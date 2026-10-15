@@ -35,7 +35,7 @@ const d = (
   table: string,
   level: PurgeDescriptor['level'],
   scope: PurgeDescriptor['scope'] = { kind: 'user_id' }
-): PurgeDescriptor => ({ table, level, scope, order: 300, snapshot: 'rows' });
+): PurgeDescriptor => ({ table, level, scope, order: 300, snapshot: 'rows', export: { kind: 'exclude', reason: 'fixture' } });
 
 /** A descriptor set that classifies every tenant table in the fixture. */
 const FIXTURE_DESCRIPTORS: PurgeDescriptor[] = [
@@ -184,6 +184,99 @@ describe('the real descriptor set (non-vacuity)', () => {
     const r = reconcileSchema({ columns, foreign_keys: [] }, PURGE_DESCRIPTORS);
     expect(r.status).toBe('drift');
     expect(r.missingDeletable).toEqual(['insight_actions']);
+  });
+});
+
+describe('export column drift (data export DE-2, FR-E19): report-only', () => {
+  // alpha_rows becomes an exported table with an explicit list.
+  const included = (
+    columns: string[],
+    excludedColumns?: Record<string, string>
+  ): PurgeDescriptor[] =>
+    FIXTURE_DESCRIPTORS.map((x) =>
+      x.table === 'alpha_rows'
+        ? { ...x, export: { kind: 'include', section: 'user_profile', columns, ...(excludedColumns ? { excludedColumns } : {}) } }
+        : x
+    );
+
+  it('lists a live column on an include table that is in neither list', () => {
+    const r = reconcileSchema(fixture, included(['id']));
+    expect(r.exportColumnDrift).toEqual([{ table: 'alpha_rows', column: 'user_id' }]);
+    expect(r.exportColumnsMissing).toEqual([]);
+  });
+
+  it('excludedColumns suppresses the drift for the columns it names', () => {
+    const r = reconcileSchema(fixture, included(['id'], { user_id: 'fixture reason' }));
+    expect(r.exportColumnDrift).toEqual([]);
+  });
+
+  it('ignores exclude and planned tables, whatever their live columns', () => {
+    const planned = FIXTURE_DESCRIPTORS.map((x) =>
+      x.table === 'kept_ledger' ? { ...x, export: { kind: 'planned' as const, slice: 'DE-4' as const } } : x
+    );
+    const r = reconcileSchema(fixture, planned);
+    expect(r.exportColumnDrift).toEqual([]);
+    expect(r.exportColumnsMissing).toEqual([]);
+  });
+
+  it('lists a declared column that is not live', () => {
+    const r = reconcileSchema(fixture, included(['id', 'user_id', 'gone_column']));
+    expect(r.exportColumnsMissing).toEqual([{ table: 'alpha_rows', column: 'gone_column' }]);
+    expect(r.exportColumnDrift).toEqual([]);
+  });
+
+  it('a drift-only result keeps status ok (it never blocks a delete)', () => {
+    const r = reconcileSchema(fixture, included(['gone_column']));
+    expect(r.exportColumnDrift.length).toBeGreaterThan(0);
+    expect(r.exportColumnsMissing.length).toBeGreaterThan(0);
+    expect(r.status).toBe('ok');
+  });
+
+  it('swapping every export classification leaves the purge verdict and the fingerprint unchanged (T-12)', () => {
+    const asIs = reconcileSchema(fixture, FIXTURE_DESCRIPTORS);
+    const swapped = reconcileSchema(fixture, included(['gone_column']).map((x) =>
+      x.table === 'alpha_rows' ? x : { ...x, export: { kind: 'planned' as const, slice: 'DE-7' as const } }
+    ));
+    for (const key of ['status', 'unclassified', 'missingDeletable', 'missingNever', 'tenantTables', 'fingerprint'] as const) {
+      expect(swapped[key]).toEqual(asIs[key]);
+    }
+    // And on the real set: every real descriptor relabelled `exclude`.
+    const columns = PURGE_DESCRIPTORS.map((x) => ({ table_name: x.table, column_name: 'id' }));
+    const real = reconcileSchema({ columns, foreign_keys: [] }, PURGE_DESCRIPTORS);
+    const relabelled = reconcileSchema(
+      { columns, foreign_keys: [] },
+      PURGE_DESCRIPTORS.map((x) => ({ ...x, export: { kind: 'exclude' as const, reason: 'swapped' } }))
+    );
+    for (const key of ['status', 'unclassified', 'missingDeletable', 'missingNever', 'tenantTables', 'fingerprint'] as const) {
+      expect(relabelled[key]).toEqual(real[key]);
+    }
+  });
+
+  // DE-4: ten included tables, was two (profiles, plugin_connections).
+  // DE-4 (user 2026-10-15): nine, plugin_connections is excluded (connected apps out).
+  it('the real set: drift is computed for every included table', () => {
+    // Every real include column live, plus one unclassified live column each.
+    const columns = PURGE_DESCRIPTORS.flatMap((x) =>
+      x.export.kind === 'include'
+        ? [...x.export.columns, ...Object.keys(x.export.excludedColumns ?? {}), 'zz_unclassified'].map((c) => ({ table_name: x.table, column_name: c }))
+        : [{ table_name: x.table, column_name: 'id' }]
+    );
+    const r = reconcileSchema({ columns, foreign_keys: [] }, PURGE_DESCRIPTORS);
+    const included = PURGE_DESCRIPTORS.filter((x) => x.export.kind === 'include').map((x) => x.table).sort();
+    expect(included).toEqual([
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'profiles',
+      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services',
+    ]);
+    expect(r.exportColumnDrift).toEqual(included.map((table) => ({ table, column: 'zz_unclassified' })));
+    expect(r.exportColumnsMissing).toEqual([]);
+  });
+
+  it('an unreadable result carries empty drift lists', async () => {
+    introspectSchema.mockResolvedValueOnce({ data: null, error: new Error('nope') });
+    const r = await runSchemaReconciler({ descriptors: FIXTURE_DESCRIPTORS });
+    expect(r.status).toBe('unreadable');
+    expect(r.exportColumnDrift).toEqual([]);
+    expect(r.exportColumnsMissing).toEqual([]);
   });
 });
 

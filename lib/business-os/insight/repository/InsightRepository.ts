@@ -1086,7 +1086,13 @@ export class InsightRepository {
         web_incomplete_content: 'website sections with incomplete content',
         // Phase 5: Cash Flow Deep
         cash_ar_aging: 'invoices aging into harder-to-collect buckets (60+ days)',
-        cash_refund_pattern: 'high refund rate that may signal service issues',
+        /* The rate is refunded PAYMENTS over paid PAYMENTS — `refundedTransactions`
+           over `paidTransactions` in the detector. Said explicitly because the
+           model otherwise reaches for "customers", which produced "9 of 24
+           customers asked for a refund" on an account with five clients: the
+           two numbers were real and the noun was invented, which reads as the
+           platform not knowing the business at all. */
+        cash_refund_pattern: 'high refund rate that may signal service issues. The counts are PAYMENTS (individual transactions), never customers or people — one client can account for several',
         cash_payout_blocked: 'Stripe payouts blocked - cannot receive money',
         // Phase 6: Pricing
         pricing_intro_offer_stuck: 'customers using intro offers but not converting to full price',
@@ -1134,7 +1140,7 @@ Business Context:
 
 Detection details:
 - Issue type: ${context}
-- Affected items: ${detection.affectedCount}
+- Affected items: ${detection.affectedCount}${detection.affectedEntityType ? ` (these are ${detection.affectedEntityType}s — NOT clients, NOT bookings, unless that is the word here)` : ''}
 ${describeCurrentValue(detection, businessContext.currency)}${describeImpact(detection, businessContext.currency)}${describeComparison(detection)}- Severity: ${detection.severity}
 ${detection.narrationSubject ? `- Specifically: ${detection.narrationSubject}` : ''}
 ${hasRealBaseline(detection) ? `- Change from baseline: ${detection.percentChange!.toFixed(0)}%` : ''}

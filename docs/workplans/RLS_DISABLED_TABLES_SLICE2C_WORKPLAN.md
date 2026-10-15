@@ -1,6 +1,6 @@
 # Workplan: RLS-disabled tables, slice 2c (the six agent-platform tables)
 
-> **Last Updated**: 2026-10-14
+> **Last Updated**: 2026-10-15
 
 **Developer:** Dev
 **Requirement:** none. This is a security fix commissioned by TL, on the same footing as slices 2a and 2b. Parent workplan: [RLS_DISABLED_TABLES_SLICE2_WORKPLAN.md](/docs/workplans/RLS_DISABLED_TABLES_SLICE2_WORKPLAN.md) (2c sections, SA conditions C-1 to C-11, "2c acceptance"). The stopgap and route map are in [EXPOSED_VIEWS_SLICE1B_WORKPLAN.md](/docs/workplans/EXPOSED_VIEWS_SLICE1B_WORKPLAN.md) ("Slice 2c: anon-only stopgap assessment").
@@ -12,7 +12,8 @@
 The workplan itself was drafted in the Dev agent worktree. It is not committed.
 **Migration number:** `20261062`. `20261061` is skipped (SA ruling 1, 2c-2 code review). See [Migration number](#migration-number).
 **Date:** 2026-10-14
-**Status:** SA workplan review 2026-10-14: **APPROVED WITH CHANGES** (see [SA Review Notes](#sa-review-notes)). **Re-scoped by SA the same day after the user's BQ-1..BQ-4 answers: sharing is switched off.** The [re-scope section](#re-scope-after-the-users-decisions-2026-10-14) overrides everything below it where they differ. 2c-1 is now "switch sharing off" (mostly deletions). 2c-2 locks the two sharing tables to the service role and drops T-1. S-2 (D-0a) and S-3 are captured, so the 2c-2 SQL may be written. Nothing applied and nothing committed.
+**Status:** ✅ **COMPLETE** (2026-10-15). 2c-1 and 2c-2 are merged (PRs #369, #370), and 2c-2 (`20261062`) was applied to production on 2026-10-14. See [2c-2 production apply record](#2c-2-production-apply-record-2026-10-14). The 24h log watch is noted in the apply record.
+**Earlier status:** SA workplan review 2026-10-14: **APPROVED WITH CHANGES** (see [SA Review Notes](#sa-review-notes)). **Re-scoped by SA the same day after the user's BQ-1..BQ-4 answers: sharing is switched off.** The [re-scope section](#re-scope-after-the-users-decisions-2026-10-14) overrides everything below it where they differ. 2c-1 is now "switch sharing off" (mostly deletions). 2c-2 locks the two sharing tables to the service role and drops T-1. S-2 (D-0a) and S-3 are captured, so the 2c-2 SQL may be written. Nothing applied and nothing committed.
 
 ## Overview
 
@@ -52,6 +53,7 @@ This slice finishes the job in small parts. **The table below is the original pl
 12. [Business questions for the user](#business-questions-for-the-user)
 13. [Follow-ups (not in 2c)](#follow-ups-not-in-2c)
 14. [SA Review Notes](#sa-review-notes)
+14a. [2c-2 production apply record (2026-10-14)](#2c-2-production-apply-record-2026-10-14)
 15. [QA Testing Report](#qa-testing-report)
 16. [Commit Info](#commit-info)
 17. [Change History](#change-history)
@@ -786,7 +788,7 @@ Code only, no database step:
 - ⬜ T2-8 `npx jest supabase/migrations/__tests__ supabase/__tests__/security-definer-surface.guard.test.ts`; `npm run test:authz-guard`; the Tailwind escape guard; the full `npm test`
 - ⬜ T2-9 PGlite (PG 17.x) dry run in the scratchpad only, never against Supabase. Setup: three roles, `auth.uid()` from `request.jwt.claims`, `agents` with the F6 policies, the six tables in the post-stopgap state, `increment_agent_stats` (the F3 body), the invoker trigger, the routing-decisions table and policy, the 1b view. Steps: pre-check CLEAN → migration → re-run refuses → checker PASS → probes P-1..P-10 → rollback → pre-check CLEAN again (exact round trip) → fail-closed cases (FORCE on, a column grant, a drifted routing policy, a drifted function md5)
 - ⬜ T2-10 SA code review → QA → user diff → RM PR
-- ⬜ T2-11 Apply (TL, user-authorized, after T1-8): see below
+- ✅ T2-11 Apply (TL, user-authorized, after T1-8): see below. **Done 2026-10-14** (no 2c-1 gate, per R-4): see [2c-2 production apply record](#2c-2-production-apply-record-2026-10-14)
 - ⬜ T2-12 Parent workplan updated (number `20261062`; ruling 2 stands, per the re-scope delta; caller correction). The 2c-2 apply follows SA's [Apply procedure for 2c-2](#apply-procedure-for-2c-2-tl-and-the-user-production-jgccgkyhpwirgknnceoh) (CR2-3), which replaces the apply order above and in S-8
 
 ### Tests (2c-2)
@@ -1438,6 +1440,23 @@ Use the file text exactly as it passed QA and the user's diff review. Every step
 
 **Apply order:** superseded by SA's [Apply procedure for 2c-2](#apply-procedure-for-2c-2-tl-and-the-user-production-jgccgkyhpwirgknnceoh) (CR2-3). It is binding: pre-check #1 runs before D-0b, the fill values are saved outside the repo, and there is no live TRUNCATE probe on production.
 
+## 2c-2 production apply record (2026-10-14)
+
+**Project:** `jgccgkyhpwirgknnceoh` (production). **Applied by:** TL, through the Supabase connector, at the user's explicit request in the session on 2026-10-14. **Procedure:** SA's [Apply procedure for 2c-2](#apply-procedure-for-2c-2-tl-and-the-user-production-jgccgkyhpwirgknnceoh) (CR2-3).
+
+| Step | Result |
+|---|---|
+| Pre-check #1 | `STOP 1`: only Q13 `agent_stats`, "run D0b first". `agent_configurations` 3 rows, md5 `b31a2dae…`; `agent_executions` 11 rows, md5 `23439f47…`; one fill entry "is the D0a agent". All Q4/Q5 grants as the stopgap left them |
+| D-0b fill values | Saved outside the repo, in the session scratchpad. Never committed |
+| D-0b re-own | "D0b done"; the row's user is the agent owner. Counters unchanged: `run_count` 1, `success_count` 1 |
+| Pre-check #2 | `CLEAN`. Q13 `agent_stats` 0 rows |
+| Migration `20261062` | Applied in one transaction; the pre-guard and the post-assert passed |
+| Checker | `VERDICT PASS`, 66 pass, 0 fail |
+| Policy md5s (SA ruling 6, FU-16) | SELECT/UPDATE qual: all `ff452c766f1dd1d84c376129b36406c1`. INSERT check = UPDATE check per table: `agent_configurations` `a30304b64b5eb0037cabc3ada8896d0f`, `agent_executions` `9680e2a8014f9f0c87e925e5e5e9b301`, `agent_logs` `ebf08590d507551e9802bc3dfe04ae0d`, `agent_stats` `5a22604b73891a6e19dd0a0ee3b18a75`. The two sharing tables have 0 policies |
+| Probes | Run in one `DO` block that ended with `RAISE EXCEPTION`, so everything was rolled back; the counter was confirmed back at 1 afterwards. P1/P1b: anon on executions and `shared_agents` → 42501. P2: the owner sees 910 of their own 910. P3: insert on a foreign agent → 42501. P4: re-point to a foreign agent → 42501. P9: the owner updates their own rows (554). P5: DELETE → 42501. P6/P8: signed-in on `shared_agents` and `shared_agent_imports` → 42501. P10: the 1b view → 42501. P7: routing decisions 0, because the table is empty for everyone. X1/X2: another user sees 0 and updates 0 of the owner's rows. P11: the owner's `increment_agent_stats` is OK. No TRUNCATE probe was run on production, per SA |
+| Advisor | `rls_disabled_in_public` and `security_definer_view` are gone; 0 ERROR lints. INFO `rls_enabled_no_policy` on `shared_agents` and `shared_agent_imports` is expected (locked to the service role, per the re-scope) and is not to be "fixed" |
+| 24h log watch | See the TL note in the PR (pending at write time) |
+
 ## QA Testing Report
 
 ### QA: slice 2c-1 (switch sharing off)
@@ -1657,3 +1676,4 @@ _RM populates this section._
 | 2026-10-14 | SA code review: 2c-2 SQL | **APPROVED WITH CHANGES.** C-4 INSERT/UPDATE (including re-pointing), no live client DELETE on the four tables (the only hits are service role), `increment_agent_stats` ON CONFLICT for the owner after D-0b, `update_agent_schedule_safe`, the routing-decisions policy, the exact-inverse rollback, paste rules, no FORCE and no SECURITY DEFINER, `lock_timeout` and single transaction, and the CASE-in-IF fix are all verified. Rulings: `20261062`; placeholders upheld (fill at paste time, never commit ids); comma via `chr(44)` + `COLLATE "C"`; `owned_agent`; extra pins kept; policy md5s recorded at apply (FU-16); sharing tables stay in the S-4 pin. **CR2-1** (Medium): the static test must require the placeholders. **CR2-2** (Low): stale `20261061` text. **CR2-3** (procedure): pre-check #1 before D-0b, fill values saved outside the repo, no live TRUNCATE probe on prod. Apply procedure recorded. See [Code Review by SA: 2c-2 SQL](#code-review-by-sa-2c-2-sql-2026-10-14) |
 | 2026-10-14 | Dev: CR2-1, CR2-2 | **CR2-1:** the D-0b static test requires exactly the `FILL_*` placeholders (5 per file) and rejects any other 32-hex literal, with mutation self-tests. **CR2-2:** live `20261061` references now say `20261062` (header, slice table, ToC and heading, slice-list row 4, Migration number, Files, T2-2); T2-12 and [2c-2 as written](#2c-2-as-written) point at SA's apply procedure (CR2-3). No SQL changed |
 | 2026-10-14 | QA: 2c-2 | **PASS, 0 bugs.** QA wrote its own PGlite dry run (PG 18.3) and followed SA's apply procedure: pre-check #1 STOP 1, D-0b (7 refusals, then applied), pre-check #2 CLEAN, migration, checker PASS 66/0, P-1..P-12 with P-5 as the `WHERE id IS NULL` DELETE and no TRUNCATE, rollback (a byte-identical round trip), D-0b reverse. 100 assertions, 0 failed. 12 drift cases of QA's own all fail closed. Static paste rules are clean on all six files, and the D-0b placeholders are 2/2/1 and 2/1/2. Jest: 2c-2 test 77 pass; `supabase/migrations/__tests__` + `supabase/__tests__` 39 suites, 2064 pass. See [QA: slice 2c-2](#qa-slice-2c-2) |
+| 2026-10-15 | 2c-2 production apply recorded; status COMPLETE | 2c-1 (#369) and 2c-2 (#370) merged. TL applied `20261062` to production (`jgccgkyhpwirgknnceoh`) on 2026-10-14 at the user's explicit request, following SA's apply procedure: pre-check #1 `STOP 1` (only `agent_stats`), D-0b re-own (fill values kept outside the repo), pre-check #2 `CLEAN`, migration in one transaction, checker PASS 66/0, policy md5s recorded (FU-16), rolled-back probe block all as expected (no TRUNCATE probe), advisor clean of the two ERROR lints. T2-11 ticked. 24h log watch noted in the PR. See [2c-2 production apply record](#2c-2-production-apply-record-2026-10-14) |

@@ -304,3 +304,104 @@ describe('AccountSummary (M1-FR-5, M1-FR-6)', () => {
     expect(within(summary).queryByTestId('account-summary-refund-note')).toBeNull();
   });
 });
+
+// ── Slice 6a (Money M-3, M3-FR-8, AC-142 render half; SA-WR-43) ─────────────
+// A separate import, so the lines above stay unedited.
+import type { FinanceAccountMargin } from '@/lib/business-os/finance/financeTypes';
+import { ACCOUNT_MARGIN, ACCOUNT_UNKNOWN, ECON_MARGIN_NOT_AVAILABLE, ECON_MARGIN_OTHER_CURRENCY, ECON_NO_REVENUE } from '../financeCopy';
+
+describe('slice 6a: the summary’s AI margin line (M3-FR-8)', () => {
+  const margin = (m: FinanceAccountMargin['margin']): FinanceAccountMargin => ({
+    paid: { failed: false, lines: [] },
+    aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+    margin: m,
+  });
+  const renderWith = (accountMargin: FinanceAccountMargin | null) => {
+    cleanup();
+    render(
+      <AccountSummary
+        accountId={A}
+        window={WINDOW}
+        aiCost={aiCost()}
+        revenue={revenue(boosts([boostLine()]))}
+        credits={credits(creditRow())}
+        accounts={accounts('tier:x')}
+        accountMargin={accountMargin}
+      />
+    );
+    return screen.getByTestId('account-summary-margin');
+  };
+
+  it('sits directly under "Paid us, total", labelled "AI margin (USD)", the figure through formatUsd', () => {
+    const line = renderWith(margin({ kind: 'figure', marginUsd: 87.7655, noRevenue: false }));
+    expect(line).toHaveTextContent('USD 87.7655');
+    const labels = [...screen.getByTestId('account-summary').querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels[labels.indexOf(ACCOUNT_PAID_TOTAL) + 1]).toBe(ACCOUNT_MARGIN);
+    expect(ACCOUNT_MARGIN).toBe('AI margin (USD)');
+  });
+
+  it('SA-WR-43: a negative margin keeps its sign; no revenue says so', () => {
+    const line = renderWith(margin({ kind: 'figure', marginUsd: -0.1234, noRevenue: true }));
+    expect(within(line).getByTestId('account-summary-margin-value')).toHaveTextContent('USD -0.1234');
+    expect(line).toHaveTextContent(ECON_NO_REVENUE);
+  });
+
+  it.each([
+    [{ kind: 'not_available' } as const, ECON_MARGIN_NOT_AVAILABLE],
+    [{ kind: 'other_currency' } as const, ECON_MARGIN_OTHER_CURRENCY],
+    [{ kind: 'unknown' } as const, ACCOUNT_UNKNOWN],
+  ])('%o → its words, never a 0', (m, text) => {
+    const line = renderWith(margin(m));
+    expect(line).toHaveTextContent(text);
+    expect(line.textContent).not.toMatch(/0\.00/);
+  });
+
+  it('no accountMargin in the payload → "Unknown"', () => {
+    expect(renderWith(null)).toHaveTextContent(ACCOUNT_UNKNOWN);
+  });
+});
+
+// ── Money M-4 (OV-5, M4-FR-2, T11-B): the summary's "Recorded above charged" line ──
+// A separate import, so the lines above stay unedited.
+import type { FinanceRecordedAiCost } from '@/lib/business-os/finance/financeTypes';
+import { RecordedAboveValue } from '../components/RecordedCostLines';
+import { ABOVE_NONE, ABOVE_NOT_AVAILABLE, ACCOUNT_AI_COST, ACCOUNT_RECORDED_ABOVE, aboveChargedAboveLine, RECORDED_LABEL, RECORDED_UNKNOWN } from '../financeCopy';
+
+describe('Money M-4: the summary’s "Recorded above charged" line (M4-FR-2)', () => {
+  const rec = (extra: Partial<FinanceRecordedAiCost> = {}): FinanceRecordedAiCost => ({
+    status: 'ok', recordedUsd: 3.75, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.25 }, chargedAboveUsd: null, ...extra,
+  });
+  const renderWith = (recorded: FinanceRecordedAiCost | undefined) => {
+    cleanup();
+    return renderSummary({ ai: aiCost({ recorded }) });
+  };
+
+  it('sits directly under "Charged AI cost"; the value, and never the recorded figure itself', () => {
+    const summary = renderWith(rec());
+    const labels = [...summary.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels[labels.indexOf(ACCOUNT_AI_COST) + 1]).toBe(ACCOUNT_RECORDED_ABOVE);
+    expect(ACCOUNT_RECORDED_ABOVE).toBe('Recorded above charged');
+    expect(within(summary).getByTestId('account-summary-recorded-above')).toHaveTextContent('USD 0.25');
+    expect(summary.textContent).not.toContain('3.75');
+    expect(within(summary).queryByText(RECORDED_LABEL)).toBeNull();
+  });
+
+  it.each([
+    [rec({ aboveCharged: { state: 'none', usd: null } }), ABOVE_NONE],
+    [rec({ aboveCharged: { state: 'none', usd: null }, chargedAboveUsd: 0.4 }), `${ABOVE_NONE}${aboveChargedAboveLine('USD 0.40')}`],
+    [rec({ aboveCharged: { state: 'not_available', usd: null } }), ABOVE_NOT_AVAILABLE],
+    [rec({ status: 'partial', recordedExact: false, aboveCharged: { state: 'unknown', usd: null } }), RECORDED_UNKNOWN],
+  ])('AC-158: %o → the same text Section 3’s renderer gives', (recorded, text) => {
+    const summary = renderWith(recorded);
+    const value = within(summary).getByTestId('account-summary-recorded-above-value');
+    expect(value.textContent).toBe(text);
+    cleanup();
+    render(<RecordedAboveValue recorded={recorded} testId="section3" />);
+    expect(screen.getByTestId('section3').textContent).toBe(text);
+  });
+
+  it('no recorded key → no line', () => {
+    const summary = renderWith(undefined);
+    expect(within(summary).queryByTestId('account-summary-recorded-above')).toBeNull();
+  });
+});

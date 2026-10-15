@@ -487,6 +487,12 @@ beforeEach(() => {
   mockSearch = '';
 });
 
+/**
+ * F-1: every section's own status is now the shared StatusChip (so it carries
+ * data-tone). "No chip in this section" means no chip OTHER than that one.
+ */
+const NO_CHIP_BUT_STATUS = (id: string) => `[data-tone]:not([data-testid="section-${id}-status"])`;
+
 describe('the finance page', () => {
   it('shows the title, the three tiles with their text state, and the sections in order', async () => {
     serve({ success: true, data: payload() });
@@ -542,7 +548,7 @@ describe('the finance page', () => {
     expect(accountsFoundingNote(1)).toBe('including 1 Founding Partner');
     expect(accountsFoundingNote(2)).toBe('including 2 Founding Partners');
     expect(within(section).queryByTestId('accounts-founding-chip-tier:x')).not.toBeInTheDocument();
-    expect(section.querySelector('[data-tone]')).toBeNull();
+    expect(section.querySelector(NO_CHIP_BUT_STATUS('accounts'))).toBeNull();
   });
 
   it('AC-82 / SA-Q24: a picked business shows the neutral "Founding Partner" chip with words, and no note sentence', async () => {
@@ -574,7 +580,7 @@ describe('the finance page', () => {
     serve({ success: true, data: p });
     render(<FinanceView />);
     const section = await screen.findByTestId('section-accounts');
-    expect(section.querySelector('[data-tone]')).toBeNull();
+    expect(section.querySelector(NO_CHIP_BUT_STATUS('accounts'))).toBeNull();
     expect(section.textContent).not.toMatch(/including \d+ Founding Partner/);
   });
 
@@ -589,6 +595,54 @@ describe('the finance page', () => {
     expect(screen.getByTestId('ai-total')).toBeInTheDocument();
     fireEvent.click(within(section).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('F-1: the section status is the shared chip: OK neutral, partial warn with an icon, could-not-load unknown with an icon', async () => {
+    const p = payload({ accounts: { status: 'unknown', scope: 'all', figures: null } });
+    p.aiCost = { ...p.aiCost, status: 'partial', figures: { ...p.aiCost.figures!, exact: false } };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    await screen.findByTestId('ai-total');
+    const ok = screen.getByTestId('section-credits-status');
+    expect(ok).toHaveAttribute('data-tone', 'neutral');
+    expect(ok.querySelector('svg')).toBeNull();
+    const partial = screen.getByTestId('section-ai-cost-status');
+    expect(partial).toHaveAttribute('data-tone', 'warn');
+    expect(partial.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    const unknown = screen.getByTestId('section-accounts-status');
+    expect(unknown).toHaveAttribute('data-tone', 'unknown');
+    expect(unknown).toHaveTextContent(SECTION_COULD_NOT_LOAD);
+    expect(unknown.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('F-1: the slice-1a tables use the shared admin table: number columns right-aligned and tabular, every other column not', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('ai-total');
+    // Literals, not the copy constants, so a renamed header cannot silently shrink the pin.
+    const NUMBER_COLUMNS: Record<string, string[]> = {
+      'accounts-groups': ['Accounts', 'In grace', 'Past due'],
+      'ai-top': ['Cost (USD)', 'Credits charged'],
+      'credits-table': ['Allowance', 'Used', '% used', 'Gifted outstanding'],
+    };
+    for (const [id, expected] of Object.entries(NUMBER_COLUMNS)) {
+      const table = screen.getByTestId(id);
+      expect(table.parentElement).toHaveClass('overflow-x-auto', 'rounded-xl');
+      const headers = Array.from(table.querySelectorAll('thead th'));
+      const numeric = headers.map((th) => th.classList.contains('text-right'));
+      expect(headers.filter((_, i) => numeric[i]).map((th) => th.textContent)).toEqual(expected);
+      const rows = Array.from(table.querySelectorAll('tbody tr'));
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        let column = 0;
+        for (const cell of Array.from(row.children) as HTMLTableCellElement[]) {
+          // A spanning cell holds words ("No allowance"), so it is left-aligned whatever it spans.
+          if (cell.colSpan === 1) expect([id, column, cell.classList.contains('tabular-nums')]).toEqual([id, column, numeric[column]]);
+          else expect(cell.classList.contains('tabular-nums')).toBe(false);
+          column += cell.colSpan;
+        }
+      }
+    }
   });
 
   it('AC-15: a partial read says "At least USD"', async () => {
@@ -784,7 +838,7 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     await renderWith(takingsSection());
     for (const id of ['accounts', 'ai-cost', 'credits']) {
       expect(screen.queryByTestId(`section-${id}-badge`)).not.toBeInTheDocument();
-      expect(screen.getByTestId(`section-${id}`).querySelector('[data-tone]')).toBeNull();
+      expect(screen.getByTestId(`section-${id}`).querySelector(NO_CHIP_BUT_STATUS(id))).toBeNull();
     }
   });
 
@@ -1621,5 +1675,128 @@ describe('Money M-1 on the page', () => {
     render(<FinanceView />);
     await screen.findByTestId('account-header');
     expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe(`/admin/analytics?range=this_month&account=${A}`);
+  });
+});
+
+// ── Slice 6a (Money M-3, AC-130, AC-145): the tabs around today's page ──────
+// A separate import, so the lists above stay unedited.
+import { TAB_ACCOUNTS, TAB_OVERVIEW } from '../financeCopy';
+
+describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
+  it('no business picked → a tablist, Overview selected, today’s sections in its panel, no tab key in the request', async () => {
+    const fetchMock = serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    const tablist = screen.getByRole('tablist');
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual([TAB_OVERVIEW, TAB_ACCOUNTS]);
+    expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('id', 'finance-panel-overview');
+    for (const id of ['kpi-strip', 'section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
+      expect(within(panel).getByTestId(id)).toBeInTheDocument();
+    }
+    expect(String(fetchMock.mock.calls[0][0])).not.toMatch(/tab=|sort=|group=|show=/);
+  });
+
+  it('a business picked → no tablist and no tab panel; the one-account view as before', async () => {
+    mockSearch = `accountId=${A}`;
+    const p = payload({ accountId: A });
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    await screen.findByTestId('account-summary');
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tabpanel')).toBeNull();
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+  });
+
+  it('clicking Accounts writes tab=accounts with router.replace and scroll false', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    fireEvent.click(screen.getByRole('tab', { name: TAB_ACCOUNTS }));
+    expect(mockReplace).toHaveBeenCalledWith('/admin/finance?preset=this_month&tab=accounts', { scroll: false });
+  });
+});
+
+// ── Money M-4 Part A (SA-W90 / E-59, SA-WR-46): Section 3's subtitle ─────────
+// A separate import, so the lists above stay unedited.
+import { AI_SOURCE, AI_TITLE } from '../financeCopy';
+
+describe('Money M-4 Part A: Section 3 names its measure and puts the window first', () => {
+  const WINDOW_LABEL = 'This month, 2026-10-01 to 2026-10-09 UTC';
+
+  it('SA-WR-46: the subtitle is "<window label>. Credit ledger: …", with no ", <window label>" tail', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-ai-cost');
+    expect(within(section).getByRole('heading', { name: AI_TITLE })).toBeInTheDocument();
+    expect(AI_TITLE).toBe('Charged AI cost in the window');
+    const subtitle = within(section).getByText(
+      (_, el) => el?.tagName === 'P' && (el.textContent ?? '').startsWith(`${WINDOW_LABEL}.`)
+    );
+    expect(subtitle.textContent).toBe(`${WINDOW_LABEL}. ${AI_SOURCE}`);
+    expect(subtitle.textContent).toBe(
+      `${WINDOW_LABEL}. Credit ledger: what Business OS actions were charged for, with corrections, from 29 Sep 2026. AI calls that were never charged are not in it.`
+    );
+    expect(subtitle.textContent).not.toContain(`, ${WINDOW_LABEL}`);
+    expect(subtitle.textContent).not.toContain('., ');
+  });
+});
+
+// ── Money M-4 Part B (OV-5, T9-B / T11-B on one render): the recorded block ──
+// A separate import, so the lists above stay unedited.
+import type { FinanceRecordedAiCost } from '@/lib/business-os/finance/financeTypes';
+import { ACCOUNT_RECORDED_ABOVE, RECORDED_LABEL } from '../financeCopy';
+import { cleanup } from '@testing-library/react';
+
+describe('Money M-4 Part B: the recorded AI cost on the page', () => {
+  const RECORDED: FinanceRecordedAiCost = {
+    status: 'ok', recordedUsd: 4.25, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.75 }, chargedAboveUsd: null,
+  };
+  const withRecorded = (recorded: FinanceRecordedAiCost | undefined, extra: Partial<FinancePayload> = {}) => {
+    const p = payload(extra);
+    p.aiCost = { ...p.aiCost, recorded };
+    return p;
+  };
+
+  it('the Overview: the block inside Section 3, beside the unchanged charged total; no element shows their sum', async () => {
+    serve({ success: true, data: withRecorded(RECORDED) });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-ai-cost');
+    const block = within(section).getByTestId('ai-recorded');
+    expect(within(block).getByText(RECORDED_LABEL)).toBeInTheDocument();
+    expect(within(block).getByTestId('ai-recorded-total')).toHaveTextContent('USD 4.25');
+    expect(within(block).getByTestId('ai-recorded-above')).toHaveTextContent('USD 0.75');
+    expect(within(section).getByTestId('ai-total')).toHaveTextContent('USD 3.50');
+    expect(document.body.textContent).not.toContain('7.75');
+  });
+
+  it('AC-158: with a business picked, the summary line and Section 3 show the same text from the one field; the recorded figure is not repeated', async () => {
+    for (const recorded of [
+      RECORDED,
+      { ...RECORDED, aboveCharged: { state: 'none' as const, usd: null }, chargedAboveUsd: 0.4 },
+      { ...RECORDED, status: 'unknown' as const, recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown' as const, usd: null } },
+    ]) {
+      cleanup();
+      mockSearch = `preset=this_month&accountId=${A}`;
+      serve({ success: true, data: withRecorded(recorded, { accountId: A }) });
+      render(<FinanceView />);
+      const summary = await screen.findByTestId('account-summary');
+      const line = within(summary).getByTestId('account-summary-recorded-above');
+      // The label sits in the line's <dt>, beside the value's <dd>.
+      expect(line.parentElement?.querySelector('dt')).toHaveTextContent(ACCOUNT_RECORDED_ABOVE);
+      expect(within(summary).getByTestId('account-summary-recorded-above-value').textContent).toBe(screen.getByTestId('ai-recorded-above').textContent);
+      expect(within(summary).queryByText(RECORDED_LABEL)).toBeNull();
+      expect(within(summary).queryByTestId('ai-recorded-total')).toBeNull();
+    }
+  });
+
+  it('AC-167 (render half): a payload with no recorded key → no block and no summary line', async () => {
+    mockSearch = `preset=this_month&accountId=${A}`;
+    serve({ success: true, data: withRecorded(undefined, { accountId: A }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-summary');
+    expect(screen.queryByTestId('ai-recorded')).toBeNull();
+    expect(screen.queryByTestId('account-summary-recorded-above')).toBeNull();
   });
 });

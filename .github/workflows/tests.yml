@@ -57,6 +57,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Merge queue: GitHub runs the required checks on the queue's temporary
+  # gh-readonly-queue/main/pr-<n>-<sha> commit. Without this trigger nothing
+  # reports there and every queued PR times out. Inert while the queue is
+  # off. See docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -87,9 +93,16 @@ jobs:
       - name: Can this change affect the Jest gate?
         id: scope
         env:
-          # Measure the whole push, not just its last commit (see build.yml).
-          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
-        run: bash .github/ci/jest-gate-scope.sh "$BASE"
+          # Measure the whole push, not just its last commit; on merge_group,
+          # the queue commit's first parent (see build.yml).
+          BASE: ${{ github.event_name == 'push' && github.event.before || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          MQ_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+        run: |
+          # Merge queue only: put base_sha in the depth-2 clone, so a stacked
+          # entry (base not HEAD^) still resolves. Guarded: a failed fetch
+          # leaves the base unresolvable and the scope rule fails open.
+          if [ -n "$MQ_BASE" ]; then git fetch --no-tags --depth=1 origin "$MQ_BASE" || true; fi
+          bash .github/ci/jest-gate-scope.sh "$BASE"
 
       - name: Setup Node.js
         if: steps.scope.outputs.skip != 'true'
@@ -156,8 +169,14 @@ jobs:
       - name: Can this change affect the Jest gate?
         id: scope
         env:
-          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
-        run: bash .github/ci/jest-gate-scope.sh "$BASE"
+          BASE: ${{ github.event_name == 'push' && github.event.before || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          MQ_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+        run: |
+          # Merge queue only: put base_sha in the depth-2 clone, so a stacked
+          # entry (base not HEAD^) still resolves. Guarded: a failed fetch
+          # leaves the base unresolvable and the scope rule fails open.
+          if [ -n "$MQ_BASE" ]; then git fetch --no-tags --depth=1 origin "$MQ_BASE" || true; fi
+          bash .github/ci/jest-gate-scope.sh "$BASE"
 
       # No npm ci: the check script uses Node built-ins only.
       - name: Setup Node.js
@@ -177,11 +196,17 @@ jobs:
       # Prints the counts and the step summary even when a shard is red.
       - name: Check the gate ran in full (G1-G7)
         if: always() && steps.scope.outputs.skip != 'true'
+        env:
+          # G3 ratchets the quarantine against the base. HEAD^1 on PR and
+          # push (unchanged); on merge_group the queue commit's first parent,
+          # which this job's scope step fetched. Unresolvable = fail closed.
+          G3_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'HEAD^1' }}
         run: |
           node .github/ci/jest-gate-check.mjs \
             --full-list gate-out/jest-list-full.txt \
             --gate-list gate-out/jest-list-gate.txt \
-            --results-dir gate-out
+            --results-dir gate-out \
+            --base "$G3_BASE"
 
       # An exact string: `cancelled`, `skipped` and `failure` are all red.
       # Applies in skip mode too, where every shard skipped its work and

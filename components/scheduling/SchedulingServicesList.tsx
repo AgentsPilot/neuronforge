@@ -518,7 +518,17 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           description: optimisticUpdates[serviceToEdit.id]?.description ?? serviceToEdit.description ?? '',
           duration: serviceToEdit.duration_minutes?.toString() || '60',
           buffer: serviceToEdit.buffer_minutes?.toString() || '0',
-          price: serviceToEdit.price?.toString() || '0',
+          /*
+             NULL STAYS EMPTY. `price?.toString() || '0'` turned "not priced
+             yet" into "free" before the editor had even rendered, so the two
+             states were indistinguishable from here down — and `0` is the one
+             that hides how the service is paid for.
+
+             The save already round-trips it: `price !== '' ? parseFloat : null`.
+          */
+          price: serviceToEdit.price === null || serviceToEdit.price === undefined
+            ? ''
+            : String(serviceToEdit.price),
           currency: serviceToEdit.currency || 'ILS',
           // The same rule as `startRowEdit`, from the same tested helper.
           ...serviceShapeValues(serviceToEdit),
@@ -1022,7 +1032,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       description: optimisticUpdates[service.id]?.description ?? service.description ?? '',
       duration: service.duration_minutes?.toString() || '60',
       buffer: service.buffer_minutes?.toString() || '0',
-      price: service.price?.toString() || '0',
+      /* Null stays empty — see the same mapping above. */
+      price: service.price === null || service.price === undefined ? '' : String(service.price),
       currency: getValidCurrency(service.currency),
       // READ THE SERVICE. These two were hardcoded, and `saveRowEdit` writes
       // them back — so editing a name, a duration or a price on a card-collected
@@ -1104,7 +1115,13 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
        */
       collection: editRowValues.sale_mode === 'proposal'
         ? null
-        : collectionToPersist(editRowValues.collection, priced ? 1 : 0),
+        /* The real figure, so "not priced yet" (null) is distinguishable from
+           "free" (0). Passing `priced ? 1 : 0` collapsed both to 0 and threw
+           away the owner's choice on every unpriced service. */
+        : collectionToPersist(
+            editRowValues.collection,
+            editRowValues.price !== '' ? parseFloat(editRowValues.price) : null
+          ),
       buffer_minutes: !editRowValues.is_scheduled ? 0 : (parseInt(editRowValues.buffer) || 0),
       price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
       currency: editRowValues.currency,
@@ -1359,6 +1376,34 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      * alone: the save discards it for a proposal anyway, so preserving it means
      * switching back does not lose the method the owner had chosen.
      */
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * NULL SHOWS THEM. ZERO HIDES THEM.
+     *
+     * The comment further down had this rule exactly right and could not act
+     * on it: "an empty price is a question still open; a saved service left at
+     * nothing has answered it. Only the second hides the shapes." It gated on
+     * `moneyLine.key === 'free'`, which is computed from a number, and a form
+     * field holds '' and '0' as the same falsy nothing.
+     *
+     * Read from the FIELD, where the difference survives:
+     *   ''   the price is not set yet. The question is open, so all three
+     *        answers are offered and usable: an owner knows they will invoice
+     *        long before they know what to charge.
+     *   '0'  nothing is charged, deliberately. There is no amount to collect,
+     *        so the choice is not merely disabled, it is not a question.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const priceUnset = values.price.trim() === '';
+    /*
+     * `!isNew` because a service being CREATED has answered nothing yet, and a
+     * new row's price field starts at '0' rather than empty. Without it the
+     * shapes vanished from the new-service editor — the first question an owner
+     * answers, gone before they could answer it, which is the same regression
+     * the `|| isNew` on the old gate existed to prevent.
+     */
+    const priceIsFree = !isNew && !priceUnset && parseFloat(values.price) === 0;
+
     const pickShape = (next: 'card' | 'invoice' | 'quote') =>
       setValues(prev => ({
         ...prev,
@@ -1515,7 +1560,13 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      * the row wrap differently for every language.
      */
     const segment = (
-      options: { value: string; label: string; active: boolean; onClick: () => void; why?: string }[]
+      options: {
+        value: string;
+        label: string;
+        active: boolean;
+        onClick: () => void;
+        why?: string;
+      }[]
     ) => (
       <div
         role="group"
@@ -2013,7 +2064,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               An empty price is a question still open; a saved service left at
               nothing has answered it. Only the second hides the shapes.
             */}
-            {(moneyLine.key !== 'free' || isNew) && (
+            {/*
+                ALL THREE, ALWAYS. The two that need a figure grey out.
+                ─────────────────────────────────────────────────────────────
+                The gate was `moneyLine.key !== 'free' || isNew`, and it hid
+                the whole group on a SAVED service with no price. Onboarding
+                now creates every service as a placeholder with no price, so
+                that is every service a new owner opens: the first question
+                about how they sell was missing, and "by quote" — the one
+                answer that fits a service with no figure — was the one they
+                could not reach.
+
+                Greyed, not gone. Card and invoice both describe how an amount
+                arrives, so they need an amount; "by quote" is a statement
+                about pricing policy and is exactly what an owner with no
+                figure may want. The disabled pair still shows the question was
+                asked, and the note under the group says what unlocks them.
+            */}
+            {!priceIsFree && (
               <div className="flex flex-col gap-2.5 mb-3">
                 {segmentWithWhy([
                   {
@@ -2035,6 +2103,15 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                     onClick: () => pickShape('quote'),
                   },
                 ])}
+
+                {/* Says which of the two nothings this is, because the field
+                    cannot: an empty box and a typed 0 look identical and mean
+                    opposite things. */}
+                {priceUnset && values.sale_mode !== 'proposal' && (
+                  <p className="text-[12px] text-[var(--v2-text-muted)] m-0 max-w-[52ch] leading-snug">
+                    {t('config.services.shape.no_price_yet')}
+                  </p>
+                )}
               </div>
             )}
 

@@ -86,3 +86,34 @@ export function section3AnalyticsHref(accountId: string | null, window: FinanceL
   analyticsWindow(params, window);
   return `/admin/analytics?${params.toString()}`;
 }
+
+/**
+ * Money M-4 (M4-FR-1, SA-W99): Section 3's "Leak check" link, the Costs & credits
+ * tab, which runs the Leak check. No window travels (the Leak check takes at
+ * most 7 days); the business does, in that tab's own `account` key, when one
+ * is picked. Literal keys, so this file still imports only the wire types.
+ */
+export function leakCheckHref(accountId: string | null): string {
+  const params = new URLSearchParams();
+  params.set('tab', 'costs');
+  if (accountId !== null) params.set('account', accountId);
+  return `/admin/business-os-llm?${params.toString()}`;
+}
+
+/**
+ * Slice 6a (M3-FR-7, AC-144): an Accounts tab row → this page's one-account
+ * view on the same window. Only the id and the window travel, in this page's
+ * own keys (`preset`, `from` / `to` for custom, `accountId`); never `tab`, a
+ * sort, a filter or a name. Literal keys, so this file still imports only the
+ * wire types.
+ */
+export function accountViewHref(accountId: string, window: FinanceLinkWindow): string {
+  const params = new URLSearchParams();
+  params.set('preset', window.preset);
+  if (window.preset === 'custom') {
+    params.set('from', window.from);
+    params.set('to', window.to);
+  }
+  params.set('accountId', accountId);
+  return `/admin/finance?${params.toString()}`;
+}

@@ -97,10 +97,21 @@ const COPY: Record<string, Record<string, string>> = {
     es: 'No se cobra nada, así que no hay cobros que configurar.',
     he: 'אין גבייה, אז אין צד כספי להגדיר.',
   },
+  /*
+   * NOT "and publish". The site is written with `status: 'draft'` and the owner
+   * publishes it, which `WebsiteGenerationService` says outright where it
+   * writes the row.
+   *
+   * Corrected here even though this panel is no longer mounted anywhere (it was
+   * removed from the onboarding chat on 2026-10-14), because a false promise
+   * left in a component is a false promise the moment somebody renders it
+   * again, and this one had already reached the build page as "Your site is
+   * published".
+   */
   'why.site': {
-    en: 'I will build and publish your site — that is where clients book you.',
-    es: 'Construiré y publicaré tu sitio — ahí es donde reservan.',
-    he: 'אבנה ואפרסם את האתר שלך — משם לקוחות מזמינים.',
+    en: 'I will build your site and leave it ready for you to publish. That is where clients book you.',
+    es: 'Construiré tu sitio y lo dejaré listo para publicar. Ahí es donde reservan.',
+    he: 'אבנה את האתר שלך ואשאיר אותו מוכן לפרסום. משם לקוחות מזמינים.',
   },
   'why.link': {
     en: 'No website — a booking link does the same job, and it is already done.',

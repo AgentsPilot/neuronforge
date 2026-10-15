@@ -74,7 +74,7 @@ import { FinanceSection } from './FinanceSection';
 import { PlanRevenuePart } from './PlanRevenuePart';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
-const NOTE = 'text-[11px] text-slate-500';
+const NOTE = 'text-[11px] text-slate-400';
 
 const currencyLabel = (currency: string | null) => currency ?? TAKINGS_UNKNOWN_CURRENCY;
 

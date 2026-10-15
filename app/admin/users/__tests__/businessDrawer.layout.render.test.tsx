@@ -50,8 +50,11 @@ import {
 jest.setTimeout(30_000);
 configure({ asyncUtilTimeout: 5000 });
 
-/** The recorded account's tier, read from the fixture (no tier name as a literal: FR-12). */
-const RECORDED_TIER = recordedAccountBody.data.plan.tier;
+/**
+ * The recorded account's plan, by the name the strip shows: the server's config
+ * read in the fixture (admin plan card plain labels; no tier name as a literal: FR-12).
+ */
+const RECORDED_TIER = recordedAccountBody.data.planPresentation.tier.name;
 
 // ── Accounts ────────────────────────────────────────────────────────────────
 
@@ -353,7 +356,7 @@ describe('L-1: the strip, then six sections in a fixed order', () => {
 // ── L-2 to L-5 the strip (BD-1, BD-3, BD-13) ────────────────────────────────
 
 describe('L-2 to L-5: the summary strip', () => {
-  it('L-2: a Business OS account: plan, the list row cell, USD estimated, the UTC sign-in; nothing to click', async () => {
+  it('L-2: a Business OS account: plan, the list row cell, USD recorded, the UTC sign-in; nothing to click', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
     const strip = within(drawer).getByTestId('drawer-strip');
     expect(within(strip).getByTestId('strip-plan').textContent).toBe(RECORDED_TIER);
@@ -365,7 +368,7 @@ describe('L-2 to L-5: the summary strip', () => {
     expect(inDrawer.getAttribute('data-band')).toBe(listCell?.getAttribute('data-band'));
     expect(inDrawer.textContent).toBe('40%');
 
-    expect(within(strip).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated');
+    expect(within(strip).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded');
     expect(within(strip).getByTestId('strip-last-sign-in').textContent?.startsWith('2026-10-10 08:05 UTC')).toBe(true);
     expect(strip.querySelectorAll('a, button, input, select, textarea, summary')).toHaveLength(0);
   });
@@ -393,7 +396,7 @@ describe('L-2 to L-5: the summary strip', () => {
   it('L-4: a failed entitlements read: Plan "Could not read", the other slots filled', async () => {
     const drawer = await openDrawer('Eli Plan', 'boost-cap');
     expect(within(drawer).getByTestId('strip-plan').textContent).toBe('Could not read');
-    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated');
+    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded');
     expect(within(within(drawer).getByTestId('strip-credits-left')).getByTestId('row-credits-left').textContent).toBe('10%');
   });
 
@@ -439,7 +442,7 @@ describe('L-2 to L-5: the summary strip', () => {
       },
     };
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
-    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated, a lower bound');
+    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded, a lower bound');
     expect(within(drawer).getByTestId('bos-panel-spend-incomplete')).toBeTruthy();
   });
 });
@@ -472,7 +475,7 @@ describe('L-6 / L-7: folds outside the money blocks', () => {
     expect(calls.length).toBe(before);
   });
 
-  it('L-7: All products is folded with its note visible; figures in the DOM; Cost by Model shows three; toggles send nothing', async () => {
+  it('L-7: All products is folded with its note visible; figures in the DOM; Recorded AI cost by model shows three; toggles send nothing', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
     const card = within(drawer).getByTestId('ai-spend-card');
     expect(card.textContent).toContain('may be incomplete above 1,000 calls');
@@ -487,7 +490,7 @@ describe('L-6 / L-7: folds outside the money blocks', () => {
     expect(within(card).getAllByTestId('ai-model-row')).toHaveLength(5);
     expect(within(modelsRest).getAllByTestId('ai-model-row')).toHaveLength(2);
     expect(within(card).getAllByTestId('ai-model-row')[0].textContent).toContain('m-a');
-    expect(card.textContent).toContain('Cost by Model (highest cost first)');
+    expect(card.textContent).toContain('Recorded AI cost by model (highest first)');
 
     const before = calls.length;
     const toggle = within(card).getByTestId('ai-all-products-toggle');
@@ -584,7 +587,7 @@ describe('L-10: loading, and the money blocks keep their nodes', () => {
     expect(within(drawer).queryByTestId('credits-block')).toBeNull();
     await act(async () => gate.resolve());
     await within(drawer).findByTestId('boost-cap');
-    await waitFor(() => expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated'));
+    await waitFor(() => expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded'));
     await quiet();
   });
 

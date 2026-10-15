@@ -4,6 +4,9 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Loader2, Check, Clock } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
+/* The registry, for the one field that joins an insight to the standing
+   automation doing the same work — see `nextStep` below. */
+import { OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
 import { BeforeAfterPanel, type ProjectionColumn } from './BeforeAfterPanel';
 import type { InsightData, InsightProjection } from './InsightDetailModal';
 
@@ -326,6 +329,131 @@ export function InsightAdvisorCard({
    * is exactly the card that prompted this work.
    */
   const isResolved = insight?.status === 'resolved';
+  /*
+   * The owner did something about this, as opposed to it merely stopping being
+   * reported. `acted` is set when they press the button; `automated` when they
+   * turn the standing rule on. See the badge below for why the difference has
+   * to be visible.
+   */
+  const wasHandled = insight?.status === 'acted' || insight?.status === 'automated';
+
+  /**
+   * WHAT HAPPENED, said from what the system actually recorded.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The owner's question, three times over, was "did it do anything?" — and the
+   * card could not answer it. It knew the row was closed and nothing else, so
+   * it picked the kindest reading and said the situation had cleared, on a card
+   * still titled "4 overdue invoices totalling ₪1,300".
+   *
+   * Four different things end up looking the same from the status alone, and
+   * they are not the same news:
+   *
+   *   messages went out        the useful answer, with the count and the date
+   *   messages were QUEUED
+   *     and never left         `skipped` — the owner thinks it was done
+   *   the owner acted, and
+   *     nothing was queued     asked for, nothing to show for it
+   *   nobody acted at all      it simply stopped being reported
+   *
+   * `skipped` is not hypothetical: of seven queued rows on the reporting
+   * account, three left and three were skipped. A card that said "handled,
+   * therefore sent" would have been wrong about nearly half of them, which is
+   * the kind of wrong that costs a client relationship rather than a click.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const closedState = (() => {
+    const outcome = insight?.outcome;
+
+    if (outcome && outcome.sent > 0) {
+      const when = outcome.lastSentAt
+        ? new Date(outcome.lastSentAt).toLocaleDateString(isRTL ? 'he-IL' : 'en-GB', { day: 'numeric', month: 'short' })
+        : '';
+      return {
+        badge: t('insight.badge.sent') || 'Done',
+        line: (t('insight.closed.sent') || '{count} sent on {date}.')
+          .replace('{count}', String(outcome.sent))
+          .replace('{date}', when)
+          .trim(),
+      };
+    }
+
+    if (outcome && outcome.skipped > 0) {
+      /* Named rather than softened. The owner pressed the button and nothing
+         reached anybody; that is the one outcome they must not have to guess. */
+      return {
+        badge: t('insight.badge.nothing_sent') || 'Nothing sent',
+        line: (t('insight.closed.skipped') || 'Nothing was sent — {count} were queued and did not go out.')
+          .replace('{count}', String(outcome.skipped)),
+      };
+    }
+
+    if (wasHandled) {
+      return {
+        badge: t('insight.badge.handled') || 'You asked for this',
+        line: t('insight.closed.handled') || 'You asked me to handle this. Nothing has gone out yet.',
+      };
+    }
+
+    /*
+     * NOT "it sorted itself out".
+     *
+     * That is what the badge said, and it is a claim about the WORLD — the
+     * invoices got paid, the client replied — made from a fact about our own
+     * bookkeeping: a detector stopped reporting. On a card still headed "4
+     * overdue invoices totalling ₪1,300", above a line saying nothing was sent,
+     * it was the only part still contradicting the rest, and it is what the
+     * owner kept asking about.
+     *
+     * We cannot tell "the problem went away" from "we stopped looking", so the
+     * badge says the one thing we know — this card is closed — and the line
+     * underneath says exactly what that meant. When the cooldown sweep fix is
+     * live, `resolved` will again mean a detector looked and found nothing, and
+     * a truthful "sorted itself out" becomes possible to say.
+     */
+    return {
+      badge: t('insight.badge.resolved') || 'Closed',
+      line: t('insight.closed.resolved') || 'This stopped being reported. Nothing was sent.',
+    };
+  })();
+
+  const closedExplanation = closedState.line;
+
+  /**
+   * WHAT HAPPENS NEXT, where a standing automation already covers this work.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The other half of the owner's question. Knowing nothing was sent is only
+   * half an answer if the invoice chaser has been running all along — and on
+   * the reporting account it is: `chase_invoices_enabled` is true, and it
+   * chases every unpaid invoice 72 hours after it falls due. A card that said
+   * "nothing was sent" and stopped there would read as neglect when the work
+   * was in hand the whole time.
+   *
+   * Joined on the process: the insight carries `paired_process_id`, and the
+   * automation now declares the process it covers. `operational` already
+   * carries every automation with its answer, so nothing new is fetched.
+   *
+   * Silent when no automation covers the process, which is honest — there is
+   * then genuinely nothing standing by, and inventing a reassurance is how the
+   * rest of this card went wrong.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const nextStep = (() => {
+    if (!insight?.paired_process_id || !operational?.length) return null;
+
+    const covering = OPERATIONAL_AUTOMATIONS.find(
+      automation => automation.coversProcess === insight.paired_process_id
+    );
+    if (!covering) return null;
+
+    const answer = operational.find(item => item.id === covering.id);
+    if (!answer) return null;
+
+    return answer.enabled
+      ? t('insight.next.covered') || 'I chase these automatically from now on.'
+      : t('insight.next.not_covered') || 'Nothing is set to chase these automatically.';
+  })();
 
   const operationalItem =
     currentIndex >= insights.length ? operational[currentIndex - insights.length] : undefined;
@@ -444,6 +572,20 @@ export function InsightAdvisorCard({
   const getSeenText = () => {
     // An approval is a question, not an observation — nothing was "seen".
     if (operationalItem) return null;
+    /*
+     * NOTHING ABOUT AN OPEN QUESTION ON A CARD THAT IS CLOSED.
+     *
+     * Every line below describes an insight the owner still has to deal with —
+     * "you have seen this before and it is still open", and the offer to take
+     * it on permanently. On a resolved or handled card they contradict the card
+     * itself: "the situation that raised this has cleared" sat directly above
+     * "you have seen this a few times and it is still open", which is the
+     * confusion the badge rewrite was supposed to end rather than move.
+     *
+     * One gate rather than three: a closed card is a badge, a title and a line
+     * about what happened. Nothing on it may ask for a decision.
+     */
+    if (isResolved || wasHandled) return null;
     // No "seen" text for setup stage
     if (effectiveStage === 'setup') {
       return null;
@@ -465,13 +607,53 @@ export function InsightAdvisorCard({
        * does not include the view happening right now: 0 really is the first
        * time.
        */
+      /*
+       * AND IT COUNTS VIEWS, SO IT MAY ONLY TALK ABOUT VIEWS.
+       *
+       * `surface_count` is incremented every time the dashboard fetches the
+       * list, so it measures how often the OWNER LOOKED, not how often the
+       * problem happened. The line at three or more said "this keeps coming
+       * back" — a claim about recurrence, made from a page-load counter.
+       *
+       * On the reporting account one insight about one set of four invoices had
+       * been seen 24 times, and another 64. Nothing had recurred; the dashboard
+       * had been opened. Worse, that sentence is the nudge toward a standing
+       * automation, so the platform was recommending an always-on rule on the
+       * strength of refreshes.
+       *
+       * Persistence is what the number really supports, and it is a good reason
+       * to offer the standing rule in its own right: this has been in front of
+       * you repeatedly and is still not dealt with. The copy now says that.
+       *
+       * The stronger signal — how many separate insights this detector has
+       * raised — is real (three `cash_ar_overdue` insights in a week on that
+       * account) but is not on this row, so claiming it here would be inventing
+       * it again.
+       */
       const shown = insight.surface_count ?? 0;
 
       if (shown === 0) {
         return t('insight.seen.first') || 'First time I\'ve seen this. I\'ll offer to handle it standing once it has happened a few times.';
       }
       if (shown >= 3) {
-        return t('insight.seen.repeated') || 'This keeps coming back. If it is going to keep happening, I can handle it standing.';
+        /*
+         * THE STANDING OFFER ONLY WHERE THERE IS ONE TO MAKE.
+         *
+         * This sentence ends "I can handle it standing", and thirteen detectors
+         * are `eligibleForAutomation: false` — there is no rule to switch on and
+         * no button anywhere on the card. The refund-rate card offered it while
+         * its own advice was "have a conversation with the clients who asked for
+         * their money back": a phone call, by a person, which the platform
+         * offered to take over permanently.
+         *
+         * The persistence half is still true and still worth saying, so only
+         * the promise goes.
+         */
+        if (!insight.eligible_for_automation) {
+          return t('insight.seen.repeated_manual')
+            || 'This has been in front of you a few times now and is still open.';
+        }
+        return t('insight.seen.repeated') || 'This has been in front of you a few times now and is still open. If it is going to keep happening, I can handle it standing.';
       }
       return t('insight.seen.again') || 'You have seen this one before and it is still open.';
     }
@@ -678,7 +860,27 @@ export function InsightAdvisorCard({
               subtext: renderLine(projection.doNothing?.detailsLine, projection.doNothing?.details),
             },
             right: {
-              label: t('insight.projection.handle_it') || 'If I handle it',
+              /*
+               * "IF I HANDLE IT" ONLY WHERE I CAN.
+               *
+               * ───────────────────────────────────────────────────────────────
+               * Thirteen detectors describe something no process can act on,
+               * and this column promised the platform would act on every one of
+               * them. The refund-rate card is the clearest: its advice is "have
+               * a conversation with the clients who asked for their money back"
+               * — a phone call, by a person — printed under a heading saying
+               * the platform would handle it, with no button anywhere on the
+               * card because `canRun` had correctly decided there was nothing
+               * to press.
+               *
+               * So the card contradicted itself twice over: it offered to do
+               * the work, gave no way to accept, and the work was never ours to
+               * do. The advice is good; the heading was the lie.
+               * ───────────────────────────────────────────────────────────────
+               */
+              label: canRun
+                ? t('insight.projection.handle_it') || 'If I handle it'
+                : t('insight.projection.what_to_do') || 'What to do about it',
               value: renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
                 || `~${formatCurrency(insight?.estimated_impact_usd || 0, {
                   showFree: false,
@@ -970,7 +1172,12 @@ export function InsightAdvisorCard({
           * the detector in the owner's language and is not ours to rewrite
           * here.
           */}
-        {isResolved && (
+        {/* Shown for BOTH, because the two are different facts the owner needs:
+            one says they dealt with it, the other that it stopped being
+            reported. Previously an `acted` insight carried no badge at all,
+            so the one case where "handled" was true was the one case that did
+            not say so. */}
+        {(isResolved || wasHandled) && (
           <div
             style={{
               display: 'inline-flex',
@@ -1001,7 +1208,27 @@ export function InsightAdvisorCard({
             >
               <path d="M20 6L9 17l-5-5" />
             </svg>
-            {t('insight.badge.resolved') || 'Already sorted'}
+            {/*
+              "HANDLED" AND "CLOSED" ARE NOT THE SAME CLAIM.
+
+              ─────────────────────────────────────────────────────────────────
+              This badge said "already handled" for anything `resolved`, and
+              `resolved` is written by the nightly sweep when a detector stops
+              reporting — not by the owner doing anything. `acted` is the status
+              that means they pressed the button, and it was never read here.
+
+              So an insight nobody had touched announced itself as handled, and
+              the owner could not tell from the card whether they had acted on
+              it. On the reporting account exactly that happened: a card for
+              four overdue invoices read "already handled" with `acted_at` null,
+              while the one they HAD acted on three days earlier — which really
+              did queue and send three reminders — carried no badge at all.
+
+              `automated` counts as handled too: a standing rule is the owner
+              deciding, once, that this is taken care of from now on.
+              ─────────────────────────────────────────────────────────────────
+            */}
+            {closedState.badge}
           </div>
         )}
 
@@ -1026,18 +1253,59 @@ export function InsightAdvisorCard({
           {displayTitle}
         </div>
 
-        {/* Description: .adv-p */}
-        <div
-          className="adv-p"
-          style={{
-            fontSize: '14.5px',
-            color: 'var(--v2-text-secondary)',
-            maxWidth: '46rem',
-            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-            lineHeight: 1.5,
-          }}
-          dangerouslySetInnerHTML={{ __html: displayDescription }}
-        />
+        {/*
+          Description — AND NOT THE PROBLEM AGAIN ONCE THE CARD IS CLOSED.
+
+          ───────────────────────────────────────────────────────────────────
+          This rendered the detector's own problem statement in every state, so
+          a closed card carried a badge saying it was over directly above a
+          paragraph insisting it was not: "sorted itself out" on top of "you
+          have 4 unpaid invoices totalling ₪1,300". Whatever the badge was
+          reworded to, the two halves went on contradicting each other, because
+          only one of them had been told the card was finished.
+
+          The title stays — it is how the owner knows WHICH card this is — and
+          the body becomes a line about the state instead. Deliberately a plain
+          statement and nothing more: what was actually SENT lives in the action
+          queue, not on this row, and some of those rows end `skipped`, so a
+          card promising delivery from here would be the next thing to be wrong.
+          ───────────────────────────────────────────────────────────────────
+        */}
+        {isResolved || wasHandled ? (
+          <div
+            className="adv-p"
+            style={{
+              fontSize: '14.5px',
+              color: 'var(--v2-text-muted)',
+              maxWidth: '46rem',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+              lineHeight: 1.5,
+            }}
+          >
+            {closedExplanation}
+            {/* What is already standing by, on the line below rather than
+                folded into the sentence above: one is what happened, the other
+                is what happens next, and running them together is how "nothing
+                was sent" came to read as "nothing will be". */}
+            {nextStep && (
+              <div style={{ marginTop: '4px', color: 'var(--v2-text-secondary)' }}>
+                {nextStep}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div
+            className="adv-p"
+            style={{
+              fontSize: '14.5px',
+              color: 'var(--v2-text-secondary)',
+              maxWidth: '46rem',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+              lineHeight: 1.5,
+            }}
+            dangerouslySetInnerHTML={{ __html: displayDescription }}
+          />
+        )}
 
         {/*
           What is waiting on this right now.
@@ -1246,8 +1514,18 @@ export function InsightAdvisorCard({
           </div>
         )}
 
-        {/* Before/After Projection (if available and in default state) */}
-        {!operationalItem && projectionColumns && cardState === 'default' && (
+        {/*
+          Before/After Projection (if available and in default state).
+
+          NOT ON A CLOSED CARD. The panel poses a choice — "if you do nothing"
+          against "if I handle it" — and on a resolved or already-handled
+          insight there is no choice left to make: `canRun` has already removed
+          the button, so the offer sat there with nothing to press. A card
+          reading "sorted itself out" directly above "I chase all 4 today" asks
+          the owner to decide something that is over, and reads as an offer that
+          has stopped working rather than one that has been withdrawn.
+        */}
+        {!operationalItem && projectionColumns && cardState === 'default' && !isResolved && !wasHandled && (
           <BeforeAfterPanel left={projectionColumns.left} right={projectionColumns.right} />
         )}
 

@@ -122,3 +122,51 @@ describe('only the id travels (AC-113)', () => {
     }
   });
 });
+
+// Slice 6a (AC-144, M3-FR-7): a separate import, so the lines above stay unedited.
+import { accountViewHref } from '../financeLinks';
+import { DEFAULT_FINANCE_QUERY, parseFinanceUrl } from '../financeUrl';
+
+describe('slice 6a: accountViewHref, an Accounts row → the one-account view on the same window (AC-144)', () => {
+  it.each(PRESETS)('%s: parsed back through parseFinanceUrl gives exactly the window and the id, and no tab key', (preset) => {
+    const window = windowFor(preset);
+    const href = accountViewHref(A, window);
+    expect(href.startsWith('/admin/finance?')).toBe(true);
+    const params = paramsOf(href);
+    const parsed = parseFinanceUrl(params, NOW);
+    expect(parsed.notice).toBeNull();
+    expect(parsed.query).toEqual({
+      ...DEFAULT_FINANCE_QUERY,
+      preset,
+      from: preset === 'custom' ? window.from : null,
+      to: preset === 'custom' ? window.to : null,
+      accountId: A,
+    });
+    expect([...params.keys()]).toEqual(preset === 'custom' ? ['preset', 'from', 'to', 'accountId'] : ['preset', 'accountId']);
+    for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
+  });
+});
+
+// Money M-4 (SA-W99, T8-B): a separate import, so the lines above stay unedited.
+import { leakCheckHref } from '../financeLinks';
+
+describe('Money M-4: leakCheckHref, the Costs & credits tab that runs the Leak check (SA-W99)', () => {
+  it('no business picked: the Costs tab only; no window and no account', () => {
+    const href = leakCheckHref(null);
+    expect(href).toBe('/admin/business-os-llm?tab=costs');
+    const get = getter(paramsOf(href));
+    expect(COSTS_FILTER_SPEC.account.parse(get)).toBeUndefined();
+    expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
+  });
+
+  it('a business picked: the tab’s own `account` key, which the Costs spec parses back; still no window key', () => {
+    const href = leakCheckHref(A);
+    expect(href).toBe(`/admin/business-os-llm?tab=costs&account=${A}`);
+    const params = paramsOf(href);
+    const get = getter(params);
+    expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
+    expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
+    expect([...params.keys()]).toEqual(['tab', 'account']);
+    for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
+  });
+});

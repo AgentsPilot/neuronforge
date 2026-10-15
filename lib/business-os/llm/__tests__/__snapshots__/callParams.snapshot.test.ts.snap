@@ -18,7 +18,7 @@ exports[`C: with the seeded rows, the resolver returns the same (FR-16, AC-2) is
     "temperature": 0,
   },
   "images/image_generation": {
-    "model": "gpt-image-1",
+    "model": "gpt-image-2.5-flare",
     "provider": "openai",
     "temperature": null,
   },
@@ -62,6 +62,11 @@ exports[`C: with the seeded rows, the resolver returns the same (FR-16, AC-2) is
     "provider": "openai",
     "temperature": null,
   },
+  "onboarding/business_deepening": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": null,
+  },
   "onboarding/business_story_extraction": {
     "model": "gpt-4o",
     "provider": "openai",
@@ -73,6 +78,11 @@ exports[`C: with the seeded rows, the resolver returns the same (FR-16, AC-2) is
     "temperature": null,
   },
   "onboarding/client_workflow_extraction": {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "temperature": null,
+  },
+  "onboarding/service_drafting": {
     "model": "gpt-4o",
     "provider": "openai",
     "temperature": null,

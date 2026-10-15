@@ -188,6 +188,13 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     client_workflow_extraction: wired('gpt-4o', null),
     client_tracking_extraction: wired('gpt-4o', null),
     adjustment_intent_extraction: wired('gpt-4o', null),
+    /* The follow-up interview. Wired like its neighbours: it resolves from the
+       onboarding area row and sends no temperature. */
+    business_deepening: wired('gpt-4o', null),
+    /* Names the placeholder services from what the owner already said. Wired
+       like the rest of onboarding: resolves from the area row, sends no
+       temperature. */
+    service_drafting: wired('gpt-4o', null),
   },
   images: {
     // Wired in Step 3: the model comes from the `images` area row, and the
@@ -446,14 +453,10 @@ describe('C: with the seeded rows, the resolver returns the same (FR-16, AC-2)',
     mockGetByKeys.mockResolvedValue(seededRows());
     const resolved = await resolveAll();
     for (const [area, callName] of ALL_CALLS) {
-      // The one intended difference: the seeded `images` row names
-      // `gpt-image-1`, which was the code default when the seed ran. The
-      // default moved to its successor on 2026-10-14 (gpt-image-1 retires
-      // 23 Oct 2026), so the seeded row resolves to the model it names.
-      const params =
-        area === 'images'
-          ? { ...TODAY[area][callName].params, model: SEEDED_ROWS.images.model }
-          : TODAY[area][callName].params;
+      // Images included: the seeded row names gpt-image-1, which the
+      // guardrail refuses since its prices were removed (2026-10-14, Q10), so
+      // the call resolves to the code default like every other area.
+      const params = TODAY[area][callName].params;
       expect({ call: `${area}/${callName}`, params: resolved[`${area}/${callName}`] }).toEqual({
         call: `${area}/${callName}`,
         params,

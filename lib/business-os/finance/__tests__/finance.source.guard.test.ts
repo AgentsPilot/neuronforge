@@ -64,6 +64,15 @@
  * on the plans part and no dim text in the new page file. Every new rule has a
  * planted negative control. The M-1 page rules (the local chip, the picked name,
  * the links file) live in the page's own guard, app/admin/finance/__tests__/source.guard.test.ts.
+ *
+ * Slice 6a (Money M-3, §11E.6, E-44, SA-Q45): three existing pins are UPDATED,
+ * each by SA ruling: the boost and plan export pins grow to exactly five names
+ * (`readMoney`, `readPlanMoney`), each with a planted sixth export (SA-WR-45);
+ * the refund-timing sentence gets a third user, the Accounts tab, with a
+ * planted fourth. A new describe pins the account economics builder (one
+ * integer scale, purity, readers only, zero DF-5 tokens, exports, one 'USD')
+ * and the purity of financeUrl.ts, whose group shape the route imports
+ * (SA-W83, SA-WR-42). Every new rule has a planted negative control.
  */
 
 import * as fs from 'fs';
@@ -98,7 +107,10 @@ const REPOSITORY = 'lib/repositories/BusinessOsFinanceReadRepository.ts';
 /** Every scanned file but the finance read repository (slice 2a, S2-F1). */
 const LAYER_B_FREE = FILES.filter((file) => file !== REPOSITORY);
 
-const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
+// CRLF normalised (as in PR #394): on a Windows checkout the newline-shaped
+// scans below (the DF-5 function and interface ends) otherwise find nothing.
+const read = (file: string) =>
+  fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/\r\n/g, '\n');
 /** Comments removed: prose about a table is not a read of it. */
 const stripComments = (text: string) =>
   text
@@ -131,10 +143,39 @@ describe('finance slice 1a source guards', () => {
     expect(WRITE_VERB.test(codeOf(file))).toBe(false);
   });
 
-  it.each(FILES)('%s: no aggregate select and no token_usage', (file) => {
+  // Money M-4 (SA-RR-M4, SA-W103, §11F.8): NARROWED by SA ruling. The table and view names stay
+  // forbidden in EVERY file, the route included (AGG-4: no file reads `token_usage` itself); the
+  // usage-log READER name moved to the rule below, which spares the route only.
+  it.each(FILES)('%s: no aggregate select and no token_usage table or usage-log view', (file) => {
     const code = codeOf(file);
     expect(code).not.toMatch(/select\(\s*['"`][^'"`]*\b(sum|avg|min|max)\s*\(/i);
-    expect(code).not.toMatch(/token_usage|TokenUsageRepository|monthly_token_usage|business_os_usage_summary/);
+    expect(code).not.toMatch(/token_usage|monthly_token_usage|business_os_usage_summary/);
+  });
+
+  // Money M-4 (SA-W103): WIDENED to `/tokenusage/i` over code (comments stripped), so the analytics
+  // reader and both instance names are caught too, not only `TokenUsageRepository` (today's gap).
+  // Only the route may name a usage-log reader; it is pinned positively in the M-4 describe.
+  const USAGE_LOG_READER = /tokenusage/i;
+  const NOT_THE_ROUTE = FILES.filter((file) => file !== 'app/api/admin/business-os/finance/route.ts');
+
+  it.each(NOT_THE_ROUTE)('%s: names no usage-log reader in code (only the route may, M4-FR-6)', (file) => {
+    expect(codeOf(file)).not.toMatch(USAGE_LOG_READER);
+  });
+
+  it('the widened reader rule bites on every reader and instance name (planted); the narrowing spares the route only', () => {
+    for (const planted of [
+      "import { tokenUsageRepository } from '@/lib/repositories/TokenUsageRepository';",
+      "import type { AdminCostPointRow } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';",
+      'adminTokenUsageAnalyticsRepository.listCostPointsAllAccountsInWindow(ctx, w, f, o)',
+      'const r = new TokenUsageRepository();',
+    ]) {
+      expect({ planted, caught: USAGE_LOG_READER.test(planted) }).toEqual({ planted, caught: true });
+    }
+    // The old case-sensitive pattern missed the analytics reader: the gap this closes.
+    expect(/TokenUsageRepository/.test('AdminTokenUsageAnalyticsRepository')).toBe(false);
+    expect(FILES.length - NOT_THE_ROUTE.length).toBe(1);
+    // AGG-4 still bites on the route's own code.
+    expect(`${codeOf('app/api/admin/business-os/finance/route.ts')}\nq.from('token_usage');\n`).toMatch(/token_usage/);
   });
 
   // Slice 2a (S2-F1): the finance read repository is the one file allowed to
@@ -714,14 +755,16 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(outsideDf5(plantedStatus)).toMatch(DF5_TOKENS);
   });
 
-  // SA-WR-35: the one DF-5 copy line. Slice 5a, SA-W58 (a) / SA-WR-38: exactly two users, the revenue
-  // panel and the account summary (S5-F7); still one constant and one sentence.
+  // SA-WR-35: the one DF-5 copy line. Slice 5a, SA-W58 (a) / SA-WR-38: the revenue panel and the
+  // account summary (S5-F7). Slice 6a (SA workplan review, the SA-W58 (a) reasoning): the Accounts tab
+  // joins, so EXACTLY THREE users; still one constant and one sentence.
   const SUMMARY = 'app/admin/finance/components/AccountSummary.tsx';
+  const ACCOUNTS_TAB = 'app/admin/finance/components/AccountsTab.tsx';
   const refundNoteUsers = (files: readonly string[], code: (file: string) => string) =>
     files.filter((file) => file !== COPY && /\bREVENUE_REFUND_TIMING_NOTE\b/.test(code(file)));
-  it('SA-WR-35 / SA-WR-38: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used by exactly RevenuePanel.tsx and AccountSummary.tsx', () => {
+  it('SA-WR-35 / SA-WR-38 / 6a: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used by exactly RevenuePanel.tsx, AccountSummary.tsx and AccountsTab.tsx', () => {
     const users = refundNoteUsers(FILES, codeOf);
-    expect([...users].sort()).toEqual([SUMMARY, PANEL].sort());
+    expect([...users].sort()).toEqual([SUMMARY, PANEL, ACCOUNTS_TAB].sort());
     expect(codeOf(COPY)).toMatch(/export const REVENUE_REFUND_TIMING_NOTE =/);
     expect(read(COPY)).toContain('Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.');
   });
@@ -732,13 +775,14 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(/\bREVENUE_REFUND_TIMING_NOTE\b/.test('REVENUE_REFUND_TIMING_NOTES')).toBe(false);
   });
 
-  it('SA-WR-38 (planted control): a THIRD user of the sentence breaks the exact two-file list', () => {
-    const THIRD = 'app/admin/finance/components/TakingsSection.tsx';
+  it('6a (planted control): a FOURTH user of the sentence breaks the exact three-file list', () => {
+    const FOURTH = 'app/admin/finance/components/TakingsSection.tsx';
     const planted = (file: string) =>
-      file === THIRD ? `${codeOf(file)}\nconst leak = REVENUE_REFUND_TIMING_NOTE;\n` : codeOf(file);
+      file === FOURTH ? `${codeOf(file)}\nconst leak = REVENUE_REFUND_TIMING_NOTE;\n` : codeOf(file);
     const users = refundNoteUsers(FILES, planted);
-    expect(users).toContain(THIRD);
-    expect([...users].sort()).not.toEqual([SUMMARY, PANEL].sort());
+    expect(users).toContain(FOURTH);
+    expect(users).toHaveLength(4);
+    expect([...users].sort()).not.toEqual([SUMMARY, PANEL, ACCOUNTS_TAB].sort());
   });
 
   // (e) SA-W22: pure and structural.
@@ -766,12 +810,23 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
   });
 
   // (g) BD-12: boostRevenue.ts's exports are pinned exactly; none is a cross-currency total.
-  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult and buildBoostRevenue', () => {
+  // Slice 6a (SA-Q45, E-44, SA-W80): `readMoney` joins the list, so the account economics builder
+  // reads boost money through the one reader. Exactly five names; `refundsAndDisputesOf` stays private.
+  const BOOST_EXPORTS = ['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue', 'readMoney'];
+  const boostExportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult, buildBoostRevenue and readMoney (SA-Q45)', () => {
     const code = codeOf(BUILDER);
-    const exported = [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
-    expect(exported).toEqual(['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue']);
+    expect(boostExportsOf(code)).toEqual(BOOST_EXPORTS);
     expect(code).not.toMatch(/export\s*\{|export\s+default/);
     expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+    expect(code).not.toMatch(/export\s+function\s+refundsAndDisputesOf\b/);
+  });
+
+  it('SA-WR-45 (planted control): a sixth boost export breaks the exact five-name pin', () => {
+    const planted = `${codeOf(BUILDER)}\nexport function refundedOf(row: BoostPurchaseInput) { return row; }\n`;
+    expect(boostExportsOf(planted)).toHaveLength(6);
+    expect(boostExportsOf(planted)).not.toEqual(BOOST_EXPORTS);
   });
 
   // (h) S4-FR-9 / AC-98: no Stripe id, receipt, flag reason or lot id.
@@ -914,9 +969,17 @@ describe('finance slice 5a source guards (plans received, the per-currency combi
     expect(exportsOf('export function sumAcrossCurrencies() {}\nexport const A = 1;')).toEqual(['A', 'sumAcrossCurrencies']);
   });
 
-  it('planRevenue.ts exports exactly PLAN_PAYMENT_KIND, PlanPaymentInput, PlanRevenueResult and buildPlanRevenue', () => {
+  // Slice 6a (SA-Q45, E-44, SA-W80): `readPlanMoney` joins the list. Exactly five names.
+  const PLAN_EXPORTS = ['PLAN_PAYMENT_KIND', 'PlanPaymentInput', 'PlanRevenueResult', 'buildPlanRevenue', 'readPlanMoney'];
+  it('SA-WR-45 (planted control): a sixth plan export breaks the exact five-name pin', () => {
+    const planted = `${codeOf(PLANS)}\nexport const PLAN_TOTAL_ACROSS_CURRENCIES = 0;\n`;
+    expect(exportsOf(planted)).toHaveLength(6);
+    expect(exportsOf(planted)).not.toEqual(PLAN_EXPORTS);
+  });
+
+  it('planRevenue.ts exports exactly PLAN_PAYMENT_KIND, PlanPaymentInput, PlanRevenueResult, buildPlanRevenue and readPlanMoney (SA-Q45)', () => {
     const code = codeOf(PLANS);
-    expect(exportsOf(code)).toEqual(['PLAN_PAYMENT_KIND', 'PlanPaymentInput', 'PlanRevenueResult', 'buildPlanRevenue']);
+    expect(exportsOf(code)).toEqual(PLAN_EXPORTS);
     expect(code).not.toMatch(/export\s*\{|export\s+default/);
     expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
   });
@@ -983,5 +1046,393 @@ describe('finance slice 5a source guards (plans received, the per-currency combi
     for (const file of FILES) {
       expect({ file, hit: /REVENUE_PLANS_(ALL_PREFIX|ALL_RECORDED|ALL_NONE|ALL_UNKNOWN|RECORDED|NONE|UNKNOWN)\b|K5_NET_HEADLINE|\bPLANS_TEXT\b/.test(read(file)) }).toEqual({ file, hit: false });
     }
+  });
+});
+
+// ── Slice 6a: account economics and AI margin (§11E.6, E-44, SA-W75, SA-W80, SA-W83, SA-WR-42) ──
+describe('finance slice 6a source guards (account economics, the AI margin)', () => {
+  const ECON = 'lib/business-os/finance/accountEconomics.ts';
+  const URL_MODULE = 'app/admin/finance/financeUrl.ts';
+  const PAGE_FILES = [
+    'app/admin/finance/components/AccountsTab.tsx',
+    'app/admin/finance/components/AccountEconomicsTable.tsx',
+    'app/admin/finance/components/FinanceTabs.tsx',
+  ];
+  const COPY = 'app/admin/finance/financeCopy.ts';
+
+  // (a) Non-vacuity.
+  it('scans the slice 6a files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([ECON, ...PAGE_FILES]));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining([ECON]));
+    expect(codeOf(ECON).length).toBeGreaterThan(3000);
+  });
+
+  // (b) SA-W75: one common integer scale, one multiply, one division each way.
+  const TIMES_100 = /\*\s*100\b|CURRENCY_SCALE\s*\*/;
+  const DECLARATION = /const MINOR_TO_COST_UNITS = COST_SCALE \/ CURRENCY_SCALE;/;
+  const withoutDeclaration = (code: string) => code.replace(DECLARATION, '');
+  it('the 6a scale rules bite (planted)', () => {
+    expect(TIMES_100.test('const units = afterTax * 100;')).toBe(true);
+    expect('a * MINOR_TO_COST_UNITS; b * MINOR_TO_COST_UNITS'.match(/\*\s*MINOR_TO_COST_UNITS\b/g)).toHaveLength(2);
+    expect(withoutDeclaration('const MINOR_TO_COST_UNITS = COST_SCALE / CURRENCY_SCALE;\nx / CURRENCY_SCALE;').match(/\/ CURRENCY_SCALE/g)).toHaveLength(1);
+    expect(/\btoUnits\(/.test('toUnits(row.amount_minor, 100)')).toBe(true);
+  });
+
+  it('accountEconomics.ts: no toHundredths, toUnits or × 100; exactly one × MINOR_TO_COST_UNITS, one / CURRENCY_SCALE, one / COST_SCALE; the constant declared once', () => {
+    const code = codeOf(ECON);
+    expect(code).not.toMatch(/\btoHundredths\b/);
+    expect(code).not.toMatch(/\btoUnits\(/);
+    expect(code).not.toMatch(TIMES_100);
+    expect(code.match(/\*\s*MINOR_TO_COST_UNITS\b/g)).toHaveLength(1);
+    expect(code.match(new RegExp(DECLARATION.source, 'g'))).toHaveLength(1);
+    expect(withoutDeclaration(code).match(/\/ CURRENCY_SCALE/g)).toHaveLength(1);
+    expect(withoutDeclaration(code).match(/\/ COST_SCALE/g)).toHaveLength(1);
+    expect(code).toMatch(/Number\.isSafeInteger\(revenueUnits\)/);
+    expect(code).toMatch(/Number\.isSafeInteger\(marginUnits\)/);
+  });
+
+  it('the scale pin bites (planted): a second multiply or a second division is caught', () => {
+    const plantedMultiply = `${codeOf(ECON)}\nconst again = 1 * MINOR_TO_COST_UNITS;\n`;
+    expect(plantedMultiply.match(/\*\s*MINOR_TO_COST_UNITS\b/g)).toHaveLength(2);
+    const plantedDivision = `${codeOf(ECON)}\nconst usd = 5 / COST_SCALE;\n`;
+    expect(withoutDeclaration(plantedDivision).match(/\/ COST_SCALE/g)).toHaveLength(2);
+  });
+
+  // (c) Pure and structural (SA-WR-4, SA-W22): no ledger row type, no table, no clock.
+  const IMPURE = /@\/lib\/repositories|supabase|business-os\/entitlements\/|['"]server-only['"]/i;
+  const LEDGER_OR_TABLE = /CreditLedgerRow|BusinessOsCreditLedger|business_os_|payment_/;
+  it('the 6a purity rules bite (planted)', () => {
+    expect(IMPURE.test("import type { CreditLedgerRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';")).toBe(true);
+    expect(LEDGER_OR_TABLE.test('(rows: readonly CreditLedgerRow[])')).toBe(true);
+    expect(LEDGER_OR_TABLE.test('PLAN_PAYMENT_KIND')).toBe(false);
+  });
+
+  it('accountEconomics.ts imports no repository, Supabase, entitlements path or server-only; names no ledger row type or table; reads no clock', () => {
+    expect(read(ECON)).not.toMatch(IMPURE);
+    expect(codeOf(ECON)).not.toMatch(LEDGER_OR_TABLE);
+    expect(codeOf(ECON)).not.toMatch(/new Date\(|Date\.now\(/);
+  });
+
+  // (d) Readers, not rows (SA-Q45, E-45): money only through the two exported readers.
+  const RAW_MONEY_COLUMN = /\bamount_total_minor\b|\bamount_tax_minor\b|\bamount_minor\b/;
+  it('the readers rule bites (planted)', () => {
+    expect(RAW_MONEY_COLUMN.test('const t = row.amount_total_minor;')).toBe(true);
+    expect(RAW_MONEY_COLUMN.test('const a = row.amount_minor;')).toBe(true);
+    expect(RAW_MONEY_COLUMN.test('readPlanMoney(row)')).toBe(false);
+  });
+
+  it('accountEconomics.ts reads money only through readMoney / readPlanMoney and counts only by the exported family and kind', () => {
+    const code = codeOf(ECON);
+    expect(code).toMatch(/\breadMoney\(/);
+    expect(code).toMatch(/\breadPlanMoney\(/);
+    expect(code).not.toMatch(RAW_MONEY_COLUMN);
+    expect(code).toMatch(/\bBOOST_PAID_FAMILY\b/);
+    expect(code).toMatch(/\bPLAN_PAYMENT_KIND\b/);
+    expect(code).toMatch(/import \{[^}]*\breadMoney\b[^}]*\} from '\.\/boostRevenue';/);
+    expect(code).toMatch(/import \{[^}]*\breadPlanMoney\b[^}]*\} from '\.\/planRevenue';/);
+  });
+
+  // DF-5 extended (E-44): ZERO refund or dispute tokens in the new builder.
+  const DF5_TOKENS = /amount_refunded_minor|'disputed'|'dispute_lost'/;
+  it('DF-5 (E-44): accountEconomics.ts names no refunded amount and no dispute status', () => {
+    expect(codeOf(ECON)).not.toMatch(DF5_TOKENS);
+  });
+
+  it('the DF-5 extension bites (planted): the builder plus a refund read is caught', () => {
+    expect(`${codeOf(ECON)}\nconst leak = (r: BoostPurchaseInput) => r.amount_refunded_minor;\n`).toMatch(DF5_TOKENS);
+    expect(`${codeOf(ECON)}\nconst held = (s: string) => s === 'disputed';\n`).toMatch(DF5_TOKENS);
+  });
+
+  // (e) Exports pinned exactly; none takes or returns a total across currencies.
+  const ECON_EXPORTS = ['AccountEconomicsInput', 'buildAccountEconomics', 'buildAccountMargin'];
+  const econExportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('accountEconomics.ts exports exactly AccountEconomicsInput, buildAccountEconomics and buildAccountMargin; no exchange rate', () => {
+    const code = codeOf(ECON);
+    expect(econExportsOf(code)).toEqual(ECON_EXPORTS);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+    expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+  });
+
+  it('the 6a export pin bites (planted): a fourth export breaks it', () => {
+    const planted = `${codeOf(ECON)}\nexport function sumAcrossCurrencies() { return 0; }\n`;
+    expect(econExportsOf(planted)).toHaveLength(4);
+    expect(econExportsOf(planted)).not.toEqual(ECON_EXPORTS);
+  });
+
+  // (f) BD-12 / BD-22: 'USD' is written once, as MARGIN_CURRENCY.
+  const USD_LITERAL = /['"`]USD['"`]/g;
+  it("'USD' appears exactly once in accountEconomics.ts, as MARGIN_CURRENCY (planted control)", () => {
+    const code = codeOf(ECON);
+    expect(code.match(USD_LITERAL)).toHaveLength(1);
+    expect(code).toMatch(/const MARGIN_CURRENCY = 'USD';/);
+    expect(`${code}\nconst other = line.currency === 'USD';\n`.match(USD_LITERAL)).toHaveLength(2);
+  });
+
+  // (g) No mode or Stripe id in the builder, the three page files, or the 6a copy.
+  const MODE_OR_STRIPE = /livemode|test.?mode|live.?mode|stripe_/i;
+  it('the 6a mode rule bites (planted)', () => {
+    expect(MODE_OR_STRIPE.test("const NOTE = 'Test mode rows';")).toBe(true);
+    expect(MODE_OR_STRIPE.test('Stripe fees are not deducted.')).toBe(false);
+  });
+
+  it('no livemode, mode wording or Stripe id in the builder, the tab files or the 6a copy', () => {
+    for (const file of [ECON, ...PAGE_FILES]) expect({ file, hit: MODE_OR_STRIPE.test(codeOf(file)) }).toEqual({ file, hit: false });
+    const copy = read(COPY);
+    const block = copy.slice(copy.indexOf('The Accounts tab: account economics'));
+    expect(block.length).toBeGreaterThan(500);
+    expect(block).not.toMatch(MODE_OR_STRIPE);
+  });
+
+  // SA-W83 / SA-WR-42: financeUrl.ts stays pure, because the route imports the group shape from it.
+  const importSourcesOf = (code: string) =>
+    [...code.matchAll(/^import\s+(type\s+)?[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => ({ typeOnly: Boolean(m[1]), source: m[2] }));
+  const urlModuleProblems = (raw: string): string[] => {
+    const problems: string[] = [];
+    if (/^\s*['"]use client['"]/m.test(raw)) problems.push('use client');
+    if (/['"]server-only['"]/.test(raw)) problems.push('server-only');
+    for (const { typeOnly, source } of importSourcesOf(raw)) {
+      if (source === 'react' || source.startsWith('next/') || source === 'next') problems.push(`imports ${source}`);
+      else if (!typeOnly && source !== '@/app/admin/components/adminWindowPresets') problems.push(`runtime import ${source}`);
+    }
+    return problems;
+  };
+
+  it('SA-WR-42: financeUrl.ts has no use client, no React or Next import, no server-only, and only adminWindowPresets at run time', () => {
+    const raw = read(URL_MODULE);
+    expect(importSourcesOf(raw).length).toBeGreaterThan(0);
+    expect(urlModuleProblems(raw)).toEqual([]);
+    expect(raw).toMatch(/export const FINANCE_GROUP_SHAPE = /);
+  });
+
+  it('SA-WR-42 (planted controls): use client, a React import, a Next import or another runtime import is caught', () => {
+    const raw = read(URL_MODULE);
+    expect(urlModuleProblems(`'use client';\n${raw}`)).toContain('use client');
+    expect(urlModuleProblems(`import { useMemo } from 'react';\n${raw}`)).toContain('imports react');
+    expect(urlModuleProblems(`import { useRouter } from 'next/navigation';\n${raw}`)).toContain('imports next/navigation');
+    expect(urlModuleProblems(`import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';\n${raw}`)).toContain(
+      'runtime import @/lib/business-os/finance/financeHealth'
+    );
+    expect(urlModuleProblems(`import 'server-only';\n${raw}`)).toContain('server-only');
+  });
+
+  it('SA-W83: the group shape is defined once (financeUrl.ts) and the route imports it', () => {
+    const definers = FILES.filter((file) => /founding_partner\|comped\|unknown_held\|tier_set\|tier:/.test(codeOf(file)));
+    expect(definers).toEqual([URL_MODULE]);
+    expect(codeOf('app/api/admin/business-os/finance/route.ts')).toMatch(/\bFINANCE_GROUP_SHAPE\b/);
+  });
+});
+
+// ── Money M-4 (OV-5, §11F.8, SA-RR-M4, SA-W103, SA-WR-48): the recorded AI cost ──
+// Every rule has a planted negative control.
+describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
+  const ROUTE = 'app/api/admin/business-os/finance/route.ts';
+  const BUILDER = 'lib/business-os/finance/recordedCost.ts';
+  const ORCHESTRATOR = 'lib/business-os/finance/financeHealth.ts';
+  const TYPES = 'lib/business-os/finance/financeTypes.ts';
+  const WIRING = 'lib/business-os/finance/financeHealthDeps.ts';
+  const LINES = 'app/admin/finance/components/RecordedCostLines.tsx';
+  const SECTION3 = 'app/admin/finance/components/AiCostSection.tsx';
+  const SUMMARY = 'app/admin/finance/components/AccountSummary.tsx';
+  const READER = /tokenusage/i;
+
+  // (a) Non-vacuity.
+  it('scans the M-4 files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([BUILDER, LINES]));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining([BUILDER]));
+    expect(codeOf(BUILDER).length).toBeGreaterThan(1500);
+  });
+
+  // (b) The route is the ONE finance file that names a usage-log reader, by code, and it calls exactly two methods.
+  const namersOf = (code: (file: string) => string) => FILES.filter((file) => READER.test(code(file)));
+  const READER_CALL = /\b(?:adminTokenUsageAnalyticsRepository|tokenUsageRepository)\s*\.\s*(\w+)\s*\(/g;
+  const methodsOf = (code: string) => [...new Set([...code.matchAll(READER_CALL)].map((m) => m[1]))].sort();
+
+  it('only the route names a usage-log reader in code (a positive pin; comments are not code, SA-W103)', () => {
+    expect(namersOf(codeOf)).toEqual([ROUTE]);
+    // The finance read repository names one in a comment only: read raw it matches, as code it does not.
+    expect(read(REPOSITORY)).toMatch(/TokenUsageRepository/);
+    expect(codeOf(REPOSITORY)).not.toMatch(READER);
+  });
+
+  it('the namers pin bites (planted): a builder naming the analytics reader joins the list', () => {
+    const planted = (file: string) =>
+      file === ORCHESTRATOR
+        ? `${codeOf(file)}\nimport type { AdminCostPointRow } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';\n`
+        : codeOf(file);
+    expect(namersOf(planted).sort()).toEqual([ORCHESTRATOR, ROUTE].sort());
+    // …while the same name in a comment does not (W103).
+    const inComment = (file: string) =>
+      file === ORCHESTRATOR ? stripComments(`${read(file)}\n// see AdminTokenUsageAnalyticsRepository\n`) : codeOf(file);
+    expect(namersOf(inComment)).toEqual([ROUTE]);
+  });
+
+  it('the route calls exactly listCostPointsAllAccountsInWindow and listCallsInWindow on the two readers', () => {
+    expect(methodsOf(codeOf(ROUTE))).toEqual(['listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
+  });
+
+  it('the method pin bites (planted): a third method on either reader is caught', () => {
+    const planted = `${codeOf(ROUTE)}\nvoid tokenUsageRepository.countInWindow([id], w, m);\n`;
+    expect(methodsOf(planted)).toEqual(['countInWindow', 'listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
+  });
+
+  // SA-WR-48: both bindings pass the Business OS row filter; without it the all-accounts read counts agent-platform calls.
+  const bindingsOf = (code: string) => {
+    const all = code.indexOf('readRecordedAllAccounts:');
+    const one = code.indexOf('readRecordedForAccount:');
+    const end = code.indexOf('});', one);
+    return { all: code.slice(all, one), one: code.slice(one, end) };
+  };
+  const filterCount = (text: string) => (text.match(/\bbosRowFilter\(\)/g) ?? []).length;
+
+  it('SA-WR-48: each recorded binding in the route passes bosRowFilter() exactly once', () => {
+    const { all, one } = bindingsOf(codeOf(ROUTE));
+    expect(all).toMatch(/listCostPointsAllAccountsInWindow\(/);
+    expect(one).toMatch(/listCallsInWindow\(/);
+    expect(filterCount(all)).toBe(1);
+    expect(all).toMatch(/\{\s*featureFilter:\s*bosRowFilter\(\)\s*\}/);
+    expect(filterCount(one)).toBe(1);
+  });
+
+  it('SA-WR-48 (planted): a binding with its filter removed is caught', () => {
+    const plantedAll = bindingsOf(codeOf(ROUTE).replace('{ featureFilter: bosRowFilter() }', '{}'));
+    expect(filterCount(plantedAll.all)).toBe(0);
+    const route = codeOf(ROUTE);
+    const oneStart = route.indexOf('readRecordedForAccount:');
+    const plantedOne = bindingsOf(route.slice(0, oneStart) + route.slice(oneStart).replace('bosRowFilter(),', '{ featurePrefix: "", features: [] },'));
+    expect(filterCount(plantedOne.one)).toBe(0);
+  });
+
+  it('SA-Q52: both bindings pass the window end less 1 ms through the one helper', () => {
+    const route = codeOf(ROUTE);
+    expect(route).toMatch(/const inclusiveEnd = \(to: Date\) => new Date\(to\.getTime\(\) - 1\);/);
+    const { all, one } = bindingsOf(route);
+    expect(all).toMatch(/end: inclusiveEnd\(span\.to\)\.toISOString\(\)/);
+    expect(one).toMatch(/end: inclusiveEnd\(span\.to\)/);
+    expect(one).not.toMatch(/signal/);
+  });
+
+  // (c) Pure and structural.
+  const IMPURE = /@\/lib\/repositories|supabase|business-os\/entitlements\/|['"]server-only['"]/i;
+  const LEDGER_OR_LOG = /CreditLedgerRow|BusinessOsCreditLedger|business_os_|token_usage|tokenusage/i;
+  it('recordedCost.ts imports no repository, Supabase, entitlements path or server-only; names no ledger row, table or usage-log reader; reads no clock', () => {
+    expect(read(BUILDER)).not.toMatch(IMPURE);
+    expect(codeOf(BUILDER)).not.toMatch(LEDGER_OR_LOG);
+    expect(codeOf(BUILDER)).not.toMatch(/new Date\(|Date\.now\(/);
+    const imports = [...codeOf(BUILDER).matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    expect(imports.sort()).toEqual(['./financeTypes', '@/lib/business-os/credits/creditReport']);
+  });
+
+  it('the M-4 purity rules bite (planted)', () => {
+    expect(IMPURE.test("import { adminTokenUsageAnalyticsRepository } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';")).toBe(true);
+    expect(LEDGER_OR_LOG.test('(rows: readonly CreditLedgerRow[])')).toBe(true);
+    expect(LEDGER_OR_LOG.test("from('token_usage')")).toBe(true);
+    expect(LEDGER_OR_LOG.test('RecordedRowInput')).toBe(false);
+    expect(/new Date\(|Date\.now\(/.test(`${codeOf(BUILDER)}\nconst t = Date.now();\n`)).toBe(true);
+  });
+
+  // (d) Scale: one division, integers, a safe-integer check.
+  it('recordedCost.ts: exactly one / COST_SCALE, no toHundredths, no × 100, and a safe-integer check', () => {
+    const code = codeOf(BUILDER);
+    expect(code.match(/\/ COST_SCALE/g)).toHaveLength(1);
+    expect(code).not.toMatch(/\btoHundredths\b/);
+    expect(code).not.toMatch(/\*\s*100\b/);
+    expect(code).toMatch(/Number\.isSafeInteger\(recordedUnits\)/);
+    expect(code).toMatch(/Number\.isSafeInteger\(differenceUnits\)/);
+  });
+
+  it('the scale pin bites (planted): a second division is caught', () => {
+    expect(`${codeOf(BUILDER)}\nconst again = n / COST_SCALE;\n`.match(/\/ COST_SCALE/g)).toHaveLength(2);
+  });
+
+  // (e) Exports exactly.
+  const EXPORTS = ['RecordedCostInput', 'RecordedReadInput', 'RecordedRowInput', 'buildRecordedAiCost'];
+  const exportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('recordedCost.ts exports exactly RecordedRowInput, RecordedReadInput, RecordedCostInput and buildRecordedAiCost', () => {
+    const code = codeOf(BUILDER);
+    expect(exportsOf(code)).toEqual(EXPORTS);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+  });
+
+  it('the export pin bites (planted): a fifth export, a sum of the two measures, breaks it', () => {
+    const planted = `${codeOf(BUILDER)}\nexport function recordedPlusCharged(a: number, b: number) { return a + b; }\n`;
+    expect(exportsOf(planted)).toHaveLength(5);
+    expect(exportsOf(planted)).not.toEqual(EXPORTS);
+  });
+
+  // (f) Never added (R4-11, BD-18).
+  const ADDED = /recorded\w*\s*\+\s*\w*charged|charged\w*\s*\+\s*\w*recorded/i;
+  it('no M-4 file adds a recorded figure to a charged one', () => {
+    for (const file of [BUILDER, ORCHESTRATOR, ROUTE, LINES, SECTION3, SUMMARY]) {
+      expect({ file, added: ADDED.test(codeOf(file)) }).toEqual({ file, added: false });
+    }
+  });
+
+  it('the never-added rule bites (planted)', () => {
+    expect(ADDED.test('const total = recordedUnits + chargedUnits;')).toBe(true);
+    expect(ADDED.test('const t = chargedUnits + recordedUsd;')).toBe(true);
+    expect(ADDED.test('const diff = recordedUnits - chargedUnits;')).toBe(false);
+    expect(ADDED.test('recordedUnits += units;')).toBe(false);
+  });
+
+  const recordedKeysOf = (code: string) => {
+    const start = code.indexOf('export interface FinanceRecordedAiCost {');
+    const end = code.indexOf('\n}', start);
+    return [...code.slice(start, end).matchAll(/^ {2}(\w+)\??:/gm)].map((m) => m[1]).sort();
+  };
+  it('SA-Q54: FinanceRecordedAiCost has exactly its five keys, none a sum', () => {
+    expect(recordedKeysOf(codeOf(TYPES))).toEqual(['aboveCharged', 'chargedAboveUsd', 'recordedExact', 'recordedUsd', 'status']);
+    expect(codeOf(TYPES)).toMatch(/recorded\?: FinanceRecordedAiCost;/);
+  });
+
+  it('the five-key pin bites (planted): a total key is caught', () => {
+    const planted = codeOf(TYPES).replace('export interface FinanceRecordedAiCost {', 'export interface FinanceRecordedAiCost {\n  totalUsd: number;');
+    expect(recordedKeysOf(planted)).toHaveLength(6);
+  });
+
+  // (g) E-53: exactness decided in one place.
+  const FLAG = /\bcompleted\b|\breachedCeiling\b/;
+  const regionsOf = (raw: string) => {
+    const region = (startMark: string, endMark: string) => {
+      const start = raw.indexOf(startMark);
+      const end = raw.indexOf(endMark, start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      return stripComments(raw.slice(start, end));
+    };
+    return [
+      region('// ── M-4 recorded read (wiring): start ──', '// ── M-4 recorded read (wiring): end ──'),
+      region('// ── 4b. M-4 recorded section: start ──', '// ── 4b. M-4 recorded section: end ──'),
+    ];
+  };
+
+  it('E-53: recordedCost.ts reads each flag once, under its kind; financeHealth.ts’s recorded wiring names neither', () => {
+    const code = codeOf(BUILDER);
+    expect(code.match(/\.completed\b/g)).toHaveLength(1);
+    expect(code.match(/\.reachedCeiling\b/g)).toHaveLength(1);
+    expect(code).toMatch(/read\.kind === 'all_accounts' \? read\.completed : null/);
+    expect(code).toMatch(/read\.kind === 'account' \? read\.reachedCeiling : null/);
+    for (const region of regionsOf(read(ORCHESTRATOR))) {
+      expect(region.length).toBeGreaterThan(200);
+      expect(region).not.toMatch(FLAG);
+    }
+  });
+
+  it('E-53 (planted): the wiring deciding exactness itself is caught', () => {
+    const raw = read(ORCHESTRATOR).replace(
+      "{ data: { kind: 'all_accounts', ...result.data }, error: null }",
+      "{ data: { kind: 'all_accounts', rows: result.data.rows, completed: result.data.rows.length < 10 }, error: null }"
+    );
+    expect(regionsOf(raw).some((region) => FLAG.test(region))).toBe(true);
+  });
+
+  // W104: the wiring's Omit grows by exactly the two route-injected reads; its entitlements import is unchanged.
+  it('SA-W104: financeHealthDeps() omits exactly the four route-injected reads', () => {
+    const match = codeOf(WIRING).match(/financeHealthDeps\(\): Omit<\s*FinanceHealthDeps,\s*([^>]*)>/);
+    expect(match).not.toBeNull();
+    const keys = [...(match as RegExpMatchArray)[1].matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    expect(keys).toEqual(['findNames', 'readRecordedAllAccounts', 'readRecordedForAccount', 'readReminderFigures']);
+    expect(codeOf(WIRING)).not.toMatch(READER);
   });
 });

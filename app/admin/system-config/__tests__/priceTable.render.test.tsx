@@ -17,6 +17,14 @@ import type { ComparisonModel, ComparisonRow, PendingView } from '@/lib/ai/prici
 import { compareUnit, rowCoverage, type UnitComparisonInput } from '@/lib/ai/pricing-research/coverageColour';
 
 const mockError = jest.fn();
+// Slice 5: "Check provider prices" is tested on its own in providerPriceCheck.render.test.tsx.
+// Here it is a static stand-in (no status read), so these page cases keep slice 4's call
+// lists and timings.
+jest.mock('@/app/admin/system-config/components/ProviderPriceCheck', () => ({
+  __esModule: true,
+  default: () => jest.requireActual('react').createElement('button', { type: 'button' }, 'Check provider prices'),
+}));
+
 jest.mock('@/lib/logger/client', () => {
   const logger: Record<string, unknown> = {
     info: jest.fn(),
@@ -323,14 +331,16 @@ describe('one table: ours next to provider (UF-5)', () => {
     expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ read: 'comparison' }), 'Price comparison read failed');
   });
 
-  it('T-14: read-only note, notice rules, no Apply / Dismiss / Check / Fetch / History; toggle states', async () => {
+  it('T-14: read-only note, notice rules, no Apply / Dismiss / History, one Check provider prices; toggle states', async () => {
     const calls = await renderTable();
     expect(calls.sort()).toEqual([`GET ${COMPARISON_URL}`, `GET ${PRICING_URL}`].sort());
     expect(screen.getByTestId('price-review-note')).toHaveTextContent('Nothing in the provider column is charged yet.');
     // Lines are pending, so no "nothing entered" notice.
     expect(screen.queryByTestId('no-pending-notice')).not.toBeInTheDocument();
     const names = screen.getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent ?? '');
-    for (const name of names) expect(name).not.toMatch(/apply|dismiss|check|fetch|history/i);
+    // Slice 5 deliberately adds the one "Check provider prices" button; Apply, Dismiss and History are still later slices.
+    for (const name of names) expect(name).not.toMatch(/apply|dismiss|history/i);
+    expect(names.filter((name) => /check|fetch/i.test(name))).toEqual(['Check provider prices']);
     expect(screen.getByTestId('pricing-toggle')).toHaveAttribute('aria-expanded', 'true');
   });
 

@@ -114,7 +114,7 @@ export function FinanceFilterBar({ query, resolved, onChange, onPick, chipName }
               </button>
             ))}
             <span
-              className={cn('rounded-md px-3 py-1.5 text-xs', query.preset === 'custom' ? 'bg-purple-500/20 text-purple-200' : 'text-slate-500')}
+              className={cn('rounded-md px-3 py-1.5 text-xs', query.preset === 'custom' ? 'bg-purple-500/20 text-purple-200' : 'text-slate-400')}
               aria-current={query.preset === 'custom' ? 'true' : undefined}
             >
               {PRESET_LABELS.custom}

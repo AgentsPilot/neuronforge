@@ -1,6 +1,6 @@
 # Business OS entitlements
 
-> **Last Updated**: 2026-10-13
+> **Last Updated**: 2026-10-15
 
 ## Overview
 
@@ -136,6 +136,18 @@ durationHistory: [{ effectiveFrom: '2026-09-22T00:00:00.000Z', days: 14 }]
 ```
 
 A trial uses the entry in force **when it started**. Shortening the trial from 14 days to 7 therefore changes the deal for new signups and cannot end a trial someone is three days into. **Append an entry; never edit one** — the snapshot test blocks an edit, for exactly that reason.
+
+**Plan payments P-6a.1 (2026-10-15): the subscription grace, the renewal margin and FC-1.** Two entries were **appended** in `config/lifecycle.ts` (C-10), both effective from `P6A_EFFECTIVE`, a fixed literal never earlier than the P-6a.1 merge (SA C-8):
+
+| History | Entries | Looked up at | Notes |
+|---|---|---|---|
+| `subscriptionGraceHistory` | 7 days (2026-09-22), **5 days** (PF-1) | the tier's access end | A tier that ended before the 5-day entry keeps its 7 days |
+| `renewalSettlementMarginHistory` (new) | **1 day** = 24 hours (PF-10; `days: 1`, SA Q-2) | the tier's paid-through date | Through `historyAt`'s earliest-entry rule it also covers older access ends; accepted because it only lengthens access |
+
+- **FC-1: the margin is part of "is the tier in force?".** `deriveLifecycle` keeps a dated tier in force until `tierSettlementEndsAt(tier_expires_at)` (the date plus the margin), with reason `tier_in_settlement_margin` inside it. So a renewing subscriber, a dated Founding Partner included, never reads grace or falls back to their cohort in the hour before Stripe's renewal payment lands (Stripe finalises and charges a renewal one hour after the period end, sandbox X-1). `accessEndsAt` stays the paid-through date **verbatim**; only the grace clock starts after the margin. Cohorts (trial, champion) get **no** margin. The write guard `planWriteChecks.tierInForce`, the launch dry run and the SQL `v_tier_in_force` stay strict (SA Q-3).
+- **AC-F6.5:** a Founding Partner whose free access is still live returns to Founding Partner (state `champion`, the pill back) once the paid-through date plus the margin passes. No grace, no pause.
+- **BQ-P12 (user decision 2026-10-15, "5 days, like every paying customer"):** when a lapsed tier and an ended cohort are both on the row, the grace length follows **whichever was in force last**. If the paid tier (with its margin) ended last, the account was a paying customer when it lapsed and gets the **subscription** grace, even if it was once a Founding Partner or a trial. If the cohort outlived the tier (the account was back on its free access when that ended), the cohort's own grace applies. Before 2026-10-15 the cohort's grace always won in this branch (a former champion got 30 days).
+- The drift snapshot freezes both histories (`subscription.grace`, `subscription.margin`); regenerate only with `npm run entitlements:snapshot`.
 
 The credit allowance in `cohorts.ts` is decided — champions read Autopilot's row, the trial total is the user's BD-16 figure (see [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md)) — and so are the 14/7/30-day durations. ⚠️ The **`email.volume` ceilings** are still a named FIRST PASS nobody has chosen; they only ever alert the platform team.
 
@@ -451,3 +463,4 @@ Plan payments P-3b.1 ([workplan](/docs/workplans/BUSINESS_OS_PLAN_PAYMENTS_P3B_W
 | 2026-10-13 | Billing: Buy in Settings (plan payments P-4.2) | New paragraph and table under § Plan checkout: `customerPlanView.plans` (every plan shown to customers; a paused or expired tier account lists its own plan), `freeAccessEndedByPurchase` (structural trial / free-access sentence, SA W-7), the `server-only` `planPurchaseView.ts` behind the input-free `my-plan` route (billing row by session user and key mode, no Stripe call, F-2 as SA W-5 words it), and the matrix test driven through the view (SA F-C). New non-gate importer registered; no capability or tier change |
 | 2026-10-13 | Billing: upgrade now, backend (plan payments P-7b.1a) | New paragraph and table under § Plan checkout: `planUpgradeOffer` (our data) and `planUpgradeEligibility` (fresh read), the preview and confirm routes, CF-6 in `planInvoiceFacts`, the U-4 guard in `planPaymentApply`. Three non-gate importers registered; F-B parser fix (inline `type` modifiers stripped, four existing entries renamed to the bare symbol). No capability, tier or snapshot change |
 | 2026-10-13 | Billing: upgrade in Settings (plan payments P-7b.1b) | New paragraph and table under § Plan checkout: `purchase.upgrade` from `planUpgradeOffer` in the purchase view (no new entitlements symbol; the `planPurchaseView.ts` registration's `why` re-checked), the `PlanUpgrade` island (no entitlements import), the view ↔ preview matrix test, and the U-7 captured fixtures. P-7b.1a marked merged (#346) |
+| 2026-10-15 | Lifecycle: 5-day grace, 24-hour renewal margin, FC-1, BQ-P12 (plan payments P-6a.1) | § Histories: `subscriptionGraceHistory` gains an appended 5-day entry (PF-1) and the new `renewalSettlementMarginHistory` is 1 day (PF-10), both at `P6A_EFFECTIVE`; `deriveLifecycle` keeps a dated tier in force through the margin (`tierSettlementEndsAt`, reason `tier_in_settlement_margin`), starts grace after it, leaves `accessEndsAt` verbatim and cohorts untouched; BQ-P12 (user, 2026-10-15): a former Founding Partner whose free access ended while paying gets the subscription grace; the cohort's grace applies only when the cohort outlived the tier. `LifecycleInputs.renewalSettlementMarginHistory` is required; the drift snapshot gains `subscription.margin`. Two new non-gate importers for the TEST MODE ONLY test clock (`plan-test-clock/route.ts`, `planTestClock.ts`) |

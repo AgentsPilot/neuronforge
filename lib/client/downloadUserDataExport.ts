@@ -26,8 +26,28 @@ export type DownloadUserDataExportResult =
       success: false;
       /** HTTP status when the server answered; absent on a network failure. */
       status?: number;
-      code: 'unauthorized' | 'server_error' | 'network';
+      /**
+       * `too_large` (DE-4 §2.6): the account holds more than the on-screen
+       * download can package; nothing was sent. Keyed on the server's
+       * `code: 'export_too_large'`, not on the status alone. The screens show
+       * their generic error until DE-9 writes the copy.
+       */
+      code: 'unauthorized' | 'server_error' | 'network' | 'too_large';
     };
+
+/** The server's refusal code for an export over the Phase 1 ceiling. */
+export const EXPORT_TOO_LARGE_CODE = 'export_too_large';
+
+/** True when a 413 body carries the export's own refusal code. Never throws. */
+async function isTooLargeRefusal(response: Response): Promise<boolean> {
+  if (response.status !== 413) return false;
+  try {
+    const body: unknown = await response.json();
+    return typeof body === 'object' && body !== null && (body as { code?: unknown }).code === EXPORT_TOO_LARGE_CODE;
+  } catch {
+    return false;
+  }
+}
 
 /** Today's date as `YYYY-MM-DD`, for the fallback filename. */
 function today(): string {
@@ -60,11 +80,9 @@ export async function downloadUserDataExport(): Promise<DownloadUserDataExportRe
   }
 
   if (!response.ok) {
-    return {
-      success: false,
-      status: response.status,
-      code: response.status === 401 ? 'unauthorized' : 'server_error',
-    };
+    let code: 'unauthorized' | 'server_error' | 'too_large' = response.status === 401 ? 'unauthorized' : 'server_error';
+    if (await isTooLargeRefusal(response)) code = 'too_large';
+    return { success: false, status: response.status, code };
   }
 
   let blob: Blob;

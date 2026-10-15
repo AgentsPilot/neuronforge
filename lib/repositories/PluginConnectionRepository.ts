@@ -7,38 +7,6 @@ import { createLogger, Logger } from '@/lib/logger';
 import type { UserConnection } from '@/lib/types/plugin-types';
 import type { AgentRepositoryResult, UpsertPluginConnectionInput } from './types';
 
-/**
- * The only columns the GDPR export reads (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md
- * §4.5). Changing this changes what the export holds: a privacy decision.
- *
- * Never read: `access_token` / `refresh_token` (credentials), `expires_at` /
- * `last_refreshed_at` (token plumbing), `settings` (free-form, so a secret could
- * land there unseen) and `id`. `profile_data` IS read, because it holds the
- * person's own provider profile, but some providers also store an access token
- * inside it: the route must never send it raw. It passes only the allow-listed
- * string fields (route.ts `accountProfile`, SA C-1).
- */
-const USER_DATA_EXPORT_COLUMNS =
-  'user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, ' +
-  'created_at, updated_at, last_used, disconnected_at, profile_data';
-
-export interface PluginConnectionExportRow {
-  user_id: string;
-  plugin_key: string;
-  plugin_name: string | null;
-  username: string | null;
-  email: string | null;
-  scope: string | null;
-  status: string | null;
-  connected_at: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  last_used: string | null;
-  disconnected_at: string | null;
-  /** Raw provider profile JSON. May hold credentials: never export it as is. */
-  profile_data: unknown;
-}
-
 export class PluginConnectionRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -336,29 +304,6 @@ export class PluginConnectionRepository {
       if (error) throw error;
       return { data: data?.length || 0, error: null };
     } catch (error) {
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every plugin
-   * connection of the caller, any status, unordered, with
-   * USER_DATA_EXPORT_COLUMNS only: credentials are never read. The column set is
-   * fixed; changing it changes what the export holds, which is a privacy
-   * decision. `profile_data` comes back raw; the route filters it (see the
-   * constant).
-   */
-  async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<PluginConnectionExportRow[]>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('plugin_connections')
-        .select(USER_DATA_EXPORT_COLUMNS)
-        .eq('user_id', userId);
-
-      if (error) throw error;
-      return { data: (data ?? []) as unknown as PluginConnectionExportRow[], error: null };
-    } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to list plugin connections for the data export');
       return { data: null, error: error as Error };
     }
   }

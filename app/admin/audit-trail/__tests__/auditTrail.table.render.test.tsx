@@ -176,7 +176,8 @@ describe('the table (§5.7)', () => {
     expect(screen.getAllByRole('table')).toHaveLength(1);
     const headers = within(table).getAllByRole('columnheader');
     const names = headers.map((h) => h.textContent);
-    expect(names).toEqual(['Details', 'Time (UTC)', 'Event', 'Severity', 'Entity', 'Resource', 'Business', 'User']);
+    // LF-8: "Details" (screen-reader-only) is now the narrow last column.
+    expect(names).toEqual(['Time (UTC)', 'Event', 'Severity', 'Entity', 'Resource', 'Business', 'User', 'Details']);
     expect(new Set(names).size).toBe(names.length);
     for (const header of headers) expect(header.getAttribute('scope')).toBe('col');
     expect(rows()).toHaveLength(2);
@@ -185,7 +186,7 @@ describe('the table (§5.7)', () => {
   it('the Time cell is UTC "YYYY-MM-DD HH:mm UTC"', async () => {
     await renderRows([LOGIN]);
     const cells = within(rows()[0]).getAllByRole('cell');
-    expect(cells[1].textContent).toBe('2026-10-10 09:00 UTC');
+    expect(cells[0].textContent).toBe('2026-10-10 09:00 UTC');
   });
 
   it('severity is a chip in words with its tone; an unknown value shows its raw word as unknown', async () => {
@@ -201,13 +202,26 @@ describe('the table (§5.7)', () => {
     ]);
   });
 
-  it('the Open button sits in the first cell, named by the event and its time', async () => {
+  // LF-8 (user request 2026-10-15): an icon in the narrow last cell; was the word "Open" in the first.
+  it('the Open button is an icon in the last cell, named by the event and its time', async () => {
     await renderRows([LOGIN]);
-    const first = within(rows()[0]).getAllByRole('cell')[0];
-    const button = within(first).getByRole('button');
+    const cells = within(rows()[0]).getAllByRole('cell');
+    const last = cells[cells.length - 1];
+    const button = within(last).getByRole('button');
     expect(button.getAttribute('aria-label')).toBe('Open details for User Login at 2026-10-10 09:00 UTC');
-    expect(button.textContent).toBe('Open');
+    expect(button.textContent).toBe('');
     expect(button.getAttribute('data-testid')).toBe('audit-open-details');
+    expect(last.classList.contains('w-10')).toBe(true);
+  });
+
+  it('LF-8: the Open column is narrow and its header word is for screen readers only', async () => {
+    await renderRows([LOGIN]);
+    const headers = within(screen.getByRole('table', { name: 'Audit events' })).getAllByRole('columnheader');
+    const last = headers[headers.length - 1];
+    expect(last.classList.contains('w-10')).toBe(true);
+    const word = last.querySelector('span');
+    expect(word?.className).toBe('sr-only');
+    expect(word?.textContent).toBe('Details');
   });
 
   it('a row with no business and a system row show an em dash in Business and User (§5.7)', async () => {

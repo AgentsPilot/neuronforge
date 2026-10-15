@@ -17,6 +17,7 @@ import {
   OnboardingConversationManager,
   ONBOARDING_STEPS,
   type AttributedOnboardingState,
+  type OnboardingState,
   Language,
 } from '@/lib/services/OnboardingConversationManager';
 import { onboardingConfigurationService } from '@/lib/services/OnboardingConfigurationService';
@@ -70,6 +71,122 @@ const ChatRequestSchema = z.object({
   /** Present only when the turn came from the services form. */
   services: z.array(StructuredServiceSchema).max(40).optional(),
 });
+
+/**
+ * The plan, as the client needs it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Extracted so the GET below and the POST above cannot drift. They describe the
+ * same plan, and two inline copies of this object is how one of them ends up
+ * missing a field that the build then cannot find — the failure this file
+ * already records on `business_brief` and on the typed company name.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function previewPayload(state: OnboardingState) {
+  const collected = state.collectedData;
+
+  return {
+    businessProfile: {
+      ...collected.businessProfile,
+      // The translated vertical, for the UI.
+      verticalDisplayName: collected.businessProfile?.vertical
+        ? onboardingConfigurationService.getVerticalDisplayName(
+            collected.businessProfile.vertical,
+            state.language
+          )
+        : undefined,
+    },
+    pipelineStages: collected.pipelineStages,
+    services: collected.services,
+    businessDescription: collected.businessDescription,
+    // The build reads `online_presence_mode`, `payment_mode`, `service_count`
+    // and the rest from here.
+    configuration: collected.configuration,
+  };
+}
+
+/**
+ * The plan this account has already reached, if any. Reads; never advances.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS: the build was reachable only through `sessionStorage`.
+ *
+ * `handleBuild` on the chat page wrote the plan into `sessionStorage` and
+ * pushed to `/onboarding-build`, which read that one key and, finding nothing,
+ * sent the owner back to `/onboarding-chat`. So a storage write that throws, a
+ * new tab, or a link opened fresh ended the same way: back at the start of the
+ * interview with no explanation, and NOTHING BUILT.
+ *
+ * Measured on a real account: the conversation sat on `preview` with a complete
+ * configuration, three named services and an intake answer, while
+ * `scheduling_services`, `crm_pipeline_stages` and `website_landing_pages` were
+ * all empty. Nothing in the system recorded that a build was owed, so nothing
+ * would ever have built it.
+ *
+ * The server already held all of it. This hands it back, which makes
+ * `sessionStorage` a fast path rather than the only one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function GET() {
+  const correlationId = crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  try {
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { data: messages, error } = await supabaseServer
+      .from('onboarding_conversations')
+      .select('message_sequence, metadata')
+      .eq('user_id', user.id)
+      .order('message_sequence', { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+
+    const snapshot = messages?.[0]?.metadata?.state_snapshot;
+    if (!snapshot) {
+      return NextResponse.json({ success: true, data: { currentStep: null, previewData: null } });
+    }
+
+    const state = JSON.parse(snapshot) as OnboardingState;
+
+    /* A step this build does not recognise cannot be resumed, and must not be
+       answered with half a plan. Same rule, same list, as the POST above. */
+    if (!ONBOARDING_STEPS.has(state.currentStep)) {
+      requestLogger.warn({ userId: user.id, step: state.currentStep }, 'Stored step is not resumable');
+      return NextResponse.json({ success: true, data: { currentStep: null, previewData: null } });
+    }
+
+    /* Only once there is a plan to show. Before `preview` the configuration is
+       not computed, and a half-built one would fail the build's validation. */
+    const ready = state.currentStep === 'preview'
+      || state.currentStep === 'building'
+      || state.currentStep === 'complete';
+
+    requestLogger.info(
+      { userId: user.id, step: state.currentStep, ready },
+      'Returned the stored onboarding plan'
+    );
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        currentStep: state.currentStep,
+        language: state.language,
+        previewData: ready && state.collectedData.configuration ? previewPayload(state) : null,
+      },
+    });
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Failed to read the stored onboarding plan');
+    return NextResponse.json(
+      { success: false, error: 'Failed to read onboarding state' },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -292,23 +409,7 @@ export async function POST(request: NextRequest) {
       // The live setup picture, on every turn.
       setup: readSetupSignals(result.updatedState.collectedData, result.updatedState.currentStep),
       conversationId: user.id, // Use user.id as conversation identifier
-      previewData: result.showPreview ? {
-        businessProfile: {
-          ...result.updatedState.collectedData.businessProfile,
-          // Add translated vertical display name for the UI
-          verticalDisplayName: result.updatedState.collectedData.businessProfile?.vertical
-            ? onboardingConfigurationService.getVerticalDisplayName(
-                result.updatedState.collectedData.businessProfile.vertical,
-                result.updatedState.language
-              )
-            : undefined
-        },
-        pipelineStages: result.updatedState.collectedData.pipelineStages,
-        services: result.updatedState.collectedData.services,
-        businessDescription: result.updatedState.collectedData.businessDescription,
-        // Include full configuration for build API (contains online_presence_mode, payment_mode, etc.)
-        configuration: result.updatedState.collectedData.configuration
-      } : undefined
+      previewData: result.showPreview ? previewPayload(result.updatedState) : undefined
     });
 
   } catch (error) {
@@ -394,6 +495,11 @@ function calculateProgress(step: string): number {
     'language_selection': 1,
     'business_name': 2,
     'business_story': 2,
+    /* The follow-ups that fill the brief. Same weight as the story they
+       elaborate: the bar must not jump while the owner is still describing the
+       business, and a step with no entry here returns 0 and sends it
+       backwards. */
+    'business_deepening': 3,
     'client_workflow': 3,
     'service_details': 4,
     'payment_collection': 5,  // How does the money reach you?

@@ -99,6 +99,8 @@ import { financeHealthDeps, findPlanWithoutOverrides, toFinanceLot } from '../fi
 import type { FinanceLot } from '../creditsSection';
 import { resolveFinanceWindow } from '../financeWindow';
 import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../financeRules';
+// Slice 6a: a separate import, so the lines above stay unedited.
+import type { FinanceAccountsTabQuery } from '../financeTypes';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -297,6 +299,14 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       ),
     },
     readReminderFigures: jest.fn<Result<FinanceReminderFiguresInput>, [Date, AbortSignal]>(() => ok(REMINDERS)),
+    // M-4 (OV-5): the two route-injected recorded AI cost reads. All accounts: USD 7 recorded against
+    // 4.50 charged (6.50 less the 2.00 deleted bucket); one account (A): USD 3.50 against 3.00.
+    readRecordedAllAccounts: jest.fn<Result<{ rows: Array<{ cost_usd: number | string | null }>; completed: boolean }>, [{ from: Date; to: Date }, AbortSignal]>(
+      () => ok({ rows: [{ cost_usd: '4' }, { cost_usd: '3' }], completed: true })
+    ),
+    readRecordedForAccount: jest.fn<Result<{ rows: Array<{ cost_usd: number | string | null }>; reachedCeiling: boolean }>, [string, { from: Date; to: Date }]>(
+      () => ok({ rows: [{ cost_usd: '3.5' }], reachedCeiling: false })
+    ),
     findNames: jest.fn((ids: readonly string[]) =>
       ok(ids.filter((id) => id === A).map((id) => ({ user_id: id, company_name: 'Acme Dental' })))
     ),
@@ -313,8 +323,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 
 const logger = () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() });
 
-async function run(deps = makeDeps(), accountId: string | null = null, log = logger(), now = NOW, window = WINDOW) {
-  const result = await buildFinanceHealth({ window, accountId, now }, log, deps as unknown as FinanceHealthDeps);
+async function run(deps = makeDeps(), accountId: string | null = null, log = logger(), now = NOW, window = WINDOW, accountsTab: FinanceAccountsTabQuery | null = null) {
+  const result = await buildFinanceHealth({ window, accountId, now, accountsTab }, log, deps as unknown as FinanceHealthDeps);
   return { result, log, deps };
 }
 
@@ -1905,5 +1915,416 @@ describe('AC-67 / SA-WR-23: the reminder deadline', () => {
       // The plans read never settles, yet the reminder read has already started beside it.
       expect(order).toEqual(['plans', 'reminders']);
     });
+  });
+});
+
+// ── Slice 6a (Money M-3): the Accounts tab and the picked margin (T5) ───────
+
+describe('slice 6a: account economics through the builder', () => {
+  const TAB: FinanceAccountsTabQuery = { sort: 'ai_cost', group: null, show: 'all' };
+  const runTab = (deps = makeDeps(), tab: FinanceAccountsTabQuery = TAB, log = logger()) => run(deps, null, log, NOW, WINDOW, tab);
+
+  it('AC-145: without the tab, neither key exists, no extra names call, counts say not built', async () => {
+    const without = await run(ownerDeps());
+    const withTab = await runTab(ownerDeps());
+    if (without.result.kind !== 'ok' || withTab.result.kind !== 'ok') throw new Error('expected ok');
+    expect(without.result.payload).not.toHaveProperty('accountEconomics');
+    expect(without.result.payload).not.toHaveProperty('accountMargin');
+    expect(without.result.counts.accountEconomics).toEqual({ built: false });
+    // The tab adds exactly ONE names call.
+    expect(withTab.deps.findNames.mock.calls.length).toBe(without.deps.findNames.mock.calls.length + 1);
+    // The Overview keys are the same, in the same order, with the tab key after them.
+    expect(Object.keys(withTab.result.payload)).toEqual([...Object.keys(without.result.payload), 'accountEconomics']);
+  });
+
+  it('AC-142 / AC-134: the owner row (89.00 paid, cost 3) and the platform line; the cost equals Section 3', async () => {
+    const { result, deps } = await runTab(ownerDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tab = result.payload.accountEconomics;
+    if (!tab) throw new Error('expected the tab');
+    const owner = tab.rows.find((r) => r.accountId === A);
+    expect(owner?.paid.lines).toEqual([{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }]);
+    expect(owner?.aiCost).toEqual({ kind: 'figure', costUsd: 3, exact: true });
+    expect(owner?.margin).toEqual({ kind: 'figure', marginUsd: 86, noRevenue: false });
+    expect(owner?.name).toBe('Acme Dental');
+    expect(owner?.nameStatus).toBe('found');
+    // The platform line's cost is Section 3's total; each row's cost is Section 3's per-account figure.
+    expect(tab.platform.aiCost).toEqual({ kind: 'figure', costUsd: result.payload.aiCost.figures?.costUsd, exact: true });
+    for (const top of result.payload.aiCost.figures?.topAccounts ?? []) {
+      const row = tab.rows.find((r) => r.accountId === top.accountId);
+      expect(row?.aiCost).toEqual({ kind: 'figure', costUsd: top.costUsd, exact: true });
+    }
+    // The platform account (on the ledger, no plan row) is labelled, never named; the deleted bucket is the Deleted row.
+    expect(tab.rows.find((r) => r.accountId === PLATFORM)).toMatchObject({ kind: 'platform', nameStatus: 'platform', name: null });
+    expect(tab.deleted?.aiCost).toEqual({ kind: 'figure', costUsd: 2, exact: true });
+    // AC-143: ONE names call for the shown rows: at most 200 ids, taken from the rows read, no platform id.
+    const lastIds = deps.findNames.mock.calls[deps.findNames.mock.calls.length - 1][0] as string[];
+    expect(lastIds.length).toBeLessThanOrEqual(200);
+    expect([...lastIds].sort()).toEqual([A, B].sort());
+    expect(lastIds).not.toContain(PLATFORM);
+    // "Paid us, total" on the Overview still reads 89 (tax included).
+    expect(result.payload.revenue.totals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ currency: 'USD', total: 89 })])
+    );
+    expect(result.counts.accountEconomics).toEqual({
+      built: true, status: 'ok', accounts: 3, matching: 3, shown: 3, deletedRow: true, noPlanRow: 1, namesFound: 1,
+      sort: 'ai_cost', group: 'all', show: 'all',
+    });
+  });
+
+  it('AC-142: the picked business gets accountMargin equal to its tab row, from R-a′ / R-k′ / R-m′ only', async () => {
+    const tab = await runTab(ownerDeps());
+    const picked = await run(ownerDeps(), A);
+    if (tab.result.kind !== 'ok' || picked.result.kind !== 'ok') throw new Error('expected ok');
+    // The picked ledger read holds only A's charge (cost 3), as the tab row's cost.
+    const row = tab.result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+    expect(picked.result.payload.accountMargin).toEqual({ paid: row?.paid, aiCost: row?.aiCost, margin: row?.margin });
+    expect(picked.result.payload).not.toHaveProperty('accountEconomics');
+    expect(picked.result.counts.accountEconomics).toEqual({ built: false });
+    expect(picked.deps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(picked.deps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(picked.deps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+  });
+
+  it('BD-15: a paying Founding Partner in its tier group carries the chip (the same set as Section 1’s note)', async () => {
+    const deps = ownerDeps();
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(A), plan(B, { tier: TIER })]));
+    const { result } = await runTab(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const b = result.payload.accountEconomics?.rows.find((r) => r.accountId === B);
+    expect(b).toMatchObject({ group: `tier:${TIER}`, foundingPartner: true, tierLabel: tierLabelForGroup(config, `tier:${TIER}`) });
+    const note = result.payload.accounts.figures?.groups.find((g) => g.key === `tier:${TIER}`)?.foundingPartners;
+    expect(note).toBe(1);
+  });
+
+  it('the group filter is logged as its kind; the groups offered come from Section 1 with server labels', async () => {
+    const { result } = await runTab(ownerDeps(), { sort: 'margin', group: `tier:${TIER}`, show: 'negative' });
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.counts.accountEconomics).toMatchObject({ built: true, group: 'tier', sort: 'margin', show: 'negative' });
+    expect(JSON.stringify(result.counts)).not.toContain(TIER);
+    const options = result.payload.accountEconomics?.groupOptions ?? [];
+    expect(options.map((o) => o.key)).toEqual(result.payload.accounts.figures?.groups.map((g) => g.key));
+  });
+
+  describe('AC-138: each read failing alone; the Overview always renders', () => {
+    const overviewKeys = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems'];
+    type Deps = ReturnType<typeof makeDeps>;
+    const cases: Array<[string, (d: Deps) => void, 'aiCost' | 'paid' | 'credits']> = [
+      ['ledger', (d) => d.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => fail()), 'aiCost'],
+      ['boosts', (d) => d.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(() => fail()), 'paid'],
+      ['plans', (d) => d.finance.listPlanPaymentsAllAccountsPaidInRange.mockImplementation(() => fail()), 'paid'],
+      ['walk', (d) => d.plans.pagePlans.mockImplementation(() => fail()), 'credits'],
+      [
+        'positions',
+        (d) => d.credits.listTotalsForAccountsInRange.mockImplementation(async () => ({ data: null, error: new Error('x') })),
+        'credits',
+      ],
+    ];
+    it.each(cases)('%s fails → Unknown in its column, the tab partial, every Overview section present', async (_name, breakIt, column) => {
+      const deps = ownerDeps();
+      breakIt(deps);
+      const { result } = await runTab(deps);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const tab = result.payload.accountEconomics;
+      expect(tab?.status).toBe('partial');
+      for (const key of overviewKeys) expect(result.payload).toHaveProperty(key);
+      const owner = tab?.rows.find((r) => r.accountId === A);
+      if (column === 'aiCost') expect(owner?.aiCost).toEqual({ kind: 'unknown' });
+      if (column === 'paid') expect(owner?.paid.failed).toBe(true);
+      if (column === 'credits') expect(owner?.credits).toEqual({ kind: 'unknown' });
+    });
+
+    it('all three money reads fail → the tab unknown', async () => {
+      const deps = ownerDeps();
+      deps.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => fail());
+      deps.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(() => fail());
+      deps.finance.listPlanPaymentsAllAccountsPaidInRange.mockImplementation(() => fail());
+      const { result } = await runTab(deps);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.accountEconomics?.status).toBe('unknown');
+    });
+
+    it('the names read fails → names "unavailable", logged as account_names, the figures stand', async () => {
+      const deps = ownerDeps();
+      const log = logger();
+      const before = await runTab(ownerDeps());
+      const earlierCalls = before.deps.findNames.mock.calls.length - 1;
+      let call = 0;
+      deps.findNames.mockImplementation((ids: readonly string[]) => {
+        call += 1;
+        // Fail only the tab's call, the last one.
+        return call > earlierCalls ? fail() : ok(ids.filter((id) => id === A).map((id) => ({ user_id: id, company_name: 'Acme Dental' })));
+      });
+      const { result } = await runTab(deps, TAB, log);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const owner = result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+      expect(owner?.nameStatus).toBe('unavailable');
+      expect(owner?.margin.kind).toBe('figure');
+      expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'account_names' }), 'Finance read failed');
+    });
+  });
+
+  it('AC-137: an injected ceiling on the ledger read → "At least" cost and an Unknown margin on every row', async () => {
+    const deps = ownerDeps();
+    deps.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => ok({ rows: [charge(A, '3')], reachedCeiling: true }));
+    const { result } = await runTab(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tab = result.payload.accountEconomics;
+    expect(tab?.rows.find((r) => r.accountId === A)?.aiCost).toEqual({ kind: 'figure', costUsd: 3, exact: false });
+    for (const row of tab?.rows ?? []) expect(row.margin).toEqual({ kind: 'unknown' });
+    expect(tab?.status).toBe('partial');
+  });
+});
+
+// ── Money M-4 (OV-5, T5-B): the recorded AI cost through the builder ─────────
+// A separate import and a pass-through spy on the pure builder (SA-WR-50), so
+// the lines above stay unedited and every other test runs the real builder.
+jest.mock('../recordedCost', () => {
+  const actual = jest.requireActual('../recordedCost');
+  return { ...actual, buildRecordedAiCost: jest.fn(actual.buildRecordedAiCost) };
+});
+import * as recordedCostModule from '../recordedCost';
+import { COST_SCALE } from '@/lib/business-os/credits/creditReport';
+
+describe('Money M-4: the recorded AI cost through the builder', () => {
+  const builderSpy = jest.mocked(recordedCostModule.buildRecordedAiCost);
+  const SPAN = { from: WINDOW.start, to: WINDOW.end };
+  const okResult = (result: Awaited<ReturnType<typeof run>>['result']) => {
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    return result;
+  };
+
+  it('SA-WR-49: RECORDED_DEADLINE_MS is written 2 * 1000 and equals 2000', () => {
+    expect(FINANCE_LIMITS.RECORDED_DEADLINE_MS).toBe(2000);
+    const code = fs.readFileSync(path.join(process.cwd(), 'lib/business-os/finance/financeHealth.ts'), 'utf8');
+    expect(code).toMatch(/RECORDED_DEADLINE_MS: 2 \* 1000,/);
+  });
+
+  it('AC-157: all businesses → the all-accounts read ONCE, with the half-open window and a signal; the account read never', async () => {
+    const { result, deps } = await run();
+    expect(deps.readRecordedAllAccounts).toHaveBeenCalledTimes(1);
+    const [span, signal] = deps.readRecordedAllAccounts.mock.calls[0];
+    expect(span).toEqual(SPAN);
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(deps.readRecordedForAccount).not.toHaveBeenCalled();
+    // AC-154: 7.00 recorded against 6.50 charged less the 2.00 deleted bucket (R4-4) → 2.50.
+    expect(okResult(result).payload.aiCost.recorded).toEqual({
+      status: 'ok',
+      recordedUsd: 7,
+      recordedExact: true,
+      aboveCharged: { state: 'figure', usd: 2.5 },
+      chargedAboveUsd: null,
+    });
+    expect(okResult(result).payload.aiCost.figures?.costUsd).toBe(6.5);
+  });
+
+  it('AC-155 / AC-157 / SA-WR-50: a business picked → the account read ONCE with exactly that id; the all-accounts read never; charged = Section 3 account units, deleted 0', async () => {
+    const { result, deps } = await run(makeDeps(), A);
+    expect(deps.readRecordedAllAccounts).not.toHaveBeenCalled();
+    expect(deps.readRecordedForAccount).toHaveBeenCalledTimes(1);
+    expect(deps.readRecordedForAccount.mock.calls[0]).toEqual([A, SPAN]);
+    expect(deps.readRecordedForAccount.mock.calls[0]).toHaveLength(2);
+    const payload = okResult(result).payload;
+    const input = builderSpy.mock.calls[builderSpy.mock.calls.length - 1][0];
+    expect(input.charged).toEqual({ totalUnits: 3 * COST_SCALE, deletedUnits: 0, exact: true });
+    expect(input.charged?.totalUnits).toBe(Math.round((payload.aiCost.figures?.costUsd ?? NaN) * COST_SCALE));
+    expect(input.read).toMatchObject({ kind: 'account', reachedCeiling: false });
+    expect(payload.aiCost.recorded?.aboveCharged).toEqual({ state: 'figure', usd: 0.5 });
+    expect(payload.aiCost.recorded?.recordedUsd).toBe(3.5);
+  });
+
+  it('the picked id reaches no recorded read when the plan check says no such business (AC-157, tenant isolation)', async () => {
+    const deps = makeDeps({ findPlanForAccount: jest.fn(() => ok({ plan: null })) });
+    const { result } = await run(deps, A);
+    expect(result.kind).toBe('account_not_found');
+    expect(deps.readRecordedForAccount).not.toHaveBeenCalled();
+    expect(deps.readRecordedAllAccounts).not.toHaveBeenCalled();
+  });
+
+  it('AC-167: the Accounts tab → neither read is called, no `recorded` key, counts { built: false }', async () => {
+    const { result, deps } = await run(makeDeps(), null, logger(), NOW, WINDOW, { sort: 'ai_cost', group: null, show: 'all' });
+    expect(deps.readRecordedAllAccounts).not.toHaveBeenCalled();
+    expect(deps.readRecordedForAccount).not.toHaveBeenCalled();
+    const tabResult = okResult(result);
+    expect(tabResult.payload.aiCost).not.toHaveProperty('recorded');
+    expect(tabResult.counts.aiRecorded).toEqual({ built: false });
+    expect(tabResult.payload.accountEconomics).toBeDefined();
+  });
+
+  it('M4-FR-9: the counts say which read ran and how; no amount', async () => {
+    const { result } = await run();
+    const counts = okResult(result).counts.aiRecorded;
+    expect(counts).toMatchObject({ built: true, read: 'all_accounts', outcome: 'ok', rows: 2, completed: true, reachedCeiling: null, unreadable: 0 });
+    expect(typeof (counts as { ms: unknown }).ms).toBe('number');
+    expect(JSON.stringify(counts)).not.toMatch(/2\.5|6\.5|4\.5|"7"/);
+    const picked = okResult((await run(makeDeps(), A)).result).counts.aiRecorded;
+    expect(picked).toMatchObject({ built: true, read: 'account', outcome: 'ok', rows: 1, completed: null, reachedCeiling: false });
+  });
+
+  it('AC-160: a small injected result (completed false) → "At least" and Unknown; Section 3 figures deep-equal the plain run', async () => {
+    const plain = okResult((await run()).result).payload.aiCost;
+    const deps = makeDeps({ readRecordedAllAccounts: jest.fn(() => ok({ rows: [{ cost_usd: '1' }], completed: false })) });
+    const capped = okResult((await run(deps)).result).payload.aiCost;
+    expect(capped.recorded).toMatchObject({ status: 'partial', recordedUsd: 1, recordedExact: false, aboveCharged: { state: 'unknown', usd: null } });
+    expect(capped.figures).toEqual(plain.figures);
+    expect(capped.status).toBe(plain.status);
+  });
+
+  it('AC-160: one account at its ceiling → "At least" and Unknown', async () => {
+    const deps = makeDeps({ readRecordedForAccount: jest.fn(() => ok({ rows: [{ cost_usd: '9' }], reachedCeiling: true })) });
+    const recorded = okResult((await run(deps, A)).result).payload.aiCost.recorded;
+    expect(recorded).toMatchObject({ status: 'partial', recordedExact: false, aboveCharged: { state: 'unknown' } });
+  });
+
+  it('AC-161: the ledger side not exact (its ceiling) → the difference Unknown, the recorded figure shown', async () => {
+    const deps = makeDeps();
+    deps.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => ok({ rows: [charge(A, '3')], reachedCeiling: true }));
+    const recorded = okResult((await run(deps)).result).payload.aiCost.recorded;
+    expect(recorded).toMatchObject({ status: 'partial', recordedUsd: 7, recordedExact: true, aboveCharged: { state: 'unknown', usd: null } });
+  });
+
+  it('AC-161: the ledger read failed → Section 3 unknown, the recorded figure shown, the difference Unknown', async () => {
+    const deps = makeDeps();
+    deps.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(fail);
+    const aiCost = okResult((await run(deps)).result).payload.aiCost;
+    expect(aiCost.status).toBe('unknown');
+    expect(aiCost.figures).toBeNull();
+    expect(aiCost.recorded).toMatchObject({ recordedUsd: 7, aboveCharged: { state: 'unknown' } });
+  });
+
+  const throwing = () => {
+    throw new Error('recorded exploded');
+  };
+  it.each([
+    ['returns { error }', fail],
+    ['throws', throwing],
+    ['returns no data', () => ok(null)],
+  ])('AC-161: the recorded read %s → both Unknown; Section 3 and every other section unchanged; logged once by name', async (_name, impl) => {
+    const plain = okResult((await run()).result).payload;
+    const log = logger();
+    const deps = makeDeps({ readRecordedAllAccounts: jest.fn(impl) });
+    const { result } = await run(deps, null, log);
+    const payload = okResult(result).payload;
+    expect(payload.aiCost.recorded).toEqual({ status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null });
+    const withoutRecorded = (section: typeof payload.aiCost) => ({ status: section.status, coverage: section.coverage, figures: section.figures });
+    expect(withoutRecorded(payload.aiCost)).toEqual(withoutRecorded(plain.aiCost));
+    for (const key of ['revenue', 'accounts', 'credits', 'takings', 'paymentProblems', 'tiles'] as const) expect(payload[key]).toEqual(plain[key]);
+    const named = log.error.mock.calls.filter((c) => (c[0] as { read?: string }).read === 'recorded_ai_cost');
+    expect(named).toHaveLength(1);
+    expect(okResult(result).counts.aiRecorded).toMatchObject({ built: true, outcome: 'failed', rows: null });
+  });
+
+  it('AC-163: K-1, Section 3 and the picked AI margin are deep-equal with and without a big recorded fixture (never added)', async () => {
+    const small = okResult((await run()).result).payload;
+    const big = okResult((await run(makeDeps({ readRecordedAllAccounts: jest.fn(() => ok({ rows: [{ cost_usd: '1000' }], completed: true })) }))).result).payload;
+    expect(big.tiles.k1).toEqual(small.tiles.k1);
+    expect(big.aiCost.figures).toEqual(small.aiCost.figures);
+    expect(big.aiCost.recorded?.recordedUsd).toBe(1000);
+    const pickedSmall = okResult((await run(makeDeps(), A)).result).payload;
+    const pickedBig = okResult((await run(makeDeps({ readRecordedForAccount: jest.fn(() => ok({ rows: [{ cost_usd: '1000' }], reachedCeiling: false })) }), A)).result).payload;
+    expect(pickedBig.accountMargin).toEqual(pickedSmall.accountMargin);
+    expect(pickedBig.tiles.k1).toEqual(pickedSmall.tiles.k1);
+  });
+
+  it('AC-159: a window that starts before the cut-over → "Not available", the recorded figure still shown', async () => {
+    const window = resolveFinanceWindow({ preset: 'custom', from: '2026-09-15', to: '2026-10-14' }, NOW);
+    const aiCost = okResult((await run(makeDeps(), null, logger(), NOW, window)).result).payload.aiCost;
+    expect(aiCost.coverage).toBe('starts_before_cutover');
+    expect(aiCost.recorded).toMatchObject({ recordedUsd: 7, aboveCharged: { state: 'not_available', usd: null } });
+  });
+
+  describe('M4-FR-8 / E-57: the deadline (fake timers)', () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] }));
+    afterEach(() => jest.useRealTimers());
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('all accounts: a never-settling read → pending at 1,999 ms; at 2,000 ms Unknown, its signal aborted, outcome "deadline"', async () => {
+      let received: AbortSignal | null = null;
+      const deps = makeDeps({
+        readRecordedAllAccounts: jest.fn((_span: unknown, signal: AbortSignal) => {
+          received = signal;
+          return new Promise(() => undefined);
+        }),
+      });
+      let settled = false;
+      const pending = run(deps).then((r) => {
+        settled = true;
+        return r;
+      });
+      await jest.advanceTimersByTimeAsync(FINANCE_LIMITS.RECORDED_DEADLINE_MS - 1);
+      expect(settled).toBe(false);
+      expect((received as AbortSignal | null)?.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      const result = okResult((await pending).result);
+      expect(result.payload.aiCost.recorded?.status).toBe('unknown');
+      expect(result.payload.aiCost.status).toBe('ok');
+      expect((received as AbortSignal | null)?.aborted).toBe(true);
+      expect(result.counts.aiRecorded).toMatchObject({ built: true, read: 'all_accounts', outcome: 'deadline' });
+    });
+
+    // Jest fails the running test on any unhandled rejection: a planted `void Promise.reject(…)` at the
+    // end of this test made it fail with that error (run 2026-10-15, recorded in the workplan), so a
+    // late rejection that escaped `underDeadline` / `settle` would fail it the same way.
+    it('one account: raced only (no signal reaches it); a late REJECTION after the deadline is dropped with no unhandled rejection', async () => {
+      let rejectLate: (err: Error) => void = () => undefined;
+      const deps = makeDeps({
+        readRecordedForAccount: jest.fn(
+          () =>
+            new Promise((_resolve, reject) => {
+              rejectLate = reject;
+            })
+        ),
+      });
+      const pending = run(deps, A);
+      await jest.advanceTimersByTimeAsync(FINANCE_LIMITS.RECORDED_DEADLINE_MS);
+      const result = okResult((await pending).result);
+      expect(deps.readRecordedForAccount.mock.calls[0]).toHaveLength(2);
+      expect(result.payload.aiCost.recorded?.status).toBe('unknown');
+      expect(result.counts.aiRecorded).toMatchObject({ built: true, read: 'account', outcome: 'deadline' });
+      rejectLate(new Error('late failure'));
+      await tick();
+      await tick();
+      expect(result.payload.aiCost.recorded?.status).toBe('unknown');
+    });
+
+    it('one account: a late RESULT after the deadline is never applied to the payload', async () => {
+      let resolveLate: (value: unknown) => void = () => undefined;
+      const deps = makeDeps({
+        readRecordedForAccount: jest.fn(
+          () =>
+            new Promise((resolve) => {
+              resolveLate = resolve;
+            })
+        ),
+      });
+      const pending = run(deps, A);
+      await jest.advanceTimersByTimeAsync(FINANCE_LIMITS.RECORDED_DEADLINE_MS);
+      const result = okResult((await pending).result);
+      resolveLate({ data: { rows: [{ cost_usd: '3.5' }], reachedCeiling: false }, error: null });
+      await tick();
+      expect(result.payload.aiCost.recorded).toEqual({ status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null });
+    });
+
+    it('the recorded read starts with the other reads, not after them (same Promise.all)', async () => {
+      const deps = makeDeps();
+      const order: string[] = [];
+      deps.readRecordedAllAccounts.mockImplementation((() => {
+        order.push('recorded');
+        return ok({ rows: [], completed: true });
+      }) as never);
+      deps.finance.listPlanPaymentsAllAccountsPaidInRange.mockImplementation((() => {
+        order.push('plans');
+        return new Promise(() => undefined);
+      }) as never);
+      void run(deps);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(['plans', 'recorded']);
+    });
+  });
+
+  it('the wiring injects neither recorded read: the route binds both (SA-W104)', () => {
+    const wired = financeHealthDeps() as Record<string, unknown>;
+    expect(wired).not.toHaveProperty('readRecordedAllAccounts');
+    expect(wired).not.toHaveProperty('readRecordedForAccount');
   });
 });

@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { automationById } from '@/lib/business-os/gaps/automations';
+import { automationById, OPERATIONAL_AUTOMATIONS } from '@/lib/business-os/gaps/automations';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'OperationalAutomationsAPI' });
@@ -35,8 +35,28 @@ const logger = createLogger({ module: 'OperationalAutomationsAPI' });
  * The COLUMN is never taken from the request — it is looked up from the id
  * against the registry, so a caller cannot name a column and have it written.
  */
+/*
+ * EVERY REGISTERED AUTOMATION, READ FROM THE REGISTRY.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This was a hand-written list of four, and the registry has six. The two it
+ * had never been told about — `auto_complete_meetings` and `chase_quotes` —
+ * were refused here with a 400 that the dashboard does not read, so pressing
+ * "yes, handle it" on either of those cards did nothing at all: no change, no
+ * error, no sign that anything had been asked. The card simply sat there.
+ *
+ * Derived rather than repeated, because a registry and a copy of a registry
+ * drift the moment somebody adds the seventh. The column is already looked up
+ * from the id, so this was the one place the two lists could disagree.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const AUTOMATION_IDS = OPERATIONAL_AUTOMATIONS.map(automation => automation.id) as [
+  string,
+  ...string[],
+];
+
 const DecisionSchema = z.object({
-  id: z.enum(['reply_to_enquiries', 'chase_invoices', 'chase_intake', 'remind_about_meeting']),
+  id: z.enum(AUTOMATION_IDS),
   /**
    * The answer to the automation's question. OPTIONAL, because `alertOwner`
    * below can arrive alone — see the note on it.

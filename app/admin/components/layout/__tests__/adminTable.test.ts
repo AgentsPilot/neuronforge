@@ -12,8 +12,10 @@ import {
   ADMIN_TD,
   ADMIN_TD_ID,
   ADMIN_TD_NUM,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
   ADMIN_TH_NUM,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
   formatShortId,
 } from '@/app/admin/components/layout/adminTable';
@@ -35,6 +37,9 @@ describe('the §5.7 table classes', () => {
       ['px-3', 'py-2', 'text-right', 'text-[11px]', 'font-medium', 'uppercase', 'tracking-wide', 'text-slate-400'],
     ],
     ['ADMIN_TD_NUM', ADMIN_TD_NUM, ['px-3', 'py-2', 'align-top', 'text-right', 'tabular-nums', 'whitespace-nowrap']],
+    // LF-8: the narrow Open column (the 32 px button plus px-1 a side).
+    ['ADMIN_TH_OPEN', ADMIN_TH_OPEN, ['w-10', 'px-1']],
+    ['ADMIN_TD_OPEN', ADMIN_TD_OPEN, ['w-10', 'px-1', 'align-top']],
     ['ADMIN_COUNT_LINE', ADMIN_COUNT_LINE, ['text-xs', 'text-slate-400']],
     [
       'ADMIN_BUTTON',

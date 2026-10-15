@@ -2,15 +2,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bot, Loader2, Send, User, Sparkles, Check, Plus, Trash2, X, Building2, Users, Calendar, CreditCard, Globe, Share2, XCircle, Lock } from 'lucide-react';
+import { Bot, Loader2, Send, User, Sparkles, Check, Plus, Trash2, X, Building2, Users, Calendar, CreditCard, Globe, Share2, XCircle, Lock, FileText } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { SessionHandler } from '@/components/SessionHandler';
 import { V2Logo } from '@/components/v2/V2Header';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { OnboardingSetupPanel, type SetupSignals } from '@/components/business-os/setup/OnboardingSetupPanel';
 import { SetupFactCard, SetupFactDeck } from '@/components/business-os/setup/SetupFactCard';
-import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { currencySymbol, currencyForLanguage, currencyFromText } from '@/lib/business-os/currency';
 import { ServicePaymentOptions } from '@/components/scheduling/ServicePaymentOptions';
 import { ServiceCurrencySelect, getCurrencySymbol } from '@/components/scheduling/ServiceCurrencySelect';
@@ -153,6 +151,25 @@ interface PreviewData {
       buffer_minutes?: number;
       sale_mode?: 'direct' | 'proposal';
     }>;
+    /**
+     * HOW MANY services to create, which is usually all the interview knows.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * Why the plan card showed nothing about services.
+     *
+     * The services question asks for a COUNT, not a catalogue: the chat used
+     * to render a fifteen-column grid to collect every field of every service
+     * before anything existed, which is not a conversation and is where owners
+     * stopped. So `services` is normally EMPTY and `service_count` holds the
+     * answer, and the build creates that many drafts from it.
+     *
+     * This card rendered its services block on `services.length > 0` alone,
+     * and this field was not even declared on the type, so the one number that
+     * knew three services were coming was invisible to the page. Three rows
+     * were created by a build whose own plan screen had not mentioned them.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    service_count?: number;
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
     /** How money actually arrives — the answer that decides whether Stripe is needed at all. */
     collection_method?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none';
@@ -172,7 +189,17 @@ interface PreviewData {
 
 export default function OnboardingChatPage() {
   const router = useRouter();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  /**
+   * The scrolling message list itself.
+   *
+   * Needed because `scrollIntoView` cannot be told to leave the WINDOW alone:
+   * it walks up and scrolls every scrollable ancestor until the target is in
+   * view, and this page's root is `min-h-screen`, so the window is one of them.
+   * Setting `scrollTop` on this element moves this element and nothing else.
+   */
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  /** First paint should land at the bottom, not animate to it. */
+  const hasScrolledOnce = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { mode } = useV2Theme();
   // `t` is pulled in so the payment dialog can use the very same strings the
@@ -200,7 +227,6 @@ export default function OnboardingChatPage() {
    * is the point — the user watches their setup assemble while they answer,
    * and watches steps come off the board when an answer removes them.
    */
-  const [setupSignals, setSetupSignals] = useState<SetupSignals | null>(null);
   /** Which service row has its payment options open, if any. */
   const [paymentDialogIndex, setPaymentDialogIndex] = useState<number | null>(null);
   /**
@@ -363,7 +389,18 @@ export default function OnboardingChatPage() {
         const welcomeMessage: Message = {
           role: 'assistant',
           content: 'Welcome to AgentsPilot! Let\'s set up your Business OS. What language would you like to use?',
-          suggestions: ['🇺🇸 English', '🇮🇱 עברית (Hebrew)', '🇪🇸 Español (Spanish)']
+          /*
+             The language's own name, no flag. A flag names a COUNTRY and these
+             are languages: Spanish is not Spain to most of the people who speak
+             it. Each name reads in the script of the thing it offers, which is
+             the clearer signal anyway.
+
+             Kept character-for-character identical to the same list in
+             `getNextResponse` (`language_selection`), because `updateStateFromMessage`
+             resolves the choice by matching these words. Two copies of one chip
+             set is the real fault here and is noted on that one.
+          */
+          suggestions: ['English', 'עברית (Hebrew)', 'Español (Spanish)']
         };
 
         setMessages([welcomeMessage]);
@@ -377,12 +414,42 @@ export default function OnboardingChatPage() {
     initialize();
   }, [router]);
 
-  // Auto-scroll to bottom and maintain focus
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * KEEP THE LIST AT THE BOTTOM, and move nothing else.
+   *
+   * Reported as "when selecting the chips or typing the chat jumps all over and
+   * back". Three separate things were fighting:
+   *
+   *  1. `scrollIntoView` cannot be scoped. It walks up and scrolls EVERY
+   *     scrollable ancestor until the target is visible, and this page's root
+   *     is `min-h-screen`, so the window was one of them. Setting `scrollTop`
+   *     on the list moves the list alone.
+   *
+   *  2. `focus()` scrolls its element into view INSTANTLY, and it ran on the
+   *     same tick as a SMOOTH scroll. So every turn started an animation and
+   *     then yanked it: the jump out, and the jump back. `preventScroll` ends
+   *     that, and the input is already on screen in a fixed-height column.
+   *
+   *  3. The first paint animated from the top of an empty list, which reads as
+   *     the page settling rather than a chat opening.
+   *
+   * Still one effect, because the two actions have to stay ordered: focus after
+   * the scroll, never during it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    // Keep input focused after new messages
+    const list = messagesScrollRef.current;
+    if (list) {
+      list.scrollTo({
+        top: list.scrollHeight,
+        behavior: hasScrolledOnce.current ? 'smooth' : 'auto',
+      });
+      hasScrolledOnce.current = true;
+    }
+
     if (!isSending && !showPreview && !showServicesForm) {
-      inputRef.current?.focus();
+      inputRef.current?.focus({ preventScroll: true });
     }
   }, [messages, isSending, showPreview, showServicesForm]);
 
@@ -496,7 +563,6 @@ export default function OnboardingChatPage() {
       setPendingQuestion(result.pendingQuestion ?? null);
 
       if (result.setup) {
-        setSetupSignals(result.setup);
       }
 
       // A fresh plan means the adjustment they asked for has been made.
@@ -897,6 +963,28 @@ export default function OnboardingChatPage() {
    * "payment_mode: invoicing" and a tile reading "Payments ✓" are not.
    */
   const configuration = previewData?.configuration as any;
+
+  /**
+   * How many services this build will create, and how many of them we can name.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The interview asks how MANY services there are rather than for a list of
+   * them, so `previewData.services` is normally empty and `service_count`
+   * carries the answer. Reading only the first of those is why the plan card
+   * showed no services section at all on the ordinary path.
+   *
+   * `Math.max` because the two can disagree in both directions: a count of
+   * three with one service named, or a catalogue of four against a stale count
+   * of two. The build creates `service_count` rows and tops up from the
+   * catalogue, so the larger figure is the honest promise.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const namedServices = previewData?.services ?? [];
+  const plannedServiceCount = Math.max(
+    namedServices.length,
+    typeof configuration?.service_count === 'number' ? configuration.service_count : 0
+  );
+  const unnamedServiceCount = Math.max(0, plannedServiceCount - namedServices.length);
   const changeLabel = selectedLanguage === 'he' ? 'שנה' : selectedLanguage === 'es' ? 'cambiar' : 'change';
 
   /**
@@ -913,21 +1001,12 @@ export default function OnboardingChatPage() {
   /** A working copy, so closing without saving leaves the plan as it was. */
   const [draftServices, setDraftServices] = useState<NonNullable<PreviewData['services']>>([]);
   /** Which draft row has its payment options open, if any. */
-  const [draftPaymentIndex, setDraftPaymentIndex] = useState<number | null>(null);
 
   const openServicesEditor = () => {
     setDraftServices((previewData?.services || []).map(service => ({ ...service })));
-    setDraftPaymentIndex(null);
     setPlanEditor('services');
   };
 
-  /** How this row is paid for — the same arrangement the settings dialog holds. */
-  const setDraftPaymentPlan = (
-    index: number,
-    plan: NonNullable<PreviewData['services']>[number]['payment_plan']
-  ) => {
-    setDraftServices(rows => rows.map((row, i) => (i === index ? { ...row, payment_plan: plan } : row)));
-  };
 
   const updateDraftService = (
     index: number,
@@ -1139,11 +1218,15 @@ export default function OnboardingChatPage() {
   const presenceSummary = (() => {
     const mode = configuration?.online_presence_mode;
     if (mode === 'full_website' || mode === 'website_only') {
+      /* Not "and publish": the site is created as a draft and the owner
+         publishes it. Promising it here is where the false claim on the build
+         page came from, and a promise is worse than a label because they act
+         on it. */
       return selectedLanguage === 'he'
-        ? 'אבנה ואפרסם את האתר שלך — משם לקוחות מזמינים.'
+        ? 'אבנה את האתר שלך ואשאיר אותו מוכן לפרסום. משם לקוחות מזמינים.'
         : selectedLanguage === 'es'
-          ? 'Construiré y publicaré tu sitio — es donde reservan.'
-          : "I'll build and publish your site — that is where clients book you.";
+          ? 'Construiré tu sitio y lo dejaré listo para publicar. Es donde reservan.'
+          : "I'll build your site and leave it ready for you to publish. That is where clients book you.";
     }
     return selectedLanguage === 'he'
       ? 'לינק להזמנות שאפשר לשלוח בוואטסאפ. בלי אתר.'
@@ -1209,10 +1292,21 @@ export default function OnboardingChatPage() {
   const handleBuild = async () => {
     if (!previewData) return;
 
-    // Store preview data in session storage for the build page
-    sessionStorage.setItem('onboarding_preview_data', JSON.stringify(previewData));
+    /*
+     * The handoff is a CONVENIENCE now, not the only path.
+     *
+     * `sessionStorage.setItem` throws on a quota or in some private modes, and
+     * it threw from inside this click handler — so the button did nothing at
+     * all, with no error anywhere the owner could see, and the build never
+     * ran. The build page can now recover the plan from the server, so the
+     * navigation must happen whether or not this write succeeds.
+     */
+    try {
+      sessionStorage.setItem('onboarding_preview_data', JSON.stringify(previewData));
+    } catch (err) {
+      logger.error({ err }, 'Could not hand the plan over in sessionStorage; the build page will refetch it');
+    }
 
-    // Redirect to the dedicated build page
     router.push(`/onboarding-build?lang=${selectedLanguage}`);
   };
 
@@ -1286,15 +1380,30 @@ export default function OnboardingChatPage() {
                     name is the title of what follows, and it inherits the
                     page's direction rather than being wrapped in a sentence
                     whose punctuation has to be flipped by hand. */}
-                <div className="mb-4">
-                  <p className="text-xs text-[var(--v2-text-muted)]">
-                    {selectedLanguage === 'he' ? 'התוכנית שלי עבור' : selectedLanguage === 'es' ? 'Mi plan para' : 'My plan for'}
-                  </p>
-                  <h2 className="text-xl font-bold text-[var(--v2-text-primary)] mt-0.5 break-words">
+                {/*
+                    ONE SENTENCE, ONE TYPE SIZE.
+                    ─────────────────────────────────────────────────────────
+                    This was a `p` above an `h2`, which broke "My plan for"
+                    away from the name it governs and left a stranded
+                    preposition on its own line. Putting them on one
+                    baseline-aligned row fixed the break and introduced a
+                    different problem: `text-xs` muted beside `text-xl` bold is
+                    a four-step size jump across a shared baseline, which reads
+                    as two fragments that happen to be adjacent.
+
+                    So it is simply a sentence now, at one size. The name still
+                    carries the weight and the full-contrast colour, so it is
+                    plainly the subject, and the words around it stop competing
+                    for the same job.
+                */}
+                <p className="mb-4 text-lg text-[var(--v2-text-secondary)] break-words">
+                  {selectedLanguage === 'he' ? 'התוכנית שלי עבור' : selectedLanguage === 'es' ? 'Mi plan para' : 'My plan for'}{' '}
+                  <bdi className="font-bold text-[var(--v2-text-primary)]">
                     {previewData.businessProfile?.company_name
                       || (selectedLanguage === 'he' ? 'העסק שלך' : selectedLanguage === 'es' ? 'tu negocio' : 'your business')}
-                  </h2>
-                </div>
+                  </bdi>
+                </p>
+
                 <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-xl overflow-hidden">
                   {/* The promise, as a number.
                       A coloured banner repeating the business name was the
@@ -1376,6 +1485,52 @@ export default function OnboardingChatPage() {
                         changeLabel={changeLabel}
                       />
 
+                      {/*
+                        WHAT WE UNDERSTOOD, in their own words — its own card,
+                        full width, directly under the name.
+                        ─────────────────────────────────────────────────────────
+                        The name card said "David KPMG · Service Provider" and
+                        stopped there. Everything the owner had just spent five
+                        questions telling us — who their clients are, what those
+                        clients leave with, what trained them for it — went into
+                        a profile column unseen, and their first sight of our
+                        reading of it was a published website.
+
+                        This paragraph is the text the site is written from, so
+                        it belongs on the screen where the plan is approved,
+                        while it still costs a sentence to correct.
+
+                        Stretched rather than sat in the grid because it is
+                        prose: at 220px a column it would wrap to eight lines
+                        and read as a wall beside two one-line facts.
+
+                        No change link. The others point at an editor that owns
+                        the fact; this one was composed from the interview, and
+                        the honest way to change it is to say so to the chat —
+                        an input here would be a second, competing source of the
+                        same sentence.
+                      */}
+                      {previewData.businessDescription && (
+                        <div style={{ gridColumn: '1/-1' }}>
+                          <SetupFactCard
+                            color="#8B5CF6"
+                            icon={<FileText className="w-3.5 h-3.5" />}
+                            title={
+                              selectedLanguage === 'he'
+                                ? 'איך נתאר את העסק שלך'
+                                : selectedLanguage === 'es'
+                                  ? 'Cómo describiremos tu negocio'
+                                  : 'How we will describe your business'
+                            }
+                            value={
+                              <span className={cn('block text-[12.5px] leading-relaxed font-normal', isRTL && 'text-right')}>
+                                <bdi>{previewData.businessDescription}</bdi>
+                              </span>
+                            }
+                          />
+                        </div>
+                      )}
+
                       {/* Every service, with the journey each one produces.
                           Three chips reading "name · price" said nothing about
                           what a client would actually walk through, and hid the
@@ -1383,7 +1538,21 @@ export default function OnboardingChatPage() {
                           between services are the point — one takes a card at
                           booking, one is invoiced after, one is free — so they
                           are shown side by side. */}
-                      {previewData.services && previewData.services.length > 0 && (
+                      {/*
+                        Rendered on the COUNT as well as the catalogue.
+                        ───────────────────────────────────────────────────────
+                        `previewData.services` is normally empty: the interview
+                        asks how MANY services there are, not for a list of
+                        them, because collecting a catalogue field by field in
+                        a chat is where owners stopped. The build then creates
+                        that many drafts.
+
+                        So gating this block on `services.length` hid the whole
+                        section from the exact account the common path produces:
+                        three services created by a build whose plan screen had
+                        said nothing about any services at all.
+                      */}
+                      {plannedServiceCount > 0 && (
                         <div style={{ gridColumn: '1/-1' }}>
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-[14px] p-4">
                             <div className="flex items-center justify-between gap-3 mb-3">
@@ -1406,55 +1575,71 @@ export default function OnboardingChatPage() {
                               </button>
                             </div>
 
-                            <div className="flex flex-col">
-                              {previewData.services.map((service, idx) => {
-                                const currency = currencySymbol(service.currency) || currencySymbol(currencyForLanguage(selectedLanguage));
-                                // Null is "we agree it together", zero is free.
-                                // Showing a quote-based service as free is how a
-                                // consultancy ends up advertising work for
-                                // nothing on its own booking page.
-                                const price = service.price === null || service.price === undefined
-                                  ? (selectedLanguage === 'he' ? 'לפי הצעת מחיר' : selectedLanguage === 'es' ? 'A convenir' : 'On request')
-                                  : service.price > 0
-                                    ? `${currency}${service.price}`
-                                    : (selectedLanguage === 'he' ? 'חינם' : selectedLanguage === 'es' ? 'Gratis' : 'Free');
-                                const scheduled = service.is_scheduled !== false;
-                                return (
-                                  <div
-                                    key={idx}
-                                    className={cn(
-                                      'flex flex-col gap-1.5 py-2.5',
-                                      idx > 0 && 'border-t border-[var(--v2-border)]'
-                                    )}
-                                  >
-                                    <div className="flex items-baseline gap-2 flex-wrap">
-                                      <span className="text-[13px] font-semibold text-[var(--v2-text-primary)]">
-                                        {service.service_name}
-                                      </span>
-                                      <span className="text-[11.5px] text-[var(--v2-text-muted)]">
-                                        {[
-                                          service.duration_minutes
-                                            ? `${service.duration_minutes} ${selectedLanguage === 'he' ? 'דק' : 'min'}`
-                                            : null,
-                                          !scheduled
-                                            ? (selectedLanguage === 'he' ? 'ללא תור' : selectedLanguage === 'es' ? 'sin cita' : 'no appointment')
-                                            : null,
-                                          price,
-                                        ].filter(Boolean).join(' · ')}
-                                      </span>
-                                    </div>
-                                    <ClientJourneyStrip
-                                      compact
-                                      intakeEnabled={(configuration as any)?.needs_intake === true}
-                                      service={{
-                                        scheduled,
-                                        collection: service.collection ?? 'invoice',
-                                        price: service.price,
-                                      }}
-                                    />
-                                  </div>
-                                );
-                              })}
+                            {/*
+                              NAMES, AND THAT THEY ARE DRAFTS.
+                              ───────────────────────────────────────────────
+                              This listed a price, a duration and a client
+                              journey per service. Every service created by
+                              onboarding is a PLACEHOLDER whose price and
+                              length the owner sets in the editor afterwards,
+                              so each of those three was showing a decision
+                              nobody had made: with no price given, the row
+                              printed "On request", which is not a blank, it
+                              is a published pricing policy. The journey strip
+                              was drawn from a `collection` value nobody had
+                              been asked for either.
+
+                              What is true and worth showing is the list of
+                              things that will exist, and that they arrive
+                              unfinished. The price belongs on the one screen
+                              built for entering prices, which the change link
+                              already opens.
+                            */}
+                            <p className="text-[11.5px] text-[var(--v2-text-muted)] m-0 mb-2.5 leading-snug">
+                              {namedServices.length === 0
+                                ? (selectedLanguage === 'he'
+                                    ? `ניצור ${plannedServiceCount} טיוטות. את השמות, המחירים והמשך תגדירו אחר כך.`
+                                    : selectedLanguage === 'es'
+                                      ? `Crearemos ${plannedServiceCount} borradores. Los nombres, precios y duraciones los defines después.`
+                                      : `We will create ${plannedServiceCount} drafts. You name, price and time them later.`)
+                                : (selectedLanguage === 'he'
+                                    ? 'ניצור את אלה כטיוטות. מחירים ומשך תגדירו אחר כך.'
+                                    : selectedLanguage === 'es'
+                                      ? 'Los crearemos como borradores. Los precios y las duraciones los defines después.'
+                                      : 'We will create these as drafts. You set prices and durations later.')}
+                            </p>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              {namedServices.map((service, idx) => (
+                                <span
+                                  key={idx}
+                                  className="inline-flex items-center gap-1.5 text-[12px] text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-full px-2.5 py-1 max-w-full"
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#D14E97' }} />
+                                  <bdi className="truncate">{service.service_name}</bdi>
+                                </span>
+                              ))}
+
+              {/* The ones still unnamed when the naming call could not
+                                  reach the count, or failed. Dashed rather than
+                                  given a made-up name here, because this card
+                                  is where the owner approves the plan: a name
+                                  invented in the UI is one they never see a
+                                  chance to correct. The build names these
+                                  itself. */}
+                              {Array.from({ length: unnamedServiceCount }).map((_, idx) => (
+                                <span
+                                  key={`unnamed-${idx}`}
+                                  className="inline-flex items-center gap-1.5 text-[12px] text-[var(--v2-text-muted)] bg-transparent border border-dashed border-[var(--v2-border)] rounded-full px-2.5 py-1"
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full border border-[var(--v2-text-muted)] flex-shrink-0" />
+                                  {selectedLanguage === 'he'
+                                    ? 'שירות ללא שם'
+                                    : selectedLanguage === 'es'
+                                      ? 'servicio sin nombre'
+                                      : 'unnamed service'}
+                                </span>
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -1619,12 +1804,26 @@ export default function OnboardingChatPage() {
 
         <div
           className={cn('flex flex-col gap-4', showPlanScreen && 'hidden')}
-          style={{ height: 'calc(100vh - 150px)', minHeight: '560px' }}
+          /*
+           * `dvh`, not `vh`, and a min-height that fits a phone.
+           *
+           * `100vh` on mobile is the viewport with the browser chrome HIDDEN,
+           * so the column was taller than what you can actually see; the page
+           * then scrolled, and every new message moved the window as well as
+           * the list. `dvh` is the visible height and follows the toolbar as it
+           * shows and hides.
+           *
+           * `560px` was also above the usable height of a small phone once the
+           * header is subtracted, which forced the same window scroll from the
+           * other direction. The floor only exists to stop the thread
+           * collapsing to nothing on a short window.
+           */
+          style={{ height: 'calc(100dvh - 150px)', minHeight: '420px' }}
         >
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg shadow-lg flex-1 min-h-0">
           <div className="flex flex-col h-full">
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+            <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
               {messages.map((message, index) => {
                 // Skip rendering empty assistant messages (visual preview handles the display)
                 if (message.role === 'assistant' && !message.content?.trim() && !message.suggestions?.length) {
@@ -1647,9 +1846,23 @@ export default function OnboardingChatPage() {
                   )}
                 >
                   {/* Avatar */}
+                  {/*
+                      TWO SPEAKERS, TWO HUES.
+                      ───────────────────────────────────────────────────────
+                      Both avatars were `--v2-primary`, and the user's bubble
+                      was filled with it too, so the ONLY thing separating the
+                      two speakers was which side of the thread they sat on.
+                      That is a weak cue while scrolling and a weaker one in
+                      Hebrew, where the eye is already working right to left.
+
+                      So the palette carries it: indigo (`--v2-primary`) is the
+                      owner, violet (`--v2-secondary`) is the assistant. Both
+                      tokens already exist and already appear together on the
+                      plan screen, so nothing new enters the palette.
+                  */}
                   {message.role === 'assistant' && (
                     <div
-                      className="w-8 h-8 bg-[var(--v2-primary)] flex items-center justify-center flex-shrink-0 rounded-lg"
+                      className="w-8 h-8 bg-[var(--v2-secondary)] flex items-center justify-center flex-shrink-0 rounded-lg"
                     >
                       <Bot className="h-4 w-4 text-white" />
                     </div>
@@ -1665,6 +1878,35 @@ export default function OnboardingChatPage() {
                           : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)]',
                         isRTL ? 'text-right' : 'text-left'
                       )}
+                      /*
+                       * The assistant's bubble, tinted violet.
+                       * ─────────────────────────────────────────────────────
+                       * It used to be plain `--v2-surface` with the default
+                       * border, which is exactly what every card on this page
+                       * is made of — so the assistant's own words read as page
+                       * furniture rather than as somebody speaking.
+                       *
+                       * Mixed with the SURFACE token rather than written as an
+                       * rgba literal, so it follows the theme: the same 9% of
+                       * violet lands on white in light mode and on #1E293B in
+                       * dark, instead of a fixed pale tint glowing on a dark
+                       * background.
+                       *
+                       * In a browser without `color-mix` the declaration is
+                       * dropped and the class above still paints the plain
+                       * surface, which is the old appearance rather than a
+                       * broken one.
+                       */
+                      style={
+                        message.role === 'assistant'
+                          ? {
+                              background:
+                                'color-mix(in srgb, var(--v2-secondary) 9%, var(--v2-surface))',
+                              borderColor:
+                                'color-mix(in srgb, var(--v2-secondary) 30%, var(--v2-border))',
+                            }
+                          : undefined
+                      }
                     >
                       <p className="text-sm whitespace-pre-wrap leading-relaxed">
                         {message.content}
@@ -1867,7 +2109,65 @@ export default function OnboardingChatPage() {
               })()}
 
 
-              <div ref={messagesEndRef} />
+              {/*
+                  THE ASSISTANT IS COMPOSING.
+                  ─────────────────────────────────────────────────────────────
+                  `isSending` only ever disabled buttons and spun a spinner
+                  inside them, so the THREAD said nothing at all: the owner
+                  answered, the screen went still, and the next question
+                  appeared some seconds later with nothing in between. On the
+                  deepening step that gap is two model calls long, which is
+                  long enough to wonder whether the answer was received.
+
+                  Built as a real message rather than a status line: same row,
+                  same avatar, same tinted bubble, so the dots occupy exactly
+                  the space the reply is about to fill and nothing jumps when
+                  it arrives.
+
+                  The negative delays matter. Three dots sharing one animation
+                  bounce in unison, which reads as a loading toy; starting each
+                  one part-way through its cycle is what makes it a wave.
+              */}
+              {isSending && (
+                <div className="flex gap-3 flex-row justify-start" aria-live="polite">
+                  <div className="w-8 h-8 bg-[var(--v2-secondary)] flex items-center justify-center flex-shrink-0 rounded-lg">
+                    <Bot className="h-4 w-4 text-white" />
+                  </div>
+
+                  <div
+                    className="px-4 py-3 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                    style={{
+                      background: 'color-mix(in srgb, var(--v2-secondary) 9%, var(--v2-surface))',
+                      borderColor: 'color-mix(in srgb, var(--v2-secondary) 30%, var(--v2-border))',
+                    }}
+                  >
+                    <span className="sr-only">
+                      {selectedLanguage === 'he'
+                        ? 'כותב...'
+                        : selectedLanguage === 'es'
+                          ? 'Escribiendo...'
+                          : 'Typing...'}
+                    </span>
+
+                    <span className="flex items-center gap-1 h-5" aria-hidden="true">
+                      {[0, 1, 2].map(i => (
+                        <span
+                          key={i}
+                          className="w-1.5 h-1.5 rounded-full animate-bounce motion-reduce:animate-none"
+                          style={{
+                            background: 'var(--v2-secondary)',
+                            /* Part-way through the cycle, so they travel as a
+                               wave instead of in unison. */
+                            animationDelay: `${-320 + i * 160}ms`,
+                            animationDuration: '1.1s',
+                          }}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                </div>
+              )}
+
             </div>
 
             {/* Services Form Modal */}
@@ -2285,22 +2585,18 @@ export default function OnboardingChatPage() {
           </div>
         </div>
 
-      {/* The setup, assembling — under the conversation, which leads.
-            Same chain, same colours and same labels the dashboard will show
-            once they are through, so the picture learned here is the picture
-            they keep. It replaces the progress bar that used to sit above:
-            "3 of 5 questions" measures the interview, this measures the thing
-            the interview is for.
+      {/*
+          The setup panel was here, under the conversation, and was removed on
+          2026-10-14 at the owner's request.
 
-            Held back until the language is chosen: before that the screen is a
-            single welcome question, and a setup panel under it would be
-            answering something nobody has asked yet — in a language we have
-            not been told to use. */}
-        {currentStep !== 'welcome' && currentStep !== 'language_selection' && (
-          <div className="flex-none">
-            <OnboardingSetupPanel signals={setupSignals} />
-          </div>
-        )}
+          It drew the same capability chain the dashboard shows, assembling as
+          the interview went. The argument for it was that it measured the thing
+          the interview is FOR rather than the interview itself. The argument
+          against is that it competes: the screen is one question at a time, and
+          a panel beneath it gives the eye somewhere else to be at the exact
+          moment the question needs answering. The plan screen at the end is
+          where the whole picture belongs, and it is now richer than this was.
+      */}
         </div>
 
 {/* Pipeline Editor Modal.
@@ -2523,217 +2819,57 @@ export default function OnboardingChatPage() {
         </button>
       </div>
 
+      {/*
+          NAMES ONLY.
+          ─────────────────────────────────────────────────────────────────────
+          This was the services settings form: fifteen grid columns carrying a
+          price, a currency, a duration, a scheduled toggle, a sale mode and a
+          payment plan, so that "a price is typed the one way it is typed
+          everywhere".
+
+          It now contradicts the card that opens it. Onboarding creates
+          PLACEHOLDERS and the card says so in as many words: "We will create
+          these as drafts. You set prices and durations later." Offering a
+          pricing grid behind that sentence asks the owner to do the work twice
+          and to decide, at the least informed moment they will ever have, what
+          each thing costs.
+
+          So the only field here is the one the drafts actually carry and the
+          only one the owner can judge right now: what the thing is called. The
+          full form still exists, in the services editor, which is where the
+          card points them next.
+      */}
       <div className="p-4 overflow-y-auto space-y-2">
-        {/* Same three columns and the same currency control as the service
-            settings, so a price is typed the one way it is typed everywhere. */}
-        <div className={cn('grid grid-cols-[repeat(15,minmax(0,1fr))] gap-2 text-xs font-medium text-[var(--v2-text-secondary)]', isRTL && 'text-right')}>
-          <div className="col-span-3">
-            {selectedLanguage === 'he' ? 'שם השירות' : selectedLanguage === 'es' ? 'Nombre' : 'Service'}
-          </div>
-          <div className="col-span-2">
-            {selectedLanguage === 'he' ? 'דורש תור?' : selectedLanguage === 'es' ? '¿Cita?' : 'Appointment?'}
-          </div>
-          <div className="col-span-2">
-            {selectedLanguage === 'he' ? 'איך נמכר?' : selectedLanguage === 'es' ? '¿Cómo se vende?' : 'How sold?'}
-          </div>
-          <div className="col-span-2">
-            {selectedLanguage === 'he' ? 'משך / הפסקה' : selectedLanguage === 'es' ? 'Duración / Pausa' : 'Duration / Break'}
-          </div>
-          <div className="col-span-2">
-            {selectedLanguage === 'he' ? 'מחיר' : selectedLanguage === 'es' ? 'Precio' : 'Price'}
-            <span className="block text-[10px] font-normal text-[var(--v2-text-muted)] leading-tight">
-              {selectedLanguage === 'he' ? 'ריק = הצעת מחיר' : selectedLanguage === 'es' ? 'vacío = a convenir' : 'empty = on request'}
-            </span>
-          </div>
-          <div className="col-span-2">
-            {selectedLanguage === 'he' ? 'איך משלמים?' : selectedLanguage === 'es' ? '¿Cómo se paga?' : 'How paid?'}
-          </div>
-          <div className="col-span-1">
-            {selectedLanguage === 'he' ? 'תשלומים' : selectedLanguage === 'es' ? 'Cuotas' : 'Plan'}
-          </div>
-          <div className="col-span-1" />
-        </div>
+        <p className="text-[12px] text-[var(--v2-text-muted)] m-0 pb-1 leading-snug">
+          {selectedLanguage === 'he'
+            ? 'רק השמות בשלב הזה. מחירים, משך ואופן התשלום מוגדרים אחר כך במסך השירותים.'
+            : selectedLanguage === 'es'
+              ? 'Solo los nombres por ahora. Los precios, las duraciones y el cobro se definen después en la pantalla de servicios.'
+              : 'Just the names for now. Prices, durations and how you take payment are set later, in the services screen.'}
+        </p>
 
         {draftServices.map((service, index) => (
-          <div key={index} className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-2 items-center">
+          <div key={index} className="flex items-center gap-2">
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{ background: '#D14E97' }}
+            />
             <input
-              type="text"
               value={service.service_name}
               onChange={e => updateDraftService(index, 'service_name', e.target.value)}
+              placeholder={
+                selectedLanguage === 'he' ? 'שם השירות' : selectedLanguage === 'es' ? 'Nombre del servicio' : 'Service name'
+              }
               className={cn(
-                'col-span-3 px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
+                'flex-1 min-w-0 px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]',
                 isRTL && 'text-right'
               )}
             />
-
-            <div className="col-span-2 flex gap-1">
-              {([true, false] as const).map(value => (
-                <button
-                  key={String(value)}
-                  type="button"
-                  onClick={() => updateDraftService(index, 'is_scheduled', value)}
-                  className={cn(
-                    'flex-1 px-1 py-2 text-[11px] rounded-lg border transition-colors',
-                    (service.is_scheduled !== false) === value
-                      ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
-                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                  )}
-                >
-                  {value
-                    ? (selectedLanguage === 'he' ? 'כן' : selectedLanguage === 'es' ? 'Sí' : 'Yes')
-                    : 'No'}
-                </button>
-              ))}
-            </div>
-
-            {/* Bought outright, or quoted first. The same question the service
-                settings ask, in the same words — a business must not be able to
-                answer it one way here and another way there. */}
-            <div className="col-span-2 flex gap-1">
-              {(['direct', 'proposal'] as const).map(value => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => updateDraftService(index, 'sale_mode', value)}
-                  className={cn(
-                    'flex-1 px-1 py-2 text-[11px] rounded-lg border transition-colors truncate',
-                    (service.sale_mode ?? 'direct') === value
-                      ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
-                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                  )}
-                >
-                  {value === 'direct'
-                    ? (selectedLanguage === 'he' ? 'ישירות' : selectedLanguage === 'es' ? 'Directo' : 'Direct')
-                    : (selectedLanguage === 'he' ? 'הצעה' : selectedLanguage === 'es' ? 'Cotizar' : 'Quote')}
-                </button>
-              ))}
-            </div>
-
-            {/* Dead, not gone — the same rule as the services row in the
-                chat above, because it is the same question asked twice and the
-                two grids must not answer it differently. */}
-            {/* How long it runs, and the gap to leave after it.
-                Together in one cell because they are the same kind of fact and
-                die together: a service nobody books against a time has neither
-                a length nor a gap. The services settings put them side by side
-                for the same reason. */}
-            <div className="col-span-2 flex gap-1">
-              <input
-                type="number"
-                value={service.duration_minutes || ''}
-                onChange={e => updateDraftService(index, 'duration_minutes', e.target.value)}
-                disabled={service.is_scheduled === false}
-                placeholder="60"
-                title={selectedLanguage === 'he' ? 'משך' : selectedLanguage === 'es' ? 'Duración' : 'Duration'}
-                className={cn(
-                  'w-1/2 px-1.5 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)] tabular-nums',
-                  service.is_scheduled === false && 'opacity-40 cursor-not-allowed',
-                  isRTL && 'text-right'
-                )}
-              />
-              <input
-                type="number"
-                min="0"
-                max="120"
-                value={service.buffer_minutes ?? ''}
-                onChange={e => updateDraftService(index, 'buffer_minutes', e.target.value)}
-                disabled={service.is_scheduled === false}
-                placeholder="15"
-                title={selectedLanguage === 'he' ? 'הפסקה בין פגישות' : selectedLanguage === 'es' ? 'Pausa entre citas' : 'Break between meetings'}
-                className={cn(
-                  'w-1/2 px-1.5 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-muted)] tabular-nums',
-                  service.is_scheduled === false && 'opacity-40 cursor-not-allowed',
-                  isRTL && 'text-right'
-                )}
-              />
-            </div>
-            <div className="col-span-2 relative">
-              <div className={cn('absolute top-1/2 -translate-y-1/2 z-10', isRTL ? 'right-2.5' : 'left-2.5')}>
-                <ServiceCurrencySelect
-                  value={(service.currency as 'USD' | 'EUR' | 'ILS' | 'GBP') || currencyForLanguage(selectedLanguage)}
-                  onChange={code => updateDraftService(index, 'currency', code)}
-                  compact
-                  align={isRTL ? 'end' : 'start'}
-                />
-              </div>
-              <input
-                type="number"
-                value={service.price === null || service.price === undefined ? '' : service.price}
-                onChange={e => updateDraftService(index, 'price', e.target.value)}
-                disabled={service.sale_mode === 'proposal'}
-                placeholder="—"
-                className={cn(
-                  'w-full px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
-                  // Dead, not gone — the same rule the duration follows, and
-                  // the same one the service settings follow for a quote.
-                  service.sale_mode === 'proposal' && 'opacity-40 cursor-not-allowed',
-                  isRTL ? 'pr-11 text-right' : 'pl-11'
-                )}
-              />
-            </div>
-            {/* How this one is collected. Per service, because a practice can
-                take a card for a session and invoice for a programme — and
-                whether this business is ever asked to connect a processor is
-                read off exactly these answers. */}
-            <div className="col-span-2 flex gap-1">
-              {(['online', 'invoice'] as const).map(value => {
-                /*
-                 * A quoted job has no collection method.
-                 *
-                 * Nobody has said what the work costs, so there is no money for
-                 * a method to describe — it is settled on the proposal. Same
-                 * rule the service settings apply, which is where this question
-                 * is answered the rest of the time.
-                 */
-                const priced =
-                  (service.sale_mode ?? 'direct') !== 'proposal' && (service.price || 0) > 0;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    disabled={!priced}
-                    onClick={() => updateDraftService(index, 'collection', value)}
-                    className={cn(
-                      'flex-1 px-1 py-2 text-[11px] rounded-lg border transition-colors truncate',
-                      !priced
-                        ? 'border-[var(--v2-border)] text-[var(--v2-text-muted)] opacity-40'
-                        : (service.collection ?? 'invoice') === value
-                          ? 'border-[#22C58B] bg-[#22C58B]/10 text-[#22C58B] font-semibold'
-                          : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                    )}
-                  >
-                    {value === 'online'
-                      ? (selectedLanguage === 'he' ? 'כרטיס' : selectedLanguage === 'es' ? 'Tarjeta' : 'Card')
-                      : (selectedLanguage === 'he' ? 'חשבונית' : selectedLanguage === 'es' ? 'Factura' : 'Invoice')}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* The same arrangement the services settings hold — including
-                going dead on a quote, where price, collection and plan all
-                describe money nobody has named yet. */}
             <button
               type="button"
-              onClick={() => setDraftPaymentIndex(index)}
-              disabled={!canSplit(service.sale_mode, service.price)}
-              className={cn(
-                'col-span-1 px-1 py-2 text-xs rounded-lg border transition-colors truncate',
-                !canSplit(service.sale_mode, service.price) && 'opacity-40 cursor-not-allowed',
-                service.payment_plan
-                  ? 'border-[#14B8A6] text-[#14B8A6] bg-[#14B8A6]/10'
-                  : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-              )}
-            >
-              {service.payment_plan
-                ? `${service.payment_plan.installment_count}×`
-                : (selectedLanguage === 'he' ? 'תשלום מלא' : selectedLanguage === 'es' ? 'Pago único' : 'Full')}
-            </button>
-
-            <button
               onClick={() => setDraftServices(rows => rows.filter((_, i) => i !== index))}
-              className="col-span-1 flex items-center justify-center text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
-              aria-label={selectedLanguage === 'he' ? 'מחק' : selectedLanguage === 'es' ? 'Eliminar' : 'Remove'}
+              className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#EF4444] transition-colors flex-shrink-0"
+              aria-label={selectedLanguage === 'he' ? 'הסר' : selectedLanguage === 'es' ? 'Quitar' : 'Remove'}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -2741,13 +2877,15 @@ export default function OnboardingChatPage() {
         ))}
 
         <button
+          type="button"
           onClick={() => setDraftServices(rows => [...rows, {
             service_name: '',
-            duration_minutes: 60,
+            duration_minutes: null,
             price: null,
             currency: currencyForLanguage(selectedLanguage),
-            is_scheduled: true,
-            collection: 'invoice',
+            is_scheduled: configuration?.sells_scheduled !== false,
+            collection: null,
+            sale_mode: 'direct' as const,
             payment_plan: null,
           }])}
           className="flex items-center gap-1 text-sm text-[var(--v2-primary)] hover:opacity-80 transition-opacity pt-1"
@@ -2779,74 +2917,19 @@ export default function OnboardingChatPage() {
     Above the services editor rather than inside it, so the two do not fight
     over the same stacking context — and it is the very component the service
     settings use, so a plan agreed here is the plan the settings will show. */}
-{planEditor === 'services' && draftPaymentIndex !== null && draftServices[draftPaymentIndex] && (() => {
-  const index = draftPaymentIndex;
-  const service = draftServices[index];
-  const plan = service.payment_plan;
-  const values = {
-    price: service.price ?? 0,
-    currency: (service.currency as 'USD' | 'EUR' | 'ILS' | 'GBP') || currencyForLanguage(selectedLanguage),
-    payment_type: (plan ? 'installments' : 'full') as 'full' | 'installments',
-    installment_count: plan?.installment_count ?? 2,
-    installment_frequency: (plan?.installment_frequency ?? 'monthly') as 'weekly' | 'biweekly' | 'monthly' | 'quarterly',
-    first_payment_due: 'on_booking' as const,
-    first_payment_days: 7,
-  };
+{/*
+    The instalment-plan sub-dialog was here, and was removed on 2026-10-14.
 
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/50 z-[60]" onClick={() => setDraftPaymentIndex(null)} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-[min(420px,92vw)]">
-        <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-5 space-y-4" dir={isRTL ? 'rtl' : 'ltr'}>
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <CreditCard className="h-4 w-4" />
-              {t('scheduling.modal.payment_options')}
-            </h3>
-            <button onClick={() => setDraftPaymentIndex(null)} className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+    It let the owner turn one service into "three payments of 200" while still
+    on the plan screen. Its only trigger was a button inside the services
+    pricing grid, and that grid is now a list of names: onboarding creates
+    placeholders, so a payment plan here would be attached to a service that
+    has no price yet.
 
-          <p className="text-sm text-[var(--v2-text-primary)] font-medium truncate">
-            {service.service_name || (selectedLanguage === 'he' ? 'שירות ללא שם' : selectedLanguage === 'es' ? 'Servicio sin nombre' : 'Unnamed service')}
-          </p>
-
-          <ServicePaymentOptions
-            formData={values}
-            setFormData={updater => {
-              const next = updater(values);
-              setDraftPaymentPlan(
-                index,
-                next.payment_type === 'installments' && next.installment_count >= 2
-                  ? {
-                    installment_count: next.installment_count,
-                    // The plan stores the three frequencies the build accepts;
-                    // quarterly is a settings-only option and would be dropped
-                    // by the schema on the way through, so it falls back to
-                    // the nearest thing that survives.
-                    installment_frequency: next.installment_frequency === 'quarterly' ? 'monthly' : next.installment_frequency,
-                  }
-                  : null
-              );
-            }}
-            getCurrencySymbol={getCurrencySymbol}
-            // A blank price is agreed per client, not free — and a quoted
-            // project is exactly the kind paid in instalments.
-            quoted={service.price === null || service.price === undefined}
-          />
-
-          <button
-            onClick={() => setDraftPaymentIndex(null)}
-            className="w-full px-4 py-2.5 bg-[var(--v2-primary)] text-white text-sm font-medium rounded-lg hover:opacity-90"
-          >
-            {selectedLanguage === 'he' ? 'סיום' : selectedLanguage === 'es' ? 'Listo' : 'Done'}
-          </button>
-        </div>
-      </div>
-    </>
-  );
-})()}
+    `setDraftPaymentIndex` was left callable with `null` alone, which is to say
+    the dialog could be closed and never opened. Instalments are set in the
+    services editor, beside the price they divide.
+*/}
 
 {/* Only presence is still a business-wide question. How money is collected
     moved onto each service, so its chooser is gone rather than left to
@@ -2857,10 +2940,10 @@ export default function OnboardingChatPage() {
         key: 'full_website',
         title: selectedLanguage === 'he' ? 'אתר מלא' : selectedLanguage === 'es' ? 'Un sitio completo' : 'A full website',
         body: selectedLanguage === 'he'
-          ? 'אבנה ואפרסם אתר עם השירותים שלך, ומשם מזמינים.'
+          ? 'אבנה אתר עם השירותים שלך ואשאיר אותו מוכן לפרסום, ומשם מזמינים.'
           : selectedLanguage === 'es'
-            ? 'Construyo y publico un sitio con tus servicios, y ahí reservan.'
-            : "I build and publish a site with your services, and that is where clients book.",
+            ? 'Construyo un sitio con tus servicios y lo dejo listo para publicar, y ahí reservan.'
+            : "I build a site with your services and leave it ready for you to publish, and that is where clients book.",
         selected: configuration?.online_presence_mode === 'full_website' || configuration?.online_presence_mode === 'website_only',
         apply: () => setPresenceMode('full_website'),
       },

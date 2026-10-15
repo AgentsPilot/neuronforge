@@ -99,6 +99,10 @@ jest.mock('@/lib/business-os/insight/detectors', () => ({
   DetectorEngine: jest.fn().mockImplementation(() => ({
     runForUser: (...a: unknown[]) => mockRunForUser(...a),
     getLastEvaluatedCount: () => 1,
+    /* Detectors that could not reach a verdict this run — on cooldown, dark, or
+       throwing. The sweep must not close their insights, so the route asks for
+       them; a mock without it made the route throw and counted as an error. */
+    getLastSilentIds: () => [],
   })),
 }));
 jest.mock('@/lib/business-os/insight/prioritizer', () => ({

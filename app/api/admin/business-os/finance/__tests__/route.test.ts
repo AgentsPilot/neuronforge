@@ -47,6 +47,12 @@
  * currency, with no Stripe, refusal, plan_written or mode key (AC-127), and the
  * info line carries `sections.revenuePlans`, `counts.plans` and
  * `counts.revenueExistence` with no amount, currency or tier.
+ *
+ * Money M-4 (OV-5, T7-B): the two usage-log readers are faked at the
+ * repository boundary (their limits stay real) and join `allReads()`, so every
+ * 401 / 403 / 400 case proves zero calls on them (AC-157). The AC-145 baseline
+ * is updated ONCE, by SA ruling E-55: one added read with its exact arguments,
+ * one `recorded` assertion and a new hash; nothing else in it changes.
  */
 
 import * as fs from 'fs';
@@ -149,6 +155,19 @@ jest.mock('@/lib/repositories/AdminJobsQueuesRepository', () => ({
   adminJobsQueuesRepository: { readQueueFiguresAllAccounts: (...a: unknown[]) => mockReadQueueFigures(...a) },
 }));
 
+// Money M-4: the two usage-log readers, faked at the repository boundary (SA-WR-3). Each fake holds
+// ONLY the one method the route may call, and the modules' real limits are kept.
+const mockRecordedAllAccounts = jest.fn();
+jest.mock('@/lib/repositories/AdminTokenUsageAnalyticsRepository', () => ({
+  ...jest.requireActual('@/lib/repositories/AdminTokenUsageAnalyticsRepository'),
+  adminTokenUsageAnalyticsRepository: { listCostPointsAllAccountsInWindow: (...a: unknown[]) => mockRecordedAllAccounts(...a) },
+}));
+const mockRecordedForAccount = jest.fn();
+jest.mock('@/lib/repositories/TokenUsageRepository', () => ({
+  ...jest.requireActual('@/lib/repositories/TokenUsageRepository'),
+  tokenUsageRepository: { listCallsInWindow: (...a: unknown[]) => mockRecordedForAccount(...a) },
+}));
+
 // Fix round 1: the real pass by default; one test makes it THROW (it is documented never to).
 const mockThrowFromPositions = { on: false };
 jest.mock('@/lib/business-os/credits/adminCreditPercent', () => {
@@ -163,6 +182,7 @@ jest.mock('@/lib/business-os/credits/adminCreditPercent', () => {
 });
 
 import { GET } from '../route';
+import { bosRowFilter } from '@/lib/business-os/llm/callCatalog';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const OWNER = {
@@ -311,6 +331,23 @@ function seed() {
   const noPlans = { data: { rows: [], reachedCeiling: false }, error: null };
   mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange.mockResolvedValue(noPlans);
   mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mockResolvedValue(noPlans);
+  // Money M-4: one recorded row each, against the one 1.2345 charge.
+  mockRecordedAllAccounts.mockResolvedValue({ data: { rows: [costPoint()], reachedCeiling: false, completed: true, pages: 1 }, error: null });
+  mockRecordedForAccount.mockResolvedValue({ data: { rows: [ledgerCall()], reachedCeiling: false }, error: null });
+}
+
+/** Money M-4: a recorded cost, a feature value and a session id that must never reach a log line or the payload (AC-164). */
+const RECORDED_COST = '1.9876543';
+const RECORDED_FEATURE = 'business-os-secret-feature';
+const RECORDED_SESSION = 'sess-secret-777';
+function costPoint() {
+  return { id: 'usage-row-1', created_at: '2026-10-02T10:00:00+00:00', cost_usd: RECORDED_COST };
+}
+function ledgerCall() {
+  return {
+    id: 'usage-row-2', created_at: '2026-10-02T10:00:00+00:00', feature: RECORDED_FEATURE, component: 'chat',
+    session_id: RECORDED_SESSION, input_tokens: 10, output_tokens: 20, cost_usd: RECORDED_COST, success: true, error_code: null,
+  };
 }
 
 const allReads = () => [
@@ -323,6 +360,9 @@ const allReads = () => [
   mockFindNames,
   // Slice 2b: R-j. Every 401 / 403 / 400 case proves zero calls on it too (AC-45, AC-46).
   mockReadQueueFigures,
+  // Money M-4: both recorded reads (AC-157).
+  mockRecordedAllAccounts,
+  mockRecordedForAccount,
 ];
 const noReadHappened = () => {
   for (const fn of allReads()) expect(fn).not.toHaveBeenCalled();
@@ -441,6 +481,9 @@ describe('not found (AC-5, SA-F14)', () => {
     expectNoStore(res);
     expect(await res.json()).toEqual({ success: false, error: 'Business not found' });
     expect(mockDeps.ledger.listRowsForAccountCreatedInRange).not.toHaveBeenCalled();
+    // Money M-4 (tenant isolation): a foreign id never reaches either recorded read.
+    expect(mockRecordedForAccount).not.toHaveBeenCalled();
+    expect(mockRecordedAllAccounts).not.toHaveBeenCalled();
   });
 
   it('500 "Could not check this business" when the check fails', async () => {
@@ -1074,6 +1117,134 @@ describe('slice 5a: our plan revenue through the route', () => {
   });
 });
 
+/**
+ * AC-145 / SA-WR-44 (slice 6a, Money M-3): the Overview baseline. Written FIRST,
+ * green on unchanged `d05eb0a4` code, and NEVER EDITED afterwards. With no
+ * `tab` key, an all-businesses request makes exactly these read calls with
+ * exactly these arguments and exactly these `findNames` calls, and returns
+ * exactly these top-level payload keys (no `accountEconomics`, no
+ * `accountMargin`). On a frozen clock the whole payload is byte-identical: its
+ * SHA-256 is pinned.
+ *
+ * E-55 (Money M-4, SA ruling, the ONE permitted update): the Overview gains one
+ * read, the all-accounts recorded AI cost read with its exact arguments
+ * (`recorded.allAccounts`; `recorded.forAccount` is never called), and
+ * `aiCost.recorded`, so the hash is refreshed. Every other read call, the
+ * `findNames` calls and the top-level keys are unchanged.
+ */
+describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () => {
+  const FROZEN_NOW = new Date('2026-10-14T12:00:00.000Z');
+  beforeEach(() => {
+    // Only the clock is frozen: timers stay real (R-j's deadline uses setTimeout).
+    jest.useFakeTimers({
+      now: FROZEN_NOW,
+      doNotFake: [
+        'nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+        'queueMicrotask', 'hrtime', 'performance',
+      ],
+    });
+    asAdmin();
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /** Dates as ISO text, the abort signal and the random correlation id as markers. */
+  const serialise = (value: unknown) =>
+    JSON.parse(
+      JSON.stringify(value, (k, v) => (v instanceof AbortSignal ? '<signal>' : k === 'correlationId' ? '<correlationId>' : v))
+    ) as unknown;
+
+  const namedReads = (): Record<string, jest.Mock> => ({
+    'plans.pagePlans': mockDeps.plans.pagePlans,
+    findPlanForAccount: mockDeps.findPlanForAccount,
+    ...Object.fromEntries(Object.entries(mockDeps.ledger).map(([k, v]) => [`ledger.${k}`, v])),
+    ...Object.fromEntries(Object.entries(mockDeps.finance).map(([k, v]) => [`finance.${k}`, v])),
+    ...Object.fromEntries(Object.entries(mockDeps.credits).map(([k, v]) => [`credits.${k}`, v])),
+    ...Object.fromEntries(Object.entries(mockDeps.lots).map(([k, v]) => [`lots.${k}`, v])),
+    readQueueFigures: mockReadQueueFigures,
+    // E-55 (M-4).
+    'recorded.allAccounts': mockRecordedAllAccounts,
+    'recorded.forAccount': mockRecordedForAccount,
+  });
+
+  const RANGE = { from: '2026-10-01T00:00:00.000Z', to: '2026-10-15T00:00:00.000Z' };
+  const LEDGER_OPTS = { pageSize: 1000, ceiling: 20000 };
+  const EXPECTED_CALLS = {
+    'plans.pagePlans': [[{ afterUserId: null, limit: 500 }]],
+    findPlanForAccount: [],
+    'ledger.listRowsOfAllAccountsCreatedInRange': [
+      [RANGE, LEDGER_OPTS],
+      [{ from: '2026-10-01T00:00:00.000Z', to: '2026-10-14T12:00:00.000Z' }, LEDGER_OPTS],
+    ],
+    'ledger.listRowsForAccountCreatedInRange': [],
+    'ledger.findChargesByActionIds': [],
+    'finance.listBillingStatusesAllAccounts': [[]],
+    'finance.findBillingStatusForAccount': [],
+    'finance.countRevenueRows': [[]],
+    'finance.listClientPaymentsAllAccountsPaidInRange': [[RANGE]],
+    'finance.listClientPaymentsForAccountPaidInRange': [],
+    'finance.listClientRefundsAllAccountsCreatedInRange': [[RANGE]],
+    'finance.listClientRefundsForAccountCreatedInRange': [],
+    'finance.listOverdueClientInvoicesAllAccounts': [['2026-10-14']],
+    'finance.listOverdueClientInvoicesForAccount': [],
+    'finance.listOverdueClientInstalmentsAllAccounts': [['2026-10-14']],
+    'finance.listOverdueClientInstalmentsForAccount': [],
+    'finance.listClientPlansAllAccounts': [[]],
+    'finance.listClientPlansForAccount': [],
+    'finance.listBoostPurchasesAllAccountsPaidInRange': [[RANGE]],
+    'finance.listBoostPurchasesForAccountPaidInRange': [],
+    'finance.listPlanPaymentsAllAccountsPaidInRange': [[RANGE]],
+    'finance.listPlanPaymentsForAccountPaidInRange': [],
+    'credits.getSnapshots': [[[ACCOUNT]]],
+    'credits.findPeriodAnchorsBatch': [[[ACCOUNT]]],
+    'credits.listTotalsForAccountsInRange': [
+      [[ACCOUNT], { from: '2026-09-01T00:00:00.000Z', to: '2026-10-15T00:00:00.000Z' }, { pageSize: 1000, ceiling: 5000 }],
+    ],
+    'lots.allAccounts': [[]],
+    'lots.forAccount': [],
+    readQueueFigures: [
+      [{ correlationId: '<correlationId>', adminId: ADMIN.id }, 'payment_reminders', '2026-10-14T12:00:00.000Z', { signal: '<signal>' }],
+    ],
+    // E-55 (M-4): the end is the window's end less 1 ms (SA-Q52); Business OS rows only (SA-WR-48).
+    'recorded.allAccounts': [
+      [
+        { correlationId: '<correlationId>', adminId: ADMIN.id },
+        { start: '2026-10-01T00:00:00.000Z', end: '2026-10-14T23:59:59.999Z' },
+        { featureFilter: serialise(bosRowFilter()) },
+        { pageSize: 1000, ceiling: 10000, signal: '<signal>' },
+      ],
+    ],
+    'recorded.forAccount': [],
+  };
+  // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
+  const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
+  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems'];
+  // E-55 (M-4): the new hash, and the 6a hash, which the payload still gives with `aiCost.recorded` taken out.
+  const EXPECTED_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
+  const SLICE_6A_SHA256 = 'b4d10bc1256d32de808c435917c0a53d44229e3df4e9ff879a035911ae13588c';
+
+  it('the read calls, the findNames calls, the top-level keys and the payload bytes', async () => {
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    const calls = Object.fromEntries(Object.entries(namedReads()).map(([k, fn]) => [k, serialise(fn.mock.calls)]));
+    expect(calls).toEqual(EXPECTED_CALLS);
+    expect(serialise(mockFindNames.mock.calls)).toEqual(EXPECTED_NAME_CALLS);
+    expect(Object.keys(body.data)).toEqual(EXPECTED_KEYS);
+    expect(body.data).not.toHaveProperty('accountEconomics');
+    expect(body.data).not.toHaveProperty('accountMargin');
+    // E-55 (M-4): the recorded AI cost is one more key inside Section 3, never a top-level key.
+    expect(body.data.aiCost).toHaveProperty('recorded');
+    const sha = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(sha.update(JSON.stringify(body.data)).digest('hex')).toBe(EXPECTED_SHA256);
+    // E-55: the only change to the bytes is that one key.
+    const section3 = { ...body.data.aiCost };
+    delete section3.recorded;
+    const without = { ...body.data, aiCost: section3 };
+    const sha6a = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(sha6a.update(JSON.stringify(without)).digest('hex')).toBe(SLICE_6A_SHA256);
+  });
+});
+
 describe('500 (AC-36)', () => {
   beforeEach(asAdmin);
 
@@ -1119,5 +1290,290 @@ describe('source', () => {
     const jsonCalls = code.match(/NextResponse\.json\(/g) ?? [];
     const withHeader = code.match(/headers: NO_STORE/g) ?? [];
     expect(jsonCalls.length).toBe(withHeader.length);
+  });
+});
+
+// ── Slice 6a (Money M-3): the Accounts tab through the route (T7) ───────────
+// The AC-145 baseline above is NOT edited (SA-WR-44); every 6a case lives here.
+describe('slice 6a: the Accounts tab through the route', () => {
+  beforeEach(asAdmin);
+
+  const TIER_ID: string = jest.requireActual('@/lib/business-os/entitlements/source').getEntitlementConfig().tierOrder[0];
+
+  it.each([
+    ['tab=overview (only accounts is accepted)', '?tab=overview'],
+    ['a malformed sort', '?tab=accounts&sort=name'],
+    ['a malformed show', '?tab=accounts&show=everything'],
+    ['a malformed group (SA-WR-42)', '?tab=accounts&group=tier:Bad!'],
+    ['an unknown group word', '?tab=accounts&group=vip'],
+    ['sort without tab (E-48)', '?sort=margin'],
+    ['group without tab (E-48)', '?group=trial'],
+    ['show without tab (E-48)', '?show=active'],
+    ['tab with a business picked (SA-W84)', `?tab=accounts&accountId=${ACCOUNT}`],
+    ['a repeated tab', '?tab=accounts&tab=accounts'],
+  ])('AC-146: %s → 400, no read', async (_name, query) => {
+    const res = await call(query);
+    expect(res.status).toBe(400);
+    expectNoStore(res);
+    noReadHappened();
+  });
+
+  it('AC-146: 401 and 403 with the tab make zero calls on every read', async () => {
+    mockGetUser.mockResolvedValue(null);
+    expect((await call('?tab=accounts&sort=margin')).status).toBe(401);
+    noReadHappened();
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    expect((await call('?tab=accounts')).status).toBe(403);
+    noReadHappened();
+  });
+
+  it('SA-WR-42: a well-formed tier key that is not configured → 200 with no rows ("No accounts match this filter")', async () => {
+    const res = await call('?tab=accounts&group=tier:no-such-tier');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.accountEconomics.rows).toEqual([]);
+    expect(body.data.accountEconomics.counts.matching).toBe(0);
+    expect(body.data.accountEconomics.platform.accountsCovered).toBeGreaterThan(0);
+  });
+
+  it('AC-141: the route passes the parsed filters to the builder; defaults applied when absent', async () => {
+    const body = await (await call('?tab=accounts&sort=margin&show=negative')).json();
+    expect(body.data.accountEconomics.query).toEqual({ sort: 'margin', group: null, show: 'negative' });
+    const plain = await (await call('?tab=accounts')).json();
+    expect(plain.data.accountEconomics.query).toEqual({ sort: 'ai_cost', group: null, show: 'all' });
+    expect(plain.data).not.toHaveProperty('accountMargin');
+  });
+
+  it('the payload: the row, its name, the platform line; AC-136: every money key beside a currency (cost and margin are USD fields)', async () => {
+    const body = await (await call('?tab=accounts')).json();
+    const tab = body.data.accountEconomics;
+    const row = tab.rows.find((r: { accountId: string }) => r.accountId === ACCOUNT);
+    expect(row).toMatchObject({
+      name: NAME,
+      nameStatus: 'found',
+      paid: { failed: false, lines: [{ currency: 'USD', afterTax: 1234.57, exact: true, planAfterTax: 0, boostsAfterTax: 1234.57 }] },
+      aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+      margin: { kind: 'figure', marginUsd: 1233.3355, noRevenue: false },
+    });
+    expect(tab.platform.aiCost).toEqual({ kind: 'figure', costUsd: body.data.aiCost.figures.costUsd, exact: true });
+
+    const MONEY = new Set(['afterTax', 'planAfterTax', 'boostsAfterTax']);
+    let moneyKeys = 0;
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (MONEY.has(key)) {
+          moneyKeys += 1;
+          expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
+        }
+        // Only the USD-by-construction fields may carry money without a currency.
+        if (typeof value === 'number' && /usd$/i.test(key)) expect(['costUsd', 'marginUsd']).toContain(key);
+        walk(value);
+      }
+    };
+    walk(tab);
+    expect(moneyKeys).toBeGreaterThan(0);
+    const text = JSON.stringify(tab);
+    for (const banned of ['stripe_', 'livemode', 'paid_at', 'user_id', BOOST_PACKAGE]) expect(text).not.toContain(banned);
+    expect(text).not.toMatch(new RegExp(`['"]${TIER_ID}['"]`));
+  });
+
+  it('AC-142 through the route: with a business picked, accountMargin from R-a′ / R-k′ / R-m′; no all-accounts read; no accountEconomics', async () => {
+    const body = await (await call(`?accountId=${ACCOUNT}`)).json();
+    expect(body.data.accountMargin).toEqual({
+      paid: { failed: false, lines: [{ currency: 'USD', afterTax: 1234.57, exact: true, planAfterTax: 0, boostsAfterTax: 1234.57 }] },
+      aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+      margin: { kind: 'figure', marginUsd: 1233.3355, noRevenue: false },
+    });
+    expect(body.data).not.toHaveProperty('accountEconomics');
+    expect(mockDeps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+  });
+
+  it('AC-143: the tab adds exactly ONE names call, of at most 200 ids, none of them a platform id', async () => {
+    await call();
+    const overviewNameCalls = mockFindNames.mock.calls.length;
+    jest.clearAllMocks();
+    seed();
+    asAdmin();
+    const ledger = { data: { rows: [chargeRow(ACCOUNT), { ...chargeRow(PLATFORM), id: 'r2' }], reachedCeiling: false }, error: null };
+    mockDeps.ledger.listRowsOfAllAccountsCreatedInRange.mockResolvedValue(ledger);
+    await call('?tab=accounts');
+    expect(mockFindNames.mock.calls.length).toBe(overviewNameCalls + 1);
+    const ids = mockFindNames.mock.calls[mockFindNames.mock.calls.length - 1][0] as string[];
+    expect(ids.length).toBeLessThanOrEqual(200);
+    expect(ids).toEqual([ACCOUNT]);
+  });
+
+  it('AC-138 through the route: R-k fails → 200, the tab partial, every Overview section present', async () => {
+    mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call('?tab=accounts');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.accountEconomics.status).toBe('partial');
+    for (const key of ['revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'tiles']) expect(body.data).toHaveProperty(key);
+  });
+
+  it('AC-147: the info line carries sections.accountEconomics and counts.accountEconomics (counts, booleans, enum words); a planted tier id, an amount, a name and a currency reach no log call', async () => {
+    await call(`?tab=accounts&sort=paid&group=tier:${TIER_ID}&show=active`);
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const ctx = lines[0][0];
+    expect(ctx.sections.accountEconomics).toMatch(/^(ok|partial|unknown)$/);
+    expect(ctx.counts.accountEconomics).toMatchObject({ built: true, sort: 'paid', group: 'tier', show: 'active' });
+    for (const value of Object.values(ctx.counts.accountEconomics)) expect(['number', 'boolean', 'string']).toContain(typeof value);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    expect(logged).not.toContain(`tier:${TIER_ID}`);
+    expect(logged).not.toMatch(new RegExp(`"${TIER_ID}"`));
+    for (const secret of [NAME, '1234.57', '1233.3355', String(BOOST_MINOR)]) expect(logged).not.toContain(secret);
+    expect(logged).not.toMatch(/\bUSD\b|"usd"/);
+  });
+
+  it('the Overview line says not_built and counts.accountEconomics { built: false }', async () => {
+    await call();
+    const ctx = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page')?.[0];
+    expect(ctx.sections.accountEconomics).toBe('not_built');
+    expect(ctx.counts.accountEconomics).toEqual({ built: false });
+  });
+
+  // SA-W83 / SA-WR-42: one definition of the group shape, imported from the pure page URL module.
+  it('the route imports FINANCE_GROUP_SHAPE from financeUrl.ts and writes no group regex of its own', () => {
+    const code = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(code).toMatch(/import \{[^}]*\bFINANCE_GROUP_SHAPE\b[^}]*\} from '@\/app\/admin\/finance\/financeUrl';/);
+    expect(code).not.toMatch(/founding_partner\|comped/);
+    expect(code).not.toMatch(/tier:\[/);
+  });
+});
+
+// ── Money M-4 (OV-5, T7-B): the recorded AI cost through the route ──────────
+// The AC-145 baseline above holds the one permitted edit (E-55); every M-4 case lives here.
+describe('Money M-4: the recorded AI cost through the route', () => {
+  beforeEach(asAdmin);
+
+  const infoLine = () => {
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    return lines[0][0];
+  };
+
+  it('AC-157 / SA-WR-48: no business picked → the all-accounts read once, Business OS rows only; the account read never', async () => {
+    const body = await (await call()).json();
+    expect(mockRecordedAllAccounts).toHaveBeenCalledTimes(1);
+    expect(mockRecordedForAccount).not.toHaveBeenCalled();
+    const [context, window, filters, opts] = mockRecordedAllAccounts.mock.calls[0];
+    expect(context).toEqual({ correlationId: expect.any(String), adminId: ADMIN.id });
+    expect(filters).toEqual({ featureFilter: bosRowFilter() });
+    expect(opts).toEqual({ pageSize: 1000, ceiling: 10000, signal: expect.any(AbortSignal) });
+    expect(typeof window.start).toBe('string');
+    expect(typeof window.end).toBe('string');
+    // 1.9876543 recorded against the one 1.2345 charge.
+    expect(body.data.aiCost.recorded).toEqual({
+      status: 'ok',
+      recordedUsd: 1.9876543,
+      recordedExact: true,
+      aboveCharged: { state: 'figure', usd: 0.7531543 },
+      chargedAboveUsd: null,
+    });
+  });
+
+  it('AC-157 / SA-WR-48 / tenant isolation: a business picked → the account read ONCE with exactly that id and Business OS rows; the all-accounts read never', async () => {
+    const body = await (await call(`?accountId=${ACCOUNT.toUpperCase()}`)).json();
+    expect(mockRecordedAllAccounts).not.toHaveBeenCalled();
+    expect(mockRecordedForAccount).toHaveBeenCalledTimes(1);
+    const args = mockRecordedForAccount.mock.calls[0];
+    expect(args).toHaveLength(4);
+    expect(args[0]).toBe(ACCOUNT);
+    expect(args[1].start).toBeInstanceOf(Date);
+    expect(args[1].end).toBeInstanceOf(Date);
+    expect(args[2]).toEqual(bosRowFilter());
+    // No signal reaches it (SA-Q53): the options are the page size and the ceiling only.
+    expect(args[3]).toEqual({ pageSize: 1000, ceiling: 5000 });
+    expect(body.data.aiCost.recorded.aboveCharged).toEqual({ state: 'figure', usd: 0.7531543 });
+  });
+
+  describe('AC-162 / SA-Q52: both reads get the window end less 1 ms (frozen clock)', () => {
+    beforeEach(() => {
+      jest.useFakeTimers({
+        now: new Date('2026-10-14T12:00:00.000Z'),
+        doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask', 'hrtime', 'performance'],
+      });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it('all accounts: the exact ISO strings', async () => {
+      await call();
+      expect(mockRecordedAllAccounts.mock.calls[0][1]).toEqual({ start: '2026-10-01T00:00:00.000Z', end: '2026-10-14T23:59:59.999Z' });
+    });
+
+    it('one account: the exact instants, as Dates', async () => {
+      await call(`?accountId=${ACCOUNT}`);
+      const window = mockRecordedForAccount.mock.calls[0][1] as { start: Date; end: Date };
+      expect(window.start.toISOString()).toBe('2026-10-01T00:00:00.000Z');
+      expect(window.end.toISOString()).toBe('2026-10-14T23:59:59.999Z');
+    });
+
+    it('a custom window: the last day’s last millisecond, never the next day', async () => {
+      await call('?preset=custom&from=2026-09-20&to=2026-10-03');
+      expect(mockRecordedAllAccounts.mock.calls[0][1]).toEqual({ start: '2026-09-20T00:00:00.000Z', end: '2026-10-03T23:59:59.999Z' });
+    });
+  });
+
+  it('AC-167: tab=accounts → neither read is called; no aiCost.recorded; the line says not_built', async () => {
+    const body = await (await call('?tab=accounts')).json();
+    expect(mockRecordedAllAccounts).not.toHaveBeenCalled();
+    expect(mockRecordedForAccount).not.toHaveBeenCalled();
+    expect(body.data.aiCost).not.toHaveProperty('recorded');
+    expect(body.data.accountEconomics).toBeDefined();
+    const ctx = infoLine();
+    expect(ctx.sections.aiRecorded).toBe('not_built');
+    expect(ctx.counts.aiRecorded).toEqual({ built: false });
+  });
+
+  it('AC-161: the recorded read fails → 200; Section 3 and every other section unchanged; recorded Unknown', async () => {
+    const plain = await (await call()).json();
+    jest.clearAllMocks();
+    seed();
+    asAdmin();
+    mockRecordedAllAccounts.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.aiCost.recorded).toEqual({ status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null });
+    expect(body.data.aiCost.status).toBe(plain.data.aiCost.status);
+    expect(body.data.aiCost.figures).toEqual(plain.data.aiCost.figures);
+    for (const section of ['revenue', 'accounts', 'credits', 'takings', 'paymentProblems']) expect(body.data[section].status).toBe(plain.data[section].status);
+    const ctx = infoLine();
+    expect(ctx.sections.aiRecorded).toBe('unknown');
+    expect(ctx.counts.aiRecorded).toMatchObject({ built: true, read: 'all_accounts', outcome: 'failed', rows: null });
+  });
+
+  it('AC-164: the info line carries the status and counts only; no cost, feature, session id or row id in any log call or in the payload', async () => {
+    await call();
+    let ctx = infoLine();
+    expect(ctx.sections.aiRecorded).toBe('ok');
+    expect(ctx.counts.aiRecorded).toMatchObject({ built: true, read: 'all_accounts', outcome: 'ok', rows: 1, completed: true, reachedCeiling: null, unreadable: 0 });
+    for (const value of Object.values(ctx.counts.aiRecorded)) expect(['number', 'boolean', 'string', 'object']).toContain(typeof value);
+    for (const value of Object.values(ctx.counts.aiRecorded)) if (typeof value === 'object') expect(value).toBeNull();
+
+    jest.clearAllMocks();
+    seed();
+    asAdmin();
+    const res = await call(`?accountId=${ACCOUNT}`);
+    const text = JSON.stringify(await res.json());
+    ctx = infoLine();
+    expect(ctx.counts.aiRecorded).toMatchObject({ built: true, read: 'account', outcome: 'ok', rows: 1, completed: null, reachedCeiling: false });
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of [RECORDED_COST, '0.7531543', RECORDED_FEATURE, RECORDED_SESSION, 'usage-row-2']) expect(logged).not.toContain(secret);
+    for (const secret of [RECORDED_FEATURE, RECORDED_SESSION, 'usage-row-2', 'session_id', 'cost_usd', '"feature"']) expect(text).not.toContain(secret);
+  });
+
+  it('SA-Q54 / R4-11: aiCost.recorded has exactly five keys and none is a sum of the two measures', async () => {
+    const body = await (await call()).json();
+    expect(Object.keys(body.data.aiCost.recorded).sort()).toEqual(['aboveCharged', 'chargedAboveUsd', 'recordedExact', 'recordedUsd', 'status']);
+    const sum = Math.round((1.9876543 + 1.2345) * 1e7) / 1e7;
+    expect(JSON.stringify(body.data)).not.toContain(String(sum));
   });
 });

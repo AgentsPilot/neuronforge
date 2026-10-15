@@ -2504,3 +2504,45 @@ describe('Stripe webhook, refund.* on a Connect account (STRIPE_CONNECT_REFUND_W
     expect(linesAt('info').map((l) => l.msg ?? l.ctx)).toContain('Unhandled event type');
   });
 });
+
+// ─── Plan payments P-6a.2: invoice.payment_action_required (SR-10) ───────────
+//
+// P-6a.2 routes `invoice.payment_action_required` to the Business OS `plan`
+// flow, but ONLY while the price switch is on (workplan §5.4; SA ruling). With
+// the switch off, which is this harness (no BUSINESS_OS_PLAN_PRICES_ENABLED),
+// the router must answer `not_business_os` before any catalog read or Stripe
+// call, so the route falls through to its legacy switch exactly as it did
+// before P-6a.2. A Connect event never reaches the router at all. These two
+// entries were added in their own describe; every entry above is untouched.
+
+describe('Stripe webhook, plan payments P-6a.2: invoice.payment_action_required (SR-10)', () => {
+  it('AR1. platform invoice.payment_action_required, price switch off: not Business OS even on a known price, nothing read or written', async () => {
+    const result = await run({
+      fixtureDir: 'platform',
+      fixture: 'invoice-payment-failed-unknown-price.json',
+      eventPatch: { type: 'invoice.payment_action_required' },
+      // Even a price the catalog knows is not consulted: the switch decides first.
+      knownPlanPrices: { price_agent_platform_1: 'bos_router_fixture_probe_a' },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(stripeTouched(result)).toBe(false);
+    expect(logged('bos_billing_event_denied')).toEqual([]);
+    expect(effectsOf(result).filter((e) => e.type === 'db' && String(e.table).startsWith('business_os_'))).toEqual([]);
+    expect(writesTo(result, CREDIT_TABLES)).toEqual([]);
+  });
+
+  it('AR2. Connect invoice.payment_action_required: never routed to Business OS; no money row written', async () => {
+    const result = await run({
+      fixture: 'invoice-payment-failed.json',
+      owners: OWNER_A,
+      eventPatch: { type: 'invoice.payment_action_required' },
+    });
+    expect(result).toMatchSnapshot();
+    expect(statusOf(result)).toBe(200);
+    expect(claimStatus(result)).toBe('completed');
+    expect(effectsOf(result).filter((e) => e.type === 'db' && String(e.table).startsWith('business_os_'))).toEqual([]);
+    expect(writesTo(result, ['payment_invoices', 'payment_transactions', 'scheduling_bookings'])).toEqual([]);
+  });
+});

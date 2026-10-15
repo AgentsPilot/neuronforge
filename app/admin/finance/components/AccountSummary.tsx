@@ -22,11 +22,21 @@
  *
  * Links carry this business's id and the window, never a name (M1-FR-7,
  * SA-W56); see `financeLinks.ts`.
+ *
+ * Money M-3 (slice 6a, M3-FR-8): "AI margin (USD)" directly under "Paid us,
+ * total", SELECTED from `accountMargin` (built on the server by the same
+ * functions as an Accounts tab row, AC-142) and printed by the tab's own
+ * `marginText`, so the two cannot differ. Still no arithmetic here.
+ *
+ * Money M-4 (OV-5, M4-FR-2): "Recorded above charged" directly under "Charged
+ * AI cost", rendered by Section 3's own `RecordedAboveValue` from the SAME
+ * `aiCost.recorded` (one payload field, rendered twice: AC-158). The recorded
+ * figure itself is not repeated here. Absent when the payload has none.
  */
 
 import type { ReactNode } from 'react';
 
-import type { FinanceAccountsSection, FinanceAiCostSection, FinanceBoostRevenue, FinanceCreditsSection, FinancePlanRevenue, FinanceRevenueSection, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceAccountMargin, FinanceAccountsSection, FinanceAiCostSection, FinanceBoostRevenue, FinanceCreditsSection, FinancePlanRevenue, FinanceRevenueSection, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 import { activityHref, analyticsHref, businessesHref, costsHref } from '../financeLinks';
 import {
   ACCOUNT_AI_COST,
@@ -38,11 +48,13 @@ import {
   ACCOUNT_LINK_BUSINESSES,
   ACCOUNT_LINK_COSTS,
   ACCOUNT_LINKS_TITLE,
+  ACCOUNT_MARGIN,
   ACCOUNT_NONE_IN_WINDOW,
   ACCOUNT_PAID_BOOSTS,
   ACCOUNT_PAID_PLAN,
   ACCOUNT_PAID_TOTAL,
   ACCOUNT_PLAN_GROUP,
+  ACCOUNT_RECORDED_ABOVE,
   ACCOUNT_SUMMARY_TITLE,
   ACCOUNT_UNKNOWN,
   accountCreditsLine,
@@ -54,6 +66,8 @@ import {
 import { atLeast, formatCredits, formatMoney, formatUsd } from '../financeFormat';
 import { AccountPlanGroup } from './AccountHeader';
 import { usedPercent } from './CreditsSection';
+import { MarginValue } from './AccountEconomicsTable';
+import { RecordedAboveValue } from './RecordedCostLines';
 
 const NOTE = 'text-[11px] text-slate-400';
 const LINK = 'text-xs text-purple-300 underline hover:text-purple-200';
@@ -155,6 +169,7 @@ export function AccountSummary({
   revenue,
   credits,
   accounts,
+  accountMargin = null,
 }: {
   accountId: string;
   window: FinanceWindowInfo;
@@ -163,6 +178,8 @@ export function AccountSummary({
   revenue: FinanceRevenueSection;
   credits: FinanceCreditsSection;
   accounts: FinanceAccountsSection;
+  /** Slice 6a (M3-FR-8): the server's margin for this business; null or absent shows "Unknown". */
+  accountMargin?: FinanceAccountMargin | null;
 }) {
   const headingId = 'account-summary-heading';
   const links: Array<{ label: string; href: string; testId: string }> = [
@@ -184,6 +201,11 @@ export function AccountSummary({
         <Line label={ACCOUNT_AI_COST} testId="account-summary-ai-cost">
           <AiCostValue aiCost={aiCost} />
         </Line>
+        {aiCost.recorded && (
+          <Line label={ACCOUNT_RECORDED_ABOVE} testId="account-summary-recorded-above">
+            <RecordedAboveValue recorded={aiCost.recorded} testId="account-summary-recorded-above-value" />
+          </Line>
+        )}
         <Line label={ACCOUNT_PAID_BOOSTS} testId="account-summary-boosts">
           <BoostsValue boosts={revenue.boosts} />
         </Line>
@@ -192,6 +214,9 @@ export function AccountSummary({
         </Line>
         <Line label={ACCOUNT_PAID_TOTAL} testId="account-summary-total">
           <TotalValue totals={revenue.totals} />
+        </Line>
+        <Line label={ACCOUNT_MARGIN} testId="account-summary-margin">
+          {accountMargin === null ? ACCOUNT_UNKNOWN : <MarginValue margin={accountMargin.margin} testId="account-summary-margin-value" />}
         </Line>
         <Line label={ACCOUNT_CREDITS} testId="account-summary-credits">
           <CreditsValue credits={credits} accountId={accountId} />

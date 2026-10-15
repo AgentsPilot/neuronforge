@@ -18,13 +18,13 @@ import { Fold, ShowMoreList } from './drawerFolds';
 import { PART_BOX, PartPurpose } from './DrawerBox';
 
 export const ALL_PRODUCTS_COPY = {
-  title: 'All products, token records (30 days; may be incomplete above 1,000 calls)',
+  title: 'All products, recorded AI cost (30 days; may be incomplete above 1,000 calls)',
   differs:
     'These come from the older token records, not the Business OS records, so they may not match the Business OS figure.',
   unreadable: 'The AI usage records could not be read.',
   show: 'Show all products',
   hide: 'Hide all products',
-  models: 'Cost by Model (highest cost first)',
+  models: 'Recorded AI cost by model (highest first)',
 } as const;
 
 export function AllProductsUsage({ stats }: { stats: UserDetailedStats }) {
@@ -53,7 +53,7 @@ export function AllProductsUsage({ stats }: { stats: UserDetailedStats }) {
               <DrawerField label="LLM Calls">
                 <span className="tabular-nums">{formatNumber(tokens.total_calls)}</span>
               </DrawerField>
-              <DrawerField label="Total Cost">
+              <DrawerField label="Recorded AI cost">
                 <span className="tabular-nums">{formatCost(tokens.total_cost_usd)}</span>
               </DrawerField>
             </DrawerFields>

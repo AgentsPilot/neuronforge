@@ -2,13 +2,18 @@
  * purge-schema-reconcile — READ-ONLY measurement of the live schema against
  * the purge descriptor set (admin delete AD-1a, AC-A5, SC-7 / SC-8).
  *
- *   npx tsx --import ./scripts/env-preload.ts scripts/purge-schema-reconcile.ts
+ *   npm run schema:reconcile
+ *   (= npx tsx --import ./scripts/env-preload.ts scripts/purge-schema-reconcile.ts)
  *
  * WHAT IT DOES. Calls `runSchemaReconciler()` — the same function the admin
  * preview's R-8 uses, so this measures the code that ships, not a copy of it —
  * and logs: the status, the three lists (unclassified, missing deletable,
  * missing never), the tenant-table count, the fingerprint, and the git ref/SHA
- * it ran from (business-os-schema-check Rule 2). It imports only the
+ * it ran from (business-os-schema-check Rule 2). Since data export DE-2 it
+ * also logs the two report-only export lists (FR-E19): `exportColumnDrift`
+ * (live columns on an exported table that nobody classified) and
+ * `exportColumnsMissing` (declared export columns that are not live). They do
+ * not change the exit code. It imports only the
  * reconciler, never `BusinessPurgeRepository` itself (purge bound B-3).
  *
  * WHAT IT NEVER DOES. It writes nothing: `purge_schema_introspect()` performs
@@ -74,6 +79,11 @@ async function main(): Promise<number> {
       unclassified: result.unclassified,
       missingDeletable: result.missingDeletable,
       missingNever: result.missingNever,
+      // DE-2, report-only (FR-E19): table.column names are schema, not data.
+      exportColumnDriftCount: result.exportColumnDrift.length,
+      exportColumnsMissingCount: result.exportColumnsMissing.length,
+      exportColumnDrift: result.exportColumnDrift.map((c) => `${c.table}.${c.column}`),
+      exportColumnsMissing: result.exportColumnsMissing.map((c) => `${c.table}.${c.column}`),
       fingerprint: result.fingerprint,
       error: result.error,
     },

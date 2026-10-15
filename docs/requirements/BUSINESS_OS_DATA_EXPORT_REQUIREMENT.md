@@ -1,11 +1,13 @@
 # Requirement: Business OS — Export My Data
 
-> **Last Updated**: 2026-10-05
+> **Last Updated**: 2026-10-15
 
 **Created by:** BA
 **Date:** 2026-10-05
 **Status:** Draft, **PARKED until the admin delete (AD-2, AD-3, AD-4) is finished** — the whole export scope, **including DE-0 (token exposure)**, runs LAST (user decisions 2026-10-05, DX-11 = no). Open business questions DX-1 to DX-10 and DX-12 are asked when the work resumes, then SA review (§9.2). **Re-baseline §1 against main first** (PR #218 merged 2026-10-05; see SQ-E10).
 **Status update (2026-10-14):** the user decided DX-1 to DX-9 (see [§0.2](#02-user-decisions-2026-10-14)). Where §0.2 differs from the BA recommendations in §9.1 or from §3 / §5 / §6 / §8, **§0.2 wins**. DX-10 and DX-12 stay open.
+**Status update (2026-10-15):** **DE-0 is complete** (DE-0a + DE-0b shipped; the user waived DE-0b's B-9 manual checks on 2026-10-14, see §0.1.4). **DE-1 is code complete**, uncommitted, on `feature/data-export-de1`, awaiting SA code review (see [§0.5](#05-de-1-status-and-notes-for-later-slices-2026-10-15)).
+**Status update (2026-10-15, DE-4):** **DE-4 (clients and scheduling) is code complete**, uncommitted, on `feature/data-export-de4`, awaiting SA code review (see [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15)). **The owner's synced outside calendar (`external_calendar_events`) is now OUT** (user BC-5, 2026-10-15): this supersedes §0.3.1 SQ-E7, the §3.1 B2 row and the §9.2 SQ-E7 default, each of which carries a note.
 
 ## Overview
 
@@ -49,6 +51,7 @@ Evidence tags: ✅ read in code or docs, or measured live, on 2026-10-05 · 🧠
 | **Export feature (DE-1 … DE-10)** | **Scheduled last, after admin delete AD-2, AD-3 and AD-4 are finished** (user decision, 2026-10-05). The requirement is written now so that SA can review it and the classification design (SQ-E1) can be settled alongside AD-1a's `SchemaReconciler` |
 | **DE-0 — security (token exposure)** | **Separate from the feature.** The finding (§1.2) is independent of export: the browser can read and write the owner's own OAuth tokens, whether or not anyone presses Export. **User decision pending:** does DE-0 jump the queue? BA recommends yes (DX-11) |
 | **Consequence of the order** | Admin delete AD-2…AD-4 will ship **before** the business data can be exported. Until DE-3/DE-4 ship, a deleted owner can take away only today's agent-platform export. See DX-12 |
+| **DE-2 — classification, CI check, skill rule** | Code complete, uncommitted (2026-10-15), see §0.6. **§0.3.6 tsc clause superseded by SA DE-2 review: T-1 Jest runtime check is the enforcement.** Drift command is `npm run schema:reconcile` (SA-Q4). BC-1 = BC-2 = No (user, 2026-10-15) |
 
 ### 0.1 SA ruling — DE-0 re-baseline and implementation conditions (2026-10-13)
 
@@ -256,6 +259,7 @@ No `.update(...).select()` exists on an `authenticated` path; that form would ne
 - (N2) Tables created in the dashboard can carry functions that no migration shows. Before the apply, the user runs one read-only query: `SELECT p.proname, p.prosecdef FROM pg_proc p WHERE p.prosrc ILIKE '%plugin_connections%';`. Any row with `prosecdef = false` that `authenticated` calls and that reads a token column would get 42501. Send such a row to SA.
 - (N3) Already true before DE-0b, not a regression: `/api/agent-chains/run` calls `runAgentWithContext` with `user_id` / `agent_id`, not `userId` / `agent`. It throws before it reaches the coordinator.
 **DE-0b shipped — 2026-10-14.** PR #381 merged (`02b57468`) and deployed to Production. Pre-check matched the rollback (anon + authenticated held all 7 privileges; no PUBLIC grant; service_role full). Migration `20261068` applied to PROD 2026-10-14; post-condition passed; checker **VERDICT PASS 46/0**; probe as `authenticated`: safe columns read, `access_token` refused **42501**. Owed: B-9 manual click-through by the user.
+**B-9 manual checks WAIVED by the user — 2026-10-14.** Every B-9 flow is an agent-platform flow (V2 OAuth connect, `/api/agent-stream` token refresh, `/settings` Plugins tab, agent sandbox plugin check, generate-agent), and that app is parked, so the user waived the click-through. The automated evidence stands (checker PASS 46/0, probe 42501). **DE-0 (DE-0a + DE-0b) is complete.**
 
 - (N4) QA E1 is accepted: also setting `updated_at` on the refresh is correct housekeeping.
 ### 0.2 User decisions 2026-10-14
@@ -276,6 +280,8 @@ No `.update(...).select()` exists on an `authenticated` path; that form would ne
 
 DX-10 (name in the file) and DX-12 (admin delete before export) are **not** decided by this round.
 
+**DX-1 open lawyer note, extended 2026-10-15 (user, during DE-4):** the note now names **connected apps** (`plugin_connections`: which apps the owner connected, the account name and email on each) alongside **activity** and the owner's billing. Both are out of the export by user decision (connected apps: §0.7, 2026-10-15); a formal GDPR access or erasure request may still require them. Non-blocking; the owner checks with the lawyer.
+
 ### 0.3 SA ruling — delivery design, classification and slice plan (2026-10-14)
 
 **Reviewed by SA — 2026-10-14, against origin/main `392a9b53`.** Status: ✅ **Requirement approved for slicing, with the rulings below.** Inputs: §0.2 (binding, not reopened) and the [async evaluation](/docs/requirements/BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md) (BA). This section answers SQ-A1…SQ-A6 and SQ-E1, SQ-E4…SQ-E9. Where it differs from §3, §5, §6, §8 or the evaluation, **this section wins** (§0.2 still wins over this section). Each slice still gets a Dev workplan and an SA workplan review. These rulings are the conditions for those workplans.
@@ -293,6 +299,8 @@ DX-10 (name in the file) and DX-12 (admin delete before export) are **not** deci
 | **SQ-E6 ledger** | Follow `ledgerService` **conventions only** (refunds as their own dated negative rows, currency on every amount, per-currency totals). Do **not** add the accountant workbook as a second file: two money views of the same rows can disagree, and the owner already has the ledger export |
 | **SQ-E7 borderline** | `website_page_views` out (above). `derived_metrics`, `daily_briefing_sends`, `business_events` out (derived / activity). `external_calendar_events` **in** (the owner's own calendar as we hold it, scheduling group). `email_sends` bodies: out with the table |
 | **FR-E12 failed section** | Kept: a section that fails is written to the README and `data.json` as `failed`, never silently empty. The job still finishes, and the page shows "complete with N sections missing" |
+
+> **Superseded in part (user BC-5, 2026-10-15, DE-4):** the SQ-E7 row above says `external_calendar_events` is **in**. It is now **out**: `exclude`, reason "user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data". The owner's real calendar stays with Google / Outlook. B2 is in without it. See [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15).
 
 #### 0.3.2 Delivery engine — SQ-A1 … SQ-A5 (and SQ-E4, SQ-E8)
 
@@ -539,6 +547,128 @@ The legal-entity line behind "AgentPilot" is README copy; it follows the open la
 
 Phase 1 plan is **approved by the user for building.** Each slice still gets a Dev workplan and an SA workplan review.
 
+### 0.5 DE-1 status and notes for later slices (2026-10-15)
+
+**DE-1 — Code complete, uncommitted, on `feature/data-export-de1`; awaiting SA code review, then QA and the user's diff review.** Workplan: [BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md) (SA approved with conditions C-1…C-8, 2026-10-14).
+
+| Item | As built in DE-1 |
+|---|---|
+| Content | Three sections in one group `account` (controller): `account_identity` (from the session), `user_profile` (`profiles`), `plugin_connections`. `agents`, `agent_configurations`, `agent_executions`, `subscriptions`, `transactions` and `audit_logs` are gone (DX-1, BQ-SA-1). The six now-unused repository export methods were deleted (SA Q-5) |
+| Section model | `lib/business-os/data-export/sections.ts`: `{ id, group, gdprRole, read }` registry, `runExportSections`. A failed or throwing read is `status: 'failed'`, listed in `summary.failed_sections`, response still 200, no error text in the file or the audit (FR-E12, AC-E9) |
+| Payload | Typed (`lib/business-os/data-export/payload.ts`, no `any`), `format_version: 2`, `provider: 'AgentPilot'`, `groups.account.controller: 'AgentPilot'` (SA C-4) |
+| File name | `agentpilot-data-export-<YYYY-MM-DD>.json` (UTC date, no user id): the §0.4.1 E fallback form. Business-name slug, owner timezone and `filename*` stay in DE-8b |
+| Audit | `DATA_EXPORTED` via `logAndFlush` (WC-7), with section counts and failed sections only |
+| Danger zone | The plain `<a href="/api/user/data-export">` is now a button through `downloadUserDataExport()`, with success / error messages (QA E4 closed in code) |
+| Profile read | `.maybeSingle()`: no profile row is an `ok`, empty section, not `failed` (SA Q-4) |
+
+**Q-3 ruling (SA, 2026-10-14), applied:** `profiles.plan` is **removed from the export in DE-1**. DX-1a says profile details only, no plan or billing data, and DE-1 is the slice that applies DX-1 to today's file. `hourly_rate_usd`, `role` and `org_id` stay for now (they are not plan or billing data); DE-3 decides them (below).
+
+**AC-E7 note:** the second half of AC-E7 ("the audit section contains the owner's visible rows and none of the BD-26 hidden types") **no longer applies**. The audit section left the export under §0.3.1 (DX-1d), and `ownerAuditReads.guard.test.ts` now proves the export route reads no audit rows at all. BD-26 itself is unchanged and stays covered for `listOwnerEntries` and the owner RLS policy. The first half (no `*` read) holds: the two remaining reads use named column constants, pinned literally in the characterization test.
+
+**Notes for later slices (SA C-6):**
+
+| Slice | Note |
+|---|---|
+| **DE-2** | `plugin_connections` rows with `status = 'disconnected'` are a **status, not a soft delete** (SA Q-7): they stay in the export. Record this on the descriptor |
+| **DE-3** | Decide `profiles.hourly_rate_usd`, `role` and `org_id` explicitly in the Business OS profile column set. Open until then |
+| **DE-8b** | **`business_profiles.business_name` does not exist** (a live probe returned 42703, DE-1 workplan §7). DE-8b's workplan must find the real business-name column with the `business-os-schema-check` skill before writing the file-name slug |
+
+### 0.6 DE-2 status, SA rulings and user decisions (2026-10-15)
+
+**DE-2 — Code complete, uncommitted, on `feature/data-export-de2`; C-3 live read done 2026-10-15 (TL, prod read-only: `profiles` 18 cols and `plugin_connections` 19 cols, drift 0, missing 0; `intent_examples` no `user_id`, no FKs). SA code-approved 2026-10-15; QA and the user's diff review next.** Workplan: [BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md) (SA approved with conditions C-1…C-9, 2026-10-15).
+
+**§0.3.6 tsc clause superseded by SA DE-2 review: T-1 Jest runtime check is the enforcement.** §0.3.6 says a descriptor without `export` "fails `tsc`, the existing type-check job". Measured in the DE-2 workplan §1.3, that is not true: Jest is transpile-only, `next build` ignores type errors, and `typecheck:bos-llm` does not scope `descriptors.ts`. SA declined widening that scope (SA-Q1: +22 files, about +62% on a required job with thin headroom, against the no-added-CI-time rule). The required TypeScript field stays as editor feedback and documentation; the gate is `lib/business-os/data-export/__tests__/exportClassification.test.ts` in the existing Jest gate.
+
+**User decisions (via TL, 2026-10-15):**
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| **BC-1** | Should the download list which Business OS modules the owner switched on? | **No** | `user_capabilities`, `user_capability_blocks`: `exclude`, "PLATFORM: module setup, not data the owner entered (user 2026-10-15)" |
+| **BC-2** | Should the download include the organisation / team-membership record? | **No** | `organizations`, `organization_members`: `exclude`, "PLATFORM: agent-platform organisation record (user 2026-10-15)" |
+
+**SA rulings that change this requirement:**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q4** | Column drift is surfaced by **`npm run schema:reconcile`** (new alias for `scripts/purge-schema-reconcile.ts`, read-only), not by `npm run schema:check`. This supersedes "surfaced by `npm run schema:check`" in §0.3.6 and FR-E19. `schema:check` is unchanged |
+| **SA-Q5** | Beside `exportColumnDrift`, a second report-only list `exportColumnsMissing` (a declared export column that is not live). It replaces the literal-select coverage `schema:check` loses once the selects come from the descriptors |
+| **SA-Q2** | Buckets carry their own shape (`include { folder }` / `exclude` / `planned 'DE-8b'`) and their own expiry flag `PLANNED_FILES_ALLOWED`, flipped by DE-8b (DE-7 flips `PLANNED_TABLES_ALLOWED`) |
+| **SA-Q6** | Secret-column deny list with a reviewed exception map (`DENY_EXCEPTIONS`, one entry: `plugin_connections.plugin_key`), checked for stale entries; the same check runs at request time in `exportColumnsOf` (fail closed to a `failed` section). Every later exception is an SA item in its slice |
+| **SA-Q8** | One table per section; `account_identity` (from the session) is the only non-table section |
+| **SA-Q10** | The audit guard covers every file under `lib/business-os/data-export/`, and refuses archived history too (`archived_records`, `archiveRepository`) |
+| **SA-Q11** | `website_blocks` is `planned` DE-7 and must be read **through an owner-scoped parent** (`website_pages` rows filtered by `user_id`), never by a caller-supplied page id alone. `onboarding_prompt_ideas` is `exclude` (assistant activity) |
+| **SA-Q12** | The skill rule diverges from Appendix A: it points at `lib/business-os/purge/descriptors.ts` (the `export` field) instead of §6.4, names buckets, and names `npm run schema:reconcile`. It is in `new-repository`, `new-api-route`, `new-plugin`, plus one line in `durable-queue-drain` |
+
+**As built (measured on the branch):** 155 table descriptors = 2 `include` (`profiles` → `user_profile`, `plugin_connections` → `plugin_connections`, the same columns in the same order as DE-1, so the file is unchanged) + 45 `planned` (DE-3: 4, DE-4: 9, DE-5: 15, DE-6: 12, DE-7: 5) + 108 `exclude`; 3 buckets = 2 `planned` DE-8b + 1 `exclude`. `intent_examples` gained a `never` / `global` descriptor (count 154 → 155); no Reset, Purge or admin delete removes anything different (`descriptorsForRun` identical for all 16 combinations). The two repositories select `exportColumnsOf(table).join(', ')`. `plugin_connections` notes record that disconnected rows are a status (§0.5) and that `ACCOUNT_PROFILE_KEYS` is the control on `profile_data` (SA C-4).
+
+**Follow-up (SA-Q9):** `intent_examples` is listed in `USER_OWNED_TABLES` but has no `user_id`; decide in the next ownership pass. DE-2 leaves the ownership entry alone.
+
+### 0.7 DE-4 status, user decisions and notes for DE-8b (2026-10-15)
+
+**DE-4 — Code complete, uncommitted, on `feature/data-export-de4`; awaiting SA code review.** T-0 live read done 2026-10-15 (TL, prod read-only: column counts 19, 11, 10, 16, 15, 26, 36, 8, 11, all as expected; `crm_contacts.notes` live; cross-tenant integrity 0 on all five parent/child edges; largest owner 885 rows / ~200 kB). `npm run schema:reconcile` on the branch (`exportColumnDrift` 0, `exportColumnsMissing` 0) is owed before merge. Workplan: [BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md) (SA approved with conditions C-1…C-12, 2026-10-15).
+
+**What it delivers:** today's JSON download (`GET /api/user/data-export`) gains eight sections in a new group `client_records` (AgentPilot the processor, the account holder the controller): `pipeline_stages`, `clients`, `client_activities`, `client_tasks`, `client_documents` (details only; files in DE-8b), `services`, `bookings`, `time_off`. Each is one table with an explicit column list and a written reason for every column left out. Every read goes through one repository, keyed on the session user's id, paged to the end in `id` order (no silent 1,000-row cut), deleted documents left out. `format_version` stays 2 (additive). No migration, no new route, no new dependency, no flag.
+
+**User decisions (via TL, 2026-10-15; binding, recorded by SA).** These DE-4 BC numbers are separate from DE-2's BC-1 / BC-2 in §0.6.
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| **BC-1** | The owner's private booking notes (`internal_notes`, never shown to the client) | **In** | `scheduling_bookings.internal_notes` included |
+| **BC-2** | Cancelled, no-show and completed bookings; finished and cancelled tasks | **In**, with their status | No status filter anywhere except BC-3 |
+| **BC-3** | Archived documents / deleted documents | **Archived in, deleted out** | `contact_documents` `rowFilter`: `status` not in (`deleted`). `status` is NOT NULL, so no NULL row is dropped |
+| **BC-4** | How a client found the business (`crm_contacts.source_metadata`) | **Readable keys only** | Allow-list, named one by one: `capture_page_url`, `referrer_url`, `referrer_domain`, `capture_channel`, `device_type`, `capture_timestamp`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`. Out: `ip_hash` (a day-salted IP hash, recoverable), `user_agent`, `session_id`, `smart_link_id`, and every key not named (`page_type`, `smart_link_code`, `smart_link_name` are not on the list; none is in live data today) |
+| **BC-5** | The synced copy of the owner's own Google / Outlook calendar (`external_calendar_events`) | **Out** | `exclude`, "user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data". **Supersedes §0.3.1 SQ-E7 ("in"), the §3.1 B2 row and the §9.2 SQ-E7 default** (each carries a note) |
+| **BC-6** | "Reminder sent" and "intake form sent" markers on a booking | **Out** (DX-1d: emails sent are activity) | `reminder_24hr_sent`, `reminder_2hr_sent`, `intake_sent_at`, `intake_reminded_at` excluded. The client's intake answers and their completion time stay in |
+| **BC-7** | The assistant's stored suggestions on a service (`ai_suggestions`) | **Out** | Excluded (assistant output, not a setting the owner chose) |
+
+**SA rulings recorded here (DE-4 review):**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q1** | One descriptor-driven, read-only `BusinessDataExportRepository`: a granularity exception inside the repository layer (as `BusinessPurgeRepository`, DEV-Q1), bounded E-1…E-6 (read-only; `include` + `user_id` scope only, resolved from a section id; columns only from `exportColumnsOf`; first filter `.eq('user_id', session id)`; service role documented; sole importer `data-export/sections.ts`). DE-5/6/7 sections go through it |
+| **SA-Q2** | Soft-delete filter as an optional `rowFilter` on the `include` classification; the filter column must be NOT NULL live (SA C-6) |
+| **SA-Q5** | Second `DENY_EXCEPTIONS` entry: `crm_pipeline_stages.stage_key` (the stage's short name, which `crm_contacts.stage` refers to; not a credential) |
+| **SA-Q7** | The Phase 1 ceiling is built **now, in today's JSON route** (below) |
+| **SA-Q8** | Rows are in `id` (uuid) order, not date order; each row carries its dates. DE-8b's README says so |
+| **SA-Q13** | `export_metadata.groups[].controller` is `'AgentPilot'` or `'account_holder'`; DE-8b replaces `account_holder` with the business name |
+
+**Phase 1 ceiling in today's JSON route (SA-Q7, C-9).** Over either limit the route answers **413** `{ success: false, error: "Your account holds more than the on-screen download can package. Nothing was downloaded. Please contact support and we will prepare your export.", code: "export_too_large" }`, `Cache-Control: no-store`, and sends **no file**, never a partial one:
+
+| Limit | Value | Why |
+|---|---|---|
+| Rows across all sections | **100,000** (`EXPORT_LIMITS.ROW_CEILING`, the §0.4.1 C constant DE-8b reuses) | Bounds memory; reading stops at the first section that passes it |
+| JSON body | **4 MB** (`EXPORT_LIMITS.JSON_BODY_MAX_BYTES`), measured on the exact bytes that would be sent, pretty-print included | Vercel refuses a function response over 4.5 MB with a platform crash, not a message. At pretty-printed JSON this is the **binding** limit in Phase 1. Today's largest account is ~200 kB |
+
+A refusal writes **no** `DATA_EXPORTED` entry (nothing was exported; `DATA_EXPORT_FAILED` arrives with the audit names in DE-8a). It logs one `warn` (`event: data_export_over_ceiling`, ids and counts only); the 413 body carries no counts. The browser helper maps it to `code: 'too_large'` only when the body carries `export_too_large` (not on the status alone); the three screens show their generic error until DE-9 writes the copy.
+
+**Third-party data in today's file (accepted in §0.4, restated):** from DE-4's merge, the current "Export data" button includes the owner's clients' details. It is downloaded only by the signed-in owner, never cached, and logs and audit carry counts only.
+
+**Notes for DE-8b (binding conditions):**
+
+| # | Condition |
+|---|---|
+| **C-11 (SA-Q12)** | The "Your files" manifest for the `contact-documents` bucket **drops any object whose `contact_documents` row is `deleted` or missing**. Deleting a document removes its file from storage, but the delete route continues with the soft delete if the storage call fails, so orphan objects can exist (DE-4 workplan F-7) |
+| **C-11 (body cap)** | The 4 MB JSON body cap exists only while the export is a direct JSON response. It is **removed when DE-8b's signed-URL zip replaces** the direct response; the §0.4.1 C zip ceilings (40 MB files, 150 files, 45 MB zip, 100,000 rows) take over |
+| CSV header | DE-8b takes each section's CSV header from `exportColumnsOf(exportDescriptorOfSection(id).table)`, so an empty section still has a header row. Rows are flat objects keyed by those columns; arrays and jsonb cells are JSON text in one cell; `clients.source_metadata` is the one reshaped cell |
+| README | Says rows are in `id` order (not date order) and that deleted documents are not included |
+
+**As built (measured on the branch):** 155 table descriptors = **10** `include` (`profiles`, `plugin_connections` + the eight DE-4 tables) + **36** `planned` (DE-3: 4, DE-5: 15, DE-6: 12, DE-7: 5; DE-4: 0) + **109** `exclude` (+ `external_calendar_events`). `level`, `order`, `scope`, `snapshot` and notes are unchanged on all nine DE-4 tables (purge baseline green). `PluginConnectionRepository.listForUserDataExport` stays unpaged on purpose: one row per `(user_id, plugin_key)` (SA C-10).
+
+**T-9 done — 2026-10-15 (SA F-3).** The "`npm run schema:reconcile` owed before merge" above is closed: TL ran the same comparison as read-only SQL on prod (DE-4 workplan §10.2): declared include ∪ excluded columns vs `information_schema.columns` for the eight included tables, **drift 0, missing 0**; `contact_documents.status` is **NOT NULL** (C-6 confirmed). Done in lieu of the script because the worktree has no DB env.
+
+**User decisions 2026-10-15, after SA code review and QA (binding; DE-4 workplan "Post-review changes — 2026-10-15"):**
+
+| # | Decision | Effect |
+|---|---|---|
+| **DE4-U1** | **The time goes in the file name, now** | `agentpilot-data-export-YYYY-MM-DD-HHmm.json`, from the route's one `exportedAt` instant (the same one written as `export_date`, UTC, and as the audit `export_timestamp`), on the **owner's clock**: `user_preferences.timezone`, read through `UserPreferencesRepository.findTimezone` (one explicit column, the session user's id). NULL (never set), blank or an invalid zone gives **UTC**, explicitly (`FALLBACK_TIMEZONE`). A failed read also gives UTC and a `warn` line: the export never fails over its name. DE-8b later swaps the `agentpilot-data-export` prefix for the business-name slug |
+| **DE4-U2** | **Connected apps are dropped from the export entirely** (business data only) | `plugin_connections` is `exclude`, "user 2026-10-15: connected apps dropped from the export (business data only); see lawyer note §0.2 DX-1". The `plugin_connections` section, its reader, its `profile_data` allow-list (`accountProfile` / `ACCOUNT_PROFILE_KEYS`), the `plugin_connections.plugin_key` deny exception and the now-dead `PluginConnectionRepository.listForUserDataExport` are removed. The table is never read by the export (pinned, with token-bearing rows seeded). The DE-0a / DE-0b browser-access controls are unchanged. The DX-1 lawyer note in §0.2 now names connected apps |
+
+**As built after DE4-U2 (measured on the branch, 2026-10-15):** 155 table descriptors = **9** `include` (`profiles` + the eight DE-4 tables) + **36** `planned` (unchanged) + **110** `exclude` (+ `plugin_connections`). The export file holds 2 account sections (`account_identity`, `user_profile`) + 8 `client_records` sections. The SA C-10 note on `listForUserDataExport` above no longer applies: the method is gone.
+
+**User manual check DE-1 — 2026-10-15: PASS** (Danger zone Export works).
+
+**UI-1 (new work item, folded into DE-9; recorded 2026-10-15):** the export result message does not match the system's look and feel. The Danger zone shows a small grey text line (`DangerZonePanel.tsx` `<p role="status" className="text-xs …">`), while the Business OS settings page uses a green banner with an icon (`app/business-os/settings/page.tsx` successMessage block) and other screens use `sonner` toasts. DE-9 must use the system's standard success/error notification for every export entry point (4 call sites: Business OS settings page, `DangerZonePanel`, `SecurityTab`, `SecurityTabV2`) and add a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1). SA picks the standard pattern in the DE-9 workplan review. No code change for this in DE-4.
+
 ---
 
 ## 1. Discovery: what exists today
@@ -646,6 +776,8 @@ Table names are as classified in `businessOwnedTables.ts` ✅. **Every column is
 | **C Content** | `websites`, `website_pages`, `website_content`, `smart_links`, `user_media` (generated and uploaded images: metadata; files in DE-8) | Mostly controller | DE-7 |
 | **D Insight & assistant activity** | `business_chat_conversation`, `business_chat_saved_plans`, `business_chat_verified_questions`, `daily_briefings`, `insights`, `insight_outcomes`, `insight_actions`, `insight_automations`, `business_health_summaries`, `owner_insight_history`, `channel_connections` (no tokens), `channel_metrics_daily`, `website_page_views` (aggregated, SQ-E7) | Mixed | DE-7 |
 | **E Agent platform (existing)** | `agents`, `agent_executions`, `agent_configurations`, `user_subscriptions`, `credit_transactions`, kept as today with explicit columns | Controller | DE-1 |
+
+> **Superseded in part (user BC-5, 2026-10-15, DE-4):** the B2 row lists `external_calendar_events`. It is **out** of the export (synced copy of the owner's own outside calendar). B2 as built is `scheduling_services`, `scheduling_bookings`, `scheduling_availability_exceptions`. See [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15).
 
 ### 3.2 Never in the export (each needs a recorded reason in the registry)
 
@@ -764,6 +896,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 
 **DE-1**
 - [ ] AC-E7 No export read uses `*` (guard). The audit section contains the owner's visible rows and none of the BD-26 hidden types (fixture with one of each).
+  - **Note (2026-10-15, DE-1):** the audit half no longer applies: the audit section left the export (DX-1d, §0.3.1), and a guard proves the route reads no audit rows. See §0.5.
 - [ ] AC-E8 A forced 500 in production mode returns no internal detail.
 - [ ] AC-E9 A section whose read fails is marked failed in the file, and the response is still 200.
 
@@ -821,6 +954,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 - [ ] **SQ-E5** Soft-deleted rows per section (the `agents` "includes deleted" precedent). (raised by: BA | status: open)
 - [ ] **SQ-E6** Reuse of `lib/payments/ledgerService`: include its workbook as an extra file, or only follow its conventions? (raised by: BA | status: open)
 - [ ] **SQ-E7** Classify the borderline tables: `website_page_views` (visitor IP or user agent?), `derived_metrics`, `daily_briefing_sends`, `external_calendar_events`, `business_events`, and where `email_sends` bodies are stored. (raised by: BA | status: open)
+  - Note (2026-10-15, DE-4): SA ruled this in §0.3.1. The `external_calendar_events` part of that ruling ("in") is superseded by the user (BC-5): **out**. See [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15).
 - [ ] **SQ-E8** DE-8 background job (queue + drain per `durable-queue-drain`, or on-demand), private bucket, link TTL, cleanup, and the rate-limit mechanism. (raised by: BA | status: open)
 - [ ] **SQ-E9** Admin send-export (DE-10): route under the `/api/admin/users/[id]/…` family. Does it fit SA-3's admin-target exception? (raised by: BA | status: open)
 - [x] **SQ-E10** Merge state of `refactor/data-export-repositories` and of AD-1a's `SchemaReconciler`. DE-1 and DE-2 build on both. (raised by: BA | status: answered 2026-10-05 by coordinator — both are on main: `refactor/data-export-repositories` (38f527f0) and AD-1a PR #216. **Also merged today: PR #218 `fix(export): include audit history and plugin connections, explicit columns, no raw error (FU-1, FU-P1, FU-P2)`.** This discovery was read from an older worktree, so §1 and DE-1 must be re-baselined against main before the work starts — parts of DE-1 are likely already done.)
@@ -881,3 +1015,9 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-14 | SA ruling: Phase 1 re-cut (§0.4.1) | Phase 1 = one request builds one zip (records + files), uploads to the private `business-data-exports` bucket (50 MB) and returns a 120 s signed URL; no queue, parts table, drain or email. Jobs table kept (rate limit in the start RPC, stale-run rule at 90 s, failed jobs not counted); one daily `/api/cron/data-export` for the 3-day sweep and a size watch. Ceiling 40 MB / 150 files / 100,000 rows / 45 MB zip / 40 s, refused before upload with a clear message and an `over_ceiling` audit; warn at 60%. BQ-SA-1 applied in DE-1/DE-2/DE-3. DX-10 file-name and controller rules. Admin "send export to owner" moved to Phase 2. Phase 1 ~14.5 d; Phase 2 list recorded, not scheduled |
 | 2026-10-14 | User decisions on Phase 1 trade-offs (§0.4.1 H) | Admin "send export to owner" deferred to Phase 2; "contact support" above the Phase 1 ceiling accepted. Phase 1 plan approved for building |
 | 2026-10-14 | DE-0b shipped | PR #381 merged + deployed; 20261068 applied to PROD; checker PASS 46/0; probe 42501. B-9 click-through owed |
+| 2026-10-14 | DE-0b B-9 waived; DE-0 complete | The user waived the B-9 manual checks (all agent-platform flows; that app is parked). DE-0 (DE-0a + DE-0b) complete |
+| 2026-10-15 | DE-1 code complete (§0.5) | Uncommitted on `feature/data-export-de1`, awaiting SA code review. Six sections out (DX-1, BQ-SA-1), section model with FR-E12 `failed`, typed payload `format_version: 2`, `logAndFlush`, Danger zone through the shared helper, file name `agentpilot-data-export-<date>.json`. Q-3 ruling recorded (`profiles.plan` removed). AC-E7 note (audit half no longer applies). C-6 notes for DE-2 (disconnected = status), DE-3 (`hourly_rate_usd` / `role` / `org_id`), DE-8b (`business_profiles.business_name` does not exist, 42703) |
+| 2026-10-15 | DE-2 code complete; SA rulings and user decisions (§0.6) | Uncommitted on `feature/data-export-de2`, C-3 live read done (drift 0, missing 0) and SA code-approved the same day. Required `export` field on every purge descriptor and bucket (155 + 3); CI enforcement is the Jest runtime check `exportClassification.test.ts`: **the §0.3.6 tsc clause is superseded** (SA-Q1 declined widening `typecheck:bos-llm`). BC-1 (modules switched on) and BC-2 (organisation record) = No, both `exclude`. SA-Q4: drift surfaced by the new `npm run schema:reconcile`, not `schema:check` (supersedes §0.3.6 / FR-E19 wording); SA-Q5 `exportColumnsMissing`. SA-Q9 follow-up: `intent_examples` is user-owned without a `user_id`. SA-Q12: skill text diverges from Appendix A (points at `descriptors.ts`, names buckets and `schema:reconcile`) |
+| 2026-10-15 | DE-4 code complete; user decisions BC-1…BC-7; calendar out (§0.7) | Uncommitted on `feature/data-export-de4`, awaiting SA code review; `schema:reconcile` owed before merge. Eight `client_records` sections (clients, notes and history, tasks, pipeline stages, document details, services, bookings, time off) in today's JSON export, through one read-only descriptor-driven repository (SA-Q1), keyset-paged on `id` to an empty page, deleted documents out via a descriptor `rowFilter` (SA-Q2). User decisions 2026-10-15: BC-1 internal notes in, BC-2 all history in, BC-3 archived in / deleted out, BC-4 `source_metadata` readable keys only (named allow-list), **BC-5 `external_calendar_events` out (supersedes §0.3.1 SQ-E7, §3.1 B2, §9.2 SQ-E7; notes added there)**, BC-6 sent-markers out, BC-7 `ai_suggestions` out. `DENY_EXCEPTIONS` + `crm_pipeline_stages.stage_key` (SA-Q5). Phase 1 ceiling built in today's route: 413 `export_too_large` over 100,000 rows or a 4 MB body (exact bytes), no file, no `DATA_EXPORTED`. DE-8b conditions (C-11): the files manifest drops objects whose `contact_documents` row is deleted or missing; the 4 MB body cap goes when the signed-URL zip replaces the JSON response |
+| 2026-10-15 | DE-4 post-review: T-9 recorded; user decisions DE4-U1 / DE4-U2; DX-1 note extended (§0.2, §0.7) | SA F-3: T-9 done by TL's read-only SQL (§10.2 of the DE-4 workplan: drift 0, missing 0, `contact_documents.status` NOT NULL), closing "`schema:reconcile` owed before merge". DE4-U1: file name `agentpilot-data-export-YYYY-MM-DD-HHmm.json` on the owner's clock (`user_preferences.timezone`; NULL / invalid / unreadable gives UTC; never fails the export). DE4-U2: connected apps (`plugin_connections`) dropped from the export: descriptor `exclude`, section, reader, allow-list, deny exception and `listForUserDataExport` removed; totals 9 include / 36 planned / 110 exclude. §0.2 DX-1 open lawyer note now names connected apps alongside activity |
+| 2026-10-15 | User manual check DE-1 PASS; UI-1 folded into DE-9 (§0.7) | Danger zone Export works. UI-1: the export result message must use the system's standard success/error notification on all 4 export entry points, plus a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1); SA picks the pattern in the DE-9 workplan review. No DE-4 code change |

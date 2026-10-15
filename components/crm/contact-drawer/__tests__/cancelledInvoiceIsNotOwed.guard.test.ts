@@ -39,8 +39,22 @@ describe('money that is not coming', () => {
     expect(code).not.toContain('Money that is not coming, by either route');
   });
 
-  it('counts a cancelled invoice as well as a cancelled booking', () => {
-    expect(definition).toContain("booking.status === 'cancelled'");
+  it('counts a cancelled invoice as well as a called-off job', () => {
+    /*
+     * `jobCalledOff` replaced `booking.status === 'cancelled'` here, and it is
+     * a SUPERSET of it: the status is one of the four signals behind it,
+     * alongside `cancel_reason`, `cancelled_by` and a stopped quote.
+     *
+     * It had to widen. `cancel` preserves a recorded attendance, so a job
+     * cancelled after its consultation was held keeps `completed` — and the
+     * plan stages that never had an invoice raised have no `invoiceStatus` to
+     * fall back on, so those stages went back to looking collectable on a job
+     * the owner had stopped.
+     *
+     * `jobOverAfterHeldMeeting.guard.test.ts` pins the derivation, including
+     * that the booking status stays part of it.
+     */
+    expect(definition).toContain('jobCalledOff');
     expect(definition).toContain("payment?.invoiceStatus === 'cancelled'");
     // Either, not both: the two routes are independent and the invoice one
     // leaves the booking untouched.

@@ -2,13 +2,13 @@
  * Owner-read guard for `audit_trail` (credit deduction BD-26; workplan
  * BUSINESS_OS_BD26_OWNER_AUDIT_HIDING_WORKPLAN.md §4, SA W26-6).
  *
- * Owner-hidden entries (lib/audit/ownerVisibility.ts) are left out by three
- * readers: the owner RLS policy, AuditTrailRepository.listOwnerEntries and
- * AuditTrailRepository.listOwnerEntriesForExport (the data export route's read;
- * DATA_EXPORT_REPOSITORY_REFACTOR_WORKPLAN.md OP-3: the route no longer names
- * the table, so it falls under the normal rule, and the export method must
- * keep both exclusions). A NEW owner-facing reader of the table would not know the
- * rule, so this guard fails on any `'audit_trail'` / `"audit_trail"` /
+ * Owner-hidden entries (lib/audit/ownerVisibility.ts) are left out by two
+ * readers: the owner RLS policy and AuditTrailRepository.listOwnerEntries. The
+ * data export route reads NO audit rows at all since DE-1
+ * (BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md §3.6: activity left the export,
+ * DX-1d), and its read method `listOwnerEntriesForExport` was deleted; a check
+ * below keeps the route from reading them again. A NEW owner-facing reader of
+ * the table would not know the rule, so this guard fails on any `'audit_trail'` / `"audit_trail"` /
  * `` `audit_trail` `` string literal in application code (comments do not
  * count) outside the allow-list below. It matches the literal, not only
  * `from('audit_trail')`, because ArchiveRepository reaches the table through a
@@ -38,13 +38,20 @@ const ALLOWED_FILES: Record<string, string> = {
 };
 
 /**
- * The data export route. NOT allow-listed (OP-3): it reads the table through
- * AuditTrailRepository.listOwnerEntriesForExport, which must apply both owner
- * exclusions (W26-6 c, ruling 5). Naming the table here again fails the guard.
+ * The data export route. NOT allow-listed, and since DE-1 it reads no audit
+ * rows at all (DX-1d): it neither names the table nor calls
+ * `auditTrailRepository`. Its own `DATA_EXPORTED` entry is a WRITE through
+ * `logAndFlush`, which does not count.
  */
 const DATA_EXPORT_ROUTE = 'app/api/user/data-export/route.ts';
-const AUDIT_REPOSITORY = 'lib/repositories/AuditTrailRepository.ts';
-const EXPORT_READ_METHOD = 'listOwnerEntriesForExport';
+
+/**
+ * Data export DE-2 (DE-1 SA S-1): the export's own module is held to the same
+ * rule as the route, because since DE-1 the route only runs the sections in
+ * lib/business-os/data-export/ and a reader added there would bypass a
+ * route-only check. Every non-test file under it.
+ */
+const DATA_EXPORT_MODULE_DIR = 'lib/business-os/data-export/';
 
 const isAdminApi = (file: string) => file.startsWith('app/api/admin/');
 
@@ -133,45 +140,18 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
-function appliesBothOwnerExclusions(source: string): boolean {
-  const code = withoutComments(source);
-  return (
-    /\.not\(\s*'entity_type'\s*,\s*'in'\s*,[\s\S]{0,80}?OWNER_HIDDEN_ENTITY_TYPES/.test(code) &&
-    /\.not\(\s*'action'\s*,\s*'like'\s*,[\s\S]{0,80}?AI_ACTION_EVENT_PREFIX/.test(code)
-  );
-}
-
 /**
- * The body of `async <name>(` in a class source, from the `{` that opens it to
- * its matching `}`; null when the method is not there. Braces are counted
- * naively, which holds for the balanced braces of template literals.
+ * The data export reads no audit rows: no repository call, no table name
+ * (DE-1). DE-2 (SA-Q10) widens it to the ARCHIVED owner history too:
+ * `archived_records` and `archiveRepository` hold the same activity (DX-1d,
+ * BD-26).
  */
-function methodBody(source: string, name: string): string | null {
-  const start = source.indexOf(`async ${name}(`);
-  if (start < 0) return null;
-  // The body opens at the first `{` that ends the signature line.
-  const open = source.slice(start).search(/\{\s*[\r\n]/);
-  if (open < 0) return null;
-  let depth = 0;
-  for (let i = start + open; i < source.length; i += 1) {
-    if (source[i] === '{') depth += 1;
-    else if (source[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return source.slice(start + open, i + 1);
-    }
-  }
-  return null;
-}
-
-/** The export read applies both owner exclusions (W26-6 c, ruling 5; OP-3). */
-function exportReadAppliesBothExclusions(repositorySource: string): boolean {
-  const body = methodBody(repositorySource, EXPORT_READ_METHOD);
-  return body !== null && appliesBothOwnerExclusions(body);
-}
-
-/** The data export route reads the audit rows through the export method. */
-function routeUsesExportRead(routeSource: string): boolean {
-  return withoutComments(routeSource).includes(`auditTrailRepository.${EXPORT_READ_METHOD}(`);
+const AUDIT_READ_CALLS = ['auditTrailRepository', 'archiveRepository'];
+const AUDIT_TABLES = ['audit_trail', 'archived_records'];
+function readsNoAuditRows(source: string): boolean {
+  const code = withoutComments(source);
+  const literals = stringLiteralsOf(source);
+  return !AUDIT_READ_CALLS.some((call) => code.includes(call)) && !AUDIT_TABLES.some((table) => literals.includes(table));
 }
 
 /** The guard's verdict for one file. */
@@ -216,22 +196,19 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
     }
   });
 
-  it('the data export read still exists by name in AuditTrailRepository (no stale entry, OP-3)', () => {
-    const entry = files.find(({ file }) => file === AUDIT_REPOSITORY);
-    expect(entry).toBeDefined();
-    expect(methodBody(entry!.source, EXPORT_READ_METHOD)).not.toBeNull();
-  });
-
-  it('the data export read applies both owner exclusions (OP-3)', () => {
-    const entry = files.find(({ file }) => file === AUDIT_REPOSITORY);
-    expect(entry && exportReadAppliesBothExclusions(entry.source)).toBe(true);
-  });
-
-  it('the data export route reads audit rows through that method, and does not name the table', () => {
+  it('the data export route reads no audit rows at all (DE-1, DX-1d)', () => {
     const entry = files.find(({ file }) => file === DATA_EXPORT_ROUTE);
     expect(entry).toBeDefined();
-    expect(routeUsesExportRead(entry!.source)).toBe(true);
-    expect(stringLiteralsOf(entry!.source)).not.toContain('audit_trail');
+    expect(readsNoAuditRows(entry!.source)).toBe(true);
+  });
+
+  it('no file of the data export module reads audit or archived rows (DE-2, S-1 / SA-Q10)', () => {
+    const moduleFiles = files.filter(({ file }) => file.startsWith(DATA_EXPORT_MODULE_DIR));
+    // Non-vacuity, by name: the scan reaches the module's readers.
+    expect(moduleFiles.map(({ file }) => file.slice(DATA_EXPORT_MODULE_DIR.length))).toEqual(
+      expect.arrayContaining(['sections.ts', 'payload.ts', 'classification.ts'])
+    );
+    expect(moduleFiles.filter(({ source }) => !readsNoAuditRows(source)).map(({ file }) => file)).toEqual([]);
   });
 });
 
@@ -261,39 +238,24 @@ describe('the guard itself (negative controls)', () => {
     const both =
       "from('audit_trail').select('*').not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`).not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)";
     expect(violation(DATA_EXPORT_ROUTE, both)).not.toBeNull();
-    expect(violation(DATA_EXPORT_ROUTE, "const { data } = await auditTrailRepository.listOwnerEntriesForExport(user.id, since);")).toBeNull();
   });
 
-  it('fails the export read when either exclusion is missing (OP-3)', () => {
-    const repo = (body: string) =>
-      [
-        'export class AuditTrailRepository {',
-        '  async listOwnerEntries(userId: string) {',
-        "    return this.supabase.from('audit_trail').not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`).not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`);",
-        '  }',
-        `  async ${EXPORT_READ_METHOD}(userId: string, since: string): Promise<unknown> {`,
-        body,
-        '  }',
-        '}',
-      ].join('\n');
-    const notIn = "      .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)";
-    const notLike = "      .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)";
-    const read = (...lines: string[]) => ["    const { data } = await this.supabase.from('audit_trail').select('*')", ...lines, '    return data;'].join('\n');
-
-    expect(exportReadAppliesBothExclusions(repo(read(notIn, notLike)))).toBe(true);
-    // Each exclusion missing. The sibling listOwnerEntries has both, so a check
-    // over the whole file instead of the method body would wrongly pass these.
-    expect(exportReadAppliesBothExclusions(repo(read(notLike)))).toBe(false);
-    expect(exportReadAppliesBothExclusions(repo(read(notIn)))).toBe(false);
-    // Only mentioned in a comment does not count.
-    expect(exportReadAppliesBothExclusions(repo(read('      // OWNER_HIDDEN_ENTITY_TYPES AI_ACTION_EVENT_PREFIX')))).toBe(false);
-    // The method gone.
-    expect(exportReadAppliesBothExclusions(repo(read(notIn, notLike)).replace(EXPORT_READ_METHOD, 'renamedRead'))).toBe(false);
+  it('flags a data export route that reads audit rows again (DE-1)', () => {
+    // Through the repository, under any method name.
+    expect(readsNoAuditRows('const { data } = await auditTrailRepository.listOwnerEntries(user.id, q);')).toBe(false);
+    // By naming the table.
+    expect(readsNoAuditRows("const { data } = await supabaseServer.from('audit_trail').select('id');")).toBe(false);
+    // A comment that mentions either does not count.
+    expect(readsNoAuditRows("// auditTrailRepository.listOwnerEntries / from('audit_trail')")).toBe(true);
+    // The audit WRITE the route makes is not a read.
+    expect(readsNoAuditRows('await logAndFlush({ action: AUDIT_EVENTS.DATA_EXPORTED }, requestLogger, ctx);')).toBe(true);
   });
 
-  it('fails when the route stops calling the export read', () => {
-    expect(routeUsesExportRead('const { data } = await auditTrailRepository.listOwnerEntriesForExport(user.id, since);')).toBe(true);
-    expect(routeUsesExportRead('// auditTrailRepository.listOwnerEntriesForExport(user.id, since)')).toBe(false);
-    expect(routeUsesExportRead('const { data } = await auditTrailRepository.listOwnerEntries(user.id, q);')).toBe(false);
+  it('flags a data export file that reads archived history (DE-2, SA-Q10)', () => {
+    expect(readsNoAuditRows('const rows = await archiveRepository.listArchived(userId);')).toBe(false);
+    expect(readsNoAuditRows("const t = 'archived_records';")).toBe(false);
+    expect(readsNoAuditRows("const t = 'audit_trail';")).toBe(false);
+    // Comments mentioning either do not count.
+    expect(readsNoAuditRows("// archiveRepository / 'archived_records'\n/* auditTrailRepository 'audit_trail' */ const a = 1;")).toBe(true);
   });
 });

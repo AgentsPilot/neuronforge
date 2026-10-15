@@ -79,6 +79,22 @@ export interface InsightData {
   estimated_impact_usd?: number;
   impact_direction?: 'loss' | 'opportunity' | 'savings';
   paired_process_id?: string;
+  /**
+   * What became of the work this insight queued, if any was.
+   *
+   * Counted from `insight_actions` by the list route. Absent when the owner
+   * never pressed anything — which is itself the answer a closed card needs,
+   * and is not the same as "sent nothing": `skipped` rows exist and are
+   * counted separately, because a queued message that never left is the fact
+   * most worth saying out loud.
+   */
+  outcome?: {
+    sent: number;
+    skipped: number;
+    failed: number;
+    pending: number;
+    lastSentAt: string | null;
+  };
   eligible_for_automation: boolean;
   process_parameters?: Record<string, unknown>;
   priority_score: number;

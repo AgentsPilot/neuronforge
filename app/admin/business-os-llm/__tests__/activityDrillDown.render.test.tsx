@@ -190,15 +190,17 @@ beforeEach(() => {
 });
 
 describe('the row button (AC-B17)', () => {
-  it('is a real button, first in the row, named with the action type and time', async () => {
+  // LF-8 (user request 2026-10-15): the button moved from the first cell to a narrow last column.
+  it('is a real button, last in the row, named with the action type and time', async () => {
     stub(okDrill(drillDown()));
     render(<ActivityTab />);
     const table = await screen.findByTestId('activity-table');
     const firstRow = within(table).getAllByTestId('activity-row')[0];
-    const button = within(firstRow).getAllByRole('button')[0];
+    const buttons = within(firstRow).getAllByRole('button');
+    const button = buttons[buttons.length - 1];
     expect(button).toHaveAttribute('type', 'button');
     expect(button).toHaveAccessibleName(OPEN_DETAILS_LABEL('website_copy', '2026-10-01 10:15 UTC'));
-    expect(firstRow.querySelector('td')).toContainElement(button);
+    expect(firstRow.querySelector('td:last-child')).toContainElement(button);
   });
 
   it('opens the drawer with ONE read that carries only the action id, and no list read is counted for it', async () => {

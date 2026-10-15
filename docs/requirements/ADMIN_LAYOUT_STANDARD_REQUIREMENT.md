@@ -1,6 +1,6 @@
 # Requirement: Admin Layout Standard
 
-> **Last Updated**: 2026-10-13
+> **Last Updated**: 2026-10-15
 
 **Created by:** BA
 **Date:** 2026-10-09
@@ -588,7 +588,7 @@ Template: `ActivityDrillDown.tsx:296-347`.
 | # | Rule |
 |---|---|
 | D-1 | A row with more detail than its cells opens a **right-side drawer** (`AdminDrawer`, §6 C-9). No hand-built modals and no inline expanding rows. |
-| D-2 | The opener is a first-column button: "Open" + `PanelRightOpen` icon, with an accessible name naming the row ("Open details for …"). Clicking anywhere on the row may also open it, but the button is the keyboard path. |
+| D-2 | The opener is a first-column button: "Open" + `PanelRightOpen` icon, with an accessible name naming the row ("Open details for …"). Clicking anywhere on the row may also open it, but the button is the keyboard path. **Amended by LF-8 (Admin Layout Follow-ups, user request 2026-10-15):** the opener (`OpenRowButton`) is an icon-only `ChevronRight` in a 32 px square target (`h-8 w-8`), with no visible word; the row-naming label ("Open details for …") is both its `aria-label` and its `title` (tooltip), and `title` must always equal the label and never be the only name. It sits in a narrow **last** column (`ADMIN_TH_OPEN` / `ADMIN_TD_OPEN` from `adminTable.ts`) whose header is a screen-reader-only "Details" (`<span className="sr-only">Details</span>`). This supersedes L-1d SA Q-10 ("first, so the keyboard reaches it first") and Q-16 / R-8 ("inside the first cell" on Businesses); the historic rows below are kept as written. |
 | D-3 | A row whose purpose is **drilling into a filtered view** (Analytics aggregate rows) is a link that sets the filter. That is navigation, not "open a row". |
 | D-4 | Drawer: `side="right"`, `w-full sm:max-w-3xl`, `bg-slate-900 p-6 text-slate-200`, `[color-scheme:dark]`, inline `backgroundColor: 'rgb(15 23 42)'`, close button colour **and focus ring** set by child selector. The title colour is set so it cannot lose to the sheet's token class (F-65). |
 | D-5 | Title `text-lg font-semibold text-slate-100` + optional `font-mono text-sm text-slate-400` suffix. Body = `Section` (h3 `text-sm font-semibold text-slate-100`, `aria-labelledby`) and `Field` (`dl` grid `grid-cols-[max-content_1fr]`). The section is not a landmark region (A-9). |
@@ -1561,3 +1561,4 @@ Doc corrections made by SA: §1 path note and rows L-2a, L-2b, L-8; §3 short-pa
 | 2026-10-13 | Q-8 retired (LF-3a SA F-1) | §1 row 12 (Messages): the Q-8 page deviation (`confirm()` kept for Delete and Mark All Read) is marked retired by Admin Layout Follow-ups LF-3b (#348, now on `main`), in the style of row 11's Q-7. The row above stays as the record of the state at build time |
 | 2026-10-13 | LF-5 copy note | §7.15: Admin users copy changed by LF-5 (purpose line, second section title, new note line, empty sentence); the L-12 as-built text kept as history |
 | 2026-10-14 | BA applied SA 5a review edits E-38, E-39 (finance health) | §5.6 U-10 gains the recorded exception for the one-shot `account` key on `/admin/users` (Money M-1, SA-Q33, E-38); §6.2 C-6 records that the original `BusinessAccountPicker` is deleted in Money M-1 (M1-FR-2, E-39). Source: [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) "SA Requirement Review — Slice 5a (M-1/M-2) — 2026-10-14" |
+| 2026-10-15 | LF-8 amendment to §5.8 D-2 (LF-8 SA F-1) | D-2 amended in place: icon-only `ChevronRight` opener with a 32 px target; label as `aria-label` and `title`; a narrow last column (`ADMIN_TH_OPEN` / `ADMIN_TD_OPEN`) with a screen-reader-only "Details" header. Supersedes L-1d SA Q-10 and Q-16 / R-8, by user request 2026-10-15; the historic rows are unchanged. Source: [ADMIN_LAYOUT_LF8_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_LF8_WORKPLAN.md) |

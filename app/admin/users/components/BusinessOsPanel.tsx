@@ -19,7 +19,7 @@
  *     & entitlements screen uses — so the plan, cohort and "which layer decided"
  *     are exactly what that API returns;
  *   - the account summary route: business name and vertical, 30-day Business OS
- *     AI spend, recent failed AI actions (metadata only).
+ *     recorded AI cost, recent failed AI actions (metadata only).
  *
  * Money: AI cost is USD by definition of the model pricing table, labelled as
  * such, never converted and never mixed with the business's own currency.
@@ -37,6 +37,7 @@ import {
   ENTITLEMENT_ERROR_COPY,
   EntitlementSnapshot,
 } from '@/app/admin/business-os-tiers/components/EntitlementSnapshot';
+import { planSummaryWords } from '@/app/admin/business-os-tiers/planCardWords';
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
@@ -103,15 +104,18 @@ function auditLink(accountId: string, groupId?: string | null): string {
 }
 
 /**
- * The tier and cohort the entitlements read already returned, nothing more.
- * Never empty (SA C6): with neither it says "No plan recorded", as the strip
- * does. The section heading already says "Plan & entitlements" (SQ-H).
+ * The plan the entitlements read says is deciding, by its plain name, and the
+ * free access underneath it while that is live ("Essentials · Founding Partner
+ * underneath"; admin plan card plain labels, 2026-10-15). Never empty (SA C6):
+ * with nothing recorded it says "No plan recorded", as the strip does; with a
+ * recorded plan that grants nothing (an anomaly) it names the anomaly. The
+ * section heading already says "Plan & entitlements" (SQ-H).
  */
 function planSummary(payload: AccountPayload): string {
-  const parts: string[] = [];
-  if (payload.plan?.tier) parts.push(payload.plan.tier);
-  if (payload.plan?.cohort) parts.push(`cohort ${payload.plan.cohort}`);
-  return parts.length > 0 ? parts.join(' · ') : STRIP_COPY.noPlan;
+  const words = planSummaryWords(payload);
+  if (words) return words;
+  if (!payload.plan?.tier && !payload.plan?.cohort) return STRIP_COPY.noPlan;
+  return `No plan in force (${payload.anomaly ?? 'anomaly'})`;
 }
 
 /** The link style the drawer uses for every in-text link (BD-11: no decorative green). */
@@ -215,7 +219,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
       aiSlot = {
         kind: 'value',
         text: formatUsd(spend.total.estimatedCostUsd),
-        sub: spend.status === 'incomplete' ? 'estimated, a lower bound' : 'estimated',
+        sub: spend.status === 'incomplete' ? 'recorded, a lower bound' : 'recorded',
       };
     }
   }
@@ -356,7 +360,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
           <>
             {/* Not headings: each DrawerSection has exactly one (L-1d M-4; SA C2). */}
             <div data-testid="bos-panel-spend" className={`${PART_BOX} space-y-2`}>
-              <p className="text-sm font-semibold text-slate-300">Business OS, last 30 days (USD estimated)</p>
+              <p className="text-sm font-semibold text-slate-300">Recorded AI cost, Business OS, last 30 days (USD)</p>
               <PartPurpose part="ai-bos" />
               {summary.data.aiSpend30d.status === 'error' ? (
                 <p className="text-sm text-rose-300">The AI usage ledger could not be read.</p>

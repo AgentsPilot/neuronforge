@@ -113,7 +113,10 @@ describe('and the menu can return it', () => {
 
   it('names which meeting, since six of a package look alike', () => {
     const refundCall = tab.slice(tab.indexOf('refundable={Boolean('));
-    expect(refundCall.slice(0, 1200)).toMatch(/label:[\s\S]{0,120}formatDate\(row\.start_time\)/);
+    /* The window widened when the call gained `transactionId` and a comment
+       explaining why a package meeting has none. What is pinned is that the
+       label still names the meeting by its date, not how close the two sit. */
+    expect(refundCall.slice(0, 2800)).toMatch(/label:[\s\S]{0,400}formatDate\(row\.start_time\)/);
   });
 });
 

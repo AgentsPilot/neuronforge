@@ -9,20 +9,29 @@
  * heading in EVERY state, `unknown` included (the takings block's "Not our
  * revenue" must not vanish when the block fails). A section that passes no
  * badge renders exactly the DOM it rendered before.
+ *
+ * Money M-4 (SA-W98, R4-9): an optional `alsoWhenUnknown`, rendered after the
+ * could-not-load line ONLY when the section is `unknown`: Section 3's recorded
+ * AI cost is its own read and must still show when the charged read failed.
+ * A section that passes none renders exactly the DOM it rendered before.
  */
 
 import type { ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import type { FinanceSectionStatus } from '@/lib/business-os/finance/financeTypes';
 import { RETRY, SECTION_COULD_NOT_LOAD, SECTION_OK, SECTION_PARTIAL } from '../financeCopy';
 
-const BADGE: Record<FinanceSectionStatus, { text: string; className: string }> = {
-  ok: { text: SECTION_OK, className: 'border-slate-600 text-slate-300' },
-  partial: { text: SECTION_PARTIAL, className: 'border-amber-500/40 text-amber-300' },
-  unknown: { text: SECTION_COULD_NOT_LOAD, className: 'border-slate-600 text-slate-400' },
+/**
+ * The section's own status as the shared chip (F-1, §5.9). "OK" is neutral:
+ * no green on a section that merely loaded. "Partial" is warn and "Could not
+ * load" is unknown, so both carry an icon beside the words (A-7).
+ */
+const BADGE: Record<FinanceSectionStatus, { text: string; tone: StatusTone }> = {
+  ok: { text: SECTION_OK, tone: 'neutral' },
+  partial: { text: SECTION_PARTIAL, tone: 'warn' },
+  unknown: { text: SECTION_COULD_NOT_LOAD, tone: 'unknown' },
 };
 
 interface Props {
@@ -34,9 +43,11 @@ interface Props {
   children?: ReactNode;
   /** A chip in words beside the heading, shown in every state (SA-W24). */
   badge?: { tone: StatusTone; label: string };
+  /** M-4 (SA-W98): content of its own read, shown under the could-not-load line when the section is unknown. */
+  alsoWhenUnknown?: ReactNode;
 }
 
-export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge }: Props) {
+export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge, alsoWhenUnknown }: Props) {
   const headingId = `${id}-heading`;
   const heading = (
     <h2 id={headingId} className="text-base font-semibold text-white">
@@ -64,9 +75,9 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
           )}
           <p className="text-xs text-slate-400">{subtitle}</p>
         </div>
-        <span className={cn('rounded border px-2 py-0.5 text-[11px]', BADGE[status].className)} data-testid={`section-${id}-status`}>
+        <StatusChip tone={BADGE[status].tone} testId={`section-${id}-status`}>
           {BADGE[status].text}
-        </span>
+        </StatusChip>
       </header>
       {status === 'unknown' ? (
         <div className="flex items-center gap-3 text-sm text-slate-300" role="status">
@@ -83,6 +94,7 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
       ) : (
         children
       )}
+      {status === 'unknown' && alsoWhenUnknown}
     </section>
   );
 }

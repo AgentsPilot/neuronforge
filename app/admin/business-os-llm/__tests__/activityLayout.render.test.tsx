@@ -314,7 +314,7 @@ describe('T-7: the KPI values (§7.11, K-8, K-9)', () => {
     await screen.findByTestId('activity-table');
     expect(tile('activity-kpi-actions')).toHaveAttribute('aria-label', 'AI actions, 2');
     expect(tile('activity-kpi-failed')).toHaveAttribute('aria-label', 'Failed, 1');
-    expect(tile('activity-kpi-cost')).toHaveAttribute('aria-label', `Cost (USD, net), ${formatUsd(0.0046)}`);
+    expect(tile('activity-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD, net), ${formatUsd(0.0046)}`);
     expect(tile('activity-kpi-failed')).not.toHaveTextContent('shown');
     const unresolved = tile('activity-kpi-unresolved');
     expect(unresolved).toHaveAttribute('aria-label', 'Unresolved corrections, 0');
@@ -343,7 +343,7 @@ describe('T-7: the KPI values (§7.11, K-8, K-9)', () => {
     stub(() => ok(payload({ rows, total: 2 })));
     const { unmount } = openAt('?tab=activity');
     await screen.findByTestId('activity-table');
-    expect(tile('activity-kpi-cost')).toHaveAttribute('aria-label', `Cost (USD, net), ${formatUsd(0.004)}`);
+    expect(tile('activity-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD, net), ${formatUsd(0.004)}`);
     expect(tile('activity-kpi-cost')).toHaveTextContent('1 without a net figure left out');
     unmount();
 
@@ -359,7 +359,7 @@ describe('T-7: the KPI values (§7.11, K-8, K-9)', () => {
     stub(() => ok(payload({ rows: allNull, total: 2 })));
     openAt('?tab=activity');
     await screen.findByTestId('activity-table');
-    expect(tile('activity-kpi-cost')).toHaveAttribute('aria-label', 'Cost (USD, net), Unknown');
+    expect(tile('activity-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost (USD, net), Unknown');
   });
 
   it('Unresolved is amber with "Needs a look" only when there is one (K-5 (ii))', async () => {

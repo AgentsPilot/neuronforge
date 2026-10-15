@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-30",
+  "generated": "2026-10-15",
   "matrixVersion": 2,
   "tiers": {
     "basic": {
@@ -136,6 +136,16 @@
         {
           "effectiveFrom": "2026-09-22T00:00:00.000Z",
           "days": 7
+        },
+        {
+          "effectiveFrom": "2026-10-20T00:00:00.000Z",
+          "days": 5
+        }
+      ],
+      "margin": [
+        {
+          "effectiveFrom": "2026-10-20T00:00:00.000Z",
+          "days": 1
         }
       ]
     }

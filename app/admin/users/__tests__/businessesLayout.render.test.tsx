@@ -497,8 +497,10 @@ describe('U-9 newest read wins (SA M-5)', () => {
 });
 
 describe('U-10 the table', () => {
-  // L-4b (SA Q-2 (b)): six headers; the Actions column went with the row toggle.
-  it('keeps the six headers, each scope="col"', async () => {
+  // L-4b (SA Q-2 (b)): the Actions column went with the row toggle. LF-8 (user
+  // request 2026-10-15): the Open button's own narrow last column, "Details"
+  // for screen readers only, makes seven.
+  it('keeps the seven headers, each scope="col"', async () => {
     mockFetch();
     render(<UsersPage />);
     await screen.findAllByTestId('row-business');
@@ -510,18 +512,21 @@ describe('U-10 the table', () => {
       'Login Activity',
       'Last Sign In',
       'Joined',
+      'Details',
     ]);
     for (const th of headers) expect(th.getAttribute('scope')).toBe('col');
   });
 
-  // L-4b: the row toggle became the drawer's Open button (Q-16, R-8).
-  it('the Open button is named for the person, shows the word "Open", and is not a toggle', async () => {
+  // L-4b: the row toggle became the drawer's Open button (Q-16, R-8). LF-8: an
+  // icon, so its name is also its tooltip (the old toggle's no-title pin is
+  // superseded); still not a toggle.
+  it('the Open button is named for the person, is an icon with that name as its tooltip, and is not a toggle', async () => {
     mockFetch();
     render(<UsersPage />);
     const open = await screen.findByRole('button', { name: 'Open details for Dana Cohen' });
-    expect(open.textContent).toBe('Open');
+    expect(open.textContent).toBe('');
     expect(open.hasAttribute('aria-expanded')).toBe(false);
-    expect(open.hasAttribute('title')).toBe(false);
+    expect(open.getAttribute('title')).toBe('Open details for Dana Cohen');
   });
 
   it('the toggle name falls back to the email, then "this login", never "null" (SA S-4)', () => {
