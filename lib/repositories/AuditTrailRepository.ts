@@ -9,8 +9,9 @@
 // the rows, but the audit routes have always read with the service role, and
 // this repository makes the scoping explicit instead of relying on RLS:
 // `.eq('user_id', userId)` on every query. For the owner method `userId` is
-// always the authenticated caller (never a client-supplied value). The same
-// holds for `listOwnerEntriesForExport`, the GDPR data export's audit read.
+// always the authenticated caller (never a client-supplied value). The GDPR
+// data export reads no audit rows (DE-1, BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md:
+// activity is out of the export, DX-1d).
 //
 // THE FIRST ADMIN EXCEPTION (admin reorganisation slice 2b, SA C-7):
 // `listAdminAiFailures` reads an ADMIN-SELECTED account's failed Business OS AI
@@ -74,9 +75,7 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
 
 /**
  * The columns an owner may read: exactly the fields the /monitoring page uses,
- * plus the two ids. Not `hash` (the tamper hash) and not `user_email`. The GDPR
- * export's audit read (listOwnerEntriesForExport) uses the same set, so changing
- * this also changes what the export holds: a privacy decision.
+ * plus the two ids. Not `hash` (the tamper hash) and not `user_email`.
  */
 /**
  * How many audit rows one behaviour read will scan.
@@ -397,43 +396,6 @@ export class AuditTrailRepository {
       return { data: [...byAction.values()].sort((a, b) => b.count - a.count), error: null };
     } catch (error) {
       this.logger.error({ err: error, userId, since }, 'Failed to count owner actions');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's own
-   * audit entries created since `since` (an ISO timestamp the route computes),
-   * newest first, at most 10000, with the same two BD-26 owner exclusions as
-   * listOwnerEntries (a source guard, lib/audit/__tests__/
-   * ownerAuditReads.guard.test.ts, keeps both here).
-   *
-   * OWNER_COLUMNS only, the set the owner audit page reads: not `hash` (the
-   * internal tamper hash) and not `user_email` (a copy of the email the export
-   * already carries in `user_profile`). Changing this changes what the export
-   * holds: a privacy decision.
-   *
-   * Filters and orders on `created_at` (FU-1, DATA_EXPORT_FOLLOWUPS_WORKPLAN.md).
-   * Before that fix it used `timestamp`, a column that does not exist, so the
-   * export never held any audit history.
-   */
-  async listOwnerEntriesForExport(userId: string, since: string): Promise<RepositoryResult<Record<string, unknown>[]>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('audit_trail')
-        .select(OWNER_COLUMNS)
-        .eq('user_id', userId)
-        // BD-26, written as in listOwnerEntries. The values are fixed identifiers, so no quoting.
-        .not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`)
-        .not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)
-        .gte('created_at', since)
-        .order('created_at', { ascending: false })
-        .limit(10000);
-
-      if (error) throw error;
-      return { data: (data ?? []) as unknown as Record<string, unknown>[], error: null };
-    } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to list owner audit entries for the data export');
       return { data: null, error: error as Error };
     }
   }

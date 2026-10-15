@@ -19,18 +19,28 @@
  * businesses, M1-FR-10). The picked NAME is held here, in state, and never in
  * the URL, a request or a log (SA-Q32, AC-109): the URL is written only from
  * the query, whose type has no name field.
+ *
+ * Money M-3 (slice 6a, M3-FR-1, SA-W88): with NO business picked, two
+ * page-local tabs, Overview (everything above, unchanged) and Accounts. The
+ * tab is the URL's `tab=accounts`, written with the same `router.replace`;
+ * leaving Accounts resets its sort and filters. The filter bar sits above both
+ * tabs. With a business picked there are no tabs, and picking a business drops
+ * `tab`, `sort`, `group` and `show`. The summary gains the AI margin line from
+ * `accountMargin`.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw } from 'lucide-react';
 
-import { parseFinanceUrl, serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
+import { DEFAULT_FINANCE_QUERY, parseFinanceUrl, serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
 import { useFinanceData } from '../useFinanceData';
 import { LOADING, NOTICE_LABEL, NAME_PLATFORM, PAGE_LOAD_FAILED, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH, RETRY } from '../financeCopy';
 import { accountNameFor, type PickedName } from '../financeAccount';
 import { AccountHeader } from './AccountHeader';
 import { AccountSummary } from './AccountSummary';
+import { AccountsTab } from './AccountsTab';
+import { FinanceTabPanel, FinanceTabs, type FinanceTab } from './FinanceTabs';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
 import { CreditsSection } from './CreditsSection';
@@ -39,6 +49,20 @@ import { FinanceKpiStrip } from './FinanceKpiStrip';
 import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
+
+/**
+ * Today's sections, unchanged. With no business picked they are the Overview
+ * tab's panel; with a business picked there are no tabs, so no panel either.
+ */
+function OverviewBody({ tabbed, children }: { tabbed: boolean; children: ReactNode }) {
+  return tabbed ? (
+    <FinanceTabPanel id="overview">
+      <div className="space-y-4">{children}</div>
+    </FinanceTabPanel>
+  ) : (
+    <>{children}</>
+  );
+}
 
 export function FinanceView() {
   const searchParams = useSearchParams();
@@ -62,10 +86,29 @@ export function FinanceView() {
   const onPick = useCallback(
     (accountId: string, name: string | null) => {
       setPickedName({ accountId, name });
-      setQuery({ ...query, accountId: accountId || null });
+      // M3-FR-1: a picked business has no tab; the tab's sort and filters go with it.
+      setQuery({
+        ...query,
+        accountId: accountId || null,
+        tab: null,
+        sort: DEFAULT_FINANCE_QUERY.sort,
+        group: DEFAULT_FINANCE_QUERY.group,
+        show: DEFAULT_FINANCE_QUERY.show,
+      });
     },
     [query, setQuery]
   );
+  // SA-Q43: selecting a tab writes `tab`; leaving Accounts resets its sort and filters.
+  const onSelectTab = useCallback(
+    (tab: FinanceTab) =>
+      setQuery(
+        tab === 'accounts'
+          ? { ...query, tab: 'accounts' }
+          : { ...query, tab: null, sort: DEFAULT_FINANCE_QUERY.sort, group: DEFAULT_FINANCE_QUERY.group, show: DEFAULT_FINANCE_QUERY.show }
+      ),
+    [query, setQuery]
+  );
+  const selectedTab: FinanceTab = query.tab === 'accounts' ? 'accounts' : 'overview';
   const accountName = query.accountId !== null ? accountNameFor(query.accountId, pickedName, data) : null;
   const chipName = accountName === null ? null : accountName.platform ? NAME_PLATFORM : accountName.name;
 
@@ -134,16 +177,37 @@ export function FinanceView() {
                 revenue={data.revenue}
                 credits={data.credits}
                 accounts={data.accounts}
+                accountMargin={data.accountMargin ?? null}
               />
             </>
           )}
-          <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
-          <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
-          <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
-          <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
-          <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
-          <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
-          <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
+          {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
+          {selectedTab === 'accounts' && query.accountId === null ? (
+            <FinanceTabPanel id="accounts">
+              {data.accountEconomics ? (
+                <AccountsTab
+                  section={data.accountEconomics}
+                  window={data.window}
+                  windowLabel={windowLabel}
+                  query={query}
+                  onChange={setQuery}
+                  onRetry={reload}
+                />
+              ) : (
+                <p className="text-sm text-slate-400">{LOADING}</p>
+              )}
+            </FinanceTabPanel>
+          ) : (
+            <OverviewBody tabbed={query.accountId === null}>
+              <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
+              <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
+              <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
+              <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
+              <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
+              <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
+              <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
+            </OverviewBody>
+          )}
         </div>
       )}
     </div>

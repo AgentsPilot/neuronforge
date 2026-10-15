@@ -397,3 +397,32 @@ describe('slice 1c: dormant Founding Partners counts the Founding Partner group 
     expect(figures.dormantFounding).toBe(1);
   });
 });
+
+describe('slice 6a: the non-wire foundingPartnerNote set (SA-W77)', () => {
+  it('holds exactly the accounts counted in a tier group’s foundingPartners; its size equals their sum', () => {
+    const TIER_2 = config.tierOrder[1];
+    const noted = planRow({ tier: TIER, cohort: CHAMPION });
+    const notedViaHint = planRow({ cohort: CHAMPION });
+    const ended = planRow({ tier: TIER, cohort: CHAMPION, cohort_expires_at: daysFromNow(-1) });
+    const comped = planRow({ tier: TIER, cohort: CHAMPION });
+    const plainChampion = planRow({ cohort: CHAMPION });
+    const paying = new Set([noted.user_id, notedViaHint.user_id, ended.user_id]);
+    const result = classifyAccounts({
+      rows: [noted, notedViaHint, ended, comped, plainChampion],
+      payingIds: paying,
+      paidTierHints: new Map([[notedViaHint.user_id, TIER_2]]),
+      window: WINDOW,
+      now: NOW,
+      config,
+    });
+    expect([...result.foundingPartnerNote].sort()).toEqual([noted.user_id, notedViaHint.user_id].sort());
+    const sum = result.figures.groups.reduce((n, g) => n + g.foundingPartners, 0);
+    expect(result.foundingPartnerNote.size).toBe(sum);
+  });
+
+  it('is empty when the paying read failed (no tier group, so no note)', () => {
+    const owner = planRow({ tier: TIER, cohort: CHAMPION });
+    const result = classifyAccounts({ rows: [owner], payingIds: null, window: WINDOW, now: NOW, config });
+    expect(result.foundingPartnerNote.size).toBe(0);
+  });
+});

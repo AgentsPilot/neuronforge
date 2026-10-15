@@ -496,3 +496,73 @@ export const ACCOUNT_LINK_ACTIVITY = 'Business OS AI Activity';
 export const ACCOUNT_LINK_COSTS = 'Business OS AI Costs & credits';
 export const ACCOUNT_LINK_ANALYTICS = 'AI cost & usage';
 export const ACCOUNT_LINK_BUSINESSES = 'Businesses';
+
+// ── The Accounts tab: account economics and AI margin (slice 6a, Money M-3, §11E) ──
+// Every figure is decided on the server (M3-FR-13); these strings only label it.
+export const TABS_LABEL = 'Finance views';
+export const TAB_OVERVIEW = 'Overview';
+export const TAB_ACCOUNTS = 'Accounts';
+
+export const ECON_TITLE = 'Accounts';
+export const ECON_SUBTITLE = 'Every account: what it paid us, what its AI cost us, and the AI margin';
+/** M3-FR-9: shown on the tab at all times. */
+export const ECON_NOTES: readonly string[] = [
+  'Paid us is after tax, net of refunds and disputes. Stripe fees are not deducted.',
+  'AI cost is the charged cost (credits we billed).',
+  'AI margin is shown only for accounts paid in USD. No exchange rate is used.',
+  'Plan refunds and disputes are not recorded yet.',
+];
+export const ECON_PLATFORM_TITLE = 'All accounts, before any filter';
+export const econPlatformCovers = (accounts: string, withDeleted: boolean) =>
+  withDeleted ? `Covers every account (${accounts}) and deleted accounts.` : `Covers every account (${accounts}).`;
+export const ECON_PAID = 'Paid us, after tax';
+export const ECON_COST = 'AI cost, charged (USD)';
+export const ECON_MARGIN = 'AI margin (USD)';
+export const ECON_BUSINESS = 'Business';
+export const ECON_GROUP = 'Plan group';
+export const ECON_GROUP_NOTE = 'Plan is the current one';
+export const ECON_CREDITS = 'Credits used';
+export const ECON_CREDITS_NOTE = 'own credit period';
+export const ECON_OPEN = 'Open';
+export const econOpenLabel = (business: string) => `Open ${business} on its own, same window`;
+export const econPaidParts = (plan: string, boosts: string) => `plan ${plan} · boosts ${boosts}`;
+export const ECON_NONE = 'None';
+export const ECON_UNKNOWN = 'Unknown';
+export const ECON_NO_PLAN_ROW = 'No plan row';
+export const ECON_NO_ALLOWANCE = 'No allowance';
+export const econCreditsUsed = (percent: string, used: string, allowance: string) => `${percent} · ${used} / ${allowance}`;
+/** M3-W-7: the margin before the charging cut-over. */
+export const ECON_MARGIN_NOT_AVAILABLE = 'Not available: AI cost is charged only from 29 Sep 2026';
+/** M3-W-5: another currency, never converted. */
+export const ECON_MARGIN_OTHER_CURRENCY = 'n/a, different currency';
+export const ECON_NO_REVENUE = 'No revenue in this window';
+export const ECON_COST_BEFORE_CUTOVER = 'Before AI charging went live';
+export const ECON_CUTOVER_NOTICE =
+  'The window starts before AI charging went live on 29 Sep 2026: AI cost covers only the charged part, and no margin is shown.';
+export const ECON_DELETED = 'Deleted accounts';
+export const ECON_SORT = 'Sort';
+export const ECON_SHOW = 'Show';
+export const ECON_ALL_GROUPS = 'All plan groups';
+export const ECON_SORT_LABELS = {
+  ai_cost: 'AI cost, highest first',
+  margin: 'AI margin, lowest first',
+  paid: 'Paid us, highest first',
+  credits: 'Credits used, highest first',
+} as const;
+export const ECON_SHOW_LABELS = {
+  all: 'All accounts',
+  active: 'Paid us or used AI in this window',
+  negative: 'Negative AI margin',
+} as const;
+export const econShowing = (shown: string, total: string) => `Showing ${shown} of ${total} accounts`;
+export const econNotListed = (count: string) => `${count} more accounts not listed; narrow with a filter`;
+export const ECON_EMPTY = 'No accounts match this filter';
+/** M3-FR-2 / M3-FR-10: a notice naming the part that is missing. */
+export const ECON_WALK_INCOMPLETE = 'Accounts with no money or AI use in this window may be missing.';
+export const ECON_LEDGER_FAILED = 'AI cost could not be loaded.';
+export const ECON_BOOSTS_FAILED = 'Boost payments could not be loaded.';
+export const ECON_PLANS_FAILED = 'Plan payments could not be loaded.';
+export const ECON_CREDITS_FAILED = 'Credits could not be loaded.';
+
+/** M3-FR-8: the account summary's margin line, under "Paid us, total". */
+export const ACCOUNT_MARGIN = 'AI margin (USD)';

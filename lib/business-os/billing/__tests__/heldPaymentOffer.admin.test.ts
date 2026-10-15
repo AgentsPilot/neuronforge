@@ -85,7 +85,7 @@ describe('C-6: heldInviteOffer is the one step, and heldPaymentOffer delegates t
   });
 
   it('source: sellableTiers only; no buyableTiers, no INVITE_TYPES grant list, no tier literal in the decision', () => {
-    const text = readFileSync(join(process.cwd(), 'lib', 'business-os', 'billing', 'planCheckoutEligibility.ts'), 'utf8');
+    const text = readFileSync(join(process.cwd(), 'lib', 'business-os', 'billing', 'planCheckoutEligibility.ts'), 'utf8').replace(/\r\n/g, '\n');
     const at = text.indexOf('export function heldInviteOffer(');
     const body = text.slice(at, text.indexOf('\n}\n', at));
     expect(body).toContain('sellableTiers()');
