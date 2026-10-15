@@ -85,7 +85,7 @@ import { atLeast, formatMoney } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
-const NOTE = 'text-[11px] text-slate-500';
+const NOTE = 'text-[11px] text-slate-400';
 
 function processorLabel(processorType: string | null): string {
   if (processorType === null) return PROCESSOR_NOT_RECORDED;

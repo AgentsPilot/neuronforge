@@ -15,6 +15,16 @@
 import type { FinanceAccountsSection, FinanceGroupCount } from '@/lib/business-os/finance/financeTypes';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
+import {
   ACCOUNTS_BY_STATE,
   ACCOUNTS_COUNT,
   ACCOUNTS_DORMANT,
@@ -37,9 +47,6 @@ import {
 } from '../financeCopy';
 import { atLeast, formatCount } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
-
-const TH = 'px-2 py-1 text-left text-[11px] font-medium uppercase tracking-wide text-slate-400';
-const TD = 'px-2 py-1 text-sm text-slate-200';
 
 export function groupLabel(group: Pick<FinanceGroupCount, 'key' | 'tierLabel'>): string {
   if (group.key.startsWith('tier:')) return group.tierLabel ?? group.key.slice('tier:'.length);
@@ -74,46 +81,48 @@ export function AccountsByPlanSection({
     >
       {f && (
         <div className="space-y-3">
-          <table className="w-full" data-testid="accounts-groups">
-            <thead>
-              <tr>
-                <th scope="col" className={TH}>{ACCOUNTS_GROUP}</th>
-                <th scope="col" className={TH}>{ACCOUNTS_COUNT}</th>
-                <th scope="col" className={TH}>{ACCOUNTS_GRACE}</th>
-                <th scope="col" className={TH}>{ACCOUNTS_PAST_DUE}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {f.groups.map((g) => (
-                <tr key={g.key} className="border-t border-slate-700/60">
-                  <th scope="row" className={`${TD} font-normal text-left`}>
-                    {groupLabel(g)}
-                    {g.foundingPartners > 0 &&
-                      (accounts.scope === 'one' ? (
-                        <span className="ml-2 inline-block align-middle">
-                          <StatusChip tone="neutral" testId={`accounts-founding-chip-${g.key}`}>
-                            {ACCOUNTS_FOUNDING_CHIP}
-                          </StatusChip>
-                        </span>
-                      ) : (
-                        <span className="ml-2 text-xs text-slate-400" data-testid={`accounts-founding-note-${g.key}`}>
-                          {accountsFoundingNote(g.foundingPartners)}
-                        </span>
-                      ))}
-                  </th>
-                  <td className={TD}>{n(g.count)}</td>
-                  <td className={TD}>{formatCount(g.grace)}</td>
-                  <td className={TD}>{formatCount(g.pastDue)}</td>
+          <div className={ADMIN_TABLE_WRAP}>
+            <table className={ADMIN_TABLE} data-testid="accounts-groups">
+              <thead className={ADMIN_THEAD}>
+                <tr>
+                  <th scope="col" className={ADMIN_TH}>{ACCOUNTS_GROUP}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{ACCOUNTS_COUNT}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{ACCOUNTS_GRACE}</th>
+                  <th scope="col" className={ADMIN_TH_NUM}>{ACCOUNTS_PAST_DUE}</th>
                 </tr>
-              ))}
-              <tr className="border-t border-slate-600">
-                <th scope="row" className={`${TD} text-left font-semibold`}>{ACCOUNTS_TOTAL}</th>
-                <td className={`${TD} font-semibold`} data-testid="accounts-total">{n(f.total)}</td>
-                <td className={TD} />
-                <td className={TD} />
-              </tr>
-            </tbody>
-          </table>
+              </thead>
+              <tbody className={ADMIN_TBODY}>
+                {f.groups.map((g) => (
+                  <tr key={g.key}>
+                    <th scope="row" className={`${ADMIN_TD} font-normal`}>
+                      {groupLabel(g)}
+                      {g.foundingPartners > 0 &&
+                        (accounts.scope === 'one' ? (
+                          <span className="ml-2 inline-block align-middle">
+                            <StatusChip tone="neutral" testId={`accounts-founding-chip-${g.key}`}>
+                              {ACCOUNTS_FOUNDING_CHIP}
+                            </StatusChip>
+                          </span>
+                        ) : (
+                          <span className="ml-2 text-xs text-slate-400" data-testid={`accounts-founding-note-${g.key}`}>
+                            {accountsFoundingNote(g.foundingPartners)}
+                          </span>
+                        ))}
+                    </th>
+                    <td className={ADMIN_TD_NUM}>{n(g.count)}</td>
+                    <td className={ADMIN_TD_NUM}>{formatCount(g.grace)}</td>
+                    <td className={ADMIN_TD_NUM}>{formatCount(g.pastDue)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <th scope="row" className={`${ADMIN_TD} font-semibold`}>{ACCOUNTS_TOTAL}</th>
+                  <td className={`${ADMIN_TD_NUM} font-semibold`} data-testid="accounts-total">{n(f.total)}</td>
+                  <td className={ADMIN_TD_NUM} />
+                  <td className={ADMIN_TD_NUM} />
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
           <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
             <div className="flex justify-between gap-2"><dt className="text-slate-400">{ACCOUNTS_NO_END_DATE}</dt><dd className="text-slate-200">{n(f.foundingNoEndDate)}</dd></div>

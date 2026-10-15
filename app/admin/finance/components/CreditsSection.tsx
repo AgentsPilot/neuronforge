@@ -14,6 +14,16 @@
 
 import type { FinanceCreditRow, FinanceCreditsSection } from '@/lib/business-os/finance/financeTypes';
 import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
+import {
   CREDITS_ALLOWANCE,
   CREDITS_BUSINESS,
   CREDITS_DELETED_NOTE,
@@ -51,9 +61,6 @@ import {
 import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
-
-const TH = 'px-2 py-1 text-left text-[11px] font-medium uppercase tracking-wide text-slate-400';
-const TD = 'px-2 py-1 text-sm text-slate-200';
 
 function nameOf(row: FinanceCreditRow): string {
   switch (row.nameStatus) {
@@ -112,47 +119,49 @@ export function CreditsSection({
           {f.rows.length === 0 ? (
             <p className="text-sm text-slate-300">{CREDITS_NO_ACCOUNTS}</p>
           ) : (
-            <table className="w-full" data-testid="credits-table">
-              <thead>
-                <tr>
-                  <th scope="col" className={TH}>{CREDITS_BUSINESS}</th>
-                  <th scope="col" className={TH}>{CREDITS_PLAN}</th>
-                  <th scope="col" className={TH}>{CREDITS_ALLOWANCE}</th>
-                  <th scope="col" className={TH}>{CREDITS_USED}</th>
-                  <th scope="col" className={TH}>{CREDITS_USED_PERCENT}</th>
-                  <th scope="col" className={TH}>{CREDITS_OVER_COLUMN}</th>
-                  <th scope="col" className={TH}>{CREDITS_GIFTED_COLUMN}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {f.rows.map((row) => (
-                  <tr key={row.accountId} className="border-t border-slate-700/60" data-testid={`credits-row-${row.accountId}`}>
-                    <th scope="row" className={`${TD} font-normal text-left`}>{nameOf(row)}</th>
-                    <td className={TD}>{row.group ? groupLabel({ key: row.group, tierLabel: row.tierLabel }) : CREDITS_UNKNOWN}</td>
-                    {row.kind === 'position' ? (
-                      <>
-                        <td className={TD}>{credits(row.allowance)}</td>
-                        <td className={TD}>{credits(row.used)}</td>
-                        <td className={TD}>
-                          {usedPercent(row)}
-                          {row.trial && <span className="ml-1 text-[11px] text-slate-400">({CREDITS_TRIAL})</span>}
-                        </td>
-                        <td className={TD}>{yesNo(row.overAllowance)}</td>
-                      </>
-                    ) : (
-                      <td className={TD} colSpan={4}>{row.kind === 'no_allowance' ? CREDITS_NO_ALLOWANCE : CREDITS_UNKNOWN}</td>
-                    )}
-                    <td className={TD}>{credits(row.giftedOutstanding)}</td>
+            <div className={ADMIN_TABLE_WRAP}>
+              <table className={ADMIN_TABLE} data-testid="credits-table">
+                <thead className={ADMIN_THEAD}>
+                  <tr>
+                    <th scope="col" className={ADMIN_TH}>{CREDITS_BUSINESS}</th>
+                    <th scope="col" className={ADMIN_TH}>{CREDITS_PLAN}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_ALLOWANCE}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_USED}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_USED_PERCENT}</th>
+                    <th scope="col" className={ADMIN_TH}>{CREDITS_OVER_COLUMN}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_GIFTED_COLUMN}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className={ADMIN_TBODY}>
+                  {f.rows.map((row) => (
+                    <tr key={row.accountId} data-testid={`credits-row-${row.accountId}`}>
+                      <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(row)}</th>
+                      <td className={ADMIN_TD}>{row.group ? groupLabel({ key: row.group, tierLabel: row.tierLabel }) : CREDITS_UNKNOWN}</td>
+                      {row.kind === 'position' ? (
+                        <>
+                          <td className={ADMIN_TD_NUM}>{credits(row.allowance)}</td>
+                          <td className={ADMIN_TD_NUM}>{credits(row.used)}</td>
+                          <td className={ADMIN_TD_NUM}>
+                            {usedPercent(row)}
+                            {row.trial && <span className="ml-1 text-[11px] text-slate-400">({CREDITS_TRIAL})</span>}
+                          </td>
+                          <td className={ADMIN_TD}>{yesNo(row.overAllowance)}</td>
+                        </>
+                      ) : (
+                        <td className={ADMIN_TD} colSpan={4}>{row.kind === 'no_allowance' ? CREDITS_NO_ALLOWANCE : CREDITS_UNKNOWN}</td>
+                      )}
+                      <td className={ADMIN_TD_NUM}>{credits(row.giftedOutstanding)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {f.rows.length < f.accounts && (
             <p className="text-xs text-slate-400" data-testid="credits-showing">{CREDITS_SHOWING(f.rows.length, f.accounts)}</p>
           )}
 
-          <ul className="space-y-1 text-[11px] text-slate-500" data-testid="credits-notes">
+          <ul className="space-y-1 text-[11px] text-slate-400" data-testid="credits-notes">
             {f.unknownAccounts > 0 && <li>{CREDITS_UNKNOWN_NOTE(f.unknownAccounts)}</li>}
             <li>{CREDITS_GIFTED_NOTE}</li>
             {gifted && gifted.deletedAccountsOutstanding !== 0 && (
