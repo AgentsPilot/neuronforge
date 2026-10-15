@@ -827,33 +827,33 @@ About **2 days**, as §11F.2 and SA-Q57 accepted (including the baseline update,
 
 ## B.16 Task list (Part B)
 
-- [ ] 0. PR 1 (Part A) merged; RM brings `feature/bos-money-m4` up to date; SA rulings SA-W98 to SA-W104 applied
-- [ ] 1. `recordedCost.ts` + T1-B
-- [ ] 2. `financeTypes.ts`; `financeHealth.ts` (deps, limit, `Promise.all`, builder call, counts, header); `financeHealthDeps.ts:101`; T5-B
-- [ ] 3. Route binding, `adminReadContext`, log line, header; `route.test.ts` mocks and `allReads()`; **the AC-145 baseline update (E-55), and only it**; M-4 route cases; T7-B. End-of-day-1 checkpoint
-- [ ] 4. `financeLinks.ts` `leakCheckHref`; T8-B
-- [ ] 5. `RecordedCostLines.tsx`; `AiCostSection.tsx`; `AccountSummary.tsx`; copy; T9-B, T11-B
-- [ ] 6. Finance guard: narrow `:144-147`; the M-4 describe (T6-B); page rules (T12-B); vocabulary guard extension
-- [ ] 7. Repository headers ([B.8](#b8-repository-headers-f-7)); VB-2 comment-only proof
-- [ ] 8. VB-1 to VB-12; canary; outputs in Implementation Notes
-- [ ] 9. Hand over to SA code review, uncommitted; then QA; then the user; then RM opens **PR 2 (Part B)**
+- [x] ✅ 0. PR 1 (Part A) merged (PR #398); Part B built on a NEW branch `feature/bos-money-m4b`, cut by RM from `main` `bd7beabd`; SA rulings SA-W98 to SA-W104 applied
+- [x] ✅ 1. `recordedCost.ts` + T1-B
+- [x] ✅ 2. `financeTypes.ts`; `financeHealth.ts` (deps, limit, `Promise.all`, builder call, counts, header); `financeHealthDeps.ts:101`; T5-B
+- [x] ✅ 3. Route binding, `adminReadContext`, log line, header; `route.test.ts` mocks and `allReads()`; **the AC-145 baseline update (E-55), and only it**; M-4 route cases; T7-B
+- [x] ✅ 4. `financeLinks.ts` `leakCheckHref`; T8-B
+- [x] ✅ 5. `RecordedCostLines.tsx`; `AiCostSection.tsx`; `AccountSummary.tsx`; copy; T9-B, T11-B (plus `FinanceSection.tsx`, deviation BD-2)
+- [x] ✅ 6. Finance guard: narrow `:144-147`; the M-4 describe (T6-B); page rules (T12-B); vocabulary guard extension
+- [x] ✅ 7. Repository headers ([B.8](#b8-repository-headers-f-7)); VB-2 comment-only proof
+- [x] ✅ 8. VB-1 to VB-12; canary; outputs in Implementation Notes
+- [ ] 9. Hand over to SA code review, uncommitted (done by Dev); then QA; then RM opens **PR 2 (Part B)**
 
 ## B.17 Checklist before SA code review (Part B)
 
-- [ ] `git branch --show-current` = `feature/bos-money-m4`; Part A is in `main`; nothing committed; no stash used
-- [ ] `git diff --stat` read first: no deletion-only file; no migration; `lib/repositories/` comment-only
-- [ ] The route is the only finance file whose code matches `/tokenusage/i`; it calls exactly the two methods
-- [ ] With a business picked, the all-accounts read is never called; with `tab=accounts`, neither read is called
-- [ ] The all-accounts exactness uses `completed`; the account exactness uses `reachedCeiling` (E-53), decided only in `recordedCost.ts`
-- [ ] Both reads receive `end − 1 ms`; the route test asserts the exact ISO value
-- [ ] The account read takes no signal; a late result is dropped with no unhandled rejection (test)
-- [ ] Integer arithmetic at `COST_SCALE`; one `/ COST_SCALE`; safe-integer check; 0.1 + 0.2 = 0.3
-- [ ] No payload field, export or element adds recorded to charged; K-1 and AI margin unchanged by a recorded fixture
-- [ ] The AC-145 baseline changed only in the E-55 hunks
-- [ ] `TokenUsageRepository` header: full caller list; no `callCatalog`; no `from '@/lib/business-os`
-- [ ] No `console.*`; log line has no amount, feature, session id or name
-- [ ] Every new guard rule has a planted negative control
-- [ ] VB-1 to VB-12 pasted with own exit codes; the canary reported TS2322 before the clean run
+- [x] ✅ `git branch --show-current` = `feature/bos-money-m4b` (Part B's own branch; Part A is in `main` as PR #398); nothing committed; no stash used
+- [x] ✅ `git diff --stat` read first: no deletion-only file; no migration; `lib/repositories/` comment-only
+- [x] ✅ The route is the only finance file whose code matches `/tokenusage/i`; it calls exactly the two methods
+- [x] ✅ With a business picked, the all-accounts read is never called; with `tab=accounts`, neither read is called
+- [x] ✅ The all-accounts exactness uses `completed`; the account exactness uses `reachedCeiling` (E-53), decided only in `recordedCost.ts`
+- [x] ✅ Both reads receive `end − 1 ms`; the route test asserts the exact ISO value
+- [x] ✅ The account read takes no signal; a late result is dropped with no unhandled rejection (test; see BD-6)
+- [x] ✅ Integer arithmetic at `COST_SCALE`; one `/ COST_SCALE`; safe-integer check; 0.1 + 0.2 = 0.3
+- [x] ✅ No payload field, export or element adds recorded to charged; K-1 and AI margin unchanged by a recorded fixture
+- [x] ✅ The AC-145 baseline changed only in the E-55 hunks (plus one proof assertion, BD-5)
+- [x] ✅ `TokenUsageRepository` header: full caller list; no `callCatalog`; no `from '@/lib/business-os`
+- [x] ✅ No `console.*`; log line has no amount, feature, session id or name
+- [x] ✅ Every new guard rule has a planted negative control
+- [x] ✅ VB-1 to VB-12 pasted with own exit codes; the canary reported TS2322 before the clean run
 
 ---
 
@@ -983,6 +983,107 @@ About **2 days**, as §11F.2 and SA-Q57 accepted (including the baseline update,
 **Not done (by design):** Part B; the AC-153 manual checks (see the QA report); the commit and PR (RM, after SA + QA + the user's diff view).
 
 ### Part B
+
+**Built 2026-10-15 by Dev on `feature/bos-money-m4b` (RM cut it from `main` `bd7beabd`, after PR #398), uncommitted.** No stash, no worktree command, no `npm install`, no migration. The requirement MDs were not edited by Dev.
+
+**Files (19 modified, 4 new)**
+- New: `lib/business-os/finance/recordedCost.ts` (139 lines), `app/admin/finance/components/RecordedCostLines.tsx` (102), `lib/business-os/finance/__tests__/recordedCost.test.ts` (227, 25 tests), `app/admin/finance/__tests__/recordedCost.render.test.tsx` (167, 11 tests).
+- Source (11): `financeTypes.ts`, `financeHealth.ts`, `financeHealthDeps.ts` (the `Omit<>`, SA-W104), the finance `route.ts`, `financeCopy.ts`, `financeLinks.ts`, `AiCostSection.tsx`, `AccountSummary.tsx`, `FinanceSection.tsx` (BD-2), and the two repository headers (comments only).
+- Tests (8): `financeHealth.test.ts`, `finance.source.guard.test.ts`, the finance `route.test.ts`, the page `source.guard.test.ts`, `financeLinks.test.ts`, `financeAccount.render.test.tsx`, `financePage.render.test.tsx`, `aiCostVocabulary.source.guard.test.ts`.
+
+**SA conditions**
+- **SA-WR-48:** both bindings pass `bosRowFilter()`. The route tests assert `featureFilter` deep-equals `bosRowFilter()` (in the E-55 baseline and in the M-4 describe) and the account read's third argument deep-equals it. Source pin: each binding has exactly one `bosRowFilter()`, with a planted control for each binding.
+- **SA-WR-49:** `RECORDED_DEADLINE_MS: 2 * 1000`, pinned in `financeHealth.test.ts`. QA's 92-day `durationMs` goes to SA before the PR; Dev did not tune it.
+- **SA-WR-50:** a T5-B case spies on the pure builder (pass-through `jest.mock`). With a business picked, `charged.totalUnits` = 3 × `COST_SCALE`, equal to Section 3's figure × `COST_SCALE`, and `deletedUnits` = 0.
+- **W103:** the name rule reads `codeOf`. `BusinessOsFinanceReadRepository.ts` names `TokenUsageRepository` in a comment: it matches raw and does not match as code (both asserted).
+- **W104:** the `Omit<>` lists exactly `findNames`, `readReminderFigures`, `readRecordedAllAccounts` and `readRecordedForAccount` (pinned). The entitlements import is unchanged (`getEntitlementConfig` only; existing pin green; `test:bos-entitlements` green).
+- **F-7:** `TokenUsageRepository` header rewritten in full: 8 callers with methods and entry routes, 2 type-only importers, and "THE TWO ALL-ACCOUNTS READS". It avoids `callCatalog` and `from '@/lib/business-os` (contract test green). The `AdminTokenUsageAnalyticsRepository` header now names three permitted callers.
+
+**Guards added (each with a planted control)**
+- `finance.source.guard`: the `:144-147` rule split.
+  - The `token_usage` / view names stay on every file, the route included.
+  - New rule: `/tokenusage/i` over code, every file but the route, with 4 planted names.
+  - New M-4 describe:
+    - (a) non-vacuity;
+    - (b) only the route names a reader; it calls exactly two methods; `bosRowFilter()` once per binding; `inclusiveEnd`;
+    - (c) purity;
+    - (d) one `/ COST_SCALE`, safe-integer checks;
+    - (e) exactly 4 exports;
+    - (f) no recorded + charged anywhere; `FinanceRecordedAiCost` has exactly 5 keys;
+    - (g) E-53: each flag is read once in `recordedCost.ts`, and neither appears in `financeHealth.ts`'s two marked recorded regions;
+    - W104.
+- Page `source.guard`:
+  - `MONEY_M4` arithmetic over every page file;
+  - no dim text, and type-only finance imports, in `RecordedCostLines.tsx`;
+  - one renderer (AC-158);
+  - the SA-W98 slot.
+- Vocabulary guard: `RecordedCostLines.tsx` joins (14 files, minimum 7 texts); 7 positive pins for the new labels.
+
+**Deviations (for SA)**
+1. **BD-1:** `buildRecordedAiCost` returns `{ recorded, counts }`, not `{ recorded, unreadable }`.
+   - `counts` holds `rows`, `completed`, `reachedCeiling` and `unreadable`, so the read flags are read only in `recordedCost.ts` (rule g) and can still be logged.
+   - `financeHealth.ts` passes each read result through by spread.
+   - The exports are unchanged (4).
+2. **BD-2:** `FinanceSection.tsx` gains an optional `alsoWhenUnknown` slot, rendered only when the section is `unknown`.
+   - Why: the frame hides its children when `unknown`, so SA-W98 ("shows when Section 3 is Unknown") could not be met inside `AiCostSection` alone. B.1 did not list this file.
+   - With no prop, the DOM is unchanged. Render tests show the block appears exactly once in each state.
+3. **BD-3:** the block sits **directly under the charged total**: the figures guard is split in two around it. It stays outside that guard (SA-W98) and under the total (M4-FR-1).
+4. **BD-4:** `counts.aiRecorded.ms` is `number | null` (null is not reachable in practice).
+5. **BD-5:** the AC-145 hunks are exactly E-55's: the header comment, 2 `namedReads`, 2 `EXPECTED_CALLS` entries, the hash, and the `recorded` assertion. One proof was **added**: the payload with `aiCost.recorded` removed still hashes to the 6a value `b4d10bc1…`. New hash: `6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250`.
+6. **BD-6:** Jest fails the running test on any unhandled rejection, so a `process.on('unhandledRejection')` spy never fires.
+   - Control: a planted `void Promise.reject(new Error('planted unhandled'))` in the late-rejection test made it **fail** with that error (run once, then removed).
+   - The test relies on this Jest behaviour, and says so in a comment.
+7. **BD-7:** the fourth R4-10 sentence is written as "By design, Recorded above charged includes chat turns outside the call catalog, platform-account calls and cache-served turns at USD 0." The requirement gives a clause, not a sentence. BA to confirm the wording.
+8. **BD-8:** the `AdminTokenUsageAnalyticsRepository` header also renames "Cost Analytics" to "AI cost & usage" (SA Part A comment 2). Comments only.
+9. **BD-9:** `makeDeps()` in `financeHealth.test.ts` gains the two recorded reads as defaults, so the 117 existing cases keep the real happy path. No existing assertion was edited.
+
+**Verification (each command alone; exit code from the command)**
+
+| # | Command | Result |
+|---|---|---|
+| VB-1 | `npx jest lib/business-os/finance app/admin/finance app/api/admin/business-os/finance lib/repositories/__tests__/BusinessOsFinanceReadRepository.test.ts --ci` | exit 0; 27 suites, 2,239 tests |
+| VB-2 | `npx jest lib/repositories/__tests__/AdminTokenUsageAnalyticsRepository.test.ts lib/business-os/usage/__tests__/tokenUsageRepository.contract.test.ts --ci` (both unchanged) | exit 0; 2 suites, 28 tests. `git diff -U0 -- lib/repositories`: **0** changed lines that are not `//` comments |
+| VB-3a | `npx jest app/admin/users app/api/admin/business-os/accounts --ci` | exit 0; 27 suites, 624 tests |
+| VB-3b / VB-4 | `npx jest app/admin/__tests__ app/admin/components lib/admin/health app/api/admin/health-summary --ci` | exit 0; 45 suites, 1,521 tests |
+| VB-3c | `npx jest app/admin/analytics app/api/admin/token-usage --ci` | exit 0; 13 suites, 277 tests |
+| VB-3d | `npx jest app/admin/business-os-llm --ci` | exit 0; 17 suites, 854 tests |
+| Vocabulary | `npx jest app/admin/__tests__/aiCostVocabulary.source.guard.test.ts --ci` | exit 0; 1 suite, 137 tests |
+| New builder | `recordedCost.test.ts` / `recordedCost.render.test.tsx` | 25 / 11 tests passed (inside VB-1) |
+| VB-5 | the 9 V-6 guard and caller-list suites | exit 0; 9 suites, 425 tests. `git diff --exit-code -- lib/business-os/billing lib/business-os/credits lib/business-os/entitlements app/api/stripe lib/payments supabase`: exit 0 |
+| VB-6 | `npm run test:bos-entitlements` | exit 0; 269 suites, 7,984 tests |
+| VB-7 | `npm run test:authz-guard` | exit 0; 2 suites, 203 tests |
+| VB-8 | `npm run typecheck:bos-llm` | exit 0, "passed". It also prints "1 baseline entry is fixed" for `app/api/onboarding/build/route.ts` (TS18047), a file outside this diff |
+| VB-9 | `npm run lint:hooks`; `npx eslint --max-warnings 0 <23 touched and new .ts/.tsx>` | exit 0; eslint first gave 2 unused-variable warnings in two tests (fixed), then exit 0 with no output |
+| VB-10 | Scoped `tsc`, config `<scratchpad>/tsconfig.m4b.json` outside the worktree (absolute `extends`; `noEmit`; `incremental: false`; include = `types/**/*.d.ts` + the 23 touched and new `.ts`/`.tsx`, tests included) | Canary `const __canary: number = 'x';` in `recordedCost.ts` → exit 2, `recordedCost.ts(140,7): error TS2322`. Restored from a byte copy (`cmp` identical, `grep -c __canary` = 0). Clean run → exit 0, **0 diagnostics**, repeated after the lint fixes |
+| VB-11 | `git diff --numstat` + untracked | 19 modified files, +1,266 / −46, 4 new files (635 lines). **No file has deletions without insertions.** No `supabase/`, billing or requirement-MD path; `lib/repositories/` comments only |
+| VB-12 | Schema | No credentials in the worktree. No new column: `cost_usd` is already selected by both readers (`ADMIN_ANALYTICS_COLUMNS.cost`, `TOKEN_USAGE_COLUMNS.call`) |
+| VB-13 | Checks 21 and 22 | For QA: see the QA report. The TypeScript ports (`checkTwentyOne` / `checkTwentyTwo`) agree with the builder on a §11F.1-shaped fixture (1.942075 / 0.329938) |
+
+**`console.*`:** none of the touched or new files has a `console.*` call (the two guard tests hold `/\bconsole\./` as a pattern, not a call).
+
+**Not done (by design):** checks 21 and 22 on the live database, and the AC-166 `durationMs` timings for This month, a 92-day window and a picked business (QA; SA-WR-49 if the 92-day read nears 2 s); the commit and PR (RM).
+
+**Fix round 1 (SA low follow-up, 2026-10-15).** The recorded-read failure notice said "The charged figures above are unaffected", even when no charged figure was shown above it.
+- **Change.**
+  - `RecordedCostLines` takes `chargedShown`. `AiCostSection` sets it to `status !== 'unknown' && figures !== null && !entirelyBefore`.
+  - When the charged figures rendered, the notice stays `RECORDED_NOTICE`.
+  - Otherwise it is the new `RECORDED_NOTICE_PLAIN`: "The recorded AI cost could not be read in time."
+  - Both texts live in `financeCopy.ts`. The page guard's `AiCostSection` pin now includes `chargedShown={chargedShown}`.
+- **Tests.** Three render cases in `recordedCost.render.test.tsx`:
+  - charged figures shown → the full notice;
+  - charged read failed → the plain notice, with no "above" or "unaffected";
+  - window entirely before the cut-over → the plain notice.
+- **Re-run** (each alone):
+
+  | Run | Exit | Result |
+  |---|---|---|
+  | Finance (VB-1 set) | 0 | 27 suites, 2,242 tests |
+  | Vocabulary guard | 0 | 137 tests |
+  | `lint:hooks` | 0 | — |
+  | ESLint on the 5 touched files | 0 | no output |
+  | Scoped tsc, canary in `RecordedCostLines.tsx` | 2 | `(113,7): error TS2322` |
+  | Scoped tsc, after restoring (`cmp` identical) | 0 | 0 diagnostics |
+- **Diff.** 21 tracked files plus 4 new; no deletion-only file. The requirement MD's +2 is not from Dev.
 
 ---
 
@@ -1117,7 +1218,72 @@ About **2 days**, as §11F.2 and SA-Q57 accepted (including the baseline update,
 
 ### Part B (OV-5)
 
-*SA to populate.*
+**Code Review by SA — 2026-10-15** (uncommitted on `feature/bos-money-m4b`, from `bd7beabd`: 4 new files, 11 source files, 8 tests)
+**Status:** ✅ **Code Approved.** Nothing blocks QA. The user has pre-authorised commit and PR after SA and QA.
+
+**Verified in code**
+
+*`recordedCost.ts`*
+- **Exactness (E-53, F-1).** All-accounts exactness comes from `completed`, and one-account exactness from `reachedCeiling === false`. Each flag is read once, in `recordedCost.ts`, and never derived from a row count (AC-168 tests).
+- **Integer arithmetic.** Every cost goes through `toUnits` at `COST_SCALE`; NaN is counted as unreadable. The overflow check uses `isSafeInteger` on the sum and the difference, and `usdOf` holds the only `/ COST_SCALE`.
+- **The difference.** It is recorded minus (total − deleted). Charged above recorded gives "None" plus `chargedAboveUsd`; a negative "above" is never produced.
+- **Rule order.** Failed first, then Not available, then Unknown, then the difference.
+
+*Wiring (`financeHealth.ts`, `route.ts`)*
+- **Deadline.** The recorded read is inside the one `Promise.all` under `underDeadline` at `RECORDED_DEADLINE_MS = 2000` (pinned). The account read is raced only; no signal reaches it.
+- **Tab and picked view.** `tab=accounts` returns `null` and no read runs (AC-167). With a business picked, only `readRecordedOne(accountId)` runs. Charged comes from Section 3's own `aiCostUnits` and `figures.exact` (SA-W102); SA-WR-50 has a pass-through spy test.
+- **Bindings.** The route binds `listCostPointsAllAccountsInWindow` (admin context, `{ featureFilter: bosRowFilter() }`, 1000/10000, signal) and `listCallsInWindow(id, …, bosRowFilter(), 1000/5000)`.
+- **Window end.** Both bindings get `inclusiveEnd = end − 1 ms`, pinned at `2026-10-14T23:59:59.999Z`.
+- **Admin context.** `reminderContext` was renamed `adminReadContext`; it is the same object, so the reminder call is unchanged.
+
+*Payload*
+- `aiCost.recorded` is optional and has five keys, none of them a sum. It is absent on the tab.
+- Nothing adds recorded to charged. The source rule (f) has a planted `recordedUnits + chargedUnits` control, and K-1 and AI margin are deep-equal with and without a recorded fixture.
+
+*AC-145 (E-55)*
+- The only baseline edits are the two mocks in `namedReads`, the `recorded.allAccounts` expected call (with `serialise(bosRowFilter())` and end − 1 ms), `'recorded.forAccount': []`, the refreshed hash `6761620e…`, and `toHaveProperty('recorded')`.
+- A new check deletes `aiCost.recorded` and gets the 6a hash `b4d10bc1…` back. That proves this one key is the only change to the bytes.
+- Every other read call, the `findNames` calls and the top-level keys are unedited.
+
+*Guards*
+- The `token_usage` / view rule stays over every file. The reader rule is `/tokenusage/i` over `codeOf` (comments stripped), excludes the route, and has planted controls.
+- **Positive pins:** only the route names a reader in code; it calls exactly `listCallsInWindow` and `listCostPointsAllAccountsInWindow`; and `bosRowFilter()` appears once per binding, with a planted filter-removed control (SA-WR-48).
+- **Repository headers:** the `git diff -U0 -- lib/repositories` lines that do not start with `//` are empty, so the change is comments only. The isolation and contract tests pass unchanged (28/28).
+
+*Page*
+- **W98.** The block renders outside the figure guard, so it shows before the cut-over and with charged Unknown.
+- **Leak check link.** `leakCheckHref` gives `?tab=costs`, plus `&account=<id>` when a business is picked. That is the Costs tab's own key (`costsFilters.ts:43`).
+
+*W104, logs, admin gate*
+- **W104.** `financeHealthDeps.ts`'s `Omit<>` gains exactly the two route-injected keys. Its entitlements import is unchanged, and `test:bos-entitlements` is green.
+- **Logs.** `counts.aiRecorded` carries the read kind, the outcome (ok, failed or deadline), rows, flags, unreadable and ms. It never carries an amount; AC-164 has a planted-value test.
+- **Admin gate.** `requireAdmin` is still the first statement (route source test). No `console.*`.
+
+**Deviations**
+
+| # | Ruling |
+|---|---|
+| D1 | ✅ **Approved.** `alsoWhenUnknown` is the right shape. It is optional and rendered only when `status === 'unknown'`. A section that passes none renders the DOM it rendered before. It cannot double-render, because the frame hides children exactly when it shows the slot. `FinanceSection` is page-local to Finance, not the shared layout folder, so no layout ruling is needed. |
+| D2 | ✅ **Approved.** `{ recorded, counts }` keeps the two read flags in the one file (E-53). `counts` is non-wire, with no amount. |
+| D3 | ✅ **Approved.** The block sits directly under the charged total, inside its own bordered box with the caption "Beside the charged cost, never added". |
+| D4 | ✅ **Approved.** Jest itself fails a test on an unhandled rejection; the Dev proved this with a planted `Promise.reject`, and that a `process.on` spy never fires. The test therefore relies on Jest's failure plus an assertion that the late result is dropped. |
+| D5 | ✅ **Wording confirmed.** "By design, Recorded above charged includes chat turns outside the call catalog, platform-account calls and cache-served turns at USD 0." This says what R4-10 already says (E-54 wording), so **no E-edit is needed**. |
+
+**Code Review Comments (Low; follow-ups, not conditions)**
+1. `RecordedCostLines.tsx`: `RECORDED_NOTICE` says "The charged figures above are unaffected." When the charged read has also failed (the `alsoWhenUnknown` path), that clause is true but there are no figures above it. Acceptable; reword in M-5 if wanted. Priority: Low.
+
+**Re-run by SA** (one at a time, own exit codes)
+
+| Run | Result |
+|---|---|
+| Finance (`lib/business-os/finance`, `app/admin/finance`, finance route, finance read repo) | exit 0, 27 suites, 2239 tests |
+| Vocabulary guard | exit 0, 137 tests |
+| Usage-log readers (isolation + contract), unchanged | exit 0, 2 suites, 28 tests |
+| Health (`lib/admin/health`, health-summary route) | exit 0, 7 suites, 296 tests |
+| `npm run test:bos-entitlements` | exit 0, 269 suites, 7984 tests |
+| `npm run test:authz-guard` | exit 0, 2 suites, 203 tests |
+
+**Code Approved for QA: Yes**
 
 ---
 
@@ -1202,7 +1368,97 @@ About **2 days**, as §11F.2 and SA-Q57 accepted (including the baseline update,
 
 ### Part B (OV-5)
 
-*QA to populate (AC-154 to AC-168; checks 21 and 22; the manual list for AC-166 is QA's).*
+**QA Report — Part B, 2026-10-15**
+**Test mode:** full (AC-154 to AC-168, plus the AC-145 baseline)
+**Strategy used:** A (unit) + B (builder and route integration with mocked reads), re-run from the worktree **one command at a time**; scoped `tsc` with a canary; code reading for the edge cases; D (manual) listed for the user.
+**Focus:** api, ui, security, performance
+**Skipped:**
+- §13 checks 21 and 22 on the live database;
+- the 92-day timing (step 5). QA's read-only timing script against the live database was **refused by the session's permission guard ("Production Reads")**. QA did not work around it, so the timing is a manual step for the user (L-104).
+
+**Input source:** prompt keywords from TL.
+**Verdict:** ✅ **PASS WITH ISSUES**. No bug found. Every Jest-testable AC passes. Still owed by the user:
+- AC-154 and AC-155 (the SQL halves);
+- AC-166;
+- the SA-WR-49 92-day timing. Per SA-WR-49, if the recorded read nears 2 s, Dev and QA report to SA **before the PR**.
+
+**Release-gate note (repeat from Part A).** The SA Workplan Review's "Release gate" line says the user has **not** given a no-diff-review go-ahead for M-4. The TL brief says commit and PR are pre-authorised. Please confirm with the user before RM opens PR 2.
+
+**Test runs** (worktree `neuronforge-finance-health`, branch `feature/bos-money-m4b`, uncommitted; every run passed first time)
+
+| # | Command | Result |
+|---|---|---|
+| Q-1 | Finance: `npx jest lib/business-os/finance app/admin/finance app/api/admin/business-os/finance lib/repositories/__tests__/BusinessOsFinanceReadRepository.test.ts --ci` | exit 0; **27 suites, 2,239 passed** |
+| Q-2 | Readers, unchanged: `npx jest lib/repositories/__tests__/AdminTokenUsageAnalyticsRepository.test.ts lib/business-os/usage/__tests__/tokenUsageRepository.contract.test.ts --ci` | exit 0; **2 suites, 28 passed**. `git diff -U0 -- lib/repositories`: every changed line is a comment (no non-comment `+` / `-` line) |
+| Q-3 | `npx jest app/admin/users app/api/admin/business-os/accounts --ci` | exit 0; **27 suites, 624 passed** |
+| Q-4 | `npx jest app/admin/__tests__ app/admin/components lib/admin/health app/api/admin/health-summary --ci` | exit 0; **45 suites, 1,521 passed** |
+| Q-5 | `npx jest app/admin/analytics app/api/admin/token-usage --ci` | exit 0; **13 suites, 277 passed** |
+| Q-6 | `npx jest app/admin/business-os-llm --ci` | exit 0; **17 suites, 854 passed** |
+| Q-7 | Vocabulary guard alone | exit 0; **1 suite, 137 passed** |
+| Q-8 | Billing guards and caller lists (the 6a V-6 nine); `git diff --exit-code -- lib/business-os/billing lib/business-os/credits lib/business-os/entitlements app/api/stripe lib/payments supabase` | exit 0; **9 suites, 425 passed**; diff **exit 0** |
+| Q-9 | `npm run test:bos-entitlements` | exit 0; **269 suites, 7,984 passed** |
+| Q-10 | `npm run test:authz-guard` | exit 0; **2 suites, 203 passed** |
+| Q-11 | `npm run lint:hooks` | exit 0 |
+| Q-12 | Scoped `tsc`. Config: `tsconfig.qa-m4b.json` in the session scratchpad (**outside the worktree**), with an absolute `extends`, `noEmit`, `incremental: false`, and `include` = `types/**/*.d.ts` + the 23 added or modified `.ts` / `.tsx` files | **Canary** (`const __qaCanary: number = "qa-canary";` appended to `recordedCost.ts`): exit 2, `lib/business-os/finance/recordedCost.ts(140,7): error TS2322: Type 'string' is not assignable to type 'number'.` **Restored** from a byte copy (`cmp` identical, `grep -c qaCanary` = 0). Re-run: **exit 0, 0 diagnostics** |
+| Q-13 | `git diff --stat` / `--numstat` | 21 tracked files (+1,438 / −71, this workplan included), 4 new; **no deletion-only file**; no `supabase/`, billing or requirement path; `lib/repositories/` comments only |
+
+**Test coverage**
+
+| AC | Result | Evidence |
+|---|---|---|
+| AC-154 | ✅ Pass (Jest), SQL half manual | T1-B §11F.1 fixture 1.942075 / 1.612137 → 0.329938, equal to `checkTwentyOne`; T9-B both lines beside the charged total, no sum. Check 21: L-100 |
+| AC-155 | ✅ Pass (Jest), SQL half manual | T5-B picked view: the account read only, figures equal to `checkTwentyTwo`; T11-B the summary line. Check 22: L-102 |
+| AC-156 | ✅ Pass | T1-B 1.94 / 1.61 → 0.33; equal → `none`; charged above → `none` + `chargedAboveUsd`; deleted left out; 0.1 + 0.2 = 0.3 exactly. Code: integer units, `charged.totalUnits − deletedUnits` (`recordedCost.ts:70-78`) |
+| AC-157 | ✅ Pass | T7-B: with `accountId`, the all-accounts mock 0 calls and the account mock once with the id; with none, the reverse; 401 / 403 / 400 / 404 → neither (`allReads()`) |
+| AC-158 | ✅ Pass | T11-B the same text in Section 3 and the summary from one `recorded` object; T12-B one renderer (`RecordedAboveValue`) |
+| AC-159 | ✅ Pass (Jest), live part manual | T1-B both cut-over coverages → `not_available` with the recorded figure kept (`recordedCost.ts:65-66`); T9-B the text, shown even when Section 3 is Unknown (BD-2 `alsoWhenUnknown` slot; render tests show it exactly once per state). Live: L-103 |
+| AC-160 | ✅ Pass | T1-B each read kind not exact → "At least" + Unknown; null and `'abc'` costs → `unreadable` 1; T5-B Section 3 deep-equal with and without |
+| AC-161 | ✅ Pass | T5-B throws / `{ error }` / never settles (fake timers past 2 s) → `unknown`, every other section present; no unhandled rejection (BD-6 control); ledger not exact → Unknown difference; T9-B the notice |
+| AC-162 | ✅ Pass | T7-B the all-accounts read gets `end` `'2026-10-14T23:59:59.999Z'` (frozen clock), the account read the `Date` 1 ms before `window.end`; T1-B / T5-B a row at `end` is excluded. Code: `inclusiveEnd` in `route.ts` |
+| AC-163 | ✅ Pass | T6-B (f) no `recorded + charged` anywhere (planted control), `FinanceRecordedAiCost` exactly five keys; T5-B K-1 and `accountMargin` deep-equal with and without; T7-B tab payload has no `recorded` |
+| AC-164 | ✅ Pass | T7-B info line `sections.aiRecorded` / `counts.aiRecorded` (statuses, counts, booleans, `ms`); planted cost, feature, session id and name in no log call; payload has no `session_id`, `feature`, `cost_usd` or row id |
+| AC-165 | ✅ Pass | Q-1 to Q-13; repository comment-only proof (Q-2) |
+| AC-166 | ⬜ NOT-TESTED | Manual L-98 to L-105 |
+| AC-167 | ✅ Pass | T5-B / T7-B `tab=accounts` → both mocks 0 calls, no `recorded`; the wiring returns `NOT_BUILT` (`financeHealth.ts:672`) |
+| AC-168 | ✅ Pass | T1-B `completed` false with fewer rows than the ceiling → "At least" and Unknown; `completed` true → figure; account `reachedCeiling` true → "At least" |
+| AC-145 (E-55) | ✅ Pass | Baseline green; BD-5: only the E-55 hunks, plus one proof assertion that the payload without `aiCost.recorded` still hashes to the 6a value |
+
+**Edge cases (code and tests read)**
+
+| Edge case | Result | Evidence |
+|---|---|---|
+| "Completed" vs ceiling: a read that stopped short is never exact | Confirmed | `readComplete = completed` for all accounts, `reachedCeiling === false` for one account (`recordedCost.ts:59`); a short-stopped read (e.g. by the signal) with `completed: false` → "At least" + Unknown |
+| The end − 1 ms boundary | Confirmed | `inclusiveEnd(to) = to − 1 ms` for both readers (`route.ts`), so `[from, to)` becomes `[from, to − 1 ms]` on `lte` readers. Residual, by design (SA-Q52): a sub-millisecond row in the last millisecond of the window falls out, while check 21 (`< month end`) keeps it. With "This month" the window ends at tomorrow 00:00, so this can only touch rows timed in the future |
+| "Not available" visible when Section 3 is Unknown (D1 / BD-2 slot) | Confirmed | `FinanceSection` `alsoWhenUnknown` renders the block only in the `unknown` state; render tests assert it once per state |
+| "None" when charged > recorded | Confirmed | `differenceUnits < 0` → `none` + `chargedAboveUsd` (`recordedCost.ts:76-78`); never a negative "above" |
+| Deleted accounts left out of charged | Confirmed | `chargedUnits = totalUnits − deletedUnits` (`:70`); the R4-4 note shows with no business picked |
+| Picked business uses only the account read | Confirmed | `accountId !== null` → `readRecordedOne(accountId)` only (`financeHealth.ts:672-676`); T7-B spies |
+| Accounts tab skips the recorded reads | Confirmed | `input.accountsTab !== null → NOT_BUILT` |
+| `bosRowFilter` keeps agent-platform calls out | Confirmed | Both bindings pass `bosRowFilter()` (SA-WR-48 pins). Its set equals check 21's: the prefix `business-os` plus the five legacy values (`callCatalog.ts:100-132`); the onboarding value stays out by design |
+| Deadline: late or failed read → Unknown, page renders | Confirmed | `underDeadline(…, RECORDED_DEADLINE_MS = 2 * 1000)`; the outcome is logged as `'deadline'` / `'failed'`; T5-B fake timers |
+| No sum of recorded + charged anywhere | Confirmed | T6-B (f) regex with a planted control; payload keys pinned; page `MONEY_M4` rule |
+| Leak check link carries `account` | Confirmed | `leakCheckHref(id)` → `/admin/business-os-llm?tab=costs&account=<id>`; no `account` key with all businesses (`financeLinks.ts:96-101`); T8-B |
+| No money in logs | Confirmed | `counts.aiRecorded` = built, read, outcome, rows, completed, reachedCeiling, unreadable, ms; the builder logs nothing; T7-B planted values absent |
+
+**Issues found**
+- **Bugs:** none.
+- **Performance:** not measured. QA's live timing was refused, as above. SA-WR-49 requires the 92-day figure before the PR (L-104).
+- **Notes (Low):**
+  1. The end − 1 ms residual above, accepted under SA-Q52.
+  2. BD-7's sentence wording awaits BA (Dev's note).
+
+**Manual live steps** (continuing from Part A's L-97): for the user. Run `npm run dev` from `neuronforge-finance-health` and sign in as a platform admin. For checks 21 and 22, replace the month `null` with `'2026-10-01 00:00:00+00'`. In check 22, also replace the account `null` with your test account id in quotes.
+
+| # | Step | Expected |
+|---|---|---|
+| L-98 | `/admin/finance`, This month (October 2026), All businesses: read Section 3 | Directly under "Charged AI cost (USD)" sits a block captioned "Beside the charged cost, never added". It shows **"Recorded AI cost (USD)"** (about USD 1.94) and **"Recorded above charged (USD)"** (about USD 0.33; it moves as usage grows). The sentence "Deleted accounts are left out…" and the "By design…" sentences appear. No figure on the page equals recorded + charged |
+| L-99 | Click **Leak check** under "Recorded above charged" | `/admin/business-os-llm?tab=costs` opens on the Costs tab (no `account`) |
+| L-100 | **Check 21** (October literal) | `recorded_usd` = "Recorded AI cost" (to the display precision). `not_charged_usd` = "Recorded above charged" (or the page shows "None" when it is 0 or below, with "Charged is USD X above recorded" when below). `charged_usd + deleted_accounts_charged_usd` = Section 3's charged total. If `rows_without_cost` > 0, the page shows "At least" and Unknown instead |
+| L-101 | Pick your test account | Section 3's block shows that account's recorded figure and difference. The account summary has a **"Recorded above charged"** line under "Charged AI cost", with exactly the same text as Section 3. There is no "Deleted accounts" sentence. The Leak check link now ends `&account=<your id>` |
+| L-102 | **Check 22** (October literal, your id) | `recorded_usd`, and `not_charged_usd` (or "None"), match the picked view. The account's charged total matches Section 3 |
+| L-103 | Custom **2026-09-15 to 2026-09-28**, All businesses | Section 3 shows the cut-over notice instead of charged figures. The recorded block still shows its figure, with "Recorded above charged: Not available: AI charging began 29 Sep 2026". Repeat with 2026-09-15 to 2026-10-14: still "Not available", with charged figures present |
+| L-104 | **SA-WR-49 timing:** Custom, the longest window allowed (92 days, e.g. 2026-07-15 to 2026-10-14), All businesses; then This month; then This month with your account picked | Read the dev-server log line "Admin read the Business OS finance page" for each: `durationMs` and `counts.aiRecorded.ms` / `outcome` / `rows` / `completed`. **If `counts.aiRecorded.ms` is near 2,000 or `outcome` is `'deadline'` on the 92-day window, stop and report to SA before the PR** (SA-WR-49). With `outcome: 'deadline'` the block reads Unknown with the notice, and every other section still renders |
+| L-105 | Accounts tab, then the log | No recorded block on the tab. The log line has `sections.aiRecorded: 'not_built'` and `counts.aiRecorded: { built: false }`. No amount, feature, session id or name in any line |
 
 ---
 
@@ -1219,3 +1475,4 @@ About **2 days**, as §11F.2 and SA-Q57 accepted (including the baseline update,
 | 2026-10-15 | Created (Dev) | Workplan for Money M-4, two PRs under one workplan (SA-Q57). Part A (OV-1): every string W-1 to W-25 listed old → new, plus W-26 comments, and the AST vocabulary guard (SA-Q51). Part B (OV-5): pure `recordedCost.ts`, two reused reads bound by the route (`end − 1 ms`, race-only account read), optional `aiCost.recorded`, the finance guard narrowed and widened, the AC-145 baseline updated once (E-55), AC-167 / AC-168, full `TokenUsageRepository` caller list (F-7). SA-W90 to SA-W104 raised; no code written |
 | 2026-10-15 | SA workplan review: **APPROVED WITH CONDITIONS** | SA-W90 to SA-W104 approved (W98: R4-5 is right; W97: `aria-label`, `title`, `placeholder` scanned). Required changes SA-WR-46 to SA-WR-50 (subtitle pin, attribute controls, `bosRowFilter()` pinned on both reads, the deadline changes only by SA ruling, picked-view charged units). Requirement edits E-58 and E-59 applied by SA. Each part stops for the user's diff view |
 | 2026-10-15 | SA code review, Part A: **Code Approved** | Strings W-1 to W-28 verified; no identifier changed; E-59 subtitle pinned; guard HEAD count re-run by SA (21 offences at HEAD, 0 now); D1 and D2 approved, D3 left; SA re-run green (two untouched load flakes pass alone) |
+| 2026-10-15 | SA code review, Part B: **Code Approved** | E-53 exactness, end − 1 ms, race-only deadline, no sum, W98 placement, SA-WR-48 and SA-WR-50, AC-145 E-55 hunks (6a hash restored with `recorded` removed), `/tokenusage/i` with two methods pinned, comment-only repository headers verified; D1 to D5 approved; SA re-run all exit 0 |

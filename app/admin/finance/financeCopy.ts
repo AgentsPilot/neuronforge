@@ -220,6 +220,38 @@ export const AI_LINK_NOTE = 'Every recorded AI call, charged or not:';
 export const AI_UNRESOLVED = 'corrections whose charge could not be found';
 export const AI_UNREADABLE = 'amounts could not be read and count as 0';
 
+// ── Money M-4 (OV-5, §11F.5, §11F.6): the recorded AI cost beside the charged one ──
+// Two measures, never added (BD-18). "Recorded above charged" is a difference of the two, named
+// as one (E-54); the Leak check keeps its own per-call "Recorded, not charged". The server
+// decides every value and state (M4-FR-11); the page only formats.
+export const RECORDED_CAPTION = 'Beside the charged cost, never added';
+export const RECORDED_LABEL = 'Recorded AI cost (USD)';
+export const RECORDED_SOURCE = 'Usage log: every Business OS AI call, charged or not, priced from the model price table';
+export const ABOVE_LABEL = 'Recorded above charged (USD)';
+export const ABOVE_SOURCE = 'Recorded AI cost minus charged AI cost, for the same window. Which calls: run the';
+export const ABOVE_LEAK_LINK = 'Leak check';
+export const ABOVE_NONE = 'None';
+/** R4-6: charged is above recorded; `usd` is already formatted ("USD 0.33"). */
+export const aboveChargedAboveLine = (usd: string) => `Charged is ${usd} above recorded (fallback prices or corrections)`;
+export const ABOVE_NOT_AVAILABLE = 'Not available: AI charging began 29 Sep 2026';
+export const RECORDED_UNKNOWN = 'Unknown';
+/** R4-9: one notice for a failed read and a passed deadline (the log tells them apart, SA-W101). */
+export const RECORDED_NOTICE = 'The recorded AI cost could not be read in time. The charged figures above are unaffected.';
+/** Fix round 1 (SA low follow-up): the same notice when no charged figure is shown above it. */
+export const RECORDED_NOTICE_PLAIN = 'The recorded AI cost could not be read in time.';
+/** R4-4: with no business picked only. */
+export const RECORDED_DELETED_NOTE = 'Deleted accounts are left out: their recorded calls are deleted with the account.';
+/** R4-10 (with E-54's closing sentence): the stated distortions, one sentence each. */
+export const RECORDED_DISTORTIONS: readonly string[] = [
+  'Fallback-priced charges are above their recorded cost, so the difference can be lower than the true uncharged cost.',
+  'A call and its charge can fall either side of a window edge: a charge is written when its action ends, up to 5 minutes later.',
+  'A failed provider call is recorded at USD 0 in both.',
+  'By design, Recorded above charged includes chat turns outside the call catalog, platform-account calls and cache-served turns at USD 0.',
+  "Recorded above charged is not 'not charged' call by call; the Leak check matches calls.",
+];
+/** M4-FR-2: the account summary's line, the same value as Section 3's (AC-158). */
+export const ACCOUNT_RECORDED_ABOVE = 'Recorded above charged';
+
 export const NAME_PLATFORM = 'Platform account';
 export const NAME_MISSING = 'No business name';
 export const NAME_UNAVAILABLE = 'Name unavailable';

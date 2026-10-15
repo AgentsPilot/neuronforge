@@ -39,6 +39,12 @@
  * is USD, BD-22) and are named `costUsd` / `marginUsd`. No field is a total
  * across currencies.
  *
+ * Money M-4 (OV-5, §11F.5, SA-Q54): one more OPTIONAL key, `aiCost.recorded`,
+ * the recorded AI cost (the usage log) and "Recorded above charged", beside
+ * the charged cost and never added to it (BD-18). USD by construction, named
+ * `…Usd`. Absent on the Accounts tab (AC-167). No field holds a sum of the two
+ * measures.
+ *
  * @module lib/business-os/finance/financeTypes
  */
 
@@ -155,11 +161,39 @@ export interface FinanceAiCostFigures {
   unresolvedAdjustments: number;
 }
 
+/** M-4 (§11F.5): the state of "Recorded above charged" (E-54). */
+export type FinanceRecordedAboveState = 'figure' | 'none' | 'not_available' | 'unknown';
+
+/**
+ * M-4 (§11F.5, SA-Q54): the recorded AI cost (the usage log) beside the charged
+ * one. Never added to it (BD-18, R4-11): no field here holds their sum. USD by
+ * construction (the model price table). No row, id, session id, feature value
+ * or name is ever in it (AC-164).
+ */
+export interface FinanceRecordedAiCost {
+  /** ok: recorded exact and the difference decided; partial: "at least" or an Unknown difference; unknown: the read failed or timed out. */
+  status: FinanceSectionStatus;
+  /** Null only when `status` is `unknown`. */
+  recordedUsd: number | null;
+  /** False = "At least" (R4-9). */
+  recordedExact: boolean;
+  /** "Recorded above charged" (E-54). `usd` only with `figure`, and always > 0. */
+  aboveCharged: { state: FinanceRecordedAboveState; usd: number | null };
+  /** Only when `aboveCharged.state` is `none` and charged is strictly above recorded (R4-6). */
+  chargedAboveUsd: number | null;
+}
+
 export interface FinanceAiCostSection {
   status: FinanceSectionStatus;
   coverage: FinanceCoverage;
   /** Null only when `status` is `unknown`. Zeros (not null) when the window is entirely before the cut-over. */
   figures: FinanceAiCostFigures | null;
+  /**
+   * M-4 (OV-5): present on the Overview and in the picked view; ABSENT (never
+   * null) on the Accounts tab (AC-167). It has its own status: a failed
+   * recorded read never changes Section 3's charged figures or `status`.
+   */
+  recorded?: FinanceRecordedAiCost;
 }
 
 export type FinanceRevenueState = 'none_yet' | 'recorded' | 'unknown';

@@ -146,3 +146,27 @@ describe('slice 6a: accountViewHref, an Accounts row → the one-account view on
     for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
   });
 });
+
+// Money M-4 (SA-W99, T8-B): a separate import, so the lines above stay unedited.
+import { leakCheckHref } from '../financeLinks';
+
+describe('Money M-4: leakCheckHref, the Costs & credits tab that runs the Leak check (SA-W99)', () => {
+  it('no business picked: the Costs tab only; no window and no account', () => {
+    const href = leakCheckHref(null);
+    expect(href).toBe('/admin/business-os-llm?tab=costs');
+    const get = getter(paramsOf(href));
+    expect(COSTS_FILTER_SPEC.account.parse(get)).toBeUndefined();
+    expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
+  });
+
+  it('a business picked: the tab’s own `account` key, which the Costs spec parses back; still no window key', () => {
+    const href = leakCheckHref(A);
+    expect(href).toBe(`/admin/business-os-llm?tab=costs&account=${A}`);
+    const params = paramsOf(href);
+    const get = getter(params);
+    expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
+    expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
+    expect([...params.keys()]).toEqual(['tab', 'account']);
+    for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
+  });
+});

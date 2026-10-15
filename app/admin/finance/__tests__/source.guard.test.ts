@@ -248,3 +248,62 @@ describe('fix round 1: which Accounts rows link', () => {
     expect(code).toMatch(/\{linked && \(\s*<Link\b/);
   });
 });
+
+// ── Money M-4 (OV-5, M4-FR-11, AC-158, T12-B) ────────────────────────────────
+describe('Money M-4 source guards (the recorded block and the summary line)', () => {
+  const LINES = path.join(DIR, 'components', 'RecordedCostLines.tsx');
+  const SECTION3 = path.join(DIR, 'components', 'AiCostSection.tsx');
+  const SUMMARY = path.join(DIR, 'components', 'AccountSummary.tsx');
+
+  it('scans the new file (non-vacuity)', () => {
+    expect(files.map(rel)).toEqual(expect.arrayContaining([rel(LINES)]));
+    expect(codeOf(LINES).length).toBeGreaterThan(1000);
+  });
+
+  // M4-FR-11 / SA-WR-18 extended to the M-4 fields (MONEY_6A itself is not edited).
+  const MONEY_M4 = '(?:recordedUsd|chargedAboveUsd|usd|costUsd)';
+  const MONEY_M4_ARITHMETIC = new RegExp(`\\b${MONEY_M4}\\b\\s*(?:[-+]=|[-+]\\s*[\\w.?!()]*\\b${MONEY_M4}\\b)`);
+  it('the M-4 money-arithmetic rule bites (planted)', () => {
+    expect(MONEY_M4_ARITHMETIC.test('const t = recorded.recordedUsd + f.costUsd;')).toBe(true);
+    expect(MONEY_M4_ARITHMETIC.test('const d = recorded.recordedUsd - aiCost.figures.costUsd;')).toBe(true);
+    expect(MONEY_M4_ARITHMETIC.test('above.usd + recorded.chargedAboveUsd')).toBe(true);
+    expect(MONEY_M4_ARITHMETIC.test('formatUsd(recorded.recordedUsd)')).toBe(false);
+  });
+
+  it.each(files.map(rel))('%s: adds or subtracts no two M-4 money fields', (file) => {
+    expect(MONEY_M4_ARITHMETIC.test(codeOf(path.join(ROOT, file)))).toBe(false);
+  });
+
+  // SA-W69 / LF-1: the new file is held to text-slate-400.
+  const DIM_TEXT = /(^|[^a-zA-Z0-9-])text-slate-[56]00([^0-9]|$)/;
+  it('RecordedCostLines.tsx: no text-slate-500 or text-slate-600; types only from lib/business-os/finance', () => {
+    expect(DIM_TEXT.test(codeOf(LINES))).toBe(false);
+    const financeImports = read(LINES).split('\n').filter((line) => /from ['"]@\/lib\/business-os\/finance\//.test(line));
+    expect(financeImports.length).toBe(1);
+    for (const line of financeImports) expect(line).toMatch(/^import type /);
+  });
+
+  // AC-158: one renderer of "Recorded above charged", used by Section 3's block and the summary.
+  const DEFINES_RENDERER = /function\s+RecordedAboveValue\b|(?:const|let|var)\s+RecordedAboveValue\b/;
+  const READS_STATE = /\baboveCharged\b|\bchargedAboveUsd\b|\bABOVE_NONE\b|\bABOVE_NOT_AVAILABLE\b|\baboveChargedAboveLine\b/;
+  it('the one-renderer rules bite (planted)', () => {
+    expect(DEFINES_RENDERER.test('function RecordedAboveValue({ recorded }) {}')).toBe(true);
+    expect(READS_STATE.test("recorded.aboveCharged.state === 'none' ? ABOVE_NONE : ''")).toBe(true);
+    expect(READS_STATE.test('<RecordedAboveValue recorded={aiCost.recorded} testId="x" />')).toBe(false);
+  });
+
+  it('AC-158: RecordedAboveValue is defined only in RecordedCostLines.tsx; the summary renders it and reads no state of its own; Section 3 renders the block', () => {
+    expect(files.filter((file) => DEFINES_RENDERER.test(codeOf(file))).map(rel)).toEqual([rel(LINES)]);
+    // The copy module defines the words; every other page file only renders through RecordedAboveValue.
+    for (const file of files.filter((f) => f !== LINES && f !== path.join(DIR, 'financeCopy.ts'))) {
+      expect({ file: rel(file), readsState: READS_STATE.test(codeOf(file)) }).toEqual({ file: rel(file), readsState: false });
+    }
+    expect(codeOf(SUMMARY)).toMatch(/<RecordedAboveValue recorded=\{aiCost\.recorded\}/);
+    expect(codeOf(SECTION3)).toMatch(/<RecordedCostLines recorded=\{aiCost\.recorded\} accountId=\{accountId\} chargedShown=\{chargedShown\} \/>/);
+  });
+
+  it('SA-W98: Section 3 hands the block to the frame’s unknown slot too, so it shows when the charged read failed', () => {
+    expect(codeOf(SECTION3)).toMatch(/alsoWhenUnknown=\{recordedBlock\}/);
+    expect(codeOf(path.join(DIR, 'components', 'FinanceSection.tsx'))).toMatch(/\{status === 'unknown' && alsoWhenUnknown\}/);
+  });
+});
