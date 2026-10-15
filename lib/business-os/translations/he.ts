@@ -2189,6 +2189,13 @@ export const he = {
     'consent.label_ad': 'לסמן דיוור שיווקי כפרסומת',
     'consent.label_ad_desc': 'חובה בדיוור לאנשים בישראל. מוסיף סימון ברור בראש כל הודעה שיווקית.',
     'consent.saved': 'נשמר',
+    'consent.save_failed': 'לא נשמר. השינויים שלך עדיין כאן, נסה שוב.',
+    'consent.load_failed': 'לא ניתן לטעון את הגדרות הרשאת השיווק.',
+    // Not "בטל": it also reads as "cancel", the opposite choice, next to "keep editing" (SA C-9).
+    'settings.drawer.discard_title': 'למחוק את השינויים?',
+    'settings.drawer.discard_desc': 'יש כאן שינויים שלא נשמרו. אם תסגור עכשיו, הם יאבדו.',
+    'settings.drawer.keep_editing': 'המשך לערוך',
+    'settings.drawer.discard': 'מחק את השינויים',
 
     // Security Tab
     'settings.security.title': 'סיסמה ואבטחה',
