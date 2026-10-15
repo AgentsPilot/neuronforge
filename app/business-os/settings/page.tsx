@@ -250,10 +250,34 @@ function BusinessOSSettingsContent() {
     try {
       setLoading(true);
 
-      const [profileRes, prefsRes] = await Promise.all([
+      /*
+       * Two independent halves (settings drawer D-1): a failed profile read
+       * cannot blank the timezone, and a failed timezone read cannot blank the
+       * profile. The timezone comes from the preferences route, RAW: `null`
+       * ("not asked") shows the placeholder, never 'UTC'. `LanguageContext`'s
+       * timezone cannot be reused, because it falls back to 'UTC'.
+       */
+      const [profileSettled, timezoneSettled] = await Promise.allSettled([
         supabase.from('profiles').select('full_name, avatar_url, job_title').eq('id', user.id).single(),
-        supabase.from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle(),
+        (async (): Promise<string> => {
+          const res = await fetch('/api/business-os/preferences', { method: 'GET' });
+          const payload = await res.json().catch(() => null);
+          const locale = res.ok && payload?.success === true ? payload.data?.locale : null;
+          if (!locale) {
+            logger.warn({ userId: user.id, status: res.status }, 'Could not read the stored timezone');
+            return '';
+          }
+          return typeof locale.timezone === 'string' ? locale.timezone : '';
+        })(),
       ]);
+      if (profileSettled.status === 'rejected') {
+        logger.error({ err: profileSettled.reason, userId: user.id }, 'Failed to load the profile row');
+      }
+      if (timezoneSettled.status === 'rejected') {
+        logger.warn({ err: timezoneSettled.reason, userId: user.id }, 'Could not read the stored timezone');
+      }
+      const profileRes = profileSettled.status === 'fulfilled' ? profileSettled.value : { data: null };
+      const storedTimezone = timezoneSettled.status === 'fulfilled' ? timezoneSettled.value : '';
 
       /*
        * Not gated on the profile row.
@@ -268,7 +292,7 @@ function BusinessOSSettingsContent() {
         full_name: profileRes.data?.full_name || '',
         avatar_url: profileRes.data?.avatar_url || '',
         job_title: profileRes.data?.job_title || '',
-        timezone: prefsRes.data?.timezone || '',
+        timezone: storedTimezone,
       });
     } catch (error) {
       logger.error({ err: error }, 'Failed to load the account settings');
@@ -295,56 +319,35 @@ function BusinessOSSettingsContent() {
    * each error, and READS THE VALUE BACK. A write that silently fails to take
    * is otherwise indistinguishable from success, and this one field governs
    * every time the platform displays.
+   *
+   * Since settings drawer D-1 the write, the `profiles` mirror and the
+   * read-back all run on the server, behind `PATCH /api/business-os/preferences`
+   * (CLAUDE.md rule 1). `success: true` means the server read the value back
+   * and it matched. No language is sent: a new preferences row takes the
+   * business's language on the server, and an existing row keeps its own.
+   * Returns the zone, or `null` on any failure. Never throws.
    */
   const persistTimezone = async (zone: string): Promise<string | null> => {
     if (!user) return null;
 
-    const stamp = new Date().toISOString();
+    try {
+      const res = await fetch('/api/business-os/preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: zone }),
+      });
+      const payload = await res.json().catch(() => null);
 
-    const { error: prefsError } = await supabase.from('user_preferences').upsert({
-      user_id: user.id,
-      timezone: zone,
-      // A human just answered, so record THAT as well as what they said — the
-      // value alone cannot tell a chosen 'UTC' from the old column default.
-      timezone_confirmed_at: stamp,
-      // Carried even though this save is about the timezone. Without it the
-      // upsert CREATES the row, and `preferred_language` lands on its `en`
-      // default — which server-side features read as a deliberate choice
-      // and used to generate English insights for a Hebrew business.
-      preferred_language: language,
-      updated_at: stamp,
-    }, { onConflict: 'user_id' });
+      if (res.ok && payload?.success === true && payload?.data?.timezone === zone) {
+        return zone;
+      }
 
-    if (prefsError) {
-      logger.error({ err: prefsError, userId: user.id, zone }, 'Failed to store the timezone');
+      logger.error({ userId: user.id, zone, status: res.status }, 'The server did not confirm the timezone');
+      return null;
+    } catch (err) {
+      logger.error({ err, userId: user.id, zone }, 'Failed to save the timezone');
       return null;
     }
-
-    /*
-     * A targeted UPDATE, not an upsert: the row exists, and naming the single
-     * column cannot clobber a field this screen did not intend to write.
-     */
-    const { error: mirrorError } = await supabase
-      .from('profiles')
-      .update({ timezone: zone, updated_at: stamp })
-      .eq('id', user.id);
-
-    if (mirrorError) {
-      logger.error({ err: mirrorError, userId: user.id, zone }, 'Failed to mirror the timezone onto the profile');
-    }
-
-    const { data: prefsRow } = await supabase
-      .from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle();
-
-    if (prefsRow?.timezone !== zone) {
-      logger.error(
-        { userId: user.id, zone, stored: prefsRow?.timezone },
-        'The timezone did not persist: the write reported success but the stored value differs'
-      );
-      return null;
-    }
-
-    return zone;
   };
 
   const saveProfile = async (overrides?: Partial<typeof profile>) => {

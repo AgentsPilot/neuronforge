@@ -28,6 +28,23 @@
  *                 currency (`business_currency_lock`), and that comes back as
  *                 409 `CURRENCY_LOCKED` so the picker can revert and explain.
  *
+ *   { timezone }  writes the business clock, `user_preferences.timezone`, the
+ *                 authority for every hour shown (`business_profiles.timezone`
+ *                 does not exist), and stamps `timezone_confirmed_at`, which
+ *                 the publish gate and My Day read as "a human answered". In
+ *                 this order (settings drawer D-1):
+ *                   1. the authority, update-then-insert, never an upsert; a
+ *                      NEW row's language comes from `business_profiles.language`
+ *                      on the server, so the browser never sends a language;
+ *                   2. the `profiles.timezone` mirror, best-effort (logged,
+ *                      never fails the save);
+ *                   3. a read-back of the authority. Success is defined by the
+ *                      read-back equalling the value sent, strictly (no trim).
+ *                 The zone is stored exactly as picked: an empty, untrimmed,
+ *                 offset-style or unknown zone is a 400, never a write and
+ *                 never a default, so "not asked" (`NULL`) stays distinct from
+ *                 a chosen `'UTC'`.
+ *
  * The currency sent must be the owner's pick. The client's display currency
  * (`currencyCode`, localStorage-backed) must never be sent here.
  */
@@ -38,9 +55,11 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { SUPPORTED_LANGUAGES } from '@/lib/business-os/userLanguage';
+import { SUPPORTED_LANGUAGES, normalizeLanguage, type SupportedLanguage } from '@/lib/business-os/userLanguage';
+import { isValidTimezone, MAX_TIMEZONE_LENGTH, TIMEZONE_SHAPE } from '@/lib/scheduling/businessTime';
 import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
 
 const logger = createLogger({ module: 'BusinessOsPreferencesAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -51,9 +70,23 @@ const BUSINESS_CURRENCIES = ['USD', 'EUR', 'ILS', 'GBP'] as const;
 /** SQLSTATE raised by `business_currency_lock` (20261008_currency_locks.sql). */
 const CHECK_VIOLATION = '23514';
 
+/**
+ * A zone exactly as picked. No `.trim()`, `.default()`, `.nullable()` or
+ * `.optional()`: the stored value is the one sent, and "unset" is not
+ * something this route writes. `isValidTimezone` repeats the length and shape
+ * checks because Zod still runs a `.refine` after a failed `.max()`/`.regex()`.
+ */
+const timezoneValue = z
+  .string()
+  .min(1)
+  .max(MAX_TIMEZONE_LENGTH)
+  .regex(TIMEZONE_SHAPE)
+  .refine(isValidTimezone, 'Unknown timezone');
+
 const preferencesSchema = z.union([
   z.object({ language: z.enum(SUPPORTED_LANGUAGES) }).strict(),
   z.object({ currency: z.enum(BUSINESS_CURRENCIES) }).strict(),
+  z.object({ timezone: timezoneValue }).strict(),
 ]);
 
 export async function GET(request: NextRequest) {
@@ -136,6 +169,90 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid JSON body' }, { status: 400 });
     }
     const validated = preferencesSchema.parse(body);
+
+    if ('timezone' in validated) {
+      const { timezone } = validated;
+      requestLogger.info({ userId: user.id, timezone }, 'Timezone update requested');
+
+      // Used only if the preferences row has to be created. A lookup failure
+      // never fails the save; the repository logs if a row is then created
+      // without a language.
+      let languageForNewRow: SupportedLanguage | null = null;
+      try {
+        const languageResult = await businessProfileRepository.findLanguage(user.id);
+        if (languageResult.error) {
+          requestLogger.warn(
+            { userId: user.id, err: languageResult.error },
+            'Could not read the business language (used only if a preferences row must be created)'
+          );
+        } else {
+          languageForNewRow = normalizeLanguage(languageResult.data);
+          if (!languageForNewRow) {
+            requestLogger.debug({ userId: user.id }, 'No supported business language for a new preferences row');
+          }
+        }
+      } catch (err) {
+        requestLogger.warn(
+          { userId: user.id, err },
+          'Could not read the business language (used only if a preferences row must be created)'
+        );
+      }
+
+      // One stamp for both tables, as the browser path wrote.
+      const confirmedAt = new Date().toISOString();
+
+      const saved = await userPreferencesRepository.saveConfirmedTimezone(user.id, timezone, {
+        languageForNewRow,
+        confirmedAt,
+      });
+      if (saved.error) {
+        requestLogger.error({ userId: user.id, err: saved.error }, 'Timezone save failed');
+        return NextResponse.json(
+          { success: false, error: 'Failed to save the timezone' },
+          { status: 500 }
+        );
+      }
+
+      const mirrored = await userProfileRepository.updateTimezoneMirror(user.id, timezone, confirmedAt);
+      if (mirrored.error) {
+        requestLogger.error({ userId: user.id }, 'Timezone mirror onto the profile failed (best-effort)');
+      }
+
+      // Success is the read-back, compared strictly: a write that reported
+      // success but did not take is otherwise indistinguishable from one that did.
+      const readBack = await userPreferencesRepository.findLocale(user.id);
+      const stored = readBack.error ? null : readBack.data?.timezone ?? null;
+      if (stored !== timezone) {
+        // The stored value can be anything (a hand-edited row): never log it as text.
+        requestLogger.error(
+          {
+            userId: user.id,
+            timezone,
+            readFailed: Boolean(readBack.error),
+            // null: nothing stored (or unreadable); a number: something else is.
+            storedLength: typeof stored === 'string' ? stored.length : null,
+          },
+          'The timezone did not persist'
+        );
+        return NextResponse.json(
+          { success: false, error: 'Failed to save the timezone' },
+          { status: 500 }
+        );
+      }
+
+      auditTrail
+        .log({
+          action: AUDIT_EVENTS.SETTINGS_PREFERENCES_UPDATED,
+          entityType: 'settings',
+          entityId: user.id,
+          userId: user.id,
+          changes: { after: { timezone } },
+          request,
+        })
+        .catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+      return NextResponse.json({ success: true, data: { timezone } });
+    }
 
     if ('language' in validated) {
       const { language } = validated;
