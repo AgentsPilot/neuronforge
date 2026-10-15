@@ -16,12 +16,12 @@
  * TWO STAND-INS, AND WHY
  *
  * `SavedAddressPicker` is a button that calls `onSelect` with a fixed address.
- * It deliberately does NOT fill anything on mount. The real picker does today:
- * the panel passes neither `selectedId` nor `current`, so the picker takes its
- * "empty form gets the default" branch and overwrites the stored postal address
- * on every open, which makes the drawer dirty on an untouched open (F-18, SA
- * S-3 ruling 3). That is out of S-3 by the user's decision, and it is NOT pinned
- * here: the F-18 task fixes it and brings a test with the real picker.
+ * It does NOT fill anything on mount, and neither does the real picker any
+ * more: F-18 made the panel call it as a text form (`matchCurrent`), so it only
+ * marks the entry the stored line already is and never writes on its own. The
+ * real picker, with the panel and the drawer, is tested in
+ * `MarketingConsentPanel.picker.render.test.tsx` (including K21: an untouched
+ * open is clean). This file keeps the stub for the drawer's own behaviour.
  *
  * `@/components/ui/select` is a native `<select>`, because Radix's portalled
  * listbox cannot be driven in jsdom. Its layering over the drawer is a manual
@@ -69,7 +69,8 @@ jest.mock('@/lib/logger', () => {
   return { ...jest.requireActual('@/lib/logger'), createLogger: () => ({ ...logger, child: () => logger }) };
 });
 
-// See the header: no fill on mount (F-18 is a separate task).
+// See the header: no fill on mount, as the real picker since F-18. The real one
+// is tested in MarketingConsentPanel.picker.render.test.tsx.
 jest.mock('@/components/ui/SavedAddressPicker', () => {
   const ReactInMock = jest.requireActual('react') as typeof React;
   return {
