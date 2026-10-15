@@ -58,7 +58,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import type { FinanceCreditRow, FinancePayload, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
 // Slice 4a: a separate import, so the line above stays unedited.
@@ -130,6 +130,9 @@ import {
   revenueDeletedLine,
 } from '../financeCopy';
 import { formatMoney } from '../financeFormat';
+// Finance F-2: a separate import, so the lists above stay unedited.
+import { PAGE_PURPOSE, PAGE_TITLE, RETRY } from '../financeCopy';
+import { FINANCE_URL_NOTICE } from '../financeUrl';
 // Slice 5a (Money M-2).
 import {
   REVENUE_PLANS_DELETED_NONE,
@@ -498,7 +501,8 @@ describe('the finance page', () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
-    expect(screen.getByRole('heading', { name: 'Finance & business health' })).toBeInTheDocument();
+    // Finance F-2: the h1 equals the sidebar label.
+    expect(screen.getByRole('heading', { level: 1, name: 'Finance' })).toBeInTheDocument();
     for (const id of ['k1_ai_cost', 'k3_founding_no_end_date', 'k5_our_revenue']) {
       const status = screen.getByTestId(`tile-${id}`).getAttribute('data-status') as keyof typeof STATUS_STYLES;
       expect(screen.getByTestId(`tile-${id}-state`)).toHaveTextContent(STATUS_STYLES[status].label);
@@ -584,7 +588,7 @@ describe('the finance page', () => {
     expect(section.textContent).not.toMatch(/including \d+ Founding Partner/);
   });
 
-  it('AC-27: a failed section says so with a Retry; the others still render; Retry refetches', async () => {
+  it('AC-27: a failed section says so with a Try again; the others still render; Try again refetches', async () => {
     const fetchMock = serve({
       success: true,
       data: payload({ accounts: { status: 'unknown', scope: 'all', figures: null } }),
@@ -593,7 +597,7 @@ describe('the finance page', () => {
     const section = await screen.findByTestId('section-accounts');
     expect(within(section).getAllByText(SECTION_COULD_NOT_LOAD).length).toBeGreaterThan(0);
     expect(screen.getByTestId('ai-total')).toBeInTheDocument();
-    fireEvent.click(within(section).getByRole('button', { name: 'Retry' }));
+    fireEvent.click(within(section).getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
@@ -674,7 +678,7 @@ describe('the finance page', () => {
     expect(screen.queryByTestId('ai-total')).not.toBeInTheDocument();
   });
 
-  it('a route error (e.g. 404) shows the server message with a Retry', async () => {
+  it('a route error (e.g. 404) shows the server message with a Try again', async () => {
     serve({ success: false, error: 'Business not found' }, 404);
     render(<FinanceView />);
     expect(await screen.findByTestId('finance-error')).toHaveTextContent('Business not found');
@@ -739,14 +743,14 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     expect(screen.getByTestId('tile-k4_gifted_outstanding-state')).toHaveTextContent(STATUS_STYLES.neutral.label);
   });
 
-  it('AC-16: Section 4 could not load → its own Retry, the other sections render, and K-4 still shows its value (SA-W12)', async () => {
+  it('AC-16: Section 4 could not load → its own Try again, the other sections render, and K-4 still shows its value (SA-W12)', async () => {
     const p = payload({ credits: creditsSection({ status: 'unknown', figures: null }) });
     p.tiles.k2 = { ...p.tiles.k2, status: 'unavailable', headline: 'Unknown', value: null };
     serve({ success: true, data: p });
     render(<FinanceView />);
     const section = await screen.findByTestId('section-credits');
     expect(within(section).getAllByText(SECTION_COULD_NOT_LOAD).length).toBeGreaterThan(0);
-    expect(within(section).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.getByTestId('ai-total')).toBeInTheDocument();
     expect(screen.getByTestId('tile-k4_gifted_outstanding')).toHaveTextContent('12.5');
     expect(screen.getByTestId('tile-k2_far_over_allowance')).toHaveAttribute('data-status', 'unavailable');
@@ -966,10 +970,10 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     expect(within(section).queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
-  it('AC-66: the block could not load → its own Retry; every other section and tile renders', async () => {
+  it('AC-66: the block could not load → its own Try again; every other section and tile renders', async () => {
     const section = await renderWith({ status: 'unknown', scope: 'all', figures: null });
     expect(within(section).getAllByText(SECTION_COULD_NOT_LOAD).length).toBeGreaterThan(0);
-    expect(within(section).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.getByTestId('ai-total')).toBeInTheDocument();
     expect(screen.getByTestId('section-credits')).toBeInTheDocument();
   });
@@ -1526,7 +1530,7 @@ describe('Our revenue (slice 4a)', () => {
     expect(screen.getByTestId('section-takings')).toBeInTheDocument();
   });
 
-  it('both reads failed → the section says it could not load, with Retry', async () => {
+  it('both reads failed → the section says it could not load, with Try again', async () => {
     const revenue = revenueSection({ status: 'unknown', state: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null });
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);
@@ -1798,5 +1802,149 @@ describe('Money M-4 Part B: the recorded AI cost on the page', () => {
     await screen.findByTestId('account-summary');
     expect(screen.queryByTestId('ai-recorded')).toBeNull();
     expect(screen.queryByTestId('account-summary-recorded-above')).toBeNull();
+  });
+});
+
+/**
+ * Finance F-2 (Admin Layout Standard §5.3, §5.10): the shared header and the
+ * shared states. The DV-1 pin (Refresh in the header) is here on purpose: F-4
+ * moves Refresh into the filter bar and must change that test deliberately.
+ */
+describe('Finance F-2: header and states', () => {
+  /** A fetch that never answers until `release` is called with a body. */
+  function pending(): { fetchMock: jest.Mock; release: (body: unknown, status?: number) => void } {
+    let resolve: (value: unknown) => void = () => undefined;
+    const fetchMock = jest.fn(
+      () =>
+        new Promise((res) => {
+          resolve = res;
+        })
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return {
+      fetchMock,
+      release: (body, status = 200) => resolve({ ok: status < 400, status, json: async () => body }),
+    };
+  }
+
+  it('the page has exactly one h1, "Finance" (the sidebar label), the purpose line, and the as-of line only once data is in', async () => {
+    const { release } = pending();
+    render(<FinanceView />);
+    const h1s = screen.getAllByRole('heading', { level: 1 });
+    expect(h1s).toHaveLength(1);
+    expect(h1s[0].textContent).toBe('Finance');
+    expect(PAGE_TITLE).toBe('Finance');
+    expect(screen.getByText(PAGE_PURPOSE)).toBeInTheDocument();
+    expect(screen.queryByTestId('as-of')).toBeNull();
+    await act(async () => release({ success: true, data: payload() }));
+    expect(await screen.findByTestId('as-of')).toHaveTextContent('This month, 2026-10-01 to 2026-10-09 UTC');
+    expect(screen.getByTestId('as-of').className).toContain('text-slate-400');
+  });
+
+  it('DV-1: Refresh is still a header action (until F-4), aria-busy while the first read runs', () => {
+    pending();
+    render(<FinanceView />);
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    expect(refresh.closest('header')).not.toBeNull();
+    expect(refresh).toHaveAttribute('aria-busy', 'true');
+    expect(refresh).toBeDisabled();
+  });
+
+  it('first load: "Reading the finance page…" in the content area, while the header and the filter bar stay mounted', () => {
+    pending();
+    render(<FinanceView />);
+    const content = screen.getByTestId('finance-content');
+    expect(within(content).getByRole('status')).toHaveTextContent('Reading the finance page…');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(content).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(screen.getByTestId('picker-pick')).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).toBeNull();
+  });
+
+  it('error: the shared red alert, the message exactly, and "Try again" sends the same request again', async () => {
+    const fetchMock = serve({ success: false, error: 'Business not found' }, 404);
+    render(<FinanceView />);
+    const message = await screen.findByTestId('finance-error');
+    expect(message.textContent).toBe('Business not found');
+    const alert = screen.getByRole('alert');
+    expect(alert).toContainElement(message);
+    expect(alert.className).toContain('border-red-500/40');
+    expect(within(screen.getByTestId('finance-content')).getByRole('alert')).toBe(alert);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(within(alert).queryByRole('button', { name: 'Retry' })).toBeNull();
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]).toEqual(fetchMock.mock.calls[0]);
+  });
+
+  it('a failure after a success clears the figures (today’s behaviour): no sections under the error', async () => {
+    let call = 0;
+    const fetchMock = jest.fn(async () => {
+      call += 1;
+      return call === 1
+        ? { ok: true, status: 200, json: async () => ({ success: true, data: payload() }) }
+        : { ok: false, status: 500, json: async () => ({ success: false, error: 'Boom' }) };
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByTestId('finance-error')).toHaveTextContent('Boom');
+    expect(screen.queryByTestId('kpi-strip')).toBeNull();
+    expect(screen.queryByTestId('section-revenue')).toBeNull();
+    expect(screen.queryByTestId('as-of')).toBeNull();
+  });
+
+  it('a Refresh keeps the current figures and marks the content area aria-busy until the read settles', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    const content = screen.getByTestId('finance-content');
+    expect(content).toHaveAttribute('aria-busy', 'false');
+    const { release } = pending();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(content).toHaveAttribute('aria-busy', 'true');
+    expect(within(content).getByTestId('kpi-strip')).toBeInTheDocument();
+    expect(within(content).queryByText('Reading the finance page…')).toBeNull();
+    await act(async () => release({ success: true, data: payload() }));
+    await waitFor(() => expect(content).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByTestId('finance-content')).toBe(content);
+  });
+
+  it('URL notice: the shared amber notice with the sentence alone (no "Note:"), and no role', async () => {
+    mockSearch = 'preset=year';
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const notice = await screen.findByTestId('finance-url-notice');
+    expect(notice.textContent).toBe(FINANCE_URL_NOTICE);
+    expect(notice).not.toHaveAttribute('role');
+    expect(notice.parentElement).not.toHaveAttribute('role');
+    expect(notice.parentElement?.className).toContain('border-amber-500/40');
+    expect(screen.queryByText(/Note:/)).toBeNull();
+  });
+
+  it('the Accounts tab waiting for its section says "Reading the accounts…"', async () => {
+    mockSearch = 'tab=accounts';
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const panel = await screen.findByRole('tabpanel');
+    expect(within(panel).getByRole('status')).toHaveTextContent('Reading the accounts…');
+  });
+
+  it('F2-R2: every retry button on the page reads "Try again" (page error and sections alike); none reads "Retry"', async () => {
+    expect(RETRY).toBe('Try again');
+    serve({
+      success: true,
+      data: payload({ accounts: { status: 'unknown', scope: 'all', figures: null }, credits: creditsSection({ status: 'unknown', figures: null }) }),
+    });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    const retries = screen.getAllByRole('button', { name: /try again|retry/i });
+    expect(retries.length).toBeGreaterThanOrEqual(2);
+    for (const button of retries) expect(button.textContent).toBe('Try again');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });

@@ -11,7 +11,8 @@
 
 import type { FinanceGroupKey, FinanceTriggerKey, FinanceWindowChoice } from '@/lib/business-os/finance/financeTypes';
 
-export const PAGE_TITLE = 'Finance & business health';
+// Finance F-2 (user decision 2026-10-15): the h1 equals the sidebar label (Admin Layout Standard §5.3).
+export const PAGE_TITLE = 'Finance';
 export const PAGE_PURPOSE =
   'How is Business OS doing this month: accounts, AI cost, credits, and what clients paid the businesses through the platform.';
 
@@ -34,9 +35,10 @@ export const FILTER_APPLY = 'Apply';
 export const FILTER_BUSINESS_HELP =
   'Only accounts with a business profile can be found by name. Paste a full account id to filter by any other account.';
 export const REFRESH = 'Refresh';
-export const LOADING = 'Loading…';
-export const PAGE_LOAD_FAILED = 'The finance page could not be loaded.';
-export const RETRY = 'Retry';
+// Finance F-2 (SA F2-R2): the standard's word (§5.10), so the page error and every section's own button say the same.
+export const RETRY = 'Try again';
+/** Finance F-2: the Accounts tab's waiting state reads "Reading the accounts…" (shared `AdminLoading`). */
+export const ACCOUNTS_WHAT = 'the accounts';
 
 export const TILE_LABELS = {
   k1: 'Charged AI cost this month',
@@ -262,8 +264,6 @@ export const TRIGGER_LABELS: Record<FinanceTriggerKey, string> = {
   external: 'External',
   unattributed: 'Unattributed',
 };
-
-export const NOTICE_LABEL = 'Note:';
 
 // ── Section 4, credits (slice 1b) ───────────────────────────────────────────
 export const CREDITS_TITLE = 'Credits';
