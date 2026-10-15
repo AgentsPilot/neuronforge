@@ -148,11 +148,9 @@ describe('IMAGE_FALLBACK_PRICING', () => {
     expect(Object.keys(IMAGE_FALLBACK_PRICING).some((k) => k.endsWith(':auto'))).toBe(false);
   });
 
-  it('keeps the gpt-image-1 prices until its shutdown has passed (the prod row and the charge rate still need them)', () => {
-    for (const size of ['1024x1024', '1024x1536', '1536x1024']) {
-      for (const quality of ['low', 'medium', 'high']) {
-        expect(IMAGE_FALLBACK_PRICING[`gpt-image-1:${size}:${quality}`]).toBeGreaterThan(0);
-      }
-    }
+  it('no longer prices the retired gpt-image-1 (removed 2026-10-14, Q10)', () => {
+    // Its absence is what makes a rollback of the images row to it safe: the
+    // guardrail refuses an unpriced image model and keeps the default.
+    expect(Object.keys(IMAGE_FALLBACK_PRICING).filter((k) => k.startsWith('gpt-image-1:'))).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-10-14
-**Status:** Draft (discovery and recommendation only). Not reviewed by SA. No business question answered yet (§9).
+**Status:** Draft (discovery and recommendation only). Not reviewed by SA. All ten business questions answered 2026-10-14: the user accepted every proposed default (§9; FIN BD-18 to BD-27). M-1 and M-2 merged as PR #383; M-3 specified in FIN §11E.
 **Supersedes:** [ADMIN_AI_COST_PAGES_OVERLAP_REVIEW.md](/docs/requirements/ADMIN_AI_COST_PAGES_OVERLAP_REVIEW.md) (cited as **OV**). OV covered three pages against older code; §2 below re-checks each of its claims.
 **Related:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) (cited as **FIN**), [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) (cited as **LAY**), [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) (cited as **PAY**).
 
@@ -246,18 +246,20 @@ Ordered so the per-account view comes first. Each step takes a few days and reus
 
 ## 9. Business questions for the user
 
-| # | Question | Proposed default | Why |
-|---|---|---|---|
-| **BQ-1** | Should admin get one "Money" section in the sidebar, holding Finance (overview, accounts, one account) and the detailed AI calls page? | **Yes.** Finance stays the first page; nothing with buttons moves in | One place to look, without mixing reports and actions |
-| **BQ-2** | When we talk about "our AI cost" for prices and margin, which number is it? | **The charged cost** (what we billed in credits). The recorded cost is shown beside it as "not charged", never added | It matches the credits we charged; the gap is waste to chase, not a different truth |
-| **BQ-3** | Is an account's revenue counted **before or after tax** when we work out margin? | **After removing tax**, net of refunds and disputes. Stripe fees are not deducted (not recorded) and are said so | Tax is collected for the government, not earned. Today's boost "net" includes tax (`financeCopy.ts:91`) |
-| **BQ-4** | For plans, should Finance show the money actually received in the month first, and monthly recurring revenue later? | **Yes: cash received now, MRR when the billing panel (P-8a) defines it** | Cash received can be shown now; MRR needs a definition that P-8a owns |
-| **BQ-5** | The planned billing views (P-8a): where should they go? | **Totals, MRR and the subscriptions list in the Money area; the per-account billing panel in the Businesses drawer**, beside credits, linked from the per-account money view | The drawer is where support acts on an account; the Money area is where you read results |
-| **BQ-6** | Should "Costs & credits" move out of the Business OS AI settings page into the Money area (as "Charge checks")? | **Yes, after the per-account view is done** | It is a money report; under Settings nobody looks for it |
-| **BQ-7** | May we retire the hidden **Platform dashboard** and the unlisted **Exchange rates** page? The agent platform's AI cost stays visible in AI calls & usage | **Yes, retire both**; keep the "All products" view | Neither feeds any figure; Exchange rates writes from the browser, a security exposure |
-| **BQ-8** | Test payments are counted as real (your decisions BD-13, BD-14). Should the per-account view say "includes test payments"? | **No label for now**, as decided; revisit at go-live (DF-3) | Consistent with your earlier decisions |
-| **BQ-9** | For **one account**, do you want a "since it started" view, beyond 92 days? | **Yes, only when one account is picked**, starting from 29 Sep 2026 (when charging began) | One account's history is small, and "has this customer been worth it?" is a lifetime question |
-| **BQ-10** | The Health tile counts every recorded AI call, while Finance counts charged actions. Keep that? | **Keep**, rename it "Recorded AI cost", link to the Money area | Health's job is to catch spend that was never charged |
+**Answered 2026-10-14:** the user accepted the proposed default for every question, exactly as written. They are recorded in FIN §0.2 as BD-18 to BD-27.
+
+| # | Question | Proposed default | Why | Answer |
+|---|---|---|---|---|
+| **BQ-1** | Should admin get one "Money" section in the sidebar, holding Finance (overview, accounts, one account) and the detailed AI calls page? | **Yes.** Finance stays the first page; nothing with buttons moves in | One place to look, without mixing reports and actions | Accepted default, 2026-10-14 (FIN BD-21) |
+| **BQ-2** | When we talk about "our AI cost" for prices and margin, which number is it? | **The charged cost** (what we billed in credits). The recorded cost is shown beside it as "not charged", never added | It matches the credits we charged; the gap is waste to chase, not a different truth | Accepted default, 2026-10-14 (FIN BD-18) |
+| **BQ-3** | Is an account's revenue counted **before or after tax** when we work out margin? | **After removing tax**, net of refunds and disputes. Stripe fees are not deducted (not recorded) and are said so | Tax is collected for the government, not earned. Today's boost "net" includes tax (`financeCopy.ts:91`) | Accepted default, 2026-10-14 (FIN BD-22) |
+| **BQ-4** | For plans, should Finance show the money actually received in the month first, and monthly recurring revenue later? | **Yes: cash received now, MRR when the billing panel (P-8a) defines it** | Cash received can be shown now; MRR needs a definition that P-8a owns | Accepted default, 2026-10-14 (FIN BD-19) |
+| **BQ-5** | The planned billing views (P-8a): where should they go? | **Totals, MRR and the subscriptions list in the Money area; the per-account billing panel in the Businesses drawer**, beside credits, linked from the per-account money view | The drawer is where support acts on an account; the Money area is where you read results | Accepted default, 2026-10-14 (FIN BD-23) |
+| **BQ-6** | Should "Costs & credits" move out of the Business OS AI settings page into the Money area (as "Charge checks")? | **Yes, after the per-account view is done** | It is a money report; under Settings nobody looks for it | Accepted default, 2026-10-14 (FIN BD-24) |
+| **BQ-7** | May we retire the hidden **Platform dashboard** and the unlisted **Exchange rates** page? The agent platform's AI cost stays visible in AI calls & usage | **Yes, retire both**; keep the "All products" view | Neither feeds any figure; Exchange rates writes from the browser, a security exposure | Accepted default, 2026-10-14 (FIN BD-25) |
+| **BQ-8** | Test payments are counted as real (your decisions BD-13, BD-14). Should the per-account view say "includes test payments"? | **No label for now**, as decided; revisit at go-live (DF-3) | Consistent with your earlier decisions | Accepted default, 2026-10-14 (FIN BD-20) |
+| **BQ-9** | For **one account**, do you want a "since it started" view, beyond 92 days? | **Yes, only when one account is picked**, starting from 29 Sep 2026 (when charging began) | One account's history is small, and "has this customer been worth it?" is a lifetime question | Accepted default, 2026-10-14 (FIN BD-26; built later, FIN DF-6) |
+| **BQ-10** | The Health tile counts every recorded AI call, while Finance counts charged actions. Keep that? | **Keep**, rename it "Recorded AI cost", link to the Money area | Health's job is to catch spend that was never charged | Accepted default, 2026-10-14 (FIN BD-27) |
 
 ---
 
@@ -289,3 +291,4 @@ Ordered so the per-account view comes first. Each step takes a few days and reus
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-14 | Created | BA discovery and recommendation: re-check of OV against main `3b300f58` (six AI cost places, not four; Costs and Activity now in the URL with the shared picker; the old picker's deletion moved to Finance). Inventory I-1 to I-20 across both products. Finding: Finance already answers most of the per-account question. Target Money area with per-account view and account economics tab. Gaps G-1 to G-13. Steps M-1 to M-8. BQ-1 to BQ-10, SA-Q-1 to SA-Q-6 |
+| 2026-10-14 | Business questions answered (BA) | The user accepted the proposed default for all ten questions. §9 gains an Answer column; each is recorded in FIN §0.2 (BQ-2, BQ-4, BQ-8 as BD-18 to BD-20 with M-1 and M-2; the other seven as BD-21 to BD-27). Status line updated: M-1 and M-2 merged (#383), M-3 specified in FIN §11E. Body otherwise unchanged |

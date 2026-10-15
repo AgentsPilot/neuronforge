@@ -197,6 +197,16 @@ describe('each meeting', () => {
     expect(createdRows()[1].timezone).toBeTruthy();
     expect(mockCreateBooking).toHaveBeenCalledTimes(4);
   });
+
+  it('reads the clock through a method the real repository actually has (F-13)', () => {
+    // The mock above supplies its own `findTimezone`, so this suite stayed
+    // green while the real method was missing and every package acceptance
+    // threw in production. Pin the mock to the real class.
+    const actual = jest.requireActual<typeof import('@/lib/repositories/UserPreferencesRepository')>(
+      '@/lib/repositories/UserPreferencesRepository'
+    );
+    expect(typeof actual.UserPreferencesRepository.prototype.findTimezone).toBe('function');
+  });
 });
 
 describe('the status, read off how the package is paid for', () => {
