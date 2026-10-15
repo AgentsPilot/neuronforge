@@ -11,6 +11,10 @@
  * send shows the link once with a copy button; revoke asks for confirmation;
  * the refusals read in plain words; Hebrew is right-to-left; every input has a
  * label; and the component imports nothing from the entitlements module.
+ *
+ * Since settings drawer S-4 the panel opens in a drawer from the row; only the
+ * opener changed here (C-6, C-12). The link-safety checks are in
+ * `InviteFriendsSection.linkSafety.test.tsx`.
  */
 
 import '@testing-library/jest-dom';
@@ -68,12 +72,20 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
+/**
+ * The row that opens the drawer (settings drawer S-4). Its accessible name is
+ * the title followed by the "N left" value, so it is matched by its start.
+ */
+function findRow(title: string) {
+  return screen.findByRole('button', { name: (name) => name.startsWith(title) });
+}
+
 async function openSection() {
   const user = userEvent.setup();
   render(<InviteFriendsSection />);
-  const header = await screen.findByRole('button', { name: INVITE_FRIENDS_COPY.en.sectionTitle });
-  await user.click(header);
-  return { user, section: screen.getByTestId('invite-friends-section') };
+  await user.click(await findRow(INVITE_FRIENDS_COPY.en.sectionTitle));
+  // The panel lives in the drawer since S-4, portalled out of the row.
+  return { user, section: await screen.findByTestId('settings-invite-drawer') };
 }
 
 describe('renders nothing unless the server says eligible', () => {
@@ -242,7 +254,7 @@ describe('an eligible champion', () => {
     ui.language = 'he';
     ui.isRTL = true;
     render(<InviteFriendsSection />);
-    const header = await screen.findByRole('button', { name: INVITE_FRIENDS_COPY.he.sectionTitle });
+    const header = await findRow(INVITE_FRIENDS_COPY.he.sectionTitle);
     expect(screen.getByTestId('invite-friends-section')).toHaveAttribute('dir', 'rtl');
     await userEvent.setup().click(header);
     expect(screen.getByTestId('invite-friends-remaining')).toHaveTextContent(INVITE_FRIENDS_COPY.he.remaining(3, ALLOWANCE));
@@ -288,7 +300,7 @@ describe('plan payments P-5b.2 (FR-31): a friend who paid reads "Subscribed", in
     ui.isRTL = rtl;
     respond = () => ({ status: 200, body: { success: true, data: summary({ invites: [subscribed] }) } });
     render(<InviteFriendsSection />);
-    const header = await screen.findByRole('button', { name: INVITE_FRIENDS_COPY[locale].sectionTitle });
+    const header = await findRow(INVITE_FRIENDS_COPY[locale].sectionTitle);
     await userEvent.setup().click(header);
     const row = screen.getByTestId('invite-friends-row-s1');
     expect(within(row).getByTestId('invite-friends-status')).toHaveTextContent(word);
