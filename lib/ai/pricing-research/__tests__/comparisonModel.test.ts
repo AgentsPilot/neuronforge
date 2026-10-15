@@ -170,6 +170,21 @@ describe('current = what we charge today', () => {
   });
 });
 
+describe('currentRowId (slice 4, SA N-1)', () => {
+  it('is the charged stored row (newest wins) for a table-priced model', async () => {
+    expect(rowOf((await buildComparison()).rows, liveModel).currentRowId).toBe('row-new');
+    expect(rowOf((await buildComparison()).rows, tableOnlyModel).currentRowId).toBe('row-t');
+  });
+
+  it('is null for a fallback, unpriced or pending-only model and for every image row', async () => {
+    mockListPending.mockResolvedValue({ data: [pendingToken(otherProviderModel, '1', '2')], error: null });
+    const rows = (await buildComparison()).rows;
+    for (const model of [fallbackModel, unpricedModel, otherProviderModel, imageModel]) {
+      expect(rowOf(rows, model).currentRowId).toBeNull();
+    }
+  });
+});
+
 describe('pending lines and colours', () => {
   it('a pending line makes the row compare: red when the provider is above us, with the red unit named', async () => {
     mockListPending.mockResolvedValue({ data: [pendingToken(liveModel, '0.15', '0.68')], error: null });
@@ -200,7 +215,11 @@ describe('pending lines and colours', () => {
     mockListPending.mockResolvedValue({ data: [pendingToken(otherProviderModel, '1', '2', { flags: ['new_model', 'cached_input_listed'] })], error: null });
     const view = rowOf((await buildComparison()).rows, otherProviderModel).pending[0];
     expect(view.flags).toEqual(['new_model', 'cached_input_listed']);
-    expect(view.flagLabels).toEqual([{ flag: 'new_model', label: 'not used yet' }]);
+    // Slice 4 (SA RC-3 as corrected by N-3): every flag now has words, in flag order.
+    expect(view.flagLabels).toEqual([
+      { flag: 'new_model', label: 'not used yet' },
+      { flag: 'cached_input_listed', label: 'provider lists a cached-input price' },
+    ]);
   });
 
   it('an image key configured as 0 (or a non-number) with no fallback is unpriced and never reaches the resolver', async () => {

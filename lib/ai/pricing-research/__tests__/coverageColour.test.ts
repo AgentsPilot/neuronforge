@@ -2,7 +2,7 @@
  * The RR-4 colour rules, every case.
  */
 
-import { compareUnit, formatGapPercent, rowCoverage, type UnitComparisonInput } from '../coverageColour';
+import { compareUnit, formatGapPercent, rowCoverage, unitGapText, type UnitComparisonInput } from '../coverageColour';
 
 const unit = (current: string | null, pending: string | null, name = 'output'): UnitComparisonInput => ({
   unit: name,
@@ -107,4 +107,28 @@ it('a red unit 1 to 4 bps under never reads as zero (CR-2)', () => {
   expect(under).toMatchObject({ colour: 'red', gapBasisPoints: -1, label: 'Undercharging: -0.01%' });
   expect(rowCoverage([under]).summary).toBe('Undercharging: output -0.01%');
   expect(compareUnit(unit('0.9996', '1'), used).label).toBe('Undercharging: -0.04%');
+});
+
+// Slice 4 (SA N-2): the short gap text a table cell shows, same rule as the labels.
+describe('unitGapText', () => {
+  it('no change reads 0.00%', () => {
+    expect(unitGapText(compareUnit(unit('0.6', '0.60'), used))).toBe('0.00%');
+  });
+
+  it('covered and undercharging carry their sign', () => {
+    expect(unitGapText(compareUnit(unit('1.35', '1'), used))).toBe('+35.00%');
+    expect(unitGapText(compareUnit(unit('2.5', '2.75'), used))).toBe('-9.09%');
+  });
+
+  it('a red unit under 1 basis point never reads 0.00%', () => {
+    const tiny = compareUnit(unit('0.99999', '1'), used);
+    expect(tiny.colour).toBe('red');
+    expect(unitGapText(tiny)).toBe('less than -0.01%');
+  });
+
+  it('a unit with no gap returns its label', () => {
+    expect(unitGapText(compareUnit(unit('0.6', null), used))).toBe('No new price');
+    expect(unitGapText(compareUnit(unit(null, '1'), used))).toBe('Not priced');
+    expect(unitGapText(compareUnit(unit(null, '1'), unused))).toBe('Not compared');
+  });
 });

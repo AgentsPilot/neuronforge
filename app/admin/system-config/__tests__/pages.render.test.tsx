@@ -5,6 +5,11 @@
  * conditions C2-2, C2-3, C2-4, C2-5; SA W2-1, W2-8, O-5). Workplan cases
  * R-1 to R-10. R-11: AI_MODEL_PRICE_REVIEW slice 1 (exact price display).
  *
+ * AI_MODEL_PRICE_REVIEW slice 4 (UF-5, SA NR-3): the table is now the price
+ * comparison, so the page also reads `/api/admin/model-pricing/comparison`.
+ * The stub answers it by default from the same rows; each edited case keeps
+ * its original intent, stated in a one-line comment. R-12 and R-13 are new.
+ *
  * P = the Model pricing page (`/admin/system-config`).
  * B = the parked AgentsPilot billing page (`/admin/agentspilot-billing`).
  *
@@ -13,8 +18,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const mockError = jest.fn();
 jest.mock('@/lib/logger/client', () => {
@@ -30,6 +34,7 @@ jest.mock('@/lib/logger/client', () => {
 
 import ModelPricingPage from '../page';
 import AgentsPilotBillingPage from '../../agentspilot-billing/page';
+import { COMPARISON_URL, okComparison } from '../__fixtures__/priceComparison';
 
 const PRICING_URL = '/api/admin/system-config/pricing';
 const SYNC_URL = '/api/admin/system-config/pricing/sync';
@@ -69,10 +74,12 @@ interface Call {
  */
 function stubFetch(routes: Record<string, Route>) {
   const calls: Call[] = [];
+  // Slice 4: the comparison read is answered from ROWS unless a case routes it.
+  const all: Record<string, Route> = { [COMPARISON_URL]: () => okComparison(ROWS), ...routes };
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: typeof init?.body === 'string' ? init.body : undefined });
-    const route = routes[url];
+    const route = all[url];
     if (!route) throw new Error(`unexpected fetch: ${method} ${url}`);
     const reply = route(method, init);
     if (reply === 'reject') throw new TypeError('Failed to fetch');
@@ -103,7 +110,8 @@ describe('P: Model pricing', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Model pricing$/);
     expect(screen.getByText('claude-haiku')).toBeInTheDocument();
     expect(screen.queryByText('System Config')).not.toBeInTheDocument();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${PRICING_URL}`]);
+    // Intent kept: only the pricing routes are read (slice 4: the list and the comparison).
+    expect(calls.map((c) => `${c.method} ${c.url}`).sort()).toEqual([`GET ${COMPARISON_URL}`, `GET ${PRICING_URL}`].sort());
   });
 
   it('R-1 (W2-8): the toggle collapses the open card', async () => {
@@ -112,18 +120,21 @@ describe('P: Model pricing', () => {
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    await userEvent.click(screen.getByTestId('pricing-toggle'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(screen.getByTestId('pricing-toggle'));
 
     expect(screen.queryByText('gpt-4o-mini')).not.toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('a successful empty list is a true answer: the table, no failure line, no banner', async () => {
-    stubFetch({ [PRICING_URL]: () => okRows([]) });
+    // Intent kept: two empty answers are a true empty table (slice 4: both reads empty).
+    stubFetch({ [PRICING_URL]: () => okRows([]), [COMPARISON_URL]: () => okComparison([]) });
 
     render(<ModelPricingPage />);
 
     expect(await screen.findByRole('table')).toBeInTheDocument();
+    expect(screen.getByText('No models to show.')).toBeInTheDocument();
     expect(screen.queryByTestId('pricing-read-failed')).not.toBeInTheDocument();
     expect(screen.queryByText(READ_FAILED_BANNER)).not.toBeInTheDocument();
   });
@@ -175,40 +186,63 @@ describe('P: Model pricing', () => {
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    await userEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
 
     expect(await screen.findByText('ok')).toBeInTheDocument();
+    // Intent kept: Sync re-reads once per list (slice 4: the comparison too).
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `GET ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
       `POST ${SYNC_URL}`,
       `GET ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
     ]);
   });
 
-  it('R-9 (W2-1): a saved price shows as saved, from the PUT reply, with no extra read', async () => {
+  it('R-9 (W2-1, N-5): a saved price shows as saved, and the PUT body is unchanged and per token', async () => {
+    // Intent kept: the saved value shows and the PUT is the same per-token request.
+    // Slice 4 (N-5): "ours" comes from the comparison, which is read once after the save.
     const saved = { ...ROWS[0], input_cost_per_token: 0.0000025 };
+    let comparisonReads = 0;
     const calls = stubFetch({
       [PRICING_URL]: (method) =>
         method === 'PUT'
           ? { status: 200, body: { success: true, data: saved, message: 'Pricing updated successfully' } }
           : okRows(),
+      [COMPARISON_URL]: () => {
+        comparisonReads += 1;
+        return okComparison(comparisonReads === 1 ? ROWS : [saved, ROWS[1]]);
+      },
     });
 
     render(<ModelPricingPage />);
     const row = (await screen.findByText('gpt-4o-mini')).closest('tr') as HTMLElement;
-    expect(within(row).getByText('$0.00000015')).toBeInTheDocument();
+    expect(within(row).getByText('$0.15')).toBeInTheDocument();
 
-    await userEvent.click(within(row).getByTitle('Edit pricing'));
-    await userEvent.click(within(row).getByTitle('Save'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(within(row).getByTitle('Edit pricing'));
+    fireEvent.click(within(row).getByTitle('Save'));
 
     expect(await screen.findByText('Pricing updated successfully!')).toBeInTheDocument();
     const after = screen.getByText('gpt-4o-mini').closest('tr') as HTMLElement;
-    expect(within(after).getByText('$0.00000250')).toBeInTheDocument();
-    expect(within(after).queryByText('$0.00000015')).not.toBeInTheDocument();
+    expect(await within(after).findByText('$2.5')).toBeInTheDocument();
+    expect(within(after).queryByText('$0.15')).not.toBeInTheDocument();
     // The other row is untouched.
     const other = screen.getByText('claude-haiku').closest('tr') as HTMLElement;
-    expect(within(other).getByText('$0.00000080')).toBeInTheDocument();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${PRICING_URL}`, `PUT ${PRICING_URL}`]);
+    expect(within(other).getByText('$0.8')).toBeInTheDocument();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
+      `PUT ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
+    ]);
+    // The PUT body is the per-token editor values, as before.
+    expect(JSON.parse(calls[2].body ?? '{}')).toEqual({
+      id: ROWS[0].id,
+      input_cost_per_token: 0.00000015,
+      output_cost_per_token: 0.0000006,
+    });
   });
 
   it('R-10 (O-5): a failed re-read after Sync clears the old table instead of leaving it as current', async () => {
@@ -224,32 +258,75 @@ describe('P: Model pricing', () => {
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    await userEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
 
     await screen.findByText(READ_FAILED_BANNER);
     expectReadFailed();
   });
 
-  // AI_MODEL_PRICE_REVIEW slice 1 (MP-FR-1, D-2 option C): the per-token price
-  // is shown exactly, with the same price per 1M under it. Before, 8 fixed
-  // decimals showed $0.075 per 1M as $0.00000008 ($0.08 per 1M).
-  it('R-11: a sub-cent per-1M price is shown exactly, per token and per 1M', async () => {
+  // AI_MODEL_PRICE_REVIEW slice 1 (MP-FR-1, D-2 option C): the price is shown
+  // exactly. Before, 8 fixed decimals showed $0.075 per 1M as $0.08 per 1M.
+  // Intent kept in slice 4: the per-1M price is the server's text, never rounded.
+  it('R-11: a sub-cent per-1M price is shown exactly, never rounded', async () => {
     const row = {
       ...ROWS[0],
       model_name: 'gemini-1.5-flash',
       input_cost_per_token: 0.000000075,
       output_cost_per_token: 0.0000003,
     };
-    stubFetch({ [PRICING_URL]: () => okRows([row]) });
+    stubFetch({ [PRICING_URL]: () => okRows([row]), [COMPARISON_URL]: () => okComparison([row]) });
 
     render(<ModelPricingPage />);
     const tr = (await screen.findByText('gemini-1.5-flash')).closest('tr') as HTMLElement;
 
-    expect(within(tr).getByText('$0.000000075')).toBeInTheDocument();
-    expect(within(tr).getByText('$0.075 per 1M')).toBeInTheDocument();
-    expect(within(tr).getByText('$0.00000030')).toBeInTheDocument();
-    expect(within(tr).getByText('$0.30 per 1M')).toBeInTheDocument();
-    expect(within(tr).queryByText('$0.00000008')).not.toBeInTheDocument();
+    expect(within(tr).getByText('$0.075')).toBeInTheDocument();
+    expect(within(tr).getByText('$0.3')).toBeInTheDocument();
+    expect(within(tr).queryByText('$0.08')).not.toBeInTheDocument();
+  });
+
+  // Slice 4 (R-9 row 4, SA RC-4): a retired row is labelled and offers no Edit.
+  it('R-12: a retired row reads "Retired <date>" and has no Edit; an active row keeps Edit', async () => {
+    const retired = {
+      ...ROWS[1],
+      id: '33333333-3333-4333-8333-333333333333',
+      model_name: 'claude-3-haiku',
+      effective_date: '2024-01-01',
+      retired_date: '2026-10-11',
+    };
+    stubFetch({ [PRICING_URL]: () => okRows([...ROWS, retired]), [COMPARISON_URL]: () => okComparison([...ROWS, retired]) });
+
+    render(<ModelPricingPage />);
+    const tr = (await screen.findByText('claude-3-haiku')).closest('tr') as HTMLElement;
+
+    expect(within(tr).getByText('Retired 2026-10-11')).toBeInTheDocument();
+    expect(within(tr).queryByTitle('Edit pricing')).not.toBeInTheDocument();
+    const active = screen.getByText('gpt-4o-mini').closest('tr') as HTMLElement;
+    expect(within(active).getByTitle('Edit pricing')).toBeInTheDocument();
+  });
+
+  // Slice 4 (SA NR-2): the save twin of R-10.
+  it('R-13: a save whose comparison re-read fails keeps the success message and clears the table', async () => {
+    const saved = { ...ROWS[0], input_cost_per_token: 0.0000025 };
+    let comparisonReads = 0;
+    stubFetch({
+      [PRICING_URL]: (method) =>
+        method === 'PUT' ? { status: 200, body: { success: true, data: saved } } : okRows(),
+      [COMPARISON_URL]: () => {
+        comparisonReads += 1;
+        return comparisonReads === 1 ? okComparison(ROWS) : { status: 500, body: { success: false, error: 'boom' } };
+      },
+    });
+
+    render(<ModelPricingPage />);
+    const row = (await screen.findByText('gpt-4o-mini')).closest('tr') as HTMLElement;
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(within(row).getByTitle('Edit pricing'));
+    fireEvent.click(within(row).getByTitle('Save'));
+
+    await screen.findByText(READ_FAILED_BANNER);
+    expect(screen.getByText('Pricing updated successfully!')).toBeInTheDocument();
+    expectReadFailed();
   });
 });
 
@@ -289,7 +366,8 @@ describe('B: AgentsPilot billing', () => {
     );
     expect(calls.some((c) => c.url.startsWith(PRICING_URL))).toBe(false);
 
-    await userEvent.click(screen.getByTestId('billing-toggle'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(screen.getByTestId('billing-toggle'));
 
     expect(screen.getByRole('heading', { name: 'AgentsPilot boost packs' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add Boost Pack/ })).toBeInTheDocument();
@@ -303,7 +381,8 @@ describe('B: AgentsPilot billing', () => {
     const { container } = render(<AgentsPilotBillingPage />);
     await screen.findByRole('heading', { level: 1 });
 
-    await userEvent.click(screen.getByTestId('advanced-toggle'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(screen.getByTestId('advanced-toggle'));
 
     const pre = container.querySelector('pre');
     expect(pre).not.toBeNull();
@@ -318,7 +397,8 @@ describe('B: AgentsPilot billing', () => {
     render(<AgentsPilotBillingPage />);
     await screen.findByRole('heading', { level: 1 });
 
-    await userEvent.click(screen.getByTestId('calc-toggle'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(screen.getByTestId('calc-toggle'));
 
     expect(screen.getByText('Save Calculator Config')).toBeInTheDocument();
   });
