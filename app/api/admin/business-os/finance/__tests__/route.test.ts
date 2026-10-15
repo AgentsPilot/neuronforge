@@ -1074,6 +1074,105 @@ describe('slice 5a: our plan revenue through the route', () => {
   });
 });
 
+/**
+ * AC-145 / SA-WR-44 (slice 6a, Money M-3): the Overview baseline. Written FIRST,
+ * green on unchanged `d05eb0a4` code, and NEVER EDITED afterwards. With no
+ * `tab` key, an all-businesses request makes exactly these read calls with
+ * exactly these arguments and exactly these `findNames` calls, and returns
+ * exactly these top-level payload keys (no `accountEconomics`, no
+ * `accountMargin`). On a frozen clock the whole payload is byte-identical: its
+ * SHA-256 is pinned.
+ */
+describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () => {
+  const FROZEN_NOW = new Date('2026-10-14T12:00:00.000Z');
+  beforeEach(() => {
+    // Only the clock is frozen: timers stay real (R-j's deadline uses setTimeout).
+    jest.useFakeTimers({
+      now: FROZEN_NOW,
+      doNotFake: [
+        'nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+        'queueMicrotask', 'hrtime', 'performance',
+      ],
+    });
+    asAdmin();
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /** Dates as ISO text, the abort signal and the random correlation id as markers. */
+  const serialise = (value: unknown) =>
+    JSON.parse(
+      JSON.stringify(value, (k, v) => (v instanceof AbortSignal ? '<signal>' : k === 'correlationId' ? '<correlationId>' : v))
+    ) as unknown;
+
+  const namedReads = (): Record<string, jest.Mock> => ({
+    'plans.pagePlans': mockDeps.plans.pagePlans,
+    findPlanForAccount: mockDeps.findPlanForAccount,
+    ...Object.fromEntries(Object.entries(mockDeps.ledger).map(([k, v]) => [`ledger.${k}`, v])),
+    ...Object.fromEntries(Object.entries(mockDeps.finance).map(([k, v]) => [`finance.${k}`, v])),
+    ...Object.fromEntries(Object.entries(mockDeps.credits).map(([k, v]) => [`credits.${k}`, v])),
+    ...Object.fromEntries(Object.entries(mockDeps.lots).map(([k, v]) => [`lots.${k}`, v])),
+    readQueueFigures: mockReadQueueFigures,
+  });
+
+  const RANGE = { from: '2026-10-01T00:00:00.000Z', to: '2026-10-15T00:00:00.000Z' };
+  const LEDGER_OPTS = { pageSize: 1000, ceiling: 20000 };
+  const EXPECTED_CALLS = {
+    'plans.pagePlans': [[{ afterUserId: null, limit: 500 }]],
+    findPlanForAccount: [],
+    'ledger.listRowsOfAllAccountsCreatedInRange': [
+      [RANGE, LEDGER_OPTS],
+      [{ from: '2026-10-01T00:00:00.000Z', to: '2026-10-14T12:00:00.000Z' }, LEDGER_OPTS],
+    ],
+    'ledger.listRowsForAccountCreatedInRange': [],
+    'ledger.findChargesByActionIds': [],
+    'finance.listBillingStatusesAllAccounts': [[]],
+    'finance.findBillingStatusForAccount': [],
+    'finance.countRevenueRows': [[]],
+    'finance.listClientPaymentsAllAccountsPaidInRange': [[RANGE]],
+    'finance.listClientPaymentsForAccountPaidInRange': [],
+    'finance.listClientRefundsAllAccountsCreatedInRange': [[RANGE]],
+    'finance.listClientRefundsForAccountCreatedInRange': [],
+    'finance.listOverdueClientInvoicesAllAccounts': [['2026-10-14']],
+    'finance.listOverdueClientInvoicesForAccount': [],
+    'finance.listOverdueClientInstalmentsAllAccounts': [['2026-10-14']],
+    'finance.listOverdueClientInstalmentsForAccount': [],
+    'finance.listClientPlansAllAccounts': [[]],
+    'finance.listClientPlansForAccount': [],
+    'finance.listBoostPurchasesAllAccountsPaidInRange': [[RANGE]],
+    'finance.listBoostPurchasesForAccountPaidInRange': [],
+    'finance.listPlanPaymentsAllAccountsPaidInRange': [[RANGE]],
+    'finance.listPlanPaymentsForAccountPaidInRange': [],
+    'credits.getSnapshots': [[[ACCOUNT]]],
+    'credits.findPeriodAnchorsBatch': [[[ACCOUNT]]],
+    'credits.listTotalsForAccountsInRange': [
+      [[ACCOUNT], { from: '2026-09-01T00:00:00.000Z', to: '2026-10-15T00:00:00.000Z' }, { pageSize: 1000, ceiling: 5000 }],
+    ],
+    'lots.allAccounts': [[]],
+    'lots.forAccount': [],
+    readQueueFigures: [
+      [{ correlationId: '<correlationId>', adminId: ADMIN.id }, 'payment_reminders', '2026-10-14T12:00:00.000Z', { signal: '<signal>' }],
+    ],
+  };
+  // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
+  const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
+  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems'];
+  const EXPECTED_SHA256 = 'b4d10bc1256d32de808c435917c0a53d44229e3df4e9ff879a035911ae13588c';
+
+  it('the read calls, the findNames calls, the top-level keys and the payload bytes', async () => {
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    const calls = Object.fromEntries(Object.entries(namedReads()).map(([k, fn]) => [k, serialise(fn.mock.calls)]));
+    expect(calls).toEqual(EXPECTED_CALLS);
+    expect(serialise(mockFindNames.mock.calls)).toEqual(EXPECTED_NAME_CALLS);
+    expect(Object.keys(body.data)).toEqual(EXPECTED_KEYS);
+    expect(body.data).not.toHaveProperty('accountEconomics');
+    expect(body.data).not.toHaveProperty('accountMargin');
+    const sha = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(sha.update(JSON.stringify(body.data)).digest('hex')).toBe(EXPECTED_SHA256);
+  });
+});
+
 describe('500 (AC-36)', () => {
   beforeEach(asAdmin);
 
@@ -1119,5 +1218,160 @@ describe('source', () => {
     const jsonCalls = code.match(/NextResponse\.json\(/g) ?? [];
     const withHeader = code.match(/headers: NO_STORE/g) ?? [];
     expect(jsonCalls.length).toBe(withHeader.length);
+  });
+});
+
+// ── Slice 6a (Money M-3): the Accounts tab through the route (T7) ───────────
+// The AC-145 baseline above is NOT edited (SA-WR-44); every 6a case lives here.
+describe('slice 6a: the Accounts tab through the route', () => {
+  beforeEach(asAdmin);
+
+  const TIER_ID: string = jest.requireActual('@/lib/business-os/entitlements/source').getEntitlementConfig().tierOrder[0];
+
+  it.each([
+    ['tab=overview (only accounts is accepted)', '?tab=overview'],
+    ['a malformed sort', '?tab=accounts&sort=name'],
+    ['a malformed show', '?tab=accounts&show=everything'],
+    ['a malformed group (SA-WR-42)', '?tab=accounts&group=tier:Bad!'],
+    ['an unknown group word', '?tab=accounts&group=vip'],
+    ['sort without tab (E-48)', '?sort=margin'],
+    ['group without tab (E-48)', '?group=trial'],
+    ['show without tab (E-48)', '?show=active'],
+    ['tab with a business picked (SA-W84)', `?tab=accounts&accountId=${ACCOUNT}`],
+    ['a repeated tab', '?tab=accounts&tab=accounts'],
+  ])('AC-146: %s → 400, no read', async (_name, query) => {
+    const res = await call(query);
+    expect(res.status).toBe(400);
+    expectNoStore(res);
+    noReadHappened();
+  });
+
+  it('AC-146: 401 and 403 with the tab make zero calls on every read', async () => {
+    mockGetUser.mockResolvedValue(null);
+    expect((await call('?tab=accounts&sort=margin')).status).toBe(401);
+    noReadHappened();
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    expect((await call('?tab=accounts')).status).toBe(403);
+    noReadHappened();
+  });
+
+  it('SA-WR-42: a well-formed tier key that is not configured → 200 with no rows ("No accounts match this filter")', async () => {
+    const res = await call('?tab=accounts&group=tier:no-such-tier');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.accountEconomics.rows).toEqual([]);
+    expect(body.data.accountEconomics.counts.matching).toBe(0);
+    expect(body.data.accountEconomics.platform.accountsCovered).toBeGreaterThan(0);
+  });
+
+  it('AC-141: the route passes the parsed filters to the builder; defaults applied when absent', async () => {
+    const body = await (await call('?tab=accounts&sort=margin&show=negative')).json();
+    expect(body.data.accountEconomics.query).toEqual({ sort: 'margin', group: null, show: 'negative' });
+    const plain = await (await call('?tab=accounts')).json();
+    expect(plain.data.accountEconomics.query).toEqual({ sort: 'ai_cost', group: null, show: 'all' });
+    expect(plain.data).not.toHaveProperty('accountMargin');
+  });
+
+  it('the payload: the row, its name, the platform line; AC-136: every money key beside a currency (cost and margin are USD fields)', async () => {
+    const body = await (await call('?tab=accounts')).json();
+    const tab = body.data.accountEconomics;
+    const row = tab.rows.find((r: { accountId: string }) => r.accountId === ACCOUNT);
+    expect(row).toMatchObject({
+      name: NAME,
+      nameStatus: 'found',
+      paid: { failed: false, lines: [{ currency: 'USD', afterTax: 1234.57, exact: true, planAfterTax: 0, boostsAfterTax: 1234.57 }] },
+      aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+      margin: { kind: 'figure', marginUsd: 1233.3355, noRevenue: false },
+    });
+    expect(tab.platform.aiCost).toEqual({ kind: 'figure', costUsd: body.data.aiCost.figures.costUsd, exact: true });
+
+    const MONEY = new Set(['afterTax', 'planAfterTax', 'boostsAfterTax']);
+    let moneyKeys = 0;
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node === null || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (MONEY.has(key)) {
+          moneyKeys += 1;
+          expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
+        }
+        // Only the USD-by-construction fields may carry money without a currency.
+        if (typeof value === 'number' && /usd$/i.test(key)) expect(['costUsd', 'marginUsd']).toContain(key);
+        walk(value);
+      }
+    };
+    walk(tab);
+    expect(moneyKeys).toBeGreaterThan(0);
+    const text = JSON.stringify(tab);
+    for (const banned of ['stripe_', 'livemode', 'paid_at', 'user_id', BOOST_PACKAGE]) expect(text).not.toContain(banned);
+    expect(text).not.toMatch(new RegExp(`['"]${TIER_ID}['"]`));
+  });
+
+  it('AC-142 through the route: with a business picked, accountMargin from R-a′ / R-k′ / R-m′; no all-accounts read; no accountEconomics', async () => {
+    const body = await (await call(`?accountId=${ACCOUNT}`)).json();
+    expect(body.data.accountMargin).toEqual({
+      paid: { failed: false, lines: [{ currency: 'USD', afterTax: 1234.57, exact: true, planAfterTax: 0, boostsAfterTax: 1234.57 }] },
+      aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+      margin: { kind: 'figure', marginUsd: 1233.3355, noRevenue: false },
+    });
+    expect(body.data).not.toHaveProperty('accountEconomics');
+    expect(mockDeps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+  });
+
+  it('AC-143: the tab adds exactly ONE names call, of at most 200 ids, none of them a platform id', async () => {
+    await call();
+    const overviewNameCalls = mockFindNames.mock.calls.length;
+    jest.clearAllMocks();
+    seed();
+    asAdmin();
+    const ledger = { data: { rows: [chargeRow(ACCOUNT), { ...chargeRow(PLATFORM), id: 'r2' }], reachedCeiling: false }, error: null };
+    mockDeps.ledger.listRowsOfAllAccountsCreatedInRange.mockResolvedValue(ledger);
+    await call('?tab=accounts');
+    expect(mockFindNames.mock.calls.length).toBe(overviewNameCalls + 1);
+    const ids = mockFindNames.mock.calls[mockFindNames.mock.calls.length - 1][0] as string[];
+    expect(ids.length).toBeLessThanOrEqual(200);
+    expect(ids).toEqual([ACCOUNT]);
+  });
+
+  it('AC-138 through the route: R-k fails → 200, the tab partial, every Overview section present', async () => {
+    mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange.mockResolvedValue({ data: null, error: new Error('down') });
+    const res = await call('?tab=accounts');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.accountEconomics.status).toBe('partial');
+    for (const key of ['revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'tiles']) expect(body.data).toHaveProperty(key);
+  });
+
+  it('AC-147: the info line carries sections.accountEconomics and counts.accountEconomics (counts, booleans, enum words); a planted tier id, an amount, a name and a currency reach no log call', async () => {
+    await call(`?tab=accounts&sort=paid&group=tier:${TIER_ID}&show=active`);
+    const lines = mockLog.info.mock.calls.filter((c) => c[1] === 'Admin read the Business OS finance page');
+    expect(lines).toHaveLength(1);
+    const ctx = lines[0][0];
+    expect(ctx.sections.accountEconomics).toMatch(/^(ok|partial|unknown)$/);
+    expect(ctx.counts.accountEconomics).toMatchObject({ built: true, sort: 'paid', group: 'tier', show: 'active' });
+    for (const value of Object.values(ctx.counts.accountEconomics)) expect(['number', 'boolean', 'string']).toContain(typeof value);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
+    expect(logged).not.toContain(`tier:${TIER_ID}`);
+    expect(logged).not.toMatch(new RegExp(`"${TIER_ID}"`));
+    for (const secret of [NAME, '1234.57', '1233.3355', String(BOOST_MINOR)]) expect(logged).not.toContain(secret);
+    expect(logged).not.toMatch(/\bUSD\b|"usd"/);
+  });
+
+  it('the Overview line says not_built and counts.accountEconomics { built: false }', async () => {
+    await call();
+    const ctx = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page')?.[0];
+    expect(ctx.sections.accountEconomics).toBe('not_built');
+    expect(ctx.counts.accountEconomics).toEqual({ built: false });
+  });
+
+  // SA-W83 / SA-WR-42: one definition of the group shape, imported from the pure page URL module.
+  it('the route imports FINANCE_GROUP_SHAPE from financeUrl.ts and writes no group regex of its own', () => {
+    const code = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(code).toMatch(/import \{[^}]*\bFINANCE_GROUP_SHAPE\b[^}]*\} from '@\/app\/admin\/finance\/financeUrl';/);
+    expect(code).not.toMatch(/founding_partner\|comped/);
+    expect(code).not.toMatch(/tier:\[/);
   });
 });

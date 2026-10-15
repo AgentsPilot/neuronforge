@@ -64,6 +64,15 @@
  * on the plans part and no dim text in the new page file. Every new rule has a
  * planted negative control. The M-1 page rules (the local chip, the picked name,
  * the links file) live in the page's own guard, app/admin/finance/__tests__/source.guard.test.ts.
+ *
+ * Slice 6a (Money M-3, §11E.6, E-44, SA-Q45): three existing pins are UPDATED,
+ * each by SA ruling: the boost and plan export pins grow to exactly five names
+ * (`readMoney`, `readPlanMoney`), each with a planted sixth export (SA-WR-45);
+ * the refund-timing sentence gets a third user, the Accounts tab, with a
+ * planted fourth. A new describe pins the account economics builder (one
+ * integer scale, purity, readers only, zero DF-5 tokens, exports, one 'USD')
+ * and the purity of financeUrl.ts, whose group shape the route imports
+ * (SA-W83, SA-WR-42). Every new rule has a planted negative control.
  */
 
 import * as fs from 'fs';
@@ -714,14 +723,16 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(outsideDf5(plantedStatus)).toMatch(DF5_TOKENS);
   });
 
-  // SA-WR-35: the one DF-5 copy line. Slice 5a, SA-W58 (a) / SA-WR-38: exactly two users, the revenue
-  // panel and the account summary (S5-F7); still one constant and one sentence.
+  // SA-WR-35: the one DF-5 copy line. Slice 5a, SA-W58 (a) / SA-WR-38: the revenue panel and the
+  // account summary (S5-F7). Slice 6a (SA workplan review, the SA-W58 (a) reasoning): the Accounts tab
+  // joins, so EXACTLY THREE users; still one constant and one sentence.
   const SUMMARY = 'app/admin/finance/components/AccountSummary.tsx';
+  const ACCOUNTS_TAB = 'app/admin/finance/components/AccountsTab.tsx';
   const refundNoteUsers = (files: readonly string[], code: (file: string) => string) =>
     files.filter((file) => file !== COPY && /\bREVENUE_REFUND_TIMING_NOTE\b/.test(code(file)));
-  it('SA-WR-35 / SA-WR-38: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used by exactly RevenuePanel.tsx and AccountSummary.tsx', () => {
+  it('SA-WR-35 / SA-WR-38 / 6a: REVENUE_REFUND_TIMING_NOTE is defined in the copy and used by exactly RevenuePanel.tsx, AccountSummary.tsx and AccountsTab.tsx', () => {
     const users = refundNoteUsers(FILES, codeOf);
-    expect([...users].sort()).toEqual([SUMMARY, PANEL].sort());
+    expect([...users].sort()).toEqual([SUMMARY, PANEL, ACCOUNTS_TAB].sort());
     expect(codeOf(COPY)).toMatch(/export const REVENUE_REFUND_TIMING_NOTE =/);
     expect(read(COPY)).toContain('Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.');
   });
@@ -732,13 +743,14 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(/\bREVENUE_REFUND_TIMING_NOTE\b/.test('REVENUE_REFUND_TIMING_NOTES')).toBe(false);
   });
 
-  it('SA-WR-38 (planted control): a THIRD user of the sentence breaks the exact two-file list', () => {
-    const THIRD = 'app/admin/finance/components/TakingsSection.tsx';
+  it('6a (planted control): a FOURTH user of the sentence breaks the exact three-file list', () => {
+    const FOURTH = 'app/admin/finance/components/TakingsSection.tsx';
     const planted = (file: string) =>
-      file === THIRD ? `${codeOf(file)}\nconst leak = REVENUE_REFUND_TIMING_NOTE;\n` : codeOf(file);
+      file === FOURTH ? `${codeOf(file)}\nconst leak = REVENUE_REFUND_TIMING_NOTE;\n` : codeOf(file);
     const users = refundNoteUsers(FILES, planted);
-    expect(users).toContain(THIRD);
-    expect([...users].sort()).not.toEqual([SUMMARY, PANEL].sort());
+    expect(users).toContain(FOURTH);
+    expect(users).toHaveLength(4);
+    expect([...users].sort()).not.toEqual([SUMMARY, PANEL, ACCOUNTS_TAB].sort());
   });
 
   // (e) SA-W22: pure and structural.
@@ -766,12 +778,23 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
   });
 
   // (g) BD-12: boostRevenue.ts's exports are pinned exactly; none is a cross-currency total.
-  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult and buildBoostRevenue', () => {
+  // Slice 6a (SA-Q45, E-44, SA-W80): `readMoney` joins the list, so the account economics builder
+  // reads boost money through the one reader. Exactly five names; `refundsAndDisputesOf` stays private.
+  const BOOST_EXPORTS = ['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue', 'readMoney'];
+  const boostExportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult, buildBoostRevenue and readMoney (SA-Q45)', () => {
     const code = codeOf(BUILDER);
-    const exported = [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
-    expect(exported).toEqual(['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue']);
+    expect(boostExportsOf(code)).toEqual(BOOST_EXPORTS);
     expect(code).not.toMatch(/export\s*\{|export\s+default/);
     expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+    expect(code).not.toMatch(/export\s+function\s+refundsAndDisputesOf\b/);
+  });
+
+  it('SA-WR-45 (planted control): a sixth boost export breaks the exact five-name pin', () => {
+    const planted = `${codeOf(BUILDER)}\nexport function refundedOf(row: BoostPurchaseInput) { return row; }\n`;
+    expect(boostExportsOf(planted)).toHaveLength(6);
+    expect(boostExportsOf(planted)).not.toEqual(BOOST_EXPORTS);
   });
 
   // (h) S4-FR-9 / AC-98: no Stripe id, receipt, flag reason or lot id.
@@ -914,9 +937,17 @@ describe('finance slice 5a source guards (plans received, the per-currency combi
     expect(exportsOf('export function sumAcrossCurrencies() {}\nexport const A = 1;')).toEqual(['A', 'sumAcrossCurrencies']);
   });
 
-  it('planRevenue.ts exports exactly PLAN_PAYMENT_KIND, PlanPaymentInput, PlanRevenueResult and buildPlanRevenue', () => {
+  // Slice 6a (SA-Q45, E-44, SA-W80): `readPlanMoney` joins the list. Exactly five names.
+  const PLAN_EXPORTS = ['PLAN_PAYMENT_KIND', 'PlanPaymentInput', 'PlanRevenueResult', 'buildPlanRevenue', 'readPlanMoney'];
+  it('SA-WR-45 (planted control): a sixth plan export breaks the exact five-name pin', () => {
+    const planted = `${codeOf(PLANS)}\nexport const PLAN_TOTAL_ACROSS_CURRENCIES = 0;\n`;
+    expect(exportsOf(planted)).toHaveLength(6);
+    expect(exportsOf(planted)).not.toEqual(PLAN_EXPORTS);
+  });
+
+  it('planRevenue.ts exports exactly PLAN_PAYMENT_KIND, PlanPaymentInput, PlanRevenueResult, buildPlanRevenue and readPlanMoney (SA-Q45)', () => {
     const code = codeOf(PLANS);
-    expect(exportsOf(code)).toEqual(['PLAN_PAYMENT_KIND', 'PlanPaymentInput', 'PlanRevenueResult', 'buildPlanRevenue']);
+    expect(exportsOf(code)).toEqual(PLAN_EXPORTS);
     expect(code).not.toMatch(/export\s*\{|export\s+default/);
     expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
   });
@@ -983,5 +1014,179 @@ describe('finance slice 5a source guards (plans received, the per-currency combi
     for (const file of FILES) {
       expect({ file, hit: /REVENUE_PLANS_(ALL_PREFIX|ALL_RECORDED|ALL_NONE|ALL_UNKNOWN|RECORDED|NONE|UNKNOWN)\b|K5_NET_HEADLINE|\bPLANS_TEXT\b/.test(read(file)) }).toEqual({ file, hit: false });
     }
+  });
+});
+
+// ── Slice 6a: account economics and AI margin (§11E.6, E-44, SA-W75, SA-W80, SA-W83, SA-WR-42) ──
+describe('finance slice 6a source guards (account economics, the AI margin)', () => {
+  const ECON = 'lib/business-os/finance/accountEconomics.ts';
+  const URL_MODULE = 'app/admin/finance/financeUrl.ts';
+  const PAGE_FILES = [
+    'app/admin/finance/components/AccountsTab.tsx',
+    'app/admin/finance/components/AccountEconomicsTable.tsx',
+    'app/admin/finance/components/FinanceTabs.tsx',
+  ];
+  const COPY = 'app/admin/finance/financeCopy.ts';
+
+  // (a) Non-vacuity.
+  it('scans the slice 6a files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([ECON, ...PAGE_FILES]));
+    expect(LAYER_B_FREE).toEqual(expect.arrayContaining([ECON]));
+    expect(codeOf(ECON).length).toBeGreaterThan(3000);
+  });
+
+  // (b) SA-W75: one common integer scale, one multiply, one division each way.
+  const TIMES_100 = /\*\s*100\b|CURRENCY_SCALE\s*\*/;
+  const DECLARATION = /const MINOR_TO_COST_UNITS = COST_SCALE \/ CURRENCY_SCALE;/;
+  const withoutDeclaration = (code: string) => code.replace(DECLARATION, '');
+  it('the 6a scale rules bite (planted)', () => {
+    expect(TIMES_100.test('const units = afterTax * 100;')).toBe(true);
+    expect('a * MINOR_TO_COST_UNITS; b * MINOR_TO_COST_UNITS'.match(/\*\s*MINOR_TO_COST_UNITS\b/g)).toHaveLength(2);
+    expect(withoutDeclaration('const MINOR_TO_COST_UNITS = COST_SCALE / CURRENCY_SCALE;\nx / CURRENCY_SCALE;').match(/\/ CURRENCY_SCALE/g)).toHaveLength(1);
+    expect(/\btoUnits\(/.test('toUnits(row.amount_minor, 100)')).toBe(true);
+  });
+
+  it('accountEconomics.ts: no toHundredths, toUnits or × 100; exactly one × MINOR_TO_COST_UNITS, one / CURRENCY_SCALE, one / COST_SCALE; the constant declared once', () => {
+    const code = codeOf(ECON);
+    expect(code).not.toMatch(/\btoHundredths\b/);
+    expect(code).not.toMatch(/\btoUnits\(/);
+    expect(code).not.toMatch(TIMES_100);
+    expect(code.match(/\*\s*MINOR_TO_COST_UNITS\b/g)).toHaveLength(1);
+    expect(code.match(new RegExp(DECLARATION.source, 'g'))).toHaveLength(1);
+    expect(withoutDeclaration(code).match(/\/ CURRENCY_SCALE/g)).toHaveLength(1);
+    expect(withoutDeclaration(code).match(/\/ COST_SCALE/g)).toHaveLength(1);
+    expect(code).toMatch(/Number\.isSafeInteger\(revenueUnits\)/);
+    expect(code).toMatch(/Number\.isSafeInteger\(marginUnits\)/);
+  });
+
+  it('the scale pin bites (planted): a second multiply or a second division is caught', () => {
+    const plantedMultiply = `${codeOf(ECON)}\nconst again = 1 * MINOR_TO_COST_UNITS;\n`;
+    expect(plantedMultiply.match(/\*\s*MINOR_TO_COST_UNITS\b/g)).toHaveLength(2);
+    const plantedDivision = `${codeOf(ECON)}\nconst usd = 5 / COST_SCALE;\n`;
+    expect(withoutDeclaration(plantedDivision).match(/\/ COST_SCALE/g)).toHaveLength(2);
+  });
+
+  // (c) Pure and structural (SA-WR-4, SA-W22): no ledger row type, no table, no clock.
+  const IMPURE = /@\/lib\/repositories|supabase|business-os\/entitlements\/|['"]server-only['"]/i;
+  const LEDGER_OR_TABLE = /CreditLedgerRow|BusinessOsCreditLedger|business_os_|payment_/;
+  it('the 6a purity rules bite (planted)', () => {
+    expect(IMPURE.test("import type { CreditLedgerRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';")).toBe(true);
+    expect(LEDGER_OR_TABLE.test('(rows: readonly CreditLedgerRow[])')).toBe(true);
+    expect(LEDGER_OR_TABLE.test('PLAN_PAYMENT_KIND')).toBe(false);
+  });
+
+  it('accountEconomics.ts imports no repository, Supabase, entitlements path or server-only; names no ledger row type or table; reads no clock', () => {
+    expect(read(ECON)).not.toMatch(IMPURE);
+    expect(codeOf(ECON)).not.toMatch(LEDGER_OR_TABLE);
+    expect(codeOf(ECON)).not.toMatch(/new Date\(|Date\.now\(/);
+  });
+
+  // (d) Readers, not rows (SA-Q45, E-45): money only through the two exported readers.
+  const RAW_MONEY_COLUMN = /\bamount_total_minor\b|\bamount_tax_minor\b|\bamount_minor\b/;
+  it('the readers rule bites (planted)', () => {
+    expect(RAW_MONEY_COLUMN.test('const t = row.amount_total_minor;')).toBe(true);
+    expect(RAW_MONEY_COLUMN.test('const a = row.amount_minor;')).toBe(true);
+    expect(RAW_MONEY_COLUMN.test('readPlanMoney(row)')).toBe(false);
+  });
+
+  it('accountEconomics.ts reads money only through readMoney / readPlanMoney and counts only by the exported family and kind', () => {
+    const code = codeOf(ECON);
+    expect(code).toMatch(/\breadMoney\(/);
+    expect(code).toMatch(/\breadPlanMoney\(/);
+    expect(code).not.toMatch(RAW_MONEY_COLUMN);
+    expect(code).toMatch(/\bBOOST_PAID_FAMILY\b/);
+    expect(code).toMatch(/\bPLAN_PAYMENT_KIND\b/);
+    expect(code).toMatch(/import \{[^}]*\breadMoney\b[^}]*\} from '\.\/boostRevenue';/);
+    expect(code).toMatch(/import \{[^}]*\breadPlanMoney\b[^}]*\} from '\.\/planRevenue';/);
+  });
+
+  // DF-5 extended (E-44): ZERO refund or dispute tokens in the new builder.
+  const DF5_TOKENS = /amount_refunded_minor|'disputed'|'dispute_lost'/;
+  it('DF-5 (E-44): accountEconomics.ts names no refunded amount and no dispute status', () => {
+    expect(codeOf(ECON)).not.toMatch(DF5_TOKENS);
+  });
+
+  it('the DF-5 extension bites (planted): the builder plus a refund read is caught', () => {
+    expect(`${codeOf(ECON)}\nconst leak = (r: BoostPurchaseInput) => r.amount_refunded_minor;\n`).toMatch(DF5_TOKENS);
+    expect(`${codeOf(ECON)}\nconst held = (s: string) => s === 'disputed';\n`).toMatch(DF5_TOKENS);
+  });
+
+  // (e) Exports pinned exactly; none takes or returns a total across currencies.
+  const ECON_EXPORTS = ['AccountEconomicsInput', 'buildAccountEconomics', 'buildAccountMargin'];
+  const econExportsOf = (code: string) =>
+    [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
+  it('accountEconomics.ts exports exactly AccountEconomicsInput, buildAccountEconomics and buildAccountMargin; no exchange rate', () => {
+    const code = codeOf(ECON);
+    expect(econExportsOf(code)).toEqual(ECON_EXPORTS);
+    expect(code).not.toMatch(/export\s*\{|export\s+default/);
+    expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
+  });
+
+  it('the 6a export pin bites (planted): a fourth export breaks it', () => {
+    const planted = `${codeOf(ECON)}\nexport function sumAcrossCurrencies() { return 0; }\n`;
+    expect(econExportsOf(planted)).toHaveLength(4);
+    expect(econExportsOf(planted)).not.toEqual(ECON_EXPORTS);
+  });
+
+  // (f) BD-12 / BD-22: 'USD' is written once, as MARGIN_CURRENCY.
+  const USD_LITERAL = /['"`]USD['"`]/g;
+  it("'USD' appears exactly once in accountEconomics.ts, as MARGIN_CURRENCY (planted control)", () => {
+    const code = codeOf(ECON);
+    expect(code.match(USD_LITERAL)).toHaveLength(1);
+    expect(code).toMatch(/const MARGIN_CURRENCY = 'USD';/);
+    expect(`${code}\nconst other = line.currency === 'USD';\n`.match(USD_LITERAL)).toHaveLength(2);
+  });
+
+  // (g) No mode or Stripe id in the builder, the three page files, or the 6a copy.
+  const MODE_OR_STRIPE = /livemode|test.?mode|live.?mode|stripe_/i;
+  it('the 6a mode rule bites (planted)', () => {
+    expect(MODE_OR_STRIPE.test("const NOTE = 'Test mode rows';")).toBe(true);
+    expect(MODE_OR_STRIPE.test('Stripe fees are not deducted.')).toBe(false);
+  });
+
+  it('no livemode, mode wording or Stripe id in the builder, the tab files or the 6a copy', () => {
+    for (const file of [ECON, ...PAGE_FILES]) expect({ file, hit: MODE_OR_STRIPE.test(codeOf(file)) }).toEqual({ file, hit: false });
+    const copy = read(COPY);
+    const block = copy.slice(copy.indexOf('The Accounts tab: account economics'));
+    expect(block.length).toBeGreaterThan(500);
+    expect(block).not.toMatch(MODE_OR_STRIPE);
+  });
+
+  // SA-W83 / SA-WR-42: financeUrl.ts stays pure, because the route imports the group shape from it.
+  const importSourcesOf = (code: string) =>
+    [...code.matchAll(/^import\s+(type\s+)?[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => ({ typeOnly: Boolean(m[1]), source: m[2] }));
+  const urlModuleProblems = (raw: string): string[] => {
+    const problems: string[] = [];
+    if (/^\s*['"]use client['"]/m.test(raw)) problems.push('use client');
+    if (/['"]server-only['"]/.test(raw)) problems.push('server-only');
+    for (const { typeOnly, source } of importSourcesOf(raw)) {
+      if (source === 'react' || source.startsWith('next/') || source === 'next') problems.push(`imports ${source}`);
+      else if (!typeOnly && source !== '@/app/admin/components/adminWindowPresets') problems.push(`runtime import ${source}`);
+    }
+    return problems;
+  };
+
+  it('SA-WR-42: financeUrl.ts has no use client, no React or Next import, no server-only, and only adminWindowPresets at run time', () => {
+    const raw = read(URL_MODULE);
+    expect(importSourcesOf(raw).length).toBeGreaterThan(0);
+    expect(urlModuleProblems(raw)).toEqual([]);
+    expect(raw).toMatch(/export const FINANCE_GROUP_SHAPE = /);
+  });
+
+  it('SA-WR-42 (planted controls): use client, a React import, a Next import or another runtime import is caught', () => {
+    const raw = read(URL_MODULE);
+    expect(urlModuleProblems(`'use client';\n${raw}`)).toContain('use client');
+    expect(urlModuleProblems(`import { useMemo } from 'react';\n${raw}`)).toContain('imports react');
+    expect(urlModuleProblems(`import { useRouter } from 'next/navigation';\n${raw}`)).toContain('imports next/navigation');
+    expect(urlModuleProblems(`import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';\n${raw}`)).toContain(
+      'runtime import @/lib/business-os/finance/financeHealth'
+    );
+    expect(urlModuleProblems(`import 'server-only';\n${raw}`)).toContain('server-only');
+  });
+
+  it('SA-W83: the group shape is defined once (financeUrl.ts) and the route imports it', () => {
+    const definers = FILES.filter((file) => /founding_partner\|comped\|unknown_held\|tier_set\|tier:/.test(codeOf(file)));
+    expect(definers).toEqual([URL_MODULE]);
+    expect(codeOf('app/api/admin/business-os/finance/route.ts')).toMatch(/\bFINANCE_GROUP_SHAPE\b/);
   });
 });

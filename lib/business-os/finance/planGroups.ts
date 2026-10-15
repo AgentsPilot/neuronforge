@@ -138,6 +138,13 @@ export interface ClassifiedAccounts {
   figures: FinanceAccountsFigures;
   /** Each classified account's group, for Section 3's breakdown by current plan. */
   groupByAccount: ReadonlyMap<string, FinanceGroupKey>;
+  /**
+   * NON-WIRE (slice 6a, SA-W77): the accounts counted in a tier group's
+   * `foundingPartners`, under exactly that condition, so the Accounts tab's
+   * Founding Partner chip and Section 1's note cannot differ. Its size equals
+   * the sum of `foundingPartners` over the groups.
+   */
+  foundingPartnerNote: ReadonlySet<string>;
 }
 
 export interface ClassifyInput {
@@ -171,6 +178,7 @@ export function classifyAccounts(input: ClassifyInput): ClassifiedAccounts {
   const byState: Record<string, number> = {};
   const byOrigin = new Map<string, number>();
   const groupByAccount = new Map<string, FinanceGroupKey>();
+  const foundingPartnerNote = new Set<string>();
   let foundingNoEndDate = 0;
   let dormantFounding = 0;
   let newTotal = 0;
@@ -206,6 +214,7 @@ export function classifyAccounts(input: ClassifyInput): ClassifiedAccounts {
     // QA-1: only while the Founding Partner period is current (no end, or an end after `now`).
     if (key.startsWith('tier:') && isChampionCohort(row.cohort) && isCohortCurrent(row.cohort_expires_at, nowMs)) {
       group.foundingPartners += 1;
+      foundingPartnerNote.add(row.user_id);
     }
 
     if (key === 'founding_partner' && isOpenEndedCohort(row)) foundingNoEndDate += 1;
@@ -243,6 +252,7 @@ export function classifyAccounts(input: ClassifyInput): ClassifiedAccounts {
       endingIn30Days,
     },
     groupByAccount,
+    foundingPartnerNote,
   };
 }
 

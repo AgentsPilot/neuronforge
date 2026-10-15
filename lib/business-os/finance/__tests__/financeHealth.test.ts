@@ -99,6 +99,8 @@ import { financeHealthDeps, findPlanWithoutOverrides, toFinanceLot } from '../fi
 import type { FinanceLot } from '../creditsSection';
 import { resolveFinanceWindow } from '../financeWindow';
 import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../financeRules';
+// Slice 6a: a separate import, so the lines above stay unedited.
+import type { FinanceAccountsTabQuery } from '../financeTypes';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -313,8 +315,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 
 const logger = () => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() });
 
-async function run(deps = makeDeps(), accountId: string | null = null, log = logger(), now = NOW, window = WINDOW) {
-  const result = await buildFinanceHealth({ window, accountId, now }, log, deps as unknown as FinanceHealthDeps);
+async function run(deps = makeDeps(), accountId: string | null = null, log = logger(), now = NOW, window = WINDOW, accountsTab: FinanceAccountsTabQuery | null = null) {
+  const result = await buildFinanceHealth({ window, accountId, now, accountsTab }, log, deps as unknown as FinanceHealthDeps);
   return { result, log, deps };
 }
 
@@ -1905,5 +1907,163 @@ describe('AC-67 / SA-WR-23: the reminder deadline', () => {
       // The plans read never settles, yet the reminder read has already started beside it.
       expect(order).toEqual(['plans', 'reminders']);
     });
+  });
+});
+
+// ── Slice 6a (Money M-3): the Accounts tab and the picked margin (T5) ───────
+
+describe('slice 6a: account economics through the builder', () => {
+  const TAB: FinanceAccountsTabQuery = { sort: 'ai_cost', group: null, show: 'all' };
+  const runTab = (deps = makeDeps(), tab: FinanceAccountsTabQuery = TAB, log = logger()) => run(deps, null, log, NOW, WINDOW, tab);
+
+  it('AC-145: without the tab, neither key exists, no extra names call, counts say not built', async () => {
+    const without = await run(ownerDeps());
+    const withTab = await runTab(ownerDeps());
+    if (without.result.kind !== 'ok' || withTab.result.kind !== 'ok') throw new Error('expected ok');
+    expect(without.result.payload).not.toHaveProperty('accountEconomics');
+    expect(without.result.payload).not.toHaveProperty('accountMargin');
+    expect(without.result.counts.accountEconomics).toEqual({ built: false });
+    // The tab adds exactly ONE names call.
+    expect(withTab.deps.findNames.mock.calls.length).toBe(without.deps.findNames.mock.calls.length + 1);
+    // The Overview keys are the same, in the same order, with the tab key after them.
+    expect(Object.keys(withTab.result.payload)).toEqual([...Object.keys(without.result.payload), 'accountEconomics']);
+  });
+
+  it('AC-142 / AC-134: the owner row (89.00 paid, cost 3) and the platform line; the cost equals Section 3', async () => {
+    const { result, deps } = await runTab(ownerDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tab = result.payload.accountEconomics;
+    if (!tab) throw new Error('expected the tab');
+    const owner = tab.rows.find((r) => r.accountId === A);
+    expect(owner?.paid.lines).toEqual([{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }]);
+    expect(owner?.aiCost).toEqual({ kind: 'figure', costUsd: 3, exact: true });
+    expect(owner?.margin).toEqual({ kind: 'figure', marginUsd: 86, noRevenue: false });
+    expect(owner?.name).toBe('Acme Dental');
+    expect(owner?.nameStatus).toBe('found');
+    // The platform line's cost is Section 3's total; each row's cost is Section 3's per-account figure.
+    expect(tab.platform.aiCost).toEqual({ kind: 'figure', costUsd: result.payload.aiCost.figures?.costUsd, exact: true });
+    for (const top of result.payload.aiCost.figures?.topAccounts ?? []) {
+      const row = tab.rows.find((r) => r.accountId === top.accountId);
+      expect(row?.aiCost).toEqual({ kind: 'figure', costUsd: top.costUsd, exact: true });
+    }
+    // The platform account (on the ledger, no plan row) is labelled, never named; the deleted bucket is the Deleted row.
+    expect(tab.rows.find((r) => r.accountId === PLATFORM)).toMatchObject({ kind: 'platform', nameStatus: 'platform', name: null });
+    expect(tab.deleted?.aiCost).toEqual({ kind: 'figure', costUsd: 2, exact: true });
+    // AC-143: ONE names call for the shown rows: at most 200 ids, taken from the rows read, no platform id.
+    const lastIds = deps.findNames.mock.calls[deps.findNames.mock.calls.length - 1][0] as string[];
+    expect(lastIds.length).toBeLessThanOrEqual(200);
+    expect([...lastIds].sort()).toEqual([A, B].sort());
+    expect(lastIds).not.toContain(PLATFORM);
+    // "Paid us, total" on the Overview still reads 89 (tax included).
+    expect(result.payload.revenue.totals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ currency: 'USD', total: 89 })])
+    );
+    expect(result.counts.accountEconomics).toEqual({
+      built: true, status: 'ok', accounts: 3, matching: 3, shown: 3, deletedRow: true, noPlanRow: 1, namesFound: 1,
+      sort: 'ai_cost', group: 'all', show: 'all',
+    });
+  });
+
+  it('AC-142: the picked business gets accountMargin equal to its tab row, from R-a′ / R-k′ / R-m′ only', async () => {
+    const tab = await runTab(ownerDeps());
+    const picked = await run(ownerDeps(), A);
+    if (tab.result.kind !== 'ok' || picked.result.kind !== 'ok') throw new Error('expected ok');
+    // The picked ledger read holds only A's charge (cost 3), as the tab row's cost.
+    const row = tab.result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+    expect(picked.result.payload.accountMargin).toEqual({ paid: row?.paid, aiCost: row?.aiCost, margin: row?.margin });
+    expect(picked.result.payload).not.toHaveProperty('accountEconomics');
+    expect(picked.result.counts.accountEconomics).toEqual({ built: false });
+    expect(picked.deps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(picked.deps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
+    expect(picked.deps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+  });
+
+  it('BD-15: a paying Founding Partner in its tier group carries the chip (the same set as Section 1’s note)', async () => {
+    const deps = ownerDeps();
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(A), plan(B, { tier: TIER })]));
+    const { result } = await runTab(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const b = result.payload.accountEconomics?.rows.find((r) => r.accountId === B);
+    expect(b).toMatchObject({ group: `tier:${TIER}`, foundingPartner: true, tierLabel: tierLabelForGroup(config, `tier:${TIER}`) });
+    const note = result.payload.accounts.figures?.groups.find((g) => g.key === `tier:${TIER}`)?.foundingPartners;
+    expect(note).toBe(1);
+  });
+
+  it('the group filter is logged as its kind; the groups offered come from Section 1 with server labels', async () => {
+    const { result } = await runTab(ownerDeps(), { sort: 'margin', group: `tier:${TIER}`, show: 'negative' });
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.counts.accountEconomics).toMatchObject({ built: true, group: 'tier', sort: 'margin', show: 'negative' });
+    expect(JSON.stringify(result.counts)).not.toContain(TIER);
+    const options = result.payload.accountEconomics?.groupOptions ?? [];
+    expect(options.map((o) => o.key)).toEqual(result.payload.accounts.figures?.groups.map((g) => g.key));
+  });
+
+  describe('AC-138: each read failing alone; the Overview always renders', () => {
+    const overviewKeys = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems'];
+    type Deps = ReturnType<typeof makeDeps>;
+    const cases: Array<[string, (d: Deps) => void, 'aiCost' | 'paid' | 'credits']> = [
+      ['ledger', (d) => d.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => fail()), 'aiCost'],
+      ['boosts', (d) => d.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(() => fail()), 'paid'],
+      ['plans', (d) => d.finance.listPlanPaymentsAllAccountsPaidInRange.mockImplementation(() => fail()), 'paid'],
+      ['walk', (d) => d.plans.pagePlans.mockImplementation(() => fail()), 'credits'],
+      [
+        'positions',
+        (d) => d.credits.listTotalsForAccountsInRange.mockImplementation(async () => ({ data: null, error: new Error('x') })),
+        'credits',
+      ],
+    ];
+    it.each(cases)('%s fails → Unknown in its column, the tab partial, every Overview section present', async (_name, breakIt, column) => {
+      const deps = ownerDeps();
+      breakIt(deps);
+      const { result } = await runTab(deps);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const tab = result.payload.accountEconomics;
+      expect(tab?.status).toBe('partial');
+      for (const key of overviewKeys) expect(result.payload).toHaveProperty(key);
+      const owner = tab?.rows.find((r) => r.accountId === A);
+      if (column === 'aiCost') expect(owner?.aiCost).toEqual({ kind: 'unknown' });
+      if (column === 'paid') expect(owner?.paid.failed).toBe(true);
+      if (column === 'credits') expect(owner?.credits).toEqual({ kind: 'unknown' });
+    });
+
+    it('all three money reads fail → the tab unknown', async () => {
+      const deps = ownerDeps();
+      deps.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => fail());
+      deps.finance.listBoostPurchasesAllAccountsPaidInRange.mockImplementation(() => fail());
+      deps.finance.listPlanPaymentsAllAccountsPaidInRange.mockImplementation(() => fail());
+      const { result } = await runTab(deps);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      expect(result.payload.accountEconomics?.status).toBe('unknown');
+    });
+
+    it('the names read fails → names "unavailable", logged as account_names, the figures stand', async () => {
+      const deps = ownerDeps();
+      const log = logger();
+      const before = await runTab(ownerDeps());
+      const earlierCalls = before.deps.findNames.mock.calls.length - 1;
+      let call = 0;
+      deps.findNames.mockImplementation((ids: readonly string[]) => {
+        call += 1;
+        // Fail only the tab's call, the last one.
+        return call > earlierCalls ? fail() : ok(ids.filter((id) => id === A).map((id) => ({ user_id: id, company_name: 'Acme Dental' })));
+      });
+      const { result } = await runTab(deps, TAB, log);
+      if (result.kind !== 'ok') throw new Error('expected ok');
+      const owner = result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+      expect(owner?.nameStatus).toBe('unavailable');
+      expect(owner?.margin.kind).toBe('figure');
+      expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'account_names' }), 'Finance read failed');
+    });
+  });
+
+  it('AC-137: an injected ceiling on the ledger read → "At least" cost and an Unknown margin on every row', async () => {
+    const deps = ownerDeps();
+    deps.ledger.listRowsOfAllAccountsCreatedInRange.mockImplementation(() => ok({ rows: [charge(A, '3')], reachedCeiling: true }));
+    const { result } = await runTab(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tab = result.payload.accountEconomics;
+    expect(tab?.rows.find((r) => r.accountId === A)?.aiCost).toEqual({ kind: 'figure', costUsd: 3, exact: false });
+    for (const row of tab?.rows ?? []) expect(row.margin).toEqual({ kind: 'unknown' });
+    expect(tab?.status).toBe('partial');
   });
 });
