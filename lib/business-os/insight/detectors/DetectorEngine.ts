@@ -111,6 +111,8 @@ export class DetectorEngine {
    * at a time, so there is nothing to interleave with.
    */
   private lastEvaluatedCount = 0;
+  /** See `getLastSilentIds`. */
+  private lastSilentIds: string[] = [];
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase;
@@ -218,6 +220,19 @@ export class DetectorEngine {
   }
 
   /**
+   * Detectors that said nothing because they COULD not, for the user most
+   * recently passed to `runForUser`.
+   *
+   * Three ways in: a vector with too little evidence, a cooldown, or a throw.
+   * None of them is evidence that a condition has ended, so the caller must
+   * protect these detectors' open insights from the stale sweep. See the
+   * comment in `runForUser`.
+   */
+  getLastSilentIds(): string[] {
+    return this.lastSilentIds;
+  }
+
+  /**
    * How much evidence each vector actually has, by name.
    *
    * This read `state === 'dark'` into a Set and threw the rest away, which
@@ -292,9 +307,32 @@ export class DetectorEngine {
     const vectorStates = await this.getVectorStates(userId);
     let evaluated = 0;
 
+    /*
+     * DETECTORS THAT NEVER REACHED A VERDICT.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The nightly sweep resolves every open insight whose detector did not fire,
+     * on the reasoning that a condition nobody is reporting any more has ended.
+     * That reasoning only holds for a detector that LOOKED and found nothing.
+     *
+     * Three kinds never looked: one whose vector has too little evidence, one
+     * silenced by its own cooldown, and one that threw. All three are
+     * indistinguishable from "found nothing" at this level, and all three were
+     * being read as the condition having ended — so a live insight was closed
+     * because the detector that raised it had been told not to speak yet.
+     *
+     * The cooldown case is the one that was reported: a contact stuck in one
+     * pipeline stage for 35 days had three insights raised and auto-resolved
+     * about a day apart, because every run inside the 48-hour cooldown swept
+     * the insight the previous run had just created.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const silent: string[] = [];
+
     for (const detector of this.detectors) {
       if (!this.shouldRun(detector, vectorStates)) {
         const vector = CATEGORY_VECTOR[detector.definition.category];
+        silent.push(detector.definition.id);
         logger.debug(
           {
             userId,
@@ -311,20 +349,35 @@ export class DetectorEngine {
       try {
         evaluated++;
         const result = await detector.evaluate(userId);
+        /* Read and cleared on every pass, so the flag can never carry from one
+           user to the next. */
+        const silencedByCooldown = detector.consumeCooldownSkip();
+
         if (result) {
           results.push(result);
           logger.debug(
             { userId, detectorId: detector.definition.id },
             'Detector fired'
           );
+        } else if (silencedByCooldown) {
+          silent.push(detector.definition.id);
+          logger.debug(
+            { userId, detectorId: detector.definition.id },
+            'Detector silent on cooldown; its open insight is not swept'
+          );
         }
       } catch (error) {
+        /* A detector that threw knows nothing about whether its condition still
+           holds, so its insight must survive this run. */
+        silent.push(detector.definition.id);
         logger.error(
           { err: error, userId, detectorId: detector.definition.id },
           'Detector evaluation failed'
         );
       }
     }
+
+    this.lastSilentIds = silent;
 
     this.lastEvaluatedCount = evaluated;
     logger.info({

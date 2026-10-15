@@ -101,6 +101,59 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /*
+     * WHAT ACTUALLY HAPPENED, for a card that is being asked to explain itself.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A closed card could say only that it was closed. It could not say whether
+     * anything had been SENT, because the outcome lives in `insight_actions` and
+     * never reached the dashboard — so "you asked me to handle this" was as far
+     * as it could go, and an owner who pressed the button days ago had no way to
+     * learn whether three emails went out or none did.
+     *
+     * It matters that this is read rather than assumed. Of the seven rows on the
+     * reporting account three `chase_invoice` are `sent` with timestamps, and
+     * three `followup_nudge` are `skipped` and never left. A card that inferred
+     * "handled, therefore sent" would have been wrong about nearly half of them.
+     *
+     * ONE query for the whole page, keyed by `insight_id`, not one per card.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const insightIds = insightsWithProjections.map(row => row.id).filter(Boolean);
+    if (insightIds.length > 0) {
+      const { data: actionRows } = await supabaseServer
+        .from('insight_actions')
+        .select('insight_id, status, sent_at')
+        .eq('user_id', user.id)
+        .in('insight_id', insightIds);
+
+      if (actionRows?.length) {
+        const byInsight = new Map<string, { sent: number; skipped: number; failed: number; pending: number; lastSentAt: string | null }>();
+
+        for (const row of actionRows as Array<{ insight_id: string; status: string; sent_at: string | null }>) {
+          const tally = byInsight.get(row.insight_id)
+            ?? { sent: 0, skipped: 0, failed: 0, pending: 0, lastSentAt: null };
+
+          if (row.status === 'sent') tally.sent += 1;
+          else if (row.status === 'skipped') tally.skipped += 1;
+          else if (row.status === 'failed') tally.failed += 1;
+          else tally.pending += 1;
+
+          // The most recent one that actually left, for the date on the card.
+          if (row.sent_at && (!tally.lastSentAt || row.sent_at > tally.lastSentAt)) {
+            tally.lastSentAt = row.sent_at;
+          }
+
+          byInsight.set(row.insight_id, tally);
+        }
+
+        insightsWithProjections = insightsWithProjections.map(insight => {
+          const outcome = byInsight.get(insight.id);
+          return outcome ? { ...insight, outcome } : insight;
+        });
+      }
+    }
+
     // Get correlated insights (unified story-driven insights)
     let correlatedInsights: Awaited<ReturnType<typeof repository.getCorrelatedInsights>>['data'] = [];
     if (params.includeCorrelated) {
