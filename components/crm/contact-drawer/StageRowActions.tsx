@@ -33,6 +33,12 @@ import { shouldOpenUpward } from './menuPlacement';
 interface StageRowActionsProps {
   /** The stage's own invoice, which both actions address. */
   invoiceId: string | null;
+  /**
+   * The processor charge this stage's money arrived as, where there is no
+   * invoice. An instalment period has one of these and no `invoiceId`; a quoted
+   * milestone has the reverse. Refund needs either.
+   */
+  transactionId?: string | null;
   paid: boolean;
   /** What is left on this stage after anything already returned. */
   remaining: number;
@@ -44,6 +50,21 @@ interface StageRowActionsProps {
    * has to be asked about directly.
    */
   refunded?: number;
+  /**
+   * This period was called off with the job.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A stopped stage with an unpaid invoice was still offering "send the invoice
+   * again". The card above it says דרישת התשלום בוטלה — the demand is
+   * withdrawn — and the row's own menu offered to send it to the client once
+   * more. Pressing it would have chased somebody for money the business had
+   * just decided not to collect.
+   *
+   * A stage that was PAID before the job stopped keeps its receipt: the payment
+   * happened, and a receipt for it stays true whatever became of the work.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  stopped?: boolean;
   /** Sends the invoice while owed, the receipt once paid — the route decides. */
   onSendDocument?: () => void;
   /** Disabled while a send for this booking is in flight. */
@@ -62,7 +83,9 @@ interface StageRowActionsProps {
 
 export function StageRowActions({
   invoiceId,
+  transactionId = null,
   paid,
+  stopped = false,
   remaining,
   refunded = 0,
   onSendDocument,
@@ -143,7 +166,9 @@ export function StageRowActions({
    * for `partially_refunded` as well.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  if (invoiceId && onSendDocument && refunded <= 0) {
+  /* A cancelled demand is not re-sent. The receipt for one already paid is,
+     because that money really did arrive. */
+  if (invoiceId && onSendDocument && refunded <= 0 && (paid || !stopped)) {
     items.push({
       key: 'document',
       label: paid ? t('crm.invoice.send_receipt') : t('crm.invoice.resend'),
@@ -155,8 +180,24 @@ export function StageRowActions({
   /*
    * Only while something is left to return. A fully refunded stage stops
    * offering it, and the line above the row already says what came back.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * EITHER KEY, because a stage's money arrives by one of two routes.
+   *
+   * This read `invoiceId` alone, which is right for a quoted MILESTONE — it
+   * raises an invoice and is refunded through it. An INSTALMENT period charged
+   * by the processor never gets one: the money lands as a transaction and
+   * `invoice_id` stays null.
+   *
+   * So a paid instalment showed its ₪400 collected and offered no way to give
+   * it back. Not a backend limitation — `/api/payments/refunds` takes
+   * `transaction_id` as an alternative to `invoice_id`, and `RefundModal` has
+   * always had the prop. The row simply never carried the key.
+   *
+   * `onRefund` decides WHICH key to send; this only asks whether one exists.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  if (paid && invoiceId && onRefund && remaining > 0) {
+  if (paid && (invoiceId || transactionId) && onRefund && remaining > 0) {
     items.push({
       key: 'refund',
       label: t('payments.refund') || 'Refund',

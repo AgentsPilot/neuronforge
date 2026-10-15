@@ -17,6 +17,13 @@
  * "YYYY-MM-DD HH:mm UTC" (§5.11). Because the Businesses drawer renders this
  * same component, it takes the same look (SA L-5 Q-4). Same test ids, same
  * words, and still no fold inside (the drawer folds it).
+ *
+ * Admin plan card plain labels (2026-10-15): the TIER / COHORT / BASIS grid
+ * is replaced by plain sentences ("Running on: …", "Free access underneath:
+ * …"), worded by `planCardWords` from the resolver's basis and the server's
+ * `planPresentation`. State and Anomaly stay as fields; the raw ids, dates,
+ * basis and matrix version move to one muted technical line, so nothing is
+ * lost for debugging.
  */
 
 import {
@@ -27,13 +34,18 @@ import {
   ADMIN_TH,
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
-import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 
+import { planCardWords, planTechnicalDetails, type PlanCardLine } from '../planCardWords';
 import type { AccountPayload } from '../types';
 
-/** An end date in the §5.11 form, or the existing words when there is none. */
-function endDate(iso: string | null | undefined): string {
-  return iso ? formatUtc(iso) : 'no end date';
+/** One plain line: muted label, the plan name, and what follows it. */
+function PlanLine({ line, testId }: { line: PlanCardLine; testId: string }) {
+  return (
+    <p data-testid={testId} className="text-sm text-slate-300">
+      <span className="text-slate-400">{line.label}</span>{' '}
+      <span className="font-semibold text-slate-100">{line.name}</span> {line.detail}
+    </p>
+  );
 }
 
 /**
@@ -65,34 +77,42 @@ export function EntitlementSnapshot({ payload }: { payload: AccountPayload }) {
   // The server decides what counts as granted, with `isGrantingValue`. The one
   // rule, asked once, and this component is not entitled to a second opinion.
   const granted = Object.entries(payload.capabilities).filter(([, resolved]) => resolved.granting);
+  const words = planCardWords(payload);
 
   return (
     <div data-testid="account-result" className="mt-4 space-y-4">
+      <div data-testid="plan-card-lines" className="space-y-1">
+        <PlanLine line={words.runningOn} testId="plan-running-on" />
+        {words.underneath && <PlanLine line={words.underneath} testId="plan-underneath" />}
+        {words.previous && <PlanLine line={words.previous} testId="plan-previous" />}
+        {words.downgradeNote && (
+          <p data-testid="plan-downgrade-note" className="text-xs text-amber-300">
+            {words.downgradeNote}
+          </p>
+        )}
+      </div>
+
       <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
         {[
-          ['Tier', payload.plan?.tier ?? 'none'],
-          ['Cohort', payload.plan?.cohort ?? 'none'],
-          ['Tier ends', endDate(payload.plan?.tier_expires_at)],
-          ['Cohort ends', endDate(payload.plan?.cohort_expires_at)],
           ['State', payload.state],
-          // `basis` is an object with a `kind` and the name of whatever it
-          // stands on. Rendering it directly threw on every lookup, and
-          // FR-12 forbids naming a plan here, so neither appears.
-          [
-            'Basis',
-            payload.basis.kind === 'none'
-              ? 'none'
-              : `${payload.basis.kind} ${payload.basis.tier ?? payload.basis.cohort ?? ''}`.trim(),
-          ],
-          ['Matrix version', String(payload.matrixVersion)],
           ['Anomaly', payload.anomaly ?? 'none'],
         ].map(([label, value]) => (
           <div key={label}>
             <dt className="text-xs uppercase tracking-wide text-slate-400">{label}</dt>
-            <dd className="font-mono text-slate-200">{value}</dd>
+            <dd
+              className={`font-mono ${label === 'Anomaly' && payload.anomaly ? 'text-rose-300' : 'text-slate-200'}`}
+            >
+              {value}
+            </dd>
           </div>
         ))}
       </dl>
+
+      {/* The raw facts the old grid printed, for debugging: ids, dates, the
+          basis kind (an OBJECT, never rendered directly) and the matrix version. */}
+      <p data-testid="plan-technical" className="font-mono text-xs text-slate-500">
+        Technical: {planTechnicalDetails(payload)}
+      </p>
 
       <div>
         <h3 className="mb-2 text-xs uppercase tracking-wide text-slate-400">

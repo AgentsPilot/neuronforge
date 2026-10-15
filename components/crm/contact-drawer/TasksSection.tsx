@@ -123,22 +123,8 @@ export function TasksSection({
                 type="date"
                 value={newTaskDueDate}
                 onChange={(e) => setNewTaskDueDate(e.target.value)}
-                className="date-input-dark-fix flex-1 min-w-[140px] h-10 px-3 py-2 text-sm rounded-md border bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-ring"
+                className="flex-1 min-w-[140px] h-10 px-3 py-2 text-sm rounded-md border bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <style jsx>{`
-                .date-input-dark-fix {
-                  color-scheme: light;
-                }
-                :global(.dark) .date-input-dark-fix,
-                :global(html.dark) .date-input-dark-fix {
-                  color-scheme: dark;
-                }
-                :global(.dark) .date-input-dark-fix::-webkit-calendar-picker-indicator,
-                :global(html.dark) .date-input-dark-fix::-webkit-calendar-picker-indicator {
-                  filter: invert(1) brightness(0.8);
-                  cursor: pointer;
-                }
-              `}</style>
               <Select
                 value={newTaskPriority}
                 onValueChange={(value) => setNewTaskPriority(value as 'low' | 'medium' | 'high' | 'urgent')}

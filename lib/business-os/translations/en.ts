@@ -1077,6 +1077,7 @@ export const en = {
     'config.services.sale_mode.direct.why': 'The price is shown, and the client can go ahead on their own.',
     'config.services.sale_mode.proposal.why': 'The client sends a request instead. You reply with a quote, and nothing is bookable until they accept it.',
     'config.services.collection.no_processor': 'Card payments need a connected processor. Until one is, your client reaches a payment step that cannot charge them.',
+    'config.services.shape.no_price_yet': 'No price set yet. You can still say how you will be paid, and fill in the figure when you know it. A price of 0 means this service is free.',
     // Field names as the forms label them, so "what is missing" names something
     // the user can go and find.
     'readiness.stillNeeds': 'Still needs:',
@@ -1777,6 +1778,27 @@ export const en = {
     'crm.back_to_dashboard': 'Back to Dashboard',
     'crm.subtitle': 'Manage your contacts and relationships',
     'crm.search_placeholder': 'Search contacts...',
+    /* The filter box. `added` heads the period group — it is the contact's
+       creation date, and "created" reads as a system field where "added" reads
+       as something the owner did. */
+    'crm.search.add_filter': 'Add a filter',
+    'crm.search.stage': 'Stage',
+    'crm.search.source': 'Source',
+    'crm.search.tag': 'Tag',
+    'crm.search.added': 'Added',
+    'onboarding.brief.audience': 'Clients',
+    'onboarding.brief.outcome': 'What they get',
+    'onboarding.brief.differentiators': 'What sets you apart',
+    'onboarding.brief.credentials': 'Background',
+    'onboarding.brief.objections': 'What holds people back',
+    'crm.search.presence': 'Has',
+    'crm.search.without': 'no',
+    'crm.search.has_email': 'email',
+    'crm.search.has_phone': 'phone',
+    'crm.search.has_bookings': 'bookings',
+    'crm.search.has_tasks': 'open tasks',
+    'crm.search.in_stage': 'In stage',
+    'crm.search.in_stage_for': 'in stage {days}d+',
     'crm.add_contact': 'Add Contact',
     'crm.add_short': 'Add',
     'crm.tab_pipeline': 'Pipeline',
@@ -2515,6 +2537,7 @@ export const en = {
     'crm.files.upload': 'Upload',
     'crm.files.upload_first': 'Upload first document',
     'crm.files.download': 'Download',
+    'crm.files.preview_failed': 'This file could not be opened.',
     'crm.files.delete': 'Delete',
     'crm.files.open': 'Open',
     'crm.files.intake_form': 'Client Form',
@@ -2566,7 +2589,7 @@ export const en = {
     'crm.document.description': 'Description (optional)',
     'crm.document.description_placeholder': 'Add notes about this document...',
     'crm.document.drag_drop': 'Drag and drop a file here, or click to browse',
-    'crm.document.max_size': 'Max file size: 50MB',
+    'crm.document.max_size': 'Max {max}MB',
     'crm.document.supported_formats': 'PDF, Images, Word, Excel supported',
 
     // CRM Intake

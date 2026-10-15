@@ -149,7 +149,10 @@ describe('the client can be told about the refund again', () => {
      * invoice, because the document it builds carries a live pay button for
      * money the client was just given back.
      */
-    expect(menu).toMatch(/if \(invoiceId && onSendDocument && refunded <= 0\)/);
+    /* `refunded <= 0` is the clause this test is about. The condition has since
+       gained `&& (paid || !stopped)` — a cancelled demand is not re-sent — so it
+       is matched as a prefix rather than in full. */
+    expect(menu).toMatch(/if \(invoiceId && onSendDocument && refunded <= 0/);
     expect(menu).toMatch(/if \(refunded > 0 && onResendRefundEmail\)/);
   });
 

@@ -78,6 +78,24 @@ export const BOS_LLM_CALLS = {
     // is ever re-wired; its absence from the ledger is not a defect (KI-D, F-12).
     'client_tracking_extraction',
     'adjustment_intent_extraction',
+    /*
+     * The follow-up interview that fills the business brief. TWO calls per
+     * question — one to choose and word it, one to read the answer — and up to
+     * one question per brief field, so a conversation that starts from a
+     * one-line description can spend ten of these. A description that already
+     * says who it is for and what they get spends far fewer, because the
+     * picker declines fields the story covers.
+     */
+    'business_deepening',
+    /**
+     * Naming the placeholder services from what the owner already said.
+     *
+     * ONE call per conversation, made once the count is known. The interview
+     * asks how MANY things they sell and deliberately not what each one is, so
+     * without this the build writes rows called "Service 1", "Service 2" and
+     * the website publishes a catalogue of names nobody chose.
+     */
+    'service_drafting',
   ],
   // OpenAI is the only image provider today (see GeneratedImageService).
   images: ['image_generation'],

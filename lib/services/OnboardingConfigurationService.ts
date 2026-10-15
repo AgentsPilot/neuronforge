@@ -13,6 +13,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import type { BusinessBrief } from '@/lib/business-os/onboarding/businessBrief';
 import { STAGE_TRANSLATIONS } from '@/lib/business-os/stageLabels';
 import { getVerticalLabel } from '@/lib/business-os/verticalLabels';
 import { capabilityKeysFromShape, shapeFromServices } from '@/lib/business-os/businessShape';
@@ -31,6 +32,15 @@ export type PaymentMode = 'none' | 'upfront' | 'invoicing' | 'installments';
 
 export interface ExtractedService {
   name: string;
+  /**
+   * What the service is, in the owner's words.
+   *
+   * The extraction prompt asks for it; a field asked for and not declared here
+   * is dropped on the way through and the question was asked for nothing. That
+   * precise failure is recorded on `sale_mode` below, which was requested in
+   * both languages for months and silently discarded.
+   */
+  description?: string;
   duration_minutes?: number | null;
   price?: number | null;
   /**
@@ -91,6 +101,15 @@ export interface BusinessStoryExtraction {
   needs_website?: boolean;
   needs_booking?: boolean;
   target_audience?: string[];  // Who they serve: parents, kids, families, businesses
+  /**
+   * Is there enough in what they wrote to tell what the business does?
+   *
+   * Decides whether `business_story` asks once more. Judged by the model that
+   * is already reading the sentence, rather than by counting characters: a
+   * threshold cannot tell "I" from "מאמן כושר", and any number picked here
+   * would be stricter in one script than another.
+   */
+  describes_business?: boolean;
 }
 
 export interface ClientWorkflowExtraction {
@@ -182,6 +201,15 @@ export interface ClientTrackingExtraction {
 export interface ExtractedData extends BusinessStoryExtraction, ClientWorkflowExtraction {
   clientAcquisition?: ClientAcquisitionExtraction;
   clientTracking?: ClientTrackingExtraction;
+  /**
+   * What the follow-up questions established — see
+   * `lib/business-os/onboarding/businessBrief`.
+   *
+   * Carried through to the configuration, and from there onto the profile, so
+   * everything that writes in the owner's name reads the same brief instead of
+   * a one-line description.
+   */
+  business_brief?: BusinessBrief;
 }
 
 export type StageType = 'lead' | 'prospect' | 'client' | 'past_client' | 'lost' | 'archived';
@@ -201,7 +229,8 @@ export interface InferredConfiguration {
   vertical: string;
   sub_vertical?: string;  // NEW: More specific vertical type
   description?: string;
-  clients_per_week: number;
+  /** Null means nobody asked, which is always: there is no question for it. */
+  clients_per_week: number | null;
 
   // Pain points & goals (stored for future re-evaluation)
   pain_points: string[];
@@ -238,6 +267,9 @@ export interface InferredConfiguration {
 
   // Reasons for each capability (for preview transparency)
   capability_reasons: Record<string, string>;
+
+  /** What the interview learned about the business itself, for writing from. */
+  business_brief?: BusinessBrief;
 }
 
 // ============================================================
@@ -295,12 +327,31 @@ const VERTICAL_NORMALIZATION: Record<string, string> = {
   // therapist, coach, consultant, lawyer, photographer, realtor, trainer, tutor
 };
 
+
 /**
  * Normalize a vertical to match template-compatible verticals.
- * Returns the original if already valid or no mapping exists.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A VALUE THAT ALREADY SELECTS A PIPELINE IS NEVER REWRITTEN, and without that
+ * guard this function destroyed two of the nine presets.
+ *
+ * It runs BEFORE the preset lookup, and the normalisation table maps toward
+ * seven canonical names of which only four are preset keys. Measured:
+ *
+ *   fitness  ->  trainer  ->  no preset  ->  default   (a `fitness` preset exists)
+ *   teacher  ->  tutor    ->  no preset  ->  default   (a `teacher` preset exists)
+ *
+ * So a personal trainer got the generic pipeline, and this function was what
+ * took the specific one away. The table is still useful for the spellings it
+ * was written for — "personal trainer", "psychologist" — but it may not
+ * overrule a word that is already an answer.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function normalizeVertical(vertical: string): string {
-  const normalized = VERTICAL_NORMALIZATION[vertical.toLowerCase()];
+  const lower = vertical.toLowerCase();
+  if (PIPELINE_PRESETS[lower]) return lower;
+
+  const normalized = VERTICAL_NORMALIZATION[lower];
   return normalized || vertical;
 }
 
@@ -411,6 +462,28 @@ const SUB_VERTICAL_PIPELINES: Record<string, PipelineStage[]> = {
     { stage_key: 'follow_up', stage_label: 'Follow Up', position: 3, color: '#f59e0b', stage_type: 'prospect' },
   ],
 };
+/**
+ * The verticals that actually select a pipeline, and nothing else.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EXPORTED so the extraction prompt can be BUILT from it.
+ *
+ * There were three overlapping lists of business types and no two agreed: the
+ * prompt offered 15, this file has presets for 8, and `VERTICAL_NORMALIZATION`
+ * folds 26 spellings into 7 canonical names. The prompt offered `coach`,
+ * `doctor`, `dentist` and `lawyer`; `realtor` was a canonical name the prompt
+ * could never produce; and of the ~20 sub-verticals it carefully distinguished,
+ * five changed anything.
+ *
+ * A model choosing `couples_therapist` over `family_therapist` was doing work
+ * that reached no consumer. Now it is offered exactly what decides something.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const PIPELINE_VERTICALS: readonly string[] = Object.keys(PIPELINE_PRESETS);
+
+/** The sub-verticals with a pipeline of their own. Everything else is noise. */
+export const PIPELINE_SUB_VERTICALS: readonly string[] = Object.keys(SUB_VERTICAL_PIPELINES);
+
 
 // Stage label translations by stage_key
 
@@ -518,7 +591,19 @@ export class OnboardingConfigurationService {
       },
       'Computing configuration from extracted data'
     );
-    const clientsPerWeek = extracted.clients_per_week || 5;
+    /*
+     * NULL means "not asked", and nobody is asked.
+     *
+     * This was `|| 5`. There is no question anywhere in onboarding about
+     * client volume, so every business was recorded as serving five clients a
+     * week — a figure the profile then asserts and the website prompt used to
+     * state outright as "Business Volume: Approximately 5 clients per week".
+     *
+     * The prompt no longer guesses it and the website no longer prints it, so
+     * the last place inventing it is this line. The build already writes
+     * `clientsPerWeek || null`, so null lands as null.
+     */
+    const clientsPerWeek = extracted.clients_per_week ?? null;
     const painPoints = extracted.pain_points || [];
     const goals = extracted.goals || [];
     const tools = extracted.tools || [];
@@ -601,6 +686,11 @@ export class OnboardingConfigurationService {
       capabilities,
       building_blocks: buildingBlocks,
       capability_reasons: reasons,
+
+      /* Passed straight through. The configuration is what the build persists
+         as `extracted_data`, so this is how the brief reaches the profile — and
+         how the pre-build summary can show the owner what we understood. */
+      business_brief: extracted.business_brief,
     };
 
     logger.info(
@@ -798,8 +888,21 @@ export class OnboardingConfigurationService {
       }
     }
 
-    // 2. Add based on services
-    if (data.services && data.services.length > 0) {
+    /*
+     * 2. Add based on services — on a service that is BOOKED against a time.
+     *
+     * This read `services.length > 0`, which was a workable proxy only while
+     * the catalogue was either typed by the owner or empty. It is the only
+     * place the scheduling capability is ever added, so on the chat's current
+     * flow, which collects a count rather than a catalogue, it never fired at
+     * all: `sells_scheduled` is carried through `computeConfiguration` and was
+     * read by nothing here.
+     *
+     * Now that the count produces named placeholder rows carrying that answer,
+     * the field decides it. A business selling without appointments has rows
+     * and must still not get a calendar.
+     */
+    if (data.services && data.services.some(service => service.is_scheduled !== false)) {
       addCapability('scheduling', 'You have services to schedule');
       addBlock('scheduling', 'service_menu');
       addBlock('scheduling', 'availability_calendar');

@@ -1,15 +1,36 @@
 /**
  * Onboarding Conversation Manager
  *
- * Manages the state machine and conversation flow for Business OS onboarding.
- * Uses LLM for deep intent understanding and entity extraction through
- * 3-4 smart open-ended questions that capture the full business context.
+ * The state machine behind the Business OS onboarding chat.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE INTERVIEW HAS TWO JOBS, and keeping them apart is what the shape of this
+ * file is for.
+ *
+ * CONFIGURE THE PLATFORM. Does this business book appointments, how does the
+ * money reach it, how many things does it sell, do clients fill in a form
+ * first, which channels does it want. Each of these decides a capability, each
+ * is asked as a chip, and each is read DETERMINISTICALLY — a button press needs
+ * no model, and a keyword search over a label that spells out its own
+ * consequence is how "no card payments" was once read as "card payments".
+ *
+ * LEARN ENOUGH TO WRITE ABOUT IT. The story, then a short follow-up interview
+ * against a declared contract (`lib/business-os/onboarding/businessBrief`),
+ * then one call that composes the description the website is generated from.
+ * Three LLM calls plus two per follow-up, and nothing here may invent a fact
+ * the owner did not give.
+ *
+ * What it does NOT do, by decision: collect a catalogue. Prices, durations and
+ * per-service exceptions belong to the services editor. Onboarding creates
+ * named DRAFTS, invisible until the owner publishes them.
  *
  * Flow:
- * 1. Language Selection - auto-detect or confirm
- * 2. Business Story - THE KEY QUESTION - extracts vertical, pain_points, goals, volume
- * 3. Client Workflow - services, pricing, payment timing, booking method
- * 4. Preview & Confirm - show computed configuration, allow adjustments
+ *   language → name → story → deepening (×N) → how you sell
+ *            → how you collect → how many → intake (if booked) → channels → plan
+ *
+ * Steps named in `ONBOARDING_STEPS` but absent above are retired and kept only
+ * so a stored conversation standing on one is resumed rather than discarded.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { getProviderFactory } from '@/lib/ai/providerFactory';
@@ -36,9 +57,41 @@ import {
   InferredConfiguration,
   PipelineStage,
   ExtractedService,
+  /* The verticals that actually select a pipeline. The extraction prompt is
+     BUILT from these rather than carrying its own copy: three overlapping
+     lists of business types, no two agreeing, is what this replaces. */
+  PIPELINE_VERTICALS,
+  PIPELINE_SUB_VERTICALS,
 } from './OnboardingConfigurationService';
 
+import {
+  BRIEF_FIELDS,
+  withoutDashPunctuation,
+  EMPTY_BRIEF,
+  MAX_FOLLOW_UPS,
+  briefContract,
+  briefHasAnything,
+  briefSoFar,
+  mergeIntoBrief,
+  fieldsStillToAsk,
+  type BriefField,
+  type BusinessBrief,
+} from '@/lib/business-os/onboarding/businessBrief';
+
 const logger = createLogger({ service: 'OnboardingConversationManager' });
+
+/**
+ * Answers that mean "move on".
+ *
+ * Every follow-up is skippable and nothing here may block the build, so a word
+ * of dismissal has to be read as one rather than recorded as a fact about the
+ * business. Kept short and literal — anything longer is an answer.
+ */
+const SKIP_WORDS = new Set([
+  'skip', 'no', 'none', 'nothing', 'pass', 'later', 'dunno', "don't know", 'dont know', 'n/a', '-',
+  'דלג', 'לא', 'אין', 'כלום', 'אחר כך', 'לא יודע',
+  'saltar', 'no', 'nada', 'ninguno', 'luego', 'no sé', 'no se',
+]);
 
 /**
  * The adjustment intents the preview prompt allows (PREVIEW_ADJUSTMENT_PROMPT).
@@ -87,6 +140,7 @@ export type OnboardingStep =
   | 'language_selection'
   | 'business_name'      // What is the business called? Asked, never inferred
   | 'business_story'
+  | 'business_deepening'  // Fills the gaps the story left — see `businessBrief`
   | 'client_workflow'
   | 'service_details'  // Follow-up when user didn't provide specific service details
   | 'payment_collection'  // How does the money reach you? (decides Stripe vs bank details)
@@ -100,6 +154,23 @@ export type OnboardingStep =
 export interface Service {
   id?: string;
   service_name: string;
+  /**
+   * What this service IS, in the owner's words.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The services created by onboarding are PLACEHOLDERS: the owner sets the
+   * price and the length in the editor afterwards. So the one thing the
+   * interview can usefully capture about a service is the only thing the
+   * editor cannot generate — what it actually is.
+   *
+   * It held nothing. This type was name, duration, price, currency,
+   * collection, sale_mode: configuration end to end. The build wrote
+   * `description: suggestion?.description`, which exists only on a service
+   * WE invented, so a service the owner described themselves arrived with no
+   * description at all and the website had a catalogue of bare names.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  description?: string;
   /** Null for a service not booked against a time — a product or deliverable. */
   duration_minutes: number | null;
   /** Null where the fee is agreed per client. Zero only where it is free. */
@@ -139,6 +210,7 @@ export const ONBOARDING_STEPS = new Set<OnboardingStep>([
   'language_selection',
   'business_name',
   'business_story',
+  'business_deepening',
   'client_workflow',
   'service_details',
   // No longer asked — each service carries its own `collection`. Kept in the
@@ -184,7 +256,70 @@ export interface OnboardingState {
     pipelineStages?: PipelineStage[];
     services?: Service[];
     businessDescription?: string;
+    /**
+     * The business story has already been asked for a second time.
+     *
+     * One re-ask, never two. The first answer was too thin to describe a
+     * business ("I", from a real run), and the second is taken as given
+     * whatever it says: an interview that can refuse to move on is an interview
+     * somebody cannot finish, and the brief questions that follow are a better
+     * place to recover than a wall.
+     */
+    storyAlreadyReasked?: boolean;
     wantsWebsite?: boolean;
+    /**
+     * What we need in order to WRITE about this business — see
+     * `lib/business-os/onboarding/businessBrief`.
+     *
+     * Separate from `businessStory`, which is the configuration read of the
+     * same answers. The story decides what the platform switches on; this
+     * decides what a page about them can say.
+     */
+    businessBrief?: BusinessBrief;
+    /**
+     * The follow-ups as EXCHANGES — what was asked and what came back.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The answers alone are fragments. "all" means nothing without the question
+     * it answered, and read as a sentence it is noise: the first composed
+     * description on a real account contained the word "all." on its own.
+     *
+     * Keeping the question with the answer is what lets the description be
+     * written rather than concatenated — and it is the owner's words on both
+     * halves, so nothing here is a paraphrase.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    briefExchanges?: Array<{ field: BriefField['key']; question: string; answer: string }>;
+    /** How many follow-ups have been asked, capped by `MAX_FOLLOW_UPS`. */
+    followUpsAsked?: number;
+    /**
+     * The fields already put to the owner, asked or not answered usefully.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WITHOUT THIS THE INTERVIEW REPEATS ITSELF.
+     *
+     * Reported: "who usually comes to you — beginners, experienced athletes…?",
+     * answered "all kind", and then "who do you usually train — are they
+     * beginners, advanced athletes…?". The reader records only what the words
+     * support, a vague answer supports nothing, the field stays missing, and
+     * the picker chooses it again. Five questions could be spent on one.
+     *
+     * A question asked is a question spent. Whether it produced anything is a
+     * separate matter, and not one to ask the owner about twice.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    askedBriefFields?: BriefField['key'][];
+    /** Which field the outstanding follow-up is about. */
+    pendingBriefField?: BriefField['key'];
+    /**
+     * The question itself, as the model phrased it.
+     *
+     * Held on the state because deciding and saying are separate here:
+     * `updateStateFromMessage` works out what to ask and `getNextResponse` says
+     * it. Anything the first learns and the second needs has to travel on the
+     * state.
+     */
+    pendingBriefQuestion?: string;
   };
   language: Language;
   pendingQuestion?: string;
@@ -210,210 +345,194 @@ export type AttributedOnboardingState = OnboardingState & { attributionGroupId: 
 // EXTRACTION PROMPTS
 // ============================================================
 
-const BUSINESS_STORY_SYSTEM_PROMPT = `You are analyzing a business owner's description of their business.
-Extract ALL relevant information from their natural language response.
+/**
+ * Read the owner's free-text answer for the facts that SWITCH SOMETHING ON.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS PROMPT USED TO BE, and why it is a quarter of the size.
+ *
+ * It asked one sentence for eleven facts, under the instruction "Be GENEROUS in
+ * inference". Of the eleven:
+ *
+ *   · TWO were discarded by the code on arrival. `company_name` loses to the
+ *     name the owner typed when asked outright; `description` is overwritten by
+ *     their own words, because an extraction once answered a Hebrew
+ *     conversation in English and that restatement became the source text for
+ *     a whole website.
+ *   · FOUR had no question feeding them and no consumer deciding anything.
+ *     `pain_points`, `goals` and `tools` came back `[]` on every real account
+ *     measured. `clients_per_week` was guessed from an adjective ("busy" = 15)
+ *     or defaulted to 5, and then stated to the website copywriter as
+ *     "Business Volume: Approximately 5 clients per week" — a number about a
+ *     business that nobody had asked.
+ *   · ONE competed with a better source. `target_audience` is now collected by
+ *     a dedicated question in the brief interview.
+ *   · The remaining four are below.
+ *
+ * "Be GENEROUS in inference" is also the exact opposite of what every other
+ * prompt in this file says. `readBriefAnswer`, forty lines away: "Record ONLY
+ * what the words support. Invent nothing, infer nothing, flatter nothing."
+ * Same model, same conversation, opposite orders.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT IS A FUNCTION
+ *
+ * The lists of verticals and sub-verticals come from the tables that CONSUME
+ * them. The prompt used to carry its own copy: it offered 15 verticals against
+ * 8 presets, named four that existed nowhere (`coach`, `doctor`, `dentist`,
+ * `lawyer`), could never produce `realtor` which is a real canonical value, and
+ * distinguished some twenty sub-verticals of which five changed anything. That
+ * last gap is why it carried a hardcoded rule naming one customer type — the
+ * thing CLAUDE.md's no-hardcoding rule exists to prevent.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function businessStoryPrompt(): string {
+  return [
+    'You are reading what a business owner just typed about their business.',
+    '',
+    'ONE JOB: return the few facts that decide how the platform is set up.',
+    'You are NOT describing the business. A later step does that, from the',
+    "owner's own words, so a description written here would compete with it.",
+    '',
+    'WHAT TO RETURN, and what each one decides:',
+    '',
+    '1. vertical. Chooses the sales pipeline this business gets. EXACTLY one of:',
+    `   ${PIPELINE_VERTICALS.join(', ')}`,
+    '   Pick the closest. Use "default" when none of them fits: a generic',
+    '   pipeline is easily lived with, a wrong one has to be unpicked stage by',
+    '   stage by someone who did not ask for it.',
+    '',
+    /*
+     * SAY WHAT CHOOSING ONE DOES. The first version of this said only what not
+     * to choose: "ONLY these change anything", "null for anything else", "reads
+     * back to the owner as a decision nobody made". Three sentences, all
+     * discouraging, and the old prompt's one worked example removed with them.
+     *
+     * Measured: a business described as "a school trainer helping high school
+     * kids with their academic challenges" came back `sub_vertical: null`, with
+     * `tutor` on the list and carrying its own pipeline. It took the broad
+     * `teacher` stages instead of the closer ones.
+     */
+    '2. sub_vertical. A MORE SPECIFIC pipeline, where one fits. Exactly one of:',
+    `   ${PIPELINE_SUB_VERTICALS.join(', ')}`,
+    '   Take a match whenever the business plainly IS that thing: these names',
+    '   mean what they say, read literally. Each carries its own pipeline stages,',
+    '   closer to how that trade actually runs than the broad category above, so',
+    '   a match is worth taking rather than passing over.',
+    '   null ONLY when none of them fits. A word that is not on this list reaches',
+    '   no consumer at all, so invent nothing: there, null is the honest answer.',
+    '',
+    '3. needs_booking. Do clients book a time with this business?',
+    '   true or false ONLY where they say so: "clients book sessions", "I see',
+    '   people by appointment", "I sell downloads, no appointments".',
+    '   null when they did not say. null is a real and common answer, and the',
+    '   most useful one: it means the chat asks them outright on the next turn.',
+    '',
+    '4. needs_website. Have they asked for a website, or said they have none?',
+    '   true or false only where stated, null otherwise. They are offered the',
+    '   choice later either way.',
+    '',
+    '5. describes_business. Is there enough here to tell what this business',
+    '   DOES? true when you could say what it sells or who it serves, even',
+    '   roughly. false when the message is a slip, a stray character, a test',
+    '   string, or words that say nothing about any business.',
+    '   This decides whether the question is asked once more, so it is the one',
+    '   judgement here with a second chance attached: when it is false, nothing',
+    '   you return above is used.',
+    '',
+    'RULES:',
+    '- INFER NOTHING. If the words do not say it, the answer is null. A guess',
+    '  here becomes a pipeline the owner did not choose.',
+    '- Every value above is a fixed key or a boolean, and none of it is shown to',
+    '  the owner. So return the keys in English exactly as listed, whatever',
+    '  language they wrote in. A translated key matches no pipeline at all.',
+    '- Return nothing else. No summary, no audience, no goals, no volume: the',
+    '  interview that follows asks about those properly, and a second answer to',
+    '  the same question is worse than no answer.',
+    '',
+    'Return JSON: {"vertical": string, "sub_vertical": string|null,',
+    ' "needs_booking": true|false|null, "needs_website": true|false|null,',
+    ' "describes_business": true|false}',
+  ].join('\n');
+}
 
-From their response, identify:
-1. company_name - Business name if mentioned (null if not)
-2. vertical - Map to ONE broad category: therapist, coach, consultant, lawyer, wellness, beauty, fitness, photographer, designer, accountant, doctor, dentist, teacher, trainer, other
-   - "teacher" is for: schools, tutors, parenting coaches, educational consultants, instructors
-   - "coach" is for: life coaches, business coaches, personal development, mentors
-   - "therapist" is for: psychologists, counselors, mental health professionals
-   - "consultant" is for: business consultants, advisors, professional services
-3. sub_vertical - More SPECIFIC type within the vertical:
-   - For teacher: tutor, instructor, parenting_coach, school, workshop_leader, course_creator
-   - For coach: life_coach, business_coach, career_coach, health_coach, executive_coach
-   - For therapist: psychologist, counselor, family_therapist, couples_therapist, child_therapist
-   - For consultant: business_consultant, marketing_consultant, it_consultant, hr_consultant
-   IMPORTANT: If the business teaches/advises PARENTS about parenting or family, use sub_vertical: "parenting_coach" (not tutor or instructor)
-4. description - A brief summary of what they do (capture nuance like "teaches parents AND kids")
-5. target_audience - Array of who they serve: individuals, families, businesses, kids, parents, couples, etc.
-6. pain_points - Array of codes (empty if none mentioned). Map to: no_shows, manual_reminders, payment_collection, admin_overhead, client_tracking, no_website, scheduling_chaos, follow_up, retention
-7. goals - Array of codes (empty if none mentioned). Map to: grow_clients, save_time, automation, professional_image, online_presence, grow_revenue, retain_clients
-8. tools - Array of any tools/software mentioned: google_calendar, stripe, venmo, paypal, whatsapp, excel, paper, quickbooks, zoom, etc.
-9. clients_per_week - Estimate number if mentioned. Even vague hints: "busy" = 15, "just starting" = 3, "small practice" = 5. Return null if no volume hints.
-10. needs_website - true if they explicitly mention wanting a website, needing online presence, or not having a website. false if they say they already have one. null if not mentioned.
-11. needs_booking - true if they mention clients booking appointments, scheduling sessions, seeing clients by appointment. null if unclear.
+/**
+ * Read a free-text answer about what the business offers, for PLACEHOLDER rows.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS PROMPT USED TO BE: 129 lines, of which about 40 were worked price
+ * examples in two languages.
+ *
+ * It extracted price, currency, instalment plans, buffer minutes, sale mode,
+ * per-service collection, pricing model, payment timing and booking method. All
+ * of that was written for the services FORM, where the owner filled in a
+ * fifteen-column grid before anything existed. That form is gone, and it is
+ * where owners stopped.
+ *
+ * The chat does not collect pricing. It asks how they sell, how the money
+ * reaches them and roughly how many things they sell, then creates that many
+ * DRAFT rows and leaves every number to the services editor, which has a field
+ * for each and is the only place one can be checked.
+ *
+ * Two of the fields it extracted were also answered by a chip on the very next
+ * turn and overwritten — `sells_scheduled` by `readScheduledAnswer` and
+ * `collection_method` by `readCollectionMethod`, both read deterministically
+ * because a label that spells out its own consequence defeats a keyword search.
+ * Two sources for one fact, with the model's version losing.
+ *
+ * And `needs_intake` was asked for here, declared on the type, and dropped by
+ * this extractor's own return block, so no account ever got an intake form
+ * from onboarding. It is now its own question with its own reader.
+ *
+ * What is left is the only thing no editor can generate: what the service IS.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const CLIENT_WORKFLOW_SYSTEM_PROMPT = `You are reading what a business owner says they offer.
 
-Be GENEROUS in inference:
-- "I'm drowning in admin" = pain_points: ["admin_overhead"], goals: ["save_time"]
-- "I want to look more professional" = goals: ["professional_image"]
-- "I'm tired of texting reminders" = pain_points: ["manual_reminders"], goals: ["automation"]
-- "Chasing payments is awkward" = pain_points: ["payment_collection"]
-- "I want to grow but can't handle more work" = goals: ["grow_clients", "save_time"]
-- "parenting school", "teaches parents" = sub_vertical: "parenting_coach", target_audience: ["parents", "families"]
+ONE JOB: name the things they sell, so each becomes a draft row they can finish.
 
-Return ONLY valid JSON with this exact structure:
-{
-  "company_name": string | null,
-  "vertical": string,
-  "sub_vertical": string | null,
-  "description": string,
-  "target_audience": string[],
-  "pain_points": string[],
-  "goals": string[],
-  "tools": string[],
-  "clients_per_week": number | null,
-  "needs_website": boolean | null,
-  "needs_booking": boolean | null
-}`;
+For each service, return:
+- name: what a client would see on a booking page. Two to four words, in the
+  owner's own language. No price, no duration, no marketing adjective.
+- description: one or two sentences saying what it is and who it suits, built
+  from what they actually said and in their phrasing. Omit it only if they said
+  nothing beyond a name.
 
-const CLIENT_WORKFLOW_SYSTEM_PROMPT = `You are analyzing how a business owner works with clients.
-Extract structured information about their services, pricing, and workflow.
+Also return:
+- needs_more_details: true only when they named nothing a service could be
+  created from. A missing price is NOT a gap: these are placeholders, and the
+  owner sets prices and durations in the services editor. Asking again for a
+  number they have already declined to give turns the interview into a form.
 
-From their response, extract:
-1. services - Array of services mentioned. For each:
-   - name: service name as described
-   - duration_minutes: session length if mentioned (30, 45, 60, 90, 120 are common). Default to 60 if it's clearly a session/appointment but no duration given.
-   - price: numeric price. Use null if NOT mentioned (NOT 0). Only use 0 if user explicitly says "free".
-   - is_scheduled: true if it's an appointment/session, false if it's a product/deliverable
-   - collection: how the money for THIS service arrives.
-     "online" only when they describe the client paying by card at the moment of booking.
-     "invoice" when they mention an invoice, bank transfer, Bit, cash, or paying later.
-     null when they did not say, or the service is free.
-     Do NOT guess "online" — defaulting to it would force them to connect a card
-     processor they may never want.
-   - buffer_minutes: the gap they need BETWEEN appointments, when they mention one.
-     Only for something booked against a time, and only where they said it —
-     never guessed. Absent means the platform's own default.
-   - sale_mode: "direct" when a client can book and pay for this immediately.
-     "proposal" when the business quotes each job before there is a price —
-     they price after seeing the site, the scope varies per client, or they
-     describe sending an offer, estimate or treatment plan first.
-     A "proposal" service legitimately has price: null; that is the one case
-     where a missing price is an answer rather than a gap, so do NOT set
-     needs_more_details for it on price alone.
-     Default to "direct" — most businesses sell a fixed thing at a fixed price.
-
-IMPORTANT about price:
-- If user ONLY provides service name without price (e.g., "ייעוץ אישי", "personal consultation"), set price: null
-- ONLY set price: 0 if user explicitly says "free", "חינם", "gratis", etc.
-- price: null means "price not provided yet, need to ask"
-- price: 0 means "explicitly free service"
-- payment_plan: set ONLY when they describe paying over time for that service —
-  "3 payments of 200", "monthly for 6 months", "בתשלומים", "en cuotas". Give
-  { "installment_count": number, "installment_frequency": "weekly"|"biweekly"|"monthly" }.
-  The price stays the TOTAL, not the instalment. Null when they pay once.
-- currency: the ISO code for whatever they wrote the price in — "$80" is USD,
-  "150 ש"ח" or "₪150" is ILS, "€40" is EUR, "£60" is GBP. Use null when they
-  gave a bare number. DO NOT infer it from the language they are speaking: a
-  business can work in Hebrew and charge in dollars, and guessing puts the
-  wrong symbol on every price they will ever send a client.
-
-2. pricing_model - ONE of. These match the three answers offered on screen, so
-   map the user's words to the same three ideas:
-   - "fixed" - a price list; every service has a set price ("services with fixed prices")
-   - "custom" - quoted per client or per project; no price list ("customised per client")
-   - "mixed" - BOTH: some services have a set price, others are quoted per client
-     ("a combination of both"). Also use this when some services are free and
-     others are paid.
-   - "free" - nothing is charged at all (ONLY if they explicitly say so)
-
-3. payment_timing - ONE of:
-   - "before" - pay to book / upfront payment
-   - "after" - invoice after service
-   - "installments" - split payments mentioned
-   - "none" - free services only
-
-4. booking_method - ONE of:
-   - "online" - wants clients to self-book
-   - "manual" - prefers to schedule themselves
-   - "both" - flexible
-
-5b. needs_intake - true when they mention clients filling in a form, a
-   questionnaire, health details or paperwork before the appointment.
-   false when they say they do not, null when they never raised it.
-
-5. collection_method - HOW the money physically reaches them. ONE of:
-   - "card_online" - client pays by card when booking (card/credit/Stripe/PayPal mentioned)
-   - "invoice" - an invoice goes out and the client transfers, or calls to pay (bank transfer, wire, Bit, "they send me the money", "I invoice them")
-   - "in_person" - cash or a card machine in the room
-   - "mixed" - explicitly both online and offline
-   - "none" - nothing is charged
-   - null - they did not say. DO NOT GUESS: a price on its own says nothing about
-     how it is collected, and guessing "card" makes us demand a Stripe account
-     from someone who takes bank transfers.
-
-6. needs_more_details - boolean: Set to true if:
-   - User only mentioned pricing model (e.g., "fixed prices") but no specific services
-   - User didn't provide service names or prices
-   - User provided service name but NO PRICE (we need to ask for price!)
-   - Response was too brief to extract meaningful service information
-
-Examples:
-- "I have 3 packages: intro $50, regular $100, intensive $200" = fixed pricing, 3 services, needs_more_details: false
-- "Every project is different, I quote after consultation" = custom pricing, needs_more_details: false
-- "Fixed prices" or "set prices per service" = needs_more_details: true (no actual services mentioned)
-- "ייעוץ אישי" or "Personal consultation" (no price) = needs_more_details: true (has name but missing price)
-- "ייעוץ אישי 60 דקות" (no price) = needs_more_details: true (has name+duration but missing price)
-- "שירותים עם מחירים קבועים" = needs_more_details: true (only says "fixed price services")
-- "300 a session, they pay me by bank transfer after" = collection_method: "invoice", payment_timing: "after"
-- "250 ש"ח, משלמים לי בביט או העברה" = collection_method: "invoice"
-- "$80, they pay on the website when booking" = collection_method: "card_online", payment_timing: "before", currency: "USD"
-- "הדרכה אישית 90 דקות 150 דולר" = currency: "USD" — Hebrew words, dollar price
-- "ייעוץ 200" = currency: null (a bare number says nothing)
-- "ליווי שנתי 6000 ש"ח, אפשר ב-12 תשלומים" = price: 6000, currency: ILS, payment_plan: { installment_count: 12, installment_frequency: "monthly" }
-- "Programme is $1200, or 3 monthly payments" = price: 1200, currency: USD, payment_plan: { installment_count: 3, installment_frequency: "monthly" }
-- "שיפוצי מטבחים, אני מתמחר כל עבודה אחרי שאני רואה את הבית" = sale_mode: "proposal", price: null, is_scheduled: false
-- "I quote each project after a site visit" = sale_mode: "proposal", price: null
-- "תוכנית טיפול של 6 מפגשים, 2700 ש"ח, אפשר ב-3 תשלומים" = sale_mode: "proposal", price: 2700, currency: ILS, payment_plan: { installment_count: 3, installment_frequency: "monthly" }
-- "250 ש"ח לפגישה" = sale_mode: "direct" (a fixed price they can just book)
-- "אני צריך 20 דקות בין מטופלים" = buffer_minutes: 20
-- "I need twenty minutes between clients to write up notes" = buffer_minutes: 20
-- "back to back is fine" = buffer_minutes: 0
-- "50 an hour, cash when they come" = collection_method: "in_person"
-- "120 per session" (nothing about HOW) = collection_method: null
+RULES:
+- INFER NOTHING they did not say. This text is the source a website is written
+  from, and a service they do not offer is worse than one less row.
+- Never return a price, a duration, a qualification or a result. Not in a name
+  and not in a description: those are facts we do not have.
+- No dashes between clauses. Use a comma, a colon or a full stop.
+- Write everything in the language the owner wrote in.
 
 Return ONLY valid JSON:
 {
-  "services": [{ "name": string, "duration_minutes": number | null, "price": number | null, "currency": "USD" | "ILS" | "EUR" | "GBP" | null, "payment_plan": { "installment_count": number, "installment_frequency": "weekly" | "biweekly" | "monthly" } | null, "is_scheduled": boolean, "collection": "online" | "invoice" | null, "sale_mode": "direct" | "proposal" }],
-  "pricing_model": "fixed" | "custom" | "free" | "mixed",
-  "needs_intake": boolean | null,
-  "payment_timing": "before" | "after" | "installments" | "none",
-  "booking_method": "online" | "manual" | "both",
-  "collection_method": "card_online" | "invoice" | "in_person" | "mixed" | "none" | null,
+  "services": [{ "name": string, "description": string }],
   "needs_more_details": boolean
 }`;
 
-const CLIENT_ACQUISITION_SYSTEM_PROMPT = `You are analyzing how a business owner currently gets new clients.
-This helps determine if they need a website or online presence.
-
-From their response, extract:
-1. acquisition_channels - Array of channels mentioned. Map to: referrals, social_media, google_search, existing_website, networking, advertising, other
-2. has_website - boolean: Do they currently have a website? true/false/null if not mentioned
-3. website_quality - If they have a website, what's its quality? "good", "outdated", "basic", or null
-4. wants_more_clients_online - boolean: Do they express interest in getting more clients through online channels?
-5. primary_channel - The main way they currently get clients (one of the acquisition_channels)
-
-Based on all the above, determine:
-6. needs_website - boolean recommendation:
-   - TRUE if: uses social_media (they already invest in online presence, website is logical next step)
-   - TRUE if: no website + wants online growth, OR has outdated website
-   - TRUE if: mentions wanting professional online presence
-   - FALSE if: ONLY referral-based AND explicitly says they don't want to grow online
-   - FALSE if: already has a good website they want to keep
-
-IMPORTANT: If user mentions social media (Instagram, Facebook, TikTok, etc.), they are ALREADY investing in online presence.
-A website is the natural complement - recommend needs_website: true unless they explicitly say they don't want one.
-
-Examples:
-- "Mostly word of mouth and referrals" = referral_based only, no social, needs_website: false
-- "Referrals and social networks" / "המלצות, רשתות" = uses social_media, needs_website: TRUE (already online, website helps)
-- "I post on Instagram but I don't have a website" = social_media, no website, needs_website: true
-- "I want to reach more people online" = wants_more_clients_online: true, needs_website: true
-- "I have a website but it's outdated" = has_website: true, website_quality: "outdated", needs_website: true
-- "Only referrals, I don't want to be online" = referral_based, explicitly no online, needs_website: false
-
-Return ONLY valid JSON:
-{
-  "acquisition_channels": string[],
-  "has_website": boolean | null,
-  "website_quality": "good" | "outdated" | "basic" | null,
-  "wants_more_clients_online": boolean,
-  "primary_channel": string,
-  "needs_website": boolean | null
-}`;
-
+/*
+ * CLIENT_ACQUISITION_SYSTEM_PROMPT was here, and was removed on 2026-10-14.
+ *
+ * It asked a model to read a free-text answer about where clients come from
+ * and recommend whether the business needs a website. The question it belonged
+ * to became a multi-select: the owner ticks "build me a website" or "connect
+ * Facebook, Instagram or Google", and `extractClientAcquisition` reads the
+ * ticks deterministically. A chosen option is not a thing to interpret.
+ *
+ * The prompt survived that change by 38 lines and was referenced by exactly
+ * one line of the codebase: its own declaration. No call site, no test, no
+ * catalogue entry. Noted here rather than silently dropped, because a reader
+ * wondering where the website recommendation is made should land on the
+ * multi-select reader and not go looking for a model.
+ */
 const CLIENT_TRACKING_SYSTEM_PROMPT = `You are analyzing how a business owner currently tracks their clients and their progress.
 This helps determine if they need a CRM system.
 
@@ -489,36 +608,8 @@ const CURRENCY_BY_LANGUAGE: Record<Language, string> = {
 // ONBOARDING CONVERSATION MANAGER
 // ============================================================
 
-/**
- * Is this service still owed a price?
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * A quoted service never is. Its figure is decided per job, in the proposal,
- * which is the whole meaning of `sale_mode: 'proposal'` — so there is no answer
- * to give, and asking anyway is how a consultant ends up with an invented
- * number on a booking page.
- *
- * The rule was already written down above the missing-price check, and written
- * correctly: "it is per service — a workshop with a price, a bespoke programme
- * without". But it was implemented per BUSINESS, off `pricing_model`, so a
- * business whose overall model reads as fixed was still chased for a price on
- * the one service that cannot have one. Hence: ask the service.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-function needsAPrice(service: { price?: number | null; sale_mode?: 'direct' | 'proposal' }): boolean {
-  if (service.sale_mode === 'proposal') return false;
-  return service.price === null || service.price === undefined;
-}
 
-/** Words and phrases that mean "no charge", in each onboarding language. Matched whole, lowercased. */
-const FREE_PRICE_WORDS = [
-  'free', 'no charge', 'free of charge',
-  'חינם', 'בחינם', 'ללא תשלום', 'בלי תשלום', 'ללא עלות',
-  'gratis', 'gratuito', 'gratuita', 'sin costo', 'sin cargo',
-];
 
-/** Free only as the entire reply — inside a sentence they hedge ("nothing fixed yet"). */
-const FREE_WHOLE_REPLIES = ['nothing', 'nada'];
 
 /**
  * The most services onboarding will create from a count.
@@ -527,6 +618,38 @@ const FREE_WHOLE_REPLIES = ['nothing', 'nada'];
  * array (`StructuredServiceSchema`, `.max(40)`), so the two limits cannot drift
  * apart and leave one path accepting what the other rejects.
  */
+/**
+ * Words and phrases that mean "no charge", in each onboarding language.
+ *
+ * Matched as WHOLE words via `containsWholeWord`: `includes` finds "free" in
+ * "freelance". Read by `readCollectionMethod`, for an owner who types "I don't
+ * charge for any of it" instead of tapping the chip. None of the other keywords
+ * there appears in that sentence, so without this it reached the `invoice`
+ * fallback and a free business was asked for bank details.
+ *
+ * (It was shared with the price parser, which has been removed. This is now its
+ * only reader, which is why the comment no longer points at one.)
+ */
+const FREE_PRICE_WORDS = [
+  'free', 'no charge', 'free of charge',
+  'חינם', 'בחינם', 'ללא תשלום', 'בלי תשלום', 'ללא עלות',
+  'gratis', 'gratuito', 'gratuita', 'sin costo', 'sin cargo',
+];
+
+/**
+ * Words that reverse whatever else is in the sentence.
+ *
+ * Read by `isConfirmation` only, and only to say NO. A reply carrying one of
+ * these is never treated as agreement, however many approving words sit beside
+ * it: "no vale así" and "not ok" are rejections written with the vocabulary of
+ * acceptance.
+ */
+const NEGATORS = [
+  'no', 'not', "don't", 'dont', 'nope', 'wrong', 'change', 'instead',
+  'לא', 'אל', 'לשנות', 'במקום',
+  'nada', 'tampoco', 'cambiar', 'cambia',
+];
+
 export const SERVICE_COUNT_MAX = 40;
 
 /** Currency words stripped before the number is read, bounded like whole words (see `containsWholeWord`). */
@@ -653,23 +776,57 @@ export class OnboardingConversationManager {
         break;
 
       case 'business_name': {
-        // Taken exactly as typed.
-        //
-        // The name used to be inferred from whatever they wrote about their
-        // business, and fell back to "your business" when they never said it —
-        // so an account could be built under a name nobody chose, and every
-        // invoice and email would carry it. A name is not something to deduce.
-        const name = message.trim();
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * READ BACK AND CONFIRMED, because this one cannot be fixed by talking.
+         *
+         * The name is taken exactly as typed, and deliberately so: it used to
+         * be inferred from whatever they wrote about their business and fell
+         * back to "your business" when they never said it, so an account could
+         * be built under a name nobody chose.
+         *
+         * But "exactly as typed" means a slip is kept exactly too, and this
+         * particular field is not one the owner sees again in passing: it goes
+         * on every invoice and every email the platform sends for them. The
+         * plan screen shows it, and that is the only other chance — by then it
+         * is several questions away and reads as settled.
+         *
+         * So it is read back once. Typing a different name instead of tapping
+         * is treated as a correction and confirmed in turn, which is what
+         * somebody who spots their own typo will actually do.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const said = message.trim();
+
+        if (state.pendingQuestion === 'name_confirm') {
+          const verdict = this.readNameConfirmation(said, updatedState.language);
+
+          if (verdict === 'yes') {
+            updatedState.pendingQuestion = undefined;
+            updatedState.currentStep = 'business_story';
+            logger.info({ userId: owner.userId, groupId: owner.groupId }, 'Business name confirmed');
+            break;
+          }
+
+          if (verdict === 'no') {
+            updatedState.pendingQuestion = 'name_again';
+            logger.info({ userId: owner.userId, groupId: owner.groupId }, 'Business name rejected; asking again');
+            break;
+          }
+
+          /* Neither: they typed a replacement. Falls through to store it and
+             read THAT back, rather than asking what they just told us. */
+        }
 
         updatedState.collectedData.businessProfile = {
           ...updatedState.collectedData.businessProfile,
-          company_name: name,
+          company_name: said,
           language: updatedState.language,
         };
 
         // The name is the owner's raw text (it is the whole message), so only its length is logged (OI-7).
-        logger.info({ userId: owner.userId, groupId: owner.groupId, nameLength: name.length }, 'Business name given');
-        updatedState.currentStep = 'business_story';
+        logger.info({ userId: owner.userId, groupId: owner.groupId, nameLength: said.length }, 'Business name given');
+        updatedState.pendingQuestion = 'name_confirm';
         break;
       }
 
@@ -684,6 +841,43 @@ export class OnboardingConversationManager {
         // shows locally and never in production, which runs at info (OI-8).
         logger.debug({ businessStory }, 'Business story extracted');
 
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * A SLIP IS NOT AN ANSWER. Asked once more, then taken as given.
+         *
+         * Reported from a real run: the owner mistyped and sent "I", the
+         * interview moved straight on, and "I" became the business
+         * description — so the follow-up questions, the composed description,
+         * the service names and the website were all written from it.
+         *
+         * The MODEL decides this, not a rule here. A character or word count
+         * was tried and thrown away: it cannot tell "I" from "מאמן כושר",
+         * because Hebrew says more per character, so any threshold is stricter
+         * in one script than another before it ever meets a vertical. The model
+         * is already reading the sentence and can simply say whether there is a
+         * business in it.
+         *
+         * One re-ask, never two, and the second answer is accepted whatever it
+         * says: an interview that can refuse to move on is one somebody cannot
+         * finish, and the brief questions that follow are a better place to
+         * recover than a wall.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        if (
+          businessStory.describes_business === false
+          && !updatedState.collectedData.storyAlreadyReasked
+        ) {
+          updatedState.collectedData.storyAlreadyReasked = true;
+          updatedState.pendingQuestion = 'story_again';
+          logger.info(
+            { userId: owner.userId, groupId: owner.groupId, messageLength: message.trim().length },
+            'The story did not describe a business; asking once more'
+          );
+          break;
+        }
+
+        updatedState.pendingQuestion = undefined;
+
         // Their own words win over the model's paraphrase.
         //
         // The extraction returns a tidy summary, and it writes it in whatever
@@ -694,10 +888,17 @@ export class OnboardingConversationManager {
         // recognise when they come to correct it in settings.
         //
         // The summary is kept only where nothing usable was typed.
+        /*
+         * ALWAYS their words now, with no length threshold.
+         *
+         * The threshold existed to fall back to the extraction's own summary
+         * for a very short answer. The extraction no longer writes one, and the
+         * fallback was never worth having: a model's paraphrase of "hair salon"
+         * is not better material than "hair salon", and the real description is
+         * composed later by `writeDescription` from this plus every follow-up.
+         */
         const ownWords = message.trim();
-        if (ownWords.length >= 20) {
-          businessStory.description = ownWords;
-        }
+        businessStory.description = ownWords;
 
         updatedState.collectedData.businessStory = businessStory;
 
@@ -735,10 +936,140 @@ export class OnboardingConversationManager {
          * conversation already standing on it must resume rather than be
          * deleted and restarted in English.
          */
+        /*
+         * Before how they sell, what they sell it FOR.
+         *
+         * The interview used to go straight to `service_details`, and everything
+         * after it is about configuration: scheduled or not, how the money
+         * arrives, how clients find them. Nothing asked who the clients are or
+         * what they get — so the profile could configure the platform and had
+         * nothing to write a page from. See `businessBrief` for the contract.
+         *
+         * The step ends itself the moment it has enough or runs out of
+         * questions, so a description that already says everything costs no
+         * extra turn.
+         */
+        updatedState.collectedData.businessBrief = EMPTY_BRIEF;
+        updatedState.collectedData.briefExchanges = [];
+        updatedState.collectedData.followUpsAsked = 0;
+
+        {
+          const first = await this.pickFollowUp(
+            businessStory.description || ownWords,
+            EMPTY_BRIEF,
+            updatedState.language,
+            owner
+          );
+
+          if (first) {
+            updatedState.currentStep = 'business_deepening';
+            /* The field being asked, PLUS the ones this trade makes obvious.
+               Retired through the same list that stops a field being asked
+               twice, so `fieldsStillToAsk` excludes them without a second
+               mechanism and the brief records no guess for them. */
+            updatedState.collectedData.askedBriefFields = [first.field, ...first.skip];
+            updatedState.collectedData.pendingBriefField = first.field;
+            updatedState.collectedData.pendingBriefQuestion = first.question;
+            updatedState.collectedData.followUpsAsked = 1;
+            updatedState.pendingQuestion = first.field;
+            logger.info({ newStep: 'business_deepening', field: first.field }, 'Asking about the business');
+            break;
+          }
+        }
+
         updatedState.currentStep = 'service_details';
         updatedState.pendingQuestion = 'sell_scheduled';
         logger.info({ newStep: 'service_details', pendingQuestion: 'sell_scheduled' }, 'Asking how the business sells');
         break;
+
+      /*
+       * The follow-ups. One field per turn, at most `MAX_FOLLOW_UPS`.
+       *
+       * Every answer is kept verbatim in `briefExchanges` as well as being read
+       * into the brief, because the owner's own words are what the final
+       * description is composed from — the same rule `business_story` applies
+       * to the story itself, and for the same reason.
+       *
+       * A skip is an answer like any other: it is recorded as nothing and the
+       * step moves on. Nothing here may block the build.
+       */
+      case 'business_deepening': {
+        const brief = updatedState.collectedData.businessBrief ?? EMPTY_BRIEF;
+        const exchanges = updatedState.collectedData.briefExchanges ?? [];
+        const asked = updatedState.collectedData.followUpsAsked ?? 0;
+        const field = updatedState.collectedData.pendingBriefField;
+        const question = updatedState.collectedData.pendingBriefQuestion ?? '';
+
+        const said = message.trim();
+        const skipped = said.length < 2 || SKIP_WORDS.has(said.toLowerCase());
+
+        if (!skipped && field) {
+          exchanges.push({ field, question, answer: said });
+          updatedState.collectedData.briefExchanges = exchanges;
+          updatedState.collectedData.businessBrief = mergeIntoBrief(
+            brief,
+            await this.readBriefAnswer(field, said, owner)
+          );
+        }
+
+        const current = updatedState.collectedData.businessBrief ?? brief;
+
+        /*
+         * Stop at the cap, or when there is nothing left worth asking.
+         *
+         * NOT when the brief is merely usable. That was the first rule here and
+         * it ended the interview after two questions on a real account, before
+         * reaching "I only take 8 clients at a time" or "12 years competing,
+         * national level" — the very material that stops a page reading like
+         * every other business in the trade. The model already declines to ask
+         * about anything the story covers, so the cap is the honest ceiling and
+         * `isEnough` is left to describe the floor rather than the finish.
+         */
+        const alreadyAsked = updatedState.collectedData.askedBriefFields ?? [];
+
+        const next =
+          asked >= MAX_FOLLOW_UPS
+            ? null
+            : await this.pickFollowUp(
+                updatedState.collectedData.businessDescription || '',
+                current,
+                updatedState.language,
+                owner,
+                alreadyAsked
+              );
+
+        if (next) {
+          updatedState.collectedData.askedBriefFields = [...alreadyAsked, next.field, ...next.skip];
+          updatedState.collectedData.pendingBriefField = next.field;
+          updatedState.collectedData.pendingBriefQuestion = next.question;
+          updatedState.collectedData.followUpsAsked = asked + 1;
+          updatedState.pendingQuestion = next.field;
+          break;
+        }
+
+        /* Their words, all of them — see `composeDescription`. */
+        updatedState.collectedData.pendingBriefField = undefined;
+        updatedState.collectedData.pendingBriefQuestion = undefined;
+        updatedState.collectedData.businessDescription = await this.writeDescription(
+          updatedState.collectedData.businessDescription || '',
+          exchanges,
+          updatedState.language,
+          owner
+        );
+        if (updatedState.collectedData.businessStory) {
+          updatedState.collectedData.businessStory.description =
+            updatedState.collectedData.businessDescription;
+        }
+
+        logger.info(
+          { asked: updatedState.collectedData.followUpsAsked, answered: exchanges.length },
+          'Business brief collected'
+        );
+
+        updatedState.currentStep = 'service_details';
+        updatedState.pendingQuestion = this.firstSellingQuestion(updatedState);
+        break;
+      }
 
       case 'client_workflow':
         // Extract services and workflow
@@ -835,134 +1166,177 @@ export class OnboardingConversationManager {
             ...updatedState.collectedData.clientWorkflow,
             service_count: count,
           };
-          updatedState.pendingQuestion = undefined;
-          updatedState.currentStep = this.nextStepAfterServices(updatedState);
           logger.info({ count }, 'Read how many services the business sells');
-          break;
-        }
 
-        // Handle price response when we asked "מה המחיר של X?"
-        if (state.pendingQuestion === 'need_price') {
-          const priceResponse = this.extractPriceFromMessage(message);
-          if (priceResponse !== null) {
-            // Update services that are missing price
-            const services = updatedState.collectedData.clientWorkflow?.services || [];
+          /*
+           * Name them, now that we know how many.
+           *
+           * Anything the owner actually typed comes first and is never traded
+           * for a generated one: the story sometimes names a service outright,
+           * and that name is theirs. The naming call tops the list up to the
+           * count, which is the same rule the build applies to `seeded`.
+           */
+          {
             /*
-             * The figure lands only on the services it was asked about.
+             * A client that SENT a structured services array gets those names.
              *
-             * This wrote it onto every service without one, quoted ones
-             * included — so answering "500" for a workshop put 500 on the
-             * bespoke programme beside it, which is the invented number the
-             * guard above exists to prevent.
+             * The chat route accepts `services` (max 40) and passes it
+             * through, and the only branch that read it was in the free-text
+             * loop removed below — so the API accepted a catalogue and
+             * discarded it. Honoured here instead, where it can still decide
+             * what gets created: the owner's own names first, the naming call
+             * topping up to the count.
              */
-            const updatedServices = services.map(s =>
-              needsAPrice(s) ? { ...s, price: priceResponse } : s
-            );
-            updatedState.collectedData.clientWorkflow = {
-              ...updatedState.collectedData.clientWorkflow!,
-              services: updatedServices,
-            };
-            updatedState.pendingQuestion = undefined;
-            logger.info({ price: priceResponse, servicesCount: updatedServices.length }, 'Updated services with price');
+            const sent = (submittedServices ?? []).filter(service => service.name?.trim());
+            if (sent.length) {
+              const already = new Set(
+                (updatedState.collectedData.clientWorkflow?.services ?? [])
+                  .map(service => service.name?.toLowerCase().trim())
+              );
+              updatedState.collectedData.clientWorkflow = {
+                ...updatedState.collectedData.clientWorkflow,
+                services: [
+                  ...(updatedState.collectedData.clientWorkflow?.services ?? []),
+                  ...sent.filter(service => !already.has(service.name.toLowerCase().trim())),
+                ],
+              };
+              logger.info({ sent: sent.length }, 'Used the services the client sent');
+            }
 
-            // Check if user wants to add more services
-            updatedState.pendingQuestion = 'more_services';
+            const named = updatedState.collectedData.clientWorkflow?.services ?? [];
+            const owed = count - named.length;
+
+            if (owed > 0) {
+              const drafted = await this.draftServices(
+                owed,
+                updatedState.collectedData.businessDescription || '',
+                updatedState.collectedData.businessBrief,
+                updatedState.language,
+                owner
+              );
+
+              /*
+               * Stamped with the two business-wide answers before they join
+               * the catalogue, and this is not cosmetic.
+               * ───────────────────────────────────────────────────────────────
+               * `computeConfiguration` reads the catalogue to decide two
+               * things, and both read a field. A row carrying a name and
+               * nothing else does not just fail to inform them, it INVERTS
+               * them, because an empty catalogue has a fallback and a
+               * populated one does not:
+               *
+               *   needs_stripe_connect: `services.length > 0` switches from
+               *     the business-wide `collection_method` to
+               *     `services.some(collection === 'online')`. Unstamped, an
+               *     owner who had just answered "the client pays online by
+               *     card" would get no processor. The comment at that line
+               *     records this exact bug being fixed once already.
+               *
+               *   addCapability('scheduling') is the ONLY source of that
+               *     capability and keys off the catalogue, so these rows are
+               *     what finally switch it on for a business that books, and
+               *     must not switch it on for one that does not.
+               *
+               * A placeholder may be missing a price and a length, which the
+               * owner sets. It may not be missing the answers they already
+               * gave.
+               */
+              const sellsScheduled = updatedState.collectedData.clientWorkflow?.sells_scheduled !== false;
+              const collectedBy = updatedState.collectedData.clientWorkflow?.collection_method;
+              const collection: 'online' | 'invoice' | null =
+                collectedBy === 'none' || !collectedBy
+                  ? null
+                  : collectedBy === 'card_online' || collectedBy === 'mixed'
+                    ? 'online'
+                    : 'invoice';
+
+              /* Case-insensitively distinct, so a generated name cannot
+                 duplicate one the owner gave. */
+              const taken = new Set(named.map(service => service.name?.toLowerCase().trim()));
+              updatedState.collectedData.clientWorkflow = {
+                ...updatedState.collectedData.clientWorkflow,
+                services: [
+                  ...named,
+                  ...drafted
+                    .filter(service => !taken.has(service.name.toLowerCase().trim()))
+                    .map(service => ({ ...service, is_scheduled: sellsScheduled, collection })),
+                ],
+              };
+            }
+          }
+
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * INTAKE, asked only of a business that books appointments.
+           *
+           * `needs_intake` was never set for anybody. Its only writer was
+           * `readIntakeNeed`, called from the part of this step that stopped
+           * being reachable, and `extractClientWorkflow` DROPPED the field in
+           * its own return block while the prompt asked for it and the type
+           * declared it. Asked for, discarded, and nothing said so.
+           *
+           * It is a question rather than an inference on purpose. It creates a
+           * `user_intake_settings` row and puts a form in front of the owner's
+           * clients; guessing that from prose is the one place in this file
+           * where being wrong writes something a stranger has to fill in.
+           *
+           * Only for appointment businesses, which is the rule the rest of the
+           * step follows: a form "before the appointment" has no meaning where
+           * there is no appointment.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          if (updatedState.collectedData.clientWorkflow?.sells_scheduled !== false) {
+            updatedState.pendingQuestion = 'intake';
             break;
           }
-          // If we couldn't extract a price, ask again (fall through to normal flow)
-          logger.warn(
-            { userId: owner.userId, groupId: owner.groupId, step: 'service_details', messageLength: message.length },
-            'Could not extract price from message'
-          );
-        }
 
-        // Check if user just said "that's all" to the "more services?" question
-        const isDoneAddingServices = !this.checkIfUserHasMoreServices(message, updatedState.language);
-        if (isDoneAddingServices && (updatedState.collectedData.clientWorkflow?.services?.length || 0) > 0) {
-          // User said they're done, proceed to next step
           updatedState.pendingQuestion = undefined;
-          logger.info({ servicesCount: updatedState.collectedData.clientWorkflow?.services?.length }, 'User done adding services');
           updatedState.currentStep = this.nextStepAfterServices(updatedState);
           break;
         }
 
-        // Check if user just said "I have more" without providing service details
-        const wantsToAddMore = this.checkIfUserWantsToAddMore(message, updatedState.language);
-        if (wantsToAddMore && state.pendingQuestion === 'more_services') {
-          // User wants to add more - ask for the service details
-          updatedState.pendingQuestion = undefined; // Clear the more_services question
-          logger.info({}, 'User wants to add more services, asking for details');
-          break; // Will show service_details_prompt
+        if (state.pendingQuestion === 'intake') {
+          const needsIntake = this.readIntakeAnswer(message, updatedState.language);
+          updatedState.collectedData.clientWorkflow = {
+            ...updatedState.collectedData.clientWorkflow,
+            needs_intake: needsIntake,
+          };
+          updatedState.pendingQuestion = undefined;
+          updatedState.currentStep = this.nextStepAfterServices(updatedState);
+          logger.info({ needsIntake }, 'Read whether clients fill in a form first');
+          break;
         }
 
         /*
-         * The form's own rows where there are any, the model only where there
-         * are not.
+         * ─────────────────────────────────────────────────────────────────────
+         * THE FREE-TEXT SERVICE LOOP WAS HERE, and was removed on 2026-10-14.
          *
-         * Somebody typing "I do haircuts and colour" still needs extracting.
-         * Somebody who filled in four rows has already answered exactly, and
-         * asking a model to read that answer back can only lose it.
+         * 123 lines: a `need_price` branch that chased a figure, a
+         * `more_services` loop that asked "any more?" after each one, a
+         * duplicate-name merge, and an LLM read of whatever was typed.
+         *
+         * None of it could run. The live sequence is `sell_scheduled` →
+         * `sell_collection` → `service_count`, and each of those branches above
+         * `break`s before reaching here; the count then moves the step on. It
+         * was reachable only by a conversation stored mid-loop from a deploy
+         * before the chips existed, and a count against the conversations table
+         * found ZERO standing anywhere near it.
+         *
+         * It also belonged to a direction we no longer have: the owner sets
+         * prices in the services editor, so chasing one here collected what
+         * would be overwritten and made the interview a form.
+         *
+         * Anything that still lands in this step with an unrecognised pending
+         * question moves on rather than looping, because a question nobody can
+         * answer is worse than a step skipped.
+         * ─────────────────────────────────────────────────────────────────────
          */
-        const serviceDetails = submittedServices?.length
-          ? { services: submittedServices }
-          : await this.extractClientWorkflow(message, owner);
-
-        // Get existing services or start fresh
-        const existingServices = updatedState.collectedData.clientWorkflow?.services || [];
-        const newServices = serviceDetails.services || [];
-
-        // Merge new services with existing ones, avoiding duplicates by service name
-        const existingNames = new Set(existingServices.map(s => s.name?.toLowerCase().trim()));
-        const uniqueNewServices = newServices.filter(
-          (s: ExtractedService) => !existingNames.has(s.name?.toLowerCase().trim())
-        );
-        const allServices = [...existingServices, ...uniqueNewServices];
-
-        // Merge with previously collected workflow info
-        const mergedWorkflow = {
-          ...updatedState.collectedData.clientWorkflow,
-          services: allServices,
-          // The toggle in the services form is an answer, not a hint. Reading
-          // it back deterministically means an extraction that misses the
-          // sentence cannot quietly drop a form the user asked for — and the
-          // build's intake card depends on this being true.
-          ...(this.readIntakeNeed(message) ? { needs_intake: true } : {}),
-        };
-        updatedState.collectedData.clientWorkflow = mergedWorkflow;
-
-        // Check if any services are missing price (price is null, not 0).
-        //
-        // Not asked when pricing is quoted per client: there is no answer, and
-        // asking anyway is how a consultant ends up with an invented number on
-        // a booking page. A null price means "on request" from here on.
-        // "Some fixed, some quoted" is the commonest shape of all, and it is
-        // per service: a workshop with a price, a bespoke programme without.
-        // Chasing a price for the quoted half would force an invented number
-        // onto exactly the services that cannot have one.
-        const pricingModel = updatedState.collectedData.clientWorkflow?.pricing_model;
-        const priceIsOptional = pricingModel === 'custom' || pricingModel === 'mixed';
-        const servicesMissingPrice = priceIsOptional
-          ? []
-          : allServices.filter(needsAPrice);
-        if (servicesMissingPrice.length > 0) {
-          // Need to ask for price
-          updatedState.pendingQuestion = 'need_price';
-          // A count only: service names are what the owner typed on the form, or
-          // the model's paraphrase of it (CR-1).
-          logger.info({ servicesMissingPriceCount: servicesMissingPrice.length }, 'Services missing price');
-          break;
-        }
-
-        // If we just added services, ask if they have more
-        if (newServices.length > 0) {
-          // Stay in service_details to ask for more services
-          updatedState.pendingQuestion = 'more_services';
-          logger.info({ servicesCount: allServices.length }, 'Asking for more services');
-          break;
-        }
-
-        // No new services provided, proceed to next step
+        updatedState.pendingQuestion = undefined;
         updatedState.currentStep = this.nextStepAfterServices(updatedState);
+        logger.info(
+          { pendingQuestion: state.pendingQuestion },
+          'Unrecognised service question; moving on'
+        );
         break;
 
       case 'payment_collection': {
@@ -1090,6 +1464,9 @@ export class OnboardingConversationManager {
       clientAcquisition: state.collectedData.clientAcquisition,
       // Retired, and read only from a conversation that still carries it.
       clientTracking: state.collectedData.clientTracking,
+      /* What the follow-ups established. Carried into the configuration so the
+         build persists it and the pre-build summary can show it back. */
+      business_brief: state.collectedData.businessBrief,
     };
     state.collectedData.extractedData = extractedData;
 
@@ -1117,6 +1494,9 @@ export class OnboardingConversationManager {
         const priced = s.price !== null && s.price !== undefined && s.price > 0;
         return {
           service_name: s.name,
+          /* The owner's sentence about this service. Dropped here is dropped
+             for good: this shape is the one the build prefers. */
+          description: s.description?.trim() || undefined,
           // Kept whatever they said, booked or not: a workshop can run two
           // hours and still be sold as a product. Null only where no length
           // was ever given — coercing that to 60 minutes is what made every
@@ -1156,6 +1536,685 @@ export class OnboardingConversationManager {
   /**
    * Extract business story using LLM
    */
+  /**
+   * Which gap to probe next, and how to word it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The model is given the CONTRACT — every field, what counts as an answer,
+   * and why a page is worse without it — plus what the owner has already said.
+   * It decides. A story that already names the audience must not be asked who
+   * the audience is, and that judgement needs to read the prose rather than
+   * count empty arrays.
+   *
+   * It phrases the question itself, in the owner's language, referring to what
+   * they actually wrote: "who are the gymnasts you work with?" beats "who is
+   * your target audience?" every time. `BRIEF_FIELDS.example` sets the register
+   * and is deliberately not the question.
+   *
+   * Returns null when nothing is worth asking, which ends the step early — the
+   * cap is a ceiling, not a quota.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * Which selling question to open on — skipping the one we already have.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONLY `sell_scheduled`, and only on an EXPLICIT answer. The narrowness is
+   * the point.
+   *
+   * Skipping here has been tried before and reverted. `client_workflow` records
+   * it: a business whose bio happened to mention services skipped the whole
+   * step, "so it was never asked whether it books appointments or how it
+   * collects money… the business that skipped them was the one most likely to
+   * publish a booking page with neither". That skip keyed off a weak signal —
+   * services being named — and dropped three answers at once.
+   *
+   * This one keys off `needs_booking`, which the story extraction returns as
+   * true, false, or NULL when it could not tell, and drops exactly one
+   * question. Null means ask: an absent answer is not an answer.
+   *
+   * `sell_collection` and `service_count` are never skipped. Nothing in the
+   * story tells us how the money arrives, and the count decides how many rows
+   * are written to a real catalogue — the file says as much where it refuses to
+   * guess one. Inferring either is how the reverted bug happened.
+   *
+   * What was taken as read still reaches the owner: the pre-build summary shows
+   * the journey and the capabilities that follow from it, and "change it" at
+   * that point is a supported answer.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private firstSellingQuestion(state: OnboardingState): string {
+    const booking = state.collectedData.businessStory?.needs_booking;
+
+    if (booking === true || booking === false) {
+      state.collectedData.clientWorkflow = {
+        ...state.collectedData.clientWorkflow,
+        sells_scheduled: booking,
+      };
+      logger.info({ sellsScheduled: booking }, 'The story already said whether they book; not asking again');
+      return 'sell_collection';
+    }
+
+    return 'sell_scheduled';
+  }
+
+  /**
+   * The description the business ends up with: everything they said, joined.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT a paraphrase, and this is the whole point.
+   *
+   * `business_story` already keeps the owner's typed words over the model's
+   * summary, because the extraction once rewrote a Hebrew answer in English and
+   * that restatement became the source text for an entire website. The follow-up
+   * answers are their words too, so the composition is a join rather than a
+   * rewrite: the original sentence, then what each answer added, in the order
+   * they said it.
+   *
+   * Done here in code rather than by a model so there is no opportunity to
+   * invent, translate or flatter. It reads a little plainly; it is true, it is
+   * in their language, and it is the thing they will recognise when they come
+   * to correct it in settings.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private composeDescription(story: string, answers: string[]): string {
+    const parts = [story.trim(), ...answers.map(a => a.trim())].filter(Boolean);
+    if (!parts.length) return story;
+
+    /* A full stop only where the owner did not write one, so their own
+       punctuation survives and nothing gains a second. */
+    return parts
+      .map(part => (/[.!?…׃׳"'\u05f4]$/.test(part) ? part : `${part}.`))
+      .join(' ');
+  }
+
+  /**
+   * The same answers, written as prose a person would read.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A MODEL AND NOT THE JOIN ABOVE.
+   *
+   * Joining in code was the first attempt, chosen to make invention and
+   * language drift impossible. What it produced on a real account:
+   *
+   *   "I'm gymnastic trainer providing training sessions. all. they get better
+   *    diet and training plan and the results are amazing. private training
+   *    that focus on the trainee and his goals. I was an army trainer for 10
+   *    years. they do not where to start."
+   *
+   * Two things are wrong and neither is fixable with punctuation. "all." is an
+   * answer to a question that is no longer on screen, so as a sentence it means
+   * nothing. And "they do not where to start" is an OBJECTION — what clients
+   * feel — sitting in a paragraph that otherwise describes the business, where
+   * it reads as a statement about the trainer.
+   *
+   * This is the business's public description and the source text for its
+   * website. It has to read.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THE MODEL MAY AND MAY NOT DO
+   *
+   * It joins. It does not embellish. The constraints are not politeness — the
+   * reason the code version existed is that an extraction once rewrote a Hebrew
+   * answer in English and that restatement became a whole website's source
+   * text. So: same language, no claim absent from the answers, no adjectives
+   * the owner did not use.
+   *
+   * A failure falls back to the join. A clumsy description is recoverable; an
+   * empty one stops the build.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async writeDescription(
+    story: string,
+    exchanges: Array<{ field: BriefField['key']; question: string; answer: string }>,
+    language: Language,
+    owner: BosLlmOwner
+  ): Promise<string> {
+    const joined = this.composeDescription(story, exchanges.map(e => e.answer));
+    if (!exchanges.length) return joined;
+
+    const factory = getProviderFactory();
+    const context = this.callContext(owner, 'business_deepening');
+    const settings = await resolveBosLlmSettings('onboarding', 'business_deepening');
+
+    const system = [
+      'You are writing a business\'s description from what its owner told you.',
+      '',
+      'THE DESCRIPTION ANSWERS TWO THINGS: who this business is, and what it does.',
+      'Everything else — who its clients are, what they get, what makes it the choice,',
+      'what stands behind it, what holds people back — belongs in it only insofar as',
+      'it says who they are and what they do. It is read by a person deciding whether',
+      'to get in touch, and it is the source text for their website.',
+      '',
+      'You are given what they first wrote, then each follow-up QUESTION (Q1, Q2 …)',
+      'with the answer it got (A1, A2 …). READ EACH ANSWER THROUGH ITS QUESTION:',
+      '"all" against a question about who comes to them means they work with everyone;',
+      'an answer to a question about what worries people is about their CLIENTS, not',
+      'about the owner.',
+      '',
+      'Use every answer that says WHO THEY ARE or WHAT THEY DO — their clients, what',
+      'those clients get, what makes them the choice, what they trained in. None of',
+      'those may be dropped: an owner answered a question for it.',
+      '',
+      'What people WORRY about before buying is not who the business is. It is kept',
+      'elsewhere and drives the questions their website answers, so leave it out here',
+      'unless it genuinely describes the work — "most of my clients arrive not knowing',
+      'where to start" says something about who they serve; "people think it is',
+      'expensive" does not.',
+      '',
+      'RULES:',
+      '- SAME LANGUAGE as the owner wrote in. Never translate. This is the one',
+      '  mistake that cannot be undone: it becomes the source text for their website.',
+      '',
+      'INVENT NO FACTS. No number, qualification, year, credential, location, price or',
+      'claim about results that the answers do not contain. And none of the words a',
+      'business writes about itself when it has nothing to say: passionate, dedicated,',
+      'premium, world-class, cutting-edge, state-of-the-art, bespoke, holistic. If the',
+      'owner did not say it, it is not true yet.',
+      '',
+      'DO NOT INFER A QUALITY FROM A FACT. "Army trainer for 10 years" does not',
+      'license "disciplined"; "private sessions" does not license "attentive". The',
+      'fact is what they said and it speaks for itself; the adjective is you adding a',
+      'compliment on their behalf, to be published under their name.',
+      '',
+      'DO NOT CLOSE WITH A SUMMARY. No final sentence promising what the approach',
+      '"ensures" or what clients "can expect". That sentence is always invented — it',
+      'is the one place there was nothing left to report, so something was made up.',
+      '',
+      'WRITE IT PROPERLY, though. Within that, this is prose and not a transcript:',
+      '- Open with who they are and what they do. That is the sentence someone reads',
+      '  first and decides on.',
+      '- Group what belongs together rather than following the order they were asked.',
+      '  Their background and their approach sit well in one sentence; the clients and',
+      '  what those clients get sit well in another.',
+      '- Join the sentences like a person would. Ordinary connecting words are not',
+      '  invented claims.',
+      '- Keep their own phrasing wherever it already reads, especially anything',
+      '  specific — "army trainer for 10 years" is better than "extensive experience",',
+      '  and a vague paraphrase of a concrete answer is a loss.',
+      '- Turn a fragment into a sentence using the question it answered: "all" after a',
+      '  question about clients becomes "I work with all kinds of clients".',
+      '- Something they said people WORRY about is about their clients, not about them.',
+      '- Four to seven sentences, 80 to 150 words. One paragraph, no headings, no',
+      '  bullet points, no preamble, no sign-off.',
+      '',
+      'Return JSON: {"description": "<the description>"}',
+    ].join('\n');
+
+    try {
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content: [
+              `Language: ${language}`,
+              'What they first wrote:',
+              story,
+              '',
+                'Then each question they were asked, and what they answered:',
+              '',
+              /* Numbered pairs rather than a list of replies. An answer read
+                 without its question is a fragment — "all" on its own is noise
+                 — and the pairing is what lets a one-word reply become the
+                 sentence it was meant to be. */
+              ...exchanges.flatMap((e, i) => [
+                `Q${i + 1} (${e.field}): ${e.question}`,
+                `A${i + 1}: ${e.answer}`,
+                '',
+              ]),
+            ].join('\n'),
+          },
+        ],
+        response_format: { type: 'json_object' },
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
+
+      const written = JSON.parse(response.content)?.description;
+
+      if (typeof written !== 'string' || written.trim().length < 20) {
+        logger.warn('The written description came back unusable; keeping the joined answers');
+        return joined;
+      }
+
+      /* Same reason as the question: this text is read by the owner on the
+         plan card and becomes the source for the website. */
+      return withoutDashPunctuation(written.trim());
+    } catch (error) {
+      logExtractionFailure(error, 'Writing the description failed');
+      return joined;
+    }
+  }
+
+  private async pickFollowUp(
+    story: string,
+    brief: BusinessBrief,
+    language: Language,
+    owner: BosLlmOwner,
+    alreadyAsked: BriefField['key'][] = []
+  ): Promise<{
+    field: BriefField['key'];
+    question: string;
+    /**
+     * Fields this business should never be asked about.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHY A SKIP LIST AND NOT JUST "DECLINE EACH TIME".
+     *
+     * The prompt has always allowed `{"field": null}`, and with six fields and
+     * a budget of six the model never used it. Measured on a hair salon:
+     *
+     *     "What do kids end up with after a visit to your salon
+     *      that they didn't have before?"      > better hait style
+     *     "Can you describe the process of what happens when someone
+     *      books a hair appointment, from start to finish?"
+     *                                          > they book time and come
+     *
+     * Both answers are the question restated, because for a haircut the
+     * outcome IS the haircut and the process IS the appointment. Those two
+     * fields exist for work that is opaque to the buyer: a coach, a
+     * consultant, a course, a programme. Asked of a salon they cost two turns
+     * and returned nothing, and the owner reported having to invent answers.
+     *
+     * Declaring them dead ONCE, up front, is what makes the interview
+     * different per trade. It reuses `askedBriefFields`, so a retired field is
+     * excluded by the same `fieldsStillToAsk` that stops a field being asked
+     * twice, and the brief simply holds nothing for it: no guess is recorded.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    skip: BriefField['key'][];
+  } | null> {
+    /* Missing AND not already put to them — see `fieldsStillToAsk`. */
+    const outstanding = fieldsStillToAsk(brief, alreadyAsked);
+    if (!outstanding.length) return null;
+
+    const factory = getProviderFactory();
+    const context = this.callContext(owner, 'business_deepening');
+    /* Its own catalogue entry, so the ledger can say what this cost and the
+       model can be read from its own row rather than borrowed from the story
+       extractor's. */
+    const settings = await resolveBosLlmSettings('onboarding', 'business_deepening');
+
+    const system = [
+      'You are interviewing a business owner so that someone else could write their website.',
+      'You are given the fields we are trying to end up holding, what the owner has said so far,',
+      'and what is still missing. Choose the ONE field most worth asking about next, and write',
+      'the question.',
+      '',
+      'WHAT WE ARE COLLECTING:',
+      briefContract(),
+      '',
+      'RULES:',
+      '- Ask about ONE field. Choose the one whose absence would hurt the page most.',
+      '- If the description already answers a field well enough to write from, do NOT ask about it.',
+      '- If nothing is worth asking, return {"field": null}.',
+      /*
+       * The test that separates a question worth a turn from a question that
+       * returns its own premise. Both failures below are measured, from one
+       * hair salon interview.
+       */
+      '- SKIP ANY FIELD WHOSE ANSWER IS ALREADY OBVIOUS FROM THE TRADE. Before asking,',
+      '  predict the answer. If your prediction is the question restated, the question is',
+      '  worthless and the owner will have to invent something to fill it. A hair salon',
+      '  asked what the client walks away with answers "a better haircut". A salon asked',
+      '  to walk through its process answers "they book and come in". Put every such',
+      '  field in "skip" and never ask it. Judge each field against THIS trade: the same',
+      '  two questions are essential for a coach, a consultant, a course or a programme,',
+      '  where the buyer genuinely cannot picture the work.',
+      '- Three sharp questions beat six dutiful ones. The budget is a ceiling, not a',
+      '  quota, and an owner inventing an answer is worse than an unanswered field: it',
+      '  becomes a claim on their website that they did not make.',
+      '- For "delivery", ask about the WORK, never about booking or paying. If the work',
+      '  is a single visit with nothing to describe, skip it.',
+      '- Write the question in the owner\'s own language, referring to what they actually said.',
+      '- One sentence. No preamble, no "great!", no explaining why you are asking.',
+      '- NEVER ask about prices, opening hours, service names, or how payment is taken.',
+      '  Those are asked elsewhere and owned by an editor; asking here creates a second answer.',
+      '',
+      /*
+       * HOW the question is phrased decides whether the answer is usable, and
+       * each of these four is a measured failure rather than a style note. The
+       * examples in the contract above demonstrate them; these state them,
+       * because a model obeys a rule more reliably than it imitates a sample.
+       */
+      'HOW TO WRITE THE QUESTION:',
+      '- Ask for something the owner can REMEMBER, not something they have to work out:',
+      '  "what is the last thing a client asked you?" beats "what do clients worry about?".',
+      '- NEVER offer options to choose from. "Are they beginners, athletes, or amateurs?"',
+      '  was asked and answered "all kind" - which is true, and useless. Ask openly.',
+      '- NEVER ask the owner to characterise themselves. "What makes you different?" returns',
+      '  "professional" and "personalised", the very copy this interview exists to prevent.',
+      '  Ask what a CLIENT said or did instead.',
+      '- Assume nothing about the shape of the work: not "after a few months", not "each',
+      '  session", not "every week". A one-off job and a year-long programme both answer this.',
+      '- No dashes of any kind between clauses, em, en or hyphen. Use a comma,',
+      '  a colon or a full stop. A dash joins two half-thoughts without saying',
+      '  how they relate, which is why it reads flat.',
+      '',
+      'Return JSON: {"field": "<one of: ' + BRIEF_FIELDS.map(f => f.key).join(', ') +
+        '> or null", "question": "<the question>", "skip": ["<fields whose answer this trade makes obvious>"]}',
+    ].join('\n');
+
+    try {
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content: [
+              `Language: ${language}`,
+              `What the owner wrote about their business:`,
+              story,
+              '',
+              'Already known:',
+              briefSoFar(brief),
+              '',
+              `Still missing: ${outstanding.map(f => f.key).join(', ')}`,
+            ].join('\n'),
+          },
+        ],
+        response_format: { type: 'json_object' },
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
+
+      const picked = JSON.parse(response.content);
+      /* Only from what was offered. A model that returns a field already asked
+         would restart the loop this list exists to prevent. */
+      const field = outstanding.find(f => f.key === picked.field);
+
+      if (!field || typeof picked.question !== 'string' || !picked.question.trim()) return null;
+
+      /* Shown verbatim in the chat, so the dash goes here rather than being
+         asked for in the prompt: forbidding the em dash moved the model to a
+         spaced hyphen, which changed the character and not the habit. */
+      /*
+       * Only names we recognise, never the field being asked right now, and
+       * never one that fills a whole SECTION.
+       *
+       * `feedsASection` is declared on the contract itself rather than listed
+       * here, so a new field states its own cost. Measured: on a tutoring
+       * account the picker retired `delivery` on its first choice, and the
+       * published How-It-Works was then written from the booking flow —
+       * "Initial Consultation / Customized Learning Plan / Ongoing Support",
+       * true of any tutor anywhere.
+       */
+      const declared: BriefField['key'][] = Array.isArray(picked.skip) ? picked.skip : [];
+      const protectedFields = BRIEF_FIELDS.filter(f => f.feedsASection).map(f => f.key);
+      const skip = declared.filter(
+        (key: unknown): key is BriefField['key'] =>
+          BRIEF_FIELDS.some(f => f.key === key)
+          && key !== field.key
+          && !protectedFields.includes(key as BriefField['key'])
+      );
+
+      const refused = declared.filter(key => protectedFields.includes(key as BriefField['key']));
+      if (refused.length) {
+        logger.info({ refused }, 'Declined to retire a field that fills a whole section');
+      }
+
+      if (skip.length) {
+        logger.info({ field: field.key, skip }, 'Retiring brief fields this trade makes obvious');
+      }
+
+      /* Shown verbatim in the chat, so the dash goes here rather than being
+         asked for in the prompt: forbidding the em dash moved the model to a
+         spaced hyphen, which changed the character and not the habit. */
+      return { field: field.key, question: withoutDashPunctuation(picked.question.trim()), skip };
+    } catch (error) {
+      logExtractionFailure(error, 'Choosing the next onboarding question failed');
+      /* No question rather than a wrong one. The interview carries on and the
+         brief keeps whatever it already has. */
+      return null;
+    }
+  }
+
+  /**
+   * The placeholder services, named from what the owner already told us.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS EXISTS AT ALL
+   *
+   * The interview asks how MANY things the business sells and deliberately not
+   * what each one is: collecting a catalogue field by field in a chat is where
+   * owners stopped, and the price and the length belong to the services editor
+   * either way. The build then creates that many rows.
+   *
+   * With only a number, those rows were called "Service 1", "Service 2",
+   * "Service 3". The website generates its catalogue from them, so a business
+   * whose owner had just spent six turns describing their work got a services
+   * section listing three numbered blanks.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY NAMING THEM HERE IS NOT THE INVENTION THIS FILE OTHERWISE REFUSES
+   *
+   * Everywhere else, an invented fact becomes a published claim: the
+   * testimonials guidance that produced "Sarah M." for a business with no
+   * clients, the guessed country code on an exported phone number, the price
+   * printed as "On request" that nobody set.
+   *
+   * A draft service is different in kind, and it is checked rather than
+   * assumed: `createMany` writes `status: 'draft'`, `is_active: false`, and
+   * every public surface resolves its catalogue through
+   * `SchedulingRepository.listBookable`, which requires BOTH. So nothing here
+   * can be booked, shown or paid for until the owner opens it, reads it and
+   * publishes it. A placeholder is meant to be replaced; the question is only
+   * whether it helps them when they get there, and "Haircut for kids" helps
+   * where "Service 2" does not.
+   *
+   * The description is held to the usual rule regardless: it may use their
+   * words and may not add facts. No price, no duration, no credential, no
+   * claim about results.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async draftServices(
+    count: number,
+    story: string,
+    brief: BusinessBrief | undefined,
+    language: Language,
+    owner: BosLlmOwner
+  ): Promise<ExtractedService[]> {
+    const factory = getProviderFactory();
+    const context = this.callContext(owner, 'service_drafting');
+    const settings = await resolveBosLlmSettings('onboarding', 'service_drafting');
+
+    const system = [
+      `You are naming ${count} service${count === 1 ? '' : 's'} for a business, from what its owner has told you.`,
+      'These become DRAFT rows the owner opens and edits before anything is public.',
+      '',
+      'FOR EACH SERVICE:',
+      '- "name": what a client would see on a booking page. Two to four words, no price,',
+      '  no duration, no marketing adjective. In the owner\'s own language.',
+      '- "description": one or two sentences saying what it is and who it suits, built from',
+      '  what the owner actually said. Their phrasing where they have one.',
+      '',
+      'RULES:',
+      '- Use what they described FIRST. If they walked you through their work, the steps of',
+      '  that work are usually the services, in that order.',
+      `- Return exactly ${count}. If their words support fewer, the remainder should be the`,
+      '  plainest thing a business of this kind offers, named plainly. Do not pad the list',
+      '  with variations of one service to reach the number.',
+      '- NEVER state a price, a length, a qualification, or a result. Not in the name and',
+      '  not in the description. Those are facts we do not have, and this text is the source',
+      '  the website is written from.',
+      '- No dashes between clauses. Use a comma, a colon or a full stop.',
+      '- Write everything in the owner\'s language.',
+      '',
+      'Return JSON: {"services": [{"name": "...", "description": "..."}]}',
+    ].join('\n');
+
+    const context_lines = [
+      `Language: ${language}`,
+      'What the owner said about the business:',
+      story || '(nothing)',
+    ];
+
+    if (brief?.delivery?.length) {
+      /* The answer written to describe the WORK, which is the closest thing the
+         interview holds to a list of services. */
+      context_lines.push('', 'How the work runs, in their words:', brief.delivery.join('; '));
+    }
+    if (brief?.audience?.length) context_lines.push('', `Who it is for: ${brief.audience.join('; ')}`);
+    if (brief?.outcome?.length) context_lines.push('', `What the client gets: ${brief.outcome.join('; ')}`);
+
+    try {
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: context_lines.join('\n') },
+        ],
+        response_format: { type: 'json_object' },
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
+
+      const parsed = JSON.parse(response.content)?.services;
+      if (!Array.isArray(parsed)) return [];
+
+      const drafted: ExtractedService[] = parsed
+        .filter((row: unknown): row is { name: string; description?: unknown } =>
+          !!row && typeof (row as { name?: unknown }).name === 'string'
+          && (row as { name: string }).name.trim().length > 0
+        )
+        .slice(0, count)
+        .map((row) => ({
+          name: withoutDashPunctuation(row.name.trim()),
+          description:
+            typeof row.description === 'string' && row.description.trim()
+              ? withoutDashPunctuation(row.description.trim())
+              : undefined,
+          /* Everything else is the business-wide answer or the editor's. A
+             duration or a price invented here is the failure this whole change
+             exists to undo. */
+        }));
+
+      logger.info({ wanted: count, drafted: drafted.length }, 'Named the draft services');
+      return drafted;
+    } catch (error) {
+      logExtractionFailure(error, 'Naming the draft services failed');
+      /* The build still creates `service_count` rows with its own names. A
+         failed naming call is a worse catalogue, never a missing one. */
+      return [];
+    }
+  }
+
+  /**
+   * Read one answer into the brief.
+   *
+   * Structured against the same contract the question came from, so what is
+   * asked and what is stored cannot drift. Only ever records what the owner
+   * said: an answer about the audience may legitimately also reveal an
+   * objection, and both are kept — but nothing is inferred that the words do
+   * not support, because this text becomes public copy.
+   */
+  private async readBriefAnswer(
+    field: BriefField['key'],
+    answer: string,
+    owner: BosLlmOwner
+  ): Promise<Partial<BusinessBrief>> {
+    const factory = getProviderFactory();
+    const context = this.callContext(owner, 'business_deepening');
+    /* Its own catalogue entry, so the ledger can say what this cost and the
+       model can be read from its own row rather than borrowed from the story
+       extractor's. */
+    const settings = await resolveBosLlmSettings('onboarding', 'business_deepening');
+
+    const system = [
+      'You are recording what a business owner just told you, as structured data.',
+      '',
+      'THE FIELDS:',
+      briefContract(),
+      '',
+      'RULES:',
+      `- The question was about "${field}". Put what they said THERE, always.`,
+      '- You may ALSO record it under another field it clearly speaks to. That is an',
+      '  addition, never a substitution: the owner was answering the question they',
+      '  were asked, and that field is the one that will not be asked again.',
+      '- Record ONLY what the words support. Invent nothing, infer nothing, flatter nothing.',
+      '  This text becomes the public copy of a real business.',
+      '- A GENERAL answer is still an answer. "all kinds", "anyone really", "all ages"',
+      '  means the audience is general — record it as that, in their words. Returning',
+      '  nothing for an answer they actually gave throws away what they said.',
+      '- Keep their phrasing. Do not translate, tidy or professionalise it.',
+      '- Short entries: one claim each, not sentences joined by commas.',
+      '- "voice": "individual" if they speak as one person ("I train…"), "team" if as a group',
+      '  ("we train…"). null if the answer does not say.',
+      '- If they declined to answer, or said nothing usable, return every field empty.',
+      '',
+      /* `delivery` was missing from this list while being a field of the
+         contract above, so an answer about how the work runs had nowhere to go
+         even when the owner described it. */
+      'Return JSON with any of: audience, outcome, differentiators, credentials,',
+      'objections, delivery (arrays of strings), and voice.',
+    ].join('\n');
+
+    try {
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: answer },
+        ],
+        response_format: { type: 'json_object' },
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
+
+      const read = JSON.parse(response.content);
+      const list = (value: unknown): string[] =>
+        Array.isArray(value) ? value.filter(v => typeof v === 'string' && v.trim()) : [];
+
+      const recorded = {
+        audience: list(read.audience),
+        outcome: list(read.outcome),
+        differentiators: list(read.differentiators),
+        credentials: list(read.credentials),
+        objections: list(read.objections),
+        delivery: list(read.delivery),
+      };
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE FIELD THAT WAS ASKED ALWAYS GETS THE ANSWER.
+       *
+       * Measured on a real account, with four questions asked and two fields
+       * left empty:
+       *
+       *   asked differentiators: "what have students or their parents told you
+       *     made them choose you over another trainer?"
+       *   > many years of experience        -> filed under CREDENTIALS only
+       *
+       *   asked objections: "what is the last thing a parent asked before
+       *     deciding to work with you?"
+       *   > that I make sure the kids showing progress  -> filed under OUTCOME
+       *
+       * Both readings are defensible — experience IS a credential — but both
+       * fields then stayed empty, and `askedBriefFields` had already spent the
+       * question, so neither was ever asked again. The FAQ and the
+       * differentiators paragraph had nothing, from answers the owner gave.
+       *
+       * The prompt says to put it there and the model reclassified anyway, so
+       * the guarantee is here instead of in the wording. Their own words,
+       * verbatim, under the question they were answering.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (!recorded[field].length) {
+        recorded[field] = [answer.trim()];
+        logger.info({ field }, 'The answer was filed elsewhere; recording it under the field that was asked');
+      }
+
+      return {
+        ...recorded,
+        voice: read.voice === 'individual' || read.voice === 'team' ? read.voice : null,
+      };
+    } catch (error) {
+      logExtractionFailure(error, 'Reading a follow-up answer failed');
+      /* The answer is still kept verbatim in `briefExchanges` and still reaches
+         the final description — only the structured read is lost. */
+      return {};
+    }
+  }
+
   private async extractBusinessStory(message: string, owner: BosLlmOwner): Promise<BusinessStoryExtraction> {
     const factory = getProviderFactory();
     const context = this.callContext(owner, 'business_story_extraction');
@@ -1171,7 +2230,7 @@ export class OnboardingConversationManager {
       const { result: response } = await withModelFallback(settings, (model) => factory.complete({
         model,
         messages: [
-          { role: 'system', content: BUSINESS_STORY_SYSTEM_PROMPT },
+          { role: 'system', content: businessStoryPrompt() },
           { role: 'user', content: message },
         ],
         response_format: { type: 'json_object' },
@@ -1181,29 +2240,37 @@ export class OnboardingConversationManager {
       const extracted = JSON.parse(response.content);
       logger.debug({ extracted }, 'Extracted business story'); // derived owner text: debug only (OI-8)
 
+      /*
+       * Four fields, each of which decides something. The seven that used to
+       * be here are documented above `businessStoryPrompt`: two were discarded
+       * by this class on arrival, four had no consumer, one competed with the
+       * brief.
+       *
+       * `'default'` rather than `'other'` as the fallback: `other` is not a key
+       * of `PIPELINE_PRESETS`, so it fell through to the default preset anyway,
+       * by accident rather than by saying so.
+       */
       return {
-        company_name: extracted.company_name || undefined,
-        vertical: extracted.vertical || 'other',
+        vertical: extracted.vertical || 'default',
         sub_vertical: extracted.sub_vertical || undefined,
-        description: extracted.description,
-        target_audience: extracted.target_audience || [],
-        pain_points: extracted.pain_points || [],
-        goals: extracted.goals || [],
-        tools: extracted.tools || [],
-        clients_per_week: extracted.clients_per_week || undefined,
         needs_website: extracted.needs_website ?? undefined,
         needs_booking: extracted.needs_booking ?? undefined,
+        /* Absent means YES. A model that forgets the field must never cost the
+           owner a repeated question. */
+        describes_business: extracted.describes_business !== false,
       };
     } catch (error) {
       logExtractionFailure(error, 'Business story extraction failed');
       // Return defaults
-      return {
-        vertical: 'other',
-        pain_points: [],
-        goals: [],
-        tools: [],
-        target_audience: [],
-      };
+      /*
+       * A failed read leaves the business on the default pipeline and leaves
+       * both booleans unanswered, so the chat asks rather than assumes.
+       *
+       * `describes_business: true` on purpose: a provider error is not evidence
+       * that the owner said nothing, and asking them to type it again because
+       * our call failed is the worst possible reading of it.
+       */
+      return { vertical: 'default', describes_business: true };
     }
   }
 
@@ -1235,22 +2302,30 @@ export class OnboardingConversationManager {
       const extracted = JSON.parse(response.content);
       logger.debug({ extracted }, 'Extracted client workflow'); // derived owner text: debug only (OI-8)
 
+      /*
+       * Names and descriptions. The three business-wide guesses that used to
+       * be defaulted here are gone, and one of them was harmful.
+       *
+       * `payment_timing: 'before'` reached `computeCollectionMethod`, whose
+       * first branch is `case 'before': return 'card_online'` — so a value
+       * nobody had stated could demand a Stripe account. The comment on that
+       * function's default branch argues the opposite at length: an invoice
+       * "asks for bank details they already have, rather than sending them
+       * through a Stripe identity check they may not need at all". Omitting
+       * the field reaches that default instead.
+       *
+       * `pricing_model` and `booking_method` were read with `=== 'custom'` and
+       * `!== 'manual'`, which land identically on undefined. How the money
+       * arrives is asked outright now and read from a chip.
+       */
       return {
         services: extracted.services || [],
-        pricing_model: extracted.pricing_model || 'fixed',
-        payment_timing: extracted.payment_timing || 'before',
-        booking_method: extracted.booking_method || 'online',
         needs_more_details: extracted.needs_more_details ?? false,
       };
     } catch (error) {
       logExtractionFailure(error, 'Client workflow extraction failed');
-      return {
-        services: [],
-        pricing_model: 'fixed',
-        payment_timing: 'before',
-        booking_method: 'online',
-        needs_more_details: true,
-      };
+      /* A failed read names nothing, and says so. */
+      return { services: [], needs_more_details: true };
     }
   }
 
@@ -1373,48 +2448,9 @@ export class OnboardingConversationManager {
     }
   }
 
-  /**
-   * Check if user indicated they have more services to add
-   * Returns true by default to ask for more services, unless user explicitly says they're done
-   */
-  private checkIfUserHasMoreServices(message: string, language: Language): boolean {
-    const lowerMsg = message.toLowerCase();
+  
 
-    // Patterns indicating "that's all" / "no more"
-    const donePatterns: Record<Language, string[]> = {
-      en: ["that's all", "that's it", "no more", "only one", "just one", "done", "nothing else", "that is all", "no", "nope"],
-      he: ['זה הכל', 'אין עוד', 'רק זה', 'סיימתי', 'אין יותר', 'זהו', 'לא', 'אין'],
-      es: ['eso es todo', 'no más', 'solo uno', 'terminado', 'nada más', 'no'],
-    };
-
-    const patterns = donePatterns[language] || donePatterns.en;
-
-    // If user explicitly said they're done, don't ask for more
-    if (patterns.some(p => lowerMsg.includes(p))) {
-      return false;
-    }
-
-    // By default, ask if they have more services (they can say no)
-    return true;
-  }
-
-  /**
-   * Check if user said "I have more" to add another service
-   * This is used when the pendingQuestion is 'more_services' to detect affirmative responses
-   */
-  private checkIfUserWantsToAddMore(message: string, language: Language): boolean {
-    const lowerMsg = message.toLowerCase();
-
-    // Patterns indicating "yes I have more"
-    const morePatterns: Record<Language, string[]> = {
-      en: ['i have more', 'yes', 'yeah', 'yep', 'more', 'another', 'add more', 'one more'],
-      he: ['יש לי עוד', 'כן', 'עוד', 'יש עוד', 'עוד אחד', 'להוסיף'],
-      es: ['tengo más', 'sí', 'si', 'más', 'otro', 'agregar más'],
-    };
-
-    const patterns = morePatterns[language] || morePatterns.en;
-    return patterns.some(p => lowerMsg.includes(p));
-  }
+  
 
   /**
    * Extract numeric price from user's response message.
@@ -1454,9 +2490,9 @@ export class OnboardingConversationManager {
 
     const CHIPS: Array<[boolean, string[]]> = [
       [false, [
-        'אני מוכר בלי תורים — אין צורך בלוח זמנים',
-        'vendo sin turnos — no hace falta agenda',
-        'i sell without appointments — no calendar needed',
+        'אני מוכר בלי תורים: אין צורך בלוח זמנים',
+        'vendo sin turnos: no hace falta agenda',
+        'i sell without appointments: no calendar needed',
       ]],
       [true, [
         'הלקוחות קובעים איתי זמן',
@@ -1578,10 +2614,10 @@ export class OnboardingConversationManager {
       // How they collect it themselves — transfer, app, cash — changes nothing
       // about setup, so it is not worth a question.
       ['card_online', [
-        'הלקוח משלם אונליין בכרטיס — צריך חיבור סליקה', 'El cliente paga online con tarjeta — hace falta pasarela', 'The client pays online by card — needs a payment gateway',
+        'הלקוח משלם אונליין בכרטיס: צריך חיבור סליקה', 'El cliente paga online con tarjeta: hace falta pasarela', 'The client pays online by card: needs a payment gateway',
       ]],
       ['invoice', [
-        'אני גובה את הכסף בעצמי — חשבונית, העברה, ביט או מזומן', 'Cobro yo mismo — factura, transferencia o efectivo', 'I collect the money myself — invoice, transfer or cash',
+        'אני גובה את הכסף בעצמי: חשבונית, העברה, ביט או מזומן', 'Cobro yo mismo: factura, transferencia o efectivo', 'I collect the money myself: invoice, transfer or cash',
       ]],
       /*
        * Nothing is charged at all.
@@ -1733,6 +2769,89 @@ export class OnboardingConversationManager {
    * append it in. Anything else is left to the extraction, which sees the free
    * text too.
    */
+  /**
+   * Do clients fill in a form before their appointment?
+   *
+   * Chips first and keywords second, the same order and for the same reason as
+   * `readScheduledAnswer` and `readCollectionMethod`: the labels spell out
+   * their consequence, so a keyword search finds "form" inside the answer that
+   * exists to say there is no form.
+   *
+   * Defaults to FALSE when nothing is recognised, which is the opposite
+   * direction to `readScheduledAnswer` and deliberately so. A missing intake
+   * form is something the owner adds in settings when they want it; an unwanted
+   * one is a questionnaire their clients are made to fill in, with questions
+   * the owner never wrote. The quiet failure has to be the harmless one.
+   */
+  /**
+   * Yes, no, or a replacement name.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * No heuristics and no thresholds: an exact chip match decides yes and no,
+   * `isConfirmation` catches a typed agreement, and a reply that is nothing but
+   * a word of refusal is a refusal. EVERYTHING ELSE is taken as the name they
+   * meant, because the alternative is storing "no" as a business name.
+   *
+   * The refusal vocabulary is `NEGATORS`, which already exists for the preview
+   * confirmation. One list, so "לא" means the same thing in both places.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private readNameConfirmation(message: string, language: Language): 'yes' | 'no' | 'renamed' {
+    const text = message.trim().toLowerCase();
+
+    const CHIPS: Array<['yes' | 'no', string[]]> = [
+      ['yes', ["yes, that's right", 'כן, זה נכון', 'sí, es correcto']],
+      ['no', ['no, let me fix it', 'לא, אני רוצה לתקן', 'no, quiero corregirlo']],
+    ];
+
+    for (const [verdict, labels] of CHIPS) {
+      if (labels.some(label => label.toLowerCase() === text)) return verdict;
+    }
+
+    if (this.isConfirmation(message, language)) return 'yes';
+
+    /* A reply that is ONLY a word of refusal. Anything longer is a name. */
+    if (NEGATORS.includes(text)) return 'no';
+
+    return 'renamed';
+  }
+
+  private readIntakeAnswer(message: string, language: Language): boolean {
+    const text = message.trim().toLowerCase();
+
+    const CHIPS: Array<[boolean, string[]]> = [
+      [true, [
+        'כן, הם ממלאים טופס לפני',
+        'sí, rellenan un formulario antes',
+        'yes, they fill in a form first',
+      ]],
+      [false, [
+        'לא, הם פשוט קובעים תור',
+        'no, solo reservan',
+        'no, they just book',
+      ]],
+    ];
+
+    for (const [answer, labels] of CHIPS) {
+      if (labels.some(label => label.toLowerCase() === text)) return answer;
+    }
+
+    /* Typed instead of tapped. The old reader's three exact labels are kept
+       below it, so a conversation resuming against an older form still reads. */
+    if (this.readIntakeNeed(message)) return true;
+
+    const yes: Record<Language, string[]> = {
+      en: ['form', 'questionnaire', 'intake', 'paperwork', 'health details'],
+      he: ['טופס', 'שאלון', 'שאלות', 'הצהרת בריאות'],
+      es: ['formulario', 'cuestionario', 'ficha'],
+    };
+
+    const words = yes[language] || yes.en;
+    const negated = NEGATORS.some(word => containsWholeWord(text, word));
+
+    return !negated && words.some(word => text.includes(word));
+  }
+
   private readIntakeNeed(message: string): boolean {
     const text = message.toLowerCase();
     return text.includes('לקוחות ממלאים טופס לפני הפגישה')
@@ -1744,50 +2863,7 @@ export class OnboardingConversationManager {
     return 'client_acquisition';
   }
 
-  /**
-   * The price in a reply to "what does X cost?", 0 for an explicit "free",
-   * null when there is no price in it.
-   *
-   * "Free" is a whole word or phrase, never a substring: the list used to hold
-   * '0' and was matched with `includes`, so "100", "250 ILS" and "₪1,200" were
-   * all recorded as free, and "freelance rate 90" matched 'free'. A bare zero
-   * counts as free only when it is the whole reply, currency aside ("0", "$0").
-   *
-   * Logs lengths and the parsed value only — never the owner's text (OI-7).
-   */
-  private extractPriceFromMessage(message: string): number | null {
-    const trimmed = message.trim();
-    const lower = trimmed.toLowerCase();
-
-    // Remove currency symbols and common currency words to extract the number.
-    // `\b` does not see Hebrew letters as word characters, so the edges are
-    // Unicode-aware lookarounds instead.
-    const cleanedMessage = lower
-      .replace(/[₪$€]/g, ' ')
-      .replace(PRICE_CURRENCY_WORDS, ' ')
-      .trim();
-
-    if (/^0+(?:\.0+)?$/.test(cleanedMessage)
-      || FREE_WHOLE_REPLIES.includes(cleanedMessage.replace(/[.!]+$/, ''))
-      || FREE_PRICE_WORDS.some(word => containsWholeWord(lower, word))) {
-      logger.info({ messageLength: trimmed.length, extracted: 0 }, 'Extracted free price from message');
-      return 0;
-    }
-
-    // Integers or decimals, with thousands separators (100, 99.99, 1,500).
-    // Starts on a digit so a stray comma is never taken as the number.
-    const numberMatch = cleanedMessage.match(/\d[\d,]*(?:\.\d+)?/);
-    if (numberMatch) {
-      const parsed = parseFloat(numberMatch[0].replace(/,/g, ''));
-      if (!isNaN(parsed) && parsed >= 0) {
-        logger.info({ messageLength: trimmed.length, extracted: parsed }, 'Extracted price from message');
-        return parsed;
-      }
-    }
-
-    logger.warn({ messageLength: trimmed.length }, 'Could not extract numeric price from message');
-    return null;
-  }
+  
 
   /**
    * Extract adjustment intent from user message
@@ -1979,7 +3055,46 @@ export class OnboardingConversationManager {
     };
 
     const patterns = confirmPatterns[language] || confirmPatterns.en;
-    return patterns.some(p => lowerMsg.includes(p));
+    /*
+     * WHOLE WORDS, and this was a substring match.
+     * ─────────────────────────────────────────────────────────────────────────
+     * The consequence of a false positive here is the worst available in the
+     * flow: `preview` reads a confirmation as "build it", so the system is
+     * created from a plan the owner was in the middle of objecting to.
+     *
+     * Measured against the lists above, with `.includes`:
+     *
+     *   es  "necesito cambiar el precio"  -> "si" inside "necesito"   -> BUILDS
+     *   es  "no vale así"                 -> "vale"                   -> BUILDS
+     *   en  "restart"                     -> "start"                  -> BUILDS
+     *   en  "the pipeline is broken"      -> "ok" inside "broken"     -> BUILDS
+     *
+     * Three of those four are an owner asking for a change and getting their
+     * account built instead. "restart" is worse still: the one word that means
+     * start over was read as agreement.
+     *
+     * `containsWholeWord` is Unicode-aware, which `\b` is not: Hebrew letters
+     * are not word characters to `\b`, so it cannot bound a Hebrew pattern.
+     * Multi-word phrases ("looks good", "eso es todo") work unchanged.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * A confirm word inside a negation is not a confirmation.
+     *
+     * "no vale así" is Spanish for "it is not right like that", and `vale`
+     * ("OK") sits in the middle of it as a genuine whole word. So whole-word
+     * matching alone still read a rejection as agreement.
+     *
+     * The asymmetry decides the direction: a false POSITIVE builds the account
+     * from a plan the owner was objecting to, while a false NEGATIVE only
+     * routes them to `preview_adjustment`, whose model reads the same sentence
+     * and may well return `confirm` and build anyway. One is unrecoverable
+     * without deleting rows; the other costs nothing. So any negator present
+     * means "not a confirmation".
+     */
+    if (NEGATORS.some(word => containsWholeWord(lowerMsg, word))) return false;
+
+    return patterns.some(p => containsWholeWord(lowerMsg, p));
   }
 
   /**
@@ -1997,25 +3112,83 @@ export class OnboardingConversationManager {
     const responses = this.getResponseTemplates(language);
 
     switch (state.currentStep) {
+      /*
+       * The question the picker chose, in the owner's language, verbatim.
+       *
+       * No suggestions: these are open questions about their own business, and
+       * a row of guessed answers would answer them for them — which is how a
+       * brief ends up describing the chips rather than the business.
+       */
+      case 'business_deepening':
+        return {
+          /*
+           * The model's question, or a TRANSLATED fallback — never the contract's
+           * example.
+           *
+           * `BRIEF_FIELDS[].example` is written in English and exists to set the
+           * register inside the prompt. Falling back to it would put an English
+           * question in front of a Hebrew owner mid-interview, which is the one
+           * failure this flow is otherwise careful to avoid — `business_story`
+           * keeps the owner's typed words precisely because an extraction once
+           * answered a Hebrew conversation in English.
+           *
+           * `business_story_prompt` exists in all three languages and asks them
+           * to say more about the business, which is what this step is for.
+           */
+          response:
+            state.collectedData.pendingBriefQuestion || responses.business_story_prompt,
+        };
+
       case 'language_selection':
         // IMPORTANT: Language selection is ALWAYS shown in English with LTR direction
         // Only after user selects their language will subsequent messages use that language
         return {
           response: 'What language would you like to use?',
-          // Flags, as the language switcher elsewhere in the platform shows
-          // them: at this point the user has not chosen a language yet, so a
-          // flag is the one label that reads before any of the words do.
-          suggestions: ['🇺🇸 English', '🇮🇱 עברית (Hebrew)', '🇪🇸 Español (Spanish)'],
+          /*
+           * The language's own name, with no flag.
+           *
+           * The argument for flags was that nothing else reads before the
+           * language is chosen. But a flag names a COUNTRY, and these are
+           * languages: Spanish is not Spain to most of the people who speak
+           * it, and English is not the United States. "English", "עברית" and
+           * "Español" each read in the script of the thing they offer, which
+           * is the clearer signal anyway.
+           *
+           * The words still carry the detection: `language_selection` matches
+           * "עברית"/"hebrew" and "español"/"spanish", so the parentheticals
+           * stay as a second spelling for each.
+           */
+          suggestions: ['English', 'עברית (Hebrew)', 'Español (Spanish)'],
         };
 
       case 'business_name':
+        if (state.pendingQuestion === 'name_confirm') {
+          return {
+            response: responses.name_confirm_prompt.replace(
+              '{name}',
+              state.collectedData.businessProfile?.company_name ?? ''
+            ),
+            suggestions: responses.name_confirm_options,
+          };
+        }
+
+        if (state.pendingQuestion === 'name_again') {
+          /* Not the opening line again: "let's start with the name" after they
+             have already given one reads as though nothing was heard. */
+          return { response: responses.business_name_again_prompt };
+        }
+
         return {
           response: responses.business_name_prompt,
         };
 
       case 'business_story':
+        /* Asked once more, and worded differently: repeating the same sentence
+           reads as though the answer was not received at all. */
         return {
-          response: responses.business_story_prompt,
+          response: state.pendingQuestion === 'story_again'
+            ? responses.business_story_again_prompt
+            : responses.business_story_prompt,
         };
 
       case 'client_workflow':
@@ -2048,26 +3221,27 @@ export class OnboardingConversationManager {
           };
         }
 
-        // Check if we need to ask for price specifically
-        if (state.pendingQuestion === 'need_price') {
-          const servicesMissingPrice =
-            state.collectedData.clientWorkflow?.services?.filter(needsAPrice) || [];
-          const serviceNames = servicesMissingPrice.map(s => s.name).join(', ');
+        /* Only reached for a business that books appointments — see the
+           `intake` branch in `updateStateFromMessage`. */
+        if (state.pendingQuestion === 'intake') {
           return {
-            response: responses.need_price_prompt.replace('{services}', serviceNames),
+            response: responses.intake_prompt,
+            suggestions: responses.intake_options,
           };
         }
-        // Check if we should ask for more services
-        if (state.pendingQuestion === 'more_services') {
-          const currentCount = state.collectedData.clientWorkflow?.services?.length || 0;
-          return {
-            response: responses.more_services_prompt.replace('{count}', currentCount.toString()),
-            suggestions: responses.more_services_options,
-          };
-        }
-        // Follow-up question to get specific service details
+
+        /*
+         * `need_price` and `more_services` were asked here. Both belonged to
+         * the free-text loop removed from `updateStateFromMessage`, and the
+         * price is now the services editor's to collect.
+         *
+         * Anything else in this step re-opens the selling sequence rather than
+         * asking a question with no reader: a stored state is the only way to
+         * arrive here, and starting from "how do you sell?" is recoverable.
+         */
         return {
-          response: responses.service_details_prompt,
+          response: responses.sell_scheduled_prompt,
+          suggestions: responses.sell_scheduled_options,
         };
 
       case 'payment_collection':
@@ -2117,174 +3291,24 @@ export class OnboardingConversationManager {
     }
   }
 
-  /**
-   * Generate preview message showing computed configuration
-   * Clean text-based design without emojis for cross-platform compatibility
+    /*
+   * `generatePreviewMessage` and `getPreviewTemplates` were here, and were
+   * removed on 2026-10-14. Together: 219 lines, no caller.
+   *
+   * They built the plan as a MARKDOWN MESSAGE: a heading, a pipeline drawn with
+   * arrows, a list of capabilities, in three languages. The chat replaced it
+   * with a React card and the preview step now returns `response: ''` with
+   * `showPreview: true`, because what the owner needs at that moment is a set
+   * of decisions they can still touch, not a receipt of what they said.
+   *
+   * Noted rather than silently dropped because it cost real confusion: asked
+   * why the business brief was not appearing on the plan screen, the obvious
+   * place to add it was `generatePreviewMessage`, and a block was added there
+   * that nobody could ever see. The plan screen is
+   * `app/onboarding-chat/page.tsx`; the post-build summary is
+   * `app/onboarding-build/page.tsx`. Those two are the surfaces.
    */
-  private generatePreviewMessage(state: OnboardingState): string {
-    const config = state.collectedData.configuration;
-    const language = state.language;
 
-    if (!config) {
-      return this.getResponseTemplates(language).preview_error;
-    }
-
-    const t = this.getPreviewTemplates(language);
-    const isRTL = language === 'he';
-
-    const lines: string[] = [];
-
-    // Header with greeting
-    lines.push(`${t.header.replace('{company}', `**${config.company_name}**`)}`);
-    lines.push('');
-    lines.push('───────────────────');
-    lines.push('');
-
-    // Client Journey - visual pipeline
-    const pipelineStages = state.collectedData.pipelineStages || config.pipeline_stages;
-    const stageLabels = pipelineStages.map(s => s.stage_label);
-    lines.push(`**${t.journey_title}**`);
-    lines.push('');
-    // Create visual pipeline with arrows
-    const pipelineArrow = isRTL ? ' < ' : ' > ';
-    lines.push(`\`${stageLabels.join(pipelineArrow)}\``);
-    lines.push('');
-
-    // Online Presence
-    lines.push(`**${t.presence_title}**`);
-    if (config.online_presence_mode === 'full_website') {
-      lines.push(`   [+] ${t.presence_website}`);
-    } else if (config.online_presence_mode === 'booking_only') {
-      lines.push(`   [+] ${t.presence_booking}`);
-    } else if (config.online_presence_mode === 'website_only') {
-      lines.push(`   [+] ${t.presence_website_only}`);
-    } else {
-      lines.push(`   [-] ${t.presence_none}`);
-    }
-    lines.push('');
-
-    // Capabilities - clean list
-    lines.push(`**${t.capabilities_title}**`);
-    config.capabilities.forEach(cap => {
-      const name = this.configService.getCapabilityDisplayName(cap, language);
-      lines.push(`   [+] ${name}`);
-    });
-    lines.push('');
-
-    // Services - clean list with pricing
-    const services = state.collectedData.services;
-    if (services && services.length > 0) {
-      lines.push(`**${t.services_title}**`);
-      services.forEach(s => {
-        // Three states, not two. A price agreed per client is null, and
-        // reading null as "free" told the user their consultancy was being
-        // set up to give the work away.
-        const priceStr = s.price === null || s.price === undefined
-          ? `_${t.quoted}_`
-          : s.price > 0
-            ? `**${s.currency} ${s.price}**`
-            : `_${t.free}_`;
-        const durationStr = t.minutes_abbrev
-          ? `${s.duration_minutes}${t.minutes_abbrev}`
-          : `${s.duration_minutes} min`;
-        lines.push(`   - ${s.service_name} | ${durationStr} | ${priceStr}`);
-      });
-      lines.push('');
-    }
-
-    // Payment mode
-    lines.push(`**${t.payment_title}**`);
-    if (config.payment_mode === 'none') {
-      lines.push(`   ${t.payment_none}`);
-    } else if (config.payment_mode === 'upfront') {
-      lines.push(`   ${t.payment_upfront}`);
-    } else if (config.payment_mode === 'invoicing') {
-      lines.push(`   ${t.payment_invoicing}`);
-    } else if (config.payment_mode === 'installments') {
-      lines.push(`   ${t.payment_installments}`);
-    }
-    lines.push('');
-    lines.push('───────────────────');
-    lines.push('');
-
-    // CTA - friendly prompt
-    lines.push(t.cta);
-
-    return lines.join('\n');
-  }
-
-  /**
-   * Get preview templates by language
-   */
-  private getPreviewTemplates(language: Language): Record<string, string> {
-    if (language === 'he') {
-      return {
-        header: 'הנה התוכנית שלי עבור {company}:',
-        journey_title: 'מסע הלקוח',
-        presence_title: 'נוכחות דיגיטלית',
-        presence_website: 'אתר מקצועי + הזמנות אונליין',
-        presence_booking: 'עמוד הזמנות ייעודי',
-        presence_website_only: 'אתר מקצועי',
-        presence_none: 'ללא אתר (אפשר להוסיף בהמשך)',
-        capabilities_title: 'הכלים שלך',
-        services_title: 'שירותים',
-        free: 'חינם',
-        quoted: 'לפי הצעת מחיר',
-        minutes_abbrev: ' דק׳',
-        payment_title: 'תשלומים',
-        payment_none: 'שירותים חינמיים',
-        payment_upfront: 'תשלום בזמן ההזמנה',
-        payment_invoicing: 'חשבוניות אחרי השירות',
-        payment_installments: 'תשלום בתשלומים',
-        cta: 'הכל נראה טוב? אמור **"כן"** להמשיך, או ספר לי מה לשנות.',
-      };
-    }
-
-    if (language === 'es') {
-      return {
-        header: 'Este es mi plan para {company}:',
-        journey_title: 'Recorrido del cliente',
-        presence_title: 'Presencia digital',
-        presence_website: 'Sitio web profesional + reservas en línea',
-        presence_booking: 'Página de reservas dedicada',
-        presence_website_only: 'Sitio web profesional',
-        presence_none: 'Sin sitio web (puedes agregar después)',
-        capabilities_title: 'Tus herramientas',
-        services_title: 'Servicios',
-        free: 'Gratis',
-        quoted: 'A convenir',
-        minutes_abbrev: ' min',
-        payment_title: 'Pagos',
-        payment_none: 'Servicios gratuitos',
-        payment_upfront: 'Pago al reservar',
-        payment_invoicing: 'Facturas después del servicio',
-        payment_installments: 'Pagos en cuotas',
-        cta: '¿Todo bien? Di **"sí"** para continuar, o dime qué cambiar.',
-      };
-    }
-
-    // English (default)
-    return {
-      header: "Here's my plan for {company}:",
-      journey_title: 'Client Journey',
-      presence_title: 'Digital Presence',
-      presence_website: 'Professional website + online booking',
-      presence_booking: 'Dedicated booking page',
-      presence_website_only: 'Professional website',
-      presence_none: 'No website (can add later)',
-      capabilities_title: 'Your Tools',
-      services_title: 'Services',
-      free: 'Free',
-      quoted: 'On request',
-      minutes_abbrev: ' min',
-      payment_title: 'Payments',
-      payment_none: 'Free services',
-      payment_upfront: 'Pay when booking',
-      payment_invoicing: 'Invoices after service',
-      payment_installments: 'Installment payments',
-      cta: 'All good? Say **"yes"** to continue, or tell me what to change.',
-    };
-  }
 
   /**
    * Get response templates by language
@@ -2293,95 +3317,92 @@ export class OnboardingConversationManager {
   private getResponseTemplates(language: Language): Record<string, any> {
     if (language === 'he') {
       return {
-        language_prompt: 'באיזו שפה תרצו להשתמש?',
-        business_name_prompt: 'מעולה! נתחיל מהשם — איך קוראים לעסק שלך?',
-        business_story_prompt: 'תודה! ועכשיו ספרו לי על העסק - מה אתם עושים ומה הביא אתכם לכאן היום?',
+        business_name_prompt: 'מעולה! נתחיל מהשם. איך קוראים לעסק שלך?',
+        business_story_prompt: 'תודה! ועכשיו ספרו לי על העסק. מה אתם עושים, ומה הביא אתכם לכאן היום?',
+        business_story_again_prompt: 'סליחה, אני צריך קצת יותר מזה כדי לעבוד איתו. במשפט או שניים: מה אתם עושים, ובשביל מי? משהו כמו "אני מנהל מספרה לילדים" בהחלט מספיק.',
+        name_confirm_prompt: 'נרשם. רק כדי לוודא, "{name}" זה בדיוק איך שתרצו שזה ייכתב? זה יופיע על כל חשבונית וכל מייל שנשלח בשמכם.',
+        name_confirm_options: ['כן, זה נכון', 'לא, אני רוצה לתקן'],
+        business_name_again_prompt: 'אין בעיה. איך זה צריך להיות?',
         client_workflow_prompt: 'תודה! איך אתם עובדים עם לקוחות? יש לכם שירותים עם מחירים קבועים, או שזה יותר מותאם אישית ללקוח?',
         client_workflow_options: ['שירותים עם מחירים קבועים', 'מותאם אישית ללקוח', 'שילוב של שניהם'],
-        service_details_prompt: 'מצוין! אפשר לספר לי קצת יותר על השירותים שלכם? לדוגמה: שם השירות, משך (בדקות), ומחיר.',
-        service_details_quote_prompt: 'מצוין! גם אם המחיר נקבע מול כל לקוח — מה אתם מציעים? לדוגמה: שם השירות ומשך (בדקות). את המחיר נשאיר להצעת מחיר.',
-        service_details_mixed_prompt: 'מצוין! ספרו לי על השירותים שלכם — שם ומשך (בדקות). איפה שיש מחיר קבוע כתבו אותו, ואיפה שהמחיר נקבע מול הלקוח פשוט אל תכתבו.',
-        need_price_prompt: 'מה המחיר של {services}?',
-        more_services_prompt: 'נהדר! הוספתי {count} שירות(ים). יש לך עוד שירותים להוסיף?',
-        more_services_options: ['יש לי עוד', 'זה הכל'],
-        sell_scheduled_prompt: 'מעולה. איך אתם מוכרים — הלקוחות קובעים איתכם זמן, או שאתם מוכרים בלי תורים?',
+        sell_scheduled_prompt: 'מעולה. איך אתם מוכרים? הלקוחות קובעים איתכם זמן, או שאתם מוכרים בלי תורים?',
         sell_scheduled_options: [
           'הלקוחות קובעים איתי זמן',
-          'אני מוכר בלי תורים — אין צורך בלוח זמנים',
+          'אני מוכר בלי תורים: אין צורך בלוח זמנים',
         ],
         // Reworded from "מזמין שירות בתשלום": the question now covers a
         // business that charges for nothing, and asking how they collect on a
         // "paid service" made the third answer read as though it did not apply.
-        payment_collection_prompt: 'וכשמישהו קונה מכם — הוא משלם אונליין, או שאתה גובה את הכסף בעצמך?',
+        payment_collection_prompt: 'וכשמישהו קונה מכם, הוא משלם אונליין, או שאתה גובה את הכסף בעצמך?',
         payment_collection_options: [
-          'הלקוח משלם אונליין בכרטיס — צריך חיבור סליקה',
-          'אני גובה את הכסף בעצמי — חשבונית, העברה, ביט או מזומן',
+          'הלקוח משלם אונליין בכרטיס: צריך חיבור סליקה',
+          'אני גובה את הכסף בעצמי: חשבונית, העברה, ביט או מזומן',
           'אני לא גובה כסף על מה שאני מוכר',
         ],
-        service_count_prompt: 'אחרון — כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות ותוכלו להשלים אותן אחר כך.',
+        service_count_prompt: 'אחרון. כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות ותוכלו להשלים אותן אחר כך.',
+        intake_prompt: 'הלקוחות שלכם ממלאים משהו לפני שאתם נפגשים, כמו טופס או הצהרת בריאות?',
+        intake_options: ['כן, הם ממלאים טופס לפני', 'לא, הם פשוט קובעים תור'],
         service_count_options: ['1', '2', '3', '5'],
-        client_acquisition_prompt: 'עכשיו — איך לקוחות ימצאו אותך ויזמינו? סמן כל מה שרלוונטי (או כלום), ואקים את מה שסימנת.',
+        client_acquisition_prompt: 'עכשיו, איך לקוחות ימצאו אותך ויזמינו? סמן כל מה שרלוונטי (או כלום), ואקים את מה שסימנת.',
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
-          'לחבר פייסבוק, אינסטגרם או גוגל — לראות מאיפה מגיעים הלקוחות',
-        ],
-        client_tracking_prompt: 'ואיך את/ה עוקב/ת היום אחרי הלקוחות וההתקדמות שלהם?',
-        client_tracking_options: [
-          'אקסל או גוגל שיטס',
-          'נייר, מחברת או אפליקציית פתקים',
-          'הכל בראש שלי',
-          'כבר יש לי מערכת CRM',
+          'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
         ],
         default_company: 'העסק שלך',
         preview_options: ['כן, בואו נתחיל!', 'אני רוצה לשנות משהו'],
-        adjustment_prompt: 'מה תרצה לשנות?',
+        /*
+       * The copy for the retired flows was here, and was removed on 2026-10-14:
+       * `service_details_prompt` and its quote and mixed variants,
+       * `need_price_prompt`, `more_services_prompt`/`_options`,
+       * `client_tracking_prompt`/`_options`, `language_prompt`,
+       * `preview_error`. Thirty strings across three languages, read by
+       * nothing.
+       *
+       * They belonged to the free-text service loop and the CRM question, both
+       * removed with their branches. Three of them were REWRITTEN earlier the
+       * same day, carefully, in three languages, before anyone checked whether
+       * the question was still asked — which is the whole argument for deleting
+       * dead copy rather than leaving it to look live.
+       */
+      adjustment_prompt: 'מה תרצה לשנות?',
         building_message: 'מעולה! אני בונה את המערכת שלך...',
         complete_message: 'הכל מוכן! ברוך הבא ל-Business OS שלך.',
         default_prompt: 'אני כאן לעזור לך להגדיר את המערכת.',
-        preview_error: 'משהו השתבש. בוא ננסה שוב.',
       };
     }
 
     if (language === 'es') {
       return {
-        language_prompt: '¿Qué idioma te gustaría usar?',
-        business_name_prompt: '¡Genial! Empecemos por el nombre — ¿cómo se llama tu negocio?',
-        business_story_prompt: '¡Gracias! Ahora cuéntame sobre tu negocio - ¿qué haces y qué te trajo aquí hoy?',
+        business_name_prompt: '¡Genial! Empecemos por el nombre. ¿Cómo se llama tu negocio?',
+        business_story_prompt: '¡Gracias! Ahora cuéntame sobre tu negocio. ¿Qué haces y qué te trajo aquí hoy?',
+        business_story_again_prompt: 'Perdona, necesito un poco más para trabajar con eso. En una o dos frases: ¿qué haces y para quién? Algo como "tengo una peluquería para niños" es suficiente.',
+        name_confirm_prompt: 'Anotado. Solo para confirmar, ¿"{name}" es exactamente como quieres que aparezca? Va en cada factura y cada correo que enviamos por ti.',
+        name_confirm_options: ['Sí, es correcto', 'No, quiero corregirlo'],
+        business_name_again_prompt: 'Sin problema. ¿Cómo debería ser?',
         client_workflow_prompt: '¡Gracias! ¿Cómo trabajas con tus clientes? ¿Tienes servicios con precios fijos, o es más personalizado por cliente?',
         client_workflow_options: ['Servicios con precios fijos', 'Personalizado por cliente', 'Combinación de ambos'],
-        service_details_prompt: '¡Perfecto! ¿Puedes contarme más sobre tus servicios? Por ejemplo: nombre del servicio, duración (en minutos) y precio.',
-        service_details_quote_prompt: '¡Perfecto! Aunque el precio lo acuerdes con cada cliente — ¿qué ofreces? Por ejemplo: nombre del servicio y duración (en minutos). El precio lo dejamos para el presupuesto.',
-        service_details_mixed_prompt: '¡Perfecto! Cuéntame tus servicios — nombre y duración (en minutos). Donde tengas precio fijo, escríbelo; donde lo acuerdes con el cliente, simplemente déjalo en blanco.',
-        need_price_prompt: '¿Cuál es el precio de {services}?',
-        more_services_prompt: '¡Genial! Agregué {count} servicio(s). ¿Tienes más servicios para agregar?',
-        more_services_options: ['Tengo más', 'Eso es todo'],
-        sell_scheduled_prompt: 'Perfecto. ¿Cómo vendes — los clientes reservan una hora contigo, o vendes sin turnos?',
+        sell_scheduled_prompt: 'Perfecto. ¿Cómo vendes? ¿Los clientes reservan una hora contigo, o vendes sin turnos?',
         sell_scheduled_options: [
           'Los clientes reservan una hora conmigo',
-          'Vendo sin turnos — no hace falta agenda',
+          'Vendo sin turnos: no hace falta agenda',
         ],
         // Reworded from "reserva un servicio de pago": the question now covers
         // a business that charges for nothing, and framing it around a paid
         // service made the third answer read as though it did not apply.
         payment_collection_prompt: 'Y cuando alguien te compra algo, ¿paga online o lo cobras tú?',
         payment_collection_options: [
-          'El cliente paga online con tarjeta — hace falta pasarela',
-          'Cobro yo mismo — factura, transferencia o efectivo',
+          'El cliente paga online con tarjeta: hace falta pasarela',
+          'Cobro yo mismo: factura, transferencia o efectivo',
           'No cobro por nada de lo que ofrezco',
         ],
-        service_count_prompt: 'La última — ¿cuántas cosas distintas vendes más o menos? Las dejaré como borradores para que las completes luego.',
+        service_count_prompt: 'La última. ¿Cuántas cosas distintas vendes más o menos? Las dejaré como borradores para que las completes luego.',
+        intake_prompt: '¿Tus clientes rellenan algo antes de verte, como un formulario o una ficha de salud?',
+        intake_options: ['Sí, rellenan un formulario antes', 'No, solo reservan'],
         service_count_options: ['1', '2', '3', '5'],
-        client_acquisition_prompt: 'Ahora — ¿cómo van a encontrarte y reservar tus clientes? Marca lo que corresponda (o nada) y construiré lo que elijas.',
+        client_acquisition_prompt: 'Ahora, ¿cómo van a encontrarte y reservar tus clientes? Marca lo que corresponda (o nada) y construiré lo que elijas.',
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
-          'Conectar Facebook, Instagram o Google — ver de dónde vienen tus clientes',
-        ],
-        client_tracking_prompt: '¿Y cómo haces hoy el seguimiento de tus clientes y su progreso?',
-        client_tracking_options: [
-          'Excel o Google Sheets',
-          'Papel, cuaderno o app de notas',
-          'Todo en mi cabeza',
-          'Ya tengo un CRM',
+          'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
         ],
         default_company: 'tu negocio',
         preview_options: ['Sí, ¡comencemos!', 'Quiero cambiar algo'],
@@ -2389,50 +3410,58 @@ export class OnboardingConversationManager {
         building_message: '¡Excelente! Estoy construyendo tu sistema...',
         complete_message: '¡Todo listo! Bienvenido a tu Business OS.',
         default_prompt: 'Estoy aquí para ayudarte a configurar tu sistema.',
-        preview_error: 'Algo salió mal. Intentemos de nuevo.',
       };
     }
 
     // English (default)
     return {
-      language_prompt: 'What language would you like to use?',
-      business_name_prompt: "Great! Let's start with the name — what is your business called?",
-      business_story_prompt: "Thanks! Now tell me about the business - what do you do and what brought you here today?",
+      business_name_prompt: "Great! Let's start with the name. What is your business called?",
+      business_story_prompt: "Thanks! Now tell me about the business. What do you do, and what brought you here today?",
+      /*
+       * Names what is missing and shows the shape of an answer, rather than
+       * repeating the question. Everything downstream is written from this
+       * sentence, which is worth saying out loud: it is the one place in the
+       * interview where more detail genuinely pays the owner back.
+       */
+      business_story_again_prompt: "Sorry, I need a little more than that to work with. In a sentence or two: what do you do, and who for? Something like \"I run a hair salon for kids\" is plenty.",
+      /*
+       * Says WHERE the name ends up, which is the only reason to spend a turn
+       * reading it back. "Is this correct?" invites a reflexive yes; "it goes
+       * on every invoice and email you send" makes somebody actually look.
+       */
+      name_confirm_prompt: 'Got it. Just to be sure, is "{name}" exactly how you want it written? It goes on every invoice and email we send for you.',
+      name_confirm_options: ["Yes, that's right", 'No, let me fix it'],
+      business_name_again_prompt: 'No problem. What should it be?',
       client_workflow_prompt: "Thanks! How do you typically work with clients? Do you have set services and prices, or is it more custom per client?",
       client_workflow_options: ['Fixed services and prices', 'Custom per client', 'A mix of both'],
-      service_details_prompt: "Perfect! Can you tell me more about your services? For example: service name, duration (in minutes), and price.",
-      service_details_quote_prompt: "Perfect! Even if you quote each client separately — what do you offer? For example: service name and duration (in minutes). We'll leave the price to the quote.",
-      service_details_mixed_prompt: "Perfect! Tell me about your services — name and duration (in minutes). Where you have a set price, write it; where you agree it with the client, just leave it out.",
-      need_price_prompt: "What is the price for {services}?",
-      more_services_prompt: "Great! I've added {count} service(s). Do you have more services to add?",
-      more_services_options: ['I have more', "That's all"],
-      sell_scheduled_prompt: "Great. Now — how do you sell? Do clients book a time with you, or do you sell without appointments?",
+      sell_scheduled_prompt: "Great. Now, how do you sell? Do clients book a time with you, or do you sell without appointments?",
       sell_scheduled_options: [
         'Clients book a time with me',
-        'I sell without appointments — no calendar needed',
+        'I sell without appointments: no calendar needed',
       ],
       // Reworded from "books a paid service": the question now covers a
       // business that charges for nothing, and framing it around a paid
       // service made the third answer read as though it did not apply.
-      payment_collection_prompt: "And when someone buys from you — do they pay online, or do you collect the money yourself?",
+      payment_collection_prompt: "And when someone buys from you, do they pay online, or do you collect the money yourself?",
       payment_collection_options: [
-        'The client pays online by card — needs a payment gateway',
-        'I collect the money myself — invoice, transfer or cash',
+        'The client pays online by card: needs a payment gateway',
+        'I collect the money myself: invoice, transfer or cash',
         'Nothing I sell is paid for',
       ],
-      service_count_prompt: "Last one — roughly how many different things do you sell? I'll set them up as drafts for you to finish.",
+      service_count_prompt: "Last one. Roughly how many different things do you sell? I'll set them up as drafts for you to finish.",
+      /*
+       * Phrased as what the CLIENT does, not as a feature name.
+       * "Do you need an intake form?" asks the owner to know what we mean by
+       * one. "Do clients fill in a form before you see them?" is a fact about
+       * their own week, which is the register the rest of this interview uses.
+       */
+      intake_prompt: "Do your clients fill in anything before you see them, like a form or health details?",
+      intake_options: ['Yes, they fill in a form first', 'No, they just book'],
       service_count_options: ['1', '2', '3', '5'],
-      client_acquisition_prompt: "Now — how will clients find you and book? Tick whatever applies (or nothing), and I will build what you choose.",
+      client_acquisition_prompt: "Now, how will clients find you and book? Tick whatever applies (or nothing), and I will build what you choose.",
       client_acquisition_options: [
         'Build me a professional website',
-        'Connect Facebook, Instagram or Google — see where clients come from',
-      ],
-      client_tracking_prompt: "And how do you keep track of your clients and their progress today?",
-      client_tracking_options: [
-        'Excel or Google Sheets',
-        'Paper, a notebook or a notes app',
-        "All in my head",
-        'I already have a CRM',
+        'Connect Facebook, Instagram or Google: see where clients come from',
       ],
       default_company: 'your business',
       preview_options: ["Yes, let's get started!", 'I want to change something'],
@@ -2440,7 +3469,6 @@ export class OnboardingConversationManager {
       building_message: "Excellent! I'm building your system...",
       complete_message: 'All done! Welcome to your Business OS.',
       default_prompt: "I'm here to help you set up your system.",
-      preview_error: 'Something went wrong. Let\'s try again.',
     };
   }
 

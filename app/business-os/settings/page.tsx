@@ -46,6 +46,7 @@ import { ErasureRequestContent } from '@/components/business-os/purge/DangerZone
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { createLogger } from '@/lib/logger';
+import { cn } from '@/lib/utils';
 
 const logger = createLogger({ module: 'BusinessOSSettings' });
 
@@ -88,6 +89,17 @@ function BusinessOSSettingsContent() {
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
   const { openConfiguration } = useConfigurationDialog();
+
+  /*
+   * The chevron on every account-card row (settings drawer S-5). Mirrored in
+   * Hebrew, as the invite row's already was: the row reads right to left and
+   * the chevron sits on its left edge, so an unmirrored one points back at the
+   * label. One helper so the rows cannot drift apart again. The tone is a
+   * parameter rather than a second class on top: `cn` does not merge Tailwind
+   * classes, so two text colours would be decided by stylesheet order.
+   */
+  const rowChevron = (tone = 'text-[var(--v2-text-muted)]') => cn('w-4 h-4', tone, isRTL && 'scale-x-[-1]');
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -460,62 +472,6 @@ function BusinessOSSettingsContent() {
    * — it belongs to the marketing site, on its own origin.
    * ─────────────────────────────────────────────────────────────────────────
    */
-  /**
-   * Give a best-effort network call a deadline it cannot outlive.
-   *
-   * ─────────────────────────────────────────────────────────────────────────
-   * Both calls below were `await`ed inside a try/catch, which catches a
-   * REJECTION and does nothing at all about a promise that simply never
-   * settles. A stalled request therefore left `loggingOut` true forever — and
-   * the dialog refuses to close while that is true — so a person who pressed
-   * log out sat on a spinner with no cancel, no escape and no way back.
-   *
-   * Resolves rather than rejects on timeout: every caller here is best-effort,
-   * and the only outcome that matters is that the browser ends up signed out
-   * and somewhere else.
-   * ─────────────────────────────────────────────────────────────────────────
-   */
-  const withDeadline = async (work: Promise<unknown>, ms: number, what: string) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const deadline = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), ms);
-    });
-
-    try {
-      const outcome = await Promise.race([work.then(() => 'done' as const), deadline]);
-      if (outcome === 'timeout') {
-        logger.warn({ what, ms }, 'Logout step exceeded its deadline; continuing without it');
-      }
-    } catch (err) {
-      logger.warn({ err, what }, 'Logout step failed; continuing without it');
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  };
-
-  /**
-   * Every key that holds a SESSION, whoever wrote it.
-   *
-   * The list below used to name `sb-auth-token` and `supabase.auth.token`, and
-   * neither is what Supabase actually writes: the real key carries the project
-   * ref (`sb-<ref>-auth-token`) and is chunked into `.0`, `.1`, … when the JWT
-   * is large. So a sign-out that failed or timed out left the session sitting
-   * in storage while the browser was sent to the login page — signed out in
-   * appearance only, and signed straight back in on return.
-   *
-   * Matched by shape rather than by a literal, so this holds in every
-   * environment and survives a project change.
-   */
-  const clearSessionKeys = (store: Storage) => {
-    const doomed: string[] = [];
-    for (let i = 0; i < store.length; i++) {
-      const key = store.key(i);
-      if (key && /^sb-.*-auth-token/.test(key)) doomed.push(key);
-    }
-    doomed.forEach((key) => store.removeItem(key));
-  };
-
   const handleLogout = async () => {
     setLoggingOut(true);
 
@@ -980,7 +936,10 @@ function BusinessOSSettingsContent() {
             in place. It shows the title only (C-8): the plan is fetched when the
             drawer opens, by `PlanSection`, as it was when the row expanded.
           */}
-          {/* Id kept for old `#settings-section-plan` links; S-5 decides whether it stays (SA W-5). */}
+          {/* Id kept (S-5, SA W-5). Nothing in the repo links to it any more (every
+              sender uses `?section=plan`), but it costs nothing, matches the
+              consent and invite rows, and a hand-shared or bookmarked
+              `#settings-section-plan` still lands on the row. */}
           <div id="settings-section-plan">
             <button
               ref={planRowRef}
@@ -994,7 +953,7 @@ function BusinessOSSettingsContent() {
                 <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('plan.section_title')}</span>
               </div>
-              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             </button>
             <SettingsDrawer
               open={planDrawer.open}
@@ -1048,7 +1007,7 @@ function BusinessOSSettingsContent() {
                 <MailCheck className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('consent.title')}</span>
               </div>
-              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             </button>
             <MarketingConsentDrawer
               open={consentDrawerOpen}
@@ -1091,7 +1050,7 @@ function BusinessOSSettingsContent() {
                 <Lock className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('settings.security.change_password')}</span>
               </div>
-              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             </button>
             <ChangePasswordDrawer
               open={passwordDrawer.open}
@@ -1111,7 +1070,7 @@ function BusinessOSSettingsContent() {
               <Download className="w-5 h-5 text-[var(--v2-text-muted)]" />
               <span className="text-sm text-[var(--v2-text-primary)]">{t('settings.security.export_data')}</span>
             </div>
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />}
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className={rowChevron()} aria-hidden="true" />}
           </button>
 
           {/* Log out.
@@ -1132,7 +1091,7 @@ function BusinessOSSettingsContent() {
             {loggingOut ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             )}
           </button>
 
@@ -1145,7 +1104,7 @@ function BusinessOSSettingsContent() {
               <Trash2 className="w-5 h-5 text-red-500" />
               <span className="text-sm text-red-600 dark:text-red-400">{t('settings.security.delete_account')}</span>
             </div>
-            <ChevronRight className="w-4 h-4 text-red-400" />
+            <ChevronRight className={rowChevron('text-red-400')} aria-hidden="true" />
           </button>
             </div>
           </div>
