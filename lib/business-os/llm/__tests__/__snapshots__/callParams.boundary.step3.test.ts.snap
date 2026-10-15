@@ -409,7 +409,7 @@ exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) images/
 [
   [
     {
-      "model": "gpt-image-1",
+      "model": "gpt-image-2.5-flare",
       "n": 1,
       "prompt": "a calm studio. A natural, understated photograph. Real materials and daylight, shallow depth of field, no text, no logos, no watermarks, no people and no faces. Editorial, not advertising.",
       "quality": "high",
