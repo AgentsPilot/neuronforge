@@ -4,14 +4,65 @@
 
 **Created by:** BA
 **Date:** 2026-10-14
-**S-1 progress:** Workplan [BUSINESS_OS_SETTINGS_DRAWER_S1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S1_WORKPLAN.md). **MERGE PENDING — PR #388 opened 2026-10-15 (SA APPROVED, QA PASS WITH NOTES); committed by RM under the user's Phase A pre-authorisation (2026-10-14: after SA approval, RM commits + opens PR without waiting for the user).** Manual QA checklist Q1–Q13 still owed by a human; W-2 go-live row 20 added to `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` §9.5 (3-D Secure not run).
-**S-2 progress:** Workplan [BUSINESS_OS_SETTINGS_DRAWER_S2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S2_WORKPLAN.md) (UI short path, no separate SA workplan review); branch `feature/settings-drawer-s2` from `feature/settings-drawer-s1` (PR #388 not yet merged, so S-2 rebases on `main` once it is). Dev code complete 2026-10-15, uncommitted, awaiting SA code review and QA.
-**S-3 progress:** Workplan [BUSINESS_OS_SETTINGS_DRAWER_S3_WORKPLAN.md](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S3_WORKPLAN.md) (full cycle). SA workplan review 2026-10-15 APPROVED WITH CONDITIONS (C-1 to C-9). **Dev code complete 2026-10-15, uncommitted, awaiting SA code review and QA.** Branch `feature/settings-drawer-s3` at `5d7a0586` (= `origin/main` after #388 and #389; no rebase needed). Marketing permission opens in the settings drawer with a fixed Save bar; the discard guard (C-5) is built into `SettingsDrawer`; save success and failure show in the drawer (F-2, F-3 fixed); F-17 fixed inside S-3 (user decision). F-18 left for its own task, to run right after S-3; until then QA K21 records the interim "Discard your changes?" prompt on an untouched open for businesses with a saved address. Hebrew and Spanish wording of the prompt is flagged to the user for a check.
-**F-18 progress:** Workplan [BUSINESS_OS_SETTINGS_CONSENT_ADDRESS_PICKER_F18_WORKPLAN.md](/docs/workplans/BUSINESS_OS_SETTINGS_CONSENT_ADDRESS_PICKER_F18_WORKPLAN.md) (full cycle), written 2026-10-15 on `fix/settings-consent-address-picker` from S-3's head `f7495ca6` (PR #397, not merged). SA workplan review 2026-10-15: APPROVED WITH CONDITIONS (C-1 to C-10). **Dev code complete 2026-10-15, uncommitted (C-6), awaiting SA code review and QA.** `tsc` errors in the panel 2 → 0; 28 new tests (textForm 9, real-picker render 15, guard 4); the picker's default test file is untouched; 14/14 mutations caught. F-19 recorded in §7. The bug has been live since PR #229 (2026-10-06). Plan: the picker gains optional props only (a text-form mode that marks but never fills, `use="marketing"`, the null-row label), so the profile and invoice screens are unchanged. The panel passes its selection and keeps edits typed during a save (SA finding 1). Moving the delete confirmation to `components/ui/dialog` is proposed out: that dialog sits under `ConfigurationDialog` (z-60 vs z-70). Proposed F-19. A read-only exposure query is in the workplan for the user to run on prod.
-**S-4 progress:** Workplan [BUSINESS_OS_SETTINGS_DRAWER_S4_WORKPLAN.md](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S4_WORKPLAN.md) (UI short path, SA-confirmed, mandatory link-safety checks). **Dev code complete 2026-10-15, uncommitted. SA code review 2026-10-15: APPROVED WITH CONDITIONS (RM: merge `origin/main` (#406) and resolve this file's doc-only conflicts before the PR); Q-1 to Q-4 ruled; F-20 and F-21 recorded in §7. Awaiting QA.** Branch `feature/settings-drawer-s4` from `origin/main` `eb2b9396`. Invite friends opens in the settings drawer from its row, which now shows "N of M invites left" (C-8). The one-time link, the draft and the in-flight flags stay in `InviteFriendsSection` (C-6), so the link survives close and reopen until Dismiss or leaving the page (Q-5 (a)); no `forceMount`, nothing in the address, storage or logs (new link-safety suite). No close while a send or a revoke is in flight (C-4). Revoke confirmation stays inline; the `#settings-section-invite-friends` anchor stays on the row. `page.tsx` untouched; no new keys. Q-2 (should the email's hash open the drawer; not built) ruled by SA: not in S-4, see F-20 (the hash probably does not scroll on a full load today, pre-existing; Dev's draft label "F-19" renumbered).
-**S-5 progress:** Workplan [BUSINESS_OS_SETTINGS_DRAWER_S5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S5_WORKPLAN.md) (UI short path). **Dev code complete 2026-10-15, uncommitted, awaiting SA code review and QA.** Branch `feature/settings-drawer-s5` from `feature/settings-drawer-s4` (PR #408). In: every account-card chevron mirrors in Hebrew through one `rowChevron` helper (S-1 SA finding 4, S-4 O-2); `id="settings-section-plan"` kept, its "S-5 decides" note replaced by the reason (W-5: no sender found); two dead log-out helpers removed; every `?section=` link re-checked (audit table in the workplan). Out: plan-name and consent-status row values (C-8: not cheap, each needs a new page-load request plus reuse inside a money or legal component), and the champion email's `?section=invite-friends` (F-20, recommended as its own slice). No new page-load request, no server change, no new keys. New finding F-22 (`?tab=` links land on the plain page).
-**Status:** Re-sequenced 2026-10-14 (UI first), SA-approved with changes: Phase A S-1 → S-5, then Phase B D-1 → D-4; F-13 hotfix runs in parallel now; L-2 any time (see C-24 and "Re-sequencing (2026-10-14): UI first"). Before that, §9 SA-reviewed 2026-10-14: APPROVED WITH CONDITIONS (C-13 to C-26; see "SA Review of §9"). D-slices need their own Dev workplans and SA workplan review; D-4 waits for DE-0a; F-13 escalated to TL as a separate hotfix. (Earlier: scope extended 2026-10-14 (§9); user answers recorded 2026-10-14, §6 all recommendations accepted; SA review 2026-10-14 APPROVED WITH CONDITIONS for S-1 to S-5, see SA Review. S-1 workplan may start.)
+**Status (2026-10-15):** **Phase A COMPLETE** — S-1 to S-5 and F-18 all merged to `main` (§0). **Phase B (D-1 to D-4) NOT STARTED — waiting for the user's go-ahead.** Full handover in [§0](#0-current-status-and-handover-2026-10-15). Per-slice history is in each workplan and in the Change History below.
 **Page reviewed:** `app/business-os/settings/page.tsx` (1,300 lines, read in full on `main` 2026-10-14) and the components it renders.
+
+---
+
+## 0. Current status and handover (2026-10-15)
+
+### 0.1 Phase A — UI drawers: ✅ COMPLETE
+
+| Slice | What | PR | Merge commit | Workplan |
+|---|---|---|---|---|
+| S-1 | Shared `SettingsDrawer` + Plan drawer | #388 | `936dfd04` | [S-1](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S1_WORKPLAN.md) |
+| S-2 | Change password drawer + `useLinkOpenedDrawer` hook | #389 | `5d7a0586` | [S-2](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S2_WORKPLAN.md) |
+| S-3 | Marketing permission drawer + discard guard (C-5) + F-17 fix | #397 | `dc9610f2` | [S-3](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S3_WORKPLAN.md) |
+| F-18 | Address picker no longer overwrites the stored marketing postal line (live bug since #229, 2026-10-06) | #406 | `53aefe89` | [F-18](/docs/workplans/BUSINESS_OS_SETTINGS_CONSENT_ADDRESS_PICKER_F18_WORKPLAN.md) |
+| S-4 | Invite friends drawer (one-time link safety) | #408 | `14f75c88` | [S-4](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S4_WORKPLAN.md) |
+| S-5 | Account card tidy (RTL chevrons, dead log-out helpers removed) | #409 | `ea2a9bf3` | [S-5](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_S5_WORKPLAN.md) |
+
+Every slice: SA approved, QA PASS WITH NOTES, QA test gaps closed and proven by mutation. Phase A ran under the user's fast-track (RM commits after SA approval; PRs set to `gh pr merge --auto --merge` + Auto-fix). **That fast-track and auto-merge applied to Phase A only — Phase B goes back to the standard flow (user sees the diff before RM commits; user merges) unless the user says otherwise.**
+
+### 0.2 Phase B — direct DB calls to server: ⬜ NOT STARTED (needs user go-ahead)
+
+Order and conditions are in §9 and the SA Review (C-13 to C-26, re-sequencing amendment of C-24). Every D-slice is **full cycle** (Dev workplan → SA workplan review → Dev → SA code review + QA → user diff → RM), one at a time from fresh `main`, never two open PRs on `page.tsx`.
+
+| Slice | What | Unblocked? |
+|---|---|---|
+| D-1 | Timezone write behind `PATCH /api/business-os/preferences` `{ timezone }` (C-14 to C-16) | ✅ F-13 fix (#387) merged |
+| D-2 | `/api/business-os/account-profile` GET + PATCH (C-17, C-18) | ✅ |
+| D-3 + L-1 | Avatar upload/delete server-side `/api/user/avatar` + hook logging (C-19 to C-21) | ✅ |
+| D-4 | Remove the page's `supabase` import + Jest guard (C-22) | ✅ DE-0a merged (`f7301fad`) |
+| L-2 | `CRMContactDrawerV2.tsx` 18 `console.*` → Pino (C-26) | any time |
+
+Note for D-slices: Phase A moved lines in `page.tsx` — find code by symbol, not line number (C-13), and record the `page.tsx` commit checked against.
+
+### 0.3 Owed by the user / a human tester
+
+| Item | Where |
+|---|---|
+| Manual browser checks for every slice (desktop + phone, en + he) — none run | Each workplan's manual checklist (S-1 Q1–Q13, S-2 P1–P14, S-3 K1–K21, F-18 M1–M11 on a test account, S-4 Q1–Q10 with a champion account, S-5 Q1–Q6) |
+| F-18 exposure check on prod (read-only, counts only) | F-18 workplan, "Exposure check" SQL + reading table |
+| 3-D Secure inside the Plan drawer (gates plan payments going live) | `BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md` §9.5 row 20 |
+| Check he/es wording of the discard prompt and consent errors | S-3 workplan (6 keys) |
+
+### 0.4 Open decisions and follow-ups
+
+| Item | Severity | Needs |
+|---|---|---|
+| **F-22** Stripe Connect return/refresh (`?tab=`/`stripe=`) lands on the plain settings page | Medium | User: where should the owner land after Stripe Connect, and should payments settings open by themselves? Then a small full-cycle slice |
+| **F-23** `signOutUser` has no deadline, wrong storage keys, and a 5xx can leave the browser signed in (Offir's fix `c1a427e6` lost in a merge) | Medium | User: schedule before or after Phase B. Full cycle; fix in `lib/client/auth-actions.ts`; add a test that log-out goes through `signOutUser` |
+| **F-20** Champion email → `?section=invite-friends` (opens the drawer) | Low | Own small slice with SA workplan review |
+| **F-21** Invite link lost on a refused resend / failed refresh | Low | Client-only fix later |
+| **F-19** Picker delete-confirm has no Escape and sits under the discard prompt | Low | Needs a layer option on the shared dialog (new pattern) |
+| Plan name on the Plan row | Optional | Only if the user asks (C-8: needs `PlanSection` data reuse) |
+| `typecheck:bos-llm` baseline entry for `app/api/onboarding/build/route.ts` now fixed | Chore | One-line baseline tighten |
+
+### 0.5 Working environment
+
+- Worktree used for Phase A: `../neuronforge-settings-drawers` (its `node_modules` is a **junction to the main checkout's** — unlink the junction before any `git worktree remove`; never `--force`).
+- Never `git stash` in this repo (shared stash list across worktrees).
 
 ## Overview
 
@@ -23,6 +74,7 @@ The user noticed that the Business OS settings page does not use the side-drawer
 
 ## Table of Contents
 
+0. [Current status and handover (2026-10-15)](#0-current-status-and-handover-2026-10-15)
 1. [The drawer pattern as built](#1-the-drawer-pattern-as-built)
 2. [Inventory of the settings page](#2-inventory-of-the-settings-page)
 3. [Recommendation per function](#3-recommendation-per-function)
@@ -812,3 +864,4 @@ Either way C-3's behaviour is unchanged. `window.history` hand-edits are not a s
 | 2026-10-15 | S-4 SA code review | APPROVED WITH CONDITIONS (S-4 workplan, SA Code Review). C-6, C-4, C-8, C-10 (code side) and C-12 verified; must-stay-green set re-run, 26 suites / 717 tests pass. Rulings: Q-1 keep the draft, no `isDirty`; Q-2 the hash does not open the drawer in S-4 and no page-level hash reader, preferred direction `?section=invite-friends` through the existing deep-link effect (F-20); Q-3 `isBusy` on revoke approved; Q-4 approved. Dev's "F-19" in the row above is renumbered **F-20** (F-19 is the picker delete-confirm finding from the F-18 cycle). New §7 rows F-20 (email hash) and F-21 (the link can disappear without Dismiss: a second or refused send, or a failed reload after a send). Condition for RM only: the branch predates #406, which edits this file, so merge `origin/main` and keep both sides (F-19 before F-20) |
 | 2026-10-15 | S-5 code complete | Tidy the account card on `feature/settings-drawer-s5` (from `feature/settings-drawer-s4`), uncommitted, UI short path. `page.tsx` only: `rowChevron(tone)` mirrors every account-card chevron in Hebrew and marks it `aria-hidden` (Delete keeps its red as a tone, since `cn` does not merge classes); plan anchor kept with its reason (W-5); dead `withDeadline` and `clearSessionKeys` removed. Frozen code (C-9) untouched. Out, with reasons in the workplan: plan and consent row values (C-8), champion email `?section=invite-friends` (F-20). New `accountCard.guard.test.ts` (8); must-stay-green set 29 suites / 754 tests pass; 7/7 mutations caught. New finding F-22 |
 | 2026-10-15 | S-5 SA code review | APPROVED (S-5 workplan, SA Code Review). SA re-ran the must-stay-green set: 29 suites / 754 tests pass. Frozen code is untouched, and `rowChevron` passes the tone as an argument, which is correct because `cn` does not merge classes. Rulings: Q-1 and Q-2 approved. Q-3: row values out, the plan name may be offered as an optional idea, consent status dropped. Q-4: F-20 is its own slice. Q-5: F-22 moved to Medium, schedule a slice (the Stripe Connect return lands on the plain page), with two business questions for the user. New §7 row F-23: Offir's log-out deadline and session-clear fix (`c1a427e6`) was lost in a merge with `31976f13`; it is to be ported into `signOutUser` in a full cycle |
+| 2026-10-15 | Phase A complete; handover | §0 added: Phase A slices with PRs and merge commits, Phase B status and order, user-owed checks, open decisions (F-22, F-23) and follow-ups. The per-slice progress lines (S-1..S-5, F-18) and the old Status line were replaced by §0; their content lives in each workplan and in the rows above. |
