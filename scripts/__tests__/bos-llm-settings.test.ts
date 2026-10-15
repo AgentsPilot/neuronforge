@@ -259,7 +259,9 @@ describe('verify-stored: the P-3 pre-apply gate (T1-13, RC-W1a)', () => {
     store.set('bizchat_analysis_enabled', 'TRUE');
     store.set('lead_reply_recommender_model', 'gpt-4o-mini');
     store.set('lead_reply_recommender_enabled', false);
-    store.set('image_generation_model', 'gpt-image-1');
+    // A priced image model. gpt-image-1 no longer is (its prices were removed
+    // on 2026-10-14, Q10), so the guardrails would rightly refuse it here.
+    store.set('image_generation_model', IMAGE_GENERATION_CONFIG_DEFAULTS.model);
 
     expect(await runBosLlmSettingsCommand(['verify-stored'])).toBe(0);
     expect(mockSet).not.toHaveBeenCalled();
@@ -308,16 +310,13 @@ describe('verify-equivalence: the P-5b post-seed gate (T1-13b, RC-W1b)', () => {
     store.set('bizchat_analysis_enabled', true);
     store.set('lead_reply_recommender_model', 'gpt-4o-mini');
     store.set('lead_reply_recommender_enabled', true);
-    store.set('image_generation_model', 'gpt-image-1');
-    // The image legacy reader is mocked, so it must return what is stored. It
-    // used to agree by accident: the code default WAS `gpt-image-1` until
-    // 2026-10-14, when the default moved off the retiring model.
-    mockGetImageGenerationConfig.mockResolvedValue({
-      ...IMAGE_GENERATION_CONFIG_DEFAULTS,
-      model: 'gpt-image-1',
-      pricesUsd: {},
-    });
-    seedAllAreas();
+    // The image legacy reader is mocked and returns the code default, so the
+    // stored value and the images row name that model too. The seed's own
+    // images row names gpt-image-1, which the guardrail now refuses (its
+    // prices were removed on 2026-10-14, Q10); agreement must not rest on that
+    // refusal, so the row is given a priced model explicitly.
+    store.set('image_generation_model', IMAGE_GENERATION_CONFIG_DEFAULTS.model);
+    seedAllAreas({ images: { ...SEEDED_ROWS.images, model: IMAGE_GENERATION_CONFIG_DEFAULTS.model } });
 
     expect(await runBosLlmSettingsCommand(['verify-equivalence'])).toBe(0);
     expect(mockSet).not.toHaveBeenCalled();
