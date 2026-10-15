@@ -17,6 +17,12 @@
  * The full chain per table is NOT re-pinned here: the route's characterization
  * test (app/api/user/data-export/__tests__/route.characterization.test.ts) owns
  * that (C-6).
+ *
+ * DE-2 (BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md §2.4, T-10 / T-11, SA C-6): the
+ * column lists moved onto the purge descriptors (`export.columns`). Each read
+ * selects exactly `exportColumnsOf(table).join(', ')`, the literal pins below
+ * and in the characterization test stay byte for byte, and a descriptor that
+ * cannot be exported fails the read closed (`{ data: null, error }`).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -45,6 +51,8 @@ jest.mock('@/lib/logger', () => {
 
 import { UserProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import { PluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
+import * as classification from '@/lib/business-os/data-export/classification';
+import { ExportClassificationError, exportColumnsOf } from '@/lib/business-os/data-export/classification';
 
 type Call = [string, ...unknown[]];
 type Result = { data: unknown; error: unknown };
@@ -106,6 +114,10 @@ const CASES: Case[] = [
 
 beforeEach(() => {
   mockLogged.length = 0;
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe('GDPR data export repository reads', () => {
@@ -200,5 +212,41 @@ describe('GDPR data export repository reads', () => {
     // `metadata` is a real, exported column on credit_transactions only; on
     // plugin_connections it does not exist (NF-1).
     if (table === 'plugin_connections') expect(columns).not.toContain('metadata');
+  });
+  /** The select string a recorded read issued, or undefined. */
+  const selectOf = (calls: Call[]) => calls.find((c) => c[0] === 'select')?.[1];
+
+  it.each(CASES)('$name selects exactly the descriptor export columns (DE-2, T-11)', async ({ table, read }) => {
+    const { client, calls } = recordingClient({ data: [], error: null });
+    await read(client);
+    expect(selectOf(calls)).toBe(exportColumnsOf(table).join(', '));
+  });
+
+  it('the equality check can fail: a select with one extra column does not match (negative control)', () => {
+    const recorded = `${exportColumnsOf('plugin_connections').join(', ')}, access_token`;
+    expect(recorded).not.toBe(exportColumnsOf('plugin_connections').join(', '));
+  });
+
+  it('the profile columns are still byte-identical to the DE-1 list (SA C-6 literal pin)', async () => {
+    const { client, calls } = recordingClient({ data: null, error: null });
+    await new UserProfileRepository(client).findForUserDataExport(USER);
+    expect(selectOf(calls)).toBe(
+      'id, full_name, avatar_url, company, job_title, timezone, language, created_at, updated_at, ' +
+        'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id'
+    );
+  });
+
+  it.each(CASES)('$name fails closed when the descriptor cannot be exported: { data: null, error }, no query (DE-2, T-10)', async ({ table, read }) => {
+    const refusal = new ExportClassificationError('denied_column', table, 'planted');
+    jest.spyOn(classification, 'exportColumnsOf').mockImplementation(() => {
+      throw refusal;
+    });
+    const { client, tables } = recordingClient({ data: [], error: null });
+    const result = await read(client);
+    expect(result).toEqual({ data: null, error: refusal });
+    expect(tables).toEqual([]);
+    const errors = mockLogged.filter((l) => l.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].fields).toMatchObject({ err: refusal, userId: USER });
   });
 });

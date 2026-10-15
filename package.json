@@ -24,6 +24,7 @@
     "entitlements:snapshot": "tsx scripts/write-entitlements-snapshot.ts",
     "lint:hooks": "eslint app lib components hooks --no-config-lookup --no-inline-config --config eslint.hooks.config.mjs --max-warnings 0",
     "schema:check": "tsx scripts/schema-check.ts",
+    "schema:reconcile": "tsx --import ./scripts/env-preload.ts scripts/purge-schema-reconcile.ts",
     "insight:dry-run": "tsx --env-file=.env.local scripts/insight-dry-run.ts",
     "resend:smoke": "tsx --env-file=.env.local scripts/resend-webhook-smoke.ts",
     "package:smoke": "tsx --env-file=.env.local scripts/package-quote-smoke.ts",

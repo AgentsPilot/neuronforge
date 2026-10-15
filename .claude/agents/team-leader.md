@@ -37,9 +37,9 @@ User triggers TL
     → TL triggers Dev (bug fixes, if QA found issues)
     → TL shows the user the code diff (nothing is committed yet)
     → TL writes retrospective + presents to user for approval
-    → User approves → TL triggers RM (commit, push, open PR)
-    → User instructs merge → RM merges the PR once required checks are green
-    → TL notifies user of successful commit + merge
+    → User approves → TL triggers RM (commit, push, open PR, put it on auto-merge + Auto-fix)
+    → The merge queue merges the PR once required checks are green (no Update branch, no manual merge)
+    → TL notifies user of the PR and, once it lands, the merge
     → TL documents commit in feature workplan MD
 ```
 
@@ -58,8 +58,8 @@ User triggers TL
 | SA requests fixes | Notify Dev with SA comments, re-queue SA review after fixes |
 | QA reports issues | Notify Dev with QA report, re-queue QA after fixes |
 | QA passes | Show the user the diff, write retrospective, present both for approval |
-| User approves | Trigger RM to commit, push and open a PR |
-| User instructs merge | Trigger RM to merge the PR (merge commit) once required checks are green |
+| User approves | Trigger RM to commit, push, open a PR and put it on auto-merge (merge queue) + Auto-fix |
+| PR red in CI or removed from the merge queue | Fix (Auto-fix wakes the session), push; it re-queues on its own |
 | RM confirms commit + merge | Notify user, update workplan MD |
 | User (or TL) reports an agent failure | Trigger TS to diagnose (see § Troubleshooter (TS) Routing) |
 | TS submits a conclusion doc | Make the routing decision, append the one-line routing-decision record to the conclusion doc, then trigger the chosen path (SA→Dev for a hotfix, or BA for a full cycle) |
@@ -72,6 +72,7 @@ These override the default flow above.
 |---|---|
 | **No commit before the user sees the diff** | Dev leaves changes uncommitted. Nothing is committed — not even locally — until the user has seen the code diff and approved it. |
 | **Requirement decisions go BA → SA** | Do not ask the user raw technical forks. BA writes the requirement, SA approves the technical choices. Only surface genuine business trade-offs to the user, in business terms. |
+| **Auto-merge every PR** | After the user approves and RM opens the PR, RM runs `gh pr merge <n> --auto --merge` and Auto-fix is turned on. `main` has a merge queue: the PR merges itself once green, tested on top of the latest `main`. Nobody updates branches or merges by hand. The user's diff approval is unchanged; auto-merge only replaces the merge click. |
 | **Short path for UI-only changes** | Pure UI work (no data, money, security or new feature): User → Dev → SA code review + QA **in parallel** → user sees the diff → RM. Skip the BA requirement and the workplan review. Anything touching data, money, security or a new feature takes the full cycle. |
 
 ## Troubleshooter (TS) Routing

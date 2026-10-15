@@ -47,6 +47,95 @@
 // wrong band is caught by the test, not by review.
 
 import type { PurgeDescriptor, StorageDescriptor } from './types';
+import type { TableExportClassification } from '@/lib/business-os/data-export/classificationTypes';
+
+// ── Data export classification (DE-2) ───────────────────────────────────────
+// Every descriptor, table and bucket, carries a REQUIRED `export` field: is
+// this in "Download my data"? (BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.3.6,
+// FR-E17; BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md §4.) It is a second axis,
+// independent of `level`: the purge engine never reads it, and nothing here
+// derives one from the other. A new table is not done until it is classified:
+// lib/business-os/data-export/__tests__/exportClassification.test.ts fails CI
+// on a descriptor without one, on a secret column in an include list, and on a
+// section registry that disagrees with these rows.
+
+/** Why a table stays out of the export. Repeated reasons are named, not retyped. */
+const EXPORT_REASON = {
+  BILLING: 'DX-1: billing and credits are not exported',
+  AGENTS: 'not Business OS data (user 2026-10-14)',
+  ACTIVITY: 'DX-1d: activity (assistant chats, briefings, insights, emails sent) is not exported',
+  VISITOR: 'DX-1d / SQ-E7: visitor tracking, not exported',
+  AUDIT: "DX-1d: the owner's activity history is not exported; BD-26 hidden types never",
+  PLATFORM: "platform data, not this account's data",
+  ACTOR_REF: 'platform data; the account appears only as who changed a row',
+  SECRET: 'secrets and credentials are never exported (§3.2)',
+  CACHE: "cache or derived data, not the owner's data",
+  MODULE_SETUP: 'PLATFORM: module setup, not data the owner entered (user 2026-10-15)',
+  ORGANISATION: 'PLATFORM: agent-platform organisation record (user 2026-10-15)',
+} as const;
+
+/** Not in the export. `detail` adds what is specific to this table. */
+const exclude = (reason: string, detail?: string): TableExportClassification =>
+  ({ kind: 'exclude', reason: detail ? `${reason}; ${detail}` : reason });
+
+/** In scope, not built yet: `slice` adds the section. Allowed until DE-7. */
+const planned = (slice: Extract<TableExportClassification, { kind: 'planned' }>['slice']): TableExportClassification =>
+  ({ kind: 'planned', slice });
+
+/**
+ * The `profiles` columns the export reads (section `user_profile`): the
+ * person's own profile and onboarding answers. Listed by name so a column added
+ * later is NOT exported until someone decides it should be. Changing this
+ * changes what the export holds: a privacy decision. Order matters: the
+ * repository selects `columns.join(', ')`, pinned byte for byte.
+ *
+ * `plan` is left out ON PURPOSE (DE-1, SA ruling Q-3): the export carries
+ * profile details only, no plan or billing data (user decision DX-1a,
+ * requirement §0.3.1). `hourly_rate_usd`, `role` and `org_id` stay until DE-3
+ * decides the explicit Business OS profile set (§0.5).
+ * Moved from UserProfileRepository PROFILE_DATA_EXPORT_COLUMNS (DE-2).
+ */
+const PROFILES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'user_profile',
+  columns: [
+    'id', 'full_name', 'avatar_url', 'company', 'job_title', 'timezone', 'language', 'created_at', 'updated_at',
+    'role', 'domain', 'onboarding', 'onboarding_goal', 'onboarding_mode', 'onboarding_data', 'hourly_rate_usd', 'org_id',
+  ],
+  excludedColumns: {
+    plan: 'DX-1a / DE-1 SA Q-3: no plan or billing data',
+  },
+};
+
+/**
+ * The `plugin_connections` columns the export reads (section
+ * `plugin_connections`). Changing this changes what the export holds: a
+ * privacy decision. Order matters, as for PROFILES_EXPORT.
+ *
+ * `profile_data` IS read, because it holds the person's own provider profile,
+ * but some providers also store an access token inside it, under names nobody
+ * can predict, and the deny list cannot see inside a jsonb value. The control
+ * is the ALLOW-list `ACCOUNT_PROFILE_KEYS` in
+ * lib/business-os/data-export/sections.ts (`accountProfile`, SA C-1): only
+ * those keys reach the file, never the raw value (DE-2 SA C-4).
+ * Moved from PluginConnectionRepository USER_DATA_EXPORT_COLUMNS (DE-2).
+ */
+const PLUGIN_CONNECTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'plugin_connections',
+  columns: [
+    'user_id', 'plugin_key', 'plugin_name', 'username', 'email', 'scope', 'status', 'connected_at',
+    'created_at', 'updated_at', 'last_used', 'disconnected_at', 'profile_data',
+  ],
+  excludedColumns: {
+    id: 'internal row id, never output',
+    access_token: 'credential, never read',
+    refresh_token: 'credential, never read',
+    expires_at: 'token plumbing',
+    last_refreshed_at: 'token plumbing',
+    settings: 'free-form; a secret could land there unseen',
+  },
+};
 
 /**
  * Ordering bands. Lower runs first.
@@ -210,159 +299,159 @@ export const CASCADE_COUNT_EXEMPT: readonly string[] = ['crm_activities'];
 
 const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.1 Business profile ────────────────────────────────────────────────
-  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows',
+  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows', export: planned('DE-3'),
     notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy. Alone in the final band (TENANCY_ROOT): 56 tables CASCADE from it (measured 2026-10-05; 57 with business_addresses, 20261037), so it goes last or their counts read 0 (F-SA-3).' },
   // Added 2026-10-06 (20261036_business_addresses_book.sql + 20261037_…_ownership_fk.sql):
   // the address book behind business_profiles.address_parts / invoice_address.
-  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-3'),
     notes: 'The business\'s saved addresses. Same level as business_profiles, which Reset keeps: its address_id / invoice_address_id point here and its address_parts / invoice_address are copies of these rows, so a Reset that emptied the book would leave the profile showing an address the picker no longer offers. CASCADE child of business_profiles (business_addresses_business_fk), so CONFIG keeps it ahead of TENANCY_ROOT for an accurate count. Its only inbound FKs are those two business_profiles columns, ON DELETE SET NULL — no blocking edge.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
-  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-4'),
     notes: 'CRM hub. CASCADE parent of proposals and crm_activities. Has no DELETE trigger since 20260928_contact_delete_handled_in_app.sql dropped T1 (B4 retired, slice 3a).' },
-  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows',
+  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows', export: planned('DE-4'),
     notes: 'DELETED LAST. The single live T5 residue path writes here mid-purge; ordering is the only available mitigation.' },
-  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-4'),
     notes: 'Seeded by /api/onboarding/build; Reset keeps them so the board still works.' },
-  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4') },
+  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 
   // ── §3.3 Website ─────────────────────────────────────────────────────────
-  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-7') },
+  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids', export: planned('DE-7'),
     notes: 'No user_id column. Child ids captured pre-delete so AC-5 has an oracle (C-13).' },
-  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-7'),
     notes: '1:1. No DELETE RLS policy.' },
-  { table: 'website_page_views', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'website_page_views', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.VISITOR),
     notes: 'IDS ONLY (DEV-Q6). Unbounded, publicly writable (WITH CHECK true), append-only, forensically worthless row-by-row. A row ceiling here would make a busy business undeletable.' },
 
   // ── §3.4 Scheduling ──────────────────────────────────────────────────────
-  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows',
+  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-4') },
+  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows', export: planned('DE-4'),
     notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a). ROOT - 2 (2026-10-08): N1 — contact_id is NOT NULL with ON DELETE SET NULL to crm_contacts, so deleting a contact first fails with 23502; it must run before crm_contacts (ROOT). Still after payment_plan_subscriptions (B2) and before scheduling_services, its CASCADE parent.' },
-  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4') },
+  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
 
   // ── §3.5 Payments ────────────────────────────────────────────────────────
-  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: planned('DE-5'),
     notes: 'B1 — RESTRICT onto payment_transactions, so this goes first. Deleting it fires T2, the single T5 residue path.' },
-  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: planned('DE-5'),
     notes: 'B2 (RESTRICT onto scheduling_bookings), so this goes first. CASCADE parent of payment_plan_installments, which sit in PRE_BLOCKING ahead of it. SELECT-only RLS.' },
-  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows',
+  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows', export: planned('DE-5'),
     notes: 'CASCADE child of payment_plan_subscriptions (BLOCKING_CHILD), so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
-  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows',
+  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: planned('DE-5'),
     notes: 'CASCADE child of payment_plan_installments, so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
-  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
+  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5'),
     notes: 'Live — 2026-08-14_drop_payment_methods.sql was never applied. Measured, not assumed.' },
-  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-5'),
     notes: 'Holds credentials JSONB. Kept by Reset so test payments work immediately.' },
-  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-5'),
     notes: 'The pre-flight gate READS this in phase 1, long before phase 2 deletes it.' },
 
   // ── §3.6 Email automation ────────────────────────────────────────────────
-  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'email_sends', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'email_sends', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
+  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
     notes: 'K* — RETAINED BY BOTH LEVELS (D8). A third party withdrew consent. auth.users survives, so the same user_id can re-onboard; deleting this would resume emailing people who opted out. FR-23 requires the copy to say so. Now DERIVED from marketing_consent_events by trigger, and kept because this promise is made to users in two places.' },
 
-  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
     notes: 'The newsletter audience. Reset clears it with the rest of the business data — unlike the consent ledger, which records what each person AGREED to and is retained forever. A rebuilt business starts with an empty list and has to earn it again.' },
 
   // ── §3.6b Marketing consent ──────────────────────────────────────────────
-  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6'),
     notes: 'Same reasoning as email_unsubscribes, in both directions. A withdrawal must outlive the business, or a reset resumes mailing people who opted out. A GRANT must outlive it too: the evidence of what someone agreed to is what answers a complaint or a subject access request years later, and it cannot be reconstructed.' },
-  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
     notes: 'The projection the send gate reads. Deleting it would read as "no decision recorded", which fails closed for grants but would also lose every suppression. Derived, but not disposable.' },
-  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6'),
     notes: 'Business configuration — the tenant\'s own consent wording, privacy notice and postal address. Unlike the decisions above, this is theirs, not their clients\'.' },
 
   // ── §3.7 Intake ──────────────────────────────────────────────────────────
-  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },
-  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6'),
     notes: 'Confirmed live by T1, so §10.2 para 2 is firm and AC-3 asserts it unconditionally.' },
 
   // ── §3.8 Onboarding & chat ───────────────────────────────────────────────
-  { table: 'onboarding_conversations', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'onboarding_conversations', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Append-only RLS; /api/onboarding/chat/reset already hard-deletes these.' },
-  { table: 'onboarding_prompt_ideas', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'command_sessions', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_chat_conversation', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'onboarding_prompt_ideas', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
+  { table: 'command_sessions', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
+  { table: 'business_chat_conversation', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'user_id is the PRIMARY KEY, so at most one row per business. A low count here is correct, not a broken query.' },
-  { table: 'business_chat_action_log', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_chat_action_log', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Deleted, and the idempotency keys are NOT retained — FR-24 accepts the plan-level re-arm deliberately.' },
-  { table: 'business_chat_saved_plans', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_chat_verified_questions', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_chat_saved_plans', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
+  { table: 'business_chat_verified_questions', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'user_id is NOT NULL (measured) — so §8.2\'s portable-row shape does NOT apply here, unlike business_chat_plan_cache. Plain scoped delete.' },
-  { table: 'business_chat_plan_cache', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_chat_plan_cache', level: 'reset', area: 'onboarding_chat', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.CACHE),
     notes: 'user_id is NULLABLE (measured). Rows WHERE user_id IS NULL are PORTABLE and shared by every tenant. The predicate is `user_id = p_user_id` and must stay equality — `<>`, `IS DISTINCT FROM` and `NOT IN` are FORBIDDEN here (§8.2). Those surviving rows are also why a planId can recur post-purge (FR-24).' },
 
   // ── §3.9 Capabilities ────────────────────────────────────────────────────
-  { table: 'user_capabilities', level: 'purge', area: 'capabilities', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows' },
-  { table: 'user_capability_blocks', level: 'purge', area: 'capabilities', scope: { kind: 'via', parent: 'user_capabilities', fk: 'user_capability_id' }, order: ORDER.CONFIG - 1, snapshot: 'ids',
+  { table: 'user_capabilities', level: 'purge', area: 'capabilities', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: exclude(EXPORT_REASON.MODULE_SETUP) },
+  { table: 'user_capability_blocks', level: 'purge', area: 'capabilities', scope: { kind: 'via', parent: 'user_capabilities', fk: 'user_capability_id' }, order: ORDER.CONFIG - 1, snapshot: 'ids', export: exclude(EXPORT_REASON.MODULE_SETUP),
     notes: 'No user_id. Child ids captured pre-delete for AC-5. Ordered one ahead of its parent so the reported count is the rows this delete actually removed, rather than 0 because the parent CASCADE got there first.' },
 
   // ── §3.10 Conversion / attribution ───────────────────────────────────────
-  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'smart_link_clicks', level: 'reset', area: 'smart_links', scope: { kind: 'via', parent: 'smart_links', fk: 'smart_link_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-7') },
+  { table: 'smart_link_clicks', level: 'reset', area: 'smart_links', scope: { kind: 'via', parent: 'smart_links', fk: 'smart_link_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.VISITOR),
     notes: 'IDS ONLY (DEV-Q6) and no user_id. Publicly writable (WITH CHECK true). Ids-only still satisfies AC-5, which needs the ids and not the rows.' },
 
   // ── §3.11 Channel insights ───────────────────────────────────────────────
-  { table: 'channel_connections', level: 'purge', area: 'channels', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'channel_connections', level: 'purge', area: 'channels', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'and it holds account_token'),
     notes: 'Holds account_token. ALWAYS deleted by Purge regardless of the integrations checkbox — the UI must not imply otherwise (AC-32).' },
-  { table: 'channel_metrics_daily', level: 'reset', area: 'channels', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'channel_metrics_daily', level: 'reset', area: 'channels', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'After a Reset, channel_connections and its last_synced_at both survive, so this returns on the connection\'s NEXT SCHEDULED sync — up to ~20h, not within the hour (FR-26 as amended).' },
 
   // ── §3.12 Insights ───────────────────────────────────────────────────────
-  { table: 'insight_automations', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'insight_automations', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'B3 — NO ACTION onto kernel_executions, so this goes first.' },
-  { table: 'insights', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows',
+  { table: 'insights', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Self-FK correlation_parent_id is SET NULL — cosmetic, needs no ordering.' },
   // Admin delete AD-1a (SC-8, SA-1(a)): found unclassified on prod 2026-10-04.
-  { table: 'insight_actions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'insight_actions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Chase-invoice / follow-up actions the insights engine proposes to the owner about their clients — business data. Its FK to business_profiles is CASCADE, so before AD-1a a Purge emptied it with no snapshot and no count (the only uncounted cascade child of business_profiles, SA-1(a)). Measured live 2026-10-04: no inbound FK; outbound insight_id -> insights SET NULL, contact/booking/invoice CASCADE — no blocking edge, so LEAF.' },
-  { table: 'owner_insight_history', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'owner_insight_history', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
   // Test-account cleanup first live run (2026-10-07): both found unclassified on prod.
   // PR #257 then committed their CREATE TABLEs (20261006e, 20261006g) and added both to
   // the ownership migration's business_owned array (20260916), whose loop is what creates
   // the `<table>_business_fk` CASCADE measured live. One descriptor each (main-fix 2026-10-08).
-  { table: 'insight_hypotheses', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'insight_hypotheses', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Model-proposed findings awaiting review (20261006e): claim, query, confirm_when, verdict about this business. A published row is copied into `insights`, not joined to it. Business data. Measured live 2026-10-07: user_id NOT NULL with insight_hypotheses_business_fk -> business_profiles(user_id) CASCADE; no other FK, no inbound FK, no trigger. decided_by is a plain uuid with no FK. No blocking edge, so LEAF. FK discrepancy reconciled 2026-10-08: 20261006e itself declares no FK; the business_fk comes from the 20260916 ownership loop (#257 added the table to its array), so the live measurement stands. RLS: 20261006e enables RLS with no policy (operator-only), matching the live probe (anon sees 0 of its 12 rows).' },
-  { table: 'insight_measurements', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'insight_measurements', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Re-readings of the insight metric after the owner acted or dismissed (20261006g): value_before, value_after, verdict. Business data. Measured live 2026-10-07: user_id NOT NULL with insight_measurements_business_fk -> business_profiles(user_id) CASCADE, insight_id NOT NULL -> insights CASCADE; no inbound FK, no trigger. LEAF, so it runs before insights (ROOT) and reports its own count rather than 0 from the cascade. Both FKs are declared by 20261006g (insight_id inline; business_fk explicitly, and also by the 20260916 ownership loop). RLS: 20261006g enables RLS with no policy (operator-only); live measurement found no policy, consistent.' },
-  { table: 'business_events', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'business_events', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'Hazard H1 — no emitters; likely empty. Also one of insight-detect\'s four tenant-enumeration sources, all of which Reset deletes (FR-26).' },
-  { table: 'derived_metrics', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'business_health_summaries', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'derived_metrics', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.CACHE) },
+  { table: 'business_health_summaries', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
 
   // ── §3.13 Kernel (insight-triggered) ─────────────────────────────────────
-  { table: 'kernel_executions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'kernel_action_log', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
+  { table: 'kernel_executions', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
+  { table: 'kernel_action_log', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
 
   // ── §3.14 Owner configuration ────────────────────────────────────────────
-  { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
+  { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-3'),
     notes: 'K* — RETAINED BY BOTH LEVELS. Holds preferred_language and currency. Deleting it resets the owner\'s language while they are reading the result screen, and renders their NEXT sign-in wrong — on a login that survives every level (D3).' },
 
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
-  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5'),
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
-  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
     notes: 'Lead data is customer data.' },
-  { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'daily_briefing_sends', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
+  { table: 'daily_briefing_sends', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'A send log. It has the email_unsubscribes flavour but not its substance: a send history is the business\'s own activity record, not a third party\'s withdrawal of consent, so D8\'s retention reasoning does not extend to it.' },
-  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-7'),
     notes: 'CONFIRMED at T4: storage_path points at the EXISTING website-images bucket (GeneratedImageService and StockImageService both write BUCKET = website-images and record here). So NO fourth StorageDescriptor is needed and AC-4 does not extend to a new bucket.' },
 ];
 
@@ -371,31 +460,31 @@ const IN_SCOPE: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 const OPT_IN: PurgeDescriptor[] = [
-  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows',
-    notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it.' },
+  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: PLUGIN_CONNECTIONS_EXPORT,
+    notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it. Export (DE-2): disconnected rows are a STATUS, not a soft delete (DE-1 SA Q-7), so they stay in the export. profile_data is read but only its allow-listed keys reach the file (ACCOUNT_PROFILE_KEYS in data-export/sections.ts, SA C-4).' },
 
   // "Also delete my agents". B6 and B7 both live here, and both are invisible
   // to a default T28 run because the option is off by default (C-28).
-  { table: 'agent_logs', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows',
+  { table: 'agent_logs', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'B6 — NO ACTION onto agents, so this must precede it.' },
-  { table: 'agent_scheduler_state', level: 'optional:agents', area: 'agents', scope: { kind: 'via', parent: 'agents', fk: 'agent_id' }, order: ORDER.BLOCKING_CHILD + 1, snapshot: 'ids',
+  { table: 'agent_scheduler_state', level: 'optional:agents', area: 'agents', scope: { kind: 'via', parent: 'agents', fk: 'agent_id' }, order: ORDER.BLOCKING_CHILD + 1, snapshot: 'ids', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'B7 (C-30). NO tenancy column at all, so FR-1\'s predicate cannot see it by construction — it is reachable only through the blocking-edge check. last_execution_id -> agent_executions is NO ACTION. agent_id -> agents is CASCADE, so deleting agents would clear it incidentally, but relying on that would make the order depend on an FK action someone can later change to SET NULL.' },
-  { table: 'agents', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows' },
-  { table: 'agent_executions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT - 1, snapshot: 'rows',
+  { table: 'agents', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS) },
+  { table: 'agent_executions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.ROOT - 1, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'CASCADE child of agents, so it goes one ahead of it for an accurate count (slice 3a, M-4). Still after agent_scheduler_state (B7).' },
-  { table: 'agent_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'agent_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'Confirmed live at T4 — it was not a migration-file phantom.' },
-  { table: 'agent_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'agent_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'Distinct from agent_memory (singular). Both exist; see also run_memories and user_memory — four memory tables in total.' },
-  { table: 'run_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'user_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'run_memories', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS) },
+  { table: 'user_memory', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'The user\'s own remembered preferences — leaving it after "delete my agents" is the same defect that added the prompt threads.' },
-  { table: 'agent_prompt_threads', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'agent_prompt_workflow_generation_sessions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows' },
-  { table: 'data_decision_requests', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'agent_prompt_threads', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS) },
+  { table: 'agent_prompt_workflow_generation_sessions', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS) },
+  { table: 'data_decision_requests', level: 'optional:agents', area: 'agents', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AGENTS),
     notes: 'PENDING a requirement amendment — §8.10 still lists this as provisional `never`, awaiting the identification T4 was asked for. Supplied: written by lib/pilot/shadow/DataDecisionHandler.ts, keyed to agent_id/execution_id, and decision_context/user_decision hold the data the decision was about. SA ruled optional:agents (N11). Both its FKs are CASCADE, so it adds NO ordering constraint (B5 does not exist).' },
 
-  { table: 'audit_trail', level: 'optional:activityHistory', area: 'activity_history', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows',
+  { table: 'audit_trail', level: 'optional:activityHistory', area: 'activity_history', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.AUDIT),
     notes: 'user_id is SET NULL on the auth FK. With this option ticked, the audit record of THIS purge is still written afterwards.' },
   // Admin Archiving (Slice 2, condition C-4): the audit rows that have been moved
   // out of audit_trail. Same classification, scope and band as their source, so
@@ -403,7 +492,7 @@ const OPT_IN: PurgeDescriptor[] = [
   // `snapshot: 'ids'`, unlike audit_trail: archived history is the long tail by
   // definition, and a full-row snapshot above the 250,000-row SNAPSHOT_ROW_CEILING
   // would make a business with years of history impossible to purge.
-  { table: 'archived_records', level: 'optional:activityHistory', area: 'activity_history', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids',
+  { table: 'archived_records', level: 'optional:activityHistory', area: 'activity_history', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.AUDIT),
     notes: 'Archived audit_trail rows (Admin Archiving). No FK to auth.users on purpose (Slice 2 SA R-1), so the user_id survives account deletion and this scope still finds the rows. Its archive_run_id FK points at archive_runs, which is never, so it constrains no purge.' },
 ];
 
@@ -415,67 +504,79 @@ const OPT_IN: PurgeDescriptor[] = [
 // SA-2P1, and it is why a category name is not evaluable.
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Build a `never` descriptor. Scope is recorded for documentation only — a `never` row never emits a delete. */
-const never = (table: string, scope: PurgeDescriptor['scope'], notes: string): PurgeDescriptor =>
-  ({ table, level: 'never', scope, order: ORDER.LEAF, snapshot: 'ids', notes });
+/**
+ * Build a `never` descriptor. Scope is recorded for documentation only — a
+ * `never` row never emits a delete. `exportAs` is the data export
+ * classification (DE-2): never purged does not mean never exported.
+ */
+const never = (
+  table: string,
+  scope: PurgeDescriptor['scope'],
+  exportAs: TableExportClassification,
+  notes: string
+): PurgeDescriptor =>
+  ({ table, level: 'never', scope, order: ORDER.LEAF, snapshot: 'ids', notes, export: exportAs });
 
 const G = { kind: 'global' } as const;
 const U = { kind: 'user_id' } as const;
 
 const EXCLUDED: PurgeDescriptor[] = [
   // §8.1 Global catalogs — no user_id
-  never('capabilities', G, 'Shared catalog, RLS off. Deleting it breaks every user.'),
-  never('capability_building_blocks', G, 'Same.'),
-  never('website_templates', G, 'Public read; breaks website creation platform-wide.'),
-  never('intake_form_templates', G, 'Global catalog. Per the tenant-isolation-guard skill, do NOT invent a user_id filter on a global catalog.'),
+  never('capabilities', G, exclude(EXPORT_REASON.PLATFORM), 'Shared catalog, RLS off. Deleting it breaks every user.'),
+  never('capability_building_blocks', G, exclude(EXPORT_REASON.PLATFORM), 'Same.'),
+  never('website_templates', G, exclude(EXPORT_REASON.PLATFORM), 'Public read; breaks website creation platform-wide.'),
+  never('intake_form_templates', G, exclude(EXPORT_REASON.PLATFORM), 'Global catalog. Per the tenant-isolation-guard skill, do NOT invent a user_id filter on a global catalog.'),
 
   // §8.4 Organisation / multi-user
-  never('organizations', { kind: 'user_id' }, 'Keys on owner_user_id, NOT user_id — so FR-1\'s predicate cannot see it, which is the gap N15\'s union predicate closes. Every user gets a row via get_or_create_user_organization.'),
-  never('organization_members', U, 'Deleting a membership can strand a multi-user org.'),
+  never('organizations', { kind: 'user_id' }, exclude(EXPORT_REASON.ORGANISATION), 'Keys on owner_user_id, NOT user_id — so FR-1\'s predicate cannot see it, which is the gap N15\'s union predicate closes. Every user gets a row via get_or_create_user_organization.'),
+  never('organization_members', U, exclude(EXPORT_REASON.ORGANISATION), 'Deleting a membership can strand a multi-user org.'),
 
   // §8.5 Billing & quota — owner-ruled
-  never('subscriptions', U, 'Billing state.'),
-  never('storage_usage', U, 'Platform quota accounting; deleting it corrupts billing state. Also carries AFTER DELETE triggers that recompute quota.'),
-  never('user_subscriptions', U, 'OWNER RULING: the platform\'s commercial relationship with the customer, not the customer\'s data about their clients. A customer disputing a charge needs the evidence.'),
-  never('subscription_invoices', U, 'Owner ruling — as above.'),
-  never('billing_events', U, 'Owner ruling — as above.'),
-  never('credit_transactions', U, 'Owner ruling — as above.'),
-  never('boost_pack_purchases', U, 'Owner ruling — as above.'),
+  never('subscriptions', U, exclude(EXPORT_REASON.BILLING), 'Billing state.'),
+  never('storage_usage', U, exclude(EXPORT_REASON.PLATFORM, 'quota accounting'), 'Platform quota accounting; deleting it corrupts billing state. Also carries AFTER DELETE triggers that recompute quota.'),
+  never('user_subscriptions', U, exclude(EXPORT_REASON.BILLING), 'OWNER RULING: the platform\'s commercial relationship with the customer, not the customer\'s data about their clients. A customer disputing a charge needs the evidence.'),
+  never('subscription_invoices', U, exclude(EXPORT_REASON.BILLING), 'Owner ruling — as above.'),
+  never('billing_events', U, exclude(EXPORT_REASON.BILLING), 'Owner ruling — as above.'),
+  never('credit_transactions', U, exclude(EXPORT_REASON.BILLING), 'Owner ruling — as above.'),
+  never('boost_pack_purchases', U, exclude(EXPORT_REASON.BILLING), 'Owner ruling — as above.'),
 
   // §8.6 Org analytics — a different subsystem
-  never('advisor_reports', U, 'Org-analytics advisor, not Business OS Insights.'),
-  never('automation_slas', U, 'Workflow/agent SLAs.'),
-  never('metric_baselines', U, 'Agent-execution analytics, not derived_metrics.'),
-  never('group_metrics_rollup', U, 'Workflow-group analytics.'),
+  never('advisor_reports', U, exclude(EXPORT_REASON.AGENTS), 'Org-analytics advisor, not Business OS Insights.'),
+  never('automation_slas', U, exclude(EXPORT_REASON.AGENTS), 'Workflow/agent SLAs.'),
+  never('metric_baselines', U, exclude(EXPORT_REASON.AGENTS), 'Agent-execution analytics, not derived_metrics.'),
+  never('group_metrics_rollup', U, exclude(EXPORT_REASON.AGENTS), 'Workflow-group analytics.'),
 
   // §8.7 Kernel / V6 learning
-  never('calibration_history', U, 'Kernel learning.'),
-  never('error_patterns', U, 'Kernel learning.'),
-  never('execution_anomalies', U, 'Kernel learning.'),
-  never('execution_baselines', U, 'Kernel learning.'),
-  never('plugin_performance', U, 'Kernel learning.'),
+  never('calibration_history', U, exclude(EXPORT_REASON.AGENTS), 'Kernel learning.'),
+  never('error_patterns', U, exclude(EXPORT_REASON.AGENTS), 'Kernel learning.'),
+  never('execution_anomalies', U, exclude(EXPORT_REASON.AGENTS), 'Kernel learning.'),
+  never('execution_baselines', U, exclude(EXPORT_REASON.AGENTS), 'Kernel learning.'),
+  never('plugin_performance', U, exclude(EXPORT_REASON.AGENTS), 'Kernel learning.'),
+  // Data export DE-2 (§0.3.6, SA-Q9): the only USER_OWNED_TABLES entry that had no descriptor.
+  never('intent_examples', G, exclude(EXPORT_REASON.AGENTS),
+    'V6 few-shot intent catalog (PII-stripped examples). No user_id: its only CREATE TABLE (20260629_intent_examples_table.sql) has none and the live dump of 2026-09-15 measured none, so scope global and FR-1 never enumerates it. Listed in USER_OWNED_TABLES although it has no user_id: decide in the next ownership pass (DE-2 SA-Q9 follow-up).'),
 
   // §8.8 Platform identity
-  never('admin_users', U, 'Deleting rows here locks admins out. The trusted admin signal — never profiles.role.'),
-  never('profiles', U, 'D3 — never deleted. (Its FK is profiles.id -> auth.users(id), not a user_id column.)'),
+  never('admin_users', U, exclude(EXPORT_REASON.PLATFORM, 'platform authorization'), 'Deleting rows here locks admins out. The trusted admin signal — never profiles.role.'),
+  never('profiles', U, PROFILES_EXPORT, 'D3 — never deleted. (Its FK is profiles.id -> auth.users(id), not a user_id column.)'),
 
   // §8.10 Agent / workflow platform (kernel)
-  never('agent_configurations', U, 'Agent platform.'),
-  never('agent_execution_logs', U, 'Agent platform.'),
-  never('agent_templates', U, 'Agent platform.'),
-  never('agentkit_analytics', U, 'Agent platform.'),
-  never('calibration_sessions', U, 'Agent platform.'),
-  never('workflow_executions', U, 'Agent platform.'),
-  never('pilot_step_routing_history', U, 'Agent platform. Its public policies were removed by migration 20261055 (server-only plus an admin SELECT policy). execution_insights still carries its N17 policy, tracked separately.'),
-  never('shadow_failure_snapshots', U, 'Agent platform.'),
-  never('shared_agents', U, 'Agent platform.'),
-  never('execution_insight_runs', U, 'The OTHER insights system — agent execution quality, not the owner\'s business. The name collision is the most common mistake in this area.'),
-  never('execution_insights', U, 'The OTHER insights system. Also carries a public WITH CHECK (true) INSERT policy (N17).'),
-  never('agent_stats', U, 'BASE TABLE, not a view — confirmed by Part 2, so it needs this descriptor. Agent platform telemetry.'),
-  never('agent_intensity_metrics', U, 'BASE TABLE, not a view — confirmed by Part 2. Agent platform telemetry.'),
+  never('agent_configurations', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('agent_execution_logs', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('agent_templates', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('agentkit_analytics', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('calibration_sessions', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('workflow_executions', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('pilot_step_routing_history', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform. Its public policies were removed by migration 20261055 (server-only plus an admin SELECT policy). execution_insights still carries its N17 policy, tracked separately.'),
+  never('shadow_failure_snapshots', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('shared_agents', U, exclude(EXPORT_REASON.AGENTS), 'Agent platform.'),
+  never('execution_insight_runs', U, exclude(EXPORT_REASON.AGENTS), 'The OTHER insights system — agent execution quality, not the owner\'s business. The name collision is the most common mistake in this area.'),
+  never('execution_insights', U, exclude(EXPORT_REASON.AGENTS), 'The OTHER insights system. Also carries a public WITH CHECK (true) INSERT policy (N17).'),
+  never('agent_stats', U, exclude(EXPORT_REASON.AGENTS), 'BASE TABLE, not a view — confirmed by Part 2, so it needs this descriptor. Agent platform telemetry.'),
+  never('agent_intensity_metrics', U, exclude(EXPORT_REASON.AGENTS), 'BASE TABLE, not a view — confirmed by Part 2. Agent platform telemetry.'),
 
   // §8.11 Token accounting
-  never('token_usage', U, 'Token accounting.'),
+  never('token_usage', U, exclude(EXPORT_REASON.BILLING, 'usage and our provider cost'), 'Token accounting.'),
 
   // §8.13 Business OS entitlements (subscription module, component 1)
   //
@@ -484,62 +585,62 @@ const EXCLUDED: PurgeDescriptor[] = [
   // account a fresh trial, which is a commercial loophole, not a start-over.
   // They are keyed to auth.users, NOT cascaded from business_profiles, so
   // neither Reset nor Purge can reach them by accident either.
-  never('business_os_account_plans', U,
+  never('business_os_account_plans', U, exclude(EXPORT_REASON.BILLING),
     'Entitlement state (tier, cohort, expiries). Deleting it would restart the trial clock — a Reset must not be a way to get another free period. Keyed to auth.users, not business_profiles.'),
-  never('business_os_entitlement_overrides', U,
+  never('business_os_entitlement_overrides', U, exclude(EXPORT_REASON.BILLING),
     'The durable record of what an admin granted or revoked, and why. Support evidence; also never deleted by the admin reset, which ends rows instead.'),
-  never('business_os_entitlement_shadow_events', U,
+  never('business_os_entitlement_shadow_events', U, exclude(EXPORT_REASON.CACHE, 'platform counters'),
     'Aggregated "what would have been gated" counters. Platform observability about the product, not the owner\'s business data.'),
 
   // Credit deduction slice 3b-i (SA-S8, workplan §6.5): the credit ledger (any service, one pool).
   // `never` for the same reason as the plan rows above, and more so: this is
   // the bill. Keyed to auth.users, not business_profiles, so no Reset or Purge
   // can reach it through the business cascade either.
-  never('business_os_credit_charges', U,
+  never('business_os_credit_charges', U, exclude(EXPORT_REASON.BILLING),
     'The bill: one row per charged Business OS action, AI or any other service. Never purged and never archived — a Reset that removed it would erase what the account was charged. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
-  never('business_os_credit_totals', U,
+  never('business_os_credit_totals', U, exclude(EXPORT_REASON.BILLING),
     'The running total of business_os_credit_charges per billing period. Derived from the bill and rebuilt from it; never purged. Keyed to auth.users (ON DELETE CASCADE), not business_profiles.'),
 
   // Credit deduction slice 11a (S11-SQ-12): credit lots. Financial records,
   // like the bill: never purged and never archived.
-  never('business_os_credit_lots', U,
+  never('business_os_credit_lots', U, exclude(EXPORT_REASON.BILLING),
     'Credits added to the account: one row per admin grant, later per boost purchase. A financial record: never purged and never archived — a Reset that removed it would erase credits the account was given or paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
-  never('business_os_credit_lot_draws', U,
+  never('business_os_credit_lot_draws', U, exclude(EXPORT_REASON.BILLING),
     'Credits taken back out of a lot (admin reversals; consumption from slice 9). A financial record that what is left of a lot is rebuilt from; never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
 
   // Plan payments P-2a (PF-14, SA-P1): the Business OS billing record.
-  never('business_os_billing_accounts', U,
+  never('business_os_billing_accounts', U, exclude(EXPORT_REASON.BILLING),
     'The Business OS billing record: the Stripe customer and subscription of the plan, one row per account per Stripe mode. A Reset that removed it would orphan a live Stripe subscription that keeps charging, and lose the customer link. A retained financial record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
 
   // Plan payments P-3b.1 (SA-P5, migration 20261027): the money history.
-  never('business_os_billing_events', U,
+  never('business_os_billing_events', U, exclude(EXPORT_REASON.BILLING),
     'The Business OS money history: one append-only row per Stripe money event of the plan (paid, failed, refused). A retained financial record: never purged and never archived. A Reset that removed it would erase what the account paid and which payment moved its plan. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
 
   // Credits boost slice 2a (NFR-12, F-11): boost purchases and cap overrides.
-  never('business_os_boost_purchases', U,
+  never('business_os_boost_purchases', U, exclude(EXPORT_REASON.BILLING),
     'Boost purchases: one row per attempt to buy credits, with the price, the Stripe references and the link to the credit lot. A financial record: never purged and never archived — a Reset that removed it would erase what the account paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
-  never('business_os_boost_cap_overrides', U,
+  never('business_os_boost_cap_overrides', U, exclude(EXPORT_REASON.BILLING),
     "Admin changes to the account's boost purchase cap, ended and never deleted. An audited admin record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles."),
 
   // Admin Archiving (Slice 2, condition C-4)
-  never('archive_runs', G,
+  never('archive_runs', G, exclude(EXPORT_REASON.PLATFORM),
     'The platform run log of archiving: who ran it, when, which cutoff, how many rows. No user_id and no business content, counts only. Never archived and never purged.'),
 
   // Admin reorganisation slice 5 (SA SC-4): the Business OS cron run record.
-  never('bos_cron_runs', G,
+  never('bos_cron_runs', G, exclude(EXPORT_REASON.PLATFORM),
     'The platform run record of the Business OS scheduled jobs: job name, times, an outcome word, an error class and numeric counts. No user_id and no business content. Platform monitoring data, pruned at 30 days by the recorder; never purged.'),
-  never('bos_cron_run_recording', G,
+  never('bos_cron_run_recording', G, exclude(EXPORT_REASON.PLATFORM),
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 
   // Invite-only signup, Slice 0 (condition C-10, SA ruling F-1).
-  never('business_os_invites', G,
+  never('business_os_invites', G, exclude(EXPORT_REASON.BILLING),
     'Platform record of who was invited, by which admin, on what grant, and whether it was used. No user_id: not tenant data, so a Reset or Purge must never touch it (a Reset that removed it would also let an owner re-enter as a fresh invitee). Deliberately NOT in USER_OWNED_TABLES: the account-deletion sweep deletes by user_id, which this table does not have. Erasure of the invitee email is requirement L-12, designed in the Slice 1 workplan.'),
   // Invite-only signup, Slice 1b (L-6, C-10).
-  never('business_os_account_lineage', G,
+  never('business_os_account_lineage', G, exclude(EXPORT_REASON.PLATFORM),
     'Platform record of who invited whom (the invitation circle, level, parent, root). Keyed on account_id, deliberately no user_id: not tenant data, and a Reset or Purge that removed it would let an owner re-enter as the referral of someone else. Not in USER_OWNED_TABLES for the same reason as business_os_invites; it holds no email, and keeps its pseudonymous ids after erasure (SA F-12).'),
 
   // Admin delete AD-1a (SC-8). Found by the SchemaReconciler on prod 2026-10-04.
-  never('auth_handoff_codes', U,
+  never('auth_handoff_codes', U, exclude(EXPORT_REASON.SECRET, 'short-lived sign-in codes'),
     'Ephemeral sign-in handoff codes: identity-level, not business data. Short-lived by design and CASCADE-deleted with the auth user, which survives every purge level (D14).'),
   //
   // Actor references on PLATFORM data. None has a tenancy column: each is a
@@ -547,28 +648,28 @@ const EXCLUDED: PurgeDescriptor[] = [
   // changed or acknowledged a row. FR-1(iv)'s union predicate (any FK to
   // auth.users) sees them; they are not this business's data and a purge must
   // not delete them. Scope `global` for documentation: there is no user_id.
-  never('ais_scoring_weights', G,
+  never('ais_scoring_weights', G, exclude(EXPORT_REASON.ACTOR_REF),
     'Actor reference on platform data: updated_by -> auth.users (SET NULL). Platform AIS scoring config.'),
-  never('ais_system_config', G,
+  never('ais_system_config', G, exclude(EXPORT_REASON.ACTOR_REF),
     'Actor reference on platform data: updated_by -> auth.users (SET NULL). Platform AIS config.'),
-  never('shared_agent_imports', G,
+  never('shared_agent_imports', G, exclude(EXPORT_REASON.AGENTS),
     'Actor reference on platform data: imported_by_user_id -> auth.users (SET NULL). Agent-platform sharing record; created_agent_id -> agents is SET NULL, so the agents option does not block on it.'),
-  never('exchange_rates', G,
+  never('exchange_rates', G, exclude(EXPORT_REASON.ACTOR_REF),
     'Actor reference on platform data: updated_by -> auth.users is NO ACTION. FU-9: a hard delete of the auth user is BLOCKED while any row names them — the FU-9 hard-delete design must null or reassign this column first.'),
-  never('exchange_rate_history', G,
+  never('exchange_rate_history', G, exclude(EXPORT_REASON.ACTOR_REF),
     'Actor reference on platform data: changed_by -> auth.users is NO ACTION. FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
-  never('system_settings_config', G,
+  never('system_settings_config', G, exclude(EXPORT_REASON.ACTOR_REF),
     'Actor reference on platform data: updated_by -> auth.users is NO ACTION. Platform-wide settings. FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
-  never('sla_events', G,
+  never('sla_events', G, exclude(EXPORT_REASON.ACTOR_REF),
     'Actor reference on platform data: acknowledged_by -> auth.users is NO ACTION (sla_id -> automation_slas is CASCADE; automation_slas is never). FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
 
   // §8.12 Account configuration and unowned tables
-  never('notification_settings', U, 'Account configuration that survives the business.'),
-  never('security_settings', U, 'Account configuration that survives the business.'),
-  never('api_keys', U, 'Account configuration.'),
-  never('user_rewards', U, 'Rewards ledger, adjacent to billing.'),
-  never('audit_logs', U, 'Live and user-scoped — NOT phantom, measured at T1. Distinct from audit_trail, so the activity-history checkbox does NOT cover it.'),
-  never('processed_webhook_events', U, 'Carries a user_id, so §3.15\'s planned "global" default did not apply. Excluded anyway: a user-scoped idempotency row deleted mid-flight could let Stripe replay a webhook against a business that no longer exists.'),
+  never('notification_settings', U, planned('DE-3'), 'Account configuration that survives the business.'),
+  never('security_settings', U, exclude(EXPORT_REASON.SECRET, 'security configuration, not in the DX-1a set (may hold second-factor material)'), 'Account configuration that survives the business.'),
+  never('api_keys', U, exclude(EXPORT_REASON.SECRET), 'Account configuration.'),
+  never('user_rewards', U, exclude(EXPORT_REASON.BILLING), 'Rewards ledger, adjacent to billing.'),
+  never('audit_logs', U, exclude(EXPORT_REASON.AUDIT), 'Live and user-scoped — NOT phantom, measured at T1. Distinct from audit_trail, so the activity-history checkbox does NOT cover it.'),
+  never('processed_webhook_events', U, exclude(EXPORT_REASON.PLATFORM, 'webhook idempotency'), 'Carries a user_id, so §3.15\'s planned "global" default did not apply. Excluded anyway: a user-scoped idempotency row deleted mid-flight could let Stripe replay a webhook against a business that no longer exists.'),
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -578,9 +679,10 @@ const EXCLUDED: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 export const STORAGE_DESCRIPTORS: readonly StorageDescriptor[] = [
-  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.' },
-  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.' },
-  { bucket: 'business-purge-snapshots', level: 'never', pathPrefix: '{user_id}/', purpose: 'The pre-purge snapshot itself. NEVER emptied by a purge — deleting the forensic artefact as part of the act it records would defeat its purpose. Private, no RLS policy granting authenticated anything (AC-36).' },
+  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'planned', slice: 'DE-8b' } },
+  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'planned', slice: 'DE-8b' } },
+  { bucket: 'business-purge-snapshots', level: 'never', pathPrefix: '{user_id}/', purpose: 'The pre-purge snapshot itself. NEVER emptied by a purge — deleting the forensic artefact as part of the act it records would defeat its purpose. Private, no RLS policy granting authenticated anything (AC-36).',
+    export: { kind: 'exclude', reason: 'an internal copy taken before a purge, not the live data' } },
 ];
 
 /** The single structure the executor iterates. Nothing else may enumerate tables. */
