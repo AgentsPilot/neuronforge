@@ -1,5 +1,5 @@
 // lib/repositories/UserProfileRepository.ts
-// Repository for read access to the user `profiles` table.
+// Repository for the user `profiles` table: read access plus one targeted write.
 //
 // Note on user_id filtering: the `profiles` table's primary key column is `id`,
 // and that value IS the Supabase auth user id (one row per user). Filtering by
@@ -7,8 +7,15 @@
 // `.eq('user_id', userId)` requirement called out in REPOSITORY_STRATEGY.md —
 // the column is just named differently because the row is the user.
 //
-// Profile rows are created/updated through auth flows and the onboarding UI,
-// not through this code path, so this repository is intentionally read-only.
+// Profile rows are created by the signup trigger and updated through auth flows
+// and the onboarding UI. This repository never creates one. Its only write is
+// `updateTimezoneMirror` (settings drawer D-1), which updates the `timezone`
+// mirror on an EXISTING row and does nothing when there is none.
+//
+// SERVICE-ROLE CLIENT (`supabaseServer`, bypasses RLS) by design: the only
+// caller of the write is `PATCH /api/business-os/preferences`, which passes the
+// SESSION user's id, and the write is scoped with `.eq('id', userId)`, so it can
+// only touch that user's own row.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -112,6 +119,34 @@ export class UserProfileRepository {
       return { data: data as UserProfile | null, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to fetch user profile');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Mirror the business timezone onto the user's existing `profiles` row.
+   *
+   * `user_preferences.timezone` is the authority; this copy is best-effort and
+   * the caller does not fail the save over it. A targeted UPDATE of two
+   * columns, never an upsert or insert: a missing row stays missing (count 0
+   * is logged at info and is not an error). `{ count: 'exact' }` and no
+   * `.select()` (the PostgREST update + select 42703 hazard). `stamp` is the
+   * same one the caller wrote to `user_preferences`. Never throws.
+   */
+  async updateTimezoneMirror(userId: string, zone: string, stamp: string): Promise<RepositoryResult<true>> {
+    try {
+      const { error, count } = await this.supabase
+        .from('profiles')
+        .update({ timezone: zone, updated_at: stamp }, { count: 'exact' })
+        .eq('id', userId);
+
+      if (error) throw error;
+      if (count === 0) {
+        this.logger.info({ userId }, 'No profile row to mirror the timezone onto');
+      }
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to mirror the timezone onto the profile');
       return { data: null, error: error as Error };
     }
   }

@@ -1,6 +1,3 @@
-'use client';
-
-import { V2ThemeProvider } from '@/lib/design-system-v2';
 import '../../v2/globals-v2.css';
 
 /*
@@ -12,6 +9,12 @@ import '../../v2/globals-v2.css';
  * from the header did not reach CRM content, and it repeated the preferences
  * request (and, with nothing saved, the backfill). CRM pages use the Business
  * OS layout's provider now.
+ *
+ * No V2ThemeProvider either (TH-1, SA Q-1), for the same kind of reason: the
+ * Business OS layout above already mounts one, nothing under CRM reads the
+ * inner context, the inner one repeated the custom-token read, and its stale
+ * `mode` could revert a toggle. With no provider left, this is a server layout
+ * that only adds the `/v2` stylesheet.
  */
 
 export default function CRMLayout({
@@ -19,9 +22,5 @@ export default function CRMLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <V2ThemeProvider>
-      {children}
-    </V2ThemeProvider>
-  );
+  return <>{children}</>;
 }

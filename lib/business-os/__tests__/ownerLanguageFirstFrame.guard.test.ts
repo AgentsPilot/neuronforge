@@ -43,8 +43,9 @@ describe('G-1: every provider layout supplies the first-frame language', () => {
     expect(text).toMatch(/<LanguageProvider initial=\{initialLanguage\}>/);
   });
 
-  // SA RC-2: V2ThemeProvider (and anything else that renders null on the server)
-  // would keep the script out of the HTML entirely.
+  // SA RC-2: written when V2ThemeProvider rendered null on the server, which
+  // would have kept the script out of the HTML. Since TH-1 it renders its
+  // children, but the script must still run before any content is parsed.
   it.each(LAYOUTS)('%s renders the script before every client provider', (file) => {
     const text = code(read(file));
     const body = text.slice(text.indexOf('return ('));

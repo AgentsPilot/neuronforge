@@ -3,6 +3,10 @@ import { LanguageProvider } from '@/lib/business-os/LanguageContext';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
 import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
 import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
+import '@/lib/design-system-v2/v2-theme-tokens.css';
+import { V2ThemeScript } from '@/lib/design-system-v2/V2ThemeScript';
+import { V2CustomTokensStyle } from '@/lib/design-system-v2/V2CustomTokensStyle';
+import { readV2CustomTokens } from '@/lib/design-system-v2/server/readV2CustomTokens';
 
 // SA N-2: the payment hold reads the session on every request, so this segment
 // is never prerendered (a static render would skip the gate, or swallow the
@@ -27,18 +31,31 @@ export default async function OnboardingBuildLayout({
   // the gate redirects, because readInitialLanguage never rejects (its
   // contract, readInitialLanguage.test.ts).
   const initialLanguagePending = readInitialLanguage();
+  // TH-1: the platform's custom design tokens, started here for the same
+  // reason (overlap the hold). Global, not per-user, so starting it before the
+  // hold decides leaks nothing; never rejects, and never waits more than its
+  // deadline (readV2CustomTokens.ts), so it is safe to leave dangling.
+  const customTokensPending = readV2CustomTokens();
 
   // The payment hold is the first AWAITED statement; nothing renders before it
   // decides.
   await redirectIfAwaitingPayment();
 
   const initialLanguage = await initialLanguagePending;
+  // Already in flight since before the hold: no extra round trip. `known` is
+  // false only when a cold read missed its deadline; the provider then
+  // corrects the page from the browser (TH-1, SA RC-16).
+  const { tokens: customTokens, known: customTokensKnown } = await customTokensPending;
 
   return (
     <>
-      {/* Outside V2ThemeProvider, which renders nothing on the server (SA RC-2). */}
+      {/* First, outside every provider, so they apply before any content is
+          parsed: language and direction, the dark class, and the custom tokens
+          (SA RC-2, TH-1). */}
       <OwnerDirScript language={initialLanguage.language} />
-      <V2ThemeProvider>
+      <V2ThemeScript />
+      <V2CustomTokensStyle tokens={customTokens} />
+      <V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown}>
         <LanguageProvider initial={initialLanguage}>
           {children}
         </LanguageProvider>

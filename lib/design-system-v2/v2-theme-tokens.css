@@ -1,0 +1,103 @@
+/*
+ * lib/design-system-v2/v2-theme-tokens.css
+ *
+ * The default `--v2-*` values, available from the first frame (performance
+ * slice TH-1). Imported by every layout that mounts `V2ThemeProvider`, and only
+ * by those (guard G-1).
+ *
+ * These are EXACTLY what the provider writes inline on <html> when there are no
+ * custom tokens: light in `:root`, the values that differ in dark in
+ * `:root.dark`. After mount the provider's inline style wins, so a difference
+ * here would change the page's colour at hydration.
+ * `themeStylesheetMatchesProvider.guard.test.tsx` compares the two behaviourally.
+ *
+ * Custom properties only, two rules only. Platform custom tokens are NOT here:
+ * they are per-deployment data, inlined by `V2CustomTokensStyle`.
+ */
+
+:root {
+  --v2-bg: #F5F5F7;
+  --v2-surface: #FFFFFF;
+  --v2-surface-hover: #F9FAFB;
+  --v2-border: #E5E7EB;
+  --v2-primary: #6366F1;
+  --v2-primary-dark: #4F46E5;
+  --v2-secondary: #8B5CF6;
+  --v2-text-primary: #1F2937;
+  --v2-text-secondary: #6B7280;
+  --v2-text-muted: #9CA3AF;
+
+  --v2-success-bg: #ECFDF5;
+  --v2-success-border: #BBF7D0;
+  --v2-success-text: #065F46;
+  --v2-success-icon: #059669;
+  --v2-error-bg: #FEF2F2;
+  --v2-error-border: #FECACA;
+  --v2-error-text: #991B1B;
+  --v2-error-icon: #DC2626;
+
+  --v2-status-success-bg: #F0FDF4;
+  --v2-status-success-border: #BBF7D0;
+  --v2-status-success-text: #15803D;
+  --v2-status-executing-bg: #EFF6FF;
+  --v2-status-executing-border: #BFDBFE;
+  --v2-status-executing-text: #1E40AF;
+  --v2-status-error-bg: #FEF2F2;
+  --v2-status-error-border: #FECACA;
+  --v2-status-error-text: #991B1B;
+  --v2-status-warning-bg: #FFFBEB;
+  --v2-status-warning-border: #FDE68A;
+  --v2-status-warning-text: #92400E;
+
+  --v2-radius-panel: 24px;
+  --v2-radius-card: 16px;
+  --v2-radius-button: 12px;
+  --v2-radius-input: 12px;
+
+  --v2-shadow-card: 0 2px 16px rgba(0, 0, 0, 0.06);
+  --v2-shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --v2-shadow-button: 0 4px 16px rgba(99, 102, 241, 0.3);
+
+  --v2-spacing-panel: 32px;
+  --v2-spacing-card: 24px;
+  --v2-spacing-section: 24px;
+
+  --v2-font-size-base: 1rem;
+  --v2-font-size-lg: 1.125rem;
+  --v2-font-size-xl: 1.25rem;
+}
+
+:root.dark {
+  --v2-bg: #0F172A;
+  --v2-surface: #1E293B;
+  --v2-surface-hover: #334155;
+  --v2-border: #475569;
+  --v2-text-primary: #F1F5F9;
+  --v2-text-secondary: #CBD5E1;
+  --v2-text-muted: #94A3B8;
+
+  --v2-success-bg: rgba(6, 95, 70, 0.15);
+  --v2-success-border: rgba(5, 150, 105, 0.3);
+  --v2-success-text: #6EE7B7;
+  --v2-success-icon: #34D399;
+  --v2-error-bg: rgba(153, 27, 27, 0.15);
+  --v2-error-border: rgba(220, 38, 38, 0.3);
+  --v2-error-text: #FCA5A5;
+  --v2-error-icon: #EF4444;
+
+  --v2-status-success-bg: #1E293B;
+  --v2-status-success-border: #15803D;
+  --v2-status-success-text: #86EFAC;
+  --v2-status-executing-bg: #1E293B;
+  --v2-status-executing-border: #1E40AF;
+  --v2-status-executing-text: #93C5FD;
+  --v2-status-error-bg: #1E293B;
+  --v2-status-error-border: #991B1B;
+  --v2-status-error-text: #FCA5A5;
+  --v2-status-warning-bg: #1E293B;
+  --v2-status-warning-border: #92400E;
+  --v2-status-warning-text: #FDE68A;
+
+  --v2-shadow-card: 0 2px 16px rgba(0, 0, 0, 0.3);
+  --v2-shadow-button: 0 4px 16px rgba(99, 102, 241, 0.5);
+}
