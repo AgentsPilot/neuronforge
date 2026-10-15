@@ -1,6 +1,6 @@
 {
  "generated": "2026-10-04",
- "count": 154,
+ "count": 155,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -93,6 +93,7 @@
   "insight_measurements": "reset",
   "insights": "reset",
   "intake_form_templates": "never",
+  "intent_examples": "never",
   "kernel_action_log": "reset",
   "kernel_executions": "reset",
   "lead_responses": "reset",
@@ -168,6 +169,7 @@
   "insight_actions": "2026-10-04 AD-1a SC-8: live user_id column; FK business_profiles CASCADE; no inbound FK (measured by scripts/purge-schema-reconcile.ts). Business data, reset/LEAF (SA-1(a)).",
   "insight_hypotheses": "2026-10-07 TAC-1: live user_id column; FK business_profiles CASCADE; no inbound FK, no trigger (measured with purge_schema_introspect, test-account cleanup first live run). Business data, reset/LEAF. 2026-10-08: no longer live-only, CREATE TABLE committed by PR #257 (20261006e) and the business_fk comes from the 20260916 ownership loop.",
   "insight_measurements": "2026-10-07 TAC-1: live user_id column; FK business_profiles CASCADE and insight_id -> insights CASCADE; no inbound FK, no trigger (measured with purge_schema_introspect, test-account cleanup first live run). Business data, reset/LEAF. 2026-10-08: no longer live-only, CREATE TABLE committed by PR #257 (20261006g), which declares both FKs.",
+  "intent_examples": "2026-10-15 DE-2: listed in USER_OWNED_TABLES but had no descriptor (data export section 0.3.6). No user_id (live dump 2026-09-15, its only CREATE TABLE 20260629_intent_examples_table.sql): a V6 few-shot catalog, scope global, never. Adds no delete to any run.",
   "marketing_consent_events": "2026-10-07: measured live: NO FK to business_profiles (by design, it outlives the business); inbound marketing_consent_state NO ACTION; DELETE-capable trigger trg_mce_guard (reviewed in descriptors.ts, unreachable: never and only a SET NULL child of crm_contacts). The consent ledger: retained by both levels. A move off never would delete the evidence of what people agreed to.",
   "marketing_consent_settings": "2026-10-07: measured live: FK business_profiles CASCADE (marketing_consent_settings_business_fk), no inbound FK, no trigger. The tenant's own consent wording and postal address: configuration kept by Reset, purge/CONFIG.",
   "marketing_consent_state": "2026-10-07: measured live: NO FK to business_profiles; -> marketing_consent_events NO ACTION; no inbound FK, no trigger. The projection the send gate reads; deleting it would lose every suppression: never.",

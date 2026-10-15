@@ -45,6 +45,14 @@ const ALLOWED_FILES: Record<string, string> = {
  */
 const DATA_EXPORT_ROUTE = 'app/api/user/data-export/route.ts';
 
+/**
+ * Data export DE-2 (DE-1 SA S-1): the export's own module is held to the same
+ * rule as the route, because since DE-1 the route only runs the sections in
+ * lib/business-os/data-export/ and a reader added there would bypass a
+ * route-only check. Every non-test file under it.
+ */
+const DATA_EXPORT_MODULE_DIR = 'lib/business-os/data-export/';
+
 const isAdminApi = (file: string) => file.startsWith('app/api/admin/');
 
 function walk(dir: string): string[] {
@@ -132,9 +140,18 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
-/** The data export route reads no audit rows: no repository call, no table name (DE-1). */
-function routeReadsNoAuditRows(routeSource: string): boolean {
-  return !withoutComments(routeSource).includes('auditTrailRepository') && !stringLiteralsOf(routeSource).includes('audit_trail');
+/**
+ * The data export reads no audit rows: no repository call, no table name
+ * (DE-1). DE-2 (SA-Q10) widens it to the ARCHIVED owner history too:
+ * `archived_records` and `archiveRepository` hold the same activity (DX-1d,
+ * BD-26).
+ */
+const AUDIT_READ_CALLS = ['auditTrailRepository', 'archiveRepository'];
+const AUDIT_TABLES = ['audit_trail', 'archived_records'];
+function readsNoAuditRows(source: string): boolean {
+  const code = withoutComments(source);
+  const literals = stringLiteralsOf(source);
+  return !AUDIT_READ_CALLS.some((call) => code.includes(call)) && !AUDIT_TABLES.some((table) => literals.includes(table));
 }
 
 /** The guard's verdict for one file. */
@@ -182,7 +199,16 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
   it('the data export route reads no audit rows at all (DE-1, DX-1d)', () => {
     const entry = files.find(({ file }) => file === DATA_EXPORT_ROUTE);
     expect(entry).toBeDefined();
-    expect(routeReadsNoAuditRows(entry!.source)).toBe(true);
+    expect(readsNoAuditRows(entry!.source)).toBe(true);
+  });
+
+  it('no file of the data export module reads audit or archived rows (DE-2, S-1 / SA-Q10)', () => {
+    const moduleFiles = files.filter(({ file }) => file.startsWith(DATA_EXPORT_MODULE_DIR));
+    // Non-vacuity, by name: the scan reaches the module's readers.
+    expect(moduleFiles.map(({ file }) => file.slice(DATA_EXPORT_MODULE_DIR.length))).toEqual(
+      expect.arrayContaining(['sections.ts', 'payload.ts', 'classification.ts'])
+    );
+    expect(moduleFiles.filter(({ source }) => !readsNoAuditRows(source)).map(({ file }) => file)).toEqual([]);
   });
 });
 
@@ -216,12 +242,20 @@ describe('the guard itself (negative controls)', () => {
 
   it('flags a data export route that reads audit rows again (DE-1)', () => {
     // Through the repository, under any method name.
-    expect(routeReadsNoAuditRows('const { data } = await auditTrailRepository.listOwnerEntries(user.id, q);')).toBe(false);
+    expect(readsNoAuditRows('const { data } = await auditTrailRepository.listOwnerEntries(user.id, q);')).toBe(false);
     // By naming the table.
-    expect(routeReadsNoAuditRows("const { data } = await supabaseServer.from('audit_trail').select('id');")).toBe(false);
+    expect(readsNoAuditRows("const { data } = await supabaseServer.from('audit_trail').select('id');")).toBe(false);
     // A comment that mentions either does not count.
-    expect(routeReadsNoAuditRows("// auditTrailRepository.listOwnerEntries / from('audit_trail')")).toBe(true);
+    expect(readsNoAuditRows("// auditTrailRepository.listOwnerEntries / from('audit_trail')")).toBe(true);
     // The audit WRITE the route makes is not a read.
-    expect(routeReadsNoAuditRows('await logAndFlush({ action: AUDIT_EVENTS.DATA_EXPORTED }, requestLogger, ctx);')).toBe(true);
+    expect(readsNoAuditRows('await logAndFlush({ action: AUDIT_EVENTS.DATA_EXPORTED }, requestLogger, ctx);')).toBe(true);
+  });
+
+  it('flags a data export file that reads archived history (DE-2, SA-Q10)', () => {
+    expect(readsNoAuditRows('const rows = await archiveRepository.listArchived(userId);')).toBe(false);
+    expect(readsNoAuditRows("const t = 'archived_records';")).toBe(false);
+    expect(readsNoAuditRows("const t = 'audit_trail';")).toBe(false);
+    // Comments mentioning either do not count.
+    expect(readsNoAuditRows("// archiveRepository / 'archived_records'\n/* auditTrailRepository 'audit_trail' */ const a = 1;")).toBe(true);
   });
 });

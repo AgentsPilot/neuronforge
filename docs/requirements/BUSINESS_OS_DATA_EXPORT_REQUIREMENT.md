@@ -50,6 +50,7 @@ Evidence tags: ✅ read in code or docs, or measured live, on 2026-10-05 · 🧠
 | **Export feature (DE-1 … DE-10)** | **Scheduled last, after admin delete AD-2, AD-3 and AD-4 are finished** (user decision, 2026-10-05). The requirement is written now so that SA can review it and the classification design (SQ-E1) can be settled alongside AD-1a's `SchemaReconciler` |
 | **DE-0 — security (token exposure)** | **Separate from the feature.** The finding (§1.2) is independent of export: the browser can read and write the owner's own OAuth tokens, whether or not anyone presses Export. **User decision pending:** does DE-0 jump the queue? BA recommends yes (DX-11) |
 | **Consequence of the order** | Admin delete AD-2…AD-4 will ship **before** the business data can be exported. Until DE-3/DE-4 ship, a deleted owner can take away only today's agent-platform export. See DX-12 |
+| **DE-2 — classification, CI check, skill rule** | Code complete, uncommitted (2026-10-15), see §0.6. **§0.3.6 tsc clause superseded by SA DE-2 review: T-1 Jest runtime check is the enforcement.** Drift command is `npm run schema:reconcile` (SA-Q4). BC-1 = BC-2 = No (user, 2026-10-15) |
 
 ### 0.1 SA ruling — DE-0 re-baseline and implementation conditions (2026-10-13)
 
@@ -567,6 +568,36 @@ Phase 1 plan is **approved by the user for building.** Each slice still gets a D
 | **DE-3** | Decide `profiles.hourly_rate_usd`, `role` and `org_id` explicitly in the Business OS profile column set. Open until then |
 | **DE-8b** | **`business_profiles.business_name` does not exist** (a live probe returned 42703, DE-1 workplan §7). DE-8b's workplan must find the real business-name column with the `business-os-schema-check` skill before writing the file-name slug |
 
+### 0.6 DE-2 status, SA rulings and user decisions (2026-10-15)
+
+**DE-2 — Code complete, uncommitted, on `feature/data-export-de2`; C-3 live read done 2026-10-15 (TL, prod read-only: `profiles` 18 cols and `plugin_connections` 19 cols, drift 0, missing 0; `intent_examples` no `user_id`, no FKs). SA code-approved 2026-10-15; QA and the user's diff review next.** Workplan: [BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md) (SA approved with conditions C-1…C-9, 2026-10-15).
+
+**§0.3.6 tsc clause superseded by SA DE-2 review: T-1 Jest runtime check is the enforcement.** §0.3.6 says a descriptor without `export` "fails `tsc`, the existing type-check job". Measured in the DE-2 workplan §1.3, that is not true: Jest is transpile-only, `next build` ignores type errors, and `typecheck:bos-llm` does not scope `descriptors.ts`. SA declined widening that scope (SA-Q1: +22 files, about +62% on a required job with thin headroom, against the no-added-CI-time rule). The required TypeScript field stays as editor feedback and documentation; the gate is `lib/business-os/data-export/__tests__/exportClassification.test.ts` in the existing Jest gate.
+
+**User decisions (via TL, 2026-10-15):**
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| **BC-1** | Should the download list which Business OS modules the owner switched on? | **No** | `user_capabilities`, `user_capability_blocks`: `exclude`, "PLATFORM: module setup, not data the owner entered (user 2026-10-15)" |
+| **BC-2** | Should the download include the organisation / team-membership record? | **No** | `organizations`, `organization_members`: `exclude`, "PLATFORM: agent-platform organisation record (user 2026-10-15)" |
+
+**SA rulings that change this requirement:**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q4** | Column drift is surfaced by **`npm run schema:reconcile`** (new alias for `scripts/purge-schema-reconcile.ts`, read-only), not by `npm run schema:check`. This supersedes "surfaced by `npm run schema:check`" in §0.3.6 and FR-E19. `schema:check` is unchanged |
+| **SA-Q5** | Beside `exportColumnDrift`, a second report-only list `exportColumnsMissing` (a declared export column that is not live). It replaces the literal-select coverage `schema:check` loses once the selects come from the descriptors |
+| **SA-Q2** | Buckets carry their own shape (`include { folder }` / `exclude` / `planned 'DE-8b'`) and their own expiry flag `PLANNED_FILES_ALLOWED`, flipped by DE-8b (DE-7 flips `PLANNED_TABLES_ALLOWED`) |
+| **SA-Q6** | Secret-column deny list with a reviewed exception map (`DENY_EXCEPTIONS`, one entry: `plugin_connections.plugin_key`), checked for stale entries; the same check runs at request time in `exportColumnsOf` (fail closed to a `failed` section). Every later exception is an SA item in its slice |
+| **SA-Q8** | One table per section; `account_identity` (from the session) is the only non-table section |
+| **SA-Q10** | The audit guard covers every file under `lib/business-os/data-export/`, and refuses archived history too (`archived_records`, `archiveRepository`) |
+| **SA-Q11** | `website_blocks` is `planned` DE-7 and must be read **through an owner-scoped parent** (`website_pages` rows filtered by `user_id`), never by a caller-supplied page id alone. `onboarding_prompt_ideas` is `exclude` (assistant activity) |
+| **SA-Q12** | The skill rule diverges from Appendix A: it points at `lib/business-os/purge/descriptors.ts` (the `export` field) instead of §6.4, names buckets, and names `npm run schema:reconcile`. It is in `new-repository`, `new-api-route`, `new-plugin`, plus one line in `durable-queue-drain` |
+
+**As built (measured on the branch):** 155 table descriptors = 2 `include` (`profiles` → `user_profile`, `plugin_connections` → `plugin_connections`, the same columns in the same order as DE-1, so the file is unchanged) + 45 `planned` (DE-3: 4, DE-4: 9, DE-5: 15, DE-6: 12, DE-7: 5) + 108 `exclude`; 3 buckets = 2 `planned` DE-8b + 1 `exclude`. `intent_examples` gained a `never` / `global` descriptor (count 154 → 155); no Reset, Purge or admin delete removes anything different (`descriptorsForRun` identical for all 16 combinations). The two repositories select `exportColumnsOf(table).join(', ')`. `plugin_connections` notes record that disconnected rows are a status (§0.5) and that `ACCOUNT_PROFILE_KEYS` is the control on `profile_data` (SA C-4).
+
+**Follow-up (SA-Q9):** `intent_examples` is listed in `USER_OWNED_TABLES` but has no `user_id`; decide in the next ownership pass. DE-2 leaves the ownership entry alone.
+
 ---
 
 ## 1. Discovery: what exists today
@@ -912,3 +943,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-14 | DE-0b shipped | PR #381 merged + deployed; 20261068 applied to PROD; checker PASS 46/0; probe 42501. B-9 click-through owed |
 | 2026-10-14 | DE-0b B-9 waived; DE-0 complete | The user waived the B-9 manual checks (all agent-platform flows; that app is parked). DE-0 (DE-0a + DE-0b) complete |
 | 2026-10-15 | DE-1 code complete (§0.5) | Uncommitted on `feature/data-export-de1`, awaiting SA code review. Six sections out (DX-1, BQ-SA-1), section model with FR-E12 `failed`, typed payload `format_version: 2`, `logAndFlush`, Danger zone through the shared helper, file name `agentpilot-data-export-<date>.json`. Q-3 ruling recorded (`profiles.plan` removed). AC-E7 note (audit half no longer applies). C-6 notes for DE-2 (disconnected = status), DE-3 (`hourly_rate_usd` / `role` / `org_id`), DE-8b (`business_profiles.business_name` does not exist, 42703) |
+| 2026-10-15 | DE-2 code complete; SA rulings and user decisions (§0.6) | Uncommitted on `feature/data-export-de2`, C-3 live read done (drift 0, missing 0) and SA code-approved the same day. Required `export` field on every purge descriptor and bucket (155 + 3); CI enforcement is the Jest runtime check `exportClassification.test.ts`: **the §0.3.6 tsc clause is superseded** (SA-Q1 declined widening `typecheck:bos-llm`). BC-1 (modules switched on) and BC-2 (organisation record) = No, both `exclude`. SA-Q4: drift surfaced by the new `npm run schema:reconcile`, not `schema:check` (supersedes §0.3.6 / FR-E19 wording); SA-Q5 `exportColumnsMissing`. SA-Q9 follow-up: `intent_examples` is user-owned without a `user_id`. SA-Q12: skill text diverges from Appendix A (points at `descriptors.ts`, names buckets and `schema:reconcile`) |

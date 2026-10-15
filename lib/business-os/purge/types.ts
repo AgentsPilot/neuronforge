@@ -8,6 +8,11 @@
 // in the code. The structural-invariant suite (T6 / AC-45) enforces that
 // mechanically, so these shapes are the contract that test checks against.
 
+import type {
+  StorageExportClassification,
+  TableExportClassification,
+} from '@/lib/business-os/data-export/classificationTypes';
+
 /** Reset keeps configuration and identity; Purge removes everything but the login. */
 export type PurgeLevel = 'reset' | 'purge';
 
@@ -109,6 +114,14 @@ export interface PurgeDescriptor {
   notes?: string;
   /** Business area for grouped counts (D-5). Required unless `level` is `never`. */
   area?: PurgeArea;
+  /**
+   * Whether this table goes into "Download my data" (data export DE-2, FR-E17).
+   * Required on every descriptor. Independent of `level`, and the purge engine
+   * never reads it. The CI enforcement is the runtime Jest check
+   * (data-export/__tests__/exportClassification.test.ts), not this type: Jest
+   * is transpile-only and no type gate covers this file (SA DE-2 review, SA-Q1).
+   */
+  export: TableExportClassification;
 }
 
 /**
@@ -125,6 +138,8 @@ export interface StorageDescriptor {
   /** Always `{user_id}/` today; explicit so a future layout change is visible. */
   pathPrefix: string;
   purpose: string;
+  /** Whether the bucket's files go into "Your files" (DE-2; files arrive in DE-8b). Required. */
+  export: StorageExportClassification;
 }
 
 // ── Pre-flight gate ─────────────────────────────────────────────────────────

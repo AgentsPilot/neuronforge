@@ -28,14 +28,19 @@
 import 'server-only';
 import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
 import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
+import type { ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
 
 /** DE-4+ add 'client_records' and 'content'. */
 export type ExportGroupId = 'account';
 
 export type GdprRole = 'controller' | 'processor';
 
-/** Every section id. DE-2's classification test cross-checks this registry. */
-export type ExportSectionId = 'account_identity' | 'user_profile' | 'plugin_connections';
+/**
+ * Every section id. Defined in the pure classificationTypes.ts (DE-2) so the
+ * purge descriptors can name a section without importing this server-only
+ * module; DE-2's classification test cross-checks this registry against them.
+ */
+export type { ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
 
 export interface ExportContext {
   /** Always `getUser().id`, never a request value. */
@@ -68,7 +73,7 @@ export interface AccountIdentityRow {
 
 /**
  * `user_profile`: the `profiles` row as PostgREST returns it, named columns
- * only (UserProfileRepository PROFILE_DATA_EXPORT_COLUMNS).
+ * only (the `profiles` descriptor's `export.columns`, DE-2).
  */
 export type UserProfileRow = Record<string, unknown>;
 

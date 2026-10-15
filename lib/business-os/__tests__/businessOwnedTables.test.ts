@@ -230,6 +230,28 @@ describe('business data ownership', () => {
       // `profiles` is `never`: a registry naming it would be caught.
       expect(probe(['profiles'])).toEqual(['profiles']);
     });
+
+    /**
+     * Data export DE-2 (FR-E18, workplan T-14): every USER_OWNED table has a
+     * descriptor, and through the descriptor an export classification
+     * (exportClassification.test.ts checks every descriptor has one). That
+     * closes the chain migration -> ownership list -> descriptor -> `export`:
+     * before DE-2 nothing asserted this direction, and `intent_examples` had no
+     * descriptor.
+     */
+    const userOwnedWithoutDescriptor = (descriptorTables: ReadonlySet<string>) =>
+      Object.keys(USER_OWNED_TABLES).filter(t => !descriptorTables.has(t));
+
+    it('every user-owned table has a purge descriptor (direction 3, DE-2)', () => {
+      // Non-vacuity.
+      expect(Object.keys(USER_OWNED_TABLES).length).toBeGreaterThan(30);
+      expect(userOwnedWithoutDescriptor(new Set(byTable.keys()))).toEqual([]);
+    });
+
+    it('the direction-3 check can fail (negative case)', () => {
+      const withoutIntentExamples = new Set([...byTable.keys()].filter(t => t !== 'intent_examples'));
+      expect(userOwnedWithoutDescriptor(withoutIntentExamples)).toEqual(['intent_examples']);
+    });
   });
 
   it('points every constraint at business_profiles with a cascade', () => {

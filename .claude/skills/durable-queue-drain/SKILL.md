@@ -113,6 +113,7 @@ The required test: **the claim prevents double-processing.** Model `SKIP LOCKED`
 - [ ] Repo methods (`⟨unscoped-by-design⟩` on cron methods); user_id-scoped otherwise; Pino
 - [ ] Cron wired LAST; fail-closed auth; migrations applied before deploy
 - [ ] Test proves claim prevents double-processing
+- [ ] A new queue table is a tenant table: give it a purge descriptor in `lib/business-os/purge/descriptors.ts` with export `exclude` and a reason (data export DE-2; `exportClassification.test.ts` fails CI without it)
 
 ## Anti-patterns (probable bugs)
 
