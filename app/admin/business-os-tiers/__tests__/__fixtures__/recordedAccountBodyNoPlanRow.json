@@ -576,6 +576,11 @@
     "ignoredOverrides": [],
     "overrides": [],
     "plan": null,
+    "planPresentation": {
+      "tier": null,
+      "cohort": null,
+      "tierBelowCohortBase": false
+    },
     "effectiveWithinSeconds": 30
   }
 }
