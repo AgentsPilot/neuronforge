@@ -53,6 +53,10 @@ const ACCOUNT_LINEAGE = '@/lib/repositories/BusinessOsAccountLineageRepository';
 // the handler also wires the invite repository's ONE N-2 read
 // (`findInviterNotificationFactsById`) into the champion notifier it builds.
 const INVITES = '@/lib/repositories/BusinessOsInviteRepository';
+// P-6a.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P6A_WORKPLAN.md T3; SA C-5, C-6, C-7):
+// the admin test-clock use case reads and resets the target account's
+// test-mode billing row and reads its plan row for the status action.
+const ACCOUNT_PLANS = '@/lib/repositories/BusinessOsAccountPlanRepository';
 const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
   'planCheckout.ts': [BILLING_ACCOUNTS],
@@ -69,6 +73,7 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // P-7b.1a (workplan BUSINESS_OS_PLAN_PAYMENTS_P7B1_WORKPLAN.md §3.9): the
   // upgrade orchestration reads the session user's billing row (findByUser).
   'planUpgrade.ts': [BILLING_ACCOUNTS],
+  'planTestClock.ts': [BILLING_ACCOUNTS, ACCOUNT_PLANS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 
