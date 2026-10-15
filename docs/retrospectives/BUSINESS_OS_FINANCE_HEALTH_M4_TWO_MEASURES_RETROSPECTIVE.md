@@ -7,7 +7,7 @@
 This is the retrospective for Money **M-4** on the read-only admin page `/admin/finance` and the admin pages around it. M-4 answers one question: "what did AI cost us, and how much of it did we not charge for?" It shipped as **two PRs under one workplan** (SA-Q57):
 
 - **Part A — OV-1, one vocabulary.** **Merged as PR #398.** 37 visible labels across 13 source files now use two names only. **"Charged AI cost"** comes from the credit ledger, and **"Recorded AI cost"** comes from the usage log. The Health tile is now "Recorded AI cost (USD)". A new TypeScript-AST vocabulary guard (`app/admin/__tests__/aiCostVocabulary.source.guard.test.ts`) found **21 offences** in the old code and finds **0** now. Short path for copy.
-- **Part B — OV-5, the two measures side by side.** It is ready to commit on `feature/bos-money-m4b` (cut by RM from `main` `bd7beabd`, after PR #398) in worktree `neuronforge-finance-health`. **Nothing is committed yet.** Finance Section 3 shows "Recorded AI cost (USD)" and **"Recorded above charged (USD)"** (recorded − charged) beside the charged total, and never adds it to that total. The M-1 account summary shows the same line. Part B reuses two existing reads (`listCostPointsAllAccountsInWindow`, `listCallsInWindow`) and adds no repository method, no migration and no write. Full cycle.
+- **Part B — OV-5, the two measures side by side.** It is ready to commit on `feature/bos-money-m4b` (cut by RM from `main` `bd7beabd`, after PR #398) in worktree `neuronforge-finance-health`. **Committed as `cde25b99`** (merge of `origin/main` `ee1471e9`); PR [#407](https://github.com/AgentsPilot/neuronforge/pull/407) open. Finance Section 3 shows "Recorded AI cost (USD)" and **"Recorded above charged (USD)"** (recorded − charged) beside the charged total, and never adds it to that total. The M-1 account summary shows the same line. Part B reuses two existing reads (`listCostPointsAllAccountsInWindow`, `listCallsInWindow`) and adds no repository method, no migration and no write. Full cycle.
 
 **How the cycle ran.**
 
@@ -18,7 +18,7 @@ This is the retrospective for Money **M-4** on the read-only admin page `/admin/
 5. SA workplan review: approved with conditions SA-WR-46 to SA-WR-50 and edits E-58 and E-59.
 6. Part A: implementation, then SA code review (approved), QA (pass, no bug), then RM merged PR #398.
 7. Part B: RM cut a new branch from `main` after #398. Then implementation with nine deviations (BD-1 to BD-9), SA code review (approved, one Low comment), QA (pass with issues, no bug), and fix round 1 (the SA Low comment).
-8. Next: RM commits Part B and opens PR 2, under the user's go-ahead given in chat.
+8. RM committed Part B (`cde25b99`), merged `origin/main` (`ee1471e9`) and opened PR [#407](https://github.com/AgentsPilot/neuronforge/pull/407) under the user's go-ahead given in chat.
 
 **MD links:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) (§11F) | [BUSINESS_OS_FINANCE_HEALTH_M4_TWO_MEASURES_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M4_TWO_MEASURES_WORKPLAN.md) | [Slice 6a retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_SLICE_6A_MONEY_M3_RETROSPECTIVE.md)
 
