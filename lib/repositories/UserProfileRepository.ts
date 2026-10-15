@@ -18,13 +18,18 @@ import { ADMIN_IDENTITY_CHUNK, ilikeContainsPattern, matchesLiterally } from './
 
 /**
  * The columns the GDPR export reads from `profiles` (findForUserDataExport;
- * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.1). Today that is every column: each is
- * the person's own profile or onboarding answer. Listed by name so a column
- * added later is NOT exported until someone decides it should be. Changing this
- * changes what the export holds: a privacy decision.
+ * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.1): the person's own profile and
+ * onboarding answers. Listed by name so a column added later is NOT exported
+ * until someone decides it should be. Changing this changes what the export
+ * holds: a privacy decision.
+ *
+ * `plan` is left out ON PURPOSE (DE-1, SA ruling Q-3): the export carries
+ * profile details only, no plan or billing data (user decision DX-1a,
+ * BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.3.1). `hourly_rate_usd`, `role` and
+ * `org_id` stay until DE-3 decides the explicit Business OS profile set.
  */
 const PROFILE_DATA_EXPORT_COLUMNS =
-  'id, full_name, avatar_url, plan, company, job_title, timezone, language, created_at, updated_at, ' +
+  'id, full_name, avatar_url, company, job_title, timezone, language, created_at, updated_at, ' +
   'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id';
 
 /**
@@ -235,21 +240,24 @@ export class UserProfileRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
-   * profile row, PROFILE_DATA_EXPORT_COLUMNS only. The column set and `.single()`
-   * are fixed: changing either changes what the export holds, which is a privacy
-   * decision. A missing row is an error here (PGRST116), as it always was; the
-   * route ignores it and exports the auth fields alone.
+   * profile row, PROFILE_DATA_EXPORT_COLUMNS only. The column set is fixed:
+   * changing it changes what the export holds, which is a privacy decision.
+   *
+   * `.maybeSingle()` (DE-1, SA ruling Q-4): no row is `{ data: null, error: null }`,
+   * NOT an error, so the export shows an empty profile section rather than a
+   * failed one (FR-E12). A real read error is still returned as an error, and
+   * the export marks the section `failed`.
    */
-  async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown>>> {
+  async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown> | null>> {
     try {
       const { data, error } = await this.supabase
         .from('profiles')
         .select(PROFILE_DATA_EXPORT_COLUMNS)
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
-      return { data: data as unknown as Record<string, unknown>, error: null };
+      return { data: (data ?? null) as unknown as Record<string, unknown> | null, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to read the profile for the data export');
       return { data: null, error: error as Error };
