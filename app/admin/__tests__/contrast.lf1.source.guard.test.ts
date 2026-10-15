@@ -1,8 +1,8 @@
 /**
  * LF-1 (Admin Layout Follow-ups §4, AC-1.1, SA-C13, SQ-8): information text on
  * Health, Scheduled jobs & queues, Audit trail and the Business OS AI Activity
- * tab is `text-slate-400` (the standard's T-5 colour). `text-slate-500` measured
- * 3.07:1 on Health and 4.16:1 on Jobs, below WCAG AA 4.5:1, so it and the
+ * tab (since Finance F-1, the Finance page too) is `text-slate-400` (the
+ * standard's T-5 colour). `text-slate-500` measured 3.07:1 on Health and 4.16:1 on Jobs, below WCAG AA 4.5:1, so it and the
  * darker `text-slate-600` are refused here, under any variant prefix.
  *
  * Folders are WALKED, not listed, so a component added later is covered.
@@ -59,6 +59,8 @@ const PAGES: Record<string, string[]> = {
   'Audit trail': walk('app/admin/audit-trail'),
   'Business OS AI Activity': walk('app/admin/business-os-llm/components/activity'),
   Businesses: walk('app/admin/users').filter((relative) => !BUSINESSES_EXCLUDED.includes(relative)),
+  // Finance F-1 (Finance vs Admin Layout Standard review, 2026-10-15): the whole folder, no exclusion.
+  Finance: walk('app/admin/finance'),
 };
 
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
@@ -119,6 +121,19 @@ describe('LF-1 contrast guard: the walk', () => {
         'app/admin/users/components/CreditsBlock.tsx',
         'app/admin/users/components/BoostBlock.tsx',
         'app/admin/users/components/CreditsLeftCell.tsx',
+      ]),
+    );
+    expect(PAGES.Finance).toEqual(
+      expect.arrayContaining([
+        'app/admin/finance/page.tsx',
+        'app/admin/finance/components/FinanceView.tsx',
+        'app/admin/finance/components/FinanceKpiStrip.tsx',
+        'app/admin/finance/components/FinanceFilterBar.tsx',
+        'app/admin/finance/components/AiCostSection.tsx',
+        'app/admin/finance/components/CreditsSection.tsx',
+        'app/admin/finance/components/OverdueTable.tsx',
+        'app/admin/finance/components/RevenuePanel.tsx',
+        'app/admin/finance/components/TakingsSection.tsx',
       ]),
     );
     for (const excluded of BUSINESSES_EXCLUDED) {

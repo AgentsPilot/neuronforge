@@ -122,7 +122,7 @@ export function FinanceView() {
         <div>
           <h1 className="text-xl font-semibold text-white">{PAGE_TITLE}</h1>
           <p className="mt-1 text-sm text-slate-400">{PAGE_PURPOSE}</p>
-          {data && <p className="mt-1 text-xs text-slate-500" data-testid="as-of">{windowLabel}</p>}
+          {data && <p className="mt-1 text-xs text-slate-400" data-testid="as-of">{windowLabel}</p>}
         </div>
         <button
           type="button"

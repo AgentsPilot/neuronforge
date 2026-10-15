@@ -487,6 +487,12 @@ beforeEach(() => {
   mockSearch = '';
 });
 
+/**
+ * F-1: every section's own status is now the shared StatusChip (so it carries
+ * data-tone). "No chip in this section" means no chip OTHER than that one.
+ */
+const NO_CHIP_BUT_STATUS = (id: string) => `[data-tone]:not([data-testid="section-${id}-status"])`;
+
 describe('the finance page', () => {
   it('shows the title, the three tiles with their text state, and the sections in order', async () => {
     serve({ success: true, data: payload() });
@@ -542,7 +548,7 @@ describe('the finance page', () => {
     expect(accountsFoundingNote(1)).toBe('including 1 Founding Partner');
     expect(accountsFoundingNote(2)).toBe('including 2 Founding Partners');
     expect(within(section).queryByTestId('accounts-founding-chip-tier:x')).not.toBeInTheDocument();
-    expect(section.querySelector('[data-tone]')).toBeNull();
+    expect(section.querySelector(NO_CHIP_BUT_STATUS('accounts'))).toBeNull();
   });
 
   it('AC-82 / SA-Q24: a picked business shows the neutral "Founding Partner" chip with words, and no note sentence', async () => {
@@ -574,7 +580,7 @@ describe('the finance page', () => {
     serve({ success: true, data: p });
     render(<FinanceView />);
     const section = await screen.findByTestId('section-accounts');
-    expect(section.querySelector('[data-tone]')).toBeNull();
+    expect(section.querySelector(NO_CHIP_BUT_STATUS('accounts'))).toBeNull();
     expect(section.textContent).not.toMatch(/including \d+ Founding Partner/);
   });
 
@@ -589,6 +595,54 @@ describe('the finance page', () => {
     expect(screen.getByTestId('ai-total')).toBeInTheDocument();
     fireEvent.click(within(section).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('F-1: the section status is the shared chip: OK neutral, partial warn with an icon, could-not-load unknown with an icon', async () => {
+    const p = payload({ accounts: { status: 'unknown', scope: 'all', figures: null } });
+    p.aiCost = { ...p.aiCost, status: 'partial', figures: { ...p.aiCost.figures!, exact: false } };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    await screen.findByTestId('ai-total');
+    const ok = screen.getByTestId('section-credits-status');
+    expect(ok).toHaveAttribute('data-tone', 'neutral');
+    expect(ok.querySelector('svg')).toBeNull();
+    const partial = screen.getByTestId('section-ai-cost-status');
+    expect(partial).toHaveAttribute('data-tone', 'warn');
+    expect(partial.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    const unknown = screen.getByTestId('section-accounts-status');
+    expect(unknown).toHaveAttribute('data-tone', 'unknown');
+    expect(unknown).toHaveTextContent(SECTION_COULD_NOT_LOAD);
+    expect(unknown.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('F-1: the slice-1a tables use the shared admin table: number columns right-aligned and tabular, every other column not', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('ai-total');
+    // Literals, not the copy constants, so a renamed header cannot silently shrink the pin.
+    const NUMBER_COLUMNS: Record<string, string[]> = {
+      'accounts-groups': ['Accounts', 'In grace', 'Past due'],
+      'ai-top': ['Cost (USD)', 'Credits charged'],
+      'credits-table': ['Allowance', 'Used', '% used', 'Gifted outstanding'],
+    };
+    for (const [id, expected] of Object.entries(NUMBER_COLUMNS)) {
+      const table = screen.getByTestId(id);
+      expect(table.parentElement).toHaveClass('overflow-x-auto', 'rounded-xl');
+      const headers = Array.from(table.querySelectorAll('thead th'));
+      const numeric = headers.map((th) => th.classList.contains('text-right'));
+      expect(headers.filter((_, i) => numeric[i]).map((th) => th.textContent)).toEqual(expected);
+      const rows = Array.from(table.querySelectorAll('tbody tr'));
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        let column = 0;
+        for (const cell of Array.from(row.children) as HTMLTableCellElement[]) {
+          // A spanning cell holds words ("No allowance"), so it is left-aligned whatever it spans.
+          if (cell.colSpan === 1) expect([id, column, cell.classList.contains('tabular-nums')]).toEqual([id, column, numeric[column]]);
+          else expect(cell.classList.contains('tabular-nums')).toBe(false);
+          column += cell.colSpan;
+        }
+      }
+    }
   });
 
   it('AC-15: a partial read says "At least USD"', async () => {
@@ -784,7 +838,7 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     await renderWith(takingsSection());
     for (const id of ['accounts', 'ai-cost', 'credits']) {
       expect(screen.queryByTestId(`section-${id}-badge`)).not.toBeInTheDocument();
-      expect(screen.getByTestId(`section-${id}`).querySelector('[data-tone]')).toBeNull();
+      expect(screen.getByTestId(`section-${id}`).querySelector(NO_CHIP_BUT_STATUS(id))).toBeNull();
     }
   });
 
