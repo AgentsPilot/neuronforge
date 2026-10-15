@@ -1623,3 +1623,68 @@ describe('Money M-1 on the page', () => {
     expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe(`/admin/analytics?range=this_month&account=${A}`);
   });
 });
+
+// ── Slice 6a (Money M-3, AC-130, AC-145): the tabs around today's page ──────
+// A separate import, so the lists above stay unedited.
+import { TAB_ACCOUNTS, TAB_OVERVIEW } from '../financeCopy';
+
+describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
+  it('no business picked → a tablist, Overview selected, today’s sections in its panel, no tab key in the request', async () => {
+    const fetchMock = serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    const tablist = screen.getByRole('tablist');
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual([TAB_OVERVIEW, TAB_ACCOUNTS]);
+    expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('id', 'finance-panel-overview');
+    for (const id of ['kpi-strip', 'section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
+      expect(within(panel).getByTestId(id)).toBeInTheDocument();
+    }
+    expect(String(fetchMock.mock.calls[0][0])).not.toMatch(/tab=|sort=|group=|show=/);
+  });
+
+  it('a business picked → no tablist and no tab panel; the one-account view as before', async () => {
+    mockSearch = `accountId=${A}`;
+    const p = payload({ accountId: A });
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    await screen.findByTestId('account-summary');
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tabpanel')).toBeNull();
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+  });
+
+  it('clicking Accounts writes tab=accounts with router.replace and scroll false', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    fireEvent.click(screen.getByRole('tab', { name: TAB_ACCOUNTS }));
+    expect(mockReplace).toHaveBeenCalledWith('/admin/finance?preset=this_month&tab=accounts', { scroll: false });
+  });
+});
+
+// ── Money M-4 Part A (SA-W90 / E-59, SA-WR-46): Section 3's subtitle ─────────
+// A separate import, so the lists above stay unedited.
+import { AI_SOURCE, AI_TITLE } from '../financeCopy';
+
+describe('Money M-4 Part A: Section 3 names its measure and puts the window first', () => {
+  const WINDOW_LABEL = 'This month, 2026-10-01 to 2026-10-09 UTC';
+
+  it('SA-WR-46: the subtitle is "<window label>. Credit ledger: …", with no ", <window label>" tail', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-ai-cost');
+    expect(within(section).getByRole('heading', { name: AI_TITLE })).toBeInTheDocument();
+    expect(AI_TITLE).toBe('Charged AI cost in the window');
+    const subtitle = within(section).getByText(
+      (_, el) => el?.tagName === 'P' && (el.textContent ?? '').startsWith(`${WINDOW_LABEL}.`)
+    );
+    expect(subtitle.textContent).toBe(`${WINDOW_LABEL}. ${AI_SOURCE}`);
+    expect(subtitle.textContent).toBe(
+      `${WINDOW_LABEL}. Credit ledger: what Business OS actions were charged for, with corrections, from 29 Sep 2026. AI calls that were never charged are not in it.`
+    );
+    expect(subtitle.textContent).not.toContain(`, ${WINDOW_LABEL}`);
+    expect(subtitle.textContent).not.toContain('., ');
+  });
+});

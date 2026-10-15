@@ -1,11 +1,12 @@
 # Requirement: Business OS — Export My Data
 
-> **Last Updated**: 2026-10-05
+> **Last Updated**: 2026-10-15
 
 **Created by:** BA
 **Date:** 2026-10-05
 **Status:** Draft, **PARKED until the admin delete (AD-2, AD-3, AD-4) is finished** — the whole export scope, **including DE-0 (token exposure)**, runs LAST (user decisions 2026-10-05, DX-11 = no). Open business questions DX-1 to DX-10 and DX-12 are asked when the work resumes, then SA review (§9.2). **Re-baseline §1 against main first** (PR #218 merged 2026-10-05; see SQ-E10).
 **Status update (2026-10-14):** the user decided DX-1 to DX-9 (see [§0.2](#02-user-decisions-2026-10-14)). Where §0.2 differs from the BA recommendations in §9.1 or from §3 / §5 / §6 / §8, **§0.2 wins**. DX-10 and DX-12 stay open.
+**Status update (2026-10-15):** **DE-0 is complete** (DE-0a + DE-0b shipped; the user waived DE-0b's B-9 manual checks on 2026-10-14, see §0.1.4). **DE-1 is code complete**, uncommitted, on `feature/data-export-de1`, awaiting SA code review (see [§0.5](#05-de-1-status-and-notes-for-later-slices-2026-10-15)).
 
 ## Overview
 
@@ -256,6 +257,7 @@ No `.update(...).select()` exists on an `authenticated` path; that form would ne
 - (N2) Tables created in the dashboard can carry functions that no migration shows. Before the apply, the user runs one read-only query: `SELECT p.proname, p.prosecdef FROM pg_proc p WHERE p.prosrc ILIKE '%plugin_connections%';`. Any row with `prosecdef = false` that `authenticated` calls and that reads a token column would get 42501. Send such a row to SA.
 - (N3) Already true before DE-0b, not a regression: `/api/agent-chains/run` calls `runAgentWithContext` with `user_id` / `agent_id`, not `userId` / `agent`. It throws before it reaches the coordinator.
 **DE-0b shipped — 2026-10-14.** PR #381 merged (`02b57468`) and deployed to Production. Pre-check matched the rollback (anon + authenticated held all 7 privileges; no PUBLIC grant; service_role full). Migration `20261068` applied to PROD 2026-10-14; post-condition passed; checker **VERDICT PASS 46/0**; probe as `authenticated`: safe columns read, `access_token` refused **42501**. Owed: B-9 manual click-through by the user.
+**B-9 manual checks WAIVED by the user — 2026-10-14.** Every B-9 flow is an agent-platform flow (V2 OAuth connect, `/api/agent-stream` token refresh, `/settings` Plugins tab, agent sandbox plugin check, generate-agent), and that app is parked, so the user waived the click-through. The automated evidence stands (checker PASS 46/0, probe 42501). **DE-0 (DE-0a + DE-0b) is complete.**
 
 - (N4) QA E1 is accepted: also setting `updated_at` on the refresh is correct housekeeping.
 ### 0.2 User decisions 2026-10-14
@@ -539,6 +541,32 @@ The legal-entity line behind "AgentPilot" is README copy; it follows the open la
 
 Phase 1 plan is **approved by the user for building.** Each slice still gets a Dev workplan and an SA workplan review.
 
+### 0.5 DE-1 status and notes for later slices (2026-10-15)
+
+**DE-1 — Code complete, uncommitted, on `feature/data-export-de1`; awaiting SA code review, then QA and the user's diff review.** Workplan: [BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md) (SA approved with conditions C-1…C-8, 2026-10-14).
+
+| Item | As built in DE-1 |
+|---|---|
+| Content | Three sections in one group `account` (controller): `account_identity` (from the session), `user_profile` (`profiles`), `plugin_connections`. `agents`, `agent_configurations`, `agent_executions`, `subscriptions`, `transactions` and `audit_logs` are gone (DX-1, BQ-SA-1). The six now-unused repository export methods were deleted (SA Q-5) |
+| Section model | `lib/business-os/data-export/sections.ts`: `{ id, group, gdprRole, read }` registry, `runExportSections`. A failed or throwing read is `status: 'failed'`, listed in `summary.failed_sections`, response still 200, no error text in the file or the audit (FR-E12, AC-E9) |
+| Payload | Typed (`lib/business-os/data-export/payload.ts`, no `any`), `format_version: 2`, `provider: 'AgentPilot'`, `groups.account.controller: 'AgentPilot'` (SA C-4) |
+| File name | `agentpilot-data-export-<YYYY-MM-DD>.json` (UTC date, no user id): the §0.4.1 E fallback form. Business-name slug, owner timezone and `filename*` stay in DE-8b |
+| Audit | `DATA_EXPORTED` via `logAndFlush` (WC-7), with section counts and failed sections only |
+| Danger zone | The plain `<a href="/api/user/data-export">` is now a button through `downloadUserDataExport()`, with success / error messages (QA E4 closed in code) |
+| Profile read | `.maybeSingle()`: no profile row is an `ok`, empty section, not `failed` (SA Q-4) |
+
+**Q-3 ruling (SA, 2026-10-14), applied:** `profiles.plan` is **removed from the export in DE-1**. DX-1a says profile details only, no plan or billing data, and DE-1 is the slice that applies DX-1 to today's file. `hourly_rate_usd`, `role` and `org_id` stay for now (they are not plan or billing data); DE-3 decides them (below).
+
+**AC-E7 note:** the second half of AC-E7 ("the audit section contains the owner's visible rows and none of the BD-26 hidden types") **no longer applies**. The audit section left the export under §0.3.1 (DX-1d), and `ownerAuditReads.guard.test.ts` now proves the export route reads no audit rows at all. BD-26 itself is unchanged and stays covered for `listOwnerEntries` and the owner RLS policy. The first half (no `*` read) holds: the two remaining reads use named column constants, pinned literally in the characterization test.
+
+**Notes for later slices (SA C-6):**
+
+| Slice | Note |
+|---|---|
+| **DE-2** | `plugin_connections` rows with `status = 'disconnected'` are a **status, not a soft delete** (SA Q-7): they stay in the export. Record this on the descriptor |
+| **DE-3** | Decide `profiles.hourly_rate_usd`, `role` and `org_id` explicitly in the Business OS profile column set. Open until then |
+| **DE-8b** | **`business_profiles.business_name` does not exist** (a live probe returned 42703, DE-1 workplan §7). DE-8b's workplan must find the real business-name column with the `business-os-schema-check` skill before writing the file-name slug |
+
 ---
 
 ## 1. Discovery: what exists today
@@ -764,6 +792,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 
 **DE-1**
 - [ ] AC-E7 No export read uses `*` (guard). The audit section contains the owner's visible rows and none of the BD-26 hidden types (fixture with one of each).
+  - **Note (2026-10-15, DE-1):** the audit half no longer applies: the audit section left the export (DX-1d, §0.3.1), and a guard proves the route reads no audit rows. See §0.5.
 - [ ] AC-E8 A forced 500 in production mode returns no internal detail.
 - [ ] AC-E9 A section whose read fails is marked failed in the file, and the response is still 200.
 
@@ -881,3 +910,5 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-14 | SA ruling: Phase 1 re-cut (§0.4.1) | Phase 1 = one request builds one zip (records + files), uploads to the private `business-data-exports` bucket (50 MB) and returns a 120 s signed URL; no queue, parts table, drain or email. Jobs table kept (rate limit in the start RPC, stale-run rule at 90 s, failed jobs not counted); one daily `/api/cron/data-export` for the 3-day sweep and a size watch. Ceiling 40 MB / 150 files / 100,000 rows / 45 MB zip / 40 s, refused before upload with a clear message and an `over_ceiling` audit; warn at 60%. BQ-SA-1 applied in DE-1/DE-2/DE-3. DX-10 file-name and controller rules. Admin "send export to owner" moved to Phase 2. Phase 1 ~14.5 d; Phase 2 list recorded, not scheduled |
 | 2026-10-14 | User decisions on Phase 1 trade-offs (§0.4.1 H) | Admin "send export to owner" deferred to Phase 2; "contact support" above the Phase 1 ceiling accepted. Phase 1 plan approved for building |
 | 2026-10-14 | DE-0b shipped | PR #381 merged + deployed; 20261068 applied to PROD; checker PASS 46/0; probe 42501. B-9 click-through owed |
+| 2026-10-14 | DE-0b B-9 waived; DE-0 complete | The user waived the B-9 manual checks (all agent-platform flows; that app is parked). DE-0 (DE-0a + DE-0b) complete |
+| 2026-10-15 | DE-1 code complete (§0.5) | Uncommitted on `feature/data-export-de1`, awaiting SA code review. Six sections out (DX-1, BQ-SA-1), section model with FR-E12 `failed`, typed payload `format_version: 2`, `logAndFlush`, Danger zone through the shared helper, file name `agentpilot-data-export-<date>.json`. Q-3 ruling recorded (`profiles.plan` removed). AC-E7 note (audit half no longer applies). C-6 notes for DE-2 (disconnected = status), DE-3 (`hourly_rate_usd` / `role` / `org_id`), DE-8b (`business_profiles.business_name` does not exist, 42703) |

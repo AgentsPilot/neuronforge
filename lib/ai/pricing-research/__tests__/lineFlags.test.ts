@@ -2,7 +2,7 @@
  * Server-computed refusals and flags (SA R-4 extended by RR-1).
  */
 
-import { duplicateUnitKeys, evaluatePendingLine, FLAG_LABELS, NEW_MODEL_LABEL, type LineFlagContext } from '../lineFlags';
+import { duplicateUnitKeys, evaluatePendingLine, FLAG_LABELS, NEW_MODEL_LABEL, PENDING_LINE_FLAGS, type LineFlagContext } from '../lineFlags';
 import type { PendingLineInput } from '../pendingLineSchema';
 
 const token = (overrides: Partial<Extract<PendingLineInput, { kind: 'token' }>> = {}): PendingLineInput => ({
@@ -72,6 +72,11 @@ describe('flags', () => {
   it('the new_model flag is labelled with the wording the user chose', () => {
     expect(NEW_MODEL_LABEL).toBe('not used yet');
     expect(FLAG_LABELS.new_model).toBe(NEW_MODEL_LABEL);
+  });
+
+  // Slice 4 (SA RC-3): every flag has words, so none reaches the page as a bare code.
+  it('every flag has a non-empty label', () => {
+    for (const flag of PENDING_LINE_FLAGS) expect(FLAG_LABELS[flag].trim().length).toBeGreaterThan(0);
   });
 
   it('large_move above 50% either way, exactly at the boundary', () => {

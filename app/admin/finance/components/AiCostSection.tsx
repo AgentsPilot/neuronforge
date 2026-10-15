@@ -5,7 +5,8 @@
  * USD and labelled so (AC-14); a read at its ceiling says "At least" (AC-15);
  * a window that starts before charging went live shows the cut-over notice,
  * and one entirely before it shows the notice INSTEAD of figures, never a $0
- * (AC-40). The provider-side token measure is a link, not a read (SA-Q4).
+ * (AC-40). The recorded AI cost (the usage log) is a link, not a read here
+ * (SA-Q4); M-4 Part B adds it beside the charged figure, never added.
  *
  * Money M-1 (CR G-8, SA-W56): that link carries the window, and the business
  * when one is picked (`section3AnalyticsHref`).
@@ -78,7 +79,7 @@ export function AiCostSection({
   const entirelyBefore = aiCost.coverage === 'entirely_before_cutover';
 
   return (
-    <FinanceSection id="ai-cost" title={AI_TITLE} subtitle={`${AI_SOURCE}, ${windowLabel}`} status={aiCost.status} onRetry={onRetry}>
+    <FinanceSection id="ai-cost" title={AI_TITLE} subtitle={`${windowLabel}. ${AI_SOURCE}`} status={aiCost.status} onRetry={onRetry}>
       <div className="space-y-3">
         <CutoverNotice coverage={aiCost.coverage} accountId={accountId} />
         {f && !entirelyBefore && (

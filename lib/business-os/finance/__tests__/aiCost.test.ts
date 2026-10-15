@@ -175,3 +175,43 @@ describe('missingOriginalIds', () => {
     expect(missingOriginalIds([charge, inSet, outside])).toEqual(['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb']);
   });
 });
+
+describe('slice 6a: the non-wire units map (SA-Q46, SA-W79)', () => {
+  it('every account’s integer cost units, the deleted bucket and the total; the parts add up to the total', () => {
+    const { figures, units } = summariseAiCost(
+      base([
+        row({ user_id: A, cost_usd: '1.2345000000' }),
+        row({ user_id: A, cost_usd: '0.0000000001' }),
+        row({ user_id: B, cost_usd: '0.5' }),
+        row({ user_id: null, cost_usd: '0.25' }),
+        row({ user_id: PLATFORM, cost_usd: '0.1' }),
+      ])
+    );
+    expect(units.byAccount.get(A)).toEqual({ cost: 12_345_000_001, rows: 2, unreadable: 0 });
+    expect(units.byAccount.get(B)).toEqual({ cost: 5_000_000_000, rows: 1, unreadable: 0 });
+    expect(units.byAccount.get(PLATFORM)).toEqual({ cost: 1_000_000_000, rows: 1, unreadable: 0 });
+    expect(units.byAccount.has('null')).toBe(false);
+    expect(units.deleted).toEqual({ cost: 2_500_000_000, rows: 1, unreadable: 0 });
+    let sum = units.deleted.cost;
+    for (const b of units.byAccount.values()) sum += b.cost;
+    expect(sum).toBe(units.total.cost);
+    // Section 3's figure is the same integer, divided once.
+    expect(figures.costUsd).toBe(units.total.cost / 1e10);
+  });
+
+  it('an unreadable cost amount is counted on its own account only (and on the total), never as a guess', () => {
+    const { figures, units } = summariseAiCost(
+      base([row({ user_id: A, cost_usd: 'abc' }), row({ user_id: B, cost_usd: '0.1' }), row({ user_id: null, cost_usd: null as unknown as string })])
+    );
+    expect(units.byAccount.get(A)).toEqual({ cost: 0, rows: 1, unreadable: 1 });
+    expect(units.byAccount.get(B)?.unreadable).toBe(0);
+    expect(units.deleted.unreadable).toBe(1);
+    expect(units.total.unreadable).toBe(2);
+    expect(figures.unreadableAmounts).toBe(2);
+  });
+
+  it('an unreadable CREDITS amount does not mark the cost unreadable (the tab shows no credits-charged column)', () => {
+    const { units } = summariseAiCost(base([row({ user_id: A, credits: 'x' })]));
+    expect(units.byAccount.get(A)).toEqual({ cost: 1_000_000_000, rows: 1, unreadable: 0 });
+  });
+});

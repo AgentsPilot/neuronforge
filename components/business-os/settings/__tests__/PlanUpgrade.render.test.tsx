@@ -203,6 +203,17 @@ async function advanceUntil(done: () => boolean, steps = 5) {
   }
 }
 
+/**
+ * Fake timers: step the bounded re-read until it gives up ("taking longer"), then
+ * a few steps more so the cap is still tested. Steps to a condition, not a fixed
+ * count: `advanceTimers: true` lets real time move the fake clock, so under CI
+ * load a re-read can land one step late.
+ */
+async function rereadUntilSlow() {
+  await advanceUntil(() => screen.queryByTestId('plan-purchase-slow') !== null, PROCESSING_REFRESH_LIMIT * 3);
+  await advanceUntil(() => false, 5);
+}
+
 async function toQuote(payload: PlanPayload) {
   await userEvent.click(upgradeButton(payload));
   await screen.findByTestId('plan-upgrade-quote');
@@ -331,11 +342,7 @@ describe('the confirm, and success only from the server re-read (U-5, V-4)', () 
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     await screen.findByTestId('plan-upgrade-upgrading');
 
-    for (let i = 0; i < PROCESSING_REFRESH_LIMIT + 5; i += 1) {
-      await act(async () => {
-        jest.advanceTimersByTime(PROCESSING_REFRESH_INTERVAL_MS);
-      });
-    }
+    await rereadUntilSlow();
     expect(server.planReads).toBe(1 + PROCESSING_REFRESH_LIMIT);
     expect(screen.queryByTestId('plan-upgrade-done')).not.toBeInTheDocument();
     expect(screen.getByTestId('plan-purchase-slow')).toHaveTextContent(COPY['plan.purchase.slow']);
@@ -354,11 +361,7 @@ describe('the confirm, and success only from the server re-read (U-5, V-4)', () 
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     await screen.findByTestId('plan-upgrade-upgrading');
 
-    for (let i = 0; i < PROCESSING_REFRESH_LIMIT + 5; i += 1) {
-      await act(async () => {
-        jest.advanceTimersByTime(PROCESSING_REFRESH_INTERVAL_MS);
-      });
-    }
+    await rereadUntilSlow();
     expect(server.planReads).toBe(1 + PROCESSING_REFRESH_LIMIT);
     expect(screen.queryByTestId('plan-upgrade-done')).not.toBeInTheDocument();
     expect(screen.getByTestId('plan-purchase-slow')).toBeInTheDocument();
@@ -372,11 +375,7 @@ describe('the confirm, and success only from the server re-read (U-5, V-4)', () 
     await toQuote(before);
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     await screen.findByTestId('plan-upgrade-upgrading');
-    for (let i = 0; i < PROCESSING_REFRESH_LIMIT + 5; i += 1) {
-      await act(async () => {
-        jest.advanceTimersByTime(PROCESSING_REFRESH_INTERVAL_MS);
-      });
-    }
+    await rereadUntilSlow();
     expect(server.planReads).toBeGreaterThan(1);
   }
 

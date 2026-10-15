@@ -3,7 +3,8 @@
  * the Settings billing summary's reward / boost-pack totals (GET
  * /api/billing/summary, P-10 workplan §16b B-3).
  *
- * `listForUserDataExport` is covered by userDataExportReads.test.ts.
+ * The data export no longer reads this table (DE-1, BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md:
+ * billing and credits left the export, DX-1a), so its export read was deleted.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';

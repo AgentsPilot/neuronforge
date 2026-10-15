@@ -84,8 +84,13 @@ describe('the settings header', () => {
     expect(settings).not.toContain("router.push('/business-os')");
   });
 
-  it('dropped the router it existed for', () => {
-    expect(settings).not.toContain('const router = useRouter()');
-    expect(settings).not.toContain('useRouter');
+  it('uses the router only to replace, never to push', () => {
+    // The router came back for settings drawer S-1 (C-3): closing a link-opened
+    // drawer takes `section` off the address with `replace`. A push would add a
+    // Back entry that reopens the drawer, and would bring back a navigation this
+    // header no longer has. The positive pin on the replace itself lives in
+    // `app/business-os/settings/__tests__/settingsDeepLinks.guard.test.ts`, which
+    // owns that behaviour (SA W-1 / O-1).
+    expect(settings).not.toMatch(/router\.push\(/);
   });
 });

@@ -337,3 +337,24 @@ describe('the one-business list (M2-FR-3)', () => {
     expect(result.payments!.map((p) => p.planLabel).sort()).toEqual([LABEL, null, null].sort());
   });
 });
+
+// Slice 6a (SA-Q45, E-44): the reader is exported unchanged. A separate import, so the lines above stay unedited.
+import { readPlanMoney } from '../planRevenue';
+
+describe('slice 6a: readPlanMoney, exported unchanged (SA-Q45)', () => {
+  it('a readable invoice → { code, amount, tax } in integer minor units, the code normalised', () => {
+    expect(readPlanMoney(invoice({ amount_minor: 7900, amount_tax_minor: 500 }))).toEqual({ code: 'USD', amount: 7900, tax: 500 });
+    expect(readPlanMoney(invoice({ amount_minor: 0 }))).toEqual({ code: 'USD', amount: 0, tax: 0 });
+  });
+
+  it('unreadable → null: tax above the amount, a string amount, an unknown currency', () => {
+    expect(readPlanMoney(invoice({ amount_minor: 100, amount_tax_minor: 120 }))).toBeNull();
+    expect(readPlanMoney(invoice({ amount_minor: '7900' }))).toBeNull();
+    expect(readPlanMoney(invoice({ currency: 'dollars' }))).toBeNull();
+  });
+
+  it('does not filter on kind: the builders filter first (SA-W80)', () => {
+    expect(readPlanMoney(invoice({ kind: 'something_else' }))).toEqual({ code: 'USD', amount: 7900, tax: 0 });
+    expect(PLAN_PAYMENT_KIND).toBe('invoice_paid');
+  });
+});

@@ -16,6 +16,13 @@
  * never in the top 10. A platform account's rows are in the total too; the top
  * 10 marks them so the page labels them "Platform account" (SA-WR-5).
  *
+ * Slice 6a (Money M-3, SA-Q46, SA-W79): the same pass also returns `units`, a
+ * NON-WIRE map of every account's integer cost units (plus the deleted bucket
+ * and the total), each with its own count of unreadable cost amounts. The
+ * Accounts tab reads its AI cost from it, so a row and Section 3 cannot
+ * differ: `figures.costUsd` is `units.total.cost / COST_SCALE`. `figures` and
+ * `top` are unchanged, so Section 3's wire is byte-identical.
+ *
  * @module lib/business-os/finance/aiCost
  */
 
@@ -32,9 +39,31 @@ interface UnitBucket {
   cost: number;
   credits: number;
   rows: number;
+  /** Rows of this bucket whose cost amount could not be read (counted as 0; slice 6a, SA-W79). */
+  unreadable: number;
 }
 
-const emptyBucket = (): UnitBucket => ({ cost: 0, credits: 0, rows: 0 });
+const emptyBucket = (): UnitBucket => ({ cost: 0, credits: 0, rows: 0, unreadable: 0 });
+
+/** One bucket's cost in integer ledger units (COST_SCALE), its rows, and its unreadable cost amounts. */
+export interface AiCostUnitBucket {
+  cost: number;
+  rows: number;
+  unreadable: number;
+}
+
+/**
+ * NON-WIRE (slice 6a, SA-Q46, SA-W79): every account's cost in integer ledger
+ * units, the deleted bucket and the total, from the same pass as `figures`.
+ * The sum over `byAccount` plus `deleted` is `total`.
+ */
+export interface AiCostUnits {
+  byAccount: ReadonlyMap<string, AiCostUnitBucket>;
+  deleted: AiCostUnitBucket;
+  total: AiCostUnitBucket;
+}
+
+const unitsOf = (b: UnitBucket): AiCostUnitBucket => ({ cost: b.cost, rows: b.rows, unreadable: b.unreadable });
 const toAmount = (b: UnitBucket): FinanceAmount => ({ costUsd: b.cost / COST_SCALE, credits: b.credits / CREDIT_SCALE, rows: b.rows });
 
 /** A top-10 line before names are looked up. */
@@ -65,6 +94,8 @@ export interface AiCostSummary {
   /** `topAccounts` here carries no names: the builder adds them. */
   figures: Omit<FinanceAiCostFigures, 'topAccounts'>;
   top: TopAccountUnits[];
+  /** NON-WIRE (slice 6a): never sent; the Accounts tab's per-account cost. */
+  units: AiCostUnits;
 }
 
 function triggerOf(effectiveTrigger: string | null, resolved: boolean): FinanceTriggerKey {
@@ -94,7 +125,8 @@ export function summariseAiCost(input: SummariseAiCostInput): AiCostSummary {
   for (const row of rows) {
     let cost = toUnits(row.cost_usd, COST_SCALE);
     let credits = toUnits(row.credits, CREDIT_SCALE);
-    if (Number.isNaN(cost)) {
+    const costUnreadable = Number.isNaN(cost);
+    if (costUnreadable) {
       unreadableAmounts += 1;
       cost = 0;
     }
@@ -106,6 +138,7 @@ export function summariseAiCost(input: SummariseAiCostInput): AiCostSummary {
       b.cost += cost;
       b.credits += credits;
       b.rows += 1;
+      if (costUnreadable) b.unreadable += 1;
     };
 
     add(total);
@@ -165,6 +198,11 @@ export function summariseAiCost(input: SummariseAiCostInput): AiCostSummary {
       unresolvedAdjustments,
     },
     top,
+    units: {
+      byAccount: new Map([...byAccount.entries()].map(([id, b]) => [id, unitsOf(b)])),
+      deleted: unitsOf(deleted),
+      total: unitsOf(total),
+    },
   };
 }
 

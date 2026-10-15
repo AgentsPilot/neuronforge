@@ -23,7 +23,9 @@
 // together" rule (see `lib/business-os/userLanguage.ts`) gets a second home.
 //
 // `findTimezone` was added for the package-acceptance wire, which creates
-// bookings off-request and so has no browser zone to fall back on.
+// bookings off-request and so has no browser zone to fall back on. It was
+// lost once in a merge conflict with `findLocale` and restored (F-13): keep
+// both when resolving a conflict here.
 //
 // Methods never throw: they return `{ data, error }`, with a database error
 // reduced to `{ code, message }` before it is logged or returned (the invite
@@ -72,6 +74,47 @@ export class UserPreferencesRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to read the preferred language');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * The business's own clock, or `null` when nothing usable is stored.
+   *
+   * `user_preferences.timezone` is the authority for every hour the platform
+   * shows a client (CLAUDE.md § Currency & Timezone;
+   * `business_profiles.timezone` does not exist). The caller is package
+   * acceptance, which runs on the client's click with no owner browser to
+   * infer a zone from.
+   *
+   * `null` is "not asked", kept distinguishable from a stored `'UTC'`, which is
+   * a choice somebody made — never default it here. Validate it with
+   * `safeTimezone` before formatting: a stored zone can be an old IANA name or
+   * a hand-edited row.
+   *
+   * Restored (F-13): the 2026-10-05 merge f66cae67 resolved a conflict with
+   * `findLocale` by keeping one side's method and the other side's header
+   * line, so this method vanished and package acceptance threw after the
+   * proposal was already claimed.
+   */
+  async findTimezone(userId: string): Promise<RepositoryResult<string>> {
+    const methodLogger = this.logger.child({ method: 'findTimezone', userId });
+    try {
+      const { data, error } = await this.supabase
+        .from(USER_PREFERENCES)
+        .select('timezone')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const stored = (data as { timezone?: unknown } | null)?.timezone;
+      const zone = typeof stored === 'string' ? stored.trim() : '';
+      return { data: zone || null, error: null };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to read the timezone');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };

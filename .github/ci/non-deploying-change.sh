@@ -68,12 +68,16 @@
 #   - a pull_request checkout (refs/pull/N/merge): HEAD^1 is the base tip, so
 #     the diff is again the whole PR.
 #
-# It is NOT right for a push carrying several commits (a rebase-merge, a merge
-# queue batch, a direct multi-commit push): HEAD^ is then the second-to-last
-# commit, so a docs-only final commit would hide code in the commits before it.
-# That is why the GitHub workflows pass `github.event.before` explicitly on
-# push events - at fetch-depth 2 it resolves exactly when it equals HEAD^ (the
-# single-commit case) and fails to resolve otherwise, which builds. On Vercel
+# It is NOT right for a push carrying several commits (a rebase-merge, a
+# direct multi-commit push): HEAD^ is then the second-to-last commit, so a
+# docs-only final commit would hide code in the commits before it. That is
+# why the GitHub workflows pass `github.event.before` explicitly on push
+# events - at fetch-depth 2 it resolves exactly when it equals HEAD^ (the
+# single-commit case) and fails to resolve otherwise, which builds. On a
+# merge_group (merge queue) run they pass `merge_group.base_sha`, the queue
+# commit's first parent, and fetch it first so it resolves even for a stacked
+# entry. Vercel never builds queue branches: vercel.json disables deployments
+# for gh-readonly-queue/** (docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md). On Vercel
 # the same job is done by VERCEL_GIT_PREVIOUS_SHA where Vercel provides it;
 # where it does not, a multi-commit preview push can skip a preview whose
 # earlier commits held code. The next push rebuilds it, and "Redeploy" in the

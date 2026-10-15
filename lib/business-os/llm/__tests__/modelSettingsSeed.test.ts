@@ -255,29 +255,36 @@ describe('the migration file (T1-9, FR-16)', () => {
 });
 
 describe('the seeded rows reproduce today exactly (T1-9, AC-2)', () => {
-  it('is accepted by the resolver guardrails, area by area', async () => {
+  it('is accepted by the resolver guardrails, area by area (images: refused, Q10)', async () => {
     for (const area of BOS_LLM_AREAS) {
       // eslint-disable-next-line no-await-in-loop
       const validation = await validateAreaRow(area, SEEDED_ROWS[area]);
+      if (area === 'images') {
+        // The seed wrote gpt-image-1. Its prices were removed on 2026-10-14
+        // (Q10), after prod moved to the successor, so the guardrail now
+        // refuses that model. Only the model is refused; nothing else.
+        expect(validation.rejected.map((issue) => ({ field: issue.field, reason: issue.reason }))).toEqual([
+          { field: 'model', reason: 'image_price_missing' },
+        ]);
+        continue;
+      }
       expect({ area, rejected: validation.rejected }).toEqual({ area, rejected: [] });
     }
   });
 
-  it('resolves every call to its code default — the seed changes nothing (images: its own model)', async () => {
+  it('resolves every call to its code default — the seed changes nothing', async () => {
     for (const area of BOS_LLM_AREAS) {
       for (const callName of bosLlmSettingsCallNames(area)) {
         // eslint-disable-next-line no-await-in-loop
         const resolved = await resolveBosLlmSettings(area as never, callName as never);
-        // The one intended difference. The seed wrote `gpt-image-1`, which WAS
-        // the image code default when it ran (2026-10-03). The default moved to
-        // the successor model on 2026-10-14 (gpt-image-1 retires 23 Oct 2026),
-        // so the seeded row now resolves to the model it names, not the default.
-        // Every other field still equals the default.
-        const expected =
-          area === 'images'
-            ? { ...bosLlmCodeDefaults(area, callName), model: SEEDED_ROWS.images.model }
-            : bosLlmCodeDefaults(area, callName);
-        expect({ area, callName, resolved }).toEqual({ area, callName, resolved: expected });
+        // Images included: the seed's gpt-image-1 is refused since its prices
+        // were removed (2026-10-14, Q10), so the call falls back to the code
+        // default, the same as every other area.
+        expect({ area, callName, resolved }).toEqual({
+          area,
+          callName,
+          resolved: bosLlmCodeDefaults(area, callName),
+        });
       }
     }
   });

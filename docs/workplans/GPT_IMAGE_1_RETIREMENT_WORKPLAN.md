@@ -49,6 +49,8 @@ Removing the `gpt-image-1` fallback entries after 23 Oct is open question Q10 in
 1. **Only with the user's OK**, apply migration `20261067_bos_llm_images_model_gpt_image_2_5_flare.sql` by hand (it sets `model` of `bos_llm_area_images` to `gpt-image-2.5-flare`, nothing else), then run the read-back query in its header. Never before the deploy. Until then prod generates with `gpt-image-1` at quality `high` ($0.167–$0.25 per image), so do it soon after the deploy and before 23 Oct 2026.
 2. Live test: generate one image on a test business. Check the `token_usage` row: `model_name = gpt-image-2.5-flare`, `cost_usd` matches the table above for the reported quality, and no "No price" or "different quality than requested" log.
 
+> **Rollback void after Q10 (SA Q10 finding 1).** The ROLLBACK comment in `20261067`'s header (set the row back to `gpt-image-1`) no longer works: with the `gpt-image-1` prices removed, the guardrail refuses that row (`image_price_missing`) and calls stay on the flare default. The migration is applied, so it is not edited. Prod has no `image_generation_*` rows (checked read-only 2026-10-14), so no configured price can re-admit `gpt-image-1` (SA Q10 finding 2, settled).
+
 ## SA Review Notes
 
 **Code Review by SA — 2026-10-14**
@@ -139,6 +141,72 @@ check-bos-llm-literals: passed   (exit 0)
 
 **Verdict: PASS.** Post-deploy steps 1 and 2 are still owed.
 
+## Follow-up: Q10 (remove the gpt-image-1 prices)
+
+**Branch:** `fix/remove-gpt-image-1-prices` (off `origin/main`), uncommitted.
+
+**Post-deploy record for PR #378:** migration `20261067` applied 2026-10-14 18:37 UTC, so the prod `images` row is `gpt-image-2.5-flare`. Live test 2026-10-14 20:01 UTC passed: portrait, quality `high`, $0.043, 43 credits, `is_fallback_priced` false, 16.8 s.
+
+**Decision (user, 2026-10-14):** remove the 9 `gpt-image-1` entries from `IMAGE_FALLBACK_PRICING` now, not after 23 Oct (Q10 in [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md) §8). Accepted consequences:
+
+- The conservative image rate (`chargePricing`, the maximum of the map) drops from $0.25 to $0.212, the flare `1024x1024:max` price. Nothing hardcodes $0.25: every consumer and test derives it from the map.
+- A rollback of the `images` row to `gpt-image-1` is refused by the guardrail (`image_price_missing`) and the call stays on the flare default.
+
+| # | Task | Status |
+|---|---|---|
+| Q10-1 | `SystemConfigRepository.ts`: delete the 9 `gpt-image-1` entries; provenance comment says why they are absent and what follows | ✅ |
+| Q10-2 | Tests: "gpt-image-1 prices kept" becomes "no longer priced"; `modelSettings` "row naming gpt-image-1 is accepted" becomes a safe-rollback regression test (refused, resolves to the default); seed tests (T1-9 guardrail test expects only the images model refused; the "resolves to the default" exceptions in T1-9 and leg C removed, since the refused seed row now falls back to the default); `bos-llm-settings` verify-stored and verify-equivalence use a priced image model; two snapshots (leg C, step 3 boundary) now show `gpt-image-2.5-flare` | ✅ |
+| Q10-3 | Docs: Q10 decided plus Change History in the price review requirement; this section | ✅ |
+
+### SA Code Review (Q10)
+
+**Code Review by SA, 2026-10-14**
+**Status:** ✅ Code Approved (with nits)
+
+Verified: `git diff` (10 files), a grep of non-test code for `gpt-image-1` and `0.25`, and the affected Jest suites (`lib/business-os/llm`, `lib/ai/pricing-research`, `lib/services`, `SystemConfigRepository.image`, `bos-llm-settings`, `check-bos-llm-literals`, `app/admin/business-os-llm`): 93 suites, 2333 tests, all pass.
+
+**Conservative rate.** `chargePricing.buildRates` takes `maxOf(IMAGE_FALLBACK_PRICING)`, so the rate becomes flare `1024x1024:max` = $0.212 with no other change. `chargeResolver`/`chargeClassification` consume `rateFor('image')`, and slice-3 `comparisonModel.conservativeFor` reads `conservativeRateDerivation()`. All three derive it. There is no hardcoded 0.25 image rate in non-test code. The `0.25` in `comparisonModel.test.ts` and `lineFlags.test.ts` comes from module mocks (a mocked `conservativeRateDerivation` and a mocked `IMAGE_FALLBACK_PRICING`), not from the real table, so leaving it is correct. `chargePricing.test.ts` derives `IMAGE_MAX` from the map. Its `gpt-image-1` record is an "unpriced" fixture, which is now even more accurate.
+
+**Test rewrites.** All are correct and still test something real:
+- The `modelSettings` safe-rollback test checks both the resolved model (the default) and the `image_price_missing` error, so it protects consequence (b).
+- The T1-9 guardrail test pins the rejection set to exactly `[{model, image_price_missing}]`. A second, unrelated rejection on the seeded images row would still fail it.
+- With the T1-9 and leg C exceptions removed, all areas use the same assertion. This is correct because the refused row now falls back to the default.
+- `verify-equivalence` gives the seeded images row the default model explicitly, so the test does not pass just because the row is refused (the right call).
+- The two snapshot lines match the leg C and step-3 resolution.
+
+**Prod impact.** Low. The prod row already names flare (20261067), and a configured value equal to the code default skips the price check, so runtime resolution does not change. Live image pricing (`resolveImagePrice`) only ever looks up flare keys now. The admin LLM screen's options come from `listPricedModels()` plus `checkModelForCall`, so `gpt-image-1` is no longer offered as an image option, which is what we want. No token_usage re-pricing path exists: the only other reader is slice-3 `comparisonModel`, which treats the map as read-only "current" prices, so `gpt-image-1` simply drops out of its image rows and coverage. Charges for unpriced image calls go down by about 15%, which the user accepted.
+
+### Code Review Comments
+1. `supabase/migrations/20261067_bos_llm_images_model_gpt_image_2_5_flare.sql:33-47`: the ROLLBACK comment still tells an operator to set the row back to `gpt-image-1`. After this change, that rollback is refused and logs `image_price_missing` on every cache window. Do not edit the applied migration. Instead, record in this workplan's Post-deploy steps (or the BOS LLM model-settings runbook) that the documented rollback is void after Q10. Priority: Low
+2. Consequence (b) holds only while `image_generation_prices_usd` in configuration has no `gpt-image-1` keys, because configuration overrides the fallback map in `checkImageModel`. No migration seeds that setting, so it is very likely empty, but SA could not check prod (no DB access). One read-only check after deploy settles it. Priority: Low
+3. `lib/business-os/llm/modelSettingsPolicy.ts:283`: the comment says `gpt-image-1` is absent from "the in-code price table", meaning the token table. It is still true, but now ambiguous, since the model is also absent from the image table. Optional rewording. Priority: Low (style)
+
+### Optimisation Suggestions
+- None.
+
+### Code Approved for QA: Yes
+
+### QA Testing Report (Q10)
+
+**QA, 2026-10-14**
+**Test mode:** full · **Strategy:** A (Jest) plus C (a direct tsx script against the real modules) · **Focus:** schema, pricing · **Skipped:** live calls, DB reads, e2e (no UI change; brief forbids them) · **Input source:** prompt
+
+| Check | Result | Notes |
+|---|---|---|
+| Targeted Jest run (`SystemConfigRepository`, `GeneratedImageService`, `lib/business-os/llm`, `lib/ai`, `bos-llm-settings`, `check-bos-llm-literals`, `app/api/website/media`, `app/admin/business-os-llm`, `app/admin/model-pricing`, `app/api/admin`) | ✅ Pass | 119 suites / 3688 tests, 23 snapshots. Jest exit 1 from **one** failure: `app/api/admin/jobs-queues/__tests__/qa-slice5-pr2.route.test.ts` "403 immediately", a timing assertion (1050 ms against a `< 1000` limit) under parallel load. That file is unchanged from `origin/main`. Rerun alone: 11/11, exit 0. Unrelated flake, and not one of the two known CRLF failures (neither ran in this path set) |
+| Extra suites that use the `gpt-image-1` seed fixture but are outside that list: `website-builder/archetypeSeed`, `chargePricing` | ✅ Pass | 2 suites / 27 tests, exit 0 |
+| `npx tsx scripts/check-bos-llm-literals.ts` | ✅ Pass | 64 files, 0 violations, exit 0 |
+| Happy path: `resolveImagePrice` for flare, 3 sizes × 5 qualities | ✅ Pass | All 15 match the price table above, `source: 'fallback'`. The flare entries are byte-identical to `origin/main` |
+| Conservative image rate | ✅ Pass | `conservativeRateDerivation()` image entry: `perImage 0.212`, `imageFrom 'gpt-image-2.5-flare:1024x1024:max'`. The map now has 15 keys and 0 `gpt-image-1` keys |
+| Failure path: a `gpt-image-1` price lookup | ✅ Pass | 4 keys (incl. the old $0.25 `1024x1536:high`) return `{usdPerImage: 0, source: 'unpriced'}` and log the error "No price for this image model…" |
+| Failure path: a settings row naming `gpt-image-1` | ✅ Pass (via Jest) | The `modelSettings` and seed tests log `reason: image_price_missing, value: gpt-image-1` and assert it resolves to the flare default |
+
+**Script:** session scratchpad `verify.ts`, 21 checks, 0 failed. It runs with a preload stub for `server-only` and a dummy unreachable Supabase URL. Neither function touches the DB, so no network call was made.
+
+**Issues:** none. Bugs: 0. Note: the test fixture `lib/business-os/llm/__fixtures__/seededRows.ts` still seeds `images` as `gpt-image-1`. That is intentional (it mirrors the historical seed, and the rewritten tests now use it as the refusal path), so no action is needed. SA comments 1–3 are still open as written (docs/prod-check only).
+
+**Verdict: PASS.** Happy path and failure path both verified. Ready for the user's diff review.
+
 ## Change History
 
 | Date | Change | Details |
@@ -149,3 +217,6 @@ check-bos-llm-literals: passed   (exit 0)
 | 2026-10-14 | SA nits F1–F3 applied | Migration 20261061 (number checked free on all branches), xhigh attribution test, Q10 open item; uncommitted pending Offir's approval |
 | 2026-10-14 | Offir approved; RM local commit | 67b8ba1 on `fix/gpt-image-1-retirement`, not pushed |
 | 2026-10-14 | Merged origin/main; migration renumbered | Merge commit `ebd155ea` (no rebase), renumber in the fix commit after it. One conflict, the price review requirement's Change History: main's slice 3 rows kept, our row after them and reworded (slice 3 is merged, not on hold); Q10 kept in §8. Migration renamed `20261067_bos_llm_images_model_gpt_image_2_5_flare.sql` (main holds `20261062` and `20261066`; `20261061` is left unused). Slice 3 check: the comparison reads `IMAGE_FALLBACK_PRICING` read-only as the "current" image price; the 15 flare keys show as in-code-fallback rows, both area models (row `gpt-image-1`, default flare) are covered, `xhigh`/`max` pass its quality pattern, and no test pins the key set or count. Slice 3 has no apply path for image prices (no reader of `ai_model_image_pricing` until slice 7), so the in-code addition stays correct. Not pushed |
+| 2026-10-14 | Follow-up Q10 | PR #378 post-deploy recorded (migration `20261067` applied 18:37 UTC; live image 20:01 UTC, $0.043, 43 credits, not fallback-priced). User decided Q10: the 9 `gpt-image-1` prices removed on `fix/remove-gpt-image-1-prices`; conservative image rate $0.25 → $0.212; a `gpt-image-1` row now resolves to the default. Uncommitted |
+| 2026-10-14 | QA report (Q10) | QA PASS: 119 suites / 3688 tests (one unrelated timing flake, green on rerun), literal guard clean, direct script 21/21 (flare prices, gpt-image-1 unpriced, conservative image rate 0.212) |
+| 2026-10-14 | SA review (Q10) | Approved with nits: F1 rollback-void note added under Post-deploy steps; F2 settled (no `image_generation_*` rows in prod); F3 optional wording, skipped |
