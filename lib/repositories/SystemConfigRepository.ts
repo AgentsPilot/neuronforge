@@ -68,14 +68,15 @@ export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> =
  * 1536x1024 and 1024x1536 share one row. `xhigh` and `max` are priced too,
  * so an image the provider reports at those levels is never recorded at $0.
  *
- * Provenance, gpt-image-1: its per-image price table (low / medium / high at
- * 1024x1024 and at 1024x1536 / 1536x1024). On 2026-09-18 all nine values were
- * confirmed against OpenAI's own model page
- * (developers.openai.com/api/docs/models/gpt-image-1, "Image generation — Per
- * image"). OpenAI shuts gpt-image-1 down on 23 Oct 2026. Keep these entries
- * until that date has passed: the prod `images` row still names it until its
- * one-row update, and `chargePricing` takes the conservative image rate as the
- * maximum of this map, so removing them would change that rate. These are the
+ * gpt-image-1 (shut down by OpenAI on 23 Oct 2026) is deliberately absent.
+ * Its nine prices were removed on 2026-10-14, after the prod `images` row moved
+ * to gpt-image-2.5-flare (migration 20261067), by user decision (Q10 in
+ * docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md). Two consequences:
+ * `chargePricing` takes the conservative image rate as the maximum of this map,
+ * so that rate is now the flare `1024x1024:max` price ($0.212, was $0.25); and
+ * a row naming gpt-image-1 is now refused by the image guardrail
+ * (`image_price_missing`) and resolves to the code default, so a rollback of
+ * the row cannot put a retired model back in service. These are the
  * DEFAULT, not the rule: `image_generation_prices_usd` in configuration
  * overrides any entry, and is where a price change belongs. This mirrors
  * `FALLBACK_PRICING` in lib/ai/pricing.ts for token models. Resolved by
@@ -83,15 +84,6 @@ export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> =
  * documented defaults, so no model name is written in the service.
  */
 export const IMAGE_FALLBACK_PRICING: Readonly<Record<string, number>> = Object.freeze({
-  'gpt-image-1:1024x1024:low': 0.011,
-  'gpt-image-1:1024x1536:low': 0.016,
-  'gpt-image-1:1536x1024:low': 0.016,
-  'gpt-image-1:1024x1024:medium': 0.042,
-  'gpt-image-1:1024x1536:medium': 0.063,
-  'gpt-image-1:1536x1024:medium': 0.063,
-  'gpt-image-1:1024x1024:high': 0.167,
-  'gpt-image-1:1024x1536:high': 0.25,
-  'gpt-image-1:1536x1024:high': 0.25,
   'gpt-image-2.5-flare:1024x1024:low': 0.007,
   'gpt-image-2.5-flare:1024x1536:low': 0.006,
   'gpt-image-2.5-flare:1536x1024:low': 0.006,
