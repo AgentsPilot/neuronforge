@@ -75,6 +75,11 @@
  * imports (`react`, `lucide-react`, `@/components/ui/dialog` and siblings
  * through `./`) were already on the S-3 allow-list, and it never fetches. The
  * Messages registry entry drops `MessagesConfirmDialog.tsx`, deleted by LF-7.
+ *
+ * Amended by Finance F-2: Finance joins the registry (SA-W2) with its page, its
+ * view and its hook; F-4 and F-5 extend the entry. No rule change. The one
+ * shared source change is `readAdminResponse.ts` exporting `adminReadFallback`
+ * (SA-W1), which adds no import.
  */
 
 import * as fs from 'fs';
@@ -680,6 +685,16 @@ const MIGRATED_PAGES = [
     // filters, no table, no drawer, no dialog: the page is read-only.
     page: '/admin/settings (Admin users)',
     files: ['app/admin/settings/page.tsx'],
+  },
+  {
+    // Finance F-2: the shared header (h1 "Finance") and states; the read on
+    // readAdminResponse since F-3. Refresh still in the header (DV-1, until F-4).
+    page: '/admin/finance (Finance)',
+    files: [
+      'app/admin/finance/page.tsx',
+      'app/admin/finance/components/FinanceView.tsx',
+      'app/admin/finance/useFinanceData.ts',
+    ],
   },
 ] as const;
 

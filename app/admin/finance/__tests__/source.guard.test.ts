@@ -154,7 +154,8 @@ describe('Money M-1 source guards', () => {
     expect(view).toMatch(/pickedName/);
     expect(sinkCalls(view).length).toBeGreaterThan(0);
     for (const args of sinkCalls(view)) expect(args).not.toMatch(/pickedName|accountName|chipName/);
-    expect(view).toMatch(/useFinanceData\(queryString,/);
+    // Finance F-2: the hook takes the query string and nothing else (fallbackError removed).
+    expect(view).toMatch(/useFinanceData\(queryString\)/);
   });
 
   // AC-112: the header and summary select, they never fold.
@@ -305,5 +306,38 @@ describe('Money M-4 source guards (the recorded block and the summary line)', ()
   it('SA-W98: Section 3 hands the block to the frame’s unknown slot too, so it shows when the charged read failed', () => {
     expect(codeOf(SECTION3)).toMatch(/alsoWhenUnknown=\{recordedBlock\}/);
     expect(codeOf(path.join(DIR, 'components', 'FinanceSection.tsx'))).toMatch(/\{status === 'unknown' && alsoWhenUnknown\}/);
+  });
+});
+
+describe('Finance F-2 source guards (header and states)', () => {
+  const VIEW = path.join(DIR, 'components', 'FinanceView.tsx');
+  const HOOK = path.join(DIR, 'useFinanceData.ts');
+  const H1 = /<h1\b/;
+  const SHARED_HEADER = /import\s*\{\s*AdminPageHeader\s*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminPageHeader'/;
+  const SHARED_STATES = /import\s*\{[^}]*\bAdminError\b[^}]*\bAdminLoading\b[^}]*\bAdminNotice\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminStates'/;
+  const HAND_NOTICE = /border-amber-500\/30/;
+
+  it('the detectors bite (planted samples)', () => {
+    expect('<h1 className="x">Finance</h1>').toMatch(H1);
+    expect("import { AdminPageHeader } from '../../components/layout/AdminPageHeader';").not.toMatch(SHARED_HEADER);
+    expect("import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';").toMatch(SHARED_HEADER);
+    expect("import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';").toMatch(SHARED_STATES);
+    expect('<p className="rounded border border-amber-500/30 bg-amber-500/10">').toMatch(HAND_NOTICE);
+  });
+
+  it('FinanceView has no own h1 and takes the header and states from the shared folder by alias', () => {
+    const view = codeOf(VIEW);
+    expect(view).not.toMatch(H1);
+    expect(view).toMatch(SHARED_HEADER);
+    expect(view).toMatch(SHARED_STATES);
+    expect(view).not.toMatch(HAND_NOTICE);
+    expect(view).toMatch(/<AdminPageHeader\b/);
+  });
+
+  it('the hook has no caller fallback any more; its defensive catch uses the shared sentence', () => {
+    const hook = codeOf(HOOK);
+    expect(hook).not.toMatch(/fallbackError/);
+    expect(hook).toMatch(/export function useFinanceData\(queryString: string\): FinanceData/);
+    expect(hook).toMatch(/setError\(adminReadFallback\(FINANCE_WHAT\)\)/);
   });
 });

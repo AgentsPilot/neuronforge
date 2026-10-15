@@ -27,15 +27,26 @@
  * tabs. With a business picked there are no tabs, and picking a business drops
  * `tab`, `sort`, `group` and `show`. The summary gains the AI margin line from
  * `accountMargin`.
+ *
+ * Finance F-2 (Admin Layout Standard §5.3, §5.10): the header is the shared
+ * `AdminPageHeader` (h1 "Finance", the sidebar label), and the states are the
+ * shared `AdminLoading`, `AdminError` and `AdminNotice`, inside one
+ * always-mounted content area that is `aria-busy` while a read runs. The hook
+ * still clears the data on a failure, so a failed read never shows old figures.
+ * DEVIATION DV-1: Refresh stays in the header's actions (the standard puts it in
+ * the filter bar) until F-4, which must move it and drop the DV-1 test pin.
  */
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { RefreshCw } from 'lucide-react';
 
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
+
 import { DEFAULT_FINANCE_QUERY, parseFinanceUrl, serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
-import { useFinanceData } from '../useFinanceData';
-import { LOADING, NOTICE_LABEL, NAME_PLATFORM, PAGE_LOAD_FAILED, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH, RETRY } from '../financeCopy';
+import { FINANCE_WHAT, useFinanceData } from '../useFinanceData';
+import { ACCOUNTS_WHAT, NAME_PLATFORM, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH } from '../financeCopy';
 import { accountNameFor, type PickedName } from '../financeAccount';
 import { AccountHeader } from './AccountHeader';
 import { AccountSummary } from './AccountSummary';
@@ -74,7 +85,7 @@ export function FinanceView() {
     [searchParams]
   );
   const queryString = serialiseFinanceUrl(query);
-  const { data, loading, error, reload } = useFinanceData(queryString, PAGE_LOAD_FAILED);
+  const { data, loading, error, reload } = useFinanceData(queryString);
 
   const setQuery = useCallback(
     (next: FinanceQuery) => router.replace(`${pathname ?? '/admin/finance'}?${serialiseFinanceUrl(next)}`, { scroll: false }),
@@ -118,23 +129,24 @@ export function FinanceView() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-700 pb-4">
-        <div>
-          <h1 className="text-xl font-semibold text-white">{PAGE_TITLE}</h1>
-          <p className="mt-1 text-sm text-slate-400">{PAGE_PURPOSE}</p>
-          {data && <p className="mt-1 text-xs text-slate-400" data-testid="as-of">{windowLabel}</p>}
-        </div>
-        <button
-          type="button"
-          onClick={reload}
-          aria-busy={loading}
-          disabled={loading}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"
-        >
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          {REFRESH}
-        </button>
-      </header>
+      <AdminPageHeader
+        title={PAGE_TITLE}
+        purpose={PAGE_PURPOSE}
+        asOf={data ? windowLabel : null}
+        actions={
+          // DV-1: Refresh stays here until F-4 moves it into the filter bar.
+          <button
+            type="button"
+            onClick={reload}
+            aria-busy={loading}
+            disabled={loading}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+            {REFRESH}
+          </button>
+        }
+      />
 
       <FinanceFilterBar
         query={query}
@@ -144,72 +156,65 @@ export function FinanceView() {
         chipName={chipName}
       />
 
-      {notice && (
-        <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="status" data-testid="finance-url-notice">
-          {NOTICE_LABEL} {notice}
-        </p>
-      )}
+      {/* A standing caveat, not a status change, so no role (SA-W4). */}
+      {notice && <AdminNotice testId="finance-url-notice">{notice}</AdminNotice>}
 
-      {loading && !data && <p className="text-sm text-slate-400">{LOADING}</p>}
+      {/* Always mounted, so a refresh keeps the current figures and says it is busy (§5.10). */}
+      <div data-testid="finance-content" aria-busy={loading} className="space-y-4">
+        {error && <AdminError message={error} testId="finance-error" onRetry={reload} />}
 
-      {error && (
-        <div className="flex items-center gap-3 text-sm text-slate-300" role="alert" data-testid="finance-error">
-          <span>{error}</span>
-          <button type="button" onClick={reload} className="rounded border border-slate-600 px-2 py-1 text-xs hover:bg-slate-700">
-            {RETRY}
-          </button>
-        </div>
-      )}
+        {loading && !data && !error && <AdminLoading what={FINANCE_WHAT} />}
 
-      {data && !error && (
-        <div className="space-y-4">
-          {data.accountId !== null && (
-            <>
-              <AccountHeader
-                accountId={data.accountId}
-                name={accountNameFor(data.accountId, pickedName, data)}
-                accounts={data.accounts}
-              />
-              <AccountSummary
-                accountId={data.accountId}
-                window={data.window}
-                aiCost={data.aiCost}
-                revenue={data.revenue}
-                credits={data.credits}
-                accounts={data.accounts}
-                accountMargin={data.accountMargin ?? null}
-              />
-            </>
-          )}
-          {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
-          {selectedTab === 'accounts' && query.accountId === null ? (
-            <FinanceTabPanel id="accounts">
-              {data.accountEconomics ? (
-                <AccountsTab
-                  section={data.accountEconomics}
-                  window={data.window}
-                  windowLabel={windowLabel}
-                  query={query}
-                  onChange={setQuery}
-                  onRetry={reload}
+        {data && !error && (
+          <div className="space-y-4">
+            {data.accountId !== null && (
+              <>
+                <AccountHeader
+                  accountId={data.accountId}
+                  name={accountNameFor(data.accountId, pickedName, data)}
+                  accounts={data.accounts}
                 />
-              ) : (
-                <p className="text-sm text-slate-400">{LOADING}</p>
-              )}
-            </FinanceTabPanel>
-          ) : (
-            <OverviewBody tabbed={query.accountId === null}>
-              <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
-              <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
-              <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
-              <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
-              <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
-              <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
-              <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
-            </OverviewBody>
-          )}
-        </div>
-      )}
+                <AccountSummary
+                  accountId={data.accountId}
+                  window={data.window}
+                  aiCost={data.aiCost}
+                  revenue={data.revenue}
+                  credits={data.credits}
+                  accounts={data.accounts}
+                  accountMargin={data.accountMargin ?? null}
+                />
+              </>
+            )}
+            {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
+            {selectedTab === 'accounts' && query.accountId === null ? (
+              <FinanceTabPanel id="accounts">
+                {data.accountEconomics ? (
+                  <AccountsTab
+                    section={data.accountEconomics}
+                    window={data.window}
+                    windowLabel={windowLabel}
+                    query={query}
+                    onChange={setQuery}
+                    onRetry={reload}
+                  />
+                ) : (
+                  <AdminLoading what={ACCOUNTS_WHAT} />
+                )}
+              </FinanceTabPanel>
+            ) : (
+              <OverviewBody tabbed={query.accountId === null}>
+                <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
+                <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
+                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
+                <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
+                <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
+                <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
+                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
+              </OverviewBody>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

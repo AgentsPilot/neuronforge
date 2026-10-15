@@ -36,10 +36,9 @@ jest.mock('@/lib/logger/client', () => {
   };
 });
 
-/** The shared copy, written out: the helper does not export these two sentences. */
+/** The shared copy, written out, so a change to either sentence is noticed here. */
 const SESSION_ENDED = 'Your admin session has ended. Sign in again.';
 const FALLBACK = 'Could not read the finance page. Try again in a moment.';
-const CALLER_FALLBACK = 'The finance page could not be loaded.';
 
 /** The payload is opaque to the hook; a branded object proves it is passed through untouched. */
 const PAYLOAD = { marker: 'finance-payload', nested: { n: 1 } } as unknown as FinancePayload;
@@ -68,7 +67,7 @@ function deferred<T>() {
 }
 
 function mount(queryString = 'preset=this_month') {
-  return renderHook(({ q }: { q: string }) => useFinanceData(q, CALLER_FALLBACK), { initialProps: { q: queryString } });
+  return renderHook(({ q }: { q: string }) => useFinanceData(q), { initialProps: { q: queryString } });
 }
 
 beforeEach(() => {
@@ -139,6 +138,27 @@ describe('useFinanceData: failures (§5.10 through readAdminResponse)', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe(ADMIN_NETWORK_ERROR);
     expect(result.current.error).not.toMatch(/Failed to fetch/);
+    expect(result.current.data).toBeNull();
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError.mock.calls[0][1]).toBe('Failed to load the finance page');
+  });
+
+  it('F-2: an unexpected throw after the fetch shows the shared fallback (no caller sentence any more), clears the data and logs', async () => {
+    // A response whose status getter throws makes the shared reader throw,
+    // outside the fetch-only try: the hook's defensive outer catch.
+    install(async () =>
+      ({
+        ok: false,
+        get status(): number {
+          throw new Error('boom');
+        },
+        json: async () => ({}),
+      }) as unknown as FakeResponse
+    );
+    const { result } = mount();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBe(FALLBACK);
+    expect(result.current.error).not.toMatch(/boom/);
     expect(result.current.data).toBeNull();
     expect(mockLogError).toHaveBeenCalledTimes(1);
     expect(mockLogError.mock.calls[0][1]).toBe('Failed to load the finance page');

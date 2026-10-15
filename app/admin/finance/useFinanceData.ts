@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { ADMIN_NETWORK_ERROR, adminReadFallback, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { clientLogger } from '@/lib/logger/client';
 import type { FinancePayload } from '@/lib/business-os/finance/financeTypes';
 
@@ -26,8 +26,11 @@ const logger = clientLogger.child({ module: 'AdminFinancePage' });
 
 export const FINANCE_API_PATH = '/api/admin/business-os/finance';
 
-/** Noun for the shared fallback: "Could not read the finance page. Try again in a moment." */
-const FINANCE_WHAT = 'the finance page';
+/**
+ * Noun for the shared fallback: "Could not read the finance page. Try again in a moment."
+ * Exported so the page's first-load state reads "Reading the finance page…" (F-2).
+ */
+export const FINANCE_WHAT = 'the finance page';
 
 export interface FinanceData {
   data: FinancePayload | null;
@@ -38,11 +41,12 @@ export interface FinanceData {
 }
 
 /**
- * `fallbackError` now names only an unexpected throw inside the hook (the
- * outer `catch`); every response outcome takes its words from the shared
- * reader. The parameter stays so `FinanceView.tsx` is not edited in F-3.
+ * Every outcome takes its words from the shared reader. Finance F-2 dropped
+ * the caller's `fallbackError` parameter (F-3 had left it feeding only the
+ * defensive outer `catch`), which now shows the shared fallback sentence
+ * (SA-W1: `adminReadFallback`, the sentence's one home).
  */
-export function useFinanceData(queryString: string, fallbackError: string): FinanceData {
+export function useFinanceData(queryString: string): FinanceData {
   const [data, setData] = useState<FinancePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -91,14 +95,14 @@ export function useFinanceData(queryString: string, fallbackError: string): Fina
         if (controller.signal.aborted) return;
         logger.error({ err }, 'Failed to load the finance page');
         setData(null);
-        setError(fallbackError);
+        setError(adminReadFallback(FINANCE_WHAT));
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     })();
 
     return () => controller.abort();
-  }, [queryString, attempt, fallbackError]);
+  }, [queryString, attempt]);
 
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
   return { data, loading, error, reload };
