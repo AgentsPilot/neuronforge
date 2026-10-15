@@ -170,3 +170,81 @@ describe('Money M-1 source guards', () => {
     expect(importsOf(codeOf(LINKS))).toEqual(['@/lib/business-os/finance/financeTypes']);
   });
 });
+
+// ── Slice 6a (Money M-3, M3-FR-13, AC-147, SA-Q43) ───────────────────────────
+describe('slice 6a source guards (the Accounts tab)', () => {
+  const TAB_FILES = ['AccountsTab.tsx', 'AccountEconomicsTable.tsx', 'FinanceTabs.tsx'].map((name) => path.join(DIR, 'components', name));
+  const EDITED = [path.join(DIR, 'components', 'AccountSummary.tsx')];
+
+  it('scans the new tab files (non-vacuity)', () => {
+    expect(files.map(rel)).toEqual(expect.arrayContaining(TAB_FILES.map(rel)));
+  });
+
+  // M3-FR-13: the client formats only.
+  const CLIENT_FOLD = /\.(sort|reduce|filter)\(/;
+  it('the client-fold rule bites (planted)', () => {
+    expect(CLIENT_FOLD.test('rows.sort((a, b) => a.cost - b.cost)')).toBe(true);
+    expect(CLIENT_FOLD.test('rows.filter((r) => r.margin)')).toBe(true);
+    expect(CLIENT_FOLD.test('rows.map((r) => r.accountId)')).toBe(false);
+  });
+
+  it.each(TAB_FILES.map(rel))('%s: no .sort(, .reduce( or .filter( (the server sorts, filters and caps)', (file) => {
+    expect(CLIENT_FOLD.test(codeOf(path.join(ROOT, file)))).toBe(false);
+  });
+
+  // SA-WR-18 extended to the 6a fields (MONEY_5A itself is not edited).
+  const MONEY_6A = '(?:afterTax|planAfterTax|boostsAfterTax|costUsd|marginUsd)';
+  const MONEY_6A_ARITHMETIC = new RegExp(`\\b${MONEY_6A}\\b\\s*(?:[-+]=|[-+]\\s*[\\w.?!()]*\\b${MONEY_6A}\\b)`);
+  it('the 6a money-arithmetic rule bites (planted)', () => {
+    expect(MONEY_6A_ARITHMETIC.test('const m = line.afterTax - cost.costUsd;')).toBe(true);
+    expect(MONEY_6A_ARITHMETIC.test('line.planAfterTax + line.boostsAfterTax')).toBe(true);
+    expect(MONEY_6A_ARITHMETIC.test('formatUsd(margin.marginUsd)')).toBe(false);
+  });
+
+  it.each(files.map(rel))('%s: adds or subtracts no two 6a money fields', (file) => {
+    expect(MONEY_6A_ARITHMETIC.test(codeOf(path.join(ROOT, file)))).toBe(false);
+  });
+
+  // SA-W69 held for the new and edited page files.
+  const DIM_TEXT = /(^|[^a-zA-Z0-9-])text-slate-[56]00([^0-9]|$)/;
+  it.each([...TAB_FILES, ...EDITED].map(rel))('%s: no text-slate-500 or text-slate-600', (file) => {
+    expect(DIM_TEXT.test(codeOf(path.join(ROOT, file)))).toBe(false);
+  });
+
+  // SA-Q43: page-local tabs, no new shared export.
+  const IMPORTS_TABS = /from\s+['"][^'"]*finance\/components\/FinanceTabs['"]/;
+  it('the tabs-export rule bites (planted)', () => {
+    expect(IMPORTS_TABS.test("import { FinanceTabs } from '@/app/admin/finance/components/FinanceTabs';")).toBe(true);
+  });
+
+  it('FinanceTabs is imported by no file outside app/admin/finance, and nothing is added to the shared layout folder', () => {
+    const scan = (dir: string, out: string[] = []): string[] => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) scan(full, out);
+        else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+      }
+      return out;
+    };
+    const outside = scan(path.join(ROOT, 'app', 'admin')).filter((file) => !file.startsWith(DIR + path.sep));
+    expect(outside.length).toBeGreaterThan(20);
+    for (const file of outside) expect({ file: rel(file), imports: IMPORTS_TABS.test(read(file)) }).toEqual({ file: rel(file), imports: false });
+    expect(fs.existsSync(path.join(ROOT, 'app', 'admin', 'components', 'layout', 'FinanceTabs.tsx'))).toBe(false);
+  });
+});
+
+// Fix round 1 (QA B-1): the table links a row only when it is not a platform account AND has a plan row.
+describe('fix round 1: which Accounts rows link', () => {
+  const TABLE = path.join(DIR, 'components', 'AccountEconomicsTable.tsx');
+  const LINK_RULE = /const linked = row\.kind !== 'platform' && !row\.noPlanRow;/;
+  it('the link-rule pin bites (planted): the old platform-only rule is caught', () => {
+    expect(LINK_RULE.test("const linked = row.kind !== 'platform';")).toBe(false);
+    expect(LINK_RULE.test("const linked = row.kind !== 'platform' && !row.noPlanRow;")).toBe(true);
+  });
+  it('AccountEconomicsTable.tsx links neither platform rows nor "No plan row" accounts, and gates every Link on `linked`', () => {
+    const code = codeOf(TABLE);
+    expect(code).toMatch(LINK_RULE);
+    expect(code.match(/<Link\b/g)).toHaveLength(1);
+    expect(code).toMatch(/\{linked && \(\s*<Link\b/);
+  });
+});

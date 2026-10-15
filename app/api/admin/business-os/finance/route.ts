@@ -47,6 +47,17 @@
  * and state words only, never an amount, a currency, a tier or a name
  * (M2-FR-11). Still no new query parameter.
  *
+ * Slice 6a (Money M-3) adds FOUR query parameters for the Accounts tab: `tab`
+ * (`accounts` only; absent = Overview), `sort`, `group` and `show`. `sort`,
+ * `group` and `show` are accepted only together with `tab=accounts` (E-48),
+ * and `tab` never with `accountId` (SA-W84): each is a 400. `group` is matched
+ * by SHAPE through `FINANCE_GROUP_SHAPE`, imported from the page's pure URL
+ * module (one definition, SA-W83), so no tier is written here. None of the
+ * four is an id or reaches a query: they only order and select rows already
+ * read. The line gains `sections.accountEconomics` and
+ * `counts.accountEconomics`: counts, booleans and enum words, `group` as its
+ * kind, never a tier id, an amount, a currency or a name (M3-FR-14).
+ *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
  * @module app/api/admin/business-os/finance
@@ -61,6 +72,7 @@ import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';
 import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
 import { resolveFinanceWindow } from '@/lib/business-os/finance/financeWindow';
 import { ADMIN_WINDOW_CHOICES, customRangeProblem, isRealDate } from '@/app/admin/components/adminWindowPresets';
+import { FINANCE_ACCOUNTS_SHOWS, FINANCE_ACCOUNTS_SORTS, FINANCE_GROUP_SHAPE } from '@/app/admin/finance/financeUrl';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { adminJobsQueuesRepository } from '@/lib/repositories/AdminJobsQueuesRepository';
 
@@ -99,9 +111,22 @@ function buildQuerySchema(now: Date) {
       from: DATE.optional(),
       to: DATE.optional(),
       accountId: z.string().uuid('accountId must be a UUID').optional(),
+      // Slice 6a (SA-Q43, SA-Q44): the Accounts tab and its sort and filters.
+      tab: z.enum(['accounts']).optional(),
+      sort: z.enum(FINANCE_ACCOUNTS_SORTS).optional(),
+      group: z.string().regex(FINANCE_GROUP_SHAPE, 'group must be a plan group').optional(),
+      show: z.enum(FINANCE_ACCOUNTS_SHOWS).optional(),
     })
     .strict()
     .superRefine((q, ctx) => {
+      // E-48: the tab's sort and filters only with the tab.
+      if (q.tab !== 'accounts' && (q.sort !== undefined || q.group !== undefined || q.show !== undefined)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'sort, group and show need tab=accounts' });
+      }
+      // SA-W84: the tab is all businesses only.
+      if (q.tab !== undefined && q.accountId !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'tab cannot be used with a business picked' });
+      }
       if (q.preset !== 'custom') return;
       if (!q.from || !q.to) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A custom window needs from and to' });
@@ -161,7 +186,11 @@ export async function GET(request: NextRequest) {
       now
     );
 
-    const result = await buildFinanceHealth({ window, accountId, now }, requestLogger, {
+    // Slice 6a: the defaults are applied here, so the builder always has a full query.
+    const accountsTab =
+      query.tab === 'accounts' ? { sort: query.sort ?? 'ai_cost', group: query.group ?? null, show: query.show ?? 'all' } : null;
+
+    const result = await buildFinanceHealth({ window, accountId, now, accountsTab }, requestLogger, {
       ...financeHealthDeps(),
       // Admin identity reads are called only from app/api/admin/** (repository guard, SEC-5).
       findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
@@ -182,7 +211,8 @@ export async function GET(request: NextRequest) {
     // this route too (SA-WR-13). `counts.takings` (slice 2a) and
     // `counts.paymentProblems` (slice 2b) are counts, booleans and state
     // words only (S2-FR-12); so are `counts.boosts` (slice 4a, S4-FR-10),
-    // `counts.plans` and `counts.revenueExistence` (slice 5a, M2-FR-11).
+    // `counts.plans` and `counts.revenueExistence` (slice 5a, M2-FR-11), and
+    // `counts.accountEconomics` (slice 6a, M3-FR-14: `group` as its kind).
     requestLogger.info(
       {
         window: { preset: window.preset, from: window.from, to: window.to },
@@ -192,6 +222,8 @@ export async function GET(request: NextRequest) {
           revenueBoosts: payload.revenue.boosts.status,
           revenuePlans: payload.revenue.plans.status,
           accounts: payload.accounts.status,
+          // Slice 6a: `not_built` on the Overview and with a business picked.
+          accountEconomics: payload.accountEconomics?.status ?? 'not_built',
           aiCost: payload.aiCost.status,
           credits: payload.credits.status,
           takings: payload.takings.status,

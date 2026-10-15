@@ -40,6 +40,12 @@
  * DF-5: refunds and disputes count in the purchase's own window. That rule is
  * one function, `refundsAndDisputesOf`, below.
  *
+ * Slice 6a (Money M-3, SA-Q45, E-44): `readMoney` is EXPORTED, unchanged, so the
+ * per-account economics builder reads a purchase's money through the one
+ * reader instead of naming its columns. `refundsAndDisputesOf` stays private:
+ * it is still the only code that reads the refunded amount or the two dispute
+ * statuses.
+ *
  * @module lib/business-os/finance/boostRevenue
  */
 
@@ -151,8 +157,11 @@ function refundsAndDisputesOf(
   };
 }
 
-/** SA-W48: the purchase's money, or null when any part of it is unreadable. */
-function readMoney(row: BoostPurchaseInput): ReadableMoney | null {
+/**
+ * SA-W48: the purchase's money, or null when any part of it is unreadable.
+ * Exported (slice 6a, SA-Q45): the account economics builder's one reader of boost money.
+ */
+export function readMoney(row: BoostPurchaseInput): ReadableMoney | null {
   const code = normaliseCurrencyCode(row.currency);
   // Only a normalised, non-null code reaches `minorUnitsPerMajor` (it trims its input).
   if (code === null || minorUnitsPerMajor(code) !== 100) return null;
