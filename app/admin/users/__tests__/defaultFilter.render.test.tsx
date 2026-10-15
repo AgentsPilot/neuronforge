@@ -129,9 +129,10 @@ describe('an empty search under Active (U-4)', () => {
 });
 
 describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
-  // L-4b (SA Q-2 (b)): the Actions column went with the row toggle (the Open
-  // button sits in the first cell), so six columns; the intent is unchanged.
-  it('has no "Auth role" or "Status" header, six columns in all', async () => {
+  // L-4b (SA Q-2 (b)): the Actions column went with the row toggle. LF-8 (user
+  // request 2026-10-15): the Open button moved to its own narrow last column
+  // ("Details", screen-reader-only), so seven columns; the intent is unchanged.
+  it('has no "Auth role" or "Status" header, seven columns in all', async () => {
     mockList(() => [DANA]);
     render(<UsersPage />);
     await screen.findByTestId('row-activity');
@@ -145,6 +146,7 @@ describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
       'Login Activity',
       'Last Sign In',
       'Joined',
+      'Details',
     ]);
   });
 
@@ -166,12 +168,12 @@ describe('no status or role column (U-9; C-23 satisfied by removal)', () => {
     expect(row.querySelector('svg.lucide-shield')).toBeNull();
   });
 
-  it('the empty state spans all six columns (slice 8a; six since L-4b, SA Q-2 (b))', async () => {
+  it('the empty state spans all seven columns (slice 8a; six since L-4b, SA Q-2 (b); seven since LF-8)', async () => {
     mockList(() => []);
     render(<UsersPage />);
     const cell = (await screen.findByText('No users found')).closest('td') as HTMLTableCellElement;
-    // Every column, whatever their number, and the literal six of today.
+    // Every column, whatever their number, and the literal seven of today.
     expect(cell.getAttribute('colspan')).toBe(String(screen.getAllByRole('columnheader').length));
-    expect(cell.getAttribute('colspan')).toBe('6');
+    expect(cell.getAttribute('colspan')).toBe('7');
   });
 });

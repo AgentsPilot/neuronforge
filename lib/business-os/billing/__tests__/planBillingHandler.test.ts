@@ -7,6 +7,7 @@
 
 const mockApplyPaid = jest.fn();
 const mockRecordFailed = jest.fn();
+const mockRecordActionRequired = jest.fn();
 const mockSessionCompleted = jest.fn();
 const mockSessionExpired = jest.fn();
 const mockMirror = jest.fn();
@@ -14,6 +15,7 @@ const mockMirror = jest.fn();
 jest.mock('@/lib/business-os/billing/planPaymentApply', () => ({
   applyPaidPlanInvoice: (...args: unknown[]) => mockApplyPaid(...args),
   recordFailedPlanInvoice: (...args: unknown[]) => mockRecordFailed(...args),
+  recordActionRequiredPlanInvoice: (...args: unknown[]) => mockRecordActionRequired(...args),
 }));
 jest.mock('@/lib/business-os/billing/planCheckoutSessionEvents', () => ({
   onPlanCheckoutSessionCompleted: (...args: unknown[]) => mockSessionCompleted(...args),
@@ -71,7 +73,7 @@ const event = (type: string, livemode = false) =>
   ({ id: 'evt_H1', type, livemode, data: { object: { id: 'x' } } }) as unknown as Stripe.Event;
 
 beforeEach(() => {
-  for (const mock of [mockApplyPaid, mockRecordFailed, mockSessionCompleted, mockSessionExpired, mockMirror]) {
+  for (const mock of [mockApplyPaid, mockRecordFailed, mockRecordActionRequired, mockSessionCompleted, mockSessionExpired, mockMirror]) {
     mock.mockReset();
     mock.mockResolvedValue(undefined);
   }
@@ -83,13 +85,13 @@ describe('PF-15: the event mode must equal the server key mode', () => {
     ['a test event on a live-key server (a sandbox forwarding to production)', 'live' as StripeMode, false],
   ])('%s: error + alert, NOTHING written, claim completed (returns)', async (_label, mode, livemode) => {
     const h = harness(mode);
-    for (const type of ['invoice.paid', 'invoice.payment_failed', 'checkout.session.completed', 'checkout.session.expired', 'customer.subscription.updated', 'customer.subscription.deleted']) {
+    for (const type of ['invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'checkout.session.completed', 'checkout.session.expired', 'customer.subscription.updated', 'customer.subscription.deleted']) {
       await expect(h.handler(event(type, livemode), h.log)).resolves.toBeUndefined();
     }
-    for (const mock of [mockApplyPaid, mockRecordFailed, mockSessionCompleted, mockSessionExpired, mockMirror]) {
+    for (const mock of [mockApplyPaid, mockRecordFailed, mockRecordActionRequired, mockSessionCompleted, mockSessionExpired, mockMirror]) {
       expect(mock).not.toHaveBeenCalled();
     }
-    expect(h.lines.filter((l) => l.ctx.event === 'bos_billing_mode_mismatch')).toHaveLength(6);
+    expect(h.lines.filter((l) => l.ctx.event === 'bos_billing_mode_mismatch')).toHaveLength(7);
     expect(h.lines.every((l) => l.level === 'error' && l.ctx.alert === true)).toBe(true);
   });
 
@@ -112,6 +114,8 @@ describe('one use case per event type', () => {
   it.each([
     ['invoice.paid', mockApplyPaid],
     ['invoice.payment_failed', mockRecordFailed],
+    // P-6a.2 (workplan §5.4).
+    ['invoice.payment_action_required', mockRecordActionRequired],
     ['checkout.session.completed', mockSessionCompleted],
     ['checkout.session.expired', mockSessionExpired],
     ['customer.subscription.updated', mockMirror],
@@ -122,7 +126,7 @@ describe('one use case per event type', () => {
     await h.handler(e, h.log);
     expect(expected).toHaveBeenCalledTimes(1);
     expect(expected).toHaveBeenCalledWith(e, h.log, h.deps);
-    const others = [mockApplyPaid, mockRecordFailed, mockSessionCompleted, mockSessionExpired, mockMirror].filter((m) => m !== expected);
+    const others = [mockApplyPaid, mockRecordFailed, mockRecordActionRequired, mockSessionCompleted, mockSessionExpired, mockMirror].filter((m) => m !== expected);
     for (const other of others) expect(other).not.toHaveBeenCalled();
     expect(h.childArgs).toEqual([{ flow: 'plan', eventType: type }]);
   });

@@ -444,7 +444,8 @@ describe('T-9 the table', () => {
     mockFetch();
     await renderPage();
     const headers = within(table()).getAllByRole('columnheader');
-    expect(headers.map((h) => h.textContent)).toEqual(['Details', 'Contact', 'Message', 'Status', 'Received (UTC)', 'Actions']);
+    // LF-8: "Details" (screen-reader-only) is now the narrow last column, after Actions.
+    expect(headers.map((h) => h.textContent)).toEqual(['Contact', 'Message', 'Status', 'Received (UTC)', 'Actions', 'Details']);
     for (const h of headers) expect(h.getAttribute('scope')).toBe('col');
     const received = within(rowOf('Dana Example')).getByTestId('row-received');
     const [time, age] = Array.from(received.querySelectorAll('span'));

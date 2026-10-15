@@ -28,14 +28,41 @@ export type PlanPurchaseOfferWire =
  *   renewing  status `active`, not set to cancel, not ended, period end in the future
  *   ending    status `active`, set to cancel at the period end
  *
- * Any other status (`past_due` included) is `null`: the dateless sentence
- * stays, and P-6a's banners own that state.
+ * Plan payments P-6a.2 (workplan §5.7): when `planPaymentNotice` (the ONE
+ * predicate the banner uses too) answers, its answer wins:
+ *
+ *   payment_failed   a renewal payment failed (also while paused, before and
+ *                    after S-5: Settings states the failure, the banner the pause)
+ *   action_required  the owner's bank asks for 3-D Secure; `confirmUrl` is
+ *                    Stripe's hosted invoice page, sent to this owner only
+ *   ended            the subscription ended and the account is in grace or paused
+ *
+ * Anything else is `null`: the dateless sentence stays.
  */
-export interface PlanPurchaseBillingWire {
-  state: 'renewing' | 'ending';
-  /** ISO: `current_period_end`. */
-  date: string;
-}
+export type PlanPurchaseBillingWire =
+  | {
+      state: 'renewing' | 'ending';
+      /** ISO: `current_period_end`. */
+      date: string;
+    }
+  | {
+      state: 'payment_failed';
+      /** ISO: when the failure was recorded (display only), else the due date; null when neither is known. */
+      date: string | null;
+      /** Stripe's attempts so far (at least 1). */
+      attempts: number;
+    }
+  | {
+      state: 'action_required';
+      /** ISO: the payment's due date (`current_period_end`); null when unknown. */
+      date: string | null;
+      confirmUrl: string;
+    }
+  | {
+      state: 'ended';
+      /** ISO: `ended_at`. */
+      date: string;
+    };
 
 /** What free access a purchase would end today (SA W-7). */
 export type EndsFreeAccessOnPurchaseWire = 'trial' | 'free_access' | null;

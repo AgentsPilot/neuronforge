@@ -162,7 +162,9 @@ describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
   // scanner that silently finds nothing (a parse change, a moved file) fails here.
   const MIN_TEXTS: Record<GuardedFile, number> = {
     'app/admin/finance/financeCopy.ts': 439,
-    'app/admin/finance/components/AiCostSection.tsx': 29,
+    // 28 since F-1: the local TH/TD class-name constants (counted as texts) moved
+    // to the shared adminTable constants; no visible copy changed.
+    'app/admin/finance/components/AiCostSection.tsx': 28,
     'app/admin/analytics/page.tsx': 71,
     'app/admin/analytics/components/AnalyticsKpis.tsx': 33,
     'app/admin/business-os-llm/costCopy.ts': 44,

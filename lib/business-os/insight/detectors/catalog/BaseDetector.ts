@@ -63,6 +63,34 @@ export abstract class BaseDetector implements Detector {
   abstract evaluate(userId: string): Promise<DetectionResult | null>;
 
   /**
+   * Whether the last evaluation said nothing because it was SILENCED.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A detector on cooldown returns `null`, which is the same thing it returns
+   * when it looked and found nothing. The engine could not tell those apart,
+   * and the nightly sweep treats "did not fire" as "the condition ended" and
+   * resolves the open insight.
+   *
+   * That turned a 48-hour "do not re-notify" into a 48-hour deletion. On the
+   * reporting account a contact sat in one pipeline stage for 35 days while
+   * three separate insights were raised and auto-resolved about a day later
+   * each, so the card flickered in and out and the owner lost sight of someone
+   * who had never moved.
+   *
+   * Consumed rather than read, so a stale `true` from one user cannot be
+   * attributed to the next one in the loop.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private silencedByCooldown = false;
+
+  /** Reads the flag and clears it. See `silencedByCooldown`. */
+  consumeCooldownSkip(): boolean {
+    const was = this.silencedByCooldown;
+    this.silencedByCooldown = false;
+    return was;
+  }
+
+  /**
    * Check if detector is on cooldown for this user
    */
   protected async isOnCooldown(userId: string): Promise<boolean> {
@@ -78,13 +106,18 @@ export abstract class BaseDetector implements Detector {
       .single();
 
     if (!data?.last_surfaced_at) {
+      this.silencedByCooldown = false;
       return false;
     }
 
     const lastSurfaced = new Date(data.last_surfaced_at);
     const cooldownEnd = new Date(lastSurfaced.getTime() + cooldownHours * 60 * 60 * 1000);
 
-    return new Date() < cooldownEnd;
+    const onCooldown = new Date() < cooldownEnd;
+    /* Recorded for the engine, which has to tell a silenced detector from a
+       quiet one before the sweep decides whose insight is stale. */
+    this.silencedByCooldown = onCooldown;
+    return onCooldown;
   }
 
   /**

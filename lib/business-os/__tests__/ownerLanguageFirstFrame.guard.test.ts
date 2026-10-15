@@ -88,8 +88,15 @@ describe('G-2: the language read is started before the payment hold, used only a
 
   it('/business-os: (ii) the Promise.all over the plan pill and the pending language comes after the gate', () => {
     const { text, gate } = positions('app/business-os/layout.tsx');
-    const all = text.search(/await Promise\.all\(\[readPlanBadge\(\), initialLanguagePending\]\)/);
+    // Plan payments P-6a.2 added the payment banner read as a third element (SA C-13).
+    const all = text.search(/await Promise\.all\(\[\s*readPlanBadge\(\),\s*initialLanguagePending,\s*readPaymentNotice\(\),?\s*\]\)/);
     expect(all).toBeGreaterThan(gate);
+  });
+
+  it('/business-os: (vi) readPaymentNotice() appears once, after the gate (P-6a.2, F5b-4)', () => {
+    const { text, gate } = positions('app/business-os/layout.tsx');
+    expect(text.match(/readPaymentNotice\(\)/g)).toHaveLength(1);
+    expect(text.indexOf('readPaymentNotice()')).toBeGreaterThan(gate);
   });
 
   it('/business-os: (iii) readPlanBadge() appears once, after the gate', () => {

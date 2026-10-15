@@ -19,7 +19,9 @@ import {
   ADMIN_TBODY,
   ADMIN_TD,
   ADMIN_TD_ID,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
   formatShortId,
 } from '@/app/admin/components/layout/adminTable';
@@ -549,13 +551,17 @@ export default function UsersPage() {
                     <th scope="col" className={ADMIN_TH}>Login Activity</th>
                     <th scope="col" className={ADMIN_TH}>Last Sign In</th>
                     <th scope="col" className={ADMIN_TH}>Joined</th>
-                    {/* No Actions column (L-4b, SA Q-2 (b)): the Open button sits in the first cell. */}
+                    {/* LF-8 (user request 2026-10-15): the Open button's narrow last column,
+                        named for screen readers only. Still no Actions column (L-4b, SA Q-2 (b)). */}
+                    <th scope="col" className={ADMIN_TH_OPEN}>
+                      <span className="sr-only">Details</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className={ADMIN_TBODY}>
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-8 text-center">
+                      <td colSpan={7} className="px-3 py-8 text-center">
                         {searchTerm.trim() !== '' && filter !== 'all' ? (
                           <>
                             {/* U-4: never widen a search silently; offer it in one click. */}
@@ -596,31 +602,22 @@ export default function UsersPage() {
                           onClick={(event) => handleRowClick(event, user)}
                         >
                           <td className={ADMIN_TD}>
-                            <div className="flex items-start gap-3">
-                              <OpenRowButton
-                                label={`Open details for ${rowToggleName(user.full_name, user.email)}`}
-                                onOpen={(button) => openRow(user, button)}
-                                testId="row-open"
-                              />
-                              <div>
-                                {/* Business name and user name together (user decision, 2026-09-25). */}
-                                <p
-                                  data-testid="row-business"
-                                  className={`text-sm font-semibold ${businessLabel(user).muted ? 'text-slate-400 italic' : 'text-white'}`}
-                                >
-                                  {businessLabel(user).text}
-                                </p>
-                                <UserNameLine
-                                  fullName={user.full_name}
-                                  email={user.email}
-                                  emailConfirmed={user.email_confirmed}
-                                  isActive={isActiveUser(user)}
-                                />
-                                <p data-testid="row-short-id" className={`mt-1 ${ADMIN_TD_ID}`} title={user.id}>
-                                  {formatShortId(user.id)}
-                                </p>
-                              </div>
-                            </div>
+                            {/* Business name and user name together (user decision, 2026-09-25). */}
+                            <p
+                              data-testid="row-business"
+                              className={`text-sm font-semibold ${businessLabel(user).muted ? 'text-slate-400 italic' : 'text-white'}`}
+                            >
+                              {businessLabel(user).text}
+                            </p>
+                            <UserNameLine
+                              fullName={user.full_name}
+                              email={user.email}
+                              emailConfirmed={user.email_confirmed}
+                              isActive={isActiveUser(user)}
+                            />
+                            <p data-testid="row-short-id" className={`mt-1 ${ADMIN_TD_ID}`} title={user.id}>
+                              {formatShortId(user.id)}
+                            </p>
                           </td>
                           <td className={`${ADMIN_TD} whitespace-nowrap`} data-testid="row-credits-cell">
                             <CreditsLeftCell business={user.business} creditsLeft={user.creditsLeft} />
@@ -684,6 +681,13 @@ export default function UsersPage() {
                           <td className={`${ADMIN_TD} whitespace-nowrap`} data-testid="row-joined">
                             <span className="block">{formatUtc(user.created_at)}</span>
                             <span className="block text-xs text-slate-400">{ageLine(user.created_at)}</span>
+                          </td>
+                          <td className={ADMIN_TD_OPEN}>
+                            <OpenRowButton
+                              label={`Open details for ${rowToggleName(user.full_name, user.email)}`}
+                              onOpen={(button) => openRow(user, button)}
+                              testId="row-open"
+                            />
                           </td>
                         </tr>
                       );

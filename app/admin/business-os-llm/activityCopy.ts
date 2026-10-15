@@ -180,8 +180,6 @@ export const DELETED_BUCKET_AT_LEAST = 'at least';
 // ---- Columns ----
 
 export const COLUMNS = {
-  /** B2a: the row's button that opens the drill-down. First, so a keyboard reaches it first. */
-  details: 'Details',
   when: 'When (UTC)',
   business: 'Business',
   area: 'Area',
@@ -196,6 +194,12 @@ export const COLUMNS = {
   errorCode: 'Error code',
   groupId: 'Grouping id',
   state: 'Record state',
+  /**
+   * B2a: the row's button that opens the drill-down. LF-8 (user request
+   * 2026-10-15): an icon in a narrow LAST column, this word for screen readers
+   * only. Last here too, so the header order is the key order.
+   */
+  details: 'Details',
 } as const;
 
 // ---- B2a: the drill-down drawer (FR-B2, AC-B17: text, never colour alone) ----

@@ -15,6 +15,8 @@ import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
 import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
 import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
+import { readPaymentNotice } from '@/lib/business-os/billing/readPaymentNotice';
+import { PlanPaymentBanner } from '@/components/business-os/billing/PlanPaymentBanner';
 
 // SA N-2: the payment hold reads the session on every request, so this segment
 // is never prerendered (a static render would skip the gate, or swallow the
@@ -71,7 +73,14 @@ export default async function BusinessOSLayout({
   // entitlements mode, so `shadow` cannot open it.
   await redirectIfAwaitingPayment();
 
-  const [planBadge, initialLanguage] = await Promise.all([readPlanBadge(), initialLanguagePending]);
+  // Plan payments P-6a.2 (SA C-13): the owner's payment banner, read with the
+  // pill and AFTER the hold (F5b-4). `readPaymentNotice` never rejects and makes
+  // no query while the price switch is off.
+  const [planBadge, initialLanguage, paymentNotice] = await Promise.all([
+    readPlanBadge(),
+    initialLanguagePending,
+    readPaymentNotice(),
+  ]);
 
   return (
     <>
@@ -106,6 +115,7 @@ export default async function BusinessOSLayout({
                 <div className="sticky top-0 z-50">
                   <BusinessOSHeader planBadge={planBadge} />
                   <BusinessOSTabs />
+                  <PlanPaymentBanner notice={paymentNotice} />
                 </div>
                 {children}
               </div>

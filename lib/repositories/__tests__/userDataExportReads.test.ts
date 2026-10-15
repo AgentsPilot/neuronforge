@@ -23,6 +23,14 @@
  * selects exactly `exportColumnsOf(table).join(', ')`, the literal pins below
  * and in the characterization test stay byte for byte, and a descriptor that
  * cannot be exported fails the read closed (`{ data: null, error }`).
+ *
+ * DE-4 (user 2026-10-15): connected apps left the export, so
+ * `PluginConnectionRepository.listForUserDataExport` lost its only caller and
+ * was deleted, with its cases here (the credentials-select pin, the list-read
+ * case). One read is left: the profile. A guard below proves the method stays
+ * gone. The DE-0b browser-access guard for `plugin_connections`
+ * (lib/plugins/__tests__/pluginConnectionsBrowserAccess.guard.test.ts) is
+ * unaffected.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -103,13 +111,6 @@ const CASES: Case[] = [
     read: (c) => new UserProfileRepository(c).findForUserDataExport(USER),
     rows: { id: USER, full_name: 'Ada' },
   },
-  {
-    name: 'PluginConnectionRepository.listForUserDataExport',
-    table: 'plugin_connections',
-    scope: ['eq', 'user_id', USER],
-    read: (c) => new PluginConnectionRepository(c).listForUserDataExport(USER),
-    rows: [{ user_id: USER, plugin_key: 'slack', created_at: null, updated_at: null, metadata: null }],
-  },
 ];
 
 beforeEach(() => {
@@ -122,9 +123,13 @@ afterEach(() => {
 
 describe('GDPR data export repository reads', () => {
   it('covers one read per exported table', () => {
-    expect(CASES.map((c) => c.table).sort()).toEqual(
-      ['plugin_connections', 'profiles'].sort()
-    );
+    // DE-4 (user 2026-10-15): profiles only, was plugin_connections + profiles.
+    expect(CASES.map((c) => c.table).sort()).toEqual(['profiles']);
+  });
+
+  it('PluginConnectionRepository has no data-export read any more (DE-4, user 2026-10-15)', () => {
+    expect('listForUserDataExport' in PluginConnectionRepository.prototype).toBe(false);
+    expect(Object.getOwnPropertyNames(PluginConnectionRepository.prototype).filter((m) => /export/i.test(m))).toEqual([]);
   });
 
   it.each(CASES)('$name reads $table scoped to the caller and returns the rows', async ({ table, scope, read, rows }) => {
@@ -143,24 +148,6 @@ describe('GDPR data export repository reads', () => {
     const errors = mockLogged.filter((l) => l.level === 'error');
     expect(errors).toHaveLength(1);
     expect(errors[0].fields).toMatchObject({ err: POSTGREST_ERROR, userId: USER });
-  });
-
-  it('the list reads return [] for a null data without error', async () => {
-    for (const c of CASES.filter((x) => Array.isArray(x.rows))) {
-      const { client } = recordingClient({ data: null, error: null });
-      expect(await c.read(client)).toEqual({ data: [], error: null });
-    }
-  });
-
-  it('the plugin connection read never selects credentials', async () => {
-    const { client, calls } = recordingClient({ data: [], error: null });
-    await new PluginConnectionRepository(client).listForUserDataExport(USER);
-    // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md NF-1 / SA C-1: `metadata` does not exist;
-    // `profile_data` is read but the route passes only allow-listed fields.
-    expect(calls).toContainEqual([
-      'select',
-      'user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, created_at, updated_at, last_used, disconnected_at, profile_data',
-    ]);
   });
 
   it('the profile read is maybeSingle: no row is { data: null, error: null }, not an error (DE-1, SA Q-4)', async () => {
@@ -200,7 +187,7 @@ describe('GDPR data export repository reads', () => {
     'total_cost_usd', 'models_used',
   ];
 
-  it.each(CASES)('$name selects an explicit column list with no excluded column', async ({ table, read }) => {
+  it.each(CASES)('$name selects an explicit column list with no excluded column', async ({ read }) => {
     const { client, calls } = recordingClient({ data: [], error: null });
     await read(client);
     const selects = calls.filter((c) => c[0] === 'select');
@@ -209,9 +196,6 @@ describe('GDPR data export repository reads', () => {
     expect(columns).not.toContain('*');
     expect(columns.length).toBeGreaterThan(1);
     for (const excluded of EXCLUDED_COLUMNS) expect(columns).not.toContain(excluded);
-    // `metadata` is a real, exported column on credit_transactions only; on
-    // plugin_connections it does not exist (NF-1).
-    if (table === 'plugin_connections') expect(columns).not.toContain('metadata');
   });
   /** The select string a recorded read issued, or undefined. */
   const selectOf = (calls: Call[]) => calls.find((c) => c[0] === 'select')?.[1];
@@ -222,9 +206,10 @@ describe('GDPR data export repository reads', () => {
     expect(selectOf(calls)).toBe(exportColumnsOf(table).join(', '));
   });
 
+  // DE-4 (user 2026-10-15): on profiles, was plugin_connections (now excluded).
   it('the equality check can fail: a select with one extra column does not match (negative control)', () => {
-    const recorded = `${exportColumnsOf('plugin_connections').join(', ')}, access_token`;
-    expect(recorded).not.toBe(exportColumnsOf('plugin_connections').join(', '));
+    const recorded = `${exportColumnsOf('profiles').join(', ')}, access_token`;
+    expect(recorded).not.toBe(exportColumnsOf('profiles').join(', '));
   });
 
   it('the profile columns are still byte-identical to the DE-1 list (SA C-6 literal pin)', async () => {

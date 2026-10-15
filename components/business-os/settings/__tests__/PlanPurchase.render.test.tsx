@@ -286,6 +286,10 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     const keys = [
       billingEndsWhen({ state: 'renewing', date: JUST_AFTER_JERUSALEM_MIDNIGHT })!.key,
       billingEndsWhen({ state: 'ending', date: JUST_AFTER_JERUSALEM_MIDNIGHT })!.key,
+      // P-6a.2: the three failed-payment states are billing instants too.
+      billingEndsWhen({ state: 'payment_failed', date: JUST_AFTER_JERUSALEM_MIDNIGHT, attempts: 1 })!.key,
+      billingEndsWhen({ state: 'action_required', date: JUST_AFTER_JERUSALEM_MIDNIGHT, confirmUrl: 'https://invoice.stripe.com/i/x' })!.key,
+      billingEndsWhen({ state: 'ended', date: JUST_AFTER_JERUSALEM_MIDNIGHT })!.key,
     ];
     expect([...ACCOUNT_CLOCK_SENTENCE_KEYS].sort()).toEqual(keys.sort());
   });

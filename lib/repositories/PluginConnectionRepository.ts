@@ -6,24 +6,6 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { UserConnection } from '@/lib/types/plugin-types';
 import type { AgentRepositoryResult, UpsertPluginConnectionInput } from './types';
-import { exportColumnsOf } from '@/lib/business-os/data-export/classification';
-
-export interface PluginConnectionExportRow {
-  user_id: string;
-  plugin_key: string;
-  plugin_name: string | null;
-  username: string | null;
-  email: string | null;
-  scope: string | null;
-  status: string | null;
-  connected_at: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  last_used: string | null;
-  disconnected_at: string | null;
-  /** Raw provider profile JSON. May hold credentials: never export it as is. */
-  profile_data: unknown;
-}
 
 export class PluginConnectionRepository {
   private supabase: SupabaseClient;
@@ -322,35 +304,6 @@ export class PluginConnectionRepository {
       if (error) throw error;
       return { data: data?.length || 0, error: null };
     } catch (error) {
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every plugin
-   * connection of the caller, any status, unordered, with the
-   * `plugin_connections` descriptor's export columns only (DE-2:
-   * lib/business-os/purge/descriptors.ts PLUGIN_CONNECTIONS_EXPORT, which lists
-   * every column left out and why): credentials are never read. Changing that
-   * list changes what the export holds, which is a privacy decision.
-   * `profile_data` comes back raw; the export's `plugin_connections` section
-   * passes only its allow-listed keys (ACCOUNT_PROFILE_KEYS).
-   *
-   * Columns are resolved INSIDE the try (DE-2 §2.4): a bad descriptor or a
-   * deny-listed column returns `{ data: null, error }` (section `failed`).
-   */
-  async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<PluginConnectionExportRow[]>> {
-    try {
-      const columns = exportColumnsOf('plugin_connections').join(', ');
-      const { data, error } = await this.supabase
-        .from('plugin_connections')
-        .select(columns)
-        .eq('user_id', userId);
-
-      if (error) throw error;
-      return { data: (data ?? []) as unknown as PluginConnectionExportRow[], error: null };
-    } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to list plugin connections for the data export');
       return { data: null, error: error as Error };
     }
   }

@@ -20,6 +20,16 @@
  */
 
 import { CutoverNotice } from '@/app/admin/business-os-llm/components/activity/CutoverNotice';
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
 import type { FinanceAiCostSection, FinanceTopAccount, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 import {
   AI_ACTIONS,
@@ -51,9 +61,6 @@ import { section3AnalyticsHref } from '../financeLinks';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
 import { RecordedCostLines } from './RecordedCostLines';
-
-const TH = 'px-2 py-1 text-left text-[11px] font-medium uppercase tracking-wide text-slate-400';
-const TD = 'px-2 py-1 text-sm text-slate-200';
 
 function nameOf(account: FinanceTopAccount): string {
   switch (account.nameStatus) {
@@ -116,39 +123,43 @@ export function AiCostSection({
             {f.rows === 0 && <p className="text-sm text-slate-300" data-testid="ai-no-rows">{AI_NO_ROWS}</p>}
             {f.rows > 0 && (
               <div className="grid gap-4 lg:grid-cols-2">
-                <table className="w-full">
-                  <caption className="text-left text-xs font-medium text-slate-300">{AI_BY_TRIGGER}</caption>
-                  <thead><tr><th scope="col" className={TH}>{AI_BY_TRIGGER}</th><th scope="col" className={TH}>{AI_COST}</th><th scope="col" className={TH}>{AI_CREDITS}</th></tr></thead>
-                  <tbody>
-                    {f.byTrigger.map((t) => (
-                      <tr key={t.trigger} className="border-t border-slate-700/60">
-                        <th scope="row" className={`${TD} font-normal text-left`}>{TRIGGER_LABELS[t.trigger]}</th>
-                        <td className={TD}>{usd(t.costUsd)}</td>
-                        <td className={TD}>{formatCredits(t.credits)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div>
-                  <table className="w-full">
-                    <caption className="text-left text-xs font-medium text-slate-300">{AI_BY_GROUP}</caption>
-                    <thead><tr><th scope="col" className={TH}>{AI_BY_GROUP}</th><th scope="col" className={TH}>{AI_COST}</th></tr></thead>
-                    <tbody>
-                      {f.byGroup.lines.map((line) => (
-                        <tr key={line.key} className="border-t border-slate-700/60">
-                          <th scope="row" className={`${TD} font-normal text-left`}>{groupLabel(line)}</th>
-                          <td className={TD}>{usd(line.costUsd)}</td>
+                <div className={ADMIN_TABLE_WRAP}>
+                  <table className={ADMIN_TABLE}>
+                    <caption className="px-3 py-2 text-left text-xs font-medium text-slate-300">{AI_BY_TRIGGER}</caption>
+                    <thead className={ADMIN_THEAD}><tr><th scope="col" className={ADMIN_TH}>{AI_BY_TRIGGER}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_COST}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_CREDITS}</th></tr></thead>
+                    <tbody className={ADMIN_TBODY}>
+                      {f.byTrigger.map((t) => (
+                        <tr key={t.trigger}>
+                          <th scope="row" className={`${ADMIN_TD} font-normal`}>{TRIGGER_LABELS[t.trigger]}</th>
+                          <td className={ADMIN_TD_NUM}>{usd(t.costUsd)}</td>
+                          <td className={ADMIN_TD_NUM}>{formatCredits(t.credits)}</td>
                         </tr>
                       ))}
-                      {f.deleted.rows > 0 && (
-                        <tr className="border-t border-slate-700/60">
-                          <th scope="row" className={`${TD} font-normal text-left`}>{AI_DELETED}</th>
-                          <td className={TD}>{usd(f.deleted.costUsd)}</td>
-                        </tr>
-                      )}
                     </tbody>
                   </table>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                </div>
+                <div>
+                  <div className={ADMIN_TABLE_WRAP}>
+                    <table className={ADMIN_TABLE}>
+                      <caption className="px-3 py-2 text-left text-xs font-medium text-slate-300">{AI_BY_GROUP}</caption>
+                      <thead className={ADMIN_THEAD}><tr><th scope="col" className={ADMIN_TH}>{AI_BY_GROUP}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_COST}</th></tr></thead>
+                      <tbody className={ADMIN_TBODY}>
+                        {f.byGroup.lines.map((line) => (
+                          <tr key={line.key}>
+                            <th scope="row" className={`${ADMIN_TD} font-normal`}>{groupLabel(line)}</th>
+                            <td className={ADMIN_TD_NUM}>{usd(line.costUsd)}</td>
+                          </tr>
+                        ))}
+                        {f.deleted.rows > 0 && (
+                          <tr>
+                            <th scope="row" className={`${ADMIN_TD} font-normal`}>{AI_DELETED}</th>
+                            <td className={ADMIN_TD_NUM}>{usd(f.deleted.costUsd)}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400">
                     {f.byGroup.status === 'unknown'
                       ? AI_BY_GROUP_UNKNOWN
                       : f.byGroup.status === 'partial'
@@ -159,19 +170,21 @@ export function AiCostSection({
               </div>
             )}
             {f.topAccounts.length > 0 && (
-              <table className="w-full" data-testid="ai-top">
-                <caption className="text-left text-xs font-medium text-slate-300">{AI_TOP}</caption>
-                <thead><tr><th scope="col" className={TH}>{AI_BUSINESS}</th><th scope="col" className={TH}>{AI_COST}</th><th scope="col" className={TH}>{AI_CREDITS}</th></tr></thead>
-                <tbody>
-                  {f.topAccounts.map((a) => (
-                    <tr key={a.accountId} className="border-t border-slate-700/60">
-                      <th scope="row" className={`${TD} font-normal text-left`}>{nameOf(a)}</th>
-                      <td className={TD}>{usd(a.costUsd)}</td>
-                      <td className={TD}>{formatCredits(a.credits)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className={ADMIN_TABLE_WRAP}>
+                <table className={ADMIN_TABLE} data-testid="ai-top">
+                  <caption className="px-3 py-2 text-left text-xs font-medium text-slate-300">{AI_TOP}</caption>
+                  <thead className={ADMIN_THEAD}><tr><th scope="col" className={ADMIN_TH}>{AI_BUSINESS}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_COST}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_CREDITS}</th></tr></thead>
+                  <tbody className={ADMIN_TBODY}>
+                    {f.topAccounts.map((a) => (
+                      <tr key={a.accountId}>
+                        <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(a)}</th>
+                        <td className={ADMIN_TD_NUM}>{usd(a.costUsd)}</td>
+                        <td className={ADMIN_TD_NUM}>{formatCredits(a.credits)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
             <p className="text-xs text-slate-400">
               {AI_DELETED}: {usd(f.deleted.costUsd)} ({formatCount(f.deleted.rows)})

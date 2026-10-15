@@ -64,6 +64,31 @@ export interface OperationalAutomation {
   gapId: GapId;
 
   /**
+   * The insight PROCESS this standing automation does the same work as.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Insights and automations describe the same jobs from two sides and were
+   * never connected. An insight knows its `paired_process_id`
+   * (`chase_overdue_invoices`); an automation knows its `gapId`
+   * (`invoice_unpaid`); nothing joined the two. So an advisor card about four
+   * overdue invoices could not tell the owner the thing they most wanted to
+   * know — that the invoice chaser is already switched on and will chase every
+   * one of them — and a card that went quiet looked like abandonment rather
+   * than like work already in hand.
+   *
+   * Matched on the PROCESS rather than on a list of detector ids, because the
+   * detector-to-process map already exists and is maintained
+   * (`TriggerableProcesses`), and the insight row carries the answer directly.
+   * A second list of detectors here would be a third place for the same fact.
+   *
+   * Only set where the automation genuinely does the process's work. Absent
+   * means the card says nothing about what happens next, which is the right
+   * answer when nothing is standing by to do it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  coversProcess?: 'chase_overdue_invoices' | 'send_reminder_sequence' | 'send_followup_nudge';
+
+  /**
    * How long after the gap appears before the platform acts.
    *
    * Every one of these writes to somebody, and a delay is what gives the owner
@@ -285,6 +310,7 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     id: 'reply_to_enquiries',
     column: 'lead_autosend_enabled',
     gapId: 'enquiry_unanswered',
+    coversProcess: 'send_followup_nudge',
     // Fifteen minutes: long enough to intervene after reading the alert on a
     // phone, short enough that the person who wrote in still has this business
     // in mind when the reply lands.
@@ -307,6 +333,9 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     id: 'chase_invoices',
     column: 'chase_invoices_enabled',
     gapId: 'invoice_unpaid',
+    /* The standing version of `chase_overdue_invoices`: the same work, to the
+       same recipients, on a clock instead of a button. */
+    coversProcess: 'chase_overdue_invoices',
     /*
      * Unused, and left in place as the record of what this used to do.
      *
@@ -363,6 +392,7 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     id: 'remind_about_meeting',
     column: 'meeting_reminder_enabled',
     gapId: 'meeting_upcoming',
+    coversProcess: 'send_reminder_sequence',
     /*
      * Unused: `timing: 'before_event'` means the clock runs from the
      * appointment, and the number of hours is the owner's. Left at the default

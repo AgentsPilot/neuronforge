@@ -108,6 +108,8 @@ interface PlanFeature {
 interface PlanSentence {
   key: string;
   date?: string | null;
+  /** P-6a.2: the `{count}` slot (`plan.payment_failed_on`'s attempts so far). */
+  count?: number | null;
 }
 
 interface PlanCategory {
@@ -194,8 +196,18 @@ async function fetchPlan(): Promise<PlanPayload | null> {
  * (QA P-4.2 note 3). These two keys come from `billingEndsWhen` only; a test
  * pins that the two agree. Every other dated sentence names a cohort or admin
  * end date stored as midnight UTC, and stays in UTC (see below).
+ *
+ * Plan payments P-6a.2 adds the three failed-payment sentences: their dates are
+ * billing instants too (a failure, a due date, an end), from the same
+ * `billingEndsWhen`.
  */
-export const ACCOUNT_CLOCK_SENTENCE_KEYS: ReadonlySet<string> = new Set(['plan.renews_on', 'plan.ends_on_paid']);
+export const ACCOUNT_CLOCK_SENTENCE_KEYS: ReadonlySet<string> = new Set([
+  'plan.renews_on',
+  'plan.ends_on_paid',
+  'plan.payment_failed_on',
+  'plan.payment_action_required_on',
+  'plan.ended_on',
+]);
 
 function renderSentence(
   value: PlanSentence | null | undefined,
@@ -206,7 +218,8 @@ function renderSentence(
 ): string | null {
   if (!value?.key) return null;
 
-  const text = t(value.key);
+  // P-6a.2: `{count}` (attempts so far) is a plain number in every language.
+  const text = typeof value.count === 'number' ? t(value.key).replace('{count}', String(value.count)) : t(value.key);
   if (!value.date) return text;
 
   const day = new Date(value.date);
@@ -451,6 +464,24 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
         </div>
         {sentence(plan.endsWhen) && (
           <p className="text-xs text-[var(--v2-text-muted)] mt-1">{sentence(plan.endsWhen)}</p>
+        )}
+        {/* P-6a.2 (workplan §5.7): what the owner can do about a failed renewal.
+            No "Update card" button until P-7a (SA Q-6): Stripe's email has the link. */}
+        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'payment_failed' && (
+          <p className="text-xs text-[var(--v2-text-muted)] mt-1" data-testid="plan-update-card-email">
+            {t('plan.update_card_email')}
+          </p>
+        )}
+        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'action_required' && (
+          <a
+            href={plan.purchase.billing.confirmUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block mt-1 text-sm text-[var(--v2-primary)] underline"
+            data-testid="plan-confirm-payment"
+          >
+            {t('billing.notice.confirm_payment')}
+          </a>
         )}
       </div>
 
