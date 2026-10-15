@@ -462,6 +462,9 @@ export const AUDIT_EVENTS = {
   // AI model price review slice 3: an admin recorded a provider's new price by hand. It is
   // PENDING only (ai_price_proposal_lines) and changes no charge until someone applies it.
   AI_PRICE_MANUAL_ENTRY: 'AI_PRICE_MANUAL_ENTRY',
+  // AI model price review slice 5: an admin pressed "Check provider prices". The
+  // fetched prices are PENDING only and change no charge until someone applies them.
+  AI_PRICE_FETCH_RUN: 'AI_PRICE_FETCH_RUN',
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -1353,6 +1356,15 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Pending AI model price entered by hand (not applied)',
+  },
+  // Info: nothing is charged differently. Written with logAndFlush by
+  // POST /api/admin/model-pricing/fetch-runs; entity 'ai_pricing', entity id the
+  // round id, with entity_kind 'price_proposal' in details. Counts and model ids
+  // only: never page text (SA SC-14).
+  [AUDIT_EVENTS.AI_PRICE_FETCH_RUN]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Provider prices checked (stored as pending, not applied)',
   },
 
   // Workflow Pilot events

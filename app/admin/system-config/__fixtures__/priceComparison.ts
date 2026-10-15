@@ -13,6 +13,8 @@ import type { UnitComparison } from '@/lib/ai/pricing-research/coverageColour';
 export const PRICING_URL = '/api/admin/system-config/pricing';
 export const COMPARISON_URL = '/api/admin/model-pricing/comparison';
 export const MANUAL_URL = '/api/admin/model-pricing/manual-entries';
+/** Slice 5: the provider price check status, read once when the card opens. */
+export const FETCH_RUNS_URL = '/api/admin/model-pricing/fetch-runs';
 
 /** The server date used by every fixture reply (NR-1: "today" is the server's). */
 export const SERVER_NOW = '2026-10-14T12:00:00.000Z';

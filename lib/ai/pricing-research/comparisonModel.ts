@@ -90,6 +90,12 @@ export interface PendingView {
   /** Human labels for the flags that have one, e.g. `new_model` → "not used yet" (user decision). */
   flagLabels: Array<{ flag: string; label: string }>;
   crossCheck: string;
+  /**
+   * Slice 5 (SA O-12): the cross-check in words, with the second list's
+   * reading and date. Always set by the server; optional only so read-model
+   * doubles written before slice 5 stay valid.
+   */
+  crossCheckDetail?: string;
   createdAt: string;
   createdBy: string;
 }
@@ -233,7 +239,8 @@ export function imageCurrent(snapshot: PricingSnapshot, model: string, size: str
 }
 
 /** The token models in the coverage set (SA finding 9), excluding pending lines. */
-function tokenCoverage(snapshot: PricingSnapshot): Set<string> {
+/** Token coverage keys (`provider:model`); exported for the slice 5 fetch, which proposes only these (RR-1). */
+export function tokenCoverage(snapshot: PricingSnapshot): Set<string> {
   const keys = new Set<string>([...snapshot.activeByKey.keys(), ...snapshot.inCodeByKey.keys()]);
   for (const key of snapshot.areas.tagsByModel.keys()) {
     if (!snapshot.areas.imageModelKeys.has(key)) keys.add(key);
@@ -323,6 +330,26 @@ function normalisePrice(text: string | null): string | null {
   return text === null ? null : formatDecimal(parseDecimal(text));
 }
 
+/** The cross-check in words. The second list is LiteLLM; its reading is text, never a price (MP-FR-6a). */
+export function crossCheckDetail(line: Pick<AiPricePendingLine, 'cross_check_verdict' | 'cross_check_value' | 'cross_check_diff_pct' | 'cross_check_fetched_at'>): string {
+  const read = line.cross_check_fetched_at ? `, read ${line.cross_check_fetched_at.slice(0, 10)}` : '';
+  const value = line.cross_check_value ? `; second price list (LiteLLM): ${line.cross_check_value}` : '';
+  switch (line.cross_check_verdict) {
+    case 'agrees':
+      return `agrees with the second price list${read}${value}`;
+    case 'differs': {
+      const diff = line.cross_check_diff_pct === null || line.cross_check_diff_pct === undefined ? '' : ` by up to ${Number(line.cross_check_diff_pct).toFixed(2)}%`;
+      return `differs from the second price list${diff}${read}${value}`;
+    }
+    case 'not_listed':
+      return `not on the second price list${read}${value}`;
+    case 'unavailable':
+      return `second price list could not be read${read}`;
+    default:
+      return 'not run';
+  }
+}
+
 function pendingView(snapshot: PricingSnapshot, line: AiPricePendingLine, unit: string): PendingView {
   return {
     lineId: line.id,
@@ -336,6 +363,7 @@ function pendingView(snapshot: PricingSnapshot, line: AiPricePendingLine, unit: 
       return label ? [{ flag, label }] : [];
     }),
     crossCheck: line.cross_check_verdict ?? 'not run',
+    crossCheckDetail: crossCheckDetail(line),
     createdAt: line.created_at,
     createdBy: snapshot.adminEmailById.get(line.created_by) ?? 'former admin',
   };

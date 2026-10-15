@@ -19,6 +19,14 @@
 import '@testing-library/jest-dom';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
+// Slice 5: "Check provider prices" is tested on its own in providerPriceCheck.render.test.tsx.
+// Here it is a static stand-in (no status read), so these page cases keep slice 4's call
+// lists and timings.
+jest.mock('@/app/admin/system-config/components/ProviderPriceCheck', () => ({
+  __esModule: true,
+  default: () => jest.requireActual('react').createElement('button', { type: 'button' }, 'Check provider prices'),
+}));
+
 jest.mock('@/lib/logger/client', () => {
   const logger: Record<string, unknown> = {
     info: jest.fn(),

@@ -428,6 +428,15 @@ export interface AiPriceSubmitLine {
   source_url: string;
   checked_on: string;
   flags: string[];
+  /**
+   * Slice 5, fetched lines only (migration `20261069` writes them): the
+   * LiteLLM cross-check. Text and a display percentage, never a price.
+   */
+  cross_check_verdict?: 'agrees' | 'differs' | 'not_listed' | 'unavailable';
+  cross_check_value?: string | null;
+  cross_check_source?: string;
+  cross_check_fetched_at?: string;
+  cross_check_diff_pct?: string | null;
 }
 
 export interface AiPriceSubmitInput {
@@ -435,6 +444,20 @@ export interface AiPriceSubmitInput {
   sourceKind: 'manual' | 'fetch';
   providerOutcomes: Record<string, unknown> | null;
   lines: AiPriceSubmitLine[];
+}
+
+/** A stored fetch round (slice 5), as the status read needs it. */
+export interface AiPriceFetchRoundRow {
+  id: string;
+  created_at: string;
+  created_by: string;
+  provider_outcomes: unknown;
+}
+
+/** The result of a fetch round submit (slice 5, SA SC-8): the round id, and one row per stored line. */
+export interface AiPriceFetchRoundSubmitResult {
+  roundId: string;
+  lines: AiPriceSubmitResultLine[];
 }
 
 /** One row of the submit RPC's result: one per submitted line. */
@@ -463,6 +486,11 @@ export interface AiPricePendingLine {
   checked_on: string;
   flags: string[];
   cross_check_verdict: string | null;
+  /** Slice 5 (read with the line; absent in older doubles). */
+  cross_check_value?: string | null;
+  cross_check_diff_pct?: number | string | null;
+  cross_check_source?: string | null;
+  cross_check_fetched_at?: string | null;
   created_by: string;
   created_at: string;
 }
