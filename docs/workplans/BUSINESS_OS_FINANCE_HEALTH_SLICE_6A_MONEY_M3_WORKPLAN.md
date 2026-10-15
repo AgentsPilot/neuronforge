@@ -1155,7 +1155,11 @@ Run `npm run dev` from `neuronforge-finance-health` and sign in as a platform ad
 
 ## Commit Info
 
-*(RM populates this section.)*
+- **Branch:** `feature/bos-money-m3`
+- **Commit:** `b8f59db1` feat(admin): Money M-3 Accounts tab with AI margin per account (slice 6a)
+- **Merge of origin/main:** `bbab0c24` (clean)
+- **PR:** [#392](https://github.com/AgentsPilot/neuronforge/pull/392), open, not merged
+- **Files:** 36 (28 modified, 8 new); no migration
 
 ---
 

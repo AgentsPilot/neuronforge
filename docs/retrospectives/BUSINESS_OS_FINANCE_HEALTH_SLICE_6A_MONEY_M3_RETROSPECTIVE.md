@@ -96,7 +96,7 @@ The slice answers one question: "across all accounts, who paid us what, what did
 | FU-5a-2 | `app/admin/finance/useFinanceData.ts` uses the server `createLogger` in a client file; fix with the shell migration in **M-6** | Dev (M-6) | ⬜ Still open |
 | FU-5a-1, FU-5a-3, FU-4a-2, FU-4a-3 and earlier | Carried from earlier slices (Unknown-currency K-5 line, load-sensitive suites, DF-5 decision, worker-exit warning, and the 5a carried list) | As before | ⬜ Unchanged |
 
-### Status: PRE-AUTHORISED BY USER (no diff review) — awaiting RM commit and PR — `feature/bos-money-m3` — commit hash pending
+### Status: PRE-AUTHORISED BY USER (no diff review) — committed `b8f59db1` (merge of origin/main `bbab0c24`) — `feature/bos-money-m3` — PR [#392](https://github.com/AgentsPilot/neuronforge/pull/392) open
 
 ---
 
