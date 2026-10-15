@@ -16,6 +16,7 @@ import React, { useRef, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
+import { TabFooter } from '@/components/business-os/settings/TabFooter';
 
 const TITLE = 'Your plan';
 // Not "Close": the sheet's built-in X (hidden by `[&>button]:hidden` in a browser, not in
@@ -29,9 +30,10 @@ interface HarnessProps {
   isRTL?: boolean;
   meta?: React.ReactNode;
   withReturnRef?: boolean;
+  withFooter?: boolean;
 }
 
-function Harness({ isBusy = false, isRTL = false, meta, withReturnRef = true }: HarnessProps) {
+function Harness({ isBusy = false, isRTL = false, meta, withReturnRef = true, withFooter = false }: HarnessProps) {
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement | null>(null);
   return (
@@ -56,6 +58,11 @@ function Harness({ isBusy = false, isRTL = false, meta, withReturnRef = true }: 
       >
         <p>Drawer body</p>
         <button type="button">Inside</button>
+        {withFooter ? (
+          <TabFooter message={<span>Footer message</span>}>
+            <button type="button">Footer save</button>
+          </TabFooter>
+        ) : null}
       </SettingsDrawer>
     </>
   );
@@ -120,6 +127,31 @@ describe('SettingsDrawer: the shell', () => {
     const { dialog } = await openDrawer();
     expect(dialog.getAttribute('data-side')).toBe('left');
     expect(dialog.getAttribute('dir')).toBe('rtl');
+  });
+
+  // S-3, W-4: a child's `TabFooter` lands in the fixed bar after the scroll
+  // body, so Save never scrolls away from the form.
+  it("a child's TabFooter renders outside the scroll body, inside the dialog", async () => {
+    render(<Harness withFooter />);
+    const { dialog } = await openDrawer();
+    const save = within(dialog).getByRole('button', { name: 'Footer save' });
+    const body = within(dialog).getByText('Drawer body').parentElement as HTMLElement;
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.contains(save)).toBe(false);
+    expect(dialog.contains(save)).toBe(true);
+    expect(within(dialog).getByText('Footer message')).toBeTruthy();
+    // The bar comes after the body, as a sibling.
+    expect(body.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('a drawer with no TabFooter has an empty footer slot (hidden by empty:hidden)', async () => {
+    render(<Harness />);
+    const { dialog } = await openDrawer();
+    const body = within(dialog).getByText('Drawer body').parentElement as HTMLElement;
+    const slot = body.nextElementSibling as HTMLElement;
+    expect(slot).toBeTruthy();
+    expect(slot.className).toContain('empty:hidden');
+    expect(slot.childNodes.length).toBe(0);
   });
 
   it('meta renders as the description; without it there is no aria-describedby', async () => {
@@ -237,13 +269,19 @@ describe('SettingsDrawer: source guard (C-1)', () => {
     expect(code).not.toMatch(/business-os\/entitlements/);
   });
 
-  // SA ruling Q-3 / W-4: S-3 may relax the `Provider` ban for exactly one
-  // import, `TabFooterSlotProvider` from `./TabFooter` (an existing portal slot,
-  // not shared state). `createContext` stays banned. That edit is expected.
-  it('has no context and no provider', () => {
+  // SA ruling Q-3 / W-4, S-3 C-8: the `Provider` ban is relaxed for exactly one
+  // name, `TabFooterSlotProvider`, imported from the `TabFooter` module (an
+  // existing portal slot, not shared state). `createContext` and `useContext`
+  // stay banned.
+  it('has no context, and no provider but TabFooterSlotProvider', () => {
     expect(code).not.toContain('createContext');
     expect(code).not.toContain('useContext');
-    expect(code).not.toContain('Provider');
+    const providers = code.match(/\w*Provider\b/g) ?? [];
+    expect(providers.length).toBeGreaterThan(0);
+    expect(new Set(providers)).toEqual(new Set(['TabFooterSlotProvider']));
+    expect(code).toMatch(
+      /import\s*\{[^}]*\bTabFooterSlotProvider\b[^}]*\}\s*from\s*'@\/components\/business-os\/settings\/TabFooter'/
+    );
   });
 
   it('does not log, and never keeps hidden content mounted', () => {
@@ -251,8 +289,91 @@ describe('SettingsDrawer: source guard (C-1)', () => {
     expect(code).not.toContain('forceMount');
   });
 
+  // C-5: the guard is a prompt inside the drawer, nothing that reaches the
+  // browser or the router, and not a shared hook.
+  it('the discard guard uses no browser confirm, unload hook or router', () => {
+    expect(code).not.toContain('window.confirm');
+    expect(code).not.toMatch(/(^|[^\w.])confirm\(/m);
+    expect(code).not.toContain('beforeunload');
+    expect(code).not.toContain('next/navigation');
+    expect(code).not.toContain('useRouter');
+    expect(code).not.toContain('history.');
+    expect(code).not.toMatch(/export\s+(function|const)\s+use\w*/);
+  });
+
+  it('the bare-confirm matcher is not vacuous', () => {
+    expect('if (confirm("Discard?")) close();').toMatch(/(^|[^\w.])confirm\(/m);
+    expect('setConfirmOpen(true);').not.toMatch(/(^|[^\w.])confirm\(/m);
+  });
+
+  it('the prompt is the shared dialog, rendered inside SheetContent (SA ruling 1)', () => {
+    expect(code).toMatch(/from\s*'@\/components\/ui\/dialog'/);
+    const start = code.indexOf('<SheetContent');
+    const end = code.indexOf('</SheetContent>');
+    const dialog = code.indexOf('<Dialog ');
+    expect(start).toBeGreaterThan(-1);
+    expect(dialog).toBeGreaterThan(start);
+    expect(end).toBeGreaterThan(dialog);
+  });
+
+  it('the footer slot sits after the scroll body, not inside it, and inside SheetContent (W-4)', () => {
+    const body = code.indexOf('overflow-y-auto');
+    const bodyEnd = code.indexOf('{children}', body);
+    const slot = code.indexOf('<TabFooterSlot ');
+    const end = code.indexOf('</SheetContent>');
+    expect(body).toBeGreaterThan(-1);
+    expect(slot).toBeGreaterThan(bodyEnd);
+    // The body's closing tag comes between the children and the slot.
+    expect(code.slice(bodyEnd, slot)).toContain('</div>');
+    expect(end).toBeGreaterThan(slot);
+  });
+
   it("keeps MoneyDetailDrawer's width and hides the sheet's built-in X", () => {
     expect(code).toContain('[&>button]:hidden');
     expect(code).toContain('sm:max-w-xl');
+  });
+});
+
+/**
+ * C-5 / SA C-8: the discard guard is not a shared hook. No file in the settings
+ * folder may DEFINE or CALL a `use…Dirty`, `use…Unsaved` or `use…Discard`,
+ * matched on comment-stripped contents (not file names), so a comment saying
+ * what is not there cannot fail it.
+ */
+describe('settings folder: no discard / dirty hook (C-5, SA C-8)', () => {
+  const HOOK_NAME = /\buse\w*(Dirty|Unsaved|Discard)/i;
+  const strip = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  function sourceFiles(dir: string): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(full);
+      return /\.(ts|tsx)$/.test(entry.name) ? [full] : [];
+    });
+  }
+
+  const files = sourceFiles(path.join(process.cwd(), 'components/business-os/settings'));
+
+  it('finds the folder\'s files (the scan is not empty)', () => {
+    expect(files.some((file) => file.endsWith('SettingsDrawer.tsx'))).toBe(true);
+    expect(files.some((file) => file.endsWith('MarketingConsentDrawer.tsx'))).toBe(true);
+  });
+
+  it('no file defines or calls one', () => {
+    const offenders = files.filter((file) => HOOK_NAME.test(strip(fs.readFileSync(file, 'utf8'))));
+    expect(offenders).toEqual([]);
+  });
+
+  describe('negative controls', () => {
+    it('a synthetic useDiscardGuard( fails', () => {
+      expect(strip('const guard = useDiscardGuard(isDirty);')).toMatch(HOOK_NAME);
+      expect(strip('export function useUnsavedChanges() {}')).toMatch(HOOK_NAME);
+      expect(strip('const d = useIsDirty();')).toMatch(HOOK_NAME);
+    });
+
+    it('the same name only in a comment passes, and ordinary names pass', () => {
+      expect(strip('// no useDiscardGuard here\n/* nor useDirty */')).not.toMatch(HOOK_NAME);
+      expect('const [isDirty, setIsDirty] = useState(false); handleDiscard();').not.toMatch(HOOK_NAME);
+    });
   });
 });
