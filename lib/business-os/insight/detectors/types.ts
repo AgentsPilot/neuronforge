@@ -417,6 +417,19 @@ export interface Detector {
    * Returns detection results if thresholds are breached
    */
   evaluate(userId: string): Promise<DetectionResult | null>;
+
+  /**
+   * Whether the evaluation just made was SILENCED by cooldown rather than quiet.
+   *
+   * `evaluate` returns `null` for both "I looked and found nothing" and "I am
+   * not allowed to speak yet", and the nightly sweep resolves the open insights
+   * of every detector that did not fire. Without this the second case closed
+   * live insights — see `BaseDetector.silencedByCooldown`.
+   *
+   * Reading it CLEARS it, so a flag set for one user cannot be attributed to
+   * the next.
+   */
+  consumeCooldownSkip(): boolean;
 }
 
 // ===========================

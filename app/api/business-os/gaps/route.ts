@@ -69,18 +69,75 @@ async function operationalAutomations(
   all: Awaited<ReturnType<typeof findGaps>>,
   log: { warn: (ctx: Record<string, unknown>, msg: string) => void }
 ) {
-  const columns = [...OPERATIONAL_AUTOMATIONS.map(a => a.column), 'automations_declined'].join(', ');
+  const wanted = [...OPERATIONAL_AUTOMATIONS.map(a => a.column), 'automations_declined'];
 
+  /*
+   * ONE COLUMN THAT DOES NOT EXIST YET MUST NOT SWITCH OFF EVERY AUTOMATION.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT HAPPENED. A `chase_quotes` automation was added to the registry and
+   * merged with its migration. The migration had not been run on the database,
+   * so `chase_quotes_enabled` did not exist — and PostgREST rejects the WHOLE
+   * select for one unknown name. The read failed, the catch below reported
+   * every automation as not approved, and an owner whose lead autosend, invoice
+   * chasing, intake chasing and meeting reminders were all `true` in the
+   * database opened My Advisor and found the lot switched off. Nothing warned
+   * them, because from the card's side "not approved" is a normal state.
+   *
+   * The blast radius is the problem, not the missing column. Code reaching a
+   * database that has not caught up is ordinary between a merge and a
+   * migration; a registry entry being ahead of the schema should cost THAT
+   * automation and nothing else.
+   *
+   * So a column PostgREST names as absent is dropped and the read retried.
+   * Bounded by the number of columns asked for — each pass removes exactly one,
+   * and the loop stops the moment a read succeeds or an error is about
+   * something else. A dropped column is simply absent from `approvals`, which
+   * reads as "never approved" for that one automation: the same answer as
+   * before, now confined to the automation whose column is missing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   let approvals: Record<string, unknown> = {};
-  try {
-    const { data, error } = await supabaseServer
-      .from('business_profiles')
-      .select(columns)
-      .eq('user_id', userId)
-      .maybeSingle();
+  let remaining = [...wanted];
+  const absent: string[] = [];
 
-    if (error) throw error;
-    approvals = (data ?? {}) as unknown as Record<string, unknown>;
+  try {
+    for (let attempt = 0; attempt <= wanted.length && remaining.length > 0; attempt += 1) {
+      const { data, error } = await supabaseServer
+        .from('business_profiles')
+        .select(remaining.join(', '))
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!error) {
+        approvals = (data ?? {}) as unknown as Record<string, unknown>;
+        break;
+      }
+
+      /* PostgREST names one missing column at a time: "column
+         business_profiles.chase_quotes_enabled does not exist". */
+      const named = String(error.message ?? '').match(
+        /column\s+\S*?\.?(\w+)\s+does not exist/i
+      )?.[1];
+
+      if (!named || !remaining.includes(named)) {
+        log.warn({ err: error }, 'Automation permissions unreadable; reporting all as not approved');
+        break;
+      }
+
+      absent.push(named);
+      remaining = remaining.filter(column => column !== named);
+    }
+
+    if (absent.length > 0) {
+      /* Loud, because this means a migration has not been run. The feature is
+         degraded rather than broken, which is exactly the state nobody notices
+         without being told. */
+      log.warn(
+        { absent, userId },
+        'Automation columns missing from business_profiles; those automations report as not approved. A migration is probably pending.'
+      );
+    }
   } catch (err) {
     log.warn({ err }, 'Automation permissions unreadable; reporting all as not approved');
   }
