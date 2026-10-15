@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-10-14
-**Status (2026-10-15):** **Phase A COMPLETE** — S-1 to S-5 and F-18 all merged to `main` (§0). **Phase B (D-1 to D-4) NOT STARTED — waiting for the user's go-ahead.** Full handover in [§0](#0-current-status-and-handover-2026-10-15). Per-slice history is in each workplan and in the Change History below.
+**Status (2026-10-15):** **Phase A COMPLETE** — S-1 to S-5 and F-18 all merged to `main` (§0). **Phase B (D-1 to D-4): user go-ahead given 2026-10-15 — starting with D-1.** **Phase C (performance improvements) PARKED** (§0.6). Full handover in [§0](#0-current-status-and-handover-2026-10-15). Per-slice history is in each workplan and in the Change History below.
 **Page reviewed:** `app/business-os/settings/page.tsx` (1,300 lines, read in full on `main` 2026-10-14) and the components it renders.
 
 ---
@@ -24,7 +24,7 @@
 
 Every slice: SA approved, QA PASS WITH NOTES, QA test gaps closed and proven by mutation. Phase A ran under the user's fast-track (RM commits after SA approval; PRs set to `gh pr merge --auto --merge` + Auto-fix). **That fast-track and auto-merge applied to Phase A only — Phase B goes back to the standard flow (user sees the diff before RM commits; user merges) unless the user says otherwise.**
 
-### 0.2 Phase B — direct DB calls to server: ⬜ NOT STARTED (needs user go-ahead)
+### 0.2 Phase B — direct DB calls to server: 🟡 STARTED 2026-10-15 (user go-ahead; D-1 first)
 
 Order and conditions are in §9 and the SA Review (C-13 to C-26, re-sequencing amendment of C-24). Every D-slice is **full cycle** (Dev workplan → SA workplan review → Dev → SA code review + QA → user diff → RM), one at a time from fresh `main`, never two open PRs on `page.tsx`.
 
@@ -63,6 +63,31 @@ Note for D-slices: Phase A moved lines in `page.tsx` — find code by symbol, no
 
 - Worktree used for Phase A: `../neuronforge-settings-drawers` (its `node_modules` is a **junction to the main checkout's** — unlink the junction before any `git worktree remove`; never `--force`).
 - Never `git stash` in this repo (shared stash list across worktrees).
+
+### 0.6 Phase C — improvements: ⏸ PARKED (user, 2026-10-15: "we will come back to them later")
+
+**Origin:** user observation 2026-10-15 — the Plan drawer takes 1–2 s to show the plan, Marketing permission 1–3 s. Read-only investigation on `origin/main` `ba29f058` (estimates from code, nothing measured; server region assumed Vercel default `iad1`, Supabase `us-east-2`).
+
+**Findings:** no slow query and no Stripe call on either open path. The delay is round trips: a likely cold serverless function on low traffic plus fixed per-request cost (Israel → US-East, `getUser`, sequential reads).
+- **Plan:** one request, `GET /api/business-os/entitlements/my-plan`, with four sequential steps (`getUser`, entitlement snapshot, `findLocale`, billing read — no Stripe). One spinner until it returns, although the plan name is already on screen (the layout reads it for the header badge via `readPlanBadge`). Est. ≈0.3–0.55 s warm; +0.5–1.5 s cold.
+- **Marketing permission:** a waterfall — `GET /api/business-os/consent-settings` (its 4 queries already run in parallel), and only after the form renders does `SavedAddressPicker` fetch `GET /api/business-os/addresses`, which pops in late. Est. ≈0.6–0.9 s warm; up to ≈1.5–3 s with two cold functions.
+- **Dev mode** (`npm run dev`) adds on-demand route compilation and StrictMode double fetches (PlanSection, picker) — measure on `next build && next start` or production.
+
+**Candidate slices** (C-8 already allows a page-load prefetch through the existing routes, in its own effect, with the drawer reusing the data):
+
+| # | Improvement | Est. saving | Effort | Cycle |
+|---|---|---|---|---|
+| C-1 | Plan: show the plan name instantly (from the header badge data), details load underneath; success still only from the server's answer (M-6) | Removes the blank wait for the main fact | ~0.5–1 d | UI short path + SA check that purchase isn't affected |
+| C-2 | Plan: prefetch on page idle or row hover, handed to `PlanSection` on mount; checkout-return re-read must still re-fetch | Most of the wait incl. cold start | ~0.5–1 d | UI short path + QA of checkout-return and upgrade |
+| C-3 | Marketing: start the address-book request in parallel with consent (optional preloaded-data prop on the shared picker; F-18 "never fills on its own" must hold) | One round trip (~0.3–0.4 s warm, up to a cold start) | ~1 d | UI short path |
+| C-4 | Marketing: render the form as soon as consent arrives, fixed-height placeholder for the picker | Perceived speed, no layout jump | ~0.25 d | UI short path |
+| C-5 | Marketing: prefetch consent + addresses on page idle or row hover, reused on open | Most of the remainder | ~0.5–1 d | UI short path |
+| C-6 | `my-plan`: run snapshot, `findLocale` and the billing read in parallel | ~60–160 ms | ~0.5 d | **Money route: full cycle** — only if measurements justify it |
+| C-7 | Measure first: cold-start share and function region in Vercel Observability (add these three routes to the performance stream's R24 / NE-6/NE-7 capture) | Decides whether C-6 is worth it | — | Needs the user's Vercel access |
+
+Recommended when resumed: C-4 + C-3 (or C-5) for Marketing permission, C-1 + C-2 for Plan — about 2–3 days, all client-side, no server or DB change. No overlap with the performance stream (`PERFORMANCE_IMPROVEMENT_SCOPING.md`, `PERFORMANCE_BUSINESS_ROUND_REQUIREMENT.md` do not cover these routes).
+
+---
 
 ## Overview
 
@@ -865,3 +890,4 @@ Either way C-3's behaviour is unchanged. `window.history` hand-edits are not a s
 | 2026-10-15 | S-5 code complete | Tidy the account card on `feature/settings-drawer-s5` (from `feature/settings-drawer-s4`), uncommitted, UI short path. `page.tsx` only: `rowChevron(tone)` mirrors every account-card chevron in Hebrew and marks it `aria-hidden` (Delete keeps its red as a tone, since `cn` does not merge classes); plan anchor kept with its reason (W-5); dead `withDeadline` and `clearSessionKeys` removed. Frozen code (C-9) untouched. Out, with reasons in the workplan: plan and consent row values (C-8), champion email `?section=invite-friends` (F-20). New `accountCard.guard.test.ts` (8); must-stay-green set 29 suites / 754 tests pass; 7/7 mutations caught. New finding F-22 |
 | 2026-10-15 | S-5 SA code review | APPROVED (S-5 workplan, SA Code Review). SA re-ran the must-stay-green set: 29 suites / 754 tests pass. Frozen code is untouched, and `rowChevron` passes the tone as an argument, which is correct because `cn` does not merge classes. Rulings: Q-1 and Q-2 approved. Q-3: row values out, the plan name may be offered as an optional idea, consent status dropped. Q-4: F-20 is its own slice. Q-5: F-22 moved to Medium, schedule a slice (the Stripe Connect return lands on the plain page), with two business questions for the user. New §7 row F-23: Offir's log-out deadline and session-clear fix (`c1a427e6`) was lost in a merge with `31976f13`; it is to be ported into `signOutUser` in a full cycle |
 | 2026-10-15 | Phase A complete; handover | §0 added: Phase A slices with PRs and merge commits, Phase B status and order, user-owed checks, open decisions (F-22, F-23) and follow-ups. The per-slice progress lines (S-1..S-5, F-18) and the old Status line were replaced by §0; their content lives in each workplan and in the rows above. |
+| 2026-10-15 | Phase C parked; Phase B go-ahead | §0.6 added: Plan and Marketing permission drawer load-time investigation (user observation: 1–2 s / 1–3 s), findings and candidate slices C-1..C-7, parked by the user. User gave the go-ahead for Phase B (D-1 first); standard flow (user sees each diff, user merges). |
