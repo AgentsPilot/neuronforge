@@ -35,6 +35,14 @@ import UsersPage from '../page';
 import { BusinessOsPanel } from '../components/BusinessOsPanel';
 import { DRAWER_PURPOSE } from '../components/DrawerBox';
 import recordedAccountBody from '@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json';
+import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
+// The plan card's names and lifecycle answers come from the server; these
+// tests build them with the server's own function and config, so a renamed
+// plan or a moved cohort base is not a broken test (and no tier id is written
+// as a literal here, FR-12).
+import { describeAccountPlans } from '@/lib/business-os/entitlements/adminAccountPlans';
+import { planInheritsFrom, planLabel } from '@/lib/business-os/entitlements/planPresentation';
+import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { AdminUserRow } from '../types';
 
 const ACCOUNT = '99999999-9999-4999-8999-999999999999';
@@ -241,11 +249,11 @@ describe('BusinessOsPanel', () => {
     expect(fold.open).toBe(false);
     const plan = within(fold).getByTestId('account-result');
     expect(plan.textContent).toContain('This answer is good for');
-    // The one-line summary names the tier the entitlements read already returned.
+    // The one-line summary names the deciding plan by its plain name.
     const summary = screen.getByTestId('bos-panel-plan-summary');
-    // LF-4a.2 (SQ-H): the section heading says "Plan & entitlements"; the line starts at the tier.
-    // The tier comes from the fixture, never a tier name as a literal (FR-12).
-    expect(summary.textContent?.startsWith(`${recordedAccountBody.data.plan.tier} · `)).toBe(true);
+    // LF-4a.2 (SQ-H): the section heading says "Plan & entitlements"; the line starts at the plan.
+    // The name comes from the fixture (the server's config read), never a literal (FR-12).
+    expect(summary.textContent?.startsWith(`${recordedAccountBody.data.planPresentation.tier.name} · `)).toBe(true);
     expect(within(screen.getByTestId('drawer-section-plan')).getAllByRole('heading')[0].textContent).toBe('Plan & entitlements');
     expect(summary.textContent).toContain('Show all capabilities');
   });
@@ -407,6 +415,163 @@ describe('BusinessOsPanel', () => {
     const note = (await screen.findByTestId('bos-panel-spend-incomplete')).textContent;
     expect(note).toContain('lower bound');
     expect(note).toContain('1,234');
+  });
+});
+
+/**
+ * Admin plan card, plain labels (2026-10-15): the card says which plan is
+ * deciding access, from the resolver's basis, by the config names the server
+ * sends — not TIER / COHORT / BASIS fields admins could not read.
+ */
+describe('the Plan & entitlements card, in plain words', () => {
+  const config = getEntitlementConfig();
+  const TIER = recordedAccountBody.data.plan.tier;
+  const NOW = new Date('2026-10-15T12:00:00.000Z');
+
+  /** The recorded tier body, with a different plan row, basis and state, named by the server's function. */
+  function body(patch: {
+    plan: { tier: string | null; tier_expires_at?: string | null; cohort: string | null; cohort_expires_at?: string | null };
+    basis: AccountPayload['basis'];
+    state: string;
+    anomaly?: string | null;
+  }) {
+    const plan = { ...recordedAccountBody.data.plan, ...patch.plan };
+    return {
+      ...recordedAccountBody,
+      data: {
+        ...recordedAccountBody.data,
+        plan,
+        basis: patch.basis,
+        state: patch.state,
+        anomaly: patch.anomaly ?? null,
+        planPresentation: describeAccountPlans(config, plan, NOW),
+      },
+    };
+  }
+
+  async function renderPlan(entitlements: unknown) {
+    mockFetch({
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: entitlements },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+      [`/credits/accounts/${ACCOUNT}`]: { status: 200, body: CREDITS },
+    });
+    render(panel(ACCOUNT, 'Dana Cohen'));
+    return screen.findByTestId('account-result');
+  }
+
+  it('basis = paid plan with live free access: Essentials running, Founding Partner underneath, amber downgrade note', async () => {
+    const result = await renderPlan(
+      body({
+        plan: { tier: TIER, tier_expires_at: '2026-11-12T00:00:00.000Z', cohort: 'champion', cohort_expires_at: null },
+        basis: { kind: 'tier', tier: TIER },
+        state: 'active',
+      })
+    );
+    const tierName = planLabel(config, TIER);
+    const cohortName = planLabel(config, 'champion');
+    const baseName = planLabel(config, planInheritsFrom(config, 'champion') as string);
+
+    expect(within(result).getByTestId('plan-running-on').textContent).toBe(
+      `Running on: ${tierName} (paid through 2026-11-12 00:00 UTC)`
+    );
+    expect(within(result).getByTestId('plan-underneath').textContent).toBe(
+      `Free access underneath: ${cohortName} — no end date. Takes over if ${tierName} isn't renewed.`
+    );
+    expect(within(result).queryByTestId('plan-previous')).toBeNull();
+    expect(within(result).getByTestId('plan-downgrade-note').textContent).toBe(
+      `Paid plan gives less than their free access (${cohortName} includes ${baseName}).`
+    );
+    expect(screen.getByTestId('bos-panel-plan-summary').textContent).toMatch(
+      new RegExp(`^${tierName} · ${cohortName} underneath · `)
+    );
+    // The strip carries the same plain words.
+    expect(screen.getByTestId('strip-plan').textContent).toBe(`${tierName} · ${cohortName} underneath`);
+
+    // The old field labels are gone; the raw ids survive in the muted technical line.
+    expect(result.textContent).not.toContain('Matrix version');
+    expect(result.textContent).not.toContain('Cohort ends');
+    const technical = within(result).getByTestId('plan-technical').textContent ?? '';
+    expect(technical).toContain(`tier id ${TIER}`);
+    expect(technical).toContain('cohort id champion');
+    expect(technical).toContain(`basis tier ${TIER}`);
+    expect(technical).toContain(`matrix version ${recordedAccountBody.data.matrixVersion}`);
+  });
+
+  it('free access that ends before the paid plan is said so, not "takes over"', async () => {
+    const result = await renderPlan(
+      body({
+        plan: {
+          tier: TIER,
+          tier_expires_at: '2026-11-12T00:00:00.000Z',
+          cohort: 'champion',
+          cohort_expires_at: '2026-11-01T00:00:00.000Z',
+        },
+        basis: { kind: 'tier', tier: TIER },
+        state: 'active',
+      })
+    );
+    const underneath = within(result).getByTestId('plan-underneath').textContent ?? '';
+    expect(underneath).toContain('(ends 2026-11-01 00:00 UTC, while the paid plan is still in force)');
+    expect(underneath).not.toContain('Takes over');
+  });
+
+  it('a paid plan with no end date over dated free access: takes over only if removed before then', async () => {
+    const result = await renderPlan(
+      body({
+        plan: {
+          tier: TIER,
+          tier_expires_at: null,
+          cohort: 'champion',
+          cohort_expires_at: '2027-01-01T00:00:00.000Z',
+        },
+        basis: { kind: 'tier', tier: TIER },
+        state: 'active',
+      })
+    );
+    const tierName = planLabel(config, TIER);
+    expect(within(result).getByTestId('plan-running-on').textContent).toBe(`Running on: ${tierName} (no end date)`);
+    expect(within(result).getByTestId('plan-underneath').textContent).toContain(
+      `ends 2027-01-01 00:00 UTC. Takes over if ${tierName} is removed before then.`
+    );
+  });
+
+  it('basis = free access, with a lapsed paid plan: Founding Partner running, previous paid plan ended', async () => {
+    const result = await renderPlan(
+      body({
+        plan: { tier: TIER, tier_expires_at: '2026-09-01T00:00:00.000Z', cohort: 'champion', cohort_expires_at: null },
+        basis: { kind: 'cohort', cohort: 'champion' },
+        state: 'champion',
+      })
+    );
+    const tierName = planLabel(config, TIER);
+    const cohortName = planLabel(config, 'champion');
+
+    expect(within(result).getByTestId('plan-running-on').textContent).toBe(`Running on: ${cohortName} (no end date)`);
+    expect(within(result).getByTestId('plan-previous').textContent).toBe(
+      `Previous paid plan: ${tierName} (ended 2026-09-01 00:00 UTC)`
+    );
+    expect(within(result).queryByTestId('plan-underneath')).toBeNull();
+    expect(within(result).queryByTestId('plan-downgrade-note')).toBeNull();
+    expect(screen.getByTestId('strip-plan').textContent).toBe(cohortName);
+  });
+
+  it('an anomaly: nothing is deciding, the anomaly is named, and no plan is shown as in force', async () => {
+    const result = await renderPlan(
+      body({
+        plan: { tier: 'not_a_tier', cohort: null },
+        basis: { kind: 'none' },
+        state: 'unknown',
+        anomaly: 'unknown_tier',
+      })
+    );
+    expect(within(result).getByTestId('plan-running-on').textContent).toBe(
+      'Running on: nothing — no plan is deciding access, so nothing is granted.'
+    );
+    expect(result.textContent).toContain('Anomaly');
+    expect(result.textContent).toContain('unknown_tier');
+    expect(within(result).getByTestId('plan-technical').textContent).toContain('tier id not_a_tier');
+    expect(screen.queryByTestId('plan-underneath')).toBeNull();
+    expect(screen.getByTestId('strip-plan').textContent).toBe('No plan in force (unknown_tier)');
   });
 });
 

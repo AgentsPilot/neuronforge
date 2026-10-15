@@ -50,8 +50,11 @@ import {
 jest.setTimeout(30_000);
 configure({ asyncUtilTimeout: 5000 });
 
-/** The recorded account's tier, read from the fixture (no tier name as a literal: FR-12). */
-const RECORDED_TIER = recordedAccountBody.data.plan.tier;
+/**
+ * The recorded account's plan, by the name the strip shows: the server's config
+ * read in the fixture (admin plan card plain labels; no tier name as a literal: FR-12).
+ */
+const RECORDED_TIER = recordedAccountBody.data.planPresentation.tier.name;
 
 // ── Accounts ────────────────────────────────────────────────────────────────
 

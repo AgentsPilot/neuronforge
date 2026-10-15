@@ -37,6 +37,7 @@ import {
   ENTITLEMENT_ERROR_COPY,
   EntitlementSnapshot,
 } from '@/app/admin/business-os-tiers/components/EntitlementSnapshot';
+import { planSummaryWords } from '@/app/admin/business-os-tiers/planCardWords';
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
@@ -103,15 +104,18 @@ function auditLink(accountId: string, groupId?: string | null): string {
 }
 
 /**
- * The tier and cohort the entitlements read already returned, nothing more.
- * Never empty (SA C6): with neither it says "No plan recorded", as the strip
- * does. The section heading already says "Plan & entitlements" (SQ-H).
+ * The plan the entitlements read says is deciding, by its plain name, and the
+ * free access underneath it while that is live ("Essentials · Founding Partner
+ * underneath"; admin plan card plain labels, 2026-10-15). Never empty (SA C6):
+ * with nothing recorded it says "No plan recorded", as the strip does; with a
+ * recorded plan that grants nothing (an anomaly) it names the anomaly. The
+ * section heading already says "Plan & entitlements" (SQ-H).
  */
 function planSummary(payload: AccountPayload): string {
-  const parts: string[] = [];
-  if (payload.plan?.tier) parts.push(payload.plan.tier);
-  if (payload.plan?.cohort) parts.push(`cohort ${payload.plan.cohort}`);
-  return parts.length > 0 ? parts.join(' · ') : STRIP_COPY.noPlan;
+  const words = planSummaryWords(payload);
+  if (words) return words;
+  if (!payload.plan?.tier && !payload.plan?.cohort) return STRIP_COPY.noPlan;
+  return `No plan in force (${payload.anomaly ?? 'anomaly'})`;
 }
 
 /** The link style the drawer uses for every in-text link (BD-11: no decorative green). */

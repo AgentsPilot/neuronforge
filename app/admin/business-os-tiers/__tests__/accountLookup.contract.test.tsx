@@ -259,9 +259,14 @@ describe('T-12: the snapshot table is the standard admin table', () => {
     await lookUp(withEnd);
     await waitFor(() => expect(screen.getByTestId('account-result')).toBeInTheDocument());
 
+    // Admin plan card plain labels (2026-10-15): the date is in the plain
+    // "Running on" line and in the muted technical line; the missing cohort
+    // end is in words there.
     const result = screen.getByTestId('account-result');
-    expect(within(result).getByText('2026-12-31 23:30 UTC')).toBeInTheDocument();
-    expect(within(result).getAllByText('no end date')).toHaveLength(1);
+    expect(within(result).getByTestId('plan-running-on')).toHaveTextContent('(paid through 2026-12-31 23:30 UTC)');
+    expect(within(result).getByTestId('plan-technical')).toHaveTextContent(
+      'tier ends 2026-12-31 23:30 UTC · cohort ends no end date'
+    );
     expect(result).not.toHaveTextContent('2026-12-31T23:30');
   });
 });
