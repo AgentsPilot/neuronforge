@@ -1,99 +1,50 @@
 // /app/api/user/data-export/route.ts
 // GDPR Article 15 & 20: Right to access and data portability
 //
-// Every read goes through a repository (CLAUDE.md rule 1;
-// DATA_EXPORT_REPOSITORY_REFACTOR_WORKPLAN.md), each a `...ForUserDataExport`
-// / `listOwnerEntriesForExport` method keyed on the authenticated user's id.
-// The repositories read with the service role (`supabaseServer`), as this route
-// always has. A read error is ignored on purpose and gives an empty section,
-// as before, so one failing table never blocks the person's whole download;
-// the repository logs the error.
+// DE-1 (BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md; requirement
+// BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.3, §0.4): the file holds the
+// person's own account details only (DX-1a): who they are (from the session),
+// their profile, and their connected apps. Left out on purpose: agents, agent
+// settings and runs (BQ-SA-1, Business OS only), activity and audit history
+// (DX-1d), and the Pilot-Credit subscription and transactions (DX-1a: no plan
+// or billing data). What each part holds lives in the section registry,
+// lib/business-os/data-export/sections.ts; this route only runs it.
 //
-// Every read names its columns (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md, FU-P1): each
-// repository method selects a column-list constant next to it (the audit read
-// reuses OWNER_COLUMNS), so a column added to a table later is not exported
-// until someone decides it should be. Plugin
-// credentials are never read; the provider profile (`profile_data`) is read but
-// only allow-listed string fields of it reach the body (`accountProfile`).
+// Every read goes through a repository (CLAUDE.md rule 1) keyed on the
+// authenticated user's id, with the service role, and names its columns, so a
+// column added to a table later is not exported until someone decides it should
+// be. Plugin credentials are never read; the provider profile (`profile_data`)
+// is read, but only allow-listed string fields of it reach the body.
 //
-// BD-26 (user decision, 2026-10-04): the owner's export leaves out internal
-// admin audit entries — every OWNER_HIDDEN_ENTITY_TYPES type and any Business
-// OS AI action event — the same rule as the owner RLS policy and
-// AuditTrailRepository.listOwnerEntries (lib/audit/ownerVisibility.ts). Both
-// exclusions live in AuditTrailRepository.listOwnerEntriesForExport, kept
-// there by a source guard (lib/audit/__tests__/ownerAuditReads.guard.test.ts).
+// FR-E12: a section that fails to read is marked `status: 'failed'` and listed
+// in `summary.failed_sections`, never shown as an empty section. The response
+// is still 200: the account identity comes from the session and cannot fail.
 //
-// The audit read filters and orders on `created_at` (FU-1). Until that fix it
-// used `timestamp`, a column that does not exist, so no export before it held
-// any audit history; the plugin connection read likewise named a column that
-// does not exist (`metadata`, NF-1), so none held plugin connections either.
+// WC-7: the `DATA_EXPORTED` audit entry is written with `logAndFlush`, bounded
+// and never rejecting, so the audit can neither block nor fail the download.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
-import { auditLog } from '@/lib/services/AuditTrailService';
+import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
-import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
-import { agentRepository } from '@/lib/repositories/AgentRepository';
-import { ExecutionRepository } from '@/lib/repositories/ExecutionRepository';
-import { agentConfigurationRepository } from '@/lib/repositories/AgentConfigurationRepository';
-import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
-import { userSubscriptionRepository } from '@/lib/repositories/UserSubscriptionRepository';
-import { creditTransactionRepository } from '@/lib/repositories/CreditTransactionRepository';
-import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
+import { EXPORT_SECTIONS, runExportSections, type ExportContext } from '@/lib/business-os/data-export/sections';
+import { buildExportPayload, exportFileName, EXPORT_GDPR_ARTICLE } from '@/lib/business-os/data-export/payload';
 
 const logger = createLogger({ module: 'UserDataExportAPI' });
-
-// ExecutionRepository defaults to the browser anon client, which would export
-// no executions under RLS; this read needs the service role like the others.
-const executionRepository = new ExecutionRepository(supabaseServer);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * The provider profile fields a person gets back in their export (SA C-1,
- * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md). An ALLOW-list on purpose: some providers
- * store an access token inside `profile_data`, under names nobody can predict,
- * so stripping known secret keys would fail open. Only these top-level keys,
- * and only when the value is a string or an array of strings. Never an id /
- * `sub`, never a token key, never a nested object. Changing this changes what
- * the export holds: a privacy decision.
- */
-const ACCOUNT_PROFILE_KEYS: readonly string[] = [
-  'name', 'given_name', 'family_name', 'email', 'mail', 'picture', 'avatar_url', 'locale',
-  'language', 'country', 'displayName', 'givenName', 'surname', 'jobTitle', 'mobilePhone',
-  'businessPhones', 'officeLocation', 'preferredLanguage', 'userPrincipalName', 'nickname',
-  'preferred_username',
-];
-
-/** The allow-listed part of a raw `profile_data` value; anything else is dropped. */
-function accountProfile(profileData: unknown): Record<string, string | string[]> {
-  const profile: Record<string, string | string[]> = {};
-  if (typeof profileData !== 'object' || profileData === null || Array.isArray(profileData)) return profile;
-  const source = profileData as Record<string, unknown>;
-  for (const key of ACCOUNT_PROFILE_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-    const value = source[key];
-    if (typeof value === 'string') {
-      profile[key] = value;
-    } else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-      profile[key] = [...(value as string[])];
-    }
-  }
-  return profile;
-}
-
-/**
- * Export all user data in machine-readable format (GDPR compliance)
+ * Export the person's data in machine-readable format (GDPR compliance)
  *
  * GDPR Requirements:
  * - Article 15: Right to access personal data
  * - Article 20: Right to data portability
  * - Format: JSON (machine-readable)
- * - Scope: All personal data held by the platform
+ * - Scope: the sections in EXPORT_SECTIONS
  */
 export async function GET(req: NextRequest) {
   const startTime = Date.now();
@@ -101,7 +52,8 @@ export async function GET(req: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   try {
-    // Authenticate user
+    // Authenticate user. This client is for getUser() only: it is never passed
+    // to a section reader (SA C-2).
     const cookieStore = await cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -123,150 +75,70 @@ export async function GET(req: NextRequest) {
 
     requestLogger.info({ userId: user.id }, 'Data export started');
 
-    // Collect all user data from all tables
-    const exportData: any = {
-      export_metadata: {
-        user_id: user.id,
-        export_date: new Date().toISOString(),
-        export_format: 'JSON',
-        gdpr_article: 'Article 15 (Right to Access) & Article 20 (Data Portability)',
-        data_controller: 'NeuronForge',
-      },
-      user_profile: {},
-      agents: [],
-      agent_executions: [],
-      agent_configurations: [],
-      plugin_connections: [],
-      subscriptions: [],
-      transactions: [],
-      audit_logs: [],
+    const ctx: ExportContext = {
+      userId: user.id,
+      authUser: { id: user.id, email: user.email ?? null, created_at: user.created_at },
     };
 
-    // 1. User Profile Data
-    const { data: profile } = await userProfileRepository.findForUserDataExport(user.id);
+    const sections = await runExportSections(ctx, EXPORT_SECTIONS, requestLogger);
+    // One clock reading, so the file name and the dates inside never straddle midnight.
+    const exportedAt = new Date();
+    const payload = buildExportPayload({
+      userId: user.id,
+      now: exportedAt,
+      sections,
+      durationMs: Date.now() - startTime,
+    });
+    const { section_counts: sectionCounts, failed_sections: failedSections } = payload.summary;
 
-    exportData.user_profile = {
-      id: user.id,
-      email: user.email,
-      created_at: user.created_at,
-      ...profile,
+    // Ids and counts only: never content, never the email.
+    const completedFields = {
+      userId: user.id,
+      sectionCounts,
+      failedSections,
+      exportSizeKb: payload.summary.export_size_kb,
+      durationMs: payload.summary.export_duration_ms,
     };
+    if (failedSections.length > 0) {
+      requestLogger.warn(completedFields, 'Data export completed with failed sections');
+    } else {
+      requestLogger.info(completedFields, 'Data export completed');
+    }
 
-    // 2. Agents Data
-    const { data: agents } = await agentRepository.listForUserDataExport(user.id);
-
-    exportData.agents = agents || [];
-
-    // 3. Agent Executions (last 90 days for reasonable size)
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
-    // At most 1000 rows, to prevent massive exports.
-    const { data: executions } = await executionRepository.listForUserDataExport(user.id, ninetyDaysAgo.toISOString());
-
-    exportData.agent_executions = executions || [];
-
-    // 4. Agent Configurations
-    const { data: configurations } = await agentConfigurationRepository.listForUserDataExport(user.id);
-
-    exportData.agent_configurations = configurations || [];
-
-    // 5. Plugin Connections (sensitive - credentials are never selected). The
-    // raw `profile_data` never reaches the body: only its allow-listed fields.
-    const { data: connections } = await pluginConnectionRepository.listForUserDataExport(user.id);
-
-    exportData.plugin_connections = (connections || []).map(conn => ({
-      plugin_key: conn.plugin_key,
-      plugin_name: conn.plugin_name,
-      account_username: conn.username,
-      account_email: conn.email,
-      account_profile: accountProfile(conn.profile_data),
-      scope: conn.scope,
-      status: conn.status,
-      connected_at: conn.connected_at ?? conn.created_at,
-      last_updated: conn.updated_at,
-      last_used: conn.last_used,
-      disconnected_at: conn.disconnected_at,
-    }));
-
-    // 6. Subscription & Billing Data
-    const { data: subscription } = await userSubscriptionRepository.findForUserDataExport(user.id);
-
-    exportData.subscriptions = subscription ? [subscription] : [];
-
-    // 7. Credit Transactions (last 12 months)
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-
-    const { data: transactions } = await creditTransactionRepository.listForUserDataExport(user.id, oneYearAgo.toISOString());
-
-    exportData.transactions = transactions || [];
-
-    // 8. Audit Logs (last 90 days, user-specific actions only). Owner-hidden
-    // entries are left out inside the repository method (BD-26): the hidden
-    // entity types, and any AI action event whatever its type.
-    const { data: auditLogs } = await auditTrailRepository.listOwnerEntriesForExport(user.id, ninetyDaysAgo.toISOString());
-
-    exportData.audit_logs = auditLogs || [];
-
-    // 9. Summary Statistics
-    exportData.summary = {
-      total_agents: exportData.agents.length,
-      total_executions: exportData.agent_executions.length,
-      total_configurations: exportData.agent_configurations.length,
-      total_plugin_connections: exportData.plugin_connections.length,
-      total_transactions: exportData.transactions.length,
-      total_audit_logs: exportData.audit_logs.length,
-      export_size_kb: Math.round(JSON.stringify(exportData).length / 1024),
-      export_duration_ms: Date.now() - startTime,
-    };
-
-    requestLogger.info(
+    // AUDIT TRAIL (WC-7). logAndFlush never rejects and logs its own timeout and
+    // failure lines, so there is nothing to catch here. Counts only (FR-E15);
+    // a failed section's reason is never recorded here (SA C-3).
+    await logAndFlush(
       {
-        userId: user.id,
-        totalAgents: exportData.summary.total_agents,
-        totalExecutions: exportData.summary.total_executions,
-        totalConfigurations: exportData.summary.total_configurations,
-        totalPluginConnections: exportData.summary.total_plugin_connections,
-        totalTransactions: exportData.summary.total_transactions,
-        totalAuditLogs: exportData.summary.total_audit_logs,
-        exportSizeKb: exportData.summary.export_size_kb,
-        durationMs: exportData.summary.export_duration_ms,
-      },
-      'Data export completed'
-    );
-
-    // AUDIT TRAIL: Log data export
-    try {
-      await auditLog({
         action: AUDIT_EVENTS.DATA_EXPORTED,
         entityType: 'user',
         entityId: user.id,
         userId: user.id,
         resourceName: user.email || 'User Data',
         details: {
-          export_timestamp: new Date().toISOString(),
+          export_timestamp: exportedAt.toISOString(),
           export_format: 'JSON',
-          data_categories: Object.keys(exportData).filter(k => k !== 'export_metadata' && k !== 'summary'),
-          summary: exportData.summary,
-          gdpr_basis: 'Article 15 (Right to Access) & Article 20 (Data Portability)',
+          format_version: payload.export_metadata.format_version,
+          data_categories: sections.filter((section) => section.status === 'ok').map((section) => section.id),
+          section_counts: sectionCounts,
+          failed_sections: failedSections,
+          gdpr_basis: EXPORT_GDPR_ARTICLE,
           ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
           user_agent: req.headers.get('user-agent') || 'unknown',
         },
         severity: 'info',
         complianceFlags: ['GDPR', 'SOC2'],
-      });
-      requestLogger.info({ userId: user.id }, 'Data export audit logged');
-    } catch (auditError) {
-      requestLogger.error({ err: auditError, userId: user.id }, 'Data export audit logging failed (non-critical)');
-    }
+      },
+      requestLogger,
+      { reason: 'data export', continues: 'the export is still returned' }
+    );
 
     // Return data as downloadable JSON
-    return new NextResponse(JSON.stringify(exportData, null, 2), {
+    return new NextResponse(JSON.stringify(payload, null, 2), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Content-Disposition': `attachment; filename="neuronforge-data-export-${user.id}-${Date.now()}.json"`,
+        'Content-Disposition': `attachment; filename="${exportFileName(exportedAt)}"`,
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
     });

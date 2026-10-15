@@ -16,7 +16,8 @@ import type { AgentRepositoryResult, UpsertPluginConnectionInput } from './types
  * land there unseen) and `id`. `profile_data` IS read, because it holds the
  * person's own provider profile, but some providers also store an access token
  * inside it: the route must never send it raw. It passes only the allow-listed
- * string fields (route.ts `accountProfile`, SA C-1).
+ * string fields (lib/business-os/data-export/sections.ts `accountProfile`,
+ * SA C-1; moved from the route in DE-1).
  */
 const USER_DATA_EXPORT_COLUMNS =
   'user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, ' +
@@ -345,8 +346,8 @@ export class PluginConnectionRepository {
    * connection of the caller, any status, unordered, with
    * USER_DATA_EXPORT_COLUMNS only: credentials are never read. The column set is
    * fixed; changing it changes what the export holds, which is a privacy
-   * decision. `profile_data` comes back raw; the route filters it (see the
-   * constant).
+   * decision. `profile_data` comes back raw; the export's `plugin_connections`
+   * section filters it (see the constant).
    */
   async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<PluginConnectionExportRow[]>> {
     try {

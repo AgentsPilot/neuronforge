@@ -31,8 +31,9 @@
  */
 
 import React, { useState } from 'react';
-import { Trash2, Download, Mail } from 'lucide-react';
+import { Trash2, Download, Mail, Loader2 } from 'lucide-react';
 import { useOptionalLanguage } from '@/lib/business-os/LanguageContext';
+import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
 
 /**
  * The address a customer writes to when they want their business erased.
@@ -87,6 +88,8 @@ const FALLBACK_COPY: Record<string, string> = {
     'We recommend downloading a copy of your data first — erasure cannot be undone.',
   'settings.security.erasure_request_contact': 'Contact us',
   'settings.security.export_button': 'Export Data',
+  'settings.security.export_success': 'Data exported successfully!',
+  'settings.security.export_error': 'Failed to export data. Please try again.',
 };
 
 /**
@@ -121,6 +124,29 @@ function useCopy() {
  */
 export function ErasureRequestContent() {
   const { tr, isRTL } = useCopy();
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportOutcome, setExportOutcome] = useState<'success' | 'error' | null>(null);
+
+  // Through the shared helper, not a plain link (SQ-E2, QA E4): a link cannot
+  // tell whether the download worked, so a signed-out click saved the 401 JSON
+  // as "my data". The helper never throws; it returns a verdict. No user id and
+  // no audit call here: the server takes the person from the session and writes
+  // DATA_EXPORTED itself.
+  const handleExport = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportOutcome(null);
+    try {
+      const result = await downloadUserDataExport();
+      setExportOutcome(result.success ? 'success' : 'error');
+    } catch {
+      // The helper returns a verdict and is not expected to throw; if it ever
+      // does, the person still sees the error message, never a false success.
+      setExportOutcome('error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -136,19 +162,21 @@ export function ErasureRequestContent() {
           isRTL ? 'flex-row-reverse' : ''
         }`}
       >
-        {/*
-          A plain link, not a fetch: /api/user/data-export is a GET that answers
-          with Content-Disposition: attachment, so the browser handles the
-          download. Nothing to wire, nothing to get wrong.
-        */}
-        <a
-          href="/api/user/data-export"
-          className="inline-flex items-center gap-2 px-3 py-2 border border-[var(--v2-border)] text-xs font-medium hover:bg-[var(--v2-surface-hover)]"
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={isExporting}
+          aria-busy={isExporting}
+          className="inline-flex items-center gap-2 px-3 py-2 border border-[var(--v2-border)] text-xs font-medium hover:bg-[var(--v2-surface-hover)] disabled:opacity-60"
           style={{ borderRadius: 'var(--v2-radius-button)' }}
         >
-          <Download className="w-3.5 h-3.5" />
+          {isExporting ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="w-3.5 h-3.5" aria-hidden="true" />
+          )}
           {tr('settings.security.export_button')}
-        </a>
+        </button>
 
         <a
           href={`mailto:${PLACEHOLDER_ERASURE_CONTACT}`}
@@ -159,6 +187,11 @@ export function ErasureRequestContent() {
           {tr('settings.security.erasure_request_contact')}
         </a>
       </div>
+
+      <p role="status" aria-live="polite" className="text-xs text-[var(--v2-text-secondary)]">
+        {exportOutcome === 'success' && tr('settings.security.export_success')}
+        {exportOutcome === 'error' && tr('settings.security.export_error')}
+      </p>
     </div>
   );
 }
