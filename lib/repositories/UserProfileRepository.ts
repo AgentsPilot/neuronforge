@@ -1,5 +1,5 @@
 // lib/repositories/UserProfileRepository.ts
-// Repository for the user `profiles` table: read access plus one targeted write.
+// Repository for the user `profiles` table: reads plus two targeted writes.
 //
 // Note on user_id filtering: the `profiles` table's primary key column is `id`,
 // and that value IS the Supabase auth user id (one row per user). Filtering by
@@ -8,14 +8,46 @@
 // the column is just named differently because the row is the user.
 //
 // Profile rows are created by the signup trigger and updated through auth flows
-// and the onboarding UI. This repository never creates one. Its only write is
-// `updateTimezoneMirror` (settings drawer D-1), which updates the `timezone`
-// mirror on an EXISTING row and does nothing when there is none.
+// and the onboarding UI. The two writes here behave differently on a missing row:
 //
-// SERVICE-ROLE CLIENT (`supabaseServer`, bypasses RLS) by design: the only
-// caller of the write is `PATCH /api/business-os/preferences`, which passes the
-// SESSION user's id, and the write is scoped with `.eq('id', userId)`, so it can
-// only touch that user's own row.
+//   updateTimezoneMirror  (settings drawer D-1) UPDATE only. Mirrors the
+//                         timezone onto an EXISTING row; a missing row stays
+//                         missing.
+//   saveSettingsCard      (settings drawer D-2) UPSERT on `id`. Saves the
+//                         settings card's name / job title and DOES create the
+//                         row for an account that has none, exactly as the
+//                         page's old browser upsert did. An upsert is right
+//                         here, unlike D-1's `preferred_language` (which needs
+//                         different values on the insert and update paths):
+//                         the payload is identical on both paths, and a
+//                         created row takes the column defaults exactly as a
+//                         signup-created row does (`role 'user'`, `timezone
+//                         'UTC'`, which is only the best-effort mirror; the
+//                         authority is `user_preferences.timezone`). It is one
+//                         atomic `INSERT ... ON CONFLICT (id) DO UPDATE` that
+//                         sets only the payload's columns, so `avatar_url`,
+//                         `role`, `timezone` and the rest of an existing row
+//                         are left alone. `profiles_role_privilege_guard`
+//                         exempts `service_role`, and `role` is never in the
+//                         payload anyway. `role` and `avatar_url` are never
+//                         written by `saveSettingsCard` (D-3 owns `avatar_url`).
+//
+// SERVICE-ROLE CLIENT (`supabaseServer`, bypasses RLS) by design: the callers of
+// the writes (`PATCH /api/business-os/preferences`, `PATCH
+// /api/business-os/account-profile`) pass the SESSION user's id. The mirror is
+// scoped with `.eq('id', userId)`; the card upsert carries `id: userId` as its
+// conflict key, set LAST in a payload built field by field from an allow-list,
+// so nothing the caller sends can name another row or another column
+// (tenant-isolation-guard).
+//
+// Database errors: `findById`, `updateTimezoneMirror`, `findSettingsCard` and
+// `saveSettingsCard` reduce a PostgREST error to `{ code, message }`
+// (`safeDbError`) before logging or returning it, because its `details` can
+// carry row values ("Failing row contains ..."; D-1 SA code review CR-1). The
+// admin and export reads (`listForAdmin`, `findAdminNamesByIds`,
+// `findForUserDataExport`) still log and return the raw error: follow-up
+// CR-1b (Low), to be done when the data-export stream is not editing
+// `userDataExportReads.test.ts`.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -23,6 +55,30 @@ import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 import { ADMIN_IDENTITY_CHUNK, ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
 import { exportColumnsOf } from '@/lib/business-os/data-export/classification';
+import { safeDbError } from './BusinessOsInviteRepository';
+
+/** A fresh Error from the safe projection: no `details`, no `hint` (CR-1). */
+function toSafeError(error: unknown): Error {
+  const safe = safeDbError(error);
+  const out = new Error(safe.message) as Error & { code?: string };
+  if (safe.code) out.code = safe.code;
+  return out;
+}
+
+/** The settings profile card (D-2). Exported for tests. */
+export const SETTINGS_CARD_COLUMNS = 'full_name, avatar_url, job_title';
+
+export interface ProfileSettingsCard {
+  full_name: string | null;
+  avatar_url: string | null;
+  job_title: string | null;
+}
+
+/** The only fields the card may write. No role, no avatar_url, no id. */
+export interface ProfileSettingsCardPatch {
+  full_name?: string;
+  job_title?: string;
+}
 
 /**
  * Subset of the `profiles` table columns used for building UserContext.
@@ -118,8 +174,8 @@ export class UserProfileRepository {
       if (error) throw error;
       return { data: data as UserProfile | null, error: null };
     } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to fetch user profile');
-      return { data: null, error: error as Error };
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to fetch user profile');
+      return { data: null, error: toSafeError(error) };
     }
   }
 
@@ -146,8 +202,67 @@ export class UserProfileRepository {
       }
       return { data: true, error: null };
     } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to mirror the timezone onto the profile');
-      return { data: null, error: error as Error };
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to mirror the timezone onto the profile');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * The settings profile card (D-2): name, avatar URL and job title.
+   *
+   * `.maybeSingle()`: no row is `{ data: null, error: null }`, not an error
+   * (the route shows empty fields). Never throws.
+   */
+  async findSettingsCard(userId: string): Promise<RepositoryResult<ProfileSettingsCard | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select(SETTINGS_CARD_COLUMNS)
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data ?? null) as ProfileSettingsCard | null, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to read the profile card');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Save the settings card's name and / or job title (D-2). See the header for
+   * why this is an upsert on `id`.
+   *
+   * The payload is built field by field from the allow-list, never by
+   * spreading `patch`, so a cast object carrying `role`, `avatar_url`,
+   * `timezone` or another id cannot reach the table. `id` is set LAST so
+   * nothing earlier can override it. No `.select()` after the upsert (the
+   * PostgREST update + select hazard). Values are never logged. Never throws.
+   */
+  async saveSettingsCard(userId: string, patch: ProfileSettingsCardPatch): Promise<RepositoryResult<true>> {
+    try {
+      const payload: Record<string, string> = {};
+      if (typeof patch.full_name === 'string') payload.full_name = patch.full_name;
+      if (typeof patch.job_title === 'string') payload.job_title = patch.job_title;
+
+      if (Object.keys(payload).length === 0) {
+        this.logger.warn({ userId }, 'Profile card save with nothing to write');
+        const empty = new Error('Nothing to update') as Error & { code?: string };
+        empty.code = 'EMPTY_PATCH';
+        return { data: null, error: empty };
+      }
+
+      // Reset by the BEFORE UPDATE trigger on the update path; needed on insert.
+      payload.updated_at = new Date().toISOString();
+      payload.id = userId;
+
+      const { error } = await this.supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to save the profile card');
+      return { data: null, error: toSafeError(error) };
     }
   }
 

@@ -62,6 +62,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
+/** The profile card as `GET /api/business-os/account-profile` returns it (D-2). */
+type ProfileCardValues = { full_name: string; avatar_url: string; job_title: string };
+
 /**
  * Scroll a deep-linked settings section into view, clear of the sticky header.
  *
@@ -258,7 +261,19 @@ function BusinessOSSettingsContent() {
        * timezone cannot be reused, because it falls back to 'UTC'.
        */
       const [profileSettled, timezoneSettled] = await Promise.allSettled([
-        supabase.from('profiles').select('full_name, avatar_url, job_title').eq('id', user.id).single(),
+        // The card comes from the account-profile route (settings drawer D-2):
+        // each field a string, '' when unset or when there is no row.
+        (async (): Promise<ProfileCardValues | null> => {
+          const res = await fetch('/api/business-os/account-profile', { method: 'GET' });
+          const payload = await res.json().catch(() => null);
+          if (!res.ok || payload?.success !== true || !payload.data) {
+            logger.error({ userId: user.id, status: res.status }, 'Failed to load the profile card');
+            return null;
+          }
+          const card = payload.data as Record<string, unknown>;
+          const text = (v: unknown) => (typeof v === 'string' ? v : '');
+          return { full_name: text(card.full_name), avatar_url: text(card.avatar_url), job_title: text(card.job_title) };
+        })(),
         (async (): Promise<string> => {
           const res = await fetch('/api/business-os/preferences', { method: 'GET' });
           const payload = await res.json().catch(() => null);
@@ -276,22 +291,21 @@ function BusinessOSSettingsContent() {
       if (timezoneSettled.status === 'rejected') {
         logger.warn({ err: timezoneSettled.reason, userId: user.id }, 'Could not read the stored timezone');
       }
-      const profileRes = profileSettled.status === 'fulfilled' ? profileSettled.value : { data: null };
+      const card = profileSettled.status === 'fulfilled' ? profileSettled.value : null;
       const storedTimezone = timezoneSettled.status === 'fulfilled' ? timezoneSettled.value : '';
 
       /*
        * Not gated on the profile row.
        *
-       * `.single()` returns nothing when no `profiles` row exists yet, and this
-       * used to skip the whole assignment — including the timezone, which comes
-       * from a different table entirely. An account with a saved zone and no
-       * profile row showed an empty timezone picker, which reads as "never set"
-       * and invites someone to set it again.
+       * A missing `profiles` row used to skip the whole assignment — including
+       * the timezone, which comes from a different table entirely. An account
+       * with a saved zone and no profile row showed an empty timezone picker,
+       * which reads as "never set" and invites someone to set it again.
        */
       setProfile({
-        full_name: profileRes.data?.full_name || '',
-        avatar_url: profileRes.data?.avatar_url || '',
-        job_title: profileRes.data?.job_title || '',
+        full_name: card?.full_name || '',
+        avatar_url: card?.avatar_url || '',
+        job_title: card?.job_title || '',
         timezone: storedTimezone,
       });
     } catch (error) {
@@ -353,6 +367,31 @@ function BusinessOSSettingsContent() {
   const saveProfile = async (overrides?: Partial<typeof profile>) => {
     if (!user) return;
 
+    // The timezone row passes { timezone } and must save ONLY the timezone.
+    // The card's Save passes nothing and must NEVER touch the timezone:
+    // re-sending it stamped timezone_confirmed_at and answered the publish
+    // gate's question on the owner's behalf (F-24). The pick does not re-write
+    // the card either, so it cannot save a half-typed or cancelled name, and
+    // it leaves the editor as it was (settings drawer D-2, SA ruling Q-1 (b)).
+    if (overrides?.timezone !== undefined) {
+      const zone = overrides.timezone;
+      try {
+        setSaving(true);
+        setSuccessMessage('');
+        setErrorMessage('');
+        const saved = zone ? await persistTimezone(zone) : null;
+        if (!saved) {
+          setErrorMessage(t('settings.profile.error'));
+          return;
+        }
+        setSuccessMessage(t('settings.profile.saved'));
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     // Passed in rather than read back out of state, so the save cannot depend
     // on whether React has re-rendered yet.
     const next = { ...profile, ...overrides };
@@ -362,26 +401,24 @@ function BusinessOSSettingsContent() {
       setSuccessMessage('');
       setErrorMessage('');
 
-      const { error: profileError } = await supabase.from('profiles').upsert({
-        id: user.id,
-        full_name: next.full_name,
-        avatar_url: next.avatar_url,
-        job_title: next.job_title,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' });
-
-      if (profileError) {
-        logger.error({ err: profileError, userId: user.id }, 'Failed to save the profile row');
+      // The name only. No avatar_url (the avatar hook stored it at pick time,
+      // F-6), no job_title (the card has no field for it, F-1, and a failed
+      // read would blank it), and no timezone (F-24).
+      const res = await fetch('/api/business-os/account-profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: next.full_name }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || payload?.success !== true) {
+        logger.error({ userId: user.id, status: res.status }, 'Failed to save the profile card');
         setErrorMessage(t('settings.profile.error'));
         return;
       }
-
-      if (next.timezone) {
-        const saved = await persistTimezone(next.timezone);
-        if (!saved) {
-          setErrorMessage(t('settings.profile.error'));
-          return;
-        }
+      // Show what was stored (the route trims).
+      const storedName: unknown = payload.data?.full_name;
+      if (typeof storedName === 'string') {
+        setProfile(p => ({ ...p, full_name: storedName }));
       }
 
       setEditingProfile(false);

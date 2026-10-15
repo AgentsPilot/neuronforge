@@ -75,14 +75,21 @@ describe('updateTimezoneMirror', () => {
     expect(logged.some((e) => e.level === 'error')).toBe(false);
   });
 
-  it('U-3: an error is returned and logged with { err }, never thrown', async () => {
-    const dbError = Object.assign(new Error('mirror failed'), { code: '42501' });
+  it('U-3: an error is returned and logged as the safe projection (CR-1), never thrown', async () => {
+    const dbError = Object.assign(new Error('mirror failed'), {
+      code: '42501',
+      details: 'Failing row contains (secret-row-value)',
+    });
     const { client } = recordingClient({ error: dbError });
     const result = await new UserProfileRepository(client).updateTimezoneMirror(USER, 'UTC', STAMP);
 
     expect(result.data).toBeNull();
-    expect(result.error).toBe(dbError);
+    expect(result.error).not.toBe(dbError);
+    expect(result.error?.message).toBe('mirror failed');
+    expect((result.error as Error & { code?: string }).code).toBe('42501');
+    expect(result.error).not.toHaveProperty('details');
     const entry = logged.find((e) => e.level === 'error');
-    expect(entry?.args[0]).toEqual(expect.objectContaining({ err: dbError, userId: USER }));
+    expect(entry?.args[0]).toEqual({ dbError: { code: '42501', message: 'mirror failed' }, userId: USER });
+    expect(JSON.stringify(logged)).not.toContain('secret-row-value');
   });
 });
