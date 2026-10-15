@@ -15,17 +15,7 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 import { ADMIN_IDENTITY_CHUNK, ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
-
-/**
- * The columns the GDPR export reads from `profiles` (findForUserDataExport;
- * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.1). Today that is every column: each is
- * the person's own profile or onboarding answer. Listed by name so a column
- * added later is NOT exported until someone decides it should be. Changing this
- * changes what the export holds: a privacy decision.
- */
-const PROFILE_DATA_EXPORT_COLUMNS =
-  'id, full_name, avatar_url, plan, company, job_title, timezone, language, created_at, updated_at, ' +
-  'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id';
+import { exportColumnsOf } from '@/lib/business-os/data-export/classification';
 
 /**
  * Subset of the `profiles` table columns used for building UserContext.
@@ -235,21 +225,32 @@ export class UserProfileRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
-   * profile row, PROFILE_DATA_EXPORT_COLUMNS only. The column set and `.single()`
-   * are fixed: changing either changes what the export holds, which is a privacy
-   * decision. A missing row is an error here (PGRST116), as it always was; the
-   * route ignores it and exports the auth fields alone.
+   * profile row, the `profiles` descriptor's export columns only (DE-2:
+   * lib/business-os/purge/descriptors.ts PROFILES_EXPORT, where the privacy
+   * reasoning now lives). Changing that list changes what the export holds,
+   * which is a privacy decision.
+   *
+   * The columns are resolved INSIDE the try (DE-2 §2.4): a bad descriptor, or a
+   * secret column on the deny list, returns `{ data: null, error }` and the
+   * export marks the section `failed` (fail closed). It can never break module
+   * load for the many routes that import this repository.
+   *
+   * `.maybeSingle()` (DE-1, SA ruling Q-4): no row is `{ data: null, error: null }`,
+   * NOT an error, so the export shows an empty profile section rather than a
+   * failed one (FR-E12). A real read error is still returned as an error, and
+   * the export marks the section `failed`.
    */
-  async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown>>> {
+  async findForUserDataExport(userId: string): Promise<RepositoryResult<Record<string, unknown> | null>> {
     try {
+      const columns = exportColumnsOf('profiles').join(', ');
       const { data, error } = await this.supabase
         .from('profiles')
-        .select(PROFILE_DATA_EXPORT_COLUMNS)
+        .select(columns)
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
-      return { data: data as unknown as Record<string, unknown>, error: null };
+      return { data: (data ?? null) as unknown as Record<string, unknown> | null, error: null };
     } catch (error) {
       this.logger.error({ err: error, userId }, 'Failed to read the profile for the data export');
       return { data: null, error: error as Error };

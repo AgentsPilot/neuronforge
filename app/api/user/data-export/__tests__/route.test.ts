@@ -1,14 +1,18 @@
 /**
- * GET /api/user/data-export (BD-26, SA W26-7).
+ * GET /api/user/data-export (SA W26-7; DE-1).
  *
- * The owner's export leaves out internal admin audit entries: the audit query
- * carries the owner-hidden entity types and the AI action prefix exclusion,
- * after the select. The route's logging is Pino (no console), with a
- * correlation id, `userId` as a field and counts only. The audit read filters
- * on `created_at`, so audit history now reaches the export, still without the
- * hidden entries; the plugin connection's provider profile is allow-listed;
- * the 500 body carries no error text outside development
- * (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-1, SA C-1, FU-P2).
+ * The route's logging is Pino (no console), with a correlation id, `userId` as
+ * a field and counts only. The plugin connection's provider profile is
+ * allow-listed; the 500 body carries no error text outside development
+ * (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md SA C-1, FU-P2).
+ *
+ * DE-1 (BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md §6.3): the export holds the
+ * account sections only. The audit-read cases (BD-26 exclusions, FU-1 audit
+ * rows) went with the audit section (DX-1d); BD-26 itself stays covered by
+ * lib/audit/__tests__/ownerAuditReads.guard.test.ts, which now also proves this
+ * route reads no audit rows. The `DATA_EXPORTED` entry goes through the real
+ * `logAndFlush` here, with the AuditTrail singleton mocked, so its
+ * never-rejects contract is exercised end to end.
  * The reads now go through repositories (DATA_EXPORT_REPOSITORY_REFACTOR_WORKPLAN.md);
  * the per-method checks live in lib/repositories/__tests__/userDataExportReads.test.ts
  * and the full behaviour pin in route.characterization.test.ts.
@@ -24,8 +28,10 @@ import { NextRequest } from 'next/server';
 
 type Call = [string, ...unknown[]];
 const mockCalls: Record<string, Call[]> = {};
-/** Per-test table rows; when unset a table returns [] (audit_trail one visible row). */
+/** Per-test table rows; when unset a table returns []. */
 const mockSeeds: Record<string, Array<Record<string, unknown>>> = {};
+/** Per-test PostgREST errors by table (DE-1, FR-E12). */
+const mockErrors: Record<string, unknown> = {};
 
 /**
  * Applies the recorded `.not(column, 'in', '(a,b)')` and `.not(column, 'like',
@@ -47,9 +53,10 @@ function mockApplyNotFilters(rows: Array<Record<string, unknown>>, calls: Call[]
 function mockBuilder(key: string) {
   const table = key.startsWith('anon:') ? key.slice('anon:'.length) : key;
   const calls: Call[] = (mockCalls[key] = mockCalls[key] ?? []);
-  const seeded = mockSeeds[table] ?? (table === 'audit_trail' ? [{ id: 'row-1', action: 'USER_LOGIN' }] : []);
+  const seeded = mockSeeds[table] ?? [];
   // Resolved lazily so the filters recorded on the chain are applied.
-  const result = () => ({ data: mockApplyNotFilters(seeded, calls), error: null });
+  const result = () =>
+    mockErrors[table] ? { data: null, error: mockErrors[table] } : { data: mockApplyNotFilters(seeded, calls), error: null };
   const builder: Record<string, unknown> = {};
   for (const method of ['select', 'eq', 'neq', 'not', 'gte', 'order', 'limit']) {
     builder[method] = (...args: unknown[]) => {
@@ -60,6 +67,18 @@ function mockBuilder(key: string) {
   builder.single = () => {
     calls.push(['single']);
     return Promise.resolve({ data: null, error: null });
+  };
+  // DE-1: the profile read is maybeSingle. It honours the select, as PostgREST
+  // does, so a seeded column the route does not select (e.g. `plan`) cannot
+  // reach the body through the mock.
+  builder.maybeSingle = () => {
+    calls.push(['maybeSingle']);
+    if (mockErrors[table]) return Promise.resolve({ data: null, error: mockErrors[table] });
+    const row = seeded[0];
+    if (!row) return Promise.resolve({ data: null, error: null });
+    const select = calls.find((c) => c[0] === 'select');
+    const columns = String(select?.[1] ?? '').split(',').map((c) => c.trim());
+    return Promise.resolve({ data: Object.fromEntries(columns.filter((c) => c in row).map((c) => [c, row[c]])), error: null });
   };
   builder.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
     Promise.resolve(result()).then(resolve, reject);
@@ -77,9 +96,14 @@ jest.mock('@supabase/ssr', () => ({
 }));
 jest.mock('next/headers', () => ({ cookies: async () => ({ get: () => undefined }) }));
 
+// DE-1: the real logAndFlush runs; only the AuditTrail singleton it writes through is mocked.
 const mockAuditLog = jest.fn();
+const mockAuditFlush = jest.fn();
 jest.mock('@/lib/services/AuditTrailService', () => ({
-  auditLog: (...args: unknown[]) => mockAuditLog(...args),
+  AuditTrail: {
+    log: (...args: unknown[]) => mockAuditLog(...args),
+    flush: () => mockAuditFlush(),
+  },
 }));
 
 const mockLogged: Array<{ level: string; fields: Record<string, unknown>; msg: string }> = [];
@@ -106,6 +130,7 @@ jest.mock('@/lib/logger', () => {
 });
 
 import { GET } from '../route';
+import { __resetAuditFlushChainForTests } from '@/lib/audit/boundedAuditFlush';
 
 const OWNER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' };
 
@@ -113,14 +138,27 @@ function request(headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('http://localhost/api/user/data-export', { headers });
 }
 
+type ExportSection = { id: string; status: string; row_count: number; rows: Array<Record<string, unknown>> };
+
+/** One section of the body, by id (DE-1: the body is a list of sections). */
+function sectionOf(body: { sections: ExportSection[] }, id: string): ExportSection {
+  const found = body.sections.find((s) => s.id === id);
+  if (!found) throw new Error(`no section ${id}`);
+  return found;
+}
+
 let consoleSpies: jest.SpyInstance[] = [];
 
 beforeEach(() => {
   for (const key of Object.keys(mockCalls)) delete mockCalls[key];
   for (const key of Object.keys(mockSeeds)) delete mockSeeds[key];
+  for (const key of Object.keys(mockErrors)) delete mockErrors[key];
   mockGetUser.mockReset();
   mockAuditLog.mockReset();
   mockAuditLog.mockResolvedValue(undefined);
+  mockAuditFlush.mockReset();
+  mockAuditFlush.mockResolvedValue(undefined);
+  __resetAuditFlushChainForTests();
   mockLogged.length = 0;
   mockChildBindings.length = 0;
   consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) => jest.spyOn(console, method).mockImplementation(() => undefined));
@@ -141,45 +179,11 @@ describe('GET /api/user/data-export', () => {
     expect(Object.keys(mockCalls)).toHaveLength(0);
   });
 
-  it('leaves owner-hidden audit entries out of the export query (BD-26), after the select', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    const res = await GET(request());
-    expect(res.status).toBe(200);
-
-    const audit = mockCalls.audit_trail;
-    expect(audit).toBeDefined();
-    const notIn = audit.findIndex(
-      (c) =>
-        c[0] === 'not' &&
-        c[1] === 'entity_type' &&
-        c[2] === 'in' &&
-        // ADMIN_BOS_CLEANUP slice 7b added bos_queue_item (migration 20261035).
-        c[3] === '(ai_action,bos_queue_item,business_os_account_plan,business_os_credit_lot,business_os_credit_period)'
-    );
-    const notLike = audit.findIndex((c) => c[0] === 'not' && c[1] === 'action' && c[2] === 'like' && c[3] === 'BUSINESS_AI_ACTION_%');
-    const select = audit.findIndex((c) => c[0] === 'select');
-    expect(select).toBe(0);
-    // FU-P1: an explicit list, never `*`, and never the tamper hash or the email copy.
-    expect(audit[select][1]).not.toBe('*');
-    expect(String(audit[select][1]).split(', ')).not.toContain('hash');
-    expect(String(audit[select][1]).split(', ')).not.toContain('user_email');
-    expect(notIn).toBeGreaterThan(select);
-    expect(notLike).toBeGreaterThan(select);
-    expect(audit).toContainEqual(['eq', 'user_id', OWNER.id]);
-    // FU-1 (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md): `created_at`, never the non-existent `timestamp`.
-    expect(audit.some((c) => c[0] === 'gte' && c[1] === 'created_at')).toBe(true);
-    expect(audit).toContainEqual(['order', 'created_at', { ascending: false }]);
-    expect(audit.some((c) => c[1] === 'timestamp')).toBe(false);
-
-    const body = JSON.parse(await res.text());
-    expect(body.audit_logs).toEqual([{ id: 'row-1', action: 'USER_LOGIN' }]);
-    expect(res.headers.get('Content-Disposition')).toContain('attachment; filename="neuronforge-data-export-');
-  });
-
-  it('still records the export in the audit trail, as before', async () => {
+  it('still records the export in the audit trail, and flushes it before responding (WC-7)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     await GET(request());
     expect(mockAuditLog).toHaveBeenCalledTimes(1);
+    expect(mockAuditFlush).toHaveBeenCalledTimes(1);
     expect(mockAuditLog.mock.calls[0][0]).toMatchObject({
       action: 'DATA_EXPORTED',
       entityType: 'user',
@@ -197,10 +201,14 @@ describe('GET /api/user/data-export', () => {
     const started = mockLogged.find((l) => l.msg === 'Data export started');
     expect(started).toMatchObject({ level: 'info', fields: { userId: OWNER.id } });
     const completed = mockLogged.find((l) => l.msg === 'Data export completed');
-    expect(completed?.fields).toMatchObject({ userId: OWNER.id, totalAuditLogs: 1 });
-    for (const value of Object.entries(completed?.fields ?? {}).filter(([key]) => key !== 'userId').map(([, v]) => v)) {
+    // DE-1: section counts and the failed list, was total_* counts.
+    expect(completed?.fields).toMatchObject({ userId: OWNER.id, failedSections: [] });
+    expect(Object.keys(completed?.fields ?? {}).sort()).toEqual(['durationMs', 'exportSizeKb', 'failedSections', 'sectionCounts', 'userId']);
+    for (const value of Object.values(completed?.fields.sectionCounts as Record<string, unknown>)) {
       expect(typeof value).toBe('number');
     }
+    expect(typeof completed?.fields.exportSizeKb).toBe('number');
+    expect(typeof completed?.fields.durationMs).toBe('number');
     // No emoji anywhere in what is logged. The ranges are numeric code points so
     // this file carries no escape sequences (repo rule, QA26-1).
     const emojiRanges: Array<[number, number]> = [
@@ -223,13 +231,16 @@ describe('GET /api/user/data-export', () => {
     expect(String(mockChildBindings[0]?.correlationId).length).toBeGreaterThan(0);
   });
 
+  // DE-1 (WC-7): logAndFlush logs the failure itself and never rejects.
   it('logs a failed audit write as an error with { err } and still returns the export', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    mockAuditLog.mockRejectedValue(new Error('queue full'));
+    mockAuditFlush.mockRejectedValue(new Error('queue full'));
     const res = await GET(request());
     expect(res.status).toBe(200);
-    const failed = mockLogged.find((l) => l.msg === 'Data export audit logging failed (non-critical)');
-    expect(failed).toMatchObject({ level: 'error', fields: { err: { message: 'queue full' }, userId: OWNER.id } });
+    expect(sectionOf(JSON.parse(await res.text()), 'account_identity').status).toBe('ok');
+    const failed = mockLogged.find((l) => l.msg === 'Audit flush on data export failed; the export is still returned');
+    expect(failed).toMatchObject({ level: 'error', fields: { err: { message: 'queue full' }, userId: OWNER.id, action: 'DATA_EXPORTED' } });
+    expect(mockLogged.find((l) => l.msg === 'Data export failed')).toBeUndefined();
   });
 
   it('logs an unexpected failure with { err } and returns 500', async () => {
@@ -273,29 +284,6 @@ describe('GET /api/user/data-export', () => {
     });
   });
 
-  it('exports the audit rows the read returns, counted in the summary (FU-1)', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    mockSeeds.audit_trail = [
-      { id: 'row-1', action: 'USER_LOGIN', entity_type: 'user' },
-      { id: 'row-2', action: 'AGENT_CREATED', entity_type: 'agent' },
-    ];
-    const body = JSON.parse(await (await GET(request())).text());
-    expect(body.audit_logs.map((r: { id: string }) => r.id)).toEqual(['row-1', 'row-2']);
-    expect(body.summary.total_audit_logs).toBe(2);
-  });
-
-  it('still leaves owner-hidden audit rows out when the read returns them (BD-26)', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    mockSeeds.audit_trail = [
-      { id: 'visible', action: 'USER_LOGIN', entity_type: 'user' },
-      { id: 'hidden-type', action: 'ADMIN_CREDIT_LOT_GRANTED', entity_type: 'business_os_credit_lot' },
-      { id: 'hidden-ai', action: 'BUSINESS_AI_ACTION_COMPLETED', entity_type: 'business_os_contact' },
-    ];
-    const body = JSON.parse(await (await GET(request())).text());
-    expect(body.audit_logs.map((r: { id: string }) => r.id)).toEqual(['visible']);
-    expect(body.summary.total_audit_logs).toBe(1);
-  });
-
   it('exports only the allow-listed provider profile strings, never the raw profile_data (SA C-1)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     mockSeeds.plugin_connections = [
@@ -322,8 +310,10 @@ describe('GET /api/user/data-export', () => {
     const res = await GET(request());
     const text = await res.text();
     const body = JSON.parse(text);
-    expect(body.plugin_connections).toHaveLength(1);
-    expect(body.plugin_connections[0].account_profile).toEqual({
+    // DE-1: the connections are the rows of the plugin_connections section.
+    const connections = sectionOf(body, 'plugin_connections').rows;
+    expect(connections).toHaveLength(1);
+    expect(connections[0].account_profile).toEqual({
       displayName: 'Ada Owner',
       businessPhones: ['+1 555 0100'],
       jobTitle: 'Founder',
@@ -343,13 +333,90 @@ describe('GET /api/user/data-export', () => {
       profile_data,
     }));
     const body = JSON.parse(await (await GET(request())).text());
-    expect(body.plugin_connections.map((c: { account_profile: unknown }) => c.account_profile)).toEqual([{}, {}, {}]);
+    expect(sectionOf(body, 'plugin_connections').rows.map((c) => c.account_profile)).toEqual([{}, {}, {}]);
   });
 
   it('reads nothing on the browser anon client (C-1)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     await GET(request());
     expect(Object.keys(mockCalls).filter((k) => k.startsWith('anon:'))).toEqual([]);
-    expect(mockCalls.agent_executions).toBeDefined();
+    // DE-1: was agent_executions, the read that used to default to the anon client.
+    expect(mockCalls.plugin_connections).toBeDefined();
+    expect(mockCalls.profiles).toBeDefined();
+  });
+
+  it('holds none of the parts DE-1 removed, as a key or as a section (DX-1, BQ-SA-1)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    const body = JSON.parse(await (await GET(request())).text());
+    const sectionIds = body.sections.map((s: ExportSection) => s.id);
+    for (const removed of ['agents', 'agent_executions', 'agent_configurations', 'subscriptions', 'transactions', 'audit_logs']) {
+      expect(Object.keys(body)).not.toContain(removed);
+      expect(sectionIds).not.toContain(removed);
+    }
+    expect(sectionIds).toEqual(['account_identity', 'user_profile', 'plugin_connections']);
+    expect(Object.keys(mockCalls).sort()).toEqual(['plugin_connections', 'profiles']);
+  });
+
+  it('never exports profiles.plan, even when the row has one (DE-1, SA Q-3 / C-1)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    // A sentinel, not a tier name: tier literals are forbidden outside the entitlements config.
+    mockSeeds.profiles = [{ id: OWNER.id, full_name: 'Ada Owner', plan: 'qa-plan-value', hourly_rate_usd: 50 }];
+    const text = await (await GET(request())).text();
+    const profile = sectionOf(JSON.parse(text), 'user_profile');
+    expect(profile.status).toBe('ok');
+    expect(profile.rows).toEqual([{ id: OWNER.id, full_name: 'Ada Owner', hourly_rate_usd: 50 }]);
+    expect(Object.keys(profile.rows[0])).not.toContain('plan');
+    expect(text).not.toContain('"plan"');
+    expect(text).not.toContain('qa-plan-value');
+  });
+
+  it('marks a failed plugin_connections read as failed, still 200, with no error text (FR-E12)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    mockErrors.plugin_connections = { message: 'relation "secret_table" does not exist', code: '42P01' };
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text);
+    expect(sectionOf(body, 'plugin_connections')).toMatchObject({ status: 'failed', row_count: 0, rows: [] });
+    expect(body.summary.failed_sections).toEqual(['plugin_connections']);
+    expect(text).not.toContain('secret_table');
+    expect(text).not.toContain('42P01');
+  });
+});
+
+describe('DE-0a: plugin_connections tokens never reach the export body (QA)', () => {
+  it('a connection row carrying access_token / refresh_token / credentials / token-bearing profile_data exports none of them', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    mockSeeds.plugin_connections = [
+      {
+        user_id: OWNER.id,
+        plugin_key: 'google-mail',
+        plugin_name: 'Gmail',
+        username: 'Ada',
+        email: 'a@example.com',
+        status: 'active',
+        created_at: '2026-02-01T00:00:00Z',
+        updated_at: '2026-03-01T00:00:00Z',
+        access_token: 'QA-ACCESS-TOKEN-SECRET',
+        refresh_token: 'QA-REFRESH-TOKEN-SECRET',
+        credentials: { api_key: 'QA-CREDENTIALS-SECRET' },
+        expires_at: '2099-01-01',
+        settings: { webhook_secret: 'QA-SETTINGS-SECRET' },
+        profile_data: { name: 'Ada', access_token: 'QA-PROFILE-ACCESS', refresh_token: 'QA-PROFILE-REFRESH', id_token: 'QA-PROFILE-ID' },
+      },
+    ];
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text);
+    // DE-1: accessor only, the connections are the rows of the plugin_connections section.
+    expect(sectionOf(body, 'plugin_connections').rows).toHaveLength(1);
+    expect(sectionOf(body, 'plugin_connections').rows[0].account_profile).toEqual({ name: 'Ada' });
+    for (const key of ['access_token', 'refresh_token', 'credentials', 'profile_data', 'id_token', 'expires_at', 'settings']) {
+      expect(text).not.toContain(`"${key}"`);
+    }
+    for (const secret of ['QA-ACCESS-TOKEN-SECRET', 'QA-REFRESH-TOKEN-SECRET', 'QA-CREDENTIALS-SECRET', 'QA-SETTINGS-SECRET', 'QA-PROFILE-ACCESS', 'QA-PROFILE-REFRESH', 'QA-PROFILE-ID']) {
+      expect(text).not.toContain(secret);
+    }
   });
 });

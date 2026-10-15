@@ -1806,6 +1806,11 @@ export const en = {
     'crm.subscribers.origin': 'Newsletter subscriber since {date}',
     'crm.tab_activity': 'Activity',
     'crm.loading': 'Loading contacts...',
+    'crm.no_stages_title': 'Your pipeline has no stages yet',
+    'crm.no_stages_body': 'The board needs stages to show its columns. Your contacts are still on the Contacts tab.',
+    'crm.stages_failed_title': 'Your pipeline could not be loaded',
+    'crm.stages_failed_body': 'Something went wrong on our side. Your contacts are safe and still on the Contacts tab.',
+    'crm.stages_failed_retry': 'Try again',
 
     // Pipeline stages - generic
     'crm.stage.lead': 'Lead',
@@ -3806,11 +3811,16 @@ export const en = {
     'media.generate.prompt': 'Describe the picture you want',
     'media.generate.action': 'Generate',
     'media.generate.working': 'Generating…',
-    'media.generate.no_people': 'Pictures of people are not generated — use your own photograph for those.',
+    'media.generate.depicts_people': 'Pictures of people are not generated — use your own photograph for those.',
     'media.generate.unavailable': 'Image generation is not available right now.',
     'media.generate.failed': 'Could not generate that. Try describing it differently.',
     'media.generate.remaining': '{remaining} of {limit} AI images left today',
     'media.generate.limit_reached': "You've used today's {limit} AI images. More tomorrow — uploading a photo still works.",
+    'media.generate.progress_title': "Creating your picture. This usually takes about a minute.",
+    'media.generate.progress_slow': "Taking longer than usual, still working.",
+    'media.generate.progress_elapsed': "Elapsed",
+    'media.generate.progress_can_close': "You can close this window. The picture will still be saved to your library.",
+    'media.generate.progress_no_repeat': "Please don't ask for the same picture again while this one is being made, or you may be charged twice.",
     'media.upload.add': 'Add',
     'settings.business.logo_hint': 'Used on your invoices, emails, booking pages and website. Square image, at least 200x200px.',
     'settings.business.logo_on_smart_links': 'Show on my public booking and contact links',
@@ -3956,6 +3966,14 @@ export const en = {
     'consent.label_ad': 'Label marketing as advertising',
     'consent.label_ad_desc': 'Required for email sent to people in Israel. Adds a clear marking to the top of every marketing message.',
     'consent.saved': 'Saved',
+    'consent.save_failed': 'Not saved. Your changes are still here. Please try again.',
+    'consent.load_failed': 'Could not load your marketing permission settings.',
+    // The settings drawer's unsaved-changes prompt (settings drawer S-3, C-5). Generic, so any
+    // settings drawer with a form can reuse it.
+    'settings.drawer.discard_title': 'Discard your changes?',
+    'settings.drawer.discard_desc': 'You have changes here that are not saved. If you close now, they will be lost.',
+    'settings.drawer.keep_editing': 'Keep editing',
+    'settings.drawer.discard': 'Discard changes',
 
     // Security Tab
     'settings.security.title': 'Password & Security',

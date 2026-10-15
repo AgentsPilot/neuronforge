@@ -69,6 +69,12 @@ export interface LifecycleInputs {
   cohorts: Readonly<Record<string, CohortConfig>>;
   tierOrder: readonly string[];
   subscriptionGraceHistory: readonly HistoryEntry[];
+  /**
+   * PF-10 (plan payments P-6a.1). Required, not optional: a caller that forgot
+   * it would silently drop FC-1 and read a renewing subscriber as lapsed in the
+   * hour before Stripe's renewal payment lands.
+   */
+  renewalSettlementMarginHistory: readonly HistoryEntry[];
 }
 
 /**
@@ -103,6 +109,20 @@ function addDays(from: string, days: number): string {
 
 function isBefore(now: Date, iso: string): boolean {
   return now.getTime() < new Date(iso).getTime();
+}
+
+/**
+ * When a dated tier's access really ends: its paid-through date plus the
+ * renewal settlement margin in force at that date (PF-10, FC-1).
+ *
+ * Stripe charges a renewal about an hour after the period end, so without this
+ * a renewing subscriber would read lapsed (grace, or back to their cohort) for
+ * that hour. `tier_expires_at` itself is never moved: every display keeps
+ * showing the paid-through date Stripe gave us, verbatim.
+ */
+export function tierSettlementEndsAt(tierExpiresAt: string, marginHistory: readonly HistoryEntry[]): string {
+  const margin = historyAt(marginHistory, new Date(tierExpiresAt));
+  return margin ? addDays(tierExpiresAt, margin.days) : tierExpiresAt;
 }
 
 /** The later of two dates, either of which may be absent. */
@@ -188,14 +208,28 @@ export function deriveLifecycle(
   }
 
   // ── A tier in force wins outright (RC-11) ─────────────────────────────────
-  if (hasTier && (account.tierExpiresAt === null || isBefore(now, account.tierExpiresAt))) {
+  // FC-1 (P-6a.1): "in force" includes the renewal settlement margin, so a
+  // renewing subscriber (a dated Founding Partner included) never flips to grace
+  // or back to their cohort in the hour before Stripe's renewal payment lands.
+  // `accessEndsAt` stays the paid-through date verbatim (PF-10).
+  const settlementEndsAt =
+    hasTier && account.tierExpiresAt !== null
+      ? tierSettlementEndsAt(account.tierExpiresAt, inputs.renewalSettlementMarginHistory)
+      : null;
+
+  if (hasTier && (account.tierExpiresAt === null || isBefore(now, settlementEndsAt as string))) {
+    let reason = 'tier_in_force';
+    if (account.tierExpiresAt === null) reason = 'tier_in_force_no_end_date';
+    else if (!isBefore(now, account.tierExpiresAt)) reason = 'tier_in_settlement_margin';
+
     return {
       state: 'active',
       basis: { kind: 'tier', tier: account.tier as string },
       accessEndsAt: account.tierExpiresAt,
       graceEndsAt: null,
-      // `past_due` is Slice 4: it needs a billing event nothing emits yet.
-      reason: account.tierExpiresAt === null ? 'tier_in_force_no_end_date' : 'tier_in_force',
+      // `past_due` stays unemitted (SA-P8, P-6a Q-1): grace is derived from the
+      // dates; Stripe's status lives on the billing record, for display only.
+      reason,
     };
   }
 
@@ -218,16 +252,28 @@ export function deriveLifecycle(
     //   access end   the LATER of the two end dates, so an account upgraded
     //                mid-trial is not pushed into grace by a trial end date that
     //                passed while they were paying
-    //   grace length the COHORT's, when there is one. An account that was also a
-    //                lapsed champion keeps the champion's 30 days instead of the
-    //                shorter subscription grace. Deliberate: it only applies to
-    //                someone who was both, and the alternative would mean that
-    //                having been a champion made their lapse worse.
+    //   grace length set by WHICHEVER ENDED LAST (BQ-P12, decided by the user
+    //                2026-10-15: "5 days, like every paying customer"). When
+    //                the paid tier was the last thing in force (its settlement
+    //                margin included), the account was a paying customer at the
+    //                moment it lapsed and gets the subscription grace, even if
+    //                it was once a Founding Partner or a trial. When the cohort
+    //                outlived the tier (the account was back on its free access
+    //                when that ended), the cohort's own grace applies, so having
+    //                paid for a while never makes a champion's lapse worse.
+    //                Before 2026-10-15 the cohort's grace always won here.
+    //
+    // FC-1: grace starts after the margin, never before (accessEndsAt is still
+    // the verbatim date; only the grace clock moves).
     const cohortEnd = cohortState?.accessEndsAt ?? null;
     const accessEndsAt = (later(account.tierExpiresAt, cohortEnd) ?? account.tierExpiresAt) as string;
-    const graceHistory = cohortState
+    const tierSettledAt = settlementEndsAt as string;
+    const cohortOutlivedTier =
+      cohortState !== null && cohortEnd !== null && new Date(cohortEnd).getTime() > new Date(tierSettledAt).getTime();
+    const graceHistory = cohortOutlivedTier
       ? inputs.cohorts[account.cohort as string].graceHistory
       : inputs.subscriptionGraceHistory;
+    const graceStartsAt = (later(tierSettledAt, cohortEnd) ?? tierSettledAt) as string;
 
     return settle({
       account,
@@ -238,6 +284,7 @@ export function deriveLifecycle(
       // more capability in grace than they ever had while paying.
       basis: { kind: 'tier', tier: account.tier as string },
       accessEndsAt,
+      graceStartsAt,
       graceHistory,
       reason: cohortState ? 'tier_and_cohort_ended' : 'tier_expired_no_cohort',
       now,
@@ -363,17 +410,26 @@ function settle(args: {
   account: EntitlementAccount;
   basis: EntitlementBasis;
   accessEndsAt: string;
+  /**
+   * When the grace clock starts. Defaults to `accessEndsAt`, so the cohort
+   * branches are unchanged; a lapsed tier passes its end plus the renewal
+   * settlement margin (FC-1, P-6a.1).
+   */
+  graceStartsAt?: string;
   graceHistory: readonly HistoryEntry[];
   reason: string;
   now: Date;
   trial?: { startedAt: string | null; endsAt: string | null };
 }): LifecycleResult {
   const { account, basis, accessEndsAt, graceHistory, reason, now, trial } = args;
+  const graceStartsAt = args.graceStartsAt ?? accessEndsAt;
 
+  // The grace LENGTH is looked up at the access end (as before P-6a), so a tier
+  // that ended before a new grace entry keeps the length it was promised.
   const grace = historyAt(graceHistory, new Date(accessEndsAt));
   // An admin's pin wins over the derived date; a missing history means no grace
   // rather than infinite grace.
-  const graceEndsAt = account.graceEndsAt ?? (grace ? addDays(accessEndsAt, grace.days) : accessEndsAt);
+  const graceEndsAt = account.graceEndsAt ?? (grace ? addDays(graceStartsAt, grace.days) : graceStartsAt);
 
   return {
     state: isBefore(now, graceEndsAt) ? 'grace' : 'paused',

@@ -38,7 +38,6 @@ import {
   countryOfPhone,
   phoneFieldCountry,
   phoneFieldValue,
-  publicFormCountry,
 } from '../phoneField';
 
 describe('the country a field starts on', () => {
@@ -171,16 +170,4 @@ describe('what the field shows', () => {
   });
 });
 
-describe('a public form, where there is no record to answer from', () => {
-  it('starts on the country the page is written for', () => {
-    // A Hebrew site's visitors had to correct the dropdown before typing.
-    expect(publicFormCountry('he')).toBe('IL');
-    expect(publicFormCountry('es')).toBe('ES');
-  });
-
-  it('leaves English on US, because `en` is not a country', () => {
-    expect(publicFormCountry('en')).toBe('US');
-    expect(publicFormCountry(null)).toBe('US');
-    expect(publicFormCountry('de')).toBe('US');
-  });
-});
+// `publicFormCountry` moved to `../publicFormCountry` (BR-2), with its tests.

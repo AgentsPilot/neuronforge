@@ -388,6 +388,114 @@ export interface AiModelPricingSyncResult {
 }
 
 /**
+ * An active `ai_model_pricing` row read with its prices as exact decimal TEXT
+ * (`::text` casts), for the admin price comparison only (AI model price review
+ * slice 3). Never a JS float.
+ */
+export interface AiModelPricingExactRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  input_cost_per_token: string;
+  output_cost_per_token: string;
+  cached_input_cost_per_token: string | null;
+  effective_date: string;
+  created_at: string;
+}
+
+/**
+ * A pending provider price line, as handed to `ai_price_submit_pending`
+ * (AI model price review slice 3). Every price is a decimal STRING: per 1M
+ * tokens or per image for the proposed price, per token or per image for the
+ * current snapshot. The database converts them; no float is ever sent.
+ */
+export interface AiPriceSubmitLine {
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size?: string;
+  image_quality?: string;
+  input_per_1m?: string;
+  output_per_1m?: string;
+  cached_input_per_1m?: string;
+  price_per_image?: string;
+  current_basis: 'table' | 'in_code_fallback' | 'image_setting' | 'unpriced';
+  current_row_id?: string;
+  current_input_cost_per_token?: string;
+  current_output_cost_per_token?: string;
+  current_cached_input_cost_per_token?: string;
+  current_cost_per_image?: string;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+  /**
+   * Slice 5, fetched lines only (migration `20261069` writes them): the
+   * LiteLLM cross-check. Text and a display percentage, never a price.
+   */
+  cross_check_verdict?: 'agrees' | 'differs' | 'not_listed' | 'unavailable';
+  cross_check_value?: string | null;
+  cross_check_source?: string;
+  cross_check_fetched_at?: string;
+  cross_check_diff_pct?: string | null;
+}
+
+export interface AiPriceSubmitInput {
+  adminUserId: string;
+  sourceKind: 'manual' | 'fetch';
+  providerOutcomes: Record<string, unknown> | null;
+  lines: AiPriceSubmitLine[];
+}
+
+/** A stored fetch round (slice 5), as the status read needs it. */
+export interface AiPriceFetchRoundRow {
+  id: string;
+  created_at: string;
+  created_by: string;
+  provider_outcomes: unknown;
+}
+
+/** The result of a fetch round submit (slice 5, SA SC-8): the round id, and one row per stored line. */
+export interface AiPriceFetchRoundSubmitResult {
+  roundId: string;
+  lines: AiPriceSubmitResultLine[];
+}
+
+/** One row of the submit RPC's result: one per submitted line. */
+export interface AiPriceSubmitResultLine {
+  proposalId: string;
+  lineId: string;
+  /** 1-based position of the line in the submitted list. */
+  lineIndex: number;
+  supersededLineId: string | null;
+}
+
+/** A pending line as the comparison read needs it (prices as submitted, per 1M or per image). */
+export interface AiPricePendingLine {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+  cross_check_verdict: string | null;
+  /** Slice 5 (read with the line; absent in older doubles). */
+  cross_check_value?: string | null;
+  cross_check_diff_pct?: number | string | null;
+  cross_check_source?: string | null;
+  cross_check_fetched_at?: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+/**
  * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
  * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
  * for why the mandatory user scoping does not apply. PostgREST returns the
@@ -619,10 +727,13 @@ export interface BusinessOsInvite {
  * `id` is read so `markFirstViewed` can target the row; it is never returned.
  * `issuer_kind` (Slice 5a, F5a-10) is read only to branch an account-issued
  * invite away from the existing-account check; it is never returned either.
+ * `invite_type` (plan payments P-9.1, SA C-2) is read only so an admin Paid
+ * invite is judged by the same predicate as the signup; never returned.
  */
 export interface BusinessOsInvitePublicView {
   id: string;
   issuer_kind: 'admin' | 'account';
+  invite_type: string;
   grant_kind: BusinessOsInviteGrantKind;
   grant_id: string;
   access_open_ended: boolean | null;
@@ -869,6 +980,15 @@ export interface BusinessOsAccountLineageLevel {
   level: number;
   /** NULL for an L1 champion (`admin_invite`); the inviting account for L2+ (FR-36). */
   parent_account_id: string | null;
+  /**
+   * Plan payments P-5b.2 (FR-25, S5-8): what the admin paid line needs. The
+   * hold predicate reads `source` and `first_paid_at`; `first_payment_ref` is
+   * the invoice id the money history is matched on, together with the account.
+   * Never a date or an amount shown from here (AC-F2.2).
+   */
+  source: 'admin_invite' | 'account_invite' | 'organic';
+  first_paid_at: string | null;
+  first_payment_ref: string | null;
 }
 
 /**
@@ -881,10 +1001,68 @@ export interface BusinessOsAccountHoldFacts {
   first_paid_at: string | null;
 }
 
-/** Slice 5b: the two invite facts the payment hold and its screen need. */
+/**
+ * Plan payments P-5b.2 (P5-C10): the same hold facts for MANY accounts at once,
+ * keyed by the account, for the shadow report and the launch dry run (admin
+ * only). Read in batches, never one `readPaymentHold` per account.
+ */
+export interface BusinessOsAccountHoldFactsRow extends BusinessOsAccountHoldFacts {
+  account_id: string;
+}
+
+/**
+ * Plan payments P-5b.2 (S5-8, SA C-11): one (account, invoice) pair the admin
+ * paid line asks the money history about. Both come from the SAME lineage row
+ * (`account_id`, `first_payment_ref`), and a money row is kept only when it
+ * matches both.
+ */
+export interface BusinessOsPaidInvoicePair {
+  accountId: string;
+  invoiceId: string;
+}
+
+/**
+ * Plan payments P-5b.2 (FR-25): one paid plan invoice from
+ * `business_os_billing_events`, as the admin paid line shows it. The amount is
+ * what was paid, tax included (Stripe `amount_paid`), in minor units of USD.
+ */
+export interface BusinessOsPaidInvoiceFacts {
+  accountId: string;
+  invoiceId: string;
+  amountMinor: number;
+  amountTaxMinor: number | null;
+  currency: 'usd';
+  paidAt: string;
+  livemode: boolean;
+}
+
+/**
+ * Slice 5b: the invite facts the payment hold and its screen need. `grant_id`
+ * (P-9.2, SA C-5) is the tier an admin Paid invite sells; NOT NULL in the
+ * schema, and an empty one makes the hold unreadable, never a held result
+ * with no tier.
+ */
 export interface BusinessOsInviteHoldFacts {
   grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
   language: string;
+}
+
+/**
+ * Plan payments P-5b.1 (N-2, SA S5-5 c): what the "your friend subscribed"
+ * email needs about ONE invite: who issued it, the address they typed, and who
+ * redeemed it (the cross-check against the paying account). Nothing else.
+ * P-9.2 (T10, SA Q-10): also the issuing admin and the grant kind, so an
+ * admin PAID invitee's first payment tells the admin who issued it (a
+ * champion's cohort invite owes nobody that email).
+ */
+export interface BusinessOsInviteNotificationFacts {
+  issuer_kind: 'admin' | 'account';
+  issuer_account_id: string | null;
+  issuer_admin_id: string | null;
+  grant_kind: BusinessOsInviteGrantKind;
+  email: string;
+  redeemed_account_id: string | null;
 }
 
 /**
@@ -895,3 +1073,13 @@ export interface BusinessOsInviteHoldFacts {
 export type FriendFinaliseOutcome =
   | { outcome: 'finalised' | 'already_finalised'; inviteId: string; level: number }
   | { outcome: 'issuer_not_eligible' | 'not_matched' };
+
+/**
+ * Plan payments P-9.1 (SA-P9): what `business_os_finalise_admin_paid_invite_redemption`
+ * answered. The friend's outcome without `level` (always 1 for an admin
+ * invite) and without `issuer_not_eligible` (an admin issuer is not re-checked
+ * in SQL; redemption re-checks the switch and the shape first).
+ */
+export type AdminPaidFinaliseOutcome =
+  | { outcome: 'finalised' | 'already_finalised'; inviteId: string }
+  | { outcome: 'not_matched' };

@@ -311,6 +311,9 @@ export const AUDIT_EVENTS = {
   // actorId null, SA Q-4), so it appears in neither person's own audit view;
   // the recipient's account id, the status, the language and the reason class
   // are in the details. Never an email address of anyone.
+  // Plan payments P-5b.1 (N-2, SA S5-4, Q-1): the same two events, with
+  // `details.event = 'subscribed'`, when a friend pays their first invoice; the
+  // same no-owner shape, never on the lineage entity (N-6).
   BOS_INVITE_INVITER_NOTIFIED: 'BOS_INVITE_INVITER_NOTIFIED',
   BOS_INVITE_INVITER_NOT_NOTIFIED: 'BOS_INVITE_INVITER_NOT_NOTIFIED',
   // Slice 5a (F5a-13): a champion's friend invites. Actor = the champion
@@ -408,6 +411,14 @@ export const AUDIT_EVENTS = {
   // 'owner', correlation id; never the confirmation secret, an email or a
   // card detail.
   BOS_BILLING_UPGRADE_REQUESTED: 'BOS_BILLING_UPGRADE_REQUESTED',
+  // Plan payments P-6a.1 (workplan §5.8, §5.11; SA C-5, C-10): TEST MODE ONLY.
+  // An admin put an account's test-mode billing record on a fresh Stripe test
+  // clock from /test-business-os, replacing its test-mode Stripe customer and
+  // clearing the subscription mirror. Entity type 'business_os_account_plan'
+  // (operator-visible), id = the ACCOUNT id; actor = the admin. Details: clock
+  // id, new and previous customer ids, record path, livemode false, correlation
+  // id. Logged and flushed before the response (WC-7).
+  BOS_BILLING_TEST_CLOCK_ATTACHED: 'BOS_BILLING_TEST_CLOCK_ATTACHED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -448,6 +459,12 @@ export const AUDIT_EVENTS = {
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
   AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
   AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
+  // AI model price review slice 3: an admin recorded a provider's new price by hand. It is
+  // PENDING only (ai_price_proposal_lines) and changes no charge until someone applies it.
+  AI_PRICE_MANUAL_ENTRY: 'AI_PRICE_MANUAL_ENTRY',
+  // AI model price review slice 5: an admin pressed "Check provider prices". The
+  // fetched prices are PENDING only and change no charge until someone applies them.
+  AI_PRICE_FETCH_RUN: 'AI_PRICE_FETCH_RUN',
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -912,12 +929,12 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.BOS_INVITE_INVITER_NOTIFIED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'The issuer of an accepted Business OS invite was emailed (recipient kind, account id, status and language recorded)',
+    description: 'The issuer of a Business OS invite was emailed that it was accepted, or (N-2) that the friend subscribed (event, recipient kind, account id, status and language recorded)',
   },
   [AUDIT_EVENTS.BOS_INVITE_INVITER_NOT_NOTIFIED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'The issuer of an accepted Business OS invite was not emailed, or the send was not confirmed in time (reason class only)',
+    description: 'The issuer of a Business OS invite was not emailed that it was accepted or (N-2) that the friend subscribed, or the send was not confirmed in time (reason class only)',
   },
   // Credit deduction slice 11b. 'warning': an admin changed what an account can
   // spend. SOC2 and not FINANCIAL: FINANCIAL is reserved for AgentsPilot's own
@@ -1040,6 +1057,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'A Business OS owner confirmed a plan upgrade and the price change reached Stripe (outcome recorded; the plan changes from the webhook)',
+  },
+  // Plan payments P-6a.1. 'info' (SA C-10): a test-mode harness action that
+  // needs no operator follow-up; SOC2, as every Business OS billing event.
+  [AUDIT_EVENTS.BOS_BILLING_TEST_CLOCK_ATTACHED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "An admin put a Business OS account's test-mode billing record on a fresh Stripe test clock (test mode only; the test-mode customer was replaced)",
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
@@ -1324,6 +1348,23 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['SOC2'],
     description: 'AI model price set to zero (usage billed at $0)',
+  },
+  // Info: nothing is charged differently. Written with logAndFlush by
+  // POST /api/admin/model-pricing/manual-entries; entity 'ai_pricing', entity id
+  // the proposal id, with entity_kind 'price_proposal' in details (SA O-14).
+  [AUDIT_EVENTS.AI_PRICE_MANUAL_ENTRY]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Pending AI model price entered by hand (not applied)',
+  },
+  // Info: nothing is charged differently. Written with logAndFlush by
+  // POST /api/admin/model-pricing/fetch-runs; entity 'ai_pricing', entity id the
+  // round id, with entity_kind 'price_proposal' in details. Counts and model ids
+  // only: never page text (SA SC-14).
+  [AUDIT_EVENTS.AI_PRICE_FETCH_RUN]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Provider prices checked (stored as pending, not applied)',
   },
 
   // Workflow Pilot events

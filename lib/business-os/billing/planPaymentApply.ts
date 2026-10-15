@@ -51,11 +51,39 @@
  * is missing or the read fails). Nothing after the apply may throw: the money
  * is already committed and a retry would only replay.
  *
+ * N-2, "YOUR FRIEND SUBSCRIBED" (P-5b.1; SA S5-5, P5-C3, P5-C8, O-4, C-3 to
+ * C-6). Driven by the same flag, on the same two statuses, AFTER the stamp
+ * entry and the invoice-paid entry are flushed:
+ *   - the lineage read above runs under N-2's clock (`deadlineMs`, 4 s, read
+ *     from the port so this file imports nothing from `lib/business-os/invites/`);
+ *   - a friend's first payment (`source = 'account_invite'`), or one whose
+ *     source could not be read, is handed to `firstPaymentNotifier` with what
+ *     is left of the clock. It finds the champion from OUR records only (the
+ *     lineage `invite_id`, then the invite's issuer) and audits every outcome;
+ *     an unread source is audited "not notified" with no email (C-6);
+ *   - an ADMIN invitee's first payment (`source = 'admin_invite'`) is handed
+ *     over too (plan payments P-9.2, T10, BQ-P11, SA Q-10): the notifier tells
+ *     the ONE admin who issued it when it was a Paid (tier) invite, found
+ *     from the invite named by the payer's OWN lineage row, never from
+ *     webhook metadata; a champion's own (cohort) first payment owes nobody
+ *     and audits nothing;
+ *   - `organic` first payments send nothing and audit nothing (nothing was
+ *     owed);
+ *   - the call sits behind a backstop and never throws. A replay never gets
+ *     here (`already_applied`), so the email goes once; a send lost to a crash
+ *     is not retried (D5-6).
+ * Worst case after the commit: 4 s (lineage + N-2) + 2 s (stamp flush) + 2 s
+ * (N-2's own audit flush) + 0.5 s slack = 8.5 s; `postCommitMs` on the
+ * `bos_billing_invoice_post_commit` line shows the real figure. P-3b's
+ * `bos_billing_invoice_applied` line is still written at the commit, before
+ * this chain starts (SA F-1).
+ *
  * @module lib/business-os/billing/planPaymentApply
  */
 
 import type Stripe from 'stripe';
 
+import { AUDIT_FLUSH_TIMEOUT_MS } from '@/lib/audit/auditTimeouts';
 import type { Logger } from '@/lib/logger';
 import type { StripeService } from '@/lib/stripe/StripeService';
 import type {
@@ -99,7 +127,53 @@ export interface PlanPaymentDeps {
    * `source: null`.
    */
   lineage?: Pick<BusinessOsAccountLineageRepository, 'findHoldFactsForAccount'>;
+  /**
+   * P-5b.1 (N-2): the champion's "your friend subscribed" email. Optional so
+   * existing deps stay valid (SA Q-4); a stamped payment that may be a
+   * friend's and finds it unwired is logged at `error` with `alert: true`, and
+   * a source guard requires every caller of `applyPaidPlanInvoice` to name it
+   * (C-5). Built only in `planBillingHandler.ts`.
+   */
+  firstPaymentNotifier?: FirstPaymentNotifier;
 }
+
+/** How the stamp's lineage read went (P-5b.1, O-4). */
+export type StampLineageRead = 'ok' | 'failed' | 'timed_out' | 'no_row' | 'no_port';
+
+/** What the N-2 notifier is told about one stamped first payment. Ids only. */
+export interface FirstPaymentNotifyInput {
+  /** The paying account, resolved from OUR billing record (SR-8). */
+  accountId: string;
+  /** The `invite_id` of that account's lineage row; null when it was not read or is absent. */
+  inviteId: string | null;
+  /**
+   * P-9.2 (T10): the lineage row's `source`, as read; null when it was not
+   * read. The notifier checks the invite against it. Absent is read as a
+   * friend's (`account_invite`), P-5b.1's only case.
+   */
+  lineageSource?: 'account_invite' | 'admin_invite' | null;
+  lineageRead: StampLineageRead;
+  /** What is left of `deadlineMs` after the lineage read (the stamp flush is not counted). */
+  remainingMs: number;
+  livemode: boolean;
+  stripeEventId: string;
+  /** The delivery's logger (correlation id and Stripe event id attached). */
+  log: Logger;
+}
+
+/** The N-2 port (P-5b.1). Its production implementation is `championSubscribedNotification.ts`. */
+export interface FirstPaymentNotifier {
+  /** The whole budget for the lineage read plus the notification (N-1's 4 s). */
+  readonly deadlineMs: number;
+  /** Never rejects by contract; the caller guards it anyway. Writes its own audit. */
+  notifyChampion(input: FirstPaymentNotifyInput): Promise<void>;
+}
+
+/** The lineage read's bound when no notifier is wired (the same 4 s as N-1, O-4). */
+const STAMP_LINEAGE_DEADLINE_MS = 4_000;
+
+/** Past the notifier's own bounds (its clock plus its audit flush): abandon it. */
+const N2_BACKSTOP_SLACK_MS = 500;
 
 /** Why a plan payment was refused: the `refusal_reason` of its money history row. */
 export type PlanPaymentRefusalReason =
@@ -446,37 +520,123 @@ function upgradeGuard(
   return onDecidingPrice ? 'proceed' : 'not_applied';
 }
 
+/** What the stamp's lineage read found (P-5a.1 W-5; P-5b.1 O-4). */
+interface StampLineage {
+  source: string | null;
+  inviteId: string | null;
+  outcome: StampLineageRead;
+  /** Time the read took, counted against N-2's clock. */
+  elapsedMs: number;
+}
+
 /**
  * P-5a.1 (SA Q-2, W-5): the lineage `source` of an account whose first
- * payment was just stamped, for the audit entry only. One read by primary key,
- * keyed on the account resolved from our billing record (SR-8). It NEVER
+ * payment was just stamped, for the audit entry; P-5b.1 also takes its
+ * `invite_id` for N-2. One read by primary key, keyed on the account resolved
+ * from our billing record (SR-8), BOUNDED by N-2's clock (O-4). It NEVER
  * throws and never decides anything: a missing port, a failed read, a missing
- * row or a throw all give `null` and a warn, and the entry is still written.
+ * row, a throw or a timeout all give `null` and a warn, and the stamp entry is
+ * still written.
  */
-async function firstPaymentSource(deps: PlanPaymentDeps, accountId: string, log: Logger): Promise<string | null> {
-  const warn = (reason: string, err?: unknown) =>
+async function readStampLineage(deps: PlanPaymentDeps, accountId: string, log: Logger, deadlineMs: number): Promise<StampLineage> {
+  const startedAt = Date.now();
+  const unread = (outcome: StampLineageRead, reason: string, err?: unknown): StampLineage => {
+    // The event name is P-5a.1's, so existing dashboards keep finding it.
     log.warn(
-      { event: 'bos_billing_first_payment_source_unread', accountId, reason, ...(err === undefined ? {} : { err }) },
+      { event: 'bos_billing_first_payment_source_unread', accountId, reason, outcome, ...(err === undefined ? {} : { err }) },
       'Lineage source of the first payment could not be read; audited without it'
     );
-  if (!deps.lineage) {
-    warn('no_lineage_port');
-    return null;
-  }
+    return { source: null, inviteId: null, outcome, elapsedMs: Date.now() - startedAt };
+  };
+  if (!deps.lineage) return unread('no_port', 'no_lineage_port');
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const read = await deps.lineage.findHoldFactsForAccount(accountId);
-    if (read.error) {
-      warn('read_failed', read.error);
-      return null;
-    }
-    if (!read.data) {
-      warn('no_lineage_row');
-      return null;
-    }
-    return read.data.source ?? null;
+    const timedOut = new Promise<'timed_out'>((resolve) => {
+      timer = setTimeout(() => resolve('timed_out'), deadlineMs);
+    });
+    const reading = deps.lineage.findHoldFactsForAccount(accountId);
+    // A late rejection after the timeout must not become an unhandled one.
+    reading.catch(() => undefined);
+    const read = await Promise.race([reading, timedOut]);
+    if (read === 'timed_out') return unread('timed_out', 'read_timed_out');
+    if (read.error) return unread('failed', 'read_failed', read.error);
+    if (!read.data) return unread('no_row', 'no_lineage_row');
+    return { source: read.data.source ?? null, inviteId: read.data.invite_id ?? null, outcome: 'ok', elapsedMs: Date.now() - startedAt };
   } catch (err) {
-    warn('read_threw', err);
-    return null;
+    return unread('failed', 'read_threw', err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The port's clock, or N-1's 4 s when it is missing or malformed. */
+function n2DeadlineMs(deps: PlanPaymentDeps): number {
+  const value = deps.firstPaymentNotifier?.deadlineMs;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : STAMP_LINEAGE_DEADLINE_MS;
+}
+
+/**
+ * N-2 (P-5b.1, S5-5, P5-C8): decide whether the champion is owed an email and
+ * hand it to the port. Runs after the stamp and invoice-paid entries were
+ * flushed. Never throws.
+ */
+async function notifyFirstPayment(deps: PlanPaymentDeps, ctx: InvoiceContext, accountId: string, lineage: StampLineage, deadlineMs: number): Promise<void> {
+  const { log, livemode, event } = ctx;
+  const ids = { accountId, livemode, stripeEventId: event.id };
+
+  // An organic first payment: nobody invited them, so nothing was owed and
+  // nothing is audited. An `admin_invite` one goes on (P-9.2, T10): only the
+  // notifier, reading the invite, can tell an admin Paid invitee (the issuing
+  // admin is told) from a champion paying for themself (nobody is).
+  if (lineage.source !== null && lineage.source !== 'account_invite' && lineage.source !== 'admin_invite') {
+    log.info({ event: 'bos_invite_subscribed_not_applicable', source: lineage.source, ...ids }, 'First payment is not from an invite; no N-2 email');
+    return;
+  }
+
+  const notifier = deps.firstPaymentNotifier;
+  if (!notifier) {
+    log.error(
+      { event: 'bos_invite_subscribed_notifier_unwired', source: lineage.source, lineageRead: lineage.outcome, ...ids, alert: true },
+      'A first payment that may be owed an N-2 email found no notifier wired; nobody was emailed'
+    );
+    return;
+  }
+
+  const input: FirstPaymentNotifyInput = {
+    accountId,
+    inviteId: lineage.inviteId,
+    lineageSource: lineage.source === 'account_invite' || lineage.source === 'admin_invite' ? lineage.source : null,
+    lineageRead: lineage.outcome,
+    remainingMs: Math.max(0, deadlineMs - lineage.elapsedMs),
+    livemode,
+    stripeEventId: event.id,
+    log,
+  };
+  // The notifier's own bounds are its clock plus one bounded audit flush.
+  const backstopMs = input.remainingMs + AUDIT_FLUSH_TIMEOUT_MS + N2_BACKSTOP_SLACK_MS;
+
+  let backstop: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const abandoned = new Promise<'abandoned'>((resolve) => {
+      backstop = setTimeout(() => resolve('abandoned'), backstopMs);
+    });
+    // `then` turns a synchronous throw into a rejection, caught below.
+    const notifying = Promise.resolve().then(() => notifier.notifyChampion(input));
+    // A late rejection after the backstop must not become an unhandled one.
+    notifying.catch(() => undefined);
+    const first = await Promise.race([notifying.then(() => 'done' as const), abandoned]);
+    if (first === 'abandoned') {
+      log.warn({ event: 'bos_invite_subscribed_notifier_abandoned', backstopMs, ...ids }, 'N-2 notifier abandoned at its backstop; the payment is unaffected');
+    }
+  } catch (err) {
+    // By error class only: the text could carry an address.
+    log.warn(
+      { event: 'bos_invite_subscribed_notifier_failed', errName: err instanceof Error ? err.name : typeof err, ...ids },
+      'N-2 notifier failed; the payment is unaffected'
+    );
+  } finally {
+    clearTimeout(backstop);
   }
 }
 
@@ -500,86 +660,22 @@ async function afterApply(
   switch (result.status) {
     case 'applied':
     case 'recorded': {
+      // P-3b's line, written the moment the money committed (SA F-1): a
+      // function cut off mid-chain still leaves the commit-time evidence.
       log.info(
         { event: 'bos_billing_invoice_applied', status: result.status, planWritten: result.planWritten, anchorSet: result.anchorSet, tier: facts.tier, ...ids },
         'Business OS plan invoice applied'
       );
-      // U-4 case 2 (SA Q-3): only here, on a NEW money history row, so a
-      // replay (`already_*`) alerts nothing. The alert is this error line.
-      if (extra.upgradeNotApplied) {
-        log.error(
-          { event: 'bos_billing_upgrade_paid_not_applied', tier: facts.tier, eventRowId: result.eventRowId, ...ids, alert: true },
-          'Upgrade paid but not applied at Stripe: money recorded, plan row untouched'
-        );
-      }
-
-      // P-5a.1: the stamp entry, built only from the function's own flag and
-      // always written when it is true (W-5), whatever the lineage read says.
-      const companionEntries =
-        result.firstPaymentStamped === true
-          ? [
-              {
-                action: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
-                entityType: 'business_os_account_lineage' as const,
-                entityId: accountId,
-                details: {
-                  invoiceId: facts.invoiceId,
-                  eventRowId: result.eventRowId,
-                  source: await firstPaymentSource(deps, accountId, log),
-                  livemode,
-                  stripeEventId: event.id,
-                },
-                severity: 'info' as const,
-              },
-            ]
-          : [];
-      if (companionEntries.length > 0) {
-        log.info(
-          { event: 'bos_billing_first_payment_stamped', eventRowId: result.eventRowId, source: companionEntries[0].details.source, ...ids },
-          'Business OS first payment stamped'
-        );
-      }
-
+      // C-4 (as amended by SA F-1): the post-commit chain is timed on its own
+      // line, written once that chain has settled.
+      const committedAt = Date.now();
       try {
-        await deps.recordPlanChange({
-          accountId,
-          action: 'BOS_BILLING_INVOICE_PAID',
-          actor: { kind: 'system', source: 'stripe_webhook' },
-          entityType: 'business_os_account_plan',
-          entityId: accountId,
-          changes: {
-            before: { tier: result.tierBefore },
-            after: {
-              tier: result.tierAfter,
-              ...(result.planWritten ? { tierExpiresAt: facts.periodEnd } : {}),
-              ...(result.anchorSet ? { periodAnchor: extra.billingCycleAnchor } : {}),
-            },
-          },
-          details: {
-            invoiceId: facts.invoiceId,
-            subscriptionId: facts.subscriptionId,
-            tier: facts.tier,
-            amountMinor: facts.amountMinor,
-            // U-9 (P-7b.1a): an upgrade's tier change is visible as such.
-            billingReason: facts.billingReason,
-            planWritten: result.planWritten,
-            anchorSet: result.anchorSet,
-            livemode,
-            stripeEventId: event.id,
-            eventRowId: result.eventRowId,
-            ...(extra.upgradeNotApplied ? { upgradeNotApplied: true } : {}),
-          },
-          severity: extra.upgradeNotApplied ? 'warning' : 'info',
-          // Only a written plan row changes what the account is entitled to.
-          invalidatesEntitlements: result.planWritten,
-          log,
-          ...(companionEntries.length > 0 ? { companionEntries } : {}),
-        });
-      } catch (err) {
-        // S5-5 b: `recordPlanChange` never rejects by contract; if it ever did,
-        // the payment is committed and a retry would only replay, so this is
-        // logged and the event completes.
-        log.error({ err, event: 'bos_billing_invoice_audit_failed', ...ids, alert: true }, 'Business OS plan invoice audit failed after the apply');
+        await afterCommit(deps, ctx, accountId, facts, result, extra);
+      } finally {
+        log.info(
+          { event: 'bos_billing_invoice_post_commit', status: result.status, ...ids, postCommitMs: Date.now() - committedAt },
+          'Business OS plan invoice post-commit chain settled'
+        );
       }
       return;
     }
@@ -634,6 +730,113 @@ async function afterApply(
       throw new PlanPaymentRetryError(`unknown_apply_status:${String(unreachable)}`);
     }
   }
+}
+
+/**
+ * `applied` / `recorded`: everything after the money committed. Nothing in
+ * here may throw (S5-5 b): the audit is guarded and N-2 is behind a backstop.
+ */
+async function afterCommit(
+  deps: PlanPaymentDeps,
+  ctx: InvoiceContext,
+  accountId: string,
+  facts: PlanInvoiceFacts,
+  result: Extract<BusinessOsApplyPlanPaymentResult, { status: 'applied' | 'recorded' }>,
+  extra: { billingCycleAnchor: string; secondSubscription: boolean; upgradeNotApplied: boolean }
+): Promise<void> {
+  const { event, livemode, log } = ctx;
+  const ids = {
+    accountId,
+    invoiceId: facts.invoiceId,
+    subscriptionId: facts.subscriptionId,
+    livemode,
+    stripeEventId: event.id,
+  };
+  // U-4 case 2 (SA Q-3): only here, on a NEW money history row, so a
+  // replay (`already_*`) alerts nothing. The alert is this error line.
+  if (extra.upgradeNotApplied) {
+    log.error(
+      { event: 'bos_billing_upgrade_paid_not_applied', tier: facts.tier, eventRowId: result.eventRowId, ...ids, alert: true },
+      'Upgrade paid but not applied at Stripe: money recorded, plan row untouched'
+    );
+  }
+
+  // P-5a.1: the stamp entry, built only from the function's own flag and
+  // always written when it is true (W-5), whatever the lineage read says.
+  // P-5b.1 (O-4): the read runs under N-2's clock, which starts here.
+  const stamped = result.firstPaymentStamped === true;
+  const deadlineMs = n2DeadlineMs(deps);
+  const lineage = stamped ? await readStampLineage(deps, accountId, log, deadlineMs) : null;
+  const companionEntries =
+    lineage !== null
+      ? [
+          {
+            action: 'BOS_BILLING_FIRST_PAYMENT_STAMPED',
+            entityType: 'business_os_account_lineage' as const,
+            entityId: accountId,
+            details: {
+              invoiceId: facts.invoiceId,
+              eventRowId: result.eventRowId,
+              source: lineage.source,
+              livemode,
+              stripeEventId: event.id,
+            },
+            severity: 'info' as const,
+          },
+        ]
+      : [];
+  if (companionEntries.length > 0) {
+    log.info(
+      { event: 'bos_billing_first_payment_stamped', eventRowId: result.eventRowId, source: companionEntries[0].details.source, ...ids },
+      'Business OS first payment stamped'
+    );
+  }
+
+  try {
+    await deps.recordPlanChange({
+      accountId,
+      action: 'BOS_BILLING_INVOICE_PAID',
+      actor: { kind: 'system', source: 'stripe_webhook' },
+      entityType: 'business_os_account_plan',
+      entityId: accountId,
+      changes: {
+        before: { tier: result.tierBefore },
+        after: {
+          tier: result.tierAfter,
+          ...(result.planWritten ? { tierExpiresAt: facts.periodEnd } : {}),
+          ...(result.anchorSet ? { periodAnchor: extra.billingCycleAnchor } : {}),
+        },
+      },
+      details: {
+        invoiceId: facts.invoiceId,
+        subscriptionId: facts.subscriptionId,
+        tier: facts.tier,
+        amountMinor: facts.amountMinor,
+        // U-9 (P-7b.1a): an upgrade's tier change is visible as such.
+        billingReason: facts.billingReason,
+        planWritten: result.planWritten,
+        anchorSet: result.anchorSet,
+        livemode,
+        stripeEventId: event.id,
+        eventRowId: result.eventRowId,
+        ...(extra.upgradeNotApplied ? { upgradeNotApplied: true } : {}),
+      },
+      severity: extra.upgradeNotApplied ? 'warning' : 'info',
+      // Only a written plan row changes what the account is entitled to.
+      invalidatesEntitlements: result.planWritten,
+      log,
+      ...(companionEntries.length > 0 ? { companionEntries } : {}),
+    });
+  } catch (err) {
+    // S5-5 b: `recordPlanChange` never rejects by contract; if it ever did,
+    // the payment is committed and a retry would only replay, so this is
+    // logged and the event completes.
+    log.error({ err, event: 'bos_billing_invoice_audit_failed', ...ids, alert: true }, 'Business OS plan invoice audit failed after the apply');
+  }
+
+  // P-5b.1 (N-2, S5-5): only after the stamp and invoice-paid entries were
+  // flushed, and only for a stamped first payment. Never throws.
+  if (lineage !== null) await notifyFirstPayment(deps, ctx, accountId, lineage, deadlineMs);
 }
 
 // ── invoice.payment_failed ──────────────────────────────────────────────────

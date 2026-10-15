@@ -14,9 +14,11 @@
  * load. The client never works out eligibility, the allowance or a status: the
  * server sends "N left", the allowance and each invite's status.
  *
- * It owns its collapsible row (rather than the page's `expandedSection`) so the
- * page needs one import and one line, and so an ineligible account sees no
- * empty header.
+ * It owns its row and its drawer (settings drawer review S-4) so the page needs
+ * one import and one line, and so an ineligible account sees no empty header.
+ * The fetch still runs on page load, not when the drawer opens: eligibility
+ * decides whether the row exists at all (C-6), and the row shows "N left" from
+ * that same answer (C-8).
  *
  * It imports nothing from the entitlements module: no plan, cohort or number is
  * named here. The words live in `inviteFriendsCopy.ts` (en/he/es); the language
@@ -24,16 +26,34 @@
  * INVITE's language is chosen in the form, defaulting to the champion's saved
  * preference, which the server sends (C-8), never `LanguageContext`.
  *
- * The one-time link from a send is held in component state only, shown with a
- * copy button until dismissed, and never re-fetchable: the server stores a hash.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONE-TIME LINK (Q-5 (a), SA-2, C-6)
+ *
+ * The link from a send is a credential: whoever holds it can sign up on the
+ * champion's invite, and it is never re-fetchable (the server stores a hash).
+ * It is held in THIS component's state and nowhere else: not the page, not the
+ * address, not browser storage, not a log line.
+ *
+ * The drawer is this component's child. Radix unmounts the drawer's content
+ * when it closes, but this component (the row) stays mounted for the life of
+ * the page, so the link is still here when the owner reopens the drawer, until
+ * they press Dismiss or leave the page. No `forceMount`: a closed drawer keeps
+ * no hidden copy of the link in the DOM. The draft (email, note, language)
+ * lives here for the same reason, so closing loses nothing and there is nothing
+ * to ask "discard?" about.
+ *
+ * While a send or a revoke is in flight the drawer refuses to close (C-4): its
+ * answer, the link or the error, has to have somewhere to show.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ChevronRight, Loader2, UserPlus } from 'lucide-react';
 
+import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
+import { cn } from '@/lib/utils';
 
 import {
   INVITE_FRIENDS_COPY,
@@ -82,9 +102,10 @@ function formatDay(iso: string, language: string): string {
 }
 
 export function InviteFriendsSection() {
-  const { isRTL, language } = useLanguage();
+  const { isRTL, language, t } = useLanguage();
   const copy = INVITE_FRIENDS_COPY[inviteFriendsLocaleOf(language)];
   const ids = useId();
+  const rowRef = useRef<HTMLButtonElement>(null);
 
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [open, setOpen] = useState(false);
@@ -118,6 +139,21 @@ export function InviteFriendsSection() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * Reached only once the drawer has let the close through (never mid-send or
+   * mid-revoke). Clears what would read wrong on reopen: a half-answered revoke
+   * confirmation, a stale "Copied", an old error. `sent` is NOT cleared: the
+   * link survives a close until Dismiss or leaving the page (Q-5 (a)).
+   */
+  const handleOpenChange = useCallback((next: boolean) => {
+    setOpen(next);
+    if (next) return;
+    setConfirming(null);
+    setCopied(false);
+    setSendError(null);
+    setRevokeError(false);
+  }, []);
 
   if (load.kind !== 'ready') return null;
   const summary = load.summary;
@@ -184,29 +220,45 @@ export function InviteFriendsSection() {
     }
   };
 
-  const panelId = `${ids}-panel`;
-
   return (
+    // The id is the champion email's anchor (`INVITER_ACTION_PATHS.champion`,
+    // C-6). It stays on this always-rendered row, never inside the drawer.
     <div id="settings-section-invite-friends" data-testid="invite-friends-section" dir={isRTL ? 'rtl' : 'ltr'}>
       <button
+        ref={rowRef}
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls={panelId}
-        className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
+        className="w-full flex items-center justify-between gap-3 p-4 hover:bg-[var(--v2-bg)] transition-colors"
       >
         <div className="flex items-center gap-3">
           <UserPlus className="w-5 h-5 text-[var(--v2-text-muted)]" aria-hidden="true" />
           <span className="text-sm text-[var(--v2-text-primary)]">{copy.sectionTitle}</span>
         </div>
-        <ChevronRight
-          className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${open ? 'rotate-90' : ''} ${isRTL ? 'scale-x-[-1]' : ''}`}
-          aria-hidden="true"
-        />
+        <div className="flex items-center gap-2">
+          {/* From the page-load answer: no extra request (C-8). */}
+          <span data-testid="invite-friends-row-value" className="text-xs text-[var(--v2-text-muted)]">
+            {copy.remaining(summary.remaining, summary.allowance)}
+          </span>
+          <ChevronRight
+            className={cn('w-4 h-4 text-[var(--v2-text-muted)]', isRTL && 'scale-x-[-1]')}
+            aria-hidden="true"
+          />
+        </div>
       </button>
 
-      {open && (
-        <div id={panelId} className="px-4 pb-4 space-y-4 text-sm text-[var(--v2-text-primary)]">
+      <SettingsDrawer
+        open={open}
+        onOpenChange={handleOpenChange}
+        title={copy.sectionTitle}
+        isBusy={sending || revoking !== null}
+        isRTL={isRTL}
+        closeLabel={t('common.close')}
+        returnFocusRef={rowRef}
+        testId="settings-invite-drawer"
+      >
+        <div className="space-y-4 text-sm text-[var(--v2-text-primary)]">
           <p className="text-[var(--v2-text-secondary)]">{copy.intro(summary.allowance)}</p>
           <p data-testid="invite-friends-remaining" className="font-medium">
             {copy.remaining(summary.remaining, summary.allowance)}
@@ -376,7 +428,7 @@ export function InviteFriendsSection() {
             )}
           </div>
         </div>
-      )}
+      </SettingsDrawer>
     </div>
   );
 }

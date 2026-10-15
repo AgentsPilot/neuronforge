@@ -290,6 +290,18 @@ describe('guardrails: one bad field, one fallback, one error log (T1-6, AC-5, DE
     expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe('gpt-image-2');
   });
 
+  it('refuses a row naming the retired gpt-image-1 and keeps the default (safe rollback, Q10)', async () => {
+    // Its fallback prices were removed on 2026-10-14. A rollback of the prod
+    // `images` row to gpt-image-1 must not put the retired model back in
+    // service: the guardrail refuses it and the call stays on the default.
+    mockGetByKeys.mockResolvedValue(rows({ images: { model: 'gpt-image-1' } }));
+
+    expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe(
+      IMAGE_GENERATION_CONFIG_DEFAULTS.model
+    );
+    expect(issuesLogged('error').some((line) => line.fields.reason === 'image_price_missing')).toBe(true);
+  });
+
   it('refuses a provider that is not on the call list (DEC-4)', async () => {
     mockGetByKeys.mockResolvedValue(rows({ leads: { provider: 'anthropic' } }));
     expect((await resolveBosLlmSettings('leads', 'reply_recommendation')).provider).toBe('openai');

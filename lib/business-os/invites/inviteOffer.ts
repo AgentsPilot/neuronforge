@@ -21,11 +21,24 @@ import 'server-only';
  * `isInviteGrantAvailable` re-checks a STORED grant against today's config: an
  * invite created for a plan that has since been removed must be refused
  * cleanly, never described or redeemed as an unknown value.
+ *
+ * ── Is an ADMIN Paid invite redeemable? (plan payments P-9.1, SA C-2) ──────
+ * `adminPaidInviteRedemption` is the ONE predicate behind both the signup
+ * (`inviteRedemption.ts`) and the public invite page (`publicInviteView.ts`),
+ * so the page never offers a signup the server would refuse (A-2). It
+ * returns a reason, not a boolean, so neither caller re-derives any part of it:
+ * the signup maps `switch_off` to 409 `paid_invites_not_available` and
+ * `unavailable` to 409 `unavailable`; the page shows "unavailable" for both.
  */
 
 import { describePlanOffer, type PlanOfferCategory } from '@/lib/business-os/entitlements/planOfferView';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
-import { INVITE_TYPES, INVITE_TYPE_IDS } from '@/lib/business-os/entitlements/config/invites';
+import { INVITE_ISSUANCE_POLICY, INVITE_TYPES, INVITE_TYPE_IDS } from '@/lib/business-os/entitlements/config/invites';
+// SA C-3: the one tier rule for an admin Paid invite is "a Stripe price
+// exists" (`sellableTiers`, P-4.1 M-1). This is an invites → billing import;
+// billing imports `invites/paymentHold` as a TYPE only, so there is no runtime
+// cycle. Nothing else from billing is imported here.
+import { sellableTiers } from '@/lib/business-os/billing/planCheckoutEligibility';
 import type { BusinessOsInviteGrantKind } from '@/lib/repositories/types';
 import { defaultLocale, type Locale } from '@/lib/i18n/config';
 
@@ -76,6 +89,43 @@ export function isInviteGrantAvailable(config: EntitlementConfig, grant: Pick<In
     const definition = INVITE_TYPES[type];
     return definition.grantKind === grant.grant_kind && (definition.grantIds as readonly string[]).includes(grant.grant_id);
   });
+}
+
+/** The facts of an admin-issued tier invite that decide whether it may be redeemed. */
+export interface AdminPaidInviteFacts {
+  issuer_kind: 'admin' | 'account';
+  invite_type: string;
+  grant_kind: BusinessOsInviteGrantKind;
+  grant_id: string;
+}
+
+/**
+ * Why an admin Paid invite may or may not be redeemed, today.
+ *
+ * - `switch_off`: Paid invites are not available yet (C-6, S5-7: the ONE
+ *   switch `paidInvitesAvailable`). Checked first, so the production answer is
+ *   unchanged while it is off (SA C-8).
+ * - `unavailable`: anything about the row that the issuance rules no longer
+ *   allow: not admin-issued; a type admins may not issue; a type whose grant
+ *   kind is not a tier (GR-1: keyed on the type's grant kind, never on its
+ *   name); a grant the config no longer carries; or a tier with no Stripe
+ *   price (SA C-3).
+ * - `ok`: redeemable. The existing-account check is the caller's.
+ */
+export type AdminPaidInviteRedemption = 'ok' | 'switch_off' | 'unavailable';
+
+export function adminPaidInviteRedemption(row: AdminPaidInviteFacts, config: EntitlementConfig): AdminPaidInviteRedemption {
+  if (!INVITE_ISSUANCE_POLICY.paidInvitesAvailable) return 'switch_off';
+  if (row.issuer_kind !== 'admin' || row.grant_kind !== 'tier') return 'unavailable';
+
+  if (!Object.prototype.hasOwnProperty.call(INVITE_TYPES, row.invite_type)) return 'unavailable';
+  const type = row.invite_type as keyof typeof INVITE_TYPES;
+  if (!INVITE_ISSUANCE_POLICY.admin.includes(type) || INVITE_TYPES[type].grantKind !== 'tier') return 'unavailable';
+
+  if (!isInviteGrantAvailable(config, row)) return 'unavailable';
+  if (!(sellableTiers() as readonly string[]).includes(row.grant_id)) return 'unavailable';
+
+  return 'ok';
 }
 
 /** The access, as data. */

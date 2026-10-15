@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Phone, Building, XCircle } from 'lucide-react';
-import { createLogger } from '@/lib/logger';
+import { clientLogger } from '@/lib/logger/client';
 import { AdminDrawer } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import {
@@ -37,7 +37,8 @@ import { ageLine } from './usersFormat';
 import { useBusinessDetails } from './useBusinessDetails';
 import type { AdminUserRow } from './types';
 
-const logger = createLogger({ module: 'AdminUsersPage' });
+// A client file logs through the client logger (Admin Layout Standard F-56; follow-ups LF-F3, SA-F3).
+const logger = clientLogger.child({ module: 'AdminUsersPage' });
 
 /** One row of the list route (the type moved to `types.ts` in L-4b). */
 type User = AdminUserRow;
@@ -110,6 +111,12 @@ export default function UsersPage() {
   /** A list read has succeeded since the last failure: tiles and table show (K-10, §5.10). */
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * LF-F2 (LF4B-F1): the read after a Give or Take back failed, so the rows on
+   * screen are the last good read. Cleared by the next read that succeeds, and
+   * by an ordinary failed read (which shows the error instead).
+   */
+  const [listStale, setListStale] = useState(false);
   /** When the list was last read successfully: the bar's "Read at HH:mm UTC". */
   const [readAt, setReadAt] = useState<string | null>(null);
   // The drawer (L-4b, the L-1d way after its QA B-1 fix). `isOpen` drives the
@@ -129,6 +136,11 @@ export default function UsersPage() {
   const { filters, setFilters, clear, isDefault, hrefFor } = useAdminFilters(USERS_FILTER_SPEC);
   const filter: StatusFilter = toStatusFilter(filters.status);
   const [searchTerm, setSearchTerm] = useState('');
+  /** SA-Q33: the inbound `account` named a business that is not on screen. Cleared by the next status or search change. */
+  const [deepLinkMissing, setDeepLinkMissing] = useState(false);
+  useEffect(() => {
+    setDeepLinkMissing(false);
+  }, [filter, searchTerm]);
 
   const searchId = useId();
   const statusId = useId();
@@ -149,7 +161,7 @@ export default function UsersPage() {
    */
   const query = useRef<{ status: StatusFilter; search: string }>({ status: filter, search: searchTerm });
 
-  const fetchUsers = useCallback(async () => {
+  const fetchUsers = useCallback(async (options: { keepRowsOnFail?: boolean } = {}) => {
     const { status, search } = query.current;
     readSeq.current += 1;
     const seq = readSeq.current;
@@ -161,12 +173,24 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
 
+    // Both callers check `isNewest()` first, so an older read never lands here.
     const fail = (message: string) => {
+      if (options.keepRowsOnFail) {
+        // LF-F2 (LF4B-F1): the read after a Give or Take back. Keep the rows, so
+        // the open drawer and its success notice stay and the admin is not led
+        // to give again. Only the state reset is skipped: the caller has logged
+        // the error, and `loading` settles in `finally` as for any read. A 401 /
+        // 403 "session ended" answer is not shown here, on purpose: the money
+        // action just succeeded, and the next Refresh or filter read shows it.
+        setListStale(true);
+        return;
+      }
       setError(message);
       setUsers([]);
       setStats(null);
       setSearchInfo(null);
       setHasLoaded(false);
+      setListStale(false);
     };
 
     try {
@@ -228,6 +252,7 @@ export default function UsersPage() {
       setSearchInfo(result.data.search);
       setHasLoaded(true);
       setReadAt(new Date().toISOString());
+      setListStale(false);
 
       logger.debug(
         { totalUsers: result.data.rows.length },
@@ -240,6 +265,9 @@ export default function UsersPage() {
       }
     }
   }, []);
+
+  /** BD-14 after a Give or Take back: one read that keeps the rows if it fails (LF-F2, LF4B-F1). */
+  const refreshAfterCredits = useCallback(() => fetchUsers({ keepRowsOnFail: true }), [fetchUsers]);
 
   // Declared before the reads below, so they see this render's status and search.
   useEffect(() => {
@@ -351,6 +379,30 @@ export default function UsersPage() {
     setIsOpen(true);
     void details.loadDetails(user.id);
   };
+
+  // Money M-1 (SA-Q33, E-38, SA-WR-36): consume the inbound `account` key ONCE,
+  // after the first list read that succeeded. A failed read consumes nothing.
+  // The hook's mount write has already removed the key from the address bar;
+  // the value stays in `filters` until this clears it. The row is looked up in
+  // the rows on screen, and the CSS selector is built from that row's id, never
+  // from the URL text. Opening goes through `openRow`, so focus returns to the
+  // row's Open button on close (D-6).
+  const pendingAccount = filters.account;
+  const consumeDeepLink = useRef<() => void>(() => undefined);
+  consumeDeepLink.current = () => {
+    const wanted = pendingAccount.toLowerCase();
+    const row = shownUsers.find((user) => user.id.toLowerCase() === wanted) ?? null;
+    const button = row
+      ? contentRef.current?.querySelector<HTMLButtonElement>(`tr[data-account-id="${row.id}"] [data-testid="row-open"]`) ?? null
+      : null;
+    if (row && button) openRow(row, button);
+    else setDeepLinkMissing(true);
+    setFilters({ account: '' });
+  };
+  useEffect(() => {
+    if (!pendingAccount || loading || !hasLoaded) return;
+    consumeDeepLink.current();
+  }, [pendingAccount, loading, hasLoaded]);
 
   /**
    * D-17 (SA Q-1): a click anywhere on the row opens it, as a mouse extra. Not
@@ -468,6 +520,18 @@ export default function UsersPage() {
               </AdminNotice>
             )}
 
+            {deepLinkMissing && (
+              <AdminNotice testId="users-deeplink-missing">This business is not in the current list</AdminNotice>
+            )}
+
+            {/* LF-F2 (SA C5): amber, no live role; only the drawer line announces. */}
+            {listStale && (
+              <AdminNotice testId="users-list-stale">
+                The business list could not be refreshed.
+                {readAt ? ` These rows are from ${formatUtc(readAt)}.` : ''} Press Refresh to try again.
+              </AdminNotice>
+            )}
+
             <p data-testid="users-count-line" className={ADMIN_COUNT_LINE}>
               {countLine(filteredUsers.length)}
             </p>
@@ -525,6 +589,7 @@ export default function UsersPage() {
                         // ARIA here: the Open button is the keyboard path (SA Q-1).
                         <tr
                           key={user.id}
+                          data-account-id={user.id}
                           className={`hover:bg-slate-700/30 transition-colors cursor-pointer ${
                             isRowOpen ? 'bg-slate-700/20' : ''
                           }`}
@@ -643,6 +708,13 @@ export default function UsersPage() {
         titleSuffix={selected ? formatShortId(selected.id) : undefined}
         testId="users-drawer"
       >
+        {/* LF-F2 (SA C4): `listStale` is page-wide and outlives this drawer, so
+            the line names no change; the Credits block's notice does that. */}
+        {listStale && selected && (
+          <p data-testid="drawer-list-stale" role="status" className="text-sm text-slate-400">
+            The business list could not be refreshed, so the credits at the top of this panel and in the list may show an older figure.
+          </p>
+        )}
         {selected && (
           <BusinessDetail
             key={selected.id}
@@ -654,6 +726,7 @@ export default function UsersPage() {
             onAuditFilterChange={(value) => details.setAuditFilter(selected.id, value)}
             isLoading={details.loading[selected.id] === true}
             refreshList={fetchUsers}
+            refreshListAfterCredits={refreshAfterCredits}
           />
         )}
       </AdminDrawer>

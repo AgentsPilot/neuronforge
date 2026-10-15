@@ -44,6 +44,8 @@ const SCREEN_FILES = [
   ...LF4A2_FILES(),
   // Admin Layout follow-ups LF-4b (inside the money blocks)
   `${ROOT}/components/moneyBlockUi.ts`,
+  // Admin Layout follow-ups LF-4d (a box and a purpose line per section, BD-16)
+  `${ROOT}/components/DrawerBox.tsx`,
 ];
 
 /**
@@ -58,6 +60,53 @@ function LF4A2_FILES(): string[] {
     `${ROOT}/components/AllProductsUsage.tsx`,
   ];
 }
+
+describe('the LF-4d boxes add no request (BD-16, AC-4.3)', () => {
+  it('DrawerBox.tsx calls no fetch and holds no state', () => {
+    const code = codeOf(read(`${ROOT}/components/DrawerBox.tsx`));
+    expect(code).not.toContain('fetch(');
+    expect(code).not.toMatch(/useState|useEffect/);
+  });
+
+  // SA F1 (LF-4d code review, MD6): a box component declared inside a render
+  // makes a new component type on every render, so the money blocks remount
+  // and re-read without end; the drawer tests then die out of memory after
+  // minutes with no message. This guard says why in milliseconds.
+  it('the box components are declared once, at module level, in DrawerBox.tsx, and the drawer imports them from there', () => {
+    // (a) Column 0: a declaration nested in a function body is indented and cannot match.
+    const boxCode = codeOf(read(`${ROOT}/components/DrawerBox.tsx`));
+    expect(boxCode).toMatch(/^export function DrawerBox[(]/m);
+    expect(boxCode).toMatch(/^export function PartPurpose[(]/m);
+
+    // (b) No other file declares a binding with either name (an import is not a declaration).
+    const declares = /(^|[^A-Za-z0-9_$])(function|const|let|var|class)[ ]+(DrawerBox|PartPurpose)([^A-Za-z0-9_$]|$)/m;
+    const others = [
+      ...fs
+        .readdirSync(path.join(process.cwd(), ROOT, 'components'))
+        .filter((name) => name.endsWith('.tsx') && name !== 'DrawerBox.tsx')
+        .map((name) => `${ROOT}/components/${name}`),
+      `${ROOT}/page.tsx`,
+    ];
+    expect(others.length).toBeGreaterThan(5);
+    const offenders = others.filter((file) => declares.test(codeOf(read(file))));
+    expect({ declaresDrawerBoxOrPartPurpose: offenders }).toEqual({ declaresDrawerBoxOrPartPurpose: [] });
+
+    // (c) The three drawer files take the components from the one module.
+    for (const file of ['BusinessOsPanel.tsx', 'BusinessDetail.tsx', 'BusinessAuditSection.tsx']) {
+      const imports = /from '[.][/]DrawerBox';/.test(codeOf(read(`${ROOT}/components/${file}`)));
+      expect({ file, importsFromDrawerBox: imports }).toEqual({ file, importsFromDrawerBox: true });
+    }
+  });
+
+  it('the F1 declaration pattern sees a nested declaration and ignores an import (planted samples)', () => {
+    const declares = /(^|[^A-Za-z0-9_$])(function|const|let|var|class)[ ]+(DrawerBox|PartPurpose)([^A-Za-z0-9_$]|$)/m;
+    expect(declares.test('  const DrawerBox = (props) => null;')).toBe(true);
+    expect(declares.test('function PartPurpose() {}')).toBe(true);
+    expect(declares.test("import { DrawerBox, PartPurpose } from './DrawerBox';")).toBe(false);
+    expect(declares.test('const DrawerBoxModule = 1;')).toBe(false);
+    expect(/^export function DrawerBox[(]/m.test('  export function DrawerBox(')).toBe(false);
+  });
+});
 
 describe('the LF-4a.2 drawer layout adds no request (BD-1, AC-4.3)', () => {
   it.each(LF4A2_FILES())('%s calls no fetch', (file) => {
@@ -90,9 +139,10 @@ describe('LF-4b inside the money blocks (BD-14, BD-15)', () => {
     expect(codeOf(read(`${ROOT}/components/moneyBlockUi.ts`))).not.toContain('fetch(');
   });
 
-  it('BD-14: the drawer hands refreshList to the panel as onCreditsChanged, the onRemoved shape', () => {
+  // LF-F2 (LF4B-F1): the money path calls the read that keeps the rows on failure.
+  it('BD-14: the drawer hands refreshListAfterCredits to the panel as onCreditsChanged, the onRemoved shape', () => {
     const detail = flat(codeOf(read(`${ROOT}/components/BusinessDetail.tsx`)));
-    expect(detail).toContain('onCreditsChanged={() => { void refreshList(); }}');
+    expect(detail).toContain('onCreditsChanged={() => { void refreshListAfterCredits(); }}');
     const panel = codeOf(read(`${ROOT}/components/BusinessOsPanel.tsx`));
     expect(occurrences(panel, 'onCreditsChanged={onCreditsChanged}')).toBe(1);
   });
@@ -390,6 +440,9 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(page.indexOf('</AdminDrawer>')).toBeGreaterThan(detail);
     expect(page.slice(drawer, detail)).toContain('open={isOpen && selected !== null}');
     expect(page.match(/refreshList=\{fetchUsers\}/g)).toHaveLength(1);
+    // LF-F2 (LF4B-F1): only the money path keeps the rows when its read fails.
+    expect(occurrences(page, 'refreshListAfterCredits={refreshAfterCredits}')).toBe(1);
+    expect(occurrences(page, 'keepRowsOnFail: true')).toBe(1);
     // L-2b SA M-4: outside every branch. From the loaded branch's opening to the
     // drawer, every brace and parenthesis is closed again, so the drawer is not
     // inside `{!error && hasLoaded && (` (jsdom cannot tell an unmount from a close).
@@ -415,9 +468,10 @@ describe('the Delete… dialog: preview, then a typed confirmation only with a t
     expect(read(DETAIL)).toMatch(
       /onDeleted=\{\(\) => \{\s*\/\/ FR-A9: after a deletion the row reads "No Business OS business"\.\s*void refreshList\(\);\s*\}\}/,
     );
-    // Only the three bodies call it: onDeleted, onRemoved, and onCreditsChanged
-    // (LF-4b, BD-14: once after a successful Give or Take back).
-    expect(occurrences(detail, 'refreshList(')).toBe(3);
+    // Only two bodies call it: onDeleted and onRemoved. onCreditsChanged (LF-4b,
+    // BD-14) calls the keep-rows read instead, once (LF-F2, LF4B-F1).
+    expect(occurrences(detail, 'refreshList(')).toBe(2);
+    expect(occurrences(detail, 'refreshListAfterCredits(')).toBe(1);
   });
 });
 
@@ -473,7 +527,8 @@ describe('the dialogs use the shared admin class (Admin Layout Standard L-4a; D-
     `${ROOT}/components/CreditFormDialog.tsx`,
     `${ROOT}/components/DeleteBusinessDialog.tsx`,
     `${ROOT}/components/BoostCapDialog.tsx`,
-    `${ROOT}/components/BoostReconcileDialog.tsx`,
+    // BoostReconcileDialog.tsx moved to app/admin/components/jobs/ReconcileTopUpsDialog.tsx
+    // in Admin Layout LF-4c; the Jobs source guard carries these checks for it (SA-W7).
   ];
 
   /** What keeps a file off the shared dialog class; empty when it is on it. */
@@ -518,5 +573,45 @@ describe('no dead Advanced Filters panel (Admin Layout Standard L-4a; D-11 (a), 
   it('page.tsx names none of the panel words', () => {
     const page = codeOf(read(`${ROOT}/page.tsx`));
     expect(PANEL_WORDS.filter((word) => page.includes(word))).toEqual([]);
+  });
+});
+
+describe('the screen logs through the client logger, never the server one (follow-ups LF-F3, SA-F3; F-56)', () => {
+  /** Every non-test source file under the screen, walked, so a new file is covered without a list edit. */
+  function screenSources(dir: string): string[] {
+    return fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true }).flatMap((entry) => {
+      const relative = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) return entry.name === '__tests__' ? [] : screenSources(relative);
+      return relative.endsWith('.ts') || relative.endsWith('.tsx') ? [relative] : [];
+    });
+  }
+
+  /** Names the server entry `@/lib/logger` as a module specifier (the client entry `@/lib/logger/client` is fine). */
+  const namesServerLogger = (code: string) => code.includes("'@/lib/logger'") || code.includes('"@/lib/logger"');
+
+  it('the detector sees the server entry in either quote style and passes the client entry (planted samples)', () => {
+    expect(namesServerLogger("import { createLogger } from '@/lib/logger';")).toBe(true);
+    expect(namesServerLogger('import { createLogger } from "@/lib/logger";')).toBe(true);
+    expect(namesServerLogger("const m = await import('@/lib/logger');")).toBe(true);
+    expect(namesServerLogger("import { clientLogger } from '@/lib/logger/client';")).toBe(false);
+  });
+
+  it('the walk finds the page, the detail hook and a component, so it cannot pass on an empty list', () => {
+    const files = screenSources(ROOT);
+    expect(files).toEqual(
+      expect.arrayContaining([`${ROOT}/page.tsx`, `${ROOT}/useBusinessDetails.ts`, `${ROOT}/components/BusinessDetail.tsx`]),
+    );
+    expect(files.some((file) => file.includes('__tests__'))).toBe(false);
+  });
+
+  it('no file of the screen imports the server logger', () => {
+    const offenders = screenSources(ROOT).filter((file) => namesServerLogger(codeOf(read(file))));
+    expect(offenders).toEqual([]);
+  });
+
+  it.each([`${ROOT}/page.tsx`, `${ROOT}/useBusinessDetails.ts`])('%s is a client file that imports clientLogger', (file) => {
+    const source = read(file);
+    expect(source.trimStart().startsWith("'use client'")).toBe(true);
+    expect(source).toContain("import { clientLogger } from '@/lib/logger/client';");
   });
 });

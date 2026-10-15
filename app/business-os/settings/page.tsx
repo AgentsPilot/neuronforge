@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
-// `useRouter` left with the back button it existed for: the only other mention
-// of `router` in this file is a comment explaining why a hard navigation is used
-// instead of it.
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+// No router here: the only address change this page makes (taking `section` off
+// when a link-opened drawer closes, C-3) lives in `useLinkOpenedDrawer`, and it
+// replaces, never pushes.
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
-import { changePassword } from '@/lib/client/change-password';
 import {
   usesOAuthSignIn,
   hasBothSignInMethods,
@@ -14,6 +13,7 @@ import {
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities';
 import { supabase } from '@/lib/supabaseClient';
+import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
@@ -27,8 +27,6 @@ import {
   ChevronRight,
   ChevronDown,
   Check,
-  Eye,
-  EyeOff,
   Pencil,
   X,
   CheckCircle,
@@ -39,12 +37,16 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
+import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
+import { ChangePasswordDrawer } from '@/components/business-os/settings/ChangePasswordDrawer';
+import { useLinkOpenedDrawer } from '@/components/business-os/settings/useLinkOpenedDrawer';
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
-import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
+import { MarketingConsentDrawer } from '@/components/business-os/settings/MarketingConsentDrawer';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { createLogger } from '@/lib/logger';
+import { cn } from '@/lib/utils';
 
 const logger = createLogger({ module: 'BusinessOSSettings' });
 
@@ -87,6 +89,17 @@ function BusinessOSSettingsContent() {
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
   const { openConfiguration } = useConfigurationDialog();
+
+  /*
+   * The chevron on every account-card row (settings drawer S-5). Mirrored in
+   * Hebrew, as the invite row's already was: the row reads right to left and
+   * the chevron sits on its left edge, so an unmirrored one points back at the
+   * label. One helper so the rows cannot drift apart again. The tone is a
+   * parameter rather than a second class on top: `cn` does not merge Tailwind
+   * classes, so two text colours would be decided by stylesheet order.
+   */
+  const rowChevron = (tone = 'text-[var(--v2-text-muted)]') => cn('w-4 h-4', tone, isRTL && 'scale-x-[-1]');
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -103,17 +116,21 @@ function BusinessOSSettingsContent() {
   // Edit states
   const [editingProfile, setEditingProfile] = useState(false);
 
-  // Expandable sections
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  // The plan drawer (settings drawer S-1) and the password drawer (S-2). Each
+  // remembers whether a `?section=` link opened it, so closing takes `section`
+  // back off the address (C-3). The typed passwords are NOT here: they live in
+  // the password drawer's own form and go when it closes (C-7).
+  const planDrawer = useLinkOpenedDrawer();
+  const passwordDrawer = useLinkOpenedDrawer();
+  const { openFromLink: openPlanFromLink } = planDrawer;
+  const { openFromLink: openPasswordFromLink } = passwordDrawer;
+  const planRowRef = useRef<HTMLButtonElement>(null);
+  const passwordRowRef = useRef<HTMLButtonElement>(null);
+  // The marketing permission drawer (S-3). Plain state, not the link hook: no
+  // link anywhere opens it. Its form lives inside the drawer and goes on close.
+  const [consentDrawerOpen, setConsentDrawerOpen] = useState(false);
+  const consentRowRef = useRef<HTMLButtonElement>(null);
 
-  // Password form
-  const [passwordForm, setPasswordForm] = useState({
-    current: '',
-    new: '',
-    confirm: '',
-  });
-  const [showPassword, setShowPassword] = useState(false);
-  const [changingPassword, setChangingPassword] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   // Delete account dialog state
@@ -123,6 +140,22 @@ function BusinessOSSettingsContent() {
 
   // Dropdown state
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+
+  /*
+   * Anyone who signs in with a provider gets an explanation instead of the form.
+   * See `usesOAuthSignIn` for why that includes an account which also has a
+   * password: the form cannot change the credential they actually use, and
+   * "forgot password" still reaches the one it can.
+   *
+   * `hasBothSignInMethods` only decides which wording the explanation gets.
+   *
+   * Up here, before the deep-link effect, because `?section=password` opens the
+   * password drawer only for an account that has the form.
+   */
+  const signsInWithProvider = usesOAuthSignIn(user);
+  const signsInWithBoth = hasBothSignInMethods(user);
+  const providerName = linkedOAuthLabel(user);
+  const providerSecurityUrl = linkedProviderAccountUrl(user);
 
   // Load data
   useEffect(() => {
@@ -177,23 +210,39 @@ function BusinessOSSettingsContent() {
      */
     /*
      * `plan` is main's, and kept: it is where the Founding Partner pill in the
-     * chrome points, so without it the pill lands somebody on settings with every
-     * section collapsed — a link that appears to do nothing.
+     * chrome points, and where the plan checkout returns (`?section=plan&checkout=…`),
+     * so without it the pill lands somebody on settings with nothing open — a
+     * link that appears to do nothing. Since settings drawer S-1 it opens the
+     * plan drawer rather than expanding a row.
+     *
+     * `openPlanFromLink` sets the link flag EVERY time, even when the drawer is
+     * already open (SA Q-2 / W-3; see `useLinkOpenedDrawer`): when `PlanPurchase`
+     * writes `?section=plan&checkout=…` into a drawer opened from the row, the
+     * address now carries `section`, and closing must take it off or a reload
+     * would reopen the drawer. `checkout` is left alone; only `PlanSection`
+     * reads it (C-11).
      *
      * `preferences` is NOT kept, though main accepted it. The section it expands
      * is the enquiry-notification one removed above, so accepting it would
      * collapse whatever the owner had open and scroll to an anchor that no longer
      * exists. Both sides of this merge said as much in their own comments.
      */
-    if (requested !== 'password' && requested !== 'plan') return;
+    if (requested === 'plan') {
+      openPlanFromLink();
+      return;
+    }
 
-    setExpandedSection(requested);
-
-    // After paint, so the section has rendered its expanded height and the
-    // scroll lands on the open panel rather than where it used to be.
-    const timer = scrollToSection(requested);
-    return () => clearTimeout(timer);
-  }, [searchParams, loading, openConfiguration]);
+    /*
+     * `password` opens the password drawer (settings drawer S-2). Nothing in the
+     * repo sends it (SA-3 (b)); it is kept because old mail may. An account that
+     * signs in with a provider has no form, so for them the page is shown
+     * unchanged, as it always was (the old expand found nothing to open).
+     */
+    if (requested === 'password') {
+      if (!signsInWithProvider) openPasswordFromLink();
+      return;
+    }
+  }, [searchParams, loading, openConfiguration, openPlanFromLink, openPasswordFromLink, signsInWithProvider]);
 
   const loadData = async () => {
     if (!user) return;
@@ -343,19 +392,6 @@ function BusinessOSSettingsContent() {
     }
   };
 
-  /*
-   * Anyone who signs in with a provider gets an explanation instead of the form.
-   * See `usesOAuthSignIn` for why that includes an account which also has a
-   * password: the form cannot change the credential they actually use, and
-   * "forgot password" still reaches the one it can.
-   *
-   * `hasBothSignInMethods` only decides which wording the explanation gets.
-   */
-  const signsInWithProvider = usesOAuthSignIn(user);
-  const signsInWithBoth = hasBothSignInMethods(user);
-  const providerName = linkedOAuthLabel(user);
-  const providerSecurityUrl = linkedProviderAccountUrl(user);
-
   /** The "you sign in with Google" block, worded by whichever state we are in. */
   const providerNotice = (titleKey: string, descKey: string) => (
     <div className="p-4 flex items-start gap-3">
@@ -381,78 +417,20 @@ function BusinessOSSettingsContent() {
     </div>
   );
 
-  const handlePasswordChange = async () => {
-    if (!passwordForm.current || !passwordForm.new) {
-      setErrorMessage(t('settings.security.password_required'));
-      return;
-    }
-    if (passwordForm.new !== passwordForm.confirm) {
-      setErrorMessage(t('settings.security.password_mismatch'));
-      return;
-    }
-    if (passwordForm.new.length < 8) {
-      setErrorMessage(t('settings.security.password_short'));
-      return;
-    }
-
-    try {
-      setChangingPassword(true);
-      setErrorMessage('');
-
-      /*
-       * Through the API, never `supabase.auth.updateUser` from here.
-       * `updateUser` does not take the current password and does not check
-       * one, so the field above was decoration: any characters in it changed
-       * the password. The route verifies it and audits the attempt.
-       */
-      const result = await changePassword(passwordForm.current, passwordForm.new);
-
-      if (!result.success) {
-        // The server's message is already written for the person reading it,
-        // and says something the generic key cannot — which credential was
-        // wrong, or that this account has no password at all.
-        setErrorMessage(result.error ?? t('settings.security.password_error'));
-        return;
-      }
-
-      setSuccessMessage(t('settings.security.password_updated'));
-      setPasswordForm({ current: '', new: '', confirm: '' });
-      setExpandedSection(null);
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to change the password');
-      setErrorMessage(t('settings.security.password_error'));
-    } finally {
-      setChangingPassword(false);
-    }
-  };
-
   const handleExportData = async () => {
     if (!user) return;
 
     try {
       setExporting(true);
 
-      const [profileRes, prefsRes, connectionsRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id),
-        supabase.from('user_preferences').select('*').eq('user_id', user.id),
-        supabase.from('plugin_connections').select('*').eq('user_id', user.id),
-      ]);
-
-      const userData = {
-        user: { id: user.id, email: user.email },
-        profile: profileRes.data?.[0] || null,
-        preferences: prefsRes.data?.[0] || null,
-        connections: connectionsRes.data || [],
-      };
-
-      const blob = new Blob([JSON.stringify(userData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `my-data-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
+      // The server export, not a client read (DE-0a): reading the tables here
+      // with `select('*')` put every plugin's OAuth tokens in the file.
+      const result = await downloadUserDataExport();
+      if (!result.success) {
+        logger.error({ code: result.code, status: result.status }, 'Failed to export the account data');
+        setErrorMessage(t('settings.security.export_error'));
+        return;
+      }
 
       setSuccessMessage(t('settings.security.export_success'));
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -494,62 +472,6 @@ function BusinessOSSettingsContent() {
    * — it belongs to the marketing site, on its own origin.
    * ─────────────────────────────────────────────────────────────────────────
    */
-  /**
-   * Give a best-effort network call a deadline it cannot outlive.
-   *
-   * ─────────────────────────────────────────────────────────────────────────
-   * Both calls below were `await`ed inside a try/catch, which catches a
-   * REJECTION and does nothing at all about a promise that simply never
-   * settles. A stalled request therefore left `loggingOut` true forever — and
-   * the dialog refuses to close while that is true — so a person who pressed
-   * log out sat on a spinner with no cancel, no escape and no way back.
-   *
-   * Resolves rather than rejects on timeout: every caller here is best-effort,
-   * and the only outcome that matters is that the browser ends up signed out
-   * and somewhere else.
-   * ─────────────────────────────────────────────────────────────────────────
-   */
-  const withDeadline = async (work: Promise<unknown>, ms: number, what: string) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const deadline = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), ms);
-    });
-
-    try {
-      const outcome = await Promise.race([work.then(() => 'done' as const), deadline]);
-      if (outcome === 'timeout') {
-        logger.warn({ what, ms }, 'Logout step exceeded its deadline; continuing without it');
-      }
-    } catch (err) {
-      logger.warn({ err, what }, 'Logout step failed; continuing without it');
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  };
-
-  /**
-   * Every key that holds a SESSION, whoever wrote it.
-   *
-   * The list below used to name `sb-auth-token` and `supabase.auth.token`, and
-   * neither is what Supabase actually writes: the real key carries the project
-   * ref (`sb-<ref>-auth-token`) and is chunked into `.0`, `.1`, … when the JWT
-   * is large. So a sign-out that failed or timed out left the session sitting
-   * in storage while the browser was sent to the login page — signed out in
-   * appearance only, and signed straight back in on return.
-   *
-   * Matched by shape rather than by a literal, so this holds in every
-   * environment and survives a project change.
-   */
-  const clearSessionKeys = (store: Storage) => {
-    const doomed: string[] = [];
-    for (let i = 0; i < store.length; i++) {
-      const key = store.key(i);
-      if (key && /^sb-.*-auth-token/.test(key)) doomed.push(key);
-    }
-    doomed.forEach((key) => store.removeItem(key));
-  };
-
   const handleLogout = async () => {
     setLoggingOut(true);
 
@@ -1009,25 +931,43 @@ function BusinessOSSettingsContent() {
             offers Choose for exactly the plans the server would sell
             (`purchase.offer`), with the embedded checkout; where nothing is on
             sale it stays read-only and shows no button that does nothing.
+
+            Since settings drawer S-1 the row opens a drawer instead of expanding
+            in place. It shows the title only (C-8): the plan is fetched when the
+            drawer opens, by `PlanSection`, as it was when the row expanded.
           */}
+          {/* Id kept (S-5, SA W-5). Nothing in the repo links to it any more (every
+              sender uses `?section=plan`), but it costs nothing, matches the
+              consent and invite rows, and a hand-shared or bookmarked
+              `#settings-section-plan` still lands on the row. */}
           <div id="settings-section-plan">
             <button
-              onClick={() => setExpandedSection(expandedSection === 'plan' ? null : 'plan')}
+              ref={planRowRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={planDrawer.open}
+              onClick={planDrawer.openFromRow}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
               <div className="flex items-center gap-3">
                 <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('plan.section_title')}</span>
               </div>
-              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'plan' ? 'rotate-90' : ''}`} />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             </button>
-            {expandedSection === 'plan' && (
-              <div className="px-4 pb-4">
-                {/* P-4.2: the checkout return marker (display only; the section
-                    pattern-checks it and only the server re-read shows a plan). */}
-                <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
-              </div>
-            )}
+            <SettingsDrawer
+              open={planDrawer.open}
+              onOpenChange={planDrawer.onOpenChange}
+              title={t('plan.section_title')}
+              isRTL={isRTL}
+              closeLabel={t('common.close')}
+              returnFocusRef={planRowRef}
+              testId="settings-plan-drawer"
+            >
+              {/* P-4.2: the checkout return marker (display only; the section
+                  pattern-checks it and only the server re-read shows a plan). */}
+              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
+            </SettingsDrawer>
           </div>
 
           {/* Slice 5a: renders nothing unless the server says this account may invite friends. */}
@@ -1051,23 +991,29 @@ function BusinessOSSettingsContent() {
             expanded rather than on a row explaining where the switch went.
           */}
 
-          {/* Marketing consent */}
+          {/* Marketing consent. Since settings drawer S-3 the row opens a drawer
+              instead of expanding in place; the id stays so an old
+              `#settings-section-consent` still lands on the row. */}
           <div id="settings-section-consent">
             <button
-              onClick={() => setExpandedSection(expandedSection === 'consent' ? null : 'consent')}
+              ref={consentRowRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={consentDrawerOpen}
+              onClick={() => setConsentDrawerOpen(true)}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
               <div className="flex items-center gap-3">
                 <MailCheck className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('consent.title')}</span>
               </div>
-              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'consent' ? 'rotate-90' : ''}`} />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             </button>
-            {expandedSection === 'consent' && (
-              <div className="px-4 pb-4">
-                <MarketingConsentPanel />
-              </div>
-            )}
+            <MarketingConsentDrawer
+              open={consentDrawerOpen}
+              onOpenChange={setConsentDrawerOpen}
+              returnFocusRef={consentRowRef}
+            />
           </div>
 
           {/*
@@ -1086,65 +1032,32 @@ function BusinessOSSettingsContent() {
                   'settings.security.provider_signin_desc'
                 )
           ) : (
-          <>
           <div>
+            {/*
+              Since settings drawer S-2 the row opens a drawer instead of
+              expanding in place. The form, its state and its messages live in
+              `ChangePasswordDrawer`, so closing the drawer clears the fields (C-7).
+            */}
             <button
-              onClick={() => setExpandedSection(expandedSection === 'password' ? null : 'password')}
+              ref={passwordRowRef}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={passwordDrawer.open}
+              onClick={passwordDrawer.openFromRow}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
               <div className="flex items-center gap-3">
                 <Lock className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('settings.security.change_password')}</span>
               </div>
-              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'password' ? 'rotate-90' : ''}`} />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             </button>
-            {expandedSection === 'password' && (
-              <div className="px-4 pb-4 space-y-3">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={passwordForm.current}
-                  onChange={(e) => setPasswordForm(p => ({ ...p, current: e.target.value }))}
-                  placeholder={t('settings.security.current_password')}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={passwordForm.new}
-                  onChange={(e) => setPasswordForm(p => ({ ...p, new: e.target.value }))}
-                  placeholder={t('settings.security.new_password')}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                />
-                <input
-                  type="password"
-                  value={passwordForm.confirm}
-                  onChange={(e) => setPasswordForm(p => ({ ...p, confirm: e.target.value }))}
-                  placeholder={t('settings.security.confirm_password')}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                />
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="text-xs text-[var(--v2-text-secondary)] flex items-center gap-1"
-                  >
-                    {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    {showPassword ? t('common.hide') : t('common.show')}
-                  </button>
-                  <button
-                    onClick={handlePasswordChange}
-                    disabled={changingPassword}
-                    className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {changingPassword ? <Loader2 className="w-4 h-4 animate-spin" /> : t('settings.security.update_password')}
-                  </button>
-                </div>
-              </div>
-            )}
+            <ChangePasswordDrawer
+              open={passwordDrawer.open}
+              onOpenChange={passwordDrawer.onOpenChange}
+              returnFocusRef={passwordRowRef}
+            />
           </div>
-          </>
           )}
 
           {/* Export Data */}
@@ -1157,7 +1070,7 @@ function BusinessOSSettingsContent() {
               <Download className="w-5 h-5 text-[var(--v2-text-muted)]" />
               <span className="text-sm text-[var(--v2-text-primary)]">{t('settings.security.export_data')}</span>
             </div>
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />}
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className={rowChevron()} aria-hidden="true" />}
           </button>
 
           {/* Log out.
@@ -1178,7 +1091,7 @@ function BusinessOSSettingsContent() {
             {loggingOut ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+              <ChevronRight className={rowChevron()} aria-hidden="true" />
             )}
           </button>
 
@@ -1191,7 +1104,7 @@ function BusinessOSSettingsContent() {
               <Trash2 className="w-5 h-5 text-red-500" />
               <span className="text-sm text-red-600 dark:text-red-400">{t('settings.security.delete_account')}</span>
             </div>
-            <ChevronRight className="w-4 h-4 text-red-400" />
+            <ChevronRight className={rowChevron('text-red-400')} aria-hidden="true" />
           </button>
             </div>
           </div>

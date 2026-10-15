@@ -26,6 +26,8 @@ jest.mock('@/lib/logger', () => ({
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  clientLogger: { child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
 
 jest.mock('next/navigation', () => ({
@@ -34,6 +36,14 @@ jest.mock('next/navigation', () => ({
 
 import UsersPage from '../page';
 import recordedAccountBody from '@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json';
+import {
+  DRAWER_PURPOSE,
+  PART_BOX,
+  PURPOSE_LINE,
+  SECTION_BOX,
+  type DrawerPurposeKey,
+  type DrawerSectionKey,
+} from '../components/DrawerBox';
 
 // As the pin files: the whole page under a parallel Jest run can take more than
 // RTL's 1 s default to settle. A longer wait can only turn a pass into a fail.
@@ -343,7 +353,7 @@ describe('L-1: the strip, then six sections in a fixed order', () => {
 // ── L-2 to L-5 the strip (BD-1, BD-3, BD-13) ────────────────────────────────
 
 describe('L-2 to L-5: the summary strip', () => {
-  it('L-2: a Business OS account: plan, the list row cell, USD estimated, the UTC sign-in; nothing to click', async () => {
+  it('L-2: a Business OS account: plan, the list row cell, USD recorded, the UTC sign-in; nothing to click', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
     const strip = within(drawer).getByTestId('drawer-strip');
     expect(within(strip).getByTestId('strip-plan').textContent).toBe(RECORDED_TIER);
@@ -355,7 +365,7 @@ describe('L-2 to L-5: the summary strip', () => {
     expect(inDrawer.getAttribute('data-band')).toBe(listCell?.getAttribute('data-band'));
     expect(inDrawer.textContent).toBe('40%');
 
-    expect(within(strip).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated');
+    expect(within(strip).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded');
     expect(within(strip).getByTestId('strip-last-sign-in').textContent?.startsWith('2026-10-10 08:05 UTC')).toBe(true);
     expect(strip.querySelectorAll('a, button, input, select, textarea, summary')).toHaveLength(0);
   });
@@ -383,7 +393,7 @@ describe('L-2 to L-5: the summary strip', () => {
   it('L-4: a failed entitlements read: Plan "Could not read", the other slots filled', async () => {
     const drawer = await openDrawer('Eli Plan', 'boost-cap');
     expect(within(drawer).getByTestId('strip-plan').textContent).toBe('Could not read');
-    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated');
+    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded');
     expect(within(within(drawer).getByTestId('strip-credits-left')).getByTestId('row-credits-left').textContent).toBe('10%');
   });
 
@@ -429,7 +439,7 @@ describe('L-2 to L-5: the summary strip', () => {
       },
     };
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
-    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated, a lower bound');
+    expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded, a lower bound');
     expect(within(drawer).getByTestId('bos-panel-spend-incomplete')).toBeTruthy();
   });
 });
@@ -462,7 +472,7 @@ describe('L-6 / L-7: folds outside the money blocks', () => {
     expect(calls.length).toBe(before);
   });
 
-  it('L-7: All products is folded with its note visible; figures in the DOM; Cost by Model shows three; toggles send nothing', async () => {
+  it('L-7: All products is folded with its note visible; figures in the DOM; Recorded AI cost by model shows three; toggles send nothing', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
     const card = within(drawer).getByTestId('ai-spend-card');
     expect(card.textContent).toContain('may be incomplete above 1,000 calls');
@@ -477,7 +487,7 @@ describe('L-6 / L-7: folds outside the money blocks', () => {
     expect(within(card).getAllByTestId('ai-model-row')).toHaveLength(5);
     expect(within(modelsRest).getAllByTestId('ai-model-row')).toHaveLength(2);
     expect(within(card).getAllByTestId('ai-model-row')[0].textContent).toContain('m-a');
-    expect(card.textContent).toContain('Cost by Model (highest cost first)');
+    expect(card.textContent).toContain('Recorded AI cost by model (highest first)');
 
     const before = calls.length;
     const toggle = within(card).getByTestId('ai-all-products-toggle');
@@ -574,7 +584,7 @@ describe('L-10: loading, and the money blocks keep their nodes', () => {
     expect(within(drawer).queryByTestId('credits-block')).toBeNull();
     await act(async () => gate.resolve());
     await within(drawer).findByTestId('boost-cap');
-    await waitFor(() => expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21estimated'));
+    await waitFor(() => expect(within(drawer).getByTestId('strip-ai-spend').textContent).toBe('$4.21recorded'));
     await quiet();
   });
 
@@ -603,5 +613,192 @@ describe('L-10: loading, and the money blocks keep their nodes', () => {
     expect(within(drawer).getByTestId('bos-panel')).toBe(panel);
     expect(within(drawer).getByTestId('credits-block')).toBe(credits);
     expect(within(drawer).getByTestId('boost-block')).toBe(boost);
+  });
+});
+
+// ── L-12 a box and a purpose line per section (LF-4d, BD-16) ────────────────
+
+/** Section title, its box key, and the group's test id, in the BD-4 order. */
+const BOXED_SECTIONS: Array<[string, DrawerSectionKey, string]> = [
+  ['Credits & billing', 'credits', 'drawer-section-credits'],
+  ['Plan & entitlements', 'plan', 'drawer-section-plan'],
+  ['AI usage', 'ai', 'drawer-section-ai'],
+  ['Account & security', 'account', 'drawer-section-account'],
+  ['Activity', 'activity', 'detail-audit'],
+];
+
+/** Each part's root test id and its own purpose key. */
+const PARTS: Array<[string, DrawerPurposeKey]> = [
+  ['credits-block', 'credits-part'],
+  ['boost-block', 'topups'],
+  ['boost-cap', 'limit'],
+  ['bos-panel-spend', 'ai-bos'],
+  ['bos-panel-failures', 'ai-failures'],
+  ['ai-spend-card', 'ai-all'],
+  ['account-group-account', 'account-account'],
+  ['account-group-signin', 'account-signin'],
+  ['plugins-card', 'account-plugins'],
+];
+
+const PART_IDS = PARTS.map(([id]) => id);
+
+/** The closest part box around an element (itself included). */
+function closestPart(el: Element): Element | null {
+  let node: Element | null = el;
+  while (node) {
+    if (PART_IDS.includes(node.getAttribute('data-testid') ?? '')) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+const DANGER_SENTENCE = 'Permanent actions for this account. Each runs a check first; a refused check changes nothing.';
+
+describe('L-12: a box and a purpose line per section (LF-4d, BD-16)', () => {
+  it('L-12a: five section boxes, each directly around its named group, in order; the danger area last', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    const boxes = BOXED_SECTIONS.map(([title, key, testId]) => {
+      const box = within(drawer).getByTestId(`drawer-box-${key}`);
+      expect({ key, className: box.className }).toEqual({ key, className: SECTION_BOX });
+      expect(box.children).toHaveLength(1);
+      const named = group(drawer, title);
+      expect(box.firstElementChild).toBe(named);
+      expect(named.getAttribute('data-testid')).toBe(testId);
+      return box;
+    });
+    const danger = within(drawer).getByTestId('danger-area');
+    expectInOrder([...boxes, danger]);
+    expect(danger.parentElement?.lastElementChild).toBe(danger);
+  });
+
+  it('L-12b: each section sentence is the element straight after its heading, its own words', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    for (const [title, key] of BOXED_SECTIONS) {
+      const heading = group(drawer, title).querySelector('h3') as HTMLElement;
+      const purpose = heading.nextElementSibling as HTMLElement;
+      expect({ title, id: purpose.getAttribute('data-testid'), text: purpose.textContent, cls: purpose.className }).toEqual({
+        title,
+        id: `drawer-purpose-${key}`,
+        text: DRAWER_PURPOSE[key],
+        cls: PURPOSE_LINE,
+      });
+    }
+  });
+
+  it('L-12c (SA C3): each part is a box holding exactly one purpose line whose closest part is itself, after its label', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    for (const [id, key] of PARTS) {
+      const part = within(drawer).getByTestId(id);
+      expect({ id, boxed: part.className.includes(PART_BOX) }).toEqual({ id, boxed: true });
+      const own = Array.from(part.querySelectorAll('[data-testid^="drawer-purpose-"]')).filter((p) => closestPart(p) === part);
+      expect({ id, own: own.map((p) => p.getAttribute('data-testid')) }).toEqual({ id, own: [`drawer-purpose-${key}`] });
+      expect(own[0].textContent).toBe(DRAWER_PURPOSE[key]);
+      // The label is the part's first p; the purpose line comes after it.
+      const label = part.querySelector('p') as HTMLElement;
+      expect(label).not.toBe(own[0]);
+      expectInOrder([label, own[0]]);
+    }
+  });
+
+  it('L-12d: the limit is inside Top-ups, and the pointer is still the last element of the top-ups block', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    const boost = within(drawer).getByTestId('boost-block');
+    const cap = within(boost).getByTestId('boost-cap');
+    expect(within(cap).getByTestId('drawer-purpose-limit')).toBeTruthy();
+    expect(within(cap).queryByTestId('drawer-purpose-topups')).toBeNull();
+    const pointer = within(boost).getByTestId('boost-reconcile-pointer');
+    const after = Array.from(boost.querySelectorAll('*')).filter(
+      (el) => pointer.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && !pointer.contains(el)
+    );
+    expect(after).toEqual([]);
+  });
+
+  it('L-12e: parts are not groups and purpose lines are not headings', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    expect(drawer.querySelectorAll('[role="group"]')).toHaveLength(5);
+    for (const id of PART_IDS) {
+      const part = within(drawer).getByTestId(id);
+      expect({ id, role: part.getAttribute('role'), labelledBy: part.getAttribute('aria-labelledby') }).toEqual({
+        id,
+        role: null,
+        labelledBy: null,
+      });
+    }
+    for (const line of Array.from(drawer.querySelectorAll('[data-testid^="drawer-purpose-"]'))) {
+      expect(line.tagName).toBe('P');
+    }
+    expect(drawer.querySelectorAll('[data-testid^="drawer-purpose-"]')).toHaveLength(BOXED_SECTIONS.length + PARTS.length);
+
+    // QA note 3 (BD-16 focus clause, BD-15): focus return falls back to the
+    // closest labelled group's heading, so from a money opener and from every
+    // part that group must be the section, never a part.
+    const LABELLED = '[role="group"][aria-labelledby]';
+    const credits = within(drawer).getByTestId('drawer-section-credits');
+    for (const opener of ['credits-give', 'boost-cap-set']) {
+      expect({ opener, group: within(drawer).getByTestId(opener).closest(LABELLED)?.getAttribute('data-testid') }).toEqual({
+        opener,
+        group: 'drawer-section-credits',
+      });
+    }
+    expect(within(drawer).getByTestId('credits-give').closest(LABELLED)).toBe(credits);
+    const sectionOf: Record<string, string> = {
+      'credits-block': 'drawer-section-credits',
+      'boost-block': 'drawer-section-credits',
+      'boost-cap': 'drawer-section-credits',
+      'bos-panel-spend': 'drawer-section-ai',
+      'bos-panel-failures': 'drawer-section-ai',
+      'ai-spend-card': 'drawer-section-ai',
+      'account-group-account': 'drawer-section-account',
+      'account-group-signin': 'drawer-section-account',
+      'plugins-card': 'drawer-section-account',
+    };
+    for (const id of PART_IDS) {
+      const group = within(drawer).getByTestId(id).closest(LABELLED);
+      expect({ id, group: group?.getAttribute('data-testid') }).toEqual({ id, group: sectionOf[id] });
+    }
+  });
+
+  it('L-12f: a non-Business OS login: five section boxes and sentences; in AI usage only All products; no money part', async () => {
+    const drawer = await openDrawer('Oren Levi', 'bos-panel-not-bos');
+    for (const [, key] of BOXED_SECTIONS) {
+      expect(within(drawer).getByTestId(`drawer-box-${key}`).className).toBe(SECTION_BOX);
+      expect(within(drawer).getByTestId(`drawer-purpose-${key}`).textContent).toBe(DRAWER_PURPOSE[key]);
+    }
+    const ai = group(drawer, 'AI usage');
+    expect(within(ai).getByTestId('drawer-purpose-ai-all')).toBeTruthy();
+    expect(within(ai).queryByTestId('drawer-purpose-ai-bos')).toBeNull();
+    expect(within(ai).queryByTestId('drawer-purpose-ai-failures')).toBeNull();
+    for (const key of ['credits-part', 'topups', 'limit']) {
+      expect(within(drawer).queryByTestId(`drawer-purpose-${key}`)).toBeNull();
+    }
+  });
+
+  it('L-12g: the danger area keeps its rose box and its sentence, word for word, and gets no purpose line', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    const danger = within(drawer).getByTestId('danger-area');
+    expect(danger.className).toBe('p-6 rounded-xl border border-rose-500/40 bg-rose-500/5');
+    expect(within(danger).getByText(DANGER_SENTENCE)).toBeTruthy();
+    expect(danger.querySelector('[data-testid^="drawer-purpose-"]')).toBeNull();
+    expect(danger.closest('[data-testid^="drawer-box-"]')).toBeNull();
+  });
+
+  it('L-12h: while the summary read is held, the three panel boxes show their sentences with the loading lines', async () => {
+    const gate = deferred();
+    summaryGate = gate.promise;
+    installFetch();
+    render(<UsersPage />);
+    await screen.findAllByTestId('row-business');
+    fireEvent.click(openButtonFor('Dana Cohen'));
+    const drawer = await screen.findByTestId('users-drawer');
+    await within(drawer).findByTestId('drawer-strip');
+    for (const key of ['credits', 'plan', 'ai'] as const) {
+      expect(within(drawer).getByTestId(`drawer-box-${key}`).className).toBe(SECTION_BOX);
+      expect(within(drawer).getByTestId(`drawer-purpose-${key}`).textContent).toBe(DRAWER_PURPOSE[key]);
+    }
+    expect(within(drawer).getByText('Loading Business OS details…')).toBeTruthy();
+    expect(within(drawer).queryByTestId('credits-block')).toBeNull();
+    await act(async () => gate.resolve());
+    await within(drawer).findByTestId('boost-cap');
+    await quiet();
   });
 });

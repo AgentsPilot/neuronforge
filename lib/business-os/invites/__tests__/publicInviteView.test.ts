@@ -4,7 +4,8 @@
  * `first_viewed_at` stamped only for a valid invite that has not been seen.
  */
 
-import { CHAMPION_INVITE_TYPE, INVITE_ISSUANCE_POLICY, INVITE_TYPES } from '@/lib/business-os/entitlements/config/invites';
+import { sellableTiers } from '@/lib/business-os/billing/planCheckoutEligibility';
+import { CHAMPION_INVITE_TYPE, INVITE_ISSUANCE_POLICY, INVITE_TYPES, PAID_INVITE_TYPE } from '@/lib/business-os/entitlements/config/invites';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import type { BusinessOsInvitePublicView } from '@/lib/repositories/types';
 
@@ -21,6 +22,7 @@ function stored(overrides: Partial<BusinessOsInvitePublicView> = {}): BusinessOs
   return {
     id: INVITE_ID,
     issuer_kind: 'admin',
+    invite_type: CHAMPION_INVITE_TYPE,
     grant_kind: 'cohort',
     grant_id: INVITE_TYPES[CHAMPION_INVITE_TYPE].defaultGrantId,
     access_open_ended: true,
@@ -137,7 +139,8 @@ describe('the valid state', () => {
     if (!outcome.ok) return;
     const response = outcome.response as Record<string, unknown>;
     expect(Object.keys(response).sort()).toEqual(
-      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'personalNote', 'state'].sort()
+      // P-9.2 (FR-22, SA C-6): `payment`, the page's one payment line.
+      ['inviterDisplayName', 'language', 'linkExpiresAt', 'maskedEmail', 'offer', 'payment', 'personalNote', 'state'].sort()
     );
     // Slice 1b (R-6): the first character of the local part, and the domain. Never the full email.
     expect(response.maskedEmail).toBe('i•••@example.com');
@@ -327,6 +330,7 @@ describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', 
       'linkExpiresAt',
       'maskedEmail',
       'offer',
+      'payment',
       'personalNote',
       'state',
     ]);
@@ -409,5 +413,69 @@ describe('Slices 5a/5b (F5a-10, F5b-3, SA R-5, Q-8): a champion friend invite', 
     const outcome = await viewInviteByToken(TOKEN, deps);
     expect(outcome.ok && outcome.response.state).toBe('existing_account');
     expect(accounts.emailHasAccount).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('P-9.1 (SA C-2, A-2): an ADMIN Paid invite reads "unavailable" exactly when the signup refuses it', () => {
+  const policy = INVITE_ISSUANCE_POLICY as unknown as { paidInvitesAvailable: boolean };
+  const shippedPaid = INVITE_ISSUANCE_POLICY.paidInvitesAvailable;
+  const paidTier = sellableTiers()[0];
+  const adminPaidRow = (overrides: Partial<BusinessOsInvitePublicView> = {}) =>
+    stored({ invite_type: PAID_INVITE_TYPE, grant_kind: 'tier', grant_id: paidTier, access_open_ended: null, access_months: null, ...overrides });
+
+  afterEach(() => {
+    policy.paidInvitesAvailable = shippedPaid;
+  });
+
+  it('switch off (production): unavailable, and the account question is never asked', async () => {
+    policy.paidInvitesAvailable = false;
+    const { deps, accountQuestions, repository } = harness(adminPaidRow(), { hasAccount: true });
+    expect(await viewInviteByToken(TOKEN, deps)).toEqual({
+      ok: true,
+      response: { state: 'unavailable', language: 'he', inviterDisplayName: 'Dana' },
+      inviteId: INVITE_ID,
+    });
+    expect(accountQuestions).toEqual([]);
+    expect(repository.markFirstViewed).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, Partial<BusinessOsInvitePublicView>]>([
+    ['a cohort type carrying a tier grant', { invite_type: CHAMPION_INVITE_TYPE }],
+    ['an unknown type', { invite_type: 'type-z' }],
+  ])('switch on, %s: unavailable', async (_label, overrides) => {
+    policy.paidInvitesAvailable = true;
+    const { deps } = harness(adminPaidRow(overrides));
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('unavailable');
+  });
+
+  it('switch on, a priced tier: valid, with the allow-listed keys only (no email, id, type or issuer)', async () => {
+    policy.paidInvitesAvailable = true;
+    const { deps, accountQuestions } = harness(adminPaidRow());
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok).toBe(true);
+    const response = outcome.ok ? (outcome.response as Record<string, unknown>) : {};
+    expect(response.state).toBe('valid');
+    expect(Object.keys(response).sort()).toEqual([
+      'inviterDisplayName',
+      'language',
+      'linkExpiresAt',
+      'maskedEmail',
+      'offer',
+      'payment',
+      'personalNote',
+      'state',
+    ]);
+    const text = JSON.stringify(response);
+    for (const secret of [INVITEE_EMAIL, INVITE_ID, 'invite_type', 'issuer', 'admin']) expect(text).not.toContain(secret);
+    // The champion's order: the account question is asked for an admin invite.
+    expect(accountQuestions).toEqual([INVITEE_EMAIL]);
+  });
+
+  it('switch on, an existing account: existing_account, as for a champion', async () => {
+    policy.paidInvitesAvailable = true;
+    const { deps } = harness(adminPaidRow(), { hasAccount: true });
+    const outcome = await viewInviteByToken(TOKEN, deps);
+    expect(outcome.ok && outcome.response.state).toBe('existing_account');
   });
 });

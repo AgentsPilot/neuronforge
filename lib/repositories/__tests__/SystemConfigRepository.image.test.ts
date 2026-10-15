@@ -66,7 +66,7 @@ describe('getImageGenerationConfig', () => {
     expect(config).toEqual({
       model: IMAGE_GENERATION_CONFIG_DEFAULTS.model,
       sizes: { ...IMAGE_GENERATION_CONFIG_DEFAULTS.sizes },
-      quality: 'auto',
+      quality: 'high',
       pricesUsd: {},
     });
     // The defaults preserve what the service sent before this was configurable.
@@ -141,8 +141,16 @@ describe('IMAGE_FALLBACK_PRICING', () => {
     }
   });
 
-  it('defaults the request to auto, which is never a price key (priced by the reported quality)', () => {
-    expect(IMAGE_GENERATION_CONFIG_DEFAULTS.quality).toBe('auto');
+  it('defaults the request to high, and auto is never a price key (priced by the reported quality)', () => {
+    // Pinned on 2026-10-14: the 2.5 models add xhigh and max, so `auto` could
+    // let the provider pick a level several times the cost (supersedes CR-1 C).
+    expect(IMAGE_GENERATION_CONFIG_DEFAULTS.quality).toBe('high');
     expect(Object.keys(IMAGE_FALLBACK_PRICING).some((k) => k.endsWith(':auto'))).toBe(false);
+  });
+
+  it('no longer prices the retired gpt-image-1 (removed 2026-10-14, Q10)', () => {
+    // Its absence is what makes a rollback of the images row to it safe: the
+    // guardrail refuses an unpriced image model and keeps the default.
+    expect(Object.keys(IMAGE_FALLBACK_PRICING).filter((k) => k.startsWith('gpt-image-1:'))).toEqual([]);
   });
 });

@@ -19,9 +19,11 @@
  * friend finalise for both methods, and the landing on the payment hold.
  */
 
-import { INVITE_ISSUANCE_POLICY } from '@/lib/business-os/entitlements/config/invites';
+import * as billing from '@/lib/business-os/billing/planCheckoutEligibility';
+import { sellableTiers } from '@/lib/business-os/billing/planCheckoutEligibility';
+import { CHAMPION_INVITE_TYPE, INVITE_ISSUANCE_POLICY, PAID_INVITE_TYPE } from '@/lib/business-os/entitlements/config/invites';
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
-import type { BusinessOsInviteRedemptionView, FriendFinaliseOutcome } from '@/lib/repositories/types';
+import type { AdminPaidFinaliseOutcome, BusinessOsInviteRedemptionView, FriendFinaliseOutcome } from '@/lib/repositories/types';
 
 import { createGoogleIdTokenVerifier, type GoogleIdTokenVerification, type GoogleTokenClient } from '../googleIdToken';
 import {
@@ -97,6 +99,8 @@ interface WorldOptions {
   issuerPlan?: { cohort: string | null; cohort_expires_at: string | null } | null | 'error';
   /** Slice 5b: what successive friend finalise calls answer (default: finalised at L2). */
   friendFinalise?: Array<FriendFinaliseOutcome | 'error'>;
+  /** Plan payments P-9.1: what successive admin Paid finalise calls answer (default: finalised). */
+  adminPaidFinalise?: Array<AdminPaidFinaliseOutcome | 'error'>;
   /** N-1: what the inviter notification does (default: resolves). */
   notify?: 'ok' | 'reject' | 'throw' | 'hang';
 }
@@ -116,6 +120,8 @@ function world(options: WorldOptions = {}) {
   const friendFinalised: Array<Record<string, unknown>> = [];
   const notified: NotifyInviterInput[] = [];
   const friendAnswers = [...(options.friendFinalise ?? [])];
+  const adminPaidFinalised: Array<Record<string, unknown>> = [];
+  const adminPaidAnswers = [...(options.adminPaidFinalise ?? [])];
   let finaliseFailuresLeft = options.finaliseFailures ?? 0;
 
   const deps: RedemptionDeps = {
@@ -244,6 +250,13 @@ function world(options: WorldOptions = {}) {
       if (answer === 'error') return { data: null, error: Object.assign(new Error(`insert failed for ${EMAIL}`), { code: '23505' }) };
       return { data: answer ?? { outcome: 'finalised' as const, inviteId: input.inviteId, level: 2 }, error: null };
     }),
+    finaliseAdminPaid: jest.fn(async (input) => {
+      calls.push('finaliseAdminPaid');
+      adminPaidFinalised.push(input as unknown as Record<string, unknown>);
+      const answer = adminPaidAnswers.length > 0 ? adminPaidAnswers.shift() : undefined;
+      if (answer === 'error') return { data: null, error: Object.assign(new Error(`insert failed for ${EMAIL}`), { code: '23505' }) };
+      return { data: answer ?? { outcome: 'finalised' as const, inviteId: input.inviteId }, error: null };
+    }),
     issuerPlans: {
       findEntitlementInputs: jest.fn(async (accountId: string) => {
         calls.push(`issuerPlan:${accountId}`);
@@ -310,6 +323,7 @@ function world(options: WorldOptions = {}) {
     verified,
     notices,
     friendFinalised,
+    adminPaidFinalised,
     notified,
     row: () => row,
   };
@@ -1020,7 +1034,7 @@ describe('Slice 5b: switch OFF (the rollback state): a friend invite is refused 
     expect(w.created).toEqual([]);
   });
 
-  it('an ADMIN Paid invite is still paid_invites_not_available (F5b-2: the generic refusal stays until 5c)', async () => {
+  it('an ADMIN Paid invite is paid_invites_not_available while the Paid switch is off (F5b-2; P-9.1 keeps this answer)', async () => {
     const w = world({ row: inviteRow({ invite_type: 'paid', grant_kind: 'tier', grant_id: 'tier-x', access_open_ended: null }) });
     expect(await complete(w.deps)).toMatchObject({ status: 409, error: 'paid_invites_not_available' });
     expect(w.calls).toEqual(['find']);
@@ -1428,5 +1442,217 @@ describe('N-1: the notification can never fail or change the signup (test 2)', (
   it('the backstop sits just past the 4 s deadline (SA C-1)', () => {
     expect(INVITER_NOTIFICATION_BACKSTOP_MS).toBeGreaterThan(4_000);
     expect(INVITER_NOTIFICATION_BACKSTOP_MS).toBeLessThanOrEqual(5_000);
+  });
+});
+
+// ── Plan payments P-9.1: an ADMIN Paid invite signs up and is held ─────────
+
+describe('P-9.1 (SA-P9, C-2, C-8): an admin Paid invite', () => {
+  const policy = INVITE_ISSUANCE_POLICY as unknown as { paidInvitesAvailable: boolean };
+  const shippedPaid = INVITE_ISSUANCE_POLICY.paidInvitesAvailable;
+  // A tier with a Stripe price today, from config (no tier literal here).
+  const PAID_TIER = sellableTiers()[sellableTiers().length - 1];
+  const adminPaid = (overrides: Partial<BusinessOsInviteRedemptionView> = {}) =>
+    inviteRow({ invite_type: PAID_INVITE_TYPE, grant_kind: 'tier', grant_id: PAID_TIER, access_open_ended: null, access_months: null, ...overrides });
+  const entries: Array<[string, (deps: RedemptionDeps) => Promise<unknown>]> = [
+    ['requestSignupCode', (deps) => requestSignupCode(TOKEN, deps)],
+    ['completeSignup', (deps) => complete(deps)],
+    ['completeGoogleSignup', (deps) => google(deps)],
+  ];
+
+  afterEach(() => {
+    policy.paidInvitesAvailable = shippedPaid;
+    jest.restoreAllMocks();
+  });
+
+  it('ships with the Paid switch off', () => {
+    expect(shippedPaid).toBe(false);
+    expect(PAID_TIER).toBeDefined();
+  });
+
+  describe('switch OFF (production today): the answer is unchanged', () => {
+    it.each(entries)('%s answers 409 paid_invites_not_available with only the token lookup run', async (_entry, run) => {
+      policy.paidInvitesAvailable = false;
+      const w = world({ row: adminPaid(), emailHasAccount: true });
+      expect(await run(w.deps)).toMatchObject({ ok: false, status: 409, error: 'paid_invites_not_available' });
+      expect(w.calls).toEqual(['find']);
+      expect(w.adminPaidFinalised).toEqual([]);
+    });
+  });
+
+  describe('switch ON', () => {
+    beforeEach(() => {
+      policy.paidInvitesAvailable = true;
+    });
+
+    it.each<[string, Partial<BusinessOsInviteRedemptionView>]>([
+      ['a type admins may issue but whose grant kind is a cohort', { invite_type: CHAMPION_INVITE_TYPE }],
+      ['an unknown type', { invite_type: 'type-z' }],
+      ['a tier the config no longer carries', { grant_id: 'tier-x' }],
+    ])('%s is "no longer available" before any code, claim or account lookup', async (_label, overrides) => {
+      for (const [, run] of entries) {
+        const w = world({ row: adminPaid(overrides) });
+        expect(await run(w.deps)).toMatchObject({ ok: false, status: 409, error: 'unavailable' });
+        expect(w.calls).toEqual(['find']);
+      }
+    });
+
+    it('SA C-3: a configured tier with no Stripe price is "no longer available"', async () => {
+      const priced = sellableTiers().filter((tier) => tier !== PAID_TIER);
+      jest.spyOn(billing, 'sellableTiers').mockReturnValue(priced);
+      const w = world({ row: adminPaid() });
+      expect(await complete(w.deps)).toMatchObject({ ok: false, status: 409, error: 'unavailable' });
+      expect(w.calls).toEqual(['find']);
+    });
+
+    it('an existing account is refused BEFORE any code is stored (the champion 1b order: the admin holds the address)', async () => {
+      const w = world({ row: adminPaid(), emailHasAccount: true });
+      expect(await requestSignupCode(TOKEN, w.deps)).toMatchObject({ ok: false, status: 409, error: 'existing_account' });
+      expect(w.calls).toEqual(['find', `emailHasAccount:${EMAIL}`, 'stamp']);
+      expect(w.sent).toEqual([]);
+      expect(w.notices).toEqual([]);
+    });
+
+    it('the code path: held on the payment hold, finalised with the ROW tier, two audits, N-1 to the issuing admin', async () => {
+      const w = world({ row: adminPaid() });
+      const outcome = await complete(w.deps);
+      expect(outcome).toEqual({ ok: true, email: EMAIL, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'awaiting_payment' });
+      expect(w.adminPaidFinalised).toEqual([{ inviteId: INVITE_ID, accountId: NEW_ID, email: EMAIL, tierId: PAID_TIER }]);
+      expect(w.finalised).toEqual([]);
+      expect(w.friendFinalised).toEqual([]);
+      expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_REDEEMED', 'BOS_INVITE_PLAN_PROVISIONED']);
+      expect(w.audits[0].details).toEqual({ inviteType: PAID_INVITE_TYPE, level: 1, source: 'admin_invite', method: 'password' });
+      expect(w.audits[1].details).toEqual({
+        grantKind: 'tier',
+        grantId: PAID_TIER,
+        basis: 'none',
+        awaitingPayment: true,
+        origin: 'invite',
+      });
+      expect(w.notified).toEqual([
+        {
+          event: 'accepted',
+          inviteId: INVITE_ID,
+          issuerKind: 'admin',
+          issuerAccountId: null,
+          issuerAdminId: ADMIN_ID,
+          inviteeEmail: EMAIL,
+          landing: 'awaiting_payment',
+        },
+      ]);
+      expectNoSecrets(w);
+    });
+
+    it('the Google path reaches the same finalise and landing', async () => {
+      const w = world({ row: adminPaid() });
+      expect(await google(w.deps)).toEqual({ ok: true, accountId: NEW_ID, inviteId: INVITE_ID, landing: 'awaiting_payment' });
+      expect(w.adminPaidFinalised).toEqual([{ inviteId: INVITE_ID, accountId: NEW_ID, email: EMAIL, tierId: PAID_TIER }]);
+      expect(w.audits[0].details).toMatchObject({ source: 'admin_invite', method: 'google' });
+      expect(w.notified[0]).toMatchObject({ issuerKind: 'admin', landing: 'awaiting_payment' });
+    });
+
+    it('already_finalised (a re-run) is a success', async () => {
+      const w = world({ row: adminPaid(), adminPaidFinalise: [{ outcome: 'already_finalised', inviteId: INVITE_ID }] });
+      expect(await complete(w.deps)).toMatchObject({ ok: true, landing: 'awaiting_payment' });
+    });
+
+    it('I-5: an error then a success is retried once and succeeds', async () => {
+      const w = world({ row: adminPaid(), adminPaidFinalise: ['error', { outcome: 'finalised', inviteId: INVITE_ID }] });
+      expect(await complete(w.deps)).toMatchObject({ ok: true });
+      expect(w.adminPaidFinalised).toHaveLength(2);
+      expect(w.recorded).toEqual([]);
+    });
+
+    it.each<[string, Array<AdminPaidFinaliseOutcome | 'error'>, string | null]>([
+      ['not_matched twice', [{ outcome: 'not_matched' }, { outcome: 'not_matched' }], null],
+      ['an error twice', ['error', 'error'], '23505'],
+    ])('I-5 / FR-12a: %s keeps the claim, records it and tells nobody', async (_label, answers, code) => {
+      const w = world({ row: adminPaid(), adminPaidFinalise: answers });
+      expect(await complete(w.deps)).toEqual({ ok: false, kind: 'unavailable_try_again' });
+      expect(w.adminPaidFinalised).toHaveLength(2);
+      expect(w.released).toEqual([]);
+      expect(w.recorded).toHaveLength(1);
+      expect(w.recorded[0]).toMatchObject({ step: 'finalise', errorCode: code, claimedAccountId: NEW_ID });
+      expect(w.audits.map((entry) => entry.action)).toEqual(['BOS_INVITE_REDEMPTION_INCOMPLETE']);
+      expect(w.notified).toEqual([]);
+      expect(w.row()?.claimed_account_id).toBe(NEW_ID);
+      expectNoSecrets(w);
+    });
+
+    it('R-7 / SA C-8: a cohort (champion) row never reaches the admin Paid finalise', async () => {
+      const w = world();
+      expect(await complete(w.deps)).toMatchObject({ ok: true, landing: 'onboarding' });
+      expect(w.finalised).toHaveLength(1);
+      expect(w.adminPaidFinalised).toEqual([]);
+    });
+
+    it('R-7 / SA C-8: an admin tier row never reaches the champion (cohort) finalise', async () => {
+      const w = world({ row: adminPaid() });
+      await complete(w.deps);
+      expect(w.finalised).toEqual([]);
+      expect(w.adminPaidFinalised).toHaveLength(1);
+    });
+
+    it('SA C-8: a live claim still answers signup_in_progress first', async () => {
+      const w = world({ row: adminPaid({ claimed_at: at(-30_000), claimed_account_id: NEW_ID }) });
+      expect(await complete(w.deps)).toMatchObject({ error: 'signup_in_progress' });
+      expect(w.calls).toEqual(['find']);
+    });
+  });
+});
+
+// ── Plan payments P-9.2 (QA P-9.1 note 1): pin the generic state refusals for the admin Paid branch ──
+// They answer BEFORE `loadAdminPaidInvite` (C-8), so a future reorder of
+// `loadRedeemableInvite` cannot let a revoked, expired or used admin Paid link
+// reach the admin finalise, a second N-1 or a second audit pair.
+
+describe('P-9.2: revoked / expired / resubmit-after-success on an admin Paid invite (switch ON)', () => {
+  const policy = INVITE_ISSUANCE_POLICY as unknown as { paidInvitesAvailable: boolean };
+  const shippedPaid = INVITE_ISSUANCE_POLICY.paidInvitesAvailable;
+  const PAID_TIER = sellableTiers()[sellableTiers().length - 1];
+  const adminPaid = (overrides: Partial<BusinessOsInviteRedemptionView> = {}) =>
+    inviteRow({ invite_type: PAID_INVITE_TYPE, grant_kind: 'tier', grant_id: PAID_TIER, access_open_ended: null, access_months: null, ...overrides });
+  const entries: Array<[string, (deps: RedemptionDeps) => Promise<unknown>]> = [
+    ['requestSignupCode', (deps) => requestSignupCode(TOKEN, deps)],
+    ['completeSignup', (deps) => complete(deps)],
+    ['completeGoogleSignup', (deps) => google(deps)],
+  ];
+
+  beforeEach(() => {
+    policy.paidInvitesAvailable = true;
+  });
+  afterEach(() => {
+    policy.paidInvitesAvailable = shippedPaid;
+  });
+
+  it.each<[string, Partial<BusinessOsInviteRedemptionView>, string]>([
+    ['a revoked link', { revoked_at: at(-60_000) }, 'revoked'],
+    ['an expired link', { link_expires_at: at(-60_000) }, 'expired'],
+    ['a link already used (a resubmit after a successful signup)', { redeemed_at: at(-60_000) }, 'used'],
+  ])('%s answers 409 %s on every entry point: only the token lookup, no finalise, no audit, no N-1', async (_label, overrides, error) => {
+    for (const [, run] of entries) {
+      const w = world({ row: adminPaid(overrides) });
+      expect(await run(w.deps)).toMatchObject({ ok: false, status: 409, error });
+      expect(w.calls).toEqual(['find']);
+      expect(w.adminPaidFinalised).toEqual([]);
+      expect(w.finalised).toEqual([]);
+      expect(w.audits).toEqual([]);
+      expect(w.notified).toEqual([]);
+      expect(w.sent).toEqual([]);
+    }
+  });
+
+  it('a successful signup, then the same link again: one finalise, one audit pair and ONE N-1 in total', async () => {
+    const first = world({ row: adminPaid() });
+    expect(await complete(first.deps)).toMatchObject({ ok: true, landing: 'awaiting_payment' });
+    expect(first.adminPaidFinalised).toHaveLength(1);
+    expect(first.notified).toHaveLength(1);
+
+    // The row as it now stands: burned by the finalise.
+    const again = world({ row: adminPaid({ redeemed_at: at(0), claimed_account_id: NEW_ID, claimed_at: at(-1_000) }) });
+    expect(await complete(again.deps)).toMatchObject({ ok: false, status: 409, error: 'used' });
+    expect(again.adminPaidFinalised).toEqual([]);
+    expect(again.audits).toEqual([]);
+    expect(again.notified).toEqual([]);
   });
 });

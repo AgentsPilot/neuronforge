@@ -10,11 +10,22 @@
  *   (the functional row update must not lose the first save).
  * - E-3: a failed re-read closes an open editor (SA O-5 optimisation), so a
  *   later good read does not reopen the editor on a row it no longer owns.
+ *
+ * AI_MODEL_PRICE_REVIEW slice 4 (UF-5, SA NR-3): the table is now the price
+ * comparison, so each router also answers `/api/admin/model-pricing/comparison`
+ * and prices show per 1M from it. Each case keeps its intent (comment).
  */
 
 import '@testing-library/jest-dom';
-import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+
+// Slice 5: "Check provider prices" is tested on its own in providerPriceCheck.render.test.tsx.
+// Here it is a static stand-in (no status read), so these page cases keep slice 4's call
+// lists and timings.
+jest.mock('@/app/admin/system-config/components/ProviderPriceCheck', () => ({
+  __esModule: true,
+  default: () => jest.requireActual('react').createElement('button', { type: 'button' }, 'Check provider prices'),
+}));
 
 jest.mock('@/lib/logger/client', () => {
   const logger: Record<string, unknown> = {
@@ -28,6 +39,7 @@ jest.mock('@/lib/logger/client', () => {
 });
 
 import ModelPricingPage from '../page';
+import { COMPARISON_URL, okComparison } from '../__fixtures__/priceComparison';
 
 const PRICING_URL = '/api/admin/system-config/pricing';
 const SYNC_URL = '/api/admin/system-config/pricing/sync';
@@ -79,32 +91,43 @@ describe('Model pricing page: QA edge cases', () => {
     ['a 200 with success false', { status: 200, body: { success: false, error: 'Row locked' } } as Reply, 'Row locked'],
     ['a thrown fetch', 'reject' as Reply, 'Failed to fetch'],
   ])('E-1: %s on save keeps the old price and shows an error', async (_label, putReply, message) => {
-    stubFetch((url, method) => (method === 'PUT' ? putReply : { status: 200, body: { success: true, data: ROWS } }));
+    // Intent kept: a failed save leaves the row's price as it was (slice 4: per 1M, from the comparison).
+    stubFetch((url, method) =>
+      url === COMPARISON_URL
+        ? okComparison(ROWS)
+        : method === 'PUT'
+          ? putReply
+          : { status: 200, body: { success: true, data: ROWS } }
+    );
 
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getAllByTitle('Increase')[0]);
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Save'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getAllByTitle('Increase')[0]);
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Save'));
 
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(screen.queryByText('Pricing updated successfully!')).not.toBeInTheDocument();
 
     // The editor stays open on failure (as before); cancelling shows the stored price, unchanged.
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Cancel'));
-    expect(within(rowOf('gpt-4o-mini')).getByText('$0.00000015')).toBeInTheDocument();
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Cancel'));
+    expect(within(rowOf('gpt-4o-mini')).getByText('$0.15')).toBeInTheDocument();
   });
 
   it('E-2: two rows saved in sequence both show their saved values', async () => {
+    // Intent kept: both saves show. Slice 4: the comparison is answered from the
+    // rows as saved so far, and is read again after each PUT (N-5).
+    let stored = ROWS.map((row) => ({ ...row }));
     const calls = stubFetch((url, method, body) => {
+      if (url === COMPARISON_URL) return okComparison(stored);
       if (method === 'PUT') {
         const { id } = JSON.parse(body ?? '{}') as { id: string };
         const base = ROWS.find((r) => r.id === id)!;
-        return {
-          status: 200,
-          body: { success: true, data: { ...base, input_cost_per_token: base.input_cost_per_token * 10 } },
-        };
+        const saved = { ...base, input_cost_per_token: base.input_cost_per_token * 10 };
+        stored = stored.map((row) => (row.id === id ? saved : row));
+        return { status: 200, body: { success: true, data: saved } };
       }
       return { status: 200, body: { success: true, data: ROWS } };
     });
@@ -112,21 +135,32 @@ describe('Model pricing page: QA edge cases', () => {
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Save'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Save'));
     await screen.findByText('Pricing updated successfully!');
+    expect(await within(rowOf('gpt-4o-mini')).findByText('$1.5')).toBeInTheDocument();
 
-    await userEvent.click(within(rowOf('claude-haiku')).getByTitle('Edit pricing'));
-    await userEvent.click(within(rowOf('claude-haiku')).getByTitle('Save'));
+    fireEvent.click(within(rowOf('claude-haiku')).getByTitle('Edit pricing'));
+    fireEvent.click(within(rowOf('claude-haiku')).getByTitle('Save'));
 
-    expect(await within(rowOf('claude-haiku')).findByText('$0.00000800')).toBeInTheDocument();
-    expect(within(rowOf('gpt-4o-mini')).getByText('$0.00000150')).toBeInTheDocument();
-    expect(calls).toEqual([`GET ${PRICING_URL}`, `PUT ${PRICING_URL}`, `PUT ${PRICING_URL}`]);
+    expect(await within(rowOf('claude-haiku')).findByText('$8')).toBeInTheDocument();
+    expect(within(rowOf('gpt-4o-mini')).getByText('$1.5')).toBeInTheDocument();
+    expect(calls).toEqual([
+      `GET ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
+      `PUT ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
+      `PUT ${PRICING_URL}`,
+      `GET ${COMPARISON_URL}`,
+    ]);
   });
 
   it('E-3: a failed re-read closes an open editor, so the next good read shows plain rows', async () => {
+    // Intent kept: a failed read clears the table and closes the editor (slice 4: the comparison always answers).
     let reads = 0;
     stubFetch((url) => {
+      if (url === COMPARISON_URL) return okComparison(ROWS);
       if (url === SYNC_URL) return { status: 200, body: { success: true, message: 'ok' } };
       reads += 1;
       return reads === 2 ? { status: 500, body: { success: false } } : { status: 200, body: { success: true, data: ROWS } };
@@ -135,16 +169,17 @@ describe('Model pricing page: QA edge cases', () => {
     const view = render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    await userEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
+    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
+    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
     expect(within(rowOf('gpt-4o-mini')).getByTitle('Save')).toBeInTheDocument();
 
     // Sync succeeds, its re-read fails: the table and the editor go.
-    await userEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
     await screen.findByTestId('pricing-read-failed');
 
     // The header refresh button (no accessible name) re-reads successfully.
     const refresh = view.container.querySelector('header button') as HTMLButtonElement;
-    await userEvent.click(refresh);
+    fireEvent.click(refresh);
 
     await screen.findByText('gpt-4o-mini');
     expect(screen.queryByTestId('pricing-read-failed')).not.toBeInTheDocument();

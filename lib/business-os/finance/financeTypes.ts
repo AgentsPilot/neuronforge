@@ -19,6 +19,32 @@
  * Slice 2b (client payment problems, layer B): the same money rule. A due
  * date is a date-only `YYYY-MM-DD` string, never an instant.
  *
+ * Slice 4a (our boost revenue, layer A): the same money rule again. Every
+ * boost money figure sits in an object that also carries its `currency`, was
+ * summed in integer minor units of that currency and divided by 100 once. K-5
+ * carries its money in `money`, never in `value` (SA-W47), and never a sum of
+ * two currencies.
+ *
+ * Slice 5a (our plan revenue, layer A): plan payments received in the window,
+ * per currency, with the same money rule. `revenue.totals` adds boost net and
+ * plans received WITHIN one currency only (SA-Q40); K-5's `money.net` is that
+ * total. No field is a total across currencies.
+ *
+ * Slice 6a (Money M-3, account economics): two OPTIONAL payload keys
+ * (SA-W74). `accountEconomics` is present only with `tab=accounts` and no
+ * business picked; `accountMargin` only with a business picked. Both are
+ * ABSENT otherwise, so the Overview payload is unchanged (AC-145), and
+ * `accounts` stays Section 1. Revenue after tax sits beside its `currency`;
+ * the charged AI cost and the AI margin are USD by construction (the ledger
+ * is USD, BD-22) and are named `costUsd` / `marginUsd`. No field is a total
+ * across currencies.
+ *
+ * Money M-4 (OV-5, §11F.5, SA-Q54): one more OPTIONAL key, `aiCost.recorded`,
+ * the recorded AI cost (the usage log) and "Recorded above charged", beside
+ * the charged cost and never added to it (BD-18). USD by construction, named
+ * `…Usd`. Absent on the Accounts tab (AC-167). No field holds a sum of the two
+ * measures.
+ *
  * @module lib/business-os/finance/financeTypes
  */
 
@@ -135,19 +161,242 @@ export interface FinanceAiCostFigures {
   unresolvedAdjustments: number;
 }
 
+/** M-4 (§11F.5): the state of "Recorded above charged" (E-54). */
+export type FinanceRecordedAboveState = 'figure' | 'none' | 'not_available' | 'unknown';
+
+/**
+ * M-4 (§11F.5, SA-Q54): the recorded AI cost (the usage log) beside the charged
+ * one. Never added to it (BD-18, R4-11): no field here holds their sum. USD by
+ * construction (the model price table). No row, id, session id, feature value
+ * or name is ever in it (AC-164).
+ */
+export interface FinanceRecordedAiCost {
+  /** ok: recorded exact and the difference decided; partial: "at least" or an Unknown difference; unknown: the read failed or timed out. */
+  status: FinanceSectionStatus;
+  /** Null only when `status` is `unknown`. */
+  recordedUsd: number | null;
+  /** False = "At least" (R4-9). */
+  recordedExact: boolean;
+  /** "Recorded above charged" (E-54). `usd` only with `figure`, and always > 0. */
+  aboveCharged: { state: FinanceRecordedAboveState; usd: number | null };
+  /** Only when `aboveCharged.state` is `none` and charged is strictly above recorded (R4-6). */
+  chargedAboveUsd: number | null;
+}
+
 export interface FinanceAiCostSection {
   status: FinanceSectionStatus;
   coverage: FinanceCoverage;
   /** Null only when `status` is `unknown`. Zeros (not null) when the window is entirely before the cut-over. */
   figures: FinanceAiCostFigures | null;
+  /**
+   * M-4 (OV-5): present on the Overview and in the picked view; ABSENT (never
+   * null) on the Accounts tab (AC-167). It has its own status: a failed
+   * recorded read never changes Section 3's charged figures or `status`.
+   */
+  recorded?: FinanceRecordedAiCost;
 }
 
 export type FinanceRevenueState = 'none_yet' | 'recorded' | 'unknown';
 
-export interface FinanceRevenueSection {
-  status: FinanceSectionStatus;
-  state: FinanceRevenueState;
+// ── Our revenue, credit boosts (slice 4a, S4-FR-1 to S4-FR-14) ──────────────
+// The platform's own boost purchases, paid in the window. Each money figure is
+// in the currency named beside it; none is ever added across currencies.
+
+/** One currency's boosts (S4-W-6). `currency` null = "Unknown currency". */
+export interface FinanceBoostLine {
+  currency: string | null;
+  /** Counted purchases (paid family) in this currency, unreadable ones included. */
+  purchases: number;
+  /** Σ readable amounts charged. "At least" when not exact or `unreadable` > 0. */
+  gross: number;
+  /** Of which tax (shown, not deducted). */
+  tax: number;
+  refunded: number;
+  /** Held in open disputes; null when it cannot be exact ("Unknown"). */
+  held: number | null;
+  /** Lost in disputes; null when it cannot be exact. */
+  lost: number | null;
+  /** gross − refunded − held − lost, only when exact; otherwise null (never a lower bound minus a figure). */
+  net: number | null;
+  /** Credits sold (credits, not money). "At least" when not exact or `unreadableCredits` > 0. */
+  creditsSold: number;
+  /** Purchases with an unreadable amount (excluded from every sum, never 0). */
+  unreadable: number;
+  /** Purchases whose credits could not be read (excluded from credits sold). */
+  unreadableCredits: number;
 }
+
+/** One (currency, package, version) row, as stored on the purchase (SA-Q30). */
+export interface FinanceBoostPackageRow {
+  currency: string | null;
+  /** Null: not recorded (defensive). */
+  packageId: string | null;
+  packageVersion: number | null;
+  purchases: number;
+  gross: number;
+  refunded: number;
+  net: number | null;
+  unreadable: number;
+}
+
+/** One currency's purchases from deleted accounts (S4-W-7). Never a name. */
+export interface FinanceBoostDeletedLine {
+  currency: string | null;
+  purchases: number;
+  net: number | null;
+  unreadable: number;
+}
+
+export interface FinanceBoostNotes {
+  /** No counted purchase in the window. */
+  empty: boolean;
+  /** False when the read reached its ceiling: counts and amounts are "At least", held / lost / net Unknown. */
+  exact: boolean;
+  /** Purchases read with a status outside the paid family: left out of every figure, counted. */
+  otherStatusPurchases: number;
+  /** Counted purchases with an unreadable amount. */
+  unreadablePurchases: number;
+  /** A refund or dispute amount is non-zero (or unknown on a refund or dispute row): the S4-W-3 note shows. */
+  refundOrDispute: boolean;
+}
+
+export interface FinanceBoostRevenue {
+  status: FinanceSectionStatus;
+  scope: 'all' | 'one';
+  /** Null only when `status` is `unknown` (the read failed). */
+  lines: FinanceBoostLine[] | null;
+  packages: FinanceBoostPackageRow[] | null;
+  /** Null with a business picked (S4-FR-8) or when the read failed. */
+  deletedAccounts: FinanceBoostDeletedLine[] | null;
+  notes: FinanceBoostNotes | null;
+}
+
+// ── Our revenue, plans (slice 5a, §11D.4 M2-FR-1 to M2-FR-11) ───────────────
+// The platform's own paid plan invoices, by `paid_at` in the window. Each money
+// figure is in the currency named beside it, received INCLUDING any tax, before
+// any refund (none is recorded for plans yet) and before Stripe fees.
+
+/** One currency's plan payments (M2-FR-1). `currency` null = "Unknown currency". */
+export interface FinancePlanLine {
+  currency: string | null;
+  /** Readable paid invoices with an amount above 0. */
+  payments: number;
+  /** Σ amounts received (tax included). "At least" when not `exact`. */
+  received: number;
+  /** Of which tax (shown, never deducted). */
+  tax: number;
+  /** Distinct accounts with a payment in this currency (deleted accounts not counted). */
+  businesses: number;
+  /** Readable paid invoices of 0 in this currency: not payments (M2-W-5). */
+  zeroAmountInvoices: number;
+  /** Paid invoices whose money could not be read: excluded, never 0 (SA-W64). */
+  unreadable: number;
+  /** False at the ceiling or with an unreadable row or an overflow on this line: payments, received and tax are "At least". */
+  exact: boolean;
+}
+
+/** One (account, currency) row of the by-business table (M2-FR-2). */
+export interface FinancePlanAccountRow {
+  accountId: string;
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable' | 'platform';
+  currency: string | null;
+  payments: number;
+  received: number;
+  exact: boolean;
+}
+
+/** One payment of the picked business (M2-FR-3), newest first. */
+export interface FinancePlanPaymentListRow {
+  /** The billing event row's own id (an internal UUID, never a Stripe id). */
+  id: string;
+  /** ISO timestamptz, shown through `formatUtc`; null only defensively (the read filters on it). */
+  paidAt: string | null;
+  /** The plan's display label, or null ("Unknown plan"). */
+  planLabel: string | null;
+  received: number;
+  tax: number;
+  currency: string | null;
+  /** ISO timestamptz, or null ("Not recorded"). */
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+/** One currency's plan payments from deleted accounts (M2-W-8). Never a name. */
+export interface FinancePlanDeletedLine {
+  currency: string | null;
+  payments: number;
+  received: number;
+  exact: boolean;
+}
+
+export interface FinancePlanNotes {
+  /** No payment and no unreadable paid invoice in the window. */
+  empty: boolean;
+  /** False when the read reached its ceiling. */
+  exact: boolean;
+  zeroAmountInvoices: number;
+  unreadable: number;
+  /** Rows of another kind (impossible by the query; left out, counted). */
+  otherKind: number;
+}
+
+export interface FinancePlanRevenue {
+  status: FinanceSectionStatus;
+  scope: 'all' | 'one';
+  /** Null only when `status` is `unknown` (the read failed). */
+  lines: FinancePlanLine[] | null;
+  /** All businesses only: at most the display cap. */
+  accounts: FinancePlanAccountRow[] | null;
+  /** Every (account, currency) row before the cap; all businesses only. */
+  accountsTotal: number | null;
+  /** One business only: at most the display cap, newest first. */
+  payments: FinancePlanPaymentListRow[] | null;
+  /** Every payment before the cap; one business only. */
+  paymentsTotal: number | null;
+  /** All businesses only; `[]` when none. */
+  deletedAccounts: FinancePlanDeletedLine[] | null;
+  notes: FinancePlanNotes | null;
+}
+
+/**
+ * One currency of "boosts net plus plans received" (SA-Q40, E-34). Every money
+ * key sits beside `currency`; a part or the total is null when it cannot be
+ * exact. Never across currencies.
+ */
+export interface FinanceRevenueTotalLine {
+  currency: string | null;
+  boostsNet: number | null;
+  plansReceived: number | null;
+  total: number | null;
+}
+
+export interface FinanceRevenueSection {
+  /** From the two money parts (SA-W62): `unknown` when boosts AND plans failed; `partial` when one did or either is partial. */
+  status: FinanceSectionStatus;
+  /**
+   * All businesses: R-d, unchanged (any paid plan invoice or paid boost,
+   * platform-wide). One business (E-36): from that business's own reads.
+   */
+  state: FinanceRevenueState;
+  /** Plan payments received in the window (slice 5a, M2-FR-11; replaced R-d's plans line, SA-W61). */
+  plans: FinancePlanRevenue;
+  /** Credit boosts paid in the window (S4-FR-10). */
+  boosts: FinanceBoostRevenue;
+  /** Boost net plus plans received, per currency (SA-Q40); null when either read failed. Never across currencies. */
+  totals: FinanceRevenueTotalLine[] | null;
+}
+
+/**
+ * K-5's money (SA-W47): one currency's figure, a count of currencies (never a
+ * sum), nothing yet, or unknown. Set on K-5 only. Slice 5a (SA-W60): `net` is
+ * boost net plus plans received, in one currency.
+ */
+export type FinanceTileMoney =
+  | { kind: 'one'; currency: string | null; net: number }
+  | { kind: 'several'; currencies: number }
+  | { kind: 'none' }
+  | { kind: 'unknown'; reason: 'failed' | 'cut_off' | 'unreadable' };
 
 export type FinanceTileId =
   | 'k1_ai_cost'
@@ -167,10 +416,12 @@ export interface FinanceTile {
   status: TileStatus;
   /** The first matching rule's description, or a fixed state text. Never "OK". */
   headline: string;
-  /** K-1: this month to date (USD); K-2 and K-3: the count; K-4: credits; K-5: none. */
+  /** K-1: this month to date (USD); K-2 and K-3: the count; K-4: credits; K-5: none (see `money`). */
   value: FinanceMeasured | null;
   /** K-1 only: the same elapsed span of last month (USD). Null when not measured. */
   previous: FinanceMeasured | null;
+  /** K-5 only (slice 4a, SA-W47; slice 5a): boost net plus plans received for the window, with its currency. Absent on K-1 to K-4. */
+  money?: FinanceTileMoney;
 }
 
 export interface FinancePayload {
@@ -187,6 +438,135 @@ export interface FinancePayload {
   takings: FinanceTakingsSection;
   /** Section 6 block B, "Client payment problems" (slice 2b). The businesses' problem, not ours (BD-2). */
   paymentProblems: FinancePaymentProblemsSection;
+  /** Slice 6a: the Accounts tab. Present only with `tab=accounts` and no business picked (SA-W74). */
+  accountEconomics?: FinanceAccountEconomicsSection;
+  /** Slice 6a: the picked business's AI margin line (M3-FR-8). Present only with a business picked. */
+  accountMargin?: FinanceAccountMargin;
+}
+
+// ── Slice 6a (Money M-3): account economics and AI margin (§11E) ─────────────
+// "Paid us" is revenue after tax, net of refunds and disputes (BD-22), per
+// currency, never added across currencies (BD-12). AI cost is the cost we
+// charged (BD-18), USD by construction. The margin exists only in USD.
+
+export type FinanceAccountsSort = 'ai_cost' | 'margin' | 'paid' | 'credits';
+export type FinanceAccountsShow = 'all' | 'active' | 'negative';
+
+/** The Accounts tab's validated query (SA-Q44). `group` null = every group. */
+export interface FinanceAccountsTabQuery {
+  sort: FinanceAccountsSort;
+  group: string | null;
+  show: FinanceAccountsShow;
+}
+
+/** One currency of "Paid us, after tax". Every money key sits beside `currency`. */
+export interface FinanceEconomicsPaidLine {
+  /** Null = "Unknown currency". */
+  currency: string | null;
+  /** Plan after tax plus boosts after tax, in this currency only. Null = Unknown (a failed read, an inexact refund, an Unknown currency or an overflow). */
+  afterTax: number | null;
+  /** False: "At least" (a read reached its ceiling, or an amount on this line could not be read). */
+  exact: boolean;
+  /** The plan part of the same line. Null when the plan read failed. */
+  planAfterTax: number | null;
+  /** The boost part of the same line. Null when the boost read failed or the line holds an inexact refund. */
+  boostsAfterTax: number | null;
+}
+
+export interface FinanceEconomicsPaid {
+  /** One per normalised currency, sorted by code, the Unknown line last. */
+  lines: FinanceEconomicsPaidLine[];
+  /** A money read failed: an empty `lines` is then "Unknown", never "None". */
+  failed: boolean;
+}
+
+/** The charged AI cost (USD by construction). */
+export type FinanceEconomicsCost =
+  | { kind: 'figure'; costUsd: number; exact: boolean }
+  | { kind: 'unknown' }
+  /** The window is entirely before the charging cut-over: the cut-over notice, never 0 (AC-40). */
+  | { kind: 'before_cutover' };
+
+/** The AI margin in USD. Precedence: not_available > other_currency > unknown > figure (SA-W82). */
+export type FinanceMarginValue =
+  | { kind: 'figure'; marginUsd: number; noRevenue: boolean }
+  | { kind: 'not_available' }
+  | { kind: 'other_currency' }
+  | { kind: 'unknown' };
+
+/** The credits cell (Section 4's row for the account). */
+export type FinanceEconomicsCredits =
+  | { kind: 'position'; used: number; allowance: number; usedTenths: number }
+  | { kind: 'no_allowance' }
+  | { kind: 'unknown' }
+  | { kind: 'no_plan_row' };
+
+export interface FinanceEconomicsRow {
+  accountId: string;
+  /** A platform account is labelled, never named and never linked (SA-W85). */
+  kind: 'account' | 'platform';
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable' | 'platform';
+  /** Section 1's group; `unknown_held` for a money-only account; null when the plan walk is incomplete. */
+  group: FinanceGroupKey | null;
+  tierLabel: string | null;
+  /** BD-15: a paying Founding Partner grouped under its paid tier (the chip). */
+  foundingPartner: boolean;
+  /** SA-Q49: on the ledger or a money row, but no plan row ("No plan row"). */
+  noPlanRow: boolean;
+  paid: FinanceEconomicsPaid;
+  aiCost: FinanceEconomicsCost;
+  margin: FinanceMarginValue;
+  credits: FinanceEconomicsCredits;
+}
+
+/** Deleted accounts (`user_id` NULL): last, never named or linked, outside the cap (SA-W86). */
+export interface FinanceEconomicsDeletedRow {
+  paid: FinanceEconomicsPaid;
+  aiCost: FinanceEconomicsCost;
+  margin: FinanceMarginValue;
+}
+
+/** Every account together, before any filter or cap (E-47). */
+export interface FinanceEconomicsPlatformLine {
+  paid: FinanceEconomicsPaid;
+  aiCost: FinanceEconomicsCost;
+  margin: FinanceMarginValue;
+  /** Account rows covered (the Deleted row is extra). */
+  accountsCovered: number;
+  includesDeleted: boolean;
+}
+
+export interface FinanceAccountEconomicsSection {
+  status: FinanceSectionStatus;
+  coverage: FinanceCoverage;
+  query: FinanceAccountsTabQuery;
+  platform: FinanceEconomicsPlatformLine;
+  /** Sorted and filtered on the server, at most the cap (200). */
+  rows: FinanceEconomicsRow[];
+  /** Null when there is no Deleted row, or the filter hides it. */
+  deleted: FinanceEconomicsDeletedRow | null;
+  counts: { accounts: number; matching: number; shown: number; notListed: number };
+  /** The plan-group options for the filter, labelled by the server (no tier in the page). */
+  groupOptions: Array<{ key: FinanceGroupKey; tierLabel: string | null }>;
+  notes: {
+    /** The plan walk failed or was capped: only accounts with money or AI use are listed (M3-FR-2). */
+    walkIncomplete: boolean;
+    ledgerFailed: boolean;
+    boostsFailed: boolean;
+    plansFailed: boolean;
+    /** The credit positions pass failed or did not run. */
+    creditsUnavailable: boolean;
+    /** The S4-W-3 refund-timing note applies (the 4a condition). */
+    refundOrDispute: boolean;
+  };
+}
+
+/** The picked business's margin (M3-FR-8): the same functions as a tab row (AC-142). */
+export interface FinanceAccountMargin {
+  paid: FinanceEconomicsPaid;
+  aiCost: FinanceEconomicsCost;
+  margin: FinanceMarginValue;
 }
 
 // ── Section 2 block B, takings through the platform (slice 2a, S2-FR-1 to S2-FR-14) ──

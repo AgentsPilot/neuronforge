@@ -2,7 +2,7 @@
 
 /**
  * The Businesses drawer's summary strip (Admin Layout follow-ups LF-4a.2,
- * BD-1, BD-3, BD-12, BD-13): Plan, Credits left, Business OS AI spend and
+ * BD-1, BD-3, BD-12, BD-13): Plan, Credits left, Recorded AI cost and
  * Last sign-in, as one read-only `dl`.
  *
  * Presentational only. It sends no request: every value comes from the row or
@@ -77,7 +77,7 @@ export function BusinessSummaryStrip({ plan, credits, aiSpend, business, credits
             <CreditsLeftCell business={business} creditsLeft={creditsLeft} />
           )}
         </DrawerField>
-        <DrawerField label="Business OS AI, 30 days" testId="strip-ai-spend">
+        <DrawerField label="Recorded AI cost, 30 days" testId="strip-ai-spend">
           <Slot slot={aiSpend} />
         </DrawerField>
         <DrawerField label="Last sign-in" testId="strip-last-sign-in">

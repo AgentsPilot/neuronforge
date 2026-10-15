@@ -24,6 +24,29 @@
  *        at any depth, writes the URL, history or storage, and the URL hook is
  *        never reached. Its own fixture self-test proves the walker can see.
  * The storage and history rule below is unchanged in text and scope (SA-R-5).
+ *
+ * Amended by Admin Layout Follow-ups LF-3a (New invite in a drawer, Revoke in a
+ * dialog; one named amendment, SA-C10):
+ *   G-8  `escapes()` lets exactly `@/components/ui/dialog` into exactly
+ *        `components/RevokeDialog.tsx`, the screen's one dialog. Every other
+ *        file, and every other `@/components/ui/` specifier (`button`, `sheet`,
+ *        look-alikes), is still refused. Negative controls and a liveness check
+ *        below. The drawer arrives through the shared folder's `AdminDrawer`;
+ *   G-7  the positive control gains `components/ui/sheet.tsx` and
+ *        `components/ui/dialog.tsx`, so the walk is proven to reach both and the
+ *        per-file URL and storage ban runs over them.
+ * The exact file list is unchanged: no file was added or removed.
+ *
+ * Amended by Admin Layout Follow-ups LF-7 (shared `AdminConfirmDialog`, SA
+ * approval of the LF-7 workplan):
+ *   G-8  the exception line is removed from `escapes()`: `RevokeDialog.tsx` now
+ *        renders the shared dialog, so every file, that one included, is refused
+ *        `@/components/ui/dialog` and its look-alikes, and no file names
+ *        `@/components/ui/`. Liveness: `RevokeDialog.tsx` imports the shared
+ *        dialog, so the refusal is not vacuous;
+ *   G-7  the positive control gains `AdminConfirmDialog.tsx`; the primitive is
+ *        still reached, now through it.
+ * The exact file list is unchanged.
  */
 
 import * as fs from 'fs';
@@ -58,6 +81,11 @@ const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), rela
 function codeOf(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
+
+/** LF-7 G-8: the screen's dialog file, the primitive no file may import, and the shared dialog it uses instead. */
+const DIALOG_FILE = `${ROOT}/components/RevokeDialog.tsx`;
+const DIALOG_PRIMITIVE = '@/components/ui/dialog';
+const SHARED_CONFIRM = '@/app/admin/components/layout/AdminConfirmDialog';
 
 /** Packages this screen may use. Anything else outside the folder is refused. */
 const ALLOWED_PACKAGES = ['react', 'lucide-react'];
@@ -118,6 +146,30 @@ describe('the screen holds no server module and no rule of its own', () => {
     // …and the screen's own files and allowed packages are not flagged.
     expect(escapes(page, './components/InviteList')).toBe(false);
     expect(escapes(page, 'react')).toBe(false);
+  });
+
+  it('G-8 (LF-7): every file, RevokeDialog.tsx included, is refused the dialog primitive and its look-alikes', () => {
+    expect(allFiles).toContain(DIALOG_FILE);
+    for (const file of allFiles) {
+      for (const specifier of [
+        DIALOG_PRIMITIVE,
+        '@/components/ui/dialogX',
+        '@/components/ui/dialog/index',
+        '@/components/ui/button',
+        '@/components/ui/sheet',
+        '../../../../components/ui/dialog',
+      ]) {
+        expect({ file, specifier, escapes: escapes(file, specifier) }).toEqual({ file, specifier, escapes: true });
+      }
+    }
+  });
+
+  it('G-8 liveness (LF-7): RevokeDialog.tsx imports the shared dialog, and no file names @/components/ui/', () => {
+    // The G-7 extractor, defined below (it runs after the module has loaded).
+    expect(valueSpecifiersOf(codeOf(read(DIALOG_FILE)))).toContain(SHARED_CONFIRM);
+    for (const relative of allFiles) {
+      expect({ file: relative, ui: codeOf(read(relative)).includes('@/components/ui/') }).toEqual({ file: relative, ui: false });
+    }
   });
 
   it.each(allFiles)('%s never touches LanguageContext (C-8)', (relative) => {
@@ -315,6 +367,11 @@ describe('L-6 G-7: nothing an Invites file pulls in, at any depth, writes the UR
       'app/admin/components/layout/adminWindow.ts',
       'app/admin/components/layout/readJsonBody.ts',
       'app/admin/components/adminWindowPresets.ts',
+      // LF-3a (SA-C10): the drawer's sheet and the Revoke dialog's primitive.
+      'components/ui/sheet.tsx',
+      'components/ui/dialog.tsx',
+      // LF-7: the shared dialog Revoke renders, through which the primitive is reached.
+      'app/admin/components/layout/AdminConfirmDialog.tsx',
     ]) {
       expect(reached.has(file)).toBe(true);
     }

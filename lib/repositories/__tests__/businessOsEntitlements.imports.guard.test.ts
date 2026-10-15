@@ -114,9 +114,10 @@ const ALLOWED = new Set(
     // (SA R-8). An admin route, gated by `requireAdmin`.
     'app/api/admin/business-os/accounts/[accountId]/summary/route.ts',
     'app/api/admin/business-os/accounts/[accountId]/summary/__tests__/route.test.ts',
-    // The redemption's production wiring. It may call exactly TWO plan-state
-    // writes, `provisionFromInvite` (the champion finalise) and, from Slice 5b,
-    // `provisionFromFriendInvite` (the friend finalise, T-19), each after
+    // The redemption's production wiring. It may call exactly THREE plan-state
+    // writes, `provisionFromInvite` (the champion finalise), from Slice 5b
+    // `provisionFromFriendInvite` (the friend finalise, T-19) and, from plan
+    // payments P-9.1, `provisionFromAdminPaidInvite` (SA-P9), each after
     // mailbox proof, the invite claim and the account creation; the test below
     // pins that it calls no other write method (F-8). Slice 5b also hands it the
     // plan repository as the friend issuer's READ-ONLY plan reader
@@ -169,6 +170,19 @@ const ALLOWED = new Set(
     // An admin route, gated by `requireAdmin`. Its test replaces the repository with a fake.
     'app/api/admin/business-os/test/take-credits/route.ts',
     'app/api/admin/business-os/test/take-credits/__tests__/route.test.ts',
+    // ── Plan payments P-6a.1, 2026-10-15 — TEST MODE ONLY, the plan test clock ──
+    // The route passes the plan repository to the tenant check, exactly as the
+    // take-credits route does: READ ONLY through `isBusinessOsTenant`. An admin
+    // route, gated by `requireAdmin`. The use case reads the target's plan row
+    // (`findEntitlementInputs`) for the `status` action's lifecycle at the
+    // clock's time, and nothing else; listed in NO_STATE_WRITE_REFERRERS below.
+    // The route test replaces the repository with a fake.
+    'app/api/admin/business-os/test/plan-test-clock/route.ts',
+    'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
+    'lib/business-os/billing/planTestClock.ts',
+    // The webhook router-placement guard names the repository's import path as a
+    // string in its billing allow-list for planTestClock.ts — a test, no call.
+    'app/api/stripe/webhook/__tests__/routerPlacement.guard.test.ts',
     // ── Credit deduction slice 8a, 2026-10-03 — the admin "Credits left" column ─
     // READ ONLY, `findPeriodAnchorsBatch` and nothing else (SA SQ-43). The one
     // file that wires the plan repository for the admin Businesses list's
@@ -228,11 +242,13 @@ const WRITE_METHODS = [
   'provisionFromInvite',
   // Invite-only signup Slice 5b (T-19): the friend finalise writes a no-basis plan row.
   'provisionFromFriendInvite',
+  // Plan payments P-9.1 (SA-P9): the admin Paid finalise writes a no-basis plan row.
+  'provisionFromAdminPaidInvite',
 ];
 
 /** The one invite-redemption file allowed to name the plan repository, and the writes it may call. */
 const INVITE_REDEMPTION_WIRING = 'lib/business-os/invites/redemptionDeps.ts';
-const INVITE_REDEMPTION_WRITES = ['provisionFromInvite', 'provisionFromFriendInvite'];
+const INVITE_REDEMPTION_WRITES = ['provisionFromInvite', 'provisionFromFriendInvite', 'provisionFromAdminPaidInvite'];
 
 /**
  * Allowed files that are NOT the repository layer and NOT an admin route.
@@ -273,6 +289,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/finance/financeHealth.ts',
   // Finance 1a: the classifier — the plan row TYPE only, pure.
   'lib/business-os/finance/planGroups.ts',
+  // Plan payments P-6a.1: the TEST MODE ONLY test clock — READ ONLY, `findEntitlementInputs` and nothing else.
+  'lib/business-os/billing/planTestClock.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -378,7 +396,7 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect(misclassified).toEqual([]);
   });
 
-  it('Slices 1b/5b (F-8, T-19): the invite redemption wiring calls the two finalise writes and NO other plan-state write', () => {
+  it('Slices 1b/5b and P-9.1 (F-8, T-19, SA-P9): the invite redemption wiring calls the three finalise writes and NO other plan-state write', () => {
     const source = readFileSync(join(ROOT, ...INVITE_REDEMPTION_WIRING.split('/')), 'utf8');
     for (const write of INVITE_REDEMPTION_WRITES) {
       expect(source).toMatch(new RegExp(`\\.${write}\\s*\\(`));

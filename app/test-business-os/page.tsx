@@ -40,6 +40,7 @@ import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
 import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
 import { PlanCheckoutPanel } from '@/components/test-business-os/PlanCheckoutPanel';
+import { PlanTestClockPanel } from '@/components/test-business-os/PlanTestClockPanel';
 import { TestCreditsPanel } from '@/components/test-business-os/TestCreditsPanel';
 import { harnessButton } from '@/components/test-business-os/harnessButton';
 
@@ -466,6 +467,11 @@ export default function TestBusinessOSPage() {
         <div style={panelStyle}>
           <h2 style={{ marginTop: 0 }}>Billing — Plan checkout (test)</h2>
           <PlanCheckoutPanel onLog={addDebugLog} onResponse={setLastResponse} />
+          {/* Plan payments P-6a.1 (workplan §5.8): TEST MODE ONLY, admin only.
+              Attach puts an account on a Stripe test clock before it buys
+              above; Status reads the account's state at the clock's time. */}
+          <h3 style={{ marginTop: '24px' }}>Test clock (test mode only)</h3>
+          <PlanTestClockPanel sessionUserId={user?.id ?? null} onLog={addDebugLog} onResponse={setLastResponse} />
         </div>
       )}
 

@@ -7,10 +7,11 @@ import 'server-only';
  *
  * Kept out of the routes so both build the SAME dependencies, and so the only
  * application file that names the plan repository is this one (it is listed,
- * with its reason, in the entitlements imports guard: it may call exactly two
- * plan-state writes, `provisionFromInvite` and, from Slice 5b,
- * `provisionFromFriendInvite`; and one read, `findEntitlementInputs`, for the
- * friend issuer's in-force champion re-check).
+ * with its reason, in the entitlements imports guard: it may call exactly three
+ * plan-state writes, `provisionFromInvite`, from Slice 5b
+ * `provisionFromFriendInvite` and, from plan payments P-9.1,
+ * `provisionFromAdminPaidInvite`; and one read, `findEntitlementInputs`, for
+ * the friend issuer's in-force champion re-check).
  *
  * The code email, and from Slice 5b the "you already have an account" notice
  * (F5b-3, SA R-5), are sent from the platform's system sender (no `from`, no
@@ -40,15 +41,13 @@ import { platformSenderAddress, sendEmail } from '@/lib/notifications/emailTrans
 import { authAccountRepository } from '@/lib/repositories/AuthAccountRepository';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsInviteRepository } from '@/lib/repositories/BusinessOsInviteRepository';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
-import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
-import { AdminAccessService } from '@/lib/services/AdminAccessService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
-import { marketingUrl, platformUrl } from '@/lib/utils/origins';
+import { marketingUrl } from '@/lib/utils/origins';
 
 import { verifyGoogleIdToken } from './googleIdToken';
 import type { RedemptionDeps, RedemptionLanding, RedemptionLogger, RedemptionRefusal } from './inviteRedemption';
 import { notifyInviter, type InviterNotificationDeps } from './inviterNotification';
+import { buildInviterNotificationDeps } from './inviterNotificationDeps';
 import { AWAITING_PAYMENT_PATH } from './paymentHold';
 import { INVITE_SIGNUP_CODE_POLICY } from './signupCodePolicy';
 
@@ -95,15 +94,13 @@ export function buildRedemptionDeps(context: {
    * visitor. Each is keyed only on the issuer id of the row the 256-bit token
    * matched (`inviteRedemption.ts` passes nothing else), and the two language
    * reads keep their `.eq('user_id', id)` (tenant-isolation-guard; SA C-2).
+   *
+   * P-5b.1 (SA C-10): the lookups are built by the shared
+   * `buildInviterNotificationDeps` (`inviterNotificationDeps.ts`, the same
+   * comment there), also used by N-2. The audit below stays this caller's: it
+   * queues, and the signup route flushes it.
    */
-  const inviterNotificationDeps: InviterNotificationDeps = {
-    findUserIdentity: (id) => authAccountRepository.findUserIdentity(id),
-    isActiveAdmin: (id) => AdminAccessService.getInstance().isAdminById(id),
-    findProfileLanguage: (id) => businessProfileRepository.findLanguage(id),
-    findPreferredLanguage: (id) => userPreferencesRepository.findPreferredLanguage(id),
-    senderAddress: () => platformSenderAddress(),
-    sendEmail,
-    platformUrl,
+  const inviterNotificationDeps: InviterNotificationDeps = buildInviterNotificationDeps({
     audit: async (entry) => {
       // SA Q-4: a system event. No owner, so the inviter's id never reaches
       // the invitee's audit view (nor the other way round); it is in details.
@@ -120,13 +117,15 @@ export function buildRedemptionDeps(context: {
         .catch((err) => context.logger.error({ err }, 'Audit failed (non-blocking)'));
     },
     logger: context.logger,
-  };
+  });
 
   return {
     invites: businessOsInviteRepository,
     accounts: authAccountRepository,
     finalise: (input) => businessOsAccountPlanRepository.provisionFromInvite(input),
     finaliseFriend: (input) => businessOsAccountPlanRepository.provisionFromFriendInvite(input),
+    // P-9.1 (SA-P9): the admin Paid finalise, a no-basis plan row and an L1 lineage row.
+    finaliseAdminPaid: (input) => businessOsAccountPlanRepository.provisionFromAdminPaidInvite(input),
     // Read-only: the friend issuer's plan row (the TypeScript in-force re-check,
     // T-19). Only the one read method is handed over (SA N-3).
     issuerPlans: { findEntitlementInputs: (accountId) => businessOsAccountPlanRepository.findEntitlementInputs(accountId) },

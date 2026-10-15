@@ -69,6 +69,12 @@
  *
  * Amended by L-12: Admin users joins the registry; no rule change and no
  * shared source change.
+ *
+ * Amended by LF-7 (Admin Layout Follow-ups): `AdminConfirmDialog.tsx`, the
+ * shared confirmation dialog, joins the expected files. No rule change: its
+ * imports (`react`, `lucide-react`, `@/components/ui/dialog` and siblings
+ * through `./`) were already on the S-3 allow-list, and it never fetches. The
+ * Messages registry entry drops `MessagesConfirmDialog.tsx`, deleted by LF-7.
  */
 
 import * as fs from 'fs';
@@ -103,6 +109,7 @@ const TSX_SOURCES = SOURCE_FILES.filter((f) => f.endsWith('.tsx'));
 
 const EXPECTED_SOURCES = [
   'AdminBusinessPicker.tsx',
+  'AdminConfirmDialog.tsx',
   'AdminDrawer.tsx',
   'AdminFilterBar.tsx',
   'AdminPageHeader.tsx',
@@ -500,7 +507,10 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // The Jobs guard's CLIENT_FILES (Admin Layout Standard L-1b).
+    // The Jobs guard's CLIENT_FILES (Admin Layout Standard L-1b), except
+    // `ReconcileTopUpsDialog.tsx` (follow-ups LF-4c), deliberately NOT listed:
+    // a money dialog moved from Businesses that still reads its route with
+    // `.json(` (L-4b SA Q-5, SA-C12 precedent). The Jobs guard pins its request.
     page: '/admin/jobs-queues (Scheduled jobs & queues)',
     files: [
       'app/admin/jobs-queues/page.tsx',
@@ -512,11 +522,9 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // G-6. The original `BusinessAccountPicker.tsx` is deliberately not listed:
-    // it is unmigrated (it still calls `.json(`), and since L-1e it is no longer
-    // on this page (the shared `AdminBusinessPicker` replaced it). It stays in
-    // the folder for Finance only (Activity left it in L-8a); the finance
-    // adoption slice deletes it (SA M-2 on L-8).
+    // G-6. The original `BusinessAccountPicker.tsx` was deleted in Money M-1
+    // (finance health §11D, M1-FR-2): Finance moved to the shared
+    // `AdminBusinessPicker`, as Audit trail (L-1e) and Activity (L-8a) had.
     page: '/admin/audit-trail (Audit trail)',
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
@@ -554,10 +562,11 @@ const MIGRATED_PAGES = [
     // unchanged, plus the strip, the folds and the "All products" block, which
     // read nothing. The credit, top-up and delete components are deliberately
     // NOT listed (L-4b SA Q-5, the G-6 precedent): CreditsBlock,
-    // CreditFormDialog, BoostBlock, BoostCapDialog, BoostReconcileDialog and
-    // DeleteBusinessDialog each still read their own route with `.json(`, and
-    // their error copy is pinned by their own render and contract tests.
-    // Converting them is money work, not a layout change (LF-4b, LF-4c).
+    // CreditFormDialog, BoostBlock, BoostCapDialog and DeleteBusinessDialog
+    // each still read their own route with `.json(`, and their error copy is
+    // pinned by their own render and contract tests. Converting them is money
+    // work, not a layout change (LF-4b). The reconcile dialog left this folder
+    // in LF-4c (now `app/admin/components/jobs/ReconcileTopUpsDialog.tsx`).
     page: '/admin/users (Businesses)',
     files: [
       'app/admin/users/page.tsx',
@@ -571,6 +580,8 @@ const MIGRATED_PAGES = [
       'app/admin/users/components/BusinessSummaryStrip.tsx',
       'app/admin/users/components/drawerFolds.tsx',
       'app/admin/users/components/AllProductsUsage.tsx',
+      // Follow-ups LF-4d: the section and part boxes (BD-16); reads nothing.
+      'app/admin/users/components/DrawerBox.tsx',
     ],
   },
   {
@@ -618,8 +629,6 @@ const MIGRATED_PAGES = [
       'app/admin/messages/messagesFormat.ts',
       'app/admin/messages/components/MessagesTable.tsx',
       'app/admin/messages/components/MessageDetail.tsx',
-      // LF-3b: the Delete and Mark All Read admin dialogs (OR-3).
-      'app/admin/messages/components/MessagesConfirmDialog.tsx',
     ],
   },
   {

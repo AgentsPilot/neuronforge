@@ -453,9 +453,13 @@ describe('C: with the seeded rows, the resolver returns the same (FR-16, AC-2)',
     mockGetByKeys.mockResolvedValue(seededRows());
     const resolved = await resolveAll();
     for (const [area, callName] of ALL_CALLS) {
+      // Images included: the seeded row names gpt-image-1, which the
+      // guardrail refuses since its prices were removed (2026-10-14, Q10), so
+      // the call resolves to the code default like every other area.
+      const params = TODAY[area][callName].params;
       expect({ call: `${area}/${callName}`, params: resolved[`${area}/${callName}`] }).toEqual({
         call: `${area}/${callName}`,
-        params: TODAY[area][callName].params,
+        params,
       });
     }
   });

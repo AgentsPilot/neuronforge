@@ -255,10 +255,19 @@ describe('the migration file (T1-9, FR-16)', () => {
 });
 
 describe('the seeded rows reproduce today exactly (T1-9, AC-2)', () => {
-  it('is accepted by the resolver guardrails, area by area', async () => {
+  it('is accepted by the resolver guardrails, area by area (images: refused, Q10)', async () => {
     for (const area of BOS_LLM_AREAS) {
       // eslint-disable-next-line no-await-in-loop
       const validation = await validateAreaRow(area, SEEDED_ROWS[area]);
+      if (area === 'images') {
+        // The seed wrote gpt-image-1. Its prices were removed on 2026-10-14
+        // (Q10), after prod moved to the successor, so the guardrail now
+        // refuses that model. Only the model is refused; nothing else.
+        expect(validation.rejected.map((issue) => ({ field: issue.field, reason: issue.reason }))).toEqual([
+          { field: 'model', reason: 'image_price_missing' },
+        ]);
+        continue;
+      }
       expect({ area, rejected: validation.rejected }).toEqual({ area, rejected: [] });
     }
   });
@@ -268,6 +277,9 @@ describe('the seeded rows reproduce today exactly (T1-9, AC-2)', () => {
       for (const callName of bosLlmSettingsCallNames(area)) {
         // eslint-disable-next-line no-await-in-loop
         const resolved = await resolveBosLlmSettings(area as never, callName as never);
+        // Images included: the seed's gpt-image-1 is refused since its prices
+        // were removed (2026-10-14, Q10), so the call falls back to the code
+        // default, the same as every other area.
         expect({ area, callName, resolved }).toEqual({
           area,
           callName,

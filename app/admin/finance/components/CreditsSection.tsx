@@ -68,8 +68,11 @@ function nameOf(row: FinanceCreditRow): string {
   }
 }
 
-/** Tenths, already floored by the server: 1499 → "149.9%"; a non-zero figure under 0.1% → "<0.1%". */
-function usedPercent(row: FinanceCreditRow): string {
+/**
+ * Tenths, already floored by the server: 1499 → "149.9%"; a non-zero figure under 0.1% → "<0.1%".
+ * Exported for the Money M-1 account summary, so the rule lives in one place.
+ */
+export function usedPercent(row: FinanceCreditRow): string {
   if (row.usedTenths === null) return CREDITS_UNKNOWN;
   if (row.usedTenths === 0 && (row.used ?? 0) > 0) return CREDITS_LESS_THAN_TENTH;
   return `${(row.usedTenths / 10).toFixed(1)}%`;

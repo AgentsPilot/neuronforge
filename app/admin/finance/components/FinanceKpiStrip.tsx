@@ -5,13 +5,33 @@
  * shows its state in TEXT as well as colour, through Health's `STATUS_STYLES`
  * labels as they are (SA-W7, AC-21), and its reason line. The green style comes only from
  * `STATUS_STYLES`, and only for a tile the server proved clear.
+ *
+ * Slice 4a (S4-FR-7, SA-W47, SA-WR-34): K-5 shows the boost net for the filter
+ * window from `tile.money`, printed ONLY through `formatMoney` (one currency) or
+ * a copy string (several currencies, unknown); never a bare number, never a
+ * sum of two currencies, never "At least". Its caption names the window.
  */
 
 import { cn } from '@/lib/utils';
 import { STATUS_STYLES } from '@/app/admin/components/health/HealthTile';
-import type { FinancePayload, FinanceTile } from '@/lib/business-os/finance/financeTypes';
-import { k2Subtitle, TILE_LABELS, TILE_PREVIOUS } from '../financeCopy';
-import { atLeast, formatCount, formatCredits, formatUsd } from '../financeFormat';
+import type { FinancePayload, FinanceTile, FinanceTileMoney } from '@/lib/business-os/finance/financeTypes';
+import { k2Subtitle, k5Caption, K5_UNKNOWN, k5SeveralCurrencies, TILE_LABELS, TILE_PREVIOUS } from '../financeCopy';
+import { atLeast, formatCount, formatCredits, formatMoney, formatUsd } from '../financeFormat';
+
+/** K-5's value: "USD 10.00", "N currencies, see Our revenue", "Unknown", or nothing (no data yet). */
+function k5Value(money: FinanceTileMoney | undefined): string | null {
+  if (!money) return null;
+  switch (money.kind) {
+    case 'one':
+      return formatMoney(money.net, money.currency);
+    case 'several':
+      return k5SeveralCurrencies(money.currencies);
+    case 'unknown':
+      return K5_UNKNOWN;
+    default:
+      return null;
+  }
+}
 
 function Tile({ tile, label, sub, value, extra }: { tile: FinanceTile; label: string; sub?: string; value: string | null; extra?: string | null }) {
   const style = STATUS_STYLES[tile.status];
@@ -36,10 +56,13 @@ function Tile({ tile, label, sub, value, extra }: { tile: FinanceTile; label: st
 export function FinanceKpiStrip({
   tiles,
   farOverAllowancePercent,
+  windowLabel,
 }: {
   tiles: FinancePayload['tiles'];
   /** K-2's line, from the payload (data, SA-W10). */
   farOverAllowancePercent: number | null;
+  /** The filter window, for K-5's caption only (SA-Q25, SA-W52). */
+  windowLabel: string;
 }) {
   const { k1, k2, k3, k4, k5 } = tiles;
   return (
@@ -60,8 +83,8 @@ export function FinanceKpiStrip({
       <Tile tile={k3} label={TILE_LABELS.k3} value={k3.value ? atLeast(formatCount(k3.value.value), k3.value.exact) : null} />
       {/* K-4 is in credits, never money: no currency (§8.4). */}
       <Tile tile={k4} label={TILE_LABELS.k4} sub={TILE_LABELS.k4Sub} value={k4.value ? formatCredits(k4.value.value) : null} />
-      {/* K-5 never shows a figure in slice 1: no $0 (S1-FR-25). */}
-      <Tile tile={k5} label={TILE_LABELS.k5} value={null} />
+      {/* K-5: the boost net for the window, from `money` only (SA-W47); no value when there is no data yet. */}
+      <Tile tile={k5} label={TILE_LABELS.k5} sub={k5Caption(windowLabel)} value={k5Value(k5.money)} />
     </div>
   );
 }

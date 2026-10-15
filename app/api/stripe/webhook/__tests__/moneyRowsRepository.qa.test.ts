@@ -19,6 +19,12 @@
  *
  * Workplan: docs/workplans/BUSINESS_OS_WEBHOOK_CONNECT_REPOSITORIES_WORKPLAN.md
  * (QA Testing Report, PR 3). No snapshots, no database, no Stripe.
+ *
+ * The refund sites (E) were moved from `charge.refunded` / `upsertFromStripe`
+ * onto `refund.*` and the three scoped ledger methods by the Stripe Connect
+ * refund fix (docs/workplans/STRIPE_CONNECT_REFUND_WEBHOOK_WORKPLAN.md). The
+ * refund path now proves the owner with `accountOwns`, so its tenant case
+ * asserts a refusal instead of FU-3's "owner copied from the payment row".
  */
 
 import fs from 'fs';
@@ -168,7 +174,12 @@ const planRow = (over: Record<string, unknown> = {}) => ({
 const disputeRow = (over: Record<string, unknown> = {}) => ({
   id: 'tx-1', user_id: 'owner-a', status: 'succeeded', amount: 150, currency: 'USD', contact_id: null, metadata: null, ...over,
 });
-const refundRow = { id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-1', currency: 'USD' };
+const refundRow = { id: 'tx-1', user_id: 'owner-a', invoice_id: 'pinv-1', currency: 'USD', stripe_connect_account_id: 'acct_owner_a' };
+/** The app's ledger row for `re_connect_1`, as `findForStripeRefund` returns it. */
+const ledgerRow = {
+  id: 'a1a1a1a1-0001-4000-8000-00000000a101', status: 'pending', processor_refund_id: 're_connect_1', source: 'app',
+  processor_type: 'stripe', amount_minor: 2500, currency: 'USD', stripe_connect_account_id: 'acct_owner_a',
+};
 const unattached = ok({ id: 'tx-by-intent', invoice_id: null });
 
 type Fixture =
@@ -177,7 +188,8 @@ type Fixture =
   | 'invoice-paid'
   | 'checkout-completed-invoice'
   | 'charge-dispute-created'
-  | 'charge-refunded';
+  | 'refund-updated-succeeded'
+  | 'refund-updated-pending-to-succeeded';
 type Patch = (ev: { type: string; account?: string; data: { object: Record<string, unknown> } }) => void;
 
 interface Run {
@@ -237,8 +249,10 @@ type Site = [string, Fixture, string, Record<string, Rule>, (string | null)?, Pa
 const SITES: Site[] = [
   ['D1 findFirstByStripeReference (dispute)', 'charge-dispute-created', `${PT}:select`, {}],
   ['D2 recordDisputeState', 'charge-dispute-created', `${PT}:update`, { [`${PT}:select`]: ok([disputeRow()]) }],
-  ['E1 findFirstByStripeReference (refund)', 'charge-refunded', `${PT}:select`, {}],
-  ['E2 upsertFromStripe', 'charge-refunded', `${PR}:upsert`, { [`${PT}:select`]: ok([refundRow]) }],
+  ['E1 findFirstByStripeReference (refund)', 'refund-updated-succeeded', `${PT}:select`, {}],
+  ['E2 findForStripeRefund', 'refund-updated-succeeded', `${PR}:select`, { [`${PT}:select`]: ok([refundRow]) }],
+  ['E3 insertFromStripe', 'refund-updated-succeeded', `${PR}:insert`, { [`${PT}:select`]: ok([refundRow]) }],
+  ['E4 applyStripeRefundState', 'refund-updated-pending-to-succeeded', `${PR}:update`, { [`${PT}:select`]: ok([refundRow]), [`${PR}:select`]: ok(ledgerRow) }],
   ['F1 findByPaymentIntentId (id)', 'payment-intent-succeeded', `${PT}:select`, {}],
   ['F2 insertFromWebhook (standalone)', 'payment-intent-succeeded', `${PT}:insert`, {}],
   ['G2 insertFromWebhookReturningId (plan period)', 'invoice-paid-plan-period', `${PT}:insert`, { [`${PLANS}:select`]: ok(planRow()) }, 'pi_plan_1'],
@@ -319,11 +333,20 @@ describe('QA CF-5 PR 3: returned errors keep their old handling', () => {
     expect((period?.chain[0][1] as Record<string, unknown>).transaction_id).toBe('tx-plan-1');
   });
 
-  it('E2: the first refund error stops the loop and fails the delivery with its message', async () => {
-    const r = await run('charge-refunded', { rules: { [`${PT}:select`]: ok([refundRow]), [`${PR}:upsert:1`]: dbError('ref fail') } });
+  it('E3: a ledger insert error fails the delivery with its message, and the booking is not synced', async () => {
+    const r = await run('refund-updated-succeeded', { rules: { [`${PT}:select`]: ok([refundRow]), [`${PR}:insert`]: dbError('ref fail') } });
     expect(r.status).toBe(500);
-    expect(claimRelease()).toEqual([{ status: 'failed', failure_message: 'Failed to record refund re_1: ref fail' }]);
-    expect(mockOps.filter((o) => o.table === PR)).toHaveLength(1);
+    expect(claimRelease()).toEqual([{ status: 'failed', failure_message: 'Failed to record refund re_dashboard_1: ref fail' }]);
+    expect(mockOps.filter((o) => o.table === PR).map((o) => o.op)).toEqual(['select', 'insert']);
+    expect(mockCalls).toEqual([]);
+  });
+
+  it('E4: a compare-and-set update error fails the delivery with its message', async () => {
+    const r = await run('refund-updated-pending-to-succeeded', {
+      rules: { [`${PT}:select`]: ok([refundRow]), [`${PR}:select`]: ok(ledgerRow), [`${PR}:update`]: dbError('upd fail') },
+    });
+    expect(r.status).toBe(500);
+    expect(claimRelease()).toEqual([{ status: 'failed', failure_message: 'Failed to update refund re_connect_1: upd fail' }]);
     expect(mockCalls).toEqual([]);
   });
 
@@ -391,29 +414,43 @@ describe('QA CF-5 PR 3: tenant isolation on every owner-checked money write', ()
     expect(inserts()).toEqual([]);
   });
 
-  it('E2 (FU-3, unchanged): the refund row copies the owner from the payment row, not from the event account', async () => {
-    await run('charge-refunded', { patch: (ev) => { ev.account = 'acct_foreign'; }, rules: { [`${PT}:select`]: ok([refundRow]) } });
-    const rows = mockOps.filter((o) => o.table === PR).map((o) => o.chain[0][1] as Record<string, unknown>);
-    expect(rows.map((x) => [x.user_id, x.transaction_id, x.invoice_id])).toEqual([
-      ['owner-a', 'tx-1', 'pinv-1'],
-      ['owner-a', 'tx-1', 'pinv-1'],
+  it('E (A-5, replaces FU-3): a refund from an account that does not own the payment: the ledger is neither read nor written', async () => {
+    const r = await run('refund-updated-succeeded', { patch: (ev) => { ev.account = 'acct_foreign'; }, rules: { [`${PT}:select`]: ok([refundRow]) } });
+    expect(r.status).toBe(200);
+    expect(mockOps.filter((o) => o.table === PR)).toEqual([]);
+    expect(claimRelease()).toEqual([expect.objectContaining({ status: 'completed' })]);
+    expect(mockCalls).toEqual([]);
+  });
+
+  it('E: an unmapped account records nothing either', async () => {
+    const r = await run('refund-updated-succeeded', { owners: {}, rules: { [`${PT}:select`]: ok([refundRow]) } });
+    expect(r.status).toBe(200);
+    expect(mockOps.filter((o) => o.table === PR)).toEqual([]);
+    expect(mockCalls).toEqual([]);
+  });
+
+  it('E: the ledger row carries the proved owner, payment and invoice from the payment row, and the event account', async () => {
+    await run('refund-updated-succeeded', { rules: { [`${PT}:select`]: ok([refundRow]) } });
+    const rows = mockOps.filter((o) => o.table === PR && o.op === 'insert').map((o) => o.chain[0][1] as Record<string, unknown>);
+    expect(rows.map((x) => [x.user_id, x.transaction_id, x.invoice_id, x.stripe_connect_account_id])).toEqual([
+      ['owner-a', 'tx-1', 'pinv-1', 'acct_owner_a'],
     ]);
   });
 });
 
 describe('QA CF-5 PR 3: value rules the harness fixtures do not reach', () => {
-  it('E2: a zero-decimal refund is recorded in major units (no / 100), falling back to the payment currency', async () => {
-    await run('charge-refunded', {
+  it('E3: a zero-decimal refund is recorded in major units (no / 100), falling back to the payment currency; plain insert', async () => {
+    await run('refund-updated-succeeded', {
       patch: (ev) => {
-        const refunds = (ev.data.object.refunds as { data: Array<Record<string, unknown>> }).data;
-        refunds[0].currency = null;
-        refunds[0].amount = 5000;
+        ev.data.object.currency = null;
+        ev.data.object.amount = 5000;
       },
       rules: { [`${PT}:select`]: ok([{ ...refundRow, currency: 'JPY' }]) },
     });
-    const first = mockOps.find((o) => o.table === PR)?.chain;
-    expect(first?.[0][1]).toMatchObject({ amount: 5000, amount_minor: 5000, currency: 'JPY', status: 'succeeded' });
-    expect(first?.[0][2]).toEqual({ onConflict: 'processor_refund_id' });
+    const insert = mockOps.find((o) => o.table === PR && o.op === 'insert')?.chain;
+    expect(insert?.[0][1]).toMatchObject({ amount: 5000, amount_minor: 5000, currency: 'JPY', status: 'succeeded' });
+    // No ON CONFLICT and nothing read back (SA-6).
+    expect(insert).toEqual([['insert', expect.any(Object)]]);
   });
 
   it.each([

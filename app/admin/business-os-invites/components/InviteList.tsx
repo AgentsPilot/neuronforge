@@ -20,11 +20,24 @@
  * "(UTC)" on the date headers, `scope="col"`, a named table. State and email
  * status are `StatusChip`s (tones ruled by SA L-6 Q-3 / Q-4: Revoked is a
  * deliberate admin act, so neutral; "Sent (not tracked)" is not a proven
- * outcome, so info; Unknown keeps its amber prompt to check, so warn). The
- * revoke form stays inline under its row (D-8): no drawer (SA Q-7).
+ * outcome, so info; Unknown keeps its amber prompt to check, so warn).
+ *
+ * ── Admin Layout Follow-ups LF-3a (OR-3, F-110) ─────────────────────────────
+ * The row keeps its Revoke button; the question itself is the page's Revoke
+ * dialog, which outlives the button (the button leaves when the row becomes
+ * Revoked). Each button's accessible name names its invite: the email and the
+ * created time to the second, in UTC (SA C1), because the same email can hold
+ * two revocable invites created the same day. The visible word stays "Revoke",
+ * and the name starts with it (WCAG 2.5.3).
+ *
+ * ── Plan payments P-5b.2 (FR-25, SA Q-7, Q-8, Q-12) ─────────────────────────
+ * An accepted row shows its payment under the State chip, as decided on the
+ * server: "Paid" with the date (UTC) and the amount paid, tax included, in USD;
+ * "Test payment" beside it for a test-mode payment; "Signed up, not paid" for a
+ * held account; "Paid, record not found" when the money history has no
+ * matching row; "Payment unknown" when a read failed. English, like every
+ * admin page. Nothing is shown when the server sends no payment.
  */
-
-import { useState } from 'react';
 
 import { AdminEmpty } from '@/app/admin/components/layout/AdminStates';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
@@ -37,12 +50,12 @@ import {
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 
-import type { InviteEmailStatus, InviteRow, InviteState } from '../types';
-import { RevokeDialog } from './RevokeDialog';
+import type { InviteEmailStatus, InvitePayment, InviteRow, InviteState } from '../types';
 
 interface Props {
   invites: InviteRow[];
-  onRevoked: (invite: InviteRow) => void;
+  /** Opens the page's Revoke dialog for this invite; `button` is where focus goes back. */
+  onRevoke: (invite: InviteRow, button: HTMLButtonElement) => void;
   /** Slice 1c: "no invites yet" and "nothing matches" are different answers. */
   emptyMessage?: string;
   /** Set only while a filter is on: the empty state offers "Clear filters" (§5.10). */
@@ -77,11 +90,69 @@ function day(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—';
 }
 
+/**
+ * The created time to the second, in UTC, for the Revoke button's name (F-110,
+ * SA C1). The same assumption as `day()`: the server sends UTC ISO strings.
+ */
+function secondUtc(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC`;
+}
+
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
-export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.', onClearFilters }: Props) {
-  const [revoking, setRevoking] = useState<string | null>(null);
+/** P-5b.2: minor units of USD as "$79.00 USD". The server only ever sends `usd` (SA-P15). */
+const USD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+function usd(amountMinor: number): string {
+  return `${USD.format(amountMinor / 100)} USD`;
+}
 
+/** P-5b.2: the payment line under the State chip (L-6 chips; tones as the email-status ones). */
+function PaymentLine({ payment }: { payment: InvitePayment }) {
+  switch (payment.state) {
+    case 'paid_recorded':
+      return (
+        <p data-testid="invite-payment" className="mt-1 flex flex-wrap items-center gap-1 text-xs text-slate-400">
+          <StatusChip tone="ok" testId="invite-payment-state">
+            Paid
+          </StatusChip>
+          <span data-testid="invite-payment-detail">
+            {day(payment.paidAt)} · {usd(payment.amountMinor)}
+          </span>
+          {!payment.livemode && (
+            <StatusChip tone="neutral" testId="invite-payment-test">
+              Test payment
+            </StatusChip>
+          )}
+        </p>
+      );
+    case 'awaiting_payment':
+      return (
+        <p data-testid="invite-payment" className="mt-1">
+          <StatusChip tone="warn" testId="invite-payment-state">
+            Signed up, not paid
+          </StatusChip>
+        </p>
+      );
+    case 'paid_record_missing':
+      return (
+        <p data-testid="invite-payment" className="mt-1">
+          <StatusChip tone="warn" testId="invite-payment-state">
+            Paid, record not found
+          </StatusChip>
+        </p>
+      );
+    case 'unknown':
+      return (
+        <p data-testid="invite-payment" className="mt-1">
+          <StatusChip tone="neutral" testId="invite-payment-state">
+            Payment unknown
+          </StatusChip>
+        </p>
+      );
+  }
+}
+
+export function InviteList({ invites, onRevoke, emptyMessage = 'No invites yet.', onClearFilters }: Props) {
   if (invites.length === 0) {
     return <AdminEmpty testId="invite-list-empty" message={emptyMessage} onClear={onClearFilters} />;
   }
@@ -156,6 +227,7 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                       )}
                     </p>
                   )}
+                  {invite.state === 'accepted' && invite.payment && <PaymentLine payment={invite.payment} />}
                   {invite.redemptionStoppedHalfway && (
                     <div
                       data-testid="invite-stopped-halfway"
@@ -201,24 +273,15 @@ export function InviteList({ invites, onRevoked, emptyMessage = 'No invites yet.
                 </td>
                 <td className={`${ADMIN_TD} whitespace-nowrap text-slate-400`}>{day(invite.firstViewedAt)}</td>
                 <td className={ADMIN_TD}>
-                  {canRevoke && revoking !== invite.id && (
+                  {canRevoke && (
                     <button
                       type="button"
-                      onClick={() => setRevoking(invite.id)}
+                      onClick={(event) => onRevoke(invite, event.currentTarget)}
+                      aria-label={`Revoke invite for ${invite.email} (created ${secondUtc(invite.createdAt)})`}
                       className={`rounded-lg border border-rose-500/50 px-2 py-1 text-xs text-rose-200 hover:bg-rose-500/20 ${FOCUS_RING}`}
                     >
                       Revoke
                     </button>
-                  )}
-                  {revoking === invite.id && (
-                    <RevokeDialog
-                      invite={invite}
-                      onCancel={() => setRevoking(null)}
-                      onRevoked={(updated) => {
-                        setRevoking(null);
-                        onRevoked(updated);
-                      }}
-                    />
                   )}
                 </td>
               </tr>

@@ -177,11 +177,18 @@ export function upgradePaymentStateOf(payments: ReadonlyArray<Stripe.InvoicePaym
  */
 export class StripeService {
   private stripe: Stripe;
+  /**
+   * Plan payments P-6a.1 (SA C-5): whether the key is a TEST-mode key. Only the
+   * mode is kept, never the key. The test-clock methods refuse anything else
+   * themselves, before any Stripe call (defence in depth behind the route).
+   */
+  private readonly isTestModeKey: boolean;
 
   constructor(stripeSecretKey: string) {
     if (!stripeSecretKey) {
       throw new Error('Stripe secret key is required');
     }
+    this.isTestModeKey = stripeSecretKey.startsWith('sk_test_') || stripeSecretKey.startsWith('rk_test_');
     this.stripe = new Stripe(stripeSecretKey, {
       apiVersion: '2025-10-29.clover'
     });
@@ -845,6 +852,96 @@ export class StripeService {
       startingAfter = result.data[result.data.length - 1].id;
     }
     throw new Error('checkout_session_items_incomplete');
+  }
+
+  // ── Business OS plan test clocks (plan payments P-6a.1, workplan §5.8; SA
+  // C-5, C-7). TEST MODE ONLY: each method refuses a non-test key before any
+  // Stripe call. No database client, no table: the caller records the customer.
+
+  /** Throws unless this service holds a test-mode key. Never echoes the key. */
+  private assertTestModeKey(): void {
+    if (!this.isTestModeKey) throw new Error('test_clock_requires_test_mode_key');
+  }
+
+  /**
+   * Create a fresh test clock frozen at `frozenTimeUnix` and a new Business OS
+   * customer on it, with the Business OS metadata (`product`, `bos_user_id`).
+   * No email, no name: Checkout collects the email and sets it on the customer.
+   *
+   * Idempotency: the customer create uses `bos-customer-clock:<user>:<clock>`,
+   * unique per clock, so a retry never makes a second customer on the same
+   * clock, and it can never collide with the account's ordinary
+   * `bos-customer:<user>` key.
+   */
+  async createBusinessOsTestClockCustomer(params: {
+    bosUserId: string;
+    frozenTimeUnix: number;
+  }): Promise<{ testClockId: string; frozenTime: string; customerId: string; livemode: boolean }> {
+    this.assertTestModeKey();
+    const { bosUserId, frozenTimeUnix } = params;
+
+    const clock = await this.stripe.testHelpers.testClocks.create({
+      frozen_time: frozenTimeUnix,
+      name: 'Business OS plan test clock',
+    });
+    const customer = await this.stripe.customers.create(
+      {
+        test_clock: clock.id,
+        metadata: {
+          [BOS_PRODUCT_METADATA_KEY]: BOS_PLAN_PRODUCT_MARKER,
+          [BOS_USER_ID_METADATA_KEY]: bosUserId,
+        },
+      },
+      { idempotencyKey: `bos-customer-clock:${bosUserId}:${clock.id}` }
+    );
+
+    return {
+      testClockId: clock.id,
+      frozenTime: new Date(clock.frozen_time * 1000).toISOString(),
+      customerId: customer.id,
+      livemode: customer.livemode,
+    };
+  }
+
+  /**
+   * The facts the test-clock route checks before it advances or reads a clock:
+   * the customer's test clock and its `bos_user_id` metadata. `deleted: true`
+   * for a customer deleted at Stripe.
+   */
+  async retrieveBusinessOsCustomerClock(customerId: string): Promise<{
+    deleted: boolean;
+    testClockId: string | null;
+    bosUserId: string | null;
+  }> {
+    this.assertTestModeKey();
+    const customer = await this.stripe.customers.retrieve(customerId);
+    if (customer.deleted) return { deleted: true, testClockId: null, bosUserId: null };
+    const clock = customer.test_clock;
+    return {
+      deleted: false,
+      testClockId: typeof clock === 'string' ? clock : clock?.id ?? null,
+      bosUserId: customer.metadata?.[BOS_USER_ID_METADATA_KEY] ?? null,
+    };
+  }
+
+  /** A test clock's frozen time and status (`ready`, `advancing`, `internal_failure`). */
+  async retrieveBusinessOsTestClock(testClockId: string): Promise<{ testClockId: string; frozenTime: string; status: string }> {
+    this.assertTestModeKey();
+    const clock = await this.stripe.testHelpers.testClocks.retrieve(testClockId);
+    return { testClockId: clock.id, frozenTime: new Date(clock.frozen_time * 1000).toISOString(), status: clock.status };
+  }
+
+  /**
+   * Move a test clock forward to `toUnix`. Stripe advances asynchronously: the
+   * answer is usually `advancing`; read the clock again for `ready`.
+   */
+  async advanceBusinessOsTestClock(
+    testClockId: string,
+    toUnix: number
+  ): Promise<{ testClockId: string; frozenTime: string; status: string }> {
+    this.assertTestModeKey();
+    const clock = await this.stripe.testHelpers.testClocks.advance(testClockId, { frozen_time: toUnix });
+    return { testClockId: clock.id, frozenTime: new Date(clock.frozen_time * 1000).toISOString(), status: clock.status };
   }
 
   /**

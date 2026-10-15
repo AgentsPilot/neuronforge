@@ -21,13 +21,13 @@
  *
  * Source-text assertions, so they survive any refactor of the code they describe.
  *
- * Admin Layout Standard L-1e (RC-7): there are two pickers until the finance
- * adoption slice. The shared `AdminBusinessPicker.tsx` (Audit trail, and since
- * L-8a the Business OS AI Activity tab) and the original
- * `BusinessAccountPicker.tsx` (Finance keeps it until the finance adoption
- * slice, which deletes it; SA M-2 on L-8) are both held to the path and
- * logging checks, and the shared file
- * joins the audit surface (one file, not the whole shared folder: SA Q-7).
+ * Admin Layout Standard L-1e (RC-7): there were two pickers until the finance
+ * adoption. The shared `AdminBusinessPicker.tsx` (Audit trail, since L-8a the
+ * Business OS AI Activity tab, and since Money M-1 Finance) is held to the path
+ * and logging checks, and joins the audit surface (one file, not the whole
+ * shared folder: SA Q-7). The original `BusinessAccountPicker.tsx` was DELETED
+ * in Money M-1 (finance health §11D, M1-FR-2; layout C-6 / E-39): a deletion
+ * pin below turns a re-added original red.
  */
 
 import * as fs from 'fs';
@@ -37,7 +37,8 @@ const ROOT = path.resolve(__dirname, '../../../..');
 
 const ORIGINAL_PICKER = 'app/admin/audit-trail/BusinessAccountPicker.tsx';
 const SHARED_PICKER = 'app/admin/components/layout/AdminBusinessPicker.tsx';
-const PICKERS = [ORIGINAL_PICKER, SHARED_PICKER];
+/** Money M-1: the original is deleted, so only the shared picker is held to the checks below. */
+const PICKERS = [SHARED_PICKER];
 const REUSED_ROUTE = 'app/api/admin/business-os/llm-usage/businesses/route.ts';
 
 /** Every file on the audit surface: the admin page, its route, the shared lib, and the shared picker. */
@@ -89,7 +90,9 @@ function businessOsModuleEdges(source: string): string[] {
 
 describe('the audit surface imports nothing from Business OS', () => {
   it('finds the files it checks', () => {
-    expect(SURFACE_FILES).toContain(ORIGINAL_PICKER);
+    // Money M-1 (M1-FR-2): a deletion pin. A re-added original is red here.
+    expect(fs.existsSync(path.join(ROOT, ORIGINAL_PICKER))).toBe(false);
+    expect(SURFACE_FILES).not.toContain(ORIGINAL_PICKER);
     expect(SURFACE_FILES).toContain(SHARED_PICKER);
     expect(fs.existsSync(path.join(ROOT, SHARED_PICKER))).toBe(true);
     expect(SURFACE_FILES).toContain('app/admin/audit-trail/page.tsx');

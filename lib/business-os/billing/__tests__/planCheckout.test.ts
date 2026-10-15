@@ -357,7 +357,7 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
     ['Stripe key mode unknown', { modeThrows: true }, {}, 'checkout_unavailable'],
     ['hold unreadable (fail closed)', { lineage: 'error' }, {}, 'hold_unreadable'],
     ['held friend asking a higher tier', { lineage: friendLineage }, { tier: HIGHER_TIER }, 'held_tier_not_allowed'],
-    ['held admin invitee (until P-9)', { lineage: adminLineage, invite: { grant_kind: 'tier', language: 'en' } }, {}, 'held_tier_unresolved'],
+    ['held admin invitee whose tier has no price (P-9.2)', { lineage: adminLineage, invite: { grant_kind: 'tier', grant_id: 'tier_without_a_price', language: 'en' } }, {}, 'held_tier_unresolved'],
     ['plan snapshot unavailable', { snapshot: { unavailable: true, resolution: null } }, {}, 'plan_unreadable'],
     ['plan snapshot read throws', { snapshot: 'throw' }, {}, 'plan_unreadable'],
     ['no plan row (Q-4)', { snapshot: { unavailable: false, resolution: { ...TIER_RESOLUTION, anomaly: 'no_plan_row' } } }, {}, 'no_plan_row'],
@@ -430,7 +430,7 @@ describe('startPlanCheckout — early refusals make NO Stripe call (C-4)', () =>
   it('held admin invitee + a switch off → held_payment_unavailable (the switches come first)', async () => {
     const { deps } = harness({
       lineage: adminLineage,
-      invite: { grant_kind: 'tier', language: 'en' },
+      invite: { grant_kind: 'tier', grant_id: HIGHER_TIER, language: 'en' },
       heldSwitches: { checkoutEnabled: true, pricesEnabled: true, paidInvitesAvailable: false },
     });
     expectRefused(await startPlanCheckout(INPUT, deps), 'held_payment_unavailable');
@@ -972,5 +972,24 @@ describe('source guards (CF-4, C-3, FR-12, tenant isolation)', () => {
     const text = code(read('lib/business-os/billing/planCheckout.ts'));
     const inputBlock = text.slice(text.indexOf('export interface PlanCheckoutInput'), text.indexOf('}', text.indexOf('export interface PlanCheckoutInput')));
     expect(inputBlock).not.toMatch(/customerId|priceId|amount|currency/);
+  });
+});
+
+describe('P-9.2 (SA-P9, C-5): a held ADMIN Paid invitee may buy the tier the admin chose, and only that one', () => {
+  it.each(TIER_ORDER.map((tier) => [tier]))('invited to %s: admitted for it (held), refused every other tier with held_tier_not_allowed', async (invited) => {
+    const admitted = harness({ lineage: adminLineage, invite: { grant_kind: 'tier', grant_id: invited, language: 'en' } });
+    expect(await startPlanCheckout({ ...INPUT, tier: invited as TierId }, admitted.deps)).toMatchObject({ ok: true, held: true, tier: invited });
+
+    for (const other of TIER_ORDER.filter((tier) => tier !== invited)) {
+      const refused = harness({ lineage: adminLineage, invite: { grant_kind: 'tier', grant_id: invited, language: 'en' } });
+      expectRefused(await startPlanCheckout({ ...INPUT, tier: other as TierId }, refused.deps), 'held_tier_not_allowed');
+      expect(refused.stripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an empty grant_id on the invite read (impossible by schema) is hold_unreadable, never "held, no tier"', async () => {
+    const { deps, stripe } = harness({ lineage: adminLineage, invite: { grant_kind: 'tier', grant_id: '', language: 'en' } });
+    expectRefused(await startPlanCheckout(INPUT, deps), 'hold_unreadable');
+    expect(stripe.createBusinessOsPlanCheckoutSession).not.toHaveBeenCalled();
   });
 });

@@ -53,6 +53,21 @@ export default function CRMPage() {
   const [taskListKey, setTaskListKey] = useState(0); // For refreshing task list
   const [contacts, setContacts] = useState<CRMContact[]>([]); // All contacts for pipeline view
   const [pipelineStages, setPipelineStages] = useState<CRMPipelineStage[]>([]);
+  /**
+   * Whether the stage request has FINISHED — success, empty or failed.
+   *
+   * `pipelineStages.length` alone cannot tell "not asked yet" from "the
+   * business has none". The board waited on the length, so an account with no
+   * stages (or a failed stage request) sat behind the spinner forever.
+   */
+  const [stagesLoaded, setStagesLoaded] = useState(false);
+  /**
+   * The stage request failed, as opposed to answering "none".
+   *
+   * Without it a failed request read as an empty pipeline, and the owner was
+   * told they had no stages when they had six and the server had a bad moment.
+   */
+  const [stagesFailed, setStagesFailed] = useState(false);
   const [enabledCapabilities, setEnabledCapabilities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   /**
@@ -129,10 +144,19 @@ export default function CRMPage() {
    */
   const phoneLibSettled = usePhoneLibSettled();
 
-  // Handle contact query parameter - open specific contact drawer
+  /*
+   * Handle contact query parameter - open specific contact drawer.
+   *
+   * Waits for the first list load to FINISH, not for it to return rows. It
+   * used to wait on `contacts.length > 0`, so on a list that loads empty — a
+   * board with no stages, a business with no contacts on page one — the link
+   * was never followed and `?contact=` sat in the address bar. `loading` comes
+   * down in the same render the rows land in, so the in-list lookup below
+   * still sees them; an empty list just goes straight to the direct fetch.
+   */
   useEffect(() => {
     const contactId = searchParams.get('contact');
-    if (contactId && contacts.length > 0 && phoneLibSettled) {
+    if (contactId && !loading && phoneLibSettled) {
       // `?section=` decides which part of the record opens. Absent or unknown
       // falls back to details, which is what every link did before it existed.
       const section = sectionFromUrl(searchParams.get('section'));
@@ -153,7 +177,7 @@ export default function CRMPage() {
         fetchContactById(contactId, section, bookingId);
       }
     }
-  }, [searchParams, contacts, phoneLibSettled]);
+  }, [searchParams, contacts, loading, phoneLibSettled]);
 
   // Handle task query parameter - fetch task to get contact_id, then open drawer with tasks tab
   useEffect(() => {
@@ -323,7 +347,13 @@ export default function CRMPage() {
    * ───────────────────────────────────────────────────────────────────────────
    */
   const fetchBoard = async (silent: boolean = false) => {
-    if (!pipelineStages.length) return;
+    // No columns, nothing to ask for. Only reached once the stages have loaded
+    // (the effect below waits for that), so the spinner must come down here or
+    // nothing else will take it down.
+    if (!pipelineStages.length) {
+      if (!silent) setLoading(false);
+      return;
+    }
 
     try {
       if (!silent) setLoading(true);
@@ -390,15 +420,17 @@ export default function CRMPage() {
    */
   useEffect(() => {
     // The board pages per column and ignores `currentPage`; the list pages
-    // globally. `pipelineStages` is a dependency because the board cannot ask
-    // for its columns until it knows what they are.
+    // globally. `pipelineStages` and `stagesLoaded` are dependencies because the
+    // board cannot ask for its columns until it knows what they are — or that
+    // there are none.
     if (viewMode === 'pipeline') {
+      if (!stagesLoaded) return;
       fetchBoard();
     } else {
       fetchContacts();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, currentPage, viewMode, pipelineStages]);
+  }, [searchQuery, currentPage, viewMode, pipelineStages, stagesLoaded]);
 
   const fetchPipelineStages = async () => {
     try {
@@ -406,9 +438,16 @@ export default function CRMPage() {
       const data = await response.json();
       if (data.success) {
         setPipelineStages(data.stages || []);
+        setStagesFailed(false);
+      } else {
+        logger.warn({ status: response.status, error: data.error }, 'Pipeline stages request was refused');
+        setStagesFailed(true);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch pipeline stages');
+      setStagesFailed(true);
+    } finally {
+      setStagesLoaded(true);
     }
   };
 
@@ -788,7 +827,7 @@ export default function CRMPage() {
         />
 
         {/* Content */}
-        {loading ? (
+        {loading || (viewMode === 'pipeline' && !stagesLoaded) ? (
           <div className="flex items-center justify-center min-h-[400px]">
             <div className="text-center space-y-4">
               <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: '#8B5CF6', borderTopColor: 'transparent' }}></div>
@@ -797,7 +836,40 @@ export default function CRMPage() {
           </div>
         ) : (
           <>
-            {viewMode === 'pipeline' && (
+            {viewMode === 'pipeline' && !pipelineStages.length && stagesFailed && (
+              <div className="flex items-center justify-center min-h-[400px]">
+                <div className="text-center space-y-3 max-w-md">
+                  <p className="text-[var(--v2-text-primary)] font-medium">{t('crm.stages_failed_title')}</p>
+                  <p className="text-sm text-[var(--v2-text-secondary)]">{t('crm.stages_failed_body')}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Back behind the spinner until the board has its rows.
+                      // The fetch effect re-runs on `stagesLoaded` and fetchBoard
+                      // clears `loading` either way — rows or no stages.
+                      // Raising `loading` too stops a one-frame empty board
+                      // between the stages arriving and fetchBoard starting.
+                      setLoading(true);
+                      setStagesLoaded(false);
+                      void fetchPipelineStages();
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-surface-hover)]"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {t('crm.stages_failed_retry')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {viewMode === 'pipeline' && !pipelineStages.length && !stagesFailed && (
+              <div className="flex items-center justify-center min-h-[400px]">
+                <div className="text-center space-y-2 max-w-md">
+                  <p className="text-[var(--v2-text-primary)] font-medium">{t('crm.no_stages_title')}</p>
+                  <p className="text-sm text-[var(--v2-text-secondary)]">{t('crm.no_stages_body')}</p>
+                </div>
+              </div>
+            )}
+            {viewMode === 'pipeline' && pipelineStages.length > 0 && (
               <>
                 <CRMPipelineView
                   contacts={contacts}

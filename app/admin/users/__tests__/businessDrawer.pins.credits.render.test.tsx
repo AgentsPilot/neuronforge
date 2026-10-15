@@ -50,6 +50,8 @@ jest.mock('@/lib/logger', () => ({
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  clientLogger: { child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
 
 jest.mock('next/navigation', () => ({
@@ -605,6 +607,7 @@ describe("the admin's own account (PIN-h)", () => {
     for (const name of ['Give credits', 'Take back', 'Take back credits', 'Set limit', 'Back to default', 'Run billing reconcile now (all accounts)']) {
       expect(within(drawer).queryByRole('button', { name })).toBeNull();
     }
+    expect(within(drawer).queryByRole('button', { name: 'Reconcile top-ups now (all accounts)' })).toBeNull();
     expect(within(drawer).getByTestId('credits-own-account').textContent).toBe(
       'You cannot change credits on your own account. Another admin has to do it.'
     );

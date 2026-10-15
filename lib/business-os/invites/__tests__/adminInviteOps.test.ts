@@ -35,6 +35,7 @@ import {
   INVITER_NAME_FALLBACK,
   INVITE_LINEAGE_BATCH,
   INVITE_LIST_CEILING,
+  INVITE_PAID_INVOICE_BATCH,
   INVITE_LIST_VIEW_KEYS,
   buildInviteFormOptions,
   createInviteForAdmin,
@@ -650,8 +651,8 @@ describe('listInvitesForAdmin', () => {
         findByInviteIdsForAdmin: async () => ({
           data: [
             // Deliberately a parent that differs from the invite's issuer: the view must take lineage's word.
-            { account_id: 'friend-1', invite_id: accepted.id, level: 2, parent_account_id: LINEAGE_PARENT },
-            { account_id: CHAMPION, invite_id: champion.id, level: 1, parent_account_id: null },
+            { account_id: 'friend-1', invite_id: accepted.id, level: 2, parent_account_id: LINEAGE_PARENT, source: 'account_invite', first_paid_at: null, first_payment_ref: null },
+            { account_id: CHAMPION, invite_id: champion.id, level: 1, parent_account_id: null, source: 'admin_invite', first_paid_at: null, first_payment_ref: null },
           ],
           error: null,
         }),
@@ -749,7 +750,7 @@ describe('listInvitesForAdmin', () => {
           findByInviteIdsForAdmin: async (ids: string[]) => {
             batches.push(ids.length);
             if (ids.length > LINEAGE_LOOKUP_LIMIT) return { data: null, error: new Error('too many ids') };
-            return { data: ids.map((id) => ({ account_id: 'acct-1', invite_id: id, level: 1, parent_account_id: null })), error: null };
+            return { data: ids.map((id) => ({ account_id: 'acct-1', invite_id: id, level: 1, parent_account_id: null, source: 'admin_invite' as const, first_paid_at: null, first_payment_ref: null })), error: null };
           },
         },
         config,
@@ -862,5 +863,226 @@ describe('inviterNameFromProfile (C-9; Slice 5a SA R-1: one fallback for admins 
 
   it('caps at the database limit, cut on a whole code point', () => {
     expect(Array.from(inviterNameFromProfile('😀'.repeat(250)))).toHaveLength(200);
+  });
+});
+
+// ── Plan payments P-5b.2: the admin paid line (FR-25, S5-8, SA C-11, Q-8, Q-12) ──
+
+describe("P-5b.2: listInvitesForAdmin carries each accepted row's payment", () => {
+  const FRIEND = '66666666-6666-4666-8666-666666666666';
+  const OTHER = '77777777-7777-4777-8777-777777777777';
+  const INVOICE = 'in_1FRIENDFRIENDFRIENDFRIEND';
+  const base = rowFrom({
+    token_hash: 'a'.repeat(64),
+    email: 'x@example.com',
+    invite_type: PAID_INVITE_TYPE,
+    grant_kind: 'tier',
+    grant_id: TIER_ORDER[0],
+    access_open_ended: null,
+    access_months: null,
+    issuer_admin_id: ADMIN,
+    inviter_display_name: 'Dana',
+    language: 'en',
+    personal_note: null,
+    internal_reason: 'Reason',
+    link_expiry_days: 30,
+    link_expires_at: '2026-10-31T12:00:00.000Z',
+  });
+  const accepted = (id: string, overrides: Partial<BusinessOsInvite> = {}): BusinessOsInvite => ({
+    ...base,
+    id,
+    redeemed_at: NOW.toISOString(),
+    redeemed_account_id: FRIEND,
+    claimed_at: NOW.toISOString(),
+    claimed_account_id: FRIEND,
+    ...overrides,
+  });
+  type LineageEntry = {
+    account_id: string;
+    invite_id: string;
+    level: number;
+    parent_account_id: string | null;
+    source: 'admin_invite' | 'account_invite' | 'organic';
+    first_paid_at: string | null;
+    first_payment_ref: string | null;
+  };
+  const lineageOf = (entries: LineageEntry[]) => ({
+    findByInviteIdsForAdmin: jest.fn(async (ids: string[]) => ({ data: entries.filter((entry) => ids.includes(entry.invite_id)), error: null })),
+  });
+  const friendEntry = (inviteId: string, overrides: Partial<LineageEntry> = {}): LineageEntry => ({
+    account_id: FRIEND,
+    invite_id: inviteId,
+    level: 2,
+    parent_account_id: OTHER,
+    source: 'account_invite',
+    first_paid_at: null,
+    first_payment_ref: null,
+    ...overrides,
+  });
+  const paidFact = {
+    accountId: FRIEND,
+    invoiceId: INVOICE,
+    amountMinor: 7900,
+    amountTaxMinor: 0,
+    currency: 'usd' as const,
+    paidAt: '2026-10-12T10:00:00.000Z',
+    livemode: false,
+  };
+  type PaidReader = NonNullable<Parameters<typeof listInvitesForAdmin>[0]['billingEvents']>;
+
+  async function list(rows: BusinessOsInvite[], entries: LineageEntry[], billingEvents?: PaidReader) {
+    const warnings: Array<Record<string, unknown>> = [];
+    const outcome = await listInvitesForAdmin({
+      repository: { listRecentForAdmin: async () => ({ data: rows, error: null }) },
+      lineage: lineageOf(entries),
+      billingEvents,
+      config,
+      now: NOW,
+      logger: { warn: (context) => warnings.push(context) },
+    });
+    if (!outcome.ok) throw new Error('expected the list');
+    return { invites: outcome.invites, warnings };
+  }
+
+  const reader = (answer: PaidReader['findPaidInvoicesForAccounts']) => ({ findPaidInvoicesForAccounts: jest.fn(answer) });
+
+  it('the view carries `payment` (an allow-listed key), null for a pending invite', async () => {
+    expect(INVITE_LIST_VIEW_KEYS).toContain('payment');
+    const { invites } = await list([base], []);
+    expect(invites[0].payment).toBeNull();
+    expect(Object.keys(invites[0]).sort()).toEqual([...INVITE_LIST_VIEW_KEYS].sort());
+  });
+
+  it("a held friend reads 'awaiting payment', by the gate's predicate, with no money read", async () => {
+    const billingEvents = reader(async () => ({ data: [], error: null }));
+    const { invites } = await list([accepted(INVITE_ID)], [friendEntry(INVITE_ID)], billingEvents);
+    expect(invites[0].payment).toEqual({ state: 'awaiting_payment' });
+    expect(billingEvents.findPaidInvoicesForAccounts).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an admin Paid (tier) invitee, unpaid', 'tier', 'admin_invite', { state: 'awaiting_payment' }],
+    ['an admin champion (cohort) invitee', 'cohort', 'admin_invite', null],
+    ['an organic lineage (never held)', 'tier', 'organic', null],
+  ] as const)('%s → %o', async (_label, grantKind, source, expected) => {
+    const { invites } = await list(
+      [accepted(INVITE_ID, { grant_kind: grantKind })],
+      [friendEntry(INVITE_ID, { source, level: 1, parent_account_id: null })]
+    );
+    expect(invites[0].payment).toEqual(expected);
+  });
+
+  it('a paid friend reads the date and the amount from the MONEY HISTORY, asked for the lineage pair only', async () => {
+    const billingEvents = reader(async () => ({ data: [paidFact], error: null }));
+    const { invites } = await list(
+      [accepted(INVITE_ID)],
+      // The lineage date differs on purpose: the view must not use it (AC-F2.2).
+      [friendEntry(INVITE_ID, { first_paid_at: '2020-01-01T00:00:00.000Z', first_payment_ref: INVOICE })],
+      billingEvents
+    );
+    expect(billingEvents.findPaidInvoicesForAccounts).toHaveBeenCalledWith([{ accountId: FRIEND, invoiceId: INVOICE }]);
+    expect(invites[0].payment).toEqual({
+      state: 'paid_recorded',
+      paidAt: '2026-10-12T10:00:00.000Z',
+      amountMinor: 7900,
+      currency: 'usd',
+      livemode: false,
+    });
+  });
+
+  it('SA Q-8: stamped but no matching money row → record not found, no date or amount, and a warn with ids only', async () => {
+    const billingEvents = reader(async () => ({ data: [], error: null }));
+    const { invites, warnings } = await list(
+      [accepted(INVITE_ID)],
+      [friendEntry(INVITE_ID, { first_paid_at: '2026-10-12T10:00:00.000Z', first_payment_ref: INVOICE })],
+      billingEvents
+    );
+    expect(invites[0].payment).toEqual({ state: 'paid_record_missing' });
+    expect(warnings).toContainEqual(
+      expect.objectContaining({ event: 'bos_invite_admin_payment_record_missing', inviteId: INVITE_ID, accountId: FRIEND })
+    );
+    expect(JSON.stringify(warnings)).not.toMatch(/7900|x@example\.com/);
+  });
+
+  it("a money row for ANOTHER pair is never shown (the view looks up its own pair only)", async () => {
+    const billingEvents = reader(async () => ({ data: [{ ...paidFact, accountId: OTHER }], error: null }));
+    const { invites } = await list(
+      [accepted(INVITE_ID)],
+      [friendEntry(INVITE_ID, { first_paid_at: '2026-10-12T10:00:00.000Z', first_payment_ref: INVOICE })],
+      billingEvents
+    );
+    expect(invites[0].payment).toEqual({ state: 'paid_record_missing' });
+  });
+
+  it.each([
+    ['the money read errors', 'error'],
+    ['the money read throws', 'throw'],
+  ] as const)('%s → unknown, never "not paid", with a warn', async (_label, how) => {
+    const billingEvents = reader(async () => {
+      if (how === 'throw') throw new Error('network');
+      return { data: null, error: new Error('timeout') };
+    });
+    const { invites, warnings } = await list(
+      [accepted(INVITE_ID)],
+      [friendEntry(INVITE_ID, { first_paid_at: '2026-10-12T10:00:00.000Z', first_payment_ref: INVOICE })],
+      billingEvents
+    );
+    expect(invites[0].payment).toEqual({ state: 'unknown' });
+    expect(warnings).toContainEqual(expect.objectContaining({ event: 'bos_invite_admin_payment_unread' }));
+  });
+
+  it('no money reader wired: a stamped row is unknown', async () => {
+    const { invites } = await list(
+      [accepted(INVITE_ID)],
+      [friendEntry(INVITE_ID, { first_paid_at: '2026-10-12T10:00:00.000Z', first_payment_ref: INVOICE })]
+    );
+    expect(invites[0].payment).toEqual({ state: 'unknown' });
+  });
+
+  it('a failed lineage read makes every accepted row unknown; a pending row still shows nothing', async () => {
+    const outcome = await listInvitesForAdmin({
+      repository: { listRecentForAdmin: async () => ({ data: [accepted(INVITE_ID), base], error: null }) },
+      lineage: { findByInviteIdsForAdmin: async () => ({ data: null, error: new Error('timeout') }) },
+      config,
+      now: NOW,
+      logger: { warn: () => undefined },
+    });
+    expect(outcome.ok && outcome.invites.map((invite) => invite.payment)).toEqual([{ state: 'unknown' }, null]);
+  });
+
+  it('an accepted row with no lineage row shows nothing', async () => {
+    const { invites } = await list([accepted(INVITE_ID)], []);
+    expect(invites[0].payment).toBeNull();
+  });
+
+  it('asks the money history in batches of 200 pairs, one per distinct stamped lineage row', async () => {
+    const rows = Array.from({ length: 450 }, (_v, i) => accepted(`00000000-0000-4000-8000-${String(i).padStart(12, '0')}`));
+    const entries = rows.map((row, i) =>
+      friendEntry(row.id, {
+        account_id: `10000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+        first_paid_at: '2026-10-12T10:00:00.000Z',
+        first_payment_ref: `in_${i}`,
+      })
+    );
+    const sizes: number[] = [];
+    const billingEvents = reader(async (pairs) => {
+      sizes.push(pairs.length);
+      if (pairs.length > 200) return { data: null, error: new Error('too many') };
+      return { data: pairs.map((pair) => ({ ...paidFact, accountId: pair.accountId, invoiceId: pair.invoiceId })), error: null };
+    });
+    const { invites } = await list(rows, entries, billingEvents);
+    expect(INVITE_PAID_INVOICE_BATCH).toBe(200);
+    expect(sizes).toEqual([200, 200, 50]);
+    expect(invites.every((invite) => invite.payment?.state === 'paid_recorded')).toBe(true);
+  });
+
+  it("pairs are built only from lineage: the invite row's own account ids are never sent", async () => {
+    const billingEvents = reader(async () => ({ data: [], error: null }));
+    await list(
+      [accepted(INVITE_ID, { redeemed_account_id: OTHER, claimed_account_id: OTHER })],
+      [friendEntry(INVITE_ID, { first_paid_at: '2026-10-12T10:00:00.000Z', first_payment_ref: INVOICE })],
+      billingEvents
+    );
+    expect(billingEvents.findPaidInvoicesForAccounts).toHaveBeenCalledWith([{ accountId: FRIEND, invoiceId: INVOICE }]);
   });
 });

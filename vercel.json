@@ -1,5 +1,10 @@
 {
   "ignoreCommand": "bash .github/ci/non-deploying-change.sh",
+  "git": {
+    "deploymentEnabled": {
+      "gh-readonly-queue/**": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/calendar-sync",

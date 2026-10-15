@@ -3,24 +3,50 @@
 //
 // INTENTIONAL SERVICE-ROLE CLIENT (RLS bypass). CLAUDE.md Rule 4 is enforced by
 // SIGNATURE instead: every method REQUIRES an account id or a non-empty list of
-// account ids — with ONE deliberate, named exception below. Callers:
-//   - the admin LLM usage report's token-usage check (Check 5, through
-//     `lib/business-os/usage/usageSummary.ts`), which passes the selected
-//     account's id (the owner card reads the credit ledger since slice 6a);
-//   - the admin LLM usage report (`lib/business-os/usage/llmUsageReport.ts`),
-//     whose routes are admin-gated through AdminAccessService before any read;
-//   - the admin chat usage report (`lib/business-os/bizql/telemetry/usageReport.ts`).
+// account ids, with TWO deliberate, named exceptions below.
 //
-// THE ONE ALL-ACCOUNTS READ is `listChatCallsAllAccountsInWindow`. "All
-// accounts" is reached by calling a differently NAMED method, never by leaving
-// an argument out, which is the mistake the rule exists to prevent. No other
-// method has, or may gain, an optional account filter
-// (lib/business-os/usage/__tests__/tokenUsageRepository.contract.test.ts).
+// CALLERS (the full list, Money M-4 F-7; a header comment, not a guard: the
+// repository stays tenant-safe by signature):
+//   - lib/business-os/usage/usageSummary.ts: `usageSummaryByFeatureAndDay`,
+//     `listSummaryRowsPage`. Reached through the admin LLM usage report's
+//     token-usage check (Check 5), with the selected account's id.
+//   - lib/business-os/usage/llmUsageReport.ts: `listCallsInWindow`,
+//     `countInWindow`, `listLabelsInWindow`. Reached from
+//     app/api/admin/business-os/llm-usage/route.ts (admin-gated before any read).
+//   - lib/business-os/bizql/telemetry/usageReport.ts:
+//     `listChatCallsForAccountInWindow`, `listChatCallsAllAccountsInWindow`.
+//     Reached from app/api/admin/chat-usage/route.ts.
+//   - lib/business-os/credits/creditLeakCheckDeps.ts: `listCallsInWindow`,
+//     `countInWindow`. Reached from the Leak check route
+//     (app/api/admin/business-os/credits/leak-check/route.ts) and the
+//     credit-leak-check cron (app/api/cron/credit-leak-check/route.ts).
+//   - lib/business-os/entitlements/report.ts: `listCallsInWindow` (the setup AI
+//     measure). Reached from the entitlements shadow report route
+//     (app/api/admin/business-os/entitlements/shadow-report/route.ts).
+//   - app/api/admin/business-os/accounts/[accountId]/summary/route.ts:
+//     `listCallsInWindow`, for the Businesses drawer's 30-day recorded AI cost.
+//   - app/api/admin/business-os/llm-settings/ledger/route.ts:
+//     `summariseFeatureAllAccountsInWindow`, for the ledger check.
+//   - app/api/admin/business-os/finance/route.ts (Money M-4, OV-5):
+//     `listCallsInWindow` only, for Finance Section 3's recorded AI cost with
+//     ONE business picked, with exactly that (already checked) account id.
+//   - lib/repositories/AdminTokenUsageAnalyticsRepository.ts: the module
+//     function `buildFeatureFilterOrExpression` and the filter types; no method.
+// Type-only importers: lib/business-os/usage/llmUsageVerification.ts and
+// lib/business-os/credits/creditLeakCheck.ts.
 //
-// Deliberately imports nothing from `lib/business-os/**` (Layer 1.1 RC-7): the
-// feature lists, prefixes and account ids are passed in as plain data. Importing
-// the call catalog here would pull `lib/repositories/index.ts`, and every file
-// that imports the barrel, into the `typecheck:bos-llm` gate.
+// THE TWO ALL-ACCOUNTS READS are `listChatCallsAllAccountsInWindow` and
+// `summariseFeatureAllAccountsInWindow`. "All accounts" is reached by calling a
+// differently NAMED method, never by leaving an argument out, which is the
+// mistake the rule exists to prevent. No other method has, or may gain, an
+// optional account filter
+// (lib/business-os/usage/__tests__/tokenUsageRepository.contract.test.ts pins
+// every method and its arity).
+//
+// Deliberately imports nothing from the Business OS library (Layer 1.1 RC-7):
+// the feature lists, prefixes and account ids are passed in as plain data.
+// Importing the call catalog here would pull `lib/repositories/index.ts`, and
+// every file that imports the barrel, into the `typecheck:bos-llm` gate.
 //
 // Only allow-listed columns are ever selected (`TOKEN_USAGE_COLUMNS`). Request
 // and response payloads, metadata and error message text are never read.

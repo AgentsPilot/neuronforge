@@ -181,11 +181,12 @@ describe('user_subscriptions is never written with a caller\'s own credentials',
   });
 
   it('only the documented pages build RewardService with the browser client', () => {
-    // RewardService upserts `user_subscriptions.balance`. These two client pages
-    // are the known exception, kept as-is on purpose: that path IS the
+    // RewardService upserts `user_subscriptions.balance`. This client page is
+    // the known exception, kept as-is on purpose: that path IS the
     // vulnerability (a user can replay the upsert to award themselves credits),
-    // so after the migration the reward is simply not credited until a
-    // server-side reward route lands. Adding a third caller must fail here.
+    // so after the migration the reward is simply not credited. The v2 agent
+    // page's caller went when sharing was switched off (RLS slice 2c-1, user
+    // decisions BQ-2/BQ-3, 2026-10-14). Adding a caller must fail here.
     const callers = sourceFiles
       .filter((f) => /new RewardService\s*\(/.test(readFileSync(f, 'utf8')))
       .map(rel)
@@ -193,7 +194,6 @@ describe('user_subscriptions is never written with a caller\'s own credentials',
 
     expect(callers).toEqual([
       'app/(protected)/agents/[id]/page.tsx',
-      'app/v2/agents/[id]/page.tsx',
     ]);
   });
 
@@ -247,13 +247,18 @@ describe('user_subscriptions is never written with a caller\'s own credentials',
     expect(src).not.toMatch(/console\./);
   });
 
-  it('the share-reward failure path is loud in both agent pages (SA RC9-7)', () => {
-    for (const page of ['app/v2/agents/[id]/page.tsx', 'app/(protected)/agents/[id]/page.tsx']) {
-      const src = readFileSync(join(REPO_ROOT, page), 'utf8');
-      expect(src).toContain(
-        'Agent shared. The credit reward could not be applied right now and will be credited later.'
-      );
-      expect(src).toContain('Agent shared but the sharing reward could not be applied');
-    }
+  it('the share-reward failure path is loud on the legacy agent page (SA RC9-7)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'app/(protected)/agents/[id]/page.tsx'), 'utf8');
+    expect(src).toContain(
+      'Agent shared. The credit reward could not be applied right now and will be credited later.'
+    );
+    expect(src).toContain('Agent shared but the sharing reward could not be applied');
+  });
+
+  it('the v2 agent page makes no sharing-credit promise (RLS slice 2c-1, BQ-2/BQ-3)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'app/v2/agents/[id]/page.tsx'), 'utf8');
+    expect(src).not.toContain('will be credited later');
+    expect(src).not.toMatch(/earn credits/i);
+    expect(src).not.toMatch(/new RewardService\s*\(/);
   });
 });

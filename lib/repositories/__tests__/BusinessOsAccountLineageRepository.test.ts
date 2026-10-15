@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe('findByInviteIdsForAdmin', () => {
-  it('reads account, invite, level and parent for the given invites', async () => {
+  it('reads account, invite, level and parent (and, P-5b.2, the hold facts and the first payment ref) for the given invites', async () => {
     const rows = [
       { account_id: 'a', invite_id: INVITE, level: 1, parent_account_id: null },
       { account_id: 'b', invite_id: INVITE, level: 2, parent_account_id: 'a' },
@@ -55,7 +55,7 @@ describe('findByInviteIdsForAdmin', () => {
     expect(await new BusinessOsAccountLineageRepository(c).findByInviteIdsForAdmin([INVITE])).toEqual({ data: rows, error: null });
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_account_lineage'] },
-      { method: 'select', args: ['account_id, invite_id, level, parent_account_id'] },
+      { method: 'select', args: ['account_id, invite_id, level, parent_account_id, source, first_paid_at, first_payment_ref'] },
       { method: 'in', args: ['invite_id', [INVITE]] },
     ]);
   });
@@ -115,9 +115,14 @@ describe('findHoldFactsForAccount (Slice 5b, the payment hold)', () => {
 });
 
 describe('no writer', () => {
-  it('has exactly two reads, and no insert/update/upsert/delete call', () => {
+  it('has exactly four reads (two from P-5b.2), and no insert/update/upsert/delete call', () => {
     const methods = Object.getOwnPropertyNames(BusinessOsAccountLineageRepository.prototype).filter((name) => name !== 'constructor');
-    expect(methods.sort()).toEqual(['findByInviteIdsForAdmin', 'findHoldFactsForAccount']);
+    expect(methods.sort()).toEqual([
+      'findByInviteIdsForAdmin',
+      'findHoldFactsForAccount',
+      'findHoldFactsForAccountsForAdmin',
+      'findSubscribedInviteIdsForIssuer',
+    ]);
     const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsAccountLineageRepository.ts'), 'utf8');
     expect(source).not.toMatch(/\.(insert|update|upsert|delete)\(/);
   });

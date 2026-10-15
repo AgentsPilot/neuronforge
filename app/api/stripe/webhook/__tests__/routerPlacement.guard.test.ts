@@ -49,10 +49,18 @@ function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
 const BILLING_ACCOUNTS = '@/lib/repositories/BusinessOsBillingAccountRepository';
 const BILLING_EVENTS = '@/lib/repositories/BusinessOsBillingEventRepository';
 const ACCOUNT_LINEAGE = '@/lib/repositories/BusinessOsAccountLineageRepository';
+// P-5b.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P5B_WORKPLAN.md §3.2; SA C-5, C-7):
+// the handler also wires the invite repository's ONE N-2 read
+// (`findInviterNotificationFactsById`) into the champion notifier it builds.
+const INVITES = '@/lib/repositories/BusinessOsInviteRepository';
+// P-6a.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P6A_WORKPLAN.md T3; SA C-5, C-6, C-7):
+// the admin test-clock use case reads and resets the target account's
+// test-mode billing row and reads its plan row for the status action.
+const ACCOUNT_PLANS = '@/lib/repositories/BusinessOsAccountPlanRepository';
 const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'businessOsStripeCustomer.ts': [BILLING_ACCOUNTS],
   'planCheckout.ts': [BILLING_ACCOUNTS],
-  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
+  'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE, INVITES],
   'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
   'planCheckoutSessionEvents.ts': [BILLING_ACCOUNTS],
   'planSubscriptionMirror.ts': [BILLING_ACCOUNTS],
@@ -65,6 +73,7 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // P-7b.1a (workplan BUSINESS_OS_PLAN_PAYMENTS_P7B1_WORKPLAN.md §3.9): the
   // upgrade orchestration reads the session user's billing row (findByUser).
   'planUpgrade.ts': [BILLING_ACCOUNTS],
+  'planTestClock.ts': [BILLING_ACCOUNTS, ACCOUNT_PLANS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 
@@ -363,13 +372,15 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     }
   });
 
-  // CF-5 PR 3 (workplan §7.3.4): the 12 money-row sites (11 `payment_transactions`,
-  // 1 `payment_refunds`). Expected calls per function; together they are every
-  // call in the route.
+  // CF-5 PR 3 (workplan §7.3.4): the money-row sites. Expected calls per
+  // function; together they are every call in the route. The Stripe Connect
+  // refund fix replaced `handleChargeRefunded` (1 read, 1 upsert, never reached)
+  // with `handleConnectRefund` (1 payment read, and one call site per ledger
+  // method: the 23505 re-read is a second pass of a loop, not a second site).
   const MONEY_ROW_CALLS: Record<string, Record<string, Record<string, number>>> = {
     paymentTransactionRepository: {
       handleDispute: { findFirstByStripeReference: 1, recordDisputeState: 1 },
-      handleChargeRefunded: { findFirstByStripeReference: 1 },
+      handleConnectRefund: { findFirstByStripeReference: 1 },
       handleConnectPaymentIntentSucceeded: { findByPaymentIntentId: 1, insertFromWebhook: 1 },
       recordPlanPeriodPaid: { insertFromWebhookReturningId: 1 },
       handleConnectInvoicePaid: {
@@ -381,7 +392,7 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
       handleConnectCheckoutCompleted: { insertFromWebhook: 1 },
     },
     paymentRefundRepository: {
-      handleChargeRefunded: { upsertFromStripe: 1 },
+      handleConnectRefund: { findForStripeRefund: 1, insertFromStripe: 1, applyStripeRefundState: 1 },
     },
   };
 
@@ -419,8 +430,9 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
 
   it('every owner-checked money-row write comes after that check, and carries the proved owner (CF-5 PR 3)', () => {
     // The owner each function proves with `accountOwns` before it records money.
-    // The dispute and refund writes have no such check (FU-3): they are keyed by
-    // a Stripe reference and copy the owner from the row they found.
+    // The dispute writes have no such check (FU-3): they are keyed by a Stripe
+    // reference and copy the owner from the row they found. The refund writes
+    // are checked in the refund branch below (STRIPE_CONNECT_REFUND_WEBHOOK A-5).
     const OWNER_PROVED: Record<string, string> = {
       handleConnectPaymentIntentSucceeded: 'ownerId',
       recordPlanPeriodPaid: 'plan.data.user_id',
@@ -451,6 +463,50 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
         expect({ fn, method, check: nearest?.arguments[1]?.getText(sf) }).toEqual({ fn, method, check: owner });
         // An insert writes the owner it proved; the attach writes no owner at all.
         expect({ fn, method, rowOwner }).toEqual({ fn, method, rowOwner: method === 'attachToInvoice' ? undefined : owner });
+      }
+    }
+  });
+
+  it('every refund-ledger write comes after accountOwns on the payment owner, and writes that owner (STRIPE_CONNECT_REFUND_WEBHOOK C-5)', () => {
+    // The refund branch of the check above. `handleConnectRefund` proves the
+    // owner of the payment it found (`transaction.user_id`) with `accountOwns`
+    // before any ledger read or write. The insert passes its row INLINE, so its
+    // `user_id` is readable here; the compare-and-set takes the owner as its
+    // first argument.
+    const fn = 'handleConnectRefund';
+    const owner = 'transaction.user_id';
+    const node = topLevelFunction(fn)!;
+    expect(node).toBeDefined();
+    const checks = callsTo(node, 'accountOwns');
+    const ledgerCalls = receiverCalls(node, 'paymentRefundRepository');
+    const writes = ledgerCalls.filter((c) =>
+      ['insertFromStripe', 'applyStripeRefundState'].includes((c.expression as ts.PropertyAccessExpression).name.text)
+    );
+    expect(writes).toHaveLength(2);
+
+    // Every ledger call, the reads included, comes after the owner check.
+    for (const call of ledgerCalls) {
+      const before = checks.filter((c) => c.end <= call.getStart(sf));
+      const nearest = before[before.length - 1];
+      expect({ fn, call: call.expression.getText(sf), check: nearest?.arguments[1]?.getText(sf) }).toEqual({
+        fn,
+        call: call.expression.getText(sf),
+        check: owner,
+      });
+    }
+
+    for (const write of writes) {
+      const method = (write.expression as ts.PropertyAccessExpression).name.text;
+      if (method === 'insertFromStripe') {
+        const row = write.arguments[0];
+        expect(row && ts.isObjectLiteralExpression(row)).toBe(true);
+        const rowOwner = (row as ts.ObjectLiteralExpression).properties
+          .filter(ts.isPropertyAssignment)
+          .find((p) => p.name.getText(sf) === 'user_id')
+          ?.initializer.getText(sf);
+        expect({ fn, method, rowOwner }).toEqual({ fn, method, rowOwner: owner });
+      } else {
+        expect({ fn, method, owner: write.arguments[0]?.getText(sf) }).toEqual({ fn, method, owner });
       }
     }
   });
@@ -1072,5 +1128,21 @@ describe('stripe webhook: Business OS router placement (P-1)', () => {
     expect(repositoryImportsOf(file, `// see @/lib/repositories\nconst s = 'lib/repositories';\n${real}`)).toEqual([]);
     expect(repositoryImportsOf(file, "import { x } from '@/lib/repositoriesExtra';")).toEqual([]);
     expect(repositoryImportsOf(file, "import { x } from '../../../repositories/AgentRepository';")).toEqual([]);
+  });
+
+  // P-5b.1 QA Edge Case 2 (SA C-3): the post-commit chain (stamp audit, N-2
+  // email, its audit) is budgeted against a pinned limit; a silent removal or
+  // lowering would let the platform default cut it between commit and flush.
+  it('exports `maxDuration = 60` at the top level, exactly once (P-5b.1, SA C-3)', () => {
+    const found: string[] = [];
+    for (const statement of sf.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      const isExported = statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+      if (!isExported || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+      for (const decl of statement.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === 'maxDuration') found.push(decl.initializer?.getText(sf) ?? '');
+      }
+    }
+    expect(found).toEqual(['60']);
   });
 });

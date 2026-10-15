@@ -6,21 +6,7 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { UserConnection } from '@/lib/types/plugin-types';
 import type { AgentRepositoryResult, UpsertPluginConnectionInput } from './types';
-
-/**
- * The only columns the GDPR export reads (DATA_EXPORT_FOLLOWUPS_WORKPLAN.md
- * §4.5). Changing this changes what the export holds: a privacy decision.
- *
- * Never read: `access_token` / `refresh_token` (credentials), `expires_at` /
- * `last_refreshed_at` (token plumbing), `settings` (free-form, so a secret could
- * land there unseen) and `id`. `profile_data` IS read, because it holds the
- * person's own provider profile, but some providers also store an access token
- * inside it: the route must never send it raw. It passes only the allow-listed
- * string fields (route.ts `accountProfile`, SA C-1).
- */
-const USER_DATA_EXPORT_COLUMNS =
-  'user_id, plugin_key, plugin_name, username, email, scope, status, connected_at, ' +
-  'created_at, updated_at, last_used, disconnected_at, profile_data';
+import { exportColumnsOf } from '@/lib/business-os/data-export/classification';
 
 export interface PluginConnectionExportRow {
   user_id: string;
@@ -278,6 +264,48 @@ export class PluginConnectionRepository {
   }
 
   /**
+   * Save a refreshed OAuth access token for ONE connection of ONE user.
+   *
+   * Legacy AgentKit refresh (PluginCoordinator, DE-0b S1). Runs as the service
+   * role because `authenticated` no longer holds the token columns. Tenant
+   * scope is `user_id` from the authenticated run context plus `plugin_key`
+   * (unique per user), and the patch is a fixed field list: the caller cannot
+   * widen it or move the row (tenant-isolation-guard Step 3). No trigger or
+   * upsert is involved. Nothing token-bearing is selected back or logged.
+   * `data` is false when no row matched.
+   */
+  async updateRefreshedToken(
+    userId: string,
+    pluginKey: string,
+    token: { accessToken: string; expiresAt: string | null }
+  ): Promise<AgentRepositoryResult<boolean>> {
+    try {
+      if (!userId || !pluginKey) throw new Error('userId and pluginKey are required');
+      if (!token.accessToken) throw new Error('accessToken is required');
+
+      const { error, count } = await this.supabase
+        .from('plugin_connections')
+        .update(
+          {
+            access_token: token.accessToken,
+            expires_at: token.expiresAt,
+            updated_at: new Date().toISOString(),
+          },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('plugin_key', pluginKey);
+
+      if (error) throw error;
+      if (!count) this.logger.warn({ userId, pluginKey }, 'Refreshed token matched no connection');
+      return { data: (count ?? 0) > 0, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, userId, pluginKey }, 'Failed to save refreshed token');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Mark all active connections with expired tokens as 'expired'
    */
   async markExpired(): Promise<AgentRepositoryResult<number>> {
@@ -300,17 +328,23 @@ export class PluginConnectionRepository {
 
   /**
    * GDPR export only (GET /api/user/data-export, Art. 15 / 20). Every plugin
-   * connection of the caller, any status, unordered, with
-   * USER_DATA_EXPORT_COLUMNS only: credentials are never read. The column set is
-   * fixed; changing it changes what the export holds, which is a privacy
-   * decision. `profile_data` comes back raw; the route filters it (see the
-   * constant).
+   * connection of the caller, any status, unordered, with the
+   * `plugin_connections` descriptor's export columns only (DE-2:
+   * lib/business-os/purge/descriptors.ts PLUGIN_CONNECTIONS_EXPORT, which lists
+   * every column left out and why): credentials are never read. Changing that
+   * list changes what the export holds, which is a privacy decision.
+   * `profile_data` comes back raw; the export's `plugin_connections` section
+   * passes only its allow-listed keys (ACCOUNT_PROFILE_KEYS).
+   *
+   * Columns are resolved INSIDE the try (DE-2 §2.4): a bad descriptor or a
+   * deny-listed column returns `{ data: null, error }` (section `failed`).
    */
   async listForUserDataExport(userId: string): Promise<AgentRepositoryResult<PluginConnectionExportRow[]>> {
     try {
+      const columns = exportColumnsOf('plugin_connections').join(', ');
       const { data, error } = await this.supabase
         .from('plugin_connections')
-        .select(USER_DATA_EXPORT_COLUMNS)
+        .select(columns)
         .eq('user_id', userId);
 
       if (error) throw error;

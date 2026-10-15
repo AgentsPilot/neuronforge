@@ -69,7 +69,24 @@ export interface InviteRow {
   issuerAccountId?: string | null;
   /** Slice 5a (F5a-8): revoked by the champion who sent it, not by an admin. */
   revokedByInviter?: boolean;
+  /**
+   * Plan payments P-5b.2 (FR-25): the payment of the account this accepted
+   * invite created, decided on the server. `null` or absent (an older server):
+   * nothing is shown.
+   */
+  payment?: InvitePayment | null;
 }
+
+/**
+ * P-5b.2: one accepted invite's payment, as the server sends it. The amount is
+ * what was paid, tax included, in minor units of USD; `livemode: false` is a
+ * test payment.
+ */
+export type InvitePayment =
+  | { state: 'awaiting_payment' }
+  | { state: 'paid_recorded'; paidAt: string; amountMinor: number; currency: 'usd'; livemode: boolean }
+  | { state: 'paid_record_missing' }
+  | { state: 'unknown' };
 
 /** Slice 5a: who issued an invite. */
 export type InviteIssuerKind = 'admin' | 'account';
@@ -87,6 +104,8 @@ export interface InviteTypeOption {
   unavailableReason: string | null;
   requiresAccess: boolean;
   grants: Array<{ id: string; label: string; default: boolean }>;
+  /** P-9.2: a server-written line shown under the plan select (Paid only). */
+  note?: string | null;
 }
 
 export interface InviteFormOptions {

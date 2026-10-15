@@ -105,7 +105,7 @@ export const GREEN_ELIGIBLE: ReadonlySet<HealthTileId> = new Set<HealthTileId>([
   'queues',
 ]);
 
-/** Above this many calls in a window, Cost Analytics' figure is truncated (OI-P1). */
+/** Above this many calls in a window, AI cost & usage's figure is truncated (OI-P1). */
 export const COST_ANALYTICS_ROW_CAP = 1000;
 
 // ── Inputs ─────────────────────────────────────────────────────────────────
@@ -419,7 +419,7 @@ export const AI_FAILED_ACTION = 'BUSINESS_AI_ACTION_FAILED';
 const TITLES: Record<HealthTileId, string> = {
   bos_ai_settings: 'Business OS AI settings',
   bos_ai_failures: 'Failed AI actions (audited)',
-  bos_ai_spend: 'Business OS AI spend (USD, estimated)',
+  bos_ai_spend: 'Recorded AI cost (USD)',
   critical_audit: 'Critical audit events',
   entitlements_mode: 'Entitlements mode',
   scheduled_jobs: 'Scheduled jobs',
@@ -659,7 +659,7 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement 
       `${money(current)} (${previousLabel}: ${money(previous)})` + (callsKnown ? ` · ${callsText(calls)}` : ''),
     exact: current.exact && previous.exact,
     href: analyticsLink(start, w.end),
-    linkLabel: `Business OS AI spend, ${windowWords}: ${money(current)}, open in AI cost & usage`,
+    linkLabel: `Recorded AI cost, ${windowWords}: ${money(current)}, open in AI cost & usage`,
     note: callsKnown && calls.value > COST_ANALYTICS_ROW_CAP ? OI_P1_NOTE : null,
   });
 
@@ -672,11 +672,12 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement 
     },
     flags: {},
     figures: [
-      figure('AI spend, last 24 h (USD)', sums.spend24h, sums.spendPrev24h, 'previous 24 h', sums.calls24h, w.last24hStart, 'last 24 hours'),
-      figure('AI spend, last 7 days (USD)', sums.spend7d, sums.spendPrev7d, 'previous 7 days', sums.calls7d, w.last7dStart, 'last 7 days'),
+      figure('Recorded AI cost, last 24 h (USD)', sums.spend24h, sums.spendPrev24h, 'previous 24 h', sums.calls24h, w.last24hStart, 'last 24 hours'),
+      figure('Recorded AI cost, last 7 days (USD)', sums.spend7d, sums.spendPrev7d, 'previous 7 days', sums.calls7d, w.last7dStart, 'last 7 days'),
     ],
     footnote:
-      'USD, estimated from the model pricing table; never mixed with a business currency. ' +
+      'USD: every Business OS AI call in the usage log, charged or not, priced from the model price table; ' +
+      'never mixed with a business currency. The charged AI cost is on Finance. ' +
       'The comparison with the previous period is computed here from one read; AI cost & usage ' +
       'computes its own "vs previous period" differently (known issue OI-P2).',
     completeness: 'complete',

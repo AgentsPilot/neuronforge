@@ -42,12 +42,25 @@
 // `lib/repositories/index.ts`, for the same reason as the billing account
 // repository: a barrel export would let any file reach it unseen.
 //
+// P-5b.2 READ (plan payments, S5-8, SA C-7 / C-11): `findPaidInvoicesForAccounts`
+// is the ONE read of the money history outside the webhook. It answers the
+// admin Signup Invites paid line, wired by
+// `app/api/admin/business-os/invites/route.ts` (behind `requireAdmin`, its first
+// statement) into `listInvitesForAdmin`. It is an intentional cross-account
+// admin read on the service role, and it keeps a row only when its account AND
+// its invoice equal a requested pair, so a reused or wrong invoice id can never
+// show another account's payment. That filter lives here, not in the caller.
+//
 // Methods never throw: they return `{ data, error }`.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, type Logger } from '@/lib/logger';
-import type { AgentRepositoryResult as RepositoryResult } from './types';
+import type {
+  AgentRepositoryResult as RepositoryResult,
+  BusinessOsPaidInvoiceFacts,
+  BusinessOsPaidInvoicePair,
+} from './types';
 import type { BusinessOsSubscriptionStatus } from './BusinessOsBillingAccountRepository';
 
 export const BOS_BILLING_EVENTS_TABLE = 'business_os_billing_events';
@@ -178,6 +191,12 @@ const CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 const UNIQUE_VIOLATION = '23505';
 /** The event-id UNIQUE constraint; a 23505 on any other key is a real error. */
 const EVENT_ID_KEY = 'business_os_billing_events_stripe_event_id_key';
+
+/** P-5b.2: the most (account, invoice) pairs one paid-invoice read accepts. */
+export const PAID_INVOICE_LOOKUP_LIMIT = 200;
+
+/** P-5b.2: the columns the admin paid line reads. Nothing about the customer or the subscription. */
+export const PAID_INVOICE_COLUMNS = 'user_id, stripe_invoice_id, amount_minor, amount_tax_minor, currency, paid_at, livemode';
 
 class BillingEventRepositoryError extends Error {
   constructor(message: string) {
@@ -431,6 +450,91 @@ export class BusinessOsBillingEventRepository {
       return { data: null, error: asError(err) };
     }
   }
+
+  /**
+   * ADMIN (plan payments P-5b.2, FR-25, S5-8, SA C-11): the paid plan invoice
+   * of each (account, invoice) pair, for the admin Signup Invites paid line.
+   *
+   * INTENTIONAL SERVICE-ROLE READ across accounts (the table has no client
+   * grant and no policy, SA-P5): a platform admin reads other accounts' money
+   * history, behind `requireAdmin` as the first statement of
+   * `GET /api/admin/business-os/invites`, the only wiring site. The pairs come
+   * from lineage rows on that page (the account and its first payment's
+   * invoice id), never from a request.
+   *
+   * ── Account AND invoice, together (S5-8) ────────────────────────────────
+   * The query narrows by both id lists, then a row is KEPT ONLY when its own
+   * `(user_id, stripe_invoice_id)` equals one requested pair. Two lists alone
+   * would let account A's pair match account B's invoice; the per-pair filter
+   * is here so no caller can skip it. `kind = 'invoice_paid'` only, which the
+   * partial UNIQUE makes at most one row per invoice.
+   *
+   * Refuses more than `PAID_INVOICE_LOOKUP_LIMIT` pairs. A pair whose account
+   * is not a UUID or whose invoice is not an `in_` id never reaches the query
+   * (it cannot match a money row; the caller reads it as "record not found").
+   * An answered row that cannot be read is an error, never a guess. Never
+   * throws.
+   */
+  async findPaidInvoicesForAccounts(pairs: BusinessOsPaidInvoicePair[]): Promise<RepositoryResult<BusinessOsPaidInvoiceFacts[]>> {
+    if (!Array.isArray(pairs) || pairs.length > PAID_INVOICE_LOOKUP_LIMIT) {
+      return { data: null, error: new BillingEventRepositoryError('invalid_input') };
+    }
+    const valid = pairs.filter(
+      (pair) => typeof pair === 'object' && pair !== null && matches(UUID_PATTERN)(pair.accountId) && matches(INVOICE_ID_PATTERN)(pair.invoiceId)
+    );
+    const methodLogger = this.logger.child({ method: 'findPaidInvoicesForAccounts', pairs: pairs.length });
+    if (valid.length < pairs.length) {
+      // Counts only: a malformed ref is data drift worth seeing, never content worth logging.
+      methodLogger.warn({ dropped: pairs.length - valid.length }, 'Paid-invoice pairs with a malformed id were not queried');
+    }
+    if (valid.length === 0) return { data: [], error: null };
+
+    const wanted = new Set(valid.map((pair) => `${pair.accountId}|${pair.invoiceId}`));
+    try {
+      const { data, error } = await this.supabase
+        .from(BOS_BILLING_EVENTS_TABLE)
+        .select(PAID_INVOICE_COLUMNS)
+        .eq('kind', 'invoice_paid')
+        .in('stripe_invoice_id', [...new Set(valid.map((pair) => pair.invoiceId))])
+        .in('user_id', [...new Set(valid.map((pair) => pair.accountId))]);
+      if (error) throw asError(error);
+
+      const facts: BusinessOsPaidInvoiceFacts[] = [];
+      for (const row of (Array.isArray(data) ? data : []) as Array<Record<string, unknown>>) {
+        // S5-8: both ids of THIS row must be one requested pair.
+        if (!wanted.has(`${String(row.user_id)}|${String(row.stripe_invoice_id)}`)) continue;
+        facts.push(paidInvoiceOf(row));
+      }
+      return { data: facts, error: null };
+    } catch (err) {
+      methodLogger.error({ err, sqlstate: sqlStateOf(err) }, 'Failed to read paid plan invoices for the admin list');
+      return { data: null, error: asError(err) };
+    }
+  }
+}
+
+/** One answered money row, read strictly: an unreadable value is an error, never a guess. */
+function paidInvoiceOf(row: Record<string, unknown>): BusinessOsPaidInvoiceFacts {
+  if (
+    !matches(UUID_PATTERN)(row.user_id) ||
+    !matches(INVOICE_ID_PATTERN)(row.stripe_invoice_id) ||
+    !isMinorAmount(row.amount_minor) ||
+    !(row.amount_tax_minor === null || isMinorAmount(row.amount_tax_minor)) ||
+    row.currency !== 'usd' ||
+    !isIso(row.paid_at) ||
+    typeof row.livemode !== 'boolean'
+  ) {
+    throw new BillingEventRepositoryError('unreadable_paid_invoice');
+  }
+  return {
+    accountId: row.user_id as string,
+    invoiceId: row.stripe_invoice_id as string,
+    amountMinor: row.amount_minor,
+    amountTaxMinor: (row.amount_tax_minor as number | null) ?? null,
+    currency: 'usd',
+    paidAt: row.paid_at,
+    livemode: row.livemode,
+  };
 }
 
 /**

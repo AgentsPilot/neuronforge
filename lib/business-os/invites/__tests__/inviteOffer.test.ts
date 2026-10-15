@@ -9,17 +9,21 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-import { CHAMPION_INVITE_TYPE, INVITE_TYPES } from '@/lib/business-os/entitlements/config/invites';
+import * as billing from '@/lib/business-os/billing/planCheckoutEligibility';
+import { sellableTiers } from '@/lib/business-os/billing/planCheckoutEligibility';
+import { CHAMPION_INVITE_TYPE, INVITE_ISSUANCE_POLICY, INVITE_TYPES, PAID_INVITE_TYPE } from '@/lib/business-os/entitlements/config/invites';
 import { TIER_ORDER } from '@/lib/business-os/entitlements/config/tierMatrix';
 import { getEntitlementConfig, type EntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { isHiddenFromCustomer } from '@/lib/business-os/entitlements/customerPlanView';
 import type { CapabilityDef } from '@/lib/business-os/entitlements/types';
 
 import {
+  adminPaidInviteRedemption,
   describeInviteAccess,
   describeInviteOffer,
   inviteAccessOf,
   isInviteGrantAvailable,
+  type AdminPaidInviteFacts,
   type InviteGrantFacts,
 } from '../inviteOffer';
 
@@ -160,5 +164,68 @@ describe('no plan contents written into the invite modules (FR-9)', () => {
     expect(source).not.toMatch(/Essentials|Autopilot|Test Flight|Founding Partner/);
     expect(source).not.toMatch(/['"`](basic|pro|trial|champion)['"`]/);
     expect(source).not.toMatch(/\$\s?\d/);
+  });
+});
+
+describe('adminPaidInviteRedemption (plan payments P-9.1, SA C-2, C-3)', () => {
+  const policy = INVITE_ISSUANCE_POLICY as unknown as { paidInvitesAvailable: boolean; admin: readonly string[] };
+  const shipped = { paidInvitesAvailable: INVITE_ISSUANCE_POLICY.paidInvitesAvailable, admin: INVITE_ISSUANCE_POLICY.admin };
+  const pricedTier = sellableTiers()[0] as string;
+  const row = (overrides: Partial<AdminPaidInviteFacts> = {}): AdminPaidInviteFacts => ({
+    issuer_kind: 'admin',
+    invite_type: PAID_INVITE_TYPE,
+    grant_kind: 'tier',
+    grant_id: pricedTier,
+    ...overrides,
+  });
+
+  afterEach(() => {
+    policy.paidInvitesAvailable = shipped.paidInvitesAvailable;
+    policy.admin = shipped.admin;
+    jest.restoreAllMocks();
+  });
+
+  it('switch off: switch_off for every row, checked first (SA C-8)', () => {
+    policy.paidInvitesAvailable = false;
+    for (const shape of [row(), row({ invite_type: 'type-z' }), row({ issuer_kind: 'account' }), row({ grant_id: 'tier-x' })]) {
+      expect(adminPaidInviteRedemption(shape, config)).toBe('switch_off');
+    }
+  });
+
+  it('switch on: ok for the Paid type and every priced tier', () => {
+    policy.paidInvitesAvailable = true;
+    for (const tier of sellableTiers()) expect(adminPaidInviteRedemption(row({ grant_id: tier }), config)).toBe('ok');
+  });
+
+  it.each<[string, Partial<AdminPaidInviteFacts>]>([
+    ['an account issuer', { issuer_kind: 'account' }],
+    ['a cohort grant', { grant_kind: 'cohort' }],
+    ['a type whose grant kind is a cohort (GR-1, keyed on the grant kind)', { invite_type: CHAMPION_INVITE_TYPE }],
+    ['an unknown type', { invite_type: 'type-z' }],
+    ['a type name that is an object key', { invite_type: 'constructor' }],
+    ['a tier the config no longer carries', { grant_id: 'tier-x' }],
+  ])('switch on: %s is unavailable', (_label, overrides) => {
+    policy.paidInvitesAvailable = true;
+    expect(adminPaidInviteRedemption(row(overrides), config)).toBe('unavailable');
+  });
+
+  it('switch on: a type admins may no longer issue is unavailable (GR-3)', () => {
+    policy.paidInvitesAvailable = true;
+    policy.admin = [CHAMPION_INVITE_TYPE];
+    expect(adminPaidInviteRedemption(row(), config)).toBe('unavailable');
+  });
+
+  it('switch on: SA C-3, a configured tier with no Stripe price is unavailable', () => {
+    policy.paidInvitesAvailable = true;
+    jest.spyOn(billing, 'sellableTiers').mockReturnValue(sellableTiers().filter((tier) => tier !== pricedTier));
+    expect(adminPaidInviteRedemption(row(), config)).toBe('unavailable');
+  });
+
+  it('SA C-3: keys on sellableTiers, never on buyableTiers or the type grant list', () => {
+    const source = readFileSync(join(process.cwd(), 'lib', 'business-os', 'invites', 'inviteOffer.ts'), 'utf8');
+    expect(source).toContain('sellableTiers()');
+    expect(source).not.toContain('buyableTiers');
+    // No invite type name written as a literal: the predicate keys on the grant kind.
+    expect(source).not.toMatch(/'paid'|"paid"/);
   });
 });

@@ -20,6 +20,9 @@
 // (`linkCheckoutSession`, `releaseCheckoutLock`, `mirrorSubscriptionState`).
 // Like P-3a's, every UPDATE is `{ count: 'exact' }` with NO `.select()` and,
 // here, no `.or()` at all. There is no DELETE grant, so there is no delete method.
+// P-6a.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P6A_WORKPLAN.md §5.8, SA C-6):
+// `attachTestClockCustomer`, TEST MODE ONLY, for the /test-business-os test
+// clock: the same compare-and-set shape, clearing the whole subscription mirror.
 //
 // ── THE TWO LOOKUPS BY A STRIPE ID (documented exception to CLAUDE.md rule 4) ─
 // The webhook does not know the account yet: finding it is the point (SR-8).
@@ -47,7 +50,8 @@
 // CALLERS: `lib/business-os/billing/businessOsStripeCustomer.ts`,
 // `lib/business-os/billing/planCheckout.ts` (P-3a), the P-3b.2 webhook use
 // cases (`planPaymentApply.ts`, `planCheckoutSessionEvents.ts`,
-// `planSubscriptionMirror.ts`, wired by `planBillingHandler.ts`), and the
+// `planSubscriptionMirror.ts`, wired by `planBillingHandler.ts`), the
+// P-6a.1 test clock (`planTestClock.ts`), and the
 // admin deletion reads under `lib/business-os/purge/`. A source
 // guard in `lib/repositories/__tests__/BusinessOsBillingAccountRepository.test.ts`
 // holds the exact list of files allowed to name this repository.
@@ -468,6 +472,90 @@ export class BusinessOsBillingAccountRepository {
       return { data: { replaced: count === 1 }, error: null };
     } catch (err) {
       methodLogger.error({ err }, 'Failed to replace the Business OS Stripe customer');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * TEST MODE ONLY (plan payments P-6a.1, SA C-6): put the account on a fresh
+   * test-clock customer, by COMPARE-AND-SET on the old customer id, and clear
+   * EVERY subscription-scoped column the 20261025 grant lists.
+   *
+   * Why not `replaceCustomer`: it keeps `ended_at`, `current_period_end`,
+   * `last_paid_at` and the failure columns. A stale `ended_at` would make the
+   * next subscription read as not live and hide its failures; a stale,
+   * clock-future `current_period_end` from an earlier demo would make the apply
+   * function treat the next purchase's invoice as not the newest, so the plan
+   * row would never be written. `founder_discount_applied_at` is left alone (it
+   * is about the account, not one subscription). Production `replaceCustomer`
+   * is unchanged (follow-up F-1).
+   *
+   * Refuses a live-mode row (`livemode: true`) as invalid input: a test clock
+   * has no meaning there. `{ count: 'exact' }`, no `.select()`, no `.or()`.
+   */
+  async attachTestClockCustomer(input: {
+    userId: string;
+    oldCustomerId: string;
+    newCustomerId: string;
+    nowIso: string;
+  }): Promise<RepositoryResult<{ replaced: boolean }>> {
+    const { userId, oldCustomerId, newCustomerId, nowIso } = input;
+    const livemode = false;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof oldCustomerId !== 'string' ||
+      !CUSTOMER_ID_PATTERN.test(oldCustomerId) ||
+      typeof newCustomerId !== 'string' ||
+      !CUSTOMER_ID_PATTERN.test(newCustomerId) ||
+      oldCustomerId === newCustomerId ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'attachTestClockCustomer', userId, livemode });
+
+    try {
+      const { error, count } = await this.supabase
+        .from(BOS_BILLING_ACCOUNTS_TABLE)
+        .update(
+          {
+            stripe_customer_id: newCustomerId,
+            stripe_subscription_id: null,
+            subscription_status: null,
+            bought_tier: null,
+            current_period_end: null,
+            cancel_at_period_end: false,
+            pending_tier: null,
+            open_checkout_session_id: null,
+            open_checkout_expires_at: null,
+            last_invoice_id: null,
+            last_paid_at: null,
+            last_payment_failed_at: null,
+            failed_attempts: 0,
+            action_required_invoice_url: null,
+            ended_at: null,
+            updated_at: nowIso,
+          },
+          { count: 'exact' }
+        )
+        .eq('user_id', userId)
+        .eq('livemode', livemode)
+        .eq('stripe_customer_id', oldCustomerId);
+      if (error) {
+        if (sqlStateOf(error) === UNIQUE_VIOLATION) {
+          methodLogger.error(
+            { newCustomerId, alert: true },
+            'Test-clock Stripe customer is already recorded for another account; nothing was replaced'
+          );
+          return { data: null, error: new BillingAccountRepositoryError('stripe_customer_held_by_another_account') };
+        }
+        throw asError(error);
+      }
+      if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+      return { data: { replaced: count === 1 }, error: null };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to attach the Business OS test-clock customer');
       return { data: null, error: asError(err) };
     }
   }

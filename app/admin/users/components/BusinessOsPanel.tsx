@@ -19,7 +19,7 @@
  *     & entitlements screen uses — so the plan, cohort and "which layer decided"
  *     are exactly what that API returns;
  *   - the account summary route: business name and vertical, 30-day Business OS
- *     AI spend, recent failed AI actions (metadata only).
+ *     recorded AI cost, recent failed AI actions (metadata only).
  *
  * Money: AI cost is USD by definition of the model pricing table, labelled as
  * such, never converted and never mixed with the business's own currency.
@@ -38,7 +38,6 @@ import {
   EntitlementSnapshot,
 } from '@/app/admin/business-os-tiers/components/EntitlementSnapshot';
 import type { AccountPayload } from '@/app/admin/business-os-tiers/types';
-import { DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { AccountSummaryPayload, AdminUserRow } from '../types';
@@ -51,6 +50,7 @@ import {
   type StripSlot,
 } from './BusinessSummaryStrip';
 import { ShowMoreList } from './drawerFolds';
+import { DrawerBox, PART_BOX, PartPurpose } from './DrawerBox';
 
 /**
  * Every refusal the summary route can return, as a sentence. Kept complete by a
@@ -215,7 +215,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
       aiSlot = {
         kind: 'value',
         text: formatUsd(spend.total.estimatedCostUsd),
-        sub: spend.status === 'incomplete' ? 'estimated, a lower bound' : 'estimated',
+        sub: spend.status === 'incomplete' ? 'recorded, a lower bound' : 'recorded',
       };
     }
   }
@@ -246,6 +246,21 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
         {!notBos && summary.state === 'ok' && summary.data.business.status === 'none' && (
           <p className="text-sm text-slate-400">Business profile not created yet (setup in progress).</p>
         )}
+        {/* Money M-1 (M1-FR-8, AC-114, SA-W71): Finance with this business
+            picked, This month. Only once the reads say it is a Business OS
+            account (Finance would 404 otherwise). The id only, never a name
+            or an email; outside the summary strip and the section boxes. */}
+        {!loading && !notBos && (
+          <p>
+            <Link
+              data-testid="bos-panel-money-view"
+              href={`/admin/finance?accountId=${encodeURIComponent(accountId)}&preset=this_month`}
+              className={LINK_CLASS}
+            >
+              Open money view
+            </Link>
+          </p>
+        )}
       </div>
 
       <BusinessSummaryStrip
@@ -260,7 +275,9 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
       {/* 1. Credits & billing: the two money blocks (their action bars, folds
           and focus return are LF-4b's, inside them). Today's gate: mounted only after both
           reads settle, and only for a Business OS account (BD-13). */}
-      <DrawerSection title="Credits & billing" testId="drawer-section-credits">
+      {/* LF-4d (BD-16): each section in its box with its purpose line; the
+          box renders in every state, so the money blocks keep their nodes. */}
+      <DrawerBox section="credits" title="Credits & billing" testId="drawer-section-credits">
         {loading && <p className="text-sm text-slate-400">Loading Business OS details…</p>}
 
         {!loading && notBos && (
@@ -270,7 +287,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
         )}
 
         {!loading && !notBos && (
-          <div className="space-y-6">
+          <div className="space-y-3">
             {/* Credits (credit deduction slice 11c): its own read */}
             <CreditsBlock
               accountId={accountId}
@@ -285,13 +302,13 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
             <BoostBlock accountId={accountId} businessLabel={businessLabel} takeBack={takeBack} />
           </div>
         )}
-      </DrawerSection>
+      </DrawerBox>
 
       {/* 2. Plan: the entitlements API, rendered by the Plans & entitlements
           component, collapsed by default here only (user UI fixes,
           2026-10-04). The Plans page renders it open, unchanged. A read
           failure is never hidden behind the fold. */}
-      <DrawerSection title="Plan & entitlements" testId="drawer-section-plan">
+      <DrawerBox section="plan" title="Plan & entitlements" testId="drawer-section-plan">
         {loading && <p className="text-sm text-slate-400">Loading the plan…</p>}
 
         {!loading && notBos && (
@@ -322,11 +339,11 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
             {ENTITLEMENT_ERROR_COPY[plan.code] ?? 'The plan could not be read.'}
           </p>
         )}
-      </DrawerSection>
+      </DrawerBox>
 
       {/* 3. AI usage (BD-7, Q-4 (a)): Business OS first and open; "All
           products" from the drawer last, folded, in every state (SA C3 (d)). */}
-      <DrawerSection title="AI usage" testId="drawer-section-ai">
+      <DrawerBox section="ai" title="AI usage" testId="drawer-section-ai">
         {loading && <p className="text-sm text-slate-400">Loading Business OS AI usage…</p>}
 
         {!loading && !notBos && summary.state === 'error' && (
@@ -338,8 +355,9 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
         {!loading && !notBos && summary.state === 'ok' && (
           <>
             {/* Not headings: each DrawerSection has exactly one (L-1d M-4; SA C2). */}
-            <div data-testid="bos-panel-spend" className="space-y-2">
-              <p className="text-sm font-semibold text-slate-300">Business OS, last 30 days (USD estimated)</p>
+            <div data-testid="bos-panel-spend" className={`${PART_BOX} space-y-2`}>
+              <p className="text-sm font-semibold text-slate-300">Recorded AI cost, Business OS, last 30 days (USD)</p>
+              <PartPurpose part="ai-bos" />
               {summary.data.aiSpend30d.status === 'error' ? (
                 <p className="text-sm text-rose-300">The AI usage ledger could not be read.</p>
               ) : (
@@ -376,8 +394,9 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
               </Link>
             </div>
 
-            <div data-testid="bos-panel-failures" className="space-y-2">
+            <div data-testid="bos-panel-failures" className={`${PART_BOX} space-y-2`}>
               <p className="text-sm font-semibold text-slate-300">Recent Business OS AI failures (last 30 days)</p>
+              <PartPurpose part="ai-failures" />
               {summary.data.recentAiFailures.status === 'error' ? (
                 <p className="text-sm text-rose-300">The audit trail could not be read.</p>
               ) : summary.data.recentAiFailures.items.length === 0 ? (
@@ -419,7 +438,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
         )}
 
         {allProducts}
-      </DrawerSection>
+      </DrawerBox>
     </div>
   );
 }

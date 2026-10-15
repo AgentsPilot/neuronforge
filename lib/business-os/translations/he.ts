@@ -184,6 +184,11 @@ export const he = {
     'crm.subscribers.origin': 'נרשם לדיוור מאז {date}',
     'crm.tab_activity': 'פעילות',
     'crm.loading': 'טוען אנשי קשר...',
+    'crm.no_stages_title': 'אין עדיין שלבים בצנרת שלך',
+    'crm.no_stages_body': 'הלוח צריך שלבים כדי להציג עמודות. אנשי הקשר שלך עדיין זמינים בלשונית אנשי קשר.',
+    'crm.stages_failed_title': 'לא ניתן היה לטעון את הצנרת שלך',
+    'crm.stages_failed_body': 'משהו השתבש אצלנו. אנשי הקשר שלך בטוחים ועדיין זמינים בלשונית אנשי קשר.',
+    'crm.stages_failed_retry': 'נסה שוב',
 
     // Pipeline stages - generic
     'crm.stage.lead': 'ליד',
@@ -2052,11 +2057,16 @@ export const he = {
     'media.generate.prompt': 'תארו את התמונה שתרצו',
     'media.generate.action': 'יצירה',
     'media.generate.working': 'יוצר…',
-    'media.generate.no_people': 'איננו יוצרים תמונות של אנשים — השתמשו בתצלום שלכם.',
+    'media.generate.depicts_people': 'איננו יוצרים תמונות של אנשים — השתמשו בתצלום שלכם.',
     'media.generate.unavailable': 'יצירת תמונות אינה זמינה כרגע.',
     'media.generate.failed': 'לא הצלחנו ליצור. נסו לתאר אחרת.',
     'media.generate.remaining': 'נשארו {remaining} מתוך {limit} תמונות AI להיום',
     'media.generate.limit_reached': 'ניצלתם את {limit} תמונות ה-AI של היום. מחר יהיו עוד — העלאת תמונה עדיין זמינה.',
+    'media.generate.progress_title': "יוצרים את התמונה שלכם. זה לוקח בדרך כלל כדקה.",
+    'media.generate.progress_slow': "לוקח יותר זמן מהרגיל, עדיין עובדים על זה.",
+    'media.generate.progress_elapsed': "זמן שעבר",
+    'media.generate.progress_can_close': "אפשר לסגור את החלון. התמונה תישמר בכל זאת בספרייה שלכם.",
+    'media.generate.progress_no_repeat': "אל תבקשו את אותה תמונה שוב בזמן שהיא נוצרת, אחרת ייתכן שתחויבו פעמיים.",
     'media.upload.add': 'הוסף',
     'settings.business.logo_hint': 'מופיע בחשבוניות, במיילים, בדפי ההזמנה ובאתר שלך. תמונה מרובעת, לפחות 200x200 פיקסלים.',
     'settings.business.logo_on_smart_links': 'הצג בקישורי ההזמנה והיצירת קשר הציבוריים שלי',
@@ -2200,6 +2210,13 @@ export const he = {
     'consent.label_ad': 'לסמן דיוור שיווקי כפרסומת',
     'consent.label_ad_desc': 'חובה בדיוור לאנשים בישראל. מוסיף סימון ברור בראש כל הודעה שיווקית.',
     'consent.saved': 'נשמר',
+    'consent.save_failed': 'לא נשמר. השינויים שלך עדיין כאן, נסה שוב.',
+    'consent.load_failed': 'לא ניתן לטעון את הגדרות הרשאת השיווק.',
+    // Not "בטל": it also reads as "cancel", the opposite choice, next to "keep editing" (SA C-9).
+    'settings.drawer.discard_title': 'למחוק את השינויים?',
+    'settings.drawer.discard_desc': 'יש כאן שינויים שלא נשמרו. אם תסגור עכשיו, הם יאבדו.',
+    'settings.drawer.keep_editing': 'המשך לערוך',
+    'settings.drawer.discard': 'מחק את השינויים',
 
     // Security Tab
     'settings.security.title': 'סיסמה ואבטחה',

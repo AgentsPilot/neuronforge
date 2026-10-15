@@ -177,6 +177,38 @@ describe('BusinessOsHandlerMissingError', () => {
   });
 });
 
+/**
+ * STRIPE_CONNECT_REFUND_WEBHOOK F4-a (i), SA-2: the dispatcher and resolvers are
+ * unchanged, and a PLATFORM `refund.*` is not Business OS. The route then logs
+ * and skips it in the switch; it never reaches a boost or plan handler.
+ */
+describe('platform refund.* events are not Business OS (F4-a)', () => {
+  it.each(['refund.created', 'refund.updated', 'refund.failed'])(
+    '%s: the default resolvers answer not_business_os without a boost read',
+    async (type) => {
+      const { createBoostResolver } = jest.requireActual('@/lib/business-os/boost/boostWebhookResolver');
+      const purchases = {
+        findBySessionIdForWebhook: jest.fn(),
+        findByIdForWebhook: jest.fn(),
+        findByPaymentIntentIdForWebhook: jest.fn(),
+      };
+      const boost = createBoostResolver({ purchases });
+      const event = {
+        id: 'evt_r',
+        type,
+        livemode: false,
+        data: { object: { id: 're_1', object: 'refund', payment_intent: 'pi_1', charge: 'ch_1', status: 'succeeded' } },
+      } as unknown as Stripe.Event;
+
+      expect(DEFAULT_RESOLVERS.map((r) => r.flow)).toEqual(['plan', 'boost']);
+      expect(await dispatchBusinessOsEvent(event, ctx, [planResolver, boost])).toEqual(NOT_OURS);
+      expect(purchases.findBySessionIdForWebhook).not.toHaveBeenCalled();
+      expect(purchases.findByIdForWebhook).not.toHaveBeenCalled();
+      expect(purchases.findByPaymentIntentIdForWebhook).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('boost 4a QA R-5: a Connect session carrying the boost marker', () => {
   it('the default resolvers answer not_business_os with ZERO boost reads (the dispatcher returns before any resolver)', async () => {
     const { createBoostResolver } = jest.requireActual('@/lib/business-os/boost/boostWebhookResolver');

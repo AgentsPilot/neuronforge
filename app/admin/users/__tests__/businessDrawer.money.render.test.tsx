@@ -40,6 +40,8 @@ jest.mock('@/lib/logger', () => ({
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  clientLogger: { child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
 
 jest.mock('next/navigation', () => ({
@@ -180,6 +182,24 @@ let boostData: AdminBoostView;
 let opsQueue: Queued[] = [];
 /** While set, the top-ups read waits for it, as a real network read takes time. */
 let boostGate: Promise<void> | null = null;
+/**
+ * LF-F2 (T-K): how the next list read fails, then cleared: a 500 from the
+ * route, a rejected fetch, or held until the test answers it (T-K8).
+ */
+let listFailNext: 'http' | 'network' | 'held' | 'heldNetwork' | null = null;
+/** The held list read's answer (T-K8). */
+let heldList: { promise: Promise<Reply>; resolve: (reply: Reply) => void } | null = null;
+/** The held list read the test rejects as a network failure (T-K9, T-K10; LF-F3, LF-F2-N1). */
+let heldNetwork: { promise: Promise<Reply>; reject: (reason: unknown) => void } | null = null;
+
+/** As the harness `deferred`, but rejectable: the harness one has no reject, and the harness stays as it is. */
+function rejectableDeferred<T>() {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((_resolve, r) => {
+    reject = r;
+  });
+  return { promise, reject };
+}
 
 function routePost(url: string): Queued {
   if (url === OPS_URL) return fromQueue(opsQueue, url);
@@ -192,6 +212,18 @@ function routeGet(url: string): Queued {
   if (boostGate && url === BOOST_URL) return boostGate.then(() => okBody(boostData));
   if (url.startsWith('/api/admin/users?')) {
     listReadCount += 1;
+    const fail = listFailNext;
+    listFailNext = null;
+    if (fail === 'http') return answer(500, { success: false, error: 'Failed to fetch users' });
+    if (fail === 'network') return Promise.reject(new TypeError('Failed to fetch'));
+    if (fail === 'held') {
+      heldList = deferred<Reply>();
+      return heldList.promise;
+    }
+    if (fail === 'heldNetwork') {
+      heldNetwork = rejectableDeferred<Reply>();
+      return heldNetwork.promise;
+    }
     return okBody([danaRow(listReadCount)]);
   }
   if (url.endsWith('/login-stats')) return okBody({ total_logins: 1, failed_logins: 0, unique_ips: 1, last_login_ip: '10.0.0.1' });
@@ -282,6 +314,9 @@ beforeEach(() => {
   listReadCount = 0;
   opsQueue = [];
   boostGate = null;
+  listFailNext = null;
+  heldList = null;
+  heldNetwork = null;
   creditsData = creditsPayload([lot(1), PAID_LOT]);
   boostData = boostView();
 });
@@ -303,7 +338,7 @@ describe('T-A: the money actions sit in bars of their own, apart from the figure
     expect(block.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
   });
 
-  it('T-A2: Set limit and Back to default open the Spending limit part, above its figures; reconcile is unmoved', async () => {
+  it('T-A2: Set limit and Back to default open the Spending limit part, above its figures; no reconcile button, the pointer is last (LF-4c)', async () => {
     boostData = boostView({ cap: { status: 'ok', default: { amountMinor: 15000, currency: 'USD', windowDays: 30 }, active: ACTIVE_CAP, history: [] } });
     const drawer = await openDrawer();
     const cap = within(drawer).getByTestId('boost-cap');
@@ -311,8 +346,12 @@ describe('T-A: the money actions sit in bars of their own, apart from the figure
     expect(bar.className).toBe(MONEY_ACTION_BAR);
     expect(within(bar).getAllByRole('button').map((b) => b.getAttribute('data-testid'))).toEqual(['boost-cap-set', 'boost-cap-end']);
     expectInOrder([bar, within(cap).getByTestId('boost-cap-override'), within(cap).getByTestId('boost-cap-history')]);
-    const blockButtons = within(within(drawer).getByTestId('boost-block')).getAllByRole('button');
-    expect(blockButtons[blockButtons.length - 1].getAttribute('data-testid')).toBe('boost-reconcile');
+    // LF-4c (BD-6): the reconcile moved to Scheduled jobs & queues; the block ends on the pointer line.
+    const block = within(drawer).getByTestId('boost-block');
+    expect(within(block).queryByTestId('boost-reconcile')).toBeNull();
+    const pointer = within(block).getByTestId('boost-reconcile-pointer');
+    const all = Array.from(block.querySelectorAll('*'));
+    expect(all.filter((element) => pointer.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING && !pointer.contains(element))).toEqual([]);
     expect(within(drawer).getByTestId('boost-block').querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
   });
 
@@ -489,6 +528,260 @@ describe('T-B: one list re-read after a successful Give or Take back (BD-14)', (
     const start = calls.length;
     await confirm(dialog);
     expect(since(start)).toEqual([`GET ${CREDITS_URL}`, listCall(), `POST ${OPS_URL}`].sort());
+  });
+});
+
+// ── T-K a failed list re-read after a money action keeps the rows (LF-F2) ──
+
+describe('T-K: a failed list re-read after a Give or Take back keeps the rows and the drawer (LF4B-F1)', () => {
+  const DRAWER_STALE =
+    'The business list could not be refreshed, so the credits at the top of this panel and in the list may show an older figure.';
+  /** The requests sent from `start` on, sorted. */
+  const since = (start: number) => calls.slice(start).map(line).sort();
+  const listUrls = () => calls.filter((c) => c.method === 'GET' && c.url.startsWith('/api/admin/users?')).map((c) => c.url);
+  const refreshButton = () => screen.getByRole('button', { name: 'Refresh the business list' }) as HTMLButtonElement;
+  const strip = (drawer: HTMLElement) => within(within(drawer).getByTestId('strip-credits-left')).getByTestId('row-credits-left');
+  const rowCell = () => within(screen.getByTestId('row-credits-cell')).getByTestId('row-credits-left');
+  const SAME_NODES = ['bos-panel', 'credits-block', 'boost-block'];
+
+  /** The money action succeeded and its list read failed: everything an admin needs to see is still there. */
+  function expectKept(drawer: HTMLElement, nodes: HTMLElement[]) {
+    expect(drawer.isConnected).toBe(true);
+    expect(screen.getByTestId('users-drawer')).toBe(drawer);
+    expect(screen.getAllByTestId('row-business')).toHaveLength(1);
+    expect(within(drawer).getByTestId('credits-success').textContent).not.toBe('');
+    const line = within(drawer).getByTestId('drawer-list-stale');
+    expect(line.textContent).toBe(DRAWER_STALE);
+    expect(line.getAttribute('role')).toBe('status');
+    expect(screen.queryByTestId('users-error')).toBeNull();
+    // Behind the drawer too (SA C3), so it is still there once the drawer closes.
+    expect(screen.getByTestId('users-list-stale')).toBeTruthy();
+    SAME_NODES.forEach((id, i) => expect(within(drawer).getByTestId(id)).toBe(nodes[i]));
+  }
+
+  async function closeDrawer(drawer: HTMLElement) {
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await quiet();
+  }
+
+  /** A Give whose list read fails as asked; returns the drawer. */
+  async function giveThenListFails(how: 'http' | 'network'): Promise<HTMLElement> {
+    const drawer = await openDrawer();
+    const dialog = await give(drawer);
+    opsQueue.push(granted(100));
+    listFailNext = how;
+    await confirm(dialog);
+    return drawer;
+  }
+
+  it('T-K1: Give, then the list read answers 500: same request as the first read, rows, drawer, notice and focus all stay', async () => {
+    const drawer = await openDrawer();
+    const mountUrl = listUrls()[0];
+    expect(screen.queryByTestId('drawer-list-stale')).toBeNull();
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    const nodes = SAME_NODES.map((id) => within(drawer).getByTestId(id));
+
+    const dialog = await give(drawer);
+    expect(screen.queryByTestId('drawer-list-stale')).toBeNull();
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    opsQueue.push(granted(100));
+    listFailNext = 'http';
+    const start = calls.length;
+    await confirm(dialog);
+
+    expect(since(start)).toEqual([`GET ${CREDITS_URL}`, `GET ${mountUrl}`, `POST ${OPS_URL}`].sort());
+    expect(listUrls()).toEqual([mountUrl, mountUrl]); // byte for byte the first read's request (SA C3)
+    expectKept(drawer, nodes);
+    await waitFor(() => expect(document.activeElement).toBe(button(drawer, 'credits-give')));
+  });
+
+  it('T-K2: Take back on a lot, then the list read answers 500: the same', async () => {
+    const drawer = await openDrawer();
+    const nodes = SAME_NODES.map((id) => within(drawer).getByTestId(id));
+    press(within(within(drawer).getAllByTestId('credits-lot')[0]).getByTestId('credits-take-back'));
+    const dialog = await screen.findByTestId('credit-form-dialog');
+    fillTakeBack(dialog, '10');
+    opsQueue.push(reduced(lot(1).id, 10, 90));
+    creditsData = creditsPayload([lot(1, { remaining: 90 }), PAID_LOT]);
+    listFailNext = 'http';
+    const start = calls.length;
+    await confirm(dialog);
+
+    expect(since(start)).toEqual([`GET ${CREDITS_URL}`, `GET ${listUrls()[0]}`, `POST ${OPS_URL}`].sort());
+    expect(listUrls()).toHaveLength(2);
+    expectKept(drawer, nodes);
+  });
+
+  it('T-K3: Take back on a top-up, then the list read is rejected (network): the same', async () => {
+    const drawer = await openDrawer();
+    const nodes = SAME_NODES.map((id) => within(drawer).getByTestId(id));
+    press(button(within(drawer).getByTestId('boost-purchase'), 'boost-take-back'));
+    const dialog = await screen.findByTestId('credit-form-dialog');
+    fillTakeBack(dialog, '100');
+    opsQueue.push(reduced(PAID_LOT.id, 100, 13650));
+    listFailNext = 'network';
+    const start = calls.length;
+    await confirm(dialog);
+
+    expect(since(start)).toEqual([`GET ${CREDITS_URL}`, `GET ${listUrls()[0]}`, `POST ${OPS_URL}`].sort());
+    expect(listUrls()).toHaveLength(2);
+    expectKept(drawer, nodes);
+  });
+
+  it('T-K4: the strip and the row keep the last good figure; the Credits block shows its own new one', async () => {
+    creditsData = creditsPayload([lot(1), PAID_LOT]);
+    const drawer = await openDrawer();
+    expect(strip(drawer).textContent).toBe('40%');
+    const dialog = await give(drawer);
+    opsQueue.push(granted(100));
+    creditsData = creditsPayload([lot(1), PAID_LOT], { extra: { status: 'ok', extraCredits: 14150, hasInconsistentLot: false, lots: [lot(1), PAID_LOT] } });
+    listFailNext = 'http';
+    await confirm(dialog);
+
+    expect(strip(drawer).textContent).toBe('40%');
+    expect(rowCell().textContent).toBe('40%');
+    expect(within(drawer).getByTestId('credits-extra-figure').textContent).toBe('14,150');
+  });
+
+  it('T-K5: closing the drawer keeps the rows and the page line; the next good Refresh clears both lines', async () => {
+    const drawer = await giveThenListFails('http');
+    await closeDrawer(drawer);
+
+    expect(screen.getAllByTestId('row-business')).toHaveLength(1);
+    // SA C5's copy, with the time of the last good read in the middle.
+    const pageLine = screen.getByTestId('users-list-stale').textContent ?? '';
+    expect(pageLine.startsWith('The business list could not be refreshed. These rows are from ')).toBe(true);
+    expect(pageLine.endsWith(' UTC. Press Refresh to try again.')).toBe(true);
+
+    fireEvent.click(refreshButton());
+    await waitFor(() => expect(rowCell().textContent).toBe('30%'));
+    await quiet();
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    expect(screen.queryByTestId('drawer-list-stale')).toBeNull();
+    expect(screen.queryByTestId('users-error')).toBeNull();
+    expect(listUrls()).toHaveLength(3);
+  });
+
+  it("T-K6: Refresh keeps today's behaviour: a failed Refresh empties the rows and shows the error, never beside the stale line", async () => {
+    const drawer = await giveThenListFails('http');
+    await closeDrawer(drawer);
+
+    listFailNext = 'http';
+    fireEvent.click(refreshButton());
+    await screen.findByTestId('users-error');
+    await quiet();
+    expect(screen.queryAllByTestId('row-business')).toHaveLength(0);
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    expect(listUrls()).toHaveLength(3);
+  });
+
+  it('T-K7: a refused Give sends no list read at all, so the failure switch is never used', async () => {
+    const drawer = await openDrawer();
+    const dialog = await give(drawer);
+    opsQueue.push(answer(409, { success: false, error: 'awaiting_payment' }));
+    listFailNext = 'http';
+    fireEvent.click(button(dialog, 'credit-form-confirm'));
+    await within(dialog).findByTestId('credit-form-error');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(dialog.isConnected).toBe(false));
+    await quiet();
+
+    expect(listUrls()).toHaveLength(1);
+    expect(listFailNext).toBe('http');
+    expect(screen.queryByTestId('drawer-list-stale')).toBeNull();
+    listFailNext = null;
+  });
+
+  it('T-K8: an older post-Give read that fails after a newer read succeeded changes nothing (newest read wins)', async () => {
+    const drawer = await openDrawer();
+    const dialog = await give(drawer);
+    opsQueue.push(granted(100));
+    listFailNext = 'held';
+    fireEvent.click(button(dialog, 'credit-form-confirm'));
+    await waitFor(() => expect(dialog.isConnected).toBe(false));
+    await waitFor(() => expect(heldList).not.toBeNull());
+
+    // Refresh is disabled while a read is in flight, so the newer read an admin
+    // can start at this moment is a status change, once the drawer is closed.
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(refreshButton().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'all' } });
+    await waitFor(() => expect(listUrls()).toHaveLength(3));
+    await waitFor(() => expect(rowCell().textContent).toBe('30%'));
+
+    await act(async () => {
+      heldList?.resolve(answer(500, { success: false, error: 'Failed to fetch users' }));
+    });
+    await quiet();
+
+    expect(rowCell().textContent).toBe('30%');
+    expect(screen.getAllByTestId('row-business')).toHaveLength(1);
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    expect(screen.queryByTestId('users-error')).toBeNull();
+    expect(listUrls()).toHaveLength(3);
+    window.history.replaceState(null, '', '/');
+  });
+
+  // LF-F3 (LF-F2-N1, SA N-1): T-K8 pins the 500 branch only; these two pin the
+  // network branch, where the order check is its own line (`if (isNewest()) fail(...)`).
+  /** Everything the newer read showed is still there, and no failure is shown. */
+  function expectNewerReadStands() {
+    expect(rowCell().textContent).toBe('30%');
+    expect(screen.getAllByTestId('row-business')).toHaveLength(1);
+    expect(screen.queryByTestId('users-error')).toBeNull();
+    expect(screen.queryByTestId('users-list-stale')).toBeNull();
+    expect(screen.queryByTestId('drawer-list-stale')).toBeNull();
+    expect(listUrls()).toHaveLength(3);
+  }
+
+  it('T-K9: keep mode: an older post-Give read rejected (network) after a newer read succeeded changes nothing', async () => {
+    const drawer = await openDrawer();
+    const dialog = await give(drawer);
+    opsQueue.push(granted(100));
+    listFailNext = 'heldNetwork';
+    fireEvent.click(button(dialog, 'credit-form-confirm'));
+    await waitFor(() => expect(dialog.isConnected).toBe(false));
+    await waitFor(() => expect(heldNetwork).not.toBeNull());
+
+    // As T-K8: the newer read an admin can start now is a status change, once the drawer is closed.
+    fireEvent.keyDown(drawer, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'all' } });
+    await waitFor(() => expect(listUrls()).toHaveLength(3));
+    await waitFor(() => expect(rowCell().textContent).toBe('30%'));
+
+    await act(async () => {
+      heldNetwork?.reject(new TypeError('Failed to fetch'));
+    });
+    await quiet();
+
+    expectNewerReadStands();
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('T-K10: normal mode: an older Status read rejected (network) after a newer Status read succeeded changes nothing', async () => {
+    installFetch();
+    render(<UsersPage />);
+    await screen.findByRole('button', { name: 'Open details for Dana Cohen' });
+    await quiet();
+    expect(rowCell().textContent).toBe('40%');
+
+    listFailNext = 'heldNetwork';
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'all' } });
+    await waitFor(() => expect(heldNetwork).not.toBeNull());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'active' } });
+    await waitFor(() => expect(listUrls()).toHaveLength(3));
+    await waitFor(() => expect(rowCell().textContent).toBe('30%'));
+
+    await act(async () => {
+      heldNetwork?.reject(new TypeError('Failed to fetch'));
+    });
+    await quiet();
+
+    expectNewerReadStands();
+    window.history.replaceState(null, '', '/');
   });
 });
 

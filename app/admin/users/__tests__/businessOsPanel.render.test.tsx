@@ -27,10 +27,13 @@ jest.mock('@/lib/logger', () => ({
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
   }),
+  // LF-F3: the page logs through `clientLogger.child`; `@/lib/logger/client` re-exports it from this module.
+  clientLogger: { child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
 
 import UsersPage from '../page';
 import { BusinessOsPanel } from '../components/BusinessOsPanel';
+import { DRAWER_PURPOSE } from '../components/DrawerBox';
 import recordedAccountBody from '@/app/admin/business-os-tiers/__tests__/__fixtures__/recordedAccountBody.json';
 import type { AdminUserRow } from '../types';
 
@@ -170,6 +173,33 @@ describe('BusinessOsPanel', () => {
     expect((await screen.findByTestId('bos-panel-not-bos')).textContent).toContain('Not a Business OS account');
     expect(screen.getByTestId('bos-panel-user').textContent).toBe('Agent Only');
     expect(screen.queryByTestId('bos-panel-spend')).toBeNull();
+  });
+
+  it('AC-114 (Money M-1): "Open money view" opens Finance on this account, This month; the id only, never a name or an email', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${ACCOUNT}`]: { status: 200, body: recordedAccountBody },
+      [`/accounts/${ACCOUNT}/summary`]: { status: 200, body: SUMMARY },
+    });
+    render(panel(ACCOUNT, 'Dana Cohen'));
+    // Not while the reads are in flight (SA-W71).
+    expect(screen.queryByTestId('bos-panel-money-view')).toBeNull();
+    const link = await screen.findByTestId('bos-panel-money-view');
+    expect(link.textContent).toBe('Open money view');
+    const href = link.getAttribute('href') ?? '';
+    expect(href).toBe(`/admin/finance?accountId=${ACCOUNT}&preset=this_month`);
+    expect(href).not.toMatch(/Dana|Acme|someone|example|@/);
+    // In the header block, outside the summary strip.
+    expect(link.closest('[data-testid="bos-panel-header"]')).not.toBeNull();
+  });
+
+  it('AC-114: no "Open money view" for a login with no Business OS account', async () => {
+    mockFetch({
+      [`/entitlements/accounts/${NO_BUSINESS}`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+      [`/accounts/${NO_BUSINESS}/summary`]: { status: 404, body: { success: false, error: 'not_a_business_os_account' } },
+    });
+    render(panel(NO_BUSINESS, 'Agent Only'));
+    await screen.findByTestId('bos-panel-not-bos');
+    expect(screen.queryByTestId('bos-panel-money-view')).toBeNull();
   });
 
   it('still shows the plan when the summary fails, under a neutral header (N-4)', async () => {
@@ -473,8 +503,12 @@ describe('the Businesses list', () => {
 
     const plugins = await screen.findByTestId('plugins-card');
     expect(plugins.textContent).toContain('could not be read');
-    expect(plugins.textContent).not.toContain('active');
-    expect(plugins.textContent).not.toContain('No plugins connected');
+    // LF-4d (BD-16, SA C1 wording): the card's purpose line says "active" in
+    // every state; everything else in the card is held to the old rule.
+    const shown = (plugins.textContent ?? '').replace(DRAWER_PURPOSE['account-plugins'], '');
+    expect(plugins.textContent).toContain(DRAWER_PURPOSE['account-plugins']);
+    expect(shown).not.toContain('active');
+    expect(shown).not.toContain('No plugins connected');
     expect(screen.getByTestId('ai-spend-card').textContent).toContain('$0.4321');
   });
 

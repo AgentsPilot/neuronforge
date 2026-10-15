@@ -316,16 +316,17 @@ describe('backward: a gate cannot ship unregistered', () => {
         'INVITE_TYPES',
         'PAID_INVITE_TYPE',
         'planLabel',
+        'planMonthlyPriceUsd',
         'InviteTypeId',
       ],
-      why: 'The admin invite operations. They read the invite config (T-14, T-15) and label plans for the admin list with `planLabel`. The Paid refusal here is an issuance rule on WHO MAY INVITE, not a capability gate on what an account may do.',
+      why: 'The admin invite operations. They read the invite config (T-14, T-15) and label plans for the admin list with `planLabel`. The Paid refusal here is an issuance rule on WHO MAY INVITE, not a capability gate on what an account may do. Plan payments P-9.2 (SA C-4) adds `planMonthlyPriceUsd`, display only: the Paid grant label shows the monthly price, read from the same injected config as the plan name.',
     },
     {
       file: 'lib/business-os/invites/inviteOffer.ts',
       // No resolver (SA M-3): the resolution lives in `planOfferView.ts`, inside
       // the module, and this file gets only its read-only result.
-      symbols: ['EntitlementConfig', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'PlanOfferCategory'],
-      why: 'Describes the plan an invite OFFERS through `describePlanOffer`, a read-only view inside the entitlements module that previews a plan the way `adminPlansView` and `customerPlanView` do. It imports no resolver and no decision function, so it cannot refuse a capability.',
+      symbols: ['EntitlementConfig', 'INVITE_ISSUANCE_POLICY', 'INVITE_TYPES', 'INVITE_TYPE_IDS', 'describePlanOffer', 'PlanOfferCategory'],
+      why: 'Describes the plan an invite OFFERS through `describePlanOffer`, a read-only view inside the entitlements module that previews a plan the way `adminPlansView` and `customerPlanView` do. It imports no resolver and no decision function, so it cannot refuse a capability. Plan payments P-9.1 (SA C-2) adds `INVITE_ISSUANCE_POLICY` for `adminPaidInviteRedemption`, the one predicate deciding whether an admin Paid INVITE may be redeemed (the Paid switch and who may issue which type): an issuance rule on an invite, not a capability gate on what an account may do.',
     },
     {
       file: 'lib/business-os/invites/inviteSchemas.ts',
@@ -390,6 +391,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'app/api/admin/business-os/test/take-credits/route.ts',
       symbols: ['currentCreditValue', 'isBusinessOsTenant', 'resolveAccountId'],
       why: 'Test harness slice TC-1 (TEST ONLY): the admin route that records one test charge of N plan credits on ONE account. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, the same check as the 11c credit view), resolves the body id through the account seam (`resolveAccountId`), and stamps the charge with `currentCreditValue().version` as every charge does. It refuses by tenancy and identity (platform account, own account, not a tenant), never by plan: no snapshot, no `check()` / `decide()`. If this file ever refuses by plan, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    // ── Plan payments P-6a.1, 2026-10-15 — the TEST MODE ONLY plan test clock (SA C-12) ──
+    {
+      file: 'app/api/admin/business-os/test/plan-test-clock/route.ts',
+      symbols: ['isBusinessOsTenant', 'resolveAccountId'],
+      why: 'Plan payments P-6a.1 (SA C-5, C-12), TEST MODE ONLY: the admin route that puts ONE account on a Stripe test clock, advances it, or reads its status for the /test-business-os demo. It asks whether the account is a Business OS tenant (`isBusinessOsTenant`, as the take-credits route does) and resolves the body id through the account seam (`resolveAccountId`). It refuses by switch, tenancy, key mode and billing-row state (a live subscription, an open checkout), never by plan: no snapshot, no `check()` / `decide()`. If this file ever refuses by plan, it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planTestClock.ts',
+      symbols: ['LifecycleResult', 'deriveLifecycle', 'fromPlanRow', 'getEntitlementConfig', 'lifecycleInputs'],
+      why: "Plan payments P-6a.1 (SA C-7, C-12), TEST MODE ONLY: the test clock's read-only `status` action derives the account's lifecycle AT THE CLOCK'S TIME (`deriveLifecycle(fromPlanRow(row), lifecycleInputs(getEntitlementConfig()), clock time)`, with the `LifecycleResult` TYPE for its answer) so the demo can show grace, paused and AC-F6.5, which the real-time Tiers page cannot while only Stripe's time moves. DISPLAY only: it grants or withholds nothing, calls no `check()` / `decide()`, and its refusals are about the clock and the billing row, never the plan. If it ever refuses by plan, it is a gate and belongs in ENFORCEMENT_POINTS.",
     },
     // ── Credits boost slice 6a, 2026-10-09 — the admin "Credit top-ups" block ──
     {

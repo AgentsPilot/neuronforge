@@ -2,7 +2,6 @@
 // Repository for managing agent executions and token usage
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import { supabase as defaultSupabase } from '@/lib/supabaseClient';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   Execution,
@@ -10,31 +9,18 @@ import type {
   AgentRepositoryResult,
 } from './types';
 
-/**
- * The columns the GDPR export reads from `agent_executions`
- * (listForUserDataExport; DATA_EXPORT_FOLLOWUPS_WORKPLAN.md §4.3). Changing
- * this changes what the export holds: a privacy decision.
- *
- * Included: status, timings, results, logs, errors, retries, and which AI
- * provider and model processed the person's data (a transparency item). Left
- * out: `job_id` / `queue_name` (queue plumbing) and, by user decision BQ-1
- * (2026-10-04), `total_cost_usd` / `models_used`: our own provider cost per run
- * is our commercial figure, not data about the person. Reversing BQ-1 means
- * adding those two names back to this list, nothing else. A column added later
- * is not exported until it is listed here.
- */
-const EXECUTION_DATA_EXPORT_COLUMNS =
-  'id, agent_id, execution_type, scheduled_at, started_at, completed_at, status, result, error_message, ' +
-  'execution_duration_ms, retry_count, next_retry_at, created_at, updated_at, progress, user_id, ' +
-  'cron_expression, next_scheduled_run, logs, run_mode, primary_model, primary_provider, routing_tier, ' +
-  'complexity_score';
-
 export class ExecutionRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
 
-  constructor(supabaseClient?: SupabaseClient) {
-    this.supabase = supabaseClient || defaultSupabase;
+  /**
+   * The client is required (RLS slice 2c-1, SA R-8). The old default was the
+   * browser client, which on the server runs as `anon`: every server caller
+   * must say whose rights it reads with (the caller's cookie client, or the
+   * service role where that is intended and documented).
+   */
+  constructor(supabaseClient: SupabaseClient) {
+    this.supabase = supabaseClient;
     this.logger = createLogger({ service: 'ExecutionRepository' });
   }
 
@@ -231,35 +217,4 @@ export class ExecutionRepository {
       return { data: null, error: error as Error };
     }
   }
-
-  /**
-   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
-   * executions since `since` (an ISO timestamp the route computes),
-   * EXECUTION_DATA_EXPORT_COLUMNS only, newest first, at most 1000. The column
-   * set and the cap are fixed; changing them changes what the export holds,
-   * which is a privacy decision.
-   *
-   * Construct this repository with `supabaseServer` for this read: the default
-   * client is the browser anon client, which would return nothing under RLS.
-   */
-  async listForUserDataExport(userId: string, since: string): Promise<AgentRepositoryResult<Record<string, unknown>[]>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('agent_executions')
-        .select(EXECUTION_DATA_EXPORT_COLUMNS)
-        .eq('user_id', userId)
-        .gte('created_at', since)
-        .order('created_at', { ascending: false })
-        .limit(1000);
-
-      if (error) throw error;
-      return { data: (data ?? []) as unknown as Record<string, unknown>[], error: null };
-    } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to list executions for the data export');
-      return { data: null, error: error as Error };
-    }
-  }
 }
-
-// Export singleton instance for convenience
-export const executionRepository = new ExecutionRepository();

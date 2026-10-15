@@ -460,6 +460,9 @@ export function lifecycleSchema(catalog: CatalogLike = CAPABILITIES): z.ZodTypeA
   return z
     .object({
       subscriptionGraceHistory: historySchema,
+      // PF-10: the same history rules (ascending, positive whole days) as every
+      // other lifecycle duration, so the drift snapshot can guard it too.
+      renewalSettlementMarginHistory: historySchema,
       // Every state × every surface kind. A missing cell would mean "what
       // happens here?" has no answer at the moment someone is paused.
       overlay: z.object(Object.fromEntries(LIFECYCLE_STATES.map((state) => [state, surfaceRow]))).strict(),

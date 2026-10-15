@@ -73,6 +73,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Merge queue: GitHub runs the required checks on the queue's temporary
+  # gh-readonly-queue/main/pr-<n>-<sha> commit. Without this trigger nothing
+  # reports there and every queued PR times out. Inert while the queue is
+  # off. See docs/workplans/CI_MERGE_QUEUE_WORKPLAN.md.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 # Read-only: the job checks out and runs Jest.
@@ -100,10 +106,17 @@ jobs:
       - name: Can this change affect the entitlement configuration?
         id: scope
         env:
-          # Measure the whole push, not just its last commit. Empty on
-          # pull_request, where the script's HEAD^ default is the base tip.
-          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+          # Measure the whole push, not just its last commit. On merge_group,
+          # the queue commit's first parent (merge_group.base_sha), fetched
+          # below via MQ_BASE. Empty on pull_request, where the script's HEAD^
+          # default is the base tip.
+          BASE: ${{ github.event_name == 'push' && github.event.before || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          MQ_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
         run: |
+          # Merge queue only: put base_sha in the depth-2 clone, so a stacked
+          # entry (base not HEAD^) still resolves. Guarded: a failed fetch
+          # leaves the base unresolvable and the scope rule fails open.
+          if [ -n "$MQ_BASE" ]; then git fetch --no-tags --depth=1 origin "$MQ_BASE" || true; fi
           if bash .github/ci/non-deploying-change.sh "$BASE"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else

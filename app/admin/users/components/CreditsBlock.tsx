@@ -49,6 +49,7 @@ import type { AccountCreditPositionPayload, CreditLotView, CreditUsageBlockView 
 import { CreditFormDialog, type CreditFormMode } from './CreditFormDialog';
 import { ShowMoreList } from './drawerFolds';
 import { MONEY_ACTION_BAR, useReturnFocus } from './moneyBlockUi';
+import { PART_BOX, PartPurpose } from './DrawerBox';
 
 type Load = { state: 'loading' } | { state: 'ok'; data: AccountCreditPositionPayload } | { state: 'error'; code: string };
 
@@ -339,12 +340,13 @@ export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null,
   }
 
   return (
-    <div data-testid="credits-block" ref={rootRef}>
+    <div data-testid="credits-block" ref={rootRef} className={PART_BOX}>
       {/* A label, not a heading: the section's h3 is its only heading (D-20, LF-4b). */}
       <p className="flex items-center gap-2 text-sm font-semibold text-slate-300">
         <Coins className="h-4 w-4 text-amber-300" aria-hidden="true" />
         {CREDIT_COPY.heading}
       </p>
+      <PartPurpose part="credits-part" />
 
       {/* BD-5: the money action, in a bar of its own, above the figures. Same
           condition as before: a good read, not the admin's own account. */}

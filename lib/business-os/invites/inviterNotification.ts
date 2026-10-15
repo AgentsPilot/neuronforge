@@ -8,6 +8,13 @@ import 'server-only';
  * Called by the redemption (`inviteRedemption.ts`) after a successful
  * finalise, for both proofs (code and Google) and both kinds of invite.
  *
+ * N-2 (plan payments P-5b.1, FR-43, SA S5-4, P5-C8): also called with
+ * `event: 'subscribed'` by `championSubscribedNotification.ts` when a friend
+ * pays their first invoice. Plan payments P-9.2 (T10, BQ-P11, SA Q-10): also
+ * to the ONE admin who issued an admin PAID invite, when that invitee pays
+ * their first invoice, with N-1's active-admin check unchanged. Everything
+ * below applies unchanged, and the audit uses the same two events.
+ *
  * ── Never throws, never fails the signup (SA Q-1, C-1) ──────────────────────
  * Every dependency call is guarded, and the whole notification (lookups,
  * template, send) runs under ONE deadline, `INVITER_NOTIFICATION_POLICY`
@@ -64,18 +71,25 @@ import { INVITER_NOT_NOTIFIED_REASONS, INVITER_NOTIFICATION_POLICY, type Inviter
 /** Where the browser lands after the redemption. A held friend reads "not subscribed yet". */
 export type InviterNotificationLanding = 'onboarding' | 'awaiting_payment';
 
-export interface NotifyInviterInput {
-  event: InviterNotificationEvent;
+interface NotifyInviterCommon {
   inviteId: string;
-  issuerKind: 'admin' | 'account';
   /** The champion, on a friend invite. From the matched invite row only. */
   issuerAccountId: string | null;
   /** The issuing admin's auth user id, on an admin invite. From the matched invite row only. */
   issuerAdminId: string | null;
   /** The address the inviter typed, as stored on the invite. */
   inviteeEmail: string;
-  landing: InviterNotificationLanding;
 }
+
+/**
+ * N-1 (`accepted`): either issuer kind; the status follows the landing.
+ * N-2 (`subscribed`, plan payments P-5b.1, FR-43): the champion; and since
+ * P-9.2 (T10, BQ-P11) the issuing admin of an admin Paid invite. The status
+ * is `subscribed`.
+ */
+export type NotifyInviterInput =
+  | (NotifyInviterCommon & { event: Extract<InviterNotificationEvent, 'accepted'>; issuerKind: 'admin' | 'account'; landing: InviterNotificationLanding })
+  | (NotifyInviterCommon & { event: Extract<InviterNotificationEvent, 'subscribed'>; issuerKind: 'admin' | 'account' });
 
 /** One audit entry. The caller writes it with no owner (`userId`/`actorId` null, SA Q-4). */
 export interface InviterNotificationAuditEntry {
@@ -105,7 +119,7 @@ export interface InviterNotificationDeps {
   platformUrl: (path: string) => string;
   audit: (entry: InviterNotificationAuditEntry) => Promise<void>;
   logger: InviterNotificationLogger;
-  /** Tests only: overrides `INVITER_NOTIFICATION_POLICY.deadlineMs`. */
+  /** Overrides `INVITER_NOTIFICATION_POLICY.deadlineMs`: tests, and N-2 (what is left of its one clock, SA O-4). */
   deadlineMs?: number;
 }
 
@@ -140,10 +154,12 @@ async function settle<T>(promise: () => Promise<T>, fallback: T): Promise<T> {
 
 const LOOKUP_FAILED = { data: null, error: new Error('lookup threw') };
 
-function statusFor(landing: InviterNotificationLanding): InviteAcceptedStatus {
+function statusFor(input: NotifyInviterInput): InviteAcceptedStatus {
+  // N-2: the event decides first (P-5b.1).
+  if (input.event === 'subscribed') return 'subscribed';
   // Chosen from the landing, not the issuer kind: if an admin Paid invitee is
   // ever held (P-9), the wording follows with no change here.
-  return landing === 'awaiting_payment' ? 'not_subscribed_yet' : 'joined';
+  return input.landing === 'awaiting_payment' ? 'not_subscribed_yet' : 'joined';
 }
 
 async function run(input: NotifyInviterInput, deps: InviterNotificationDeps, recipientKind: InviterRecipientKind): Promise<RunResult> {
@@ -199,7 +215,7 @@ async function run(input: NotifyInviterInput, deps: InviterNotificationDeps, rec
     const email = generateInviteAcceptedEmail({
       event: input.event,
       inviteeEmail: input.inviteeEmail,
-      status: statusFor(input.landing),
+      status: statusFor(input),
       recipientKind,
       actionUrl: deps.platformUrl(INVITER_ACTION_PATHS[recipientKind]),
       locale: resolved.language,
@@ -228,7 +244,7 @@ async function run(input: NotifyInviterInput, deps: InviterNotificationDeps, rec
  */
 export async function notifyInviter(input: NotifyInviterInput, deps: InviterNotificationDeps): Promise<InviterNotificationOutcome> {
   const recipientKind: InviterRecipientKind = input.issuerKind === 'admin' ? 'admin' : 'champion';
-  const status = statusFor(input.landing);
+  const status = statusFor(input);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<'timedOut'>((resolve) => {
@@ -267,6 +283,7 @@ export async function notifyInviter(input: NotifyInviterInput, deps: InviterNoti
 
   // C-3: ids and reason classes only. Never the invitee's or the inviter's address.
   const logContext = {
+    event: input.event,
     inviteId: input.inviteId,
     recipientKind,
     outcome: outcome.outcome,

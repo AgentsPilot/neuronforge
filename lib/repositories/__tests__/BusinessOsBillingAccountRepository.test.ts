@@ -428,6 +428,104 @@ describe('replaceCustomer (compare-and-set on the old customer id)', () => {
   });
 });
 
+// ── P-6a.1 (SA C-6): the test-clock attach clears the WHOLE subscription mirror ──
+
+describe('attachTestClockCustomer (TEST MODE ONLY, compare-and-set on the old customer id)', () => {
+  const INPUT = { userId: USER, oldCustomerId: 'cus_old', newCustomerId: 'cus_clock', nowIso: NOW_ISO };
+
+  it('swaps the customer and clears every subscription-scoped column, test mode only, CAS on the old id, count exact, no select, no or', async () => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(INPUT);
+    expect(result).toEqual({ data: { replaced: true }, error: null });
+    expect(argsOf(queries[0], 'update')).toEqual([
+      [
+        {
+          stripe_customer_id: 'cus_clock',
+          stripe_subscription_id: null,
+          subscription_status: null,
+          bought_tier: null,
+          current_period_end: null,
+          cancel_at_period_end: false,
+          pending_tier: null,
+          open_checkout_session_id: null,
+          open_checkout_expires_at: null,
+          last_invoice_id: null,
+          last_paid_at: null,
+          last_payment_failed_at: null,
+          failed_attempts: 0,
+          action_required_invoice_url: null,
+          ended_at: null,
+          updated_at: NOW_ISO,
+        },
+        { count: 'exact' },
+      ],
+    ]);
+    expect(argsOf(queries[0], 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['stripe_customer_id', 'cus_old'],
+    ]);
+    expect(argsOf(queries[0], 'select')).toEqual([]);
+    expect(argsOf(queries[0], 'or')).toEqual([]);
+  });
+
+  it('writes every UPDATE-granted column of 20261025 except the founder discount stamp, and resets all but the customer and updated_at (C-6)', async () => {
+    const migration = fs
+      .readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261025_business_os_billing_accounts.sql'), 'utf8')
+      .replace(/\r\n/g, '\n');
+    const grant = migration.match(/GRANT UPDATE \(([^)]+)\) ON TABLE public\.business_os_billing_accounts TO service_role;/);
+    expect(grant).not.toBeNull();
+    const granted = (grant as RegExpMatchArray)[1].split(',').map((column) => column.trim());
+
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(INPUT);
+    const patch = argsOf(queries[0], 'update')[0][0] as Record<string, unknown>;
+
+    const kept = ['stripe_customer_id', 'founder_discount_applied_at', 'updated_at'];
+    expect(Object.keys(patch).sort()).toEqual(granted.filter((column) => column !== 'founder_discount_applied_at').sort());
+    for (const column of granted.filter((name) => !kept.includes(name))) {
+      expect([null, false, 0]).toContain(patch[column]);
+    }
+  });
+
+  it('count 0 → replaced: false (someone else changed the customer first)', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null, count: 0 }));
+    expect(await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(INPUT)).toEqual({
+      data: { replaced: false },
+      error: null,
+    });
+  });
+
+  it("a unique violation (the new customer is another account's) → an error with an alert, never a row", async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { code: '23505', message: 'duplicate key' }, count: null }));
+    const result = await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('stripe_customer_held_by_another_account');
+    expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ alert: true }), expect.any(String));
+  });
+
+  it('any other error → returned, never thrown', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: { message: 'down' }, count: null }));
+    const result = await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(INPUT);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('down');
+  });
+
+  it.each([
+    ['a non-uuid account', { ...INPUT, userId: 'nope' }],
+    ['a non-customer old id', { ...INPUT, oldCustomerId: 'sub_1' }],
+    ['an empty new id', { ...INPUT, newCustomerId: 'cus_' }],
+    ['an id carrying a filter', { ...INPUT, newCustomerId: 'cus_a,user_id.neq.x' }],
+    ['the same id twice', { ...INPUT, newCustomerId: 'cus_old' }],
+    ['an unreadable time', { ...INPUT, nowIso: 'now' }],
+  ])('refuses %s before querying', async (_label, input) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null, count: 1 }));
+    const result = await new BusinessOsBillingAccountRepository(client).attachTestClockCustomer(input);
+    expect(result.error?.message).toBe('invalid_input');
+    expect(queries).toHaveLength(0);
+  });
+});
+
 // ── P-3b.2: the webhook's lookups and compare-and-set writes (workplan §3.3, §3.5) ──
 
 const SUBSCRIPTION = 'sub_a1B2c3';
@@ -679,15 +777,15 @@ describe('source guards', () => {
     expect(BILLING_ACCOUNT_COLUMNS.split(', ')).toEqual(migrationColumns());
   });
 
-  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5): one insert, five compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
+  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5, P-6a.1 C-6): one insert, six compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
     expect(code.match(/\.insert\(/g)).toHaveLength(1);
-    expect(code.match(/\.update\(/g)).toHaveLength(5);
+    expect(code.match(/\.update\(/g)).toHaveLength(6);
     expect(code).not.toMatch(/\.(delete|upsert|rpc)\(/);
     expect(code).not.toMatch(/\.update\(\{\s*\.\.\./);
     // UPDATE + .or() + .select() fails 42703 in production (2026-09-29): the
     // two compare-and-set methods must never select.
     const lf = code.replace(/\r\n/g, '\n');
-    for (const method of ['acquireCheckoutLock', 'replaceCustomer', 'linkCheckoutSession', 'releaseCheckoutLock', 'mirrorSubscriptionState']) {
+    for (const method of ['acquireCheckoutLock', 'replaceCustomer', 'attachTestClockCustomer', 'linkCheckoutSession', 'releaseCheckoutLock', 'mirrorSubscriptionState']) {
       const start = lf.indexOf(`async ${method}(`);
       const end = lf.indexOf('\n  }\n', start);
       expect(start).toBeGreaterThan(0);
@@ -703,12 +801,12 @@ describe('source guards', () => {
   });
 
   it('the read and every update scope by user_id and livemode; the two Stripe-id lookups by livemode; the other from() is the three-field insert', () => {
-    expect(code.match(/\.from\(/g)).toHaveLength(9);
+    expect(code.match(/\.from\(/g)).toHaveLength(10);
     expect(code.match(/\.maybeSingle\(\)/g)).toHaveLength(3);
-    // findByUser and the five updates.
-    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(6);
-    // The same six, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
-    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(8);
+    // findByUser and the six updates.
+    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(7);
+    // The same seven, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
+    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(9);
     expect(code.match(/\.eq\('stripe_subscription_id', stripeSubscriptionId\)/g)).toHaveLength(2);
     expect(code.match(/\.eq\('stripe_customer_id', stripeCustomerId\)/g)).toHaveLength(2);
     expect(code).toContain('.insert({ user_id: userId, livemode, stripe_customer_id: stripeCustomerId })');
@@ -732,6 +830,9 @@ describe('source guards', () => {
       // Plan payments P-3b.1 (SA C-8 ruling): the admin entitlements route suite
       // fakes this repository (no subscription) for the PF-13 billing read.
       'app/api/admin/business-os/entitlements/__tests__/routes.test.ts',
+      // Plan payments P-6a.1: the test-clock route suite fakes the repository
+      // module by name. The route itself does not name it (planTestClock.ts does).
+      'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
       // Plan payments P-3a: the checkout route's integration test fakes the
       // repository module by name. The route itself does not name it.
       'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
@@ -754,6 +855,8 @@ describe('source guards', () => {
       'lib/business-os/billing/__tests__/planCheckoutSessionEvents.test.ts',
       // P-5a.1: the first payment stamp test imports the same TYPE for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.firstPayment.test.ts',
+      // P-5b.1: the N-2 apply test imports the same TYPE for its fake.
+      'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       // P-7b.1b (U-7): the captured-payload test imports the billing row TYPE to build its fakes.
@@ -779,6 +882,10 @@ describe('source guards', () => {
       // the SESSION user's billing row for the current mode (findByUser only).
       'lib/business-os/billing/planPurchaseView.ts',
       'lib/business-os/billing/planSubscriptionMirror.ts',
+      // Plan payments P-6a.1 (SA C-5, C-6): the TEST MODE ONLY test clock reads
+      // the target account's test-mode row (findByUser) and records or moves its
+      // customer (recordCustomer, attachTestClockCustomer).
+      'lib/business-os/billing/planTestClock.ts',
       // Plan payments P-7b.1a (workplan §3.4, §3.8): the upgrade orchestration
       // reads the SESSION user's billing row for the current mode (findByUser only).
       'lib/business-os/billing/planUpgrade.ts',

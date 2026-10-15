@@ -67,6 +67,10 @@ import {
 } from '../BusinessOsFinanceReadRepository';
 // Slice 1c: a separate import too, so the imports above stay byte-identical.
 import { FinanceReadDuplicateError } from '../BusinessOsFinanceReadRepository';
+// Slice 4a: a separate import too, so the imports above stay byte-identical.
+import { FINANCE_BOOST_PURCHASE_COLUMNS } from '../BusinessOsFinanceReadRepository';
+// Slice 5a: a separate import too, so the imports above stay byte-identical.
+import { FINANCE_PLAN_PAYMENT_COLUMNS } from '../BusinessOsFinanceReadRepository';
 
 type Call = { method: string; args: unknown[] };
 type Response = { data?: unknown; error: unknown; count?: number | null };
@@ -826,4 +830,333 @@ describe('slice 2b: the plan and reminder writers are named in words only (SA-W4
     expect(raw).toMatch(/payment reminder repository/);
     expect(raw).toMatch(/THIS FILE NEVER READS THE REMINDER QUEUE/);
   });
+});
+
+// ── Slice 4a: the platform's boost purchases paid in the window (R-k, R-k′) ──
+
+const boostRow = (id: string) => ({
+  id,
+  user_id: A,
+  status: 'paid',
+  package_id: 'pkg-a',
+  package_version: 1,
+  currency: 'usd',
+  amount_total_minor: 98765,
+  amount_tax_minor: 0,
+  amount_refunded_minor: 0,
+  credits_total: '5000.000000',
+  paid_at: '2026-10-12T10:00:00.000Z',
+});
+
+const BOOST_READS = [
+  {
+    name: 'R-k listBoostPurchasesAllAccountsPaidInRange',
+    scoped: false,
+    call: (repo: Repo, range: Range, opts?: Opts) => repo.listBoostPurchasesAllAccountsPaidInRange(range, opts),
+  },
+  {
+    name: 'R-k′ listBoostPurchasesForAccountPaidInRange',
+    scoped: true,
+    call: (repo: Repo, range: Range, opts?: Opts, id: string = A) => repo.listBoostPurchasesForAccountPaidInRange(id, range, opts),
+  },
+] as const;
+
+describe('slice 4a column allow-list (§11C.6, S4-FR-9)', () => {
+  const cols = (list: string) => list.split(',').map((c) => c.trim());
+
+  it('boost purchases: exactly the revenue columns', () => {
+    expect(cols(FINANCE_BOOST_PURCHASE_COLUMNS)).toEqual([
+      'id', 'user_id', 'status', 'package_id', 'package_version', 'currency',
+      'amount_total_minor', 'amount_tax_minor', 'amount_refunded_minor', 'credits_total', 'paid_at',
+    ]);
+  });
+
+  it('no mode, no Stripe id, no receipt, no flag reason, no lot, no created_at or status_changed_at', () => {
+    for (const banned of ['livemode', 'receipt_url', 'flag_reason', 'lot_id', 'created_at', 'status_changed_at']) {
+      expect(cols(FINANCE_BOOST_PURCHASE_COLUMNS)).not.toContain(banned);
+    }
+    expect(FINANCE_BOOST_PURCHASE_COLUMNS).not.toContain('stripe_');
+  });
+});
+
+describe.each(BOOST_READS)('$name', ({ scoped, call }) => {
+  it('one page: the boost table, the exact columns, paid_at in the range as ISO strings (AC-88), keyset order, page 1000; no livemode, no status filter', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [boostRow(P1)], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), RANGE);
+
+    expect(result).toEqual({ data: { rows: [boostRow(P1)], reachedCeiling: false }, error: null });
+    expect(queries).toHaveLength(1);
+    const [q] = queries;
+    expect(q[0].args).toEqual(['business_os_boost_purchases']);
+    expect(argsOf(q, 'select')).toEqual([[FINANCE_BOOST_PURCHASE_COLUMNS]]);
+    expect(argsOf(q, 'gte')).toEqual([['paid_at', '2026-10-01T00:00:00.000Z']]);
+    expect(argsOf(q, 'lt')).toEqual([['paid_at', '2026-11-01T00:00:00.000Z']]);
+    expect(argsOf(q, 'order')).toEqual([['id', { ascending: true }]]);
+    expect(argsOf(q, 'limit')).toEqual([[1000]]);
+    expect(argsOf(q, 'gt')).toEqual([]);
+    expect(argsOf(q, 'not')).toEqual([]);
+    expect(argsOf(q, 'or')).toEqual([]);
+    expect(argsOf(q, 'eq')).toEqual(scoped ? [['user_id', A]] : []);
+    expect(JSON.stringify(q)).not.toContain('livemode');
+    expect(q.map((c) => c.method)).toEqual(
+      scoped ? ['from', 'select', 'gte', 'lt', 'eq', 'order', 'limit'] : ['from', 'select', 'gte', 'lt', 'order', 'limit']
+    );
+  });
+
+  it('AC-88 / S4-F2: a month-boundary window carries exactly its half-open ISO bounds (the database applies the microsecond rule)', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const november = { from: new Date('2026-11-01T00:00:00.000Z'), to: new Date('2026-12-01T00:00:00.000Z') };
+    await call(new BusinessOsFinanceReadRepository(client), november);
+    expect(argsOf(queries[0], 'gte')).toEqual([['paid_at', '2026-11-01T00:00:00.000Z']]);
+    expect(argsOf(queries[0], 'lt')).toEqual([['paid_at', '2026-12-01T00:00:00.000Z']]);
+  });
+
+  it('pages by keyset (gt the last id) and stops on a short page; the scope is on every page', async () => {
+    const { client, queries } = recordingClient((_c, i) =>
+      i === 0 ? { data: [boostRow(P1), boostRow(P2)], error: null } : { data: [boostRow(P3)], error: null }
+    );
+    const result = await call(new BusinessOsFinanceReadRepository(client), RANGE, { pageSize: 2, ceiling: 10 });
+    expect(result.data?.rows.map((r) => r.id)).toEqual([P1, P2, P3]);
+    expect(result.data?.reachedCeiling).toBe(false);
+    expect(queries).toHaveLength(2);
+    expect(argsOf(queries[0], 'gt')).toEqual([]);
+    expect(argsOf(queries[1], 'gt')).toEqual([['id', P2]]);
+    for (const q of queries) expect(argsOf(q, 'eq')).toEqual(scoped ? [['user_id', A]] : []);
+  });
+
+  it('AC-93: the ceiling (>=) returns the rows read with reachedCeiling, never an error; exactly 3 is true; 2 is false', async () => {
+    const plenty = recordingClient((calls) => {
+      const [[size]] = argsOf(calls, 'limit') as number[][];
+      return { data: [P1, P2, P3, P4].slice(0, size).map(boostRow), error: null };
+    });
+    const capped = await call(new BusinessOsFinanceReadRepository(plenty.client), RANGE, { ceiling: 3, pageSize: 2 });
+    expect(capped.error).toBeNull();
+    expect(capped.data?.rows).toHaveLength(3);
+    expect(capped.data?.reachedCeiling).toBe(true);
+
+    const exactlyThree = recordingClient((_c, i) =>
+      i === 0 ? { data: [boostRow(P1), boostRow(P2)], error: null } : { data: [boostRow(P3)], error: null }
+    );
+    const three = await call(new BusinessOsFinanceReadRepository(exactlyThree.client), RANGE, { ceiling: 3, pageSize: 2 });
+    expect(three.data).toEqual({ rows: [P1, P2, P3].map(boostRow), reachedCeiling: true });
+
+    const onlyTwo = recordingClient((_c, i) => (i === 0 ? { data: [boostRow(P1), boostRow(P2)], error: null } : { data: [], error: null }));
+    const two = await call(new BusinessOsFinanceReadRepository(onlyTwo.client), RANGE, { ceiling: 3, pageSize: 2 });
+    expect(two.data).toEqual({ rows: [P1, P2].map(boostRow), reachedCeiling: false });
+  });
+
+  it.each([
+    ['from equal to to', { from: RANGE.from, to: RANGE.from }, undefined],
+    ['from after to', { from: RANGE.to, to: RANGE.from }, undefined],
+    ['an invalid from', { from: new Date('nope'), to: RANGE.to }, undefined],
+    ['a zero page', RANGE, { pageSize: 0 }],
+    ['a ceiling over 5,000', RANGE, { ceiling: 5001 }],
+  ])('refuses %s before querying', async (_n, range, opts) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), range, opts);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+    expect(mockLog.warn).toHaveBeenCalled();
+  });
+
+  it('a read error is { data: null, error }, logged at error, never throws', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), RANGE);
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'boom' }) });
+    expect(mockLog.error).toHaveBeenCalled();
+  });
+
+  it(scoped ? 'logs at debug with counts only (AC-98): never the id, an amount, a currency or a package' : 'logs one info line with counts and timing only (AC-98)', async () => {
+    const { client } = recordingClient(() => ({ data: [boostRow(P1)], error: null }));
+    await call(new BusinessOsFinanceReadRepository(client), RANGE);
+    const level = scoped ? mockLog.debug : mockLog.info;
+    expect(level).toHaveBeenCalledTimes(1);
+    const [ctx, message] = level.mock.calls[0];
+    expect(message).toBe(`Boost purchase rows of ${scoped ? 'one account' : 'all accounts'} read`);
+    expect(Object.keys(ctx).sort()).toEqual(scoped ? ['method', 'reachedCeiling', 'rows'] : ['durationMs', 'method', 'reachedCeiling', 'rows']);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of [A, P1, '98765', 'usd', 'pkg-a']) expect(logged).not.toContain(secret);
+    if (scoped) expect(mockLog.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('R-k′ listBoostPurchasesForAccountPaidInRange: the account id (SA-W1, AC-96)', () => {
+  it.each([[''], ['not-a-uuid'], ["11111111-1111-4111-8111-111111111111' or 1=1"]])(
+    'refuses %p before any query, at warn',
+    async (id) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+      const result = await new BusinessOsFinanceReadRepository(client).listBoostPurchasesForAccountPaidInRange(id, RANGE);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+      expect(queries).toHaveLength(0);
+      expect(mockLog.warn).toHaveBeenCalled();
+      expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(id || 'never-empty');
+    }
+  );
+});
+
+// ── Slice 5a: the platform's paid plan invoices in the window (R-m, R-m′) ────
+// The R-d describe, the limits equality, the no-write and no-aggregate pins,
+// the writer names and the one-caller list above are unedited (§11D.7).
+
+const planRow = (id: string) => ({
+  id,
+  user_id: A,
+  kind: 'invoice_paid',
+  tier: 'some-tier',
+  amount_minor: 7900,
+  amount_tax_minor: 0,
+  currency: 'usd',
+  period_start: '2026-10-12T18:21:00.000Z',
+  period_end: '2026-11-12T18:21:00.000Z',
+  paid_at: '2026-10-12T18:21:00.000Z',
+});
+
+const PLAN_READS = [
+  {
+    name: 'R-m listPlanPaymentsAllAccountsPaidInRange',
+    scoped: false,
+    call: (repo: Repo, range: Range, opts?: Opts) => repo.listPlanPaymentsAllAccountsPaidInRange(range, opts),
+  },
+  {
+    name: 'R-m′ listPlanPaymentsForAccountPaidInRange',
+    scoped: true,
+    call: (repo: Repo, range: Range, opts?: Opts, id: string = A) => repo.listPlanPaymentsForAccountPaidInRange(id, range, opts),
+  },
+] as const;
+
+describe('slice 5a column allow-list (§11D.6, M2-FR-10, AC-127)', () => {
+  const cols = (list: string) => list.split(',').map((c) => c.trim());
+
+  it('plan payments: exactly the revenue columns', () => {
+    expect(cols(FINANCE_PLAN_PAYMENT_COLUMNS)).toEqual([
+      'id', 'user_id', 'kind', 'tier', 'amount_minor', 'amount_tax_minor', 'currency', 'period_start', 'period_end', 'paid_at',
+    ]);
+  });
+
+  it('no mode, no Stripe id, no refusal reason, no plan_written, no created_at', () => {
+    for (const banned of ['livemode', 'refusal_reason', 'plan_written', 'created_at']) {
+      expect(cols(FINANCE_PLAN_PAYMENT_COLUMNS)).not.toContain(banned);
+    }
+    expect(FINANCE_PLAN_PAYMENT_COLUMNS).not.toContain('stripe_');
+  });
+});
+
+describe.each(PLAN_READS)('$name', ({ scoped, call }) => {
+  const eqs = scoped ? [['kind', 'invoice_paid'], ['user_id', A]] : [['kind', 'invoice_paid']];
+
+  it('one page: the billing events table, the exact columns, kind invoice_paid, paid_at in the range as ISO strings (AC-118), keyset order, page 1000; no livemode', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [planRow(P1)], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), RANGE);
+
+    expect(result).toEqual({ data: { rows: [planRow(P1)], reachedCeiling: false }, error: null });
+    expect(queries).toHaveLength(1);
+    const [q] = queries;
+    expect(q[0].args).toEqual(['business_os_billing_events']);
+    expect(argsOf(q, 'select')).toEqual([[FINANCE_PLAN_PAYMENT_COLUMNS]]);
+    expect(argsOf(q, 'eq')).toEqual(eqs);
+    expect(argsOf(q, 'gte')).toEqual([['paid_at', '2026-10-01T00:00:00.000Z']]);
+    expect(argsOf(q, 'lt')).toEqual([['paid_at', '2026-11-01T00:00:00.000Z']]);
+    expect(argsOf(q, 'order')).toEqual([['id', { ascending: true }]]);
+    expect(argsOf(q, 'limit')).toEqual([[1000]]);
+    expect(argsOf(q, 'gt')).toEqual([]);
+    expect(argsOf(q, 'not')).toEqual([]);
+    expect(argsOf(q, 'or')).toEqual([]);
+    expect(JSON.stringify(q)).not.toContain('livemode');
+  });
+
+  it('AC-118: a month-boundary window carries exactly its half-open ISO bounds (the database applies the microsecond rule)', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const november = { from: new Date('2026-11-01T00:00:00.000Z'), to: new Date('2026-12-01T00:00:00.000Z') };
+    await call(new BusinessOsFinanceReadRepository(client), november);
+    expect(argsOf(queries[0], 'gte')).toEqual([['paid_at', '2026-11-01T00:00:00.000Z']]);
+    expect(argsOf(queries[0], 'lt')).toEqual([['paid_at', '2026-12-01T00:00:00.000Z']]);
+  });
+
+  it('pages by keyset (gt the last id); the kind filter (and the account) on EVERY page', async () => {
+    const { client, queries } = recordingClient((_c, i) =>
+      i === 0 ? { data: [planRow(P1), planRow(P2)], error: null } : { data: [planRow(P3)], error: null }
+    );
+    const result = await call(new BusinessOsFinanceReadRepository(client), RANGE, { pageSize: 2, ceiling: 10 });
+    expect(result.data?.rows.map((r) => r.id)).toEqual([P1, P2, P3]);
+    expect(result.data?.reachedCeiling).toBe(false);
+    expect(queries).toHaveLength(2);
+    expect(argsOf(queries[1], 'gt')).toEqual([['id', P2]]);
+    for (const q of queries) {
+      expect(argsOf(q, 'eq')).toEqual(eqs);
+      expect(argsOf(q, 'gte')).toEqual([['paid_at', '2026-10-01T00:00:00.000Z']]);
+    }
+  });
+
+  it('AC-125: the ceiling (>=) returns the rows read with reachedCeiling; exactly 3 is true; 2 is false', async () => {
+    const plenty = recordingClient((calls) => {
+      const [[size]] = argsOf(calls, 'limit') as number[][];
+      return { data: [P1, P2, P3, P4].slice(0, size).map(planRow), error: null };
+    });
+    const capped = await call(new BusinessOsFinanceReadRepository(plenty.client), RANGE, { ceiling: 3, pageSize: 2 });
+    expect(capped.error).toBeNull();
+    expect(capped.data?.rows).toHaveLength(3);
+    expect(capped.data?.reachedCeiling).toBe(true);
+
+    const exactlyThree = recordingClient((_c, i) =>
+      i === 0 ? { data: [planRow(P1), planRow(P2)], error: null } : { data: [planRow(P3)], error: null }
+    );
+    const three = await call(new BusinessOsFinanceReadRepository(exactlyThree.client), RANGE, { ceiling: 3, pageSize: 2 });
+    expect(three.data).toEqual({ rows: [P1, P2, P3].map(planRow), reachedCeiling: true });
+
+    const onlyTwo = recordingClient((_c, i) => (i === 0 ? { data: [planRow(P1), planRow(P2)], error: null } : { data: [], error: null }));
+    const two = await call(new BusinessOsFinanceReadRepository(onlyTwo.client), RANGE, { ceiling: 3, pageSize: 2 });
+    expect(two.data).toEqual({ rows: [P1, P2].map(planRow), reachedCeiling: false });
+  });
+
+  it.each([
+    ['from equal to to', { from: RANGE.from, to: RANGE.from }, undefined],
+    ['from after to', { from: RANGE.to, to: RANGE.from }, undefined],
+    ['an invalid from', { from: new Date('nope'), to: RANGE.to }, undefined],
+    ['a zero page', RANGE, { pageSize: 0 }],
+    ['a ceiling over 5,000', RANGE, { ceiling: 5001 }],
+  ])('refuses %s before querying', async (_n, range, opts) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), range, opts);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+    expect(mockLog.warn).toHaveBeenCalled();
+  });
+
+  it('a read error is { data: null, error }, logged at error, never throws', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    const result = await call(new BusinessOsFinanceReadRepository(client), RANGE);
+    expect(result).toEqual({ data: null, error: expect.objectContaining({ message: 'boom' }) });
+    expect(mockLog.error).toHaveBeenCalled();
+  });
+
+  it(scoped ? 'logs at debug with counts only (AC-127): never the id, an amount, a currency or a tier' : 'logs one info line with counts and timing only (AC-127)', async () => {
+    const { client } = recordingClient(() => ({ data: [planRow(P1)], error: null }));
+    await call(new BusinessOsFinanceReadRepository(client), RANGE);
+    const level = scoped ? mockLog.debug : mockLog.info;
+    expect(level).toHaveBeenCalledTimes(1);
+    const [ctx, message] = level.mock.calls[0];
+    expect(message).toBe(`Plan payment rows of ${scoped ? 'one account' : 'all accounts'} read`);
+    expect(Object.keys(ctx).sort()).toEqual(scoped ? ['method', 'reachedCeiling', 'rows'] : ['durationMs', 'method', 'reachedCeiling', 'rows']);
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.debug.mock.calls]);
+    for (const secret of [A, P1, '7900', 'usd', 'some-tier']) expect(logged).not.toContain(secret);
+    if (scoped) expect(mockLog.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('R-m′ listPlanPaymentsForAccountPaidInRange: the account id (SA-W1, AC-123)', () => {
+  it.each([[''], ['not-a-uuid'], ["' or 1=1"], ["11111111-1111-4111-8111-111111111111' or 1=1"]])(
+    'refuses %p before any query, at warn',
+    async (id) => {
+      const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+      const result = await new BusinessOsFinanceReadRepository(client).listPlanPaymentsForAccountPaidInRange(id, RANGE);
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+      expect(queries).toHaveLength(0);
+      expect(mockLog.warn).toHaveBeenCalled();
+      expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(id || 'never-empty');
+    }
+  );
 });
