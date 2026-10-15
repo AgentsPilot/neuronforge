@@ -411,6 +411,14 @@ export const AUDIT_EVENTS = {
   // 'owner', correlation id; never the confirmation secret, an email or a
   // card detail.
   BOS_BILLING_UPGRADE_REQUESTED: 'BOS_BILLING_UPGRADE_REQUESTED',
+  // Plan payments P-6a.1 (workplan §5.8, §5.11; SA C-5, C-10): TEST MODE ONLY.
+  // An admin put an account's test-mode billing record on a fresh Stripe test
+  // clock from /test-business-os, replacing its test-mode Stripe customer and
+  // clearing the subscription mirror. Entity type 'business_os_account_plan'
+  // (operator-visible), id = the ACCOUNT id; actor = the admin. Details: clock
+  // id, new and previous customer ids, record path, livemode false, correlation
+  // id. Logged and flushed before the response (WC-7).
+  BOS_BILLING_TEST_CLOCK_ATTACHED: 'BOS_BILLING_TEST_CLOCK_ATTACHED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -1049,6 +1057,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'A Business OS owner confirmed a plan upgrade and the price change reached Stripe (outcome recorded; the plan changes from the webhook)',
+  },
+  // Plan payments P-6a.1. 'info' (SA C-10): a test-mode harness action that
+  // needs no operator follow-up; SOC2, as every Business OS billing event.
+  [AUDIT_EVENTS.BOS_BILLING_TEST_CLOCK_ATTACHED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "An admin put a Business OS account's test-mode billing record on a fresh Stripe test clock (test mode only; the test-mode customer was replaced)",
   },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
