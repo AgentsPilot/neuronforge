@@ -253,12 +253,21 @@ Diff reviewed against `e668a7a6`: 8 files, +129/−34. `git diff --check` is cle
 
 ## Commit Info
 
+| Item | Value |
+|---|---|
+| PR | #396, merged 2026-10-15 as `f2a67d25` |
+| Commits | `ddc61ca5` ci (6 workflows, scope script header, `vercel.json`) · `a593b903` docs (this workplan) · `a0487468` merge of origin/main |
+| Queue enabled | 2026-10-15 by the user, classic branch protection on `main` → Require merge queue |
+| Live configuration (read back via GraphQL `mergeQueue.configuration`) | merge method `MERGE`, strategy `ALLGREEN`, build concurrency 5, group size 1–5, min-group wait 300 s, check timeout 3600 s. The classic page exposes only the merge method; the rest are GitHub defaults, accepted by TL (group size up to 5 is the stacked case §2/C-7 already covers) |
+| Post-merge proof A | this docs PR, merged through the queue (see the PR) |
+
 ---
 
 ## Change History
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-15 | Merged and enabled | #396 merged (`f2a67d25`); the user enabled Require merge queue; live configuration recorded in Commit Info; proof A = the PR that adds this row |
 | 2026-10-15 | Created | Dev workplan for merge queue support, awaiting SA review |
 | 2026-10-15 | Implemented | C-1..C-7 applied; 6 workflows, `vercel.json`, script header comment; local simulation (8 cases) and YAML/JSON parse recorded in §7; uncommitted, awaiting SA code review |
 | 2026-10-15 | SA workplan review | Approved with conditions C-1..C-7. SA-Q1: `vercel.json` `deploymentEnabled` glob, not the env guard. SA-Q2: `base_sha` = the queue commit's first parent; keep the fetch. SA-Q3: keep `push: main`, no slice. Runtime corrected to ~4–5 min |
