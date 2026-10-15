@@ -1252,7 +1252,7 @@ export class SchedulingBookingRepository {
           service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode, is_scheduled),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
           payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at),
-          planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, label)
+          planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, transaction_id, label)
         `)
         .eq('user_id', userId);
 
@@ -1571,6 +1571,33 @@ export class SchedulingBookingRepository {
 
   /**
    * Cancel booking
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ATTENDANCE THAT WAS RECORDED IS NOT OVERWRITTEN
+   *
+   * `status` is asked to hold two different facts: what happened to the
+   * APPOINTMENT (held, no-show, still ahead) and what happened to the JOB
+   * (running, stopped). For most bookings they are the same fact, so one
+   * column is enough.
+   *
+   * A quoted job is where they come apart. The consultation is held, the owner
+   * marks it so — `status: 'completed'` — and the quote is declined or goes
+   * unpaid, so the owner cancels. There is no `completed_at` column, so writing
+   * `cancelled` here does not hide that the meeting happened, it ERASES it: the
+   * client journey then titles a meeting the owner sat through as
+   * "הזמנה בוטלה / בוטלה", and nothing anywhere remembers otherwise.
+   *
+   * So a booking that already carries an answer about attendance keeps it. The
+   * meeting WAS held; cancelling the job afterwards does not un-hold it. What
+   * the cancellation needs to record still gets recorded — the code, the note
+   * and who called it off are written below either way — and the job's own
+   * state lives where it belongs: the proposal moves to `stopped` and its
+   * stages to `cancelled`, which is what the badges already read.
+   *
+   * This is the same split the booking card makes between `attendanceRecorded`
+   * and `jobIsOver`, which is what allows Cancel to be offered after a
+   * consultation is marked held in the first place.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   async cancel(
     id: string,
@@ -1595,14 +1622,72 @@ export class SchedulingBookingRepository {
       cancelledBy?: CancelledBy | null;
     }
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
-    return this.update(id, userId, {
-      status: 'cancelled',
+    /*
+     * Its own narrow read rather than `findById`, which JOINs the contact and
+     * the invoices for a single column this does not otherwise need.
+     *
+     * A failure here does not block the cancellation. It leaves
+     * `attendanceRecorded` false, so the status is written as it always was:
+     * the worst case is the behaviour that shipped before this, not a
+     * cancellation that silently did not happen.
+     */
+    let attendanceRecorded = false;
+    let alreadyCancelled = false;
+    const { data: current } = await this.supabase
+      .from('scheduling_bookings')
+      .select('status, cancelled_by, cancel_reason')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (current?.status === 'completed' || current?.status === 'no_show') {
+      attendanceRecorded = true;
+      alreadyCancelled = Boolean(current.cancelled_by || current.cancel_reason);
+    }
+
+    const result = await this.update(id, userId, {
+      // Omitted, not set to the old value: `update` stamps `updated_at` and
+      // writes only the keys it is given, so leaving it out is what preserves it.
+      ...(attendanceRecorded ? {} : { status: 'cancelled' as const }),
       cancellation_reason: reason || null,
       cancel_reason: structured?.code || null,
       // Trimmed to null: '' would read as a note that exists and says nothing.
       cancel_note: structured?.note?.trim() || null,
       cancelled_by: structured?.cancelledBy || null
     });
+
+    /*
+     * THE CANCELLATION STILL HAPPENED, SO IT STILL GETS AN EVENT.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `update()` emits `booking.cancelled` only when the status write itself
+     * claims the transition — deliberately, because the conditional UPDATE is
+     * what stops three concurrent callers emitting three events for one
+     * booking. Omitting `status` above therefore also withholds the event, and
+     * `CashCancelledUnrefundedDetector` and the `booking_cancelled` gap are
+     * what read it. A job stopped with the client's money still held is
+     * precisely what that detector exists to surface, so going quiet there
+     * would be the worse bug of the two.
+     *
+     * The column and the event answer different questions. The column is the
+     * appointment's outcome, which is `completed`. The event is a record of
+     * what happened, and a cancellation happened. Both are true at once.
+     *
+     * Exactly one emit on either path: `update()` fires it when it writes the
+     * status, this fires it when it does not.
+     *
+     * `alreadyCancelled` keeps a re-cancel from emitting twice. It is a
+     * pre-read rather than a claimed write, so two cancels landing in the same
+     * instant on an already-held booking could both emit — narrower than the
+     * window `update()` closes, and the cost is a duplicate retention event
+     * rather than a duplicate email.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (attendanceRecorded && !alreadyCancelled && result.data) {
+      emitBookingStatusEvent(userId, result.data as unknown as Record<string, unknown>, 'cancelled');
+    }
+
+    return result;
   }
 
   /**

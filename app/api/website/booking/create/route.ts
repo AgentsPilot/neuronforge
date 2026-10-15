@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { shouldTakePayment } from '@/lib/business-os/clientJourney';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
@@ -202,21 +203,41 @@ export async function POST(request: NextRequest) {
       ownerId = user.id;
     }
 
-    // Fetch the service
-    const { data: service, error: serviceError } = await supabaseServer
-      .from('scheduling_services')
-      // `collection` is what decides whether money is taken here at all. The
-      // select omitted it, so the decision below could not consult it even in
-      // principle and fell back to price.
-      //
-      // `sale_mode` for the same reason, one bug later: a quoted service has no
-      // price yet, so it looked free — and "free" files the contact as a client
-      // on the spot. Asking for a quote made you a client before anyone had
-      // named a figure.
-      .select('id, service_name, duration_minutes, price, currency, is_active, collection, sale_mode')
-      .eq('id', data.service_id)
-      .eq('user_id', ownerId)
-      .single();
+    /*
+     * THE WHOLE SERVICE ROW, NOT A LIST OF COLUMNS TYPED OUT HERE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This named eight columns by hand, and the row has thirty. Everything
+     * unnamed arrived `undefined` — and the code BELOW asks questions of fields
+     * this select could not know it would need.
+     *
+     * Three bugs, all the same shape, all silent:
+     *
+     *   `collection`        omitted, so "is money taken here at all" could not
+     *                       be consulted even in principle and fell back to
+     *                       price.
+     *
+     *   `sale_mode`         omitted one bug later: a quoted service has no price
+     *                       yet, so it looked FREE — and free files the contact
+     *                       as a client on the spot. Asking for a quote made you
+     *                       a client before anyone had named a figure.
+     *
+     *   `payment_type` and  omitted, so `isInstallmentPlan` inside
+     *   `installment_count` `createBookingInvoice` read two undefined fields,
+     *                       answered "no plan", and billed the whole total as
+     *                       one invoice. A service sold as "2 × ₪400" invoiced
+     *                       the client ₪800 and wrote no instalments at all.
+     *
+     * The owner's path never had any of these, because it does not type a list:
+     * `findById` is `.select('*')`. Same client, same `id` + `user_id` scoping,
+     * every column — including the ones added after this line was written.
+     *
+     * A hand-typed column list cannot know what its callers will ask for. That
+     * is the bug class, and this is the end of it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: service, error: serviceError } =
+      await schedulingServiceRepository.findById(data.service_id, ownerId);
 
     if (serviceError || !service) {
       requestLogger.warn({ serviceId: data.service_id }, 'Service not found');
@@ -669,7 +690,11 @@ export async function POST(request: NextRequest) {
         bookingInvoice = await createBookingInvoice(
           ownerId,
           booking.id,
-          service as never,
+          /* No cast. It was `service as never`, and that cast is precisely why
+             the missing plan columns never surfaced: it told TypeScript to stop
+             checking the one shape that would have named them. The repository
+             returns a real `SchedulingService`, so the types line up. */
+          service,
           {
             contact_id: contactId,
             contact_name: clientName || 'Client',

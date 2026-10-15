@@ -101,9 +101,35 @@ describe('collectionToPersist', () => {
 
   it('clears it when the service is free', () => {
     // A stale 'online' on a free service would keep counting towards "this
-    // business needs a payment processor".
+    // business needs a payment processor". Zero is an answer: nothing is
+    // charged, so there is nothing to collect.
     expect(collectionToPersist('online', 0)).toBeNull();
-    expect(collectionToPersist('online', null)).toBeNull();
-    expect(collectionToPersist('invoice', undefined)).toBeNull();
+  });
+
+  it('keeps it when the service is not priced YET, which is not the same thing', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * This case used to assert null, alongside the zero above. The concern
+     * quoted there is real and unchanged — a FREE service must not demand a
+     * processor — but null is not free.
+     *
+     * Onboarding creates every service as a placeholder with `price: null`,
+     * meaning "not priced yet". Clearing the method for those meant an owner
+     * who chose "they pay by card" had it written as null and read back as
+     * "invoice" on the next open: the choice reverted, silently, on every
+     * service a new account has.
+     *
+     * An owner knows they will invoice long before they know what to charge.
+     * Keeping the answer is the whole point of asking.
+     *
+     * What acts on it still behaves: `journeyReadiness` requires
+     * `(price || 0) > 0` before a card step appears, so an unpriced service
+     * cannot send a client to a payment page. What it does affect is
+     * `needs_stripe_connect`, and correctly — "when I price this, they will
+     * pay by card" is exactly a reason to connect a processor.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    expect(collectionToPersist('online', null)).toBe('online');
+    expect(collectionToPersist('invoice', undefined)).toBe('invoice');
   });
 });

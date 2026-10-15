@@ -75,7 +75,6 @@ const BASELINE: Record<string, number> = {
   // around it — the word is ordinary English before it is a tier name.
   'lib/services/WebsiteAutoBuildService.ts': 1,
   'lib/services/OnboardingConfigurationService.ts': 1,
-  'lib/services/OnboardingConversationManager.ts': 2,
   'lib/testing/GenericTestSystem.ts': 1,
 };
 

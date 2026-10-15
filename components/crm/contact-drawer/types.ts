@@ -76,6 +76,16 @@ export interface Appointment {
   cancellation_reason?: string | null;
   intake_responses?: IntakeResponses;
   intake_completed_at?: string;
+  /**
+   * When the form went out, and when the client was nudged about it.
+   *
+   * On the row all along and never carried here, which is why the journey's
+   * intake card had nothing to say: the step knew only whether a RESPONSE
+   * existed, so a form that had been sent and a form that had never been sent
+   * were the same empty card.
+   */
+  intake_sent_at?: string;
+  intake_reminded_at?: string;
   created_at?: string;  // For product purchases, use created_at as the order date
   service?: {
     service_name: string;
@@ -176,6 +186,27 @@ export interface SessionPaymentPlan {
     /** 'date' bills on a schedule; 'manual' waits for the owner to mark it done. */
     trigger: 'date' | 'manual' | null;
     invoiceId: string | null;
+    /**
+     * The transaction this stage's money arrived as, where there is no invoice.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A quoted milestone raises an invoice and is refunded through it. An
+     * INSTALMENT period charged by the processor does not: the money lands as a
+     * `payment_transactions` row and `payment_plan_installments.invoice_id`
+     * stays null, with only `transaction_id` set.
+     *
+     * The stage row gates Refund on having something to refund AGAINST, and
+     * `invoiceId` was the only key it carried — so a paid instalment offered no
+     * refund at all. The owner could see ₪400 collected and had no way to give
+     * it back from the row that reported it.
+     *
+     * Nothing downstream needed building: `/api/payments/refunds` has always
+     * accepted `transaction_id` as an alternative to `invoice_id`, and
+     * `RefundModal` has always had the prop. Only this field was missing to
+     * carry it from the row to the dialog.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    transactionId?: string | null;
     dueDate: string | null;
     /**
      * When the money actually arrived.

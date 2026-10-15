@@ -188,6 +188,13 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     client_workflow_extraction: wired('gpt-4o', null),
     client_tracking_extraction: wired('gpt-4o', null),
     adjustment_intent_extraction: wired('gpt-4o', null),
+    /* The follow-up interview. Wired like its neighbours: it resolves from the
+       onboarding area row and sends no temperature. */
+    business_deepening: wired('gpt-4o', null),
+    /* Names the placeholder services from what the owner already said. Wired
+       like the rest of onboarding: resolves from the area row, sends no
+       temperature. */
+    service_drafting: wired('gpt-4o', null),
   },
   images: {
     // Wired in Step 3: the model comes from the `images` area row, and the

@@ -86,10 +86,49 @@ function hasValue(value: string | null | undefined): boolean {
 }
 
 /**
+ * The values `vertical` holds when nothing is known about the trade.
+ *
+ * `default` is the fallback pipeline preset's own key, written by the story
+ * extraction when it cannot read a trade from what the owner typed. `other`
+ * is the same sentinel under its previous name and is still in older rows.
+ */
+const UNKNOWN_VERTICALS = new Set(['default', 'other']);
+
+/**
  * What the business profile is still missing.
  *
- * Every field the settings form exposes, because the whole form is what the
- * chip is asking the user to finish.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NOT every field the form exposes. This comment used to claim that it was, and
+ * the claim was false: `BusinessProfileSection` also writes `website_url`,
+ * `phone`, `email`, `address`/`address_parts` and `logo_url`, none of which are
+ * counted here.
+ *
+ * The distinction is deliberate, and it is not "the whole form". A field
+ * belongs in this list only if the platform BREAKS without it:
+ *
+ *   company_name    on every invoice, email and public page
+ *   business_type   chooses the pipeline, the sub-vertical and the site's copy
+ *   industry        \
+ *   company_size     | the four answers the setup and the AI read to decide
+ *   primary_goal     | what this account needs
+ *   technical_level /
+ *
+ * Deliberately NOT gates, each for a reason worth keeping:
+ *
+ *   logo_url     plenty of businesses have none, and everything falls back to
+ *                the name. See `ProfileField` — counting it once refused a
+ *                website publish over a missing image.
+ *   website_url  we BUILD them one. Asking for a site as a precondition of
+ *                finishing setup inverts the product.
+ *   address      the invoice needs one and `missingInvoiceFields` gates it
+ *                there, on `invoice_address`, where it is actually used.
+ *   phone/email  a contact section falls back to the enquiry form, so a page
+ *                without them still works. Worth PROMPTING for, never a gate.
+ *
+ * The rule, so the next person does not "complete" this list: a gate is a
+ * thing that is broken without an answer, not a thing it would be nice to
+ * know. Everything else belongs in a prompt.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function missingProfileFields(
   profile: BusinessProfileFields | null | undefined,
@@ -98,7 +137,24 @@ export function missingProfileFields(
   const missing: ProfileField[] = [];
 
   if (!hasValue(profile?.company_name)) missing.push('company_name');
-  if (!hasValue(profile?.vertical)) missing.push('business_type');
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A SENTINEL IS NOT AN ANSWER.
+   *
+   * `vertical` holds `'default'` when the story extraction could not tell what
+   * the business is — it is the key of the fallback pipeline preset, not a
+   * trade. `'other'` was the same thing under its older name, and both are
+   * still written by `extractBusinessStory`'s failure path.
+   *
+   * `hasValue` only asks whether a person typed something, and nobody typed
+   * these: we did. Measured on a real account whose readiness card read
+   * "Business details — complete" with `vertical: 'default'`, which is the one
+   * field in this list that decides the shape of the whole setup.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (!hasValue(profile?.vertical) || UNKNOWN_VERTICALS.has(profile!.vertical!.trim().toLowerCase())) {
+    missing.push('business_type');
+  }
   if (!hasValue(settings?.industry)) missing.push('industry');
   if (!hasValue(settings?.company_size)) missing.push('company_size');
   if (!hasValue(settings?.primary_goal)) missing.push('primary_goal');

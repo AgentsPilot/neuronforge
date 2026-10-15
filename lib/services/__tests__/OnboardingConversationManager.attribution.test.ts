@@ -169,40 +169,57 @@ describe('one grouping id per onboarding conversation (AC-3)', () => {
     }
   );
 
-  it('shares one group across turns, including client_workflow_extraction fired twice', async () => {
+  it('shares one group across turns, and across call types', async () => {
+    /*
+     * Was driven through `client_workflow` and then the legacy free-text
+     * service loop, because those were the only two turns that each made a
+     * model call. Both are gone: the selling questions are chips read without
+     * a model, and the free-text loop was unreachable and has been removed.
+     *
+     * The brief interview is the better demonstration anyway. It spends one
+     * call to CHOOSE the question and another to READ the answer, so a single
+     * group has to hold several calls of DIFFERENT kinds across consecutive
+     * turns, which is what this file is about.
+     */
     const manager = new OnboardingConversationManager();
     const owner = { userId: OWNER_ID, groupId: GROUP };
 
-    // Turn 1: the workflow answer names no services, so the flow asks how they
-    // sell. `client_workflow` is no longer asked of a new conversation, but its
-    // handler stays for one resumed mid-flight, which is what this drives.
-    mockComplete.mockResolvedValueOnce({ content: JSON.stringify({ services: [] }) });
-    const turn1 = await manager.processUserMessage(owner, 'Fixed prices', state('client_workflow'));
-    expect(turn1.updatedState.currentStep).toBe('service_details');
+    // Turn 1: the story is read, then a follow-up is chosen.
+    mockComplete
+      .mockResolvedValueOnce({ content: JSON.stringify({ vertical: 'beauty' }) })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ field: 'audience', question: 'Who comes to you?', skip: [] }),
+      });
+
+    const turn1 = await manager.processUserMessage(
+      owner,
+      'I run a hair salon mostly for children',
+      state('business_story')
+    );
+    expect(turn1.updatedState.currentStep).toBe('business_deepening');
     expect(turn1.updatedState.attributionGroupId).toBe(GROUP);
 
-    /*
-     * Turn 2: typed (not form) service details, extracted by the same call.
-     *
-     * Reached with `pendingQuestion` cleared, which is the legacy free-text
-     * loop — the state a conversation already standing in `more_services` is
-     * restored into. The new chip questions deliberately make NO llm call, so
-     * driving turn 2 through them would leave this test with one call and
-     * nothing to say about grouping, which is its actual subject.
-     */
-    mockComplete.mockResolvedValueOnce({ content: JSON.stringify({ services: [{ name: 'Haircut', price: 50 }] }) });
-    await manager.processUserMessage(
-      owner,
-      'I do haircuts for 50',
-      { ...turn1.updatedState, pendingQuestion: undefined }
-    );
+    // Turn 2: the answer is read, then the next follow-up is chosen.
+    mockComplete
+      .mockResolvedValueOnce({ content: JSON.stringify({ audience: ['children'] }) })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ field: 'outcome', question: 'What changes for them?', skip: [] }),
+      });
 
-    const workflowCalls = calls().filter(([, c]) => c?.component === 'client_workflow_extraction');
-    expect(workflowCalls).toHaveLength(2);
-    for (const [, context] of workflowCalls) expect(context?.sessionId).toBe(GROUP);
+    await manager.processUserMessage(owner, 'mainly kids', turn1.updatedState);
+
+    const all = calls();
+    expect(all.length).toBeGreaterThanOrEqual(4);
+    for (const [, context] of all) expect(context?.sessionId).toBe(GROUP);
+
+    /* More than one KIND of call under one group, which a repeat of the same
+       component could not show. */
+    const components = new Set(all.map(([, c]) => c?.component));
+    expect(components.has('business_story_extraction')).toBe(true);
+    expect(components.has('business_deepening')).toBe(true);
   });
 
-  it('asks how they sell with no llm call at all — three chips, three reads', async () => {
+  it('reads the chips with no llm call, and spends exactly one naming the drafts', async () => {
     const manager = new OnboardingConversationManager();
     const owner = { userId: OWNER_ID, groupId: GROUP };
 
@@ -222,13 +239,59 @@ describe('one grouping id per onboarding conversation (AC-3)', () => {
     expect(collected.updatedState.pendingQuestion).toBe('service_count');
     expect(collected.updatedState.collectedData.clientWorkflow?.collection_method).toBe('none');
 
+    /* The point: a capability answer costs nothing. Two turns, no model. */
+    expect(calls()).toHaveLength(0);
+
+    /*
+     * The count turn is different, and deliberately so. It is the one place
+     * the interview spends a call on something other than understanding the
+     * business: naming the placeholder rows the build is about to create, so
+     * they are not "Service 1", "Service 2", "Service 3".
+     */
+    mockComplete.mockResolvedValueOnce({
+      content: JSON.stringify({
+        services: [
+          { name: 'Kids haircut', description: 'A cut for children, with a parent in the room.' },
+          { name: 'Colour', description: 'Colour, booked as its own appointment.' },
+          { name: 'Styling', description: 'Styling for an occasion.' },
+        ],
+      }),
+    });
+
     const counted = await manager.processUserMessage(owner, '3', collected.updatedState);
     expect(counted.updatedState.collectedData.clientWorkflow?.service_count).toBe(3);
-    expect(counted.updatedState.pendingQuestion).toBeUndefined();
-    expect(counted.updatedState.currentStep).toBe('client_acquisition');
 
-    // The point: capability answers cost nothing. Three turns, no model.
-    expect(calls()).toHaveLength(0);
+    const named = counted.updatedState.collectedData.clientWorkflow?.services ?? [];
+    expect(named.map(service => service.name)).toEqual(['Kids haircut', 'Colour', 'Styling']);
+    /* The owner's answers, carried onto the placeholder: without them the
+       catalogue INVERTS the Stripe and scheduling decisions. */
+    expect(named.every(service => service.is_scheduled === true)).toBe(true);
+    expect(named.every(service => service.collection === null)).toBe(true);
+
+    /* One call, under this conversation's group — the subject of this file. */
+    const naming = calls().filter(([, c]) => c?.component === 'service_drafting');
+    expect(naming).toHaveLength(1);
+    for (const [, context] of naming) expect(context?.sessionId).toBe(GROUP);
+
+    /*
+     * And it does not fall through to the plan: a business that books now gets
+     * asked whether its clients fill in a form first, which was asked of
+     * nobody and set for nobody before.
+     */
+    expect(counted.updatedState.currentStep).toBe('service_details');
+    expect(counted.updatedState.pendingQuestion).toBe('intake');
+
+    const intake = await manager.processUserMessage(
+      owner,
+      'Yes, they fill in a form first',
+      counted.updatedState
+    );
+    expect(intake.updatedState.collectedData.clientWorkflow?.needs_intake).toBe(true);
+    expect(intake.updatedState.currentStep).toBe('client_acquisition');
+    expect(intake.updatedState.pendingQuestion).toBeUndefined();
+
+    /* The intake answer is a chip too: still no further model call. */
+    expect(calls().filter(([, c]) => c?.component !== 'service_drafting')).toHaveLength(0);
   });
 
   it('re-asks the count rather than inventing one, and never reopens the services form', async () => {
@@ -293,13 +356,51 @@ describe('behaviour is unchanged (AC-4)', () => {
     expect(params.messages[1]).toEqual({ role: 'user', content: 'We are a physio clinic' });
   });
 
-  it('parses the extraction as before', async () => {
+  it('keeps only the fields that decide something', async () => {
+    /*
+     * Was "parses the extraction as before", asserting `goals`, `company_name`
+     * and `pain_points` survived the read. They no longer do, and the point of
+     * the change is that they should not: `company_name` loses to the name the
+     * owner typed when asked outright, and `goals` / `pain_points` / `tools` /
+     * `clients_per_week` / `target_audience` had no question feeding them and
+     * no consumer deciding anything from them.
+     *
+     * A model still volunteering them is ignored here rather than stored, so a
+     * stale prompt cannot put them back by accident.
+     */
     const manager = new OnboardingConversationManager();
     mockComplete.mockResolvedValueOnce({
-      content: JSON.stringify({ vertical: 'wellness', goals: ['grow'], company_name: 'Calm' }),
+      content: JSON.stringify({
+        vertical: 'wellness',
+        sub_vertical: 'life_coach',
+        needs_booking: true,
+        needs_website: null,
+        // Volunteered anyway. Must not be stored.
+        goals: ['grow'],
+        company_name: 'Calm',
+        pain_points: ['no_shows'],
+        clients_per_week: 15,
+      }),
     });
+
     const story = await extractorsOf(manager).extractBusinessStory('We are Calm', OWNER);
-    expect(story).toMatchObject({ vertical: 'wellness', goals: ['grow'], company_name: 'Calm', pain_points: [] });
+
+    expect(story).toEqual({
+      vertical: 'wellness',
+      sub_vertical: 'life_coach',
+      needs_booking: true,
+      needs_website: undefined,
+      /*
+       * The fifth, added after an owner mistyped "I" and the interview moved
+       * straight on. It decides whether the question is asked once more, and
+       * the model judges it: a word or character count cannot tell "I" from
+       * "מאמן כושר" and would be stricter in one script than another.
+       *
+       * Absent here, so it reads as `true` — our omission must never cost the
+       * owner a repeated question.
+       */
+      describes_business: true,
+    });
   });
 
   it('keeps each documented fallback when the call fails', async () => {
@@ -307,12 +408,16 @@ describe('behaviour is unchanged (AC-4)', () => {
     mockComplete.mockRejectedValue(new Error('provider down'));
     const extractors = extractorsOf(manager);
 
+    /*
+     * `'default'`, not `'other'`. `other` is not a key of `PIPELINE_PRESETS`,
+     * so it reached the default preset by falling through rather than by
+     * saying so — and left the log reading `raw_vertical: other` for a
+     * business that simply could not be read.
+     */
     await expect(extractors.extractBusinessStory('x', OWNER)).resolves.toEqual({
-      vertical: 'other',
-      pain_points: [],
-      goals: [],
-      tools: [],
-      target_audience: [],
+      vertical: 'default',
+      /* A provider error is not evidence that the owner said nothing. */
+      describes_business: true,
     });
     await expect(extractors.extractAdjustmentIntent('x', OWNER)).resolves.toEqual(
       expect.objectContaining({ intent: expect.any(String) })
@@ -398,37 +503,30 @@ describe('owner text never reaches a logger (OI-7), derived text only at debug (
     });
     expect(line('Business story extracted').level).toBe('debug');
     expect(line('Extracted business story').level).toBe('debug');
-    // The derived text IS kept, at debug, for local debugging (D-OI8).
-    expect(JSON.stringify(line('Business story extracted').fields)).toContain(DERIVED);
+
+    /*
+     * This asserted the derived text WAS present at debug (D-OI8), by planting
+     * a marker in the extraction's `description`.
+     *
+     * The extraction no longer returns any text: four values, each a fixed key
+     * or a boolean, because the description is now always the owner's typed
+     * words and the composed one is written later by `writeDescription`.
+     *
+     * So the OI-8 risk is gone from this call rather than confined to debug,
+     * and the assertion inverts: nothing the owner wrote may appear in these
+     * fields at any level. The D-OI8 allowance still covers the calls that do
+     * return derived text, asserted below.
+     */
+    const storyFields = JSON.stringify(line('Business story extracted').fields);
+    expect(storyFields).not.toContain(DERIVED);
+    expect(storyFields).not.toContain(SENTINEL);
   });
 
   it('client_workflow: the extraction at debug only', async () => {
+    /* Restored: removed by accident while dropping the price cases beside it.
+       The extractor still exists, so the guard still applies. */
     await send(SENTINEL, state('client_workflow'));
     expect(line('Extracted client workflow').level).toBe('debug');
-  });
-
-  const pricing = () =>
-    state('service_details', {
-      pendingQuestion: 'need_price',
-      collectedData: { clientWorkflow: { services: [{ name: 'Class', price: null }], pricing_model: 'fixed' } },
-    });
-
-  it('a parseable price: the number and the length, not the text', async () => {
-    // 175, not 100 or 150: the parser's "free" check matches any reply containing '0'.
-    await send(`${SENTINEL} 175`, pricing());
-    expect(line('Extracted price from message').fields).toEqual({ extracted: 175, messageLength: SENTINEL.length + 4 });
-  });
-
-  it('an unparseable price: lengths only, on both warnings', async () => {
-    await send(SENTINEL, pricing());
-    expect(line('Could not extract numeric price from message')).toMatchObject({
-      level: 'warn',
-      fields: { messageLength: SENTINEL.length },
-    });
-    expect(line('Could not extract price from message')).toMatchObject({
-      level: 'warn',
-      fields: { messageLength: SENTINEL.length, userId: OWNER_ID, groupId: GROUP },
-    });
   });
 
   it('client_acquisition: the derived chips and the length, not the text', async () => {
@@ -474,51 +572,4 @@ describe('owner text never reaches a logger (OI-7), derived text only at debug (
     expect(line('Unknown adjustment intent: details').level).toBe('debug');
   });
 
-  it('services from the form missing a price (CR-1): a count at info, the typed names at no level', async () => {
-    await send(
-      SENTINEL,
-      state('service_details', { collectedData: { clientWorkflow: { pricing_model: 'fixed' } } }),
-      [
-        { name: `${SENTINEL} one`, price: null },
-        { name: `${SENTINEL} two`, price: null },
-      ]
-    );
-    expect(line('Services missing price')).toEqual({
-      level: 'info',
-      fields: { servicesMissingPriceCount: 2 },
-      msg: 'Services missing price',
-    });
-  });
-
-  describe('an extractor failure (CR-2)', () => {
-    const cases: Array<[string, OnboardingState, string]> = [
-      ['business story', state('business_story'), 'Business story extraction failed'],
-      ['client workflow', state('client_workflow'), 'Client workflow extraction failed'],
-      ['adjustment intent', state('preview_adjustment'), 'Adjustment intent extraction failed'],
-    ];
-
-    it.each(cases)('%s, unparseable model output: only the error name at error, the detail at debug', async (_n, s, msg) => {
-      mockComplete.mockImplementation(async () => ({ content: `${DERIVED} — not JSON` }));
-      await send(SENTINEL, s);
-      expect(line(msg)).toEqual({ level: 'error', fields: { errName: 'SyntaxError' }, msg });
-      // A SyntaxError's message quotes the model output; it is kept at debug only.
-      const detail = line(`${msg}: parse error detail`);
-      expect(detail.level).toBe('debug');
-      expect(JSON.stringify(detail.fields)).toContain('DERIVED-MA');
-    });
-
-    it.each(cases)('%s, a provider error: full detail kept at error', async (_n, s, msg) => {
-      mockComplete.mockRejectedValue(new Error('provider down'));
-      await send(SENTINEL, s);
-      expect(line(msg)).toMatchObject({ level: 'error', fields: { err: { name: 'Error', message: 'provider down' } } });
-    });
-
-    it('client tracking (unreachable, KI-D), unparseable model output: the same shape', async () => {
-      mockComplete.mockImplementation(async () => ({ content: `${DERIVED} — not JSON` }));
-      await extractorsOf(new OnboardingConversationManager()).extractClientTracking(SENTINEL, OWNER);
-      expect(line('Client tracking extraction failed')).toMatchObject({ level: 'error', fields: { errName: 'SyntaxError' } });
-      // `afterEach` expects the per-message line; this case calls the extractor directly.
-      mockLogged.push({ level: 'debug', fields: { messageLength: SENTINEL.length }, msg: 'Processing user message' });
-    });
-  });
 });

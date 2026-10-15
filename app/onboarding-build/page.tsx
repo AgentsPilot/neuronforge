@@ -55,6 +55,23 @@ interface PreviewData {
   }>;
   businessDescription?: string;
   configuration?: {
+    /**
+     * What the interview learned about the business itself — see
+     * `lib/business-os/onboarding/businessBrief`.
+     *
+     * Shown back before the build because this is the owner's last chance to
+     * catch a misunderstanding. Everything they spent five questions saying
+     * otherwise goes straight into a profile column and is seen again only
+     * once a site has been generated from it and published.
+     */
+    business_brief?: {
+      audience?: string[];
+      outcome?: string[];
+      differentiators?: string[];
+      credentials?: string[];
+      objections?: string[];
+      voice?: 'individual' | 'team' | null;
+    };
     company_name?: string;
     vertical?: string;
     description?: string;
@@ -68,6 +85,14 @@ interface PreviewData {
       price?: number;
       is_scheduled?: boolean;
     }>;
+    /**
+     * How many services the build will create.
+     *
+     * The interview asks for a count, not a catalogue, so `services` above is
+     * normally empty and this holds the answer. Undeclared, it reads as
+     * `undefined` and the services step vanished from the plan.
+     */
+    service_count?: number;
     /** Clients fill in a form before their appointment. */
     needs_intake?: boolean;
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
@@ -158,8 +183,20 @@ function OnboardingBuildContent() {
   const initializeBuildSteps = useCallback((data: PreviewData): BuildStep[] => {
     const hasWebsite = data.configuration?.online_presence_mode === 'full_website' ||
                        data.configuration?.online_presence_mode === 'website_only';
-    const hasServices = (data.services?.length || 0) > 0 ||
-                        (data.configuration?.services?.length || 0) > 0;
+    /*
+     * The COUNT counts. The interview asks how many services there are rather
+     * than for a list of them, so both catalogues read here are normally
+     * empty while `service_count` holds the answer and the build creates that
+     * many drafts from it. Reading only the catalogues dropped the whole step
+     * from the plan on the ordinary path, and made the line below say "0
+     * services created" about three rows that were about to exist.
+     */
+    const plannedServices = Math.max(
+      data.services?.length || 0,
+      data.configuration?.services?.length || 0,
+      data.configuration?.service_count || 0
+    );
+    const hasServices = plannedServices > 0;
     const hasPipeline = (data.pipelineStages?.length || 0) > 0 ||
                         (data.configuration?.pipeline_stages?.length || 0) > 0;
     const hasPayments = data.configuration?.payment_mode !== 'none';
@@ -195,8 +232,8 @@ function OnboardingBuildContent() {
         status: 'pending',
         icon: <Calendar className="w-4 h-4" />,
         color: '#D14E97',
-        result: `${(data.services?.length || data.configuration?.services?.length || 0)} ${
-          selectedLanguage === 'he' ? 'שירותים נוצרו, עם מחירים ומשך' : selectedLanguage === 'es' ? 'servicios creados, con precios y duración' : 'services created, prices and durations set'
+        result: `${plannedServices} ${
+          selectedLanguage === 'he' ? 'שירותים נוצרו כטיוטות' : selectedLanguage === 'es' ? 'servicios creados como borradores' : 'services created as drafts'
         }`,
       });
     }
@@ -219,8 +256,22 @@ function OnboardingBuildContent() {
         status: 'pending',
         icon: <Globe className="w-4 h-4" />,
         color: '#4F6EF7',
+        /*
+         * "Your site is published" was false, and falsely in the one direction
+         * that costs the owner something.
+         *
+         * `WebsiteGenerationService` writes the page with `status: 'draft'`,
+         * under a comment that says so outright: "Website starts as draft, user
+         * must explicitly publish". So an owner told their site was live had no
+         * reason to ever go and publish it, and no reason to look for it when
+         * nobody arrived.
+         *
+         * The build genuinely did its half, which is why this still turns
+         * green. Naming what is left is the difference between a finished step
+         * and a finished website.
+         */
         result: hasWebsite
-          ? (selectedLanguage === 'he' ? 'האתר שלך פורסם' : selectedLanguage === 'es' ? 'Tu sitio está publicado' : 'Your site is published')
+          ? (selectedLanguage === 'he' ? 'האתר שלך מוכן לפרסום' : selectedLanguage === 'es' ? 'Tu sitio está listo para publicar' : 'Your site is ready for you to publish')
           : (selectedLanguage === 'he' ? 'הלינק להזמנות מוכן' : selectedLanguage === 'es' ? 'Tu enlace de reserva está listo' : 'Your booking link is ready'),
       });
     }
@@ -488,7 +539,42 @@ function OnboardingBuildContent() {
 
           setIsLoading(false);
         } else if (!cancelled) {
-          router.push('/onboarding-chat');
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * NO sessionStorage: ASK THE SERVER before giving up.
+           *
+           * This used to push straight back to `/onboarding-chat`, which then
+           * composed a fresh welcome — so the owner was returned to the first
+           * question with no explanation, and nothing was built. Every path
+           * that loses the key ended there: a storage write that throws, a new
+           * tab, a link opened cold, a restored session.
+           *
+           * Measured on a real account: the conversation sat on `preview` with
+           * a complete configuration, three named services and an intake
+           * answer, while services, pipeline stages and the website were all
+           * empty. The plan existed on the server the whole time; nothing
+           * could ask for it.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          try {
+            const response = await fetch('/api/onboarding/chat');
+            const recovered = response.ok ? await response.json() : null;
+            const plan = recovered?.data?.previewData ?? null;
+
+            if (plan && !cancelled) {
+              logger.info({ step: recovered?.data?.currentStep }, 'Recovered the plan from the server');
+              sessionStorage.setItem('onboarding_preview_data', JSON.stringify(plan));
+              setPreviewData(plan as PreviewData);
+              setIsLoading(false);
+              return;
+            }
+          } catch (err) {
+            /* Falling back to the chat is still the right answer when there is
+               genuinely no plan to build. */
+            logger.error({ err }, 'Could not recover the plan from the server');
+          }
+
+          if (!cancelled) router.push('/onboarding-chat');
         }
       } catch (error) {
         logger.error({ err: error }, 'Error loading preview data');
@@ -709,6 +795,50 @@ function OnboardingBuildContent() {
                     </span>
                   )}
                 </div>
+
+                {/*
+                  WHAT WE UNDERSTOOD, shown back before anything is built.
+                  ───────────────────────────────────────────────────────────
+                  The card named the business and its trade and stopped there.
+                  Everything the owner just spent five questions telling us —
+                  who their clients are, what those clients get, what makes
+                  them the choice — went into a profile column unseen, and the
+                  first sight of our reading of it was a published website.
+
+                  Each line is their own words, so a misunderstanding is
+                  obvious at a glance rather than inferred from the copy.
+                */}
+                {(() => {
+                  const brief = previewData.configuration?.business_brief;
+                  if (!brief) return null;
+
+                  const candidates: Array<[string, string[] | undefined]> = [
+                    [t('onboarding.brief.audience') || 'Clients', brief.audience],
+                    [t('onboarding.brief.outcome') || 'What they get', brief.outcome],
+                    [t('onboarding.brief.differentiators') || 'What sets you apart', brief.differentiators],
+                    [t('onboarding.brief.credentials') || 'Background', brief.credentials],
+                    [t('onboarding.brief.objections') || 'What holds people back', brief.objections],
+                  ];
+
+                  /* Typed on the way out: `.filter` alone widens the tuple to
+                     `any[][]` and the pair stops being a pair. */
+                  const lines: Array<[string, string[]]> = candidates.flatMap(([label, values]) =>
+                    values?.length ? [[label, values] as [string, string[]]] : []
+                  );
+
+                  if (!lines.length) return null;
+
+                  return (
+                    <div className="mt-3 pt-3 border-t border-[var(--v2-border)] space-y-1.5">
+                      {lines.map(([label, values]) => (
+                        <p key={label} className="text-[11px] leading-snug text-[var(--v2-text-secondary)]">
+                          <span className="text-[var(--v2-text-muted)]">{label}: </span>
+                          <bdi>{(values ?? []).join(' · ')}</bdi>
+                        </p>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -1040,7 +1170,7 @@ function OnboardingBuildContent() {
       {openStep === 'bank' && userId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
           <div
-            className="w-full max-w-2xl max-h-[calc(100vh-1.5rem)] flex flex-col bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl overflow-hidden"
+            className="w-full max-w-2xl max-h-[calc(100dvh-1.5rem)] flex flex-col bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl overflow-hidden"
             dir={isRTL ? 'rtl' : 'ltr'}
           >
             <div className="flex-shrink-0 flex items-center justify-between gap-3 px-4 pt-4 pb-2.5">

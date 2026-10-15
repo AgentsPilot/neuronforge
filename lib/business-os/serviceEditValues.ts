@@ -74,5 +74,20 @@ export function collectionToPersist(
   collection: 'online' | 'invoice',
   price: number | null | undefined
 ): 'online' | 'invoice' | null {
-  return (price ?? 0) > 0 ? collection : null;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NULL IS NOT ZERO, and this treated them as the same answer.
+   *
+   * `(price ?? 0) > 0` cleared the collection for both, so an owner who said
+   * "they pay by card" on a service they had not priced yet had that choice
+   * written as null, and `serviceShapeValues` read it back as "invoice" on the
+   * next open. The choice reverted and nothing said why.
+   *
+   * null  = not priced yet. The question is still open, so keep the answer.
+   * 0     = free, deliberately. Nothing is charged, so there is nothing to
+   *         collect and the column should say so.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (price === null || price === undefined) return collection;
+  return price > 0 ? collection : null;
 }

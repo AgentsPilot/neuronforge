@@ -82,12 +82,43 @@ const computedConfigurationSchema = z.object({
   /** Which pipeline preset was used — a parenting coach is not a generic tutor. */
   sub_vertical: z.string().nullable().optional(),
   description: z.string().optional(),
-  clients_per_week: z.number(),
+  /**
+   * What the interview learned about the business itself.
+   *
+   * Declared here or Zod strips it: this schema parses the configuration the
+   * chat sends, and an undeclared key is dropped silently — the brief would
+   * reach the route and never reach the profile, with nothing to say it had
+   * gone. See `lib/business-os/onboarding/businessBrief`.
+   */
+  business_brief: z.object({
+    audience: z.array(z.string()).optional(),
+    outcome: z.array(z.string()).optional(),
+    differentiators: z.array(z.string()).optional(),
+    credentials: z.array(z.string()).optional(),
+    objections: z.array(z.string()).optional(),
+    /* How the work runs once somebody says yes. The How-It-Works section is
+       written from this; undeclared, it is stripped here and that section
+       falls back to the booking flow, which is the same for every business. */
+    delivery: z.array(z.string()).optional(),
+    voice: z.enum(['individual', 'team']).nullable().optional(),
+  }).optional(),
+  /* Nullable: no question feeds it, so "not asked" has to be sendable. A
+     required number here is what kept `|| 5` alive upstream. */
+  clients_per_week: z.number().nullable(),
   pain_points: z.array(z.string()),
   goals: z.array(z.string()),
   tools: z.array(z.string()),
   services: z.array(z.object({
     name: z.string(),
+    /*
+     * What the service is, in the owner's words.
+     *
+     * Undeclared, Zod STRIPS it — the failure recorded on `business_brief`
+     * above, where a key reached the route and never reached the table with
+     * nothing to say it had gone. The draft rows below write it, and it is the
+     * only field on a placeholder service that no editor can generate.
+     */
+    description: z.string().optional(),
     duration_minutes: z.number().nullable().optional(),
     // Null is a real answer here — "the fee is agreed with each client" — and
     // the code below distinguishes it from an absent price and from a zero.
@@ -162,6 +193,8 @@ const buildRequestSchema = z.object({
   // Services from onboarding chat
   services: z.array(z.object({
     service_name: z.string(),
+    /** See `description` on the configuration schema above. */
+    description: z.string().optional(),
     /*
      * Null is a real answer: a product is not booked against a time, so it has
      * no length. The column is nullable and `configuration.services` above has
@@ -353,6 +386,21 @@ export async function POST(request: NextRequest) {
       // would keep manufacturing stale answers for that fallback to trust.
       profileData.online_presence_mode = configuration.online_presence_mode;
       profileData.needs_stripe_connect = configuration.needs_stripe_connect;
+      /*
+       * HOW THE MONEY ARRIVES, in its own column and not only inside the blob.
+       *
+       * `business_profiles.collection_method` was left NULL by every onboarding,
+       * while `extracted_data.collection_method` held the answer the owner had
+       * tapped. Three readers want the column and not the blob:
+       * `setupGraph` (`const explicit = profile.collection_method`), and both
+       * `businessShape` files, which pass it to everything that decides what the
+       * money side of the setup still needs.
+       *
+       * So the one question in the interview that decides whether Stripe is ever
+       * mentioned was answered, stored where nothing looks, and read as "they
+       * never said".
+       */
+      profileData.collection_method = configuration.collection_method ?? null;
       profileData.extracted_data = configuration; // Store full config for debugging
     }
 
@@ -935,7 +983,10 @@ export async function POST(request: NextRequest) {
         draftRows.push({
           user_id: user.id,
           service_name: claimName(seed?.name ?? suggestion?.service_name, index),
-          description: suggestion?.description ?? undefined,
+          /* Theirs first. `suggestion` exists only on a service WE invented,
+             so reading it alone meant a service the owner described in their
+             own words was stored with no description at all. */
+          description: seed?.description ?? suggestion?.description ?? undefined,
           duration_minutes: scheduled
             ? seed?.duration_minutes ?? suggestion?.duration_minutes ?? null
             : null,
@@ -1123,6 +1174,50 @@ export async function POST(request: NextRequest) {
           createdServices.push(serviceResult.data);
           requestLogger.info({ serviceId: serviceResult.data.id, serviceName: service.name }, 'Service created');
         }
+      }
+    }
+
+    /*
+     * 5.4. The service NAMES, in the profile's own column.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `business_profiles.services` is `TEXT[]` and every onboarding left it
+     * `{}`, while `extracted_data.services` held the full objects. The reader
+     * that wants the column is `WebsiteAutoBuildService.buildProfileContext`:
+     *
+     *     if (profile.services.length > 0)
+     *       parts.push(`Services: ${profile.services.join(', ')}`);
+     *
+     * An empty array simply drops that line, so the auto-build path described
+     * the business without ever naming what it sells.
+     *
+     * Written HERE rather than with the rest of the profile at step 3, because
+     * the rows do not exist yet at step 3 and these are the names that were
+     * actually created — including any the build had to generate itself to
+     * reach the count. Writing `configuration.services` earlier would have
+     * been right only while the naming call succeeded.
+     *
+     * Non-fatal: a profile missing this column is a thinner prompt on one
+     * path, not a failed build.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (createdServices.length > 0) {
+      const names = createdServices
+        .map(created => created.service_name)
+        .filter((name): name is string => !!name?.trim());
+
+      const { error: namesError } = await supabaseServer
+        .from('business_profiles')
+        .update({ services: names })
+        .eq('user_id', user.id);
+
+      if (namesError) {
+        requestLogger.warn(
+          { err: namesError, userId: user.id, count: names.length },
+          'Could not record the service names on the profile'
+        );
+      } else {
+        requestLogger.info({ userId: user.id, count: names.length }, 'Recorded the service names on the profile');
       }
     }
 

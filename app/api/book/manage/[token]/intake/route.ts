@@ -9,6 +9,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
+import { outcomeRecorded } from '@/lib/business-os/bookingStatus';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'API', service: 'BookingIntake' });
@@ -155,6 +156,26 @@ export async function GET(
     if (booking.status === 'cancelled') {
       return NextResponse.json(
         { success: false, error: 'This booking has been cancelled' },
+        { status: 400 }
+      );
+    }
+
+    /*
+     * And every other way the appointment can already be over.
+     *
+     * The test above covers the one the owner presses most, and `no_show` and
+     * `completed` end a meeting just as finally. Without this a client marked
+     * absent could still open the form, fill it in and attach files to it —
+     * answers landing on a booking nobody will look at again, after the owner's
+     * own card had stopped asking for them.
+     *
+     * Separate from the cancelled branch rather than folded into it: the two
+     * deserve different sentences, and the cancelled one is the copy (and, in
+     * the upload route, the error CODE) that the client-side already handles.
+     */
+    if (outcomeRecorded(booking.status)) {
+      return NextResponse.json(
+        { success: false, code: 'settled', error: 'This booking has already taken place' },
         { status: 400 }
       );
     }
@@ -311,6 +332,26 @@ export async function POST(
     if (booking.status === 'cancelled') {
       return NextResponse.json(
         { success: false, error: 'This booking has been cancelled' },
+        { status: 400 }
+      );
+    }
+
+    /*
+     * And every other way the appointment can already be over.
+     *
+     * The test above covers the one the owner presses most, and `no_show` and
+     * `completed` end a meeting just as finally. Without this a client marked
+     * absent could still open the form, fill it in and attach files to it —
+     * answers landing on a booking nobody will look at again, after the owner's
+     * own card had stopped asking for them.
+     *
+     * Separate from the cancelled branch rather than folded into it: the two
+     * deserve different sentences, and the cancelled one is the copy (and, in
+     * the upload route, the error CODE) that the client-side already handles.
+     */
+    if (outcomeRecorded(booking.status)) {
+      return NextResponse.json(
+        { success: false, code: 'settled', error: 'This booking has already taken place' },
         { status: 400 }
       );
     }
