@@ -19,9 +19,18 @@
  *                holding this subscription. Never `current_period_end`, the
  *                tier or the plan row: only a paid invoice moves those
  *
- * No money history, no audit (Q-1). Everything else these events mean
- * (pending downgrade, failed attempts, the "ended" history and audit) is
- * P-6a / P-7b's. A read or write failure throws (claim released, retried).
+ *   5  ended     P-6a.2 (workplan §5.5; SA C-4): on `customer.subscription.deleted`
+ *                ONLY (Stripe sends exactly one per subscription; X-4 showed no
+ *                `.updated` to `canceled` before it), after a successful mirror:
+ *                one `subscription_ended` money history row (unique on the
+ *                event id, so a replay records nothing) and, when that row is
+ *                new, one `BOS_BILLING_SUBSCRIPTION_ENDED` audit (`info`, C-10).
+ *                A `.updated` that reads an ended subscription mirrors it and
+ *                nothing more. No plan write, no entitlement invalidation: the
+ *                lifecycle derives from the paid-through date (SA-P8)
+ *
+ * Otherwise no money history and no audit (Q-1); a pending downgrade is
+ * P-7b's. A read or write failure throws (claim released, retried).
  *
  * @module lib/business-os/billing/planSubscriptionMirror
  */
@@ -31,16 +40,27 @@ import type Stripe from 'stripe';
 import type { Logger } from '@/lib/logger';
 import type { StripeService } from '@/lib/stripe/StripeService';
 import type {
+  BusinessOsBillingAccount,
   BusinessOsBillingAccountRepository,
   BusinessOsSubscriptionStatus,
 } from '@/lib/repositories/BusinessOsBillingAccountRepository';
+import type { BusinessOsBillingEventRepository } from '@/lib/repositories/BusinessOsBillingEventRepository';
+import { resolveAccountId } from '@/lib/business-os/entitlements/account';
+import type { RecordPlanChangeInput } from '@/lib/business-os/entitlements/recordPlanChange';
 import { BOS_USER_ID_METADATA_KEY } from '@/lib/business-os/billing/stripeMetadataKeys';
 
 export interface PlanSubscriptionMirrorDeps {
   billingAccounts: Pick<BusinessOsBillingAccountRepository, 'findByStripeSubscription' | 'mirrorSubscriptionState'>;
+  /** P-6a.2: the `subscription_ended` money history row. */
+  billingEvents: Pick<BusinessOsBillingEventRepository, 'recordEvent'>;
   stripe: () => Pick<StripeService, 'retrieveBusinessOsSubscription'>;
+  /** P-6a.2: the `BOS_BILLING_SUBSCRIPTION_ENDED` audit, flushed bounded (PF-11). */
+  recordPlanChange: (input: RecordPlanChangeInput) => Promise<void>;
   now: () => Date;
 }
+
+/** Stripe's `cancellation_details.reason` values worth recording; anything else is recorded as null. */
+const CANCELLATION_REASONS: readonly string[] = ['payment_failed', 'cancellation_requested', 'payment_disputed'];
 
 const SUBSCRIPTION_ID_PATTERN = /^sub_[A-Za-z0-9]{1,251}$/;
 const SUBSCRIPTION_STATUSES: readonly BusinessOsSubscriptionStatus[] = [
@@ -113,4 +133,67 @@ export async function mirrorPlanSubscription(event: Stripe.Event, log: Logger, d
       ? 'Business OS plan subscription status mirrored'
       : 'Billing record no longer holds this subscription; nothing written'
   );
+
+  // C-4: the end is recorded from `.deleted` only, and only on the row that
+  // still holds this subscription.
+  if (event.type === 'customer.subscription.deleted' && mirrored.data.mirrored) {
+    await recordSubscriptionEnded(event, embedded, account, endedAtIso, log, deps);
+  }
+}
+
+/** P-6a.2 (§5.5, AC-F6.3): one `subscription_ended` row; one audit when it is new. Throws on a write failure (retried). */
+async function recordSubscriptionEnded(
+  event: Stripe.Event,
+  embedded: Stripe.Subscription,
+  account: BusinessOsBillingAccount,
+  endedAtIso: string | null,
+  log: Logger,
+  deps: PlanSubscriptionMirrorDeps
+): Promise<void> {
+  // Our record names the account (SR-8); the seam canonicalises it.
+  const accountId = resolveAccountId(account.accountId as string);
+  const subscriptionId = embedded.id;
+  const ids = { accountId, subscriptionId, livemode: event.livemode, stripeEventId: event.id };
+
+  const recorded = await deps.billingEvents.recordEvent({
+    accountId,
+    livemode: event.livemode,
+    kind: 'subscription_ended',
+    stripeEventId: event.id,
+    stripeSubscriptionId: subscriptionId,
+    stripeCustomerId: account.stripeCustomerId,
+    tier: account.boughtTier,
+  });
+  if (recorded.error || !recorded.data) throw recorded.error ?? new Error('subscription_ended_not_recorded');
+  if (recorded.data.outcome === 'duplicate') {
+    log.info({ event: 'bos_billing_subscription_ended_replayed', ...ids }, 'Business OS plan subscription end already recorded');
+    return;
+  }
+
+  const rawReason = embedded.cancellation_details?.reason ?? null;
+  const cancellationReason = typeof rawReason === 'string' && CANCELLATION_REASONS.includes(rawReason) ? rawReason : null;
+  log.info(
+    { event: 'bos_billing_subscription_ended', cancellationReason, ended: endedAtIso !== null, eventRowId: recorded.data.eventRowId, ...ids },
+    'Business OS plan subscription ended and recorded'
+  );
+  await deps.recordPlanChange({
+    accountId,
+    action: 'BOS_BILLING_SUBSCRIPTION_ENDED',
+    actor: { kind: 'system', source: 'stripe_webhook' },
+    entityType: 'business_os_account_plan',
+    entityId: accountId,
+    changes: {},
+    details: {
+      subscriptionId,
+      cancellationReason,
+      endedAt: endedAtIso,
+      livemode: event.livemode,
+      stripeEventId: event.id,
+      eventRowId: recorded.data.eventRowId,
+    },
+    severity: 'info',
+    // The lifecycle derives from the paid-through date (SA-P8): nothing to invalidate.
+    invalidatesEntitlements: false,
+    log,
+  });
 }

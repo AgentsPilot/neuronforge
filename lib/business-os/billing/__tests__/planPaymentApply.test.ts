@@ -30,11 +30,19 @@ import type Stripe from 'stripe';
 import {
   applyPaidPlanInvoice,
   PlanPaymentRetryError,
+  recordActionRequiredPlanInvoice,
   recordFailedPlanInvoice,
   type PlanPaymentDeps,
 } from '@/lib/business-os/billing/planPaymentApply';
 import { BOS_PLAN_LOOKUP_KEYS, planTierForLookupKey } from '@/lib/business-os/billing/planPriceCatalog';
-import type { BusinessOsBillingAccount } from '@/lib/repositories/BusinessOsBillingAccountRepository';
+import {
+  decideRenewalCure,
+  decideRenewalFailure,
+  type BusinessOsBillingAccount,
+  type RenewalCureResult,
+  type RenewalFailureInput,
+  type RenewalFailureWriteResult,
+} from '@/lib/repositories/BusinessOsBillingAccountRepository';
 import type {
   BusinessOsApplyPlanPaymentInput,
   BusinessOsApplyPlanPaymentResult,
@@ -217,6 +225,41 @@ class FakeWorld {
     };
   }
 
+  /**
+   * P-6a.2: the billing repository's renewal-failure write, through the REAL
+   * pure decision (`decideRenewalFailure`), on the row of this account and mode.
+   */
+  renewalFailure(input: RenewalFailureInput, actionRequired: boolean): RenewalFailureWriteResult {
+    const row = this.billing && this.billing.accountId === input.userId && this.billing.livemode === input.livemode ? this.billing : null;
+    const decision = decideRenewalFailure(row, {
+      stripeSubscriptionId: input.stripeSubscriptionId,
+      invoiceId: input.invoiceId,
+      periodEndIso: input.periodEndIso,
+      attemptCount: input.attemptCount,
+      failedAtIso: input.failedAtIso,
+      hostedInvoiceUrl: input.hostedInvoiceUrl,
+      actionRequired,
+    });
+    if (decision.kind === 'moot') return { outcome: 'moot', reason: decision.reason };
+    if (decision.kind === 'unchanged' || !row) return { outcome: 'unchanged' };
+    this.billing = {
+      ...row,
+      failedAttempts: decision.failedAttempts,
+      lastPaymentFailedAt: decision.lastPaymentFailedAt,
+      actionRequiredInvoiceUrl: decision.actionRequiredInvoiceUrl,
+    };
+    return { outcome: 'recorded', failedAttempts: decision.failedAttempts, actionRequiredUrlStored: decision.actionRequiredInvoiceUrl !== null };
+  }
+
+  /** P-6a.2: the cure, through the REAL pure decision (`decideRenewalCure`). */
+  cure(input: { userId: string; livemode: boolean; stripeSubscriptionId: string; paidPeriodEndIso: string }): RenewalCureResult {
+    const row = this.billing && this.billing.accountId === input.userId && this.billing.livemode === input.livemode ? this.billing : null;
+    const decision = decideRenewalCure(row, input);
+    if (decision.kind === 'nothing' || !row) return { outcome: 'nothing', reason: decision.kind === 'nothing' ? decision.reason : 'no_row' };
+    this.billing = { ...row, failedAttempts: 0, actionRequiredInvoiceUrl: null };
+    return { outcome: 'cleared' };
+  }
+
   record(input: BusinessOsBillingEventInput): { outcome: 'recorded'; eventRowId: string } | { outcome: 'duplicate' } {
     if (input.stripeEventId !== null && this.events.some((e) => e.stripeEventId === input.stripeEventId)) return { outcome: 'duplicate' };
     const id = this.rowId();
@@ -286,8 +329,21 @@ function setup(world = new FakeWorld()) {
     data: world.billing && world.billing.stripeCustomerId === id && world.billing.livemode === livemode ? world.billing : null,
     error: null,
   }));
+  const recordRenewalFailure = jest.fn(async (input: RenewalFailureInput) => ({ data: world.renewalFailure(input, false), error: null }));
+  const recordActionRequired = jest.fn(async (input: RenewalFailureInput) => ({ data: world.renewalFailure(input, true), error: null }));
+  const clearRenewalFailure = jest.fn(async (input: { userId: string; livemode: boolean; stripeSubscriptionId: string; paidPeriodEndIso: string }) => {
+    order.push('cure');
+    return { data: world.cure(input), error: null };
+  });
   const deps: PlanPaymentDeps = {
-    billingAccounts: { findByStripeSubscription: findBySub, findByStripeCustomer: findByCustomer } as unknown as PlanPaymentDeps['billingAccounts'],
+    billingAccounts: {
+      findByStripeSubscription: findBySub,
+      findByStripeCustomer: findByCustomer,
+      recordRenewalFailure,
+      recordActionRequired,
+      clearRenewalFailure,
+    } as unknown as PlanPaymentDeps['billingAccounts'],
+    now: () => new Date('2026-10-15T09:00:00.000Z'),
     billingEvents: {
       applyPlanPayment: jest.fn(async (input: BusinessOsApplyPlanPaymentInput) => {
         order.push('apply');
@@ -318,7 +374,22 @@ function setup(world = new FakeWorld()) {
   };
   const log = { info: at('info'), warn: at('warn'), error: at('error'), debug: at('debug') } as unknown as Logger;
   const logged = (event: string) => logLines.filter((l) => l.ctx.event === event);
-  return { world, deps, audits, order, subscriptions, lines, log, logged, findBySub, findByCustomer };
+  return {
+    world,
+    deps,
+    audits,
+    order,
+    subscriptions,
+    lines,
+    log,
+    logged,
+    logLines,
+    findBySub,
+    findByCustomer,
+    recordRenewalFailure,
+    recordActionRequired,
+    clearRenewalFailure,
+  };
 }
 
 const paid = (h: ReturnType<typeof setup>, event: Stripe.Event) => applyPaidPlanInvoice(event, h.log, h.deps);
@@ -484,7 +555,8 @@ describe('C-6 (SA-P2, SA-P16): the plan row moves only on the newest paid invoic
     await paid(h, paidCreate());
     expect(h.world.plan).toEqual({ tier: TIER_A, planVersion: 7, tierExpiresAt: PERIOD_1_END, periodAnchor: ANCHOR_ISO, cohort: 'trial' });
     expect(h.world.billing).toMatchObject({ stripeSubscriptionId: SUB_1, subscriptionStatus: 'active', boughtTier: TIER_A, currentPeriodEnd: PERIOD_1_END });
-    expect(h.order).toEqual(['apply', 'audit:BOS_BILLING_INVOICE_PAID']);
+    // P-6a.2: the renewal-failure cure runs last, after the audit flush (never before it).
+    expect(h.order).toEqual(['apply', 'audit:BOS_BILLING_INVOICE_PAID', 'cure']);
     expect(h.audits[0]).toMatchObject({
       accountId: ACCOUNT,
       actor: { kind: 'system', source: 'stripe_webhook' },
@@ -813,29 +885,35 @@ describe('metadata never chooses the account (SR-8, QA hardening)', () => {
 
 // ── invoice.payment_failed (SA Q-2) ─────────────────────────────────────────
 
-describe('invoice.payment_failed (SA Q-2): one history row, no plan or billing write', () => {
+describe('invoice.payment_failed (SA Q-2; P-6a.2): one history row, never a plan write', () => {
   const failed = (invoiceId = 'in_F1') => invoiceEvent('invoice-payment-failed.json', { invoiceId });
   const run = (h: ReturnType<typeof setup>, event: Stripe.Event) => recordFailedPlanInvoice(event, h.log, h.deps);
 
-  it('records invoice_payment_failed with the amount due, warns, applies nothing, audits nothing', async () => {
+  // P-6a.2 changed what a RENEWAL failure does (this fixture is `subscription_cycle`):
+  // one info audit on a new row, and the billing record is asked to count it.
+  // Here the row holds no subscription yet, so the count is moot.
+  it('records invoice_payment_failed with the amount due, warns, applies nothing; a renewal is audited once (P-6a.2)', async () => {
     const h = setup();
     await run(h, failed());
     expect(historyKinds(h.world)).toEqual(['invoice_payment_failed']);
     expect(h.world.events[0]).toMatchObject({ userId: ACCOUNT, invoiceId: 'in_F1', subscriptionId: SUB_1 });
     expect(h.world.events[0].input).toMatchObject({ amountMinor: 5000, tier: TIER_B, paidAt: null, currency: 'usd' });
     expect(h.deps.billingEvents.applyPlanPayment).not.toHaveBeenCalled();
-    expect(h.audits).toEqual([]);
+    expect(h.audits.map((a) => a.action)).toEqual(['BOS_BILLING_PAYMENT_FAILED']);
     expect(h.world.plan?.tier).toBeNull();
+    expect(h.world.billing).toMatchObject({ failedAttempts: 0, lastPaymentFailedAt: null });
     expect(h.logged('bos_billing_payment_failed')[0].level).toBe('warn');
+    expect(h.logged('bos_billing_renewal_failure_counted')[0].ctx).toMatchObject({ outcome: 'moot', reason: 'other_subscription' });
   });
 
-  it('a redelivery is a replay (event-id duplicate counts as done)', async () => {
+  it('a redelivery is a replay (event-id duplicate counts as done): no second audit', async () => {
     const h = setup();
     const event = failed();
     await run(h, event);
     await run(h, event);
     expect(h.world.events).toHaveLength(1);
     expect(h.logged('bos_billing_payment_failed_replayed')).toHaveLength(1);
+    expect(h.audits).toHaveLength(1);
   });
 
   it('the same account and metadata checks as paid apply first', async () => {
@@ -855,5 +933,227 @@ describe('invoice.payment_failed (SA Q-2): one history row, no plan or billing w
     const h = setup();
     h.deps.billingEvents.recordEvent = jest.fn(async () => ({ data: null, error: new Error('down') }));
     await expect(run(h, failed())).rejects.toThrow('down');
+  });
+});
+
+// ── P-6a.2: renewal failures, 3-D Secure and the cure (§5.3, §5.4; SA C-1 to C-3, C-10, U-10) ──
+
+/** The renewal period after the first one: the fixture line's next month. */
+const P1_UNIX = 1_792_592_000;
+const P2_UNIX = 1_795_184_000;
+const P2_ISO = new Date(P2_UNIX * 1000).toISOString();
+const RENEWAL_INVOICE = 'in_R1';
+const HOSTED = 'https://invoice.stripe.com/i/acct_probe/test_renewal_one?s=ap';
+
+interface UnpaidOptions {
+  invoiceId?: string;
+  attemptCount?: number;
+  billingReason?: string | null;
+  hostedInvoiceUrl?: string | null;
+  periodEnd?: number;
+  actionRequired?: boolean;
+  created?: number;
+}
+
+/** A failed (or 3-D Secure) invoice on SUB_1 for the period ending at `periodEnd` (P). */
+function unpaidEvent(opts: UnpaidOptions = {}): Stripe.Event {
+  const event = invoiceEvent('invoice-payment-failed.json', { invoiceId: opts.invoiceId ?? RENEWAL_INVOICE }, (invoice) => {
+    const raw = invoice as unknown as Record<string, unknown>;
+    raw.billing_reason = opts.billingReason === undefined ? 'subscription_cycle' : opts.billingReason;
+    raw.attempt_count = opts.attemptCount ?? 1;
+    raw.hosted_invoice_url = opts.hostedInvoiceUrl ?? null;
+    invoice.lines.data[0].period = { start: P1_UNIX, end: opts.periodEnd ?? P2_UNIX };
+  });
+  if (opts.actionRequired) event.type = 'invoice.payment_action_required' as Stripe.Event['type'];
+  if (opts.created !== undefined) event.created = opts.created;
+  return event;
+}
+
+const renewalPaid = (invoiceId = RENEWAL_INVOICE) => invoiceEvent('invoice-paid-renewal.json', { invoiceId });
+
+/** A world whose account bought SUB_1 (paid through the first period). */
+async function subscribedHarness() {
+  const h = setup();
+  await paid(h, paidCreate());
+  expect(h.world.billing).toMatchObject({ stripeSubscriptionId: SUB_1, failedAttempts: 0 });
+  h.audits.length = 0;
+  h.order.length = 0;
+  return h;
+}
+
+const failedRun = (h: ReturnType<typeof setup>, event: Stripe.Event) => recordFailedPlanInvoice(event, h.log, h.deps);
+const actionRun = (h: ReturnType<typeof setup>, event: Stripe.Event) => recordActionRequiredPlanInvoice(event, h.log, h.deps);
+
+describe('P-6a.2: a RENEWAL failure is counted on the billing record and audited once (§5.3)', () => {
+  it('counts the attempt (Stripe count, the event date as display), one info audit with ids only', async () => {
+    const h = await subscribedHarness();
+    const event = unpaidEvent({ attemptCount: 1 });
+    await failedRun(h, event);
+    expect(h.world.billing).toMatchObject({ failedAttempts: 1, lastPaymentFailedAt: new Date(event.created * 1000).toISOString(), actionRequiredInvoiceUrl: null });
+    expect(h.audits).toEqual([
+      expect.objectContaining({
+        action: 'BOS_BILLING_PAYMENT_FAILED',
+        actor: { kind: 'system', source: 'stripe_webhook' },
+        entityType: 'business_os_account_plan',
+        entityId: ACCOUNT,
+        severity: 'info',
+        invalidatesEntitlements: false,
+        details: expect.objectContaining({ invoiceId: RENEWAL_INVOICE, subscriptionId: SUB_1, attemptCount: 1, billingReason: 'subscription_cycle', livemode: false }),
+      }),
+    ]);
+    // Never a plan write: the lifecycle derives grace from the paid-through date (SA-P8).
+    expect(h.deps.billingEvents.applyPlanPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('the next attempt raises the count; a replay and a late older delivery change nothing and audit nothing more', async () => {
+    const h = await subscribedHarness();
+    const first = unpaidEvent({ attemptCount: 1 });
+    const second = unpaidEvent({ attemptCount: 2, created: first.created + 60 });
+    await failedRun(h, first);
+    await failedRun(h, second);
+    expect(h.world.billing?.failedAttempts).toBe(2);
+    await failedRun(h, second);
+    await failedRun(h, first);
+    expect(h.world.billing).toMatchObject({ failedAttempts: 2, lastPaymentFailedAt: new Date(second.created * 1000).toISOString() });
+    expect(h.audits.map((a) => a.action)).toEqual(['BOS_BILLING_PAYMENT_FAILED', 'BOS_BILLING_PAYMENT_FAILED']);
+  });
+
+  it('C-3: a billing write that fails throws (claim released), the audit is not lost, and the retry heals the count', async () => {
+    const h = await subscribedHarness();
+    const event = unpaidEvent();
+    h.recordRenewalFailure.mockResolvedValueOnce({ data: null, error: Object.assign(new Error('db down'), { name: 'BillingAccountRepositoryError' }) } as never);
+    await expect(failedRun(h, event)).rejects.toThrow('db down');
+    expect(h.audits.map((a) => a.action)).toEqual(['BOS_BILLING_PAYMENT_FAILED']);
+    expect(h.world.billing?.failedAttempts).toBe(0);
+    // Stripe's retry: the history row is a duplicate, the count is written now, no second audit.
+    await failedRun(h, event);
+    expect(h.world.billing?.failedAttempts).toBe(1);
+    expect(h.audits).toHaveLength(1);
+    expect(h.world.events.filter((e) => e.kind === 'invoice_payment_failed')).toHaveLength(1);
+  });
+
+  it('C-2: two lost compare-and-set rounds release the claim (PlanPaymentRetryError)', async () => {
+    const h = await subscribedHarness();
+    h.recordRenewalFailure.mockResolvedValueOnce({ data: null, error: Object.assign(new Error('concurrent_change'), { name: 'BillingAccountRepositoryError' }) } as never);
+    await expect(failedRun(h, unpaidEvent())).rejects.toMatchObject({ name: 'PlanPaymentRetryError', reason: 'renewal_failure_concurrent_change' });
+  });
+
+  it('C-1: a failure delivered after its cure (the row already paid through P) writes nothing to the billing record', async () => {
+    const h = await subscribedHarness();
+    await paid(h, renewalPaid());
+    expect(h.world.billing?.currentPeriodEnd).toBe(P2_ISO);
+    await failedRun(h, unpaidEvent({ invoiceId: 'in_R0_late' }));
+    expect(h.world.billing).toMatchObject({ failedAttempts: 0, lastPaymentFailedAt: null });
+    expect(h.logged('bos_billing_renewal_failure_counted')[0].ctx).toMatchObject({ outcome: 'moot', reason: 'period_already_paid' });
+  });
+
+  it('C-1: event.created in REAL time, far before the clock-time period (a test clock), still counts', async () => {
+    const h = await subscribedHarness();
+    await failedRun(h, unpaidEvent({ created: 1_600_000_000 }));
+    expect(h.world.billing?.failedAttempts).toBe(1);
+  });
+});
+
+describe('P-6a.2 U-10: an UPGRADE failure, or any non-renewal reason, never counts and is never audited', () => {
+  it.each([['subscription_update'], ['subscription_create'], ['manual'], [null]])('billing_reason %s: one history row, no billing write, no audit', async (reason) => {
+    const h = await subscribedHarness();
+    await failedRun(h, unpaidEvent({ billingReason: reason }));
+    expect(h.world.events.filter((e) => e.kind === 'invoice_payment_failed')).toHaveLength(1);
+    expect(h.recordRenewalFailure).not.toHaveBeenCalled();
+    expect(h.audits).toEqual([]);
+    expect(h.world.billing?.failedAttempts).toBe(0);
+    expect(h.logged('bos_billing_payment_failure_not_renewal')).toHaveLength(1);
+  });
+
+  it('an upgrade 3-D Secure: one payment_action_required history row, no URL stored, no audit', async () => {
+    const h = await subscribedHarness();
+    await actionRun(h, unpaidEvent({ billingReason: 'subscription_update', actionRequired: true, attemptCount: 0, hostedInvoiceUrl: HOSTED }));
+    expect(historyKinds(h.world).filter((k) => k === 'payment_action_required')).toHaveLength(1);
+    expect(h.recordActionRequired).not.toHaveBeenCalled();
+    expect(h.world.billing?.actionRequiredInvoiceUrl).toBeNull();
+    expect(h.audits).toEqual([]);
+  });
+});
+
+describe('P-6a.2: a RENEWAL 3-D Secure request (§5.4)', () => {
+  it('stores the Stripe-hosted URL, counts one attempt from attempt_count 0 (X-5), one info audit; the URL is in no log line and no audit', async () => {
+    const h = await subscribedHarness();
+    await actionRun(h, unpaidEvent({ actionRequired: true, attemptCount: 0, hostedInvoiceUrl: HOSTED }));
+    expect(historyKinds(h.world)).toContain('payment_action_required');
+    expect(h.world.billing).toMatchObject({ failedAttempts: 1, actionRequiredInvoiceUrl: HOSTED });
+    expect(h.audits.map((a) => [a.action, a.severity])).toEqual([['BOS_BILLING_PAYMENT_ACTION_REQUIRED', 'info']]);
+    const seen = JSON.stringify({ logs: h.logLines, audits: h.audits });
+    expect(seen).not.toContain('invoice.stripe.com');
+    expect(seen).not.toContain('test_renewal_one');
+  });
+
+  it('X-5 order: the plain failure of the SAME invoice (same hosted URL) after it keeps the URL', async () => {
+    const h = await subscribedHarness();
+    await actionRun(h, unpaidEvent({ actionRequired: true, attemptCount: 0, hostedInvoiceUrl: HOSTED }));
+    await failedRun(h, unpaidEvent({ attemptCount: 0, hostedInvoiceUrl: HOSTED }));
+    expect(h.world.billing).toMatchObject({ failedAttempts: 1, actionRequiredInvoiceUrl: HOSTED });
+  });
+
+  it('a URL that is not a Stripe page is never stored, and the warn carries no value', async () => {
+    const h = await subscribedHarness();
+    await actionRun(h, unpaidEvent({ actionRequired: true, hostedInvoiceUrl: 'https://example.invalid/scrubbed' }));
+    expect(h.world.billing).toMatchObject({ failedAttempts: 1, actionRequiredInvoiceUrl: null });
+    expect(h.logged('bos_billing_action_required_url_unusable')[0].ctx).toMatchObject({ hasUrl: true });
+    expect(JSON.stringify(h.logLines)).not.toContain('example.invalid');
+  });
+});
+
+describe('P-6a.2: the cure after a paid invoice (SA C-1 ruling, rule 5)', () => {
+  it('a paid renewal (the newest invoice) clears the count and the URL, keeps the date', async () => {
+    const h = await subscribedHarness();
+    const failure = unpaidEvent({ actionRequired: true, attemptCount: 0, hostedInvoiceUrl: HOSTED });
+    await actionRun(h, failure);
+    await paid(h, renewalPaid());
+    expect(h.world.billing).toMatchObject({
+      currentPeriodEnd: P2_ISO,
+      failedAttempts: 0,
+      actionRequiredInvoiceUrl: null,
+      lastPaymentFailedAt: new Date(failure.created * 1000).toISOString(),
+    });
+    expect(h.logged('bos_billing_renewal_failure_cleared')).toHaveLength(1);
+  });
+
+  it('heals on already_applied: a crash after the commit is cured by Stripe redelivering the paid event', async () => {
+    const h = await subscribedHarness();
+    await failedRun(h, unpaidEvent());
+    h.clearRenewalFailure.mockResolvedValueOnce({ data: null, error: new Error('db down') } as never);
+    const paidEvent = renewalPaid();
+    await paid(h, paidEvent);
+    expect(h.world.billing?.failedAttempts).toBe(1);
+    expect(h.logged('bos_billing_renewal_failure_clear_failed')[0].level).toBe('warn');
+    await paid(h, paidEvent);
+    expect(h.world.billing?.failedAttempts).toBe(0);
+  });
+
+  it('a late replay of an OLDER paid invoice clears nothing', async () => {
+    const h = await subscribedHarness();
+    await paid(h, renewalPaid());
+    // A failure on the NEXT period, then the first period's paid invoice delivered again.
+    await failedRun(h, unpaidEvent({ invoiceId: 'in_R2', periodEnd: P2_UNIX + 30 * 86_400 }));
+    expect(h.world.billing?.failedAttempts).toBe(1);
+    await paid(h, paidCreate());
+    expect(h.world.billing?.failedAttempts).toBe(1);
+  });
+
+  it('never throws, even when the port itself throws: the money is committed', async () => {
+    const h = await subscribedHarness();
+    h.clearRenewalFailure.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    await expect(paid(h, renewalPaid())).resolves.toBeUndefined();
+    expect(h.logged('bos_billing_renewal_failure_clear_failed')).toHaveLength(1);
+  });
+
+  it('a replayed REFUSAL (already_recorded) cures nothing', async () => {
+    const h = await subscribedHarness();
+    h.deps.billingEvents.applyPlanPayment = jest.fn(async () => ({ data: { status: 'already_recorded' as const, eventRowId: '44444444-4444-4444-8444-000000000099' }, error: null }));
+    h.clearRenewalFailure.mockClear();
+    await paid(h, renewalPaid());
+    expect(h.clearRenewalFailure).not.toHaveBeenCalled();
   });
 });

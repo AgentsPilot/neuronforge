@@ -7,7 +7,7 @@
 **Depends on:** P-3b merged (#251, #299: apply function, money history, status mirror); P-5a merged (20261028 apply function); P-7b.1a merged (#346: `billingReason` on the facts, U-4). P-9 merged first by build order only (user, 2026-10-03).
 **Date:** 2026-10-14
 **Branch:** `feature/bos-plan-payments-p6a`, worktree `neuronforge-invite-s1`, fresh from `origin/main` `e7488400` (#384). Confirmed with `git branch --show-current` on 2026-10-14. Highest migration on that main: `20261068`.
-**Status:** SA reviewed 2026-10-14: APPROVED WITH CONDITIONS C-1 to C-14 (SA Review Notes); split accepted. **P-6a.1 (T0 to T5) Code Complete 2026-10-15, uncommitted; SA code review 2026-10-15: APPROVED WITH FIXES, Code Approved for QA** (SA Code Review — P-6a.1; merge gate adds C-15). BQ-P12 decided by the user 2026-10-15: 5 days (§18). P-6a.2 (T6 to T11) not started: it branches from `origin/main` after P-6a.1 merges.
+**Status:** SA reviewed 2026-10-14: APPROVED WITH CONDITIONS C-1 to C-14 (SA Review Notes); split accepted. **P-6a.1 (T0 to T5) Code Complete 2026-10-15, uncommitted; SA code review 2026-10-15: APPROVED WITH FIXES, Code Approved for QA** (SA Code Review — P-6a.1; merge gate adds C-15). BQ-P12 decided by the user 2026-10-15: 5 days (§18). P-6a.1 MERGED (#405). **P-6a.2 (T6 to T11) Code Complete 2026-10-15** on `feature/bos-plan-payments-p6a2` (fresh from `origin/main` `50d26e78`), uncommitted; **SA code review 2026-10-16: APPROVED WITH FIXES, Code Approved for QA** (SA Code Review — P-6a.2; merge gate adds C-16, the real-PostgREST proof).
 
 ## Overview
 
@@ -230,30 +230,19 @@ export function tierSettlementEndsAt(tierExpiresAt: string, marginHistory: reado
 
 **`planPaymentApply.ts` `recordFailedPlanInvoice`** keeps its history row for every failed plan invoice (unchanged). Then, **only when `facts.billingReason === 'subscription_cycle'`** (new constant `RENEWAL_BILLING_REASONS = ['subscription_cycle']`):
 
-1. `billingAccounts.recordRenewalFailure({ userId, livemode, stripeSubscriptionId, failedAtIso: event.created, attemptCount: invoice.attempt_count })`.
-2. On a **new** history row only (not `duplicate`): audit `BOS_BILLING_PAYMENT_FAILED` through `recordPlanChange` (system actor, `details`: invoice id, subscription id, `attemptCount`, `billingReason`, livemode; no email, no URL), `invalidatesEntitlements: false`, flushed bounded before the 200 (PF-11).
+1. `billingAccounts.recordRenewalFailure({ userId, livemode, stripeSubscriptionId, invoiceId, periodEndIso: P, attemptCount: invoice.attempt_count, failedAtIso: event.created, hostedInvoiceUrl })`, **whether the history row is new or a `duplicate`** (C-3: idempotent and order-safe, so a crash between the two heals on Stripe's retry).
+2. On a **new** history row only (not `duplicate`): audit `BOS_BILLING_PAYMENT_FAILED` (severity `info`, C-10) through `recordPlanChange` (system actor, `details`: invoice id, subscription id, `attemptCount`, `billingReason`, livemode; no email, no URL), `invalidatesEntitlements: false`, flushed bounded before the 200 (PF-11).
 
-**New repository method `recordRenewalFailure`** (`{ count: 'exact' }`, **no `.select()`**, because UPDATE + `.or()` + `.select()` fails 42703 in production; the repository header already says so):
+**Time base (C-1 ruling, SA code review of P-6a.1).** Under a test clock `event.created` is real time while every invoice and subscription timestamp is the clock's, so **no comparison ever mixes `event.created` with a Stripe object timestamp**. "Cured" is decided by **billing periods**:
 
-```text
-UPDATE business_os_billing_accounts
-SET failed_attempts = $attemptCount, last_payment_failed_at = $failedAt, updated_at = $now
-WHERE user_id = $u AND livemode = $m AND stripe_subscription_id = $sub
-  AND (last_payment_failed_at IS NULL OR last_payment_failed_at <= $failedAt)
-  AND (last_paid_at IS NULL OR last_paid_at < $failedAt)
-```
+- **`P`** = the failed invoice's **subscription line `period.end`** (the paid-through date that invoice would buy; `facts.periodEnd`). Never `invoice.period_end`, which names the previous period (X-1).
+- A renewal failure is **moot** (nothing written to the billing row) when the row's subscription id is not the invoice's, when the row's `current_period_end >= P`, or when the row's `last_invoice_id` is this invoice (it was paid). Safe because `current_period_end` is written only by the paid apply path (`mirrorSubscriptionState` never writes it; the test-clock attach clears it in test mode only); a source test keeps it so.
+- **Between failures:** the larger count wins (a replay or a late older delivery writes nothing new). `failed_attempts = max(row.failed_attempts, max(attempt_count, 1))`: a recorded renewal failure is at least one attempt, because the off-session 3-D Secure failure arrives with `attempt_count: 0` (X-5).
+- **`last_payment_failed_at` = `event.created`, display only**: never in a filter or a decision about the cure (it keeps the later of two `event.created` values, one time base).
 
-Order-safe both ways, on Stripe's timestamps, never arrival time: a failure delivered after the payment that cured it (`paid_at > failedAt`) writes nothing; an older failure delivered after a newer one writes nothing; a replay writes the same values. `attempt_count` is Stripe's own count, so a missed event never makes our count drift. The two-`or` filter shape is checked against PostgREST in T5's repository test (the 42703 note); if it is a problem, the method reads the row and does a compare-and-set on the values it read (§17 Q-4).
+**Write shape (C-2, Q-4): read, decide in a pure function, compare-and-set.** `recordRenewalFailure`, `recordActionRequired` and `clearRenewalFailure` read the row (`findByUser(userId, livemode)`), decide in pure exported functions (`decideRenewalFailure`, `decideRenewalCure`), then UPDATE with `.eq` / `.is` on every value the decision read (`stripe_subscription_id`, `current_period_end`, `last_invoice_id`, `failed_attempts`, `action_required_invoice_url`, `last_payment_failed_at`), `{ count: 'exact' }`, **no `.select()`, no `.or()`**. Count 0 means a concurrent write: re-read and re-decide once, then return a `concurrent_change` error (the handler throws `PlanPaymentRetryError`: claim released, Stripe retries), except `clearRenewalFailure`, whose caller never throws (log `warn` with ids). The values are passed back exactly as read (PostgREST's own timestamp text), so a microsecond is never lost.
 
-**Recovery: `afterApply`** (paid path), on `applied`, `recorded` **and** `already_applied` (so a crash between the commit and this write heals on Stripe's retry), calls `billingAccounts.clearRenewalFailure({ userId, livemode, stripeSubscriptionId, paidAtIso })`:
-
-```text
-SET failed_attempts = 0, action_required_invoice_url = NULL, updated_at = $now
-WHERE user_id = $u AND livemode = $m AND stripe_subscription_id = $sub
-  AND (last_payment_failed_at IS NULL OR last_payment_failed_at <= $paidAt)
-```
-
-`last_payment_failed_at` is kept: it is the "last failure" date P-8a's panel shows. The clear is **hygiene**, not the closing rule: the banner already closes on `last_paid_at > last_payment_failed_at` and on the status (§5.6), so a failed clear never shows a wrong banner. It never throws ("nothing after the apply may throw"): a failure is logged `warn` with the ids.
+**Recovery: `afterApply`** (paid path), on `applied`, `recorded` **and** `already_applied` (so a crash between the commit and this write heals on Stripe's retry; never on `already_recorded`, which is a replayed refusal whose money was not applied), calls `billingAccounts.clearRenewalFailure({ userId, livemode, stripeSubscriptionId, paidPeriodEndIso: P })`. It sets `failed_attempts = 0` and `action_required_invoice_url = NULL` **only when the paid invoice is the newest**: `P >= current_period_end` read after the apply, so a late replay of an older paid invoice clears nothing. `last_payment_failed_at` is kept (the "last failure" date P-8a's panel shows). It never throws ("nothing after the apply may throw"): a failure is logged `warn` with the ids, and the next delivery of the paid event heals it.
 
 **Why not inside the apply function?** Atomic, but it means replacing `business_os_apply_plan_payment` (a migration with pre-check, checker, probe, rollback and a production apply gate) for a write that is order-safe and idempotent on its own. §14, §17 Q-4.
 
@@ -261,16 +250,16 @@ WHERE user_id = $u AND livemode = $m AND stripe_subscription_id = $sub
 
 - **Resolver:** `planInvoiceResolver.ts` routes `invoice.payment_action_required` through `resolveInvoice`, like `invoice.payment_failed`, **but only while the price switch is on**. With the switch off it returns `not_business_os`, today's outcome, before any catalog load or Stripe call: going through `resolveInvoice` unguarded would turn today's `not_business_os` into an `unknown_price` deny (the empty catalog), a production behaviour change. Pinned by a test. The router table in the file header gains the row.
 - **Handler:** `planBillingHandler.ts` gains `case 'invoice.payment_action_required': return recordActionRequiredPlanInvoice(...)`.
-- **`recordActionRequiredPlanInvoice`** (new, `planPaymentApply.ts`): `checkInvoice(..., 'failed', log)` (same mode, account, metadata and customer checks); a `payment_action_required` history row for every plan invoice; then, for `subscription_cycle` only: `billingAccounts.recordActionRequired({ ..., failedAtIso: event.created, hostedInvoiceUrl })` (the same order-safe filter as §5.3, plus `action_required_invoice_url`), and on a new row an audit `BOS_BILLING_PAYMENT_ACTION_REQUIRED`.
-- **The hosted URL** is a bearer link to the owner's invoice. It is shape-checked (`https://invoice.stripe.com/` prefix, ≤ 2048; else not stored, `warn`), **never logged, never audited, never in an error**, and sent only to that owner's browser (§5.6). A test spies on every logger and audit call (the P-7b.1 client-secret test pattern).
-- **A plain decline on the same invoice after an action-required** keeps the URL: Stripe's hosted invoice page accepts a new card as well as the authentication, so "Confirm payment" still leads somewhere that settles the invoice. A failure on a **different** renewal invoice (next month) clears it (`recordRenewalFailure` sets `action_required_invoice_url = NULL` when the stored URL is not the event invoice's `hosted_invoice_url`).
-- Experiment X-5 (§11) confirms that a 3-D Secure renewal also fires `invoice.payment_failed` and moves the subscription to `past_due`. If it does not move the status, §5.6's fallback rule covers it.
+- **`recordActionRequiredPlanInvoice`** (new, `planPaymentApply.ts`): `checkInvoice(..., 'failed', log)` (same mode, account, metadata and customer checks); a `payment_action_required` history row for every plan invoice; then, for `subscription_cycle` only and whether the row is new or a `duplicate` (C-3): `billingAccounts.recordActionRequired({ ..., periodEndIso: P, attemptCount, failedAtIso: event.created, hostedInvoiceUrl })`, the same period-based decision and compare-and-set as §5.3 (C-1), plus `action_required_invoice_url`; on a new row only an audit `BOS_BILLING_PAYMENT_ACTION_REQUIRED` (`info`, C-10).
+- **The hosted URL** is a bearer link to the owner's invoice. It is shape-checked (`https://invoice.stripe.com/` prefix, ≤ 2048; else not stored, `warn` without the value), **never logged, never audited, never in an error**, and sent only to that owner's browser (§5.6). A test spies on every logger and audit call (the P-7b.1 client-secret test pattern).
+- **A plain decline on the same invoice after an action-required** keeps the URL: Stripe's hosted invoice page accepts a new card as well as the authentication, so "Confirm payment" still leads somewhere that settles the invoice. "Same invoice" is decided by the URL itself: the stored URL is kept only when it equals the event invoice's `hosted_invoice_url`; a failure on a **different** renewal invoice (next month) clears it. X-5 showed both events arrive in the same second, in either order, so both orders end with the URL stored.
+- X-5 (§11) confirmed that a 3-D Secure renewal also fires `invoice.payment_failed` (with `attempt_count: 0`, hence `max(attempt_count, 1)`) and moves the subscription to `past_due`.
 
 ### 5.5 Subscription ended (AC-F6.3)
 
-`planSubscriptionMirror.ts`, after a successful mirror (`mirrored: true`) of an event where Stripe's subscription has `ended_at` (whatever the event type, so a `.updated` that ends it counts too):
+`planSubscriptionMirror.ts`, after a successful mirror (`mirrored: true`) of a **`customer.subscription.deleted`** event only (C-4: Stripe sends exactly one per subscription; X-4 showed no `.updated` to `canceled` before it). A `.updated` that reads an ended subscription mirrors it and nothing more; `mirrorSubscriptionState`'s result is unchanged:
 
-- `billingEvents.recordEvent({ kind: 'subscription_ended', stripeEventId, stripeSubscriptionId, stripeCustomerId, tier: account.boughtTier, ... })`. Unique on `stripe_event_id`, so a replay records nothing. Two events that both carry the end (`.updated` then `.deleted`) would write two rows; the audit is written only when the row is new **and** the billing row's `ended_at` was NULL before this mirror (the mirror returns the previous value: a one-field change to `mirrorSubscriptionState`'s result).
+- `billingEvents.recordEvent({ kind: 'subscription_ended', stripeEventId, stripeSubscriptionId, stripeCustomerId, tier: account.boughtTier, ... })`. Unique on `stripe_event_id`, so a replay records nothing; the audit is written only when the row is new.
 - Audit `BOS_BILLING_SUBSCRIPTION_ENDED` (system actor; `details`: subscription id, Stripe's `cancellation_details.reason` when present: `payment_failed` vs `cancellation_requested`, livemode).
 - No plan write, no entitlement invalidation: the lifecycle derives from `T` (SA-P8).
 
@@ -292,7 +281,7 @@ export function planPaymentNotice(row: BillingRowFacts | null, lifecycle: Lifecy
 | Rule | Why |
 |---|---|
 | `null` when there is no row, or the row is not in the server key's mode | PF-15 |
-| **Failure open** = not ended AND (`subscription_status ∈ {past_due, unpaid}` OR (`last_payment_failed_at` set AND (`last_paid_at` null OR `last_payment_failed_at > last_paid_at`))) | The status is Stripe's truth read fresh (order-safe, and a declined or 3-D Secure **upgrade** never leaves `active`: E-1b, E-2, E-4 captures). The column branch covers a status event that has not landed yet. Both are U-10-safe, because the failure columns are written for `subscription_cycle` only |
+| **Failure open** = not ended AND (`subscription_status ∈ {past_due, unpaid}` OR `failed_attempts > 0`) | **C-1 ruling:** the column branch is a marker the cure clears (`failed_attempts`, at least 1 for any recorded renewal failure), never a comparison of `last_payment_failed_at` with `last_paid_at` (two time bases under a test clock). The status is Stripe's truth read fresh (order-safe, and a declined or 3-D Secure **upgrade** never leaves `active`: E-1b, E-2, E-4 captures). The column branch covers a status event that has not landed yet. Both are U-10-safe, because the failure columns are written for `subscription_cycle` only. `last_payment_failed_at` is only the date shown |
 | `action_required` when failure open AND `action_required_invoice_url` set | SA-P8 |
 | `paused` when failure open AND lifecycle state `paused` AND `enforcing` | §6: paused is recorded, not acted on, until S-5. Before S-5 the banner never claims a pause that is not happening; it keeps the payment_failed wording (§17 Q-5) |
 | `payment_failed` when failure open; `pauseBy = lifecycle.graceEndsAt` only while the state is `grace` | The date is the lifecycle's own answer, never recomputed here |
@@ -389,7 +378,7 @@ Three new `AUDIT_EVENTS` keys, registered in `events.ts` (definition + severity)
 | G-2 | FC-2 answered by the user, or the recommended default stands (§18) | P-6a.1 merge | User (via TL) |
 | G-3 | **Production dated-tier count** (read-only, user, SQL editor), so the lifecycle change's reach is known before it merges: `select count(*) as dated_tiers, count(*) filter (where tier_expires_at < now()) as already_lapsed from public.business_os_account_plans where tier is not null and tier_expires_at is not null;` | P-6a.1 merge | User |
 | G-4 | Sandbox experiments X-1 to X-6 run and recorded (§11); the sandbox's failed-payment settings recorded (retries, "cancel the subscription" after the last one) | T6 (P-6a.2 handler code) | TL supplies the key file location; Dev runs |
-| G-5 | User approves the he/es drafts (§13) | P-6a.2 merge | User |
+| G-5 | User approves the he/es drafts (§13) — ✅ **approved by the user 2026-10-16** | P-6a.2 merge | User |
 | G-6 | Demo (§12) run on the standard sandbox | P-6a.2 merge | TL / user |
 | G-7 | `npm run test:bos-entitlements` green on each PR's final diff | each PR | Dev, then QA |
 
@@ -406,12 +395,12 @@ Three new `AUDIT_EVENTS` keys, registered in `events.ts` (definition + severity)
 | ✅ T4 | **Done 2026-10-15.** Sandbox experiments X-1 to X-6 on the standard sandbox, 11 fixtures captured and scrubbed, every test clock deleted, Implementation Notes (§11) | 0.4d | .1 |
 | ✅ T5 | **Done.** `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` lifecycle section; requirement row, §10.6 and Change History; `test:bos-entitlements` green (267 suites, 8017 tests) | 0.05d | .1 |
 | | **P-6a.1 subtotal** | **≈ 1.9d** | |
-| T6 | Repository: `recordRenewalFailure`, `recordActionRequired`, `clearRenewalFailure`, mirror's previous `ended_at`; unit tests incl. the order-safety matrix and the PostgREST filter shape | 0.4d | .2 |
-| T7 | Webhook: renewal failure write + audit (U-10 whitelist), `payment_action_required` route + handler + URL handling (never logged), clear on paid (incl. `already_applied`), ended row + audit; audit keys; Connect harness entry | 0.6d | .2 |
-| T8 | `planPaymentNotice` + `readPaymentNotice` + banner + layout; switch-off inert test | 0.45d | .2 |
-| T9 | Settings → Plan states + `PlanSection` + en/he/es keys (drafts) | 0.35d | .2 |
-| T10 | Captured-fixture test: the real code over the X-n captures and the P-7b.1 E-1b/E-2/E-4 upgrade captures (U-10 negatives) | 0.25d | .2 |
-| T11 | Registration (`enforcementPoints.test.ts`), `test:bos-entitlements`, `lint:hooks`, docs, requirement row | 0.15d | .2 |
+| ✅ T6 | **Done 2026-10-15** (C-1 ruling applied; §5.3 to §5.6 amended first). Repository: `recordRenewalFailure`, `recordActionRequired`, `clearRenewalFailure`, mirror's previous `ended_at`; unit tests incl. the order-safety matrix and the PostgREST filter shape | 0.4d | .2 |
+| ✅ T7 | **Done.** Webhook: renewal failure write + audit (U-10 whitelist), `payment_action_required` route + handler + URL handling (never logged), clear on paid (incl. `already_applied`), ended row + audit; audit keys; Connect harness entry | 0.6d | .2 |
+| ✅ T8 | **Done.** `planPaymentNotice` + `readPaymentNotice` + banner + layout; switch-off inert test | 0.45d | .2 |
+| ✅ T9 | **Done** (he/es approved by the user 2026-10-16, G-5). Settings → Plan states + `PlanSection` + en/he/es keys | 0.35d | .2 |
+| ✅ T10 | **Done.** Captured-fixture test: the real code over the X-n captures and the P-7b.1 E-1b/E-2/E-4 upgrade captures (U-10 negatives) | 0.25d | .2 |
+| ✅ T11 | **Done.** Registration (`enforcementPoints.test.ts`), `test:bos-entitlements`, `lint:hooks`, docs, requirement row | 0.15d | .2 |
 | | **P-6a.2 subtotal** | **≈ 2.2d** | |
 | | **Total** | **≈ 4.1d** | |
 
@@ -497,9 +486,9 @@ Standard sandbox (N-5 as updated: no production endpoint pause), local server, t
 
 ## 13. Banners and Settings Wording (en / he / es)
 
-The plan name comes from `presentation` (never a literal). **he and es are DRAFTS for the user's approval (G-5).**
+The plan name comes from `presentation` (never a literal). **he and es: approved by the user 2026-10-16 (G-5).**
 
-| Key | en | he (draft) | es (draft) |
+| Key | en | he | es |
 |---|---|---|---|
 | `billing.notice.payment_failed` | Your last payment for {plan} didn't go through. Please update your card to keep your plan. | התשלום האחרון עבור {plan} לא עבר. כדי לשמור על התוכנית, יש לעדכן את כרטיס האשראי. | Tu último pago de {plan} no se pudo procesar. Actualiza tu tarjeta para mantener tu plan. |
 | `billing.notice.payment_failed_by` | Your last payment for {plan} didn't go through. Please update your card before {date} to keep your plan running. | התשלום האחרון עבור {plan} לא עבר. יש לעדכן את כרטיס האשראי עד {date} כדי שהתוכנית תמשיך לפעול. | Tu último pago de {plan} no se pudo procesar. Actualiza tu tarjeta antes del {date} para que tu plan siga activo. |
@@ -788,6 +777,111 @@ Dev's finding stands: under a test clock `event.created` is real time while ever
 
 #### Code Approved for QA: Yes (with C-15 added to the merge gate)
 
+### SA Code Review — P-6a.2 (2026-10-16)
+
+**Code Review by SA — 2026-10-16**
+**Status:** ✅ APPROVED WITH FIXES (one comment fix applied by SA) and one added merge gate (**C-16**, the real-PostgREST proof of deviation 9). Code Approved for QA: **Yes**.
+
+Reviewed on `feature/bos-plan-payments-p6a2` at `origin/main` `50d26e78` (worktree `neuronforge-invite-s1`, all uncommitted): the 30 tracked files and the 8 new files, against the C-1 ruling (P-6a.1 review), C-2 to C-4, C-10, C-12, C-13, Q-5, Q-6, U-10, and the `tenant-isolation-guard`, `business-os-entitlements` and `business-os-schema-check` skills.
+
+#### Verified
+
+| Item | Result |
+|---|---|
+| §5.3 to §5.6 rewritten to the C-1 ruling | ✅ No comparison mixes `event.created` with a Stripe timestamp; `P` = the line `period.end` (`facts.periodEnd`); `last_payment_failed_at` display only (compared only with an earlier `event.created`) |
+| C-1 rules in code | ✅ `decideRenewalFailure`: moot on no row / other subscription / `current_period_end >= P` / `last_invoice_id` = this invoice; `failed_attempts = max(row, max(attempt_count, 1))`. `decideRenewalCure`: clears only when `P >= current_period_end` read after the apply. Rule 4 approximated (deviation 1, ruled below) |
+| C-1 rule 3 source test | ✅ Three source guards: only the test-mode attach names `current_period_end` in an UPDATE payload in the repository; no other app file opens a query on the table (finance read repository read-only); in SQL only `business_os_apply_plan_payment` updates the table |
+| U-10 | ✅ `RENEWAL_BILLING_REASONS = ['subscription_cycle']`, a whitelist; a non-renewal stops after the history row (no billing write, no audit). Captured E-1b / E-2 / E-4 negatives run the real code: history row only, status `active`, notice `null` |
+| C-2 write shape | ✅ Read (`findByUser`), pure decision, UPDATE with `.eq` / `.is` on every value read, `{ count: 'exact' }`, no `.select()`, no `.or()`; values passed back verbatim (`nullableTimestamp` keeps PostgREST's text); count 0 → one re-read, then `concurrent_change` → `PlanPaymentRetryError` (claim released). Real-PostgREST proof owed: C-16 |
+| C-3 heal on replay | ✅ Billing write runs on `recorded` and `duplicate`; audit on a new row only |
+| Cure path | ✅ On `applied`, `recorded`, `already_applied`; never `already_recorded`; after N-2's chain; never throws (warn with ids) |
+| Audit (C-10) | ✅ Three keys, `info`, SOC2, audience `bos`, entity `business_os_account_plan`, system actor; details ids only. Written before the billing write (deviation 3); `recordPlanChange` catches internally, so it cannot abort the write |
+| `invoice.payment_action_required` | ✅ `NOT_OURS` while the price switch is off, before any catalog read or Stripe call; Connect harness: **re-verified by SA, per-entry SHA-256 against `origin/main`: 107 existing entries identical, 2 added (AR1, AR2), 0 removed, 0 changed**; snapshot file md5 unchanged after all mutation runs |
+| Ended (C-4) | ✅ `.deleted` only, after `mirrored: true`; one `subscription_ended` row (unique on the event id); audit only when new; `.updated` with `ended_at` mirrors only; `mirrorSubscriptionState` unchanged; cancellation reason from an allow-list |
+| Q-5 | ✅ `paused` only when the lifecycle reads `paused` AND `getEntitlementMode() === 'enforce'` (the effective mode, after the launch gate); Settings shows `paused` as `payment_failed` (deviation 5) |
+| Q-6 | ✅ No Update card button; Settings line `plan.update_card_email` under `payment_failed`; "Confirm payment" link for `action_required` |
+| `planPaymentNotice.ts` | ✅ Zero imports; pure; prefix re-check (C-13) with a test pinning it equal to the repository's `HOSTED_INVOICE_URL_PREFIX` |
+| `readPaymentNotice.ts` | ✅ `server-only`; switch off → no call at all; no session → `null`; account through `resolveAccountId`; billing row by session account and the server key's mode; any throw → `null` + warn; wire carries the URL only for `action_required` |
+| Layout (F5b-4, first frame) | ✅ Third element of the `Promise.all` after the payment hold; guard (ii) and new (vi) pin it; banner reads its words from `useLanguage` (server-seeded language), `dir` set; no read while the switch is off. With the switch on: one indexed billing read per Business OS page, plus the snapshot only when a row exists (as ruled) |
+| Hosted URL | ✅ Stored only via `isHostedInvoiceUrl` (`https://invoice.stripe.com/`, ≤ 2048, no whitespace); re-checked at read; never in a log line, audit or error (spy tests); `noopener noreferrer` |
+| Tenant isolation | ✅ Webhook: account from our billing row (SR-8), metadata cross-check unchanged, every new UPDATE scoped `user_id` + `livemode` + `stripe_subscription_id`, explicit field list, no caller payload. Banner / Settings: session id only |
+| Registration (C-12) | ✅ `readPaymentNotice.ts` and `planSubscriptionMirror.ts` added to `KNOWN_NON_GATE_IMPORTERS` with exact symbols and a P-6a `why`; `planPurchaseView.ts` gains `getEntitlementMode`; `planPaymentNotice.ts` imports nothing, so not registered; no tier or capability literal |
+| i18n | ✅ All new keys in en / he / es (he / es drafts, G-5); Hebrew RTL rendered and tested; three new sentence keys join `ACCOUNT_CLOCK_SENTENCE_KEYS` |
+| Logging | ✅ Pino only; no `console.*` in any touched or new file |
+
+#### Tests run by SA
+
+| Run | Result |
+|---|---|
+| Affected suites (`lib/business-os/billing`, `app/api/stripe`, both billing repository tests, `components/business-os`, `app/business-os`, `lib/audit`, first-frame guard, `enforcementPoints`) | ✅ 124 suites, 5610 / 5610, 109 snapshots |
+| `npm run test:bos-entitlements` | ✅ 271 suites, **8122 / 8122** |
+| `lib/audit` after the SA comment fix | ✅ 179 / 179 |
+
+**Mutations, one at a time** (each restored by reverse edit, md5 verified identical to before; all six source files re-verified together at the end; `git diff --shortstat` unchanged):
+
+| # | Mutation | Killed by |
+|---|---|---|
+| M1 | U-10 whitelist accepts any non-null reason | 8 tests (apply + captured negatives) |
+| M2 | Resolver price-switch check removed for `invoice.payment_action_required` | 4 tests (resolver, route, harness AR1) |
+| M3 | `enforcing` dropped from the `paused` rule | 1 test (`planPaymentNotice`) |
+| M4 | Attempt floor `max(attempt_count, 1)` removed | 6 tests (X-5 `attempt_count: 0`) |
+| M5 | Cure ignores "older invoice" | 3 tests |
+| M6 | Cure also on `already_recorded` | 1 test |
+| M7 | Banner read ignores the price switch | 2 tests (zero-call pins) |
+| M8 | `ended` shown regardless of the lifecycle (AC-F6.5) | 2 tests |
+| M9 | Confirm-URL prefix re-check removed at read | 1 test |
+| M10 | Failure audit written on a replayed row too | 4 tests |
+| M11 | Ended row + audit on `.updated` too (C-4) | 8 tests |
+| M12 | "Period already paid" moot rule removed (C-1 rule 3) | 5 tests |
+
+#### Rulings on the deviations
+
+| # | Ruling |
+|---|---|
+| **1** rule 4 approximated | **Accepted as display-only. No column, no migration now.** What the approximation affects: only the attempt count shown in Settings when two renewal invoices of the same subscription are open at once. What it cannot affect: whether a failure is shown, and the cure. The status branch reads Stripe's own `past_due` / `unpaid`, so if an older invoice is paid while a newer one is still open, the cure clears the column but the banner stays on the status; and an older paid replay clears nothing (`P < current_period_end`). Two open renewal invoices need a subscription that stays `past_due` across a whole billing period, which the required Stripe setting forbids: §9.5 row 11 ("cancel the subscription after all retries fail", X-6: about 14 days, shorter than any period). **Conditions:** (a) the go-live checklist entry for §9.5 row 11 states the retry window must end before the next period starts; (b) follow-up **F-4** (owner P-8b, TL to place): if that setting is ever changed to leave subscriptions `past_due`, or a plan period shorter than the retry window is added, add `failed_period_end` (migration) and make rule 4 exact |
+| **2** `last_invoice_id` moot reason | Accepted: same time base, both values Stripe's; covered by the matrix |
+| **3** audit before the billing write | Accepted. `recordPlanChange` never throws, so the order cannot block the write, and writing it after would lose it for good on a retry (duplicate row). Consequence accepted: a first delivery that turns out moot still has its audit, which truthfully records what Stripe sent. SA fix 1 corrects the `events.ts` comment that claimed the details say what the billing write did |
+| **4** cure on `already_applied`, not `already_recorded` | Accepted (M6 pins it) |
+| **5** Settings shows `paused` as `payment_failed` | Accepted: Settings states the fact; only the banner names the pause, and only when enforcing (Q-5) |
+| **6** `action_required` dated by the due date | Accepted: matches "the payment due on {date}" |
+| **7** `Business OS` fallback label | Accepted; the key is in G-5's approval list |
+| **8** notice returns tier ids | Accepted: keeps `planPaymentNotice.ts` import-free (C-12 preferred); prefix equality pinned |
+| **9** new filter shapes unproven against real PostgREST | **Required before merge: C-16 below.** Not proven by mocks (the 42703 history). Of the shapes, `.is(col, null)` on an UPDATE (this repository, `linkCheckoutSession`) and `.eq` on a timestamptz passed back as PostgREST returned it (`BusinessOsInviteRepository` signup-code CAS, live) are already in production use; new are `.eq` on the integer `failed_attempts`, `.eq` on a text URL containing `?`, `=`, `:` and `/`, and the five-filter combination on this table |
+| **10** `.deleted` with no `ended_at` still records | Accepted: the event is the end; the audit says `endedAt: null` |
+
+#### Added merge gate
+
+- **C-16 Real-PostgREST proof of the P-6a.2 writes (deviation 9).** Both parts, results recorded in this workplan before RM merges. Neither part writes a row.
+  - **C-16a Shape probe (no match).** A scratch script (scratchpad, never committed) on the service-role client constructs the REAL `BusinessOsBillingAccountRepository` and replaces only `findByUser` on that one instance, so it returns a fabricated row for a freshly generated random UUID with `livemode: false`. First, a read confirms no billing row exists for that UUID. Then it calls `recordRenewalFailure`, `recordActionRequired` and `clearRenewalFailure` against production twice each: (i) with the fabricated row's `current_period_end`, `last_invoice_id`, `action_required_invoice_url` and `last_payment_failed_at` all null (the `.is` branches; for the cure, `current_period_end` non-null and URL null); (ii) with all four non-null, in PostgREST's own text (`2026-11-15T10:00:00.123456+00:00`), `failed_attempts: 2`, and the URL `https://invoice.stripe.com/i/acct_probe/test_probe?s=ap`. **Pass:** every call returns the repository error `concurrent_change` (two rounds, count 0 each) and no PostgREST error code (no 42703, PGRST1xx, 22P02, 22007), and a final read still finds no row for the UUID. Anything else stops the merge and comes back to SA. Running it needs the user's go-ahead (TL asks; production database, read-only in effect), as for the invite CAS.
+  - **C-16b Match proof (count 1), inside G-6.** Demo steps 4 (first failure: `.is` on the URL and on `last_payment_failed_at`), 5 (second attempt: `.eq` on the non-null `last_payment_failed_at`, round-tripping microseconds), 6 (cure) and 7 (3-D Secure: the URL stored, then `.eq` on the non-null URL in the X-5 second event and in the cure). **Pass:** Status shows `failedAttempts` 1 → 2 → 0 and the URL stored then cleared, and the dev server log has no `concurrent_change`, `renewal_failure_concurrent_change` or `bos_billing_renewal_failure_clear_failed` line for those steps.
+
+#### Fix applied by SA
+
+1. `lib/audit/events.ts` (`BOS_BILLING_PAYMENT_FAILED` comment): it listed "what the billing record did" among the details, which the code cannot record because the audit is written before the write (deviation 3). Comment now says so and points at the `bos_billing_renewal_failure_counted` log line. Comment only; `lib/audit` 179 / 179.
+
+#### Code Review Comments
+
+1. Merge gate **C-16** (above). — Priority: High
+2. G-5 (he / es drafts incl. `billing.notice.plan_fallback`) and G-6 (demo) as Implementation Notes "For RM" says. — Priority: High (merge gate)
+3. Follow-up **F-4** (deviation 1) for the TL to place; the §9.5 row 11 go-live wording (deviation 1, condition a). — Priority: Medium
+
+#### Optimisation Suggestions (not blocking)
+
+- `app/business-os/layout.tsx`: `readPlanBadge()` and `readPaymentNotice()` run in parallel and both call `getSnapshot`, which has no in-flight de-duplication, so on a cold cache a billing account's page load may read the plan inputs twice. Only with the price switch on and a billing row present. A later in-flight map in `EntitlementService` would fix it for every caller.
+- `PlanSection.tsx` `renderSentence`: `{count}` is filled with `.replace` on the first slot only. Fine for today's one key; the banner's `fill()` helper is the safer shape if a second slot is ever added.
+
+#### QA focus
+
+1. **C-16a and C-16b**: run or witness them and record the output (QA owns the evidence; TL obtains the user's go-ahead for C-16a).
+2. **U-10 live (D10)**: a declined upgrade and a 3-D Secure upgrade show no banner, no Settings failure line and no `BOS_BILLING_PAYMENT_FAILED` / `_ACTION_REQUIRED` audit, with one history row each.
+3. **Order matrix at the edges**: replay the same `invoice.payment_failed` (Stripe CLI `events resend`): no second audit, count unchanged; deliver the X-5 pair in both orders: URL stored either way.
+4. **Banner wording by mode**: with `BOS_ENTITLEMENTS_MODE=shadow`, an account whose lifecycle reads paused shows the payment-failed wording, never "paused"; `pauseBy` only while in grace.
+5. **Switch off**: with `BUSINESS_OS_PLAN_PRICES_ENABLED` off, no banner, no Settings failure state, and no billing read from the layout (server log).
+6. **Hebrew and Spanish**: banner and Settings lines, Hebrew right to left; dates on the account clock.
+7. **Log scan** (demo step 11): no `invoice.stripe.com`, `@`, `sk_test`, `whsec_` in any webhook, banner-read or repository line.
+
+#### Code Approved for QA: Yes (with C-16 added to the merge gate)
+
 ---
 
 ## Implementation Notes (P-6a.1)
@@ -880,6 +974,91 @@ select count(*) as live_mode_subscriptions from public.business_os_billing_accou
 ```
 
 Pass: `live_mode_subscriptions = 0` and the admin Tiers page shows the entitlement mode as shadow or off. The four counts are informational and go in the requirement's P-6a row.
+
+---
+
+## Implementation Notes (P-6a.2)
+
+**Dev, 2026-10-15.** T6 to T11 on `feature/bos-plan-payments-p6a2` (worktree `neuronforge-invite-s1`, fresh from `origin/main` `50d26e78`, P-6a.1 merged as #405), uncommitted. Before T6, §5.3, §5.4, §5.5 and §5.6 were rewritten to the C-1 ruling (and §5.5 to C-4). No migration.
+
+### What was built
+
+| Area | Files | Notes |
+|---|---|---|
+| T6 repository | `lib/repositories/BusinessOsBillingAccountRepository.ts` | Pure, exported decisions `decideRenewalFailure` and `decideRenewalCure`; `isHostedInvoiceUrl` (`https://invoice.stripe.com/`, ≤ 2048, no whitespace). Methods `recordRenewalFailure`, `recordActionRequired` (one private `writeRenewalFailure`) and `clearRenewalFailure`: read with `findByUser(user, mode)`, decide, then UPDATE with `.eq` / `.is` on every value read (`stripe_subscription_id`, `current_period_end`, `last_invoice_id`, `failed_attempts`, `action_required_invoice_url`, `last_payment_failed_at`; the cure: subscription, `failed_attempts`, `current_period_end`, URL), `{ count: 'exact' }`, no `.select()`, no `.or()`. Values passed back exactly as PostgREST returned them (microseconds kept). Count 0 → re-read and re-decide once, then `concurrent_change`. The URL is never in a log line |
+| C-1 rules | same | Moot when the row holds another subscription (or none), `current_period_end >= P` (P = `facts.periodEnd`, the line period end), or `last_invoice_id` is this invoice. `failed_attempts = max(row, max(attempt_count, 1))`. `last_payment_failed_at` = the later of two `event.created` values (one clock, display only). URL: set by a renewal action-required with a Stripe-hosted URL; kept by a later event with the same hosted URL; cleared by another invoice's. Cure clears `failed_attempts` and the URL only when `P >= current_period_end` read after the apply |
+| T7 webhook | `planPaymentApply.ts`, `planInvoiceResolver.ts`, `planBillingHandler.ts`, `planSubscriptionMirror.ts` | `RENEWAL_BILLING_REASONS = ['subscription_cycle']` (U-10 whitelist). `recordFailedPlanInvoice` / new `recordActionRequiredPlanInvoice` share one body: history row for every plan invoice; a non-renewal stops there (info log, no billing write, no audit); a renewal audits on a NEW row only (`info`, ids only) and then writes the billing record whether the row is new or a duplicate (C-3). The cure runs after `applied` / `recorded` (after N-2's chain, so its clock is unchanged) and on `already_applied`, never on `already_recorded`; it never throws. Resolver: `invoice.payment_action_required` returns `not_business_os` before any catalog read or Stripe call while the price switch is off. Mirror: on `customer.subscription.deleted` only, after a successful mirror, one `subscription_ended` row and, when new, `BOS_BILLING_SUBSCRIPTION_ENDED` (`cancellationReason` from a small allow-list); `mirrorSubscriptionState` unchanged (C-4) |
+| Audit | `lib/audit/events.ts`, `eventAudience.ts` | `BOS_BILLING_PAYMENT_FAILED`, `BOS_BILLING_PAYMENT_ACTION_REQUIRED`, `BOS_BILLING_SUBSCRIPTION_ENDED`: `info`, SOC2, audience `bos` (C-10); split 58 / 63 / 84 (205) |
+| T8 banner | `planPaymentNotice.ts` (new, no import), `readPaymentNotice.ts` (new, server-only), `components/business-os/billing/PlanPaymentBanner.tsx` (new, client), `app/business-os/layout.tsx` | The one predicate (§5.6 as amended): mode check; `ended` only while grace / paused; failure open = status `past_due`/`unpaid` OR `failed_attempts > 0`; `action_required` when the URL passes the prefix re-check (C-13); `paused` only when the effective mode is `enforce` (Q-5); else `payment_failed` with `pauseBy` = the lifecycle's `graceEndsAt` while in grace. The read makes no call at all while the price switch is off; no session → null; any throw → null + warn; account through `resolveAccountId`. The wire carries only kind, plan label, pause date, and the confirm URL for `action_required`. Layout: third element of the `Promise.all` after the hold (F5b-4); the banner sits in the sticky wrapper under the tabs |
+| T9 Settings | `planPurchaseTypes.ts`, `planPurchaseView.ts`, `PlanSection.tsx`, `en.ts`, `he.ts`, `es.ts` | `PlanPurchaseBillingWire` gains `payment_failed` (date, attempts), `action_required` (date = due date, `confirmUrl`), `ended`; `billingStateFromRecord(row, now, notice)` takes `planPaymentNotice`'s answer first (only while the price switch is on); `billingEndsWhen` maps them to `plan.payment_failed_on` (with `count`), `plan.payment_action_required_on`, `plan.ended_on`; the three keys join `ACCOUNT_CLOCK_SENTENCE_KEYS`; `plan.update_card_email` under a failed payment, a "Confirm payment" link for action required. No Update card button (Q-6) |
+| T10 captures | `lib/business-os/billing/__tests__/planRenewal.captured.test.ts` | The real webhook code over X-1 to X-5 (paid, `past_due`, failed attempt 1, paid retry clears, late X-2 replay moot, X-4 attempt 9, deleted → ended row + audit, notice `ended` while paused and `null` for a resumed Founding Partner; X-5 both orders with `attempt_count: 0`, URL stored, cleared by X-5b) and over E-1b / E-2 / E-4 (U-10: history row only, no billing write, no audit, status `active`, notice `null`) |
+| T11 registrations | `enforcementPoints.test.ts`, `routerPlacement.guard.test.ts`, both billing repository caller guards, `ownerLanguageFirstFrame.guard.test.ts` | Non-gate importers: `readPaymentNotice.ts` (`getEntitlementConfig`, `getEntitlementMode`, `getEntitlementService`, `planLabel`, `resolveAccountId`), `planSubscriptionMirror.ts` (`RecordPlanChangeInput`, `resolveAccountId`); `planPurchaseView.ts` gains `getEntitlementMode`. `BILLING_REPOSITORY_IMPORTS`: `readPaymentNotice.ts` [accounts], `planSubscriptionMirror.ts` [accounts, events]. No file names `BusinessOsAccountPlanRepository`, so the RC-15 list is unchanged |
+
+### Tests added or changed
+
+| Suite | What |
+|---|---|
+| `BusinessOsBillingAccountRepository.test.ts` | +49: URL shape; the decision matrix (no row, other subscription, paid through P, invoice already paid, first failure, 3DS `attempt_count 0`, replay, late older, newer, real-time `created` far before / after the clock dates, URL same vs other invoice in both X-5 orders); cure matrix; exact UPDATE payload and CAS filters incl. raw PostgREST timestamps and IS NULL; moot / unchanged write nothing; one lost round retried, two → `concurrent_change`; DB error returned; URL in no log. **Source tests (C-1 rule 3):** only `attachTestClockCustomer` (test mode, sets null) names `current_period_end` in an UPDATE payload; no other app file opens a query on the table except the read-only finance repository; in SQL only the apply function updates the table. Scope counts updated (8 updates, 12 `from`) |
+| `planPaymentApply.test.ts` | The fake world runs the REAL decisions; +19 P-6a.2 cases (count + audit; raise / replay / late older; C-3 heal with the audit not lost; `concurrent_change` → retry; failure after its cure moot; real-time `created`; U-10 for `subscription_update`, `subscription_create`, `manual`, null; upgrade 3DS; renewal 3DS URL never in logs or audits; non-Stripe URL; cure on paid, heal on `already_applied`, older paid replay clears nothing, port throws, `already_recorded` cures nothing). Two existing expectations moved: the failed-payment describe now expects one audit for a renewal, and C6-7's order ends with `cure` |
+| `planSubscriptionMirror.test.ts` | +7 (deleted → row + audit; replay; unknown reason; `.updated` ended → mirror only; mirror skipped; write failure throws; no plan columns) |
+| `planInvoiceResolver.test.ts`, `planBillingHandler.test.ts` | switch off → `not_business_os`, no catalog read, no Stripe; on → plan flow / deny; new handler case; PF-15 covers it |
+| `planPaymentNotice.test.ts`, `readPaymentNotice.test.ts` (new) | every row of §5.6; the reader's four guarantees, switch off makes no call (also with the real env reader) |
+| `PlanPaymentBanner.test.tsx`, `PlanPaymentState.render.test.tsx` (new) | each kind en / he / es, RTL, account-clock dates, `noopener`, keys present in all three dictionaries; Settings sentences, attempts, card line, confirm link, ended, switch off, he / es |
+| `planHandler.route.test.ts` | +2 through the real route: switch off → no Business OS table touched; switch on → history row + CAS update with the URL, no URL in any log |
+| `connectPath.characterisation.test.ts` | +2 entries in their own describe (AR1 platform action-required, switch off; AR2 Connect action-required), written with an anchored `-t`, never `-u`. **Per-entry SHA-256 against `origin/main`'s snapshot: all 107 existing entries byte-identical, 2 added, 0 removed** |
+| `PlanPurchase.render.test.tsx`, `ownerLanguageFirstFrame.guard.test.ts`, `eventAudience.test.ts` | the clock-key equality now covers the three new keys; the layout's `Promise.all` regex takes the third element and a new check pins `readPaymentNotice()` once, after the gate; split pinned |
+
+**Mutations** (three applied together, run with `--ci` so no snapshot could be written, restored by reverse edit; `git diff --stat` identical before and after, the harness snapshot hashes unchanged): (a) the U-10 whitelist made to accept any reason, (b) the resolver's switch check removed for `invoice.payment_action_required`, (c) `enforcing` dropped from the paused rule. The combined run failed 15 tests, in exactly the describes that pin them: U-10 non-renewal (4), U-10 captured negatives (4), the P-7b.1 forward note (1), the resolver switch (2), the route switch-off case (1), harness AR1 (1), the X-5 resolver case (1) and `planPaymentNotice` paused (1). Not run one at a time.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| Requested suites (`lib/business-os/billing`, `lib/business-os/entitlements`, `app/api/stripe`, `lib/stripe`, `lib/repositories/__tests__`, `lib/audit`, `components/business-os`, `app/business-os`, `app/invite`, plus `app/api/business-os/entitlements`, `lib/business-os/__tests__`, `lib/business-os/invites`) | ✅ 333 suites, **10499 / 10499**, 116 snapshots |
+| Re-run after the mutation restore (`lib/business-os/billing`, `app/api/stripe`, billing repository) | ✅ 58 suites, 4254 / 4254, 109 snapshots |
+| `npm run test:bos-entitlements` | ✅ 271 suites, **8122 / 8122** |
+| `npm run typecheck:bos-llm` | ✅ 543 files, 28 baseline, 0 new (one first-run finding in the new captured test, a missing resolver context argument, fixed) |
+| Full-program type check of every touched and new file (scratch tsconfig) | 0 diagnostics in them (the pre-existing duplicate keys in `en.ts` / `es.ts` and two unrelated component errors are on main) |
+| ESLint on touched files | 0 errors; 1 pre-existing warning (`lib/audit/events.ts`, `_` unused, not this slice) |
+| `npm run lint:hooks` | ✅ clean |
+| `console.*` in touched files | none |
+| `git diff --stat` | 29 tracked files +2149 / −98, no deletion-only file; 9 new files |
+
+### Deviations for SA
+
+1. **"An invoice with a larger P supersedes an older one" (C-1 rule 4) is not representable without a column.** The row stores no failed invoice id or P, so the decision cannot tell two OPEN renewal invoices apart: the count is `max(row, attempts)` across open failures within the same paid-through period. That only matters if Stripe leaves a subscription `past_due` across a whole period; the sandbox's revenue recovery cancels after about 14 days (X-4, X-6), and the effect is display only (the larger count shows). The URL rule does distinguish invoices (by the hosted URL). A column (`failed_period_end`) would need a migration, which this slice was told not to add. Ruling asked.
+2. **`last_invoice_id === invoice` as a third moot reason** (a failure of the invoice that was paid), besides `current_period_end >= P`. Same time base, belt and braces.
+3. **Audit before the billing write** on a new history row: a billing write that throws releases the claim and the retry sees a duplicate row, so an audit written after it would be lost for good. C-3 says "only for a new history row", which holds.
+4. **The cure runs on `already_applied` but not `already_recorded`** (a replayed refusal; its money was never applied). §5.3 was amended accordingly.
+5. **`paused` in Settings is shown as `payment_failed`** (Settings states the failure; only the banner says paused, and only when enforcing).
+6. **`action_required` in Settings dates the sentence with the due date (`current_period_end`)**, matching "the payment due on {date}"; `payment_failed` uses `last_payment_failed_at` (display only), else the due date.
+7. **The banner shows the product name `Business OS` when the row has no bought tier** (new key `billing.notice.plan_fallback`, the same word in all three languages), so a failure is never hidden for want of a label. Labels use the default locale, as the plan pill does.
+8. **`planPaymentNotice` returns tier ids, not labels** (it imports nothing); `readPaymentNotice` turns them into labels. A test pins its URL prefix to the repository's.
+9. **Real-PostgREST runs owed (C-2):** `.eq` on timestamptz columns, on an integer and on a URL value, and `.is` on four columns, are new filter shapes for this repository. No database call was allowed in this session, so they are recorded for the demo (steps 4 and 7 below exercise both writes) and QA.
+10. **A `customer.subscription.deleted` whose fresh read has no `ended_at` still records `subscription_ended`** (the event is the end); the audit carries `endedAt: null` then.
+
+### Demo checklist (P-6a.2, TL / user; standard sandbox, local server)
+
+Prerequisite: the P-6a.1 run-sheet steps 0 to 2 (keys and both switches in `neuronforge-invite-s1/.env.local` only, `stripe listen` forwarding, an attached test clock), and the dev server output kept for step 9.
+
+1. As owner A, buy Essentials with `4242…` on the clock. No banner; Settings → Plan "Renews on …".
+2. Advance to `T + 2 h`: renewal paid, still no banner (AC-F5.1).
+3. Dashboard: A's default card `4000 0000 0000 0341`. Advance past `T'`. Within a few seconds of the webhook: the **banner** "Your last payment for Essentials didn't go through…" on every Business OS page; Settings "Your payment on {date} didn't go through… (attempts so far: 1)" and "To update your card, use the link in the email Stripe sent you." (D3). The date is real time (C-1 rule 6): acceptable for the harness.
+4. Audit: one `BOS_BILLING_PAYMENT_FAILED` (`info`). This is also the first real-PostgREST run of `recordRenewalFailure` (deviation 9): Status shows `failedAttempts: 1`.
+5. Advance to the next retry: Settings "attempts so far: 2"; no second audit for the same event.
+6. Card back to `4242`, pay the open invoice: banner gone, Settings "Renews on …"; Status `failedAttempts: 0` (the cure, a real-PostgREST run of `clearRenewalFailure`).
+7. Owner B (fresh clock): card `4000 0027 6000 3184`, advance past the period end: banner "Your bank needs you to confirm your payment for Essentials." with **Confirm payment** opening Stripe's hosted page in a new tab; Settings "Your bank asked you to confirm the payment due on {date}." with the same link. Authenticate: the banner goes (D7).
+8. Card `0341` again on A, advance through about 14 days of retries: Stripe cancels; one `subscription_ended` money-history row and one `BOS_BILLING_SUBSCRIPTION_ENDED` audit. The **ended** banner appears only once the lifecycle reads grace or paused in REAL time (C-7: the clock does not move our clock), so it is proved by the unit and captured tests, not live (D8).
+9. U-10 (D10): a `basic` owner upgrades with the always-decline card, then with `3184` and completes it: no banner, no Settings failure line, no `BOS_BILLING_PAYMENT_FAILED` audit; one `invoice_payment_failed` / `payment_action_required` history row each.
+10. Hebrew and Spanish (D11): switch language; banner and Settings lines in each, Hebrew right to left (drafts, G-5).
+11. Log check: search the dev server output for `invoice.stripe.com`, `@`, `sk_test`, `whsec_`: no match in any line from the webhook, the banner read or the repository.
+12. Clean-up as P-6a.1 step 10 (cancel with `stripe listen` running, delete clocks, restore the demo plan rows, remove keys and switches).
+
+### For RM
+
+- Merge gate G-5: the user approves the he / es drafts (§13 table, unchanged wording, plus `billing.notice.plan_fallback` = "Business OS" in both).
+- G-6: the demo above.
+- No migration; nothing to apply. Production stays inert: the banner and Settings states read nothing while `BUSINESS_OS_PLAN_PRICES_ENABLED` is off, `invoice.payment_action_required` keeps `not_business_os`, and the webhook changes run only for recognised plan events.
 
 ---
 
@@ -1003,11 +1182,80 @@ Report back: steps 2 to 9 Status readings (state, reason, `graceEndsAt`), the X-
 - [x] All acceptance criteria that can be tested without the live sandbox pass; no High or Medium issue open — ready for the user's demo and the merge gate (C-8, C-11, C-15)
 - [ ] Issues found — Dev must address before commit (E-1 recommended, not blocking)
 
+### QA Report — P-6a.2 "Failed payment: records and banners" (2026-10-16)
+
+**QA — 2026-10-16**
+**Test mode:** full (focus items 2 to 7 in Jest / in-memory; item 1 prepared, not run)
+**Strategy used:** A (unit: predicate, decisions, mode reader) + B (integration-style Jest over the real webhook code, real route, captured X-1..X-5 / E-1b / E-2 / E-4 fixtures) + C (C-16a probe script, dry-run only) + E (log scan over the Jest output and a log-capture scratch test)
+**Focus:** api, ui, security (SA QA focus 1 to 7)
+**Skipped:** C-16a live run (production) — not run by QA: the go-ahead reached QA only as a message relayed by the coordinator, which QA does not treat as the user's own consent for a production action. The script is ready (below). C-16b and the live halves of items 2 to 7 are demo steps (G-6), owed by the user
+**Input source:** prompt keywords (TL) + SA "QA focus" list
+
+Worktree `neuronforge-invite-s1`, branch `feature/bos-plan-payments-p6a2`, uncommitted. QA changed no file except this workplan (this section and one Change History row). One scratch test was written, run and deleted; `git diff --shortstat` was 30 files, +2352 / −106, both before and after, apart from this workplan.
+
+#### Test Coverage
+
+| # | SA QA focus | Tested? | Result | Evidence |
+|---|---|---|---|---|
+| 1 | C-16a shape probe (real PostgREST, no match) | ⚠️ | **Not run — owed** | Script written per the SA spec and dry-run against a fake client: all 6 calls → `concurrent_change` after exactly 2 reads, 12 UPDATEs with the expected filter shapes (`.is` × 4 on round (i); `.eq` on integer `failed_attempts`, timestamptz text with microseconds, and the URL with `?`/`=`/`:`/`/` on round (ii); cure `.is` / `.eq` URL), pre- and final read empty in both modes, `C-16a RESULT: PASS`. Live run command below |
+| 1 | C-16b match proof (count 1) | ⚠️ | **Owed (demo G-6, steps 4–7)** | User-side demo |
+| 2 | U-10: upgrade decline / 3-D Secure → no banner, no Settings failure line, no failure audit, one history row each | ✅ | Pass (Jest) | Captured E-1b failed, E-1b action-required, E-2 declined, E-4 action-required: history row only, no billing write, no audit, status `active`, notice `null`; `planPaymentApply` U-10 `it.each` over `subscription_update` / `subscription_create` / `manual` / `null`; `planPaymentNotice` U-10 row. Live half is demo step 9 |
+| 3 | Order matrix: replay of the same `invoice.payment_failed` → no second audit, count unchanged; X-5 pair in both orders → URL stored | ✅ | Pass (Jest) | `planPaymentApply`: "a redelivery is a replay … no second audit", "the next attempt raises the count; a replay and a late older delivery change nothing and audit nothing more" (audits stay 2 for 2 distinct attempts), C-3 heal; captured X-5 "action required first" and "failure first": one attempt, URL stored, cleared by the paid invoice. Live `stripe events resend` is a demo step |
+| 4 | Banner wording by mode: shadow + paused lifecycle → payment-failed wording, never "paused"; `pauseBy` only in grace | ✅ | Pass (Jest + QA scratch) | `planPaymentNotice` Q-5 and pauseBy rows. **QA scratch test through the REAL `getEntitlementMode()`** (not the injected `enforcing` port): `BOS_ENTITLEMENTS_MODE=shadow` + paused → `{ kind: 'payment_failed', pauseBy: null }`; shadow + grace → `pauseBy` = grace end; unset (off) + paused → `payment_failed`; `enforce` (effective `enforce`) + paused → `paused`. Settings shows `paused` as `payment_failed` by design (deviation 5) |
+| 5 | Switch off: no banner, no Settings failure state, no billing read from the layout | ✅ | Pass (Jest) | `readPaymentNotice` "off with the price switch: nothing is read at all" + "the real switch: unset means off, and no default port is touched"; `PlanPaymentState` "the price switch off: the failure is not described"; `planHandler.route` switch off → no Business OS table touched; resolver switch off → `not_business_os`, no catalog read, no Stripe call; first-frame guard (vi) pins the single `readPaymentNotice()` after the gate. Server-log check is a demo step |
+| 6 | Hebrew and Spanish: banner and Settings, Hebrew RTL, dates on the account clock | ✅ | Pass (Jest + QA key audit) | All **12** new keys present exactly once in each of en / es / he (`billing.notice.payment_failed`, `_by`, `paused`, `action_required`, `confirm_payment`, `ended`, `open_plan`, `plan_fallback`; `plan.payment_failed_on`, `plan.update_card_email`, `plan.payment_action_required_on`, `plan.ended_on`); placeholders identical across languages for every key (`{plan}`, `{date}`, `{count}`); `plan_fallback` = "Business OS" in all three. Banner tests: each kind in he and es, right direction, no English left; Settings he (rtl) / es (ltr); account-clock date test. Wording is still draft (G-5) |
+| 7 | Log scan: no `invoice.stripe.com`, `@`, `sk_test`, `whsec_` in webhook / banner-read / repository lines | ✅ | Pass (Jest scope) | (a) Affected-suite output: 64 Pino lines, 0 × `invoice.stripe.com` / `sk_test` / `sk_live` / `rk_test` / `whsec_`; every `@` is a `node_modules\@…` stack path in UI-test warn lines, none in a webhook, banner-read or repository line. (b) **QA scratch test**: real repository with a capturing logger over `recordActionRequired` + `clearRenewalFailure` for count 1, count 0 × 2 (`concurrent_change`, warns), and a PostgREST error whose `details` / `hint` carry the URL and an email: serialised log lines contain none of the five patterns (`asError` keeps only message + code). (c) Existing spies: "the hosted URL is never logged" (reader), captured X-5 logs+audits scan, route test. Live half is demo step 11 |
+
+#### Issues Found
+
+##### Bugs (must fix before commit)
+None.
+
+##### Performance Issues (should fix)
+None new (SA's non-blocking note stands: `readPlanBadge()` and `readPaymentNotice()` may both call `getSnapshot` on a cold cache, switch on only).
+
+##### Edge Cases (nice to fix)
+None found. CRLF check: the new source-scan tests normalise `\r\n` (`BusinessOsBillingAccountRepository.test.ts`) or use `\s*` regexes (first-frame guard); the touched files are LF in the working copy (`core.autocrlf=true`), and the suites pass locally on Windows.
+
+#### Test Outputs / Logs
+
+| Run | Result |
+|---|---|
+| Affected suites: `lib/business-os/billing`, `app/api/stripe`, both billing repository tests, `components/business-os`, `app/business-os`, `lib/audit`, first-frame guard, `lib/business-os/entitlements` (`--ci`) | ✅ **167 suites, 6763 / 6763**, 109 snapshots |
+| `npm run test:bos-entitlements` | ✅ **271 suites, 8122 / 8122** |
+| QA scratch test (items 4 and 7; deleted after the run) | ✅ 7 / 7 (first run 2 failed on a QA fixture error — row had no bought tier, so `planLabel` was correctly `null`; fixed the fixture, not the code) |
+| C-16a dry run (fake client, no network) | ✅ `C-16a RESULT: PASS`, 6 / 6 calls `concurrent_change` after 2 rounds |
+
+**C-16a probe script** (scratchpad, never committed): `C:/Users/Barak/AppData/Local/Temp/claude/C--Users-Barak-My-Projects-AgentsPilot-neuronforge/51836f38-6608-4d06-896c-962df6b6971b/scratchpad/c16a-probe.ts`. Constructs the REAL `BusinessOsBillingAccountRepository` on `supabaseServer`, replaces `findByUser` on that one instance only, fresh `randomUUID()`, `livemode: false`; pre-read and final read with the real `findByUser` in both modes; rounds (i) all-null (`.is` branches; cure: period non-null, URL null) and (ii) all non-null in PostgREST text `2026-11-15T10:00:00.123456+00:00`, `failed_attempts: 2`, URL `https://invoice.stripe.com/i/acct_probe/test_probe?s=ap`. Pass = every call `concurrent_change` (name `BillingAccountRepositoryError`, exactly 2 reads), no 42703 / 22P02 / 22007 / PGRST1xx, final read empty. Reads the env file in-process and prints no key material. Run from the worktree (so the tsconfig paths resolve):
+
+```bash
+cd "C:/Users/Barak/My Projects/AgentsPilot/neuronforge-invite-s1"
+npx tsx --tsconfig ./tsconfig.json "C:/Users/Barak/AppData/Local/Temp/claude/C--Users-Barak-My-Projects-AgentsPilot-neuronforge/51836f38-6608-4d06-896c-962df6b6971b/scratchpad/c16a-probe.ts" --env "C:/Users/Barak/My Projects/AgentsPilot/neuronforge/.env.local"
+```
+
+(The worktree has no `.env.local`; the main checkout's holds the production Supabase URL and service-role key. `--dry` runs the same script against a fake client.) Exit 0 = PASS, 1 = FAIL (stop the merge, back to SA), 2 = pre-read found a row, 3 = script error.
+
+#### Final Status
+
+- [x] Focus items 2 to 7 pass in Jest / in-memory; no Bug open
+- [x] C-16a live run PASS (recorded below); G-5 he / es wording approved by the user 2026-10-16
+- [ ] **Not yet ready to merge:** C-16b and the live halves of items 2, 3, 5, 6, 7 (G-6 demo) are still owed
+
 ---
+
+### C-16a live run (TL, 2026-10-16, user go-ahead given in chat: "yes, run")
+
+Production, service-role, probe UUID e6f1a86c-d5e1-4414-98bf-466d78bd8e2b, livemode false. Pre-read: no row (both modes). All six calls (recordRenewalFailure, recordActionRequired, clearRenewalFailure; null and non-null shapes) returned `concurrent_change` after 2 rounds, count 0 each, no PostgREST error code. Final read: no row (both modes). **C-16a RESULT: PASS** (exit 0). C-16b remains owed in the G-6 demo.
 
 ## Commit Info
 
-*RM will populate this section.*
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-plan-payments-p6a2` (from `origin/main` `50d26e78`) |
+| Commit | `24efa45a` feat(billing): failed-payment records, banner and Settings states (P-6a.2) |
+| Merge of `origin/main` | `f3e2e9a6` (clean, tests re-run green) |
+| PR | [#416](https://github.com/AgentsPilot/neuronforge/pull/416), open; auto-merge NOT enabled |
+| Merge gate owed | G-6 live demo (incl. C-16b) |
 
 ---
 
@@ -1021,3 +1269,7 @@ Report back: steps 2 to 9 Status readings (state, reason, `graceEndsAt`), the X-
 | 2026-10-15 | SA code review, P-6a.1 (SA) | **APPROVED WITH FIXES**, Code Approved for QA. Deviations 1 to 7 accepted (deviation 1, "whichever ended last", is within the user's BQ-P12 decision, trial side effect included; no question to the user). C-1 ruled for P-6a.2: "cured" decided by periods (the invoice line's `period.end` against `current_period_end`), failure marker `failed_attempts = max(attempt_count, 1)`, `last_payment_failed_at` display only. SA fix: `account_name` scrubbed in 7 captured fixtures (it carried a personal name). New merge check C-15 (former Founding Partner grace already running). The 3 "always failing" tests are Windows CRLF only (main green on CI at `e7488400`); #394 fixes one on main, F-3 opened for the finance guard. `test:bos-entitlements` 8017/8017; 6 mutations, all killed |
 | 2026-10-15 | QA, P-6a.1 (QA) | **PASS WITH NOTES.** Requested suites 7402/7403 (1 = CRLF `heldPaymentOffer.admin`, not this slice); finance guard 2 red, CRLF (F-3); `test:bos-entitlements` 8017/8017; `typecheck:bos-llm` 0 new; `lint:hooks` clean. QA scratch boundary suite 9/9 (deleted). Fixtures re-scanned clean. Mutation M-QA1 survived → E-1 (new-row attach race untested). Demo hazards E-2 (cancel before deleting a clock), E-3 (restore demo plan rows); E-4 C-15 window widened to 31 days. Run-sheet and merge-gate SQL in the QA report |
 | 2026-10-15 | QA E-1 closed (Dev) | Test only: one route test for the new-row attach race (`recordCustomer` → `created: false` → 409 `concurrent_change`, no audit). M-QA1 now killed; `planTestClock.ts` unchanged (md5 `8d8e1ecce98c032ed222f49383ff0363`). Route 42/42; billing 3517/3518 (1 = CRLF `heldPaymentOffer.admin`, not this slice) |
+| 2026-10-15 | P-6a.2 implemented (Dev) | T6 to T11 on `feature/bos-plan-payments-p6a2` (from `origin/main` `50d26e78`), uncommitted, awaiting SA code review. §5.3, §5.4, §5.5, §5.6 amended to the C-1 ruling and C-4 before T6. Repository: pure `decideRenewalFailure` / `decideRenewalCure`, read-decide-CAS writes (`.eq` / `.is`, `{ count: 'exact' }`, no `.select()`, no `.or()`), cured by periods, `max(attempt_count, 1)`. Webhook: `subscription_cycle` whitelist (U-10), audit before the billing write on a new row, heal on replay (C-3), cure after paid (never on `already_recorded`), action-required routed only with the price switch on, ended row + audit on `.deleted` only (C-4); three `info` audit keys (C-10). One predicate `planPaymentNotice` for the banner (layout, inert while the price switch is off) and Settings; en/he/es (he/es drafts, G-5). Captured-fixture test over X-1 to X-5 and the E-1b/E-2/E-4 U-10 negatives. Connect harness: 2 entries added, 107 existing byte-identical (per-entry hash vs `origin/main`). Suites 10499/10499; `test:bos-entitlements` 8122/8122; `typecheck:bos-llm` 0 new; `lint:hooks` clean. 10 deviations for SA (rule 4 needs a column; no migration added) |
+| 2026-10-16 | SA code review, P-6a.2 (SA) | **APPROVED WITH FIXES**, Code Approved for QA. Verified the C-1 rewrite of §5.3 to §5.6 and the code (periods, `max(attempt_count, 1)`, cure only when newest, `current_period_end` source guards), U-10, C-2 to C-4, C-10, C-12, C-13, Q-5, Q-6, tenant isolation, registrations, i18n. Connect harness re-verified per entry (107 identical, 2 added). Affected suites 5610/5610; `test:bos-entitlements` 8122/8122; 12 mutations one at a time, all killed, md5-restored. Deviation 1 accepted as display-only (status branch keeps the failure visible; follow-up F-4 if the Stripe retry setting ever allows two open periods). Deviation 9: new merge gate **C-16** (no-match shape probe through the real repository against production + count-1 proof in demo steps 4 to 7). SA fix: `events.ts` comment on `BOS_BILLING_PAYMENT_FAILED` details |
+| 2026-10-16 | QA, P-6a.2 (QA) | Focus items 2 to 7 PASS in Jest / in-memory, no bug. Affected suites 167 / 6763, `test:bos-entitlements` 271 / 8122. QA scratch checks (deleted): real `getEntitlementMode()` shadow / off / enforce for the paused wording; repository log capture incl. a PostgREST error carrying the URL. All 12 new keys once each in en / es / he, placeholders equal. C-16a probe written and dry-run PASS, **live run not done by QA** (go-ahead only relayed via the coordinator); C-16a live, C-16b, G-5, G-6 owed |
+| 2026-10-16 | G-5 approved; committed, PR opened (user; RM) | User approved the he / es wording (G-5) 2026-10-16: "wording approved on P-6a.2"; i18n comments updated. P-6a.2 SA APPROVED WITH FIXES (fix applied), QA PASS (no bug), C-16a production probe PASS. Committed on `feature/bos-plan-payments-p6a2` and PR #416 opened to `main` (see Commit Info). No migration. Merge gate still owed: **G-6 live demo (incl. C-16b)**; auto-merge NOT enabled |

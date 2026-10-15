@@ -23,6 +23,17 @@
 // P-6a.1 (workplan BUSINESS_OS_PLAN_PAYMENTS_P6A_WORKPLAN.md §5.8, SA C-6):
 // `attachTestClockCustomer`, TEST MODE ONLY, for the /test-business-os test
 // clock: the same compare-and-set shape, clearing the whole subscription mirror.
+// P-6a.2 (same workplan §5.3, §5.4; SA C-1 ruling, C-2, C-3): the renewal
+// failure record (`recordRenewalFailure`, `recordActionRequired`) and its cure
+// (`clearRenewalFailure`). Each READS the row, DECIDES in a pure exported
+// function (`decideRenewalFailure`, `decideRenewalCure`) and writes by
+// compare-and-set on every value the decision read: `.eq` / `.is` only, no
+// `.or()`, no `.select()`, `{ count: 'exact' }`. "Cured" is decided by billing
+// PERIODS (the failed invoice's line period end against `current_period_end`),
+// never by comparing `event.created` with a Stripe timestamp: under a test
+// clock they are two different clocks (C-1). `current_period_end` is written
+// only by the paid apply function (and cleared by the test-mode attach); a
+// source test keeps it so.
 //
 // ── THE TWO LOOKUPS BY A STRIPE ID (documented exception to CLAUDE.md rule 4) ─
 // The webhook does not know the account yet: finding it is the point (SR-8).
@@ -152,6 +163,150 @@ function isFilterSafeIso(value: unknown): value is string {
     !Number.isNaN(Date.parse(value))
   );
 }
+
+const INVOICE_ID_PATTERN = /^in_[A-Za-z0-9]{1,252}$/;
+
+/**
+ * Stripe's hosted invoice page, the only link a "Confirm payment" banner may
+ * open (plan payments P-6a.2, §5.4). A bearer link to the owner's invoice:
+ * never logged, never audited. Also re-checked by the banner read (SA C-13).
+ * The table's own CHECK (`https://`, at most 2048) is looser; this is ours.
+ */
+export const HOSTED_INVOICE_URL_PREFIX = 'https://invoice.stripe.com/';
+
+export function isHostedInvoiceUrl(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.startsWith(HOSTED_INVOICE_URL_PREFIX) &&
+    value.length > HOSTED_INVOICE_URL_PREFIX.length &&
+    value.length <= 2048 &&
+    !/\s/.test(value)
+  );
+}
+
+/** What a failed (or authentication-needing) RENEWAL invoice says, for the decision. */
+export interface RenewalFailureFacts {
+  stripeSubscriptionId: string;
+  invoiceId: string;
+  /** `P`: the invoice's subscription line period end, the paid-through date it would buy (never `invoice.period_end`). */
+  periodEndIso: string;
+  /** Stripe's `attempt_count` (0 for an off-session 3-D Secure failure, X-5). */
+  attemptCount: number;
+  /** `event.created`: DISPLAY ONLY. Compared only with an earlier `event.created` (one clock). */
+  failedAtIso: string;
+  /** The event invoice's `hosted_invoice_url` as Stripe sent it; stored only for `actionRequired` and only when shaped. */
+  hostedInvoiceUrl: string | null;
+  /** `invoice.payment_action_required` (true) or `invoice.payment_failed` (false). */
+  actionRequired: boolean;
+}
+
+/** The columns `decideRenewalFailure` reads, and so the compare-and-set compares. */
+export type RenewalFailureRowFacts = Pick<
+  BusinessOsBillingAccount,
+  'stripeSubscriptionId' | 'currentPeriodEnd' | 'lastInvoiceId' | 'failedAttempts' | 'actionRequiredInvoiceUrl' | 'lastPaymentFailedAt'
+>;
+
+export type RenewalFailureMootReason = 'no_row' | 'other_subscription' | 'period_already_paid' | 'invoice_already_paid';
+
+export type RenewalFailureDecision =
+  | { kind: 'moot'; reason: RenewalFailureMootReason }
+  /** A replay, or an older delivery: the row already says as much or more. */
+  | { kind: 'unchanged' }
+  | { kind: 'write'; failedAttempts: number; lastPaymentFailedAt: string; actionRequiredInvoiceUrl: string | null };
+
+function instant(value: string): number {
+  return Date.parse(value);
+}
+
+/**
+ * The renewal-failure decision (SA C-1 ruling, rules 2 to 6). Pure.
+ *
+ *   moot       the row holds another subscription (or none), the row is
+ *              already paid through `P` (`current_period_end >= P`), or this
+ *              very invoice is the last one paid
+ *   attempts   `max(row, max(attempt_count, 1))`: a recorded renewal failure
+ *              is at least one attempt, and the larger count wins, so a
+ *              replay or a late older delivery never lowers it
+ *   URL        set by an action-required event with a Stripe-hosted URL; kept
+ *              by a later event on the SAME invoice (same hosted URL), cleared
+ *              by one on a different invoice
+ *   date       the later of the two `event.created` values: display only
+ *
+ * The two period dates compared are both Stripe's (one clock); `failedAtIso`
+ * is never compared with them.
+ */
+export function decideRenewalFailure(row: RenewalFailureRowFacts | null, facts: RenewalFailureFacts): RenewalFailureDecision {
+  if (!row) return { kind: 'moot', reason: 'no_row' };
+  if (row.stripeSubscriptionId !== facts.stripeSubscriptionId) return { kind: 'moot', reason: 'other_subscription' };
+  if (row.currentPeriodEnd !== null && instant(row.currentPeriodEnd) >= instant(facts.periodEndIso)) {
+    return { kind: 'moot', reason: 'period_already_paid' };
+  }
+  if (row.lastInvoiceId !== null && row.lastInvoiceId === facts.invoiceId) return { kind: 'moot', reason: 'invoice_already_paid' };
+
+  const failedAttempts = Math.max(row.failedAttempts, Math.max(facts.attemptCount, 1));
+
+  let actionRequiredInvoiceUrl: string | null;
+  if (facts.actionRequired && isHostedInvoiceUrl(facts.hostedInvoiceUrl)) {
+    actionRequiredInvoiceUrl = facts.hostedInvoiceUrl;
+  } else if (row.actionRequiredInvoiceUrl !== null && row.actionRequiredInvoiceUrl === facts.hostedInvoiceUrl) {
+    actionRequiredInvoiceUrl = row.actionRequiredInvoiceUrl;
+  } else {
+    actionRequiredInvoiceUrl = null;
+  }
+
+  const lastPaymentFailedAt =
+    row.lastPaymentFailedAt !== null && instant(row.lastPaymentFailedAt) >= instant(facts.failedAtIso)
+      ? row.lastPaymentFailedAt
+      : facts.failedAtIso;
+
+  if (
+    failedAttempts === row.failedAttempts &&
+    actionRequiredInvoiceUrl === row.actionRequiredInvoiceUrl &&
+    lastPaymentFailedAt === row.lastPaymentFailedAt
+  ) {
+    return { kind: 'unchanged' };
+  }
+  return { kind: 'write', failedAttempts, lastPaymentFailedAt, actionRequiredInvoiceUrl };
+}
+
+/** The columns `decideRenewalCure` reads. */
+export type RenewalCureRowFacts = Pick<
+  BusinessOsBillingAccount,
+  'stripeSubscriptionId' | 'currentPeriodEnd' | 'failedAttempts' | 'actionRequiredInvoiceUrl'
+>;
+
+export type RenewalCureDecision =
+  | { kind: 'nothing'; reason: 'no_row' | 'other_subscription' | 'no_failure' | 'no_period' | 'older_invoice' }
+  | { kind: 'clear' };
+
+/**
+ * The cure (SA C-1 ruling, rule 5). Pure. Read AFTER the apply: the failure
+ * marker is cleared only when the paid invoice is the newest
+ * (`P >= current_period_end`), so a late replay of an older paid invoice
+ * clears nothing.
+ */
+export function decideRenewalCure(
+  row: RenewalCureRowFacts | null,
+  facts: { stripeSubscriptionId: string; paidPeriodEndIso: string }
+): RenewalCureDecision {
+  if (!row) return { kind: 'nothing', reason: 'no_row' };
+  if (row.stripeSubscriptionId !== facts.stripeSubscriptionId) return { kind: 'nothing', reason: 'other_subscription' };
+  if (row.failedAttempts === 0 && row.actionRequiredInvoiceUrl === null) return { kind: 'nothing', reason: 'no_failure' };
+  if (row.currentPeriodEnd === null) return { kind: 'nothing', reason: 'no_period' };
+  if (instant(facts.paidPeriodEndIso) < instant(row.currentPeriodEnd)) return { kind: 'nothing', reason: 'older_invoice' };
+  return { kind: 'clear' };
+}
+
+/** What a renewal-failure write did. */
+export type RenewalFailureWriteResult =
+  | { outcome: 'recorded'; failedAttempts: number; actionRequiredUrlStored: boolean }
+  | { outcome: 'unchanged' }
+  | { outcome: 'moot'; reason: RenewalFailureMootReason };
+
+export type RenewalCureResult = { outcome: 'cleared' } | { outcome: 'nothing'; reason: Extract<RenewalCureDecision, { kind: 'nothing' }>['reason'] };
+
+/** Compare-and-set rounds: the first, and one re-read after a concurrent write (C-2). */
+const CAS_ROUNDS = 2;
 
 /** "No lock, or an expired one", as a PostgREST `or` filter. Exported for its test. */
 export function checkoutLockFreeFilter(nowIso: string): string {
@@ -793,6 +948,202 @@ export class BusinessOsBillingAccountRepository {
       return { data: null, error: asError(err) };
     }
   }
+
+  // ── P-6a.2: renewal failures and their cure (§5.3, §5.4; SA C-1, C-2) ──────
+
+  /**
+   * `invoice.payment_failed` on a RENEWAL invoice (the caller decides that, U-10):
+   * count the attempt on the row holding this subscription. Read, decide
+   * (`decideRenewalFailure`), compare-and-set. `concurrent_change` (an error)
+   * means two rounds lost to concurrent writes: the caller releases the claim
+   * and Stripe retries.
+   */
+  async recordRenewalFailure(input: RenewalFailureInput): Promise<RepositoryResult<RenewalFailureWriteResult>> {
+    return this.writeRenewalFailure(input, false);
+  }
+
+  /**
+   * `invoice.payment_action_required` on a RENEWAL invoice (3-D Secure, SA-P8:
+   * treated as failed): the same decision, and the hosted invoice URL is stored
+   * when it is a Stripe-hosted page. The URL is never logged here.
+   */
+  async recordActionRequired(input: RenewalFailureInput): Promise<RepositoryResult<RenewalFailureWriteResult>> {
+    return this.writeRenewalFailure(input, true);
+  }
+
+  private async writeRenewalFailure(
+    input: RenewalFailureInput,
+    actionRequired: boolean
+  ): Promise<RepositoryResult<RenewalFailureWriteResult>> {
+    const { userId, livemode, stripeSubscriptionId, invoiceId, periodEndIso, attemptCount, failedAtIso, hostedInvoiceUrl, nowIso } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof stripeSubscriptionId !== 'string' ||
+      !SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId) ||
+      typeof invoiceId !== 'string' ||
+      !INVOICE_ID_PATTERN.test(invoiceId) ||
+      !isFilterSafeIso(periodEndIso) ||
+      !isFilterSafeIso(failedAtIso) ||
+      typeof attemptCount !== 'number' ||
+      !Number.isSafeInteger(attemptCount) ||
+      attemptCount < 0 ||
+      !(hostedInvoiceUrl === null || typeof hostedInvoiceUrl === 'string') ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const method = actionRequired ? 'recordActionRequired' : 'recordRenewalFailure';
+    // Ids only: never the hosted URL (a bearer link to the owner's invoice).
+    const methodLogger = this.logger.child({ method, userId, livemode, stripeSubscriptionId, invoiceId });
+    const facts: RenewalFailureFacts = {
+      stripeSubscriptionId,
+      invoiceId,
+      periodEndIso,
+      attemptCount,
+      failedAtIso,
+      hostedInvoiceUrl,
+      actionRequired,
+    };
+
+    try {
+      for (let round = 0; round < CAS_ROUNDS; round += 1) {
+        const read = await this.findByUser(userId, livemode);
+        if (read.error) return { data: null, error: read.error };
+        const row = read.data;
+        const decision = decideRenewalFailure(row, facts);
+        if (decision.kind === 'moot') return { data: { outcome: 'moot', reason: decision.reason }, error: null };
+        if (decision.kind === 'unchanged' || !row) return { data: { outcome: 'unchanged' }, error: null };
+
+        const base = this.supabase
+          .from(BOS_BILLING_ACCOUNTS_TABLE)
+          .update(
+            {
+              failed_attempts: decision.failedAttempts,
+              last_payment_failed_at: decision.lastPaymentFailedAt,
+              action_required_invoice_url: decision.actionRequiredInvoiceUrl,
+              updated_at: nowIso,
+            },
+            { count: 'exact' }
+          )
+          .eq('user_id', userId)
+          .eq('livemode', livemode)
+          .eq('stripe_subscription_id', stripeSubscriptionId)
+          .eq('failed_attempts', row.failedAttempts);
+        // The compare-and-set: every value the decision read, exactly as read.
+        const withPeriod = row.currentPeriodEnd === null ? base.is('current_period_end', null) : base.eq('current_period_end', row.currentPeriodEnd);
+        const withInvoice = row.lastInvoiceId === null ? withPeriod.is('last_invoice_id', null) : withPeriod.eq('last_invoice_id', row.lastInvoiceId);
+        const withUrl =
+          row.actionRequiredInvoiceUrl === null
+            ? withInvoice.is('action_required_invoice_url', null)
+            : withInvoice.eq('action_required_invoice_url', row.actionRequiredInvoiceUrl);
+        const query =
+          row.lastPaymentFailedAt === null
+            ? withUrl.is('last_payment_failed_at', null)
+            : withUrl.eq('last_payment_failed_at', row.lastPaymentFailedAt);
+
+        const { error, count } = await query;
+        if (error) throw asError(error);
+        if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+        if (count === 1) {
+          return {
+            data: {
+              outcome: 'recorded',
+              failedAttempts: decision.failedAttempts,
+              actionRequiredUrlStored: decision.actionRequiredInvoiceUrl !== null,
+            },
+            error: null,
+          };
+        }
+        methodLogger.warn({ round }, 'Business OS billing row changed while recording a renewal failure; re-reading');
+      }
+      return { data: null, error: new BillingAccountRepositoryError('concurrent_change') };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to record the Business OS renewal failure');
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * A paid plan invoice (any `applied` / `recorded` / replayed apply): clear the
+   * failure marker when the paid invoice is the newest (`decideRenewalCure`),
+   * by compare-and-set. `last_payment_failed_at` is kept (the date P-8a shows).
+   * Two lost rounds is a `concurrent_change` error; the caller logs it and
+   * never throws (the money is already committed).
+   */
+  async clearRenewalFailure(input: {
+    userId: string;
+    livemode: boolean;
+    stripeSubscriptionId: string;
+    /** `P` of the PAID invoice (its line period end). */
+    paidPeriodEndIso: string;
+    nowIso: string;
+  }): Promise<RepositoryResult<RenewalCureResult>> {
+    const { userId, livemode, stripeSubscriptionId, paidPeriodEndIso, nowIso } = input;
+    if (
+      typeof userId !== 'string' ||
+      !UUID_PATTERN.test(userId) ||
+      typeof livemode !== 'boolean' ||
+      typeof stripeSubscriptionId !== 'string' ||
+      !SUBSCRIPTION_ID_PATTERN.test(stripeSubscriptionId) ||
+      !isFilterSafeIso(paidPeriodEndIso) ||
+      !isFilterSafeIso(nowIso)
+    ) {
+      return { data: null, error: new BillingAccountRepositoryError('invalid_input') };
+    }
+    const methodLogger = this.logger.child({ method: 'clearRenewalFailure', userId, livemode, stripeSubscriptionId });
+
+    try {
+      for (let round = 0; round < CAS_ROUNDS; round += 1) {
+        const read = await this.findByUser(userId, livemode);
+        if (read.error) return { data: null, error: read.error };
+        const row = read.data;
+        const decision = decideRenewalCure(row, { stripeSubscriptionId, paidPeriodEndIso });
+        if (decision.kind === 'nothing' || !row || row.currentPeriodEnd === null) {
+          return { data: { outcome: 'nothing', reason: decision.kind === 'nothing' ? decision.reason : 'no_row' }, error: null };
+        }
+
+        const base = this.supabase
+          .from(BOS_BILLING_ACCOUNTS_TABLE)
+          .update({ failed_attempts: 0, action_required_invoice_url: null, updated_at: nowIso }, { count: 'exact' })
+          .eq('user_id', userId)
+          .eq('livemode', livemode)
+          .eq('stripe_subscription_id', stripeSubscriptionId)
+          .eq('failed_attempts', row.failedAttempts)
+          .eq('current_period_end', row.currentPeriodEnd);
+        const query =
+          row.actionRequiredInvoiceUrl === null
+            ? base.is('action_required_invoice_url', null)
+            : base.eq('action_required_invoice_url', row.actionRequiredInvoiceUrl);
+
+        const { error, count } = await query;
+        if (error) throw asError(error);
+        if (count !== 0 && count !== 1) throw new BillingAccountRepositoryError('unexpected_update_count');
+        if (count === 1) return { data: { outcome: 'cleared' }, error: null };
+        methodLogger.warn({ round }, 'Business OS billing row changed while clearing a renewal failure; re-reading');
+      }
+      return { data: null, error: new BillingAccountRepositoryError('concurrent_change') };
+    } catch (err) {
+      methodLogger.error({ err }, 'Failed to clear the Business OS renewal failure');
+      return { data: null, error: asError(err) };
+    }
+  }
+}
+
+/** What the renewal-failure writes take. Every value is server-derived (our row, Stripe's invoice). */
+export interface RenewalFailureInput {
+  userId: string;
+  livemode: boolean;
+  stripeSubscriptionId: string;
+  invoiceId: string;
+  /** `P` (see `RenewalFailureFacts`). */
+  periodEndIso: string;
+  attemptCount: number;
+  /** `event.created`, display only. */
+  failedAtIso: string;
+  hostedInvoiceUrl: string | null;
+  nowIso: string;
 }
 
 // Singleton on the service-role client (see the header for why).

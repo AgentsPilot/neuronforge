@@ -517,8 +517,8 @@ describe('backward: a gate cannot ship unregistered', () => {
     {
       // Plan payments P-4.2 (workplan §3.4, §3.7; SA W-6, W-7).
       file: 'lib/business-os/billing/planPurchaseView.ts',
-      symbols: ['FreeAccessEndedByPurchase', 'freeAccessEndedByPurchase', 'hasOpenEndedFreeAccess'],
-      why: 'Plan payments P-4.2 (SA W-6, W-7): the Settings → Plan purchase view behind the my-plan route. It reads `hasOpenEndedFreeAccess` (BQ-P10) over the snapshot the route already holds, to feed `planPurchaseOffer` the same fact the checkout uses, and `freeAccessEndedByPurchase` (with its `FreeAccessEndedByPurchase` TYPE) to pick the "ends your free trial / free access today" sentence. It DESCRIBES what the checkout would sell, for display; it refuses nothing itself (the checkout route does), grants or withholds no capability, and calls no `check()` / `decide()`, so there is no capability to register it under. P-7b.1b re-check: it also feeds `planUpgradeOffer` (planCheckoutEligibility.ts) from the same billing row, for `purchase.upgrade`; no new entitlements symbol, and the upgrade routes refuse, not this view. If it ever refuses a request or a feature by plan, it moves to ENFORCEMENT_POINTS.',
+      symbols: ['FreeAccessEndedByPurchase', 'freeAccessEndedByPurchase', 'getEntitlementMode', 'hasOpenEndedFreeAccess'],
+      why: 'Plan payments P-4.2 (SA W-6, W-7): the Settings → Plan purchase view behind the my-plan route. It reads `hasOpenEndedFreeAccess` (BQ-P10) over the snapshot the route already holds, to feed `planPurchaseOffer` the same fact the checkout uses, and `freeAccessEndedByPurchase` (with its `FreeAccessEndedByPurchase` TYPE) to pick the "ends your free trial / free access today" sentence. It DESCRIBES what the checkout would sell, for display; it refuses nothing itself (the checkout route does), grants or withholds no capability, and calls no `check()` / `decide()`, so there is no capability to register it under. P-7b.1b re-check: it also feeds `planUpgradeOffer` (planCheckoutEligibility.ts) from the same billing row, for `purchase.upgrade`; no new entitlements symbol, and the upgrade routes refuse, not this view. If it ever refuses a request or a feature by plan, it moves to ENFORCEMENT_POINTS. P-6a.2 (workplan §5.7, SA Q-5): `getEntitlementMode` is read only to know whether the effective mode is `enforce`, so the Settings line never says "paused" before S-5; it decides wording, never access.',
     },
     {
       file: 'components/test-business-os/PlanCheckoutPanel.tsx',
@@ -556,6 +556,16 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/billing/planPaymentApply.ts',
       symbols: ['EntitlementConfig', 'RecordPlanChangeInput', 'resolveAccountId', 'tierIsConfigured'],
       why: 'Plan payments P-3b.2 (workplan §3.2, §3.3): applies a PAID Stripe plan invoice. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `tierIsConfigured` refuses to WRITE a tier the config does not define (RC-1, a data-integrity refusal of a payment, not a refusal of a request by plan); the two TYPES describe its ports. It calls no `check()` / `decide()` and gates no feature. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planSubscriptionMirror.ts',
+      symbols: ['RecordPlanChangeInput', 'resolveAccountId'],
+      why: 'Plan payments P-6a.2 (workplan §5.5, SA C-4): on `customer.subscription.deleted` it records the `subscription_ended` money history row and the BOS_BILLING_SUBSCRIPTION_ENDED audit. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `RecordPlanChangeInput` is the TYPE of its audit port. It writes no plan row, invalidates nothing, calls no `check()` / `decide()` and refuses nothing by plan.',
+    },
+    {
+      file: 'lib/business-os/billing/readPaymentNotice.ts',
+      symbols: ['getEntitlementConfig', 'getEntitlementMode', 'getEntitlementService', 'planLabel', 'resolveAccountId'],
+      why: 'Plan payments P-6a.2 (workplan §5.6, SA C-13): the owner payment banner read for the Business OS layout. It reads the session account snapshot (`getEntitlementService` through `resolveAccountId`) for the lifecycle state and grace end, `getEntitlementMode` only to know whether the effective mode is `enforce` (no "paused" wording before S-5, SA Q-5), and `planLabel` / `getEntitlementConfig` for the plan name. DISPLAY ONLY, like readPlanBadge: it refuses nothing, grants nothing and calls no `check()` / `decide()`.',
     },
   ];
 

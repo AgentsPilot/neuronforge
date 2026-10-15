@@ -73,9 +73,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +1 shared (AI_PRICE_MANUAL_ENTRY): AI model price review slice 3, a pending price entered by hand (2026-10-14).
   // +1 Business OS (BOS_BILLING_TEST_CLOCK_ATTACHED): plan payments P-6a.1, the test-mode test clock attach (2026-10-15).
   // +1 shared (AI_PRICE_FETCH_RUN): AI model price review slice 5, "Check provider prices" (2026-10-15).
-  it('pins the split: 55 Business OS, 63 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(202);
-    expect(eventsTagged('bos')).toHaveLength(55);
+  // +3 Business OS (BOS_BILLING_PAYMENT_FAILED, _PAYMENT_ACTION_REQUIRED, _SUBSCRIPTION_ENDED): plan payments P-6a.2, renewal failures and the end (2026-10-15).
+  it('pins the split: 58 Business OS, 63 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(205);
+    expect(eventsTagged('bos')).toHaveLength(58);
     expect(eventsTagged('shared')).toHaveLength(63);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });
