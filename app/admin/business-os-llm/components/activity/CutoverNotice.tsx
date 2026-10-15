@@ -1,8 +1,8 @@
 /**
  * The cut-over line (FR-B13, AC-B20). The ledger begins when charging went
  * live, so any window that starts earlier says so and points at where earlier
- * AI activity lives: the audit trail's AI action entries and Cost Analytics,
- * narrowed to the chosen business when there is one.
+ * AI activity lives: the audit trail's AI action entries and the recorded AI
+ * cost in AI cost & usage, narrowed to the chosen business when there is one.
  *
  * When the whole window is before the cut-over, the tab renders this INSTEAD
  * of the table, so there is no empty "no results" that reads as "nothing ran".

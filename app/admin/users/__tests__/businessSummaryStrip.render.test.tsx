@@ -19,7 +19,7 @@ const PLAN_WORDS = `${recordedAccountBody.data.plan.tier} · cohort pilot`;
 const BASE: BusinessSummaryStripProps = {
   plan: { kind: 'value', text: PLAN_WORDS },
   credits: { kind: 'cell' },
-  aiSpend: { kind: 'value', text: '$4.21', sub: 'estimated' },
+  aiSpend: { kind: 'value', text: '$4.21', sub: 'recorded' },
   business: { companyName: 'Acme Therapy', vertical: 'therapist' },
   creditsLeft: { kind: 'percent', value: 64, trial: false },
   lastSignInAt: '2026-10-10T08:05:00Z',
@@ -32,16 +32,16 @@ describe('BusinessSummaryStrip', () => {
     render(<BusinessSummaryStrip {...BASE} />);
     const strip = screen.getByTestId('drawer-strip');
     const labels = Array.from(strip.querySelectorAll('dt')).map((dt) => dt.textContent);
-    expect(labels).toEqual(['Plan', 'Credits left', 'Business OS AI, 30 days', 'Last sign-in']);
+    expect(labels).toEqual(['Plan', 'Credits left', 'Recorded AI cost, 30 days', 'Last sign-in']);
     expect(strip.querySelectorAll('dl')).toHaveLength(1);
     expect(strip.querySelectorAll('a, button, input, select, textarea, summary')).toHaveLength(0);
   });
 
-  it('a Business OS account: the plan words, the list cell, the USD figure marked estimated, the UTC sign-in', () => {
+  it('a Business OS account: the plan words, the list cell, the USD figure marked recorded, the UTC sign-in', () => {
     render(<BusinessSummaryStrip {...BASE} />);
     expect(slot('strip-plan').textContent).toBe(PLAN_WORDS);
     expect(within(slot('strip-credits-left')).getByTestId('row-credits-left').textContent).toContain('64%');
-    expect(slot('strip-ai-spend').textContent).toBe('$4.21estimated');
+    expect(slot('strip-ai-spend').textContent).toBe('$4.21recorded');
     const lines = Array.from(slot('strip-last-sign-in').querySelectorAll('span')).map((s) => s.textContent);
     expect(lines[0]).toBe('2026-10-10 08:05 UTC');
   });

@@ -262,6 +262,9 @@ Minimum coverage:
 - [ ] Class exported from `index.ts` (both the class and the singleton)
 - [ ] Unit tests cover each method's happy path + at least one error path
 - [ ] **`'use client'` files do NOT import this repository** — repositories are server-only
+- [ ] **New table, bucket, or a new column on an exported table? Classified for the data export in the same PR** (see below)
+
+**Data export classification (mandatory).** If your change adds a table or a storage bucket that stores customer or business data, or adds a column to a table the export includes, classify it in the same PR, in its descriptor in `lib/business-os/purge/descriptors.ts` (the required `export` field; a new bucket is a `STORAGE_DESCRIPTORS` row with `export`). Either **include** it with an explicit column list (never `*`), or **exclude** it with a written reason (secret, cache, platform-only, our cost, activity…). Token, secret and key columns are always excluded and must never be granted to `anon` / `authenticated`. A descriptor without a classification fails CI (`lib/business-os/data-export/__tests__/exportClassification.test.ts`), and a user-owned table without a descriptor fails `businessOwnedTables.test.ts`. A new column on an included table goes into its `columns` or its `excludedColumns`, with a reason. Check the live schema with `npm run schema:reconcile` (read-only), which reports unclassified and missing export columns.
 
 ---
 
@@ -275,4 +278,5 @@ Minimum coverage:
 | Hard delete by default | Soft delete (status + deleted_at) is the project default |
 | Import the repository in a `'use client'` component | Repositories are server-only — call them via an API route |
 | Use `console.error('repo failed:', err)` | `this.logger.error({ err }, 'repo failed')` |
+| Add a table (or a column to an exported table) and leave the data export to "later" | Classify it in its descriptor's `export` field in the same PR: include with explicit columns, or exclude with a reason (`npm run schema:reconcile` shows what is unclassified) |
 | Inline new query patterns instead of reusing helpers | If you find yourself repeating logic across repositories, extract it — but ask SA first per CLAUDE.md rule #7 |

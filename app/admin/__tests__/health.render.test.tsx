@@ -90,11 +90,11 @@ const SUMMARY: HealthSummary = {
       headline: 'Total is a minimum; not all calls counted',
       figures: [
         {
-          label: 'AI spend, last 7 days (USD)',
+          label: 'Recorded AI cost, last 7 days (USD)',
           value: 'at least $12.10 (previous 7 days: $3.00)',
           exact: false,
           href: '/admin/analytics?scope=bos&dateFrom=x&dateTo=y',
-          linkLabel: 'Business OS AI spend, last 7 days: at least $12.10, open in AI cost & usage',
+          linkLabel: 'Recorded AI cost, last 7 days: at least $12.10, open in AI cost & usage',
           note: null,
         },
       ],

@@ -30,6 +30,14 @@
 //
 // No Supabase client import and no `.from(` (B-1 / B-2): all I/O is the one
 // repository call in `runSchemaReconciler`.
+//
+// ── Export column drift (data export DE-2, FR-E19) ──────────────────────────
+// Two REPORT-ONLY lists ride along: `exportColumnDrift` (a live column on an
+// exported table that nobody classified) and `exportColumnsMissing` (a column
+// the export declares that is not live). Neither changes `status`, so neither
+// can block a delete, and the fingerprint stays (table, level) only. This file
+// never reads a descriptor's `export` itself (SA-Q3): the pure helpers in
+// data-export/classification.ts do.
 
 import { createHash } from 'crypto';
 
@@ -39,6 +47,11 @@ import {
   type PurgeSchemaSnapshot,
 } from '@/lib/repositories/BusinessPurgeRepository';
 import { PURGE_DESCRIPTORS } from './descriptors';
+import {
+  exportColumnDrift,
+  exportColumnsMissing,
+  type ExportColumnRef,
+} from '@/lib/business-os/data-export/classification';
 import type { PurgeDescriptor, PurgeDescriptorLevel } from './types';
 
 const logger = createLogger({ module: 'PurgeSchemaReconciler' });
@@ -71,6 +84,16 @@ export interface SchemaReconcileResult {
   tenantTables: string[];
   /** sha256 hex over the canonical schema/descriptor shape. `null` when unreadable. */
   fingerprint: string | null;
+  /**
+   * DE-2, report-only: live columns on an export `include` table that are in
+   * neither its `columns` nor its `excludedColumns`. Never affects `status`.
+   */
+  exportColumnDrift: ExportColumnRef[];
+  /**
+   * DE-2, report-only: columns an `include` table declares that are not live
+   * (PostgREST would reject that section's whole select). Never affects `status`.
+   */
+  exportColumnsMissing: ExportColumnRef[];
   /** Present when `status === 'unreadable'`. Never contains row data. */
   error?: string;
 }
@@ -162,7 +185,16 @@ export function reconcileSchema(
       ? 'drift'
       : 'ok';
 
-  return { status, unclassified, missingDeletable, missingNever, tenantTables, fingerprint };
+  return {
+    status,
+    unclassified,
+    missingDeletable,
+    missingNever,
+    tenantTables,
+    fingerprint,
+    exportColumnDrift: exportColumnDrift(snapshot.columns, descriptors),
+    exportColumnsMissing: exportColumnsMissing(snapshot.columns, descriptors),
+  };
 }
 
 /**
@@ -184,6 +216,8 @@ export async function runSchemaReconciler(
     missingNever: [],
     tenantTables: [],
     fingerprint: null,
+    exportColumnDrift: [],
+    exportColumnsMissing: [],
     error,
   });
 
@@ -204,6 +238,8 @@ export async function runSchemaReconciler(
         missingNeverCount: result.missingNever.length,
         unclassified: result.unclassified,
         missingDeletable: result.missingDeletable,
+        exportColumnDriftCount: result.exportColumnDrift.length,
+        exportColumnsMissingCount: result.exportColumnsMissing.length,
       },
       'Schema reconciled against purge descriptors'
     );

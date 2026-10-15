@@ -865,7 +865,9 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // +2 test-account cleanup first live run (2026-10-07): insight_hypotheses and insight_measurements (both reset).
     // +4 never entered when added (2026-10-08): business_subscribers, marketing_consent_events,
     // marketing_consent_state, marketing_consent_settings.
-    expect(baseline.count).toBe(154);
+    // +1 data export DE-2 (2026-10-15): intent_examples (never, global), the USER_OWNED_TABLES
+    // entry that had no descriptor.
+    expect(baseline.count).toBe(155);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

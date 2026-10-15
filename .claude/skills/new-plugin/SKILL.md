@@ -83,6 +83,10 @@ These are the things most likely to be missed and they break the V6 pipeline sil
 - [ ] While the committed active profile is `business_os`, a new non-BOS plugin is registered but not loaded. To test it, set `ACTIVE_PLUGIN_PROFILE` to `'all'` locally and do **not** commit that change.
 - [ ] UI metadata `category` is one of: `communication` · `productivity` · `crm` · `marketing` · `project` · `finance` · `integration` · `ai`.
 
+### Data export (plugins that add their own table or bucket, e.g. internal Business OS plugins)
+
+- [ ] **Data export classification (mandatory).** If your change adds a table or a storage bucket that stores customer or business data, or adds a column to a table the export includes, classify it in the same PR, in its descriptor in `lib/business-os/purge/descriptors.ts` (the required `export` field; a new bucket is a `STORAGE_DESCRIPTORS` row with `export`). Either **include** it with an explicit column list (never `*`), or **exclude** it with a written reason (secret, cache, platform-only, our cost, activity…). Token, secret and key columns are always excluded and must never be granted to `anon` / `authenticated`. A descriptor without a classification fails CI (`lib/business-os/data-export/__tests__/exportClassification.test.ts`), and a user-owned table without a descriptor fails `businessOwnedTables.test.ts`. A new column on an included table goes into its `columns` or its `excludedColumns`, with a reason. Check the live schema with `npm run schema:reconcile` (read-only), which reports unclassified and missing export columns.
+
 ### CLAUDE.md cross-cutting rules
 
 - [ ] No hardcoded plugin names or operation names in V6 pipeline code or system prompts (per **Platform Design Principles** in CLAUDE.md). Plugin schemas are the source of truth.

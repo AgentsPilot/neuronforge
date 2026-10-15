@@ -19,7 +19,7 @@
  *     & entitlements screen uses — so the plan, cohort and "which layer decided"
  *     are exactly what that API returns;
  *   - the account summary route: business name and vertical, 30-day Business OS
- *     AI spend, recent failed AI actions (metadata only).
+ *     recorded AI cost, recent failed AI actions (metadata only).
  *
  * Money: AI cost is USD by definition of the model pricing table, labelled as
  * such, never converted and never mixed with the business's own currency.
@@ -215,7 +215,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
       aiSlot = {
         kind: 'value',
         text: formatUsd(spend.total.estimatedCostUsd),
-        sub: spend.status === 'incomplete' ? 'estimated, a lower bound' : 'estimated',
+        sub: spend.status === 'incomplete' ? 'recorded, a lower bound' : 'recorded',
       };
     }
   }
@@ -356,7 +356,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
           <>
             {/* Not headings: each DrawerSection has exactly one (L-1d M-4; SA C2). */}
             <div data-testid="bos-panel-spend" className={`${PART_BOX} space-y-2`}>
-              <p className="text-sm font-semibold text-slate-300">Business OS, last 30 days (USD estimated)</p>
+              <p className="text-sm font-semibold text-slate-300">Recorded AI cost, Business OS, last 30 days (USD)</p>
               <PartPurpose part="ai-bos" />
               {summary.data.aiSpend30d.status === 'error' ? (
                 <p className="text-sm text-rose-300">The AI usage ledger could not be read.</p>
