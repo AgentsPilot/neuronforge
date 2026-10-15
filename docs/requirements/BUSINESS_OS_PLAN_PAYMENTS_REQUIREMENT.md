@@ -592,6 +592,7 @@ P-2 and P-1 can run in parallel. P-1 must be deployed to production before P-3a 
 | 17 | **`paidInvitesAvailable`** on. This opens friend payment and admin Paid invites (F5c-3). **Turned on only after P-9.2 has merged** (SA S5-7, P5-C12; P-9 SA C-11): from P-9.1 the switch also opens an admin Paid invitee's signup, but only P-9.2 gives them a way to pay, so with P-9.1 alone they would be held on "payment coming soon". Local demos flip it locally and never commit the flip | User decides; one-line PR | After row 15, and only after P-9.2 has merged | ☐ |
 | 18 | **First real purchase** checked end to end: the plan row, the billing record with `livemode = true`, the money history, the audit entry, the receipt email, and Adaptive Pricing off (row 12) | User; TL checks the records | After row 16 | ☐ |
 | 19 | **Admin shows live data only.** The billing panel, subscriptions list and MRR show the live purchase and none of the test rows (PF-15) | User; TL checks | After row 18 | ☐ |
+| 20 | **3-D Secure (checkout and upgrade) verified inside the Settings plan drawer** (settings drawer S-1, SA W-2; added 2026-10-15). Checkout with `4000 0027 6000 3184` and the upgrade with Stripe's "always requires authentication" card, each on desktop and phone width: the challenge can be clicked and typed into, focus is not pulled back into the drawer, the drawer stays open, and abandoning leaves it usable. Neither payment switch goes on in production until this is ticked | User; QA records | Before row 15 | ☐ |
 
 ---
 
