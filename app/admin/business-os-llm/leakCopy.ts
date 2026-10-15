@@ -20,7 +20,7 @@ export const LEAK_NOT_RUN = 'Not run yet. Choose up to 7 days (UTC) and run the 
 export const LEAK_SCOPE = (accountLabel: string | null) =>
   accountLabel ? `Checking one business: ${accountLabel}` : 'Checking every Business OS business';
 
-export const LEAK_CLEAN = 'No uncharged AI spend found';
+export const LEAK_CLEAN = 'No recorded AI cost left uncharged';
 
 /** CR4b-N2 / QA4b-E2: the end pulled back to the start leaves nothing to examine. Never green. */
 export const LEAK_EMPTY_WINDOW = 'Nothing to check yet — the window has not ended';
@@ -43,7 +43,7 @@ export const LEAK_ROW_NOTE = (counts: { chargedAboveUsage: number; unresolvedCor
     .join(' · ');
 
 export const LEAK_FOUND = (accounts: number, usd: string) =>
-  `${accounts} business${accounts === 1 ? '' : 'es'} with uncharged AI spend (${usd} not charged)`;
+  `${accounts} business${accounts === 1 ? '' : 'es'} with recorded AI cost not charged (${usd})`;
 
 export const LEAK_PARTIAL =
   'Not everything could be checked, so this is not a clean result. See the reasons below and run it again, ' +
@@ -56,7 +56,7 @@ export const LEAK_TWO_NIGHTS =
   'A discrepancy near midnight can be reported on two nights in a row: a reused chat or onboarding group is examined by both.';
 
 export const LEAK_STATUS_TEXT: Record<LeakAccountStatusWire, string> = {
-  leak: 'Uncharged spend',
+  leak: 'Recorded, not charged',
   could_not_check: 'Could not check',
   incomplete: 'Only partly read',
   clean: 'No leak',

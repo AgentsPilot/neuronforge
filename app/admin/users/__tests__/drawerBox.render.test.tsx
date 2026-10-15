@@ -109,7 +109,7 @@ describe('DB-5: the sentences are the approved copy, word for word (SA C1; TL co
       limit: 'The most this business can spend on top-ups, and its changes.',
       plan: 'The Business OS plan and what it includes.',
       ai: 'AI cost, calls and failures for this account over 30 days.',
-      'ai-bos': "Estimated cost of this business's Business OS AI calls, in USD.",
+      'ai-bos': "Recorded AI cost of this business's Business OS AI calls, in USD.",
       'ai-failures': 'Business OS AI actions that failed, newest first, with audit links.',
       'ai-all': "This account's AI token use in every product, from older records.",
       account: 'Who this login is, how it signs in, and its plugins.',
