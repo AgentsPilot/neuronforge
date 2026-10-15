@@ -25,7 +25,8 @@
  *      slice 2b the all-accounts overdue and client plan reads and the
  *      platform-wide reminder queue read, since slice 4a the all-accounts
  *      boost purchase read, and since slice 5a the all-accounts plan payment
- *      read). The platform-wide revenue head count is not called with a
+ *      read, and since M-4 the all-accounts usage-log cost read). The
+ *      platform-wide revenue head count is not called with a
  *      business picked either (SA-Q35, slice 5a): the picked view makes no
  *      platform-wide read at all.
  * Slice 1c (BD-14, BD-15, BD-16): the billing and revenue reads count test
@@ -93,6 +94,16 @@
  * summary's margin line (M3-FR-8), with no names call. Without the tab and
  * with no business picked, neither runs and the payload is unchanged (AC-145).
  *
+ * RECORDED AI COST (Money M-4, OV-5, §11F). The usage log is reached ONLY
+ * through the two route-injected functions, `readRecordedAllAccounts` (no
+ * business picked) and `readRecordedForAccount` (exactly the picked, checked
+ * id): this file names no usage-log reader. One more entry in the one
+ * `Promise.all`, under `RECORDED_DEADLINE_MS`; the account read takes no
+ * signal, so it is raced only and a late result is dropped (E-57). On the
+ * Accounts tab neither is called and `aiCost.recorded` is absent (AC-167).
+ * The pure `buildRecordedAiCost` decides exactness and the difference; this
+ * file hands it Section 3's integer units and never adds the two measures.
+ *
  * READ-ONLY: no write, no LLM call, no audit entry. Logs read failures only,
  * with the read's name: never a figure, a name or an account id.
  *
@@ -112,7 +123,7 @@ import type {
   FinanceRevenueCounts,
 } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import { cutoverClamp, settle } from '@/lib/business-os/credits/aiActivity';
-import { underDeadline, type DeadlineRead, type ReadTiming } from '@/lib/admin/readUnderDeadline';
+import { ReadDeadlineError, underDeadline, type DeadlineRead, type ReadTiming } from '@/lib/admin/readUnderDeadline';
 import { todayUtc } from '@/app/admin/components/adminWindowPresets';
 import { CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
 import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
@@ -124,6 +135,7 @@ import { buildBoostRevenue } from './boostRevenue';
 import { buildPlanRevenue } from './planRevenue';
 import { combineOurRevenue } from './ourRevenue';
 import { buildAccountEconomics, buildAccountMargin } from './accountEconomics';
+import { buildRecordedAiCost, type RecordedReadInput, type RecordedRowInput } from './recordedCost';
 import type { AiCostUnits } from './aiCost';
 import {
   buildClientPlans,
@@ -197,6 +209,12 @@ export const FINANCE_LIMITS = {
    * a product on purpose.
    */
   REMINDER_DEADLINE_MS: 2 * 1000,
+  /**
+   * The recorded AI cost read's deadline (M-4, M4-FR-8, SA-W100): the
+   * reminder precedent. Changed only by SA ruling after QA times a 92-day
+   * window (SA-WR-49), never tuned silently.
+   */
+  RECORDED_DEADLINE_MS: 2 * 1000,
 } as const;
 
 /** K-5's information lines (slice 4a, S4-FR-7; slice 5a, SA-W60): nothing in the window, or what the figure is. */
@@ -259,6 +277,25 @@ export interface FinanceHealthDeps {
    * signal reaches every query.
    */
   readReminderFigures: (now: Date, signal: AbortSignal) => Promise<RepoResult<FinanceReminderFiguresInput>>;
+  /**
+   * M-4 (§11F.7): every account's Business OS usage-log costs in the half-open
+   * span `[from, to)`. Route-bound (the route converts the end, SA-Q52).
+   * Called only with no business picked and no tab, under
+   * `RECORDED_DEADLINE_MS`; the signal stops its paging.
+   */
+  readRecordedAllAccounts: (
+    span: FinanceSpan,
+    signal: AbortSignal
+  ) => Promise<RepoResult<{ rows: RecordedRowInput[]; completed: boolean }>>;
+  /**
+   * M-4: ONE account's Business OS usage-log costs in `[from, to)`. Called
+   * only with that business picked (after the plan check). No signal
+   * (SA-Q53): raced against the deadline only.
+   */
+  readRecordedForAccount: (
+    accountId: string,
+    span: FinanceSpan
+  ) => Promise<RepoResult<{ rows: RecordedRowInput[]; reachedCeiling: boolean }>>;
   /** The entitlement config, passed to the pure classifier (SA-WR-4). */
   config: ClassifyInput['config'];
   isPlatformAccount: (accountId: string) => boolean;
@@ -403,6 +440,26 @@ export interface FinanceHealthCounts {
         group: FinanceGroupFilterKind;
         show: FinanceAccountsTabQuery['show'];
       };
+  /**
+   * The recorded AI cost read (M-4, M4-FR-9): which read ran, how it ended,
+   * counts and flags only, never an amount, a difference, a feature value, a
+   * session id or a name. `{ built: false }` on the Accounts tab.
+   */
+  aiRecorded:
+    | { built: false }
+    | {
+        built: true;
+        read: 'all_accounts' | 'account';
+        outcome: 'ok' | 'failed' | 'deadline';
+        /** Rows read; null when the read failed. */
+        rows: number | null;
+        /** The all-accounts read's flag; null for the account read or a failed read. */
+        completed: boolean | null;
+        /** The account read's flag; null for the all-accounts read or a failed read. */
+        reachedCeiling: boolean | null;
+        unreadable: number;
+        ms: number | null;
+      };
 }
 
 const GROUP_KINDS: ReadonlySet<string> = new Set(['trial', 'founding_partner', 'comped', 'unknown_held', 'tier_set']);
@@ -509,6 +566,31 @@ export async function buildFinanceHealth(
   // SA-Q35: R-d is platform-wide, so with a business picked it is not called (E-36).
   const NOT_CALLED_REVENUE: RepoResult<FinanceRevenueCounts> | null = null;
 
+  // ── M-4 recorded read (wiring): start ──
+  // §11F.7: the recorded AI cost. On the Accounts tab neither read runs (AC-167); with a business
+  // picked only the account read, with exactly the checked id (AC-157); otherwise only the
+  // all-accounts read. The builder asks for the half-open window; the route converts the end
+  // (SA-Q52). Each result's flags travel by spread: they are read in recordedCost.ts only (E-53).
+  const recordedSpan: FinanceSpan = { from: window.start, to: window.end };
+  const recordedTimings: ReadTiming[] = [];
+  const NOT_BUILT: DeadlineRead<RecordedReadInput> | null = null;
+  const noRecordedData = () => new Error('Recorded read returned no data');
+  const readRecordedAll = (signal: AbortSignal) =>
+    settle<RecordedReadInput>(async () => {
+      const result = await deps.readRecordedAllAccounts(recordedSpan, signal);
+      return result.error || !result.data
+        ? { data: null, error: result.error ?? noRecordedData() }
+        : { data: { kind: 'all_accounts', ...result.data }, error: null };
+    });
+  const readRecordedOne = (id: string) =>
+    settle<RecordedReadInput>(async () => {
+      const result = await deps.readRecordedForAccount(id, recordedSpan);
+      return result.error || !result.data
+        ? { data: null, error: result.error ?? noRecordedData() }
+        : { data: { kind: 'account', ...result.data }, error: null };
+    });
+  // ── M-4 recorded read (wiring): end ──
+
   const [
     plansResult,
     payingResult,
@@ -526,6 +608,7 @@ export async function buildFinanceHealth(
     reminderRead,
     boostPurchases,
     planPayments,
+    recordedRead,
   ] = await Promise.all([
     plansPromise,
     accountId !== null
@@ -583,6 +666,14 @@ export async function buildFinanceHealth(
         ? deps.finance.listPlanPaymentsForAccountPaidInRange(accountId, windowRange)
         : deps.finance.listPlanPaymentsAllAccountsPaidInRange(windowRange)
     ),
+    // M-4 (M4-FR-8, SA-W100): the recorded read, in this same Promise.all, under its own deadline.
+    // The account read is raced only (E-57): it takes no signal, and a late result is dropped
+    // (`underDeadline` swallows its settlement, and `settle` means it never rejects).
+    input.accountsTab !== null
+      ? Promise.resolve(NOT_BUILT)
+      : accountId !== null
+        ? underDeadline('recorded', recordedTimings, () => readRecordedOne(accountId), FINANCE_LIMITS.RECORDED_DEADLINE_MS)
+        : underDeadline('recorded', recordedTimings, (signal) => readRecordedAll(signal), FINANCE_LIMITS.RECORDED_DEADLINE_MS),
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -677,6 +768,33 @@ export async function buildFinanceHealth(
       figures: { ...summary.figures, topAccounts },
     };
   }
+
+  // ── 4b. M-4 recorded section: start ──
+  // §11F.5: the recorded AI cost beside Section 3's charged one, never added (BD-18). Section 3's
+  // own units (R-a, or R-a′ with a business picked, whose deleted bucket is 0 by construction) and
+  // its own exactness (SA-W102); null when the ledger read failed (R4-9). Section 3's figures and
+  // status are not touched: the recorded result is one more key on the same object.
+  let recordedCounts: FinanceHealthCounts['aiRecorded'] = { built: false };
+  if (recordedRead !== null) {
+    if (!recordedRead.ok) failed('recorded_ai_cost', recordedRead.error ?? null);
+    const builtRecorded = buildRecordedAiCost({
+      read: recordedRead.ok ? recordedRead.value : { kind: 'failed' },
+      coverage: clamp.coverage,
+      charged:
+        aiCostUnits && aiCost.figures
+          ? { totalUnits: aiCostUnits.total.cost, deletedUnits: aiCostUnits.deleted.cost, exact: aiCost.figures.exact }
+          : null,
+    });
+    aiCost = { ...aiCost, recorded: builtRecorded.recorded };
+    recordedCounts = {
+      built: true,
+      read: accountId !== null ? 'account' : 'all_accounts',
+      outcome: recordedRead.ok ? 'ok' : recordedRead.error instanceof ReadDeadlineError ? 'deadline' : 'failed',
+      ...builtRecorded.counts,
+      ms: recordedTimings[0]?.ms ?? null,
+    };
+  }
+  // ── 4b. M-4 recorded section: end ──
 
   // ── 5. Our revenue (S1-FR-25..27; slice 4a S4-FR-1 to S4-FR-10; slice 5a §11D.4) ──
   // Boosts from R-k / R-k′, plans from R-m / R-m′. R-d (all businesses only)
@@ -1208,6 +1326,7 @@ export async function buildFinanceHealth(
       },
       revenueExistence: revenueResult === null ? 'not_called' : revenueResult.data ? 'read' : 'failed',
       accountEconomics: accountEconomicsCounts,
+      aiRecorded: recordedCounts,
     },
   };
 }

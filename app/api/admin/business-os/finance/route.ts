@@ -58,6 +58,20 @@
  * `counts.accountEconomics`: counts, booleans and enum words, `group` as its
  * kind, never a tier id, an amount, a currency or a name (M3-FR-14).
  *
+ * Money M-4 (OV-5, §11F.7) adds Section 3's recorded AI cost. This is the ONE
+ * finance file allowed to name the usage-log readers, and it names exactly
+ * two methods (the finance source guard): the Health tile's all-accounts read
+ * `listCostPointsAllAccountsInWindow` (no business picked) and the Businesses
+ * drawer's one-account read `listCallsInWindow` (exactly the picked id, which
+ * the builder has already checked). Both are bound here to this request (the
+ * admin read context, the Business OS row filter, the page size and ceiling)
+ * and injected, the 2b precedent. Both readers are inclusive at the end and
+ * the Finance window is exclusive, so each gets `end` less 1 ms (SA-Q52). The
+ * line gains `sections.aiRecorded` (a status) and `counts.aiRecorded` (which
+ * read, how it ended, counts and flags): never an amount, a difference, a
+ * feature value, a session id or a name (M4-FR-9). Still no new query
+ * parameter.
+ *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
  * @module app/api/admin/business-os/finance
@@ -67,7 +81,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
-import { isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
+import { bosRowFilter, isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
 import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';
 import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
 import { resolveFinanceWindow } from '@/lib/business-os/finance/financeWindow';
@@ -75,6 +89,8 @@ import { ADMIN_WINDOW_CHOICES, customRangeProblem, isRealDate } from '@/app/admi
 import { FINANCE_ACCOUNTS_SHOWS, FINANCE_ACCOUNTS_SORTS, FINANCE_GROUP_SHAPE } from '@/app/admin/finance/financeUrl';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { adminJobsQueuesRepository } from '@/lib/repositories/AdminJobsQueuesRepository';
+import { adminTokenUsageAnalyticsRepository, ADMIN_HEALTH_READ_LIMITS } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';
+import { tokenUsageRepository, TOKEN_USAGE_READ_LIMITS } from '@/lib/repositories/TokenUsageRepository';
 
 const logger = createLogger({ module: 'AdminBosFinanceAPI' });
 
@@ -84,6 +100,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
+
+/** SA-Q52: both reused usage-log reads are inclusive at the end; the Finance window is exclusive. */
+const inclusiveEnd = (to: Date) => new Date(to.getTime() - 1);
 
 /** Every response leaves through here, so none can miss the header (AC-35). */
 function noStore(response: NextResponse): NextResponse {
@@ -151,8 +170,9 @@ export async function GET(request: NextRequest) {
   if (gate instanceof NextResponse) return noStore(gate);
 
   const requestLogger = baseLogger.child({ adminId: gate.user.id });
-  // R-j's admin context (slice 2b): the jobs & queues read refuses to run without it.
-  const reminderContext = { correlationId, adminId: gate.user.id };
+  // The admin read context of the two cross-account admin reads: R-j (slice 2b, the jobs & queues
+  // read) and, since M-4, the all-accounts recorded AI cost read. Each refuses to run without it.
+  const adminReadContext = { correlationId, adminId: gate.user.id };
   const startedAt = Date.now();
 
   try {
@@ -196,7 +216,25 @@ export async function GET(request: NextRequest) {
       findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
       // R-j (SA-Q14): the jobs & queues admin read, its one definition of stuck and dead-lettered.
       readReminderFigures: (readAt, signal) =>
-        adminJobsQueuesRepository.readQueueFiguresAllAccounts(reminderContext, 'payment_reminders', readAt, { signal }),
+        adminJobsQueuesRepository.readQueueFiguresAllAccounts(adminReadContext, 'payment_reminders', readAt, { signal }),
+      // M-4 (§11F.7): the Health tile's all-accounts read, Business OS rows only (SA-WR-48), called
+      // only with no business picked; the signal stops its paging at the deadline.
+      readRecordedAllAccounts: (span, signal) =>
+        adminTokenUsageAnalyticsRepository.listCostPointsAllAccountsInWindow(
+          adminReadContext,
+          { start: span.from.toISOString(), end: inclusiveEnd(span.to).toISOString() },
+          { featureFilter: bosRowFilter() },
+          { pageSize: ADMIN_HEALTH_READ_LIMITS.PAGE_SIZE, ceiling: ADMIN_HEALTH_READ_LIMITS.CEILING, signal }
+        ),
+      // M-4: the Businesses drawer's one-account read (`.eq('user_id')` by signature), Business OS
+      // rows only (SA-WR-48), with exactly the picked id the builder checked. No signal (SA-Q53).
+      readRecordedForAccount: (id, span) =>
+        tokenUsageRepository.listCallsInWindow(
+          id,
+          { start: span.from, end: inclusiveEnd(span.to) },
+          bosRowFilter(),
+          { pageSize: TOKEN_USAGE_READ_LIMITS.MAX_PAGE_SIZE, ceiling: TOKEN_USAGE_READ_LIMITS.MAX_CEILING }
+        ),
     });
 
     if (result.kind === 'account_not_found') return errorResponse(404, 'Business not found');
@@ -212,7 +250,8 @@ export async function GET(request: NextRequest) {
     // `counts.paymentProblems` (slice 2b) are counts, booleans and state
     // words only (S2-FR-12); so are `counts.boosts` (slice 4a, S4-FR-10),
     // `counts.plans` and `counts.revenueExistence` (slice 5a, M2-FR-11), and
-    // `counts.accountEconomics` (slice 6a, M3-FR-14: `group` as its kind).
+    // `counts.accountEconomics` (slice 6a, M3-FR-14: `group` as its kind), and
+    // `counts.aiRecorded` (M-4, M4-FR-9: which read, how it ended, counts and flags).
     requestLogger.info(
       {
         window: { preset: window.preset, from: window.from, to: window.to },
@@ -225,6 +264,8 @@ export async function GET(request: NextRequest) {
           // Slice 6a: `not_built` on the Overview and with a business picked.
           accountEconomics: payload.accountEconomics?.status ?? 'not_built',
           aiCost: payload.aiCost.status,
+          // M-4: the recorded AI cost's status; `not_built` on the Accounts tab.
+          aiRecorded: payload.aiCost.recorded?.status ?? 'not_built',
           credits: payload.credits.status,
           takings: payload.takings.status,
           paymentProblems: {

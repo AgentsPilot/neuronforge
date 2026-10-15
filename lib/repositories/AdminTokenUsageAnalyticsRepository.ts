@@ -1,6 +1,6 @@
 // lib/repositories/AdminTokenUsageAnalyticsRepository.ts
-// Cross-account reads of the `token_usage` ledger for the admin Cost Analytics
-// screen ("AI cost & usage", /admin/analytics).
+// Cross-account reads of the `token_usage` ledger for the admin "AI cost & usage"
+// screen (/admin/analytics), the recorded AI cost.
 //
 // ADMIN-ONLY, CROSS-ACCOUNT BY DESIGN. This is the first admin-only
 // repository (ADMIN_IDENTIFICATION_AND_ACCESS.md OI-9 names it as the
@@ -10,10 +10,16 @@
 //     "a platform admin reads every ledger row" policy to lean on, and the
 //     owner policy would return one account at most. CLAUDE.md Rule 4
 //     (`.eq('user_id', userId)`) is replaced by the caller's gate. The ONLY
-//     permitted callers are `app/api/admin/token-usage/drill-down/route.ts`
-//     (Cost Analytics) and `app/api/admin/health-summary/route.ts` (the Health
-//     landing, admin reorganisation slice 4: the count and the paged cost read
-//     below). Both run `requireAdmin` before they reach this class. A source guard
+//     permitted callers are three:
+//       * `app/api/admin/token-usage/drill-down/route.ts` (AI cost & usage);
+//       * `app/api/admin/health-summary/route.ts` (the Health landing, admin
+//         reorganisation slice 4: the count and the paged cost read below);
+//       * `app/api/admin/business-os/finance/route.ts` (Finance Section 3's
+//         recorded AI cost, Money M-4 OV-5): `listCostPointsAllAccountsInWindow`
+//         only, with the Business OS row filter, called only with no business
+//         picked (one business is read through TokenUsageRepository's
+//         account-scoped `listCallsInWindow` instead).
+//     All three run `requireAdmin` before they reach this class. A source guard
 //     (lib/repositories/__tests__/AdminTokenUsageAnalyticsRepository.test.ts)
 //     fails if anything outside `app/api/admin/**` imports it.
 //   - "All accounts" is in the METHOD NAME, never an omitted argument

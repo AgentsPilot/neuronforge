@@ -9,6 +9,11 @@
  * heading in EVERY state, `unknown` included (the takings block's "Not our
  * revenue" must not vanish when the block fails). A section that passes no
  * badge renders exactly the DOM it rendered before.
+ *
+ * Money M-4 (SA-W98, R4-9): an optional `alsoWhenUnknown`, rendered after the
+ * could-not-load line ONLY when the section is `unknown`: Section 3's recorded
+ * AI cost is its own read and must still show when the charged read failed.
+ * A section that passes none renders exactly the DOM it rendered before.
  */
 
 import type { ReactNode } from 'react';
@@ -34,9 +39,11 @@ interface Props {
   children?: ReactNode;
   /** A chip in words beside the heading, shown in every state (SA-W24). */
   badge?: { tone: StatusTone; label: string };
+  /** M-4 (SA-W98): content of its own read, shown under the could-not-load line when the section is unknown. */
+  alsoWhenUnknown?: ReactNode;
 }
 
-export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge }: Props) {
+export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge, alsoWhenUnknown }: Props) {
   const headingId = `${id}-heading`;
   const heading = (
     <h2 id={headingId} className="text-base font-semibold text-white">
@@ -83,6 +90,7 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
       ) : (
         children
       )}
+      {status === 'unknown' && alsoWhenUnknown}
     </section>
   );
 }

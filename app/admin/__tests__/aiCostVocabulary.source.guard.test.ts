@@ -31,7 +31,7 @@ import * as ts from 'typescript';
 
 const ROOT = process.cwd();
 
-/** The §11F.4 places (W-1 to W-28). Part B's RecordedCostLines.tsx joins in Part B. */
+/** The §11F.4 places (W-1 to W-28), and Part B's Section 3 block (Money M-4 OV-5, B.11). */
 const FILES = [
   'app/admin/finance/financeCopy.ts',
   'app/admin/finance/components/AiCostSection.tsx',
@@ -46,6 +46,7 @@ const FILES = [
   'app/admin/users/components/BusinessOsPanel.tsx',
   'app/admin/users/components/AllProductsUsage.tsx',
   'app/admin/users/components/DrawerBox.tsx',
+  'app/admin/finance/components/RecordedCostLines.tsx',
 ] as const;
 type GuardedFile = (typeof FILES)[number];
 
@@ -152,9 +153,9 @@ const TEXTS = new Map<GuardedFile, string[]>(
 const textsOf = (f: GuardedFile) => TEXTS.get(f)!;
 
 describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
-  it('scans the thirteen §11F.4 files', () => {
-    expect(FILES).toHaveLength(13);
-    expect(new Set(FILES).size).toBe(13);
+  it('scans the thirteen §11F.4 files and the Part B block', () => {
+    expect(FILES).toHaveLength(14);
+    expect(new Set(FILES).size).toBe(14);
   });
 
   // The number of visible texts each file had when the guard was written. A
@@ -173,6 +174,7 @@ describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
     'app/admin/users/components/BusinessOsPanel.tsx': 111,
     'app/admin/users/components/AllProductsUsage.tsx': 16,
     'app/admin/users/components/DrawerBox.tsx': 18,
+    'app/admin/finance/components/RecordedCostLines.tsx': 7,
   };
   it.each(FILES)('%s has at least its pinned number of visible texts', (f) => {
     expect(textsOf(f).length).toBeGreaterThanOrEqual(MIN_TEXTS[f]);
@@ -323,6 +325,14 @@ const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; e
   { row: 'W-25b', file: ALL_PRODUCTS, text: 'Recorded AI cost by model (highest first)', exact: true },
   { row: 'W-25c', file: ALL_PRODUCTS, text: 'Recorded AI cost', exact: true },
   { row: 'W-27', file: DRAWER_BOX, text: "Recorded AI cost of this business's Business OS AI calls, in USD.", exact: true },
+  // Money M-4 Part B (OV-5, M4-FR-1, M4-FR-2, E-54): the new Section 3 labels, in the finance copy.
+  { row: 'M4-FR-1 caption', file: FIN, text: 'Beside the charged cost, never added', exact: true },
+  { row: 'M4-FR-1 recorded', file: FIN, text: 'Recorded AI cost (USD)', exact: true },
+  { row: 'M4-FR-1 recorded source', file: FIN, text: 'Usage log: every Business OS AI call, charged or not, priced from the model price table', exact: true },
+  { row: 'M4-FR-1 / E-54 above', file: FIN, text: 'Recorded above charged (USD)', exact: true },
+  { row: 'M4-FR-1 above source', file: FIN, text: 'Recorded AI cost minus charged AI cost, for the same window. Which calls: run the', exact: true },
+  { row: 'M4-FR-2 / E-54 summary', file: FIN, text: 'Recorded above charged', exact: true },
+  { row: 'R4-5', file: FIN, text: 'Not available: AI charging began 29 Sep 2026', exact: true },
 ];
 
 /** Exact whole texts: "AI cost (USD)" never matches inside "Charged AI cost (USD)". */

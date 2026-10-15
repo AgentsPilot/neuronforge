@@ -41,7 +41,12 @@ const ALL_TIERS = [...TIER_ORDER] as string[];
 const cohortEntries = Object.entries(COHORTS) as Array<[string, CohortConfig]>;
 const ADMIN_DATED = cohortEntries.find(([, config]) => !config.durationHistory)![0];
 const TIMED = cohortEntries.find(([, config]) => !!config.durationHistory)![0];
-const INPUTS: LifecycleInputs = { cohorts: COHORTS, tierOrder: TIER_ORDER, subscriptionGraceHistory: LIFECYCLE_CONFIG.subscriptionGraceHistory };
+const INPUTS: LifecycleInputs = {
+  cohorts: COHORTS,
+  tierOrder: TIER_ORDER,
+  subscriptionGraceHistory: LIFECYCLE_CONFIG.subscriptionGraceHistory,
+  renewalSettlementMarginHistory: LIFECYCLE_CONFIG.renewalSettlementMarginHistory,
+};
 
 function snapshotFor(overrides: Parameters<typeof account>[0]): PlanSnapshotLike {
   const lifecycle = deriveLifecycle(account(overrides), INPUTS, NOW);

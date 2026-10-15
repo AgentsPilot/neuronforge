@@ -767,6 +767,7 @@ export function lifecycleInputs(config: EntitlementConfig) {
     cohorts: config.cohorts,
     tierOrder: config.tierOrder,
     subscriptionGraceHistory: config.lifecycle.subscriptionGraceHistory,
+    renewalSettlementMarginHistory: config.lifecycle.renewalSettlementMarginHistory,
   };
 }
 

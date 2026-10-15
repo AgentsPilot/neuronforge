@@ -8,6 +8,13 @@
  * (AC-40). The recorded AI cost (the usage log) is a link, not a read here
  * (SA-Q4); M-4 Part B adds it beside the charged figure, never added.
  *
+ * Money M-4 (OV-5, M4-FR-1, SA-W98): the recorded block (`RecordedCostLines`)
+ * sits directly under the charged total, but OUTSIDE the figures guard, so it
+ * also shows before the cut-over; when the charged read failed (the section
+ * `unknown`, whose frame hides its content) it is handed to the frame's
+ * `alsoWhenUnknown` instead. It is absent when the payload has no
+ * `aiCost.recorded` (the Accounts tab).
+ *
  * Money M-1 (CR G-8, SA-W56): that link carries the window, and the business
  * when one is picked (`section3AnalyticsHref`).
  */
@@ -43,6 +50,7 @@ import { atLeast, formatCount, formatCredits, formatUsd } from '../financeFormat
 import { section3AnalyticsHref } from '../financeLinks';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
+import { RecordedCostLines } from './RecordedCostLines';
 
 const TH = 'px-2 py-1 text-left text-[11px] font-medium uppercase tracking-wide text-slate-400';
 const TD = 'px-2 py-1 text-sm text-slate-200';
@@ -77,18 +85,34 @@ export function AiCostSection({
   const f = aiCost.figures;
   const usd = (v: number) => atLeast(formatUsd(v), f?.exact ?? true);
   const entirelyBefore = aiCost.coverage === 'entirely_before_cutover';
+  // Fix round 1: the failure notice names "the charged figures above" only when they rendered.
+  const chargedShown = aiCost.status !== 'unknown' && f !== null && !entirelyBefore;
+  const recordedBlock = aiCost.recorded ? (
+    <RecordedCostLines recorded={aiCost.recorded} accountId={accountId} chargedShown={chargedShown} />
+  ) : null;
 
   return (
-    <FinanceSection id="ai-cost" title={AI_TITLE} subtitle={`${windowLabel}. ${AI_SOURCE}`} status={aiCost.status} onRetry={onRetry}>
+    <FinanceSection
+      id="ai-cost"
+      title={AI_TITLE}
+      subtitle={`${windowLabel}. ${AI_SOURCE}`}
+      status={aiCost.status}
+      onRetry={onRetry}
+      alsoWhenUnknown={recordedBlock}
+    >
       <div className="space-y-3">
         <CutoverNotice coverage={aiCost.coverage} accountId={accountId} />
         {f && !entirelyBefore && (
+          <dl className="grid gap-3 sm:grid-cols-3">
+            <div><dt className="text-xs text-slate-400">{AI_TOTAL}</dt><dd className="text-lg font-semibold text-white" data-testid="ai-total">{usd(f.costUsd)}</dd></div>
+            <div><dt className="text-xs text-slate-400">{AI_CREDITS}</dt><dd className="text-lg font-semibold text-white">{atLeast(formatCredits(f.credits), f.exact)}</dd></div>
+            <div><dt className="text-xs text-slate-400">{AI_ACTIONS}</dt><dd className="text-lg font-semibold text-white">{atLeast(formatCount(f.chargedActions), f.exact)}</dd></div>
+          </dl>
+        )}
+        {/* M-4 (SA-W98): outside the figures guard; never added to the charged total above. */}
+        {recordedBlock}
+        {f && !entirelyBefore && (
           <>
-            <dl className="grid gap-3 sm:grid-cols-3">
-              <div><dt className="text-xs text-slate-400">{AI_TOTAL}</dt><dd className="text-lg font-semibold text-white" data-testid="ai-total">{usd(f.costUsd)}</dd></div>
-              <div><dt className="text-xs text-slate-400">{AI_CREDITS}</dt><dd className="text-lg font-semibold text-white">{atLeast(formatCredits(f.credits), f.exact)}</dd></div>
-              <div><dt className="text-xs text-slate-400">{AI_ACTIONS}</dt><dd className="text-lg font-semibold text-white">{atLeast(formatCount(f.chargedActions), f.exact)}</dd></div>
-            </dl>
             {f.rows === 0 && <p className="text-sm text-slate-300" data-testid="ai-no-rows">{AI_NO_ROWS}</p>}
             {f.rows > 0 && (
               <div className="grid gap-4 lg:grid-cols-2">

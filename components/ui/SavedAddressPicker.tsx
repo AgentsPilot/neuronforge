@@ -32,6 +32,16 @@
  * can never rewrite the address on an invoice. That rule lives in
  * `lib/business-os/addressBook.ts`; this component only has to make the choice
  * clear.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A FORM THAT STORES TEXT, NOT PARTS (F-18)
+ *
+ * The marketing postal line is one line of free text, so it cannot be compared
+ * part by part and cannot be judged "empty" by this component. Such a caller
+ * passes `matchCurrent`: the picker then only MARKS the entry the caller says
+ * its text matches, and never fills anything on its own. The caller owns its
+ * seed; only the owner's click on an entry changes the field. Callers that do
+ * not pass it (profile, invoice) keep the structured behaviour below unchanged.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -40,8 +50,21 @@ import { Check, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { hasAddressContent, type StructuredAddress } from '@/lib/geo/address';
 
-/** What a saved address is used for, where it is used for anything. */
+/**
+ * What a saved address is used for, where it is used for anything.
+ *
+ * Mirrors the two pointer columns the addresses GET reads
+ * (`business_profiles.address_id`, `invoice_address_id`), because this is the
+ * type of `KnownAddress.usedBy`. Do not widen it for a new form: a form with no
+ * pointer column can never appear in `usedBy`. Use `AddressForm` for that.
+ */
 export type AddressUse = 'profile' | 'invoice';
+
+/**
+ * Which form the picker sits in. Every pointer use, plus forms that reuse the
+ * book without pointing at it (marketing stores its postal line as text).
+ */
+export type AddressForm = AddressUse | 'marketing';
 
 export interface KnownAddress {
   id: string;
@@ -81,8 +104,11 @@ function sameAddress(
 }
 
 interface SavedAddressPickerProps {
-  /** Which form this is, so the list can say "your invoices use this one". */
-  use: AddressUse;
+  /**
+   * Which form this is, so the list can say "your invoices use this one" and
+   * so two pickers on one page never share a radio group.
+   */
+  use: AddressForm;
   /**
    * The entry this form is currently pointing at, where it has one.
    *
@@ -99,6 +125,28 @@ interface SavedAddressPickerProps {
   onSelect: (address: StructuredAddress) => void;
   /** What the form currently holds, for recognising it in the list. */
   current?: StructuredAddress | null;
+  /**
+   * For a form that stores its address as TEXT, not parts. Passing it says two
+   * things, and both follow from that one fact:
+   *
+   *   1. RECOGNISE BY TEXT. Where the caller has not given `selectedId`, the
+   *      picker marks the first entry this returns `true` for (reported as
+   *      `'derived'`), and nothing else.
+   *   2. NEVER FILL. The picker then never calls `onSelect` by itself and never
+   *      falls back to the default entry. A form that cannot describe its
+   *      content as parts cannot be judged "empty" here, and it owns its seed.
+   *      Only the owner's click on an entry fills it.
+   *
+   * It wins over `current` when both are passed. Must be pure: it is called
+   * inside the book fetch and read through a ref, so it is never a reason to
+   * refetch.
+   */
+  matchCurrent?: (option: KnownAddress) => boolean;
+  /**
+   * The words for the "none of these" row. Defaults to "Add a new address",
+   * which is false on a form where typing adds nothing to the book.
+   */
+  otherLabel?: string;
   locale: 'en' | 'he' | 'es';
   isRTL?: boolean;
   /** The reader's words. Keys live in `LanguageContext`. */
@@ -125,6 +173,8 @@ export function SavedAddressPicker({
   onSelectedChange,
   onSelect,
   current,
+  matchCurrent,
+  otherLabel,
   locale,
   isRTL = false,
   t,
@@ -178,6 +228,8 @@ export function SavedAddressPicker({
   selectedRef.current = selectedId;
   const currentRef = useRef(current);
   currentRef.current = current;
+  const matchCurrentRef = useRef(matchCurrent);
+  matchCurrentRef.current = matchCurrent;
 
   useEffect(() => {
     let cancelled = false;
@@ -209,16 +261,27 @@ export function SavedAddressPicker({
          * given us.
          */
         if (selectedRef.current === null) {
-          const held = currentRef.current;
+          const recognises = matchCurrentRef.current;
 
-          if (hasAddressContent(held)) {
-            const match = book.find(option => sameAddress(option.address, held));
+          if (recognises) {
+            /*
+             * A form that stores text (see `matchCurrent`): mark, never fill.
+             * No `onSelect`, and no default for a form that "looks empty".
+             */
+            const match = book.find(option => recognises(option));
             if (match) onSelectedChange?.(match.id, 'derived');
           } else {
-            const fallback = book.find(option => option.isDefault) ?? book[0];
-            if (fallback) {
-              onSelectedChange?.(fallback.id, 'derived');
-              onSelect(fallback.address);
+            const held = currentRef.current;
+
+            if (hasAddressContent(held)) {
+              const match = book.find(option => sameAddress(option.address, held));
+              if (match) onSelectedChange?.(match.id, 'derived');
+            } else {
+              const fallback = book.find(option => option.isDefault) ?? book[0];
+              if (fallback) {
+                onSelectedChange?.(fallback.id, 'derived');
+                onSelect(fallback.address);
+              }
             }
           }
         }
@@ -277,8 +340,12 @@ export function SavedAddressPicker({
          * are looking at. "Your invoices use this one" is worth knowing on the
          * profile screen; on the invoice screen it is a label saying "this is
          * the screen you are on".
+         *
+         * Every other use, one line each: on the profile and invoice screens
+         * that is at most one, exactly as before; a form with no pointer of its
+         * own (marketing) can have two.
          */
-        const otherUse = option.usedBy.find(u => u !== use);
+        const otherUses = option.usedBy.filter(u => u !== use);
 
         return (
           <label
@@ -320,11 +387,11 @@ export function SavedAddressPicker({
                 </bdi>
               )}
 
-              {otherUse && (
-                <span className="mt-1 block text-[11px]" style={{ color: 'var(--v2-text-muted)' }}>
+              {otherUses.map(otherUse => (
+                <span key={otherUse} className="mt-1 block text-[11px]" style={{ color: 'var(--v2-text-muted)' }}>
                   {t(`settings.address.used_by.${otherUse}`)}
                 </span>
-              )}
+              ))}
             </span>
 
             {/*
@@ -402,7 +469,7 @@ export function SavedAddressPicker({
         />
         <Plus className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--v2-text-muted)' }} aria-hidden />
         <span className="text-sm" style={{ color: 'var(--v2-text-primary)' }}>
-          {t('settings.address.add_new')}
+          {otherLabel ?? t('settings.address.add_new')}
         </span>
       </label>
 
