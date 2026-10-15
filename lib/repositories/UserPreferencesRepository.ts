@@ -13,14 +13,35 @@
 // SERVICE-ROLE CLIENT, scoped by `user_id` (CLAUDE.md rules 1 and 4). Callers:
 // the admin invite form, which reads the signed-in admin's OWN preference to
 // pre-select the invitee language, and `/api/business-os/preferences`, which
-// reads and writes the session user's own row for `LanguageContext`. Every
+// reads and writes the session user's own row for `LanguageContext` and the
+// settings page's timezone save. Every
 // query filters on the `user_id` it is given; nothing here reads another user
 // by omission.
 //
-// One writer: `upsertPreferredLanguage`, called only by
-// `PATCH /api/business-os/preferences`, which writes it together with
-// `business_profiles.language`. Keep it the only one, or the "both columns
-// together" rule (see `lib/business-os/userLanguage.ts`) gets a second home.
+// Two writers in this repository, each with one caller,
+// `PATCH /api/business-os/preferences`:
+//
+//   `upsertPreferredLanguage`  the language, always written together with
+//                              `business_profiles.language` (`{ language }`).
+//                              Keep it the only language writer, or the "both
+//                              columns together" rule (see
+//                              `lib/business-os/userLanguage.ts`) gets a second
+//                              home.
+//
+//   `saveConfirmedTimezone`    the timezone and `timezone_confirmed_at`
+//                              (`{ timezone }`, settings drawer D-1). UPDATE
+//                              first, INSERT only when no row exists, never an
+//                              upsert: an upsert would either overwrite an
+//                              existing row's `preferred_language` (if sent) or
+//                              create the row on the `en` default (if not). The
+//                              language for a NEW row comes from the server
+//                              (`business_profiles.language`), never from the
+//                              browser.
+//
+// Known debt, not moved by D-1: `user_preferences.timezone` is still written
+// directly, outside this repository, by `app/api/onboarding/build/route.ts`,
+// `app/api/user/profile/route.ts`, `app/(protected)/settings/page.tsx` and
+// `components/onboarding/hooks/useOnboarding.ts`.
 //
 // `findTimezone` was added for the package-acceptance wire, which creates
 // bookings off-request and so has no browser zone to fall back on. It was
@@ -151,6 +172,87 @@ export class UserPreferencesRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to read the locale preferences');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * Save the business timezone the owner just picked, and stamp that a human
+   * answered (`timezone_confirmed_at`), creating the row only if there is none.
+   *
+   * The caller has already validated `zone` (`isValidTimezone`); it is written
+   * exactly as given: no trim, no default. `null` ("not asked") is never
+   * written here.
+   *
+   *   A. UPDATE the user's row (`{ count: 'exact' }`, no `.select()`: the
+   *      PostgREST update + select 42703 hazard). `preferred_language` is not
+   *      sent, so an existing row keeps its language.
+   *   B. Count 0: INSERT a new row, with `languageForNewRow` when the caller
+   *      has one (the business's language, resolved server-side) and otherwise
+   *      no language at all, so the column default applies (logged).
+   *   C. The insert hit `23505` (a concurrent save created the row first):
+   *      the UPDATE once more. No second retry.
+   *
+   * A `null` count is treated as a failure, not as "no row" (SA Q-3): an
+   * insert on an unknown count could race a real row. One `confirmedAt` stamp
+   * is used for both `timezone_confirmed_at` and `updated_at`, and the caller
+   * passes the same stamp to the `profiles` mirror. Never upserts, never throws.
+   */
+  async saveConfirmedTimezone(
+    userId: string,
+    zone: string,
+    options: { languageForNewRow: SupportedLanguage | null; confirmedAt: string }
+  ): Promise<RepositoryResult<true>> {
+    const methodLogger = this.logger.child({ method: 'saveConfirmedTimezone', userId });
+    const { languageForNewRow, confirmedAt } = options;
+    const changes = { timezone: zone, timezone_confirmed_at: confirmedAt, updated_at: confirmedAt };
+
+    const updateExisting = async (): Promise<number> => {
+      const { error, count } = await this.supabase
+        .from(USER_PREFERENCES)
+        .update(changes, { count: 'exact' })
+        .eq('user_id', userId);
+      if (error) throw error;
+      if (count === null || count === undefined) {
+        throw Object.assign(new Error('Update count unavailable'), { code: 'COUNT_UNAVAILABLE' });
+      }
+      if (count > 1) {
+        // The only production signal of duplicate rows for one user.
+        methodLogger.warn({ count }, 'More than one preferences row updated for one user');
+      }
+      return count;
+    };
+
+    try {
+      if ((await updateExisting()) >= 1) return { data: true, error: null };
+
+      // `user_id` last, so nothing spread before it can replace it.
+      const row = {
+        ...changes,
+        ...(languageForNewRow ? { preferred_language: languageForNewRow } : {}),
+        user_id: userId,
+      };
+      const { error: insertError } = await this.supabase.from(USER_PREFERENCES).insert(row);
+
+      if (!insertError) {
+        if (!languageForNewRow) {
+          methodLogger.warn('Created the preferences row without a language; the column default applies');
+        }
+        return { data: true, error: null };
+      }
+
+      if ((insertError as { code?: string }).code !== '23505') throw insertError;
+
+      methodLogger.info('Preferences row created concurrently; updating it instead');
+      if ((await updateExisting()) >= 1) return { data: true, error: null };
+      throw Object.assign(new Error('No preferences row to update after a duplicate-key insert'), {
+        code: 'NO_ROW_AFTER_RETRY',
+      });
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to save the timezone');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };
