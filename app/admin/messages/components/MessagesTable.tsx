@@ -2,9 +2,9 @@
 
 /**
  * The Messages table (Admin Layout Standard L-7, §2.4): the `adminTable`
- * constants, status and priority chips, "Received (UTC)" with an age line, the
- * Open button in the first cell and a named Delete in the last. No Reply
- * control (D-14 (b), R-15).
+ * constants, status and priority chips, "Received (UTC)" with an age line, a
+ * named Delete, and the Open button as an icon in a narrow last column (LF-8,
+ * user request 2026-10-15). No Reply control (D-14 (b), R-15).
  *
  * The whole row also opens, as before, under the six D-17 rules (SA M-3):
  * the `tr` takes `onClick` and `cursor-pointer` only; a click on a control
@@ -24,7 +24,9 @@ import {
   ADMIN_TABLE_WRAP,
   ADMIN_TBODY,
   ADMIN_TD,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
@@ -122,13 +124,16 @@ export function MessagesTable({ rows, openId, deleteFailedId, onOpen, onDelete }
       <table className={ADMIN_TABLE} aria-label="Messages">
         <thead className={ADMIN_THEAD}>
           <tr>
-            <th scope="col" className={ADMIN_TH}>Details</th>
             <th scope="col" className={ADMIN_TH}>Contact</th>
             <th scope="col" className={ADMIN_TH}>Message</th>
             <th scope="col" className={ADMIN_TH}>Status</th>
             <th scope="col" className={ADMIN_TH}>Received (UTC)</th>
             <th scope="col" className={ADMIN_TH}>
               <span className="sr-only">Actions</span>
+            </th>
+            {/* LF-8: the Open button's narrow last column; its name is for screen readers only. */}
+            <th scope="col" className={ADMIN_TH_OPEN}>
+              <span className="sr-only">Details</span>
             </th>
           </tr>
         </thead>
@@ -143,13 +148,6 @@ export function MessagesTable({ rows, openId, deleteFailedId, onOpen, onDelete }
               }`}
               onClick={(event) => handleRowClick(event, message)}
             >
-              <td className={ADMIN_TD}>
-                <OpenRowButton
-                  label={`Open message from ${message.name}`}
-                  onOpen={(button) => onOpen(message, button)}
-                  testId="row-open"
-                />
-              </td>
               <td className={ADMIN_TD}>
                 <div className="flex flex-wrap items-center gap-2">
                   <p className={`text-sm text-white ${message.status === 'unread' ? 'font-bold' : 'font-medium'}`}>
@@ -192,6 +190,13 @@ export function MessagesTable({ rows, openId, deleteFailedId, onOpen, onDelete }
                     {DELETE_FAILED}
                   </p>
                 )}
+              </td>
+              <td className={ADMIN_TD_OPEN}>
+                <OpenRowButton
+                  label={`Open message from ${message.name}`}
+                  onOpen={(button) => onOpen(message, button)}
+                  testId="row-open"
+                />
               </td>
             </tr>
           ))}

@@ -14,13 +14,25 @@ import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
 const LABEL = 'Open details for User Login at 2026-10-10 09:00 UTC';
 
 describe('OpenRowButton', () => {
-  it('shows "Open", is named by the label, and hides its icon', () => {
+  // LF-8 (user request 2026-10-15): an icon only; was the visible word "Open".
+  it('is an icon only, named by the label, with the label as its tooltip and its icon hidden', () => {
     render(<OpenRowButton label={LABEL} onOpen={jest.fn()} testId="x-open" />);
     const button = screen.getByRole('button', { name: LABEL });
-    expect(button.textContent).toBe('Open');
+    expect(button.textContent).toBe('');
+    expect(button.getAttribute('aria-label')).toBe(LABEL);
+    expect(button.getAttribute('title')).toBe(LABEL);
     expect(button.getAttribute('data-testid')).toBe('x-open');
-    const icon = button.querySelector('svg');
-    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    const icons = button.querySelectorAll('svg');
+    expect(icons).toHaveLength(1);
+    expect(icons[0].getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('LF-8: a 32 px square hit target, the icon centred', () => {
+    render(<OpenRowButton label={LABEL} onOpen={jest.fn()} />);
+    const button = screen.getByRole('button', { name: LABEL });
+    for (const cls of ['h-8', 'w-8', 'inline-flex', 'items-center', 'justify-center']) {
+      expect({ cls, present: button.classList.contains(cls) }).toEqual({ cls, present: true });
+    }
   });
 
   it('a click hands the button itself to onOpen, once', () => {

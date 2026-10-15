@@ -41,7 +41,9 @@ import {
   ADMIN_TBODY,
   ADMIN_TD,
   ADMIN_TD_ID,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
   formatShortId,
 } from '@/app/admin/components/layout/adminTable';
@@ -1157,7 +1159,6 @@ function AuditTrailPageContent() {
                 <table className={ADMIN_TABLE} aria-label="Audit events" data-testid="audit-table">
                   <thead className={ADMIN_THEAD}>
                     <tr>
-                      <th scope="col" className={ADMIN_TH}>Details</th>
                       <th scope="col" className={ADMIN_TH}>Time (UTC)</th>
                       <th scope="col" className={ADMIN_TH}>Event</th>
                       <th scope="col" className={ADMIN_TH}>Severity</th>
@@ -1165,6 +1166,10 @@ function AuditTrailPageContent() {
                       <th scope="col" className={ADMIN_TH}>Resource</th>
                       <th scope="col" className={ADMIN_TH}>Business</th>
                       <th scope="col" className={ADMIN_TH}>User</th>
+                      {/* LF-8: the Open button's narrow last column; its name is for screen readers only. */}
+                      <th scope="col" className={ADMIN_TH_OPEN}>
+                        <span className="sr-only">Details</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody className={ADMIN_TBODY}>
@@ -1172,13 +1177,6 @@ function AuditTrailPageContent() {
                       const userLabel = auditUserLabel(log);
                       return (
                         <tr key={log.id} data-testid="audit-row">
-                          <td className={ADMIN_TD}>
-                            <OpenRowButton
-                              testId="audit-open-details"
-                              label={`Open details for ${getActionLabel(log.action)} at ${formatUtc(log.created_at)}`}
-                              onOpen={(button) => openRow(log.id, button)}
-                            />
-                          </td>
                           <td className={`${ADMIN_TD} whitespace-nowrap`}>{formatUtc(log.created_at)}</td>
                           <td className={ADMIN_TD}>
                             <div className="flex items-center gap-2 text-slate-200">
@@ -1242,6 +1240,13 @@ function AuditTrailPageContent() {
                             ) : (
                               <span className="text-slate-400">—</span>
                             )}
+                          </td>
+                          <td className={ADMIN_TD_OPEN}>
+                            <OpenRowButton
+                              testId="audit-open-details"
+                              label={`Open details for ${getActionLabel(log.action)} at ${formatUtc(log.created_at)}`}
+                              onOpen={(button) => openRow(log.id, button)}
+                            />
                           </td>
                         </tr>
                       );

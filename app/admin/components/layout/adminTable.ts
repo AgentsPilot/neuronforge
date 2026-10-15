@@ -33,6 +33,17 @@ export const ADMIN_TH_NUM = 'px-3 py-2 text-right text-[11px] font-medium upperc
 /** A number cell: right-aligned, tabular figures, never wrapped, never monospace (C-13). */
 export const ADMIN_TD_NUM = 'px-3 py-2 align-top text-right tabular-nums whitespace-nowrap';
 
+/**
+ * The narrow last column that holds a row's `OpenRowButton` (LF-8, user
+ * request 2026-10-15). The header's word ("Details") is screen-reader-only,
+ * so the column still has a name: `<th scope="col" className={ADMIN_TH_OPEN}>`
+ * around `<span className="sr-only">Details</span>`. `w-10` is the 32 px
+ * button plus `px-1` on each side.
+ */
+export const ADMIN_TH_OPEN = 'w-10 px-1 py-2';
+
+export const ADMIN_TD_OPEN = 'w-10 px-1 py-1 align-top';
+
 /** An id in a cell: pages show `formatShortId(id)` and put the full id in `title`. */
 export const ADMIN_TD_ID = 'font-mono text-[11px] text-slate-400';
 

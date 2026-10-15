@@ -28,8 +28,10 @@ import {
   ADMIN_TD,
   ADMIN_TD_ID,
   ADMIN_TD_NUM,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
   ADMIN_TH_NUM,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
   formatShortId,
 } from '@/app/admin/components/layout/adminTable';
@@ -133,7 +135,6 @@ export function ActivityTable({
       <table className={ADMIN_TABLE} data-testid="activity-table" aria-label="AI actions">
         <thead className={ADMIN_THEAD}>
           <tr>
-            <th scope="col" className={ADMIN_TH}>{COLUMNS.details}</th>
             <th scope="col" className={ADMIN_TH}>{COLUMNS.when}</th>
             <th scope="col" className={ADMIN_TH}>{COLUMNS.business}</th>
             <th scope="col" className={ADMIN_TH}>{COLUMNS.area}</th>
@@ -148,18 +149,15 @@ export function ActivityTable({
             <th scope="col" className={ADMIN_TH}>{COLUMNS.errorCode}</th>
             <th scope="col" className={ADMIN_TH}>{COLUMNS.groupId}</th>
             <th scope="col" className={ADMIN_TH}>{COLUMNS.state}</th>
+            {/* LF-8: the Open button's narrow last column; its name is for screen readers only. */}
+            <th scope="col" className={ADMIN_TH_OPEN}>
+              <span className="sr-only">{COLUMNS.details}</span>
+            </th>
           </tr>
         </thead>
         <tbody className={ADMIN_TBODY}>
           {rows.map((row) => (
             <tr key={row.actionId} data-testid="activity-row">
-              <td className={ADMIN_TD}>
-                <OpenRowButton
-                  testId="activity-open-details"
-                  label={OPEN_DETAILS_LABEL(row.actionType, formatInstant(row.createdAt))}
-                  onOpen={(opener) => onOpen(row.actionId, opener)}
-                />
-              </td>
               <td className={`${ADMIN_TD} whitespace-nowrap`}>{formatInstant(row.createdAt)}</td>
               <td className={ADMIN_TD}>
                 <div className="text-slate-200">{row.companyName ?? NAME_UNAVAILABLE}</div>
@@ -185,6 +183,13 @@ export function ActivityTable({
               </td>
               <td className={ADMIN_TD}>
                 <RecordStateMarker row={row} settleMinutes={settleMinutes} />
+              </td>
+              <td className={ADMIN_TD_OPEN}>
+                <OpenRowButton
+                  testId="activity-open-details"
+                  label={OPEN_DETAILS_LABEL(row.actionType, formatInstant(row.createdAt))}
+                  onOpen={(opener) => onOpen(row.actionId, opener)}
+                />
               </td>
             </tr>
           ))}
