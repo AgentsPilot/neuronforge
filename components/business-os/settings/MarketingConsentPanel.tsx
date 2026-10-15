@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { SavedAddressPicker, type AddressSource } from '@/components/ui/SavedAddressPicker';
+import { SavedAddressPicker, type KnownAddress } from '@/components/ui/SavedAddressPicker';
 import { formatAddressOneLine } from '@/lib/geo/address';
 import type { CountryLocale } from '@/lib/geo/countries';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
@@ -163,6 +163,18 @@ function isPayload(data: unknown): data is Payload {
   return !!defaults && typeof defaults === 'object';
 }
 
+/** Trimmed, inner whitespace collapsed, case-folded: the form two addresses are compared in. */
+function normalisedAddressText(text: string | null | undefined): string {
+  return (text ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+/**
+ * Every language `formatAddressOneLine` writes in. A postal line filled from the
+ * address book is written in whatever language the reader had at the time, and
+ * only the country name differs between them, so recognising it needs all three.
+ */
+const ONE_LINE_LOCALES: readonly CountryLocale[] = ['en', 'he', 'es'];
+
 interface MarketingConsentPanelProps {
   /** Told whenever the form starts or stops differing from what was last loaded or saved. */
   onDirtyChange?: (dirty: boolean) => void;
@@ -173,8 +185,8 @@ interface MarketingConsentPanelProps {
 export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: MarketingConsentPanelProps = {}) {
   const { t, isRTL, language } = useLanguage();
 
-  /** Which saved address, if any, the postal field still represents. */
-  const [reusedAddress, setReusedAddress] = useState<AddressSource | null>(null);
+  /** The id of the saved address, if any, the postal field still represents. */
+  const [reusedAddress, setReusedAddress] = useState<string | null>(null);
 
   /** `formatAddressOneLine` speaks three languages; anything else reads English. */
   const addressLocale: CountryLocale =
@@ -214,8 +226,15 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
   /*
    * Never logs a value from the payload or the form: the wording, the notice and
    * the postal address are legal or personal text. Status and `err` only.
+   *
+   * `sentForm` is passed only by `save()`, for the reload after a successful
+   * save (SA S-3 finding 1, QA edge case 5). The fields stay editable while a
+   * save is in flight, so anything typed since `sentForm` was sent is kept
+   * rather than overwritten by the reload. The baseline still becomes what the
+   * server now holds, so kept text leaves the form dirty and the drawer still
+   * asks before dropping it.
    */
-  const load = useCallback(async () => {
+  const load = useCallback(async (sentForm?: Settings) => {
     if (loadInFlight.current) return;
     loadInFlight.current = true;
     // A failure before anything has loaded hides the form (F-17). After a load
@@ -242,7 +261,8 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
       // crash in render.
       const next = seeded(json.data.settings, json.data.defaults, languageRef.current);
       setPayload(json.data);
-      setForm(next);
+      // Functional, so it compares against the latest typed text, not a stale closure.
+      setForm((prev) => (sentForm && !sameSettings(prev, sentForm) ? prev : next));
       setBaseline(next);
       setLoadFailed(false);
       hasLoaded.current = true;
@@ -303,7 +323,7 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
       }
       setBaseline(sent);
       setSaved(true);
-      await load();
+      await load(sent);
     } catch (err) {
       // The form stays as typed, and dirty, so the drawer still guards it.
       logger.error({ err }, 'Could not save consent settings');
@@ -343,6 +363,28 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
 
   const field =
     'w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-sm text-[var(--v2-text-primary)]';
+
+  /*
+   * Which saved address the postal text already IS, for marking it in the list
+   * (F-18). Used for marking only: a wrong answer can mark or unmark a radio,
+   * and can never write the field.
+   *
+   * The entry's `label` counts: it is what a click would write for this
+   * reader. So does the one-line form in each language `formatAddressOneLine`
+   * speaks. English is how `business_profiles.address` is written, which is
+   * where an unstored field is seeded from. Hebrew and Spanish are how a click
+   * wrote it for a reader in that language, and the line stays the same address
+   * when the reader later switches language (only the country name differs).
+   * An empty field matches nothing. The field text is normalised once here, not
+   * per option; the label is tried first and the language forms only on a miss.
+   */
+  const postalText = normalisedAddressText(form.postal_address);
+  const sameAsPostal = (text: string | null | undefined): boolean =>
+    normalisedAddressText(text) === postalText;
+  const recognisesPostal = (option: KnownAddress): boolean =>
+    postalText !== '' &&
+    (sameAsPostal(option.label) ||
+      ONE_LINE_LOCALES.some((locale) => sameAsPostal(formatAddressOneLine(option.address, locale))));
 
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'} className="space-y-5 text-sm">
@@ -484,11 +526,20 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
           Flattened to one line, because this column is free text rather than
           structured: `formatAddressOneLine` renders exactly what the public
           pages render.
+
+          A TEXT FORM (F-18). `matchCurrent` tells the picker this field is
+          text the panel seeded itself: it marks the entry the text already
+          is, and never fills on its own. Only the owner's click changes the
+          field. Without it the picker took the book's default and wrote it
+          over the stored legal postal line on every open.
         */}
         <div className="mb-2">
           <SavedAddressPicker
-            selected={reusedAddress}
-            onSelectedChange={setReusedAddress}
+            use="marketing"
+            selectedId={reusedAddress}
+            onSelectedChange={(id) => setReusedAddress(id)}
+            matchCurrent={recognisesPostal}
+            otherLabel={t('settings.address.reuse_other')}
             onSelect={(address) =>
               setForm(prev => ({
                 ...prev,
