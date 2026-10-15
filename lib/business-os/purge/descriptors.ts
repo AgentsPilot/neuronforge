@@ -108,32 +108,173 @@ const PROFILES_EXPORT: TableExportClassification = {
 };
 
 /**
- * The `plugin_connections` columns the export reads (section
- * `plugin_connections`). Changing this changes what the export holds: a
- * privacy decision. Order matters, as for PROFILES_EXPORT.
- *
- * `profile_data` IS read, because it holds the person's own provider profile,
- * but some providers also store an access token inside it, under names nobody
- * can predict, and the deny list cannot see inside a jsonb value. The control
- * is the ALLOW-list `ACCOUNT_PROFILE_KEYS` in
- * lib/business-os/data-export/sections.ts (`accountProfile`, SA C-1): only
- * those keys reach the file, never the raw value (DE-2 SA C-4).
- * Moved from PluginConnectionRepository USER_DATA_EXPORT_COLUMNS (DE-2).
+ * `plugin_connections` is NOT exported (user decision 2026-10-15, DE-4): the
+ * export holds business data only, and a connected app is account plumbing.
+ * The pending lawyer note in the requirement's §0.2 DX-1 now names connected
+ * apps alongside activity. Until DE-4 this was an `include` of 13 columns with
+ * a `profile_data` allow-list (DE-1 / DE-2); the reader, its repository method
+ * and the allow-list were removed with it. The DE-0a / DE-0b token controls are
+ * unaffected: they are about browser access, not the export.
  */
-const PLUGIN_CONNECTIONS_EXPORT: TableExportClassification = {
+const PLUGIN_CONNECTIONS_EXCLUDED =
+  'user 2026-10-15: connected apps dropped from the export (business data only); see lawyer note §0.2 DX-1';
+
+// ── DE-4: client records (BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md §3) ─────────
+// Eight tables, one section each, group `client_records` (AgentPilot is the
+// processor; the account holder is the controller). Every list was checked
+// column by column against the live schema on 2026-10-15 (workplan §10.1, SA
+// review DE-4). Order matters: the export repository selects
+// `columns.join(', ')`, pinned byte for byte in the characterization test.
+// Ids and foreign-key ids ARE included: they are how a booking points at its
+// client and its service inside the file. Changing a list changes what the
+// export holds: a privacy decision, and an SA item.
+
+/** Why a COLUMN stays out. Repeated reasons are named, not retyped (DE-4 SA-Q4). */
+const EXPORT_COLUMN_REASON = {
+  OWNER_ID: 'always the exporting account; it is in export_metadata.user_id',
+  DOCUMENT_STORAGE:
+    "where the file sits in our storage; the file itself arrives in 'Your files' (DE-8b), whose manifest comes from STORAGE_DESCRIPTORS",
+  REMINDER_SENT: 'DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)',
+  INTAKE_SENT: 'DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)',
+  CALENDAR_SYNC: 'calendar sync plumbing',
+} as const;
+
+/**
+ * `crm_contacts` -> section `clients`. `source_metadata` is read but never
+ * written raw: the section keeps only the user's BC-4 keys
+ * (SOURCE_METADATA_KEYS in data-export/sections.ts). It also holds `ip_hash`
+ * (a day-salted hash of the visitor's IP, recoverable), `session_id` and
+ * `user_agent`, which never reach the file. The four attribution columns are
+ * generated from `source_metadata` (20260826).
+ */
+const CRM_CONTACTS_EXPORT: TableExportClassification = {
   kind: 'include',
-  section: 'plugin_connections',
+  section: 'clients',
   columns: [
-    'user_id', 'plugin_key', 'plugin_name', 'username', 'email', 'scope', 'status', 'connected_at',
-    'created_at', 'updated_at', 'last_used', 'disconnected_at', 'profile_data',
+    'id', 'first_name', 'last_name', 'email', 'phone', 'stage', 'stage_entered_at', 'tags', 'custom_fields', 'notes',
+    'source', 'source_metadata', 'referrer_domain', 'utm_source', 'utm_medium', 'utm_campaign', 'created_at', 'updated_at',
   ],
   excludedColumns: {
-    id: 'internal row id, never output',
-    access_token: 'credential, never read',
-    refresh_token: 'credential, never read',
-    expires_at: 'token plumbing',
-    last_refreshed_at: 'token plumbing',
-    settings: 'free-form; a secret could land there unseen',
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `crm_activities` -> `client_activities`: notes and the history timeline, every type (B1 in whole). */
+const CRM_ACTIVITIES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_activities',
+  columns: [
+    'id', 'contact_id', 'activity_type', 'title', 'description', 'activity_date', 'auto_logged', 'source_capability',
+    'source_entity_id', 'created_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `crm_pipeline_stages` -> `pipeline_stages`. `stage_key` passes the deny list through DENY_EXCEPTIONS (SA-Q5). */
+const CRM_PIPELINE_STAGES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'pipeline_stages',
+  columns: ['id', 'vertical', 'stage_key', 'stage_label', 'position', 'color', 'stage_type', 'is_primary_client_stage', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `crm_tasks` -> `client_tasks`. Completed and cancelled tasks are in: statuses (BC-2). */
+const CRM_TASKS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_tasks',
+  columns: [
+    'id', 'contact_id', 'title', 'description', 'priority', 'status', 'due_date', 'reminder_at', 'completed_at',
+    'created_by', 'source_entity_type', 'source_entity_id', 'tags', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `contact_documents` -> `client_documents`: the details only; the files
+ * arrive in DE-8b. Deleted documents (`status = 'deleted'`, the soft delete
+ * of ContactDocumentsRepository) are left out; archived ones are in (BC-3).
+ * `status` is NOT NULL DEFAULT 'active' (20260722), so NOT IN drops no NULL row.
+ */
+const CONTACT_DOCUMENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_documents',
+  columns: [
+    'id', 'contact_id', 'name', 'document_type', 'file_name', 'file_size', 'mime_type', 'description', 'tags', 'status',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    storage_path: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+    storage_bucket: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+  },
+  rowFilter: {
+    column: 'status',
+    notIn: ['deleted'],
+    reason: 'SQ-E5: soft-deleted documents are not exported (user BC-3, 2026-10-15: archived ones are)',
+  },
+};
+
+/**
+ * `scheduling_services` -> `services`. `price` always travels with
+ * `currency`, the authority for what a client is charged (FR-E9). Draft and
+ * inactive services are in: statuses.
+ */
+const SCHEDULING_SERVICES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'services',
+  columns: [
+    'id', 'service_name', 'description', 'duration_minutes', 'price', 'currency', 'buffer_minutes', 'max_bookings_per_day',
+    'advance_booking_days', 'min_notice_hours', 'availability', 'is_active', 'status', 'is_scheduled', 'collection',
+    'sale_mode', 'payment_type', 'installment_count', 'installment_frequency', 'first_payment_due', 'first_payment_days',
+    'source', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    ai_suggestions: 'assistant output kept to pre-fill the service form, not a setting the owner chose (DX-1d; user BC-7, 2026-10-15)',
+  },
+};
+
+/**
+ * `scheduling_bookings` -> `bookings`. Cancelled, completed and no-show
+ * bookings are in (BC-2); the owner's private `internal_notes` are in (BC-1).
+ * `payment_amount` travels with `payment_currency`. `intake_responses` are the
+ * client's answers: the owner's record.
+ */
+const SCHEDULING_BOOKINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'bookings',
+  columns: [
+    'id', 'service_id', 'contact_id', 'parent_booking_id', 'occurrence_number', 'start_time', 'end_time', 'timezone',
+    'status', 'cancellation_reason', 'cancel_reason', 'cancel_note', 'cancelled_by', 'booking_source', 'notes',
+    'internal_notes', 'payment_status', 'payment_method', 'payment_amount', 'payment_currency', 'payment_id', 'invoice_id',
+    'payment_plan_id', 'intake_responses', 'intake_completed_at', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    reminder_24hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
+    reminder_2hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
+    intake_sent_at: EXPORT_COLUMN_REASON.INTAKE_SENT,
+    intake_reminded_at: EXPORT_COLUMN_REASON.INTAKE_SENT,
+    external_calendar_event_id: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_provider: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_synced_at: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_error: "the calendar provider's error text from our integration",
+  },
+};
+
+/** `scheduling_availability_exceptions` -> `time_off`. */
+const SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'time_off',
+  columns: ['id', 'exception_type', 'start_date', 'end_date', 'custom_hours', 'reason', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
   },
 };
 
@@ -307,14 +448,14 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'The business\'s saved addresses. Same level as business_profiles, which Reset keeps: its address_id / invoice_address_id point here and its address_parts / invoice_address are copies of these rows, so a Reset that emptied the book would leave the profile showing an address the picker no longer offers. CASCADE child of business_profiles (business_addresses_business_fk), so CONFIG keeps it ahead of TENANCY_ROOT for an accurate count. Its only inbound FKs are those two business_profiles columns, ON DELETE SET NULL — no blocking edge.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
-  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: CRM_CONTACTS_EXPORT,
     notes: 'CRM hub. CASCADE parent of proposals and crm_activities. Has no DELETE trigger since 20260928_contact_delete_handled_in_app.sql dropped T1 (B4 retired, slice 3a).' },
-  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows', export: CRM_ACTIVITIES_EXPORT,
     notes: 'DELETED LAST. The single live T5 residue path writes here mid-purge; ordering is the only available mitigation.' },
-  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: CRM_PIPELINE_STAGES_EXPORT,
     notes: 'Seeded by /api/onboarding/build; Reset keeps them so the board still works.' },
-  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4') },
-  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CRM_TASKS_EXPORT },
+  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CONTACT_DOCUMENTS_EXPORT,
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 
   // ── §3.3 Website ─────────────────────────────────────────────────────────
@@ -327,11 +468,11 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'IDS ONLY (DEV-Q6). Unbounded, publicly writable (WITH CHECK true), append-only, forensically worthless row-by-row. A row ceiling here would make a busy business undeletable.' },
 
   // ── §3.4 Scheduling ──────────────────────────────────────────────────────
-  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-4') },
-  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: SCHEDULING_SERVICES_EXPORT },
+  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows', export: SCHEDULING_BOOKINGS_EXPORT,
     notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a). ROOT - 2 (2026-10-08): N1 — contact_id is NOT NULL with ON DELETE SET NULL to crm_contacts, so deleting a contact first fails with 23502; it must run before crm_contacts (ROOT). Still after payment_plan_subscriptions (B2) and before scheduling_services, its CASCADE parent.' },
-  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4') },
-  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT },
+  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude("user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data"),
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
 
   // ── §3.5 Payments ────────────────────────────────────────────────────────
@@ -460,8 +601,8 @@ const IN_SCOPE: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 const OPT_IN: PurgeDescriptor[] = [
-  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: PLUGIN_CONNECTIONS_EXPORT,
-    notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it. Export (DE-2): disconnected rows are a STATUS, not a soft delete (DE-1 SA Q-7), so they stay in the export. profile_data is read but only its allow-listed keys reach the file (ACCOUNT_PROFILE_KEYS in data-export/sections.ts, SA C-4).' },
+  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: exclude(PLUGIN_CONNECTIONS_EXCLUDED),
+    notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it. Export: excluded since DE-4 (user 2026-10-15, connected apps out), so the export never reads this table.' },
 
   // "Also delete my agents". B6 and B7 both live here, and both are invisible
   // to a default T28 run because the option is off by default (C-28).

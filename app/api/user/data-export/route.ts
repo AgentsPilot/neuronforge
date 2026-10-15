@@ -3,8 +3,8 @@
 //
 // DE-1 (BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md; requirement
 // BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.3, §0.4): the file holds the
-// person's own account details only (DX-1a): who they are (from the session),
-// their profile, and their connected apps. Left out on purpose: agents, agent
+// person's own account details only (DX-1a): who they are (from the session)
+// and their profile. Left out on purpose: agents, agent
 // settings and runs (BQ-SA-1, Business OS only), activity and audit history
 // (DX-1d), and the Pilot-Credit subscription and transactions (DX-1a: no plan
 // or billing data). What each part holds lives in the section registry,
@@ -13,15 +13,31 @@
 // Every read goes through a repository (CLAUDE.md rule 1) keyed on the
 // authenticated user's id, with the service role, and names its columns, so a
 // column added to a table later is not exported until someone decides it should
-// be. Plugin credentials are never read; the provider profile (`profile_data`)
-// is read, but only allow-listed string fields of it reach the body.
+// be. DE-4 (user 2026-10-15): connected apps (`plugin_connections`) are not
+// exported at all, so that table, and every credential on it, is never read.
 //
 // FR-E12: a section that fails to read is marked `status: 'failed'` and listed
 // in `summary.failed_sections`, never shown as an empty section. The response
 // is still 200: the account identity comes from the session and cannot fail.
 //
+// DE-4 (BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md §2.6, SA-Q7, C-9): the file now
+// also holds the owner's client records (group `client_records`). Two Phase 1
+// ceilings refuse with 413 and send NO file, never a partial one: more than
+// EXPORT_LIMITS.ROW_CEILING rows across sections, or a body over
+// EXPORT_LIMITS.JSON_BODY_MAX_BYTES (measured on the exact bytes that would be
+// sent; Vercel crashes a response over 4.5 MB instead of answering). A refusal
+// writes no DATA_EXPORTED entry (nothing was exported); its warn line carries
+// ids and counts only, and the 413 body carries none. DE-8b's zip replaces the
+// body cap.
+//
 // WC-7: the `DATA_EXPORTED` audit entry is written with `logAndFlush`, bounded
 // and never rejecting, so the audit can neither block nor fail the download.
+//
+// File name (user decision 2026-10-15, DE-4): `agentpilot-data-export-
+// YYYY-MM-DD-HHmm.json`, from the same `exportedAt` instant as the dates in the
+// file, on the owner's clock (`user_preferences.timezone`, read through
+// UserPreferencesRepository, scoped to the session id). A missing, invalid or
+// unreadable timezone gives a UTC name: the export never fails over its name.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
@@ -30,12 +46,58 @@ import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { createLogger } from '@/lib/logger';
 import { EXPORT_SECTIONS, runExportSections, type ExportContext } from '@/lib/business-os/data-export/sections';
-import { buildExportPayload, exportFileName, EXPORT_GDPR_ARTICLE } from '@/lib/business-os/data-export/payload';
+import { buildExportPayload, exportFileName, EXPORT_GDPR_ARTICLE, sectionCounts as countSections } from '@/lib/business-os/data-export/payload';
+import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
+import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
+import { FALLBACK_TIMEZONE, safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'UserDataExportAPI' });
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const NO_STORE = 'no-store, no-cache, must-revalidate';
+
+/**
+ * The Phase 1 refusal (DE-4 §2.6). `code` is what the client keys on, not the
+ * status alone (SA review DE-4). No counts, no internals in the body (C-9).
+ */
+function tooLargeResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      success: false,
+      error: 'Your account holds more than the on-screen download can package. Nothing was downloaded. Please contact support and we will prepare your export.',
+      code: 'export_too_large',
+    },
+    { status: 413, headers: { 'Cache-Control': NO_STORE } }
+  );
+}
+
+/** Only the level ownerTimezone uses, typed structurally so the Pino child satisfies it. */
+interface WarnLogger {
+  warn: (context: Record<string, unknown>, message: string) => void;
+}
+
+/**
+ * The owner's clock for the file name (DE-4, user 2026-10-15). NULL (never
+ * set), blank, invalid or unreadable all give FALLBACK_TIMEZONE ('UTC'):
+ * the name is a label, so it never fails the export. The repository logs its
+ * own read error; this line says what the export did about it.
+ */
+async function ownerTimezone(userId: string, log: WarnLogger): Promise<string> {
+  try {
+    const { data, error } = await userPreferencesRepository.findTimezone(userId);
+    if (error) {
+      log.warn({ userId }, 'Data export: timezone unreadable, file name in UTC');
+      return FALLBACK_TIMEZONE;
+    }
+    return safeTimezone(data);
+  } catch (err) {
+    // findTimezone never throws by contract; a throw must still not fail the export.
+    log.warn({ err, userId }, 'Data export: timezone unreadable, file name in UTC');
+    return FALLBACK_TIMEZONE;
+  }
+}
 
 /**
  * Export the person's data in machine-readable format (GDPR compliance)
@@ -80,7 +142,25 @@ export async function GET(req: NextRequest) {
       authUser: { id: user.id, email: user.email ?? null, created_at: user.created_at },
     };
 
-    const sections = await runExportSections(ctx, EXPORT_SECTIONS, requestLogger);
+    const run = await runExportSections(ctx, EXPORT_SECTIONS, requestLogger);
+    if (run.overCeiling) {
+      // Ids and counts only. No DATA_EXPORTED entry: nothing was exported.
+      requestLogger.warn(
+        {
+          event: 'data_export_over_ceiling',
+          userId: user.id,
+          limit: 'rows',
+          rowCeiling: EXPORT_LIMITS.ROW_CEILING,
+          atSection: run.atSection,
+          sectionCounts: countSections(run.sections),
+          durationMs: Date.now() - startTime,
+        },
+        'Data export refused: over the Phase 1 ceiling'
+      );
+      return tooLargeResponse();
+    }
+    const { sections } = run;
+    const timezone = await ownerTimezone(user.id, requestLogger);
     // One clock reading, so the file name and the dates inside never straddle midnight.
     const exportedAt = new Date();
     const payload = buildExportPayload({
@@ -90,6 +170,25 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startTime,
     });
     const { section_counts: sectionCounts, failed_sections: failedSections } = payload.summary;
+
+    // C-9: the exact bytes the response will carry, pretty-print included.
+    const body = JSON.stringify(payload, null, 2);
+    const bodyBytes = Buffer.byteLength(body, 'utf8');
+    if (bodyBytes > EXPORT_LIMITS.JSON_BODY_MAX_BYTES) {
+      requestLogger.warn(
+        {
+          event: 'data_export_over_ceiling',
+          userId: user.id,
+          limit: 'body',
+          bodyBytes,
+          bodyMaxBytes: EXPORT_LIMITS.JSON_BODY_MAX_BYTES,
+          sectionCounts,
+          durationMs: Date.now() - startTime,
+        },
+        'Data export refused: over the Phase 1 ceiling'
+      );
+      return tooLargeResponse();
+    }
 
     // Ids and counts only: never content, never the email.
     const completedFields = {
@@ -134,12 +233,12 @@ export async function GET(req: NextRequest) {
     );
 
     // Return data as downloadable JSON
-    return new NextResponse(JSON.stringify(payload, null, 2), {
+    return new NextResponse(body, {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Content-Disposition': `attachment; filename="${exportFileName(exportedAt)}"`,
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Content-Disposition': `attachment; filename="${exportFileName(exportedAt, timezone)}"`,
+        'Cache-Control': NO_STORE,
       },
     });
 

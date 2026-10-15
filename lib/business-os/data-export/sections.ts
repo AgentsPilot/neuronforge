@@ -8,10 +8,21 @@
 // runs the registry in order and writes one section per entry. Later slices
 // (DE-3 … DE-7) add sections here; they do not touch the route.
 //
-// What is in, today (DX-1a): the person's own account details. What is out:
+// What is in, today: the person's own account details (DX-1a, group
+// `account`), and since DE-4 the owner's client records and scheduling (DX-1b,
+// group `client_records`: clients, their notes and history, tasks, pipeline
+// stages, document details, services, bookings, time off). What is out:
 // agents, agent settings and runs (BQ-SA-1, Business OS only), activity and
-// audit history (DX-1d), Pilot-Credit subscription and transactions (DX-1a).
-// Adding a section is a privacy decision, not a refactor.
+// audit history (DX-1d), Pilot-Credit subscription and transactions (DX-1a),
+// the synced copy of the owner's outside calendar (user BC-5, 2026-10-15),
+// and, since DE-4, the owner's connected apps (`plugin_connections`; user
+// 2026-10-15: business data only, lawyer note §0.2 DX-1). Adding a section is
+// a privacy decision, not a refactor.
+//
+// DE-4: the client-record readers all go through ONE repository method,
+// keyed on the section id (never a table name: SA C-4), paged to the end, and
+// bounded by the Phase 1 row ceiling (limits.ts). Over the ceiling, reading
+// stops and the route refuses: no partial file (§0.4.1 C).
 //
 // FR-E12: a section that fails to read is written as `status: 'failed'`, never
 // as an empty-looking section. A reader that throws is treated the same way.
@@ -20,18 +31,18 @@
 //
 // Service role only (SA C-2, DE-0b): every reader uses the default repository
 // singletons, which are built on `supabaseServer`. The route's cookie-auth
-// client is for `getUser()` only and is never passed here: under DE-0b the
-// `authenticated` role cannot read `plugin_connections.profile_data`.
+// client is for `getUser()` only and is never passed here.
 //
 // Server-only: it imports repositories. Never import it from a 'use client' file.
 
 import 'server-only';
 import { userProfileRepository } from '@/lib/repositories/UserProfileRepository';
-import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
+import { businessDataExportRepository } from '@/lib/repositories/BusinessDataExportRepository';
 import type { ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
+import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
 
-/** DE-4+ add 'client_records' and 'content'. */
-export type ExportGroupId = 'account';
+/** DE-4 adds 'client_records'; DE-7 adds 'content'. */
+export type ExportGroupId = 'account' | 'client_records';
 
 export type GdprRole = 'controller' | 'processor';
 
@@ -51,13 +62,19 @@ export interface ExportContext {
 export type SectionReadResult<Row> =
   | { ok: true; rows: Row[] }
   // No reason on purpose: it is logged by the repository, never put in the file (C-3).
-  | { ok: false };
+  // `overCeiling`: the section holds more rows than the budget left (DE-4 §2.6).
+  | { ok: false; overCeiling?: true };
+
+/** What a reader may still return before the export is over its ceiling. */
+export interface SectionReadBudget {
+  maxRows: number;
+}
 
 export interface ExportSectionDefinition<Row> {
   id: ExportSectionId;
   group: ExportGroupId;
   gdprRole: GdprRole;
-  read: (ctx: ExportContext) => Promise<SectionReadResult<Row>>;
+  read: (ctx: ExportContext, budget: SectionReadBudget) => Promise<SectionReadResult<Row>>;
 }
 
 export type ExportedSection<Row> =
@@ -77,63 +94,50 @@ export interface AccountIdentityRow {
  */
 export type UserProfileRow = Record<string, unknown>;
 
-/** `plugin_connections`: one connected account, credentials never included. */
-export interface PluginConnectionExportItem {
-  plugin_key: string;
-  plugin_name: string | null;
-  account_username: string | null;
-  account_email: string | null;
-  account_profile: Record<string, string | string[]>;
-  scope: string | null;
-  status: string | null;
-  connected_at: string | null;
-  last_updated: string | null;
-  last_used: string | null;
-  disconnected_at: string | null;
-}
+/**
+ * A `client_records` row (DE-4): the descriptor's columns, as the database
+ * holds them, in descriptor order. One flat object per row, so DE-8b writes
+ * the same rows as one CSV per section (§2.5). The one reshaped cell is
+ * `clients.source_metadata` (allow-listed, SOURCE_METADATA_KEYS).
+ */
+export type ClientRecordRow = Record<string, unknown>;
 
-export type ExportRow = AccountIdentityRow | UserProfileRow | PluginConnectionExportItem;
+export type ExportRow = AccountIdentityRow | UserProfileRow | ClientRecordRow;
 
 export type AnyExportSectionDefinition =
   | ExportSectionDefinition<AccountIdentityRow>
   | ExportSectionDefinition<UserProfileRow>
-  | ExportSectionDefinition<PluginConnectionExportItem>;
+  | ExportSectionDefinition<ClientRecordRow>;
 
 export type AnyExportedSection = ExportedSection<ExportRow>;
 
 /**
- * The provider profile fields a person gets back in their export (SA C-1,
- * DATA_EXPORT_FOLLOWUPS_WORKPLAN.md). An ALLOW-list on purpose: some providers
- * store an access token inside `profile_data`, under names nobody can predict,
- * so stripping known secret keys would fail open. Only these top-level keys,
- * and only when the value is a string or an array of strings. Never an id /
- * `sub`, never a token key, never a nested object. Changing this changes what
- * the export holds: a privacy decision.
- *
- * Moved verbatim from app/api/user/data-export/route.ts (DE-1).
+ * The readable parts of `crm_contacts.source_metadata`: how a client found the
+ * business (user decision BC-4, 2026-10-15; DE-4 SA C-3). An ALLOW-list, named
+ * one by one: no prefix match, so the list cannot grow by pattern. Left out on
+ * purpose: `ip_hash` (a day-salted hash of the visitor's IP, which can be
+ * turned back into the address), `user_agent` (a browser signature),
+ * `session_id` and `smart_link_id` (our tracking ids), and every key not
+ * named here (`page_type`, `smart_link_code`, `smart_link_name` are not on the
+ * user's list). Changing this changes what the export holds: a privacy
+ * decision.
  */
-export const ACCOUNT_PROFILE_KEYS: readonly string[] = [
-  'name', 'given_name', 'family_name', 'email', 'mail', 'picture', 'avatar_url', 'locale',
-  'language', 'country', 'displayName', 'givenName', 'surname', 'jobTitle', 'mobilePhone',
-  'businessPhones', 'officeLocation', 'preferredLanguage', 'userPrincipalName', 'nickname',
-  'preferred_username',
+export const SOURCE_METADATA_KEYS: readonly string[] = [
+  'capture_page_url', 'referrer_url', 'referrer_domain', 'capture_channel', 'device_type', 'capture_timestamp',
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
 ];
 
-/** The allow-listed part of a raw `profile_data` value; anything else is dropped. */
-export function accountProfile(profileData: unknown): Record<string, string | string[]> {
-  const profile: Record<string, string | string[]> = {};
-  if (typeof profileData !== 'object' || profileData === null || Array.isArray(profileData)) return profile;
-  const source = profileData as Record<string, unknown>;
-  for (const key of ACCOUNT_PROFILE_KEYS) {
+/** The allow-listed string values of a raw `source_metadata`; anything else is dropped. */
+export function sourceMetadata(value: unknown): Record<string, string> {
+  const kept: Record<string, string> = {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return kept;
+  const source = value as Record<string, unknown>;
+  for (const key of SOURCE_METADATA_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-    const value = source[key];
-    if (typeof value === 'string') {
-      profile[key] = value;
-    } else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-      profile[key] = [...(value as string[])];
-    }
+    const item = source[key];
+    if (typeof item === 'string') kept[key] = item;
   }
-  return profile;
+  return kept;
 }
 
 const accountIdentitySection: ExportSectionDefinition<AccountIdentityRow> = {
@@ -158,39 +162,51 @@ const userProfileSection: ExportSectionDefinition<UserProfileRow> = {
   },
 };
 
-const pluginConnectionsSection: ExportSectionDefinition<PluginConnectionExportItem> = {
-  id: 'plugin_connections',
-  group: 'account',
-  gdprRole: 'controller',
-  read: async (ctx) => {
-    const { data, error } = await pluginConnectionRepository.listForUserDataExport(ctx.userId);
-    if (error) return { ok: false };
-    // Disconnected connections are kept: a status, not a soft delete (SA Q-7).
-    // The raw `profile_data` never reaches the file: only its allow-listed fields.
-    return {
-      ok: true,
-      rows: (data ?? []).map((conn) => ({
-        plugin_key: conn.plugin_key,
-        plugin_name: conn.plugin_name,
-        account_username: conn.username,
-        account_email: conn.email,
-        account_profile: accountProfile(conn.profile_data),
-        scope: conn.scope,
-        status: conn.status,
-        connected_at: conn.connected_at ?? conn.created_at,
-        last_updated: conn.updated_at,
-        last_used: conn.last_used,
-        disconnected_at: conn.disconnected_at,
-      })),
-    };
-  },
-};
+/**
+ * A `client_records` section (DE-4): one descriptor-driven read through
+ * `BusinessDataExportRepository`, keyed on the session's id and on the section
+ * id. AgentPilot is the processor of these records; the account holder is
+ * the controller. `mapRow` is for the one reshaped cell (source_metadata).
+ */
+function clientRecordsSection(
+  id: ExportSectionId,
+  mapRow?: (row: ClientRecordRow) => ClientRecordRow
+): ExportSectionDefinition<ClientRecordRow> {
+  return {
+    id,
+    group: 'client_records',
+    gdprRole: 'processor',
+    read: async (ctx, budget) => {
+      const { data, error } = await businessDataExportRepository.listOwnedRowsForExport(id, ctx.userId, {
+        maxRows: budget.maxRows,
+      });
+      if (error || !data) return { ok: false };
+      if (data.overCeiling) return { ok: false, overCeiling: true };
+      return { ok: true, rows: mapRow ? data.rows.map(mapRow) : data.rows };
+    },
+  };
+}
 
-/** The registry, in file order. */
+/** `clients`: the raw `source_metadata` never reaches the file, only its BC-4 keys. Key order is kept. */
+const clientRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, source_metadata: sourceMetadata(row.source_metadata) });
+
+/**
+ * The registry, in file order. DE-4's eight sections follow the account group (§2.3).
+ * DE-4 (user 2026-10-15): the `plugin_connections` section is gone, with its
+ * reader and its `profile_data` allow-list: connected apps are not exported.
+ */
 export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   accountIdentitySection,
   userProfileSection,
-  pluginConnectionsSection,
+  clientRecordsSection('pipeline_stages'),
+  clientRecordsSection('clients', clientRow),
+  clientRecordsSection('client_activities'),
+  clientRecordsSection('client_tasks'),
+  // Deleted documents are left out by the descriptor's rowFilter (BC-3).
+  clientRecordsSection('client_documents'),
+  clientRecordsSection('services'),
+  clientRecordsSection('bookings'),
+  clientRecordsSection('time_off'),
 ];
 
 /** Only the level this module uses, typed structurally so a Pino child logger satisfies it. */
@@ -198,32 +214,62 @@ export interface SectionRunLogger {
   error: (context: Record<string, unknown>, message: string) => void;
 }
 
-async function runOne(ctx: ExportContext, section: AnyExportSectionDefinition, logger: SectionRunLogger): Promise<AnyExportedSection> {
-  const head = { id: section.id, group: section.group, gdpr_role: section.gdprRole };
-  let result: SectionReadResult<ExportRow>;
+/** What `runExportSections` returns. Over the ceiling, the route sends no file (§0.4.1 C). */
+export type ExportRunResult =
+  | { overCeiling: false; sections: AnyExportedSection[] }
+  | {
+      overCeiling: true;
+      /** The sections read before the ceiling was passed; never written to a file. */
+      sections: AnyExportedSection[];
+      /** The section during which the ceiling was passed. */
+      atSection: ExportSectionId;
+    };
+
+async function readOne(
+  ctx: ExportContext,
+  section: AnyExportSectionDefinition,
+  budget: SectionReadBudget,
+  logger: SectionRunLogger
+): Promise<SectionReadResult<ExportRow>> {
   try {
-    result = await section.read(ctx);
+    return await section.read(ctx, budget);
   } catch (err) {
     // FR-E12 holds even for a reader that forgets to catch. The error stays in the log.
     logger.error({ err, sectionId: section.id }, 'Data export section read threw');
-    result = { ok: false };
+    return { ok: false };
   }
-  if (!result.ok) return { ...head, status: 'failed', row_count: 0, rows: [] };
-  return { ...head, status: 'ok', row_count: result.rows.length, rows: result.rows };
 }
 
 /**
  * Read every section, sequentially and in registry order (as the route always
  * has; parallel reads are a later optimisation). Never throws for a reader.
+ *
+ * DE-4 (§2.6): every reader is handed the rows still left under the ceiling.
+ * Rows of every section count, the account sections included. The moment the
+ * total passes the ceiling, reading stops (later sections are not read) and
+ * the result is `overCeiling`. Exactly at the ceiling is exported.
  */
 export async function runExportSections(
   ctx: ExportContext,
   sections: readonly AnyExportSectionDefinition[],
-  logger: SectionRunLogger
-): Promise<AnyExportedSection[]> {
+  logger: SectionRunLogger,
+  opts: { rowCeiling?: number } = {}
+): Promise<ExportRunResult> {
+  const rowCeiling = opts.rowCeiling ?? EXPORT_LIMITS.ROW_CEILING;
   const out: AnyExportedSection[] = [];
+  let total = 0;
   for (const section of sections) {
-    out.push(await runOne(ctx, section, logger));
+    const head = { id: section.id, group: section.group, gdpr_role: section.gdprRole };
+    const result = await readOne(ctx, section, { maxRows: Math.max(0, rowCeiling - total) }, logger);
+    if (!result.ok) {
+      if (result.overCeiling) return { overCeiling: true, sections: out, atSection: section.id };
+      out.push({ ...head, status: 'failed', row_count: 0, rows: [] });
+      continue;
+    }
+    total += result.rows.length;
+    // A reader that ignores its budget (the account sections) still counts.
+    if (total > rowCeiling) return { overCeiling: true, sections: out, atSection: section.id };
+    out.push({ ...head, status: 'ok', row_count: result.rows.length, rows: result.rows });
   }
-  return out;
+  return { overCeiling: false, sections: out };
 }

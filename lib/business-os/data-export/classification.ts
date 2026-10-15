@@ -21,6 +21,7 @@
 import { PURGE_DESCRIPTORS } from '@/lib/business-os/purge/descriptors';
 import type { PurgeDescriptor } from '@/lib/business-os/purge/types';
 import type {
+  ExportRowFilter,
   ExportSectionId,
   TableExportClassification,
 } from '@/lib/business-os/data-export/classificationTypes';
@@ -44,7 +45,10 @@ export const SECRET_COLUMN_DENY_PATTERNS: readonly RegExp[] = [
  * stale entry (one that no longer names an included column that is denied).
  */
 export const DENY_EXCEPTIONS: Readonly<Record<string, string>> = {
-  'plugin_connections.plugin_key': "the plugin's name (e.g. google-mail), not a credential",
+  // DE-4 (user 2026-10-15): 'plugin_connections.plugin_key' removed with the
+  // connected-apps section; the stale-entry check would flag it otherwise.
+  // DE-4 SA-Q5 (approved 2026-10-15).
+  'crm_pipeline_stages.stage_key': "the stage's short name (e.g. lead), which crm_contacts.stage refers to; not a credential",
 };
 
 /** True when `column` matches the deny list (before any exception). */
@@ -66,7 +70,15 @@ const COLUMN_NAME = /^[a-z_][a-z0-9_]*$/;
 
 // ── Lookup ──────────────────────────────────────────────────────────────────
 
-export type ExportClassificationErrorCode = 'unknown_table' | 'not_included' | 'invalid_column' | 'denied_column';
+export type ExportClassificationErrorCode =
+  | 'unknown_table'
+  | 'not_included'
+  | 'invalid_column'
+  | 'denied_column'
+  // DE-4: resolving a section to its one descriptor, and the reader's bounds.
+  | 'unknown_section'
+  | 'not_user_scoped'
+  | 'invalid_row_filter';
 
 /** Thrown by `exportColumnsOf`. The repositories catch it and return `{ error }`. */
 export class ExportClassificationError extends Error {
@@ -115,6 +127,41 @@ export function exportColumnsOf(
     }
   }
   return classification.columns;
+}
+
+/**
+ * The one `include` descriptor behind a section (DE-4 SA C-4): the reader is
+ * handed a section id, never a table name, so no table literal lives in
+ * `sections.ts`. DE-8b takes a CSV header from the same lookup
+ * (`exportColumnsOf(exportDescriptorOfSection(id).table)`), so an empty
+ * section still gets its header row. Throws `ExportClassificationError`
+ * (`unknown_section`) for zero or several matches: fail closed.
+ */
+export function exportDescriptorOfSection(
+  section: ExportSectionId,
+  descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS
+): PurgeDescriptor {
+  const matches = descriptors.filter((d) => d.export?.kind === 'include' && d.export.section === section);
+  if (matches.length !== 1) {
+    throw new ExportClassificationError('unknown_section', section, `expected one include descriptor for the section, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+/** A row-filter value: plain word characters only, so the quoted PostgREST list needs no escaping. */
+const ROW_FILTER_VALUE = /^[A-Za-z0-9_]+$/;
+
+/**
+ * The PostgREST value list for `.not(column, 'in', list)`, each value quoted:
+ * `("deleted")` (DE-4 SA C-6). Throws for a value outside `ROW_FILTER_VALUE`.
+ */
+export function rowFilterInList(filter: ExportRowFilter): string {
+  for (const value of filter.notIn) {
+    if (!ROW_FILTER_VALUE.test(value)) {
+      throw new ExportClassificationError('invalid_row_filter', filter.column, `row filter value ${JSON.stringify(value)} is not a plain word`);
+    }
+  }
+  return `(${filter.notIn.map((value) => `"${value}"`).join(',')})`;
 }
 
 // ── CI rules (pure; exportClassification.test.ts runs them) ─────────────────
@@ -171,6 +218,7 @@ export function tableExportProblems(
           }
         }
       }
+      if (value.rowFilter !== undefined) problems.push(...rowFilterProblems(table, value.rowFilter, seen));
       break;
     }
     case 'exclude':
@@ -186,6 +234,31 @@ export function tableExportProblems(
     default:
       problems.push(`${table}: unknown export kind ${JSON.stringify(value.kind)}`);
   }
+  return problems;
+}
+
+/**
+ * DE-4 U-4 (SA-Q2): a `rowFilter` names one of the table's declared columns,
+ * a non-empty list of plain-word values, and a reason. NOT NULL is checked
+ * against the live columns by `rowFilterNullabilityProblems` (SA C-6).
+ */
+function rowFilterProblems(table: string, filter: unknown, declared: ReadonlySet<string>): string[] {
+  if (!isObject(filter)) return [`${table}: rowFilter must be { column, notIn, reason }`];
+  const problems: string[] = [];
+  if (typeof filter.column !== 'string' || !declared.has(filter.column)) {
+    problems.push(`${table}: rowFilter column ${JSON.stringify(filter.column)} is not a declared column`);
+  }
+  const notIn = filter.notIn;
+  if (!Array.isArray(notIn) || notIn.length === 0) {
+    problems.push(`${table}: rowFilter needs a non-empty notIn list`);
+  } else {
+    for (const value of notIn as unknown[]) {
+      if (typeof value !== 'string' || !ROW_FILTER_VALUE.test(value)) {
+        problems.push(`${table}: rowFilter value ${JSON.stringify(value)} is not a plain word`);
+      }
+    }
+  }
+  if (!nonEmpty(filter.reason)) problems.push(`${table}: rowFilter has no reason`);
   return problems;
 }
 
@@ -266,6 +339,32 @@ export function sectionRegistryProblems(
 }
 
 // ── Column drift (FR-E19, report-only) ──────────────────────────────────────
+
+/**
+ * DE-4 SA C-6: every `rowFilter` column is NOT NULL live. SQL `NOT IN` drops a
+ * NULL row silently, so a nullable filter column would hide rows the owner
+ * holds. A filter column missing from `liveColumns`, or without
+ * `is_nullable = 'NO'`, is a problem (fail closed: unknown is not NOT NULL).
+ * Tables absent from `liveColumns` entirely are skipped, as in
+ * `exportColumnsMissing`.
+ */
+export function rowFilterNullabilityProblems(
+  liveColumns: ReadonlyArray<{ table_name: string; column_name: string; is_nullable?: string }>,
+  descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS
+): string[] {
+  const problems: string[] = [];
+  for (const d of descriptors) {
+    if (d.export?.kind !== 'include' || !d.export.rowFilter) continue;
+    const tableColumns = liveColumns.filter((c) => c.table_name === d.table);
+    if (tableColumns.length === 0) continue;
+    const { column } = d.export.rowFilter;
+    const live = tableColumns.find((c) => c.column_name === column);
+    if (live?.is_nullable !== 'NO') {
+      problems.push(`${d.table}: rowFilter column ${column} is not NOT NULL live (is_nullable ${JSON.stringify(live?.is_nullable ?? null)})`);
+    }
+  }
+  return problems;
+}
 
 export interface ExportColumnRef {
   table: string;

@@ -14,8 +14,27 @@
 // reset and is not exported. Nothing derives one from the other, and the purge
 // engine never reads `export`.
 
-/** Every section id of the export file. `sections.ts` re-exports it. */
-export type ExportSectionId = 'account_identity' | 'user_profile' | 'plugin_connections';
+/**
+ * Every section id of the export file. `sections.ts` re-exports it.
+ *
+ * DE-4 adds the eight `client_records` sections, one table each. They are
+ * plain words because DE-8b names each CSV after its section (`clients.csv`,
+ * `bookings.csv`; DE-4 SA-Q3).
+ *
+ * DE-4 (user 2026-10-15): `plugin_connections` is no longer a section:
+ * connected apps left the export (business data only).
+ */
+export type ExportSectionId =
+  | 'account_identity'
+  | 'user_profile'
+  | 'pipeline_stages'
+  | 'clients'
+  | 'client_activities'
+  | 'client_tasks'
+  | 'client_documents'
+  | 'services'
+  | 'bookings'
+  | 'time_off';
 
 /** The slices that add a table's section. `planned` is allowed until DE-7. */
 export type PlannedTableSlice = 'DE-3' | 'DE-4' | 'DE-5' | 'DE-6' | 'DE-7';
@@ -39,9 +58,28 @@ export type TableExportClassification =
       section: ExportSectionId;
       columns: readonly string[];
       excludedColumns?: Readonly<Record<string, string>>;
+      /** Rows left out of the section, declaratively (DE-4 §2.4, SA-Q2). */
+      rowFilter?: ExportRowFilter;
     }
   | { kind: 'exclude'; reason: string }
   | { kind: 'planned'; slice: PlannedTableSlice };
+
+/**
+ * Rows of an `include` table that stay out of the export: `column NOT IN
+ * (notIn)`. The one user is the soft delete of `contact_documents` (SQ-E5,
+ * BC-3). A status that is not a delete (archived, cancelled, inactive) is
+ * never filtered: "everything we hold" (DX-8).
+ *
+ * `column` must be one of the table's `columns` and NOT NULL live, because SQL
+ * `NOT IN` drops a NULL row without a word (DE-4 SA C-6). `tableExportProblems`
+ * checks the shape; `rowFilterNullabilityProblems` checks NOT NULL against the
+ * live columns. The purge engine never reads it (it never reads `export`).
+ */
+export interface ExportRowFilter {
+  column: string;
+  notIn: readonly string[];
+  reason: string;
+}
 
 /**
  * Whether a storage BUCKET goes into the file's "Your files". A bucket has no
