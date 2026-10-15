@@ -39,7 +39,7 @@ export const PAGE_LOAD_FAILED = 'The finance page could not be loaded.';
 export const RETRY = 'Retry';
 
 export const TILE_LABELS = {
-  k1: 'AI cost this month',
+  k1: 'Charged AI cost this month',
   k1Sub: 'This month vs last month, UTC',
   k2: 'Accounts far over allowance',
   k3: 'Founding Partners with no end date',
@@ -199,9 +199,10 @@ export const GROUP_LABELS: Record<Exclude<FinanceGroupKey, `tier:${string}`>, st
 };
 export const DELETED_GROUP = 'Deleted accounts';
 
-export const AI_TITLE = 'AI cost in the window';
-export const AI_SOURCE = 'Credit ledger, charges and corrections';
-export const AI_TOTAL = 'AI cost (USD)';
+export const AI_TITLE = 'Charged AI cost in the window';
+export const AI_SOURCE =
+  'Credit ledger: what Business OS actions were charged for, with corrections, from 29 Sep 2026. AI calls that were never charged are not in it.';
+export const AI_TOTAL = 'Charged AI cost (USD)';
 export const AI_CREDITS = 'Credits charged';
 export const AI_ACTIONS = 'Charged actions';
 export const AI_BY_TRIGGER = 'By trigger';
@@ -209,13 +210,13 @@ export const AI_BY_GROUP = 'By current plan group';
 export const AI_BY_GROUP_NOTE = 'By the plan each account is on now, not the plan it was on when charged.';
 export const AI_BY_GROUP_PARTIAL = 'At least: the plan rows were read only up to their limit, so some accounts may sit in the wrong group.';
 export const AI_BY_GROUP_UNKNOWN = 'Unknown: the plan rows could not be read.';
-export const AI_TOP = 'Top 10 businesses by AI cost';
+export const AI_TOP = 'Top 10 businesses by charged AI cost';
 export const AI_BUSINESS = 'Business';
 export const AI_COST = 'Cost (USD)';
 export const AI_DELETED = 'Deleted accounts';
 export const AI_NO_ROWS = 'No AI actions charged in this window';
 export const AI_LINK = 'AI cost & usage';
-export const AI_LINK_NOTE = 'For the provider-side token measure, see';
+export const AI_LINK_NOTE = 'Every recorded AI call, charged or not:';
 export const AI_UNRESOLVED = 'corrections whose charge could not be found';
 export const AI_UNREADABLE = 'amounts could not be read and count as 0';
 
@@ -478,8 +479,8 @@ export const ACCOUNT_UNKNOWN = 'Unknown';
 
 export const ACCOUNT_SUMMARY_TITLE = 'Account summary';
 /** BD-18: the AI cost we charged (the credit ledger), USD. */
-export const ACCOUNT_AI_COST = 'AI cost, charged';
-export const ACCOUNT_CUTOVER_NOTE = 'The window starts before AI charging went live: see AI cost in the window below.';
+export const ACCOUNT_AI_COST = 'Charged AI cost';
+export const ACCOUNT_CUTOVER_NOTE = 'The window starts before AI charging went live: see Charged AI cost in the window below.';
 export const ACCOUNT_CUTOVER_ENTIRELY = 'The whole window is before AI charging went live: nothing was charged in it.';
 export const ACCOUNT_PAID_BOOSTS = 'Paid us: credit boosts';
 export const ACCOUNT_PAID_PLAN = 'Paid us: plan';
@@ -508,7 +509,7 @@ export const ECON_SUBTITLE = 'Every account: what it paid us, what its AI cost u
 /** M3-FR-9: shown on the tab at all times. */
 export const ECON_NOTES: readonly string[] = [
   'Paid us is after tax, net of refunds and disputes. Stripe fees are not deducted.',
-  'AI cost is the charged cost (credits we billed).',
+  'AI cost is the charged AI cost (credits we billed); the recorded AI cost is not used here.',
   'AI margin is shown only for accounts paid in USD. No exchange rate is used.',
   'Plan refunds and disputes are not recorded yet.',
 ];
@@ -516,7 +517,7 @@ export const ECON_PLATFORM_TITLE = 'All accounts, before any filter';
 export const econPlatformCovers = (accounts: string, withDeleted: boolean) =>
   withDeleted ? `Covers every account (${accounts}) and deleted accounts.` : `Covers every account (${accounts}).`;
 export const ECON_PAID = 'Paid us, after tax';
-export const ECON_COST = 'AI cost, charged (USD)';
+export const ECON_COST = 'Charged AI cost (USD)';
 export const ECON_MARGIN = 'AI margin (USD)';
 export const ECON_BUSINESS = 'Business';
 export const ECON_GROUP = 'Plan group';
@@ -544,7 +545,7 @@ export const ECON_SORT = 'Sort';
 export const ECON_SHOW = 'Show';
 export const ECON_ALL_GROUPS = 'All plan groups';
 export const ECON_SORT_LABELS = {
-  ai_cost: 'AI cost, highest first',
+  ai_cost: 'Charged AI cost, highest first',
   margin: 'AI margin, lowest first',
   paid: 'Paid us, highest first',
   credits: 'Credits used, highest first',

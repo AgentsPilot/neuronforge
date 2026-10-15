@@ -3717,6 +3717,12 @@ export const es = {
     'consent.label_ad': 'Marcar el marketing como publicidad',
     'consent.label_ad_desc': 'Obligatorio para el email enviado a personas en Israel. Añade una marca clara al principio de cada mensaje de marketing.',
     'consent.saved': 'Guardado',
+    'consent.save_failed': 'No se ha guardado. Tus cambios siguen aquí. Inténtalo de nuevo.',
+    'consent.load_failed': 'No se pudo cargar la configuración del permiso de marketing.',
+    'settings.drawer.discard_title': '¿Descartar los cambios?',
+    'settings.drawer.discard_desc': 'Tienes cambios sin guardar. Si cierras ahora, se perderán.',
+    'settings.drawer.keep_editing': 'Seguir editando',
+    'settings.drawer.discard': 'Descartar cambios',
 
     // Security Tab
     'settings.security.title': 'Contraseña y Seguridad',

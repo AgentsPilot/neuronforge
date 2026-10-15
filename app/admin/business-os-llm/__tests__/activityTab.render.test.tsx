@@ -215,13 +215,13 @@ describe('states', () => {
 });
 
 describe('the table (AC-B1, AC-B17)', () => {
-  it('labels the cost column "Cost (USD)" and carries the B1b audit-entry columns', async () => {
+  it('labels the cost column "Charged AI cost (USD)" and carries the B1b audit-entry columns', async () => {
     stub(() => ok(payload()));
     render(<ActivityTab />);
     const table = await screen.findByTestId('activity-table');
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers).toEqual(Object.values(COLUMNS));
-    expect(headers).toContain('Cost (USD)');
+    expect(headers).toContain('Charged AI cost (USD)');
     for (const present of ['Calls / failed', 'Tokens', 'Models', 'Error code']) expect(headers).toContain(present);
   });
 
