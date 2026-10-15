@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md) §1, row LF-8 (user request 2026-10-15)
 **Branch:** `feature/admin-layout-lf8-open-icon` (from `origin/main` `ba29f058`)
 **Date:** 2026-10-15
-**Status:** Code Complete (awaiting SA code review)
+**Status:** PR #417 open — fast-track (SA passed); the user merges
 
 ## Overview
 
@@ -187,7 +187,14 @@ Each applied to one file, the targeted suites run, the file copied back and its 
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf8-open-icon` |
+| Code commit | `26924225` |
+| Merge of `origin/main` | `cad22484` (clean, no conflicts) |
+| PR | [#417](https://github.com/AgentsPilot/neuronforge/pull/417), open, fast-track (SA passed); the user merges |
+| RM test run | `jest app/admin` + admin-authz-surface guard + tailwind-css-escape guard: 145 suites, 4,381 tests pass; `lint:hooks` clean |
+| Owed | Quick browser look: chevron centred in the narrow column, Tab shows the purple ring |
 
 ## Change History
 
@@ -196,3 +203,4 @@ Each applied to one file, the targeted suites run, the file copied back and its 
 | 2026-10-15 | Created | Dev workplan for LF-8 |
 | 2026-10-15 | SA code review | APPROVED WITH FIXES (F-1 standard D-2 amendment, F-2 footer-width pin); Q1 keep Open last; Q2 keep `title`; no separate QA pass |
 | 2026-10-15 | SA fixes applied (Dev) | F-1: standard §5.8 D-2 amended with the LF-8 line, plus a Change History row there. F-2: T-4b footer-width pin; SA-M1 now fails (8 expected, 9 received) and the file was restored with an equal checksum. `jest app/admin` 143 suites / 4,246 tests pass; tailwind guard 6 pass; `lint:hooks` clean |
+| 2026-10-15 | PR opened (RM) | Code commit `26924225`, merge of `origin/main` `cad22484` (clean). PR #417 open, fast-track; 145 suites / 4,381 tests pass, `lint:hooks` clean |
