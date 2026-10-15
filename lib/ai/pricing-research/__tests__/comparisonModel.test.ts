@@ -197,6 +197,27 @@ describe('pending lines and colours', () => {
     ]);
   });
 
+  it('slice 5 (QA R-1): the pending view carries the cross-check in words from the line', async () => {
+    mockListPending.mockResolvedValue({
+      data: [
+        pendingToken(liveModel, '0.15', '0.60', {
+          cross_check_verdict: 'agrees',
+          cross_check_value: 'input 0.15, output 0.6 per 1M',
+          cross_check_diff_pct: 0,
+          cross_check_fetched_at: '2026-10-15T09:00:00.000Z',
+        }),
+      ],
+      error: null,
+    });
+    const row = rowOf((await buildComparison()).rows, liveModel);
+    expect(row.pending).toHaveLength(1);
+    expect(row.pending[0].crossCheck).toBe('agrees');
+    expect(row.pending[0].crossCheckDetail?.startsWith('agrees with the second price list')).toBe(true);
+    expect(row.pending[0].crossCheckDetail).toBe(
+      'agrees with the second price list, read 2026-10-15; second price list (LiteLLM): input 0.15, output 0.6 per 1M'
+    );
+  });
+
   it('green when we are at or above the provider price', async () => {
     mockListPending.mockResolvedValue({ data: [pendingToken(liveModel, '0.15', '0.5')], error: null });
     const row = rowOf((await buildComparison()).rows, liveModel);

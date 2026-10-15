@@ -225,7 +225,8 @@ export function SourceCell({ row }: { row: ComparisonRow | null }) {
             )}
             <span className={MUTED}>{`${SOURCE_WORDS.checked} ${formatUtcDate(view.checkedOn)}`}</span>
             <span className={MUTED}>{`${SOURCE_WORDS.enteredBy} ${view.createdBy}, ${formatUtc(view.createdAt)}`}</span>
-            <span className={MUTED}>{`${SOURCE_WORDS.crossCheck} ${view.crossCheck}`}</span>
+            {/* Slice 5 (O-12): the words from the server when present; slice 4 doubles carry only the verdict. */}
+            <span className={MUTED}>{`${SOURCE_WORDS.crossCheck} ${view.crossCheckDetail ?? view.crossCheck}`}</span>
           </li>
         ))}
       </ul>
