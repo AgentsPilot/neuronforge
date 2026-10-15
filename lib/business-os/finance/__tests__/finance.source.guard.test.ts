@@ -107,7 +107,10 @@ const REPOSITORY = 'lib/repositories/BusinessOsFinanceReadRepository.ts';
 /** Every scanned file but the finance read repository (slice 2a, S2-F1). */
 const LAYER_B_FREE = FILES.filter((file) => file !== REPOSITORY);
 
-const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
+// CRLF normalised (as in PR #394): on a Windows checkout the newline-shaped
+// scans below (the DF-5 function and interface ends) otherwise find nothing.
+const read = (file: string) =>
+  fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/\r\n/g, '\n');
 /** Comments removed: prose about a table is not a read of it. */
 const stripComments = (text: string) =>
   text

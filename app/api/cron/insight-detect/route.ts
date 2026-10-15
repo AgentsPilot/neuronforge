@@ -473,7 +473,25 @@ async function runJob(request: NextRequest) {
          * that says the wrong thing about the thing it exists to describe.
          * The loop's own catch still counts an error here and carries on.
          */
-        const resolved = await repository.resolveStaleInsights(userId, ranDetectorIds);
+        /*
+         * A DETECTOR THAT NEVER SPOKE CANNOT CLOSE ITS OWN INSIGHT.
+         *
+         * `ranDetectorIds` is the detectors that FIRED, so every detector that
+         * returned nothing was treated as saying the condition had ended. Three
+         * kinds return nothing without having looked — a vector with too little
+         * evidence, a cooldown, and a throw — and sweeping those closed insights
+         * that were still true.
+         *
+         * The cooldown case is the one that was reported: a contact stuck in a
+         * pipeline stage for 35 days had three insights raised and resolved
+         * about a day apart, each one closed by a run inside the 48-hour
+         * cooldown that the previous run had started. The card appeared, went,
+         * came back and went again, while the contact never moved.
+         */
+        const resolved = await repository.resolveStaleInsights(userId, [
+          ...ranDetectorIds,
+          ...detectorEngine.getLastSilentIds(),
+        ]);
         if (resolved.data) stats.insightsResolved += resolved.data;
 
       } catch (error) {
