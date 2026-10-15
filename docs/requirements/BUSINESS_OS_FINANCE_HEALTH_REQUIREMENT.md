@@ -7,7 +7,7 @@
 **Status:** **Draft. SA review: APPROVED WITH CONDITIONS (2026-10-09); BA has applied SA-F1 to SA-F14 and the SA-Q1 to SA-Q12 rulings; SA re-check passed 2026-10-09 (SA-RC): cleared for the slice 1a workplan.** The user accepted every proposed default for BQ-1 to BQ-12 on 2026-10-09 (§0.2, BD-1 to BD-12). No business question is open. Slice 1 is split into **1a** and **1b** (SA-F3). Slice 1a implemented, SA code review approved, QA passed, user approved the diff 2026-10-10; RM commit + PR next. **Slice 2 (§11A):** SA requirement review APPROVED WITH CONDITIONS 2026-10-11 (SA-RR-2); BA applied findings S2-F1 to S2-F9 and the SA-Q13 to SA-Q19 rulings; the 2a workplan is next.
 **Based on:** [BUSINESS_OS_FINANCE_HEALTH_DISCOVERY.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_DISCOVERY.md) (cited as **D**, with section or line) and [BUSINESS_OS_FINANCE_HEALTH_LIVE_SCHEMA.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_LIVE_SCHEMA.md) (cited as **LS**; authoritative over migrations wherever they differ).
 **Related:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) (P-3b.2, P-5, P-6a/b, P-8a/b; AM-10 "revenue by month" is this page), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md), [BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md), [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md), [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md).
-**Money area source (2026-10-14):** [ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md](/docs/requirements/ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md) (cited as **CR**) is the source of scope for steps M-1 and M-2, specified in §11D. It is committed on its own docs PR; this document does not copy it.
+**Money area source (2026-10-14):** [ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md](/docs/requirements/ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md) (cited as **CR**) is the source of scope for steps M-1 and M-2, specified in §11D, and step M-3, specified in §11E. It is committed on its own docs PR; this document does not copy it.
 
 ## Overview
 
@@ -35,6 +35,7 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11B. Slice 1c (fix): test-mode platform money and paying Founding Partners](#11b-slice-1c-fix-test-mode-platform-money-and-paying-founding-partners)
     - [11C. Slice 4 (4a and 4b): Boost revenue](#11c-slice-4-4a-and-4b-boost-revenue)
     - [11D. Slice 5a, Money M-1 and M-2: one account, one screen; plan payments received](#11d-slice-5a-money-m-1-and-m-2-one-account-one-screen-plan-payments-received)
+    - [11E. Slice 6a, Money M-3: account economics and AI margin](#11e-slice-6a-money-m-3-account-economics-and-ai-margin)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -58,7 +59,8 @@ This document is the feature's **single source of truth**: every slice decision,
 | 4 | Boost revenue: **4a** boost revenue per currency and package, K-5 value; **4b** boost problems, K-5 dispute rule, bought credits in Section 4 (test and live together, BD-14; no switch) | **Met:** boost purchases are recorded (1 paid Starter, test mode, counted under BD-14; §11C.1); **no migration**; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`, not on the boost repository (§11C.6) | ⬜ **4a implemented (uncommitted); SA code review APPROVED with no conditions (SA-CR-4a), QA PASS WITH ISSUES (no bugs, no fix round); user approved diff 2026-10-14; TL retrospective done; 4a committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open, awaiting user merge; manual QA L-49 to L-58 owed; 4b next; DF-5 refund timing on default (a) pending user. 2026-10-14: DF-5 decided by the user (BD-17, refund month); **4b paused until Money M-3 merges** (CR §8; it edits `RevenuePanel`, `CreditsSection` and the K-5 tile, as M-1 and M-2 do)** (§11C; SA-Q25 to SA-Q31; about 2.5 + 1.5 days) | 4a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md) | 4a: [#358](https://github.com/AgentsPilot/neuronforge/pull/358) |
 | 5a | **Money M-1 / M-2** (CR §8): **M-1** "One account, one screen": the shared business picker (the original audit-trail picker is deleted), an account header and account summary with a business picked, links that carry the window and the account, both ways with the Businesses drawer; **M-2** "Plan payments received": cash received from plan payments per currency, per window, per account, in Our revenue and K-5 (no MRR) | M-1: none (**no new read**); M-2: P-3b `invoice_paid` rows (live: 1, §11D.1); **no migration**; new reads R-m, R-m′ in `BusinessOsFinanceReadRepository` (§11D.6). **FIN 4b is paused during M-1 to M-3** (it edits the same files, CR §8) | ⬜ **Implemented (M-1 checkpoint green, then M-2); SA code review APPROVED (SA-CR-5a; E-43 applied); QA PASS WITH ISSUES, no bugs; user pre-authorised commit + PR without diff review (2026-10-14); committed `e8ffc5da` and PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) opened (2026-10-14, not merged); user sync next** (specified 2026-10-14, §11D; SA-Q32 to SA-Q41; requirement SA-RR-5a). M-1 about 2 days (short path if SA agrees, SA-Q32), M-2 about 2.5 days (full cycle). **Amended 2026-10-14 (user, SA-W55):** M-1 and M-2 ship in **one workplan and one PR**. M-1 is finished first and proven at the M-1 checkpoint (no `lib/` or `app/api/` change; AC-111); M-2 starts only after it | [BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md) | [#383](https://github.com/AgentsPilot/neuronforge/pull/383) |
 | 5 | Plan revenue, MRR, paying vs comped, trial-to-paid | P-3b.2 (webhook writer), P-8a (MRR definition), P-5 (`first_paid_at` writer) | ⬜ **Split 2026-10-14 (BD-19):** cash received is **5a / M-2** (row above, needs no P-8a); **5b** = MRR, after PAY P-8a, plus paying vs comped exactness, trial-to-paid and the funnel "paid" stage | — | — |
-| 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5 | — | — |
+| 6a | **Money M-3** (CR §8) "Account economics and AI margin": a Finance **Accounts** tab, one row per account for the window (what it paid us, plan + boosts, after tax and refunds, per currency; charged AI cost; **AI margin, USD only**; credits; plan group), sorted and filtered on the server, capped at 200 rows, each row opening the M-1 one-account view; the AI margin line in the M-1 account summary; a platform AI margin line above the table | Slice 5a merged (#383); **no migration, no new read**: the all-accounts reads R-a, R-k, R-m, the plan walk and the credit-positions pass already carry `user_id` per row (§11E.1) | ⬜ **Implemented; SA code review APPROVED (SA-CR-6a; E-52 applied); QA PASS WITH ISSUES, B-1 fixed in fix round 1; user pre-authorised commit + PR without diff review; RM commit + PR next, then user sync** (requirement SA-RR-6a, edits E-44..E-51 applied; specified 2026-10-14, §11E; SA-Q42 to SA-Q50). About 3 days, full cycle. FIN 4b stays paused until M-3 merges | — | — |
+| 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b | — | — |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
 | 8 | History snapshots (plan mix, credits) for trend lines | A migration and a cron (SA) | ⬜ Not started | — | — |
 
@@ -88,6 +90,13 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **BD-18** | CR BQ-2 (Money M-1) | **The business AI cost figure is the CHARGED cost** (the credit ledger, what we billed in credits). The recorded cost (usage log) is a separate operations figure, shown beside it as "not charged" in a later step (CR M-4) and **never added**. The M-1 account summary shows charged AI cost only. | 2026-10-14 | User accepted CR default |
 | **BD-19** | CR BQ-4 (Money M-2) | **Plan revenue is shown as cash received first** (`invoice_paid` events in the window); **MRR comes later**, with PAY P-8a's definition (FIN slice 5b). Slice 5 is split: 5a = M-2 (cash received), 5b = MRR. | 2026-10-14 | User accepted CR default |
 | **BD-20** | CR BQ-8 (Money M-1, M-2) | **No "includes test payments" label for now**, in the account summary or in plan revenue, consistent with BD-14. Revisit at go-live (DF-3). | 2026-10-14 | User accepted CR default |
+| **BD-21** | CR BQ-1 | **One "Money" section in the admin sidebar**, holding Finance (overview, accounts, one account) and the detailed AI calls page. Finance stays the first page; nothing with buttons (an action) moves in. Built in CR step M-5. | 2026-10-14 | User accepted CR default |
+| **BD-22** | CR BQ-3 (Money M-3) | **AI margin is worked out on revenue after removing tax**, net of refunds and disputes. Stripe fees are not deducted (not recorded) and the page says so. | 2026-10-14 | User accepted CR default |
+| **BD-23** | CR BQ-5 | The planned billing views (PAY P-8a): **totals, MRR and the subscriptions list in the Money area; the per-account billing panel in the Businesses drawer**, beside credits, linked from the per-account money view. | 2026-10-14 | User accepted CR default |
+| **BD-24** | CR BQ-6 | **"Costs & credits" moves out of the Business OS AI settings page into the Money area** (as "Charge checks"), **after** the per-account view is done (CR step M-5). | 2026-10-14 | User accepted CR default |
+| **BD-25** | CR BQ-7 | **Retire the hidden Platform dashboard and the unlisted Exchange rates page**; keep the "All products" view of AI calls & usage (CR step M-8). | 2026-10-14 | User accepted CR default |
+| **BD-26** | CR BQ-9 | **Yes to a "since it started" view for one account** (beyond the 92-day cap), only when one account is picked, starting from the charging cut-over (29 Sep 2026). Deferred as DF-6; not in M-3. | 2026-10-14 | User accepted CR default |
+| **BD-27** | CR BQ-10 | **Keep the Health tile**, which counts every recorded AI call, but **rename it "Recorded AI cost"** and link it to the Money area (CR step M-4, OV-1 wording). | 2026-10-14 | User accepted CR default |
 
 **Log:**
 - 2026-10-09 — BA applied SA findings F1–F14; slice 1 split into 1a/1b (SA F3).
@@ -108,6 +117,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-14 — The user tested owner account (the Basic plan account of 2026-10-12) paid a USD 79 Basic plan and a USD 10 boost, both Stripe test mode; Finance showed only the USD 10, because plan amounts were never built. The user accepted the consolidation review's defaults for steps M-1 and M-2 (BD-18 charged AI cost; BD-19 cash received first, MRR later; BD-20 no test-payment label) and BD-17 (boost refund in the refund month; lost dispute in the month lost; held means held now; implementation deferred, 4b paused). BA specified **slice 5a = Money M-1 and M-2** in §11D from a read-only live check (§11D.1: 9 billing event rows, 1 `invoice_paid` USD 79.00 for the test account dated 2026-10-12, 8 `mismatch_refused` with amounts and no account) and the CR source. M-1 about 2 days (UI, no new read), M-2 about 2.5 days (reads R-m, R-m′; no migration). AC-108 to AC-129; §13 checks 17 and 18; SA-Q32 to SA-Q41. The CR "since it started" view (BQ-9) is kept out of M-1 (DF-6). Awaiting SA review.
 - 2026-10-14 — BA applied SA 5a review edits E-33..E-39 (SA-RR-5a): M2-FR-3 timestamps through `formatUtc` and AC-129 (E-33, S5-F1); M2-FR-5 K-5 exactness per currency (E-34, S5-F3); M1-FR-4 Paying / Not paying / Unknown from the Section 1 groups (E-35, S5-F4); M2-FR-7 picked-view `revenue.state` and AC-123 `countRevenueRows` zero calls (E-36, SA-Q35); M2-FR-3 tier label through `tierLabelForGroup` (E-37, SA-Q37); admin layout standard U-10 exception for the one-shot `account` key (E-38) and C-6 picker deletion in M-1 (E-39).
 - 2026-10-14 — BA applied SA 5a workplan-review edits E-40..E-42 (SA-WP-5a): §13 checks 17 and 18 take one UTC month through a `p` block, default the current month, and the check intro names the 2026-10-01 month (E-40, SA-WR-40); §11D.2 Order and §0.1 row 5a record one workplan and one PR with the M-1 checkpoint as a hard gate (E-41, SA-W55); M1-FR-7 every link carries the window, superseding SA-Q34's "(its own window)" (E-42, SA-W56).
+- 2026-10-14 — The user accepted **all ten** consolidation review defaults (CR §9). BQ-2, BQ-4 and BQ-8 were already recorded as BD-18 to BD-20; the other seven are **BD-21 to BD-27** (one Money section; margin on revenue after tax; billing totals in Money and the per-account billing panel in the Businesses drawer; Costs & credits into Money later; retire Platform dashboard and Exchange rates; "since it started" view for one account, deferred as DF-6; keep the Health tile, renamed "Recorded AI cost"). The user said "continue with M-3". BA specified **slice 6a = Money M-3** in §11E from the merged 5a code (main `d05eb0a4`) and a read-only live check (§11E.1): no new read, a new pure builder over rows the route already reads; margin USD only (BD-12, BD-22); AC-130 to AC-149; §13 checks 19 and 20; SA-Q42 to SA-Q50; DF-8 (Stripe fee estimate stays in 6b). About 3 days. Awaiting SA review.
+- 2026-10-14 — BA applied SA 6a review edits E-44..E-48 (SA-RR-6a): §11E.6 export pins for `boostRevenue.ts` and `planRevenue.ts` and the DF-5 pin extended to `accountEconomics.ts` with zero tokens (E-44, S6-F1); M3-W-2 boost after-tax rule from the reader's result, no status literal (E-45, S6-F2); URL key `tab=accounts` in M3-FR-1, M3-FR-5, M3-FR-11, M3-FR-12, AC-130, AC-145, AC-146, SA-Q42 and the §11E.6 route row (E-46, S6-F3); AC-134 platform line before filter and cap (E-47, S6-F4); M3-FR-5 `sort`, `group`, `show` only with the tab, else 400 (E-48, S6-F5).
+- 2026-10-14 — BA applied SA 6a workplan-review edits E-49..E-51 (SA-WP-6a): M3-FR-11 optional payload keys `accountEconomics` (tab, no business picked) and `accountMargin` (business picked), both absent otherwise (E-49, SA-W74); M3-FR-3 "Paid us" through `formatMoney`, AI cost and AI margin through `formatUsd` (E-50, SA-W76); §13 slice 6a checks intro records the two by-design differences from check 19 (E-51, SA-W81). §0.1 slice 6a: workplan SA-approved with conditions, Dev implementing.
 
 ### 0.3 SA rulings
 
@@ -174,6 +186,11 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-W55 to SA-W73** | **Slice 5a workplan rulings, all approved.**<br>• W55: one workplan and one PR, with the M-1 checkpoint as a hard gate (E-41).<br>• W56: every link carries the window, AI cost & usage included; supersedes SA-Q34's "(its own window)" (E-42).<br>• W57: a page-only `account` key (timing test SA-WR-36).<br>• W58: option (a), the refund-timing pin widened to exactly two users.<br>• W59: `netMinorByCurrency`; `k5` moves to `ourRevenue.ts`.<br>• W60: K-5's shape is kept.<br>• W61: `revenue.plans` becomes an object; R-d's behaviour stays pinned.<br>• W62: section status comes from the two money parts.<br>• W63: an absent part is an exact 0 only for an exact read.<br>• W64: unreadable is decided per row.<br>• W65: a `tierOrder` membership check gives "Unknown plan".<br>• W66: sort by currency first.<br>• W67: the Businesses link uses `status=all`.<br>• W68: a temporary local chip until M-6.<br>• W69: Finance is not added to the contrast walk; the new files are held by a finance rule.<br>• W70 to W73: as proposed. | 2026-10-14 | §11D, checks 17 and 18 |
 | **SA-WP-5a** | **2026-10-14 SA workplan review (slice 5a, Money M-1/M-2): APPROVED WITH CONDITIONS.** One PR accepted, with the M-1 checkpoint as a hard gate. Required changes SA-WR-36 to SA-WR-40. BA applies E-40 (checks 17 and 18 take a month, default now), E-41 and E-42 (exact text in the workplan's SA review). | 2026-10-14 | Slice 5a |
 | **SA-CR-5a** | **2026-10-14 SA code review (slice 5a, Money M-1/M-2): APPROVED, code approved for QA.**<br>• SA-WR-36 to SA-WR-40 verified; the M-1 checkpoint is recorded and every `lib/` / `app/api/` path in the final diff is M-2.<br>• The picker is deleted and the contract test is a deletion pin.<br>• R-m / R-m′: `invoice_paid` only, `minorUnitsPerMajor`, currency normalised, ceiling 5,000 with "At least", account-scoped reads.<br>• R-d is not called with a business picked; timestamps go through `formatUtc`.<br>• K-5 adds within one currency and is Unknown unless both parts are exact.<br>• The plans line is per account; the name chain is picked → payload → short id.<br>• The one-shot `account` key is stripped from the URL and filters nothing.<br>• Tier labels come through a callback, with no literal and no new entitlements import.<br>• Every link carries the window; no money in logs; `requireAdmin` is first; the billing and webhook guards are untouched.<br>• D-1 to D-6 approved; D-4 needs **E-43** (M2-FR-7: `recorded` = any `invoice_paid` row or a counted boost).<br>• The `useFinanceData.ts` server-logger use is pre-existing since 1a and deferred to M-6. | 2026-10-14 | Slice 5a |
+| **SA-Q42 to SA-Q50** | **Slice 6a (M-3) rulings.**<br>• Q42: build the table only with `tab=accounts`.<br>• Q43: key `tab=accounts`, page-local tabs, no new shared export (E-46).<br>• Q44: `sort`, `group` and `show`, accepted only with the tab (E-48).<br>• Q45: export the boost and plan row readers, with the export pins updated; `refundsAndDisputesOf` stays private (E-44); after tax with no status literal (E-45).<br>• Q46: `summariseAiCost` returns the per-account map.<br>• Q47: a part refund of a taxed boost is Unknown.<br>• Q48: "Not available" before the cut-over.<br>• Q49: money-only accounts are shown.<br>• Q50: full cycle, one PR, 4b paused. | 2026-10-14 | §11E |
+| **SA-RR-6a** | **2026-10-14 SA requirement review (slice 6a, Money M-3): APPROVED WITH CONDITIONS.** "No new read" verified (R-a, R-k, R-m, the plan walk and positions all carry the account; `aiCost.ts` already has the per-account map). Caller lists and table pin unchanged; billing placement untouched.<br>**Findings:**<br>• S6-F1 (High): the boost and plan export pins trip, and DF-5 must be extended to the new builder (E-44).<br>• S6-F2: after-tax from the reader result, no status literal (E-45).<br>• S6-F3: key `tab` (E-46).<br>• S6-F4: AC-134 scope (E-47).<br>• S6-F5: sort and filter keys only with the tab (E-48).<br>• S6-F6: 3 days accepted.<br>Checks 19 and 20 pass the style rules (QA runs them). The workplan starts after E-44 to E-48. | 2026-10-14 | Slice 6a |
+| **SA-W74 to SA-W89** | **Slice 6a workplan rulings (all approved).**<br>• W74: optional payload keys `accountEconomics` (tab) and `accountMargin` (picked) (E-49).<br>• W75: integer scale 1e8 is exact with no double count; the bound is corrected to about USD 900,719.<br>• W76: `formatMoney` for "Paid us", `formatUsd` for cost and margin (E-50).<br>• W77 to W80: non-wire helpers; five names per export pin.<br>• W81: tax above net gives Unknown; follow E-45; differences from check 19 recorded (E-51).<br>• W82: precedence Not available > n/a > Unknown.<br>• W83: one group regex in pure `financeUrl.ts`, imported by the route, purity pinned.<br>• W84: `tab` with `accountId` returns 400.<br>• W85: platform rows have no link.<br>• W86 to W89 as written.<br>• Refund-note pin: three users. | 2026-10-14 | Slice 6a |
+| **SA-WP-6a** | **2026-10-14 SA workplan review (slice 6a): APPROVED WITH CONDITIONS.** Required changes:<br>• SA-WR-41: the safe-range bound, with a boundary test.<br>• SA-WR-42: `financeUrl.ts` purity pin.<br>• SA-WR-43: negative-margin sign and "(USD)" headers.<br>• SA-WR-44: AC-145 baseline not edited.<br>• SA-WR-45: planted sixth export.<br>BA edits E-49 to E-51. | 2026-10-14 | Slice 6a |
+| **SA-CR-6a** | **2026-10-15 SA code review (slice 6a, Money M-3): Code Approved.**<br>• SA-WR-41 to SA-WR-45 verified in code.<br>• The AC-145 baseline is unedited (two inserted hunks only).<br>• Deviations 1 to 9 approved: the route importing the sort and show lists from the pure `financeUrl.ts` keeps one definition.<br>• Third check-19 difference: a zero non-USD plan invoice makes no line (M2-W-5). **The page is right**; no code change; E-52 records it.<br>• Low follow-ups: tab `aria-controls` names an unmounted panel; the cost cell is Unknown where Section 3 prints a figure (unreadable or overflow rows), so AC-134 holds on readable data; the group select does not show an unlisted tier.<br>• No repository, billing or entitlements change; no money in logs; `requireAdmin` first.<br>• SA re-run: finance 2029, authz-guard 203, bos-entitlements 7986 tests, all exit 0. | 2026-10-15 | Slice 6a |
 
 ### 0.4 Deferrals and parked items
 
@@ -186,6 +203,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** **Decided 2026-10-14 (BD-17): refund month; lost dispute in the month lost; held means held now.** The writer-side date and the page change stay deferred with FIN 4b (paused during Money M-1 to M-3). | 2026-10-13 |
 | DF-6 | **"Since it started" view for one account** (CR BQ-9: a window beyond the 92-day cap, from the charging cut-over, for a picked account only) | Not needed for M-1: the account summary answers the picked window. It raises the cap for account-scoped reads only, a route and validation change (CR SA-Q-6), so it is not UI-only. A later Money item, after M-3 | 2026-10-14 |
 | DF-7 | **Refused plan payments with an amount** (`mismatch_refused` rows) | Live: 8 test-mode rows, no account (`unknown_customer`), amounts recorded (§11D.1). They are not revenue of any account and M-2 never counts them (M2-W-2). Showing them belongs to platform payment problems (slice 7) | 2026-10-14 |
+| DF-8 | **Stripe fee estimate in the AI margin** (BD-7) | M-3 shows AI margin with the label "Stripe fees not deducted" and no estimate. The labelled estimate (the boost requirement's assumed 2.9% + USD 0.30) needs a per-payment rule for plans and boosts and its own exactness rule; it moves to slice 6b with K-7 and the per-plan margin (BD-8). DF-6 also stays deferred after M-3 (it changes the 92-day cap, a route and validation change; §11E.2) | 2026-10-14 |
 
 ---
 
@@ -1272,6 +1290,146 @@ Technical only; no business question is open (BD-17 to BD-20). Each has a BA sug
 
 ---
 
+## 11E. Slice 6a, Money M-3: account economics and AI margin
+
+Specified 2026-10-14 from the consolidation review (**CR** §5.1 "Finance: Accounts", §5.2 "AI margin", §7 G-4 and G-6, §8 M-3), the merged 5a code (main `d05eb0a4`, PR #383), a read-only live check (§11E.1), and BD-1, BD-7, BD-8, BD-12, BD-14, BD-18, BD-20, BD-22. **No migration, no new SQL function, no new table, no write, and no new repository method.** It adds one pure builder, one validated route parameter group (SA-Q42) and a tab. This is FIN slice 6 split: **6a** = margin overall and per account, USD only; **6b** keeps the margin per current plan (BD-8), K-7 and the Stripe fee estimate (DF-8). Where this section and §8.3 disagree on margin, **this section governs**.
+
+**The question it answers.** "Across all accounts, who paid us what, what did their AI cost us, and which accounts are worth it?" For the owner test account in October 2026 the row reads: paid us **USD 89.00** after tax (plan 79.00 + boost 10.00, tax 0), charged AI cost **USD X** (check 19), AI margin **USD 89.00 minus X**.
+
+### 11E.1 Live facts and code facts (read-only, 2026-10-14)
+
+Live: measured with a SELECT-only script from the main checkout (`e49a4719`; zero-row column probes plus counts; no rows written, no DDL). Code: read on `feature/bos-money-m3` at `d05eb0a4`. Checks 19 and 20 (§13) were written against these facts and not executed by BA.
+
+| Fact | Value |
+|---|---|
+| `business_os_credit_charges` | 423 rows, columns `id, user_id, kind, cost_usd, credits, created_at` read back without error. Only `kind = 'charge'` today (no adjustment yet). October 2026: 386 rows over **6 accounts**, none with `user_id` NULL |
+| `business_os_boost_purchases` | 1 row: `paid`, `USD`, `amount_tax_minor` 0. Columns `amount_total_minor, amount_tax_minor, amount_refunded_minor, paid_at, status, currency, user_id` read back |
+| `business_os_billing_events` | 9 rows; 1 `invoice_paid`, `usd`, `amount_tax_minor` 0 (§11D.1) |
+| `business_os_account_plans` | 8 rows (every account in the plan walk) |
+| Every all-accounts read already carries the account | R-a ledger rows (`user_id`; `aiCost.ts` already builds a per-account map and returns only the top 10); R-k boost rows (`user_id`; `boostRevenue.ts` groups by currency and package only); R-m plan rows (`user_id`; `planRevenue.ts` builds a by-business table, received **including tax**); the plan walk (`classifyAccounts` returns `groupByAccount`); the credit-positions pass (`positionsPass.byUserId`, every walked account). **So no new read is needed: M-3 groups rows the route already holds.** |
+| Tax | Plan rows carry `amount_tax_minor` per payment; boost rows carry `amount_tax_minor` per purchase. Today's boost **net** and plan **received** both **include** tax (`financeCopy.ts`, M2-W-3). No tax is recorded per refund |
+| Charging cut-over | `CHARGING_CUTOVER_FLOOR_MS` = 2026-09-29 16:50:53.914 UTC (`lib/business-os/credits/aiActivity.ts:146`); Section 3 reports `coverage` (`after_cutover`, `starts_before_cutover`, `entirely_before_cutover`) |
+| Route | `app/api/admin/business-os/finance/route.ts` validates `preset`, `from`, `to`, `accountId` with Zod; the page URL keys are the same (`financeUrl.ts`). There is no tab and no sort parameter today |
+| Display cap precedent | `TABLE_ROWS_SHOWN` 200 (`financeHealth.ts:157`): one names request (the identity read's 200-id chunk) |
+
+### 11E.2 Scope
+
+| In scope | Not in scope |
+|---|---|
+| An **Accounts** tab on Finance (all businesses only); a pure server-side builder of one row per account; the AI margin rule; server-side sort, filter and a 200-row cap; a platform totals line; a link from each row to the M-1 one-account view; the **AI margin** line in the M-1 account summary (picked view) | Any new read or repository method; MRR (5b); the margin per current plan, K-7 and the Stripe fee estimate (6b, DF-8); recorded-but-not-charged cost (M-4, BD-18); the "since it started" window (DF-6, BD-26: it raises the 92-day cap, a route and validation change, not trivial); the Money sidebar section (M-5, BD-21); plan refunds and disputes (not recorded before PAY P-6b); any FX (BD-12); a CSV export |
+
+**Estimate: about 3 days**, full cycle (new money logic and a route parameter): builder, wiring and route about 1.5 days; tab, table and summary line about 1 day; guards, SQL cross-checks and QA about 0.5 day.
+
+### 11E.3 Money and margin rules
+
+| # | Rule |
+|---|---|
+| M3-W-1 | **Window.** The page window (preset or custom, at most 92 days, UTC; TZ-1). Revenue is dated by `paid_at` (plans M2-W-1, boosts S4-W-1); AI cost by ledger `created_at` (Section 3). The window is the one in the URL and is carried on every row link. |
+| M3-W-2 | **Paid us, after tax (BD-22), per account and currency.** **Plans:** for each counted payment (M2-W-2 to M2-W-5), `amount_minor` minus `amount_tax_minor`. **Boosts:** for each counted purchase (S4-W-2): `paid` = total minus tax; `refunded` with refunded = total = 0; `partially_refunded` or `refunded` with tax 0 = total minus refunded; `disputed` and `dispute_lost` = 0 (nothing kept; S4-W-6). A refund of a purchase with tax above 0 that is not a full refund is **inexact** (no tax per refund is recorded). Minor units used as is (S4-W-4, M2-W-4); `groupByCurrency` lines only. Before-tax figures stay on the Overview; the Accounts tab shows after-tax only and says so. Computed from the exported boost reader's result, with no status literal: let net = total minus refunded minus held minus lost; net 0 gives 0; otherwise no refund gives net minus tax; otherwise tax 0 gives net; otherwise inexact. |
+| M3-W-3 | **AI cost = charged cost (BD-18)**, USD: the net of charges and adjustments in the window for that account, summed exactly at the ledger scale, as Section 3 sums it. Deleted accounts' rows form the Deleted accounts row. |
+| M3-W-4 | **AI margin = paid us after tax in USD minus charged AI cost**, in USD, shown **only when all** of these hold for the account (or for the platform line): (a) every revenue line of the account is USD, so no line in another currency and no Unknown-currency line; (b) the USD revenue after tax is exact; (c) the AI cost is exact; (d) the window does not start before the charging cut-over. An account with no revenue at all and exact cost has margin = minus its cost (a real loss), labelled "No revenue in this window". |
+| M3-W-5 | **Other currencies (BD-12, CUR-3).** When (a) fails, the margin cell reads **"n/a, different currency"** and the revenue cell shows each currency on its own line. No conversion, no exchange rate, and no partial margin from the USD part alone (the AI cost cannot be split between currencies). |
+| M3-W-6 | **Unknown and "at least" (AGG-3, §6.6).** A read at its ceiling makes the figures from it "At least X" and the margin **Unknown** (a lower bound minus a lower bound is not a figure). A failed read makes its column **Unknown** on every row and the margin Unknown. An unreadable row (S4-W-4, M2-W-4, ledger unreadable amount) or an inexact refund (M3-W-2) makes that account's figure "At least" (revenue) or Unknown (net after refund) and its margin Unknown. Unknown is never shown as 0. |
+| M3-W-7 | **Before the cut-over.** When the window starts before the charging cut-over (Section 3 `coverage` is not `after_cutover`), every margin reads **"Not available: AI cost is charged only from 29 Sep 2026"**; revenue and cost still show, with the cut-over notice. |
+| M3-W-8 | **Deleted accounts** (`user_id` NULL on any read): one "Deleted accounts" row, never named, never linked, always last, outside the cap; its figures count in the platform line. |
+| M3-W-9 | **Platform AI margin line** above the table: paid us after tax per currency, charged AI cost, and the platform AI margin under M3-W-4 to M3-W-7 applied to all accounts together (any non-USD revenue anywhere makes it "n/a, different currency"). It covers **every** account, unfiltered, and says so. |
+| M3-W-10 | **Test and live together** (BD-14, BD-20): no label, switch or `livemode` filter. |
+
+### 11E.4 Functional rules
+
+| # | Requirement |
+|---|---|
+| M3-FR-1 | **Tab.** With no business picked, Finance shows two tabs, **Overview** (today's page, the default) and **Accounts**. The tab is in the URL (`tab=accounts`; absent means Overview), written with `replace` (the U-2 precedent of `?tab=`). With a business picked there is no tab: the one-account view shows, and picking a business from the Accounts tab drops `tab`. Tab key name and component are SA-Q43. |
+| M3-FR-2 | **Which accounts.** Every account in the plan walk, plus every `user_id` that appears in the window's ledger, boost or plan rows but has no plan row (group "Unknown/held", noted "No plan row"), plus the Deleted accounts row (M3-W-8). A platform account shows the existing platform label. If the plan walk failed or hit its ceiling, the list holds only accounts seen in the money reads, the table is `partial`, and a notice says "Accounts with no money or AI use in this window may be missing". |
+| M3-FR-3 | **Columns:** Business (name for shown rows only, the existing `findNames` path, else the short id; never in the URL or a log); **Plan group** (current, with the Founding Partner chip, BD-15; header note "Plan is the current one", BD-8); **Paid us, after tax** (one line per currency; a second small line "plan X · boosts Y" in the same currency); **AI cost, charged (USD)**; **AI margin (USD)**; **Credits used** (% of allowance and "used / allowance", for the account's own credit period, TZ-3, labelled "own credit period"; Unknown when the positions pass failed; "No allowance" as Section 4); **Open** (M3-FR-7). "Paid us" through `formatMoney` (exactly two decimals, currency named); AI cost and AI margin through `formatUsd` (2 to 4 decimals, as Section 3 prints its cost, so the cost cell equals Section 3's text); numbers in `ADMIN_TD_NUM` cells. |
+| M3-FR-4 | **Sort (server side, before the cap).** Options: **AI cost, highest first** (default); **AI margin, lowest first** (losses first; "n/a", "Not available" and Unknown rows after every number, then by AI cost); **Paid us, highest first** (USD after tax; accounts with another currency after the USD ones, by currency code then amount, never compared across currencies); **Credits used, highest first**. Ties by account id. Sorting by name is not offered (names are read for shown rows only). |
+| M3-FR-5 | **Filters (server side, before the cap):** **Plan group** (all, or one of the six groups, §8.1); **Show**: "All accounts" (default), "Paid us or used AI in this window", "Negative AI margin" (only rows with a USD margin below 0). Filters and sort live in the URL beside `tab`, validated with Zod on the route; a malformed value falls back to the default with the existing `FINANCE_URL_NOTICE`. The route accepts `sort`, `group` and `show` only together with `tab=accounts` (otherwise 400), and the page writes them only on that tab. |
+| M3-FR-6 | **Cap.** At most **200** rows shown (`TABLE_ROWS_SHOWN`, one names request), plus the Deleted accounts row. The count line reads "Showing 200 of N accounts" and, when cut, "N more accounts not listed; narrow with a filter". The platform line (M3-W-9) covers every account. |
+| M3-FR-7 | **Link to the one-account view.** Each named or short-id row links to `/admin/finance?accountId=<id>` plus the current window (`preset`, or `preset=custom&from&to`), so the M-1 view opens on the same window. The Deleted accounts row has no link. Only the id and the window are in the href. |
+| M3-FR-8 | **Account summary AI margin line (fills CR §5.2).** With a business picked, the M-1 summary gains **"AI margin (USD)"** under "Paid us, total", built by the same builder from the account-scoped reads (R-a′, R-k′, R-m′) with the same rule; so the Accounts row and the one-account view show the same figure for the same window (AC-142). |
+| M3-FR-9 | **Labels and notes (always shown on the tab):** "Paid us is after tax, net of refunds and disputes. Stripe fees are not deducted." (BD-7, BD-22); "AI cost is the charged cost (credits we billed)." (BD-18); "AI margin is shown only for accounts paid in USD. No exchange rate is used." (BD-12); "Plan refunds and disputes are not recorded yet." (M2-W-6); the S4-W-3 boost refund timing note whenever the boost part carries it (until 4b builds BD-17). |
+| M3-FR-10 | **Honest indicators:** no account matches the filter: "No accounts match this filter" (no table); the tab is `unknown` only when the ledger read and both revenue reads failed; otherwise per-column Unknown and the tab `partial` with a notice naming the part. |
+| M3-FR-11 | **Where the code lives.** A pure builder `lib/business-os/finance/accountEconomics.ts` (structural input types; no data-layer, entitlements or clock import; plan labels through the `tierLabelOf` callback, the aiCost precedent). It reuses the one definition of a readable boost and plan row (SA-Q45) and of a per-account ledger sum (SA-Q46); it never adds two currencies and exports no function that could. Wired in `financeHealth.ts`; the route adds an optional `accountEconomics` section to the payload only when `tab=accounts` and no business is picked (SA-Q42), and an optional `accountMargin` (the M3-FR-8 line) only when a business is picked; both keys are absent otherwise, and `accounts` stays Section 1 (SA-W74). |
+| M3-FR-12 | **Overview unchanged.** Without `tab=accounts`, the route makes the same reads and returns the same payload as before M-3 (except the M3-FR-8 summary line with a business picked). |
+| M3-FR-13 | **No client arithmetic** (the M1-FR-6 rule): every figure, sort and filter is decided on the server; the client formats only. |
+| M3-FR-14 | **Logs and payload:** the route's one `info` line adds the accounts table's status, row counts (total, shown, filtered out), and the sort and filter values: never an amount, a name or a currency total (SEC-8). No Stripe id, tier literal or `livemode` in the payload. |
+| M3-FR-15 | **Layout standard:** shared table constants, `StatusChip`, `AdminNotice`, `AdminEmpty`, `formatCount`; copy in `financeCopy.ts`; no `console.`; contrast as LF-1. The page shell stays as it is (M-6, DF-4). |
+| M3-FR-16 | **Performance:** no new database read; one more names request of at most 200 ids, only on the Accounts tab; route p95 under 2 s; QA records `durationMs` for both tabs. |
+
+### 11E.5 Reads (reused; no new read)
+
+| Need | All accounts (Accounts tab) | One account (summary line) |
+|---|---|---|
+| Charged AI cost per account | R-a `listRowsOfAllAccountsCreatedInRange` (ceiling 20,000) plus the originals look-up | `listRowsForAccountCreatedInRange` |
+| Boosts per account | R-k (ceiling 5,000) | R-k′ |
+| Plans per account | R-m (ceiling 5,000) | R-m′ |
+| Plan group | plan walk `pagePlans` + R-c paying (`classifyAccounts().groupByAccount`) | `findEntitlementInputs` + R-c′ (unchanged) |
+| Credits used | credit-positions pass `byUserId` (as Section 4) | the same, one account |
+| Names | `findNames` for the shown ids only (≤ 200) | the M-1 chip rule |
+
+`BusinessOsFinanceReadRepository`, `BusinessOsCreditLedgerReadRepository` and the lot repository gain **no** method; their caller lists and the finance table pin are unchanged.
+
+### 11E.6 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | New builder | It imports no repository, no data layer, no entitlements module and no clock; `REPOSITORY_TABLES` unchanged; extend the "no cross-currency total" control to the new file (planted negative control) |
+| `app/admin/finance/__tests__/source.guard.test.ts` | New tab and table components | Type imports only from `lib/business-os/finance/`; no repository; no `console.`; no arithmetic on money in components |
+| `lib/repositories/__tests__/BusinessOsFinanceReadRepository.test.ts`, ledger and lot caller lists, `BusinessOsBillingEventRepository.test.ts` caller list | **Not tripped** (no new method, no new caller) | Run unchanged and paste the result |
+| `serviceColumn.guard.test.ts` (AGG-6) | Per-account cost never groups on raw `service` | Run unchanged |
+| `tierLiteral.forbidden.test.ts`, `npm run test:bos-entitlements` | Plan group labels via callback | No tier literal; no new entitlements importer (if SA rules otherwise, register it in the same diff) |
+| Webhook placement guards (`routerPlacement`, `invoiceIntentsStayUnowned`, `planSurfaces`, `firstPaymentStamp`) | Not tripped: nothing under `lib/business-os/billing/` | Run unchanged |
+| Finance route tests and `npm run test:authz-guard` | New Zod fields (`tab`, sort, filter) | 400 on malformed values; 401 / 403 make no read; Overview payload and reads unchanged without `tab` |
+| `financeUrl.test.ts`, `FINANCE_URL_KEYS` | New URL keys | Round-trip, defaults, malformed fallback with the notice |
+| `layoutFolder.guard`, contrast LF-1 guard | New Finance components | Run; no exclusion added |
+| `finance.source.guard.test.ts` export pins for `boostRevenue.ts` (`:769-772`) and `planRevenue.ts` (`:917-919`) | **Trip**: SA-Q45 exports the row readers | Update each list to the exact new names in the same diff, with a reason comment; no other export |
+| Same file, DF-5 pin (`:684-712`) | Scans `boostRevenue.ts` only | Extend it to `accountEconomics.ts` with zero tokens allowed (no `amount_refunded_minor`, `'disputed'` or `'dispute_lost'`), with a planted control |
+
+Dev runs, before SA code review, and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, layout and billing placement suites, `npm run lint:hooks`, eslint on touched files, and the scoped `tsc` with canary (AC-44). No new CI job and no added critical-path time.
+
+### 11E.7 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check. Figures are compared with checks 19 and 20 (§13) run at test time.
+
+- [ ] **AC-130** With no business picked, Finance shows Overview and Accounts tabs; `tab=accounts` opens Accounts after a reload; with a business picked no tab shows and `tab` is dropped.
+- [ ] **AC-131** **Rows:** every plan-walk account appears (8 today, plus any money-only account labelled "No plan row"), the Deleted accounts row last when any `user_id` NULL row was read; a platform account carries the platform label.
+- [ ] **AC-132** **Paid us after tax** per account and currency equals check 19 `usd_revenue_after_tax_minor` / 100 (USD) and lists any other currency on its own line; plan and boost parts show beside it.
+- [ ] **AC-133** **Tax rules (unit):** plan 7900 with tax 500 gives 74.00; boost `paid` 1000 tax 100 gives 9.00; `refunded` in full gives 0; `partially_refunded` with tax 0 gives total minus refunded; `partially_refunded` with tax above 0 gives Unknown net and margin Unknown; `disputed` and `dispute_lost` give 0.
+- [ ] **AC-134** **AI cost** per account equals check 19 `ai_cost_usd` and the platform line's AI cost (every account, before any filter or cap, deleted accounts included) equals Section 3's total for the same window.
+- [ ] **AC-135** **Margin rule:** an all-USD exact account shows revenue after tax minus cost (negative allowed); an account with no revenue shows minus its cost with "No revenue in this window"; values match check 19 `ai_margin_usd`.
+- [ ] **AC-136** **Different currency:** a mocked account with an ILS boost (alone, or beside USD) shows "n/a, different currency", the ILS line on its own, and no USD-only partial margin; the platform line then reads "n/a, different currency"; no element, payload field or exported function adds two currencies.
+- [ ] **AC-137** **Ceilings:** an injected small ceiling on R-a, R-k or R-m shows "At least" on that part and Unknown margin on every row; the tab is `partial` with a notice.
+- [ ] **AC-138** **Failures:** each of the ledger, boost, plan, plan walk and positions reads failing alone shows Unknown in its column only (plan walk: the M3-FR-2 notice), the tab `partial`; all three money reads failing makes the tab `unknown`; the Overview still renders.
+- [ ] **AC-139** **Cut-over:** a window starting before 2026-09-29 16:50:53.914 UTC shows "Not available: AI cost is charged only from 29 Sep 2026" in every margin cell and on the platform line.
+- [ ] **AC-140** **Sort:** each of the four options orders rows as M3-FR-4 on a fixture with numbers, n/a, Unknown and a second currency; ties by id; the order is decided before the cap (a row ranked 201 by the default is absent, ranked 1 by another sort is present).
+- [ ] **AC-141** **Filters:** plan group and the three Show options narrow the rows on the server; "Negative AI margin" excludes n/a, Unknown and Not available rows; the platform line is unchanged by any filter.
+- [ ] **AC-142** **Same figure both ways:** for the owner test account and an October 2026 window, the Accounts row margin equals the M-1 summary's AI margin line, and "Paid us, after tax" equals USD 89.00 while "Paid us, total" on the Overview still shows USD 89.00 including tax (tax 0 today).
+- [ ] **AC-143** **Cap:** with 250 fixture accounts, 200 rows show plus the Deleted accounts row, the count line reads "Showing 200 of 250 accounts" with the "N more" sentence, and `findNames` receives at most 200 ids, all taken from the rows read.
+- [ ] **AC-144** **Link:** each row's href is `/admin/finance?accountId=<id>` plus the current window keys, nothing else; the Deleted accounts row has no link; following it opens the M-1 view on the same window.
+- [ ] **AC-145** **Overview unchanged:** without `tab`, the route makes the same read calls with the same arguments and returns the same payload as before M-3 (route test); `findNames` is not called for the accounts table.
+- [ ] **AC-146** **URL and input:** malformed `tab`, sort or filter values return 400 from the route and fall back to defaults with `FINANCE_URL_NOTICE` on the page; 401 and 403 make zero reads.
+- [ ] **AC-147** **No client arithmetic, logs, data:** the tab components compute no sum, difference, sort or conversion (source test); the route info line carries statuses, counts, sort and filter values only; the payload has no Stripe id, tier literal or `livemode`; test and live rows count together with no label.
+- [ ] **AC-148** **Guards and read-only:** every §11E.6 row passes; no write, migration, SQL function or repository method added; scoped `tsc` with canary.
+- [ ] **AC-149** **Manual QA (L-75 to L-80):** open Finance, Accounts, This month (October 2026); see the owner test account with USD 89.00 paid after tax, its charged AI cost and margin matching check 19, its plan group and credits; sort by AI margin and by AI cost; filter "Paid us or used AI"; open the row and land on its one-account view with the same window and the same margin line; set a window starting 2026-09-15 and see "Not available" margins; compare the platform line with check 20; record it in the workplan.
+
+### 11E.8 Open questions for SA (slice 6a)
+
+Technical only. **No business question is open**: BD-7, BD-12, BD-18 and BD-22 decide the margin; the CR M-3 description sets the columns.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q42** | Build the accounts table only when `tab=accounts` (a new validated route field), or on every all-businesses request? | Only on `tab=accounts`: the Overview payload and timing stay exactly as today (AC-145), and the extra names request runs only on the tab |
+| **SA-Q43** | The tab: URL key name (`view`, or `tab` as on Business OS AI), and whether to reuse the Business OS AI tab pattern (L-8a: roving focus, `replaceState`) as a shared part or keep it page-local (a new pattern needs SA, CLAUDE.md rule 7) | `tab=accounts`, matching Business OS AI; page-local with the same keyboard rules, no new shared export (SA-R-3) |
+| **SA-Q44** | Sort and filter keys and enums in the URL and on the route (for example `sort`, `group`, `show`), and their place in the M-6 rename (`range` / `account`) | Short keys `sort`, `group`, `show`, Zod enums, defaults omitted from the URL; M-6 keeps them unchanged |
+| **SA-Q45** | One definition of a readable row: export the per-row readers from `boostRevenue.ts` (`readMoney`) and `planRevenue.ts` so the new builder does not copy them, or have those builders also return a per-account after-tax projection? | Export the per-row readers (the "one core, two projections" ruling of SA-Q7); `refundsAndDisputesOf` stays the only reader of refunds and disputes |
+| **SA-Q46** | Per-account AI cost: have `summariseAiCost` also return the full per-account map (non-wire), or sum the ledger rows again in the new builder? | Return the map from `summariseAiCost` (one sum, so the rows and Section 3 cannot differ; AC-134) |
+| **SA-Q47** | The after-tax rule for refunds (M3-W-2): Unknown net when a taxed purchase is partly refunded, instead of a pro-rata tax share | Unknown: no tax per refund is recorded and a pro-rata figure would be a guess; live tax is 0 on every row |
+| **SA-Q48** | Margin when the window starts before the cut-over: "Not available" (M3-W-7), or a margin limited to the part after the cut-over? | "Not available": revenue before the cut-over has no matching charged cost, so any margin would be overstated |
+| **SA-Q49** | Accounts seen only in money reads (no plan row): show as "Unknown/held, No plan row" rows (M3-FR-2), or leave them out? | Show them: they paid us or cost us, so leaving them out would hide money; it matches Section 3 holding such ledger rows under Unknown/held |
+| **SA-Q50** | Full cycle confirmed (new money logic, route fields), one workplan and one PR, FIN 4b still paused until merge? | Yes |
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -1323,6 +1481,7 @@ This table is SA's guard table from the SA review (SA-F5), replacing the earlier
 | Slice 1c rows (BD-14, BD-15) | R-c, R-c′ and R-d drop `livemode`; new paying-champion mapping; new panel copy | See §11B.5: the finance repository test's `livemode = true` pins, the source guard's layer-A non-vacuity control, the S1-FR-26/27 and AC-22/23 panel tests, the classifier tests; `enforcementPoints` only if symbols change | 1c |
 | Slice 4 rows (boost revenue, problems, bought credits) | New reads R-k, R-k′, R-l, R-l′ on a table the repository already reads; panel and K-5 copy change; K-5 gains a rule (4b) | See §11C.7: the finance table pin does **not** grow; the repository test gains one test per method; the 1c panel tests are updated; the boost repository and the three webhook placement guards are not tripped (run unchanged) | 4a, 4b |
 | Slice 5a rows (Money M-1 picker swap and account summary; M-2 plan payments received) | M-1 deletes the original picker named by four guards and touches the Businesses page; M-2 adds R-m, R-m′ on a table the repository already reads, and changes the plans line and K-5 | See §11D.7: the picker contract test, layout folder guard, contrast guard and finance render tests (M-1); the finance table pin does **not** grow, the repository test gains one test per method, the billing event caller list and the four billing placement guards are not tripped (run unchanged), the 4a plans-line and K-5 tests are updated (M-2) | 5a (M-1, M-2) |
+| Slice 6a rows (Money M-3 accounts tab and AI margin) | A new pure builder in `lib/business-os/finance/`, new route fields, a tab; no new read or repository method | See §11E.6: the finance source guards gain the new files; repository, ledger, lot and billing event caller lists, the finance table pin and the billing placement guards are not tripped (run unchanged); route and URL tests cover the new fields | 6a (M-3) |
 
 **Not tripped:** L8, BD-26 owner-read, `businessOwnedTables` / purge descriptors, `adminReadMethods`, `accountSeam.guard` (if SA-Q7 is followed), billing-account and billing-event caller lists, boost repository pins (SA-F2 keeps the page off them). **No new CI job and no added PR critical-path time:** every new test runs in the existing Jest gate or the existing `test:bos-entitlements` job.
 
@@ -1823,6 +1982,151 @@ group by 1, 2
 order by 1, 2;
 ```
 
+### Slice 6a checks (19 and 20)
+
+Both back M-3 (§11E). The same rules hold: read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live mode are counted together (BD-14). Revenue amounts are **minor units** (divide by 100); AI cost is USD at the ledger scale. Written against the live facts of §11E.1; not yet executed by BA. A month that starts before the charging cut-over (2026-09-29 16:50:53.914 UTC) returns a null margin, as the page shows "Not available". Known differences, by design (SA-W81): a paid boost whose tax is above its amount shows Unknown on the page while check 19 gives a negative figure; and the page applies the status-free rule of E-45 to a paid boost with a refund recorded, which the boost transition function never produces. Neither row exists today. A third, also by design (SA-CR-6a): a readable plan invoice of zero in a currency other than USD makes no line on the page (M2-W-5, a zero invoice is not a payment), so the margin stays a figure, while check 19 counts it as an other-currency row and returns a null margin. The page is right. No such row exists today.
+
+**File:** `check 19 - account economics this month` (AC-132, AC-134, AC-135, AC-142, AC-149)
+
+```sql
+-- Finance page check 19: account economics in one UTC month, one row per account, read only.
+-- Compare with the Accounts tab rows and the AI margin line of the account summary.
+-- The month is the current UTC month. To check another month, replace null in the
+-- p block below with a quoted UTC month start, such as 2026-10-01 00:00:00+00.
+-- Revenue is after tax. Plans: amount_minor less amount_tax_minor, invoice_paid only.
+-- Boosts: paid is total less tax; a full refund adds 0; a refund with tax 0 is total
+-- less refunded; disputed and dispute_lost add 0; a part refund of a taxed boost is inexact.
+-- AI cost is the charged cost: every credit ledger row created in the month, in USD.
+-- A margin is given only when all revenue of the account is USD and nothing is inexact.
+with p as (
+  select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start
+),
+rev as (
+  select coalesce(e.user_id::text, 'deleted accounts') as account,
+         upper(btrim(e.currency)) as currency,
+         e.amount_minor - e.amount_tax_minor as after_tax_minor
+  from public.business_os_billing_events e
+  cross join p
+  where e.kind = 'invoice_paid'
+    and e.paid_at >= p.month_start
+    and e.paid_at < p.month_start + interval '1 month'
+  union all
+  select coalesce(b.user_id::text, 'deleted accounts') as account,
+         upper(btrim(b.currency)) as currency,
+         case
+           when b.status = 'paid' then b.amount_total_minor - b.amount_tax_minor
+           when b.status in ('disputed', 'dispute_lost') then 0
+           when b.amount_refunded_minor = b.amount_total_minor then 0
+           when b.amount_tax_minor = 0 then b.amount_total_minor - b.amount_refunded_minor
+           else null
+         end as after_tax_minor
+  from public.business_os_boost_purchases b
+  cross join p
+  where b.paid_at >= p.month_start
+    and b.paid_at < p.month_start + interval '1 month'
+    and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+),
+rev_acc as (
+  select r.account,
+         coalesce(sum(r.after_tax_minor) filter (where r.currency = 'USD'), 0) as usd_after_tax_minor,
+         count(*) filter (where r.currency is distinct from 'USD') as other_currency_rows,
+         coalesce(string_agg(distinct r.currency, ',') filter (where r.currency <> 'USD'), '') as other_currencies,
+         count(*) filter (where r.after_tax_minor is null) as inexact_rows
+  from rev r
+  group by r.account
+),
+cost_acc as (
+  select coalesce(c.user_id::text, 'deleted accounts') as account,
+         sum(c.cost_usd) as ai_cost_usd,
+         count(*) as ledger_rows
+  from public.business_os_credit_charges c
+  cross join p
+  where c.created_at >= p.month_start
+    and c.created_at < p.month_start + interval '1 month'
+  group by 1
+)
+select
+  coalesce(r.account, c.account) as account,
+  coalesce(r.usd_after_tax_minor, 0) as usd_revenue_after_tax_minor,
+  coalesce(r.other_currencies, '') as other_currencies,
+  coalesce(r.inexact_rows, 0) as inexact_revenue_rows,
+  coalesce(c.ai_cost_usd, 0) as ai_cost_usd,
+  coalesce(c.ledger_rows, 0) as ledger_rows,
+  case
+    when (select month_start from p) < timestamptz '2026-09-29 16:50:53.914+00' then null
+    when coalesce(r.other_currency_rows, 0) > 0 then null
+    when coalesce(r.inexact_rows, 0) > 0 then null
+    else round(coalesce(r.usd_after_tax_minor, 0) / 100.0 - coalesce(c.ai_cost_usd, 0), 6)
+  end as ai_margin_usd
+from rev_acc r
+full outer join cost_acc c on c.account = r.account
+order by 5 desc, 1;
+```
+
+**File:** `check 20 - platform AI margin this month` (AC-134, AC-136, AC-149)
+
+```sql
+-- Finance page check 20: platform AI margin in one UTC month, one row, read only.
+-- Compare with the platform line above the Accounts tab. It ignores every filter.
+-- The month is the current UTC month. To check another month, replace null in the
+-- p block below with a quoted UTC month start, such as 2026-10-01 00:00:00+00.
+-- Same revenue and cost rules as check 19, over every account, deleted accounts included.
+-- Any revenue row in another currency makes the platform margin null (no exchange rate).
+with p as (
+  select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start
+),
+rev as (
+  select upper(btrim(e.currency)) as currency,
+         e.amount_minor - e.amount_tax_minor as after_tax_minor
+  from public.business_os_billing_events e
+  cross join p
+  where e.kind = 'invoice_paid'
+    and e.paid_at >= p.month_start
+    and e.paid_at < p.month_start + interval '1 month'
+  union all
+  select upper(btrim(b.currency)) as currency,
+         case
+           when b.status = 'paid' then b.amount_total_minor - b.amount_tax_minor
+           when b.status in ('disputed', 'dispute_lost') then 0
+           when b.amount_refunded_minor = b.amount_total_minor then 0
+           when b.amount_tax_minor = 0 then b.amount_total_minor - b.amount_refunded_minor
+           else null
+         end as after_tax_minor
+  from public.business_os_boost_purchases b
+  cross join p
+  where b.paid_at >= p.month_start
+    and b.paid_at < p.month_start + interval '1 month'
+    and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+),
+cost as (
+  select coalesce(sum(c.cost_usd), 0) as ai_cost_usd, count(*) as ledger_rows
+  from public.business_os_credit_charges c
+  cross join p
+  where c.created_at >= p.month_start
+    and c.created_at < p.month_start + interval '1 month'
+),
+rev_all as (
+  select coalesce(sum(r.after_tax_minor) filter (where r.currency = 'USD'), 0) as usd_after_tax_minor,
+         count(*) filter (where r.currency is distinct from 'USD') as other_currency_rows,
+         count(*) filter (where r.after_tax_minor is null) as inexact_rows
+  from rev r
+)
+select
+  ra.usd_after_tax_minor as usd_revenue_after_tax_minor,
+  ra.other_currency_rows,
+  ra.inexact_rows as inexact_revenue_rows,
+  co.ai_cost_usd,
+  co.ledger_rows,
+  case
+    when (select month_start from p) < timestamptz '2026-09-29 16:50:53.914+00' then null
+    when ra.other_currency_rows > 0 then null
+    when ra.inexact_rows > 0 then null
+    else round(ra.usd_after_tax_minor / 100.0 - co.ai_cost_usd, 6)
+  end as ai_margin_usd
+from rev_all ra
+cross join cost co;
+```
+
 ---
 
 ## 14. Open questions for SA
@@ -2275,6 +2579,78 @@ There are no refunds today."
 
 ---
 
+## SA Requirement Review — Slice 6a (M-3) — 2026-10-14
+
+**Reviewed by SA — 2026-10-14, against `d05eb0a4`**
+**Status:** ✅ **APPROVED WITH CONDITIONS.** The workplan may start once the BA has applied E-44 to E-48. It runs the **full cycle**: new money logic, new route fields, and edits to export and DF-5 pins. BD-7, BD-12, BD-14, BD-18 and BD-22 are not reopened.
+
+**"No new read" — verified in the code.** Every all-businesses request already holds what M-3 needs, per account:
+- **R-a ledger rows** carry `user_id` (`CREDIT_LEDGER_ROW_COLUMNS`), and `summariseAiCost` already builds a full `byAccount` map (`aiCost.ts:89-125`) before cutting it to the top 10.
+- **R-k boost rows** and **R-m plan rows** carry `user_id`.
+- **The plan walk** gives `groupByAccount`.
+- **The positions pass** gives `byUserId`.
+- **In the picked view**, R-a′, R-k′ and R-m′ are already read.
+
+So M-3 is a new pure builder plus route fields, with no repository method. The caller lists and the table pin are unchanged, and nothing goes under `lib/business-os/billing/`. This confirms the BA's guard claims.
+
+**Missing from §11E.6 — two existing pins trip:**
+- `finance.source.guard.test.ts:769-772` pins `boostRevenue.ts`'s exports to exactly four names.
+- `:917-919` pins `planRevenue.ts`'s exports the same way.
+
+Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin (`:684-712`) scans **only** `boostRevenue.ts`, so a new builder could read `amount_refunded_minor` and the dispute literals with no guard noticing. See S6-F1.
+
+**SQL checks 19 and 20:** ASCII only, with no "into", no apostrophe in a comment, and one result set each. Their revenue and cost rules match M3-W-2 to M3-W-4, and they take a month through the `p` block. They were not run here (no credentials); QA runs them.
+
+### Findings
+
+1. **S6-F1 (High): the guard table misses the export pins and the DF-5 scope.**
+   - **Required:** update the two export pins in the same diff, to the exact new lists, each with a reason comment.
+   - Extend the DF-5 pin to `accountEconomics.ts` with **zero** tokens allowed. The new builder takes refunded, held and lost only from the exported boost reader's result, never from the row.
+   - **E-44.**
+2. **S6-F2 (Medium): the after-tax boost rule should need no status literal.** From the boost reader's `{ total, tax, refunded, held, lost }`, let `net = total - refunded - held - lost`. Then:
+   - `net === 0` gives 0 (full refund, `disputed`, `dispute_lost`);
+   - otherwise `refunded === 0` gives `net - tax` (paid);
+   - otherwise `tax === 0` gives `net`;
+   - otherwise inexact.
+
+   This equals M3-W-2 and check 19, and keeps the dispute statuses in DF-5's one place. **E-45.**
+3. **S6-F3 (Medium): the URL key.** M3-FR-1 says `view=accounts`, but the BA's own SA-Q43 suggests `tab`, and Business OS AI uses `tab`. **Ruling: `tab=accounts`.** **E-46.**
+4. **S6-F4 (Low): AC-134's sum needs a scope.** It is over **every** account before filter and cap, so the platform line's AI cost equals Section 3's total. **E-47.**
+5. **S6-F5 (Low): sort and filter keys outside the tab.** The route accepts `sort`, `group` and `show` only with `tab=accounts` (400 otherwise), and the page writes them only on that tab. **E-48.**
+6. **S6-F6 (Low): the estimate.** About 3 days is accepted. Report at the end of day 1 if the builder and route are not green.
+
+### Rulings SA-Q42 to SA-Q50
+
+| # | Ruling |
+|---|---|
+| **SA-Q42** | **Build the table only with `tab=accounts`.** The reads are already made on every all-businesses request; only the builder and one names request are extra. Without the tab, the Overview payload and reads are unchanged (AC-145). |
+| **SA-Q43** | **Key `tab`, value `accounts`, absent = Overview, written with `replace`.** Tabs are page-local with the L-8a keyboard rules; no new shared export (SA-R-3). The M-6 shell migration keeps `tab`. |
+| **SA-Q44** | **Keys `sort`, `group` and `show`, Zod enums, defaults omitted from the URL.** They are accepted only with `tab=accounts` (S6-F5) and are unchanged by M-6. |
+| **SA-Q45** | **Export the per-row readers** (`readMoney` from `boostRevenue.ts`, `readPlanMoney` from `planRevenue.ts`), with the export pins updated (S6-F1). `refundsAndDisputesOf` stays private and the only reader of refunds and disputes. The after-tax step follows S6-F2. |
+| **SA-Q46** | **`summariseAiCost` also returns the full per-account map** (non-wire, cost units). There is one sum, so the rows and Section 3 cannot differ. |
+| **SA-Q47** | **Unknown** for a partial refund of a taxed boost; no pro-rata guess. Live tax is 0. |
+| **SA-Q48** | **"Not available"** before the cut-over (Section 3's `coverage` is not `after_cutover`). |
+| **SA-Q49** | **Show** money-only accounts as Unknown/held "No plan row". Hiding them would hide money. |
+| **SA-Q50** | **Confirmed: full cycle, one workplan, one PR**, and FIN 4b stays paused until merge. |
+
+**Also confirmed:**
+- Sort and filter run **server side before the 200-row cap**.
+- The cap is honest: "Showing 200 of N" plus "N more not listed". Names are looked up only for shown ids. The Deleted accounts row is outside the cap.
+- The platform line covers every account, unfiltered, and any non-USD revenue anywhere gives "n/a, different currency": never a sum across currencies.
+- AC-130 to AC-149 are testable, with E-46 and E-47.
+
+### Requirement edits (BA applies; recorded in §0.3 as SA-RR-6a)
+
+- **E-44 (§11E.6, S6-F1).** Add two rows to the §11E.6 table:
+  - "`finance.source.guard.test.ts` export pins for `boostRevenue.ts` (`:769-772`) and `planRevenue.ts` (`:917-919`) | **Trip**: SA-Q45 exports the row readers | Update each list to the exact new names in the same diff, with a reason comment; no other export";
+  - "Same file, DF-5 pin (`:684-712`) | Scans `boostRevenue.ts` only | Extend it to `accountEconomics.ts` with zero tokens allowed (no `amount_refunded_minor`, `'disputed'` or `'dispute_lost'`), with a planted control".
+- **E-45 (M3-W-2, S6-F2).** Append to M3-W-2: " Computed from the exported boost reader's result, with no status literal: let net = total minus refunded minus held minus lost; net 0 gives 0; otherwise no refund gives net minus tax; otherwise tax 0 gives net; otherwise inexact."
+- **E-46 (S6-F3).** In §11E, replace the Finance tab URL key `view` (value `accounts`) with `tab` everywhere it names the tab: M3-FR-1, M3-FR-5, M3-FR-11, M3-FR-12, AC-130, AC-145, AC-146 and SA-Q42.
+- **E-47 (AC-134, S6-F4).** Replace "and the sum over rows (plus deleted) equals Section 3's total for the same window" with "and the platform line's AI cost (every account, before any filter or cap, deleted accounts included) equals Section 3's total for the same window".
+- **E-48 (M3-FR-5, S6-F5).** Append to M3-FR-5: " The route accepts `sort`, `group` and `show` only together with `tab=accounts` (otherwise 400), and the page writes them only on that tab."
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -2343,3 +2719,11 @@ There are no refunds today."
 | 2026-10-14 | E-43 applied (SA-CR-5a, D-4) | M2-FR-7: in the picked view `revenue.state` is `recorded` when the account has any `invoice_paid` row (the same rows R-d counts with all businesses) or a counted boost in the window. |
 | 2026-10-14 | Slice 5a ready for PR | SA-CR-5a APPROVED, QA PASS WITH ISSUES with no bugs. No fix round: QA low note (an unreadable plan row with no currency beside a USD boost would read as two currencies on K-5) cannot occur today because plan rows are USD-only; recorded as follow-up FU-5a-1. The user pre-authorised commit and PR for M-1 + M-2 without a diff review. User manual QA L-59 to L-74 owed. |
 | 2026-10-14 | Slice 5a PR opened | RM committed slice 5a (M-1 + M-2) as `e8ffc5da` on `feature/bos-money-m1-m2`, merged origin/main (`858f037d`, clean; finance, users, layout, billing, payments suites 153 / 7,312, `test:bos-entitlements` 265 / 7,914, `test:authz-guard` 203 green) and opened PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) under the user's pre-authorisation (no diff review). Not merged. Manual QA L-59 to L-74 owed by the user. §0.1 row 5a updated. |
+| 2026-10-14 | BA: CR decisions BD-21 to BD-27 recorded; slice 6a "Money M-3" specified | The user accepted all ten consolidation review defaults; the seven not already recorded are BD-21 (one Money section), BD-22 (margin on revenue after tax), BD-23 (billing totals in Money, per-account billing panel in the Businesses drawer), BD-24 (Costs & credits into Money later), BD-25 (retire Platform dashboard and Exchange rates), BD-26 ("since it started" view for one account, deferred DF-6), BD-27 (Health tile kept, renamed "Recorded AI cost"). New **§11E** (Money M-3, FIN slice 6 split into 6a and 6b): Accounts tab with one row per account (paid us after tax per currency, charged AI cost, AI margin USD only, credits used, plan group), server-side sort, filter and 200-row cap, platform margin line, row link to the M-1 view, AI margin line in the M-1 summary; rules M3-W-1 to M3-W-10 and M3-FR-1 to M3-FR-16; **no new read** (R-a, R-k, R-m, plan walk and positions pass already carry the account); guards §11E.6; AC-130 to AC-149; SA-Q42 to SA-Q50. §0.1 rows 6a (new) and 6 (split), §0.2 log, DF-8 (Stripe fee estimate to 6b), §12.2 row, §13 checks 19 and 20 (ASCII, no apostrophes in comments, no "into", one result set each; not executed by BA). About 3 days. SA sections and §0.3 unchanged. Awaiting SA requirement review. No code changed. |
+| 2026-10-14 | SA requirement review, slice 6a (M-3): **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — Slice 6a (M-3) — 2026-10-14", checked against `d05eb0a4`. §0.3 rows SA-Q42 to SA-Q50 and SA-RR-6a added. "No new read" verified in the code. Findings S6-F1 (High: the boost and plan export pins trip; DF-5 pin to be extended) to S6-F6. BA edits E-44 to E-48 (guard rows, status-free after-tax rule, key `tab`, AC-134 scope, sort and filter keys only with the tab). Checks 19 and 20 confirmed against the style rules, not run. No code changed. |
+| 2026-10-14 | BA applied SA 6a review edits E-44..E-48 | SA-RR-6a: §11E.6 two guard rows (boost and plan export pins; DF-5 pin extended to `accountEconomics.ts` with zero tokens) (E-44); M3-W-2 status-free boost after-tax rule (E-45); URL key `tab=accounts` across §11E (E-46); AC-134 platform line before filter and cap (E-47); M3-FR-5 `sort`, `group`, `show` only with the tab, else 400 (E-48). §0.1 slice 6a: SA-approved with conditions, edits applied, Dev workplan next. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-14 | SA workplan review, slice 6a (Money M-3) | APPROVED WITH CONDITIONS. §0.3 rows SA-W74 to SA-W89 and SA-WP-6a added. BA edits E-49 (M3-FR-11 payload keys), E-50 (M3-FR-3 formatters) and E-51 (§13 slice 6a check differences) are specified in the workplan SA section, not yet applied. No code changed. |
+| 2026-10-14 | BA applied SA 6a workplan-review edits E-49..E-51 | SA-WP-6a: M3-FR-11 optional `accountEconomics` and `accountMargin` payload keys (E-49); M3-FR-3 formatters, "Paid us" `formatMoney`, AI cost and margin `formatUsd` (E-50); §13 slice 6a checks intro notes the known differences from check 19 (E-51). §0.1 slice 6a: workplan SA-approved with conditions (SA-WP-6a; WR-41..WR-45), Dev implementing. SA sections and §0.3 unchanged. No code changed. |
+| 2026-10-15 | SA code review, slice 6a (Money M-3) | Code Approved (SA-CR-6a in §0.3). Third check-19 difference ruled page-right; E-52 (BA) appends it to the "Slice 6a checks" intro, exact text in the workplan SA Code Review. No requirement body text changed by SA. |
+| 2026-10-15 | E-52 applied (SA-CR-6a) | Slice 6a checks intro: third known difference from check 19 (a zero non-USD plan invoice makes no page line; the page is right). |
+| 2026-10-15 | Slice 6a ready for PR | SA-CR-6a APPROVED; QA PASS WITH ISSUES; B-1 (a No plan row account linked to a Business not found view) fixed in fix round 1 with a render test and a page-guard pin. SA Low follow-ups FU-6a: inactive tab aria-controls; cost cell vs Section 3 on unreadable or overflow rows; group select for an unlisted tier. User pre-authorised commit and PR. User manual QA L-75 to L-88 owed. |

@@ -301,3 +301,31 @@ describe('the failure split (SA-W12, AC-16, AC-38)', () => {
     expect(result.gifted).toMatchObject({ outstanding: 12, accountsNotListed: null });
   });
 });
+
+describe('slice 6a: the non-wire rowByAccount (SA-W78)', () => {
+  it('holds EVERY account’s row before the display cap, the same objects the shown rows come from', () => {
+    const ids = [A, B, C, D];
+    const result = buildCreditsSection(
+      input({
+        accountIds: ids,
+        positions: new Map([
+          [A, position(100, 40)],
+          [B, position(100, 160)],
+          [C, position(100, 90)],
+          [D, { kind: 'no_allowance' }],
+        ]),
+        displayCap: 2,
+      })
+    );
+    expect(result.figures?.rows).toHaveLength(2);
+    expect(result.rowByAccount?.size).toBe(4);
+    for (const row of result.figures?.rows ?? []) expect(result.rowByAccount?.get(row.accountId)).toEqual(row);
+    expect(result.rowByAccount?.get(D)?.kind).toBe('no_allowance');
+    expect(result.rowByAccount?.get(A)?.usedTenths).toBe(400);
+  });
+
+  it('is null exactly when figures is null (no pass, or the walk failed)', () => {
+    expect(buildCreditsSection(input({ positions: null })).rowByAccount).toBeNull();
+    expect(buildCreditsSection(input({ accountIds: null })).rowByAccount).toBeNull();
+  });
+});

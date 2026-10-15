@@ -445,3 +445,28 @@ describe('netMinorByCurrency (slice 5a, SA-W59): the combiner input, integer min
     result.lines!.forEach((line, i) => expect(result.netMinorByCurrency[i].netMinor === null).toBe(line.net === null));
   });
 });
+
+// Slice 6a (SA-Q45, E-44): the reader is exported unchanged. A separate import, so the lines above stay unedited.
+import { readMoney } from '../boostRevenue';
+
+describe('slice 6a: readMoney, exported unchanged (SA-Q45)', () => {
+  it('a readable purchase → { total, tax, refunded, held, lost } in integer minor units', () => {
+    expect(readMoney(boost({ amount_total_minor: 1000, amount_tax_minor: 100 }))).toEqual({ total: 1000, tax: 100, refunded: 0, held: 0, lost: 0 });
+    expect(readMoney(boost({ status: 'partially_refunded', amount_refunded_minor: 400 }))).toEqual({ total: 1000, tax: 0, refunded: 400, held: 0, lost: 0 });
+    expect(readMoney(boost({ status: 'disputed' }))).toEqual({ total: 1000, tax: 0, refunded: 0, held: 1000, lost: 0 });
+    expect(readMoney(boost({ status: 'dispute_lost' }))).toEqual({ total: 1000, tax: 0, refunded: 0, held: 0, lost: 1000 });
+  });
+
+  it('unreadable → null: a string amount, an unknown currency, a refund above the total; tax above total is NOT refused here (SA-W81)', () => {
+    expect(readMoney(boost({ amount_total_minor: '1000' }))).toBeNull();
+    expect(readMoney(boost({ currency: 'US' }))).toBeNull();
+    expect(readMoney(boost({ amount_refunded_minor: 1001 }))).toBeNull();
+    expect(readMoney(boost({ amount_total_minor: 100, amount_tax_minor: 120 }))).toEqual({ total: 100, tax: 120, refunded: 0, held: 0, lost: 0 });
+  });
+
+  it('the builder still counts through the same reader (its net is unchanged)', () => {
+    mockMinorUnits.mockClear();
+    const built = buildBoostRevenue({ purchases: read([boost()]), scope: 'all' });
+    expect(built.netMinorByCurrency).toEqual([{ currency: 'USD', netMinor: 1000 }]);
+  });
+});
