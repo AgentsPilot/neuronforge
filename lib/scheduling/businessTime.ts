@@ -61,6 +61,46 @@ export function safeTimezone(timezone: string | null | undefined): string {
   }
 }
 
+/** The longest zone name `isValidTimezone` accepts (and the route's `.max()`). */
+export const MAX_TIMEZONE_LENGTH = 64;
+
+/**
+ * The characters a stored zone may contain, starting with a letter (C-14 as
+ * amended by SA-D1-1). No IANA name starts with a digit or a sign, and the
+ * leading letter keeps out the offset IDs (`+05`, `+0500`) that Node's `Intl`
+ * accepts but older browser engines reject.
+ */
+export const TIMEZONE_SHAPE = /^[A-Za-z][A-Za-z0-9_+\-/]*$/;
+
+/**
+ * True when `zone` has the stored-zone shape and `Intl` resolves it exactly as
+ * given. No trimming, no fallback, no canonicalisation.
+ *
+ * The strict counterpart of `safeTimezone`, for a value about to be STORED
+ * (`PATCH /api/business-os/preferences` `{ timezone }`): a zone that only works
+ * after trimming would be stored with the whitespace and fail the read-back.
+ *
+ * Constructor check rather than `Intl.supportedValuesOf('timeZone')`: that
+ * list differs between engines, and Node's omits `UTC`. Aliases and lowercase
+ * (`EST`, `utc`) pass, because `Intl` resolves them.
+ *
+ * Anything that is not a string, is empty or is over-long is refused before
+ * `Intl` sees it: Zod still runs a `.refine` after a failed `.max()` or
+ * `.regex()`, so this must be safe on any input. Never throws.
+ */
+export function isValidTimezone(zone: unknown): boolean {
+  if (typeof zone !== 'string' || zone.length === 0 || zone.length > MAX_TIMEZONE_LENGTH) {
+    return false;
+  }
+  if (!TIMEZONE_SHAPE.test(zone)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The parts of an instant as they read on a given wall clock.
  *

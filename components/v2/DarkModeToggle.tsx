@@ -21,11 +21,9 @@ export function DarkModeToggle() {
         style={{ borderRadius: 'var(--v2-radius-button)' }}
         aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
       >
-        {mode === 'dark' ? (
-          <Sun className="w-4 h-4" />
-        ) : (
-          <Moon className="w-4 h-4" />
-        )}
+        {/* Switched by the `.dark` class, not `mode`, so the first frame is right (TH-1, SA Q-3). */}
+        <Moon className="w-4 h-4 dark:hidden" />
+        <Sun className="w-4 h-4 hidden dark:block" />
       </button>
 
       {/* Tooltip */}

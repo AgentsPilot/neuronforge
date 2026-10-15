@@ -531,9 +531,9 @@ export function LanguageProvider({
 
         From state, not from the server prop, so it follows every switch; a
         wrapper fixed to the server value would pin the old direction over the
-        whole page after a switch. Not in the server HTML: every layout mounts
-        this provider inside `V2ThemeProvider`, which renders nothing until it
-        mounts. `<html>` is set before paint by `OwnerDirScript` instead.
+        whole page after a switch. Since TH-1 it is also in the server HTML
+        (`V2ThemeProvider` renders its children on the server), and `<html>` is
+        still set before paint by `OwnerDirScript`.
 
         `display: contents` generates no box, so sizing and layout are as
         before; `dir` and `lang` still inherit through it.
