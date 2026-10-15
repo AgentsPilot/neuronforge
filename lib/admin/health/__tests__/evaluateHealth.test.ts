@@ -344,9 +344,23 @@ describe('C-18: a lower bound is never clear, whatever the rules say', () => {
 
   it('the figure keeps its "at least"', () => {
     const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: lb(1.25) })), 'bos_ai_spend');
-    const week = shown.figures.find((f) => f.label === 'AI spend, last 7 days (USD)')!;
+    const week = shown.figures.find((f) => f.label === 'Recorded AI cost, last 7 days (USD)')!;
     expect(week.value).toContain('at least $1.25');
     expect(week.exact).toBe(false);
+  });
+
+  it('M-4 (W-20 to W-22): the tile, its figures and its link say "Recorded AI cost"; the footnote points at Finance', () => {
+    const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: ex(1.25) })), 'bos_ai_spend');
+    expect(shown.title).toBe('Recorded AI cost (USD)');
+    expect(shown.figures.map((f) => f.label)).toEqual(['Recorded AI cost, last 24 h (USD)', 'Recorded AI cost, last 7 days (USD)']);
+    expect(shown.figures[1].linkLabel).toMatch(/^Recorded AI cost, last 7 days: .*, open in AI cost & usage$/);
+    expect(shown.footnote).toContain(
+      'USD: every Business OS AI call in the usage log, charged or not, priced from the model price table; never mixed with a business currency. The charged AI cost is on Finance. '
+    );
+    // The OI-P2 sentence is unchanged.
+    expect(shown.footnote).toContain('known issue OI-P2');
+    const shownText = [shown.title, shown.footnote, ...shown.figures.flatMap((f) => [f.label, f.linkLabel])].join(' ');
+    expect(shownText).not.toMatch(/estimated|AI spend/i);
   });
 });
 
