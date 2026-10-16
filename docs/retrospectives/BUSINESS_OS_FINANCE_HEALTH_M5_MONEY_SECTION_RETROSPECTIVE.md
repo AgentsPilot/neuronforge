@@ -6,7 +6,7 @@
 
 This retrospective covers Money M-5, "The Money section", from the finance stream. M-5 adds a Money section to the admin sidebar, moves the Costs & credits report and its Leak check from Business OS AI to a new Charge checks page, renames "AI cost & usage" to "AI calls & usage", and closes FU-M4-1 (the Health rule and cron wording). There is no data, money, API or migration change. Under the user's standing go-ahead (BD-32, BD-33, 2026-10-16), each slice proceeds once SA, QA and TL approve. RM then commits, opens the PR and turns on auto-merge.
 
-**Status:** SA approved (workplan with conditions M5-R1 to M5-R4, code with no conditions). QA passed with no bugs. TL approves for RM below. Nothing is committed yet.
+**Status:** SA approved (workplan with conditions M5-R1 to M5-R4, code with no conditions). QA passed with no bugs. TL approved for RM. Committed `1c7b7554`, PR #444 open with auto-merge on.
 
 ---
 
@@ -69,7 +69,7 @@ This retrospective covers Money M-5, "The Money section", from the finance strea
 - **4b (refund dates)**, next in the BD-32 order. It needs a prod migration that the user applies by hand, so its PR stays **off** auto-merge until the user confirms the migration is applied.
 - **Open business question BQ-13:** should a refunded boost take back its credits? Today's behaviour is kept until the user decides.
 
-### Status: APPROVED, NOT YET COMMITTED — `feature/bos-money-m5` — commit hash to be recorded by RM
+### Status: COMMITTED — `feature/bos-money-m5` — commit `1c7b7554` (origin/main merged in `4e96e719`) — [PR #444](https://github.com/AgentsPilot/neuronforge/pull/444), auto-merge on
 
 **TL approval: approved for RM commit + PR** (BD-33: SA approved, QA passed, TL approved, 2026-10-17). RM sets auto-merge, because this slice has no migration or manual gate.
 
@@ -80,3 +80,4 @@ This retrospective covers Money M-5, "The Money section", from the finance strea
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-17 | Created | TL retrospective for Money M-5, the Money section; TL approval for RM commit + PR under BD-33 |
+| 2026-10-17 | RM commit recorded | Commit `1c7b7554`, merge of origin/main `4e96e719`, PR #444 with auto-merge on |
