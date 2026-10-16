@@ -356,7 +356,7 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   { name: 'GET /api/admin/memory-consolidation', call: () => memoryConsolidation.GET() },
   { name: 'GET /api/admin/onboarding-config', call: () => onboardingConfig.GET() },
   { name: 'GET /api/admin/orchestration-config', call: () => orchestrationConfig.GET() },
-  { name: 'GET /api/admin/ui-config', call: () => uiConfig.GET() },
+  { name: 'GET /api/admin/ui-config', call: () => uiConfig.GET(req('/api/admin/ui-config', 'GET')) },
 
   // ── SLICE 3 (2026-09-21) — catalogue reads ──────────────────────────────
   // `reward-config` GET is the one that had LIVE CUSTOMER CALLERS. Its gate

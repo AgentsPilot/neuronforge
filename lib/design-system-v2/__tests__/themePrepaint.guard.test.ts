@@ -145,8 +145,8 @@ describe('G-7 the token read is started before the payment hold and used only af
 describe('G-8 no browser read of system_settings_config where the theme lives (RC-11, narrowed scope)', () => {
   /*
    * Scope: the design system and every segment that mounts the provider.
-   * `lib/hooks/useUIVersion.ts` is a known browser reader and writer outside
-   * this scope; it is in the TH-2b inventory and deliberately not edited here.
+   * `lib/hooks/useUIVersion.ts`, a browser reader and writer outside this
+   * scope, had no importer and was deleted in slice F-1.
    */
   const SCOPE = /^(lib\/design-system-v2\/|app\/business-os\/|app\/onboarding-build\/|app\/onboarding-chat\/|app\/v2\/)/;
   it('no client module in scope names the table', () => {

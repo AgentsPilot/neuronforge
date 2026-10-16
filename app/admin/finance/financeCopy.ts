@@ -5,8 +5,9 @@
  * Slice 1c (BD-14, S1C-FR-7): our revenue counts test and real payments together, with
  * no mode wording anywhere on the page; a tier group names its Founding Partners (BD-15).
  *
- * Tile states reuse Health's `STATUS_STYLES` labels as they are (SA-W7); the
- * headline under each carries the finance-specific reason.
+ * Tile states use the shared admin tile's status words (Finance F-5; equal to
+ * Health's, as SA-W7 required); the headline under each carries the
+ * finance-specific reason.
  */
 
 import type { FinanceGroupKey, FinanceTriggerKey } from '@/lib/business-os/finance/financeTypes';
@@ -44,6 +45,14 @@ export function k2Subtitle(percent: number | null): string {
   return percent === null ? 'Line not set' : `At or over ${percent}% of this period's allowance`;
 }
 export const TILE_PREVIOUS = 'Same days last month:';
+/**
+ * Finance F-5 (SA-W4): K-1's sub-line. The same-days-last-month figure, when
+ * there is one, joins the caption, so the tile keeps one sub-line and its
+ * headline is the shared tile's second line.
+ */
+export function k1SubLine(previous: string | null): string {
+  return previous === null ? TILE_LABELS.k1Sub : `${TILE_LABELS.k1Sub} · ${TILE_PREVIOUS} ${previous}`;
+}
 export const AT_LEAST = 'At least';
 
 export const SECTION_COULD_NOT_LOAD = 'Could not load this section';
