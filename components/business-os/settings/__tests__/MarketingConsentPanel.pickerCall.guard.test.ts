@@ -29,15 +29,54 @@ const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, ''
 const panel = stripComments(read(PANEL));
 const picker = stripComments(read(PICKER));
 
+/**
+ * The `<SavedAddressPicker … />` element starting at `from` in `source`: up to
+ * its own closing `/>`, found by brace depth rather than by indentation, so the
+ * call can sit in any branch (C-a moved it into the "book is in" branch).
+ * Prop values are `{…}` expressions; a `/>` inside one (a JSX prop) is not the
+ * element's end.
+ */
+function elementAt(source: string, from: number): string {
+  let depth = 0;
+  for (let i = from; i < source.length - 1; i++) {
+    const ch = source[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    else if (depth === 0 && ch === '/' && source[i + 1] === '>') return source.slice(from, i + 2);
+  }
+  throw new Error('no closing /> for the element');
+}
+
 /** The `<SavedAddressPicker … />` element in the panel. */
 function pickerCall(): string {
   const start = panel.indexOf('<SavedAddressPicker');
   expect(start).toBeGreaterThan(-1);
-  // Its own closing `/>` sits on a line of its own, after the multi-line props.
-  const end = panel.indexOf('\n          />', start);
-  expect(end).toBeGreaterThan(start);
-  return panel.slice(start, end);
+  return elementAt(panel, start);
 }
+
+describe('pickerCall() finds the element, at any indentation (SA-CA-5 negative controls)', () => {
+  it("stops at the element's own />, not at a /> inside a prop, and ignores indentation", () => {
+    const source = [
+      '{ready ? (',
+      '<SavedAddressPicker',
+      '  use="marketing"',
+      '      icon={<Icon />}',
+      '  matchCurrent={(o) => o.id === "x"}',
+      '            />',
+      ') : null}',
+      '<p>after</p>',
+    ].join('\n');
+    const call = elementAt(source, source.indexOf('<SavedAddressPicker'));
+    expect(call).toContain('matchCurrent={(o) => o.id === "x"}');
+    expect(call.endsWith('/>')).toBe(true);
+    expect(call).not.toContain('<p>after</p>');
+    expect(call).not.toContain(') : null}');
+  });
+
+  it('a call with no closing /> is an error, not a silent slice of the rest of the file', () => {
+    expect(() => elementAt('<SavedAddressPicker use="marketing"', 0)).toThrow();
+  });
+});
 
 describe('the panel calls the picker as a text form', () => {
   it('G-1: passes use="marketing", selectedId and matchCurrent', () => {
@@ -50,6 +89,19 @@ describe('the panel calls the picker as a text form', () => {
   it('G-2: no dead `selected` prop, and no `AddressSource` anywhere in the panel', () => {
     expect(pickerCall()).not.toMatch(/\sselected=\{/);
     expect(read(PANEL)).not.toMatch(/\bAddressSource\b/);
+  });
+});
+
+describe('exactly one picker, seeded, and it is the text form (SA-CA-5)', () => {
+  it('G-5: the call passes initialBook', () => {
+    expect(pickerCall()).toMatch(/\binitialBook=\{/);
+  });
+
+  it('G-6: <SavedAddressPicker occurs exactly once in the panel, and that one carries matchCurrent', () => {
+    // A second, fallback picker in another branch without `matchCurrent` would
+    // take the structured path and fill the field on its own again (F-18).
+    expect(panel.split('<SavedAddressPicker').length - 1).toBe(1);
+    expect(pickerCall()).toMatch(/\bmatchCurrent=\{/);
   });
 });
 

@@ -41,6 +41,8 @@ import { ChangePasswordDrawer } from '@/components/business-os/settings/ChangePa
 import { useLinkOpenedDrawer } from '@/components/business-os/settings/useLinkOpenedDrawer';
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { MarketingConsentDrawer } from '@/components/business-os/settings/MarketingConsentDrawer';
+import { startMarketingDrawerReads } from '@/components/business-os/settings/marketingDrawerReads';
+import { DRAWER_PREFETCH_MAX_AGE_MS, useDrawerPrefetch } from '@/components/business-os/settings/useDrawerPrefetch';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
@@ -90,7 +92,7 @@ function BusinessOSSettingsContent() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
-  const { openConfiguration } = useConfigurationDialog();
+  const { openConfiguration, isConfigurationOpen } = useConfigurationDialog();
 
   /*
    * The chevron on every account-card row (settings drawer S-5). Mirrored in
@@ -132,6 +134,31 @@ function BusinessOSSettingsContent() {
   // link anywhere opens it. Its form lives inside the drawer and goes on close.
   const [consentDrawerOpen, setConsentDrawerOpen] = useState(false);
   const consentRowRef = useRef<HTMLButtonElement>(null);
+  /*
+   * Its two reads (consent and the address book), started before the click
+   * (settings drawer review C-5): when the browser is idle after the page has
+   * loaded, and on the row's hover, focus or press. The drawer takes them once
+   * when it opens instead of asking again. Its own hook and effect, never
+   * `loadData` (SA condition C-8); the routes are named in
+   * `marketingDrawerReads`, not here. `start` and `key` are built in the same
+   * render, so they always agree on the language.
+   */
+  const consentPrefetch = useDrawerPrefetch({
+    start: () => startMarketingDrawerReads(language),
+    key: user?.id ? `${user.id}:${language}` : null,
+    // Not while the page's own reads run; never while the configuration dialog
+    // is open, because that is where the address book is edited.
+    enabled: !loading && !isConfigurationOpen,
+    // Nothing starts while this drawer is open (QA-CA-B1): a save happens in
+    // there, so a pair started meanwhile (the idle warm firing late, the Safari
+    // timer) would carry the wording from before the save, and a reopen would
+    // show it as clean. Paused rather than disabled so the drawer can still
+    // take the set it opened with; the close drops anything left, so the next
+    // warm after a save is fresh (the hook's rule 6).
+    paused: consentDrawerOpen,
+    maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
+    warmOnIdle: true,
+  });
 
   const [exporting, setExporting] = useState(false);
 
@@ -1039,6 +1066,9 @@ function BusinessOSSettingsContent() {
               type="button"
               aria-haspopup="dialog"
               aria-expanded={consentDrawerOpen}
+              onPointerEnter={consentPrefetch.warm}
+              onFocus={consentPrefetch.warm}
+              onPointerDown={consentPrefetch.warm}
               onClick={() => setConsentDrawerOpen(true)}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
@@ -1052,6 +1082,7 @@ function BusinessOSSettingsContent() {
               open={consentDrawerOpen}
               onOpenChange={setConsentDrawerOpen}
               returnFocusRef={consentRowRef}
+              takePrefetched={consentPrefetch.take}
             />
           </div>
 

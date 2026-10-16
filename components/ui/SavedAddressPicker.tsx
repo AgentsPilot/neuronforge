@@ -45,10 +45,11 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { hasAddressContent, type StructuredAddress } from '@/lib/geo/address';
+import { readAddressBook } from '@/components/ui/addressBookRead';
 
 /**
  * What a saved address is used for, where it is used for anything.
@@ -102,6 +103,13 @@ function sameAddress(
 
   return keys.every(key => (a[key] ?? '').trim() === (b[key] ?? '').trim());
 }
+
+/*
+ * A layout effect in the browser, a plain effect on the server (where a layout
+ * effect only warns). Local on purpose, as in `theme-provider.tsx`: it is one
+ * line, and a shared export would be a new pattern for one use.
+ */
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 interface SavedAddressPickerProps {
   /**
@@ -165,6 +173,15 @@ interface SavedAddressPickerProps {
    * says what an entry is used for before the pencil is pressed.
    */
   onEdit?: (option: KnownAddress) => void;
+  /**
+   * The book, already read by the caller for `locale`. The first render shows
+   * it, with no request and no empty frame. It is read once, at mount, and only
+   * when its `locale` is the picker's `locale` then; otherwise it is ignored and
+   * the picker reads the book itself. A delete, a `refreshKey` change or a
+   * different `locale` reads the book again, exactly as without it. The
+   * selection is derived from it exactly as from a fetched book.
+   */
+  initialBook?: { locale: string; addresses: KnownAddress[] };
 }
 
 export function SavedAddressPicker({
@@ -180,9 +197,16 @@ export function SavedAddressPicker({
   t,
   refreshKey = 0,
   onEdit,
+  initialBook,
 }: SavedAddressPickerProps) {
-  const [options, setOptions] = useState<KnownAddress[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  /*
+   * The caller's book, taken once at mount and only for the locale it was read
+   * in. A later `initialBook` is never looked at: the prop seeds, it does not
+   * control.
+   */
+  const [seed] = useState(() => (initialBook && initialBook.locale === locale ? initialBook : null));
+  const [options, setOptions] = useState<KnownAddress[]>(() => seed?.addresses ?? []);
+  const [loaded, setLoaded] = useState(seed !== null);
   /** The entry being removed, so its row can say so instead of just vanishing. */
   const [removing, setRemoving] = useState<string | null>(null);
   /** Bumped locally after a delete, to refetch without the caller's help. */
@@ -231,65 +255,94 @@ export function SavedAddressPicker({
   const matchCurrentRef = useRef(matchCurrent);
   matchCurrentRef.current = matchCurrent;
 
+  /*
+   * Which entry this form is already on, where the caller has not said.
+   *
+   * Read off the fields rather than stored, so a form whose address came
+   * from the book opens with that entry marked instead of looking
+   * hand-typed. An empty form takes the default — there is nothing to
+   * lose, and a blank form beside an unselected list of saved addresses
+   * is the state that sent owners back to retyping what they had already
+   * given us.
+   *
+   * One function for every way the book arrives, so a book the caller read
+   * (`initialBook`) and a book read here can never be judged differently.
+   */
+  const deriveSelection = (book: KnownAddress[]) => {
+    if (selectedRef.current !== null) return;
+
+    const recognises = matchCurrentRef.current;
+
+    if (recognises) {
+      /*
+       * A form that stores text (see `matchCurrent`): mark, never fill.
+       * No `onSelect`, and no default for a form that "looks empty".
+       */
+      const match = book.find(option => recognises(option));
+      if (match) onSelectedChange?.(match.id, 'derived');
+    } else {
+      const held = currentRef.current;
+
+      if (hasAddressContent(held)) {
+        const match = book.find(option => sameAddress(option.address, held));
+        if (match) onSelectedChange?.(match.id, 'derived');
+      } else {
+        const fallback = book.find(option => option.isDefault) ?? book[0];
+        if (fallback) {
+          onSelectedChange?.(fallback.id, 'derived');
+          onSelect(fallback.address);
+        }
+      }
+    }
+  };
+
+  /*
+   * Whether the seed still stands in for a read (SA-CA-3). It does only while
+   * the fetch effect sees exactly the mount's `(locale, refreshKey,
+   * localVersion)`. The first run with anything else turns it off for good, so
+   * a switch he → en → he reads again instead of keeping the English labels
+   * under Hebrew. Deterministic, so a StrictMode re-run skips as well.
+   */
+  const seedStands = useRef(seed !== null);
+  const seedAt = useRef({ locale, refreshKey });
+
+  /*
+   * The seeded selection, derived once per mount (SA-CA-4), before paint so the
+   * "none of these" row is never drawn checked for a frame. Ref-guarded, so a
+   * StrictMode re-run derives nothing a second time; the fetched path's
+   * cancelled first run derives nothing either, so the two stay alike.
+   */
+  const seedDerived = useRef(false);
+  useIsomorphicLayoutEffect(() => {
+    if (!seed || seedDerived.current) return;
+    seedDerived.current = true;
+    deriveSelection(seed.addresses);
+    // Mount only: the seed is never re-read, and the latest choice is read
+    // through the refs above.
+  }, []);
+
   useEffect(() => {
+    if (seedStands.current) {
+      const atMount =
+        locale === seedAt.current.locale && refreshKey === seedAt.current.refreshKey && localVersion === 0;
+      if (atMount) return;
+      seedStands.current = false;
+    }
+
     let cancelled = false;
 
     (async () => {
       try {
-        const response = await fetch(
-          `/api/business-os/addresses?locale=${encodeURIComponent(locale)}`,
-          { cache: 'no-store' }
-        );
-        if (!response.ok) return;
-
-        const result = await response.json();
-        if (cancelled || !result?.success) return;
-
-        const book: KnownAddress[] = Array.isArray(result.data?.addresses)
-          ? result.data.addresses
-          : [];
-        setOptions(book);
-
         /*
-         * Which entry this form is already on, where the caller has not said.
-         *
-         * Read off the fields rather than stored, so a form whose address came
-         * from the book opens with that entry marked instead of looking
-         * hand-typed. An empty form takes the default — there is nothing to
-         * lose, and a blank form beside an unselected list of saved addresses
-         * is the state that sent owners back to retyping what they had already
-         * given us.
+         * A failed read is an answer, not a throw (`readAddressBook` never
+         * rejects): a convenience that failed. The fields below are the whole
+         * form without it, exactly as they were before this existed.
          */
-        if (selectedRef.current === null) {
-          const recognises = matchCurrentRef.current;
+        const read = await readAddressBook(locale);
+        if (cancelled || !read.ok) return;
 
-          if (recognises) {
-            /*
-             * A form that stores text (see `matchCurrent`): mark, never fill.
-             * No `onSelect`, and no default for a form that "looks empty".
-             */
-            const match = book.find(option => recognises(option));
-            if (match) onSelectedChange?.(match.id, 'derived');
-          } else {
-            const held = currentRef.current;
-
-            if (hasAddressContent(held)) {
-              const match = book.find(option => sameAddress(option.address, held));
-              if (match) onSelectedChange?.(match.id, 'derived');
-            } else {
-              const fallback = book.find(option => option.isDefault) ?? book[0];
-              if (fallback) {
-                onSelectedChange?.(fallback.id, 'derived');
-                onSelect(fallback.address);
-              }
-            }
-          }
-        }
-      } catch {
-        /*
-         * A convenience that failed. The fields below are the whole form
-         * without it, exactly as they were before this existed.
-         */
+        setOptions(read.addresses);
+        deriveSelection(read.addresses);
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -298,6 +351,9 @@ export function SavedAddressPicker({
     return () => {
       cancelled = true;
     };
+    // `deriveSelection` reads the caller's latest choice through refs; it is
+    // deliberately not a reason to refetch (see the refs above).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locale, refreshKey, localVersion]);
 
   /*
