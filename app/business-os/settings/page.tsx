@@ -12,7 +12,6 @@ import {
   linkedOAuthLabel,
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities';
-import { supabase } from '@/lib/supabaseClient';
 import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
