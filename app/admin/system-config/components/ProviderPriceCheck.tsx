@@ -17,7 +17,7 @@
  * in this browser file (RC-8): counts arrive as JSON numbers and are printed.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
@@ -81,14 +81,24 @@ function crossCheckLine(status: SourceStatus): string | null {
 export interface ProviderPriceCheckProps {
   /** Called after a check is stored, so the page re-reads the price table. */
   onFinished: () => void;
+  /**
+   * Page layout slice (UF-7): hands the page every status read, so its "Last
+   * provider check" KPI uses this same read and no second request. `null`
+   * when the read failed.
+   */
+  onStatus?: (status: FetchStatus | null) => void;
 }
 
-export default function ProviderPriceCheck({ onFinished }: ProviderPriceCheckProps) {
+export default function ProviderPriceCheck({ onFinished, onStatus }: ProviderPriceCheckProps) {
   const [status, setStatus] = useState<FetchStatus | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
   const [running, setRunning] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [summary, setSummary] = useState<FetchRunSummary | null>(null);
+
+  // A ref, so a new `onStatus` function on every page render never re-runs the mount read.
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
 
   const loadStatus = useCallback(async () => {
     const result = await readFetchStatus();
@@ -98,6 +108,7 @@ export default function ProviderPriceCheck({ onFinished }: ProviderPriceCheckPro
     } else {
       setStatusFailed(true);
     }
+    onStatusRef.current?.(result.ok ? result.data : null);
   }, []);
 
   useEffect(() => {
