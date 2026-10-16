@@ -81,7 +81,8 @@ describe('slice 4 new files', () => {
     const page = codeOf(read(`${DIR}/page.tsx`));
     expect(page).toContain("import ProviderPriceCheck from '@/app/admin/system-config/components/ProviderPriceCheck';");
     expect(page.match(/<ProviderPriceCheck/g)).toHaveLength(1);
-    expect(page.replace(/[ \n]+/g, ' ')).toContain('<ProviderPriceCheck onFinished={() => { void fetchData(true); }} />');
+    // Intent kept; page layout slice (UF-7): `onStatus` hands the page the status this component already read (the Last provider check KPI).
+    expect(page.replace(/[ \n]+/g, ' ')).toContain('<ProviderPriceCheck onFinished={() => { void fetchData(true); }} onStatus={setCheckStatus} />');
   });
 
     it('no raw .json( read: bodies go through readJsonBody or readAdminResponse', () => {

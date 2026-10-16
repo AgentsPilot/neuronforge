@@ -11,7 +11,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import type { ComparisonModel, ComparisonRow, PendingView } from '@/lib/ai/pricing-research/comparisonModel';
 import { compareUnit, rowCoverage, type UnitComparisonInput } from '@/lib/ai/pricing-research/coverageColour';
@@ -285,6 +285,8 @@ describe('one table: ours next to provider (UF-5)', () => {
     });
     jest.setSystemTime(new Date('2099-01-01T00:00:00.000Z'));
     await renderTable();
+    // Intent kept; page layout slice (UF-7): retired and superseded rows show only with "Show retired" on.
+    fireEvent.click(screen.getByTestId('show-retired-toggle'));
     expect(within(rowOf('claude-3-haiku')).getByText('Retired 2026-10-11')).toBeInTheDocument();
     expect(within(rowOf('claude-3-haiku')).queryByTitle('Edit pricing')).not.toBeInTheDocument();
     expect(within(rowOf('gpt-future-row')).getByText('Starts 2026-11-01')).toBeInTheDocument();
@@ -305,6 +307,8 @@ describe('one table: ours next to provider (UF-5)', () => {
 
   it('T-12: sort by gap, stored-only rows last', async () => {
     await renderTable();
+    // Intent kept; page layout slice (UF-7): "Show retired" on, so every stored-only row is in the order.
+    fireEvent.click(screen.getByTestId('show-retired-toggle'));
     // QA Bug 1: plain DOM queries and fireEvent keep this case well under a second.
     const order = () =>
       Array.from(document.querySelectorAll('tbody tr')).map((tr) => tr.querySelector('td .font-mono')?.textContent);
@@ -352,20 +356,25 @@ describe('one table: ours next to provider (UF-5)', () => {
   });
 
   it('T-15 (SA F-4, NR-2): the table is busy while the comparison is re-read after a save, then not', async () => {
+    // QA timing (one 5 s timeout under load): a save re-renders the whole page about six times, and with the
+    // full ten-row fixture each render is the cost. Intent kept with only the row being saved, and one
+    // waitFor on the busy flag replaces a no-op findByText plus a timer.
+    const quiet: ComparisonModel = { ...MODEL, rows: ROWS.filter((r) => r.currentRowId === 'id-mini') };
+    const storedMini = STORED.filter((r) => r.id === 'id-mini');
     let release: () => void = () => undefined;
     let comparisonReads = 0;
     global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
       if (url === COMPARISON_URL) {
         comparisonReads += 1;
-        const reply = { ok: true, status: 200, json: async () => ({ success: true, data: MODEL }) };
+        const reply = { ok: true, status: 200, json: async () => ({ success: true, data: quiet }) };
         if (comparisonReads === 1) return reply;
         // The re-read after the save waits until the test releases it.
         return new Promise((resolve) => {
           release = () => resolve(reply);
         });
       }
-      const data = method === 'PUT' ? STORED[0] : STORED;
+      const data = method === 'PUT' ? storedMini[0] : storedMini;
       return { ok: true, status: 200, json: async () => ({ success: true, data }) };
     }) as unknown as typeof fetch;
 
@@ -379,9 +388,8 @@ describe('one table: ours next to provider (UF-5)', () => {
     expect(screen.getByTestId('pricing-table-wrap')).toHaveAttribute('aria-busy', 'true');
 
     release();
-    await screen.findByText('gpt-4o-mini');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.getByTestId('pricing-table-wrap')).not.toHaveAttribute('aria-busy');
+    await waitFor(() => expect(screen.getByTestId('pricing-table-wrap')).not.toHaveAttribute('aria-busy'));
+    expect(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing')).toBeInTheDocument();
     expect(comparisonReads).toBe(2);
   });
 

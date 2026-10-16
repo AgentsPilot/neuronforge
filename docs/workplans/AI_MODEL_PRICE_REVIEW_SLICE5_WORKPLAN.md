@@ -1,6 +1,6 @@
 # Workplan: AI Model Price Review, Slice 5 ("Check provider prices": OpenAI + LiteLLM cross-check)
 
-> **Last Updated**: 2026-10-14
+> **Last Updated**: 2026-10-16
 
 **Developer:** Dev
 **Requirement:** [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md): UF-1; MP-FR-3, MP-FR-6a, MP-FR-12 as amended; SA Re-review RR-1 (fetch design), RR-2 (pending-only writes), RR-7, RR-8 (location); R-9 row 5 (per-provider status moved here by slice 4 RC-6); BQ-4 (Google and Kimi manual); slice 3 O-5 (cross-check columns), O-14 (`AI_PRICE_FETCH_RUN` deferred here), C-8 (float conversion)
@@ -947,7 +947,21 @@ No other bug. SA F-1..F-6 and QA bugs 1 and 3 are verified closed by the mutants
 
 ## Commit Info
 
-_To be completed by RM._
+| Item | Value |
+|---|---|
+| PR | #404 |
+| Commit | `47c16a05` |
+| Merge | `5ce4203f` |
+
+### Production apply record (2026-10-15)
+
+| Step | Result |
+|---|---|
+| Before state | 42/12/0, charged-price fingerprint `76c7cfe8e89e2464f9fa866668682426` |
+| Migration | `20261069` applied |
+| Slice 5 checker | PASS 9/0 |
+| Slice 3 checker (re-run) | PASS 68/0 |
+| Probe | PASS P01..P05, rolled back, 0 rows left |
 
 ## Change History
 
@@ -960,3 +974,4 @@ _To be completed by RM._
 | 2026-10-15 | SA code review | Fix Required, two small items: F-1 (filter the coverage ids by `MODEL_ID_REGEX` so one bad id cannot 500 every check and leave no round) and F-2 (D-1 ruled: add the route to `chargingUntouched.guard` `SLICE_FILES`, list-only). Low: F-3 (clock skew in the 60 s refusal), F-4 (probe P05 precision), F-5 (a whitespace-line fixture case), F-6 (LiteLLM history lines). D-2, D-5 and D-7 accepted; test durations acceptable. Migration verified against the slice 3 body: SC-2, SC-3, SC-5, SC-5a and SC-6 all hold. Apply order confirmed |
 | 2026-10-15 | SA F-1..F-6 and QA fixes; merged origin/main | F-1 coverage ids filtered through `MODEL_ID_REGEX`, one warn `{ dropped, models }`, route test with `GPT-4o`. F-2 the route added to `chargingUntouched.guard` `SLICE_FILES` (TL-authorised, list only). F-3 `Math.max(0, …)` elapsed, test for a round 2 s in the future (409). F-4 probe P05 requires `permission denied for function%`. F-5 adapter case with whitespace-only blank lines and indented anchors. F-6 LiteLLM last success and last failure rendered. QA: LiteLLM disagreeing on all three units never reaches a price (M07a–c); `crossCheckDetail` unit cases and a source-cell render case (X1, X2); exact 1 bp boundary both sides (M06c, M06e); `ProviderPriceCheck` mocked in the four slice 4 page suites (D-13), slowest page case now 1.3 s in parallel. `git merge origin/main` fast-forwarded to `3d4122a9`; the requirement edits were re-applied with a three-way merge (one Change History conflict, both rows kept). `20261069` still free. Full `tsc --noEmit` (8 GB) completes: 0 errors in touched files. Uncommitted |
 | 2026-10-15 | QA R-1: read-model wiring of `crossCheckDetail` pinned | New `comparisonModel.test.ts` case: a pending line with verdict `agrees` gives `PendingView.crossCheckDetail` "agrees with the second price list, read 2026-10-15; second price list (LiteLLM): …". Mutant X1a (`crossCheckDetail: 'not run'` at `comparisonModel.ts:366`) applied in place: the new case fails (1 failed, 19 passed); file restored, `cmp` byte-identical to the saved copy. Uncommitted |
+| 2026-10-16 | Commit Info filled | PR #404, commit 47c16a05, merge 5ce4203f; production apply record of 2026-10-15 (`20261069` applied, checkers PASS 9/0 and 68/0, probe PASS and rolled back) |

@@ -174,7 +174,8 @@ describe('Model pricing page: QA edge cases', () => {
     expect(within(rowOf('gpt-4o-mini')).getByTitle('Save')).toBeInTheDocument();
 
     // Sync succeeds, its re-read fails: the table and the editor go.
-    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    // QA timing: the Sync button by its label text, not a page-wide role query (about 0.5 s a call under load); same button.
+    fireEvent.click(screen.getByText('Sync Latest Pricing').closest('button') as HTMLButtonElement);
     await screen.findByTestId('pricing-read-failed');
 
     // The header refresh button (no accessible name) re-reads successfully.

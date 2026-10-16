@@ -169,3 +169,40 @@ export const NEEDS_MANUAL_WORDS: Readonly<Record<string, string>> = {
   wrong_cell_count: 'the row has an unexpected number of cells',
   ambiguous_match: 'the name matches more than one model',
 };
+
+/** Page layout slice (UF-7, 2026-10-16): the KPI strip. */
+export const KPI_WORDS = {
+  undercharging: 'Undercharging',
+  pending: 'Pending prices',
+  lastCheck: 'Last provider check',
+  modelsInUse: 'Models in use',
+  noneUndercharging: 'no model is undercharged',
+  worst: 'worst',
+  notPriced: 'not priced',
+  awaitingApply: 'awaiting Apply',
+  of: 'of',
+  compared: 'compared',
+  reading: 'Reading…',
+  unavailable: 'Unavailable',
+  statusUnavailable: 'The last check could not be loaded.',
+  neverChecked: 'Never checked',
+  runCheck: 'never checked; use Check provider prices',
+  ageUnknown: 'age unknown',
+  today: 'today',
+  dayAgo: 'day ago',
+  daysAgo: 'days ago',
+  stale: 'older than 90 days',
+} as const;
+
+/** Page layout slice (UF-7): the retired filter. Superseded rows follow it too. */
+export const RETIRED_FILTER_WORDS = {
+  toggle: 'Show retired',
+  hidden: 'retired or superseded rows hidden.',
+  hiddenOne: 'retired or superseded row hidden.',
+} as const;
+
+/** Page layout slice (UF-7): the help button and drawer title. */
+export const HELP_WORDS = {
+  button: 'About model pricing',
+  title: 'About model pricing',
+} as const;
