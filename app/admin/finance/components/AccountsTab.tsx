@@ -8,8 +8,9 @@
  * table or "No accounts match this filter".
  *
  * SELECT AND FORMAT ONLY (M3-FR-13): sorting, filtering, the cap and every
- * figure are the server's. A control writes the URL through `onChange` (the
- * view's `router.replace`), which refetches. The plan-group options and their
+ * figure are the server's. A control reports through `onChange`; the view
+ * turns it into one write of its URL filter state (`useAdminFilters`, Finance
+ * F-4), which refetches. The plan-group options and their
  * labels come from the server (`groupOptions`): no tier is written here.
  */
 

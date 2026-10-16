@@ -688,12 +688,15 @@ const MIGRATED_PAGES = [
   },
   {
     // Finance F-2: the shared header (h1 "Finance") and states; the read on
-    // readAdminResponse since F-3. Refresh still in the header (DV-1, until F-4).
+    // readAdminResponse since F-3. Finance F-4: the shared filter bar and the
+    // URL hook; DV-1 ended in F-4 (Refresh moved from the header to the bar).
     page: '/admin/finance (Finance)',
     files: [
       'app/admin/finance/page.tsx',
       'app/admin/finance/components/FinanceView.tsx',
       'app/admin/finance/useFinanceData.ts',
+      'app/admin/finance/components/FinanceFilterBar.tsx',
+      'app/admin/finance/financeFilters.ts',
     ],
   },
 ] as const;
