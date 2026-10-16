@@ -36,6 +36,16 @@
  * `payments.metadata` keeps only `notes` and `source`, through the new
  * `pickStringKeys`; `sourceMetadata` is now a call to it and its DE-4 cases
  * below are unchanged. Earlier expectations change only by the ten ids.
+ *
+ * DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §8 N-4, N-5, N-11; SA C-2,
+ * C-4): ten client_records sections after client_payment_methods. Consent
+ * `evidence` keeps only CONSENT_EVIDENCE_KEYS; subscriber `attribution` goes
+ * through `sourceMetadata` (the same SOURCE_METADATA_KEYS); page URLs lose
+ * their query string and fragment (`withoutQueryOrFragment`). F-DE6-1 (TL
+ * 2026-10-16): `sourceMetadata` now cuts `capture_page_url` / `referrer_url`
+ * too, the one deliberate change to DE-4 output; for a value without `?` or
+ * `#` it is byte-identical to DE-4 (the C-7 cases below). Earlier
+ * expectations change only by the ten ids.
  */
 
 const mockFindProfile = jest.fn();
@@ -48,13 +58,17 @@ jest.mock('@/lib/repositories/BusinessDataExportRepository', () => ({
 }));
 
 import {
+  CONSENT_EVIDENCE_KEYS,
   EXPORT_SECTIONS,
   PAYMENT_METADATA_KEYS,
   SOURCE_METADATA_KEYS,
+  SOURCE_METADATA_URL_KEYS,
+  consentEvidence,
   paymentMetadata,
   pickStringKeys,
   runExportSections,
   sourceMetadata,
+  withoutQueryOrFragment,
   type AnyExportSectionDefinition,
   type AnyExportedSection,
   type ExportContext,
@@ -77,10 +91,15 @@ const DE5_ACCOUNT_IDS: ExportSectionId[] = ['payment_account', 'payment_provider
 const DE5_IDS: ExportSectionId[] = [
   'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
 ];
-/** DE-5: every client_records section (DE-4 + DE-5). */
-const CLIENT_IDS: ExportSectionId[] = [...DE4_IDS, ...DE5_IDS];
-/** DE-5: every section read through the repository, in registry order. */
-const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS];
+/** DE-6: the ten intake, email marketing and consent sections after client_payment_methods (§2.3). */
+const DE6_IDS: ExportSectionId[] = [
+  'intake_settings', 'intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
+  'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
+];
+/** DE-5: every client_records section (DE-4 + DE-5). DE-6: + DE6_IDS. */
+const CLIENT_IDS: ExportSectionId[] = [...DE4_IDS, ...DE5_IDS, ...DE6_IDS];
+/** DE-5: every section read through the repository, in registry order. DE-6: + DE6_IDS. */
+const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS];
 
 /** Runs the registry and returns the sections, failing the test if it came back over the ceiling. */
 async function runAll(ctx: ExportContext, sections: readonly AnyExportSectionDefinition[], logger: { error: (f: Record<string, unknown>, m: string) => void }): Promise<AnyExportedSection[]> {
@@ -109,8 +128,8 @@ describe('runExportSections', () => {
     const { logger, lines } = recordingLogger();
     const sections = await runAll(CTX, EXPORT_SECTIONS, logger);
     // DE-4: + the eight client_records sections. DE-3: + the four account sections from tables.
-    // DE-5: + the two account and eight client-money sections.
-    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS]);
+    // DE-5: + the two account and eight client-money sections. DE-6: + the ten DE-6 sections.
+    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS]);
     for (const s of sections) {
       expect(s.status).toBe('ok');
       expect(s.row_count).toBe(s.rows.length);
@@ -185,6 +204,8 @@ describe('runExportSections', () => {
       ...DE5_ACCOUNT_IDS.map((id) => [id, 'failed']),
       ...DE4_IDS.map((id) => [id, 'failed']),
       ...DE5_IDS.map((id) => [id, 'failed']),
+      // DE-6: + the ten DE-6 sections.
+      ...DE6_IDS.map((id) => [id, 'failed']),
     ]);
     expect(sections[0].rows).toEqual([CTX.authUser]);
   });
@@ -396,6 +417,10 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
     // DE-5
     payment_account: true, payment_providers: true, quotes: true, invoices: true, payments: true, refunds: true,
     payment_plans: true, client_payment_plans: true, installments: true, client_payment_methods: true,
+    // DE-6
+    intake_settings: true, intake_forms: true, email_campaigns: true, email_sequences: true, email_sequence_steps: true,
+    email_sequence_enrollments: true, newsletter_subscribers: true, consent_records: true, consent_settings: true,
+    email_unsubscribes: true,
   };
 
   it('ids are unique and every ExportSectionId has exactly one definition', () => {
@@ -413,9 +438,10 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
 
   // DE-3: 6 account (2 + the four from tables) + 8 client_records, was 2 + 8.
   // DE-5: 8 account + 16 client_records, was 6 + 8.
-  it('DE-4: registry order is 8 account + 16 client_records; the calendar copy is not a section (BC-5)', () => {
-    // DE-5: + DE5_ACCOUNT_IDS after DE3_IDS, + DE5_IDS after DE4_IDS.
-    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS]);
+  // DE-6: 8 account + 26 client_records, was 8 + 16 (N-11).
+  it('DE-4: registry order is 8 account + 26 client_records; the calendar copy is not a section (BC-5)', () => {
+    // DE-5: + DE5_ACCOUNT_IDS after DE3_IDS, + DE5_IDS after DE4_IDS. DE-6: + DE6_IDS after DE5_IDS.
+    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS]);
     expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS]);
     for (const s of EXPORT_SECTIONS.filter((x) => DE3_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
     // DE-5 M-9 (SA-Q1): the Stripe account and providers are account / controller.
@@ -425,6 +451,11 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
     // DE-5: CLIENT_IDS (DE-4 + the eight money sections, processor), was DE4_IDS.
     expect(EXPORT_SECTIONS.filter((s) => s.group === 'client_records').map((s) => s.id)).toEqual(CLIENT_IDS);
     for (const s of EXPORT_SECTIONS.filter((x) => DE5_IDS.includes(x.id))) expect(s.gdprRole).toBe('processor');
+    // DE-6 N-11 (SA-Q2): all ten are client_records / processor, intake and consent settings included.
+    for (const s of EXPORT_SECTIONS.filter((x) => DE6_IDS.includes(x.id))) {
+      expect(s.group).toBe('client_records');
+      expect(s.gdprRole).toBe('processor');
+    }
     expect(EXPORT_SECTIONS.map((s) => s.id as string)).not.toContain('calendar_busy_times');
   });
 
@@ -506,6 +537,8 @@ describe('payload', () => {
       ...Object.fromEntries(DE5_ACCOUNT_IDS.map((id) => [id, 0])),
       ...Object.fromEntries(DE4_IDS.map((id) => [id, 0])),
       ...Object.fromEntries(DE5_IDS.map((id) => [id, 0])),
+      // DE-6: + the ten DE-6 sections.
+      ...Object.fromEntries(DE6_IDS.map((id) => [id, 0])),
     });
     expect(payload.summary.failed_sections).toEqual(['user_profile']);
     expect(payload.summary.export_duration_ms).toBe(7);
@@ -641,5 +674,172 @@ describe('DE-5 C-7 pickStringKeys keeps sourceMetadata byte-identical', () => {
   it.each(CASES.map((c, i) => [i, c]))('case %i: same JSON text as the DE-4 implementation', (_i, value) => {
     expect(JSON.stringify(sourceMetadata(value))).toBe(JSON.stringify(de4SourceMetadata(value)));
     expect(JSON.stringify(pickStringKeys(value, SOURCE_METADATA_KEYS))).toBe(JSON.stringify(de4SourceMetadata(value)));
+  });
+});
+
+// ── DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §8; SA review DE-6 C-2, C-4; TL F-DE6-1) ──
+
+describe('DE-6 C-4 withoutQueryOrFragment (SA-Q7)', () => {
+  it.each([
+    ['https://x.test/p?token=TOK', 'https://x.test/p'],
+    ['https://x.test/p?session=S1', 'https://x.test/p'],
+    ['https://x.test/p?sid=SID', 'https://x.test/p'],
+    ['https://x.test/p?code=C0DE', 'https://x.test/p'],
+    ['https://x.test/p#frag', 'https://x.test/p'],
+    ['https://x.test/p?a=1#b', 'https://x.test/p'],
+    // A fragment that comes first cuts there too, whichever comes first.
+    ['https://x.test/p#b?a=1', 'https://x.test/p'],
+    // No query: unchanged, byte for byte.
+    ['https://x.test/a/b/', 'https://x.test/a/b/'],
+    // A relative or malformed value is sliced, never parsed or rewritten.
+    ['/book/now?ref=abc', '/book/now'],
+    ['not a url ? at all', 'not a url '],
+    ['?only=query', ''],
+  ])('%j -> %j', (input, expected) => {
+    expect(withoutQueryOrFragment(input)).toBe(expected);
+  });
+
+  it('a value that is not a string passes through as is (NULL stays NULL)', () => {
+    expect(withoutQueryOrFragment(null)).toBeNull();
+    expect(withoutQueryOrFragment(undefined)).toBeUndefined();
+    expect(withoutQueryOrFragment(5)).toBe(5);
+    const obj = { url: 'https://x.test/p?token=T' };
+    expect(withoutQueryOrFragment(obj)).toBe(obj);
+  });
+});
+
+describe('DE-6 N-4 consent evidence keeps only the three written keys (SA-Q4)', () => {
+  it('the allow-list is exactly client_statement, confirmed_via, note', () => {
+    expect(CONSENT_EVIDENCE_KEYS).toEqual(['client_statement', 'confirmed_via', 'note']);
+  });
+
+  it('a seeded evidence yields exactly the three strings, in list order; every other key and shape is dropped', () => {
+    const raw = {
+      note: 'Agreed by phone',
+      ip: '203.0.113.7',
+      confirmed_via: 'email_link',
+      nested: { client_statement: 'deep' },
+      count: 3,
+      client_statement: 'Yes, email me offers',
+    };
+    const kept = consentEvidence(raw);
+    expect(kept).toEqual({ client_statement: 'Yes, email me offers', confirmed_via: 'email_link', note: 'Agreed by phone' });
+    expect(Object.keys(kept)).toEqual(['client_statement', 'confirmed_via', 'note']);
+    expect(consentEvidence({ client_statement: 7, note: null })).toEqual({});
+    expect([null, ['note'], 'note', 5].map(consentEvidence)).toEqual([{}, {}, {}, {}]);
+  });
+
+  it('negative control: a widened list (an ip key) would export the ip; the real list does not', () => {
+    const raw = { client_statement: 's', ip: '203.0.113.7' };
+    expect(pickStringKeys(raw, [...CONSENT_EVIDENCE_KEYS, 'ip'])).toHaveProperty('ip');
+    expect(consentEvidence(raw)).not.toHaveProperty('ip');
+    // A prefix in the list matches nothing (no pattern growth).
+    expect(pickStringKeys({ client_statement_extra: 'x' }, CONSENT_EVIDENCE_KEYS)).toEqual({});
+  });
+});
+
+describe('DE-6 the consent_records and newsletter_subscribers rows from the registry', () => {
+  const EVENT = {
+    id: 'e1',
+    email: 'dana@example.com',
+    privacy_policy_url: 'https://biz.test/privacy',
+    source_page_url: 'https://x.test/p?token=TOK-XYZ&sid=SID-XYZ#frag',
+    evidence: { client_statement: 'Yes please', confirmed_via: 'confirm_button', ip: 'IP-XYZ' },
+    occurred_at: 't',
+  };
+  const SUBSCRIBER = {
+    id: 's1',
+    email: 'lee@example.com',
+    attribution: {
+      capture_page_url: 'https://x.test/join?code=CODE-XYZ',
+      referrer_url: 'https://ref.test/r?session=SESSREF-XYZ#top',
+      capture_channel: 'website',
+      ip_hash: 'IPHASH-XYZ',
+      user_agent: 'UA-XYZ',
+      session_id: 'SESS-XYZ',
+      smart_link_id: 'SL-XYZ',
+    },
+    created_at: 't',
+  };
+
+  async function rowsOf(): Promise<Record<string, Record<string, unknown>>> {
+    mockListOwned.mockImplementation(async (section: string) => {
+      const rows = section === 'consent_records' ? [EVENT] : section === 'newsletter_subscribers' ? [SUBSCRIBER] : [];
+      return { data: { rows, overCeiling: false }, error: null };
+    });
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    return {
+      consent: sections.find((s) => s.id === 'consent_records')!.rows[0] as Record<string, unknown>,
+      subscriber: sections.find((s) => s.id === 'newsletter_subscribers')!.rows[0] as Record<string, unknown>,
+    };
+  }
+
+  it('consent_records: evidence allow-listed, source_page_url cut, privacy_policy_url as held; key order kept', async () => {
+    const { consent } = await rowsOf();
+    expect(Object.keys(consent)).toEqual(Object.keys(EVENT));
+    expect(consent.source_page_url).toBe('https://x.test/p');
+    expect(consent.privacy_policy_url).toBe('https://biz.test/privacy');
+    expect(consent.evidence).toEqual({ client_statement: 'Yes please', confirmed_via: 'confirm_button' });
+    for (const leaked of ['TOK-XYZ', 'SID-XYZ', 'frag', 'IP-XYZ']) expect(JSON.stringify(consent)).not.toContain(leaked);
+  });
+
+  it('N-5: newsletter_subscribers attribution keeps only SOURCE_METADATA_KEYS, URLs cut (SA-Q7 C-2)', async () => {
+    const { subscriber } = await rowsOf();
+    expect(Object.keys(subscriber)).toEqual(Object.keys(SUBSCRIBER));
+    expect(subscriber.attribution).toEqual({
+      capture_page_url: 'https://x.test/join',
+      referrer_url: 'https://ref.test/r',
+      capture_channel: 'website',
+    });
+    for (const leaked of ['CODE-XYZ', 'SESSREF-XYZ', 'IPHASH-XYZ', 'UA-XYZ', 'SESS-XYZ', 'SL-XYZ']) {
+      expect(JSON.stringify(subscriber)).not.toContain(leaked);
+    }
+  });
+
+  it('N-5: the subscriber list IS SOURCE_METADATA_KEYS (one list for one shape), and the URL keys are two of it', () => {
+    expect(SOURCE_METADATA_URL_KEYS).toEqual(['capture_page_url', 'referrer_url']);
+    for (const key of SOURCE_METADATA_URL_KEYS) expect(SOURCE_METADATA_KEYS).toContain(key);
+    // Identity: a copied list with one extra key exports the extra key; sourceMetadata does not.
+    const copy = [...SOURCE_METADATA_KEYS, 'smart_link_id'];
+    expect(copy).not.toBe(SOURCE_METADATA_KEYS);
+    expect(pickStringKeys(SUBSCRIBER.attribution, copy)).toHaveProperty('smart_link_id');
+    expect(sourceMetadata(SUBSCRIBER.attribution)).not.toHaveProperty('smart_link_id');
+  });
+
+  it('the other eight DE-6 sections pass their rows through as read (no mapper)', async () => {
+    const RAW = { id: 'r1', trigger_config: { tag: 'vip' }, page: 'https://x.test/p?keep=1' };
+    mockListOwned.mockImplementation(async () => ({ data: { rows: [RAW], overCeiling: false }, error: null }));
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    for (const id of DE6_IDS.filter((x) => x !== 'consent_records' && x !== 'newsletter_subscribers')) {
+      expect(sections.find((s) => s.id === id)?.rows).toEqual([RAW]);
+    }
+  });
+});
+
+describe('DE-6 (F-DE6-1) clients.source_metadata page URLs lose their query string (TL 2026-10-16)', () => {
+  it('capture_page_url and referrer_url are cut; every other key is as DE-4 left it', async () => {
+    const raw = {
+      capture_page_url: 'https://biz.test/book?token=TOK-F1&sid=SID-F1#frag',
+      referrer_url: 'https://ref.test/x?code=CODE-F1',
+      capture_channel: 'website',
+      utm_source: 'news?letter',
+      ip_hash: 'IPHASH-F1',
+    };
+    mockListOwned.mockImplementation(async (section: string) =>
+      section === 'clients'
+        ? { data: { rows: [{ id: 'c1', source_metadata: raw }], overCeiling: false }, error: null }
+        : { data: { rows: [], overCeiling: false }, error: null }
+    );
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    const client = sections.find((s) => s.id === 'clients')!.rows[0] as Record<string, unknown>;
+    // Key order of the allow-list is kept; only the two URL keys are cut (a utm value is not a URL key).
+    expect(client.source_metadata).toEqual({
+      capture_page_url: 'https://biz.test/book',
+      referrer_url: 'https://ref.test/x',
+      capture_channel: 'website',
+      utm_source: 'news?letter',
+    });
+    expect(Object.keys(client.source_metadata as object)).toEqual(['capture_page_url', 'referrer_url', 'capture_channel', 'utm_source']);
+    for (const leaked of ['TOK-F1', 'SID-F1', 'CODE-F1', 'frag', 'IPHASH-F1']) expect(JSON.stringify(sections)).not.toContain(leaked);
   });
 });

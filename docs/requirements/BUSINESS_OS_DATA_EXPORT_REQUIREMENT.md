@@ -536,6 +536,8 @@ The legal-entity line behind "AgentPilot" is README copy; it follows the open la
 
 **Order:** DE-0b → DE-1 → DE-2 → DE-3…DE-6 (any order; DE-4 first is the most valuable) → DE-7 → DE-8a → DE-8b → DE-9 → DE-10a. DE-10b rides with purge slice 5.
 
+> **User request 2026-10-16 (recorded in DE-6, §0.10):** DE-10a (admin export) is the **last Phase 1 slice**, and its admin control lives in **`/admin/users`, in the business area, placed just above the Danger Zone**.
+
 **Total:** about **14.5 working days** (DE-1 to DE-10a), excluding DE-0b (~1 d) and DE-10b (inside purge slice 5). §0.3's plan was about 19 days; the difference is the engine, the split and the email.
 
 ##### H. User decisions on the Phase 1 trade-offs (2026-10-14)
@@ -809,6 +811,73 @@ The exact lists are the `*_EXPORT` descriptors in `lib/business-os/purge/descrip
 - Purge follow-up (not DE-5): the `never('subscriptions', …)` purge descriptor names a table that is not live in prod (TL §11.3, 2026-10-16); SchemaReconciler already reports it under `missingNever`. Remove or re-point it in the purge workstream.
 
 **As built (measured on the branch, 2026-10-16):** 155 table descriptors = **23** `include` + **17** `planned` (DE-6: 12, DE-7: 5; DE-5: 0) + **115** `exclude`. On the 15 DE-5 rows, `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged (purge suites green). The export file holds 8 `account` sections and 16 `client_records` sections. The 13 earlier selects (DE-3, DE-4, `profiles`) are byte-identical (SA C-7).
+
+### 0.10 DE-6 status, TL defaults and SA rulings (2026-10-16)
+
+**DE-6 (intake, leads and consent): code complete 2026-10-16; SA code-approved + QA PASS 2026-10-16; committed on `feature/data-export-de6` by RM.** T-0 live read done (TL, prod read-only; DE-6 workplan §11.1), SA-owed reads done (§11.2: Q7b, Q11, F-DE6-1 count). SA workplan review approved with conditions C-1…C-12 and rulings SA-Q1…SA-Q10 (2026-10-16). T-10 done by TL: 0 drift / 0 missing over 124 names; SA code-approved + QA PASS 2026-10-16 (28/28 negative controls). Workplan: [BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md).
+
+**What it delivers:** the JSON download (`GET /api/user/data-export`) gains ten `client_records` sections (AgentPilot the processor; SA-Q2), after `client_payment_methods`: `intake_settings` (`user_intake_settings`), `intake_forms` (`business_intake_forms`, every version), `email_campaigns`, `email_sequences`, `email_sequence_steps`, `email_sequence_enrollments`, `newsletter_subscribers` (`business_subscribers`), `consent_records` (`marketing_consent_events`), `consent_settings` (`marketing_consent_settings`) and `email_unsubscribes` (the do-not-email list). Each is one table with an explicit column list and a written reason for every column left out, read through the DE-4 `BusinessDataExportRepository`, keyed on the session user's id, inside the Phase 1 row ceiling. Child tables (steps, enrollments, consent records) are read by their own `user_id`. Two tables are `exclude`: `lead_responses` (activity) and `marketing_consent_state` (derived). `format_version` stays 2. There is no migration, no new route, file, dependency or flag. Client answers to intake forms were already in the file (DE-4 `bookings.intake_responses`); DE-6 adds the forms they answer.
+
+**Business calls: TL defaults 2026-10-16 — user may change.** The user asked for an autonomous run, so TL took these defaults, following the user's earlier decisions (activity out, tracking out, AI-generated out, everything we hold in). These DE-6 BC numbers are separate from the BC numbers of DE-2…DE-5.
+
+| # | Question | TL default 2026-10-16 — user may change | Effect |
+|---|---|---|---|
+| BC-1 | Consent technical evidence (scrambled IP and its key, browser signature, visit id) | **Out** | `ip_hash`, `ip_hash_salt`, `user_agent`, `session_id` are `excludedColumns` (`VISITOR_EVIDENCE`). The wording, time, method, form and page are in. The evidence stays in AgentPilot's records (the ledger is never purged) |
+| BC-2 | Automatic invitations, chases and reminders to leads (`lead_responses`) | **Out** (activity) | `lead_responses` is `exclude` |
+| BC-3 | Campaign and sequence sent / opened / clicked counts | **Counts out**; the campaign, its status and sent date in | The counters are `excludedColumns` (`DELIVERY_STATS`) |
+| BC-4 | Intake form drafts and old versions | **All versions in**; the AI generation details out | Every status in; `generated_from` out (`GENERATION_METADATA`) |
+| BC-5 | Unconfirmed and unsubscribed newsletter sign-ups | **In**, with status | No row filter |
+| BC-6 | A separate "current answer per address" list | **No** | `marketing_consent_state` is `exclude` (derived); DE-8b's README explains how to read the current answer |
+| BC-7 | Consent settings (statements per language, privacy notice, postal address) | **In** | `consent_settings` section (single-row read, SA-Q1) |
+| BC-8 | Consent records of people later erased | **In, as held** | Redacted rows go out with `redacted@invalid` and `redacted_at` |
+
+**SA rulings recorded here (DE-6 workplan review, 2026-10-16):**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q1** | `marketing_consent_settings` has no `id` (PK `user_id`). The `include` classification gains an optional `rowKey?: 'user_id'` (that literal only). The repository reads such a table as ONE query inside `listOwnedRowsForExport`, after the E-2 scope and E-3 deny checks: `.eq('user_id', session id).limit(2)`, no order, no `gt`, no other filter; 0 rows ok-empty, 1 ok, 2 fail the section closed; the ceiling applies. CI (`tableExportProblems`): with `rowKey` it must be `'user_id'`, the scope `user_id`, `user_id` not in `columns`, no `rowFilter`. **New converse CI rule:** an `include` without `rowKey` must list `id` (it lived only at runtime before). A test pins `marketing_consent_settings` as the only `rowKey` descriptor; a second one is an SA item |
+| SA-Q2 | All ten sections are `client_records` / processor, in the order above |
+| SA-Q3 | `marketing_consent_state` excluded as derived (Q11: 0 key mismatches, 0 disagreements, 0 orphan state rows) |
+| SA-Q4 | `questions`, `segment_filter`, `trigger_config` go out whole. `business_subscribers.attribution` goes through `SOURCE_METADATA_KEYS` (the DE-4 list, by identity). `marketing_consent_events.evidence` goes through the new `CONSENT_EVIDENCE_KEYS = ['client_statement', 'confirmed_via', 'note']`, strings only. C-5: every writer of `segment_filter` / `trigger_config` is owner-authenticated or a server constant (DE-6 workplan Dev notes) |
+| SA-Q5 | Deny-list hardening: `ip_hash_salt`, `user_agent`, `session_id`, `ip_address`, `fingerprint` added to `SECRET_COLUMN_DENY_EXACT`, and `/_salt$/` to `SECRET_COLUMN_DENY_PATTERNS` ("secrets and visitor tracking"). No DE-1…DE-5 include is hit; `DENY_EXCEPTIONS` keeps its one entry |
+| SA-Q6 | `email_sequence_enrollments.next_send_at` out (`QUEUE_STATE`); `current_step_number` in |
+| **SA-Q7** | Page URLs lose their query string and fragment: a string is cut at the first `?` or `#` (plain slicing, never `new URL()`); scheme, host and path kept; non-strings pass through. Applied to `consent_records.source_page_url` and to the subscriber `attribution` keys `capture_page_url` / `referrer_url` (C-2). `privacy_policy_url` is kept as held (§11.2: 0 with a query string, C-3) |
+| SA-Q8 | `email_normalized` out on both tables (`DERIVED_COPY`) |
+| SA-Q9 | `lead_responses` excluded as activity; its purge note left as it is |
+| SA-Q10 | `marketing_consent_events.recorded_by` out (`ACTOR_ID`); live 8 of 8 are the owner |
+
+**F-DE6-1 (TL decision 2026-10-16): the one deliberate change to DE-4 output.** `crm_contacts.source_metadata.referrer_url` carries token-like parameters on 4 live contacts, and `capture_page_url` comes from the same public `page_url` (§11.2). The same strip helper now applies to the `clients` section's `source_metadata.capture_page_url` and `referrer_url`. It is a deliberate DE-4 re-pin, marked `DE-6 (F-DE6-1):` in code, with tests that seed `?token=…&sid=…#frag` and assert none of it reaches the body. A value without `?` or `#` is byte-identical to DE-4. Every other DE-1…DE-5 select, section, group and role is unchanged (C-7: the 23 earlier select strings are compared against the literals of origin/main `98735db9`).
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table):**
+
+| Table → section | In | Out | Total |
+|---|---|---|---|
+| `user_intake_settings` → `intake_settings` | 5 | `user_id` | 6 |
+| `business_intake_forms` → `intake_forms` | 8, incl. `questions` (whole), `generated_at` | `user_id`, `generated_from` | 10 |
+| `email_campaigns` → `email_campaigns` | 11, incl. `segment_filter`, `status`, `scheduled_at`, `sent_at` | `user_id`, 5 × counters | 17 |
+| `email_sequences` → `email_sequences` | 8, incl. `trigger_config` | `user_id`, 3 × counters | 12 |
+| `email_sequence_steps` → `email_sequence_steps` | 8 | `user_id`, 3 × counters | 12 |
+| `email_sequence_enrollments` → `email_sequence_enrollments` | 7 | `user_id`, `next_send_at` | 9 |
+| `business_subscribers` → `newsletter_subscribers` | 12, incl. `attribution` (allow-listed, URLs cut) | `user_id`, `email_normalized` | 14 |
+| `marketing_consent_events` → `consent_records` | 17, incl. `statement_text`, `statement_locale`, `statement_version`, `privacy_policy_url`, `source_page_url` (cut), `evidence` (allow-listed), `redacted_at` | `user_id`, `email_normalized`, `ip_hash`, `ip_hash_salt`, `user_agent`, `session_id`, `recorded_by` | 24 |
+| `marketing_consent_settings` → `consent_settings` | 13 (no `id` exists; `rowKey: 'user_id'`) | `user_id` | 14 |
+| `email_unsubscribes` → `email_unsubscribes` | 5 | `user_id` | 6 |
+
+The exact lists are the `*_EXPORT` descriptors in `lib/business-os/purge/descriptors.ts`, pinned literally in `exportClassification.test.ts` (`DE6_PINS`) and byte for byte in the route characterization test.
+
+**Notes for DE-8b (binding):**
+
+| # | Note |
+|---|---|
+| README: current consent | The current answer for an address is its latest consent record (a withdrawal wins a tie). For email, `email_unsubscribes` and `newsletter_subscribers.status` give it directly (BC-6) |
+| README: privacy notice | Only the current hosted privacy notice text is stored (`consent_settings.privacy_policy_body`); each consent record keeps the exact sentence agreed and the notice link it was shown (R-5) |
+| README: erased people | A redacted record reads `redacted@invalid` with `redacted_at` set: a decision existed and was erased (BC-8) |
+| README: page addresses | Page addresses in consent records, newsletter sign-ups and client sources are shown without their query string (SA-Q7, F-DE6-1) |
+| CSV | The ten sections follow the DE-4 CSV rule; `questions`, `segment_filter`, `trigger_config`, `attribution` and `evidence` go as JSON text in one cell |
+
+**User request 2026-10-16 (for DE-10a):** DE-10a (admin export) lives in **`/admin/users`, in the business area, placed just ABOVE the Danger Zone**, and it is the **LAST Phase 1 slice**. Noted at the Phase 1 order (§0.4.1 G).
+
+**As built (measured on the branch, 2026-10-16):** 155 table descriptors = **33** `include` + **5** `planned` (DE-7) + **117** `exclude`. On the 12 DE-6 rows, `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged (purge suites green). The export file holds 8 `account` sections and 26 `client_records` sections. The 23 earlier selects are byte-identical (SA C-7); the only earlier output change is F-DE6-1.
 
 ---
 
@@ -1164,3 +1233,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-15 | User manual check DE-1 PASS; UI-1 folded into DE-9 (§0.7) | Danger zone Export works. UI-1: the export result message must use the system's standard success/error notification on all 4 export entry points, plus a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1); SA picks the pattern in the DE-9 workplan review. No DE-4 code change |
 | 2026-10-16 | DE-3 code complete; user decisions BC-A…BC-G; SA rulings (§0.8) | Uncommitted on `feature/data-export-de3`, awaiting SA code review; T-9 drift check (157 names, five tables) owed, TL runs it as read-only SQL. Four `account` sections (preferences, notification settings, business profile, business addresses) through the DE-4 repository; `profiles` loses `hourly_rate_usd` and `org_id`, keeps `role`. BC-A agent-platform settings out (`AGENT_SETTING`, verbatim); BC-B invoice bank details out (`BANK_DETAILS`, verbatim) incl. `invoice_payment_instructions` (SA R-2); `invoice_tax_id` in (SA R-1); BC-C…BC-G confirmed. SA-Q1 single-row read dropped (all tables have `id`). DE-8b README note: three timezone columns (authority, mirror, quiet hours only). Totals 13 include / 32 planned / 110 exclude |
 | 2026-10-16 | DE-5 code complete; user decisions BC-1…BC-12; SA rulings (§0.9) | Uncommitted on `feature/data-export-de5`, waiting for SA code review. T-10 drift check (249 names, ten tables) owed: TL runs it as read-only SQL. Ten money sections: 2 `account` (payment account, payment providers) and 8 `client_records` (quotes, invoices, payments, refunds, payment plans, client payment plans, instalments, client payment methods). Five money tables excluded: reminders, event log and automation runs (activity), built-in rules, and dead `payment_methods`. **BC-3: the Stripe invoice web and PDF links are IN, which overrides the workplan default and SA-Q5.** BC-1: card brand and last 4 only. BC-11: no totals. SA-Q3: `payments.metadata` limited to `notes` and `source` through the new `pickStringKeys` (DE-4 `sourceMetadata` output byte-identical). SA-Q6: refund fee columns have no currency, plus the DE-8b README wording. SA-Q7: `charge_account_kind` out. SA-Q11: `card_number`, `cvc` and `cvv` added to the deny list. Totals 23 include / 17 planned / 115 exclude |
+| 2026-10-16 | DE-6 code complete; TL defaults BC-1…BC-8; SA rulings; F-DE6-1; DE-10a placement (§0.10) | T-10 done by TL: 0 drift / 0 missing over 124 names; SA code-approved + QA PASS 2026-10-16 (28/28 negative controls); committed on `feature/data-export-de6` by RM. Ten `client_records` sections (intake settings, intake forms, email campaigns, sequences, steps, enrollments, newsletter sign-ups, consent records, consent settings, do-not-email list); `lead_responses` and `marketing_consent_state` excluded. TL defaults 2026-10-16 (user may change): visitor evidence, lead messages and delivery counters out; all form versions, sign-ups and redacted consent records in. SA-Q1: `rowKey: 'user_id'` single-row read for `marketing_consent_settings`, plus the CI rule "include without rowKey lists id". SA-Q5: visitor-tracking names and `/_salt$/` on the deny list. SA-Q7: page URLs cut at the query string. **F-DE6-1: the same cut on DE-4 `clients.source_metadata` `capture_page_url` / `referrer_url`, the one deliberate change to earlier output.** User request: DE-10a in `/admin/users`, business area, just above the Danger Zone, last Phase 1 slice. Totals 33 include / 5 planned / 117 exclude |

@@ -666,6 +666,200 @@ const PAYMENT_PROCESSORS_EXPORT: TableExportClassification = {
   },
 };
 
+// ── DE-6: intake, email marketing and consent (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §3) ──
+// The questions the owner asks clients (every version), the intake on/off
+// settings, the email campaigns and sequences the owner wrote, which clients
+// are in which sequence, the newsletter sign-up list, the do-not-email list,
+// the consent record and the owner's consent settings. Ten sections, group
+// `client_records` (AgentPilot the processor; DE-6 SA-Q2). Every list was
+// reconciled with the live schema on 2026-10-16 (workplan §11.1, SA review
+// DE-6): `columns` ∪ `excludedColumns` is exactly the live column set of each
+// table. Order matters: the export repository selects `columns.join(', ')`,
+// pinned byte for byte in the route characterization test.
+//
+// All history is in: draft and archived forms, pending and unsubscribed
+// sign-ups, withdrawn and redacted consent records, cancelled enrollments
+// (DX-8; TL defaults BC-4, BC-5, BC-8, 2026-10-16). None of these tables
+// soft-deletes, so no rowFilter. Every child table (steps, enrollments,
+// consent records) is read by its OWN `user_id`, never by following a parent
+// id. Out: visitor tracking (BC-1), delivery counters (BC-3), the AI
+// provenance of a form (BC-4), and two whole tables (the lead-message queue,
+// BC-2; the derived consent projection, BC-6). Changing a list changes what
+// the export holds: a privacy decision, and an SA item.
+
+/** Why a DE-6 COLUMN stays out. Repeated reasons are named, not retyped. */
+const MARKETING_COLUMN_REASON = {
+  DELIVERY_STATS:
+    'DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)',
+  QUEUE_STATE: 'when the next email is scheduled to go: sending machinery, not a record (DE-6 SA-Q6)',
+  GENERATION_METADATA: `${EXPORT_COLUMN_REASON.ASSISTANT_OUTPUT}: how the assistant built the form (model, inputs) (TL default BC-4, 2026-10-16)`,
+  VISITOR_EVIDENCE:
+    'a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)',
+  DERIVED_COPY: 'a generated lower-case copy of email, which is in (DE-6 SA-Q8)',
+  ACTOR_ID:
+    'the id that recorded the decision inside our system (the owner on every live row); `method` says how it was recorded (DE-6 SA-Q10; as DE-5 SA-Q15)',
+} as const;
+
+/** `user_intake_settings` -> `intake_settings`: one row per owner (UNIQUE user_id). */
+const USER_INTAKE_SETTINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'intake_settings',
+  columns: ['id', 'is_enabled', 'send_after_booking', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `business_intake_forms` -> `intake_forms`: every version and status (draft,
+ * published, archived), so an answer in `bookings.intake_responses` can be
+ * read against the form it was given to. `questions` travels whole (SA-Q4).
+ */
+const BUSINESS_INTAKE_FORMS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'intake_forms',
+  columns: ['id', 'version', 'status', 'questions', 'generated_at', 'published_at', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    generated_from: MARKETING_COLUMN_REASON.GENERATION_METADATA,
+  },
+};
+
+/** `email_campaigns` -> `email_campaigns`: the wording, audience, status and dates; no counters. */
+const EMAIL_CAMPAIGNS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_campaigns',
+  columns: [
+    'id', 'name', 'subject', 'body_html', 'body_text', 'segment_filter', 'status', 'scheduled_at', 'sent_at', 'created_at',
+    'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    recipients_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    sent_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    opened_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    clicked_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    failed_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+  },
+};
+
+/** `email_sequences` -> `email_sequences`: `trigger_config` travels whole (SA-Q4, C-5). */
+const EMAIL_SEQUENCES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_sequences',
+  columns: ['id', 'name', 'description', 'trigger_type', 'trigger_config', 'is_active', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    total_sent: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    total_opened: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    total_clicked: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+  },
+};
+
+/** `email_sequence_steps` -> `email_sequence_steps`: read by its own `user_id`, never via `sequence_id`. */
+const EMAIL_SEQUENCE_STEPS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_sequence_steps',
+  columns: ['id', 'sequence_id', 'step_number', 'delay_minutes', 'subject', 'body_html', 'body_text', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    sent_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    opened_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    clicked_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+  },
+};
+
+/** `email_sequence_enrollments` -> `email_sequence_enrollments`: which client is in which sequence, every status. */
+const EMAIL_SEQUENCE_ENROLLMENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_sequence_enrollments',
+  columns: ['id', 'sequence_id', 'contact_id', 'status', 'current_step_number', 'enrolled_at', 'completed_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    next_send_at: MARKETING_COLUMN_REASON.QUEUE_STATE,
+  },
+};
+
+/** `email_unsubscribes` -> `email_unsubscribes`: the owner's do-not-email list (derived by trigger from the ledger). */
+const EMAIL_UNSUBSCRIBES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_unsubscribes',
+  columns: ['id', 'contact_id', 'email', 'reason', 'unsubscribed_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `marketing_consent_events` -> `consent_records`: every grant and withdrawal,
+ * with the exact wording agreed to, its locale and version, the method, the
+ * form and page, and when. Redacted rows go out as held (BC-8). `evidence` is
+ * READ but never written raw: only `client_statement`, `confirmed_via` and
+ * `note`, as strings (CONSENT_EVIDENCE_KEYS in data-export/sections.ts,
+ * SA-Q4). `source_page_url` loses its query string and fragment in the
+ * section mapper (SA-Q7: 2 of 16 live URLs carried token-like parameters).
+ * `privacy_policy_url` is kept as held (0 with a query string, §11.2).
+ */
+const MARKETING_CONSENT_EVENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'consent_records',
+  columns: [
+    'id', 'contact_id', 'email', 'channel', 'purpose', 'decision', 'method', 'statement_text', 'statement_locale',
+    'statement_version', 'privacy_policy_url', 'source_surface', 'source_page_url', 'evidence', 'redacted_at',
+    'occurred_at', 'created_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    email_normalized: MARKETING_COLUMN_REASON.DERIVED_COPY,
+    ip_hash: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    ip_hash_salt: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    user_agent: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    session_id: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    recorded_by: MARKETING_COLUMN_REASON.ACTOR_ID,
+  },
+};
+
+/**
+ * `marketing_consent_settings` -> `consent_settings`: the owner's consent
+ * wording per language, privacy notice, postal address and advertisement
+ * label (BC-7). The table has NO `id`: its primary key is `user_id`, so it is
+ * read as one row (`rowKey: 'user_id'`, DE-6 SA-Q1), not keyset paged. The
+ * only descriptor with a `rowKey`; a second one is an SA item.
+ */
+const MARKETING_CONSENT_SETTINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'consent_settings',
+  rowKey: 'user_id',
+  columns: [
+    'capture_enabled', 'statement_en', 'statement_es', 'statement_he', 'statement_version', 'privacy_policy_mode',
+    'privacy_policy_url', 'privacy_policy_body', 'privacy_policy_updated_at', 'postal_address', 'label_as_advertisement',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: `${EXPORT_COLUMN_REASON.OWNER_ID}; it is also the row key (one row per owner)`,
+  },
+};
+
+/**
+ * `business_subscribers` -> `newsletter_subscribers`: every sign-up, pending
+ * and unsubscribed included, with its status (BC-5). `attribution` is built
+ * by the same code as `crm_contacts.source_metadata`, so it goes through the
+ * same SOURCE_METADATA_KEYS allow-list, with the page URLs cut at the query
+ * string (SA-Q7 C-2).
+ */
+const BUSINESS_SUBSCRIBERS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'newsletter_subscribers',
+  columns: [
+    'id', 'email', 'name', 'status', 'source', 'attribution', 'subscribed_at', 'confirmed_at', 'promoted_contact_id',
+    'promoted_at', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    email_normalized: MARKETING_COLUMN_REASON.DERIVED_COPY,
+  },
+};
+
 /**
  * Ordering bands. Lower runs first.
  *
@@ -887,28 +1081,28 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'The pre-flight gate READS this in phase 1, long before phase 2 deletes it.' },
 
   // ── §3.6 Email automation ────────────────────────────────────────────────
-  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: EMAIL_SEQUENCES_EXPORT },
+  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: EMAIL_SEQUENCE_STEPS_EXPORT },
+  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: EMAIL_CAMPAIGNS_EXPORT },
   { table: 'email_sends', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
-  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: EMAIL_SEQUENCE_ENROLLMENTS_EXPORT },
+  { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: EMAIL_UNSUBSCRIBES_EXPORT,
     notes: 'K* — RETAINED BY BOTH LEVELS (D8). A third party withdrew consent. auth.users survives, so the same user_id can re-onboard; deleting this would resume emailing people who opted out. FR-23 requires the copy to say so. Now DERIVED from marketing_consent_events by trigger, and kept because this promise is made to users in two places.' },
 
-  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: BUSINESS_SUBSCRIBERS_EXPORT,
     notes: 'The newsletter audience. Reset clears it with the rest of the business data — unlike the consent ledger, which records what each person AGREED to and is retained forever. A rebuilt business starts with an empty list and has to earn it again.' },
 
   // ── §3.6b Marketing consent ──────────────────────────────────────────────
-  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: MARKETING_CONSENT_EVENTS_EXPORT,
     notes: 'Same reasoning as email_unsubscribes, in both directions. A withdrawal must outlive the business, or a reset resumes mailing people who opted out. A GRANT must outlive it too: the evidence of what someone agreed to is what answers a complaint or a subject access request years later, and it cannot be reconstructed.' },
-  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.CACHE, 'the current consent per address, rebuilt by trigger from marketing_consent_events, which is exported whole as consent_records; no id column to page on (TL default BC-6, 2026-10-16; DE-6 SA-Q3)'),
     notes: 'The projection the send gate reads. Deleting it would read as "no decision recorded", which fails closed for grants but would also lose every suppression. Derived, but not disposable.' },
-  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: MARKETING_CONSENT_SETTINGS_EXPORT,
     notes: 'Business configuration — the tenant\'s own consent wording, privacy notice and postal address. Unlike the decisions above, this is theirs, not their clients\'.' },
 
   // ── §3.7 Intake ──────────────────────────────────────────────────────────
-  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: USER_INTAKE_SETTINGS_EXPORT },
+  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: BUSINESS_INTAKE_FORMS_EXPORT,
     notes: 'Confirmed live by T1, so §10.2 para 2 is firm and AC-3 asserts it unconditionally.' },
 
   // ── §3.8 Onboarding & chat ───────────────────────────────────────────────
@@ -975,7 +1169,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
   { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: PROPOSALS_EXPORT,
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
-  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'queued and sent automatic messages to leads and clients (invitations, chases, reminders) with their claim / lease columns: messages sent are activity (TL default BC-2, 2026-10-16; as payment_reminders, DE-5 BC-4)'),
     notes: 'Lead data is customer data.' },
   { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
   { table: 'daily_briefing_sends', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),

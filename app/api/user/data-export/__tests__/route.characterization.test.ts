@@ -88,6 +88,23 @@
  *   `source` only; the audit `section_counts` / `data_categories` gain ten keys;
  * - the five excluded money tables and the tables of money paid to AgentPilot
  *   are seeded (raw, unprojected) and asserted NEVER read (SA C-6 a).
+ *
+ * Deliberately re-pinned AGAIN by DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md
+ * §8 N-12, SA C-7). Every changed expectation carries a `DE-6:` comment.
+ * Insert-only for DE-1 … DE-5: the twenty-three earlier select strings are the
+ * literals of origin/main 98735db9, untouched, as are their chains, groups and
+ * order. The ONE deliberate change to earlier output is F-DE6-1 (TL
+ * 2026-10-16): `clients.source_metadata` `capture_page_url` / `referrer_url`
+ * lose their query string and fragment; its own test below seeds them.
+ * - ten intake, email marketing and consent tables are read after the DE-5
+ *   tables, all on the service-role client: nine keyset-paged like a DE-4
+ *   table, `marketing_consent_settings` as ONE query (`.eq('user_id')
+ *   .limit(2)`, SA-Q1); their ten literal select strings are pinned;
+ * - the body gains ten `client_records` sections; consent `evidence` and
+ *   subscriber `attribution` are allow-listed, page URLs cut at the query;
+ *   the audit `section_counts` / `data_categories` gain ten keys;
+ * - `lead_responses`, `marketing_consent_state` and `email_sends` are seeded
+ *   raw and asserted NEVER read (N-7).
  */
 
 import { NextRequest } from 'next/server';
@@ -113,6 +130,10 @@ const MOCK_PAGED_TABLES = new Set([
   'payment_refunds', 'payment_plans', 'payment_plan_subscriptions', 'payment_plan_installments', 'saved_payment_methods',
   'crm_pipeline_stages', 'crm_contacts', 'crm_activities', 'crm_tasks', 'contact_documents',
   'scheduling_services', 'scheduling_bookings', 'scheduling_availability_exceptions',
+  // DE-6: the ten DE-6 tables (consent settings is awaited once, so it takes one queued result).
+  'user_intake_settings', 'business_intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
+  'email_sequence_enrollments', 'business_subscribers', 'marketing_consent_events', 'marketing_consent_settings',
+  'email_unsubscribes',
 ]);
 /** DE-4 (R-8): more queries than this means a reader is looping; fail, do not hang. */
 const MOCK_CALL_CAP = 100;
@@ -233,15 +254,32 @@ const DE5_TABLES = [
   'payment_plan_installments', // installments
   'saved_payment_methods', // client_payment_methods
 ] as const;
-// DE-3: + DE3_TABLES after the account table. DE-5: + DE5_ACCOUNT_TABLES, + DE5_TABLES.
-const TABLES = [...ACCOUNT_TABLES, ...DE3_TABLES, ...DE5_ACCOUNT_TABLES, ...DE4_TABLES, ...DE5_TABLES] as const;
+// DE-6: the ten intake, email marketing and consent tables, after the DE-5 tables, in registry order.
+const DE6_TABLES = [
+  'user_intake_settings', // intake_settings
+  'business_intake_forms', // intake_forms
+  'email_campaigns', // email_campaigns
+  'email_sequences', // email_sequences
+  'email_sequence_steps', // email_sequence_steps
+  'email_sequence_enrollments', // email_sequence_enrollments
+  'business_subscribers', // newsletter_subscribers
+  'marketing_consent_events', // consent_records
+  'marketing_consent_settings', // consent_settings (one row, SA-Q1)
+  'email_unsubscribes', // email_unsubscribes
+] as const;
+// DE-3: + DE3_TABLES after the account table. DE-5: + DE5_ACCOUNT_TABLES, + DE5_TABLES. DE-6: + DE6_TABLES.
+const TABLES = [...ACCOUNT_TABLES, ...DE3_TABLES, ...DE5_ACCOUNT_TABLES, ...DE4_TABLES, ...DE5_TABLES, ...DE6_TABLES] as const;
 type Table = (typeof TABLES)[number];
+/** DE-6: every DE-6 table; the single-row one is not keyset paged. */
+type De6Table = (typeof DE6_TABLES)[number];
+type De6PagedTable = Exclude<De6Table, 'marketing_consent_settings'>;
+const DE6_PAGED_TABLES = DE6_TABLES.filter((t): t is De6PagedTable => t !== 'marketing_consent_settings');
 type De4Table = (typeof DE4_TABLES)[number];
 type De3Table = (typeof DE3_TABLES)[number];
 /** DE-5: every money table. */
 type De5Table = (typeof DE5_ACCOUNT_TABLES)[number] | (typeof DE5_TABLES)[number];
-/** DE-3: every table read through the paged reader. DE-5: + De5Table. */
-type PagedTable = De3Table | De4Table | De5Table;
+/** DE-3: every table read through the paged reader. DE-5: + De5Table. DE-6: + the nine paged DE-6 tables. */
+type PagedTable = De3Table | De4Table | De5Table | De6PagedTable;
 
 const DE3_SECTION: Record<De3Table, string> = {
   user_preferences: 'preferences',
@@ -276,6 +314,20 @@ const DE5_SECTION: Record<De5Table, string> = {
 };
 const DE5_ALL_TABLES: readonly De5Table[] = [...DE5_ACCOUNT_TABLES, ...DE5_TABLES];
 
+// DE-6: the section each DE-6 table backs.
+const DE6_SECTION: Record<De6Table, string> = {
+  user_intake_settings: 'intake_settings',
+  business_intake_forms: 'intake_forms',
+  email_campaigns: 'email_campaigns',
+  email_sequences: 'email_sequences',
+  email_sequence_steps: 'email_sequence_steps',
+  email_sequence_enrollments: 'email_sequence_enrollments',
+  business_subscribers: 'newsletter_subscribers',
+  marketing_consent_events: 'consent_records',
+  marketing_consent_settings: 'consent_settings',
+  email_unsubscribes: 'email_unsubscribes',
+};
+
 // DE-1 (new, required by SA C-7): the six tables that left the export are never read.
 // DE-4: + external_calendar_events (user BC-5: the synced calendar copy is not exported).
 // DE-4 (user 2026-10-15): + plugin_connections (connected apps are not exported).
@@ -291,11 +343,16 @@ const MONEY_TO_US_TABLES = [
 const EXCLUDED_MONEY_TABLES = [
   'payment_events', 'payment_reminders', 'payment_automation_rules', 'payment_automation_executions', 'payment_methods',
 ] as const;
+// DE-6 (N-7): the lead-message queue and the derived consent projection are
+// excluded (TL defaults BC-2 / BC-6), and email_sends is activity; seeded raw.
+const EXCLUDED_DE6_TABLES = ['lead_responses', 'marketing_consent_state', 'email_sends'] as const;
 const REMOVED_TABLES = [
   'agents', 'agent_executions', 'agent_configurations', 'audit_trail',
   'external_calendar_events', 'plugin_connections',
   ...EXCLUDED_MONEY_TABLES,
   ...MONEY_TO_US_TABLES,
+  // DE-6.
+  ...EXCLUDED_DE6_TABLES,
 ] as const;
 
 // DE-4 (user 2026-10-15, new): the owner's clock for the file name, read after the sections.
@@ -410,6 +467,27 @@ const SELECTS: Record<Table, string> = {
   saved_payment_methods:
     'id, contact_id, processor_type, processor_customer_id, processor_method_id, method_type, brand, ' +
     'last_four, is_default, is_valid, created_at, updated_at',
+  // DE-6 (new): the ten intake, email marketing and consent selects, from the descriptors (SA review DE-6), byte for byte.
+  user_intake_settings: 'id, is_enabled, send_after_booking, created_at, updated_at',
+  business_intake_forms: 'id, version, status, questions, generated_at, published_at, created_at, updated_at',
+  email_campaigns:
+    'id, name, subject, body_html, body_text, segment_filter, status, scheduled_at, sent_at, created_at, ' +
+    'updated_at',
+  email_sequences: 'id, name, description, trigger_type, trigger_config, is_active, created_at, updated_at',
+  email_sequence_steps: 'id, sequence_id, step_number, delay_minutes, subject, body_html, body_text, created_at',
+  email_sequence_enrollments: 'id, sequence_id, contact_id, status, current_step_number, enrolled_at, completed_at',
+  business_subscribers:
+    'id, email, name, status, source, attribution, subscribed_at, confirmed_at, promoted_contact_id, ' +
+    'promoted_at, created_at, updated_at',
+  marketing_consent_events:
+    'id, contact_id, email, channel, purpose, decision, method, statement_text, statement_locale, ' +
+    'statement_version, privacy_policy_url, source_surface, source_page_url, evidence, redacted_at, ' +
+    'occurred_at, created_at',
+  marketing_consent_settings:
+    'capture_enabled, statement_en, statement_es, statement_he, statement_version, privacy_policy_mode, ' +
+    'privacy_policy_url, privacy_policy_body, privacy_policy_updated_at, postal_address, label_as_advertisement, ' +
+    'created_at, updated_at',
+  email_unsubscribes: 'id, contact_id, email, reason, unsubscribed_at',
 };
 
 // DE-4: one row per client_records table (two clients), ids in ascending order.
@@ -472,8 +550,60 @@ const MAPPED_DE5_ROWS: Record<De5Table, Array<Record<string, unknown>>> = {
     { ...DE5_ROWS.payment_transactions[0], metadata: { notes: 'cash at the desk', source: 'manual_mark_paid' } },
   ],
 };
-/** DE-3: the rows of every paged table, for its last id. DE-5: + DE5_ROWS. */
-const PAGED_ROWS: Record<PagedTable, Array<Record<string, unknown>>> = { ...DE3_ROWS, ...DE4_ROWS, ...DE5_ROWS };
+// DE-6: one row per DE-6 table (a draft form, a withdrawn and an owner-entered consent, a
+// pending subscriber), ids after the DE-5 ones. The tracking values and the token-like
+// query strings are seeded raw (this mock never honours `select`) and must not leave.
+const DE6_ROWS: Record<De6Table, Array<Record<string, unknown>>> = {
+  user_intake_settings: [{ id: id(51), is_enabled: true, send_after_booking: true }],
+  business_intake_forms: [{ id: id(52), version: 2, status: 'draft', questions: [{ id: 'q1', label: 'Goals?', type: 'long_text', required: true }] }],
+  email_campaigns: [{ id: id(53), name: 'Spring', subject: 'Hello', status: 'sent', segment_filter: { tags: ['vip'] } }],
+  email_sequences: [{ id: id(54), name: 'Welcome', trigger_type: 'tag_added', trigger_config: { tag: 'new' }, is_active: false }],
+  email_sequence_steps: [{ id: id(55), sequence_id: id(54), step_number: 1, delay_minutes: 60, subject: 'Day one' }],
+  email_sequence_enrollments: [{ id: id(56), sequence_id: id(54), contact_id: id(2), status: 'cancelled' }],
+  business_subscribers: [
+    {
+      id: id(57),
+      email: 'lee@example.com',
+      status: 'pending',
+      attribution: {
+        capture_page_url: 'https://biz.test/join?code=never-exported-code#frag',
+        capture_channel: 'website',
+        ip_hash: 'never-exported-sub-ip-hash',
+        user_agent: 'never-exported-sub-ua',
+        session_id: 'never-exported-sub-session',
+      },
+    },
+  ],
+  marketing_consent_events: [
+    {
+      id: id(58),
+      email: 'dana@example.com',
+      decision: 'withdrawn',
+      method: 'owner_entered',
+      privacy_policy_url: 'https://biz.test/privacy',
+      source_page_url: 'https://biz.test/p?token=never-exported-token&sid=never-exported-sid#frag',
+      evidence: { note: 'asked by phone', client_statement: 'No more emails', ip: 'never-exported-evidence-ip' },
+    },
+  ],
+  marketing_consent_settings: [{ capture_enabled: true, statement_en: 'Email me offers', privacy_policy_mode: 'hosted' }],
+  email_unsubscribes: [{ id: id(59), contact_id: id(2), email: 'dana@example.com', reason: 'unsubscribe_link' }],
+};
+// DE-6: what the two reshaped DE-6 sections write (key order kept).
+const MAPPED_DE6_ROWS: Record<De6Table, Array<Record<string, unknown>>> = {
+  ...DE6_ROWS,
+  business_subscribers: [
+    { ...DE6_ROWS.business_subscribers[0], attribution: { capture_page_url: 'https://biz.test/join', capture_channel: 'website' } },
+  ],
+  marketing_consent_events: [
+    {
+      ...DE6_ROWS.marketing_consent_events[0],
+      source_page_url: 'https://biz.test/p',
+      evidence: { client_statement: 'No more emails', note: 'asked by phone' },
+    },
+  ],
+};
+/** DE-3: the rows of every paged table, for its last id. DE-5: + DE5_ROWS. DE-6: + the nine paged DE-6 tables. */
+const PAGED_ROWS: Record<PagedTable, Array<Record<string, unknown>>> = { ...DE3_ROWS, ...DE4_ROWS, ...DE5_ROWS, ...DE6_ROWS };
 
 // DE-4: what the clients section writes: source_metadata allow-listed in place.
 const MAPPED_DE4_ROWS: Record<De4Table, Array<Record<string, unknown>>> = {
@@ -512,6 +642,10 @@ const EXPECTED_CHAINS: Record<Table, Call[]> = {
   ...(Object.fromEntries(DE4_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De4Table, Call[]>),
   // DE-5 (new): a data page, then the empty page, on every money table.
   ...(Object.fromEntries(DE5_ALL_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De5Table, Call[]>),
+  // DE-6 (new): a data page, then the empty page, on the nine paged tables.
+  ...(Object.fromEntries(DE6_PAGED_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De6PagedTable, Call[]>),
+  // DE-6 (new, SA-Q1): the single-row read. One query: the tenant filter, limit 2; no order, no gt.
+  marketing_consent_settings: [['select', SELECTS.marketing_consent_settings], ['eq', 'user_id', OWNER.id], ['limit', 2]],
 };
 
 const PROFILE = { id: OWNER.id, full_name: 'Ada Owner', company: 'Acme' };
@@ -574,6 +708,10 @@ function seed(): void {
   for (const t of [...EXCLUDED_MONEY_TABLES, ...MONEY_TO_US_TABLES]) {
     mockResults[t] = { data: [{ user_id: OWNER.id, amount: 999, currency: 'USD', note: `never-exported-${t}` }], error: null };
   }
+  // DE-6: one data result per DE-6 table (the paged ones then read an empty page).
+  for (const t of DE6_TABLES) mockQueues[t] = [{ data: DE6_ROWS[t], error: null }];
+  // DE-6 (N-7): the excluded tables hold rows; a read would leak them.
+  for (const t of EXCLUDED_DE6_TABLES) mockResults[t] = { data: [{ user_id: OWNER.id, note: `never-exported-${t}` }], error: null };
 }
 
 // DE-4 (user 2026-10-15): MAPPED_CONNECTIONS is gone with the section.
@@ -582,7 +720,9 @@ type SectionRows = unknown[] | 'failed';
 /** One section as the route writes it. DE-4: the client_records sections are group client_records, processor. */
 function section(id: string, rows: SectionRows): Record<string, unknown> {
   // DE-5: + the eight client-money sections.
-  const isRecord = Object.values(DE4_SECTION).includes(id) || DE5_TABLES.some((t) => DE5_SECTION[t] === id);
+  // DE-6: + the ten DE-6 sections.
+  const isRecord =
+    Object.values(DE4_SECTION).includes(id) || DE5_TABLES.some((t) => DE5_SECTION[t] === id) || Object.values(DE6_SECTION).includes(id);
   const group = isRecord ? 'client_records' : 'account';
   const gdpr_role = isRecord ? 'processor' : 'controller';
   return rows === 'failed'
@@ -608,6 +748,8 @@ type BodyParts = {
   details?: Partial<Record<De3Table, SectionRows>>;
   // DE-5: the ten money sections by table (default: the mapped seed).
   money?: Partial<Record<De5Table, SectionRows>>;
+  // DE-6: the ten DE-6 sections by table (default: the mapped seed).
+  intake?: Partial<Record<De6Table, SectionRows>>;
 };
 
 function expectedBody(parts: BodyParts): Record<string, unknown> {
@@ -622,6 +764,8 @@ function expectedBody(parts: BodyParts): Record<string, unknown> {
     ...DE4_TABLES.map((t) => section(DE4_SECTION[t], parts.records?.[t] ?? MAPPED_DE4_ROWS[t])),
     // DE-5: the eight client-money sections, after the DE-4 ones.
     ...DE5_TABLES.map((t) => section(DE5_SECTION[t], parts.money?.[t] ?? MAPPED_DE5_ROWS[t])),
+    // DE-6: the ten intake, email marketing and consent sections, after the DE-5 ones.
+    ...DE6_TABLES.map((t) => section(DE6_SECTION[t], parts.intake?.[t] ?? MAPPED_DE6_ROWS[t])),
   ];
   const head = {
     export_metadata: {
@@ -669,6 +813,8 @@ const DE3_COUNTS = Object.fromEntries(DE3_TABLES.map((t) => [DE3_SECTION[t], DE3
 // DE-5: the row count of each money section for the seed, in registry order (account two first).
 const DE5_ACCOUNT_COUNTS = Object.fromEntries(DE5_ACCOUNT_TABLES.map((t) => [DE5_SECTION[t], DE5_ROWS[t].length]));
 const DE5_COUNTS = Object.fromEntries(DE5_TABLES.map((t) => [DE5_SECTION[t], DE5_ROWS[t].length]));
+// DE-6: the row count of each DE-6 section for the seed.
+const DE6_COUNTS = Object.fromEntries(DE6_TABLES.map((t) => [DE6_SECTION[t], DE6_ROWS[t].length]));
 
 function request(headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('http://localhost/api/user/data-export', { headers });
@@ -724,7 +870,9 @@ describe('GET /api/user/data-export: characterization pin', () => {
   // DE-3: thirteen section tables, was nine: the four account tables, paged, after profiles.
   // DE-5: twenty-three, was thirteen: the two account money tables after the DE-3
   // tables, the eight client-money tables after the DE-4 tables.
-  it('reads the twenty-three section tables in order, then the timezone, all on the service-role client', async () => {
+  // DE-6: thirty-three, was twenty-three: the ten DE-6 tables after the DE-5 ones;
+  // consent settings is read once (the single-row read), the others twice.
+  it('reads the thirty-three section tables in order, then the timezone, all on the service-role client', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     seed();
     await GET(request());
@@ -734,11 +882,14 @@ describe('GET /api/user/data-export: characterization pin', () => {
       ...DE5_ACCOUNT_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
       ...DE4_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
       ...DE5_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
+      // DE-6.
+      ...DE6_TABLES.flatMap((t) => (t === 'marketing_consent_settings' ? [`service:${t}`] : [`service:${t}`, `service:${t}`])),
       'service:user_preferences',
     ]);
     // DE-5 (SA C-6 a): the set of tables touched is exactly the registry's 23 (the timezone read is on one of them).
+    // DE-6: 33.
     expect(new Set(mockReadOrder)).toEqual(new Set(TABLES.map((t) => `service:${t}`)));
-    expect(TABLES).toHaveLength(23);
+    expect(TABLES).toHaveLength(33);
     expect(Object.keys(mockCalls).filter((k) => k.startsWith('anon:'))).toEqual([]);
   });
 
@@ -757,6 +908,50 @@ describe('GET /api/user/data-export: characterization pin', () => {
       ...pageQuery('crm_activities', id(11)),
       ...pageQuery('crm_activities', id(12)),
     ]);
+  });
+
+  // DE-6 (F-DE6-1, TL 2026-10-16): the one deliberate change to DE-4 output.
+  it('DE-6 (F-DE6-1): clients.source_metadata page URLs reach the body without their query string or fragment', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seed();
+    mockQueues.crm_contacts = [
+      {
+        data: [
+          {
+            id: id(2),
+            first_name: 'Dana',
+            source_metadata: {
+              capture_page_url: 'https://biz.test/book?token=F1-TOKEN-NEVER&sid=F1-SID-NEVER#F1-FRAG-NEVER',
+              referrer_url: 'https://ref.test/x?code=F1-CODE-NEVER',
+              capture_channel: 'website',
+            },
+          },
+        ],
+        error: null,
+      },
+    ];
+    const res = await GET(request());
+    const text = await res.text();
+    const clients = JSON.parse(text).sections.find((s: { id: string }) => s.id === 'clients');
+    expect(clients.rows).toEqual([
+      { id: id(2), first_name: 'Dana', source_metadata: { capture_page_url: 'https://biz.test/book', referrer_url: 'https://ref.test/x', capture_channel: 'website' } },
+    ]);
+    for (const leaked of ['F1-TOKEN-NEVER', 'F1-SID-NEVER', 'F1-FRAG-NEVER', 'F1-CODE-NEVER', 'token=', 'sid=']) expect(text).not.toContain(leaked);
+  });
+
+  // DE-6 (N-6 / SA-Q7 C-4): consent page URLs and subscriber URLs, cut; tracking values never in the body.
+  it('DE-6: consent and subscriber tracking values and query strings never reach the body; the page path does', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seed();
+    const res = await GET(request());
+    const text = await res.text();
+    expect(text).not.toContain('never-exported');
+    expect(text).toContain('"source_page_url": "https://biz.test/p"');
+    expect(text).toContain('"capture_page_url": "https://biz.test/join"');
+    expect(text).toContain('"privacy_policy_url": "https://biz.test/privacy"');
+    for (const key of ['ip_hash', 'ip_hash_salt', 'user_agent', 'session_id', 'recorded_by', 'email_normalized', 'generated_from', 'next_send_at']) {
+      expect(text).not.toContain(`"${key}"`);
+    }
   });
 
   // DE-1 (new, SA C-7): DX-1 / BQ-SA-1 removed these sections.
@@ -846,6 +1041,8 @@ describe('GET /api/user/data-export: characterization pin', () => {
     ...(Object.fromEntries(DE3_TABLES.map((t) => [t, { details: { [t]: 'failed' } }])) as Record<De3Table, Partial<BodyParts>>),
     // DE-5 (new).
     ...(Object.fromEntries(DE5_ALL_TABLES.map((t) => [t, { money: { [t]: 'failed' } }])) as Record<De5Table, Partial<BodyParts>>),
+    // DE-6 (new).
+    ...(Object.fromEntries(DE6_TABLES.map((t) => [t, { intake: { [t]: 'failed' } }])) as Record<De6Table, Partial<BodyParts>>),
   };
 
   /** DE-4: an error on `table`, whichever kind of read it is. */
@@ -883,8 +1080,10 @@ describe('GET /api/user/data-export: characterization pin', () => {
     const details = Object.fromEntries(DE3_TABLES.map((t) => [t, 'failed'])) as Record<De3Table, SectionRows>;
     // DE-5: and the ten money sections.
     const money = Object.fromEntries(DE5_ALL_TABLES.map((t) => [t, 'failed'])) as Record<De5Table, SectionRows>;
+    // DE-6: and the ten DE-6 sections.
+    const intake = Object.fromEntries(DE6_TABLES.map((t) => [t, 'failed'])) as Record<De6Table, SectionRows>;
     // DE-4 (user 2026-10-15): no `connections: 'failed'`.
-    expect(await res.text()).toBe(JSON.stringify(expectedBody({ profile: 'failed', records, details, money }), null, 2));
+    expect(await res.text()).toBe(JSON.stringify(expectedBody({ profile: 'failed', records, details, money, intake }), null, 2));
   });
 
   // DE-1 (WC-7, §3.7): through logAndFlush with its context; details carry section
@@ -909,11 +1108,12 @@ describe('GET /api/user/data-export: characterization pin', () => {
         // DE-4 (user 2026-10-15): plugin_connections removed from both.
         // DE-3: + the four account sections, after user_profile.
         // DE-5: + the ten money sections (counts only: no amount, no currency).
+        // DE-6: + the ten DE-6 sections (counts only: no email, no wording).
         data_categories: [
           'account_identity', 'user_profile', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE5_ACCOUNT_TABLES.map((t) => DE5_SECTION[t]),
-          ...DE4_TABLES.map((t) => DE4_SECTION[t]), ...DE5_TABLES.map((t) => DE5_SECTION[t]),
+          ...DE4_TABLES.map((t) => DE4_SECTION[t]), ...DE5_TABLES.map((t) => DE5_SECTION[t]), ...DE6_TABLES.map((t) => DE6_SECTION[t]),
         ],
-        section_counts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS },
+        section_counts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS, ...DE6_COUNTS },
         failed_sections: [],
         gdpr_basis: 'Article 15 (Right to Access) & Article 20 (Data Portability)',
         ip_address: '203.0.113.7',
@@ -937,12 +1137,13 @@ describe('GET /api/user/data-export: characterization pin', () => {
     const details = mockLogAndFlush.mock.calls[0][0].details;
     // DE-4: + the eight client_records sections.
     // DE-3: + the four account sections. DE-5: + the ten money sections.
+    // DE-6: + the ten DE-6 sections.
     expect(details.data_categories).toEqual([
       'account_identity', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE5_ACCOUNT_TABLES.map((t) => DE5_SECTION[t]),
-      ...DE4_TABLES.map((t) => DE4_SECTION[t]), ...DE5_TABLES.map((t) => DE5_SECTION[t]),
+      ...DE4_TABLES.map((t) => DE4_SECTION[t]), ...DE5_TABLES.map((t) => DE5_SECTION[t]), ...DE6_TABLES.map((t) => DE6_SECTION[t]),
     ]);
     expect(details.failed_sections).toEqual(['user_profile']);
-    expect(details.section_counts).toEqual({ account_identity: 1, user_profile: 0, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS });
+    expect(details.section_counts).toEqual({ account_identity: 1, user_profile: 0, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS, ...DE6_COUNTS });
     expect(JSON.stringify(details)).not.toContain('boom');
   });
 
@@ -962,7 +1163,8 @@ describe('GET /api/user/data-export: characterization pin', () => {
         userId: OWNER.id,
         // DE-4: + the eight client_records counts. DE-4 (user 2026-10-15): no plugin_connections.
         // DE-3: + the four account section counts. DE-5: + the ten money section counts.
-        sectionCounts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS },
+        // DE-6: + the ten DE-6 section counts.
+        sectionCounts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS, ...DE6_COUNTS },
         failedSections: [],
         exportSizeKb: summary.export_size_kb,
         durationMs: 0,
