@@ -256,6 +256,7 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
   // DE-4 (user 2026-10-15): nine, plugin_connections is excluded (connected apps out).
   // DE-3: thirteen, + business_addresses, business_profiles, notification_settings, user_preferences.
   // DE-5: twenty-three, + the ten money tables (payment_*, proposals, saved_payment_methods, stripe_connect_accounts).
+  // DE-6: thirty-three, + the ten intake, email marketing and consent tables.
   it('the real set: drift is computed for every included table', () => {
     // Every real include column live, plus one unclassified live column each.
     const columns = PURGE_DESCRIPTORS.flatMap((x) =>
@@ -266,8 +267,17 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
     const r = reconcileSchema({ columns, foreign_keys: [] }, PURGE_DESCRIPTORS);
     const included = PURGE_DESCRIPTORS.filter((x) => x.export.kind === 'include').map((x) => x.table).sort();
     expect(included).toEqual([
-      'business_addresses', 'business_profiles',
-      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'notification_settings',
+      'business_addresses',
+      // DE-6.
+      'business_intake_forms',
+      'business_profiles',
+      // DE-6.
+      'business_subscribers',
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks',
+      // DE-6.
+      'email_campaigns', 'email_sequence_enrollments', 'email_sequence_steps', 'email_sequences', 'email_unsubscribes',
+      'marketing_consent_events', 'marketing_consent_settings',
+      'notification_settings',
       // DE-5: the ten money tables.
       'payment_invoices', 'payment_plan_installments', 'payment_plan_subscriptions', 'payment_plans', 'payment_processors',
       'payment_refunds', 'payment_transactions',
@@ -277,6 +287,8 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
       'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services',
       // DE-5.
       'stripe_connect_accounts',
+      // DE-6.
+      'user_intake_settings',
       'user_preferences',
     ]);
     expect(r.exportColumnDrift).toEqual(included.map((table) => ({ table, column: 'zz_unclassified' })));
