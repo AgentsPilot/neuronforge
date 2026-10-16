@@ -22,6 +22,13 @@
  * allow-list cases went with it. The registry is 2 account + 8 client_records,
  * and the account rows that count toward the ceiling are 2, was 3. The file
  * name carries the time on the owner's clock.
+ *
+ * DE-3 (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §7 X-6 / X-7): four account
+ * sections read from tables (preferences, notification settings, business
+ * profile, business addresses), after user_profile and before the
+ * client_records sections, through the same mocked repository method. They
+ * are group account, controller. DE-4's expectations are unchanged apart from
+ * the four ids appearing ahead of them.
  */
 
 const mockFindProfile = jest.fn();
@@ -52,6 +59,8 @@ const DE4_IDS: ExportSectionId[] = [
 ];
 // DE-4 (user 2026-10-15): plugin_connections removed, was the third account section.
 const ACCOUNT_IDS: ExportSectionId[] = ['account_identity', 'user_profile'];
+/** DE-3: the account sections read from tables, after user_profile, in registry order. */
+const DE3_IDS: ExportSectionId[] = ['preferences', 'notification_settings', 'business_profile', 'business_addresses'];
 
 /** Runs the registry and returns the sections, failing the test if it came back over the ceiling. */
 async function runAll(ctx: ExportContext, sections: readonly AnyExportSectionDefinition[], logger: { error: (f: Record<string, unknown>, m: string) => void }): Promise<AnyExportedSection[]> {
@@ -79,8 +88,8 @@ describe('runExportSections', () => {
   it('all readers ok: sections in registry order, status ok, row_count = rows', async () => {
     const { logger, lines } = recordingLogger();
     const sections = await runAll(CTX, EXPORT_SECTIONS, logger);
-    // DE-4: + the eight client_records sections.
-    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE4_IDS]);
+    // DE-4: + the eight client_records sections. DE-3: + the four account sections from tables.
+    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE4_IDS]);
     for (const s of sections) {
       expect(s.status).toBe('ok');
       expect(s.row_count).toBe(s.rows.length);
@@ -93,7 +102,8 @@ describe('runExportSections', () => {
     // The readers are keyed on the session's id.
     expect(mockFindProfile).toHaveBeenCalledWith(USER);
     // DE-4: one read per client_records section, by SECTION id (C-4), the session's id, and the budget left.
-    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual(DE4_IDS);
+    // DE-3 X-7: the four account sections from tables read the same way, first.
+    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual([...DE3_IDS, ...DE4_IDS]);
     for (const call of mockListOwned.mock.calls) {
       expect(call[1]).toBe(USER);
       // DE-4 (user 2026-10-15): - 2 account rows, was - 3 (plugin_connections gone).
@@ -147,9 +157,53 @@ describe('runExportSections', () => {
     expect(sections.map((s) => [s.id, s.status])).toEqual([
       ['account_identity', 'ok'],
       ['user_profile', 'failed'],
+      ...DE3_IDS.map((id) => [id, 'failed']),
       ...DE4_IDS.map((id) => [id, 'failed']),
     ]);
     expect(sections[0].rows).toEqual([CTX.authUser]);
+  });
+});
+
+describe('DE-3 X-6 / X-7 the account sections read from tables', () => {
+  it('each is group account, controller, and passes its rows through as read (no reshaping)', async () => {
+    mockListOwned.mockImplementation(async (section: string) => ({
+      data: { rows: [{ id: `${section}-1`, source_metadata: { ip_hash: 'kept-as-read' } }], overCeiling: false },
+      error: null,
+    }));
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    for (const id of DE3_IDS) {
+      const s = sections.find((x) => x.id === id);
+      expect(s).toMatchObject({ group: 'account', gdpr_role: 'controller', status: 'ok', row_count: 1 });
+      // Only `clients` reshapes a cell; a DE-3 section returns the repository's row as is.
+      expect(s?.rows).toEqual([{ id: `${id}-1`, source_metadata: { ip_hash: 'kept-as-read' } }]);
+    }
+  });
+
+  it('one failing DE-3 reader gives that section failed with no error text; the rest stay ok', async () => {
+    mockListOwned.mockImplementation(async (section: string) =>
+      section === 'business_profile'
+        ? { data: null, error: new Error('column business_profiles.secret does not exist') }
+        : { data: { rows: [], overCeiling: false }, error: null }
+    );
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    expect(sections.find((s) => s.id === 'business_profile')).toEqual({
+      id: 'business_profile', group: 'account', gdpr_role: 'controller', status: 'failed', row_count: 0, rows: [],
+    });
+    expect(sections.filter((s) => s.status === 'failed').map((s) => s.id)).toEqual(['business_profile']);
+    expect(JSON.stringify(sections)).not.toContain('secret');
+  });
+
+  it('the DE-3 rows count toward the ceiling, before the client records (SA C-3)', async () => {
+    mockListOwned.mockImplementation(async (section: ExportSectionId, _user: string, opts: { maxRows: number }) => {
+      const n = section === 'business_addresses' ? 3 : DE3_IDS.includes(section) ? 1 : 0;
+      return n > opts.maxRows
+        ? { data: { rows: [], overCeiling: true }, error: null }
+        : { data: { rows: Array.from({ length: n }, (_, i) => ({ id: `${section}-${i}` })), overCeiling: false }, error: null };
+    });
+    await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger, { rowCeiling: 100 });
+    // 2 account rows, then 1 + 1 + 1 + 3 from DE-3: the first client_records section is offered 92.
+    const offered = Object.fromEntries(mockListOwned.mock.calls.map((c) => [c[0], c[2].maxRows]));
+    expect(offered).toMatchObject({ preferences: 98, notification_settings: 97, business_profile: 96, business_addresses: 95, pipeline_stages: 92 });
   });
 });
 
@@ -267,11 +321,12 @@ describe('DE-4 U-8 the row ceiling (§0.4.1 C)', () => {
     budgeted({ clients: 9 });
     const run = await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger, { rowCeiling: 10 });
     expect(run).toMatchObject({ overCeiling: true, atSection: 'clients' });
-    expect(run.sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, 'pipeline_stages']);
+    // DE-3: the four (empty) account sections from tables come first.
+    expect(run.sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, 'pipeline_stages']);
     // pipeline_stages and clients were read; nothing after clients.
-    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual(['pipeline_stages', 'clients']);
-    // DE-4 (user 2026-10-15): 8 left, was 7.
-    expect(mockListOwned.mock.calls[1][2]).toEqual({ maxRows: 8 });
+    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual([...DE3_IDS, 'pipeline_stages', 'clients']);
+    // DE-4 (user 2026-10-15): 8 left, was 7. DE-3: clients is call 5, was 1.
+    expect(mockListOwned.mock.calls.find((c) => c[0] === 'clients')?.[2]).toEqual({ maxRows: 8 });
   });
 
   it('negative control: ceiling + 1 spread over two sections still trips it', async () => {
@@ -306,6 +361,8 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
   const ALL_IDS: Record<ExportSectionId, true> = {
     // DE-4 (user 2026-10-15): plugin_connections removed.
     account_identity: true, user_profile: true,
+    // DE-3
+    preferences: true, notification_settings: true, business_profile: true, business_addresses: true,
     // DE-4
     pipeline_stages: true, clients: true, client_activities: true, client_tasks: true, client_documents: true,
     services: true, bookings: true, time_off: true,
@@ -324,8 +381,11 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
     }
   });
 
-  it('DE-4: registry order is 2 account + 8 client_records; the calendar copy is not a section (BC-5)', () => {
-    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE4_IDS]);
+  // DE-3: 6 account (2 + the four from tables) + 8 client_records, was 2 + 8.
+  it('DE-4: registry order is 6 account + 8 client_records; the calendar copy is not a section (BC-5)', () => {
+    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE4_IDS]);
+    expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS]);
+    for (const s of EXPORT_SECTIONS.filter((x) => DE3_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
     // DE-4 (user 2026-10-15): connected apps are not a section.
     expect(EXPORT_SECTIONS.map((s) => s.id as string)).not.toContain('plugin_connections');
     expect(EXPORT_SECTIONS.filter((s) => s.group === 'client_records').map((s) => s.id)).toEqual(DE4_IDS);
@@ -405,6 +465,7 @@ describe('payload', () => {
     expect(EXPORT_GROUPS.client_records.gdpr_role).toBe('processor');
     expect(payload.summary.section_counts).toEqual({
       account_identity: 1, user_profile: 0,
+      ...Object.fromEntries(DE3_IDS.map((id) => [id, 0])),
       ...Object.fromEntries(DE4_IDS.map((id) => [id, 0])),
     });
     expect(payload.summary.failed_sections).toEqual(['user_profile']);

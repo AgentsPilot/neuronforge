@@ -35,6 +35,13 @@
  * DE-0a token test stays, now proving the table is never read and no token
  * reaches the body. The file name carries the time on the owner's clock
  * (`user_preferences.timezone`); NULL, invalid or unreadable gives UTC.
+ *
+ * DE-3 (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §7 X-12 / X-14): four account
+ * sections read from tables (preferences, notification settings, business
+ * profile, business addresses). `hourly_rate_usd` and `org_id` are no longer
+ * in the profile section; `role` is. `user_preferences` is now read twice
+ * (the preferences section, then the timezone), so a timezone-only error is
+ * seeded under `user_preferences:maybeSingle`.
  */
 
 import { NextRequest } from 'next/server';
@@ -110,6 +117,8 @@ function mockBuilder(key: string) {
   // reach the body through the mock.
   builder.maybeSingle = () => {
     recorded.push(['maybeSingle']);
+    // DE-3: an error on this table's single-row read only (the timezone read), not its paged section read.
+    if (mockErrors[`${table}:maybeSingle`]) return Promise.resolve({ data: null, error: mockErrors[`${table}:maybeSingle`] });
     if (mockErrors[table]) return Promise.resolve({ data: null, error: mockErrors[table] });
     const row = seeded[0];
     if (!row) return Promise.resolve({ data: null, error: null });
@@ -349,12 +358,14 @@ describe('GET /api/user/data-export', () => {
     }
     // DE-4: + the eight client_records sections and their tables.
     // DE-4 (user 2026-10-15): plugin_connections removed; + user_preferences (the file name's clock).
+    // DE-3: + the four account sections read from tables, after user_profile, and their tables.
     expect(sectionIds).toEqual([
-      'account_identity', 'user_profile',
+      'account_identity', 'user_profile', 'preferences', 'notification_settings', 'business_profile', 'business_addresses',
       'pipeline_stages', 'clients', 'client_activities', 'client_tasks', 'client_documents', 'services', 'bookings', 'time_off',
     ]);
     expect(Object.keys(mockCalls).sort()).toEqual([
-      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'profiles',
+      'business_addresses', 'business_profiles',
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'notification_settings', 'profiles',
       'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'user_preferences',
     ]);
     // BC-5: the calendar copy is never read.
@@ -364,14 +375,74 @@ describe('GET /api/user/data-export', () => {
   it('never exports profiles.plan, even when the row has one (DE-1, SA Q-3 / C-1)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     // A sentinel, not a tier name: tier literals are forbidden outside the entitlements config.
-    mockSeeds.profiles = [{ id: OWNER.id, full_name: 'Ada Owner', plan: 'qa-plan-value', hourly_rate_usd: 50 }];
+    // DE-3 (X-12): + org_id and role; hourly_rate_usd and org_id are no longer exported, role is.
+    mockSeeds.profiles = [
+      { id: OWNER.id, full_name: 'Ada Owner', plan: 'qa-plan-value', hourly_rate_usd: 50, org_id: 'qa-org-id-value', role: 'business_owner' },
+    ];
     const text = await (await GET(request())).text();
     const profile = sectionOf(JSON.parse(text), 'user_profile');
     expect(profile.status).toBe('ok');
-    expect(profile.rows).toEqual([{ id: OWNER.id, full_name: 'Ada Owner', hourly_rate_usd: 50 }]);
+    // DE-3: was [{ id, full_name, hourly_rate_usd: 50 }].
+    expect(profile.rows).toEqual([{ id: OWNER.id, full_name: 'Ada Owner', role: 'business_owner' }]);
     expect(Object.keys(profile.rows[0])).not.toContain('plan');
     expect(text).not.toContain('"plan"');
     expect(text).not.toContain('qa-plan-value');
+    // DE-3 (BC-A / BC-G).
+    for (const out of ['"hourly_rate_usd"', '"org_id"', 'qa-org-id-value']) expect(text).not.toContain(out);
+  });
+
+  // DE-3 (new): the four account sections carry exactly the descriptor columns; the ruled exclusions never reach the file.
+  it('exports the profile details: preferences, notifications, business profile, addresses; the ruled columns stay out (DE-3)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    const P = '50000000-0000-4000-8000-000000000005';
+    mockSeeds.user_preferences = [
+      { id: P, user_id: OWNER.id, timezone: 'Asia/Jerusalem', preferred_language: 'he', default_model: 'QA-MODEL', temperature: 0.7, debug_mode: true },
+    ];
+    mockSeeds.notification_settings = [
+      { id: P, user_id: OWNER.id, email_enabled: true, quiet_hours_timezone: 'Asia/Jerusalem', push_agent_updates: true, email_agent_updates: false },
+    ];
+    mockSeeds.business_profiles = [
+      {
+        id: P,
+        user_id: OWNER.id,
+        company_name: 'Acme Studio',
+        invoice_tax_id: '515151515',
+        invoice_bank_account: 'QA-IBAN-NEVER',
+        invoice_bank_routing: 'QA-ROUTING-NEVER',
+        invoice_bank_name: 'QA-BANK-NEVER',
+        invoice_payment_instructions: 'QA-PAY-TO-IBAN-NEVER',
+        website_analysis: { summary: 'QA-ANALYSIS-NEVER' },
+        onboarding_conversation: [{ role: 'user', content: 'QA-CHAT-NEVER' }],
+        connected_plugins: ['QA-PLUGIN-NEVER'],
+        calendar_sync_provider: 'QA-SYNC-NEVER',
+        profile_completeness: 80,
+      },
+    ];
+    mockSeeds.business_addresses = [{ id: P, user_id: OWNER.id, label: 'Studio', parts: { city: 'Tel Aviv' }, is_default: true }];
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text);
+    expect(sectionOf(body, 'preferences').rows).toEqual([{ id: P, preferred_language: 'he', timezone: 'Asia/Jerusalem' }]);
+    expect(sectionOf(body, 'notification_settings').rows).toEqual([{ id: P, email_enabled: true, quiet_hours_timezone: 'Asia/Jerusalem' }]);
+    expect(sectionOf(body, 'business_profile').rows).toEqual([{ id: P, company_name: 'Acme Studio', invoice_tax_id: '515151515' }]);
+    expect(sectionOf(body, 'business_addresses').rows).toEqual([{ id: P, label: 'Studio', parts: { city: 'Tel Aviv' }, is_default: true }]);
+    for (const id of ['preferences', 'notification_settings', 'business_profile', 'business_addresses']) {
+      expect(body.sections.find((s: ExportSection & { group: string; gdpr_role: string }) => s.id === id)).toMatchObject({
+        group: 'account', gdpr_role: 'controller', status: 'ok', row_count: 1,
+      });
+    }
+    for (const leaked of ['NEVER', 'QA-MODEL', '"temperature"', '"debug_mode"', '"push_agent_updates"', '"email_agent_updates"', '"profile_completeness"']) {
+      expect(text).not.toContain(leaked);
+    }
+    // The owner id is in export_metadata.user_id only, never on a row (OWNER_ID).
+    for (const id of ['preferences', 'notification_settings', 'business_profile', 'business_addresses']) {
+      for (const row of sectionOf(body, id).rows) expect(Object.keys(row)).not.toContain('user_id');
+    }
+    // The audit entry gains the four counts, counts only.
+    const details = mockAuditLog.mock.calls[0][0].details;
+    expect(details.section_counts).toMatchObject({ preferences: 1, notification_settings: 1, business_profile: 1, business_addresses: 1 });
+    expect(JSON.stringify(details)).not.toContain('Acme Studio');
   });
 
   // DE-4 (user 2026-10-15): driven through profiles, was plugin_connections.
@@ -439,6 +510,10 @@ describe('DE-4: client records and the Phase 1 ceiling (U-9)', () => {
     expect(eqCalls.length).toBeGreaterThan(10);
     for (const c of eqCalls) expect(c[2]).toBe(OWNER.id);
     expect(JSON.stringify(mockCalls)).not.toContain(OTHER);
+    // DE-3 (X-14): the four account tables were read, each keyed on the session id.
+    for (const table of ['user_preferences', 'notification_settings', 'business_profiles', 'business_addresses']) {
+      expect(mockCalls[table]).toContainEqual(['eq', 'user_id', OWNER.id]);
+    }
   });
 
   const TOO_LARGE = {
@@ -553,10 +628,12 @@ describe('DE-0a: plugin_connections tokens never reach the export body (QA)', ()
 describe("DE-4 (user 2026-10-15): the file name's clock never fails the export", () => {
   it('the owner timezone is read through the repository, keyed on the session id, one explicit column', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    mockSeeds.user_preferences = [{ user_id: OWNER.id, timezone: 'Asia/Jerusalem', preferred_language: 'he' }];
+    // DE-3: the row carries its id, as live (the preferences section pages on it).
+    mockSeeds.user_preferences = [{ id: '50000000-0000-4000-8000-000000000005', user_id: OWNER.id, timezone: 'Asia/Jerusalem', preferred_language: 'he' }];
     const res = await GET(request());
     expect(res.status).toBe(200);
-    expect(mockCalls.user_preferences).toEqual([['select', 'timezone'], ['eq', 'user_id', OWNER.id], ['maybeSingle']]);
+    // DE-3: the preferences section reads the table first; the timezone read is the last three calls.
+    expect(mockCalls.user_preferences.slice(-3)).toEqual([['select', 'timezone'], ['eq', 'user_id', OWNER.id], ['maybeSingle']]);
     expect(res.headers.get('Content-Disposition')).toMatch(/^attachment; filename="agentpilot-data-export-\d{4}-\d{2}-\d{2}-\d{4}\.json"$/);
   });
 
@@ -570,7 +647,8 @@ describe("DE-4 (user 2026-10-15): the file name's clock never fails the export",
 
   it('a timezone read error: still 200 with a UTC name, the error text in no body, a warn line', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
-    mockErrors.user_preferences = { message: 'relation "secret_prefs" does not exist', code: '42P01' };
+    // DE-3: on the timezone read only, was on the whole table (now also the preferences section).
+    mockErrors['user_preferences:maybeSingle'] = { message: 'relation "secret_prefs" does not exist', code: '42P01' };
     freezeClock();
     try {
       const res = await GET(request());
@@ -595,7 +673,8 @@ describe("DE-4 (user 2026-10-15): the file name's clock never fails the export",
     const throwSpy = jest.spyOn(userPreferencesRepository, 'findTimezone');
     try {
       // Baseline: a stored UTC, at the same frozen instant.
-      mockSeeds.user_preferences = [{ user_id: OWNER.id, timezone: 'UTC' }];
+      // DE-3: + the row id, as live.
+      mockSeeds.user_preferences = [{ id: '50000000-0000-4000-8000-000000000005', user_id: OWNER.id, timezone: 'UTC' }];
       const baseline = await GET(request());
       expect(baseline.status).toBe(200);
       expect(baseline.headers.get('Content-Disposition')).toBe(UTC_NAME);

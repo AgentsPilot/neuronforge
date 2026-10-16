@@ -17,6 +17,12 @@
  *
  * `@/lib/supabaseServer` is a delegating stub, so the registry's singletons
  * read from whichever fake the test installs. Unit cases inject their client.
+ *
+ * DE-3 (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §7 X-7 / X-8): the four
+ * account sections read from tables go through the same method, so U-5 and
+ * U-6 run over them too. X-8: A's business profile points at one of B's
+ * addresses (`address_id`); A's file holds that bare id and nothing else of
+ * B's: the address book is read by its own `user_id`, never via the pointer.
  */
 
 import fs from 'fs';
@@ -158,6 +164,17 @@ const DE4_SECTIONS: Record<string, ExportSectionId> = {
   scheduling_availability_exceptions: 'time_off',
 };
 
+/** DE-3: the four account sections read from tables (X-7). */
+const DE3_SECTIONS: Record<string, ExportSectionId> = {
+  user_preferences: 'preferences',
+  notification_settings: 'notification_settings',
+  business_profiles: 'business_profile',
+  business_addresses: 'business_addresses',
+};
+
+/** Every table the registry reads through this repository. */
+const OWNED_SECTIONS: Record<string, ExportSectionId> = { ...DE3_SECTIONS, ...DE4_SECTIONS };
+
 /** A full row for `table`: every declared column, plus the ones the export must never select. */
 function rowFor(table: string, tenant: 'a' | 'b', n: number, extra: Row = {}): Row {
   const userId = tenant === 'a' ? USER_A : USER_B;
@@ -177,6 +194,14 @@ function seedBothTenants(): Record<string, Row[]> {
     db[table] = [];
     for (const tenant of ['a', 'b'] as const) {
       const count = table === 'crm_activities' && tenant === 'a' ? 1_003 : 3;
+      for (let n = 0; n < count; n += 1) db[table].push(rowFor(table, tenant, n));
+    }
+  }
+  // DE-3: one row per tenant in the 1:1 tables (user_id is unique live), two saved addresses each.
+  for (const table of Object.keys(DE3_SECTIONS)) {
+    db[table] = [];
+    for (const tenant of ['a', 'b'] as const) {
+      const count = table === 'business_addresses' ? 2 : 1;
       for (let n = 0; n < count; n += 1) db[table].push(rowFor(table, tenant, n));
     }
   }
@@ -226,7 +251,8 @@ beforeEach(() => {
 // ── U-5 ─────────────────────────────────────────────────────────────────────
 
 describe('U-5 listOwnedRowsForExport: one table, paged to the end', () => {
-  it.each(Object.entries(DE4_SECTIONS))('%s: select = exportColumnsOf, eq user_id first, keyset on id', async (table, section) => {
+  // DE-3 X-7: + the four account sections read from tables.
+  it.each(Object.entries(OWNED_SECTIONS))('%s: select = exportColumnsOf, eq user_id first, keyset on id', async (table, section) => {
     const db: Record<string, Row[]> = { [table]: [0, 1, 2, 3, 4].map((n) => rowFor(table, 'a', n)) };
     const { client, log } = fakeClient(db);
     const result = await new BusinessDataExportRepository(client, { pageSize: 2 }).listOwnedRowsForExport(section, USER_A, { maxRows: 100 });
@@ -404,15 +430,19 @@ describe('U-6 cross-tenant: the whole registry for A returns only A (C-7)', () =
     const byId = Object.fromEntries(run.sections.map((s) => [s.id, s]));
     expect(byId.client_activities.row_count).toBe(1_003);
     expect(byId.client_documents.rows.map((r) => (r as Row).status).sort()).toEqual(['active', 'archived']);
-    for (const [table, section] of Object.entries(DE4_SECTIONS)) {
+    // DE-3: and the four account sections read from tables.
+    for (const [table, section] of Object.entries(OWNED_SECTIONS)) {
       const expected = db[table].filter((r) => r.user_id === USER_A && r.status !== 'deleted').map((r) => String(r.id)).sort();
       expect(byId[section].rows.map((r) => String((r as Row).id))).toEqual(expected);
+      expect(expected.length).toBeGreaterThan(0);
     }
     // The source_metadata allow-list held through the real reader.
     expect(text).not.toContain('NEVER-EXPORTED');
     expect((byId.clients.rows as Row[]).find((r) => r.id === db.crm_contacts[0].id)?.source_metadata).toEqual({ capture_channel: 'website' });
-    // Every DE-4 query's first filter is the session id.
-    for (const entry of fake.log.filter((l) => l.table in DE4_SECTIONS)) {
+    // Every DE-4 (and DE-3) query's first filter is the session id.
+    const owned = fake.log.filter((l) => l.table in OWNED_SECTIONS);
+    expect(new Set(owned.map((l) => l.table))).toEqual(new Set(Object.keys(OWNED_SECTIONS)));
+    for (const entry of owned) {
       expect(entry.calls[1]).toEqual(['eq', 'user_id', USER_A]);
     }
     // Paging crossed tenants' ids: the activities took 2 data pages + the empty one.
@@ -424,6 +454,35 @@ describe('U-6 cross-tenant: the whole registry for A returns only A (C-7)', () =
     mockActiveClient = fakeClient(db, { ignoreUserIdFilter: true }).client as unknown as { from: (table: string) => unknown };
     const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
     expect(foreignMarkers(JSON.stringify(run.sections), db).length).toBeGreaterThan(0);
+  });
+
+  // DE-3 X-8 (tenant-isolation-guard): a crossed pointer carries an id, never an address.
+  it("X-8: A's profile naming B's address id exports that bare id only; B's address stays out", async () => {
+    const db = seedBothTenants();
+    const bAddress = db.business_addresses.find((r) => r.user_id === USER_B)!;
+    const aProfile = db.business_profiles.find((r) => r.user_id === USER_A)!;
+    aProfile.address_id = bAddress.id;
+    mockActiveClient = fakeClient(db).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const byId = Object.fromEntries(run.sections.map((s) => [s.id, s]));
+    const text = JSON.stringify(run.sections);
+    // The pointer is exported as held, a bare uuid on A's own row.
+    expect((byId.business_profile.rows[0] as Row).address_id).toBe(bAddress.id);
+    // The address book holds A's addresses only: B's row is never read through the pointer.
+    expect(byId.business_addresses.rows.map((r) => (r as Row).id)).toEqual(
+      db.business_addresses.filter((r) => r.user_id === USER_A).map((r) => r.id).sort()
+    );
+    for (const value of Object.values(bAddress)) if (value !== bAddress.id) expect(text).not.toContain(String(value));
+    // Of B's markers, only that one id appears.
+    expect(foreignMarkers(text, db)).toEqual([String(bAddress.id)]);
+  });
+
+  it('X-8 negative control: a fake that ignores .eq(user_id) puts B\'s address in the book', async () => {
+    const db = seedBothTenants();
+    mockActiveClient = fakeClient(db, { ignoreUserIdFilter: true }).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const book = run.sections.find((s) => s.id === 'business_addresses')!;
+    expect(book.rows.some((r) => (r as Row).id === db.business_addresses.find((x) => x.user_id === USER_B)!.id)).toBe(true);
   });
 });
 

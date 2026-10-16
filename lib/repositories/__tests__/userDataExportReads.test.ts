@@ -31,6 +31,11 @@
  * gone. The DE-0b browser-access guard for `plugin_connections`
  * (lib/plugins/__tests__/pluginConnectionsBrowserAccess.guard.test.ts) is
  * unaffected.
+ *
+ * DE-3 (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §3.1, X-12): the three
+ * profile columns DE-1 left open are decided. `role` stays; `org_id` and
+ * `hourly_rate_usd` left the select. The literal pin is re-pinned
+ * deliberately (15 columns, was 17).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -163,8 +168,9 @@ describe('GDPR data export repository reads', () => {
     await new UserProfileRepository(client).findForUserDataExport(USER);
     const columns = String(calls.find((c) => c[0] === 'select')?.[1]).split(',').map((c) => c.trim());
     expect(columns).not.toContain('plan');
-    // DE-3 decides these three explicitly (SA C-6); until then they stay.
-    for (const kept of ['hourly_rate_usd', 'role', 'org_id']) expect(columns).toContain(kept);
+    // DE-3 decided the three DE-1 left open (SA C-6): role in; org_id and hourly_rate_usd out.
+    expect(columns).toContain('role');
+    for (const out of ['hourly_rate_usd', 'org_id']) expect(columns).not.toContain(out);
   });
 
   /**
@@ -212,12 +218,13 @@ describe('GDPR data export repository reads', () => {
     expect(recorded).not.toBe(exportColumnsOf('profiles').join(', '));
   });
 
-  it('the profile columns are still byte-identical to the DE-1 list (SA C-6 literal pin)', async () => {
+  // DE-3 (deliberate re-pin): the DE-1 list minus hourly_rate_usd and org_id.
+  it('the profile columns are byte-identical to the DE-3 list (SA C-6 literal pin)', async () => {
     const { client, calls } = recordingClient({ data: null, error: null });
     await new UserProfileRepository(client).findForUserDataExport(USER);
     expect(selectOf(calls)).toBe(
       'id, full_name, avatar_url, company, job_title, timezone, language, created_at, updated_at, ' +
-        'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id'
+        'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data'
     );
   });
 

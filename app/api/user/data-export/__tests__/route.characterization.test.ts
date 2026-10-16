@@ -58,6 +58,23 @@
  * - the file name is `agentpilot-data-export-YYYY-MM-DD-HHmm.json` on the
  *   owner's clock: one more read, `user_preferences.timezone`, after the
  *   sections; NULL, invalid or unreadable gives a UTC name and still a 200.
+ *
+ * Deliberately re-pinned AGAIN by DE-3 (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md
+ * §7 X-9 / X-11, SA C-2). Every changed expectation carries a `DE-3:` comment.
+ * Insert-only for DE-4: the eight DE-4 selects, their order, their group and
+ * role and the clients source_metadata reshaping are untouched.
+ * - four account tables are read after `profiles` and before the DE-4 tables
+ *   (user_preferences, notification_settings, business_profiles,
+ *   business_addresses), each keyset-paged like a DE-4 table, all on the
+ *   service-role client; their four literal select strings are pinned;
+ * - the `profiles` select loses `hourly_rate_usd` and `org_id` (15 columns);
+ * - the body gains four `account` sections; the audit `section_counts` /
+ *   `data_categories` gain four keys;
+ * - `user_preferences` is now read twice (the section, then the timezone),
+ *   so the mock takes a paged table's queued page when the query is AWAITED
+ *   and answers `maybeSingle` from `mockResults`, was: one queued page per
+ *   `from()` whatever the terminal. Every DE-4 read is awaited, never
+ *   `maybeSingle`, so the DE-4 tables see exactly what they saw before.
  */
 
 import { NextRequest } from 'next/server';
@@ -76,6 +93,8 @@ const mockResults: Record<string, Result> = {};
  */
 const mockQueues: Record<string, Result[]> = {};
 const MOCK_PAGED_TABLES = new Set([
+  // DE-3: the four account tables read through the same paged reader.
+  'user_preferences', 'notification_settings', 'business_profiles', 'business_addresses',
   'crm_pipeline_stages', 'crm_contacts', 'crm_activities', 'crm_tasks', 'contact_documents',
   'scheduling_services', 'scheduling_bookings', 'scheduling_availability_exceptions',
 ]);
@@ -90,8 +109,10 @@ function mockBuilder(client: string, table: string) {
   mockReadOrder.push(key);
   const calls: Call[] = (mockCalls[key] = mockCalls[key] ?? []);
   // DE-4: a paged table takes the next queued page at query time.
-  const paged: Result | undefined = MOCK_PAGED_TABLES.has(table) ? (mockQueues[table]?.shift() ?? { data: [], error: null }) : undefined;
-  const result = (): Result => paged ?? mockResults[table] ?? { data: null, error: null };
+  // DE-3: when the query is awaited (the keyset read), so a `maybeSingle` on the
+  // same table (the timezone read on user_preferences) is answered from mockResults.
+  const paged = (): Result => mockQueues[table]?.shift() ?? { data: [], error: null };
+  const result = (): Result => mockResults[table] ?? { data: null, error: null };
   const builder: Record<string, unknown> = {};
   for (const method of mockChainMethods) {
     builder[method] = (...args: unknown[]) => {
@@ -106,7 +127,7 @@ function mockBuilder(client: string, table: string) {
     };
   }
   builder.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-    Promise.resolve(result()).then(resolve, reject);
+    Promise.resolve(MOCK_PAGED_TABLES.has(table) ? paged() : result()).then(resolve, reject);
   return builder;
 }
 
@@ -162,6 +183,13 @@ const OWNER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'a@example.co
 // credit_transactions, audit_trail).
 // DE-4 (user 2026-10-15): one, was ['profiles', 'plugin_connections'].
 const ACCOUNT_TABLES = ['profiles'] as const;
+// DE-3: the four account tables read through the paged reader, after profiles (section in the comment).
+const DE3_TABLES = [
+  'user_preferences', // preferences
+  'notification_settings', // notification_settings
+  'business_profiles', // business_profile
+  'business_addresses', // business_addresses
+] as const;
 // DE-4: + the eight client_records tables, in registry order (section in the comment).
 const DE4_TABLES = [
   'crm_pipeline_stages', // pipeline_stages
@@ -173,9 +201,20 @@ const DE4_TABLES = [
   'scheduling_bookings', // bookings
   'scheduling_availability_exceptions', // time_off
 ] as const;
-const TABLES = [...ACCOUNT_TABLES, ...DE4_TABLES] as const;
+// DE-3: + DE3_TABLES after the account table.
+const TABLES = [...ACCOUNT_TABLES, ...DE3_TABLES, ...DE4_TABLES] as const;
 type Table = (typeof TABLES)[number];
 type De4Table = (typeof DE4_TABLES)[number];
+type De3Table = (typeof DE3_TABLES)[number];
+/** DE-3: every table read through the paged reader. */
+type PagedTable = De3Table | De4Table;
+
+const DE3_SECTION: Record<De3Table, string> = {
+  user_preferences: 'preferences',
+  notification_settings: 'notification_settings',
+  business_profiles: 'business_profile',
+  business_addresses: 'business_addresses',
+};
 
 const DE4_SECTION: Record<De4Table, string> = {
   crm_pipeline_stages: 'pipeline_stages',
@@ -207,9 +246,35 @@ const UTC_FILE_NAME = 'attachment; filename="agentpilot-data-export-2026-07-15-1
 const SELECTS: Record<Table, string> = {
   // DE-1 (SA Q-3 / C-1): `plan` removed (DX-1a: no plan or billing data); was
   // 'id, full_name, avatar_url, plan, company, …'.
+  // DE-3 (§3.1): `hourly_rate_usd` and `org_id` removed (user BC-A / DE-2 BC-2); `role` kept.
   profiles:
     'id, full_name, avatar_url, company, job_title, timezone, language, created_at, updated_at, ' +
-    'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data, hourly_rate_usd, org_id',
+    'role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data',
+  // DE-3 (new): the four account selects, from the descriptors (SA final lists), byte for byte.
+  user_preferences:
+    'id, preferred_language, timezone, timezone_confirmed_at, preferred_currency, theme, sidebar_collapsed, ' +
+    'compact_mode, show_timestamps, enable_sounds, keyboard_shortcuts, data_retention_days, analytics_enabled, ' +
+    'telemetry_enabled, created_at, updated_at',
+  notification_settings:
+    'id, email_enabled, email_frequency, email_system_alerts, email_security_alerts, email_marketing, ' +
+    'push_enabled, push_system_alerts, push_mentions, desktop_enabled, desktop_system_alerts, inapp_enabled, ' +
+    'inapp_sounds, inapp_popups, quiet_hours_enabled, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, ' +
+    'created_at, updated_at',
+  business_profiles:
+    'id, vertical, sub_vertical, company_name, company_size, clients_per_week, revenue_tier, description, services, ' +
+    'pain_points, goals, tools, payment_mode, online_presence_mode, primary_crm, primary_calendar, primary_payment, ' +
+    'phone, email, address, address_parts, address_id, invoice_address_id, ' +
+    'website_url, landing_pages, logo_url, show_logo_on_smart_links, theme, template_id, subdomain, user_code, ' +
+    'scheduling_availability, process_steps, language, currency, ' +
+    'invoice_company_name, invoice_address, invoice_tax_id, invoice_footer_text, invoice_number_prefix, ' +
+    'invoice_document_type, invoice_prices_include_tax, invoice_tax_rate, invoice_tax_label, invoice_payment_terms_days, ' +
+    'collection_method, default_payment_processor, payment_retry_enabled, payment_retry_intervals, payment_max_retries, ' +
+    'payment_reminder_enabled, payment_reminder_days_before, payment_overdue_reminder_days, payment_reminder_channels, ' +
+    'daily_briefing_email_enabled, lead_alert_email_enabled, lead_autosend_enabled, chase_invoices_enabled, ' +
+    'chase_intake_enabled, chase_quotes_enabled, automations_declined, meeting_reminder_enabled, ' +
+    'meeting_reminder_hours_before, meeting_reminder_notify_client, meeting_reminder_notify_owner, ' +
+    'auto_complete_meetings_enabled, created_at, updated_at',
+  business_addresses: 'id, label, parts, is_default, created_at, updated_at',
   // DE-4 (user 2026-10-15): the plugin_connections select is gone (the table is never read).
   // DE-4 (new): the eight client_records selects, from the descriptors (workplan §3), byte for byte.
   crm_pipeline_stages: 'id, vertical, stage_key, stage_label, position, color, stage_type, is_primary_client_stage, created_at',
@@ -256,6 +321,16 @@ const DE4_ROWS: Record<De4Table, Array<Record<string, unknown>>> = {
   scheduling_bookings: [{ id: id(8), service_id: id(7), contact_id: id(2), status: 'no_show', internal_notes: 'private' }],
   scheduling_availability_exceptions: [{ id: id(9), exception_type: 'blocked', reason: 'holiday' }],
 };
+// DE-3: one row per account table read through the paged reader, ids after the DE-4 ones.
+const DE3_ROWS: Record<De3Table, Array<Record<string, unknown>>> = {
+  user_preferences: [{ id: id(21), preferred_language: 'he', timezone: 'Asia/Jerusalem' }],
+  notification_settings: [{ id: id(22), email_enabled: true, quiet_hours_timezone: 'Asia/Jerusalem' }],
+  business_profiles: [{ id: id(23), company_name: 'Acme Studio', address_id: id(24), invoice_tax_id: '515151515' }],
+  business_addresses: [{ id: id(24), label: 'Studio', parts: { city: 'Tel Aviv', country: 'IL' }, is_default: true }],
+};
+/** DE-3: the rows of every paged table, for its last id. */
+const PAGED_ROWS: Record<PagedTable, Array<Record<string, unknown>>> = { ...DE3_ROWS, ...DE4_ROWS };
+
 // DE-4: what the clients section writes: source_metadata allow-listed in place.
 const MAPPED_DE4_ROWS: Record<De4Table, Array<Record<string, unknown>>> = {
   ...DE4_ROWS,
@@ -265,8 +340,8 @@ const MAPPED_DE4_ROWS: Record<De4Table, Array<Record<string, unknown>>> = {
   ],
 };
 
-/** DE-4: one keyset page query on a client_records table. */
-function pageQuery(table: De4Table, after: string | null): Call[] {
+/** DE-4: one keyset page query on a client_records table. DE-3: or on a DE-3 account table. */
+function pageQuery(table: PagedTable, after: string | null): Call[] {
   return [
     ['select', SELECTS[table]],
     ['eq', 'user_id', OWNER.id],
@@ -278,12 +353,16 @@ function pageQuery(table: De4Table, after: string | null): Call[] {
   ];
 }
 
-const lastId = (table: De4Table) => String(DE4_ROWS[table][DE4_ROWS[table].length - 1].id);
+// DE-3: over every paged table, was DE4_ROWS only.
+const lastId = (table: PagedTable) => String(PAGED_ROWS[table][PAGED_ROWS[table].length - 1].id);
 
 const EXPECTED_CHAINS: Record<Table, Call[]> = {
   // DATA_EXPORT_FOLLOWUPS_WORKPLAN.md FU-P1: every ['select', SELECTS.x] below was ['select', '*'].
   // DE-1 (SA Q-4): ['maybeSingle'], was ['single'].
   profiles: [['select', SELECTS.profiles], ['eq', 'id', OWNER.id], ['maybeSingle']],
+  // DE-3 (new): a data page, then the empty page; user_preferences then gets the timezone read.
+  ...(Object.fromEntries(DE3_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De3Table, Call[]>),
+  user_preferences: [...pageQuery('user_preferences', null), ...pageQuery('user_preferences', lastId('user_preferences')), ...PREFERENCES_CHAIN],
   // DE-4 (user 2026-10-15): the plugin_connections chain is gone; REMOVED_TABLES pins it unread.
   // DE-4 (new): a data page, then the empty page after its last id that ends the read.
   ...(Object.fromEntries(DE4_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De4Table, Call[]>),
@@ -341,6 +420,8 @@ function seed(): void {
   mockResults.plugin_connections = { data: CONNECTIONS, error: null };
   // DE-4: one data page per client_records table; the empty page follows.
   for (const t of DE4_TABLES) mockQueues[t] = [{ data: DE4_ROWS[t], error: null }];
+  // DE-3: and per DE-3 account table.
+  for (const t of DE3_TABLES) mockQueues[t] = [{ data: DE3_ROWS[t], error: null }];
 }
 
 // DE-4 (user 2026-10-15): MAPPED_CONNECTIONS is gone with the section.
@@ -367,12 +448,19 @@ function section(id: string, rows: SectionRows): Record<string, unknown> {
  */
 // DE-4: + `records`, the eight client_records sections by table (default: the mapped seed).
 // DE-4 (user 2026-10-15): `connections` removed.
-type BodyParts = { profile: SectionRows; records?: Partial<Record<De4Table, SectionRows>> };
+// DE-3: + `details`, the four account sections read from tables (default: the seed).
+type BodyParts = {
+  profile: SectionRows;
+  records?: Partial<Record<De4Table, SectionRows>>;
+  details?: Partial<Record<De3Table, SectionRows>>;
+};
 
 function expectedBody(parts: BodyParts): Record<string, unknown> {
   const sections = [
     section('account_identity', [{ id: OWNER.id, email: OWNER.email, created_at: OWNER.created_at }]),
     section('user_profile', parts.profile),
+    // DE-3: the four account sections, after user_profile.
+    ...DE3_TABLES.map((t) => section(DE3_SECTION[t], parts.details?.[t] ?? DE3_ROWS[t])),
     // DE-4 (user 2026-10-15): no plugin_connections section.
     ...DE4_TABLES.map((t) => section(DE4_SECTION[t], parts.records?.[t] ?? MAPPED_DE4_ROWS[t])),
   ];
@@ -417,6 +505,8 @@ const FULL: BodyParts = { profile: [PROFILE] };
 
 // DE-4: the row count of each client_records section for the seed.
 const DE4_COUNTS = Object.fromEntries(DE4_TABLES.map((t) => [DE4_SECTION[t], DE4_ROWS[t].length]));
+// DE-3: the row count of each DE-3 account section for the seed.
+const DE3_COUNTS = Object.fromEntries(DE3_TABLES.map((t) => [DE3_SECTION[t], DE3_ROWS[t].length]));
 
 function request(headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('http://localhost/api/user/data-export', { headers });
@@ -469,12 +559,14 @@ describe('GET /api/user/data-export: characterization pin', () => {
   // table is read twice (its data page, then the empty page that ends the read).
   // DE-4 (user 2026-10-15): nine section tables, was ten (plugin_connections out),
   // then user_preferences once for the file name's clock.
-  it('reads the nine section tables in order, then the timezone, all on the service-role client', async () => {
+  // DE-3: thirteen section tables, was nine: the four account tables, paged, after profiles.
+  it('reads the thirteen section tables in order, then the timezone, all on the service-role client', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     seed();
     await GET(request());
     expect(mockReadOrder).toEqual([
       ...ACCOUNT_TABLES.map((t) => `service:${t}`),
+      ...DE3_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
       ...DE4_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
       'service:user_preferences',
     ]);
@@ -515,11 +607,13 @@ describe('GET /api/user/data-export: characterization pin', () => {
   });
 
   // DE-4 (user 2026-10-15, new): one explicit column, scoped to the session id.
+  // DE-3: user_preferences is also the preferences section, read first; the timezone read is the last three calls.
   it('pins the timezone read: select timezone, the session id, maybeSingle', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     seed();
     await GET(request());
-    expect(mockCalls['service:user_preferences']).toEqual(PREFERENCES_CHAIN);
+    expect(mockCalls['service:user_preferences'].slice(-PREFERENCES_CHAIN.length)).toEqual(PREFERENCES_CHAIN);
+    expect(mockReadOrder[mockReadOrder.length - 1]).toBe('service:user_preferences');
   });
 
   // DE-1: the section model, was "(profile spread, plugin mapping, summary)".
@@ -578,6 +672,8 @@ describe('GET /api/user/data-export: characterization pin', () => {
     // DE-4 (user 2026-10-15): the plugin_connections case is gone with the section.
     // DE-4 (new).
     ...(Object.fromEntries(DE4_TABLES.map((t) => [t, { records: { [t]: 'failed' } }])) as Record<De4Table, Partial<BodyParts>>),
+    // DE-3 (new).
+    ...(Object.fromEntries(DE3_TABLES.map((t) => [t, { details: { [t]: 'failed' } }])) as Record<De3Table, Partial<BodyParts>>),
   };
 
   /** DE-4: an error on `table`, whichever kind of read it is. */
@@ -611,8 +707,10 @@ describe('GET /api/user/data-export: characterization pin', () => {
     const res = await GET(request());
     expect(res.status).toBe(200);
     const records = Object.fromEntries(DE4_TABLES.map((t) => [t, 'failed'])) as Record<De4Table, SectionRows>;
+    // DE-3: and the four account sections read from tables.
+    const details = Object.fromEntries(DE3_TABLES.map((t) => [t, 'failed'])) as Record<De3Table, SectionRows>;
     // DE-4 (user 2026-10-15): no `connections: 'failed'`.
-    expect(await res.text()).toBe(JSON.stringify(expectedBody({ profile: 'failed', records }), null, 2));
+    expect(await res.text()).toBe(JSON.stringify(expectedBody({ profile: 'failed', records, details }), null, 2));
   });
 
   // DE-1 (WC-7, §3.7): through logAndFlush with its context; details carry section
@@ -635,8 +733,9 @@ describe('GET /api/user/data-export: characterization pin', () => {
         format_version: 2,
         // DE-4: + the eight client_records sections.
         // DE-4 (user 2026-10-15): plugin_connections removed from both.
-        data_categories: ['account_identity', 'user_profile', ...DE4_TABLES.map((t) => DE4_SECTION[t])],
-        section_counts: { account_identity: 1, user_profile: 1, ...DE4_COUNTS },
+        // DE-3: + the four account sections, after user_profile.
+        data_categories: ['account_identity', 'user_profile', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE4_TABLES.map((t) => DE4_SECTION[t])],
+        section_counts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE4_COUNTS },
         failed_sections: [],
         gdpr_basis: 'Article 15 (Right to Access) & Article 20 (Data Portability)',
         ip_address: '203.0.113.7',
@@ -659,9 +758,10 @@ describe('GET /api/user/data-export: characterization pin', () => {
     await GET(request());
     const details = mockLogAndFlush.mock.calls[0][0].details;
     // DE-4: + the eight client_records sections.
-    expect(details.data_categories).toEqual(['account_identity', ...DE4_TABLES.map((t) => DE4_SECTION[t])]);
+    // DE-3: + the four account sections.
+    expect(details.data_categories).toEqual(['account_identity', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE4_TABLES.map((t) => DE4_SECTION[t])]);
     expect(details.failed_sections).toEqual(['user_profile']);
-    expect(details.section_counts).toEqual({ account_identity: 1, user_profile: 0, ...DE4_COUNTS });
+    expect(details.section_counts).toEqual({ account_identity: 1, user_profile: 0, ...DE3_COUNTS, ...DE4_COUNTS });
     expect(JSON.stringify(details)).not.toContain('boom');
   });
 
@@ -680,7 +780,8 @@ describe('GET /api/user/data-export: characterization pin', () => {
       fields: {
         userId: OWNER.id,
         // DE-4: + the eight client_records counts. DE-4 (user 2026-10-15): no plugin_connections.
-        sectionCounts: { account_identity: 1, user_profile: 1, ...DE4_COUNTS },
+        // DE-3: + the four account section counts.
+        sectionCounts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE4_COUNTS },
         failedSections: [],
         exportSizeKb: summary.export_size_kb,
         durationMs: 0,

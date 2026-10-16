@@ -1,6 +1,6 @@
 # Requirement: Business OS — Export My Data
 
-> **Last Updated**: 2026-10-15
+> **Last Updated**: 2026-10-16
 
 **Created by:** BA
 **Date:** 2026-10-05
@@ -669,6 +669,64 @@ A refusal writes **no** `DATA_EXPORTED` entry (nothing was exported; `DATA_EXPOR
 
 **UI-1 (new work item, folded into DE-9; recorded 2026-10-15):** the export result message does not match the system's look and feel. The Danger zone shows a small grey text line (`DangerZonePanel.tsx` `<p role="status" className="text-xs …">`), while the Business OS settings page uses a green banner with an icon (`app/business-os/settings/page.tsx` successMessage block) and other screens use `sonner` toasts. DE-9 must use the system's standard success/error notification for every export entry point (4 call sites: Business OS settings page, `DangerZonePanel`, `SecurityTab`, `SecurityTabV2`) and add a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1). SA picks the standard pattern in the DE-9 workplan review. No code change for this in DE-4.
 
+### 0.8 DE-3 status, user decisions and SA rulings (2026-10-16)
+
+**DE-3 — Code complete on `feature/data-export-de3`; SA code-approved 2026-10-16; QA PASS 2026-10-16 (21/21 negative controls, 0 new failures); T-9 done by TL read-only SQL: 0 drift / 0 missing over 157 names; all ids uuid.** T-0 live read done 2026-10-16 (TL, prod read-only; DE-3 workplan §10.1): live column counts `profiles` 18, `user_preferences` 23, `notification_settings` 24, `business_profiles` 85 (`subdomain` is live), `business_addresses` 7; every table has an `id` primary key; `user_id` unique on the three 1:1 tables; max 1 row per user on all four; 0 cross-tenant address pointers. Workplan: [BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md) (SA approved with conditions C-1…C-9, 2026-10-16). T-9 drift check (declared vs live, all five tables, 157 names): done, 0 drift / 0 missing (DE-3 workplan §10.2).
+
+**What it delivers:** today's JSON download (`GET /api/user/data-export`) gains four sections in the existing `account` group (AgentPilot the controller), after `user_profile`: `preferences` (`user_preferences`), `notification_settings`, `business_profile` (`business_profiles`) and `business_addresses`. Each is one table with an explicit column list and a written reason for every column left out, read through the DE-4 `BusinessDataExportRepository` (keyed on the session user's id, paged to the end, inside the Phase 1 row ceiling). The `profiles` section loses `hourly_rate_usd` and `org_id`. `format_version` stays 2 (additive). No migration, no new route, no new dependency, no flag, no new file.
+
+**User decisions (via TL, 2026-10-16; binding, recorded by SA).** These DE-3 BC numbers are separate from DE-2's and DE-4's.
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| **BC-A** | Agent-platform settings on the account (the hourly rate behind "money saved" on agent runs; the AI model settings) | **Out** | Reason, verbatim: "user 2026-10-16: agent-platform setting, Business OS data only" (`AGENT_SETTING`). `profiles.hourly_rate_usd`; `user_preferences.default_model`, `max_tokens`, `temperature`, `auto_save_conversations`, `debug_mode`, `beta_features`; `notification_settings.email_agent_updates`, `push_agent_updates`, `desktop_agent_updates` (SA R-3) |
+| **BC-B** | The bank details printed on the owner's invoices | **Out** | Reason, verbatim: "user 2026-10-16: bank details left out of the file" (`BANK_DETAILS`). `business_profiles.invoice_bank_name`, `invoice_bank_account`, `invoice_bank_routing`, and `invoice_payment_instructions` (SA R-2) |
+| BC-C | The owner's answers about the business in; the assistant's website analysis, what it extracted from the bio, and the onboarding chat out | **Confirmed** | `website_analysis`, `extracted_data`, `onboarding_conversation` excluded |
+| BC-D | Setup-progress markers out | **Confirmed** | `onboarding_completed`, `profile_completeness`, `setup_checklist_dismissed`, `dismissed_setup_steps`, `needs_stripe_connect` excluded (`SETUP_STATE`) |
+| BC-E | Calendar-sync settings on the business profile out | **Confirmed** | `calendar_sync_enabled`, `calendar_sync_provider`, `calendar_last_synced_at` excluded (`CALENDAR_SYNC`) |
+| BC-F | The list of connected apps on the business profile out | **Confirmed** | `connected_plugins` excluded (as DE4-U2) |
+| BC-G | The organisation id on the profile out; the role (persona) in | **Confirmed** | `profiles.org_id` excluded (DE-2 BC-2); `profiles.role` kept |
+
+**SA rulings recorded here (DE-3 workplan review, 2026-10-16):**
+
+| Ruling | Change |
+|---|---|
+| **R-1** | `invoice_tax_id` is **in**: a tax registration number printed on every invoice by law identifies the business; it is not a bank detail |
+| **R-2** | `invoice_payment_instructions` is **out** under `BANK_DETAILS`, with the suffix "(free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3)". The product treats bank details and written payment instructions as the same thing (`profileReadiness.ts` `hasPaymentMethod`, `invoicePaymentOptions.ts`), so the free text often holds the IBAN. TL states this to the user as a one-line confirmation. `invoice_footer_text` stays in |
+| **R-3** | `debug_mode`, `beta_features` and the three `*_agent_updates` toggles fall under BC-A. The general display and privacy switches on `user_preferences` and the other notification choices (`push_mentions`, system / security / marketing) stay **in** |
+| **SA-Q1** | Moot: all four tables have an `id` primary key, so the normal keyset read works. No single-row read, no `rowKey`; `classification.ts` is not touched |
+| **SA-Q2** | The four sections are group `account`, AgentPilot the controller: facts about the account holder's own business, given to us to run the account |
+| **SA-Q3** | `user_code` and `subdomain` in: the business's public address, not a credential |
+| **SA-Q4** | `primary_crm`, `primary_calendar`, `primary_payment`, `tools` in (the owner's answers); `connected_plugins` out (connection plumbing, DE4-U2) |
+| **SA-Q5** | The jsonb columns travel whole, on the live key census: `scheduling_availability` (day keys), `address_parts` / `invoice_address` / `business_addresses.parts` (the six address parts), `theme` (design tokens, the design's `id` / `source`), `process_steps` (no object elements today). `profiles.onboarding_data` stays as DE-1 decided |
+| **SA-Q6** | Moot: no jsonb and no push-subscription column on either settings table. `DENY_EXCEPTIONS` stays at one entry; no value-shape deny rule |
+| **SA-Q7** | `profiles.domain` and `onboarding*` stay as DE-1 decided (the person's onboarding answers, not settings) |
+| **SA-Q8** | Both timezone columns exported as held; see the DE-8b README note below |
+| **SA-Q9** | Setup-progress columns out (confirmed by the user as BC-D) |
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table):**
+
+| Table → section | In | Out (reason) | Total |
+|---|---|---|---|
+| `profiles` → `user_profile` | `id, full_name, avatar_url, company, job_title, timezone, language, created_at, updated_at, role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data` (15) | `plan` (no plan or billing data), `org_id` (DE-2 BC-2), `hourly_rate_usd` (`AGENT_SETTING`) | 18 |
+| `user_preferences` → `preferences` | `id, preferred_language, timezone, timezone_confirmed_at, preferred_currency, theme, sidebar_collapsed, compact_mode, show_timestamps, enable_sounds, keyboard_shortcuts, data_retention_days, analytics_enabled, telemetry_enabled, created_at, updated_at` (16) | `user_id` (`OWNER_ID`); `default_model, max_tokens, temperature, auto_save_conversations, debug_mode, beta_features` (`AGENT_SETTING`) | 23 |
+| `notification_settings` → `notification_settings` | `id, email_enabled, email_frequency, email_system_alerts, email_security_alerts, email_marketing, push_enabled, push_system_alerts, push_mentions, desktop_enabled, desktop_system_alerts, inapp_enabled, inapp_sounds, inapp_popups, quiet_hours_enabled, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, created_at, updated_at` (20) | `user_id` (`OWNER_ID`); `email_agent_updates, push_agent_updates, desktop_agent_updates` (`AGENT_SETTING`) | 24 |
+| `business_profiles` → `business_profile` | 68 columns: the owner's answers about the business, contact details and address (incl. the bare `address_id` / `invoice_address_id`), public presence (incl. `subdomain`, `user_code`), working hours, language and currency, the invoice profile without the bank lines (incl. `invoice_tax_id`, `invoice_footer_text`), collection settings, and the automations the owner switched on or declined; `id`, `created_at`, `updated_at` | 17: `user_id` (`OWNER_ID`); `website_analysis`, `extracted_data` (`ASSISTANT_OUTPUT`); `onboarding_conversation` (activity); `connected_plugins` (`CONNECTED_APPS`); 3 × calendar sync (`CALENDAR_SYNC`); 5 × setup progress (`SETUP_STATE`); 4 × bank details (`BANK_DETAILS`) | 85 |
+| `business_addresses` → `business_addresses` | `id, label, parts, is_default, created_at, updated_at` (6) | `user_id` (`OWNER_ID`) | 7 |
+
+The exact 68 / 17 lists are the `BUSINESS_PROFILES_EXPORT` descriptor in `lib/business-os/purge/descriptors.ts`, pinned literally in `exportClassification.test.ts` (`DE3_PINS`) and byte for byte in the route characterization test.
+
+**Tenant isolation (tenant-isolation-guard, SA approved):** the only id is the session's `getUser().id`; every DE-3 read's first filter is `.eq('user_id', <session id>)`. The addresses are read by their own `user_id`, never by following `address_id` / `invoice_address_id`, which are exported as bare uuids: even a crossed pointer would carry an id, never another tenant's address (pinned by a cross-tenant test). Read-only; no write path.
+
+**Notes for DE-8b (binding):**
+
+| # | Note |
+|---|---|
+| README: timezones (SA-Q8) | The file holds three timezone columns. `preferences.timezone` (`user_preferences.timezone`) is the **authority** for the owner's clock; `user_profile.timezone` (`profiles.timezone`) is a **mirror** of it; `notification_settings.quiet_hours_timezone` is the zone of the **quiet hours only** |
+| CSV | The four sections follow the DE-4 CSV rule (header from `exportColumnsOf`; arrays and jsonb cells as JSON text in one cell). `business_profile` is one row with 68 columns |
+
+**As built (measured on the branch, 2026-10-16):** 155 table descriptors = **13** `include` (`profiles`, the eight DE-4 tables, + `user_preferences`, `notification_settings`, `business_profiles`, `business_addresses`) + **32** `planned` (DE-5: 15, DE-6: 12, DE-7: 5; DE-3: 0) + **110** `exclude` (unchanged). `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged on the four DE-3 rows (purge suites green). The export file holds 6 `account` sections + 8 `client_records` sections. The DE-4 sections, their eight selects, order, group, role and the `clients` `source_metadata` reshaping are unchanged (SA C-2).
+
 ---
 
 ## 1. Discovery: what exists today
@@ -1021,3 +1079,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-15 | DE-4 code complete; user decisions BC-1…BC-7; calendar out (§0.7) | Uncommitted on `feature/data-export-de4`, awaiting SA code review; `schema:reconcile` owed before merge. Eight `client_records` sections (clients, notes and history, tasks, pipeline stages, document details, services, bookings, time off) in today's JSON export, through one read-only descriptor-driven repository (SA-Q1), keyset-paged on `id` to an empty page, deleted documents out via a descriptor `rowFilter` (SA-Q2). User decisions 2026-10-15: BC-1 internal notes in, BC-2 all history in, BC-3 archived in / deleted out, BC-4 `source_metadata` readable keys only (named allow-list), **BC-5 `external_calendar_events` out (supersedes §0.3.1 SQ-E7, §3.1 B2, §9.2 SQ-E7; notes added there)**, BC-6 sent-markers out, BC-7 `ai_suggestions` out. `DENY_EXCEPTIONS` + `crm_pipeline_stages.stage_key` (SA-Q5). Phase 1 ceiling built in today's route: 413 `export_too_large` over 100,000 rows or a 4 MB body (exact bytes), no file, no `DATA_EXPORTED`. DE-8b conditions (C-11): the files manifest drops objects whose `contact_documents` row is deleted or missing; the 4 MB body cap goes when the signed-URL zip replaces the JSON response |
 | 2026-10-15 | DE-4 post-review: T-9 recorded; user decisions DE4-U1 / DE4-U2; DX-1 note extended (§0.2, §0.7) | SA F-3: T-9 done by TL's read-only SQL (§10.2 of the DE-4 workplan: drift 0, missing 0, `contact_documents.status` NOT NULL), closing "`schema:reconcile` owed before merge". DE4-U1: file name `agentpilot-data-export-YYYY-MM-DD-HHmm.json` on the owner's clock (`user_preferences.timezone`; NULL / invalid / unreadable gives UTC; never fails the export). DE4-U2: connected apps (`plugin_connections`) dropped from the export: descriptor `exclude`, section, reader, allow-list, deny exception and `listForUserDataExport` removed; totals 9 include / 36 planned / 110 exclude. §0.2 DX-1 open lawyer note now names connected apps alongside activity |
 | 2026-10-15 | User manual check DE-1 PASS; UI-1 folded into DE-9 (§0.7) | Danger zone Export works. UI-1: the export result message must use the system's standard success/error notification on all 4 export entry points, plus a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1); SA picks the pattern in the DE-9 workplan review. No DE-4 code change |
+| 2026-10-16 | DE-3 code complete; user decisions BC-A…BC-G; SA rulings (§0.8) | Uncommitted on `feature/data-export-de3`, awaiting SA code review; T-9 drift check (157 names, five tables) owed, TL runs it as read-only SQL. Four `account` sections (preferences, notification settings, business profile, business addresses) through the DE-4 repository; `profiles` loses `hourly_rate_usd` and `org_id`, keeps `role`. BC-A agent-platform settings out (`AGENT_SETTING`, verbatim); BC-B invoice bank details out (`BANK_DETAILS`, verbatim) incl. `invoice_payment_instructions` (SA R-2); `invoice_tax_id` in (SA R-1); BC-C…BC-G confirmed. SA-Q1 single-row read dropped (all tables have `id`). DE-8b README note: three timezone columns (authority, mirror, quiet hours only). Totals 13 include / 32 planned / 110 exclude |

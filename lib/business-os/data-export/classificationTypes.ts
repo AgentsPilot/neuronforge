@@ -23,10 +23,18 @@
  *
  * DE-4 (user 2026-10-15): `plugin_connections` is no longer a section:
  * connected apps left the export (business data only).
+ *
+ * DE-3 adds four `account` sections after `user_profile`: the person's
+ * preferences and notification choices, the business profile and the
+ * business's saved addresses (DE-3 workplan §2.3).
  */
 export type ExportSectionId =
   | 'account_identity'
   | 'user_profile'
+  | 'preferences'
+  | 'notification_settings'
+  | 'business_profile'
+  | 'business_addresses'
   | 'pipeline_stages'
   | 'clients'
   | 'client_activities'
