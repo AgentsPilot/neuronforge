@@ -46,7 +46,7 @@ export interface DrillLabel {
 export type DrillLabels = Partial<Record<DrillField, DrillLabel>>;
 
 /** The noun phrase for "Read at", "Refresh …" and the shared states. */
-export const ANALYTICS_WHAT = 'AI cost and usage';
+export const ANALYTICS_WHAT = 'AI calls and usage';
 
 /** Drill chips in bar order. Agent and execution exist only in the All scope (C3-2). */
 const DRILL_CHIPS: ReadonlyArray<{ field: Exclude<DrillField, 'account'>; key: string; name: string; allOnly?: boolean }> = [

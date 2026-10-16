@@ -16,7 +16,13 @@
  *   6. (slice 5) Scheduled jobs & queues is third under Monitor;
  *   7. (ADMIN_BOS_CLEANUP slice 2) Model pricing is split from the AgentsPilot
  *      billing settings, which moved to a parked page, and Free tier &
- *      onboarding moved to the parked section.
+ *      onboarding moved to the parked section;
+ *   8. (Money M-5, finance health §11H.3) a Money section follows Monitor,
+ *      holding Finance (first), Charge checks and AI calls & usage (detail),
+ *      and nothing with action buttons;
+ *   9. (M-5) Charge checks lives at a NESTED route, `/admin/finance/charges`,
+ *      which the one-level page scan cannot see, so it is allowed for
+ *      explicitly (`NESTED_LISTED`) and checked to exist on disk.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -82,10 +88,14 @@ const adminPageRoutes = (): string[] => {
 // to the database, so surfacing it would widen exposure.
 const UNLISTED = ['/admin/exchange-rates'];
 
+// Listed pages below the one-level scan (M-5): each must exist on disk.
+const NESTED_LISTED = ['/admin/finance/charges'];
+
 describe('section order', () => {
-  it('is Monitor, Businesses, Settings, AgentsPilot (parked)', () => {
+  it('is Monitor, Money, Businesses, Settings, AgentsPilot (parked)', () => {
     expect(sections.map((s) => s.title)).toEqual([
       'Monitor',
+      'Money',
       'Businesses',
       'Settings',
       'AgentsPilot (parked)',
@@ -96,14 +106,18 @@ describe('section order', () => {
     // Scheduled jobs & queues follows AI cost & usage (slice 5, requirement
     // §4.2); Archiving sits directly under Audit trail (Admin Archiving,
     // condition C-2); Finance sits directly after Health (finance & business
-    // health slice 1a, requirement §5).
+    // health slice 1a, requirement §5). Money M-5 moved Finance and AI calls &
+    // usage (detail) into the new Money section, Finance first (BD-21).
     expect(hrefsOf('Monitor')).toEqual([
       '/admin',
-      '/admin/finance',
-      '/admin/analytics',
       '/admin/jobs-queues',
       '/admin/audit-trail',
       '/admin/archiving',
+    ]);
+    expect(hrefsOf('Money')).toEqual([
+      '/admin/finance',
+      '/admin/finance/charges',
+      '/admin/analytics',
     ]);
     expect(hrefsOf('Businesses')).toEqual([
       '/admin/users',
@@ -156,13 +170,19 @@ describe('every admin page is reachable, exactly once', () => {
   });
 
   it('lists every page except the deliberately unlisted ones', () => {
-    const expected = onDisk.filter((r) => !UNLISTED.includes(r));
+    const expected = [...onDisk.filter((r) => !UNLISTED.includes(r)), ...NESTED_LISTED].sort();
     expect([...allHrefs].sort()).toEqual(expected);
     // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
     // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
     // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
-    // Finance (finance & business health slice 1a).
-    expect(allHrefs).toHaveLength(28);
+    // Finance (finance & business health slice 1a) + Charge checks (M-5).
+    expect(allHrefs).toHaveLength(29);
+  });
+
+  it('every nested listed page exists on disk (M-5)', () => {
+    for (const route of NESTED_LISTED) {
+      expect({ route, exists: fs.existsSync(path.join(process.cwd(), 'app', `${route.slice(1)}/page.tsx`)) }).toEqual({ route, exists: true });
+    }
   });
 
   it('never lists the same page twice', () => {
@@ -278,5 +298,40 @@ describe('the logo matches the Business OS app (admin header identity)', () => {
 
   it('keeps the Admin badge beside the logo', () => {
     expect(sidebar).toMatch(/<Logo\b[^>]*\/>\s*<span[^>]*>\s*Admin\s*<\/span>/);
+  });
+});
+
+describe('Money M-5: the Money section (finance health §11H.3)', () => {
+  const money = () => sections.find((s) => s.title === 'Money')?.items ?? [];
+
+  it('sits directly after Monitor and is visible', () => {
+    const titles = sections.map((s) => s.title);
+    expect(titles.indexOf('Money')).toBe(titles.indexOf('Monitor') + 1);
+    expect(sections.find((s) => s.title === 'Money')?.hidden).toBe(false);
+  });
+
+  it('Finance first, then Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
+    expect(money().map((i) => [i.name, i.href, i.description])).toEqual([
+      ['Finance', '/admin/finance', 'Revenue, AI cost and credits, Business OS'],
+      ['Charge checks', '/admin/finance/charges', 'Charged AI cost checked per account, Business OS'],
+      ['AI calls & usage (detail)', '/admin/analytics', 'Every AI call and its recorded cost, both products'],
+    ]);
+  });
+
+  it('holds no page whose main job is an action (AC-185, BD-21)', () => {
+    const hrefs = money().map((i) => i.href);
+    for (const action of ['/admin/users', '/admin/system-config', '/admin/jobs-queues', '/admin/business-os-invites']) {
+      expect(hrefs).not.toContain(action);
+    }
+  });
+
+  it('Business OS AI no longer claims costs (S-4, AC-186)', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.name === 'Business OS AI');
+    expect(item?.description).toBe('Models, temperatures & AI activity');
+    expect(item?.description.toLowerCase()).not.toContain('cost');
+  });
+
+  it('the old name "AI cost & usage" is gone from the sidebar', () => {
+    expect(sections.flatMap((s) => s.items).map((i) => i.name)).not.toContain('AI cost & usage');
   });
 });

@@ -542,7 +542,7 @@ const MIGRATED_PAGES = [
   {
     // L-2a (part a): header, KPI strip, filter bar, states, URL. L-2b (part b):
     // the table, the call drawer, the run card and the summary cards.
-    page: '/admin/analytics (AI cost & usage)',
+    page: '/admin/analytics (AI calls & usage (detail))',
     files: [
       'app/admin/analytics/page.tsx',
       'app/admin/analytics/analyticsTypes.ts',
@@ -643,9 +643,10 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // L-8a / L-8b (header, tabs, Activity), L-9a / L-9b (Costs & credits),
-    // L-10 (Settings): one entry for the page's three tabs (SA L-10 Q-10). The
-    // filter-spec modules are listed because they import the shared folder
+    // L-8a / L-8b (header, tabs, Activity), L-10 (Settings): one entry for the
+    // page's tabs (SA L-10 Q-10). The Costs & credits tab (L-9a / L-9b) moved
+    // to Charge checks in Money M-5, and its files moved to that entry below.
+    // The filter-spec modules are listed because they import the shared folder
     // (SA L-10 M-4). Deliberately NOT listed (the G-6 precedent):
     // `components/LedgerCheckPanel.tsx`, parked since 2026-09-24 and not
     // mounted, still reads with `.json(` (F-123, slice 3 re-mounts and
@@ -658,7 +659,6 @@ const MIGRATED_PAGES = [
     files: [
       'app/admin/business-os-llm/page.tsx',
       'app/admin/business-os-llm/activityFilters.ts',
-      'app/admin/business-os-llm/costsFilters.ts',
       'app/admin/business-os-llm/tabWindowFilter.ts',
       'app/admin/business-os-llm/components/SettingsKpis.tsx',
       'app/admin/business-os-llm/components/AreaCard.tsx',
@@ -678,11 +678,6 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-llm/components/activity/CutoverNotice.tsx',
       'app/admin/business-os-llm/components/activity/DeletedAccountsBucket.tsx',
       'app/admin/business-os-llm/components/activity/RecordStateMarker.tsx',
-      'app/admin/business-os-llm/components/costs/CostsTab.tsx',
-      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
-      'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
-      'app/admin/business-os-llm/components/costs/CostsSections.tsx',
-      'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
   },
   {
@@ -707,6 +702,22 @@ const MIGRATED_PAGES = [
       // Finance F-5: the shared KPI tiles, and the sections they jump to.
       'app/admin/finance/components/FinanceKpiStrip.tsx',
       'app/admin/finance/components/FinanceSection.tsx',
+    ],
+  },
+  {
+    // Money M-5 (finance health §11H.4, AC-200): the cost report and its Leak
+    // check (L-9a / L-9b), moved from the Business OS AI page's Costs & credits
+    // tab. The page imports the header; the report's files stay where they are
+    // (SA-Q59) and are listed here, and only here.
+    page: '/admin/finance/charges (Charge checks)',
+    files: [
+      'app/admin/finance/charges/page.tsx',
+      'app/admin/business-os-llm/costsFilters.ts',
+      'app/admin/business-os-llm/components/costs/CostsTab.tsx',
+      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
+      'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
+      'app/admin/business-os-llm/components/costs/CostsSections.tsx',
+      'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
   },
 ] as const;
@@ -741,6 +752,21 @@ describe('C-14 part (b): migrated pages', () => {
       const specs = specifiersOf(codeOf(read(file)));
       expect({ file, relative: specs.filter((s) => reachesLayoutRelatively(file, s)) }).toEqual({ file, relative: [] });
     });
+  });
+});
+
+describe('C-14 part (b): the registry itself (Money M-5, AC-200)', () => {
+  it('lists every file in exactly one page entry', () => {
+    const all = MIGRATED_PAGES.flatMap((entry) => [...entry.files]);
+    const twice = all.filter((file, index) => all.indexOf(file) !== index);
+    expect(twice).toEqual([]);
+  });
+
+  it('Charge checks is registered with its page and the report files', () => {
+    const entry = MIGRATED_PAGES.find((e) => e.page === '/admin/finance/charges (Charge checks)');
+    expect(entry?.files).toEqual(expect.arrayContaining(['app/admin/finance/charges/page.tsx', 'app/admin/business-os-llm/components/costs/CostsTab.tsx']));
+    const bosAi = MIGRATED_PAGES.find((e) => e.page === '/admin/business-os-llm (Business OS AI)');
+    expect(bosAi?.files.some((file) => file.includes('/costs/') || file.endsWith('costsFilters.ts'))).toBe(false);
   });
 });
 

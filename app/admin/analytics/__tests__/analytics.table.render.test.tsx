@@ -234,7 +234,7 @@ function arrive(search: string) {
   mockSearch = search;
 }
 
-const refreshButton = () => screen.getByRole('button', { name: 'Refresh AI cost and usage' }) as HTMLButtonElement;
+const refreshButton = () => screen.getByRole('button', { name: 'Refresh AI calls and usage' }) as HTMLButtonElement;
 
 async function settled() {
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -576,7 +576,7 @@ describe('QA B-1: the open call leaves the data', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.queryByTestId('analytics-error')).toBeNull());
     expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5);
-    expect(screen.getByRole('status').textContent).toBe('Reading AI cost and usage…');
+    expect(screen.getByRole('status').textContent).toBe('Reading AI calls and usage…');
     expect(document.body.textContent).not.toContain('$0.00');
     expect(screen.queryByTestId('analytics-empty')).toBeNull();
     expect(screen.getByTestId('drawer-mounted')).toBeTruthy();

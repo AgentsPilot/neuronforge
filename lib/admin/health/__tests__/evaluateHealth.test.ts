@@ -18,6 +18,7 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import {
   AI_FAILED_ACTION,
   ENTITLEMENTS_PAGE_LINK,
+  FINANCE_PAGE_LINK,
   GREEN_ELIGIBLE,
   GREEN_HEADLINE,
   LOWER_BOUND_HEADLINE,
@@ -353,7 +354,7 @@ describe('C-18: a lower bound is never clear, whatever the rules say', () => {
     const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: ex(1.25) })), 'bos_ai_spend');
     expect(shown.title).toBe('Recorded AI cost (USD)');
     expect(shown.figures.map((f) => f.label)).toEqual(['Recorded AI cost, last 24 h (USD)', 'Recorded AI cost, last 7 days (USD)']);
-    expect(shown.figures[1].linkLabel).toMatch(/^Recorded AI cost, last 7 days: .*, open in AI cost & usage$/);
+    expect(shown.figures[1].linkLabel).toMatch(/^Recorded AI cost, last 7 days: .*, open in AI calls & usage$/);
     expect(shown.footnote).toContain(
       'USD: every Business OS AI call in the usage log, charged or not, priced from the model price table; never mixed with a business currency. The charged AI cost is on Finance. '
     );
@@ -581,7 +582,7 @@ describe('figures and links', () => {
     }
   });
 
-  it('the spend tile links to AI cost & usage with the exact ISO window', () => {
+  it('the spend tile links to AI calls & usage with the exact ISO window', () => {
     const tile = tileOf(evaluateHealth(quietInputs()), 'bos_ai_spend');
     const url = new URL(tile.figures[0].href!, 'http://x');
     expect(url.pathname).toBe('/admin/analytics');
@@ -642,9 +643,10 @@ describe('figures and links', () => {
     expect(invalid.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
   });
 
-  const LINKED = ['entitlements_mode', 'scheduled_jobs', 'queues'];
+  // Money M-5 (R-5, AC-196): the Recorded AI cost tile links to Finance.
+  const LINKED = ['entitlements_mode', 'scheduled_jobs', 'queues', 'bos_ai_spend'];
 
-  it('only the entitlements, jobs and queues tiles carry a page link, read or not', () => {
+  it('only the entitlements, jobs, queues and Recorded AI cost tiles carry a page link, read or not', () => {
     const failed = quietInputs();
     failed.settings = { ok: false };
     failed.failures = { ok: false };
@@ -953,5 +955,36 @@ describe('purity (C-6)', () => {
     expect(code).not.toMatch(/from ['"]@\/app\//);
     expect(code).not.toMatch(/from ['"]@\/lib\/repositories/);
     expect(code).not.toMatch(/AdminTokenUsageAnalyticsRepository|server-only/);
+  });
+});
+
+describe('Money M-5 (R-5, SA-Q55, SA-Q64, AC-196): the Recorded AI cost tile links to Finance', () => {
+  it('its page link is Finance at its default window, in words that say so, read or failed', () => {
+    expect(FINANCE_PAGE_LINK).toEqual({ href: '/admin/finance', text: 'Charged AI cost: open Finance' });
+    const read = tileOf(evaluateHealth(quietInputs()), 'bos_ai_spend');
+    expect(read.pageLink).toEqual(FINANCE_PAGE_LINK);
+    const failedInputs = quietInputs();
+    failedInputs.spend = { ok: false };
+    expect(tileOf(evaluateHealth(failedInputs), 'bos_ai_spend').pageLink).toEqual(FINANCE_PAGE_LINK);
+  });
+
+  it('its two figure links still open AI calls & usage, each with its own window', () => {
+    const tile = tileOf(evaluateHealth(quietInputs()), 'bos_ai_spend');
+    expect(tile.figures).toHaveLength(2);
+    const starts = tile.figures.map((figure) => {
+      const url = new URL(figure.href!, 'http://x');
+      expect(url.pathname).toBe('/admin/analytics');
+      expect(url.searchParams.get('scope')).toBe('bos');
+      return url.searchParams.get('dateFrom');
+    });
+    expect(new Set(starts).size).toBe(2);
+  });
+
+  it('no other tile changed its page link', () => {
+    for (const tile of evaluateHealth(quietInputs())) {
+      if (tile.id === 'entitlements_mode') expect(tile.pageLink).toEqual(ENTITLEMENTS_PAGE_LINK);
+      else if (tile.id === 'scheduled_jobs' || tile.id === 'queues') expect(tile.pageLink?.href).toBe('/admin/jobs-queues');
+      else if (tile.id !== 'bos_ai_spend') expect(tile.pageLink).toBeNull();
+    }
   });
 });
