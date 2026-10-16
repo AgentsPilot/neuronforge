@@ -28,10 +28,18 @@ import type {
 
 // ── Secret columns ──────────────────────────────────────────────────────────
 
-/** Column names that are never exported, whatever table they are on (§3.2). */
+/**
+ * Column names that are never exported, whatever table they are on (§3.2).
+ *
+ * DE-5 (SA-Q11): + `card_number`, `cvc`, `cvv`. No such column exists today
+ * ("no card number is ever stored in this system", 20260828e); the entries
+ * stop one added later from being exported by a review mistake. A Stripe
+ * `client_secret` is not listed: `/_secret$/` below already denies it.
+ */
 export const SECRET_COLUMN_DENY_EXACT: readonly string[] = [
   'access_token', 'refresh_token', 'token', 'credentials', 'secret', 'api_key',
   'password', 'password_hash', 'account_token', 'cost_usd', 'provider_cost_usd',
+  'card_number', 'cvc', 'cvv',
 ];
 
 /** Name shapes that are never exported (secrets, hashes, our provider cost). */

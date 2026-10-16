@@ -21,6 +21,14 @@
 // 2026-10-15: business data only, lawyer note §0.2 DX-1). Adding a section is
 // a privacy decision, not a refactor.
 //
+// DE-5: the client money (DX-1b): quotes, invoices, payments, refunds, payment
+// plans, the plans clients are on, instalments and saved payment methods
+// (group `client_records`), and the business's Stripe account and payment
+// providers (group `account`, SA-Q1). Money paid to AgentPilot (plans,
+// credits, boosts) is never read (DX-1a). Amounts go out exactly as stored,
+// next to their own currency column; nothing here converts, sums or
+// defaults a currency (CLAUDE.md § Currency & Timezone; user BC-11).
+//
 // DE-4: the client-record readers all go through ONE repository method,
 // keyed on the section id (never a table name: SA C-4), paged to the end, and
 // bounded by the Phase 1 row ceiling (limits.ts). Over the ceiling, reading
@@ -107,8 +115,9 @@ export type UserProfileRow = Record<string, unknown>;
 export type OwnedRow = Record<string, unknown>;
 
 /**
- * A `client_records` row (DE-4). An alias of `OwnedRow`; the one reshaped
- * cell is `clients.source_metadata` (allow-listed, SOURCE_METADATA_KEYS).
+ * A `client_records` row (DE-4). An alias of `OwnedRow`; the reshaped cells
+ * are `clients.source_metadata` (allow-listed, SOURCE_METADATA_KEYS) and,
+ * since DE-5, `payments.metadata` (PAYMENT_METADATA_KEYS).
  */
 export type ClientRecordRow = OwnedRow;
 
@@ -137,17 +146,46 @@ export const SOURCE_METADATA_KEYS: readonly string[] = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
 ];
 
-/** The allow-listed string values of a raw `source_metadata`; anything else is dropped. */
-export function sourceMetadata(value: unknown): Record<string, string> {
+/**
+ * The string values of `value` under exactly `keys`, in `keys` order; anything
+ * else is dropped (DE-5 SA-Q3, generalised from DE-4's `sourceMetadata`). Own
+ * properties only, strings only, each key named: no prefix or pattern match,
+ * so an allow-list cannot grow by itself. Not an object (NULL, an array, a
+ * string) gives `{}`.
+ */
+export function pickStringKeys(value: unknown, keys: readonly string[]): Record<string, string> {
   const kept: Record<string, string> = {};
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return kept;
   const source = value as Record<string, unknown>;
-  for (const key of SOURCE_METADATA_KEYS) {
+  for (const key of keys) {
     if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
     const item = source[key];
     if (typeof item === 'string') kept[key] = item;
   }
   return kept;
+}
+
+/** The allow-listed string values of a raw `source_metadata`; anything else is dropped. */
+export function sourceMetadata(value: unknown): Record<string, string> {
+  return pickStringKeys(value, SOURCE_METADATA_KEYS);
+}
+
+/**
+ * The readable parts of `payment_transactions.metadata` (DE-5 SA-Q3; user
+ * BC-7, 2026-10-16): `notes`, the text the owner typed when recording a cash
+ * or bank payment (stored nowhere else), and `source`, how the payment was
+ * recorded (`manual_mark_paid`, `website_booking`, ...). Every other key is
+ * out: `checkout_session_id`, `connect_account_id`, `subscription_id`,
+ * `stripe_invoice_id` (processor plumbing), `booking_id`, `service_id`,
+ * `invoice_number`, `installment_count`, `installment_number` (copies of
+ * columns already in the section), and any key not named here. Changing this
+ * changes what the export holds: a privacy decision.
+ */
+export const PAYMENT_METADATA_KEYS: readonly string[] = ['notes', 'source'];
+
+/** The allow-listed string values of a raw `payment_transactions.metadata`. */
+export function paymentMetadata(value: unknown): Record<string, string> {
+  return pickStringKeys(value, PAYMENT_METADATA_KEYS);
 }
 
 const accountIdentitySection: ExportSectionDefinition<AccountIdentityRow> = {
@@ -222,12 +260,18 @@ function accountTableSection(id: ExportSectionId): ExportSectionDefinition<Owned
 /** `clients`: the raw `source_metadata` never reaches the file, only its BC-4 keys. Key order is kept. */
 const clientRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, source_metadata: sourceMetadata(row.source_metadata) });
 
+/** `payments` (DE-5): the raw `metadata` never reaches the file, only `notes` and `source`. Key order is kept. */
+const paymentRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, metadata: paymentMetadata(row.metadata) });
+
 /**
  * The registry, in file order. DE-4's eight sections follow the account group (§2.3).
  * DE-3: the four account sections from tables follow `user_profile`; they
  * draw on the same row ceiling, before the client records (DE-3 SA C-3).
  * DE-4 (user 2026-10-15): the `plugin_connections` section is gone, with its
  * reader and its `profile_data` allow-list: connected apps are not exported.
+ * DE-5: the Stripe account and payment providers follow `business_addresses`
+ * (account, SA-Q1); the eight client-money sections follow `time_off`. All
+ * draw on the same row ceiling.
  */
 export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   accountIdentitySection,
@@ -236,6 +280,9 @@ export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   accountTableSection('notification_settings'),
   accountTableSection('business_profile'),
   accountTableSection('business_addresses'),
+  // DE-5 (SA-Q1): facts about the business itself, AgentPilot the controller.
+  accountTableSection('payment_account'),
+  accountTableSection('payment_providers'),
   clientRecordsSection('pipeline_stages'),
   clientRecordsSection('clients', clientRow),
   clientRecordsSection('client_activities'),
@@ -245,6 +292,15 @@ export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   clientRecordsSection('services'),
   clientRecordsSection('bookings'),
   clientRecordsSection('time_off'),
+  // DE-5: the client money, every status in (user BC-2).
+  clientRecordsSection('quotes'),
+  clientRecordsSection('invoices'),
+  clientRecordsSection('payments', paymentRow),
+  clientRecordsSection('refunds'),
+  clientRecordsSection('payment_plans'),
+  clientRecordsSection('client_payment_plans'),
+  clientRecordsSection('installments'),
+  clientRecordsSection('client_payment_methods'),
 ];
 
 /** Only the level this module uses, typed structurally so a Pino child logger satisfies it. */

@@ -13,14 +13,23 @@
  * `toFinanceQuery` maps the state onto `FinanceQuery` and `serialiseFinanceUrl`
  * writes it (AC-173). Only ids and enums reach the URL.
  *
- * Order (S1-FR-5, §11A.0): KPI strip, our revenue, takings through the
- * platform (Section 2 block B, slice 2a, directly under our revenue),
- * Section 1, Section 3, Section 4 (credits, slice 1b), then Section 6 block
- * B, client payment problems (slice 2b), last.
+ * Order (S1-FR-5, §11A.0): our revenue, takings through the platform
+ * (Section 2 block B, slice 2a, directly under our revenue), Section 1,
+ * Section 3, Section 4 (credits, slice 1b), then Section 6 block B, client
+ * payment problems (slice 2b), last.
+ *
+ * Finance F-5 (BD-29, standard §5.1): the KPI strip sits between the header
+ * and the filter bar, on Overview, on the Accounts tab and with a business
+ * picked; placeholders while the first read runs, nothing on an error (K-10).
+ * Its tiles are links (BD-31): K-1 opens AI cost & usage for This month and
+ * the business (SA-W7 (a)); the others jump to their section with a plain
+ * anchor, or, on the Accounts tab where the sections are not mounted, select
+ * Overview and scroll there once (SA-W3 (a), F5-R2). The page never writes a
+ * hash or history itself: the hook stays the one URL writer.
  *
  * Money M-1 (finance health §11D.3): with a business picked, the account
- * header and the account summary sit above the KPI strip (never with all
- * businesses, M1-FR-10). The picked NAME is held here, in state, and never in
+ * header and the account summary sit at the top of the content (never with
+ * all businesses, M1-FR-10). The picked NAME is held here, in state, and never in
  * the URL, a request or a log (SA-Q32, AC-109): the URL is written only from
  * the filters, whose type has no name field.
  *
@@ -49,6 +58,7 @@ import { ADMIN_WINDOW_LABELS, type AdminWindowValue } from '@/app/admin/componen
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 
 import { serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
+import { k1AnalyticsHref } from '../financeLinks';
 import {
   FINANCE_CLEAR_PATCH,
   FINANCE_FILTER_SPEC,
@@ -70,13 +80,16 @@ import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
-import { FinanceKpiStrip } from './FinanceKpiStrip';
+import { FinanceKpiPlaceholders, FinanceKpiStrip, type FinanceTileSection, type FinanceTileTarget } from './FinanceKpiStrip';
 import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
 
 /** M3-FR-1: the Accounts tab's keys at their defaults (a pick, or leaving the tab). */
 const TAB_RESET: Partial<FinanceFilters> = { sort: 'ai_cost', group: '', show: 'all' };
+
+/** This page's path, for the Accounts-tab tiles' real links (F-5, SA-W3 (a)). */
+const FINANCE_PATH = '/admin/finance';
 
 /**
  * Today's sections, unchanged. With no business picked they are the Overview
@@ -93,7 +106,7 @@ function OverviewBody({ tabbed, children }: { tabbed: boolean; children: ReactNo
 }
 
 export function FinanceView() {
-  const { filters, setFilters } = useAdminFilters(FINANCE_FILTER_SPEC);
+  const { filters, setFilters, hrefFor } = useAdminFilters(FINANCE_FILTER_SPEC);
   const query = useMemo(() => toFinanceQuery(filters), [filters]);
   const queryString = serialiseFinanceUrl(query);
   const { data, loading, error, reload } = useFinanceData(queryString);
@@ -149,6 +162,37 @@ export function FinanceView() {
     [setFilters]
   );
   const selectedTab: FinanceTab = query.tab === 'accounts' ? 'accounts' : 'overview';
+  const onAccountsTab = selectedTab === 'accounts' && query.accountId === null;
+
+  // F-5 (SA-W3 (a), F5-R2): the section an Accounts-tab tile asked for. Once
+  // Overview is mounted it is scrolled into view ONCE and cleared; no hash.
+  const [jumpTo, setJumpTo] = useState<FinanceTileSection | null>(null);
+  useEffect(() => {
+    if (jumpTo === null || onAccountsTab || !data) return;
+    const target = document.getElementById(jumpTo);
+    if (!target) return;
+    target.scrollIntoView({ block: 'start' });
+    setJumpTo(null);
+  }, [jumpTo, onAccountsTab, data]);
+
+  // F-5 (BD-31): where the sections are on screen, a plain anchor; on the
+  // Accounts tab, the shared filter mode: a real link to Overview at the same
+  // window and business, whose plain click is the Overview tab's one write.
+  const targetFor = useCallback(
+    (section: FinanceTileSection): FinanceTileTarget =>
+      onAccountsTab
+        ? {
+            filter: {
+              href: `${FINANCE_PATH}${hrefFor({ tab: '', ...TAB_RESET })}#${section}`,
+              apply: () => {
+                onSelectTab('overview');
+                setJumpTo(section);
+              },
+            },
+          }
+        : { href: `#${section}` },
+    [onAccountsTab, hrefFor, onSelectTab]
+  );
   const accountName = query.accountId !== null ? accountNameFor(query.accountId, pickedName, data) : null;
   const chipName = accountName === null ? null : accountName.platform ? NAME_PLATFORM : accountName.name;
 
@@ -160,6 +204,19 @@ export function FinanceView() {
   return (
     <div className="space-y-6">
       <AdminPageHeader title={PAGE_TITLE} purpose={PAGE_PURPOSE} asOf={data ? windowLabel : null} />
+
+      {/* F-5 (BD-29): header, KPI strip, filter bar. K-10: placeholders on the first read, nothing on an error. */}
+      {data && !error ? (
+        <FinanceKpiStrip
+          tiles={data.tiles}
+          farOverAllowancePercent={data.credits.farOverAllowancePercent}
+          windowLabel={windowLabel}
+          aiCostHref={k1AnalyticsHref(data.accountId)}
+          targetFor={targetFor}
+        />
+      ) : (
+        loading && !error && <FinanceKpiPlaceholders />
+      )}
 
       <FinanceFilterBar
         filters={filters}
@@ -219,7 +276,6 @@ export function FinanceView() {
               </FinanceTabPanel>
             ) : (
               <OverviewBody tabbed={query.accountId === null}>
-                <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
                 <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
                 <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
                 <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />

@@ -7,6 +7,11 @@
 // `account` sections from tables (DE-3: preferences, notification settings,
 // business profile, business addresses) and, from DE-5 on, the later Business
 // OS sections. Comment only in DE-3: no behaviour changed (DE-3 SA C-4).
+// DE-5 money sections (quotes, invoices, payments, refunds, payment plans and
+// instalments, saved payment methods, the Stripe account, payment providers)
+// read through the same method: comment only, no behaviour changed. Every
+// child table (refunds, instalments) is read by its OWN `user_id`, never by
+// following a parent id, so a crossed pointer carries a bare id, never a row.
 //
 // ── Why one repository and not one method per domain repository ────────────
 // SA granted this as a GRANULARITY exception inside the repository layer (DE-4

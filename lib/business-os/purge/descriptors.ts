@@ -415,6 +415,257 @@ const BUSINESS_ADDRESSES_EXPORT: TableExportClassification = {
   },
 };
 
+// ── DE-5: client money (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §3) ───────────
+// What the business's clients were quoted, invoiced, charged and refunded, the
+// payment plans they are on and their instalments (group `client_records`,
+// AgentPilot the processor), and which Stripe account and payment provider the
+// business takes money through (group `account`, AgentPilot the controller;
+// DE-5 SA-Q1). Money paid to US (plans, credits, boosts) is not in these
+// tables and never in the file (DX-1a). Every list was reconciled with the
+// live schema on 2026-10-16 (workplan §11.1): `columns` ∪ `excludedColumns` is
+// exactly the live column set of each table. Order matters: the export
+// repository selects `columns.join(', ')`, pinned byte for byte in the route
+// characterization test.
+//
+// Currency (CLAUDE.md § Currency & Timezone): every amount is exported as
+// stored, next to the currency column it is denominated in; nothing is
+// converted, summed or defaulted. `processor_fee` / `net_amount` are in
+// `fee_currency`, which is not always the payment's. `payment_refunds.
+// fee_returned` / `refund_fee` have NO currency column and are exported with
+// none (SA-Q6). No total of any kind (user BC-11). The pairing is pinned in
+// exportClassification.test.ts (SA C-4).
+//
+// All history is in: failed, cancelled, refunded, draft, superseded rows, each
+// with its status (user BC-2). None of these tables soft-deletes, so no
+// rowFilter. Changing a list changes what the export holds: a privacy
+// decision, and an SA item.
+
+/** Why a DE-5 COLUMN stays out. Repeated reasons are named, not retyped. */
+const MONEY_COLUMN_REASON = {
+  PROCESSOR_METADATA:
+    'processor plumbing (Stripe object ids already in their own columns, routing bits); no key the owner entered on live rows (DE-5 SA-Q3)',
+  RECONCILIATION_STATE:
+    'which Stripe account our refund path must target; internal routing state (DE-5 SA-Q7)',
+  RETRY_STATE: "the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)",
+  CARD_EXPIRY: 'user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out',
+  ACTOR_ID:
+    'the id that started the refund inside our system, which can be an AgentPilot operator; `source` says how it was started (DE-5 SA-Q15)',
+  IDEMPOTENCY: "our internal dedupe key for the refund request, not the owner's data (and a secret deny-list name)",
+  PROVIDER_CAPABILITY: "what the payment provider can do: a product fact, not the owner's data",
+} as const;
+
+/**
+ * `payment_transactions` -> section `payments`: every payment a client made
+ * or attempted (failed and pending in, with their status). `processor_fee`
+ * and `net_amount` are in `fee_currency` (NULL fee and NULL fee_currency mean
+ * "fee not recorded", not zero). `metadata` is READ but never written raw: the
+ * section keeps only `notes` (what the owner typed when recording a cash or
+ * bank payment) and `source` (how the payment was recorded), as strings
+ * (PAYMENT_METADATA_KEYS in data-export/sections.ts, DE-5 SA-Q3, user BC-7).
+ * `charge_account_kind` is out with `account_resolution` (SA-Q7): on live
+ * rows `platform` only ever marks a manual payment the owner recorded, and in
+ * a client-money file it would read as money paid to AgentPilot.
+ */
+const PAYMENT_TRANSACTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payments',
+  columns: [
+    'id', 'contact_id', 'invoice_id', 'booking_id', 'service_id', 'amount', 'currency', 'status', 'payment_method',
+    'description', 'metadata', 'failure_reason', 'paid_at', 'refund_status', 'refunded_amount', 'refunded_at',
+    'refund_reason', 'processor_type', 'processor_refund_id', 'processor_fee', 'net_amount', 'fee_currency',
+    'stripe_payment_intent_id', 'stripe_charge_id', 'stripe_customer_id', 'stripe_connect_account_id', 'created_at',
+    'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    account_resolution: MONEY_COLUMN_REASON.RECONCILIATION_STATE,
+    charge_account_kind: MONEY_COLUMN_REASON.RECONCILIATION_STATE,
+  },
+};
+
+/**
+ * `payment_refunds` -> `refunds`: the append-only refund ledger, one dated row
+ * per refund, amounts POSITIVE as stored (money returned to the client; SA-Q4).
+ * `amount_minor` is the figure Stripe was told, in the refund's own
+ * `currency`. `fee_returned` / `refund_fee` carry no currency (SA-Q6).
+ */
+const PAYMENT_REFUNDS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'refunds',
+  columns: [
+    'id', 'transaction_id', 'invoice_id', 'amount', 'amount_minor', 'currency', 'status', 'reason', 'reason_note',
+    'processor_type', 'processor_refund_id', 'stripe_connect_account_id', 'source', 'failure_code', 'failure_message',
+    'fee_returned', 'refund_fee', 'created_at', 'updated_at', 'succeeded_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    idempotency_key: MONEY_COLUMN_REASON.IDEMPOTENCY,
+    initiated_by: MONEY_COLUMN_REASON.ACTOR_ID,
+    metadata: MONEY_COLUMN_REASON.PROCESSOR_METADATA,
+  },
+};
+
+/**
+ * `payment_invoices` -> `invoices`: drafts, cancelled and refunded invoices
+ * in. The owner's private `internal_notes` are in (user BC-7). The Stripe
+ * invoice web and PDF links (`stripe_hosted_invoice_url`,
+ * `stripe_invoice_pdf`) are IN by the user's decision (BC-3, 2026-10-16, which
+ * overrides the workplan default and SA-Q5): anyone holding the file can open
+ * those invoice pages.
+ */
+const PAYMENT_INVOICES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'invoices',
+  columns: [
+    'id', 'contact_id', 'booking_id', 'service_id', 'invoice_number', 'amount', 'currency', 'status', 'line_items',
+    'due_date', 'payment_terms', 'notes', 'internal_notes', 'sent_at', 'paid_at', 'payment_method', 'payment_received_at',
+    'payment_notes', 'processor_type', 'processor_checkout_id', 'processor_payment_id', 'processor_customer_id',
+    'processor_payment_method_id', 'stripe_invoice_id', 'stripe_hosted_invoice_url', 'stripe_invoice_pdf', 'client_name',
+    'client_email', 'client_address', 'refunded_amount', 'refund_status', 'refunded_at', 'allow_online_payment',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    retry_count: MONEY_COLUMN_REASON.RETRY_STATE,
+    last_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+    next_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+  },
+};
+
+/**
+ * `proposals` -> `quotes` (the product calls them quotes). Every status in.
+ * `decline_note` is the client's own words to the business; `accepted_snapshot`
+ * is the record of what the client agreed to, whole (live key census: the
+ * quote's own terms only, workplan §11.1 Q4).
+ */
+const PROPOSALS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'quotes',
+  columns: [
+    'id', 'contact_id', 'service_id', 'booking_id', 'package_booking_id', 'document_id', 'supersedes_id',
+    'created_invoice_id', 'created_plan_id', 'title', 'description', 'currency', 'total', 'prices_include_tax', 'tax_rate',
+    'tax_label', 'payment_shape', 'payment_terms_days', 'sessions', 'status', 'valid_until', 'decline_reason',
+    'decline_note', 'stop_reason', 'stop_note', 'accepted_snapshot', 'sent_at', 'viewed_at', 'decided_at', 'stopped_at',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `payment_plans` -> `payment_plans`: the owner's plan templates, inactive ones in. */
+const PAYMENT_PLANS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payment_plans',
+  columns: [
+    'id', 'service_id', 'name', 'description', 'total_amount', 'currency', 'supported_currencies', 'installment_count',
+    'installment_amount', 'installment_frequency', 'allowed_processors', 'preferred_processor', 'is_active', 'created_at',
+    'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `payment_plan_subscriptions` -> `client_payment_plans`: the plans clients
+ * are on, past-due, cancelled and completed ones in. Card brand and last 4
+ * in; expiry out (user BC-1).
+ */
+const PAYMENT_PLAN_SUBSCRIPTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_payment_plans',
+  columns: [
+    'id', 'contact_id', 'booking_id', 'service_id', 'payment_plan_id', 'stripe_subscription_id', 'stripe_schedule_id',
+    'stripe_price_id', 'stripe_customer_id', 'stripe_connect_account_id', 'installment_count', 'installment_amount',
+    'currency', 'frequency', 'periods_paid', 'status', 'next_charge_at', 'next_charge_amount', 'last_failure_code',
+    'last_failure_at', 'card_brand', 'card_last4', 'cancel_reason', 'cancel_note', 'cancelled_by', 'created_at',
+    'updated_at', 'completed_at', 'cancelled_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    card_exp_month: MONEY_COLUMN_REASON.CARD_EXPIRY,
+    card_exp_year: MONEY_COLUMN_REASON.CARD_EXPIRY,
+    metadata: MONEY_COLUMN_REASON.PROCESSOR_METADATA,
+  },
+};
+
+/** `payment_plan_installments` -> `installments`: every instalment, cancelled ones in. */
+const PAYMENT_PLAN_INSTALLMENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'installments',
+  columns: [
+    'id', 'payment_plan_id', 'subscription_id', 'booking_id', 'contact_id', 'proposal_id', 'invoice_id', 'transaction_id',
+    'installment_number', 'label', 'trigger', 'amount', 'currency', 'due_date', 'status', 'paid_at', 'payment_method',
+    'processor_type', 'stripe_invoice_id', 'completed_at', 'cancel_reason', 'cancel_note', 'cancelled_by', 'cancelled_at',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    retry_count: MONEY_COLUMN_REASON.RETRY_STATE,
+    last_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+    next_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+  },
+};
+
+/**
+ * `saved_payment_methods` -> `client_payment_methods`. `processor_method_id`
+ * is a Stripe reference, not a credential: charging it needs the business's
+ * own secret key (SA-Q5). No card number is ever stored. Expiry out (BC-1).
+ */
+const SAVED_PAYMENT_METHODS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_payment_methods',
+  columns: [
+    'id', 'contact_id', 'processor_type', 'processor_customer_id', 'processor_method_id', 'method_type', 'brand',
+    'last_four', 'is_default', 'is_valid', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    expiry_month: MONEY_COLUMN_REASON.CARD_EXPIRY,
+    expiry_year: MONEY_COLUMN_REASON.CARD_EXPIRY,
+  },
+};
+
+/**
+ * `stripe_connect_accounts` -> `payment_account` (group `account`): the
+ * business's own Stripe account, one per owner. `currency` is the account's
+ * settlement currency, stored lower case and exported as stored; it explains
+ * `fee_currency` on payments. `stripe_email` is the owner's own email for the
+ * account (SA-Q13).
+ */
+const STRIPE_CONNECT_ACCOUNTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payment_account',
+  columns: [
+    'id', 'stripe_account_id', 'stripe_account_type', 'charges_enabled', 'payouts_enabled', 'details_submitted',
+    'onboarding_completed', 'country', 'currency', 'business_type', 'stripe_email', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `payment_processors` -> `payment_providers` (group `account`): which
+ * provider the business uses and whether it is connected (disconnected rows
+ * are a status, in). `credentials` is never selected, not even to drop later
+ * (user BC-12: keys never).
+ */
+const PAYMENT_PROCESSORS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payment_providers',
+  columns: ['id', 'processor_type', 'is_active', 'is_default', 'connection_status', 'last_verified_at', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    credentials: EXPORT_REASON.SECRET,
+    supports_checkout: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+    supports_saved_methods: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+    supports_refunds: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+    supports_partial_refunds: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+  },
+};
+
 /**
  * Ordering bands. Lower runs first.
  *
@@ -613,26 +864,26 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
 
   // ── §3.5 Payments ────────────────────────────────────────────────────────
-  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: PAYMENT_REFUNDS_EXPORT,
     notes: 'B1 — RESTRICT onto payment_transactions, so this goes first. Deleting it fires T2, the single T5 residue path.' },
-  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: PAYMENT_PLAN_SUBSCRIPTIONS_EXPORT,
     notes: 'B2 (RESTRICT onto scheduling_bookings), so this goes first. CASCADE parent of payment_plan_installments, which sit in PRE_BLOCKING ahead of it. SELECT-only RLS.' },
-  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: PAYMENT_TRANSACTIONS_EXPORT },
+  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: PAYMENT_INVOICES_EXPORT },
+  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: PAYMENT_PLANS_EXPORT },
+  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows', export: PAYMENT_PLAN_INSTALLMENTS_EXPORT,
     notes: 'CASCADE child of payment_plan_subscriptions (BLOCKING_CHILD), so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
-  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'payment event log feeding the automation engine; the payments, invoices and refunds it records are exported themselves (user BC-5, 2026-10-16; as business_events, §0.3.1 SQ-E7)') },
+  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.PLATFORM, 'the built-in payment rules the platform seeds; the owner cannot create or edit them (defaultPaymentRules.ts; user BC-6, 2026-10-16)') },
+  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'automation run history and its claim / lease columns (user BC-5, 2026-10-16)') },
+  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'payment reminders scheduled and sent to clients: emails sent are activity (user BC-4, 2026-10-16; as DE-4 BC-6)'),
     notes: 'CASCADE child of payment_plan_installments, so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
-  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: SAVED_PAYMENT_METHODS_EXPORT },
+  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.PLATFORM, 'dead table superseded by saved_payment_methods: no app reads or writes it, 0 rows (live 2026-10-16); drop migration pending'),
     notes: 'Live — 2026-08-14_drop_payment_methods.sql was never applied. Measured, not assumed.' },
-  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: PAYMENT_PROCESSORS_EXPORT,
     notes: 'Holds credentials JSONB. Kept by Reset so test payments work immediately.' },
-  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: STRIPE_CONNECT_ACCOUNTS_EXPORT,
     notes: 'The pre-flight gate READS this in phase 1, long before phase 2 deletes it.' },
 
   // ── §3.6 Email automation ────────────────────────────────────────────────
@@ -722,7 +973,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'K* — RETAINED BY BOTH LEVELS. Holds preferred_language and currency. Deleting it resets the owner\'s language while they are reading the result screen, and renders their NEXT sign-in wrong — on a login that survives every level (D3).' },
 
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
-  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: PROPOSALS_EXPORT,
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
   { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
     notes: 'Lead data is customer data.' },
