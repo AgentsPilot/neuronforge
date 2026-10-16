@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-14
+> **Last Updated**: 2026-10-16
 
 ## Overview
 
@@ -40,7 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-15** (AI model price review slice 5, on `86dd3266` plus that slice): **106 handlers across 75
+Re-derived **2026-10-16** (AI model price review slice 6, on `447d17a2` plus that slice): **103 handlers across 75
+route files = 97 `requireAdmin` + 6 inline + 0 open.** Slice 6 deletes four pricing handlers and one route file (Sync, and the single-row `PUT`/`POST`/`DELETE`; rows 57, 59, 60 and 61 struck through) and registers `business-os/test/plan-test-clock#POST` (row 110), which landed on main in `be3eab13` (plan payments P-6a.1) without a row. Before that, **2026-10-15** (AI model price review slice 5, on `86dd3266` plus that slice): **106 handlers across 75
 route files = 100 `requireAdmin` + 6 inline + 0 open.** Slice 5 adds one file with two handlers, rows 108–109. Before that, **2026-10-14** (slice 3, on `799f8018` plus that slice): **104 handlers across 74
 route files = 98 `requireAdmin` + 6 inline + 0 open.** (2026-10-09: 100 across 70. Two handlers landed on main since without a register row, `business-os/finance#GET` and `business-os/test/take-credits#POST`, both `requireAdmin`; slice 3 adds two.) The split is measured, not
 asserted — re-run the census rather than trusting these figures if much time has
@@ -179,7 +180,7 @@ passed.
 | It derives admin identity **only** from `admin_users`, via `AdminAccessService` | ✅ True |
 | It fails closed, answers **401** signed-out / **403** non-admin, and never 500s on an authorization outcome | ✅ True |
 | No app-code access decision reads `profiles.role` — a repo-wide sweep returns **zero** hits | ✅ True, and CI rule R4 keeps it that way |
-| **Every one of the 104 `/api/admin/*` handlers requires an admin.** 98 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-14** (slices 2 + 3 of the unification; re-counted from disk in AI model price review slice 3) |
+| **Every one of the 103 `/api/admin/*` handlers requires an admin.** 97 via `requireAdmin`, 6 via their own equivalent check. **Zero open.** | ✅ **True as of 2026-10-16** (slices 2 + 3 of the unification; re-counted from disk in AI model price review slice 6) |
 | **All 28 `/admin` pages are protected on the server**, by inheritance from `app/admin/layout.tsx` | ✅ **True as of 2026-09-21** (slice 5), for the 21 pages then. The 7 added since inherited it without an edit: `business-os-tiers`, `business-os-llm`, `platform-dashboard` (the old landing, moved in admin reorganisation slice 4, beside the rewritten `/admin` Health page), `archiving` (Admin Archiving slice 1), `jobs-queues` (admin reorganisation slice 5, a client page), `business-os-invites` (invite-only signup slice 0) and `agentspilot-billing` (ADMIN_BOS_CLEANUP slice 2, a client page). 21 + 7 = 28. Re-counted 2026-09-27: 26 `page.tsx` files under `app/admin/`. Re-counted 2026-10-03 from disk: 27 on `5061489b`, 28 after ADMIN_BOS_CLEANUP slice 2 |
 | A **new** admin route cannot ship ungated | ✅ **True.** `Admin authz surface guard` is a **required status check** on `main` with `enforce_admins` and `strict` — a red guard blocks the merge |
 | A **new** `/admin` page is protected before its author writes a line of it | ✅ True — it renders as `children` of the guarded layout; there is no per-page opt-out |
@@ -206,7 +207,7 @@ verbs open in the *same* files, so a file-level table would have been misleading
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**98 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 rows 99–103 on 2026-10-09 and rows 104–107 on 2026-10-14; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02. **107 rows, 104 live**, equal to the measured handler count.)
+**97 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 rows 99–103 on 2026-10-09 rows 104–107 on 2026-10-14, rows 108–109 on 2026-10-15 and row 110 on 2026-10-16; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02; rows 57, 59, 60 and 61 likewise, deleted on 2026-10-16. **110 rows, 103 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -266,11 +267,11 @@ the right unit for the register.
 | 54 | `storage-tiers` | `PUT` | ✅ gated | `requireAdmin` |
 | 55 | `system-config` | `GET` | ✅ gated | `requireAdmin` |
 | 56 | `system-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 57 | `system-config/pricing` | `DELETE` | ✅ gated | `requireAdmin` |
+| ~~57~~ | ~~`system-config/pricing`~~ | ~~`DELETE`~~ | 🗑 deleted 2026-10-16 | AI model price review slice 6 (MP-FR-11, Q9): the hard delete of a price row. Next.js now answers 405 |
 | 58 | `system-config/pricing` | `GET` | ✅ gated | `requireAdmin` |
-| 59 | `system-config/pricing` | `POST` | ✅ gated | `requireAdmin` |
-| 60 | `system-config/pricing` | `PUT` | ✅ gated | `requireAdmin` |
-| 61 | `system-config/pricing/sync` | `POST` | ✅ gated | `requireAdmin` |
+| ~~59~~ | ~~`system-config/pricing`~~ | ~~`POST`~~ | 🗑 deleted 2026-10-16 | Idem: create a price row directly. 405 |
+| ~~60~~ | ~~`system-config/pricing`~~ | ~~`PUT`~~ | 🗑 deleted 2026-10-16 | Idem: the per-row Edit. 405 |
+| ~~61~~ | ~~`system-config/pricing/sync`~~ | ~~`POST`~~ | 🗑 deleted 2026-10-16 | Idem: Sync, which copied a built-in list over the live prices. The file is gone (404) |
 | 62 | `system-limits` | `PUT` | ✅ gated | `requireAdmin` |
 | 63 | `token-usage` | `GET` | ✅ gated | `requireAdmin` |
 | 64 | `token-usage` | `HEAD` | ✅ gated | `requireAdmin` |
@@ -319,6 +320,7 @@ the right unit for the register.
 | 107 | `model-pricing/comparison` | `GET` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 3: read-only comparison of what we charge today versus the newest pending provider price, with coverage colours and the Business OS areas using each model. Takes no query parameter (400). No audit (a read). 401/403 before any read, pinned by its route test |
 | 108 | `model-pricing/fetch-runs` | `POST` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 5: "Check provider prices". Takes no input (an empty strict Zod object, 400 otherwise), so no URL can be supplied; fetches only the two pinned public URLs (OpenAI's pricing page, LiteLLM's list), refuses a second check within 60 s (409). Stores **pending** lines only, through the service-role RPC `ai_price_submit_pending` (`fetch`), which repeats the `admin_users` check; writes no live price and changes no charge. Audited `AI_PRICE_FETCH_RUN` with `logAndFlush`. 401/403 before the body is read or anything is fetched, pinned by its route test |
 | 109 | `model-pricing/fetch-runs` | `GET` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 5: the "Check provider prices" status (per source, the last run, last success and last failure, SA SC-12). Takes no query parameter (400). Reads only through `AiPriceProposalRepository`. No audit (a read). 401/403 before any read, pinned by its route test |
+| 110 | `business-os/test/plan-test-clock` | `POST` | ✅ gated | `requireAdmin` first statement (`plan-test-clock/route.ts:85`). Gated from birth by plan payments P-6a.1 (`be3eab13`, the test-mode test clock attach); registered 2026-10-16 in AI model price review slice 6 (SA SC6-7) |
 
 ### CI enforcement
 
@@ -719,3 +721,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-13 | Admin users page wording (LF-5) | The revoke step quotes the page's new section title "Admins set in the server configuration" (was "Granted by the ADMIN_EMAILS environment setting"). Doc text only |
 | 2026-10-14 | AI model price review slice 3: register rows 104–107, census 104 = 98 + 6 + 0, 74 files | Re-counted from disk (SA C-9): 72 route files and 102 handlers on `799f8018`, two of them never registered (`business-os/finance#GET`, `business-os/test/take-credits#POST`, both `requireAdmin` first, rows 104–105, doc only). Slice 3 adds `model-pricing/manual-entries#POST` and `model-pricing/comparison#GET` (rows 106–107), both `requireAdmin` first statement. No guard cap changes |
 | 2026-10-15 | AI model price review slice 5: register rows 108–109, census 106 = 100 + 6 + 0, 75 files | Rows **108** `model-pricing/fetch-runs#POST` ("Check provider prices") and **109** `model-pricing/fetch-runs#GET` (its status), both gated from birth with `requireAdmin` as the first statement. Census re-counted from disk on `86dd3266` plus this slice: 75 route files. No guard cap changes |
+| 2026-10-16 | AI model price review slice 6: rows 57/59/60/61 struck, row 110 added, census 103 = 97 + 6 + 0, 75 files | Sync (`system-config/pricing/sync#POST`) and the single-row `system-config/pricing` `PUT`, `POST` and `DELETE` deleted (MP-FR-11); `GET` (row 58) stays. Row **110** `business-os/test/plan-test-clock#POST` registered: gated, landed in `be3eab13` without a row. Re-counted from disk; no guard cap moved (no exemption names either pricing file). Stale totals in the truth table and the register summary corrected |
