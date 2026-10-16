@@ -42,6 +42,13 @@
  * in the profile section; `role` is. `user_preferences` is now read twice
  * (the preferences section, then the timezone), so a timezone-only error is
  * seeded under `user_preferences:maybeSingle`.
+ *
+ * DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §8 M-5, M-6, M-14, M-15; SA
+ * C-5, C-6, C-8): ten money sections. Live currency traps go out byte for byte
+ * (no conversion, no default, no case change), `summary` keeps its four keys,
+ * the tables of money paid to AgentPilot and the excluded money tables are
+ * never read even when seeded, a planted user id changes nothing in the ten
+ * reads, and the money rows count toward the Phase 1 ceiling.
  */
 
 import { NextRequest } from 'next/server';
@@ -359,14 +366,20 @@ describe('GET /api/user/data-export', () => {
     // DE-4: + the eight client_records sections and their tables.
     // DE-4 (user 2026-10-15): plugin_connections removed; + user_preferences (the file name's clock).
     // DE-3: + the four account sections read from tables, after user_profile, and their tables.
+    // DE-5: + payment_account, payment_providers after business_addresses; + the eight money sections after time_off.
     expect(sectionIds).toEqual([
       'account_identity', 'user_profile', 'preferences', 'notification_settings', 'business_profile', 'business_addresses',
+      'payment_account', 'payment_providers',
       'pipeline_stages', 'clients', 'client_activities', 'client_tasks', 'client_documents', 'services', 'bookings', 'time_off',
+      'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
     ]);
+    // DE-5: + the ten money tables.
     expect(Object.keys(mockCalls).sort()).toEqual([
       'business_addresses', 'business_profiles',
-      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'notification_settings', 'profiles',
-      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'user_preferences',
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'notification_settings',
+      'payment_invoices', 'payment_plan_installments', 'payment_plan_subscriptions', 'payment_plans', 'payment_processors',
+      'payment_refunds', 'payment_transactions', 'profiles', 'proposals', 'saved_payment_methods',
+      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'stripe_connect_accounts', 'user_preferences',
     ]);
     // BC-5: the calendar copy is never read.
     expect(mockCalls.external_calendar_events).toBeUndefined();
@@ -460,6 +473,12 @@ describe('GET /api/user/data-export', () => {
   });
 });
 
+/** DE-5: the ten money tables the export reads, in registry order. */
+const DE5_MONEY_TABLES = [
+  'stripe_connect_accounts', 'payment_processors', 'proposals', 'payment_invoices', 'payment_transactions', 'payment_refunds',
+  'payment_plans', 'payment_plan_subscriptions', 'payment_plan_installments', 'saved_payment_methods',
+] as const;
+
 describe('DE-4: client records and the Phase 1 ceiling (U-9)', () => {
   const C1 = '10000000-0000-4000-8000-000000000001';
   const C2 = '20000000-0000-4000-8000-000000000002';
@@ -513,6 +532,11 @@ describe('DE-4: client records and the Phase 1 ceiling (U-9)', () => {
     // DE-3 (X-14): the four account tables were read, each keyed on the session id.
     for (const table of ['user_preferences', 'notification_settings', 'business_profiles', 'business_addresses']) {
       expect(mockCalls[table]).toContainEqual(['eq', 'user_id', OWNER.id]);
+    }
+    // DE-5 (M-14, SA C-8): and the ten money tables, each keyed on the session id only.
+    for (const table of DE5_MONEY_TABLES) {
+      expect(mockCalls[table]).toContainEqual(['eq', 'user_id', OWNER.id]);
+      expect(mockCalls[table].filter((c) => c[0] === 'eq').every((c) => c[1] === 'user_id' && c[2] === OWNER.id)).toBe(true);
     }
   });
 
@@ -699,5 +723,119 @@ describe("DE-4 (user 2026-10-15): the file name's clock never fails the export",
       throwSpy.mockRestore();
       jest.useRealTimers();
     }
+  });
+});
+
+// ── DE-5: client money (SA C-5, C-6, M-15) ──────────────────────────────────
+
+describe('DE-5 C-5: the live currency traps go out exactly as stored; no total', () => {
+  const PAY_ILS_USD_FEE = '61000000-0000-4000-8000-000000000001';
+  const PAY_USD_NO_FEE = '62000000-0000-4000-8000-000000000002';
+  const REFUND_ILS = '63000000-0000-4000-8000-000000000003';
+  const CONNECT = '64000000-0000-4000-8000-000000000004';
+  const INVOICE_EUR = '65000000-0000-4000-8000-000000000005';
+
+  function seedTraps(): void {
+    // One owner, two (three) currencies: ILS and USD payments, a EUR invoice.
+    mockSeeds.payment_transactions = [
+      // ILS payment, fees in USD (39 such rows live).
+      { id: PAY_ILS_USD_FEE, user_id: OWNER.id, amount: 350.5, currency: 'ILS', status: 'succeeded', processor_fee: 3.21, net_amount: 91.04, fee_currency: 'USD', refunded_amount: 120, charge_account_kind: 'connect', account_resolution: 'resolved' },
+      // USD payment, fee not recorded: NULL fee and NULL fee_currency (58 live), never zero, never filled in.
+      { id: PAY_USD_NO_FEE, user_id: OWNER.id, amount: 80, currency: 'USD', status: 'failed', processor_fee: null, net_amount: null, fee_currency: null },
+    ];
+    // An ILS refund under the USD-fee payment, with fee_returned set: it gains NO currency key.
+    mockSeeds.payment_refunds = [
+      { id: REFUND_ILS, user_id: OWNER.id, transaction_id: PAY_ILS_USD_FEE, amount: 120, amount_minor: 12000, currency: 'ILS', status: 'succeeded', fee_returned: 1.1, refund_fee: null, idempotency_key: 'QA-IDEMPOTENCY-NEVER' },
+    ];
+    // Connect currency is stored lower case live: exported as stored.
+    mockSeeds.stripe_connect_accounts = [{ id: CONNECT, user_id: OWNER.id, stripe_account_id: 'acct_1', currency: 'usd', country: 'IL' }];
+    mockSeeds.payment_invoices = [{ id: INVOICE_EUR, user_id: OWNER.id, amount: 99.99, currency: 'EUR', status: 'draft', refunded_amount: 0 }];
+  }
+
+  it('every amount and currency is byte-equal to the seed; NULL stays NULL; usd stays lower case', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedTraps();
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text);
+    expect(JSON.stringify(sectionOf(body, 'payments').rows)).toBe(JSON.stringify([
+      { id: PAY_ILS_USD_FEE, amount: 350.5, currency: 'ILS', status: 'succeeded', refunded_amount: 120, processor_fee: 3.21, net_amount: 91.04, fee_currency: 'USD', metadata: {} },
+      // No metadata in the seed: the allow-list still writes an object, as clients.source_metadata.
+      { id: PAY_USD_NO_FEE, amount: 80, currency: 'USD', status: 'failed', processor_fee: null, net_amount: null, fee_currency: null, metadata: {} },
+    ]));
+    // The refund keeps its own currency (ILS) and gets no fee currency from its USD-fee payment.
+    const [refund] = sectionOf(body, 'refunds').rows;
+    expect(JSON.stringify(refund)).toBe(JSON.stringify({
+      id: REFUND_ILS, transaction_id: PAY_ILS_USD_FEE, amount: 120, amount_minor: 12000, currency: 'ILS', status: 'succeeded', fee_returned: 1.1, refund_fee: null,
+    }));
+    expect(Object.keys(refund).filter((k) => /currency/.test(k))).toEqual(['currency']);
+    expect(sectionOf(body, 'payment_account').rows).toEqual([{ id: CONNECT, stripe_account_id: 'acct_1', country: 'IL', currency: 'usd' }]);
+    expect(sectionOf(body, 'invoices').rows).toEqual([{ id: INVOICE_EUR, amount: 99.99, currency: 'EUR', status: 'draft', refunded_amount: 0 }]);
+    // BC-11: no total of any kind; the summary keeps exactly its four keys.
+    expect(Object.keys(body.summary)).toEqual(['section_counts', 'failed_sections', 'export_size_kb', 'export_duration_ms']);
+    expect(Object.values(body.summary.section_counts).every((v) => Number.isInteger(v))).toBe(true);
+    expect(text).not.toMatch(/"(total|totals|money_total|revenue|revenue_by_currency|sum|amount_total)"\s*:/);
+    // Out columns stay out.
+    for (const leaked of ['QA-IDEMPOTENCY-NEVER', '"charge_account_kind"', '"account_resolution"', '"user_id"']) {
+      expect(JSON.stringify(body.sections)).not.toContain(leaked);
+    }
+    // The audit entry carries counts only: no amount, no currency.
+    const details = mockAuditLog.mock.calls[0][0].details;
+    expect(details.section_counts).toMatchObject({ payments: 2, refunds: 1, payment_account: 1, invoices: 1 });
+    const audit = JSON.stringify(details);
+    for (const s of ['ILS', 'USD', 'EUR', '350.5', '99.99']) expect(audit).not.toContain(s);
+  });
+
+  it('negative control: a planted money total in the summary would be seen', () => {
+    const planted = { section_counts: {}, failed_sections: [], export_size_kb: 1, export_duration_ms: 0, money_total: 430.5 };
+    expect(Object.keys(planted)).not.toEqual(['section_counts', 'failed_sections', 'export_size_kb', 'export_duration_ms']);
+    expect(JSON.stringify({ summary: planted })).toMatch(/"(total|totals|money_total|revenue|revenue_by_currency|sum|amount_total)"\s*:/);
+  });
+});
+
+describe('DE-5 C-6 (a): money paid to AgentPilot is never read, even when seeded', () => {
+  // SA F-1 (2026-10-16): `subscriptions` is not a live table, so it is not seeded.
+  const MONEY_TO_US = [
+    'billing_events', 'boost_pack_purchases', 'user_subscriptions', 'credit_transactions', 'subscription_invoices',
+    'business_os_account_plans', 'business_os_billing_accounts', 'business_os_billing_events', 'business_os_credit_charges',
+    'business_os_credit_totals', 'business_os_credit_lots', 'business_os_credit_lot_draws', 'business_os_boost_purchases',
+  ];
+  const EXCLUDED_MONEY = ['payment_events', 'payment_reminders', 'payment_automation_rules', 'payment_automation_executions', 'payment_methods'];
+
+  /** Billing or excluded tables among the tables a run touched. */
+  const touchedForbidden = (touched: readonly string[]): string[] =>
+    touched.map((k) => k.replace(/^anon:/, '')).filter((t) => MONEY_TO_US.includes(t) || EXCLUDED_MONEY.includes(t));
+
+  it('the run touches exactly the 23 section tables (+ the timezone read on user_preferences); none of these', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    for (const t of [...MONEY_TO_US, ...EXCLUDED_MONEY]) {
+      mockSeeds[t] = [{ id: '70000000-0000-4000-8000-000000000007', user_id: OWNER.id, amount: 49, currency: 'USD', note: `QA-${t}-NEVER` }];
+    }
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(touchedForbidden(Object.keys(mockCalls))).toEqual([]);
+    expect(Object.keys(mockCalls)).toHaveLength(23);
+    expect(text).not.toContain('NEVER');
+  });
+
+  it('negative control: a run that touched a billing table is red', () => {
+    expect(touchedForbidden(['payment_transactions', 'billing_events', 'anon:payment_events'])).toEqual(['billing_events', 'payment_events']);
+  });
+});
+
+describe('DE-5 M-15: the money sections draw on the Phase 1 row ceiling', () => {
+  it('payments over the remaining budget: 413, no file, no DATA_EXPORTED', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    mockSeeds.payment_transactions = Array.from({ length: 3 }, (_, n) => ({ id: `8000000${n}-0000-4000-8000-000000000000`, user_id: OWNER.id, amount: 10, currency: 'ILS' }));
+    // identity 1 + payments 3 = 4 > 3.
+    mockLimits.ROW_CEILING = 3;
+    const res = await GET(request());
+    expect(res.status).toBe(413);
+    expect(res.headers.get('Content-Disposition')).toBeNull();
+    expect(mockAuditLog).not.toHaveBeenCalled();
+    const warn = mockLogged.find((l) => l.msg === 'Data export refused: over the Phase 1 ceiling');
+    expect(warn).toMatchObject({ level: 'warn', fields: { limit: 'rows', rowCeiling: 3, atSection: 'payments' } });
   });
 });
