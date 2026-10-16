@@ -33,6 +33,7 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { V2_CUSTOM_TOKENS_CONFIG_KEY } from '@/lib/design-system-v2/customTokens';
 
 const logger = createLogger({ module: 'AdminSystemConfigAPI' });
 
@@ -81,13 +82,26 @@ function isReservedKey(key: string): boolean {
 }
 
 /**
- * Exact keys this route must never write. `helpbot_embedding_model` is read by
- * Business OS chat's plan cache and verified questions (EmbeddingService):
- * changing it invalidates every stored vector, so it is a data migration, not a
- * setting (`lib/business-os/llm/modelSettingsPolicy.ts`). The HelpBot route
- * refuses it too (ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL, SA F-1).
+ * Exact keys this route must never write, each with the message the admin sees.
+ *
+ * - `helpbot_embedding_model` is read by Business OS chat's plan cache and
+ *   verified questions (EmbeddingService): changing it invalidates every stored
+ *   vector, so it is a data migration, not a setting
+ *   (`lib/business-os/llm/modelSettingsPolicy.ts`). The HelpBot route refuses it
+ *   too (ADMIN_HELPBOT_LOCK_AND_AUDIT_EMAIL, SA F-1).
+ * - `v2_custom_tokens` is validated on save only by `/api/admin/ui-config`
+ *   (slice F-1, SA R-1); a free-form write here would skip that validation.
  */
-const LOCKED_KEYS: ReadonlySet<string> = new Set(['helpbot_embedding_model']);
+const LOCKED_KEYS: ReadonlyMap<string, string> = new Map([
+  [
+    'helpbot_embedding_model',
+    'helpbot_embedding_model cannot be changed here: it is shared with Business OS chat and changing it is a data migration.',
+  ],
+  [
+    V2_CUSTOM_TOKENS_CONFIG_KEY,
+    `${V2_CUSTOM_TOKENS_CONFIG_KEY} cannot be changed here: edit the design tokens at /admin/ui-config, which validates them.`,
+  ],
+]);
 
 function isLockedKey(key: string): boolean {
   return LOCKED_KEYS.has(canonicalKey(key));
@@ -233,11 +247,7 @@ export async function PUT(request: NextRequest) {
         'Refused a write to a locked settings key'
       );
       return NextResponse.json(
-        {
-          success: false,
-          error:
-            'helpbot_embedding_model cannot be changed here: it is shared with Business OS chat and changing it is a data migration.',
-        },
+        { success: false, error: LOCKED_KEYS.get(canonicalKey(lockedKeys[0])) },
         { status: 400 }
       );
     }
