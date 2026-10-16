@@ -25,7 +25,7 @@ This retrospective covers the three Finance layout-standard slices the finance s
 |---|---|---|---|
 | F-2 header and states | UI short path | #424, merged | The page now uses `AdminPageHeader` (h1 "Finance"), `AdminLoading`, `AdminError` and `AdminNotice`, and the content area carries `aria-busy`. `adminReadFallback` is exported from the shared reader. Finance joined `MIGRATED_PAGES`. "Retry" became "Try again" everywhere on the page (F2-R2). SA approved with no conditions, and QA passed. |
 | F-4 filter bar and URL state | Full cycle | #434, merged | `AdminFilterBar` and `useAdminFilters` own all eight keys, so each change is one write. The canonical keys are `range` and `account`, and the `preset` and `accountId` aliases are read forever. Refresh and Read-at moved into the bar, which ended DV-1. The bad-link notice was removed (BD-30, U-4 per key). The AC-173 request pin was written first and frozen. E-60 allows four intended request changes, and F4-R4 records the page deviations in the standard. Both stale `router.replace` comments were fixed. |
-| F-5 KPI tiles | Full cycle (shared folder) | About to be committed on `feature/finance-f5-kpi-tiles` | The shared `KpiStrip` gained the green, not-measured and unavailable statuses, an optional value, a `detail` line and a cross-page `link` mode. There is still a single green, `OK_GREEN`. The tiles sit above the bar on both tabs and in the picked view. K-2 to K-5 jump to their sections, and K-1 opens AI cost & usage on This month plus the business (W7(a), E-62). Finance no longer imports Health's `STATUS_STYLES`. SA approved with no conditions, and QA passed with no bugs. |
+| F-5 KPI tiles | Full cycle (shared folder) | #437, open (auto-merge on); commit `24cf0c3d` | The shared `KpiStrip` gained the green, not-measured and unavailable statuses, an optional value, a `detail` line and a cross-page `link` mode. There is still a single green, `OK_GREEN`. The tiles sit above the bar on both tabs and in the picked view. K-2 to K-5 jump to their sections, and K-1 opens AI cost & usage on This month plus the business (W7(a), E-62). Finance no longer imports Health's `STATUS_STYLES`. SA approved with no conditions, and QA passed with no bugs. |
 
 ### What went well
 
@@ -69,7 +69,7 @@ This retrospective covers the three Finance layout-standard slices the finance s
 | FU-5 | M-8: remove the old pages | Finance stream |
 | FU-6 | Open user question: should a refunded boost take its credits back? | User |
 
-### Status: F-2 MERGED (#424) — F-4 MERGED (#434) — F-5 PENDING COMMIT — `feature/finance-f5-kpi-tiles` — hash to be recorded by RM
+### Status: F-2 MERGED (#424) — F-4 MERGED (#434) — F-5 PR #437 (auto-merge on) — `feature/finance-f5-kpi-tiles` — commit `24cf0c3d`
 
 ---
 
@@ -78,3 +78,4 @@ This retrospective covers the three Finance layout-standard slices the finance s
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-16 | Created | TL retrospective for F-2, F-4, F-5 (DF-4 / Money M-6); draft awaiting user approval |
+| 2026-10-16 | F-5 commit recorded (RM) | F-5 committed `24cf0c3d`, PR #437 opened with auto-merge on |
