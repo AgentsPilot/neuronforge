@@ -266,11 +266,13 @@ describe('Help drawer (UF-7)', () => {
     const dialog = await screen.findByTestId('pricing-help-drawer');
     expect(dialog).toHaveAttribute('role', 'dialog');
     expect(dialog).toHaveAccessibleName('About model pricing');
-    expect(within(dialog).getByText(/Copies a built-in price list, kept in the code/)).toBeInTheDocument();
+    // Slice 6 (SA SC6-6 a): the Sync paragraph is gone; the removed-buttons paragraph replaces it.
+    expect(within(dialog).queryByText(/Copies a built-in price list, kept in the code/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/The Sync button and the per-row Edit have been removed[.]/)).toBeInTheDocument();
     expect(within(dialog).getByText(/in effect on all servers within 1 hour/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Apply \(coming later\)/)).toBeInTheDocument();
     expect(within(dialog).getByText(/History \(coming later\)/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/will be removed in a later update, when Apply arrives/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Until Apply arrives, a live price can only be changed in the database by an operator/)).toBeInTheDocument();
 
     fireEvent.keyDown(dialog, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

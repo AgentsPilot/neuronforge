@@ -479,10 +479,13 @@ export const AUDIT_EVENTS = {
   // SYSTEM CONFIGURATION EVENTS
   // ==========================================
   ROUTING_CONFIG_UPDATED: 'ROUTING_CONFIG_UPDATED', // Intelligent routing settings
+  // Historic: the five AI_PRICING_* events below are no longer emitted since AI model
+  // price review slice 6 removed Sync and the single-row edit. They stay registered so
+  // existing audit rows keep their label and severity (SA D-4).
   AI_PRICING_CREATED: 'AI_PRICING_CREATED',
   AI_PRICING_UPDATED: 'AI_PRICING_UPDATED',
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
-  AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
+  AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Sync copied a built-in list from the code; it never contacted a provider
   AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
   // AI model price review slice 3: an admin recorded a provider's new price by hand. It is
   // PENDING only (ai_price_proposal_lines) and changes no charge until someone applies it.
@@ -1384,7 +1387,7 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.AI_PRICING_SYNCED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'AI model pricing synced from external source',
+    description: 'AI model pricing synced from the built-in list',
   },
   // Critical, like AI_PRICING_DELETED: the revenue effect is comparable — every
   // call to a zero-priced model is billed at $0 until someone notices.

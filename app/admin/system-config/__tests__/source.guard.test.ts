@@ -8,12 +8,13 @@
  * - P fetches only the pricing routes; B keeps every AgentsPilot fetch and
  *   handler binding it had (counted, not just present: `tsc` cannot see a
  *   dropped `onClick`).
- * - Sync is parked (UC-5) and frozen byte for byte (C2-1). Its handler and its
- *   button are held below as whole literal blocks, so any edit to either one,
- *   formatting included, fails here. The only approved change is the handler's
- *   one logging line, already substituted in the fixture.
- * - S-1 and S-4 re-pinned to the true text: AI_MODEL_PRICE_REVIEW slice 1,
- *   approved SA 2026-10-08 R-5.
+ * - SA 2026-10-16 slice 6 R-5 (moved from slice 8 by R-9 row 6): Sync and the
+ *   per-row Edit are removed (MP-FR-11, user decision Q9). The old byte-for-byte
+ *   Sync pins (S-9 handler, S-10 button) are replaced by assertions that no Sync
+ *   and no direct write exists on P (S-2, S-3, S-5..S-7 inverted; NW-1). S-1 and
+ *   S-4 are re-pinned byte for byte to the new truthful text.
+ * - S-1 and S-4 were first re-pinned in AI_MODEL_PRICE_REVIEW slice 1, approved
+ *   SA 2026-10-08 R-5.
  *
  * Line endings are normalised first, so a Windows checkout reads the same as CI.
  */
@@ -33,67 +34,10 @@ const count = (haystack: string, needle: string) => haystack.split(needle).lengt
 
 const P = read('app/admin/system-config/page.tsx');
 const B = read('app/admin/agentspilot-billing/page.tsx');
+/** The page's copy module (slice 4); MT-1 scans it too (SA SC6-6 b). */
+const COPY = read('app/admin/system-config/priceReviewCopy.ts');
 const pCode = codeOf(P);
 const bCode = codeOf(B);
-
-/** S-9 (SA W2-3): `handleSyncPricing`, whole, with the one approved logger line. */
-const SYNC_HANDLER = `
-  const handleSyncPricing = async () => {
-    try {
-      setSaving(true);
-      setError(null);
-      setSuccess(null);
-
-      const response = await fetch('/api/admin/system-config/pricing/sync', {
-        method: 'POST'
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to sync pricing');
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to sync pricing');
-      }
-
-      setSuccess(result.message || 'Pricing synced successfully!');
-
-      // Refresh pricing data after sync since it fetches from external API
-      await fetchData(true);
-
-      setTimeout(() => setSuccess(null), 5000);
-
-    } catch (error) {
-      logger.error({ err: error }, 'Pricing sync failed');
-      setError(error instanceof Error ? error.message : 'Unknown error occurred');
-    } finally {
-      setSaving(false);
-    }
-  };
-`;
-
-/** S-10 (SA W2-3): the Sync button, whole. */
-const SYNC_BUTTON = `
-              <button
-                onClick={handleSyncPricing}
-                disabled={saving}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-              >
-                {saving ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    Sync Latest Pricing
-                  </>
-                )}
-              </button>
-`;
 
 describe('P: Model pricing fetches only the pricing routes (C2-2, G-1, G-2)', () => {
   it('G-1: no AgentsPilot route and no settings read', () => {
@@ -110,13 +54,19 @@ describe('P: Model pricing fetches only the pricing routes (C2-2, G-1, G-2)', ()
     expect(pCode.toLowerCase()).not.toContain('boost');
   });
 
-  it('W2-4: the pricing fetches and handler bindings are all there, counted', () => {
-    expect(count(pCode, "'/api/admin/system-config/pricing'")).toBe(2);
-    expect(count(pCode, "'/api/admin/system-config/pricing/sync'")).toBe(1);
-    expect(count(pCode, 'handleSavePricing(model.id)')).toBe(1);
-    expect(count(pCode, 'handleEditPricing(model)')).toBe(1);
-    expect(count(pCode, 'onClick={handleCancelEditPricing}')).toBe(1);
-    expect(count(pCode, 'onClick={handleSyncPricing}')).toBe(1);
+  it('W2-4 (slice 6): the pricing list is read once, and no Sync or edit handler is left', () => {
+    expect(count(pCode, "'/api/admin/system-config/pricing'")).toBe(1);
+    expect(count(P, '/api/admin/system-config/pricing/sync')).toBe(0);
+    for (const handler of ['handleSyncPricing', 'handleSavePricing', 'handleEditPricing', 'handleCancelEditPricing']) {
+      expect({ handler, count: count(P, handler) }).toEqual({ handler, count: 0 });
+    }
+  });
+
+  it('NW-1 (slice 6): P sends no write request; its one fetch( is the pricing GET', () => {
+    expect(pCode).not.toMatch(/method:\s*['"`](PUT|POST|DELETE|PATCH)['"`]/);
+    const fetches = pCode.match(/(?<![A-Za-z0-9_])fetch[(]/g) ?? [];
+    expect(fetches).toHaveLength(1);
+    expect(pCode).toContain("fetch('/api/admin/system-config/pricing', {\n          method: 'GET',");
   });
 });
 
@@ -144,53 +94,55 @@ describe('P: the header says what the page is (C2-2, G-8)', () => {
   });
 });
 
-describe('P: Sync is unchanged apart from its true text (C2-1, G-5; R-5)', () => {
+describe('P: Sync and the per-row Edit are removed (MP-FR-11; slice 6 R-5)', () => {
   it('S-1: the helper text', () => {
     expect(P).toContain(
-      'Cost per token for each AI model. Sync copies a built-in price list; it does not fetch prices from providers.'
+      'Cost per token for each AI model, as charged today. Live prices cannot be changed on this page until Apply arrives.'
     );
   });
 
-  it('S-2, S-3: the labels', () => {
-    expect(P).toContain('Sync Latest Pricing');
-    expect(P).toContain('Syncing...');
+  it('S-2, S-3: neither Sync label is left anywhere in P, comments included', () => {
+    expect(P).not.toContain('Sync Latest Pricing');
+    expect(P).not.toContain('Syncing...');
   });
 
-  it('S-4: the info-box paragraph', () => {
+  it('S-4: the help paragraph on the removed buttons', () => {
     expect(P).toContain(
-      '<strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.'
+      'The Sync button and the per-row Edit have been removed. Every price change will go through a pending price and Apply. Until Apply arrives, a live price can only be changed in the database by an operator, with the platform owner&apos;s approval.'
     );
   });
 
-  it('S-5 to S-7: the comment, the route and the handler fragments', () => {
-    expect(P).toContain('// Refresh pricing data after sync since it fetches from external API');
-    expect(P).toContain("fetch('/api/admin/system-config/pricing/sync', {");
-    expect(P).toContain("'Failed to sync pricing'");
-    expect(P).toContain("result.message || 'Pricing synced successfully!'");
-    expect(P).toContain('await fetchData(true);');
-    expect(P).toContain('setTimeout(() => setSuccess(null), 5000);');
-  });
-
-  it('S-9: the whole handleSyncPricing function, verbatim', () => {
-    expect(P).toContain(SYNC_HANDLER);
-  });
-
-  it('S-10: the whole Sync button, verbatim', () => {
-    expect(P).toContain(SYNC_BUTTON);
+  it('S-5 to S-7: the Sync comment, route and messages are gone', () => {
+    expect(P).not.toContain('// Refresh pricing data after sync since it fetches from external API');
+    expect(P).not.toContain('/pricing/sync');
+    expect(P).not.toContain('Failed to sync pricing');
+    expect(P).not.toContain('Pricing synced successfully!');
+    expect(P).not.toContain('Failed to update pricing');
   });
 });
 
 describe('P: the info box tells the truth (MP-FR-1)', () => {
-  it('MT-1: none of the false claims is back', () => {
+  it('MT-1: none of the false claims is back (page and copy module)', () => {
     expect(P).not.toContain('Automatically fetches');
     expect(P).not.toContain('Intelligent Routing');
     expect(P).not.toContain('intelligent routing');
     expect(P).not.toContain('per 1,000');
     expect(P).not.toContain('immediately');
+    // Slice 6 (SA SC6-6 b): the old "Sync and Edit change live prices" wording, in either file.
+    for (const [file, source] of [
+      ['page.tsx', P],
+      ['priceReviewCopy.ts', COPY],
+    ] as const) {
+      expect({ file, hit: source.includes('change live prices directly') }).toEqual({ file, hit: false });
+      expect({ file, hit: source.includes('Sync and Edit') }).toEqual({ file, hit: false });
+      expect({ file, hit: source.includes('Edit pricing') }).toEqual({ file, hit: false });
+    }
   });
 
-  it('MT-2: it says when a change takes effect', () => {
-    expect(P).toContain('in effect on all servers within 1 hour');
+  it('MT-2: it says when a change takes effect (the whole sentence, QA E-3)', () => {
+    expect(P).toContain(
+      'Each server keeps its own copy of these prices for up to 1 hour, so a change is in effect on all servers within 1 hour. Changes don&apos;t alter provider billing.'
+    );
   });
 });
 

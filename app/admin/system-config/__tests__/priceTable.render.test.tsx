@@ -3,8 +3,9 @@
  *
  * The one Model pricing table as the price comparison (AI model price review
  * slice 4; user decision UF-5; SA RC-4, RC-7, RC-9, N-1, N-2, NR-1, NR-4,
- * NR-5). Workplan cases T-1 to T-14; T-15 (save re-reads) is R-9 / R-13 in
- * `pages.render.test.tsx`.
+ * NR-5). Workplan cases T-1 to T-15. Slice 6 (MP-FR-11): no row has Edit;
+ * T-11b (the editor) is deleted and T-15 runs on the silent re-read a stored
+ * price check triggers (SA O-9).
  *
  * The comparison rows are built with the real `compareUnit` / `rowCoverage`,
  * so every colour, gap and label is the server's own.
@@ -18,11 +19,14 @@ import { compareUnit, rowCoverage, type UnitComparisonInput } from '@/lib/ai/pri
 
 const mockError = jest.fn();
 // Slice 5: "Check provider prices" is tested on its own in providerPriceCheck.render.test.tsx.
-// Here it is a static stand-in (no status read), so these page cases keep slice 4's call
-// lists and timings.
+// Here it is a stand-in (no status read), so these page cases keep slice 4's call lists and
+// timings. Slice 6: clicking it calls `onFinished`, the page's surviving silent re-read.
 jest.mock('@/app/admin/system-config/components/ProviderPriceCheck', () => ({
   __esModule: true,
-  default: () => jest.requireActual('react').createElement('button', { type: 'button' }, 'Check provider prices'),
+  default: ({ onFinished }: { onFinished?: () => void }) =>
+    jest
+      .requireActual('react')
+      .createElement('button', { type: 'button', 'data-testid': 'price-check-stand-in', onClick: () => onFinished?.() }, 'Check provider prices'),
 }));
 
 jest.mock('@/lib/logger/client', () => {
@@ -275,7 +279,7 @@ describe('one table: ours next to provider (UF-5)', () => {
     expect(within(rowOf('gpt-4o')).queryByRole('link')).not.toBeInTheDocument();
   });
 
-  it('T-11: retired, starts-later and superseded rows (RC-4, NR-1); Edit only where it is charged', async () => {
+  it('T-11: retired, starts-later and superseded rows (RC-4, NR-1); no row has Edit (slice 6)', async () => {
     // QA Bug 2: the browser clock is pinned far past every fixture date, so a
     // version that used the browser clock instead of the server's generatedAt
     // would call the 2026-11-01 row superseded, whatever today's real date is.
@@ -288,21 +292,15 @@ describe('one table: ours next to provider (UF-5)', () => {
     // Intent kept; page layout slice (UF-7): retired and superseded rows show only with "Show retired" on.
     fireEvent.click(screen.getByTestId('show-retired-toggle'));
     expect(within(rowOf('claude-3-haiku')).getByText('Retired 2026-10-11')).toBeInTheDocument();
-    expect(within(rowOf('claude-3-haiku')).queryByTitle('Edit pricing')).not.toBeInTheDocument();
     expect(within(rowOf('gpt-future-row')).getByText('Starts 2026-11-01')).toBeInTheDocument();
-    expect(within(rowOf('gpt-future-row')).getByTitle('Edit pricing')).toBeInTheDocument();
     expect(within(rowOf('gpt-older-row')).getByText('Superseded by a newer row, not charged')).toBeInTheDocument();
-    expect(within(rowOf('gpt-older-row')).queryByTitle('Edit pricing')).not.toBeInTheDocument();
-    // A joined row keeps Edit; a comparison-only row has none.
-    expect(within(rowOf('gpt-4o')).getByTitle('Edit pricing')).toBeInTheDocument();
-    expect(within(rowOf('claude-3-5-sonnet')).queryByTitle('Edit pricing')).not.toBeInTheDocument();
-  });
-
-  it('T-11b: the editor fields say "per token" (NR-4)', async () => {
-    await renderTable();
-    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
-    expect(within(rowOf('gpt-4o-mini')).getByLabelText('Input, per token')).toBeInTheDocument();
-    expect(within(rowOf('gpt-4o-mini')).getByLabelText('Output, per token')).toBeInTheDocument();
+    // Intent changed by slice 6 (MP-FR-11): Edit is gone from every row, charged or not.
+    expect(screen.queryAllByTitle('Edit pricing')).toHaveLength(0);
+    // QA E-2: no button at all whose accessible name starts with "Edit" (a DOM walk, fast).
+    const editNames = Array.from(document.querySelectorAll('button'))
+      .map((button) => (button.getAttribute('aria-label') ?? button.getAttribute('title') ?? button.textContent ?? '').trim())
+      .filter((name) => /^edit/i.test(name));
+    expect(editNames).toEqual([]);
   });
 
   it('T-12: sort by gap, stored-only rows last', async () => {
@@ -339,6 +337,8 @@ describe('one table: ours next to provider (UF-5)', () => {
     const calls = await renderTable();
     expect(calls.sort()).toEqual([`GET ${COMPARISON_URL}`, `GET ${PRICING_URL}`].sort());
     expect(screen.getByTestId('price-review-note')).toHaveTextContent('Nothing in the provider column is charged yet.');
+    // Slice 6 (SA O-7): the note's last sentence is the new truth; the old "Sync and Edit" wording is gone (MT-1).
+    expect(screen.getByTestId('price-review-note')).toHaveTextContent(/Until then, no live price can be changed on this page[.]$/);
     // Lines are pending, so no "nothing entered" notice.
     expect(screen.queryByTestId('no-pending-notice')).not.toBeInTheDocument();
     const names = screen.getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent ?? '');
@@ -355,42 +355,41 @@ describe('one table: ours next to provider (UF-5)', () => {
     expect(await screen.findByTestId('no-pending-notice')).toHaveTextContent('Use Enter provider price to add one.');
   });
 
-  it('T-15 (SA F-4, NR-2): the table is busy while the comparison is re-read after a save, then not', async () => {
-    // QA timing (one 5 s timeout under load): a save re-renders the whole page about six times, and with the
-    // full ten-row fixture each render is the cost. Intent kept with only the row being saved, and one
-    // waitFor on the busy flag replaces a no-op findByText plus a timer.
+  it('T-15 (SA F-4, NR-2; slice 6 O-9): the table is busy while both lists are re-read silently, then not', async () => {
+    // Slice 6: the save is gone, so the silent re-read under test is the one a stored price check
+    // triggers (`onFinished` -> `fetchData(true)`). Only the row under test, as before (QA timing).
     const quiet: ComparisonModel = { ...MODEL, rows: ROWS.filter((r) => r.currentRowId === 'id-mini') };
     const storedMini = STORED.filter((r) => r.id === 'id-mini');
     let release: () => void = () => undefined;
     let comparisonReads = 0;
-    global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
-      const method = init?.method ?? 'GET';
+    let pricingReads = 0;
+    global.fetch = jest.fn(async (url: string) => {
       if (url === COMPARISON_URL) {
         comparisonReads += 1;
         const reply = { ok: true, status: 200, json: async () => ({ success: true, data: quiet }) };
         if (comparisonReads === 1) return reply;
-        // The re-read after the save waits until the test releases it.
+        // The silent re-read waits until the test releases it.
         return new Promise((resolve) => {
           release = () => resolve(reply);
         });
       }
-      const data = method === 'PUT' ? storedMini[0] : storedMini;
-      return { ok: true, status: 200, json: async () => ({ success: true, data }) };
+      pricingReads += 1;
+      return { ok: true, status: 200, json: async () => ({ success: true, data: storedMini }) };
     }) as unknown as typeof fetch;
 
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
     expect(screen.getByTestId('pricing-table-wrap')).not.toHaveAttribute('aria-busy');
 
-    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing'));
-    fireEvent.click(within(rowOf('gpt-4o-mini')).getByTitle('Save'));
-    await screen.findByText('Pricing updated successfully!');
-    expect(screen.getByTestId('pricing-table-wrap')).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(screen.getByTestId('price-check-stand-in'));
+    await waitFor(() => expect(screen.getByTestId('pricing-table-wrap')).toHaveAttribute('aria-busy', 'true'));
 
     release();
     await waitFor(() => expect(screen.getByTestId('pricing-table-wrap')).not.toHaveAttribute('aria-busy'));
-    expect(within(rowOf('gpt-4o-mini')).getByTitle('Edit pricing')).toBeInTheDocument();
+    expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    // SA O-9: the silent path re-reads both lists, not only the comparison.
     expect(comparisonReads).toBe(2);
+    expect(pricingReads).toBe(2);
   });
 
   it('a row button opens the form pre-filled with that model', async () => {

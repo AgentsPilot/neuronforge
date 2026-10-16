@@ -7,7 +7,7 @@
  * import or a raw `.from('<table>')` call comes back into these routes — which is
  * exactly how the pre-Step-0 code looked.
  *
- * It also holds the line on `console.*`: these three routes are Pino-only.
+ * It also holds the line on `console.*`: these routes are Pino-only (two since AI model price review slice 6 deleted Sync).
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs';
@@ -33,7 +33,9 @@ const files = routeFiles(ROUTES_DIR);
 
 describe('app/api/admin/system-config/** data access', () => {
   it('finds the route files to check', () => {
-    expect(files.length).toBeGreaterThanOrEqual(3);
+    // 3 -> 2 in AI model price review slice 6: the Sync route was deleted (MP-FR-11).
+    // `route.ts` (settings) and `pricing/route.ts` (GET only) remain.
+    expect(files.length).toBeGreaterThanOrEqual(2);
   });
 
   it.each(files.map((f) => [f.replace(process.cwd(), '').replace(/\\/g, '/'), f]))(
