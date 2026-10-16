@@ -2,8 +2,11 @@
 //
 // DE-4 (BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md §2.1, §2.2, §2.4, §2.6;
 // requirement BUSINESS_OS_DATA_EXPORT_REQUIREMENT.md §0.3.2 SQ-A5, §0.3.6,
-// §0.4.1 C): the ONE reader behind every `client_records` section of
-// "Download my data" (and, from DE-5 on, the later Business OS sections).
+// §0.4.1 C): the ONE reader behind every descriptor-driven section of
+// "Download my data": the `client_records` sections (DE-4), the four
+// `account` sections from tables (DE-3: preferences, notification settings,
+// business profile, business addresses) and, from DE-5 on, the later Business
+// OS sections. Comment only in DE-3: no behaviour changed (DE-3 SA C-4).
 //
 // ── Why one repository and not one method per domain repository ────────────
 // SA granted this as a GRANULARITY exception inside the repository layer (DE-4

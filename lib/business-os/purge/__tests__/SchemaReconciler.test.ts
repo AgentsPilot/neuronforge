@@ -254,6 +254,7 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
 
   // DE-4: ten included tables, was two (profiles, plugin_connections).
   // DE-4 (user 2026-10-15): nine, plugin_connections is excluded (connected apps out).
+  // DE-3: thirteen, + business_addresses, business_profiles, notification_settings, user_preferences.
   it('the real set: drift is computed for every included table', () => {
     // Every real include column live, plus one unclassified live column each.
     const columns = PURGE_DESCRIPTORS.flatMap((x) =>
@@ -264,8 +265,9 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
     const r = reconcileSchema({ columns, foreign_keys: [] }, PURGE_DESCRIPTORS);
     const included = PURGE_DESCRIPTORS.filter((x) => x.export.kind === 'include').map((x) => x.table).sort();
     expect(included).toEqual([
-      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'profiles',
-      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services',
+      'business_addresses', 'business_profiles',
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'notification_settings', 'profiles',
+      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'user_preferences',
     ]);
     expect(r.exportColumnDrift).toEqual(included.map((table) => ({ table, column: 'zz_unclassified' })));
     expect(r.exportColumnsMissing).toEqual([]);
