@@ -43,6 +43,19 @@
  * record no longer offers that tier as an upgrade (it now pays for it). A
  * failed re-read never claims success (U-5).
  *
+ * OPENING FAST (settings drawer review C-2, slice C-b)
+ *
+ * The settings page may start the first `my-plan` read before the click
+ * (`planDrawerReads`, `useDrawerPrefetch`) and hand it over through
+ * `takePrefetched`. It is taken ONCE per mount, in a ref-guarded effect
+ * outside the cancellable one, so StrictMode cannot spend it (B-1). It serves
+ * the FIRST read only, and only with no valid checkout marker on the URL and
+ * in the same language (B-2, B-3); a warm answer that is not an `ok` plan is
+ * read again, fresh. Every other read fetches, as before: the bounded
+ * re-reads, "Check again" and the language re-read. Success never comes from
+ * a warmed read: "You're on" needs a marker or an upgrade made in this mount,
+ * and neither exists when the first read is taken.
+ *
  * Also not here: **anything about chat.** The chat capabilities are withheld from
  * Essentials in config and nothing enforces them yet, so a line saying "your plan
  * does not include chat" would be false while chat works. The server drops them;
@@ -68,6 +81,7 @@ import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { createLogger } from '@/lib/logger';
 
 import { PlanPurchase, type PlanChoice } from './PlanPurchase';
+import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
 import { PlanUpgrade } from './PlanUpgrade';
 import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
 
@@ -169,11 +183,26 @@ export interface PlanPayload {
   problem: PlanSentence | null;
 }
 
-/** The plan read. Resolves `null` when the server did not answer with a plan. */
+/**
+ * The section's judgement of a `my-plan` body: the plan when the server
+ * answered with one, otherwise `null`. A narrow check that never throws.
+ */
+function planFrom(body: unknown): PlanPayload | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const { success, data } = body as { success?: unknown; data?: unknown };
+  return success && data ? (data as PlanPayload) : null;
+}
+
+/**
+ * The plan re-read (after checkout or an upgrade, and "Check again"). Resolves
+ * `null` when the server did not answer with a plan, and throws the read's own
+ * error when it failed, as it always has, so each caller logs its own `warn`.
+ * The request itself lives in `planDrawerReads` (one copy, SA Q-8).
+ */
 async function fetchPlan(): Promise<PlanPayload | null> {
-  const response = await fetch('/api/business-os/entitlements/my-plan');
-  const body = await response.json();
-  return body?.success && body?.data ? (body.data as PlanPayload) : null;
+  const read = await readMyPlan();
+  if (read.kind === 'threw') throw read.err;
+  return planFrom(read.body);
 }
 
 /**
@@ -303,7 +332,41 @@ function CategoryRowText({
   );
 }
 
-export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string | null } = {}) {
+/**
+ * A warm read is used only when it answered with a plan that is `ok` (SA Q-3).
+ * Anything else (`unavailable`, `no_plan_record`, `success: false`, a throw)
+ * is read once more, fresh.
+ */
+function isUsableWarm(answer: PlanRead): boolean {
+  return answer.kind === 'answered' && planFrom(answer.body)?.status === 'ok';
+}
+
+/** Why a warm read was not used, for a `debug` line: never the body, never a plan name (SA-CB-4). */
+function discardContext(answer: PlanRead): { reason: string; status?: number; err?: unknown } {
+  if (answer.kind === 'threw') return { reason: 'threw', err: answer.err };
+  const data = planFrom(answer.body);
+  return { reason: data ? `plan_${data.status}` : 'no_plan', status: answer.status };
+}
+
+interface FirstRead {
+  /** The language the read was started for. */
+  language: string;
+  read: Promise<PlanRead>;
+  /** Started by the page before the click, rather than by this mount. */
+  preloaded: boolean;
+}
+
+export function PlanSection({
+  checkoutMarker = null,
+  takePrefetched,
+}: {
+  checkoutMarker?: string | null;
+  /**
+   * C-b: hands over the read the settings page started before the click, or
+   * `null`. Called once per mount, for the first read only.
+   */
+  takePrefetched?: () => PlanDrawerRead | null;
+} = {}) {
   const { t, isRTL, language, timezone } = useLanguage();
 
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
@@ -317,6 +380,9 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
   const [upgradeTarget, setUpgradeTarget] = useState<string | null>(null);
   const [upgradeWatching, setUpgradeWatching] = useState(false);
   const mounted = useRef(true);
+  /** C-b (B-1): the first read is fixed once per mount, StrictMode included. */
+  const firstStarted = useRef(false);
+  const firstRead = useRef<FirstRead | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -391,39 +457,81 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
     return () => clearTimeout(timer);
   }, [processing, exhausted, loading, refreshes]);
 
+  /*
+   * The FIRST read, fixed once per mount (C-b, B-1). Declared immediately
+   * before the `[language]` effect, which applies it: React runs one
+   * component's effects in declaration order, so this always runs first
+   * (SA-CB-3).
+   *
+   * In an effect guarded by a ref, not in render and not in a `useState`
+   * initializer: under StrictMode the mount render runs twice and the first
+   * one's hooks are thrown away, so a `take()` there would be spent by the
+   * discarded render. Effects re-run on the same fiber, so the ref survives and
+   * StrictMode's re-run starts and takes nothing. The cold read starts here
+   * too, so the cancelled run and the kept run share ONE request (SA Q-2).
+   */
+  useEffect(() => {
+    if (firstStarted.current) return;
+    firstStarted.current = true;
+    // Always taken, even when it will not be used: a set never outlives the
+    // mount it was offered to (rule 1, SA Q-4).
+    const offered = takePrefetched?.() ?? null;
+    const usable =
+      offered !== null &&
+      // B-2: a checkout return always reads fresh.
+      !isCheckoutReturnMarker(checkoutMarker) &&
+      // B-3: a set started in another language is not this one.
+      offered.language === language;
+    firstRead.current = usable
+      ? { language, read: offered.plan, preloaded: true }
+      : { language, read: readMyPlan(), preloaded: false };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only: the set is taken once (B-1)
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     /*
-     * No language on the request, deliberately.
-     *
-     * Plan and feature NAMES are config data and are resolved server-side — from
-     * the reader's own stored preference, not from anything sent here. That
-     * route's guard protects the property that there is nothing to read in a
-     * request, so no `?accountId=` can ever be honoured; a `?lang=` would have
-     * been the first crack in it.
-     *
-     * Re-fetched when the language changes so those names catch up once the
-     * preference is saved. The SENTENCES do not wait for that — they are keys,
+     * No language on the request: see `planDrawerReads`. Re-read when the
+     * language changes so the plan and feature NAMES catch up once the
+     * preference is saved. The SENTENCES do not wait for that: they are keys,
      * rendered below, and switch immediately.
+     *
+     * The first run applies the first read (above), when it was started in this
+     * language. Any other run reads fresh (B-2), and the first read is spent
+     * once it is applied, so a later switch back reads fresh too.
      */
-    fetchPlan()
-      .then((data) => {
+    const pending = firstRead.current;
+    const first = pending !== null && pending.language === language ? pending : null;
+    if (first === null) firstRead.current = null;
+
+    void (async () => {
+      // StrictMode: the cancelled run and the kept run await the same promise.
+      let answer = first !== null ? await first.read : await readMyPlan();
+      if (cancelled) return;
+      // An unusable warm answer is never shown: read once more, fresh, and judge
+      // only that answer (SA Q-3). A cold first read is applied as it is.
+      if (first !== null && first.preloaded && !isUsableWarm(answer)) {
+        logger.debug(discardContext(answer), 'Prefetched plan read unusable; reading again');
+        answer = await readMyPlan();
         if (cancelled) return;
-        if (!data) {
-          setFailed(true);
-          return;
-        }
-        setPlan(data);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        logger.error({ err: error }, 'Could not load the plan section');
+      }
+      if (first !== null) firstRead.current = null;
+
+      if (answer.kind === 'threw') {
+        logger.error({ err: answer.err }, 'Could not load the plan section');
         setFailed(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        return;
+      }
+      const data = planFrom(answer.body);
+      if (!data) {
+        setFailed(true);
+        return;
+      }
+      setPlan(data);
+    })().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
 
     return () => {
       cancelled = true;
