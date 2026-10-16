@@ -42,6 +42,7 @@ import { useLinkOpenedDrawer } from '@/components/business-os/settings/useLinkOp
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { MarketingConsentDrawer } from '@/components/business-os/settings/MarketingConsentDrawer';
 import { startMarketingDrawerReads } from '@/components/business-os/settings/marketingDrawerReads';
+import { startPlanDrawerRead } from '@/components/business-os/settings/planDrawerReads';
 import { DRAWER_PREFETCH_MAX_AGE_MS, useDrawerPrefetch } from '@/components/business-os/settings/useDrawerPrefetch';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -156,6 +157,43 @@ function BusinessOSSettingsContent() {
     // take the set it opened with; the close drops anything left, so the next
     // warm after a save is fresh (the hook's rule 6).
     paused: consentDrawerOpen,
+    maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
+    warmOnIdle: true,
+  });
+
+  /*
+   * Your plan's read, started before the click (settings drawer review C-2,
+   * slice C-b), in the same way and through the same hook as the consent
+   * reads above. `PlanSection` takes it once, for its first read only; a
+   * checkout return and every re-read still fetch. The route is named in
+   * `planDrawerReads`, not here (B-4).
+   *
+   * Warmed only until the drawer has been opened and closed once (SA Q-1 (b),
+   * rule 7). Unlike the consent drawer, this one has no busy lock: it can
+   * close while a purchase or an upgrade is still landing, so a read started
+   * after the close could predate it, and a reopen would show the old plan,
+   * with its Upgrade or Choose button, as current. After the first close every
+   * open reads fresh, as before.
+   *
+   * The spent flag is derived in render (state set during render, React's
+   * pattern for a value that depends on earlier renders), so it is never true
+   * while the drawer is open and is true in the very render that closes it:
+   * `enabled` and `paused` change together, and no warm can start after the
+   * close (SA-CB-1). Set on the open instead, `enabled` would drop the set
+   * before the drawer's portal mounted to take it.
+   */
+  const [planDrawerOpened, setPlanDrawerOpened] = useState(false);
+  if (planDrawer.open && !planDrawerOpened) setPlanDrawerOpened(true);
+  const planWarmSpent = planDrawerOpened && !planDrawer.open;
+  const planPrefetch = useDrawerPrefetch({
+    start: () => startPlanDrawerRead(language),
+    // B-3: the language is in the key, never on the request.
+    key: user?.id ? `${user.id}:${language}` : null,
+    // As the consent hook (parity, SA Q-5), and never after the first close.
+    enabled: !loading && !isConfigurationOpen && !planWarmSpent,
+    // Paused rather than disabled while open, so the drawer can still take the
+    // set it opened with (the hook's rule 6).
+    paused: planDrawer.open,
     maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
     warmOnIdle: true,
   });
@@ -1002,8 +1040,11 @@ function BusinessOSSettingsContent() {
             sale it stays read-only and shows no button that does nothing.
 
             Since settings drawer S-1 the row opens a drawer instead of expanding
-            in place. It shows the title only (C-8): the plan is fetched when the
-            drawer opens, by `PlanSection`, as it was when the row expanded.
+            in place. It shows the title only (C-8). Since C-b the plan read is
+            started before the click (browser idle, or the row's hover, focus or
+            press) and `PlanSection` takes it for its first read, but only until
+            the drawer has been opened and closed once. A checkout return, every
+            later open and every re-read inside the drawer read fresh.
           */}
           {/* Id kept (S-5, SA W-5). Nothing in the repo links to it any more (every
               sender uses `?section=plan`), but it costs nothing, matches the
@@ -1015,6 +1056,9 @@ function BusinessOSSettingsContent() {
               type="button"
               aria-haspopup="dialog"
               aria-expanded={planDrawer.open}
+              onPointerEnter={planPrefetch.warm}
+              onFocus={planPrefetch.warm}
+              onPointerDown={planPrefetch.warm}
               onClick={planDrawer.openFromRow}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
@@ -1035,7 +1079,7 @@ function BusinessOSSettingsContent() {
             >
               {/* P-4.2: the checkout return marker (display only; the section
                   pattern-checks it and only the server re-read shows a plan). */}
-              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
+              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} takePrefetched={planPrefetch.take} />
             </SettingsDrawer>
           </div>
 

@@ -14,6 +14,12 @@
  * before; the drawer takes the reads; and none of it leaks into `loadData` or
  * names a route in the page. The hook's own rules have their own tests.
  *
+ * Since C-b the page holds a SECOND call, for the plan drawer
+ * (`planPrefetch.guard.test.ts` pins that one). This file pins the consent
+ * call only: it is found by its name, the count is exactly two with the names
+ * `consentPrefetch` and `planPrefetch`, and each negative control proves its
+ * mutation hit the consent call and not the plan call (SA-CB-6).
+ *
  * Pins run on comment-stripped source, so a commented-out line cannot satisfy
  * them. Each pin has a negative control.
  * ─────────────────────────────────────────────────────────────────────────────
@@ -57,8 +63,21 @@ function moduleStateViolations(source: string): string[] {
   return declarations.filter((line) => !/^(?:export\s+)?const\s+[A-Z][A-Z0-9_]*\s*=\s*[\d_]+\s*;\s*$/.test(line.trimEnd()));
 }
 
-/** The `useDrawerPrefetch({ … })` call's options object. */
-const prefetchCall = (source: string) => braceBlock(source, 'useDrawerPrefetch(');
+/**
+ * The consent `useDrawerPrefetch({ … })` call's options object, found by its
+ * name: the plan call (C-b) has the same shape and must never be read here.
+ */
+const prefetchCall = (source: string) => braceBlock(source, 'const consentPrefetch = useDrawerPrefetch(');
+
+/** The names of every `const <name> = useDrawerPrefetch(` in the page, sorted. */
+const prefetchNames = (source: string) => [...source.matchAll(/const\s+(\w+)\s*=\s*useDrawerPrefetch\(/g)].map((m) => m[1]).sort();
+
+/** T-G1 whole: exactly two calls, one per drawer, by name; then the consent call's options. */
+function t1(source: string) {
+  expect(source.split('useDrawerPrefetch(').length - 1).toBe(2);
+  expect(prefetchNames(source)).toEqual(['consentPrefetch', 'planPrefetch']);
+  g1(source);
+}
 
 /** The consent row button, up to its closing tag. */
 function consentRow(source: string): string {
@@ -125,9 +144,8 @@ function g5(source: string) {
 }
 
 describe('the page wiring (C-5)', () => {
-  it('T-G1: one prefetch, keyed by account and language, off while loading or while the configuration dialog is open, paused while the drawer itself is open', () => {
-    expect(code.split('useDrawerPrefetch(').length - 1).toBe(1);
-    g1(code);
+  it('T-G1: two prefetches, one per drawer (consent and plan, C-b); the consent one keyed by account and language, off while loading or while the configuration dialog is open, paused while the drawer itself is open', () => {
+    t1(code);
   });
 
   it('T-G2: the consent row warms on hover, focus and press, and still opens with the same onClick', () => {
@@ -154,29 +172,42 @@ describe('negative controls: each pin fails on the mutation it exists for', () =
     expect(code).toContain(needle);
     return code.replace(needle, replacement);
   };
+  /**
+   * SA-CB-6: `replace` changes the first occurrence only, and the plan call
+   * shares some of these strings. A T-G1 control must prove it changed the
+   * CONSENT call, or it could pass by mutating the plan call.
+   */
+  const hitsConsent = (mutated: string) => {
+    expect(prefetchCall(mutated)).not.toBe(prefetchCall(code));
+    return mutated;
+  };
 
   it('T-G1 fails without !isConfigurationOpen, and without !loading', () => {
-    expect(() => g1(without('!loading && !isConfigurationOpen', '!loading'))).toThrow();
-    expect(() => g1(without('!loading && !isConfigurationOpen', '!isConfigurationOpen'))).toThrow();
+    expect(() => g1(hitsConsent(without('!loading && !isConfigurationOpen', '!loading')))).toThrow();
+    expect(() => g1(hitsConsent(without('!loading && !isConfigurationOpen', '!isConfigurationOpen')))).toThrow();
   });
 
   it('T-G1 fails when && becomes || (QA-MU-7)', () => {
-    expect(() => g1(without('enabled: !loading && !isConfigurationOpen,', 'enabled: !loading || !isConfigurationOpen,'))).toThrow();
+    expect(() => g1(hitsConsent(without('enabled: !loading && !isConfigurationOpen,', 'enabled: !loading || !isConfigurationOpen,')))).toThrow();
   });
 
   it('T-G1 fails without the pause on the drawer, or with a different one (QA-CA-B1)', () => {
-    expect(() => g1(without('paused: consentDrawerOpen,'))).toThrow();
-    expect(() => g1(without('paused: consentDrawerOpen,', 'paused: false,'))).toThrow();
-    expect(() => g1(without('paused: consentDrawerOpen,', 'paused: !consentDrawerOpen,'))).toThrow();
+    expect(() => g1(hitsConsent(without('paused: consentDrawerOpen,')))).toThrow();
+    expect(() => g1(hitsConsent(without('paused: consentDrawerOpen,', 'paused: false,')))).toThrow();
+    expect(() => g1(hitsConsent(without('paused: consentDrawerOpen,', 'paused: !consentDrawerOpen,')))).toThrow();
   });
 
   it('T-G1 fails when the drawer term moves into enabled (that drops the set before the drawer can take it)', () => {
     const moved = without('enabled: !loading && !isConfigurationOpen,', 'enabled: !loading && !isConfigurationOpen && !consentDrawerOpen,');
-    expect(() => g1(moved.replace('paused: consentDrawerOpen,', ''))).toThrow();
+    expect(() => g1(hitsConsent(moved.replace('paused: consentDrawerOpen,', '')))).toThrow();
   });
 
   it('T-G1 fails when the key drops the language', () => {
-    expect(() => g1(code.replace('`${user.id}:${language}`', '`${user.id}`'))).toThrow();
+    expect(() => g1(hitsConsent(code.replace('`${user.id}:${language}`', '`${user.id}`')))).toThrow();
+  });
+
+  it('T-G1 fails when the consent call is renamed (the anchor finds it by name; SA-CB-6)', () => {
+    expect(() => t1(without('const consentPrefetch = useDrawerPrefetch(', 'const marketingPrefetch = useDrawerPrefetch('))).toThrow();
   });
 
   it('T-G2 fails without onFocus, and when onClick changes', () => {
