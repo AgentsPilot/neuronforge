@@ -3601,7 +3601,7 @@ export const es = {
     'media.upload.preview_title': 'Vista previa',
     'media.upload.replace': 'Reemplazar imagen',
     'media.upload.max_size': 'Máx {size}MB',
-    'media.upload.invalid_type': 'Ese archivo no es una imagen. Sube un JPEG, PNG, GIF, WebP o SVG.',
+    'media.upload.invalid_type': 'Ese archivo no es una imagen. Sube un JPEG, PNG, GIF o WebP.',
     'media.upload.too_large': 'Ese archivo es demasiado grande. El máximo son {size}MB.',
     'media.upload.failed': 'La subida falló. Inténtalo de nuevo.',
     'media.upload.no_url': 'El archivo se subió pero no pudimos obtener su enlace.',

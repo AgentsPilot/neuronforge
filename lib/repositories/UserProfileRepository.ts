@@ -1,5 +1,5 @@
 // lib/repositories/UserProfileRepository.ts
-// Repository for the user `profiles` table: reads plus two targeted writes.
+// Repository for the user `profiles` table: reads plus four targeted writes.
 //
 // Note on user_id filtering: the `profiles` table's primary key column is `id`,
 // and that value IS the Supabase auth user id (one row per user). Filtering by
@@ -8,7 +8,7 @@
 // the column is just named differently because the row is the user.
 //
 // Profile rows are created by the signup trigger and updated through auth flows
-// and the onboarding UI. The two writes here behave differently on a missing row:
+// and the onboarding UI. The writes here behave differently on a missing row:
 //
 //   updateTimezoneMirror  (settings drawer D-1) UPDATE only. Mirrors the
 //                         timezone onto an EXISTING row; a missing row stays
@@ -31,6 +31,17 @@
 //                         exempts `service_role`, and `role` is never in the
 //                         payload anyway. `role` and `avatar_url` are never
 //                         written by `saveSettingsCard` (D-3 owns `avatar_url`).
+//   setAvatarUrl          (settings drawer D-3) UPSERT on `id`, for the same
+//                         reasons as `saveSettingsCard`: the account with no
+//                         `profiles` row gets one (SA-D2-8), where the old
+//                         browser UPDATE silently saved nothing. Payload is
+//                         `avatar_url`, `updated_at`, then `id` LAST.
+//   clearAvatarUrl        (settings drawer D-3) UPDATE only. Nothing to clear
+//                         on a missing row, so none is created.
+//
+// `findAvatarUrl`, `setAvatarUrl` and `clearAvatarUrl` are called only by
+// `POST` / `DELETE /api/user/avatar`, with the SESSION user's id. None of them
+// logs a URL value.
 //
 // SERVICE-ROLE CLIENT (`supabaseServer`, bypasses RLS) by design: the callers of
 // the writes (`PATCH /api/business-os/preferences`, `PATCH
@@ -40,10 +51,10 @@
 // so nothing the caller sends can name another row or another column
 // (tenant-isolation-guard).
 //
-// Database errors: `findById`, `updateTimezoneMirror`, `findSettingsCard` and
-// `saveSettingsCard` reduce a PostgREST error to `{ code, message }`
-// (`safeDbError`) before logging or returning it, because its `details` can
-// carry row values ("Failing row contains ..."; D-1 SA code review CR-1). The
+// Database errors: `findById`, `updateTimezoneMirror`, `findSettingsCard`,
+// `saveSettingsCard` and the three avatar methods reduce a PostgREST error to
+// `{ code, message }` (`safeDbError`) before logging or returning it, because
+// its `details` can carry row values ("Failing row contains ..."; D-1 SA code review CR-1). The
 // admin and export reads (`listForAdmin`, `findAdminNamesByIds`,
 // `findForUserDataExport`) still log and return the raw error: follow-up
 // CR-1b (Low), to be done when the data-export stream is not editing
@@ -262,6 +273,87 @@ export class UserProfileRepository {
       return { data: true, error: null };
     } catch (error) {
       this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to save the profile card');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * The stored profile-picture URL (D-3, C-19), so `POST` / `DELETE
+   * /api/user/avatar` know which old file to consider deleting.
+   *
+   * `.maybeSingle()`: no row, or a NULL column, is `{ data: null, error: null }`.
+   * The URL is never logged. Never throws.
+   */
+  async findAvatarUrl(userId: string): Promise<RepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select('avatar_url')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const value = (data as { avatar_url?: unknown } | null)?.avatar_url;
+      return { data: typeof value === 'string' ? value : null, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to read the avatar URL');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Store a new profile-picture URL (D-3). An UPSERT on `id`, so it also works
+   * for an account with no `profiles` row (SA-D2-8 / RK-2 / F-25 D-3 note):
+   * the old hook's UPDATE silently saved nothing there. Same reasoning as
+   * `saveSettingsCard` (see the header): identical payload on both paths,
+   * `role` never in it, `id` set LAST. No `.select()`. The URL is never
+   * logged. Never throws.
+   */
+  async setAvatarUrl(userId: string, url: string): Promise<RepositoryResult<true>> {
+    try {
+      if (typeof url !== 'string' || url.length === 0) {
+        this.logger.warn({ userId }, 'Avatar URL save with nothing to write');
+        const empty = new Error('Nothing to update') as Error & { code?: string };
+        empty.code = 'EMPTY_VALUE';
+        return { data: null, error: empty };
+      }
+
+      const payload: Record<string, string> = {};
+      payload.avatar_url = url;
+      // Reset by the BEFORE UPDATE trigger on the update path; needed on insert.
+      payload.updated_at = new Date().toISOString();
+      payload.id = userId;
+
+      const { error } = await this.supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to save the avatar URL');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Clear the profile-picture URL (D-3, Remove). A targeted UPDATE, never an
+   * upsert: there is nothing to clear on a missing row, so none is created
+   * (count 0 is logged at info and is not an error). `{ count: 'exact' }` and
+   * no `.select()` (the PostgREST update + select hazard). Never throws.
+   */
+  async clearAvatarUrl(userId: string): Promise<RepositoryResult<true>> {
+    try {
+      const { error, count } = await this.supabase
+        .from('profiles')
+        .update({ avatar_url: null, updated_at: new Date().toISOString() }, { count: 'exact' })
+        .eq('id', userId);
+
+      if (error) throw error;
+      if (count === 0) {
+        this.logger.info({ userId }, 'No profile row to clear the avatar on');
+      }
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to clear the avatar URL');
       return { data: null, error: toSafeError(error) };
     }
   }
