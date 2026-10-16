@@ -26,6 +26,10 @@ import {
   BoxSelect
 } from 'lucide-react'
 import { v2Tokens } from '@/lib/design-system-v2/tokens'
+import { clientLogger } from '@/lib/logger/client'
+import { radiusOptions, shadowOptions, spacingOptions, fontSizeOptions } from './presets'
+
+const logger = clientLogger.child({ module: 'AdminUiConfigPage' })
 
 type UIVersion = 'v1' | 'v2'
 
@@ -125,20 +129,17 @@ export default function UIConfigPage() {
         },
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch UI configuration')
-      }
+      // Body first: the route's error text is more useful than the status.
+      const result = await response.json().catch(() => null)
 
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to load configuration')
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Failed to load configuration')
       }
 
       setCurrentVersion(result.data.uiVersion || 'v1')
       setCustomTokens(result.data.customTokens || {})
     } catch (err) {
-      console.error('Error:', err)
+      logger.error({ err }, 'Failed to load UI configuration')
       setMessage({ type: 'error', text: 'Failed to load configuration' })
     } finally {
       setLoading(false)
@@ -165,20 +166,17 @@ export default function UIConfigPage() {
         })
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to save custom tokens')
+      // Body first: a 400 names the invalid tokens, which the banner shows.
+      const result = await response.json().catch(() => null)
+
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Failed to save tokens')
       }
 
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to save tokens')
-      }
-
-      setMessage({ type: 'success', text: 'Custom tokens saved successfully! Refresh V2 pages to see changes.' })
+      setMessage({ type: 'success', text: 'Saved. Pages pick up the change within about a minute.' })
       setEditMode(false)
     } catch (err) {
-      console.error('Error:', err)
+      logger.error({ err }, 'Failed to save custom tokens')
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'An error occurred while saving' })
     } finally {
       setSaving(false)
@@ -202,21 +200,17 @@ export default function UIConfigPage() {
         })
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to reset tokens')
-      }
+      const result = await response.json().catch(() => null)
 
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to reset tokens')
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Failed to reset tokens')
       }
 
       setCustomTokens({})
       setMessage({ type: 'success', text: 'Tokens reset to defaults successfully!' })
       setEditMode(false)
     } catch (err) {
-      console.error('Error:', err)
+      logger.error({ err }, 'Failed to reset custom tokens')
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'An error occurred while resetting' })
     } finally {
       setSaving(false)
@@ -250,14 +244,10 @@ export default function UIConfigPage() {
         })
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to update UI version')
-      }
+      const result = await response.json().catch(() => null)
 
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to update version')
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Failed to update version')
       }
 
       setCurrentVersion(newVersion)
@@ -266,7 +256,7 @@ export default function UIConfigPage() {
         text: `Successfully switched to ${newVersion.toUpperCase()}! Refresh your browser to see changes.`
       })
     } catch (err) {
-      console.error('Error:', err)
+      logger.error({ err }, 'Failed to update UI version')
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'An error occurred while saving' })
     } finally {
       setSaving(false)
@@ -297,19 +287,7 @@ export default function UIConfigPage() {
     return !options.includes(value)
   }
 
-  // Predefined options for each token type
-  const radiusOptions = ['4px', '8px', '12px', '16px', '20px', '24px', '32px', 'custom']
-  const shadowOptions = [
-    '0 1px 2px rgba(0,0,0,0.05)',
-    '0 2px 4px rgba(0,0,0,0.1)',
-    '0 4px 8px rgba(0,0,0,0.12)',
-    '0 8px 16px rgba(0,0,0,0.15)',
-    '0 2px 16px rgba(0,0,0,0.06)',
-    '0 8px 24px rgba(0,0,0,0.12)',
-    'custom'
-  ]
-  const spacingOptions = ['4px', '8px', '12px', '16px', '20px', '24px', '32px', '40px', '48px', 'custom']
-  const fontSizeOptions = ['0.75rem', '0.875rem', '1rem', '1.125rem', '1.25rem', '1.5rem', '1.875rem', '2.25rem', 'custom']
+  // Preset options live in ./presets.ts (checked against the save schema).
 
   const designTokens = getDesignTokens()
   const colorTokens = designTokens.filter(t => t.category === 'color')

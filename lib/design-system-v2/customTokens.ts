@@ -5,12 +5,14 @@
  * sanitizer and the CSS builder (performance slice TH-1, TH-2 folded in).
  *
  * ── Why this module exists ──────────────────────────────────────────────────
- * An admin saves custom tokens in `/admin/ui-config`; the save route stores the
- * object as-is, without validation. They used to reach the page only through
- * `style.setProperty` in the browser. Now they are read on the server and
- * written into a raw `<style>` element on every owner page, so THIS module is
- * the security boundary: nothing outside the allow-list, and no value outside
- * its grammar, can reach the HTML.
+ * An admin saves custom tokens in `/admin/ui-config`. Since slice F-1 the save
+ * is validated by `lib/validation/admin-ui-config-schema.ts`, which is built from
+ * this module's allow-list and `validTokenValue`, so both sides share one
+ * grammar. They used to reach the page only through `style.setProperty` in the
+ * browser. Now they are read on the server and written into a raw `<style>`
+ * element on every owner page, so THIS module remains the security boundary for
+ * the read: nothing outside the allow-list, and no value outside its grammar,
+ * can reach the HTML, whatever is stored.
  *
  * Pure: no React, no Next, no I/O, no logger (guard G-12). The provider imports
  * only the type.

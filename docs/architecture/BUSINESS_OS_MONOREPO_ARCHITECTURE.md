@@ -1,6 +1,6 @@
 # Business OS — Monorepo Architecture & Migration Decision
 
-> **Last Updated**: 2026-07-16
+> **Last Updated**: 2026-10-16
 
 ## Overview
 
@@ -211,7 +211,7 @@ Separately, `lib/` contains outright UI code that must **not** travel into any p
 | Path | Contents | Destination |
 |---|---|---|
 | `lib/design-system-v2/` | `theme-provider.tsx`, tokens, gradients — `'use client'` | → `apps/orchestrator` |
-| `lib/hooks/` | `useTheme.ts`, `useUIVersion.ts` — `'use client'` | → `apps/orchestrator` |
+| `lib/hooks/` | No `'use client'` module left: `useTheme.ts` and `useUIVersion.ts` had no importer and were deleted (performance slice F-1, 2026-10-16) | — |
 | `lib/client/agent-api.ts` | `'use client'` | → `apps/orchestrator` |
 | `lib/ui/` | thinking-words dictionary/loader | → `apps/orchestrator` |
 | `lib/supabaseClient.ts` | `'use client'` browser client | → `packages/core` (client entrypoint) or app |
@@ -1015,3 +1015,4 @@ The Business OS merge introduced **42 tables + 1 view + 2 storage buckets** acro
 | 2026-07-16 | Q8 revised — gap closed | Reworked Q8 after grounding it in the current code: today's `middleware.ts` does no auth, gating is a client-side layout check, and there is no entitlement gate. Shared auth therefore means Orchestrator's "logged-in + onboarded" gate would admit Business OS users. **New decision (split):** Business OS protects its own routes from day one; the real control is a **server-side entitlement gate on Orchestrator**, sourced from a trusted signal (not `profiles.role`), added as a **Phase 4 prerequisite** (task 4.2). Added §12.2 with the full reasoning. Previously "accepted deferred risk" — now mitigated by design. |
 | 2026-07-16 | Renamed `studio` → `orchestrator` | Renamed the existing-app package throughout: folder `apps/orchestrator`, prose "Orchestrator" (was "Studio"). Reflects the app's role (agent orchestration/management for technical users). Note the mild terminology overlap with the kernel's existing `OrchestrationService` — acceptable, flagged for awareness. |
 | 2026-08-04 | Business OS found already merged — plan amended | Reviewed PR #10 (`7c9801d`) + `06086dc`: ~421 files of Business OS code are already in `main`. Added **§13** (footprint, classification, coupling) and **§14** (data-model pointer), and created companion **[BUSINESS_OS_DATA_MODEL.md](/docs/architecture/BUSINESS_OS_DATA_MODEL.md)** (42 tables + 1 view + 2 buckets). **Rewrote Phase 4** from "scaffold empty business-os" to "**extract** the already-merged BOS" — a bounded `git mv` (4a) + three-file hand-split of `middleware.ts`/`app/(protected)/layout.tsx`/`package.json` (4b) + auth/decisions (4c). Kept Phase 2 as a pure block-move (BOS rides along as part of the single current app). Coupling verified clean (kernel↔BOS zero imports; BOS repos headless). Opened **Q9** (chat/ai-data-layer placement), **Q10** (unwired i18n/`next-intl`), **Q11** (BOS consumes no kernel today — is the shared-kernel premise met?), and a DB-hygiene item (corrupt/duplicate migrations, `WebsiteBlockRepository` lacks `user_id`, RLS-off global tables). |
+| 2026-10-16 | `lib/hooks/` UI row updated | Performance slice F-1 deleted the dead `'use client'` hooks `useTheme.ts` and `useUIVersion.ts` (no importer); the §5.2 row no longer lists them. |

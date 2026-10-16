@@ -168,6 +168,33 @@ describe('PUT validation and reserved keys (T0-2)', () => {
     expect(setMultiple).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['the exact key', 'v2_custom_tokens'],
+    ['an upper-case variant', 'V2_CUSTOM_TOKENS'],
+    ['a zero-width-space prefix', '​v2_custom_tokens'],
+  ])('refuses the locked v2_custom_tokens key (%s) with 400 and writes nothing (F-1 R-1)', async (_label, key) => {
+    const response = await route.PUT(
+      putRequest({ updates: { [key]: { colors: { primary: 'red;}body{display:none' } } } })
+    );
+
+    expect(response.status).toBe(400);
+    const text = await response.text();
+    expect(JSON.parse(text)).toMatchObject({
+      success: false,
+      error: expect.stringContaining('/admin/ui-config'),
+    });
+    expect(text).not.toContain('red;}');
+    expect(setMultiple).not.toHaveBeenCalled();
+  });
+
+  it('refuses a body that mixes v2_custom_tokens with an allowed key', async () => {
+    const response = await route.PUT(
+      putRequest({ updates: { payment_grace_period_days: 7, v2_custom_tokens: {} } })
+    );
+    expect(response.status).toBe(400);
+    expect(setMultiple).not.toHaveBeenCalled();
+  });
+
   it('refuses bos_llm_area_* keys with 400 and writes nothing', async () => {
     const response = await route.PUT(
       putRequest({ updates: { bos_llm_area_chat: { enabled: false } } })
