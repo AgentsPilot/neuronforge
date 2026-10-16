@@ -3,7 +3,9 @@
 /**
  * MediaUploader Component
  * Reusable drag-and-drop image upload component for website blocks
- * Uploads to Supabase Storage bucket: website-images
+ * Uploads through `/api/website/upload`, which alone decides the bucket, the
+ * path and the accepted types (F-27). The browser checks below only mirror
+ * the server's list and limit, so a file the server would refuse is never sent.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -12,6 +14,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { MediaLibraryPicker } from '@/components/website/MediaLibraryPicker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { createLogger } from '@/lib/logger';
+import { WEBSITE_IMAGE_ACCEPT, WEBSITE_IMAGE_MAX_MB, websiteUploadErrorKey } from '@/lib/validation/websiteImage';
 
 const logger = createLogger({ module: 'MediaUploader' });
 
@@ -19,7 +22,10 @@ interface MediaUploaderProps {
   value?: string;
   onChange: (url: string) => void;
   onRemove?: () => void;
-  bucket?: string;
+  /**
+   * Only `logos` (as the last `/`-segment) means anything: it puts the file in
+   * the owner's `logos/` sub-folder. The server never uses this as a path.
+   */
   folder?: string;
   accept?: string;
   maxSizeMB?: number;
@@ -46,10 +52,9 @@ export function MediaUploader({
   value,
   onChange,
   onRemove,
-  bucket = 'website-images',
   folder = '',
-  accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml',
-  maxSizeMB = 5,
+  accept = WEBSITE_IMAGE_ACCEPT,
+  maxSizeMB = WEBSITE_IMAGE_MAX_MB,
   className = '',
   placeholder,
   previewClassName = 'w-full h-32',
@@ -106,7 +111,7 @@ export function MediaUploader({
       if (folder) {
         formData.append('folder', folder);
       }
-      formData.append('bucket', bucket);
+      // No `bucket`: the server decides it (F-27).
 
       const response = await fetch('/api/website/upload', {
         method: 'POST',
@@ -116,7 +121,14 @@ export function MediaUploader({
       const result = await response.json();
 
       if (!response.ok || !result.success) {
-        throw new Error(result.error || t('media.upload.failed'));
+        /*
+         * The server's `error` is fixed English for API callers; the owner
+         * sees their own language, chosen by `code` (F-27 SA-F27-2).
+         */
+        const key = websiteUploadErrorKey(result.code);
+        setError(key === 'media.upload.too_large' ? t(key, { size: WEBSITE_IMAGE_MAX_MB }) : t(key));
+        setStatus('error');
+        return;
       }
 
       if (result.url) {
@@ -126,14 +138,17 @@ export function MediaUploader({
         // Reset success status after 2 seconds
         setTimeout(() => setStatus('idle'), 2000);
       } else {
-        throw new Error(t('media.upload.no_url'));
+        setError(t('media.upload.no_url'));
+        setStatus('error');
       }
     } catch (err) {
+      // A network failure or a body that is not JSON. Its message is the
+      // browser's English, so the owner gets the translated failure instead.
       logger.error({ err }, 'File upload failed');
-      setError(err instanceof Error ? err.message : t('media.upload.failed'));
+      setError(t('media.upload.failed'));
       setStatus('error');
     }
-  }, [accept, bucket, folder, maxSizeBytes, maxSizeMB, onChange]);
+  }, [accept, folder, maxSizeBytes, maxSizeMB, onChange]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

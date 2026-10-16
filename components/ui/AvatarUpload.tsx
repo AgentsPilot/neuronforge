@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Camera, Upload, Trash2, Loader2, User, AlertCircle } from 'lucide-react';
 import { useAvatarUpload } from '../onboarding/hooks/useAvatarUpload';
+import { AVATAR_MIME_TYPES } from '@/lib/validation/avatar';
 
 interface AvatarUploadProps {
   currentAvatarUrl?: string | null;
@@ -164,7 +165,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept={AVATAR_MIME_TYPES.join(',')}
         onChange={handleFileSelect}
         className="hidden"
       />

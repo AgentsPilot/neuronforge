@@ -21,7 +21,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 
 import { AdminConfirmDialog, ADMIN_CONFIRM_TONE_CLASS, type AdminConfirmTone } from '../AdminConfirmDialog';
-import { ADMIN_DIALOG_CLASS } from '../adminDialog';
+import { ADMIN_DIALOG_CLASS, ADMIN_DIALOG_DESCRIPTION_CLASS } from '../adminDialog';
 
 const TITLE = 'Do the thing?';
 
@@ -286,5 +286,106 @@ describe('AdminConfirmDialog', () => {
     expect(field.compareDocumentPosition(buttonIn('Go')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.keyboard('{Enter}');
     expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * LF-9: the four optional props added for Reconcile top-ups. A harness of its
+ * own, so the LF-7 cases above stay byte-identical.
+ */
+describe('AdminConfirmDialog: LF-9 optional props', () => {
+  interface Lf9Props {
+    onConfirm: () => Promise<boolean | void>;
+    description?: string;
+    busyLabel?: string;
+    confirmTestId?: string;
+    cancelTestId?: string;
+  }
+
+  function Lf9Harness({ onConfirm, description, busyLabel, confirmTestId, cancelTestId }: Lf9Props) {
+    const [open, setOpen] = useState(false);
+    return (
+      <div>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open
+        </button>
+        <AdminConfirmDialog
+          open={open}
+          title={TITLE}
+          description={description}
+          confirmLabel="Go"
+          busyLabel={busyLabel}
+          confirmTestId={confirmTestId}
+          cancelTestId={cancelTestId}
+          testId="confirm-under-test"
+          onConfirm={onConfirm}
+          onClose={() => setOpen(false)}
+          onReturnFocus={() => undefined}
+        />
+      </div>
+    );
+  }
+
+  it('AC-15: busyLabel is the confirm words in flight, and the words come back after it settles', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<boolean>();
+    render(<Lf9Harness onConfirm={() => pending.promise} busyLabel="Going…" />);
+    await openIt(user);
+    const confirm = () => within(dialog()).getByRole('button', { name: /Go/ }) as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(confirm());
+    });
+    expect(confirm().textContent).toBe('Going…');
+    expect(confirm().querySelector('svg.animate-spin')?.getAttribute('aria-hidden')).toBe('true');
+    await act(async () => pending.resolve(false));
+    await waitFor(() => expect(confirm().textContent).toBe('Go'));
+  });
+
+  it('AC-15: without busyLabel the confirm keeps its words in flight', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<boolean>();
+    render(<Lf9Harness onConfirm={() => pending.promise} />);
+    await openIt(user);
+    await act(async () => {
+      fireEvent.click(buttonIn('Go'));
+    });
+    expect(buttonIn('Go').textContent).toBe('Go');
+    await act(async () => pending.resolve(false));
+  });
+
+  it('AC-16: description renders in the header with the admin description class and is the accessible description', async () => {
+    const user = userEvent.setup();
+    render(<Lf9Harness onConfirm={async () => undefined} description="Some context." />);
+    const shown = await openIt(user);
+    const text = within(shown).getByText('Some context.');
+    for (const cls of ADMIN_DIALOG_DESCRIPTION_CLASS.split(' ')) expect(text.className).toContain(cls);
+    expect(text.closest('form')).toBeNull();
+    // The accessible description: aria-describedby names the element holding the text.
+    const describedBy = shown.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(describedBy).toBe(text.id);
+    expect(document.getElementById(describedBy as string)?.textContent).toBe('Some context.');
+  });
+
+  it('AC-16: without a description there is no aria-describedby', async () => {
+    const user = userEvent.setup();
+    render(<Lf9Harness onConfirm={async () => undefined} />);
+    const shown = await openIt(user);
+    expect(shown.hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('AC-17: confirmTestId and cancelTestId land on the two buttons, and are absent when not given', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <Lf9Harness onConfirm={async () => undefined} confirmTestId="the-confirm" cancelTestId="the-cancel" />
+    );
+    await openIt(user);
+    expect(within(dialog()).getByTestId('the-confirm')).toBe(buttonIn('Go'));
+    expect(within(dialog()).getByTestId('the-cancel')).toBe(buttonIn('Cancel'));
+    unmount();
+    render(<Lf9Harness onConfirm={async () => undefined} />);
+    await openIt(user);
+    expect(buttonIn('Go').hasAttribute('data-testid')).toBe(false);
+    expect(buttonIn('Cancel').hasAttribute('data-testid')).toBe(false);
   });
 });

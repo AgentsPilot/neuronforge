@@ -3805,7 +3805,7 @@ export const en = {
     'media.upload.preview_title': 'Image preview',
     'media.upload.replace': 'Replace image',
     'media.upload.max_size': 'Max {size}MB',
-    'media.upload.invalid_type': 'That file is not an image. Please upload a JPEG, PNG, GIF, WebP or SVG.',
+    'media.upload.invalid_type': 'That file is not an image. Please upload a JPEG, PNG, GIF or WebP.',
     'media.upload.too_large': 'That file is too large. The maximum is {size}MB.',
     'media.upload.failed': 'Upload failed. Please try again.',
     'media.upload.no_url': 'The file uploaded but we could not get a link to it.',
