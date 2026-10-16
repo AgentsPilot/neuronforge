@@ -14,66 +14,54 @@
  *
  * HOW THE FIRST OPEN STAYS IDENTICAL
  *
- * Every site keeps rendering its dialog exactly where it did, closed. With
- * `ssr: false` the closed instance renders nothing on the server (it rendered
- * nothing there before either: both dialogs draw nothing while closed), and
- * on the client it asks for its chunk as soon as it mounts — after the page
- * has painted, with no click needed (AC-1.1). By the time an owner clicks, the
- * component is already resolved, so the dialog opens in the same frame, with
- * the same animation and tab, as before (AC-1.2).
+ * Every site keeps rendering its dialog exactly where it did, closed. The
+ * closed instance renders nothing on the server (it rendered nothing there
+ * before either: both dialogs draw nothing while closed), and on the client it
+ * asks for its chunk as soon as it mounts — after the page has painted, with no
+ * click needed (AC-1.1). By the time an owner clicks, the component is already
+ * resolved, so the dialog opens in the same frame, with the same animation and
+ * tab, as before (AC-1.2).
  *
- * ONE `dynamic()` PER DIALOG, SHARED BY EVERY SITE. React resolves a lazy
- * component once per `dynamic()` call, not once per instance, so the layout's
- * closed instance warms it for every other site on the page (My Day, the
- * website builder, the setup wizard). A site that is mounted only on click
- * still renders in the first frame, because the component is already resolved.
+ * ONE LOADER PER DIALOG, SHARED BY EVERY SITE. Each `createLazyDialog` call
+ * below owns one module-level loader, so the layout's closed instance warms it
+ * for every other site on the page (My Day, the website builder, the setup
+ * wizard).
  *
  * Props, `isOpen` and `onClose` pass straight through, so close behaviour —
  * capability refresh, `onClose` once, the closing grace — is unchanged (AC-1.5).
  *
- * IF THE CHUNK FAILS TO LOAD (offline after the page loaded), the dialog
- * renders nothing and the failure is logged. Throwing instead would take the
- * whole owner page down through its error boundary because a CLOSED dialog
- * could not prefetch.
+ * IF THE CHUNK FAILS TO LOAD, it is retried, an open dialog shows a visible
+ * "Couldn't load this — Try again" surface, and the failure is not remembered:
+ * the next open starts a fresh load. See `lazyDialogLoader.tsx` and
+ * docs/workplans/PERF_1_LAZY_DIALOG_FAILURE_FIX.md. (The first version resolved
+ * a failure to a component rendering `null`, which `next/dynamic` then cached
+ * for the life of the page: the Business Setup tab went permanently dead.)
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import dynamic from 'next/dynamic';
 import type { ComponentProps, ComponentType } from 'react';
 // Type-only: these erase at build time and keep the heavy modules out of the
 // page's first download. A value import here would undo the whole slice
 // (guarded by `components/business-os/__tests__/lazyDialogs.guard.test.ts`).
 import type { ConfigurationDialog as ConfigurationDialogComponent } from '@/components/business-os/ConfigurationDialog';
 import type { SchedulingDialog as SchedulingDialogComponent } from '@/components/business-os/SchedulingDialog';
-import { createLogger } from '@/lib/logger';
-
-const logger = createLogger({ module: 'lazyDialogs' });
+import { createLazyDialog } from '@/components/business-os/lazyDialogLoader';
 
 type ConfigurationDialogProps = ComponentProps<typeof ConfigurationDialogComponent>;
 type SchedulingDialogProps = ComponentProps<typeof SchedulingDialogComponent>;
 
-function renderNothing(): null {
-  return null;
-}
-
-export const LazyConfigurationDialog = dynamic<ConfigurationDialogProps>(
+export const LazyConfigurationDialog = createLazyDialog<ConfigurationDialogProps>(
+  'ConfigurationDialog',
   () =>
-    import('@/components/business-os/ConfigurationDialog')
-      .then((mod): ComponentType<ConfigurationDialogProps> => mod.ConfigurationDialog)
-      .catch((err: unknown): ComponentType<ConfigurationDialogProps> => {
-        logger.error({ err }, 'ConfigurationDialog chunk failed to load');
-        return renderNothing;
-      }),
-  { ssr: false }
+    import('@/components/business-os/ConfigurationDialog').then(
+      (mod): ComponentType<ConfigurationDialogProps> => mod.ConfigurationDialog
+    )
 );
 
-export const LazySchedulingDialog = dynamic<SchedulingDialogProps>(
+export const LazySchedulingDialog = createLazyDialog<SchedulingDialogProps>(
+  'SchedulingDialog',
   () =>
-    import('@/components/business-os/SchedulingDialog')
-      .then((mod): ComponentType<SchedulingDialogProps> => mod.SchedulingDialog)
-      .catch((err: unknown): ComponentType<SchedulingDialogProps> => {
-        logger.error({ err }, 'SchedulingDialog chunk failed to load');
-        return renderNothing;
-      }),
-  { ssr: false }
+    import('@/components/business-os/SchedulingDialog').then(
+      (mod): ComponentType<SchedulingDialogProps> => mod.SchedulingDialog
+    )
 );

@@ -1,6 +1,6 @@
 # Business OS LLM Model Settings — Operator Runbook
 
-> **Last Updated**: 2026-09-21
+> **Last Updated**: 2026-10-16
 
 ## Overview
 
@@ -98,7 +98,7 @@ The script validates the candidate row with **the resolver's own** schema and gu
 
 | Refusal | Meaning |
 |---|---|
-| `unpriced_model`, `zero_price` | The model has no active `ai_model_pricing` row with input **and** output costs > 0. Price it first, or its spend lands in the ledger at $0 |
+| `unpriced_model`, `zero_price` | The model has no active `ai_model_pricing` row with input **and** output costs > 0. Price it first, or its spend lands in the ledger at $0. Since 2026-10-16 (AI model price review slice 6) there is no in-app price edit: until Apply ships, pricing a model is done with the [emergency SQL runbook](/docs/runbooks/AI_MODEL_PRICE_EMERGENCY_SQL_RUNBOOK.md), only with the platform owner's approval |
 | `image_price_missing` | An image model with no price for every configured size at every quality |
 | `image_model_on_token_call` / a token model on the image call | The families are not interchangeable |
 | `model_rejects_sampling_parameters` | A reasoning model (`gpt-5*`, `o1*`, `o3*`, `o4*`) on a call that must send a temperature or a frequency penalty — that is a 400 the retry does not cover |
@@ -260,3 +260,4 @@ Chat's four embeddings are excluded from per-call settings and are stopped by th
 |------|--------|---------|
 | 2026-09-21 | Created (FR-18, Layer 2 Step 4) | Read / change / emergency-off procedure for the eight area rows, the guardrails that refuse a value, propagation and rollback. §5 records that the kill switch **fails open** (FU-6 / D-61): a settings-read failure on an instance with no cached values re-enables a switched-off area, the only signal is the resolver's log, and `get <area>` reads the row rather than the resolver's live view |
 | 2026-09-21 | SA review of Step 4 applied | §5 and §6 now carry a **copy-paste `token_usage` query and the eight `business-os-<area>` feature values** — the switch-independent proof was the one step that was not executable at 2am (SA finding 12), and it names the one area it cannot see (chat-v2 writes no ledger row). New §3.3 for failures that are not value failures (an absent or rotated service-role key), and the Overview says where you would notice a problem at all, since nothing alerts (SA finding 14) |
+| 2026-10-16 | Pricing a model | `unpriced_model` / `zero_price` row points at the AI model price emergency SQL runbook: Sync and Edit were removed in AI model price review slice 6 |

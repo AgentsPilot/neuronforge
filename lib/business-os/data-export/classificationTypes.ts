@@ -33,6 +33,11 @@
  * providers, SA-Q1) and eight `client_records` sections after `time_off`
  * (quotes, invoices, payments, refunds, payment plans, the plans clients are
  * on, instalments, saved payment methods; DE-5 workplan §2.3).
+ *
+ * DE-6 adds ten `client_records` sections after `client_payment_methods`:
+ * the intake settings and forms, the email campaigns, sequences, their steps
+ * and who is enrolled, the newsletter sign-ups, the consent records, the
+ * consent settings and the do-not-email list (DE-6 workplan §2.3).
  */
 export type ExportSectionId =
   | 'account_identity'
@@ -58,7 +63,17 @@ export type ExportSectionId =
   | 'payment_plans'
   | 'client_payment_plans'
   | 'installments'
-  | 'client_payment_methods';
+  | 'client_payment_methods'
+  | 'intake_settings'
+  | 'intake_forms'
+  | 'email_campaigns'
+  | 'email_sequences'
+  | 'email_sequence_steps'
+  | 'email_sequence_enrollments'
+  | 'newsletter_subscribers'
+  | 'consent_records'
+  | 'consent_settings'
+  | 'email_unsubscribes';
 
 /** The slices that add a table's section. `planned` is allowed until DE-7. */
 export type PlannedTableSlice = 'DE-3' | 'DE-4' | 'DE-5' | 'DE-6' | 'DE-7';
@@ -84,6 +99,14 @@ export type TableExportClassification =
       excludedColumns?: Readonly<Record<string, string>>;
       /** Rows left out of the section, declaratively (DE-4 §2.4, SA-Q2). */
       rowFilter?: ExportRowFilter;
+      /**
+       * DE-6 SA-Q1: the table has no `id` and its primary key is `user_id`,
+       * so the reader takes its one row with `.eq('user_id').limit(2)` and
+       * fails closed on two, instead of keyset paging on `id`. `'user_id'` is
+       * the only value. Without it, `columns` must list `id`. Only
+       * `marketing_consent_settings` carries it; a second one is an SA item.
+       */
+      rowKey?: 'user_id';
     }
   | { kind: 'exclude'; reason: string }
   | { kind: 'planned'; slice: PlannedTableSlice };

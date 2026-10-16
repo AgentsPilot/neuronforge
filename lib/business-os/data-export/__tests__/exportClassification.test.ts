@@ -36,6 +36,7 @@ import {
   rowFilterInList,
   rowFilterNullabilityProblems,
   SECRET_COLUMN_DENY_EXACT,
+  SECRET_COLUMN_DENY_PATTERNS,
   sectionRegistryProblems,
   staleDenyExceptions,
   storageExportProblems,
@@ -121,12 +122,15 @@ describe('T-2 an exclude carries a reason', () => {
 });
 
 describe('T-3 an include lists explicit, well-formed columns', () => {
+  // DE-6 (SA-Q1 (2)): an include without rowKey must list `id`, so each
+  // malformed plant now sits next to a well-formed `id`; otherwise the new
+  // rule would add a second problem and hide which rule each case pins.
   it.each([
     [[], 'profiles: include needs a non-empty column list'],
-    [['*'], 'profiles: malformed column "*"'],
-    [['a, b'], 'profiles: malformed column "a, b"'],
+    [['id', '*'], 'profiles: malformed column "*"'],
+    [['id', 'a, b'], 'profiles: malformed column "a, b"'],
     [['id', 'id'], 'profiles: duplicate column id'],
-    [['Id'], 'profiles: malformed column "Id"'],
+    [['id', 'Id'], 'profiles: malformed column "Id"'],
   ])('negative control: %j is flagged', (columns, problem) => {
     expect(tableProblems([withExport('profiles', { kind: 'include', section: 'user_profile', columns })])).toEqual([problem]);
   });
@@ -202,6 +206,9 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
       'payment_account', 'payment_providers',
       'pipeline_stages', 'clients', 'client_activities', 'client_tasks', 'client_documents', 'services', 'bookings', 'time_off',
       'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
+      // DE-6: the ten intake, email marketing and consent sections (8 + 26).
+      'intake_settings', 'intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
+      'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
     ]);
     expect(sectionRegistryProblems(PURGE_DESCRIPTORS, sectionIds, NON_TABLE_SECTIONS)).toEqual([]);
   });
@@ -220,28 +227,31 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
   // the plant moves to proposals (still planned, DE-5).
   // DE-5 (T-9): proposals now backs quotes, so the plant moves to
   // lead_responses (still planned, DE-6).
+  // DE-6 (T-9): lead_responses is now excluded, so the plant moves to
+  // smart_links (still planned, DE-7).
   it('negative control: a descriptor naming an unknown section', () => {
     const unknown = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'lead_responses' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
+      d.table === 'smart_links' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
     );
     expect(sectionRegistryProblems(unknown, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'lead_responses: names unknown section client_records',
+      'smart_links: names unknown section client_records',
     ]);
   });
 
   // DE-5 (T-9): planted on lead_responses (still planned, DE-6), was proposals.
+  // DE-6 (T-9): planted on smart_links (still planned, DE-7), was lead_responses.
   it('negative control: two descriptors on one section, and an include on a non-table section', () => {
     const two = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'lead_responses' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
+      d.table === 'smart_links' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(two, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'user_profile: expected exactly one include descriptor, found 2 (lead_responses, profiles)',
+      'user_profile: expected exactly one include descriptor, found 2 (smart_links, profiles)',
     ]);
     const onIdentity = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'lead_responses' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
+      d.table === 'smart_links' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(onIdentity, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'account_identity: a non-table section has include descriptors (lead_responses)',
+      'account_identity: a non-table section has include descriptors (smart_links)',
     ]);
   });
 
@@ -395,8 +405,12 @@ describe('T-10 exportColumnsOf fails closed', () => {
     ['audit_logs', 'not_included'],
     // DE-4: was crm_contacts, now included. DE-3: was business_profiles, now
     // included; proposals is still planned (DE-5). DE-5 (T-9): proposals is
-    // now included; lead_responses is still planned (DE-6).
+    // now included; lead_responses is still planned (DE-6). DE-6 (T-9):
+    // lead_responses is now excluded (activity, BC-2); smart_links is still
+    // planned (DE-7).
+    ['smart_links', 'not_included'],
     ['lead_responses', 'not_included'],
+    ['marketing_consent_state', 'not_included'],
     // DE-5: an excluded money table (activity, user BC-5).
     ['payment_events', 'not_included'],
     ['external_calendar_events', 'not_included'],
@@ -1279,7 +1293,8 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
     expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned' && d.export.slice === 'DE-5')).toEqual([]);
   });
 
-  it('the classification totals: 155 = 23 include + 17 planned (DE-6 12, DE-7 5) + 115 exclude', () => {
+  // DE-6: 155 = 33 include + 5 planned (DE-7) + 117 exclude, was 23 + 17 (DE-6 12, DE-7 5) + 115.
+  it('the classification totals: 155 = 33 include + 5 planned (DE-7 5) + 117 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
@@ -1287,8 +1302,8 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
     expect(PURGE_DESCRIPTORS).toHaveLength(155);
-    expect(kinds).toEqual({ include: 23, planned: 17, exclude: 115 });
-    expect(bySlice).toEqual({ 'DE-6': 12, 'DE-7': 5 });
+    expect(kinds).toEqual({ include: 33, planned: 5, exclude: 117 });
+    expect(bySlice).toEqual({ 'DE-7': 5 });
   });
 
   it('every DE-5 excludedColumns reason is non-empty; credentials carries the SECRET reason', () => {
@@ -1646,5 +1661,346 @@ describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA
     expect(currencyConversionHits("import { convert } from '@/lib/fx/rates';")).toEqual(["import @/lib/fx/rates"]);
     expect(currencyConversionHits('row.currency = String(row.currency).toUpperCase();')).toEqual(['/\\.toUpperCase\\s*\\(/']);
     expect(currencyConversionHits("// exchange_rates are never read\nconst s = 'convertCurrency';")).toEqual([]);
+  });
+});
+
+// ── DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §3, §8; SA review DE-6; TL defaults §13.1) ──
+
+/**
+ * DE-6 N-1 / N-2: the ten include lists, pinned literally, in order.
+ * `excluded` is the key list of `excludedColumns`, in order.
+ */
+const DE6_PINS: Record<string, { section: string; columns: string[]; excluded: string[] }> = {
+  user_intake_settings: {
+    section: 'intake_settings',
+    columns: ['id', 'is_enabled', 'send_after_booking', 'created_at', 'updated_at'],
+    excluded: ['user_id'],
+  },
+  business_intake_forms: {
+    section: 'intake_forms',
+    columns: ['id', 'version', 'status', 'questions', 'generated_at', 'published_at', 'created_at', 'updated_at'],
+    excluded: ['user_id', 'generated_from'],
+  },
+  email_campaigns: {
+    section: 'email_campaigns',
+    columns: [
+      'id', 'name', 'subject', 'body_html', 'body_text', 'segment_filter', 'status', 'scheduled_at', 'sent_at', 'created_at',
+      'updated_at',
+    ],
+    excluded: ['user_id', 'recipients_count', 'sent_count', 'opened_count', 'clicked_count', 'failed_count'],
+  },
+  email_sequences: {
+    section: 'email_sequences',
+    columns: ['id', 'name', 'description', 'trigger_type', 'trigger_config', 'is_active', 'created_at', 'updated_at'],
+    excluded: ['user_id', 'total_sent', 'total_opened', 'total_clicked'],
+  },
+  email_sequence_steps: {
+    section: 'email_sequence_steps',
+    columns: ['id', 'sequence_id', 'step_number', 'delay_minutes', 'subject', 'body_html', 'body_text', 'created_at'],
+    excluded: ['user_id', 'sent_count', 'opened_count', 'clicked_count'],
+  },
+  email_sequence_enrollments: {
+    section: 'email_sequence_enrollments',
+    columns: ['id', 'sequence_id', 'contact_id', 'status', 'current_step_number', 'enrolled_at', 'completed_at'],
+    excluded: ['user_id', 'next_send_at'],
+  },
+  business_subscribers: {
+    section: 'newsletter_subscribers',
+    columns: [
+      'id', 'email', 'name', 'status', 'source', 'attribution', 'subscribed_at', 'confirmed_at', 'promoted_contact_id',
+      'promoted_at', 'created_at', 'updated_at',
+    ],
+    excluded: ['user_id', 'email_normalized'],
+  },
+  marketing_consent_events: {
+    section: 'consent_records',
+    columns: [
+      'id', 'contact_id', 'email', 'channel', 'purpose', 'decision', 'method', 'statement_text', 'statement_locale',
+      'statement_version', 'privacy_policy_url', 'source_surface', 'source_page_url', 'evidence', 'redacted_at',
+      'occurred_at', 'created_at',
+    ],
+    excluded: ['user_id', 'email_normalized', 'ip_hash', 'ip_hash_salt', 'user_agent', 'session_id', 'recorded_by'],
+  },
+  marketing_consent_settings: {
+    section: 'consent_settings',
+    columns: [
+      'capture_enabled', 'statement_en', 'statement_es', 'statement_he', 'statement_version', 'privacy_policy_mode',
+      'privacy_policy_url', 'privacy_policy_body', 'privacy_policy_updated_at', 'postal_address', 'label_as_advertisement',
+      'created_at', 'updated_at',
+    ],
+    excluded: ['user_id'],
+  },
+  email_unsubscribes: {
+    section: 'email_unsubscribes',
+    columns: ['id', 'contact_id', 'email', 'reason', 'unsubscribed_at'],
+    excluded: ['user_id'],
+  },
+};
+const DE6_TABLES = Object.keys(DE6_PINS);
+
+/** The two DE-6 excludes and what each reason must name (TL defaults §13.1, SA-Q3 / SA-Q9). */
+const DE6_EXCLUDES: Record<string, RegExp> = {
+  lead_responses: /^DX-1d: activity .*BC-2/,
+  marketing_consent_state: /^cache or derived data.*marketing_consent_events.*BC-6/,
+};
+
+/** DE-6 pins as a pure check, so a planted copy can be run through it (negative control). */
+function de6PinProblems(ds: readonly PurgeDescriptor[]): string[] {
+  const problems: string[] = [];
+  for (const [table, pin] of Object.entries(DE6_PINS)) {
+    const e = ds.find((d) => d.table === table)?.export;
+    if (e?.kind !== 'include') {
+      problems.push(`${table} must be include`);
+      continue;
+    }
+    if (e.section !== pin.section) problems.push(`${table} must be section ${pin.section}`);
+    if (JSON.stringify(e.columns) !== JSON.stringify(pin.columns)) problems.push(`${table} columns changed`);
+    if (JSON.stringify(Object.keys(e.excludedColumns ?? {})) !== JSON.stringify(pin.excluded)) problems.push(`${table} excludedColumns changed`);
+    if (!e.excludedColumns?.user_id?.startsWith(OWNER_ID_REASON)) problems.push(`${table} user_id must carry the OWNER_ID reason`);
+    // N-10 / DX-8: all history in; no DE-6 table soft-deletes, so no row filter.
+    if (e.rowFilter) problems.push(`${table} must have no rowFilter (all history in)`);
+  }
+  for (const [table, reason] of Object.entries(DE6_EXCLUDES)) {
+    const e = ds.find((d) => d.table === table)?.export;
+    if (!(e?.kind === 'exclude' && reason.test(e.reason))) problems.push(`${table} must be excluded with its ruled reason`);
+  }
+  if (ds.some((d) => d.export?.kind === 'planned' && d.export.slice === 'DE-6')) problems.push('a table is still planned for DE-6');
+  return problems;
+}
+
+/**
+ * DE-6 live columns, verbatim and in live order from the T-0 Q1 output (DE-6
+ * workplan §11.1, prod, 2026-10-16). Inline, not a fixture file (no new file).
+ * A migration adding a column to one of these tables adds it here AND
+ * classifies it in its descriptor.
+ */
+const DE6_LIVE_TABLES: Record<string, string> = {
+  business_intake_forms:
+    'id user_id version status questions generated_at generated_from published_at created_at updated_at',
+  business_subscribers:
+    'id user_id email email_normalized name status source attribution subscribed_at confirmed_at promoted_contact_id ' +
+    'promoted_at created_at updated_at',
+  email_campaigns:
+    'id user_id name subject body_html body_text segment_filter status scheduled_at sent_at recipients_count sent_count ' +
+    'opened_count clicked_count failed_count created_at updated_at',
+  email_sequence_enrollments:
+    'id user_id sequence_id contact_id status current_step_number next_send_at enrolled_at completed_at',
+  email_sequence_steps:
+    'id sequence_id user_id step_number delay_minutes subject body_html body_text sent_count opened_count clicked_count created_at',
+  email_sequences:
+    'id user_id name description trigger_type trigger_config is_active total_sent total_opened total_clicked created_at updated_at',
+  email_unsubscribes: 'id user_id contact_id email reason unsubscribed_at',
+  marketing_consent_events:
+    'id user_id contact_id email email_normalized channel purpose decision method statement_text statement_locale ' +
+    'statement_version privacy_policy_url source_surface source_page_url ip_hash ip_hash_salt user_agent session_id ' +
+    'recorded_by evidence redacted_at occurred_at created_at',
+  marketing_consent_settings:
+    'user_id capture_enabled statement_en statement_es statement_he statement_version privacy_policy_mode privacy_policy_url ' +
+    'privacy_policy_body privacy_policy_updated_at postal_address label_as_advertisement created_at updated_at',
+  user_intake_settings: 'id user_id is_enabled send_after_booking created_at updated_at',
+};
+const DE6_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE6_LIVE_TABLES).flatMap(([table_name, names]) =>
+  names.split(' ').map((column_name) => ({ table_name, column_name }))
+);
+
+describe('DE-6 N-1 the intake, email marketing and consent classifications are pinned', () => {
+  it('ten include rows, two excludes with their ruled reasons, no DE-6 planned row left', () => {
+    expect(de6PinProblems(PURGE_DESCRIPTORS)).toEqual([]);
+    expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned' && d.export.slice === 'DE-6')).toEqual([]);
+  });
+
+  it('every DE-6 excludedColumns reason is non-empty; the tracking four share the VISITOR_EVIDENCE reason', () => {
+    for (const table of DE6_TABLES) {
+      const e = exportClassificationOf(table);
+      if (e?.kind !== 'include') throw new Error(`${table} not include`);
+      for (const reason of Object.values(e.excludedColumns ?? {})) expect(reason.trim().length).toBeGreaterThan(10);
+    }
+    const events = exportClassificationOf('marketing_consent_events');
+    if (events?.kind !== 'include') throw new Error('not include');
+    const tracking = ['ip_hash', 'ip_hash_salt', 'user_agent', 'session_id'].map((c) => events.excludedColumns?.[c]);
+    expect(new Set(tracking).size).toBe(1);
+    expect(tracking[0]).toMatch(/visitor tracking.*BC-1/);
+  });
+
+  it('the 12 DE-6 rows keep their purge fields: email_unsubscribes, consent events and state stay never (N-13)', () => {
+    for (const table of ['email_unsubscribes', 'marketing_consent_events', 'marketing_consent_state']) {
+      expect(byTable.get(table)?.level).toBe('never');
+    }
+    for (const table of [...DE6_TABLES, ...Object.keys(DE6_EXCLUDES)]) expect(byTable.get(table)?.scope).toEqual({ kind: 'user_id' });
+  });
+
+  it('negative controls: a re-planned subscribers table, ip_hash_salt moved into columns, a reworded exclude, a rowFilter', () => {
+    const replanned = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'business_subscribers' ? { ...d, export: { kind: 'planned' as const, slice: 'DE-6' as const } } : d
+    );
+    expect(de6PinProblems(replanned)).toEqual(['business_subscribers must be include', 'a table is still planned for DE-6']);
+    const saltIn = withInclude('marketing_consent_events', (e) => {
+      const { ip_hash_salt: _salt, ...rest } = e.excludedColumns ?? {};
+      void _salt;
+      return { ...e, columns: [...e.columns, 'ip_hash_salt'], excludedColumns: rest };
+    });
+    expect(de6PinProblems(saltIn)).toEqual(['marketing_consent_events columns changed', 'marketing_consent_events excludedColumns changed']);
+    // SA-Q5: and the deny list now catches it on its own.
+    expect(tableProblems(saltIn.filter((d) => d.table === 'marketing_consent_events'))).toEqual([
+      'marketing_consent_events: column ip_hash_salt is on the secret deny list',
+    ]);
+    const reworded = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'lead_responses' ? { ...d, export: { kind: 'exclude' as const, reason: 'lead stuff' } } : d
+    );
+    expect(de6PinProblems(reworded)).toEqual(['lead_responses must be excluded with its ruled reason']);
+    const filtered = withInclude('business_intake_forms', (e) => ({ ...e, rowFilter: { column: 'status', notIn: ['archived'], reason: 'x' } }));
+    expect(de6PinProblems(filtered)).toEqual(['business_intake_forms must have no rowFilter (all history in)']);
+  });
+});
+
+describe('DE-6 N-2 the declared lists match the live columns (T-0 Q1, workplan §11.1)', () => {
+  it('the inline live set is the measured state: Q2 counts', () => {
+    const counts: Record<string, number> = {};
+    for (const c of DE6_LIVE_COLUMNS) counts[c.table_name] = (counts[c.table_name] ?? 0) + 1;
+    expect(counts).toEqual({
+      business_intake_forms: 10, business_subscribers: 14, email_campaigns: 17, email_sequence_enrollments: 9,
+      email_sequence_steps: 12, email_sequences: 12, email_unsubscribes: 6, marketing_consent_events: 24,
+      marketing_consent_settings: 14, user_intake_settings: 6,
+    });
+  });
+
+  it('no drift and nothing missing; columns + excludedColumns = the live set, exactly', () => {
+    expect(exportColumnDrift(DE6_LIVE_COLUMNS).filter((r) => DE6_TABLES.includes(r.table))).toEqual([]);
+    expect(exportColumnsMissing(DE6_LIVE_COLUMNS).filter((r) => DE6_TABLES.includes(r.table))).toEqual([]);
+    for (const table of DE6_TABLES) {
+      const e = exportClassificationOf(table);
+      if (e?.kind !== 'include') throw new Error(`${table} not include`);
+      const decided = [...e.columns, ...Object.keys(e.excludedColumns ?? {})].sort();
+      expect(decided).toEqual(DE6_LIVE_COLUMNS.filter((c) => c.table_name === table).map((c) => c.column_name).sort());
+    }
+  });
+
+  it('negative controls: an extra live column is drift; a declared column missing live is reported', () => {
+    const extra = [...DE6_LIVE_COLUMNS, { table_name: 'marketing_consent_events', column_name: 'device_id' }];
+    expect(exportColumnDrift(extra).filter((r) => DE6_TABLES.includes(r.table))).toEqual([
+      { table: 'marketing_consent_events', column: 'device_id' },
+    ]);
+    const without = DE6_LIVE_COLUMNS.filter((c) => !(c.table_name === 'marketing_consent_settings' && c.column_name === 'postal_address'));
+    expect(exportColumnsMissing(without).filter((r) => DE6_TABLES.includes(r.table))).toEqual([
+      { table: 'marketing_consent_settings', column: 'postal_address' },
+    ]);
+  });
+
+  it('each DE-6 section resolves to its one include descriptor, user_id scoped (the reader never takes a table name)', () => {
+    for (const [table, pin] of Object.entries(DE6_PINS)) {
+      expect(exportDescriptorOfSection(pin.section as never).table).toBe(table);
+      expect(byTable.get(table)?.scope.kind).toBe('user_id');
+    }
+  });
+});
+
+describe('DE-6 N-9 / SA-Q1 (2), (3) the rowKey rules in CI', () => {
+  const settings = byTable.get('marketing_consent_settings')!;
+
+  it('only marketing_consent_settings carries a rowKey, and it is user_id (a second one is an SA item)', () => {
+    const withKey = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'include' && d.export.rowKey !== undefined);
+    expect(withKey.map((d) => d.table)).toEqual(['marketing_consent_settings']);
+    expect(settings.export.kind === 'include' && settings.export.rowKey).toBe('user_id');
+    expect(settings.export.kind === 'include' && settings.export.columns.includes('id')).toBe(false);
+    expect(tableProblems([settings])).toEqual([]);
+  });
+
+  it('every include without rowKey lists id (the converse rule; all 32 pass)', () => {
+    const keyed = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'include' && d.export.rowKey === undefined);
+    expect(keyed).toHaveLength(32);
+    for (const d of keyed) expect(d.export.kind === 'include' && d.export.columns.includes('id')).toBe(true);
+  });
+
+  it('negative control: an include without rowKey and without id is reported', () => {
+    expect(tableProblems([withExport('user_intake_settings', { kind: 'include', section: 'intake_settings', columns: ['is_enabled'] })])).toEqual([
+      'user_intake_settings: include without rowKey must list id (the keyset reader pages on it)',
+    ]);
+    const { rowKey: _rk, ...noKey } = settings.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+    void _rk;
+    expect(tableProblems([{ ...settings, export: noKey }])).toEqual([
+      'marketing_consent_settings: include without rowKey must list id (the keyset reader pages on it)',
+    ]);
+  });
+
+  it("negative controls: rowKey 'id', user_id in columns, a via scope, a rowFilter beside it", () => {
+    const e = settings.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+    expect(tableProblems([{ ...settings, export: { ...e, rowKey: 'id' } }])).toEqual([
+      'marketing_consent_settings: rowKey must be \'user_id\', got "id"',
+    ]);
+    expect(tableProblems([{ ...settings, export: { ...e, columns: ['user_id', ...e.columns], excludedColumns: {} } }])).toEqual([
+      'marketing_consent_settings: rowKey user_id must not be in columns (it is the owner id)',
+    ]);
+    expect(tableProblems([{ ...settings, scope: { kind: 'via', parent: 'business_profiles', fk: 'user_id' } as never }])).toEqual([
+      'marketing_consent_settings: rowKey needs a user_id scope',
+    ]);
+    expect(tableProblems([{ table: 'marketing_consent_settings', export: e }])).toEqual([
+      'marketing_consent_settings: rowKey needs a user_id scope',
+    ]);
+    expect(
+      tableProblems([{ ...settings, export: { ...e, rowFilter: { column: 'privacy_policy_mode', notIn: ['none'], reason: 'x' } } }])
+    ).toEqual(['marketing_consent_settings: rowKey and rowFilter together are not allowed']);
+  });
+});
+
+describe('DE-6 N-3 / SA-Q5 visitor tracking is never selected, and the deny list now says so', () => {
+  const TRACKING = ['ip_hash', 'ip_hash_salt', 'user_agent', 'session_id'];
+
+  it('the four are excluded on the consent ledger and selected by no include anywhere', () => {
+    const events = exportClassificationOf('marketing_consent_events');
+    if (events?.kind !== 'include') throw new Error('not include');
+    for (const c of TRACKING) expect(Object.keys(events.excludedColumns ?? {})).toContain(c);
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.export.kind !== 'include') continue;
+      expect(d.export.columns.filter((c) => TRACKING.includes(c) || c === 'ip_address' || c === 'fingerprint')).toEqual([]);
+    }
+  });
+
+  it('SA-Q5: the five names are denied exactly, and /_salt$/ by pattern; look-alikes are not', () => {
+    expect(SECRET_COLUMN_DENY_EXACT).toEqual([
+      'access_token', 'refresh_token', 'token', 'credentials', 'secret', 'api_key',
+      'password', 'password_hash', 'account_token', 'cost_usd', 'provider_cost_usd',
+      'card_number', 'cvc', 'cvv',
+      'ip_hash_salt', 'user_agent', 'session_id', 'ip_address', 'fingerprint',
+    ]);
+    expect(SECRET_COLUMN_DENY_PATTERNS.map(String)).toEqual([
+      '/_token$/', '/_secret$/', '/_key$/', '/_credentials$/', '/_hash$/', '/cost_usd$/', '/_salt$/',
+    ]);
+    for (const c of [...TRACKING, 'ip_address', 'fingerprint', 'password_salt']) expect(matchesSecretDeny(c)).toBe(true);
+    // Exact, not a pattern: these stay exportable names (DE-5 excludes checkout_session_id on its own).
+    for (const c of ['checkout_session_id', 'salt', 'user_agent_family', 'stage_key']) expect(matchesSecretDeny(c)).toBe(c === 'stage_key');
+  });
+
+  it('the hardening adds no hit to DE-1 … DE-6 output: every include passes, DENY_EXCEPTIONS still has its one entry', () => {
+    expect(Object.keys(DENY_EXCEPTIONS)).toEqual(['crm_pipeline_stages.stage_key']);
+    expect(staleDenyExceptions()).toEqual([]);
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.export.kind !== 'include') continue;
+      expect(exportColumnsOf(d.table).filter((c) => isDeniedColumn(d.table, c))).toEqual([]);
+    }
+  });
+
+  it('negative control: user_agent planted into the consent columns fails in CI and at request time', () => {
+    const planted = withInclude('marketing_consent_events', (e) => {
+      const { user_agent: _ua, ...rest } = e.excludedColumns ?? {};
+      void _ua;
+      return { ...e, columns: [...e.columns, 'user_agent'], excludedColumns: rest };
+    });
+    expect(tableProblems(planted.filter((d) => d.table === 'marketing_consent_events'))).toEqual([
+      'marketing_consent_events: column user_agent is on the secret deny list',
+    ]);
+    expect(() => exportColumnsOf('marketing_consent_events', planted)).toThrow(/secret deny list/);
+  });
+
+  it('SA-Q8 / SA-Q10 / SA-Q6: email_normalized, recorded_by, next_send_at and generated_from are out', () => {
+    const out: Array<[string, string]> = [
+      ['marketing_consent_events', 'email_normalized'], ['business_subscribers', 'email_normalized'],
+      ['marketing_consent_events', 'recorded_by'], ['email_sequence_enrollments', 'next_send_at'],
+      ['business_intake_forms', 'generated_from'],
+    ];
+    for (const [table, column] of out) {
+      expect(exportColumnsOf(table)).not.toContain(column);
+      const e = exportClassificationOf(table);
+      expect(e?.kind === 'include' && typeof e.excludedColumns?.[column] === 'string').toBe(true);
+    }
   });
 });

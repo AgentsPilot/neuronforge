@@ -29,22 +29,35 @@ import type {
 // ── Secret columns ──────────────────────────────────────────────────────────
 
 /**
- * Column names that are never exported, whatever table they are on (§3.2).
+ * Column names that are never exported, whatever table they are on (§3.2):
+ * secrets and visitor tracking.
  *
  * DE-5 (SA-Q11): + `card_number`, `cvc`, `cvv`. No such column exists today
  * ("no card number is ever stored in this system", 20260828e); the entries
  * stop one added later from being exported by a review mistake. A Stripe
  * `client_secret` is not listed: `/_secret$/` below already denies it.
+ *
+ * DE-6 (SA-Q5): + the visitor-tracking names `ip_hash_salt`, `user_agent`,
+ * `session_id`, `ip_address`, `fingerprint`. Until DE-6 they were kept out
+ * by review only (marketing_consent_events lists them in `excludedColumns`,
+ * which this check does not read); now an include that lists one fails CI
+ * and fails its section at request time. No DE-1…DE-5 include names any of
+ * them. Exact names, so `checkout_session_id` is not matched.
  */
 export const SECRET_COLUMN_DENY_EXACT: readonly string[] = [
   'access_token', 'refresh_token', 'token', 'credentials', 'secret', 'api_key',
   'password', 'password_hash', 'account_token', 'cost_usd', 'provider_cost_usd',
   'card_number', 'cvc', 'cvv',
+  'ip_hash_salt', 'user_agent', 'session_id', 'ip_address', 'fingerprint',
 ];
 
-/** Name shapes that are never exported (secrets, hashes, our provider cost). */
+/**
+ * Name shapes that are never exported (secrets, hashes, salts, our provider
+ * cost). DE-6 (SA-Q5): + `/_salt$/`: a salt stored next to a hash is what
+ * lets the hash be checked against a known value.
+ */
 export const SECRET_COLUMN_DENY_PATTERNS: readonly RegExp[] = [
-  /_token$/, /_secret$/, /_key$/, /_credentials$/, /_hash$/, /cost_usd$/,
+  /_token$/, /_secret$/, /_key$/, /_credentials$/, /_hash$/, /cost_usd$/, /_salt$/,
 ];
 
 /**
@@ -186,9 +199,16 @@ const nonEmpty = (value: unknown): boolean => typeof value === 'string' && value
  * Problems with one table descriptor's `export` value (T-1…T-5, T-7).
  * Typed `unknown` on purpose: the CI check must see an object that the type
  * would have rejected (Jest does not type-check, SA DE-2 review SA-Q1).
+ *
+ * DE-6 (SA-Q1 (2)): the reader's key is checked here too, not only at request
+ * time. An include WITHOUT `rowKey` must list `id` (the keyset reader pages on
+ * it; until DE-6 that rule lived only in the repository). An include WITH
+ * `rowKey` must have `rowKey: 'user_id'`, a `user_id` scope, no `user_id` in
+ * `columns` (it is the owner id) and no `rowFilter`. `scope` is read off the
+ * descriptor for that reason.
  */
 export function tableExportProblems(
-  descriptor: { table: string; export?: unknown },
+  descriptor: { table: string; export?: unknown; scope?: unknown },
   options: { plannedAllowed: boolean; exceptions?: Readonly<Record<string, string>> }
 ): string[] {
   const { table } = descriptor;
@@ -227,6 +247,7 @@ export function tableExportProblems(
         }
       }
       if (value.rowFilter !== undefined) problems.push(...rowFilterProblems(table, value.rowFilter, seen));
+      problems.push(...rowKeyProblems(descriptor, value, seen));
       break;
     }
     case 'exclude':
@@ -267,6 +288,30 @@ function rowFilterProblems(table: string, filter: unknown, declared: ReadonlySet
     }
   }
   if (!nonEmpty(filter.reason)) problems.push(`${table}: rowFilter has no reason`);
+  return problems;
+}
+
+/**
+ * DE-6 SA-Q1 (2): how the reader keys the table. Without `rowKey` the keyset
+ * reader pages on `id`, so `id` must be declared. With it, the single-row
+ * read's preconditions hold: `'user_id'` only, a `user_id` scope, the key not
+ * selected, no row filter.
+ */
+function rowKeyProblems(
+  descriptor: { table: string; scope?: unknown },
+  value: Record<string, unknown>,
+  declared: ReadonlySet<string>
+): string[] {
+  const { table } = descriptor;
+  if (!('rowKey' in value) || value.rowKey === undefined) {
+    return declared.has('id') ? [] : [`${table}: include without rowKey must list id (the keyset reader pages on it)`];
+  }
+  const problems: string[] = [];
+  if (value.rowKey !== 'user_id') problems.push(`${table}: rowKey must be 'user_id', got ${JSON.stringify(value.rowKey)}`);
+  const scope = descriptor.scope;
+  if (!isObject(scope) || scope.kind !== 'user_id') problems.push(`${table}: rowKey needs a user_id scope`);
+  if (declared.has('user_id')) problems.push(`${table}: rowKey user_id must not be in columns (it is the owner id)`);
+  if (value.rowFilter !== undefined) problems.push(`${table}: rowKey and rowFilter together are not allowed`);
   return problems;
 }
 

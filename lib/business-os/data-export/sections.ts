@@ -29,6 +29,14 @@
 // next to their own currency column; nothing here converts, sums or
 // defaults a currency (CLAUDE.md § Currency & Timezone; user BC-11).
 //
+// DE-6: intake, email marketing and consent (DX-1b, group `client_records`):
+// the intake settings and every version of the intake form, the email
+// campaigns, sequences, their steps and who is enrolled, the newsletter
+// sign-ups, the consent records and settings, and the do-not-email list.
+// Visitor tracking stays out (consent evidence and attribution through
+// allow-lists; page URLs without their query string), and so do delivery
+// counters and the lead-message queue (TL defaults BC-1…BC-3, 2026-10-16).
+//
 // DE-4: the client-record readers all go through ONE repository method,
 // keyed on the section id (never a table name: SA C-4), paged to the end, and
 // bounded by the Phase 1 row ceiling (limits.ts). Over the ceiling, reading
@@ -117,7 +125,10 @@ export type OwnedRow = Record<string, unknown>;
 /**
  * A `client_records` row (DE-4). An alias of `OwnedRow`; the reshaped cells
  * are `clients.source_metadata` (allow-listed, SOURCE_METADATA_KEYS) and,
- * since DE-5, `payments.metadata` (PAYMENT_METADATA_KEYS).
+ * since DE-5, `payments.metadata` (PAYMENT_METADATA_KEYS); since DE-6,
+ * `newsletter_subscribers.attribution` (SOURCE_METADATA_KEYS),
+ * `consent_records.evidence` (CONSENT_EVIDENCE_KEYS) and
+ * `consent_records.source_page_url` (query string cut).
  */
 export type ClientRecordRow = OwnedRow;
 
@@ -165,9 +176,45 @@ export function pickStringKeys(value: unknown, keys: readonly string[]): Record<
   return kept;
 }
 
-/** The allow-listed string values of a raw `source_metadata`; anything else is dropped. */
+/**
+ * DE-6 SA-Q7: a page URL without its query string and fragment. A string is
+ * cut at the first `?` or `#`, whichever comes first; scheme, host and path
+ * are kept exactly as stored. Plain string slicing, not `new URL()`, so a
+ * relative or malformed value never throws and is never rewritten. Anything
+ * that is not a string (NULL included) passes through unchanged.
+ *
+ * Why: the public forms record the page the visitor was on, query string
+ * and all, and live rows carry token-like parameters there (`token=`,
+ * `sid=`, `code=`; DE-6 workplan §11.1, §11.2). No query parameter on such
+ * a page is something the owner entered; the campaign tags a reader needs
+ * are already their own `utm_*` keys.
+ */
+export function withoutQueryOrFragment(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const cut = value.search(/[?#]/);
+  return cut === -1 ? value : value.slice(0, cut);
+}
+
+/**
+ * DE-6 (F-DE6-1): the keys of SOURCE_METADATA_KEYS that hold a page URL, cut
+ * by `withoutQueryOrFragment`. The one deliberate change DE-6 makes to DE-4
+ * output (TL decision 2026-10-16: 4 live contacts carry token-like referrer
+ * parameters).
+ */
+export const SOURCE_METADATA_URL_KEYS: readonly string[] = ['capture_page_url', 'referrer_url'];
+
+/**
+ * The allow-listed string values of a raw `source_metadata`; anything else is
+ * dropped. Also used for `business_subscribers.attribution` (DE-6), which the
+ * same builder writes.
+ */
 export function sourceMetadata(value: unknown): Record<string, string> {
-  return pickStringKeys(value, SOURCE_METADATA_KEYS);
+  const kept = pickStringKeys(value, SOURCE_METADATA_KEYS);
+  // DE-6 (F-DE6-1): the page URLs lose their query string and fragment. Key order is kept.
+  for (const key of SOURCE_METADATA_URL_KEYS) {
+    if (key in kept) kept[key] = withoutQueryOrFragment(kept[key]) as string;
+  }
+  return kept;
 }
 
 /**
@@ -186,6 +233,21 @@ export const PAYMENT_METADATA_KEYS: readonly string[] = ['notes', 'source'];
 /** The allow-listed string values of a raw `payment_transactions.metadata`. */
 export function paymentMetadata(value: unknown): Record<string, string> {
   return pickStringKeys(value, PAYMENT_METADATA_KEYS);
+}
+
+/**
+ * The readable parts of `marketing_consent_events.evidence` (DE-6 SA-Q4): the
+ * three keys the code writes. `client_statement` is the sentence the
+ * visitor's page showed, `confirmed_via` how a double opt-in was confirmed
+ * (`email_link` / `confirm_button`), `note` what the owner typed when
+ * entering consent by hand. Strings only; any other key is dropped. Changing
+ * this changes what the export holds: a privacy decision.
+ */
+export const CONSENT_EVIDENCE_KEYS: readonly string[] = ['client_statement', 'confirmed_via', 'note'];
+
+/** The allow-listed string values of a raw consent `evidence`. */
+export function consentEvidence(value: unknown): Record<string, string> {
+  return pickStringKeys(value, CONSENT_EVIDENCE_KEYS);
 }
 
 const accountIdentitySection: ExportSectionDefinition<AccountIdentityRow> = {
@@ -257,11 +319,33 @@ function accountTableSection(id: ExportSectionId): ExportSectionDefinition<Owned
   return ownedRowsSection(id, 'account', 'controller');
 }
 
-/** `clients`: the raw `source_metadata` never reaches the file, only its BC-4 keys. Key order is kept. */
+/**
+ * `clients`: the raw `source_metadata` never reaches the file, only its BC-4 keys. Key order is kept.
+ * DE-6 (F-DE6-1): `sourceMetadata` now also cuts the two page URLs at their query string.
+ */
 const clientRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, source_metadata: sourceMetadata(row.source_metadata) });
 
 /** `payments` (DE-5): the raw `metadata` never reaches the file, only `notes` and `source`. Key order is kept. */
 const paymentRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, metadata: paymentMetadata(row.metadata) });
+
+/**
+ * `newsletter_subscribers` (DE-6): the raw `attribution` never reaches the
+ * file, only the SOURCE_METADATA_KEYS (same builder as `source_metadata`),
+ * with the page URLs cut at the query string (SA-Q7 C-2). Key order is kept.
+ */
+const subscriberRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, attribution: sourceMetadata(row.attribution) });
+
+/**
+ * `consent_records` (DE-6): the raw `evidence` never reaches the file, only
+ * CONSENT_EVIDENCE_KEYS (SA-Q4); `source_page_url` loses its query string and
+ * fragment (SA-Q7). `privacy_policy_url` is kept as held (0 live URLs with a
+ * query string, §11.2 C-3). Key order is kept.
+ */
+const consentEventRow = (row: ClientRecordRow): ClientRecordRow => ({
+  ...row,
+  source_page_url: withoutQueryOrFragment(row.source_page_url),
+  evidence: consentEvidence(row.evidence),
+});
 
 /**
  * The registry, in file order. DE-4's eight sections follow the account group (§2.3).
@@ -301,6 +385,18 @@ export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   clientRecordsSection('client_payment_plans'),
   clientRecordsSection('installments'),
   clientRecordsSection('client_payment_methods'),
+  // DE-6: intake, email marketing and consent, every status in (SA-Q2, §2.3).
+  clientRecordsSection('intake_settings'),
+  clientRecordsSection('intake_forms'),
+  clientRecordsSection('email_campaigns'),
+  clientRecordsSection('email_sequences'),
+  clientRecordsSection('email_sequence_steps'),
+  clientRecordsSection('email_sequence_enrollments'),
+  clientRecordsSection('newsletter_subscribers', subscriberRow),
+  clientRecordsSection('consent_records', consentEventRow),
+  // One row, read by user_id (no id column; SA-Q1).
+  clientRecordsSection('consent_settings'),
+  clientRecordsSection('email_unsubscribes'),
 ];
 
 /** Only the level this module uses, typed structurally so a Pino child logger satisfies it. */

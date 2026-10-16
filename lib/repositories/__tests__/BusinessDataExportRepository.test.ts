@@ -30,6 +30,15 @@
  * names A's subscription AND A's invoice, A's instalment names B's plan: A's
  * file holds A's rows only, and A's bare pointer ids, never a row of B's.
  * Children are read by their own `user_id`, never by following a parent id.
+ *
+ * DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §8 N-3, N-8, N-9, N-10; SA
+ * C-1): nine DE-6 sections go through the keyset reader unchanged; the tenth,
+ * `consent_settings` (no `id`, PK `user_id`), through the single-row branch:
+ * 0 / 1 / 2 rows, the ceiling, the query shape (`eq('user_id')` then
+ * `limit(2)`, no order, no gt) and fail-closed plants. N-8: B's step, B's
+ * enrollment, B's consent event and B's subscriber all point at A's rows;
+ * A's file holds none of them. The DE-6 cases are appended; nothing above
+ * changed.
  */
 
 import fs from 'fs';
@@ -736,5 +745,233 @@ describe('DE-5 M-11 / C-3 secrets and metadata through the real reader', () => {
     expect((payments.rows as Row[]).find((r) => r.id === aPayment.id)?.metadata).toEqual({ notes: 'Bank transfer, ref 42', source: 'manual_mark_paid' });
     expect(JSON.stringify(run.sections)).not.toContain('QA_NEVER');
     expect(JSON.stringify(run.sections)).not.toContain('QA-UNKNOWN-NEVER');
+  });
+});
+
+// ── DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §8 N-3, N-8, N-9, N-10; SA review DE-6 C-1) ──
+
+/** DE-6: the nine paged sections (each table has an `id`). */
+const DE6_PAGED_SECTIONS: Record<string, ExportSectionId> = {
+  user_intake_settings: 'intake_settings',
+  business_intake_forms: 'intake_forms',
+  email_campaigns: 'email_campaigns',
+  email_sequences: 'email_sequences',
+  email_sequence_steps: 'email_sequence_steps',
+  email_sequence_enrollments: 'email_sequence_enrollments',
+  business_subscribers: 'newsletter_subscribers',
+  marketing_consent_events: 'consent_records',
+  email_unsubscribes: 'email_unsubscribes',
+};
+/** DE-6: all ten, the single-row `consent_settings` included (SA-Q1). */
+const DE6_SECTIONS: Record<string, ExportSectionId> = { ...DE6_PAGED_SECTIONS, marketing_consent_settings: 'consent_settings' };
+
+/** A consent-settings row: no `id` (PK `user_id`), every declared column plus the owner id. */
+function settingsRow(tenant: 'a' | 'b', n = 0, extra: Row = {}): Row {
+  const row: Row = {};
+  for (const column of exportColumnsOf('marketing_consent_settings')) row[column] = `${tenant}-settings-${column}-${n}`;
+  return { ...row, user_id: tenant === 'a' ? USER_A : USER_B, ...extra };
+}
+
+describe('DE-6 the nine paged sections go through the keyset reader unchanged', () => {
+  it.each(Object.entries(DE6_PAGED_SECTIONS))('%s: select = exportColumnsOf, eq user_id first, keyset on id', async (table, section) => {
+    const db: Record<string, Row[]> = { [table]: [0, 1, 2].map((n) => rowFor(table, 'a', n)) };
+    const { client, log } = fakeClient(db);
+    const result = await new BusinessDataExportRepository(client, { pageSize: 2 }).listOwnedRowsForExport(section, USER_A, { maxRows: 100 });
+    expect(result.error).toBeNull();
+    expect(result.data?.rows).toHaveLength(3);
+    const select = exportColumnsOf(table).join(', ');
+    expect(log[0].calls).toEqual([['select', select], ['eq', 'user_id', USER_A], ['order', 'id', { ascending: true }], ['limit', 2]]);
+    expect(log).toHaveLength(3);
+    for (const r of result.data?.rows ?? []) expect(Object.keys(r)).toEqual(exportColumnsOf(table));
+    expect(JSON.stringify(result.data)).not.toContain('EXCLUDED');
+  });
+});
+
+describe('DE-6 N-9 the single-row read (SA-Q1 (4), (5))', () => {
+  const read = (db: Record<string, Row[]>, maxRows = 10) => {
+    const fake = fakeClient(db);
+    const repo = new BusinessDataExportRepository(fake.client, { pageSize: 2 });
+    return { fake, result: repo.listOwnedRowsForExport('consent_settings', USER_A, { maxRows }) };
+  };
+  const SELECT = exportColumnsOf('marketing_consent_settings').join(', ');
+
+  it('0 rows: ok, empty, after exactly one query', async () => {
+    const { fake, result } = read({ marketing_consent_settings: [settingsRow('b')] });
+    expect(await result).toEqual({ data: { rows: [], overCeiling: false }, error: null });
+    expect(fake.log).toHaveLength(1);
+  });
+
+  it('1 row: ok; the query is eq(user_id) then limit(2), with no order and no gt; the declared columns only', async () => {
+    const { fake, result } = read({ marketing_consent_settings: [settingsRow('b'), settingsRow('a')] });
+    const r = await result;
+    expect(r.error).toBeNull();
+    expect(r.data?.rows).toEqual([Object.fromEntries(exportColumnsOf('marketing_consent_settings').map((c) => [c, `a-settings-${c}-0`]))]);
+    expect(fake.log).toHaveLength(1);
+    expect(fake.log[0]).toEqual({ table: 'marketing_consent_settings', calls: [['select', SELECT], ['eq', 'user_id', USER_A], ['limit', 2]] });
+    // B's settings row is never returned to A, and the owner id is not selected.
+    const text = JSON.stringify(r.data);
+    expect(text).not.toContain('b-settings');
+    expect(text).not.toContain(USER_A);
+    const info = mockLogged.find((l) => l.msg === 'Data export section read');
+    expect(info?.fields).toMatchObject({ sectionId: 'consent_settings', table: 'marketing_consent_settings', userId: USER_A, pages: 1, rows: 1 });
+  });
+
+  it('2 rows: fails closed (section failed); the log carries counts only, never row content', async () => {
+    const { result } = read({ marketing_consent_settings: [settingsRow('a', 0), settingsRow('a', 1)] });
+    const r = await result;
+    expect(r.data).toBeNull();
+    expect(r.error).toBeInstanceOf(Error);
+    expect(r.error?.message).toBe('Data export single-row read found 2 rows for one owner');
+    const logged = JSON.stringify(mockLogged);
+    expect(logged).not.toContain('a-settings');
+  });
+
+  it('maxRows 0 with 1 row: over the ceiling, no rows', async () => {
+    const { result } = read({ marketing_consent_settings: [settingsRow('a')] }, 0);
+    expect(await result).toEqual({ data: { rows: [], overCeiling: true }, error: null });
+    expect(mockLogged.find((l) => l.msg === 'Data export section is over the row ceiling')?.fields).toMatchObject({ pages: 1, maxRows: 0 });
+  });
+
+  it('a PostgREST error fails the section', async () => {
+    const fake = fakeClient({}, { errorOn: { marketing_consent_settings: new Error('down') } });
+    const r = await new BusinessDataExportRepository(fake.client).listOwnedRowsForExport('consent_settings', USER_A, { maxRows: 10 });
+    expect(r.data).toBeNull();
+  });
+
+  describe('fails closed with no query', () => {
+    const settings = PURGE_DESCRIPTORS.find((d) => d.table === 'marketing_consent_settings')!;
+    const e = settings.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+    const replace = (patch: PurgeDescriptor): PurgeDescriptor[] => PURGE_DESCRIPTORS.map((d) => (d.table === settings.table ? patch : d));
+
+    it.each<[string, PurgeDescriptor[]]>([
+      // A planted rowKey other than user_id (Jest does not type-check).
+      ["rowKey 'id'", replace({ ...settings, export: { ...e, rowKey: 'id' as never } })],
+      ['a rowFilter beside the rowKey', replace({ ...settings, export: { ...e, rowFilter: { column: 'privacy_policy_mode', notIn: ['none'], reason: 'x' } } })],
+      ['a via scope (E-2 runs first)', replace({ ...settings, scope: { kind: 'via', parent: 'business_profiles', fk: 'user_id' } })],
+      ['a deny-listed column (E-3 runs first)', replace({ ...settings, export: { ...e, columns: [...e.columns, 'user_agent'] } })],
+      ['without the rowKey (no id to page on)', replace({ ...settings, export: { ...e, rowKey: undefined } })],
+    ])('%s', async (_name, descriptors) => {
+      const { client, log } = fakeClient({ marketing_consent_settings: [settingsRow('a')] });
+      const r = await new BusinessDataExportRepository(client, { descriptors }).listOwnedRowsForExport('consent_settings', USER_A, { maxRows: 10 });
+      expect(r.data).toBeNull();
+      expect(r.error).toBeInstanceOf(Error);
+      expect(log).toHaveLength(0);
+    });
+  });
+});
+
+describe('DE-6 N-3 a tracking column planted in the consent ledger fails the section at request time (SA-Q5)', () => {
+  it.each(['user_agent', 'session_id', 'ip_hash_salt', 'ip_hash'])('%s: no query, section failed', async (column) => {
+    const events = PURGE_DESCRIPTORS.find((d) => d.table === 'marketing_consent_events')!;
+    const e = events.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+    const descriptors = PURGE_DESCRIPTORS.map((d) => (d === events ? { ...d, export: { ...e, columns: [...e.columns, column] } } : d));
+    const { client, log } = fakeClient({ marketing_consent_events: [rowFor('marketing_consent_events', 'a', 0)] });
+    const r = await new BusinessDataExportRepository(client, { descriptors }).listOwnedRowsForExport('consent_records', USER_A, { maxRows: 10 });
+    expect(r.data).toBeNull();
+    expect(log).toHaveLength(0);
+  });
+
+  it('the real ledger select names none of the four', async () => {
+    const { client, log } = fakeClient({ marketing_consent_events: [rowFor('marketing_consent_events', 'a', 0)] });
+    await new BusinessDataExportRepository(client).listOwnedRowsForExport('consent_records', USER_A, { maxRows: 10 });
+    const select = String(log[0].calls[0][1]).split(', ');
+    for (const c of ['ip_hash', 'ip_hash_salt', 'user_agent', 'session_id', 'recorded_by', 'email_normalized', 'user_id']) {
+      expect(select).not.toContain(c);
+    }
+  });
+});
+
+describe('DE-6 N-8 cross-tenant: crossed pointers carry a bare id, never a row (tenant-isolation-guard)', () => {
+  const byOwner = (db: Record<string, Row[]>, table: string, owner: string) => db[table].filter((r) => r.user_id === owner);
+
+  /** Both tenants in the ten DE-6 tables only, plus each tenant's own contacts for the pointers. */
+  function crossedSeed() {
+    const db: Record<string, Row[]> = { plugin_connections: [] };
+    for (const table of Object.keys(DE6_PAGED_SECTIONS)) {
+      db[table] = [];
+      for (const tenant of ['a', 'b'] as const) for (let n = 0; n < 2; n += 1) db[table].push(rowFor(table, tenant, n));
+    }
+    db.marketing_consent_settings = [settingsRow('a'), settingsRow('b')];
+    const aSequence = byOwner(db, 'email_sequences', USER_A)[0];
+    const aContactId = uid('a', 'crm_contacts', 0);
+    // B's step under A's sequence; B's enrollment on A's sequence and contact; B's consent event and
+    // subscriber naming A's contact.
+    const bStep = byOwner(db, 'email_sequence_steps', USER_B)[0];
+    bStep.sequence_id = aSequence.id;
+    bStep.subject = 'QA-B-STEP-NEVER';
+    const bEnrollment = byOwner(db, 'email_sequence_enrollments', USER_B)[0];
+    bEnrollment.sequence_id = aSequence.id;
+    bEnrollment.contact_id = aContactId;
+    const bEvent = byOwner(db, 'marketing_consent_events', USER_B)[0];
+    bEvent.contact_id = aContactId;
+    bEvent.statement_text = 'QA-B-CONSENT-NEVER';
+    const bSubscriber = byOwner(db, 'business_subscribers', USER_B)[0];
+    bSubscriber.promoted_contact_id = aContactId;
+    bSubscriber.email = 'qa-b-subscriber-never@example.com';
+    // A's enrollment on B's sequence: exported as a bare id.
+    const bSequence = byOwner(db, 'email_sequences', USER_B)[0];
+    const aEnrollment = byOwner(db, 'email_sequence_enrollments', USER_A)[0];
+    aEnrollment.sequence_id = bSequence.id;
+    return { db, bStep, bEnrollment, bEvent, bSubscriber, bSequence, aEnrollment };
+  }
+
+  it("A's export holds every A row of the ten tables and none of B's, though B's rows point at A's", async () => {
+    const seeded = crossedSeed();
+    const fake = fakeClient(seeded.db);
+    mockActiveClient = fake.client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    expect(run.overCeiling).toBe(false);
+    const byId = Object.fromEntries(run.sections.map((s) => [s.id, s]));
+    const text = JSON.stringify(run.sections);
+    for (const [table, section] of Object.entries(DE6_PAGED_SECTIONS)) {
+      expect(byId[section].status).toBe('ok');
+      expect(byId[section].rows.map((r) => String((r as Row).id))).toEqual(byOwner(seeded.db, table, USER_A).map((r) => String(r.id)).sort());
+    }
+    expect(byId.consent_settings).toMatchObject({ status: 'ok', row_count: 1 });
+    expect(text).not.toContain('b-settings');
+    for (const leaked of ['QA-B-STEP-NEVER', 'QA-B-CONSENT-NEVER', 'qa-b-subscriber-never@example.com']) expect(text).not.toContain(leaked);
+    for (const bRow of [seeded.bStep, seeded.bEnrollment, seeded.bEvent, seeded.bSubscriber]) expect(text).not.toContain(String(bRow.id));
+    // A's enrollment exports B's sequence id as held; B's sequence row is not in A's sequences.
+    expect((byId.email_sequence_enrollments.rows as Row[]).find((r) => r.id === seeded.aEnrollment.id)?.sequence_id).toBe(seeded.bSequence.id);
+    expect(byId.email_sequences.rows.map((r) => (r as Row).id)).not.toContain(seeded.bSequence.id);
+    expect(foreignMarkers(text, seeded.db)).toEqual([String(seeded.bSequence.id)]);
+    // Children were read by their own user_id: the only filter on every DE-6 query.
+    const de6 = fake.log.filter((l) => l.table in DE6_SECTIONS);
+    expect(new Set(de6.map((l) => l.table))).toEqual(new Set(Object.keys(DE6_SECTIONS)));
+    for (const entry of de6) {
+      expect(entry.calls[1]).toEqual(['eq', 'user_id', USER_A]);
+      expect(entry.calls.filter((c) => c[0] === 'eq')).toEqual([['eq', 'user_id', USER_A]]);
+      expect(entry.calls.some((c) => c[0] === 'in' || c[0] === 'not')).toBe(false);
+    }
+    // The tables DE-6 excluded, and email_sends, are never read.
+    for (const table of ['lead_responses', 'marketing_consent_state', 'email_sends']) expect(fake.log.some((l) => l.table === table)).toBe(false);
+  });
+
+  it("negative control: a fake that ignores .eq(user_id) puts B's rows (and B's settings) in A's file", async () => {
+    const seeded = crossedSeed();
+    mockActiveClient = fakeClient(seeded.db, { ignoreUserIdFilter: true }).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const steps = run.sections.find((s) => s.id === 'email_sequence_steps')!;
+    expect(steps.rows.some((r) => (r as Row).id === seeded.bStep.id)).toBe(true);
+    // Two owners' settings rows: the single-row read fails closed rather than export B's.
+    expect(run.sections.find((s) => s.id === 'consent_settings')?.status).toBe('failed');
+  });
+});
+
+describe('DE-6 N-10 all history is in: every status, no row filter on a DE-6 table', () => {
+  const STATUSES: Record<string, Array<[string, unknown]>> = {
+    business_intake_forms: [['status', 'draft'], ['status', 'published'], ['status', 'archived']],
+    business_subscribers: [['status', 'pending'], ['status', 'confirmed'], ['status', 'unsubscribed'], ['status', 'promoted']],
+    marketing_consent_events: [['decision', 'granted'], ['decision', 'withdrawn'], ['redacted_at', '2026-10-01T00:00:00Z']],
+    email_sequence_enrollments: [['status', 'active'], ['status', 'paused'], ['status', 'completed'], ['status', 'cancelled']],
+    email_campaigns: [['status', 'draft'], ['status', 'scheduled'], ['status', 'sent']],
+  };
+
+  it.each(Object.entries(STATUSES))('%s: every seeded state is exported', async (table, states) => {
+    const db = { [table]: states.map(([column, value], n) => rowFor(table, 'a', n, { [column]: value })) };
+    const { client, log } = fakeClient(db);
+    const result = await new BusinessDataExportRepository(client).listOwnedRowsForExport(DE6_PAGED_SECTIONS[table], USER_A, { maxRows: 100 });
+    expect(result.data?.rows).toHaveLength(states.length);
+    expect(log.flatMap((l) => l.calls).some((c) => c[0] === 'not')).toBe(false);
   });
 });

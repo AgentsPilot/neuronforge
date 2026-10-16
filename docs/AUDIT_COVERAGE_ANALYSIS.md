@@ -94,7 +94,7 @@ Files that may need audit logging:
 - `/app/api/admin/users/[id]/terminate/route.ts` - User termination
 - `/app/api/admin/users/route.ts` - User management
 - `/app/api/admin/system-config/route.ts` - System configuration (GET/PUT)
-- `/app/api/admin/system-config/pricing/sync/route.ts` - Pricing sync POST handler
+- ~~`/app/api/admin/system-config/pricing/sync/route.ts` - Pricing sync POST handler~~ **Removed 2026-10-16 (AI model price review slice 6)**, with the single-row pricing PUT/POST/DELETE and the `logAIPricing*` helpers; the `AI_PRICING_*` events stay registered for history
 
 ## System Actions (Automated)
 

@@ -31,6 +31,10 @@ export const es = {
     // Loading
     'loading.dashboard': 'Cargando tu Business OS...',
     'loading.myday': 'Cargando Mi Día...',
+    'lazyDialog.loading': 'Cargando…',
+    'lazyDialog.loadFailed.title': 'No se pudo cargar',
+    'lazyDialog.loadFailed.body': 'Revisa tu conexión e inténtalo de nuevo.',
+    'lazyDialog.loadFailed.retry': 'Intentar de nuevo',
 
     // Payments & Invoices
     'payments.invoices': 'Facturas',

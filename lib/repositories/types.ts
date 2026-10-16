@@ -368,25 +368,6 @@ export interface AiModelPricing {
   created_at: string;
 }
 
-/** Everything needed to insert one pricing row. The caller owns the clock. */
-export interface CreateAiModelPricingInput {
-  provider: string;
-  model_name: string;
-  input_cost_per_token: number;
-  output_cost_per_token: number;
-  effective_date: string;
-}
-
-/** One catalogue entry handed to `syncMany`. Same shape as an insert. */
-export type AiModelPricingSyncEntry = CreateAiModelPricingInput;
-
-/** Per-model outcome of a sync run; the values are model names. */
-export interface AiModelPricingSyncResult {
-  updated: string[];
-  created: string[];
-  failed: string[];
-}
-
 /**
  * An active `ai_model_pricing` row read with its prices as exact decimal TEXT
  * (`::text` casts), for the admin price comparison only (AI model price review
