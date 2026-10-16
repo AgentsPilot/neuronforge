@@ -1,11 +1,72 @@
 import { useState, useCallback } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/components/UserProvider';
+import { createLogger } from '@/lib/logger';
+import { AVATAR_MAX_BYTES, isAvatarMimeType } from '@/lib/validation/avatar';
+
+/*
+ * The profile picture, through `POST` / `DELETE /api/user/avatar` (settings
+ * drawer D-3, C-21). This hook used to read and write `profiles` and the
+ * `avatars` bucket from the browser; the server now owns all of it, decides
+ * the file type from its bytes and deletes an old file only when it is proven
+ * to be this account's.
+ *
+ * The public shape is unchanged: `uploadAvatar(file) -> url | null`,
+ * `deleteAvatar() -> boolean`, plus `uploading` / `error` / `progress`.
+ *
+ * The pre-check below is a convenience (no request for a file the server
+ * would refuse); the server decides. Messages are this hook's own English
+ * sentences, chosen from the route's `code`: a server's text is never shown.
+ * Logs carry a status, a code or the thrown error only, never a file name or
+ * a URL (L-1).
+ */
+
+const logger = createLogger({ module: 'useAvatarUpload' });
+
+const AVATAR_ROUTE = '/api/user/avatar';
+
+const MESSAGES = {
+  notAuthenticated: 'User not authenticated',
+  fileType: 'Please choose a PNG, JPEG, WebP or GIF image',
+  fileTooLarge: 'Image must be 4 MB or smaller',
+  signInAgain: 'Please sign in again',
+  uploadFailed: 'Failed to upload the picture',
+  removeFailed: 'Failed to remove the picture',
+} as const;
 
 interface AvatarUploadState {
   uploading: boolean;
   error: string | null;
   progress: number;
+}
+
+interface AvatarRouteBody {
+  code?: string;
+  avatarUrl?: string;
+}
+
+/** The route's JSON, read defensively: a platform 413 (Vercel) is not JSON. */
+async function readBody(response: Response): Promise<AvatarRouteBody> {
+  try {
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object') return {};
+    const { code, data } = body as { code?: unknown; data?: unknown };
+    const avatarUrl =
+      data && typeof data === 'object' ? (data as { avatar_url?: unknown }).avatar_url : undefined;
+    return {
+      code: typeof code === 'string' ? code : undefined,
+      avatarUrl: typeof avatarUrl === 'string' ? avatarUrl : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** The sentence for a refused request: by `code`, then by status, else the fallback. */
+function messageFor(status: number, code: string | undefined, fallback: string): string {
+  if (code === 'file_type') return MESSAGES.fileType;
+  if (code === 'file_too_large' || status === 413) return MESSAGES.fileTooLarge;
+  if (code === 'unauthorized' || status === 401) return MESSAGES.signInAgain;
+  return fallback;
 }
 
 export const useAvatarUpload = () => {
@@ -18,102 +79,42 @@ export const useAvatarUpload = () => {
 
   const uploadAvatar = useCallback(async (file: File): Promise<string | null> => {
     if (!user) {
-      setState(prev => ({ ...prev, error: 'User not authenticated' }));
+      setState(prev => ({ ...prev, error: MESSAGES.notAuthenticated }));
       return null;
     }
 
-    // Validate file
-    if (!file.type.startsWith('image/')) {
-      setState(prev => ({ ...prev, error: 'Please select an image file' }));
+    if (!isAvatarMimeType(file.type)) {
+      setState(prev => ({ ...prev, error: MESSAGES.fileType }));
       return null;
     }
 
-    // Check file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      setState(prev => ({ ...prev, error: 'Image must be less than 5MB' }));
+    if (file.size > AVATAR_MAX_BYTES) {
+      setState(prev => ({ ...prev, error: MESSAGES.fileTooLarge }));
       return null;
     }
 
     setState(prev => ({ ...prev, uploading: true, error: null, progress: 0 }));
 
     try {
-      // Create unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}-${Date.now()}.${fileExt}`;
-      const filePath = fileName; // Just the filename, not nested in folder
+      const form = new FormData();
+      form.append('file', file);
 
-      // Delete old avatar if it exists
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('avatar_url')
-        .eq('id', user.id)
-        .single();
-
-      if (profile?.avatar_url) {
-        // Extract filename from URL and delete old file
-        const oldFileName = profile.avatar_url.split('/').pop();
-        if (oldFileName && oldFileName !== fileName) {
-          await supabase.storage
-            .from('avatars')
-            .remove([oldFileName]);
-        }
-      }
-
-      // Upload new avatar
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: true
-        });
-
-      if (uploadError) {
-        throw uploadError;
-      }
-
+      const response = await fetch(AVATAR_ROUTE, { method: 'POST', body: form });
       setState(prev => ({ ...prev, progress: 50 }));
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
-
-      const avatarUrl = urlData.publicUrl;
-
-      // Update profile with new avatar URL
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          avatar_url: avatarUrl,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user.id);
-
-      if (profileError) {
-        throw profileError;
+      const body = await readBody(response);
+      if (response.ok && body.avatarUrl) {
+        setState(prev => ({ ...prev, progress: 100, uploading: false }));
+        return body.avatarUrl;
       }
 
-      setState(prev => ({ ...prev, progress: 100, uploading: false }));
-
-      return avatarUrl;
-
-    } catch (error) {
-      console.error('Avatar upload error:', error);
-      console.error('Error details:', JSON.stringify(error, null, 2));
-      
-      let errorMessage = 'Failed to upload avatar';
-      
-      if (error && typeof error === 'object') {
-        if ('message' in error) {
-          errorMessage = error.message as string;
-        } else if ('error' in error) {
-          errorMessage = (error as any).error;
-        } else if ('statusText' in error) {
-          errorMessage = (error as any).statusText;
-        }
-      }
-      
-      setState(prev => ({ ...prev, error: errorMessage, uploading: false, progress: 0 }));
+      logger.warn({ status: response.status, code: body.code }, 'Avatar upload refused');
+      const message = messageFor(response.status, body.code, MESSAGES.uploadFailed);
+      setState(prev => ({ ...prev, error: message, uploading: false, progress: 0 }));
+      return null;
+    } catch (err) {
+      logger.error({ err }, 'Avatar upload request failed');
+      setState(prev => ({ ...prev, error: MESSAGES.uploadFailed, uploading: false, progress: 0 }));
       return null;
     }
   }, [user]);
@@ -124,43 +125,20 @@ export const useAvatarUpload = () => {
     setState(prev => ({ ...prev, uploading: true, error: null }));
 
     try {
-      // Get current avatar URL
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('avatar_url')
-        .eq('id', user.id)
-        .single();
-
-      if (profile?.avatar_url) {
-        // Extract filename and delete from storage
-        const fileName = profile.avatar_url.split('/').pop();
-        if (fileName) {
-          await supabase.storage
-            .from('avatars')
-            .remove([`avatars/${fileName}`]);
-        }
+      const response = await fetch(AVATAR_ROUTE, { method: 'DELETE' });
+      if (response.ok) {
+        setState(prev => ({ ...prev, uploading: false }));
+        return true;
       }
 
-      // Update profile to remove avatar URL
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          avatar_url: null,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user.id);
-
-      if (profileError) {
-        throw profileError;
-      }
-
-      setState(prev => ({ ...prev, uploading: false }));
-      return true;
-
-    } catch (error) {
-      console.error('Avatar deletion error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to delete avatar';
-      setState(prev => ({ ...prev, error: errorMessage, uploading: false }));
+      const body = await readBody(response);
+      logger.warn({ status: response.status, code: body.code }, 'Avatar removal refused');
+      const message = messageFor(response.status, body.code, MESSAGES.removeFailed);
+      setState(prev => ({ ...prev, error: message, uploading: false }));
+      return false;
+    } catch (err) {
+      logger.error({ err }, 'Avatar removal request failed');
+      setState(prev => ({ ...prev, error: MESSAGES.removeFailed, uploading: false }));
       return false;
     }
   }, [user]);
