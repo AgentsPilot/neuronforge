@@ -727,6 +727,89 @@ The exact 68 / 17 lists are the `BUSINESS_PROFILES_EXPORT` descriptor in `lib/bu
 
 **As built (measured on the branch, 2026-10-16):** 155 table descriptors = **13** `include` (`profiles`, the eight DE-4 tables, + `user_preferences`, `notification_settings`, `business_profiles`, `business_addresses`) + **32** `planned` (DE-5: 15, DE-6: 12, DE-7: 5; DE-3: 0) + **110** `exclude` (unchanged). `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged on the four DE-3 rows (purge suites green). The export file holds 6 `account` sections + 8 `client_records` sections. The DE-4 sections, their eight selects, order, group, role and the `clients` `source_metadata` reshaping are unchanged (SA C-2).
 
+### 0.9 DE-5 status, user decisions and SA rulings (2026-10-16)
+
+**DE-5 (client money): SA code-approved + QA PASS 2026-10-16 (25/25 negative controls); T-10 drift 0/0 (TL). Uncommitted on `feature/data-export-de5`; SA F-1 applied 2026-10-16.** Before that, T-0 live read done 2026-10-16 (TL, prod read-only; DE-5 workplan §11.1) and SA C-1 counts done (§11.2). The SA workplan review is approved with conditions C-1…C-9 and rulings SA-Q1…SA-Q15 (2026-10-16). T-10 drift check done (TL, 0 drift / 0 missing) and billing table names checked live (SA C-6; 13 of 14 live, `subscriptions` dropped from the test lists by F-1). Workplan: [BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md).
+
+**What it delivers:** the JSON download (`GET /api/user/data-export`) gains ten sections. Two go in the `account` group (AgentPilot the controller), after `business_addresses`: `payment_account` (`stripe_connect_accounts`) and `payment_providers` (`payment_processors`). Eight go in the `client_records` group (AgentPilot the processor), after `time_off`: `quotes` (`proposals`), `invoices` (`payment_invoices`), `payments` (`payment_transactions`), `refunds` (`payment_refunds`), `payment_plans`, `client_payment_plans` (`payment_plan_subscriptions`), `installments` (`payment_plan_installments`) and `client_payment_methods` (`saved_payment_methods`). Each section is one table with an explicit column list and a written reason for every column left out. Each is read through the DE-4 `BusinessDataExportRepository`, keyed on the session user's id, paged to the end, inside the Phase 1 row ceiling. Child tables (refunds, instalments) are read by their own `user_id`, never by following a parent id. Five money tables are `exclude`. `format_version` stays 2. There is no migration, no new route, repository method, file, dependency or flag.
+
+**Money paid to AgentPilot is not in the file (DX-1a).** It lives in the billing tables, never in these ten. A test pins it at route level and at classification level (SA C-6).
+
+**User decisions (via TL, 2026-10-16; binding).** These DE-5 BC numbers are separate from the BC numbers of DE-2, DE-3 and DE-4.
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| BC-1 | Card data on saved methods and client plans | **Brand and last 4 only** | `card_brand`, `card_last4`, `brand`, `last_four` are in. `card_exp_month`, `card_exp_year`, `expiry_month`, `expiry_year` are out (`CARD_EXPIRY`). No card number is stored anywhere |
+| BC-2 | Failed, cancelled, refunded and draft rows | **All in**, each with its status | No `rowFilter` on any DE-5 table (none of them soft-deletes) |
+| **BC-3** | The Stripe invoice web link and PDF link | **In. This overrides the workplan default and SA-Q5, which were "out".** The user accepts that anyone holding the file can open those invoice pages | `stripe_hosted_invoice_url` and `stripe_invoice_pdf` are in `payment_invoices` columns. No deny rule matches them, so there is no exception entry |
+| BC-4 | Payment reminders sent to clients | **Out** (activity) | `payment_reminders` is `exclude` |
+| BC-5 | Payment event log and automatic-action history | **Out** (activity) | `payment_events` and `payment_automation_executions` are `exclude`. This meets the SA-Q14 condition |
+| BC-6 | The built-in payment rules | **Out** | `payment_automation_rules` is `exclude` (platform defaults the owner cannot edit) |
+| BC-7 | Private invoice notes; the owner's typed notes on manual payments | **In** | `internal_notes` is in. On `payments.metadata`, only `notes` and `source` are exported (SA-Q3). The invoice and quote sent / viewed dates are in |
+| BC-8…BC-10 | Fees and net amount (each in its own currency); Stripe reference numbers | **In** | `processor_fee` and `net_amount` are exported with `fee_currency`. The Stripe / processor ids are in |
+| BC-11 | Totals | **None of any kind** | `summary` keeps exactly its four keys (counts, failed sections, size, duration). Per-currency totals stay in the ledger export |
+| BC-12 | Provider name and status in; keys never | **Default kept** | `payment_processors.credentials` is never selected (`SECRET`) |
+
+`payment_methods` is `exclude` as a dead table (0 rows live, superseded by `saved_payment_methods`; SA-Q8).
+
+**SA rulings recorded here (DE-5 workplan review, 2026-10-16):**
+
+| Ruling | Change |
+|---|---|
+| SA-Q1 | `payment_account` and `payment_providers` are group `account`, AgentPilot the controller, after `business_addresses`. The other eight are `client_records`, processor |
+| SA-Q2 | The section ids are as listed above (`quotes`, `client_payment_plans`, `client_payment_methods`) |
+| **SA-Q3 (Dev default overruled in part)** | `payment_refunds.metadata` and `payment_plan_subscriptions.metadata` are out whole. `payment_transactions.metadata` is in through a named allow-list of exactly `notes` and `source`, strings only. This uses a new general `pickStringKeys(value, keys)`. `sourceMetadata` (DE-4) is now a one-line call to it, and its output is byte-identical |
+| SA-Q4 | Refunds are exported as stored, with positive amounts. No signed column is added. DE-5 adds no total |
+| SA-Q5 | The processor and Stripe ids are references, not credentials, so they are in. Invoice `id` is in. (The ruling on the two invoice links is superseded by user BC-3.) |
+| **SA-Q6** | `fee_returned` and `refund_fee` are exported as stored with **no currency**. Nothing is copied from the parent payment. The pairing test lists exactly these two in a "no currency column" set. Live: 0 rows have either one set (§11.2). **DE-8b README wording:** "these two amounts have no recorded currency; for a Stripe refund they are normally in the payment's fee currency (`payments.fee_currency` on the linked payment); check your Stripe dashboard." |
+| **SA-Q7 (Dev default overruled)** | `charge_account_kind` is **out**, together with `account_resolution` (`RECONCILIATION_STATE`). On live rows, `platform` only ever goes with `manual` (37 / 37, C-1). In a client-money file it would read as money paid to AgentPilot, which it is not |
+| SA-Q8 | `payment_methods` is excluded (0 rows) |
+| SA-Q9 | A NULL currency stays NULL and is never filled in (live: 0 rows). A NULL fee with a NULL `fee_currency` means "fee not recorded", which is not zero. The Connect currency `usd` is exported lower case, as stored |
+| SA-Q10 | The amount-to-currency pairing lives in a map inside the test. No descriptor field is added |
+| SA-Q11 | `card_number`, `cvc` and `cvv` are added to `SECRET_COLUMN_DENY_EXACT`. `client_secret` is not added, because `/_secret$/` already covers it (noted in a comment). There is no new hit on any existing include |
+| SA-Q12 | The retry counters (`retry_count`, `last_retry_at`, `next_retry_at`) on invoices and instalments are out (`RETRY_STATE`) |
+| SA-Q13 | The `stripe_connect_accounts` facts are in, including `stripe_email` (the owner's own) and `currency` (the settlement currency) |
+| SA-Q14 | `payment_events` is out as activity (user BC-5) |
+| SA-Q15 | `payment_refunds.initiated_by` is out (`ACTOR_ID`). `idempotency_key` and `credentials` are always out |
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table):**
+
+| Table → section | In | Out | Total |
+|---|---|---|---|
+| `payment_transactions` → `payments` | 28, incl. `metadata` (only `notes` and `source` exported), `processor_fee`, `net_amount`, `fee_currency` | `user_id`, `account_resolution`, `charge_account_kind` | 31 |
+| `payment_refunds` → `refunds` | 20, incl. `amount_minor`, `fee_returned`, `refund_fee` | `user_id`, `idempotency_key`, `initiated_by`, `metadata` | 24 |
+| `payment_invoices` → `invoices` | 35, incl. `internal_notes`, `stripe_hosted_invoice_url`, `stripe_invoice_pdf` | `user_id`, 3 × retry | 39 |
+| `proposals` → `quotes` | 32 | `user_id` | 33 |
+| `payment_plans` → `payment_plans` | 15 | `user_id` | 16 |
+| `payment_plan_subscriptions` → `client_payment_plans` | 29, incl. `card_brand`, `card_last4` | `user_id`, 2 × card expiry, `metadata` | 33 |
+| `payment_plan_installments` → `installments` | 26 | `user_id`, 3 × retry | 30 |
+| `saved_payment_methods` → `client_payment_methods` | 12, incl. `brand`, `last_four` | `user_id`, 2 × expiry | 15 |
+| `stripe_connect_accounts` → `payment_account` | 13, incl. `stripe_email`, `currency` | `user_id` | 14 |
+| `payment_processors` → `payment_providers` | 8 | `user_id`, `credentials`, 4 × provider capability | 14 |
+
+The exact lists are the `*_EXPORT` descriptors in `lib/business-os/purge/descriptors.ts`. They are pinned literally in `exportClassification.test.ts` (`DE5_PINS`) and byte for byte in the route characterization test.
+
+**Currency (CLAUDE.md § Currency & Timezone):** every amount goes out as stored, next to the currency column it is denominated in. `processor_fee` and `net_amount` are paired with `fee_currency`, not with the payment's `currency`. Nothing is converted, defaulted, case-changed or summed. Tests pin this:
+- an exhaustive pairing check (catalog money columns plus columns whose names look like amounts, with a planted `deposit_amount` as negative control);
+- a test with live trap values: an ILS payment with USD fees, a NULL fee with a NULL fee currency, an ILS refund under a USD-fee payment, lower-case `usd`, and two currencies for one owner;
+- a source scan for FX or conversion code.
+
+**Notes for DE-8b (binding):**
+
+| # | Note |
+|---|---|
+| README: refund fees (SA-Q6) | Use the wording in the SA-Q6 row above |
+| README: fees | `processor_fee` / `net_amount` are in `fee_currency`, which can differ from the payment's `currency`. An empty fee means "fee not recorded", not zero (SA-Q9) |
+| README: refunds | A refund row is money returned to the client, stored positive. `payments.amount` is the gross charge, so do not count refunds twice. There are no totals in the file; for totals per currency, use the ledger export (SA-Q4, BC-11) |
+| README: invoice links | `stripe_hosted_invoice_url` and `stripe_invoice_pdf` open the invoice page for anyone who holds them (user BC-3) |
+| CSV | The ten sections follow the DE-4 CSV rule. `payments.metadata`, `line_items`, `payment_shape`, `sessions`, `accepted_snapshot` and `client_address` go as JSON text in one cell |
+
+**Follow-ups:**
+
+- Purge follow-up (not DE-5): the `never('subscriptions', …)` purge descriptor names a table that is not live in prod (TL §11.3, 2026-10-16); SchemaReconciler already reports it under `missingNever`. Remove or re-point it in the purge workstream.
+
+**As built (measured on the branch, 2026-10-16):** 155 table descriptors = **23** `include` + **17** `planned` (DE-6: 12, DE-7: 5; DE-5: 0) + **115** `exclude`. On the 15 DE-5 rows, `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged (purge suites green). The export file holds 8 `account` sections and 16 `client_records` sections. The 13 earlier selects (DE-3, DE-4, `profiles`) are byte-identical (SA C-7).
+
 ---
 
 ## 1. Discovery: what exists today
@@ -1080,3 +1163,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-15 | DE-4 post-review: T-9 recorded; user decisions DE4-U1 / DE4-U2; DX-1 note extended (§0.2, §0.7) | SA F-3: T-9 done by TL's read-only SQL (§10.2 of the DE-4 workplan: drift 0, missing 0, `contact_documents.status` NOT NULL), closing "`schema:reconcile` owed before merge". DE4-U1: file name `agentpilot-data-export-YYYY-MM-DD-HHmm.json` on the owner's clock (`user_preferences.timezone`; NULL / invalid / unreadable gives UTC; never fails the export). DE4-U2: connected apps (`plugin_connections`) dropped from the export: descriptor `exclude`, section, reader, allow-list, deny exception and `listForUserDataExport` removed; totals 9 include / 36 planned / 110 exclude. §0.2 DX-1 open lawyer note now names connected apps alongside activity |
 | 2026-10-15 | User manual check DE-1 PASS; UI-1 folded into DE-9 (§0.7) | Danger zone Export works. UI-1: the export result message must use the system's standard success/error notification on all 4 export entry points, plus a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1); SA picks the pattern in the DE-9 workplan review. No DE-4 code change |
 | 2026-10-16 | DE-3 code complete; user decisions BC-A…BC-G; SA rulings (§0.8) | Uncommitted on `feature/data-export-de3`, awaiting SA code review; T-9 drift check (157 names, five tables) owed, TL runs it as read-only SQL. Four `account` sections (preferences, notification settings, business profile, business addresses) through the DE-4 repository; `profiles` loses `hourly_rate_usd` and `org_id`, keeps `role`. BC-A agent-platform settings out (`AGENT_SETTING`, verbatim); BC-B invoice bank details out (`BANK_DETAILS`, verbatim) incl. `invoice_payment_instructions` (SA R-2); `invoice_tax_id` in (SA R-1); BC-C…BC-G confirmed. SA-Q1 single-row read dropped (all tables have `id`). DE-8b README note: three timezone columns (authority, mirror, quiet hours only). Totals 13 include / 32 planned / 110 exclude |
+| 2026-10-16 | DE-5 code complete; user decisions BC-1…BC-12; SA rulings (§0.9) | Uncommitted on `feature/data-export-de5`, waiting for SA code review. T-10 drift check (249 names, ten tables) owed: TL runs it as read-only SQL. Ten money sections: 2 `account` (payment account, payment providers) and 8 `client_records` (quotes, invoices, payments, refunds, payment plans, client payment plans, instalments, client payment methods). Five money tables excluded: reminders, event log and automation runs (activity), built-in rules, and dead `payment_methods`. **BC-3: the Stripe invoice web and PDF links are IN, which overrides the workplan default and SA-Q5.** BC-1: card brand and last 4 only. BC-11: no totals. SA-Q3: `payments.metadata` limited to `notes` and `source` through the new `pickStringKeys` (DE-4 `sourceMetadata` output byte-identical). SA-Q6: refund fee columns have no currency, plus the DE-8b README wording. SA-Q7: `charge_account_kind` out. SA-Q11: `card_number`, `cvc` and `cvv` added to the deny list. Totals 23 include / 17 planned / 115 exclude |
