@@ -83,6 +83,12 @@ jest.mock('@/components/ui/SavedAddressPicker', () => {
   };
 });
 
+// The panel reads the address book in parallel with consent (C-a, C-3). Stubbed
+// here so the call-ordered consent replies below are not consumed by it (SA-CA-7).
+jest.mock('@/components/ui/addressBookRead', () => ({
+  readAddressBook: (locale: string) => Promise.resolve({ ok: true, locale, addresses: [] }),
+}));
+
 jest.mock('@/components/ui/select', () => {
   const ReactInMock = jest.requireActual('react') as typeof React;
   type Kids = { children?: React.ReactNode };

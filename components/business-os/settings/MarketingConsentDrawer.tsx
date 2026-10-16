@@ -4,6 +4,7 @@ import React, { useCallback, useState } from 'react';
 
 import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
 import { MarketingConsentPanel } from '@/components/business-os/settings/MarketingConsentPanel';
+import type { MarketingDrawerReads } from '@/components/business-os/settings/marketingDrawerReads';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 /**
@@ -31,9 +32,19 @@ interface MarketingConsentDrawerProps {
   onOpenChange: (open: boolean) => void;
   /** The row that opened it; focus goes back there on close. */
   returnFocusRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * Reads the page started early (C-5), handed to the panel, which takes them
+   * once when it mounts. Optional: without it the panel reads on open.
+   */
+  takePrefetched?: () => MarketingDrawerReads | null;
 }
 
-export function MarketingConsentDrawer({ open, onOpenChange, returnFocusRef }: MarketingConsentDrawerProps) {
+export function MarketingConsentDrawer({
+  open,
+  onOpenChange,
+  returnFocusRef,
+  takePrefetched,
+}: MarketingConsentDrawerProps) {
   const { t, isRTL } = useLanguage();
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -68,7 +79,11 @@ export function MarketingConsentDrawer({ open, onOpenChange, returnFocusRef }: M
       returnFocusRef={returnFocusRef}
       testId="settings-consent-drawer"
     >
-      <MarketingConsentPanel onDirtyChange={setIsDirty} onBusyChange={setIsSaving} />
+      <MarketingConsentPanel
+        onDirtyChange={setIsDirty}
+        onBusyChange={setIsSaving}
+        takePrefetched={takePrefetched}
+      />
     </SettingsDrawer>
   );
 }

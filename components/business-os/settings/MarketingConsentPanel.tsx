@@ -36,6 +36,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SavedAddressPicker, type KnownAddress } from '@/components/ui/SavedAddressPicker';
+import { readAddressBook, type AddressBookRead } from '@/components/ui/addressBookRead';
+import {
+  readConsentSettings,
+  type ConsentRead,
+  type MarketingDrawerReads,
+} from '@/components/business-os/settings/marketingDrawerReads';
 import { formatAddressOneLine } from '@/lib/geo/address';
 import type { CountryLocale } from '@/lib/geo/countries';
 import { TabFooter } from '@/components/business-os/settings/TabFooter';
@@ -163,6 +169,36 @@ function isPayload(data: unknown): data is Payload {
   return !!defaults && typeof defaults === 'object';
 }
 
+/**
+ * What a consent read is worth: a payload to seed the form from, or the reason
+ * it is not one. `status` is a refusal (a non-OK status, `success !== true`, a
+ * payload without defaults); `err` is a throw (no response, a body that is not
+ * JSON, a payload `seeded` cannot read). The panel logs them as it always has:
+ * `warn({ status })` and `error({ err })` (D-12).
+ */
+type ConsentVerdict =
+  | { usable: true; data: Payload; next: Settings }
+  | { usable: false; status: number }
+  | { usable: false; err: unknown };
+
+function judgeConsent(read: ConsentRead, locale: 'en' | 'he' | 'es'): ConsentVerdict {
+  if (!read.ok) return read.kind === 'threw' ? { usable: false, err: read.err } : { usable: false, status: read.status };
+  const json = read.body as { success?: unknown; data?: unknown } | null;
+  if (json?.success !== true || !isPayload(json.data)) return { usable: false, status: read.status };
+  try {
+    return { usable: true, data: json.data, next: seeded(json.data.settings, json.data.defaults, locale) };
+  } catch (err) {
+    // A payload `seeded` cannot read is a failed load, not a crash in render.
+    return { usable: false, err };
+  }
+}
+
+/** The address book beside the postal field: still coming, in, or not to be had. */
+type BookState = 'pending' | 'failed' | { locale: string; addresses: KnownAddress[] };
+
+const bookStateOf = (read: AddressBookRead): BookState =>
+  read.ok ? { locale: read.locale, addresses: read.addresses } : 'failed';
+
 /** Trimmed, inner whitespace collapsed, case-folded: the form two addresses are compared in. */
 function normalisedAddressText(text: string | null | undefined): string {
   return (text ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
@@ -180,9 +216,22 @@ interface MarketingConsentPanelProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Told while a save (and the reload after it) is in flight, so the drawer can refuse to close. */
   onBusyChange?: (busy: boolean) => void;
+  /**
+   * Hands over reads the settings page started early (`useDrawerPrefetch`), or
+   * `null`. Called once per mount. Used only when they were read in the panel's
+   * language; anything unusable in them is read once more, fresh.
+   */
+  takePrefetched?: () => MarketingDrawerReads | null;
 }
 
-export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: MarketingConsentPanelProps = {}) {
+interface LoadOptions {
+  /** Passed only by `save()`, for the reload after a successful save. */
+  sentForm?: Settings;
+  /** Passed only by the first load on mount: a consent read already started. */
+  preloaded?: Promise<ConsentRead>;
+}
+
+export function MarketingConsentPanel({ onDirtyChange, onBusyChange, takePrefetched }: MarketingConsentPanelProps = {}) {
   const { t, isRTL, language } = useLanguage();
 
   /** The id of the saved address, if any, the postal field still represents. */
@@ -210,6 +259,14 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
   const hasLoaded = useRef(false);
   /** One load at a time: Try again cannot double-fire. */
   const loadInFlight = useRef(false);
+  /*
+   * The address book, read AT THE SAME TIME as consent (C-3) rather than by the
+   * picker once the form has rendered, which made the list a second wait. It
+   * never touches `form` or `baseline`: only consent seeds the form (S-3).
+   */
+  const [book, setBook] = useState<BookState>('pending');
+  /** The mount reads start once, StrictMode's re-run included (SA-CA-9). */
+  const started = useRef(false);
 
   /*
    * `language` is read through a ref, not closed over as a dependency.
@@ -233,8 +290,15 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
    * rather than overwritten by the reload. The baseline still becomes what the
    * server now holds, so kept text leaves the form dirty and the drawer still
    * asks before dropping it.
+   *
+   * `preloaded` is passed only by the first load on mount (C-5). It is awaited
+   * instead of a new request. Anything unusable in it (a refusal, a throw,
+   * `success !== true`, a payload without defaults) is never shown: it is read
+   * once more, fresh, and only that answer reaches the F-17 decision (SA-CA-2).
+   * Try again and the reload after a save never pass it, so they always read
+   * fresh.
    */
-  const load = useCallback(async (sentForm?: Settings) => {
+  const load = useCallback(async ({ sentForm, preloaded }: LoadOptions = {}) => {
     if (loadInFlight.current) return;
     loadInFlight.current = true;
     // A failure before anything has loaded hides the form (F-17). After a load
@@ -243,24 +307,29 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
       if (!hasLoaded.current) setLoadFailed(true);
     };
     try {
-      const response = await fetch(
-        `/api/business-os/consent-settings?locale=${encodeURIComponent(languageRef.current)}`
-      );
-      if (!response.ok) {
-        logger.warn({ status: response.status }, 'Consent settings load refused');
+      let verdict: ConsentVerdict | null = null;
+      if (preloaded) {
+        const early = judgeConsent(await preloaded, languageRef.current);
+        if (early.usable) {
+          verdict = early;
+        } else {
+          // Not acted on, so not a load failure: debug only, status or err only.
+          logger.debug(
+            'err' in early ? { err: early.err } : { status: early.status },
+            'Prefetched consent settings unusable; reading again'
+          );
+        }
+      }
+      if (!verdict) verdict = judgeConsent(await readConsentSettings(languageRef.current), languageRef.current);
+
+      if (!verdict.usable) {
+        if ('err' in verdict) logger.error({ err: verdict.err }, 'Could not load consent settings');
+        else logger.warn({ status: verdict.status }, 'Consent settings load refused');
         failed();
         return;
       }
-      const json = await response.json();
-      if (json?.success !== true || !isPayload(json.data)) {
-        logger.warn({ status: response.status }, 'Consent settings load refused');
-        failed();
-        return;
-      }
-      // Inside the try: a payload `seeded` cannot read is a failed load, not a
-      // crash in render.
-      const next = seeded(json.data.settings, json.data.defaults, languageRef.current);
-      setPayload(json.data);
+      const { data, next } = verdict;
+      setPayload(data);
       // Functional, so it compares against the latest typed text, not a stale closure.
       setForm((prev) => (sentForm && !sameSettings(prev, sentForm) ? prev : next));
       setBaseline(next);
@@ -275,9 +344,33 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
     }
   }, []);
 
+  /*
+   * On mount: the book and consent, both in flight before either is awaited
+   * (C-3). Reads the page started early are taken once (C-5) and used only in
+   * the panel's own language. A prefetched book that failed is read once more,
+   * fresh; a book that fails again leaves no picker, which is what a failed
+   * read always showed (Q-5).
+   *
+   * No cancellation on unmount: a late answer to an unmounted panel is a no-op,
+   * and a StrictMode cleanup must not drop the one read this mount makes.
+   */
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (started.current) return;
+    started.current = true;
+
+    const lang = languageRef.current;
+    const offered = takePrefetched?.() ?? null;
+    const pre = offered && offered.locale === lang ? offered : null;
+
+    const bookRead = pre
+      ? pre.book.then((read) => (read.ok ? read : readAddressBook(lang)))
+      : readAddressBook(lang);
+    void bookRead.then((read) => setBook(bookStateOf(read)));
+
+    void load({ preloaded: pre?.consent });
+    // Mount only: `takePrefetched` is consumed once, never re-asked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const retry = () => {
     if (loadInFlight.current) return;
@@ -323,7 +416,7 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
       }
       setBaseline(sent);
       setSaved(true);
-      await load(sent);
+      await load({ sentForm: sent });
     } catch (err) {
       // The form stays as typed, and dirty, so the drawer still guards it.
       logger.error({ err }, 'Could not save consent settings');
@@ -534,22 +627,43 @@ export function MarketingConsentPanel({ onDirtyChange, onBusyChange }: Marketing
           over the stored legal postal line on every open.
         */}
         <div className="mb-2">
-          <SavedAddressPicker
-            use="marketing"
-            selectedId={reusedAddress}
-            onSelectedChange={(id) => setReusedAddress(id)}
-            matchCurrent={recognisesPostal}
-            otherLabel={t('settings.address.reuse_other')}
-            onSelect={(address) =>
-              setForm(prev => ({
-                ...prev,
-                postal_address: formatAddressOneLine(address, addressLocale) ?? prev.postal_address,
-              }))
-            }
-            locale={language}
-            isRTL={isRTL}
-            t={t}
-          />
+          {book === 'pending' ? (
+            /*
+              C-4: the picker's place, held while the book is still coming, so
+              the postal box does not jump when the list arrives. No text and
+              hidden from assistive tech: it is a shape, not content. About one
+              entry, the "different address" row and the title. Pulses only
+              where motion is welcome.
+            */
+            <div
+              data-testid="consent-address-book-placeholder"
+              aria-hidden="true"
+              className="h-[8.5rem] motion-safe:animate-pulse"
+              style={{
+                border: '1px solid var(--v2-border)',
+                borderRadius: 'var(--v2-radius-card)',
+                background: 'var(--v2-surface)',
+              }}
+            />
+          ) : book !== 'failed' ? (
+            <SavedAddressPicker
+              use="marketing"
+              selectedId={reusedAddress}
+              onSelectedChange={(id) => setReusedAddress(id)}
+              matchCurrent={recognisesPostal}
+              otherLabel={t('settings.address.reuse_other')}
+              onSelect={(address) =>
+                setForm(prev => ({
+                  ...prev,
+                  postal_address: formatAddressOneLine(address, addressLocale) ?? prev.postal_address,
+                }))
+              }
+              locale={language}
+              isRTL={isRTL}
+              t={t}
+              initialBook={book}
+            />
+          ) : null}
         </div>
         {/* The business's own address from its profile, shown greyed. A detail it
             has already given the platform should not be a blank box here, and a
