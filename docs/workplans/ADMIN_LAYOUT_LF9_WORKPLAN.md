@@ -7,7 +7,7 @@
 **Branch:** `feature/admin-layout-lf9-shared-confirm-jobs-archive` (from `origin/main` `067c4a3e`)
 **Path:** SA reviews this workplan (it changes a shared component and a pinned money dialog), then Dev builds, then SA code review, then user diff, then RM
 **Date:** 2026-10-16
-**Status:** Built, awaiting SA code review (uncommitted). Build results in §11
+**Status:** PR [#426](https://github.com/AgentsPilot/neuronforge/pull/426) open (SA code approved, no fixes; auto-merge on). Build results in §11
 
 ## Overview
 
@@ -277,7 +277,13 @@ _QA populates._
 
 ## Commit Info
 
-_RM populates._
+| Item | Value |
+|---|---|
+| Branch | `feature/admin-layout-lf9-shared-confirm-jobs-archive` |
+| Code commit | `05ebe866` refactor(admin): move Reconcile top-ups dialog onto shared confirm box (LF-9) |
+| Base | `origin/main` `067c4a3e` (branch not behind, no merge) |
+| PR | [#426](https://github.com/AgentsPilot/neuronforge/pull/426), auto-merge on (merge queue) |
+| Owed | Short QA browser check of the Reconcile dialog (SA code review, "QA needed") |
 
 ## Change History
 
@@ -287,3 +293,4 @@ _RM populates._
 | 2026-10-16 | SA workplan review | Approved option (a): Reconcile migrates with four optional props; Drain, Cancel, Retry permanent non-adopters; Archive in-flight gap graded Low, accepted; conditions C-1 to C-6 |
 | 2026-10-16 | Built (Dev) | C-1 to C-6 met; §11 results: 77 suites / 2,323 tests pass, M1 to M11 all bite, pin proof empty; uncommitted, awaiting SA code review |
 | 2026-10-16 | SA code review | Code approved, no fixes: C-1 to C-6 verified, fetch block byte-identical, pin proof re-run empty, SA-M1 and SA-M2 bite; short QA pass |
+| 2026-10-16 | PR opened (RM) | Code commit `05ebe866`; PR #426 against `main`, auto-merge on; short QA browser check owed |
