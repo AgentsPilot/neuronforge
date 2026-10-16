@@ -44,6 +44,9 @@ const logger = clientLogger.child({ module: 'AuthActions' });
  * and language — the exact cross-persona bleed that makes a test harness lie.
  * Theme keys (`app-theme`, `v2-theme-mode`) are deliberately absent: they
  * describe the device and identify nobody.
+ *
+ * The SESSION is not in this list: it is cleared by shape, see
+ * `SESSION_KEY_PATTERN`.
  */
 export const PERSON_SCOPED_STORAGE_KEYS = [
   'onboarding_completed', 'onboarding_data', 'onboarding_goal',
@@ -52,8 +55,15 @@ export const PERSON_SCOPED_STORAGE_KEYS = [
   'business-os-language', 'business-os-currency',
   'agent_builder_session_key', 'agent_builder_user_view_preference',
   'helpBotContext', 'helpBotOpen',
-  'sb-auth-token', 'supabase.auth.token',
 ] as const;
+
+/**
+ * Two session key names this list used to carry. Supabase never writes either
+ * (the real key is `sb-<ref>-auth-token`, matched by `SESSION_KEY_PATTERN`),
+ * but legacy agent-builder code still READS them, so a copy an older build left
+ * behind is removed on every sign-out. Not exported.
+ */
+const LEGACY_SESSION_KEYS = ['sb-auth-token', 'supabase.auth.token'] as const;
 
 export interface AuthActionResult {
   ok: boolean;
@@ -216,60 +226,362 @@ export async function sendPasswordResetEmail(
   return { ok: true };
 }
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SIGN-OUT (Business OS settings drawer review, slice C-c, F-23)
+ *
+ * Every sign-out control in the product calls `signOutUser`, and each one
+ * navigates AFTER it returns. So the promise this function makes is what keeps
+ * a person from being stuck: it never rejects, it resolves within the three
+ * deadlines below (9 s), and on return this browser holds no session, whatever
+ * the server said.
+ *
+ * Three things the plain `supabase.auth.signOut()` does not give:
+ *
+ * 1. A deadline. A request that never settles is not caught by try/catch, and
+ *    left the log-out spinner (and the settings dialog, which cannot close
+ *    while it spins) on forever.
+ *
+ * 2. A local clear when the server does not confirm. auth-js keeps the session
+ *    on any error other than 401/403/404 — a 5xx or a network failure — and
+ *    even `scope: 'local'` calls the server first. The person was sent to the
+ *    login page while this browser stayed signed in.
+ *
+ * 3. The session is in COOKIES, not localStorage. `lib/supabaseClient.ts` is
+ *    `@supabase/ssr`'s browser client, which stores `sb-<ref>-auth-token` (or
+ *    its chunks `.0`, `.1`, …) through `document.cookie`. A clear of storage
+ *    alone signs nobody out.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** The audit write is best-effort; it may delay leaving by this much at most. */
+const AUDIT_DEADLINE_MS = 2000;
+/** The requested sign-out (global revokes every device: the slowest call). */
+const SIGN_OUT_DEADLINE_MS = 5000;
+/**
+ * The network-free local sign-out after a failure. It can still wait: auth-js
+ * runs every auth call under one lock with no timeout, so after a HUNG
+ * requested sign-out this one usually queues behind it and times out here.
+ * The cookie clear before it is what has already signed the browser out.
+ */
+const LOCAL_FALLBACK_DEADLINE_MS = 2000;
+
+/**
+ * Every name the browser client writes for a session: the key, its chunks, and
+ * the two side keys auth-js removes with it. The ref is a hostname label
+ * (letters, digits, hyphens); the chunk suffix mirrors `@supabase/ssr`'s
+ * `isChunkLike`. Matched by shape so it holds in every environment.
+ */
+const SESSION_KEY_PATTERN = /^sb-[A-Za-z0-9-]+-auth-token(?:-code-verifier|-user)?(?:\.(?:0|[1-9]\d*))?$/;
+
+export type SignOutOutcome = 'signed_out' | 'server_error' | 'timeout' | 'threw';
+
+export interface SignOutResult extends AuthActionResult {
+  /** What the REQUESTED sign-out did. `ok` is true only for `signed_out`. */
+  outcome: SignOutOutcome;
+  /** True when no session cookie or storage key was found in this browser afterwards. */
+  clearedLocally: boolean;
+}
+
+type DeadlineResult<T> =
+  | { kind: 'done'; value: T }
+  | { kind: 'threw'; err: unknown }
+  | { kind: 'timeout' };
+
+/**
+ * Run `work` with a deadline it cannot outlive. Never throws, and leaves no
+ * timer behind when the work settles first. A rejection that arrives after the
+ * deadline is absorbed by `settled`, so it cannot surface as an
+ * `unhandledrejection`.
+ */
+async function withDeadline<T>(work: () => Promise<T>, ms: number): Promise<DeadlineResult<T>> {
+  let pending: Promise<T>;
+  try {
+    pending = work();
+  } catch (err) {
+    return { kind: 'threw', err };
+  }
+
+  const settled = Promise.resolve(pending).then(
+    (value): DeadlineResult<T> => ({ kind: 'done', value }),
+    (err: unknown): DeadlineResult<T> => ({ kind: 'threw', err })
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<DeadlineResult<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), ms);
+  });
+
+  try {
+    return await Promise.race([settled, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The status and class name of an auth error, and nothing else. The raw error
+ * object is never logged: auth-js errors can carry request context, and the
+ * client logger's redaction is only a backstop.
+ */
+function describeAuthError(err: unknown): { authStatus: number | null; authName: string | null } {
+  if (!err || typeof err !== 'object') return { authStatus: null, authName: null };
+  const { status, name } = err as { status?: unknown; name?: unknown };
+  return {
+    authStatus: typeof status === 'number' ? status : null,
+    authName: typeof name === 'string' ? name : null,
+  };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Sign-out failed';
+}
+
+/** The browser storages that can be read here; a disabled one is skipped. */
+function availableStorages(): Storage[] {
+  const stores: Storage[] = [];
+  for (const pick of [() => window.localStorage, () => window.sessionStorage]) {
+    try {
+      const store = pick();
+      if (store) stores.push(store);
+    } catch {
+      // Private mode or storage disabled: nothing stored there to clear.
+    }
+  }
+  return stores;
+}
+
+function sessionCookieNames(): string[] {
+  try {
+    return document.cookie
+      .split(';')
+      .map((part) => {
+        const eq = part.indexOf('=');
+        return (eq < 0 ? part : part.slice(0, eq)).trim();
+      })
+      .filter((name) => SESSION_KEY_PATTERN.test(name));
+  } catch {
+    return [];
+  }
+}
+
+function sessionStorageKeys(store: Storage): string[] {
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < store.length; i++) {
+      const key = store.key(i);
+      if (key && SESSION_KEY_PATTERN.test(key)) keys.push(key);
+    }
+  } catch {
+    // A storage that refuses to be read has nothing we can clear.
+  }
+  return keys;
+}
+
+/**
+ * Expire every session cookie and remove every session storage key, by shape.
+ *
+ * Assumes what is true in this repo today (C-c workplan K-6): the browser
+ * client is the only writer of the auth cookie, and it writes it host-only,
+ * `Path=/`, not `httpOnly`, so an expiry with the same path from
+ * `document.cookie` removes the very cookie the server reads. If the client
+ * ever gets a `cookieOptions.domain` (a session shared across subdomains),
+ * that domain must be mirrored here, or the cookie survives; `clearedLocally`
+ * then reports false rather than assuming success.
+ *
+ * Never `SameSite=None`: a browser rejects it without `Secure`.
+ */
+function clearSessionByShape(): { cookies: number; storageKeys: number } {
+  const cookieNames = sessionCookieNames();
+  for (const name of cookieNames) {
+    try {
+      document.cookie = `${name}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; SameSite=Lax`;
+    } catch {
+      // Cookies disabled: nothing was stored there.
+    }
+  }
+
+  let storageKeys = 0;
+  for (const store of availableStorages()) {
+    for (const key of sessionStorageKeys(store)) {
+      try {
+        store.removeItem(key);
+        storageKeys++;
+      } catch {
+        // Counted as left by `countSessionLeft`.
+      }
+    }
+  }
+  return { cookies: cookieNames.length, storageKeys };
+}
+
+/** How many session cookies or storage keys are still here, re-read after the clear. */
+function countSessionLeft(): number {
+  return (
+    sessionCookieNames().length +
+    availableStorages().reduce((n, store) => n + sessionStorageKeys(store).length, 0)
+  );
+}
+
+/** The person-scoped keys and the legacy session names, from both storages. */
+function clearPersonScopedKeys(): void {
+  for (const store of availableStorages()) {
+    try {
+      for (const key of [...PERSON_SCOPED_STORAGE_KEYS, ...LEGACY_SESSION_KEYS]) store.removeItem(key);
+      store.removeItem('onboarding_preview_data');
+    } catch {
+      logger.warn({ step: 'person-scoped-keys' }, 'Browser storage unavailable during sign-out');
+    }
+  }
+}
+
+export interface SignOutOptions {
+  scope?: 'global' | 'local';
+  user?: { id: string; email?: string | null } | null;
+  /**
+   * Recorded as `details.method` on the USER_LOGOUT entry, so the audit trail
+   * still says WHICH control someone left through. Each call site passes its
+   * own — the values predate this module and are kept verbatim.
+   */
+  method?: string;
+}
+
+/**
+ * One sign-out at a time per page. A double click (two controls have no busy
+ * guard) joins the run already in progress instead of writing a second audit
+ * entry and queueing a second auth call behind the auth lock.
+ */
+let inFlightSignOut: Promise<SignOutResult> | null = null;
+
 /**
  * Sign out. `scope: 'global'` ends the session on every device; `'local'` ends
  * it in this browser only, which is what you want when hopping between test
  * personas without killing your other sessions.
  *
- * Person-scoped browser storage is cleared either way — see
- * `PERSON_SCOPED_STORAGE_KEYS`. The caller decides where to navigate
- * afterwards; nothing here redirects.
+ * The contract every caller relies on:
+ * - It never rejects.
+ * - It resolves within about 9 s (2 s audit, 5 s sign-out, 2 s local fallback).
+ * - On return this browser holds no session (`clearedLocally` says whether that
+ *   was verified by re-reading), and person-scoped browser storage is cleared
+ *   either way — see `PERSON_SCOPED_STORAGE_KEYS`.
+ * - `ok` means the server confirmed the requested sign-out. When it is false
+ *   after a GLOBAL sign-out, other devices may still be signed in; that cannot
+ *   be fixed from this browser.
+ *
+ * The caller decides where to navigate afterwards; nothing here redirects.
+ * A call made while another is running returns that run's promise.
  */
-export async function signOutUser(
-  opts: {
-    scope?: 'global' | 'local';
-    user?: { id: string; email?: string | null } | null;
-    /**
-     * Recorded as `details.method` on the USER_LOGOUT entry, so the audit trail
-     * still says WHICH control someone left through. Each call site passes its
-     * own — the values predate this module and are kept verbatim.
-     */
-    method?: string;
-  } = {}
-): Promise<AuthActionResult> {
+export function signOutUser(opts: SignOutOptions = {}): Promise<SignOutResult> {
+  if (inFlightSignOut) {
+    logger.debug({ method: opts.method ?? 'in-app' }, 'Sign-out already in progress; joining it');
+    return inFlightSignOut;
+  }
+  // Assigned before anything awaits, so a second call in the same tick joins.
+  const run = runSignOut(opts)
+    // `runSignOut` catches everything except a throwing logger (CR-CC-1); even
+    // then the contract holds: resolve, and do not claim the clear was verified.
+    .catch((): SignOutResult => ({ ok: false, error: 'Sign-out failed', outcome: 'threw', clearedLocally: false }))
+    .finally(() => {
+      inFlightSignOut = null;
+    });
+  inFlightSignOut = run;
+  return run;
+}
+
+async function runSignOut(opts: SignOutOptions): Promise<SignOutResult> {
   const { scope = 'local', user = null, method = 'in-app' } = opts;
+  const startedAt = Date.now();
+  let outcome: SignOutOutcome = 'threw';
+  let error: string | undefined = 'Sign-out failed';
+  let cookiesCleared = 0;
+  let storageKeysCleared = 0;
 
-  // Before the sign-out: afterwards there is no session to attribute it to.
-  if (user?.id) {
-    await auditAuthEvent({
-      action: 'USER_LOGOUT',
-      userId: user.id,
-      resourceName: user.email || 'User',
-      details: { method, scope },
-      severity: 'info',
-    });
-  }
-
-  let error: string | undefined;
   try {
-    const { error: signOutError } = await supabase.auth.signOut({ scope });
-    if (signOutError) error = signOutError.message;
+    // Before the sign-out: afterwards there is no session to attribute it to.
+    if (user?.id) {
+      const audit = await withDeadline(
+        () =>
+          auditAuthEvent({
+            action: 'USER_LOGOUT',
+            userId: user.id,
+            resourceName: user.email || 'User',
+            details: { method, scope },
+            severity: 'info',
+          }),
+        AUDIT_DEADLINE_MS
+      );
+      if (audit.kind === 'timeout') {
+        logger.warn({ step: 'audit', deadlineMs: AUDIT_DEADLINE_MS }, 'Sign-out audit exceeded its deadline; continuing');
+      }
+    }
+
+    const requested = await withDeadline(() => supabase.auth.signOut({ scope }), SIGN_OUT_DEADLINE_MS);
+
+    if (requested.kind === 'done' && !requested.value.error) {
+      outcome = 'signed_out';
+      error = undefined;
+    } else {
+      let detail: { authStatus: number | null; authName: string | null } = { authStatus: null, authName: null };
+      if (requested.kind === 'timeout') {
+        outcome = 'timeout';
+        error = 'timeout';
+      } else if (requested.kind === 'threw') {
+        outcome = 'threw';
+        error = errorMessage(requested.err);
+        detail = describeAuthError(requested.err);
+      } else {
+        outcome = 'server_error';
+        error = requested.value.error?.message ?? 'Sign-out failed';
+        detail = describeAuthError(requested.value.error);
+      }
+
+      const fields = { scope, method, outcome, ...detail, durationMs: Date.now() - startedAt };
+      const message = 'Sign-out not confirmed by the server; clearing this browser locally';
+      if (outcome === 'threw') logger.error(fields, message);
+      else logger.warn(fields, message);
+
+      // Cookies FIRST: with no session in storage, the local sign-out below
+      // makes no network call; it only drops auth-js's memory and fires
+      // SIGNED_OUT to the page's listeners.
+      const first = clearSessionByShape();
+      cookiesCleared += first.cookies;
+      storageKeysCleared += first.storageKeys;
+
+      const local = await withDeadline(() => supabase.auth.signOut({ scope: 'local' }), LOCAL_FALLBACK_DEADLINE_MS);
+      if (local.kind !== 'done' || local.value.error) {
+        logger.warn(
+          { step: 'local-fallback', outcome: local.kind === 'done' ? 'server_error' : local.kind },
+          'Local fallback sign-out did not complete; session keys already cleared'
+        );
+      }
+    }
   } catch (err) {
-    // Log it and clear locally anyway: someone who pressed sign out must end up
-    // signed out of this browser even if the server call failed.
-    error = (err as Error).message;
-    logger.error({ err }, 'Sign-out call failed — clearing local state regardless');
+    // Nothing above should throw; if something does, the clear below still runs.
+    if (outcome !== 'signed_out') outcome = 'threw';
+    logger.error({ step: 'unexpected', ...describeAuthError(err) }, 'Unexpected sign-out failure; clearing locally');
   }
 
+  // Always, success included: idempotent, and it catches a cookie an in-flight
+  // token refresh re-wrote while the calls above were running.
+  let clearedLocally = false;
   try {
-    PERSON_SCOPED_STORAGE_KEYS.forEach((key) => {
-      localStorage.removeItem(key);
-      sessionStorage.removeItem(key);
-    });
-    sessionStorage.removeItem('onboarding_preview_data');
+    const last = clearSessionByShape();
+    cookiesCleared += last.cookies;
+    storageKeysCleared += last.storageKeys;
+    clearPersonScopedKeys();
+
+    if (cookiesCleared + storageKeysCleared > 0) {
+      logger.info({ cookies: cookiesCleared, storageKeys: storageKeysCleared }, 'Session keys cleared by shape');
+    }
+
+    const left = countSessionLeft();
+    clearedLocally = left === 0;
+    if (!clearedLocally) {
+      logger.warn({ left }, 'Session keys survived the sign-out clear');
+    }
   } catch {
-    // Private mode, or storage disabled. The sign-out above is what matters.
+    logger.warn({ step: 'final-clear' }, 'Browser storage unavailable during sign-out');
   }
 
-  return { ok: !error, error };
+  logger.info({ scope, method, outcome, clearedLocally, durationMs: Date.now() - startedAt }, 'Sign-out finished');
+  return { ok: outcome === 'signed_out', error, outcome, clearedLocally };
 }
