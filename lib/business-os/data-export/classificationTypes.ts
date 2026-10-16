@@ -27,6 +27,12 @@
  * DE-3 adds four `account` sections after `user_profile`: the person's
  * preferences and notification choices, the business profile and the
  * business's saved addresses (DE-3 workplan §2.3).
+ *
+ * DE-5 adds the client money: two `account` sections after
+ * `business_addresses` (the business's Stripe account and its payment
+ * providers, SA-Q1) and eight `client_records` sections after `time_off`
+ * (quotes, invoices, payments, refunds, payment plans, the plans clients are
+ * on, instalments, saved payment methods; DE-5 workplan §2.3).
  */
 export type ExportSectionId =
   | 'account_identity'
@@ -35,6 +41,8 @@ export type ExportSectionId =
   | 'notification_settings'
   | 'business_profile'
   | 'business_addresses'
+  | 'payment_account'
+  | 'payment_providers'
   | 'pipeline_stages'
   | 'clients'
   | 'client_activities'
@@ -42,7 +50,15 @@ export type ExportSectionId =
   | 'client_documents'
   | 'services'
   | 'bookings'
-  | 'time_off';
+  | 'time_off'
+  | 'quotes'
+  | 'invoices'
+  | 'payments'
+  | 'refunds'
+  | 'payment_plans'
+  | 'client_payment_plans'
+  | 'installments'
+  | 'client_payment_methods';
 
 /** The slices that add a table's section. `planned` is allowed until DE-7. */
 export type PlannedTableSlice = 'DE-3' | 'DE-4' | 'DE-5' | 'DE-6' | 'DE-7';

@@ -32,8 +32,10 @@ import {
   exportColumnsOf,
   exportDescriptorOfSection,
   isDeniedColumn,
+  matchesSecretDeny,
   rowFilterInList,
   rowFilterNullabilityProblems,
+  SECRET_COLUMN_DENY_EXACT,
   sectionRegistryProblems,
   staleDenyExceptions,
   storageExportProblems,
@@ -49,6 +51,9 @@ import {
  * column only (SA C-6).
  */
 import DE4_LIVE_FIXTURE from './fixtures/de4-live-columns.json';
+// DE-5 (SA C-4): the catalog's `type: 'money'` fields feed the currency-pairing
+// completeness check. catalog.ts imports types only, so nothing else loads.
+import { SEMANTIC_CATALOG } from '@/lib/business-os/catalog/catalog';
 
 type LiveColumn = { table_name: string; column_name: string; is_nullable?: string };
 const DE4_LIVE_COLUMN_COUNTS: Record<string, number> = DE4_LIVE_FIXTURE.counts;
@@ -190,9 +195,13 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
     // DE-4: + the eight client_records sections. DE-4 (user 2026-10-15):
     // plugin_connections removed, so the registry is 2 + 8, was 3 + 8.
     // DE-3: + the four account sections from tables, after user_profile (6 + 8).
+    // DE-5: + payment_account, payment_providers after business_addresses, and
+    // the eight client-money sections after time_off (8 + 16).
     expect(sectionIds).toEqual([
       'account_identity', 'user_profile', 'preferences', 'notification_settings', 'business_profile', 'business_addresses',
+      'payment_account', 'payment_providers',
       'pipeline_stages', 'clients', 'client_activities', 'client_tasks', 'client_documents', 'services', 'bookings', 'time_off',
+      'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
     ]);
     expect(sectionRegistryProblems(PURGE_DESCRIPTORS, sectionIds, NON_TABLE_SECTIONS)).toEqual([]);
   });
@@ -209,27 +218,30 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
   // DE-4: the planted table was business_profiles (then planned, DE-3), was
   // crm_tasks. DE-3 (T-8): business_profiles now backs business_profile, so
   // the plant moves to proposals (still planned, DE-5).
+  // DE-5 (T-9): proposals now backs quotes, so the plant moves to
+  // lead_responses (still planned, DE-6).
   it('negative control: a descriptor naming an unknown section', () => {
     const unknown = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'proposals' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
+      d.table === 'lead_responses' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
     );
     expect(sectionRegistryProblems(unknown, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'proposals: names unknown section client_records',
+      'lead_responses: names unknown section client_records',
     ]);
   });
 
+  // DE-5 (T-9): planted on lead_responses (still planned, DE-6), was proposals.
   it('negative control: two descriptors on one section, and an include on a non-table section', () => {
     const two = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'proposals' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
+      d.table === 'lead_responses' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(two, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'user_profile: expected exactly one include descriptor, found 2 (proposals, profiles)',
+      'user_profile: expected exactly one include descriptor, found 2 (lead_responses, profiles)',
     ]);
     const onIdentity = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'proposals' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
+      d.table === 'lead_responses' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(onIdentity, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'account_identity: a non-table section has include descriptors (proposals)',
+      'account_identity: a non-table section has include descriptors (lead_responses)',
     ]);
   });
 
@@ -382,8 +394,11 @@ describe('T-10 exportColumnsOf fails closed', () => {
   it.each([
     ['audit_logs', 'not_included'],
     // DE-4: was crm_contacts, now included. DE-3: was business_profiles, now
-    // included; proposals is still planned (DE-5).
-    ['proposals', 'not_included'],
+    // included; proposals is still planned (DE-5). DE-5 (T-9): proposals is
+    // now included; lead_responses is still planned (DE-6).
+    ['lead_responses', 'not_included'],
+    // DE-5: an excluded money table (activity, user BC-5).
+    ['payment_events', 'not_included'],
     ['external_calendar_events', 'not_included'],
     // DE-4 (user 2026-10-15): connected apps left the export.
     ['plugin_connections', 'not_included'],
@@ -1057,5 +1072,579 @@ describe('C-2 classification.ts closes no import cycle', () => {
   it('classificationTypes.ts imports nothing', () => {
     const types = fs.readFileSync(path.join(REPO, 'lib', 'business-os', 'data-export', 'classificationTypes.ts'), 'utf-8');
     expect(/^import\s/m.test(types)).toBe(false);
+  });
+});
+
+// ── DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §3, §8; SA review DE-5; user §13.1) ──
+
+/**
+ * DE-5 M-1 / M-2 (SA C-2): the ten include lists, pinned literally, in order.
+ * `excluded` is the key list of `excludedColumns`, in order. BC-3 (user
+ * 2026-10-16, overriding SA-Q5): the Stripe invoice web and PDF links are IN.
+ */
+const DE5_PINS: Record<string, { section: string; columns: string[]; excluded: string[] }> = {
+  payment_transactions: {
+    section: 'payments',
+    columns: [
+      'id', 'contact_id', 'invoice_id', 'booking_id', 'service_id', 'amount', 'currency', 'status', 'payment_method',
+      'description', 'metadata', 'failure_reason', 'paid_at', 'refund_status', 'refunded_amount', 'refunded_at',
+      'refund_reason', 'processor_type', 'processor_refund_id', 'processor_fee', 'net_amount', 'fee_currency',
+      'stripe_payment_intent_id', 'stripe_charge_id', 'stripe_customer_id', 'stripe_connect_account_id', 'created_at',
+      'updated_at',
+    ],
+    excluded: ['user_id', 'account_resolution', 'charge_account_kind'],
+  },
+  payment_refunds: {
+    section: 'refunds',
+    columns: [
+      'id', 'transaction_id', 'invoice_id', 'amount', 'amount_minor', 'currency', 'status', 'reason', 'reason_note',
+      'processor_type', 'processor_refund_id', 'stripe_connect_account_id', 'source', 'failure_code', 'failure_message',
+      'fee_returned', 'refund_fee', 'created_at', 'updated_at', 'succeeded_at',
+    ],
+    excluded: ['user_id', 'idempotency_key', 'initiated_by', 'metadata'],
+  },
+  payment_invoices: {
+    section: 'invoices',
+    columns: [
+      'id', 'contact_id', 'booking_id', 'service_id', 'invoice_number', 'amount', 'currency', 'status', 'line_items',
+      'due_date', 'payment_terms', 'notes', 'internal_notes', 'sent_at', 'paid_at', 'payment_method', 'payment_received_at',
+      'payment_notes', 'processor_type', 'processor_checkout_id', 'processor_payment_id', 'processor_customer_id',
+      'processor_payment_method_id', 'stripe_invoice_id', 'stripe_hosted_invoice_url', 'stripe_invoice_pdf', 'client_name',
+      'client_email', 'client_address', 'refunded_amount', 'refund_status', 'refunded_at', 'allow_online_payment',
+      'created_at', 'updated_at',
+    ],
+    excluded: ['user_id', 'retry_count', 'last_retry_at', 'next_retry_at'],
+  },
+  proposals: {
+    section: 'quotes',
+    columns: [
+      'id', 'contact_id', 'service_id', 'booking_id', 'package_booking_id', 'document_id', 'supersedes_id',
+      'created_invoice_id', 'created_plan_id', 'title', 'description', 'currency', 'total', 'prices_include_tax', 'tax_rate',
+      'tax_label', 'payment_shape', 'payment_terms_days', 'sessions', 'status', 'valid_until', 'decline_reason',
+      'decline_note', 'stop_reason', 'stop_note', 'accepted_snapshot', 'sent_at', 'viewed_at', 'decided_at', 'stopped_at',
+      'created_at', 'updated_at',
+    ],
+    excluded: ['user_id'],
+  },
+  payment_plans: {
+    section: 'payment_plans',
+    columns: [
+      'id', 'service_id', 'name', 'description', 'total_amount', 'currency', 'supported_currencies', 'installment_count',
+      'installment_amount', 'installment_frequency', 'allowed_processors', 'preferred_processor', 'is_active', 'created_at',
+      'updated_at',
+    ],
+    excluded: ['user_id'],
+  },
+  payment_plan_subscriptions: {
+    section: 'client_payment_plans',
+    columns: [
+      'id', 'contact_id', 'booking_id', 'service_id', 'payment_plan_id', 'stripe_subscription_id', 'stripe_schedule_id',
+      'stripe_price_id', 'stripe_customer_id', 'stripe_connect_account_id', 'installment_count', 'installment_amount',
+      'currency', 'frequency', 'periods_paid', 'status', 'next_charge_at', 'next_charge_amount', 'last_failure_code',
+      'last_failure_at', 'card_brand', 'card_last4', 'cancel_reason', 'cancel_note', 'cancelled_by', 'created_at',
+      'updated_at', 'completed_at', 'cancelled_at',
+    ],
+    excluded: ['user_id', 'card_exp_month', 'card_exp_year', 'metadata'],
+  },
+  payment_plan_installments: {
+    section: 'installments',
+    columns: [
+      'id', 'payment_plan_id', 'subscription_id', 'booking_id', 'contact_id', 'proposal_id', 'invoice_id', 'transaction_id',
+      'installment_number', 'label', 'trigger', 'amount', 'currency', 'due_date', 'status', 'paid_at', 'payment_method',
+      'processor_type', 'stripe_invoice_id', 'completed_at', 'cancel_reason', 'cancel_note', 'cancelled_by', 'cancelled_at',
+      'created_at', 'updated_at',
+    ],
+    excluded: ['user_id', 'retry_count', 'last_retry_at', 'next_retry_at'],
+  },
+  saved_payment_methods: {
+    section: 'client_payment_methods',
+    columns: [
+      'id', 'contact_id', 'processor_type', 'processor_customer_id', 'processor_method_id', 'method_type', 'brand',
+      'last_four', 'is_default', 'is_valid', 'created_at', 'updated_at',
+    ],
+    excluded: ['user_id', 'expiry_month', 'expiry_year'],
+  },
+  stripe_connect_accounts: {
+    section: 'payment_account',
+    columns: [
+      'id', 'stripe_account_id', 'stripe_account_type', 'charges_enabled', 'payouts_enabled', 'details_submitted',
+      'onboarding_completed', 'country', 'currency', 'business_type', 'stripe_email', 'created_at', 'updated_at',
+    ],
+    excluded: ['user_id'],
+  },
+  payment_processors: {
+    section: 'payment_providers',
+    columns: ['id', 'processor_type', 'is_active', 'is_default', 'connection_status', 'last_verified_at', 'created_at', 'updated_at'],
+    excluded: [
+      'user_id', 'credentials', 'supports_checkout', 'supports_saved_methods', 'supports_refunds', 'supports_partial_refunds',
+    ],
+  },
+};
+const DE5_TABLES = Object.keys(DE5_PINS);
+
+/** The five DE-5 excludes and the user decision each reason must name (§13.1). */
+const DE5_EXCLUDES: Record<string, RegExp> = {
+  payment_events: /BC-5/,
+  payment_automation_executions: /BC-5/,
+  payment_automation_rules: /BC-6/,
+  payment_reminders: /BC-4/,
+  payment_methods: /dead table/,
+};
+
+const RULED_REASON = {
+  CARD_EXPIRY: 'user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out',
+  SECRET: 'secrets and credentials are never exported (§3.2)',
+};
+
+/** DE-5 pins as a pure check, so a planted copy can be run through it (negative control). */
+function de5PinProblems(ds: readonly PurgeDescriptor[]): string[] {
+  const problems: string[] = [];
+  for (const [table, pin] of Object.entries(DE5_PINS)) {
+    const e = ds.find((d) => d.table === table)?.export;
+    if (e?.kind !== 'include') {
+      problems.push(`${table} must be include`);
+      continue;
+    }
+    if (e.section !== pin.section) problems.push(`${table} must be section ${pin.section}`);
+    if (JSON.stringify(e.columns) !== JSON.stringify(pin.columns)) problems.push(`${table} columns changed`);
+    if (JSON.stringify(Object.keys(e.excludedColumns ?? {})) !== JSON.stringify(pin.excluded)) problems.push(`${table} excludedColumns changed`);
+    if (e.excludedColumns?.user_id !== OWNER_ID_REASON) problems.push(`${table} user_id must carry the OWNER_ID reason`);
+    // M-8 / DX-8: all history in; no DE-5 table soft-deletes, so no row filter.
+    if (e.rowFilter) problems.push(`${table} must have no rowFilter (all history in)`);
+  }
+  for (const [table, reason] of Object.entries(DE5_EXCLUDES)) {
+    const e = ds.find((d) => d.table === table)?.export;
+    if (!(e?.kind === 'exclude' && reason.test(e.reason))) problems.push(`${table} must be excluded with its ruled reason`);
+  }
+  if (ds.some((d) => d.export?.kind === 'planned' && d.export.slice === 'DE-5')) problems.push('a table is still planned for DE-5');
+  return problems;
+}
+
+/**
+ * DE-5 live columns, verbatim and in live order from the T-0 Q1 output (DE-5
+ * workplan §11.1, prod, 2026-10-16). Inline, not a fixture file (no new file).
+ * A migration adding a column to one of these tables adds it here AND
+ * classifies it in its descriptor.
+ */
+const DE5_LIVE_TABLES: Record<string, string> = {
+  payment_transactions:
+    'id user_id contact_id stripe_payment_intent_id stripe_charge_id stripe_customer_id amount currency status payment_method ' +
+    'description invoice_id metadata failure_reason paid_at created_at updated_at refund_status refunded_amount refunded_at ' +
+    'refund_reason processor_refund_id processor_type service_id booking_id stripe_connect_account_id charge_account_kind ' +
+    'account_resolution processor_fee net_amount fee_currency',
+  payment_refunds:
+    'id user_id transaction_id invoice_id amount amount_minor currency status reason processor_type processor_refund_id ' +
+    'stripe_connect_account_id idempotency_key source initiated_by failure_code failure_message metadata created_at updated_at ' +
+    'succeeded_at fee_returned refund_fee reason_note',
+  payment_invoices:
+    'id user_id contact_id invoice_number amount currency status line_items due_date payment_terms notes internal_notes sent_at ' +
+    'paid_at created_at updated_at payment_method payment_received_at payment_notes processor_type processor_checkout_id ' +
+    'processor_payment_id processor_customer_id processor_payment_method_id retry_count last_retry_at next_retry_at ' +
+    'stripe_invoice_id stripe_hosted_invoice_url stripe_invoice_pdf client_name client_email client_address booking_id ' +
+    'service_id refunded_amount refund_status refunded_at allow_online_payment',
+  proposals:
+    'id user_id contact_id service_id title description currency total prices_include_tax tax_rate tax_label status valid_until ' +
+    'payment_shape decline_reason decline_note supersedes_id accepted_snapshot created_invoice_id created_plan_id sent_at ' +
+    'viewed_at decided_at created_at updated_at booking_id document_id payment_terms_days stop_reason stop_note stopped_at ' +
+    'sessions package_booking_id',
+  payment_plans:
+    'id user_id service_id name description total_amount currency supported_currencies installment_count installment_amount ' +
+    'installment_frequency allowed_processors preferred_processor is_active created_at updated_at',
+  payment_plan_subscriptions:
+    'id user_id contact_id booking_id service_id payment_plan_id stripe_subscription_id stripe_schedule_id stripe_price_id ' +
+    'stripe_customer_id stripe_connect_account_id installment_count installment_amount currency frequency periods_paid status ' +
+    'next_charge_at next_charge_amount last_failure_code last_failure_at card_brand card_last4 card_exp_month card_exp_year ' +
+    'metadata created_at updated_at completed_at cancelled_at cancel_reason cancel_note cancelled_by',
+  payment_plan_installments:
+    'id user_id payment_plan_id booking_id contact_id installment_number amount currency due_date status paid_at payment_method ' +
+    'processor_type transaction_id retry_count last_retry_at next_retry_at created_at updated_at subscription_id invoice_id ' +
+    'stripe_invoice_id label trigger completed_at proposal_id cancel_reason cancel_note cancelled_by cancelled_at',
+  saved_payment_methods:
+    'id user_id contact_id processor_type processor_customer_id processor_method_id method_type last_four brand expiry_month ' +
+    'expiry_year is_default is_valid created_at updated_at',
+  stripe_connect_accounts:
+    'id user_id stripe_account_id stripe_account_type charges_enabled payouts_enabled details_submitted onboarding_completed ' +
+    'country currency business_type created_at updated_at stripe_email',
+  payment_processors:
+    'id user_id processor_type is_active is_default credentials supports_checkout supports_saved_methods supports_refunds ' +
+    'supports_partial_refunds connection_status last_verified_at created_at updated_at',
+};
+const DE5_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE5_LIVE_TABLES).flatMap(([table_name, names]) =>
+  names.split(' ').map((column_name) => ({ table_name, column_name }))
+);
+
+describe('DE-5 M-1 the client-money classifications are pinned', () => {
+  it('ten include rows, five excludes with their ruled reasons, no DE-5 planned row left', () => {
+    expect(de5PinProblems(PURGE_DESCRIPTORS)).toEqual([]);
+    expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned' && d.export.slice === 'DE-5')).toEqual([]);
+  });
+
+  it('the classification totals: 155 = 23 include + 17 planned (DE-6 12, DE-7 5) + 115 exclude', () => {
+    const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
+    const bySlice: Record<string, number> = {};
+    for (const d of PURGE_DESCRIPTORS) {
+      kinds[d.export.kind] += 1;
+      if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
+    }
+    expect(PURGE_DESCRIPTORS).toHaveLength(155);
+    expect(kinds).toEqual({ include: 23, planned: 17, exclude: 115 });
+    expect(bySlice).toEqual({ 'DE-6': 12, 'DE-7': 5 });
+  });
+
+  it('every DE-5 excludedColumns reason is non-empty; credentials carries the SECRET reason', () => {
+    for (const table of DE5_TABLES) {
+      const e = exportClassificationOf(table);
+      if (e?.kind !== 'include') throw new Error(`${table} not include`);
+      for (const reason of Object.values(e.excludedColumns ?? {})) expect(reason.trim().length).toBeGreaterThan(10);
+    }
+    const processors = exportClassificationOf('payment_processors');
+    if (processors?.kind !== 'include') throw new Error('not include');
+    expect(processors.excludedColumns?.credentials).toBe(RULED_REASON.SECRET);
+  });
+
+  it('negative controls: a re-planned refunds table, a link moved out of columns, a reworded exclude', () => {
+    const replanned = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'payment_refunds' ? { ...d, export: { kind: 'planned' as const, slice: 'DE-5' as const } } : d
+    );
+    expect(de5PinProblems(replanned)).toEqual(['payment_refunds must be include', 'a table is still planned for DE-5']);
+    // BC-3: taking the invoice web link back out of the file fails the pin.
+    const linkOut = withInclude('payment_invoices', (e) => ({
+      ...e,
+      columns: e.columns.filter((c) => c !== 'stripe_hosted_invoice_url'),
+      excludedColumns: { ...e.excludedColumns, stripe_hosted_invoice_url: 'bearer link' },
+    }));
+    expect(de5PinProblems(linkOut)).toEqual(['payment_invoices columns changed', 'payment_invoices excludedColumns changed']);
+    const reworded = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'payment_reminders' ? { ...d, export: { kind: 'exclude' as const, reason: 'reminders' } } : d
+    );
+    expect(de5PinProblems(reworded)).toEqual(['payment_reminders must be excluded with its ruled reason']);
+  });
+});
+
+describe('DE-5 M-2 the declared lists match the live columns (T-0 Q1, workplan §11.1; SA C-2)', () => {
+  it('the inline live set is the measured state: Q2 counts', () => {
+    const counts: Record<string, number> = {};
+    for (const c of DE5_LIVE_COLUMNS) counts[c.table_name] = (counts[c.table_name] ?? 0) + 1;
+    expect(counts).toEqual({
+      payment_transactions: 31, payment_refunds: 24, payment_invoices: 39, proposals: 33, payment_plans: 16,
+      payment_plan_subscriptions: 33, payment_plan_installments: 30, saved_payment_methods: 15, stripe_connect_accounts: 14,
+      payment_processors: 14,
+    });
+  });
+
+  it('no drift and nothing missing; columns + excludedColumns = the live set, exactly', () => {
+    expect(exportColumnDrift(DE5_LIVE_COLUMNS).filter((r) => DE5_TABLES.includes(r.table))).toEqual([]);
+    expect(exportColumnsMissing(DE5_LIVE_COLUMNS).filter((r) => DE5_TABLES.includes(r.table))).toEqual([]);
+    for (const table of DE5_TABLES) {
+      const e = exportClassificationOf(table);
+      if (e?.kind !== 'include') throw new Error(`${table} not include`);
+      const decided = [...e.columns, ...Object.keys(e.excludedColumns ?? {})].sort();
+      expect(decided).toEqual(DE5_LIVE_COLUMNS.filter((c) => c.table_name === table).map((c) => c.column_name).sort());
+    }
+  });
+
+  it('negative controls: an extra live column is drift; a declared column missing live is reported', () => {
+    const extra = [...DE5_LIVE_COLUMNS, { table_name: 'payment_refunds', column_name: 'operator_note' }];
+    expect(exportColumnDrift(extra).filter((r) => DE5_TABLES.includes(r.table))).toEqual([
+      { table: 'payment_refunds', column: 'operator_note' },
+    ]);
+    const without = DE5_LIVE_COLUMNS.filter((c) => !(c.table_name === 'payment_transactions' && c.column_name === 'fee_currency'));
+    expect(exportColumnsMissing(without).filter((r) => DE5_TABLES.includes(r.table))).toEqual([
+      { table: 'payment_transactions', column: 'fee_currency' },
+    ]);
+  });
+
+  it('each DE-5 section resolves to its one include descriptor (the reader never takes a table name)', () => {
+    for (const [table, pin] of Object.entries(DE5_PINS)) {
+      expect(exportDescriptorOfSection(pin.section as never).table).toBe(table);
+      expect(byTable.get(table)?.scope.kind).toBe('user_id');
+    }
+  });
+});
+
+describe('DE-5 M-3 / M-12 secrets and card data (SA-Q11, user BC-1, BC-3, BC-12)', () => {
+  it('credentials and idempotency_key are out and selected by no include; DENY_EXCEPTIONS still has its one entry', () => {
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.export.kind !== 'include') continue;
+      expect(d.export.columns).not.toContain('credentials');
+      expect(d.export.columns).not.toContain('idempotency_key');
+    }
+    expect(Object.keys(DENY_EXCEPTIONS)).toEqual(['crm_pipeline_stages.stage_key']);
+    for (const table of DE5_TABLES) expect(exportColumnsOf(table).filter((c) => isDeniedColumn(table, c))).toEqual([]);
+  });
+
+  it('BC-3: both Stripe invoice links pass the deny list with no exception (no rule would block them)', () => {
+    for (const c of ['stripe_hosted_invoice_url', 'stripe_invoice_pdf']) {
+      expect(matchesSecretDeny(c)).toBe(false);
+      expect(exportColumnsOf('payment_invoices')).toContain(c);
+      expect(Object.keys(DENY_EXCEPTIONS).some((k) => k.endsWith(`.${c}`))).toBe(false);
+    }
+  });
+
+  it('SA-Q11: card_number, cvc, cvv are denied by name; client_secret by the _secret pattern; no existing include is hit', () => {
+    expect(SECRET_COLUMN_DENY_EXACT).toEqual(expect.arrayContaining(['card_number', 'cvc', 'cvv']));
+    expect(SECRET_COLUMN_DENY_EXACT).not.toContain('client_secret');
+    for (const c of ['card_number', 'cvc', 'cvv', 'client_secret']) expect(matchesSecretDeny(c)).toBe(true);
+    // The additions add no hit to DE-1 … DE-5 output (C-7): no include lists any of them.
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.export.kind !== 'include') continue;
+      expect(d.export.columns.filter((c) => ['card_number', 'cvc', 'cvv'].includes(c))).toEqual([]);
+    }
+  });
+
+  it('negative controls: a planted credentials or card_number column fails in CI and at request time', () => {
+    for (const column of ['credentials', 'card_number', 'cvv']) {
+      const planted = withInclude('payment_processors', (e) => ({ ...e, columns: [...e.columns, column] }));
+      expect(tableProblems(planted.filter((d) => d.table === 'payment_processors'))).toEqual(
+        column === 'credentials'
+          ? ['payment_processors: column credentials is on the secret deny list', 'payment_processors: credentials is both included and excluded']
+          : [`payment_processors: column ${column} is on the secret deny list`]
+      );
+      expect(() => exportColumnsOf('payment_processors', planted)).toThrow(/secret deny list/);
+    }
+    // idempotency_key is caught by /_key$/ even without its exclusion.
+    expect(isDeniedColumn('payment_refunds', 'idempotency_key')).toBe(true);
+  });
+
+  it('BC-1: brand and last 4 in; no expiry column in any include; expiry out with the ruled reason', () => {
+    const subs = exportClassificationOf('payment_plan_subscriptions');
+    const saved = exportClassificationOf('saved_payment_methods');
+    if (subs?.kind !== 'include' || saved?.kind !== 'include') throw new Error('not include');
+    expect(subs.columns).toEqual(expect.arrayContaining(['card_brand', 'card_last4']));
+    expect(saved.columns).toEqual(expect.arrayContaining(['brand', 'last_four']));
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.export.kind !== 'include') continue;
+      expect(d.export.columns.filter((c) => /(^|_)exp(iry)?_(month|year)$/.test(c))).toEqual([]);
+    }
+    for (const c of ['card_exp_month', 'card_exp_year']) expect(subs.excludedColumns?.[c]).toBe(RULED_REASON.CARD_EXPIRY);
+    for (const c of ['expiry_month', 'expiry_year']) expect(saved.excludedColumns?.[c]).toBe(RULED_REASON.CARD_EXPIRY);
+  });
+
+  it('SA-Q3: only payments selects metadata (allow-listed in sections.ts); refunds and plan subscriptions leave it out', () => {
+    expect(exportColumnsOf('payment_transactions')).toContain('metadata');
+    expect(exportColumnsOf('payment_refunds')).not.toContain('metadata');
+    expect(exportColumnsOf('payment_plan_subscriptions')).not.toContain('metadata');
+  });
+
+  it('SA-Q7 / Q12 / Q15: charge_account_kind, account_resolution, the retry counters and initiated_by are out', () => {
+    const out: Array<[string, string]> = [
+      ['payment_transactions', 'charge_account_kind'], ['payment_transactions', 'account_resolution'],
+      ['payment_invoices', 'retry_count'], ['payment_invoices', 'last_retry_at'], ['payment_invoices', 'next_retry_at'],
+      ['payment_plan_installments', 'retry_count'], ['payment_plan_installments', 'last_retry_at'],
+      ['payment_plan_installments', 'next_retry_at'], ['payment_refunds', 'initiated_by'],
+    ];
+    for (const [table, column] of out) {
+      expect(exportColumnsOf(table)).not.toContain(column);
+      const e = exportClassificationOf(table);
+      expect(e?.kind === 'include' && typeof e.excludedColumns?.[column] === 'string').toBe(true);
+    }
+  });
+});
+
+/**
+ * DE-5 SA C-4 (M-4): every amount is exported next to the currency column it
+ * is denominated in. Three parts, local to the test (SA-Q10: no new
+ * descriptor field). `table.amount` -> `table.currency_column`.
+ */
+const AMOUNT_CURRENCY: Record<string, string> = {
+  'payment_transactions.amount': 'currency',
+  'payment_transactions.refunded_amount': 'currency',
+  // F-5: Stripe's settlement currency, not always the payment's.
+  'payment_transactions.processor_fee': 'fee_currency',
+  'payment_transactions.net_amount': 'fee_currency',
+  'payment_refunds.amount': 'currency',
+  'payment_refunds.amount_minor': 'currency',
+  'payment_invoices.amount': 'currency',
+  'payment_invoices.refunded_amount': 'currency',
+  'payment_invoices.line_items': 'currency',
+  'proposals.total': 'currency',
+  'proposals.payment_shape': 'currency',
+  'proposals.sessions': 'currency',
+  'proposals.accepted_snapshot': 'currency',
+  'payment_plans.total_amount': 'currency',
+  'payment_plans.installment_amount': 'currency',
+  'payment_plan_subscriptions.installment_amount': 'currency',
+  'payment_plan_subscriptions.next_charge_amount': 'currency',
+  'payment_plan_installments.amount': 'currency',
+};
+
+/** SA-Q6: amounts the platform never recorded a currency for. Exactly these two. */
+const NO_CURRENCY_COLUMN: readonly string[] = ['payment_refunds.fee_returned', 'payment_refunds.refund_fee'];
+
+/** A column name that reads as an amount (SA C-4); `tax_rate`, `*_currency`, `*_id` are excluded by name. */
+const AMOUNT_NAME = /(^|_)(amount|fee|total)(_|$)|_minor$/;
+const notAnAmount = (column: string): boolean => column === 'tax_rate' || column.endsWith('_currency') || column.endsWith('_id');
+
+/** `table` -> its catalog `type: 'money'` columns, where the catalog covers the table. */
+const CATALOG_MONEY: Map<string, Set<string>> = (() => {
+  const out = new Map<string, Set<string>>();
+  for (const entity of Object.values(SEMANTIC_CATALOG) as unknown as Array<{ table: string; fields?: Record<string, { column?: string; type?: string }> }>) {
+    for (const f of Object.values(entity.fields ?? {})) {
+      if (f.type !== 'money' || !f.column) continue;
+      out.set(entity.table, (out.get(entity.table) ?? new Set<string>()).add(f.column));
+    }
+  }
+  return out;
+})();
+
+/**
+ * Pairing problems over the given descriptors (a pure check, so a planted copy
+ * can be run through it). Completeness: every DE-5 `columns` entry that is
+ * catalog money OR reads as an amount must be in the map or the no-currency
+ * set. Catalog and name are UNIONED, not "catalog where it covers the table":
+ * the catalog types only `amount` as money on payments, so the narrower rule
+ * would let `processor_fee` / `net_amount` / `refunded_amount` pass unpaired.
+ */
+function currencyPairingProblems(
+  ds: readonly PurgeDescriptor[],
+  map: Readonly<Record<string, string>> = AMOUNT_CURRENCY,
+  noCurrency: readonly string[] = NO_CURRENCY_COLUMN
+): string[] {
+  const problems: string[] = [];
+  for (const table of DE5_TABLES) {
+    const e = ds.find((d) => d.table === table)?.export;
+    if (e?.kind !== 'include') continue;
+    for (const column of e.columns) {
+      const key = `${table}.${column}`;
+      const isAmount = CATALOG_MONEY.get(table)?.has(column) || (AMOUNT_NAME.test(column) && !notAnAmount(column));
+      if (isAmount && !(key in map) && !noCurrency.includes(key)) problems.push(`${key} has no currency pairing`);
+      const currency = map[key];
+      if (currency !== undefined && !e.columns.includes(currency)) problems.push(`${key} is exported without its currency ${currency}`);
+    }
+  }
+  for (const key of Object.keys(map)) {
+    const [table, column] = key.split('.');
+    const e = ds.find((d) => d.table === table)?.export;
+    if (e?.kind !== 'include' || !e.columns.includes(column)) problems.push(`${key} is mapped but not exported`);
+  }
+  return problems;
+}
+
+describe('DE-5 M-4 every amount travels with its own currency (SA C-4, SA-Q6, SA-Q10)', () => {
+  it('the real descriptors pair every amount; nothing is mapped that is not exported', () => {
+    expect(currencyPairingProblems(PURGE_DESCRIPTORS)).toEqual([]);
+  });
+
+  it('the no-currency set is exactly fee_returned and refund_fee, and they get no currency in the descriptors', () => {
+    expect([...NO_CURRENCY_COLUMN]).toEqual(['payment_refunds.fee_returned', 'payment_refunds.refund_fee']);
+    for (const key of NO_CURRENCY_COLUMN) expect(key in AMOUNT_CURRENCY).toBe(false);
+    // The refund row exports its own currency (that of `amount`) and NO fee currency.
+    expect(exportColumnsOf('payment_refunds')).not.toContain('fee_currency');
+  });
+
+  it('the check is not vacuous: the catalog covers the payment tables and the name rule sees the fee columns', () => {
+    expect(CATALOG_MONEY.get('payment_refunds')).toEqual(new Set(['amount', 'fee_returned', 'refund_fee']));
+    expect(CATALOG_MONEY.get('payment_transactions')?.has('amount')).toBe(true);
+    for (const c of ['processor_fee', 'net_amount', 'refunded_amount', 'amount_minor', 'total', 'next_charge_amount']) {
+      expect(AMOUNT_NAME.test(c)).toBe(true);
+    }
+    for (const c of ['tax_rate', 'fee_currency', 'installment_count', 'payment_terms_days']) {
+      expect(AMOUNT_NAME.test(c) && !notAnAmount(c)).toBe(false);
+    }
+  });
+
+  it('negative control: dropping fee_currency while processor_fee is in is red', () => {
+    const noFeeCurrency = withInclude('payment_transactions', (e) => ({ ...e, columns: e.columns.filter((c) => c !== 'fee_currency') }));
+    expect(currencyPairingProblems(noFeeCurrency)).toEqual([
+      'payment_transactions.processor_fee is exported without its currency fee_currency',
+      'payment_transactions.net_amount is exported without its currency fee_currency',
+    ]);
+    const noCurrency = withInclude('payment_transactions', (e) => ({ ...e, columns: e.columns.filter((c) => c !== 'currency') }));
+    expect(currencyPairingProblems(noCurrency)).toEqual([
+      'payment_transactions.amount is exported without its currency currency',
+      'payment_transactions.refunded_amount is exported without its currency currency',
+    ]);
+  });
+
+  it('negative control: a planted deposit_amount with no pairing is red', () => {
+    const planted = withInclude('proposals', (e) => ({ ...e, columns: [...e.columns, 'deposit_amount'] }));
+    expect(currencyPairingProblems(planted)).toEqual(['proposals.deposit_amount has no currency pairing']);
+  });
+
+  it('negative control: a fee column moved out of the no-currency set is red', () => {
+    expect(currencyPairingProblems(PURGE_DESCRIPTORS, AMOUNT_CURRENCY, ['payment_refunds.fee_returned'])).toEqual([
+      'payment_refunds.refund_fee has no currency pairing',
+    ]);
+  });
+});
+
+/**
+ * DE-5 SA C-6 (b): money paid to US is never a section. Every name must have a
+ * purge descriptor, so it is classified here; a descriptor alone does NOT prove
+ * the table is live (SchemaReconciler reports dead ones under `missingNever`).
+ * The names were checked live by TL (business-os-schema-check, 2026-10-16):
+ * `subscriptions` is not a live table and is deliberately absent (SA F-1).
+ */
+const BILLING_TABLES: readonly string[] = [
+  'billing_events', 'boost_pack_purchases', 'user_subscriptions', 'credit_transactions',
+  'subscription_invoices', 'business_os_account_plans', 'business_os_boost_purchases',
+  ...PURGE_DESCRIPTORS.map((d) => d.table).filter((t) => t.startsWith('business_os_billing_') || t.startsWith('business_os_credit_')),
+];
+
+function billingIncludeProblems(ds: readonly PurgeDescriptor[]): string[] {
+  return BILLING_TABLES.filter((t) => ds.find((d) => d.table === t)?.export.kind !== 'exclude').map(
+    (t) => `${t} (money paid to AgentPilot) must be excluded`
+  );
+}
+
+describe('DE-5 M-6 money paid to AgentPilot is never a section (DX-1a; SA C-6 b)', () => {
+  it('every billing table has a descriptor (a live name) and is excluded; the prefixes match real tables', () => {
+    expect(BILLING_TABLES.filter((t) => t.startsWith('business_os_billing_')).length).toBeGreaterThanOrEqual(2);
+    expect(BILLING_TABLES.filter((t) => t.startsWith('business_os_credit_')).length).toBeGreaterThanOrEqual(4);
+    expect(BILLING_TABLES.filter((t) => !byTable.has(t))).toEqual([]);
+    expect(billingIncludeProblems(PURGE_DESCRIPTORS)).toEqual([]);
+    // And no section resolves to one.
+    for (const id of sectionIds) {
+      if (id in NON_TABLE_SECTIONS) continue;
+      expect(BILLING_TABLES).not.toContain(exportDescriptorOfSection(id).table);
+    }
+  });
+
+  it('negative control: a billing table planted as an include is red', () => {
+    const planted = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'billing_events' ? { ...d, export: { kind: 'include' as const, section: 'payments' as const, columns: ['id'] } } : d
+    );
+    expect(billingIncludeProblems(planted)).toEqual(['billing_events (money paid to AgentPilot) must be excluded']);
+  });
+});
+
+/** Source with comments removed (string contents kept), for import specifiers. */
+const withoutComments = (source: string): string => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+/** DE-5 C-5: conversion, FX or currency-case code in the export's own source. */
+function currencyConversionHits(source: string): string[] {
+  const hits: string[] = [];
+  const code = codeOnly(source);
+  for (const re of [/exchange_?rate/i, /convertCurrency/i, /\bfx\b/i, /\.toUpperCase\s*\(/, /\.toLowerCase\s*\(/, /toFixed\s*\(/]) {
+    if (re.test(code)) hits.push(String(re));
+  }
+  const imports = [...withoutComments(source).matchAll(/(?:from|require\()\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  for (const spec of imports) if (/currency|exchange|fx|money/i.test(spec)) hits.push(`import ${spec}`);
+  return hits;
+}
+
+describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA C-5)', () => {
+  const DATA_EXPORT_DIR = path.join(REPO, 'lib', 'business-os', 'data-export');
+  const scanned = [
+    ...fs.readdirSync(DATA_EXPORT_DIR, { withFileTypes: true })
+      .filter((e) => e.isFile() && /\.tsx?$/.test(e.name))
+      .map((e) => path.join(DATA_EXPORT_DIR, e.name)),
+    path.join(REPO, 'lib', 'repositories', 'BusinessDataExportRepository.ts'),
+    path.join(REPO, 'app', 'api', 'user', 'data-export', 'route.ts'),
+  ];
+
+  it('scanned the export source (non-vacuous, by name), and none of it converts or rewrites a currency', () => {
+    expect(scanned.map((f) => path.basename(f))).toEqual(
+      expect.arrayContaining(['sections.ts', 'payload.ts', 'classification.ts', 'BusinessDataExportRepository.ts', 'route.ts'])
+    );
+    const offenders = scanned.flatMap((f) => currencyConversionHits(fs.readFileSync(f, 'utf-8')).map((h) => `${path.basename(f)}: ${h}`));
+    expect(offenders).toEqual([]);
+  });
+
+  it('negative controls: a rate lookup, an FX import, an upper-cased currency are flagged; comments and strings are not', () => {
+    expect(currencyConversionHits("const r = await getExchangeRate('USD', row.currency);")).toEqual(['/exchange_?rate/i']);
+    expect(currencyConversionHits("import { convert } from '@/lib/fx/rates';")).toEqual(["import @/lib/fx/rates"]);
+    expect(currencyConversionHits('row.currency = String(row.currency).toUpperCase();')).toEqual(['/\\.toUpperCase\\s*\\(/']);
+    expect(currencyConversionHits("// exchange_rates are never read\nconst s = 'convertCurrency';")).toEqual([]);
   });
 });
