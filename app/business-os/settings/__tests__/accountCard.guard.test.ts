@@ -15,7 +15,10 @@
  *   - the page fetches no row value of its own (C-8, tightened): the plan and
  *     consent drawers load their data when they open, and any page-load read
  *     belongs in its own effect through an existing route, never here by
- *     accident;
+ *     accident. Since C-a (C-5) the consent drawer's reads may start early
+ *     through `useDrawerPrefetch` and the read module `marketingDrawerReads`,
+ *     which names the route, so the page still never does
+ *     (`consentPrefetch.guard.test.ts` pins that wiring);
  *   - the two dead log-out helpers stay gone.
  *
  * Positive pins run on comment-stripped source, so a commented-out line cannot
