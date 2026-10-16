@@ -1,6 +1,6 @@
 # Admin Cost and Revenue Consolidation Review
 
-> **Last Updated**: 2026-10-14
+> **Last Updated**: 2026-10-16
 
 **Created by:** BA
 **Date:** 2026-10-14
@@ -226,10 +226,10 @@ Ordered so the per-account view comes first. Each step takes a few days and reus
 | **M-2** | **Plan payments received** (FIN slice 5 split: **5a**) | A read of `invoice_paid` billing events in the window, all accounts and one account, per currency, net of tax shown separately. Our revenue shows plans beside boosts, K-5 includes them, and the plans line is no longer platform-wide in the picked view. No MRR | Full cycle; about 2.5 days. A new read in `BusinessOsFinanceReadRepository`, no migration (to confirm, SA-Q-1) | M-1 (layout of the block). SA rules that 5a does not need P-8a |
 | **M-3** | **Account economics and AI margin** (FIN slice 6, early) | The **Accounts** tab (§5.1) and the margin line in the account summary. Margin = our revenue excluding tax (BQ-3) minus charged AI cost, USD only, labelled "AI margin", with "Stripe fees not deducted" | Full cycle; about 3 days. Groups rows Finance already reads; no new table | M-2 |
 | **M-4** | **Two measures, one vocabulary** (OV-1 + OV-5) | The §6 labels on every page; Finance shows "Recorded, not charged" beside the charged figure for the window and for one account, never added | OV-1 copy: short path, about 1 day (it can run any time, alone). OV-5: full cycle, about 2 days. **In progress (2026-10-15): specified in FIN §11F, awaiting SA review** | M-3 for OV-5 |
-| **M-5** | **The Money section** | The sidebar gains "Money" holding Finance and AI calls & usage (relabelled); Costs & credits mounts at `/admin/finance/charges` and leaves the Business OS AI tabs; the Business OS AI sidebar description drops "costs" | Short path, about 2 days; **needs user sign-off** (the layout stream treats the sidebar as fixed, LAY `:12`) | M-1. BQ-1, BQ-6 |
+| **M-5** | **The Money section** | The sidebar gains "Money" holding Finance and AI calls & usage (relabelled); Costs & credits mounts at `/admin/finance/charges` and leaves the Business OS AI tabs; the Business OS AI sidebar description drops "costs" | Short path, about 2 days; **needs user sign-off** (the layout stream treats the sidebar as fixed, LAY `:12`); sign-off given 2026-10-14 by accepting BQ-1 and BQ-6. **PR open (2026-10-17): [#444](https://github.com/AgentsPilot/neuronforge/pull/444), auto-merge on; commit `1c7b7554`; FIN §11H** | M-1. BQ-1, BQ-6 |
 | **M-6** | **Finance shell on the layout standard** (FIN DF-4, rest) | Shared header, KPI strip (with its cross-page link mode, LAY `:54`) and URL names `range` / `account`, keeping `preset` / `accountId` as aliases | Full cycle (it builds the deferred cross-page tile mode); about 2 days. **In progress (2026-10-15) via F-2/F-4/F-5**, specified in FIN §11G | M-1 (picker already done) |
 | **M-7** | **Resume FIN 4b, then 5b and 7** | 4b boost problems and bought credits; 5b MRR after PAY P-8a; 7 platform payment problems after PAY P-6a/P-6b/P-8b | As already specified in FIN | M-3 |
-| **M-8** *(optional)* | **Legacy clean-up** | Remove Platform dashboard and Exchange rates (BQ-7) | Full cycle (removes routes and pages); about 1 day | User decision |
+| **M-8** | **Legacy clean-up** | **Changed 2026-10-16 (FIN BD-34): do not delete** Platform dashboard and Exchange rates. Mark both redundant with code comments, and stop using or linking them; the routes stay (BQ-7 as amended) | Short; about 1 day. Third in the FIN BD-32 order (after M-5 and FIN 4b) | User decision (given) |
 
 **How this fits the other streams.**
 
@@ -292,3 +292,4 @@ Ordered so the per-account view comes first. Each step takes a few days and reus
 |---|---|---|
 | 2026-10-14 | Created | BA discovery and recommendation: re-check of OV against main `3b300f58` (six AI cost places, not four; Costs and Activity now in the URL with the shared picker; the old picker's deletion moved to Finance). Inventory I-1 to I-20 across both products. Finding: Finance already answers most of the per-account question. Target Money area with per-account view and account economics tab. Gaps G-1 to G-13. Steps M-1 to M-8. BQ-1 to BQ-10, SA-Q-1 to SA-Q-6 |
 | 2026-10-14 | Business questions answered (BA) | The user accepted the proposed default for all ten questions. §9 gains an Answer column; each is recorded in FIN §0.2 (BQ-2, BQ-4, BQ-8 as BD-18 to BD-20 with M-1 and M-2; the other seven as BD-21 to BD-27). Status line updated: M-1 and M-2 merged (#383), M-3 specified in FIN §11E. Body otherwise unchanged |
+| 2026-10-16 | M-5 in progress; M-8 changed (BA) | §8 M-5 row: in progress, specified in FIN §11H, sign-off recorded as given by BQ-1 and BQ-6. §8 M-8 row: no deletion; the two pages are marked redundant in code comments and unlinked (FIN BD-34). Body otherwise unchanged |

@@ -19,9 +19,12 @@
  *     of the JSX attributes `data-testid`, `testId`, `className`, `key`, `id`
  *     and `href` — testids, metric names and URLs are not copy (SA-W97).
  *
- * The Health rule descriptions and metric labels (`lib/admin/health/rules.ts`)
- * are deliberately NOT scanned: they keep "spend" until M-5 (SA-W94, FU-M4-1).
- * The Leak check's known-path reason texts keep "spend" too (SA-W96); none of
+ * Money M-5 (finance health §11H.5, AC-199) widened the scan: the Health rule
+ * descriptions and metric labels (`lib/admin/health/rules.ts`, S-14, S-15),
+ * the Scheduled jobs registry (`lib/cron/bosCronJobs.ts`, whose credit leak
+ * check row said "AI spend", S-16, S-17), the Charge checks page, and AI calls
+ * & usage's bar noun (`AnalyticsFilterBar.tsx`, S-18). That closes FU-M4-1.
+ * The Leak check's known-path reason texts keep "spend" (SA-W96); none of
  * them matches a forbidden phrase.
  */
 
@@ -47,6 +50,11 @@ const FILES = [
   'app/admin/users/components/AllProductsUsage.tsx',
   'app/admin/users/components/DrawerBox.tsx',
   'app/admin/finance/components/RecordedCostLines.tsx',
+  // Money M-5 (AC-199).
+  'lib/admin/health/rules.ts',
+  'lib/cron/bosCronJobs.ts',
+  'app/admin/finance/charges/page.tsx',
+  'app/admin/analytics/components/AnalyticsFilterBar.tsx',
 ] as const;
 type GuardedFile = (typeof FILES)[number];
 
@@ -153,9 +161,9 @@ const TEXTS = new Map<GuardedFile, string[]>(
 const textsOf = (f: GuardedFile) => TEXTS.get(f)!;
 
 describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
-  it('scans the thirteen §11F.4 files and the Part B block', () => {
-    expect(FILES).toHaveLength(14);
-    expect(new Set(FILES).size).toBe(14);
+  it('scans the thirteen §11F.4 files, the Part B block and the four M-5 files', () => {
+    expect(FILES).toHaveLength(18);
+    expect(new Set(FILES).size).toBe(18);
   });
 
   // The number of visible texts each file had when the guard was written. A
@@ -177,6 +185,11 @@ describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
     'app/admin/users/components/AllProductsUsage.tsx': 16,
     'app/admin/users/components/DrawerBox.tsx': 18,
     'app/admin/finance/components/RecordedCostLines.tsx': 7,
+    // Money M-5, measured with this file's own scanner after the M-5 edits.
+    'lib/admin/health/rules.ts': 184,
+    'lib/cron/bosCronJobs.ts': 580,
+    'app/admin/finance/charges/page.tsx': 2,
+    'app/admin/analytics/components/AnalyticsFilterBar.tsx': 50,
   };
   it.each(FILES)('%s has at least its pinned number of visible texts', (f) => {
     expect(textsOf(f).length).toBeGreaterThanOrEqual(MIN_TEXTS[f]);
@@ -249,6 +262,9 @@ const STRIP = 'app/admin/users/components/BusinessSummaryStrip.tsx';
 const PANEL = 'app/admin/users/components/BusinessOsPanel.tsx';
 const ALL_PRODUCTS = 'app/admin/users/components/AllProductsUsage.tsx';
 const DRAWER_BOX = 'app/admin/users/components/DrawerBox.tsx';
+const RULES = 'lib/admin/health/rules.ts';
+const CRON = 'lib/cron/bosCronJobs.ts';
+const ANALYTICS_BAR = 'app/admin/analytics/components/AnalyticsFilterBar.tsx';
 
 /** `exact`: one whole visible text equals it; otherwise one contains it. */
 const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; exact?: true }> = [
@@ -307,13 +323,14 @@ const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; e
   {
     row: 'W-19a',
     file: ACTIVITY,
-    text: 'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI cost & usage.',
+    // M-5 S-9: the page's new name.
+    text: 'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI calls & usage.',
   },
-  { row: 'W-19b', file: ACTIVITY, text: 'AI cost & usage (Business OS, recorded)', exact: true },
+  { row: 'W-19b / S-9', file: ACTIVITY, text: 'AI calls & usage (Business OS, recorded)', exact: true },
   { row: 'W-20', file: HEALTH, text: 'Recorded AI cost (USD)', exact: true },
   { row: 'W-21a', file: HEALTH, text: 'Recorded AI cost, last 24 h (USD)', exact: true },
   { row: 'W-21b', file: HEALTH, text: 'Recorded AI cost, last 7 days (USD)', exact: true },
-  { row: 'W-21c', file: HEALTH, text: 'Recorded AI cost, ${}: ${}, open in AI cost & usage', exact: true },
+  { row: 'W-21c / S-12', file: HEALTH, text: 'Recorded AI cost, ${}: ${}, open in AI calls & usage', exact: true },
   {
     row: 'W-22',
     file: HEALTH,
@@ -335,6 +352,26 @@ const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; e
   { row: 'M4-FR-1 above source', file: FIN, text: 'Recorded AI cost minus charged AI cost, for the same window. Which calls: run the', exact: true },
   { row: 'M4-FR-2 / E-54 summary', file: FIN, text: 'Recorded above charged', exact: true },
   { row: 'R4-5', file: FIN, text: 'Not available: AI charging began 29 Sep 2026', exact: true },
+  // Money M-5 (§11H.5 S-5 to S-18; AC-195, AC-199).
+  { row: 'S-5', file: ANALYTICS, text: 'AI calls & usage (detail)', exact: true },
+  { row: 'S-6', file: COSTS, text: 'Charge checks', exact: true },
+  { row: 'S-7', file: FIN, text: 'AI calls & usage', exact: true },
+  { row: 'S-8', file: FIN, text: 'Charge checks', exact: true },
+  { row: 'S-10', file: ACTIVITY, text: 'Platform AI calls are counted by the Leak check on Charge checks.' },
+  { row: 'S-11', file: PANEL, text: 'Open in AI calls & usage', exact: true },
+  { row: 'S-12 note', file: HEALTH, text: 'AI calls & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.', exact: true },
+  { row: 'S-12 footnote', file: HEALTH, text: 'The comparison with the previous period is computed here from one read; AI calls & usage computes' },
+  { row: 'S-13', file: HEALTH, text: 'Charged AI cost: open Finance', exact: true },
+  { row: 'S-14a', file: RULES, text: '24 h recorded AI cost', exact: true },
+  { row: 'S-14b', file: RULES, text: 'previous 24 h recorded AI cost', exact: true },
+  { row: 'S-14c', file: RULES, text: '7-day recorded AI cost', exact: true },
+  { row: 'S-14d', file: RULES, text: 'previous 7-day recorded AI cost', exact: true },
+  { row: 'S-15a', file: RULES, text: 'Recorded AI cost tripled vs yesterday', exact: true },
+  { row: 'S-15b', file: RULES, text: 'Recorded AI cost doubled vs yesterday', exact: true },
+  { row: 'S-15c', file: RULES, text: 'Recorded AI cost up 50% or more on the week', exact: true },
+  { row: 'S-16', file: CRON, text: "Checks that yesterday's recorded Business OS AI cost was all charged", exact: true },
+  { row: 'S-17', file: CRON, text: 'businesses with recorded AI cost not charged', exact: true },
+  { row: 'S-18', file: ANALYTICS_BAR, text: 'AI calls and usage', exact: true },
 ];
 
 /** Exact whole texts: "AI cost (USD)" never matches inside "Charged AI cost (USD)". */
@@ -402,6 +439,25 @@ const OLD_TEXTS: ReadonlyArray<{ row: string; files: readonly GuardedFile[] | 'a
   { row: 'W-25b', files: 'all', text: 'Cost by Model (highest cost first)' },
   { row: 'W-25c', files: 'all', text: 'Total Cost' },
   { row: 'W-27', files: 'all', text: "Estimated cost of this business's Business OS AI calls, in USD." },
+  // Money M-5 (§11H.5): the old names and the FU-M4-1 "spend" wording.
+  { row: 'S-1 / S-5 / S-7', files: 'all', text: 'AI cost & usage' },
+  { row: 'S-6 / S-8', files: 'all', text: 'Costs & credits' },
+  { row: 'S-8', files: 'all', text: 'Business OS AI Costs & credits' },
+  { row: 'S-9', files: 'all', text: 'AI cost & usage (Business OS, recorded)' },
+  { row: 'S-10', files: 'all', text: 'Platform AI calls are counted by the leak check on the Costs & credits tab.' },
+  { row: 'S-11', files: 'all', text: 'Open in AI cost & usage' },
+  { row: 'S-12', files: 'all', text: 'Recorded AI cost, ${}: ${}, open in AI cost & usage' },
+  { row: 'S-12', files: 'all', text: 'AI cost & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.' },
+  { row: 'S-14a', files: 'all', text: '24 h spend' },
+  { row: 'S-14b', files: 'all', text: 'previous 24 h spend' },
+  { row: 'S-14c', files: 'all', text: '7-day spend' },
+  { row: 'S-14d', files: 'all', text: 'previous 7-day spend' },
+  { row: 'S-15a', files: 'all', text: 'Spend tripled vs yesterday' },
+  { row: 'S-15b', files: 'all', text: 'Spend doubled vs yesterday' },
+  { row: 'S-15c', files: 'all', text: 'Week up 50% or more' },
+  { row: 'S-16', files: 'all', text: "Checks that yesterday's Business OS AI spend was all charged" },
+  { row: 'S-17', files: 'all', text: 'businesses with uncharged AI spend' },
+  { row: 'S-18', files: 'all', text: 'AI cost and usage' },
 ];
 
 describe('AC-150: the new texts are present', () => {

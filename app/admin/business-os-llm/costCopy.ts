@@ -1,9 +1,13 @@
 /**
- * The words of the Costs & credits tab (credit deduction slice 4a), in one
- * place so the render tests assert the same strings the screen shows.
+ * The words of the cost report (credit deduction slice 4a), in one place so
+ * the render tests assert the same strings the screen shows. Money M-5 moved
+ * the report from the Business OS AI "Costs & credits" tab to its own page,
+ * Charge checks (`/admin/finance/charges`); the tab label became the page's h1
+ * (S-6), renamed rather than removed (SA-W4).
  */
 
-export const COSTS_TAB_LABEL = 'Costs & credits';
+/** The Charge checks page's h1, equal to its sidebar label (LAY D-3 (a)). */
+export const CHARGE_CHECKS_TITLE = 'Charge checks';
 export const SETTINGS_TAB_LABEL = 'Settings';
 
 export const COSTS_INTRO =

@@ -286,7 +286,7 @@ function AdminCostAnalyticsContent() {
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="AI cost & usage" purpose={PURPOSE} />
+      <AdminPageHeader title="AI calls & usage (detail)" purpose={PURPOSE} />
 
       {!error && (
         <AnalyticsKpis

@@ -645,15 +645,18 @@ describe('the page: the Activity tab and the URL (SA-RC-13, SA-B1-8)', () => {
     expect(activityCalls(fetchMock).length).toBeGreaterThan(0);
   });
 
-  it('?tab=costs opens the Costs tab AND mounts its panel on first render', async () => {
+  // Money M-5 (§11H.4 R-2, AC-192): the Costs tab moved to Charge checks and an
+  // old `?tab=costs` link is redirected by next.config.js. If that is ever
+  // bypassed, `costs` is an unknown value here: Settings, and no report read.
+  it('?tab=costs (an old link that bypassed the redirect) opens Settings, with no Costs tab and no report read', async () => {
     mockSearch = 'tab=costs';
     const fetchMock = stubPage();
     render(<BusinessOsLlmSettingsPage />);
-    expect(screen.getByTestId('tab-costs')).toHaveAttribute('aria-selected', 'true');
-    expect(await screen.findByTestId('costs-tab')).toBeVisible();
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith('/api/admin/business-os/credits/report'))).toBe(true)
-    );
+    expect(screen.getByTestId('tab-settings')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByTestId('tab-costs')).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith('/api/admin/business-os/credits/report'))).toBe(false);
+    expect(screen.queryByTestId('costs-tab')).not.toBeInTheDocument();
     expect(screen.queryByTestId('activity-tab')).not.toBeInTheDocument();
   });
 

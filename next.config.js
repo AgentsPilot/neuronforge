@@ -75,6 +75,17 @@ const nextConfig = {
         destination: '/business-os/orders',
         permanent: false,
       },
+      {
+        // Money M-5 (§11H.4 R-1): the Business OS AI "Costs & credits" tab
+        // moved to Charge checks. Temporary for the same reason as above. Next
+        // passes the query through, so the window (range, from, to) and the
+        // business (account) arrive; the stray tab=costs is not a Charge checks
+        // key and is ignored there (SA-Q60, SA-W1). `value` is matched whole.
+        source: '/admin/business-os-llm',
+        has: [{ type: 'query', key: 'tab', value: 'costs' }],
+        destination: '/admin/finance/charges',
+        permanent: false,
+      },
     ];
   },
 }

@@ -63,7 +63,7 @@ export const UNAVAILABLE_HEADLINE = 'Could not check just now';
 /** The SA C-18 invariant's headline: a lower bound is never clear. */
 export const LOWER_BOUND_HEADLINE = 'Total is a minimum; not all calls counted';
 export const OI_P1_NOTE =
-  'AI cost & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.';
+  'AI calls & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.';
 /** The closing line of a rule list when the tile's figures are always exact. */
 export const OTHERWISE_GREEN = `Otherwise: green, "${GREEN_HEADLINE}".`;
 /**
@@ -659,7 +659,7 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement 
       `${money(current)} (${previousLabel}: ${money(previous)})` + (callsKnown ? ` · ${callsText(calls)}` : ''),
     exact: current.exact && previous.exact,
     href: analyticsLink(start, w.end),
-    linkLabel: `Recorded AI cost, ${windowWords}: ${money(current)}, open in AI cost & usage`,
+    linkLabel: `Recorded AI cost, ${windowWords}: ${money(current)}, open in AI calls & usage`,
     note: callsKnown && calls.value > COST_ANALYTICS_ROW_CAP ? OI_P1_NOTE : null,
   });
 
@@ -678,7 +678,7 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement 
     footnote:
       'USD: every Business OS AI call in the usage log, charged or not, priced from the model price table; ' +
       'never mixed with a business currency. The charged AI cost is on Finance. ' +
-      'The comparison with the previous period is computed here from one read; AI cost & usage ' +
+      'The comparison with the previous period is computed here from one read; AI calls & usage ' +
       'computes its own "vs previous period" differently (known issue OI-P2).',
     completeness: 'complete',
   };
@@ -728,11 +728,22 @@ export const ENTITLEMENTS_PAGE_LINK: HealthPageLink = {
 };
 
 /**
+ * Where the "Recorded AI cost" tile leads (Money M-5, R-5, SA-Q55, SA-Q64):
+ * Finance, which holds the charged AI cost, at its default window. The tile's
+ * own figures keep their links to AI calls & usage with their own windows.
+ */
+export const FINANCE_PAGE_LINK: HealthPageLink = {
+  href: '/admin/finance',
+  text: 'Charged AI cost: open Finance',
+};
+
+/**
  * Static page links, by tile: shown whatever the read returned, including when
  * it failed or the rule list was invalid (QA-3).
  */
 function tilePageLink(id: MeasuredTileId): HealthPageLink | null {
   if (id === 'entitlements_mode') return ENTITLEMENTS_PAGE_LINK;
+  if (id === 'bos_ai_spend') return FINANCE_PAGE_LINK;
   if (id === 'scheduled_jobs' || id === 'queues') return JOBS_QUEUES_PAGE_LINK;
   return null;
 }

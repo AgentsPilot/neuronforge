@@ -1,6 +1,6 @@
 # Business OS credit pricing: the credit value and plan allowances
 
-> **Last Updated**: 2026-10-14
+> **Last Updated**: 2026-10-16
 
 ## Overview
 
@@ -232,7 +232,7 @@ Re-run the calculation when **any** of these happens:
 
 | Source | What it gives |
 |---|---|
-| **Costs & credits tab** of `/admin/business-os-llm` (slice 4a) | Per account and billing period: credits and cost by action type, area, effective service and trigger; **p50 / p90 per action type**; the fallback-priced count. The first place to look |
+| **Charge checks** page, `/admin/finance/charges` (slice 4a; until Money M-5 the Costs & credits tab of `/admin/business-os-llm`) | Per account and billing period: credits and cost by action type, area, effective service and trigger; **p50 / p90 per action type**; the fallback-priced count. The first place to look |
 | **The credit ledger** (`business_os_credit_charges`, `business_os_credit_totals`) | The authoritative record of what was charged, from 2026-09-29 ~15:40 UTC. Prefer it over the audit trail |
 | **`audit_trail` `ai_action` entries** | Per-action detail (action type, trigger, `estimatedCostUsd`) back to 2026-09-19. Lossy by design — use for history before the ledger existed, not as the bill |
 | **`token_usage`** | Per-call cost, the only record of AI before 2026-09-19, and the cross-check. The leak check (slice 4b) compares it with the ledger |
@@ -290,3 +290,4 @@ Use the counting rules in §4.2 for deterministic actions, so figures stay compa
 | 2026-10-04 | Slice 8b: the low-line audit record | §5 "Fractional credits" row: one admin audit entry when a recorded charge takes the shown plan percentage below 10 (BD-22, BD-25), derived once per period; KI-21 to KI-23 |
 | 2026-10-04 | Credits boost slice 1: the markup in code | One paragraph at the end of §6.3: the markup's home `creditRetail.ts` (append-only, version 1 = D1), the computed boost base rate, and the procedure for a markup change (re-version the boost packages). No figure changed |
 | 2026-10-14 | Image model change noted | §4.5: the measured $0.25 image row is labelled historical (`gpt-image-1`), and a note gives the new default `gpt-image-2.5-flare` at quality `high` with its estimated $0.043–$0.054 per image. No measured figure changed |
+| 2026-10-16 | Money M-5: where the cost report lives | §4.6 table: the operator cost report is the Charge checks page (`/admin/finance/charges`), moved from the Business OS AI "Costs & credits" tab. No figure changed |

@@ -76,15 +76,15 @@ describe('the block (M4-FR-1)', () => {
     expect(document.body.textContent).not.toContain('3.55');
   });
 
-  it('SA-W99: the Leak check link opens the Costs tab; with a business picked it carries the account; never a window', () => {
+  it('SA-W99 / M-5 R-4: the Leak check link opens Charge checks; with a business picked it carries the account; never a window', () => {
     renderSection(aiCost());
     const link = screen.getByTestId('ai-recorded-leak-link');
     expect(link).toHaveTextContent(ABOVE_LEAK_LINK);
-    expect(link).toHaveAttribute('href', '/admin/business-os-llm?tab=costs');
+    expect(link).toHaveAttribute('href', '/admin/finance/charges');
     cleanup();
     renderSection(aiCost(), A);
-    expect(screen.getByTestId('ai-recorded-leak-link')).toHaveAttribute('href', `/admin/business-os-llm?tab=costs&account=${A}`);
-    // The existing AI cost & usage link stays and keeps the window.
+    expect(screen.getByTestId('ai-recorded-leak-link')).toHaveAttribute('href', `/admin/finance/charges?account=${A}`);
+    // The existing AI calls & usage link stays and keeps the window.
     expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toContain('range=this_month');
   });
 

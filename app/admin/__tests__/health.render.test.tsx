@@ -94,7 +94,7 @@ const SUMMARY: HealthSummary = {
           value: 'at least $12.10 (previous 7 days: $3.00)',
           exact: false,
           href: '/admin/analytics?scope=bos&dateFrom=x&dateTo=y',
-          linkLabel: 'Recorded AI cost, last 7 days: at least $12.10, open in AI cost & usage',
+          linkLabel: 'Recorded AI cost, last 7 days: at least $12.10, open in AI calls & usage',
           note: null,
         },
       ],
@@ -184,6 +184,18 @@ describe('the Health page', () => {
     expect(link.getAttribute('href')).toBe('/admin/business-os-tiers');
     expect(within(ent).getByText('Mode in effect')).toBeTruthy();
     expect(ent.textContent).not.toMatch(/\d/);
+  });
+
+  it('Money M-5 (R-5): the Recorded AI cost tile shows its page link to Finance', async () => {
+    const tiles = SUMMARY.tiles.map((t) =>
+      t.id === 'bos_ai_spend' ? { ...t, pageLink: { href: '/admin/finance', text: 'Charged AI cost: open Finance' } } : t
+    );
+    mockRoute({ success: true, data: { ...SUMMARY, tiles } });
+    render(<AdminHealthPage />);
+    const spend = await screen.findByTestId('health-tile-bos_ai_spend');
+    const link = within(spend).getByTestId('page-link');
+    expect(link.textContent).toBe('Charged AI cost: open Finance');
+    expect(link.getAttribute('href')).toBe('/admin/finance');
   });
 
   it('a tile without a page link renders none', async () => {

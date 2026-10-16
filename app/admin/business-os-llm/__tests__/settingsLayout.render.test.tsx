@@ -154,7 +154,8 @@ describe('S-1 / S-2: the header has no actions; Refresh lives in the Settings ba
     expect(screen.queryByRole('search')).toBeNull();
     expect(screen.queryByText(/read at 2026/i)).toBeNull();
 
-    for (const other of ['costs', 'activity']) {
+    // Money M-5: Activity is the only other tab (Costs moved to Charge checks).
+    for (const other of ['activity']) {
       fireEvent.click(screen.getByTestId(`tab-${other}`));
       expect(within(header).queryAllByRole('button', { hidden: true })).toHaveLength(0);
       expect(screen.queryByRole('button', { name: 'Refresh the settings', hidden: true })).toBeNull();

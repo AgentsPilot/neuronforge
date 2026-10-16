@@ -8,6 +8,13 @@
  * the KPI strip (C-12, SA M-1). L-9b adds the sections and the leak panel on
  * the standard (C-9 to C-11).
  *
+ * Money M-5 (finance health §11H.4, SA-W5): the report moved from the Business
+ * OS AI page's Costs & credits tab to its own page, Charge checks
+ * (`/admin/finance/charges`), which mounts the same `CostsTab`. These cases now
+ * mount that page; the assertions are the same, except that the address bar
+ * carries no `tab` (the page has none), and a stray `tab` brought by the
+ * old-link redirect is kept untouched (SA-W1).
+ *
  * `useSearchParams` follows `window.location` here, as Next does once
  * `replaceState(null, …)` has been delivered (the `activityLayout.render`
  * harness).
@@ -20,7 +27,7 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
-import BusinessOsLlmSettingsPage from '../page';
+import ChargeChecksPage from '@/app/admin/finance/charges/page';
 import {
   COSTS_EMPTY,
   COSTS_INCOMPLETE,
@@ -34,7 +41,7 @@ import type { CostPeriodFigures, CostReportPayload } from '../costTypes';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
-const PAGE = '/admin/business-os-llm';
+const PAGE = '/admin/finance/charges';
 const REPORT_PATH = '/api/admin/business-os/credits/report';
 const DAY_MS = 86_400_000;
 
@@ -114,12 +121,12 @@ const spanOf = (url: string) => {
   const params = paramsOf(url);
   return (Date.parse(`${params.get('to')}T00:00:00Z`) - Date.parse(`${params.get('from')}T00:00:00Z`)) / DAY_MS;
 };
-const costs = () => document.getElementById('bos-llm-panel-costs') as HTMLElement;
+const costs = () => document.querySelector('[data-testid="costs-tab"]') as HTMLElement;
 const flush = () => act(async () => {});
 
 function openAt(search: string) {
   window.history.replaceState(null, '', `${PAGE}${search}`);
-  return render(<BusinessOsLlmSettingsPage />);
+  return render(<ChargeChecksPage />);
 }
 
 beforeEach(() => {
@@ -130,7 +137,7 @@ beforeEach(() => {
 describe('C-1: the bar (§5.5, D-2 (b), SA-R-11, D-15)', () => {
   it('the windows in order with 30 days pressed, the Business picker, Clear disabled, Refresh named, Read at', async () => {
     stub(() => ok(report()));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-periods');
     const bar = within(costs()).getByRole('search', { name: 'Filters' });
     const windowGroup = within(bar).getByRole('group', { name: 'Window' });
@@ -157,7 +164,7 @@ describe('C-1: the bar (§5.5, D-2 (b), SA-R-11, D-15)', () => {
 describe('the URL contract (§5.6)', () => {
   it('C-2: an inbound custom window and business read once with those values, and the controls show them', async () => {
     const fetchMock = stub(() => ok(report({ accountFilter: A })));
-    const search = `?tab=costs&range=custom&from=2026-07-01&to=2026-07-31&account=${A}`;
+    const search = `?range=custom&from=2026-07-01&to=2026-07-31&account=${A}`;
     openAt(search);
     await within(costs()).findByTestId('costs-periods');
     await flush();
@@ -181,7 +188,7 @@ describe('the URL contract (§5.6)', () => {
     ['a one-sided window', 'to=2026-10-01'],
   ])('C-3: %s is ignored (U-4): one default read, and the address bar is cleaned', async (_name, query) => {
     const fetchMock = stub(() => ok(report()));
-    openAt(`?tab=costs&${query}`);
+    openAt(`?${query}`);
     await within(costs()).findByTestId('costs-periods');
     await flush();
     const calls = reportCalls(fetchMock);
@@ -190,35 +197,51 @@ describe('the URL contract (§5.6)', () => {
     expect(paramsOf(calls[0]).has('accountId')).toBe(false);
     expect(within(costs()).getByRole('button', { name: '30 days' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(costs()).getByRole('button', { name: 'Clear' })).toBeDisabled();
-    await waitFor(() => expect(window.location.search).toBe('?tab=costs'));
+    await waitFor(() => expect(window.location.search).toBe(''));
   });
 
-  it('C-4: a preset writes by replaceState(null, …) keeping tab and omitting the default; Clear removes every Costs key with one read', async () => {
+  it('C-4: a preset writes by replaceState(null, …) only the Costs keys, omitting the default; Clear removes every Costs key with one read', async () => {
     const fetchMock = stub(() => ok(report()));
-    openAt(`?tab=costs&range=7d&account=${A}`);
+    openAt(`?range=7d&account=${A}`);
     await within(costs()).findByTestId('costs-periods');
     await flush();
     const spy = jest.spyOn(window.history, 'replaceState');
 
     fireEvent.click(within(costs()).getByRole('button', { name: '90 days' }));
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(2));
-    expect(spy).toHaveBeenLastCalledWith(null, '', `${PAGE}?tab=costs&range=90d&account=${A}`);
+    expect(spy).toHaveBeenLastCalledWith(null, '', `${PAGE}?range=90d&account=${A}`);
 
     fireEvent.click(within(costs()).getByRole('button', { name: '30 days' }));
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(3));
-    expect(window.location.search).toBe(`?tab=costs&account=${A}`);
+    expect(window.location.search).toBe(`?account=${A}`);
 
     fireEvent.click(within(costs()).getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(4));
     await flush();
-    expect(window.location.search).toBe('?tab=costs');
+    expect(window.location.search).toBe('');
     expect(reportCalls(fetchMock)).toHaveLength(4);
     expect([...paramsOf(reportCalls(fetchMock)[3]).keys()]).toEqual(['from', 'to']);
   });
 
+  it('M-5 (SA-W1): a stray tab=costs from the old-link redirect is read past and kept; only the Costs keys change', async () => {
+    const fetchMock = stub(() => ok(report()));
+    openAt(`?tab=costs&range=7d&account=${A}`);
+    await within(costs()).findByTestId('costs-periods');
+    await flush();
+    const calls = reportCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    expect(spanOf(calls[0])).toBe(6);
+    expect(paramsOf(calls[0]).get('accountId')).toBe(A);
+
+    fireEvent.click(within(costs()).getByRole('button', { name: '90 days' }));
+    await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(2));
+    await flush();
+    expect(window.location.search).toBe(`?tab=costs&range=90d&account=${A}`);
+  });
+
   it('C-5: From after To is refused inline: no read, no URL write (F-73)', async () => {
     const fetchMock = stub(() => ok(report()));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-periods');
     await flush();
     const spy = jest.spyOn(window.history, 'replaceState');
@@ -232,7 +255,7 @@ describe('the URL contract (§5.6)', () => {
     expect(within(costs()).getByRole('alert')).toHaveTextContent('The start date must not be after the end date');
     expect(reportCalls(fetchMock)).toHaveLength(1);
     expect(spy).not.toHaveBeenCalled();
-    expect(window.location.search).toBe('?tab=costs');
+    expect(window.location.search).toBe('');
   });
 });
 
@@ -269,7 +292,7 @@ describe('C-6: Refresh and Try again (§5.10, D-15)', () => {
           ? ok(report())
           : new Promise<Answer>((resolve) => (hold = resolve))
     );
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-periods');
     const first = reportCalls(fetchMock)[0];
     expect(paramsOf(first).get('from')).toBe('2026-10-02');
@@ -302,7 +325,7 @@ describe('C-6: Refresh and Try again (§5.10, D-15)', () => {
 describe('the shared states (§5.10)', () => {
   it('C-7: a platform account gets the Costs sentence (SA M-2), no Try again, and no strip', async () => {
     stub(() => ({ status: 409, body: { success: false, error: 'platform_account' } }));
-    openAt(`?tab=costs&account=${A}`);
+    openAt(`?account=${A}`);
     const notice = await within(costs()).findByTestId('costs-platform-account');
     expect(notice.textContent).toBe(COSTS_PLATFORM_ACCOUNT);
     expect(within(costs()).queryByTestId('costs-error')).toBeNull();
@@ -314,19 +337,19 @@ describe('the shared states (§5.10)', () => {
   it('C-8: an empty report offers Clear filters only while a business is picked', async () => {
     const empty = report({ periods: [], accounts: [], mismatchedPeriods: 0, rowsRead: null });
     const fetchMock = stub(() => ok(empty));
-    const { unmount } = openAt('?tab=costs');
+    const { unmount } = openAt('');
     expect(await within(costs()).findByTestId('costs-empty')).toHaveTextContent(COSTS_EMPTY);
     expect(within(costs()).queryByRole('button', { name: 'Clear filters' })).toBeNull();
     unmount();
 
-    openAt(`?tab=costs&account=${A}`);
+    openAt(`?account=${A}`);
     await within(costs()).findByTestId('costs-empty');
     const before = reportCalls(fetchMock).length;
     fireEvent.click(within(costs()).getByRole('button', { name: 'Clear filters' }));
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(before + 1));
     expect(paramsOf(reportCalls(fetchMock)[before]).has('accountId')).toBe(false);
     await flush();
-    expect(window.location.search).toBe('?tab=costs');
+    expect(window.location.search).toBe('');
   });
 });
 
@@ -382,7 +405,7 @@ describe('L-9b: the sections and the leak panel on the standard (C-9 to C-11)', 
 
   it('C-9: number cells in tabular figures (never monospace), check chips by tone with icons, fallback time in UTC, no slate-500', async () => {
     stub(() => ok(sectionsReport()));
-    openAt('?tab=costs');
+    openAt('');
     const periods = await within(costs()).findByTestId('costs-periods');
 
     // Every right-aligned cell of every section table is a tabular, non-monospace number cell (F-71).
@@ -426,7 +449,7 @@ describe('L-9b: the sections and the leak panel on the standard (C-9 to C-11)', 
 
   it('C-10: each section carries its id, and every table has a name', async () => {
     stub(() => ok(sectionsReport()));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-periods');
     for (const id of ['costs-periods', 'costs-breakdowns', 'costs-fallback', 'costs-spread']) {
       expect(document.getElementById(id)).toHaveAttribute('data-testid', id);
@@ -463,7 +486,7 @@ describe('L-9b: the sections and the leak panel on the standard (C-9 to C-11)', 
     global.fetch = fetchMock as unknown as typeof fetch;
     const leakCalls = () => fetchMock.mock.calls.map((c) => String(c[0])).filter((url) => url.split('?')[0] === LEAK_PATH);
 
-    openAt(`?tab=costs&account=${A}`);
+    openAt(`?account=${A}`);
     await within(costs()).findByTestId('costs-periods');
     expect(within(costs()).getByTestId('leak-scope')).toHaveTextContent('Checking one business: Alpha Studio');
     fireEvent.click(within(costs()).getByTestId('leak-run'));
@@ -485,7 +508,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
 
   it('values and formats; Periods not matching red "Needs action" at 1; anchors to rendered sections', async () => {
     stub(() => ok(report()));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-periods');
     expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
     expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.007)}`);
@@ -517,20 +540,20 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
           ? ok(report({ mismatchedPeriods: 0, periods: [{ ...first, matches: null }, { ...second, matches: null }] }))
           : ok(report({ mismatchedPeriods: 0, periods: [first, { ...second, matches: true }] }))
     );
-    const { unmount } = openAt('?tab=costs');
+    const { unmount } = openAt('');
     await within(costs()).findByTestId('costs-periods');
     expect(tile('costs-kpi-periods')).toHaveAttribute('aria-label', 'Periods not matching, 0');
     expect(tile('costs-kpi-periods')).toHaveAttribute('data-status', 'neutral');
     expect(tile('costs-kpi-periods')).not.toHaveTextContent('checked');
     unmount();
 
-    const second_ = openAt(`?tab=costs&account=${A}`);
+    const second_ = openAt(`?account=${A}`);
     await within(costs()).findByTestId('costs-periods');
     expect(tile('costs-kpi-periods')).toHaveTextContent('of 1 checked');
     expect(tile('costs-kpi-periods')).toHaveAttribute('data-status', 'neutral');
     second_.unmount();
 
-    openAt(`?tab=costs&account=${B}`);
+    openAt(`?account=${B}`);
     await within(costs()).findByTestId('costs-periods');
     expect(tile('costs-kpi-periods')).toHaveAttribute('aria-label', 'Periods not matching, Not checked');
     expect(tile('costs-kpi-periods')).toHaveAttribute('data-status', 'neutral');
@@ -539,7 +562,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
 
   it('SA M-1: an incomplete report puts "may be incomplete" on all five tiles, turns none amber, and keeps Periods red', async () => {
     stub(() => ok(report({ incomplete: true, incompleteReasons: ['rows_ceiling'] })));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-incomplete');
     for (const testId of ALL_TILES) {
       const element = tile(testId);
@@ -558,7 +581,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
         ? ok(report({ breakdowns: null, sections: { totals: 'ok', rows: 'failed', names: 'ok', originals: 'skipped' } }))
         : ok(report({ periods: [], sections: { totals: 'failed', rows: 'skipped', names: 'skipped', originals: 'skipped' } }))
     );
-    const { unmount } = openAt('?tab=costs');
+    const { unmount } = openAt('');
     await within(costs()).findByTestId('costs-totals-failed');
     for (const testId of ALL_TILES) {
       expect(tile(testId).getAttribute('aria-label')).toMatch(/, Unknown$/);
@@ -567,7 +590,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     }
     unmount();
 
-    openAt(`?tab=costs&account=${A}`);
+    openAt(`?account=${A}`);
     await within(costs()).findByTestId('costs-fallback-failed');
     expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced, Unknown');
     expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
@@ -577,7 +600,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
 
   it('an empty report: the tiles have no target (K-6)', async () => {
     stub(() => ok(report({ periods: [], mismatchedPeriods: 0 })));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-empty');
     for (const testId of ALL_TILES) {
       expect(tile(testId).tagName).toBe('DIV');
@@ -588,7 +611,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
   it('five placeholders on the first read (K-10); hidden on an error', async () => {
     let release: (value: Answer) => void = () => {};
     stub(() => new Promise<Answer>((resolve) => (release = resolve)));
-    const { unmount } = openAt('?tab=costs');
+    const { unmount } = openAt('');
     await waitFor(() => expect(within(costs()).getAllByTestId('kpi-placeholder')).toHaveLength(5));
     await act(async () => release({ status: 500, body: { success: false, error: 'boom' } }));
     await within(costs()).findByTestId('costs-error');
@@ -616,7 +639,7 @@ describe('F-1: the partial-report lines on the shared notice (F-120)', () => {
 
   it('each line alone is its own notice with its words, never an alert', async () => {
     stub(() => ok(report({ unreadableAmounts: 3 })));
-    const first = openAt('?tab=costs');
+    const first = openAt('');
     await within(costs()).findByTestId('costs-unreadable');
     noticeOf('costs-unreadable');
     expect(within(costs()).getByTestId('costs-unreadable').textContent).toBe(UNREADABLE_AMOUNTS(3));
@@ -625,7 +648,7 @@ describe('F-1: the partial-report lines on the shared notice (F-120)', () => {
     first.unmount();
 
     stub(() => ok(report({ sections: { totals: 'ok', rows: 'ok', names: 'failed', originals: 'ok' } })));
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-names-failed');
     noticeOf('costs-names-failed');
     expect(within(costs()).getByTestId('costs-names-failed').textContent).toBe(NAMES_FAILED);
@@ -643,7 +666,7 @@ describe('F-1: the partial-report lines on the shared notice (F-120)', () => {
         }),
       ),
     );
-    openAt('?tab=costs');
+    openAt('');
     await within(costs()).findByTestId('costs-names-failed');
 
     const boxes = ['costs-incomplete', 'costs-unreadable', 'costs-names-failed'].map(noticeOf);
