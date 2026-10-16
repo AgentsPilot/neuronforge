@@ -174,6 +174,8 @@ About +150 lines (component, mostly the why-comment), +250 (unit test), -145 (`M
 
 Recorded in §14 LF3B-F1: `app/admin/users/components/CreditFormDialog.tsx`, `BoostCapDialog.tsx`, `DeleteBusinessDialog.tsx` (Businesses money and danger dialogs, held by the LF-4a.1 and LF-4b pin suites); `app/admin/components/jobs/DrainNowDialog.tsx`, `CancelQueueItemDialog.tsx`, `RetryQueueItemDialog.tsx`, `ReconcileTopUpsDialog.tsx` (Jobs guard pins); `app/admin/archiving/components/ArchiveConfirmDialog.tsx`. Each adoption is its own slice with its pins unedited.
 
+**Update 2026-10-16 (LF-9, [ADMIN_LAYOUT_LF9_WORKPLAN.md](/docs/workplans/ADMIN_LAYOUT_LF9_WORKPLAN.md)):** the Jobs and Archive entries are settled. `ReconcileTopUpsDialog.tsx` adopted the shared dialog (with the optional `description`, `busyLabel`, `confirmTestId` and `cancelTestId` props). `DrainNowDialog.tsx`, `CancelQueueItemDialog.tsx` and `RetryQueueItemDialog.tsx` are permanent non-adopters: ask-then-report dialogs, not confirmations (SA SQ-3). `ArchiveConfirmDialog.tsx` is not an adopter: its in-flight gap is graded Low and accepted (SA SQ-4). The three Businesses dialogs were outside LF-9. See §14 LF3B-F1 in the requirement.
+
 ## 10. Questions for SA (ruled 2026-10-14)
 
 Rulings: SQ-1 approved, one look with the Messages classes plus `inline-flex items-center gap-2` and the spinner in both tones; SQ-2 accepted (form wraps children and footer, header outside, `space-y-3`); SQ-3 delete; SQ-4 `false`, worded as "the dialog does not call onClose; the consumer decides". Full text in SA Review Notes §4.
