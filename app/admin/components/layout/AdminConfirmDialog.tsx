@@ -21,15 +21,25 @@
  *
  * Always a `<form>`: the confirm is `type="submit"`, so Enter in a field of
  * `children` confirms, and `canConfirm` gates both the button and the submit.
- * No description prop (SA C-3): no consumer has one yet; the first adopter that
- * needs one adds it with its test.
+ * An optional `description` (added by LF-9, its first adopter: Reconcile
+ * top-ups) is the content's accessible description; without one the content
+ * has no `aria-describedby` at all. LF-9 also added `busyLabel` (the confirm's
+ * words in flight, default `confirmLabel`) and the two button test ids. None
+ * of the four changes anything for a consumer that does not pass it.
  */
 
 import { useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { Loader2 } from 'lucide-react';
 
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ADMIN_DIALOG_CLASS, ADMIN_DIALOG_TITLE_CLASS } from './adminDialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ADMIN_DIALOG_CLASS, ADMIN_DIALOG_DESCRIPTION_CLASS, ADMIN_DIALOG_TITLE_CLASS } from './adminDialog';
 import { ADMIN_BUTTON } from './adminTable';
 
 export type AdminConfirmTone = 'danger' | 'primary';
@@ -46,10 +56,18 @@ export interface AdminConfirmDialogProps {
   open: boolean;
   /** The question. */
   title: ReactNode;
+  /** A sentence of context under the title; becomes the accessible description. */
+  description?: ReactNode;
   /** The cancel button's words. Default "Cancel". */
   cancelLabel?: string;
   /** The confirm button's words. */
   confirmLabel: string;
+  /** The confirm button's words while the request is in flight. Default `confirmLabel`. */
+  busyLabel?: string;
+  /** On the confirm button. */
+  confirmTestId?: string;
+  /** On the cancel button. */
+  cancelTestId?: string;
   /** Default `primary`. */
   tone?: AdminConfirmTone;
   /** On the dialog content. */
@@ -76,8 +94,12 @@ export interface AdminConfirmDialogProps {
 export function AdminConfirmDialog({
   open,
   title,
+  description,
   cancelLabel = 'Cancel',
   confirmLabel,
+  busyLabel,
+  confirmTestId,
+  cancelTestId,
   tone = 'primary',
   testId,
   children,
@@ -118,7 +140,9 @@ export function AdminConfirmDialog({
       <DialogContent
         data-testid={testId}
         className={ADMIN_DIALOG_CLASS}
-        aria-describedby={undefined}
+        // With a description the key is left out, so Radix links its own
+        // description id; an explicit undefined would remove that link (SA C-1).
+        {...(description === undefined ? { 'aria-describedby': undefined } : {})}
         aria-busy={isBusy}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
@@ -137,6 +161,9 @@ export function AdminConfirmDialog({
       >
         <DialogHeader>
           <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{title}</DialogTitle>
+          {description !== undefined && (
+            <DialogDescription className={ADMIN_DIALOG_DESCRIPTION_CLASS}>{description}</DialogDescription>
+          )}
         </DialogHeader>
         <form onSubmit={(event) => void submit(event)} className="space-y-3">
           {children}
@@ -144,6 +171,7 @@ export function AdminConfirmDialog({
             <button
               ref={cancelRef}
               type="button"
+              data-testid={cancelTestId}
               onClick={() => onOpenChange(false)}
               disabled={isBusy}
               className={ADMIN_BUTTON}
@@ -152,12 +180,13 @@ export function AdminConfirmDialog({
             </button>
             <button
               type="submit"
+              data-testid={confirmTestId}
               disabled={isBusy || !canConfirm}
               aria-busy={isBusy}
               className={ADMIN_CONFIRM_TONE_CLASS[tone]}
             >
               {isBusy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {confirmLabel}
+              {isBusy ? (busyLabel ?? confirmLabel) : confirmLabel}
             </button>
           </DialogFooter>
         </form>
