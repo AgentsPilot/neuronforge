@@ -32,6 +32,7 @@ import { ImageIcon, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { notifyCreditUsageChanged } from '@/lib/business-os/client/creditUsageSignal';
 import { ImageGenerationProgress } from '@/components/website/ImageGenerationProgress';
+import { WEBSITE_IMAGE_ACCEPT, WEBSITE_IMAGE_MAX_MB, websiteUploadErrorKey } from '@/lib/validation/websiteImage';
 
 interface LibraryItem {
   id: string;
@@ -199,7 +200,9 @@ export function MediaLibraryPicker({
         await load();
         return;
       }
-      setUploadError(result.error || t('media.upload.failed'));
+      // By `code`, not the server's English `error` (F-27 SA-F27-2).
+      const key = websiteUploadErrorKey(result.code);
+      setUploadError(key === 'media.upload.too_large' ? t(key, { size: WEBSITE_IMAGE_MAX_MB }) : t(key));
     } catch {
       setUploadError(t('media.upload.failed'));
     } finally {
@@ -349,7 +352,7 @@ export function MediaLibraryPicker({
           <input
             ref={fileInput}
             type="file"
-            accept="image/jpeg,image/png,image/webp,image/svg+xml"
+            accept={WEBSITE_IMAGE_ACCEPT}
             className="hidden"
             onChange={event => {
               const file = event.target.files?.[0];

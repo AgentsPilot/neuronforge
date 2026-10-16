@@ -2027,7 +2027,7 @@ export const he = {
     'media.upload.preview_title': 'תצוגת תמונה',
     'media.upload.replace': 'החלפת תמונה',
     'media.upload.max_size': 'עד {size}MB',
-    'media.upload.invalid_type': 'הקובץ הזה אינו תמונה. יש להעלות JPEG, PNG, GIF, WebP או SVG.',
+    'media.upload.invalid_type': 'הקובץ הזה אינו תמונה. יש להעלות JPEG, PNG, GIF או WebP.',
     'media.upload.too_large': 'הקובץ גדול מדי. המקסימום הוא {size}MB.',
     'media.upload.failed': 'ההעלאה נכשלה. נסה שוב.',
     'media.upload.no_url': 'הקובץ הועלה אך לא הצלחנו לקבל אליו קישור.',
