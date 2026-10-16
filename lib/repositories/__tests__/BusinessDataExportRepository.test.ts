@@ -23,6 +23,13 @@
  * U-6 run over them too. X-8: A's business profile points at one of B's
  * addresses (`address_id`); A's file holds that bare id and nothing else of
  * B's: the address book is read by its own `user_id`, never via the pointer.
+ *
+ * DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §8 M-7, M-8, M-11; SA C-3,
+ * C-8): the ten money sections go through the same method, so U-5 and U-6
+ * run over them too. M-7 / C-8: B's refund names A's payment, B's instalment
+ * names A's subscription AND A's invoice, A's instalment names B's plan: A's
+ * file holds A's rows only, and A's bare pointer ids, never a row of B's.
+ * Children are read by their own `user_id`, never by following a parent id.
  */
 
 import fs from 'fs';
@@ -172,8 +179,22 @@ const DE3_SECTIONS: Record<string, ExportSectionId> = {
   business_addresses: 'business_addresses',
 };
 
-/** Every table the registry reads through this repository. */
-const OWNED_SECTIONS: Record<string, ExportSectionId> = { ...DE3_SECTIONS, ...DE4_SECTIONS };
+/** DE-5: the ten money sections (two account, eight client_records). */
+const DE5_SECTIONS: Record<string, ExportSectionId> = {
+  stripe_connect_accounts: 'payment_account',
+  payment_processors: 'payment_providers',
+  proposals: 'quotes',
+  payment_invoices: 'invoices',
+  payment_transactions: 'payments',
+  payment_refunds: 'refunds',
+  payment_plans: 'payment_plans',
+  payment_plan_subscriptions: 'client_payment_plans',
+  payment_plan_installments: 'installments',
+  saved_payment_methods: 'client_payment_methods',
+};
+
+/** Every table the registry reads through this repository. DE-5: + DE5_SECTIONS. */
+const OWNED_SECTIONS: Record<string, ExportSectionId> = { ...DE3_SECTIONS, ...DE4_SECTIONS, ...DE5_SECTIONS };
 
 /** A full row for `table`: every declared column, plus the ones the export must never select. */
 function rowFor(table: string, tenant: 'a' | 'b', n: number, extra: Row = {}): Row {
@@ -203,6 +224,13 @@ function seedBothTenants(): Record<string, Row[]> {
     for (const tenant of ['a', 'b'] as const) {
       const count = table === 'business_addresses' ? 2 : 1;
       for (let n = 0; n < count; n += 1) db[table].push(rowFor(table, tenant, n));
+    }
+  }
+  // DE-5: three rows per tenant in every money table.
+  for (const table of Object.keys(DE5_SECTIONS)) {
+    db[table] = [];
+    for (const tenant of ['a', 'b'] as const) {
+      for (let n = 0; n < 3; n += 1) db[table].push(rowFor(table, tenant, n));
     }
   }
   // C-7: A has an active, an archived and a deleted document.
@@ -560,5 +588,153 @@ describe('C-5 E-6: the sole importer is data-export/sections.ts', () => {
     const read = (f: string) =>
       f === planted ? "import { businessDataExportRepository } from '@/lib/repositories/BusinessDataExportRepository';" : '';
     expect(disallowedImporters([planted], read)).toEqual([path.join('lib', 'services', 'Planted.ts')]);
+  });
+});
+
+// ── DE-5: client money (M-7, M-8, M-11; SA C-3, C-8) ─────────────────────────
+
+describe('DE-5 M-7 / C-8 cross-tenant pointers carry a bare id, never a row', () => {
+  const byOwner = (db: Record<string, Row[]>, table: string, owner: string) => db[table].filter((r) => r.user_id === owner);
+
+  /** Both tenants in the ten money tables only (the other sections read empty), so the whole-registry runs stay fast (SA C-9). */
+  function seedMoneyOnly(): Record<string, Row[]> {
+    const db: Record<string, Row[]> = { plugin_connections: [] };
+    for (const table of Object.keys(DE5_SECTIONS)) {
+      db[table] = [];
+      for (const tenant of ['a', 'b'] as const) for (let n = 0; n < 3; n += 1) db[table].push(rowFor(table, tenant, n));
+    }
+    return db;
+  }
+
+  function crossedSeed(): { db: Record<string, Row[]>; bRefund: Row; bInstallment: Row; aInstallment: Row; aPayment: Row; aSub: Row; aInvoice: Row; bPlan: Row } {
+    const db = seedMoneyOnly();
+    const aPayment = byOwner(db, 'payment_transactions', USER_A)[0];
+    const aSub = byOwner(db, 'payment_plan_subscriptions', USER_A)[0];
+    const aInvoice = byOwner(db, 'payment_invoices', USER_A)[0];
+    const bPlan = byOwner(db, 'payment_plans', USER_B)[0];
+    // B's refund names A's payment; B's instalment names A's subscription AND A's invoice.
+    const bRefund = byOwner(db, 'payment_refunds', USER_B)[0];
+    bRefund.transaction_id = aPayment.id;
+    bRefund.amount = 'QA-B-REFUND-AMOUNT-NEVER';
+    const bInstallment = byOwner(db, 'payment_plan_installments', USER_B)[0];
+    bInstallment.subscription_id = aSub.id;
+    bInstallment.invoice_id = aInvoice.id;
+    bInstallment.label = 'QA-B-INSTALMENT-NEVER';
+    // A's instalment names B's plan.
+    const aInstallment = byOwner(db, 'payment_plan_installments', USER_A)[0];
+    aInstallment.payment_plan_id = bPlan.id;
+    return { db, bRefund, bInstallment, aInstallment, aPayment, aSub, aInvoice, bPlan };
+  }
+
+  it("A's export holds every A money row and none of B's, though B's rows name A's payment, subscription and invoice", async () => {
+    const seeded = crossedSeed();
+    const fake = fakeClient(seeded.db);
+    mockActiveClient = fake.client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    expect(run.overCeiling).toBe(false);
+    const byId = Object.fromEntries(run.sections.map((s) => [s.id, s]));
+    const text = JSON.stringify(run.sections);
+    for (const [table, section] of Object.entries(DE5_SECTIONS)) {
+      expect(byId[section].status).toBe('ok');
+      expect(byId[section].rows.map((r) => String((r as Row).id))).toEqual(byOwner(seeded.db, table, USER_A).map((r) => String(r.id)).sort());
+    }
+    // B's refund and instalment are absent although they point at A's rows.
+    expect(byId.refunds.rows.map((r) => (r as Row).id)).not.toContain(seeded.bRefund.id);
+    expect(byId.installments.rows.map((r) => (r as Row).id)).not.toContain(seeded.bInstallment.id);
+    for (const leaked of ['QA-B-REFUND-AMOUNT-NEVER', 'QA-B-INSTALMENT-NEVER']) expect(text).not.toContain(leaked);
+    // A's instalment exports B's plan id as held, a bare uuid; B's plan row is not in payment_plans.
+    expect((byId.installments.rows as Row[]).find((r) => r.id === seeded.aInstallment.id)?.payment_plan_id).toBe(seeded.bPlan.id);
+    expect(byId.payment_plans.rows.map((r) => (r as Row).id)).not.toContain(seeded.bPlan.id);
+    expect(text).not.toContain(String(seeded.bPlan.name));
+    // Of B's markers, only that one pointer id appears.
+    expect(foreignMarkers(text, seeded.db)).toEqual([String(seeded.bPlan.id)]);
+    // Children were read by their own user_id: no query on a money table filters by a parent id.
+    const money = fake.log.filter((l) => l.table in DE5_SECTIONS);
+    expect(new Set(money.map((l) => l.table))).toEqual(new Set(Object.keys(DE5_SECTIONS)));
+    for (const entry of money) {
+      expect(entry.calls[1]).toEqual(['eq', 'user_id', USER_A]);
+      expect(entry.calls.filter((c) => c[0] === 'eq')).toEqual([['eq', 'user_id', USER_A]]);
+      expect(entry.calls.some((c) => c[0] === 'in' || c[0] === 'not')).toBe(false);
+    }
+  });
+
+  it("negative control: a fake that ignores .eq(user_id) puts B's refund (naming A's payment) in A's file", async () => {
+    const seeded = crossedSeed();
+    mockActiveClient = fakeClient(seeded.db, { ignoreUserIdFilter: true }).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const refunds = run.sections.find((s) => s.id === 'refunds')!;
+    expect(refunds.rows.some((r) => (r as Row).id === seeded.bRefund.id)).toBe(true);
+    const installments = run.sections.find((s) => s.id === 'installments')!;
+    expect(installments.rows.some((r) => (r as Row).id === seeded.bInstallment.id)).toBe(true);
+  });
+});
+
+describe('DE-5 M-8 all history is in: every status, no row filter on a money table', () => {
+  const STATUSES: Record<string, string[]> = {
+    payment_transactions: ['succeeded', 'failed', 'pending', 'refunded'],
+    payment_refunds: ['succeeded', 'failed', 'cancelled'],
+    payment_invoices: ['draft', 'sent', 'paid', 'cancelled', 'refunded', 'overdue'],
+    proposals: ['draft', 'sent', 'accepted', 'declined', 'superseded', 'stopped', 'withdrawn'],
+    payment_plan_subscriptions: ['active', 'past_due', 'cancelled', 'completed'],
+    payment_plan_installments: ['pending', 'paid', 'overdue', 'cancelled'],
+  };
+
+  it.each(Object.entries(STATUSES))('%s: every seeded status is exported', async (table, statuses) => {
+    const db = { [table]: statuses.map((status, n) => rowFor(table, 'a', n, { status })) };
+    const { client, log } = fakeClient(db);
+    const result = await new BusinessDataExportRepository(client).listOwnedRowsForExport(DE5_SECTIONS[table], USER_A, { maxRows: 100 });
+    expect(result.data?.rows.map((r) => r.status).sort()).toEqual([...statuses].sort());
+    expect(log.flatMap((l) => l.calls).some((c) => c[0] === 'not')).toBe(false);
+  });
+
+  it('inactive plans and disconnected providers are in', async () => {
+    const db = {
+      payment_plans: [rowFor('payment_plans', 'a', 0, { is_active: false }), rowFor('payment_plans', 'a', 1, { is_active: true })],
+      payment_processors: [rowFor('payment_processors', 'a', 0, { connection_status: 'disconnected', is_active: false })],
+    };
+    const repo = new BusinessDataExportRepository(fakeClient(db).client);
+    expect((await repo.listOwnedRowsForExport('payment_plans', USER_A, { maxRows: 10 })).data?.rows).toHaveLength(2);
+    expect((await repo.listOwnedRowsForExport('payment_providers', USER_A, { maxRows: 10 })).data?.rows).toHaveLength(1);
+  });
+});
+
+describe('DE-5 M-11 / C-3 secrets and metadata through the real reader', () => {
+  it('credentials, idempotency_key and the refund / subscription metadata are never selected', async () => {
+    const db: Record<string, Row[]> = {};
+    for (const table of Object.keys(DE5_SECTIONS)) db[table] = [rowFor(table, 'a', 0)];
+    db.payment_processors[0].credentials = { secret_key: 'sk_live_QA_NEVER' };
+    const { client, log } = fakeClient(db);
+    const repo = new BusinessDataExportRepository(client);
+    const out: Row[] = [];
+    for (const section of Object.values(DE5_SECTIONS)) out.push(...((await repo.listOwnedRowsForExport(section, USER_A, { maxRows: 10 })).data?.rows ?? []));
+    const selects = Object.fromEntries(log.map((l) => [l.table, String(l.calls[0][1])]));
+    const columnsOf = (table: string) => selects[table].split(', ');
+    expect(columnsOf('payment_processors')).not.toContain('credentials');
+    expect(columnsOf('payment_refunds')).not.toContain('idempotency_key');
+    expect(columnsOf('payment_refunds')).not.toContain('metadata');
+    expect(columnsOf('payment_plan_subscriptions')).not.toContain('metadata');
+    expect(columnsOf('payment_transactions')).toContain('metadata');
+    expect(JSON.stringify(out)).not.toContain('sk_live_QA_NEVER');
+    expect(JSON.stringify(out)).not.toContain('EXCLUDED');
+  });
+
+  it('payments.metadata through the registry: only notes and source, as strings', async () => {
+    // Only the payments table is seeded (the other sections read empty), so the run stays fast (SA C-9).
+    const db: Record<string, Row[]> = { payment_transactions: [rowFor('payment_transactions', 'a', 0), rowFor('payment_transactions', 'b', 0)] };
+    const aPayment = db.payment_transactions.find((r) => r.user_id === USER_A)!;
+    aPayment.metadata = {
+      notes: 'Bank transfer, ref 42',
+      source: 'manual_mark_paid',
+      checkout_session_id: 'cs_QA_NEVER',
+      connect_account_id: 'acct_QA_NEVER',
+      client_secret: 'pi_QA_secret_NEVER',
+      unknown_key: 'QA-UNKNOWN-NEVER',
+    };
+    mockActiveClient = fakeClient(db).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const payments = run.sections.find((s) => s.id === 'payments')!;
+    expect((payments.rows as Row[]).find((r) => r.id === aPayment.id)?.metadata).toEqual({ notes: 'Bank transfer, ref 42', source: 'manual_mark_paid' });
+    expect(JSON.stringify(run.sections)).not.toContain('QA_NEVER');
+    expect(JSON.stringify(run.sections)).not.toContain('QA-UNKNOWN-NEVER');
   });
 });

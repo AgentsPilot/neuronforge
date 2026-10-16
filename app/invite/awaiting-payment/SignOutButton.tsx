@@ -30,8 +30,15 @@ export function SignOutButton({
     setBusy(true);
     setFailed(false);
     const result = await signOutUser({ scope: 'local', method: 'awaiting-payment' });
-    if (!result.ok) {
-      // Local state is cleared either way (auth-actions); say so and let them retry.
+    /*
+     * Proceed when this browser is signed out, even if the server did not
+     * confirm it: `signOutUser` clears the session locally on a server failure
+     * or a timeout and says so in `clearedLocally`. After a HUNG request a retry
+     * would not help (the hung call keeps the auth lock), so a friend who is
+     * already signed out must not be shown "failed". Only a session that
+     * survived the local clear keeps them here, with a retry.
+     */
+    if (!result.ok && !result.clearedLocally) {
       setFailed(true);
       setBusy(false);
       return;

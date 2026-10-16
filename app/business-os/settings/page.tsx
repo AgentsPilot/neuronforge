@@ -549,9 +549,12 @@ function BusinessOSSettingsContent() {
      * particular, because a second copy of it here drifts the moment a key is
      * added and silently starts leaking one person's state to the next.
      *
-     * Nothing it does can trap someone in a session they asked to leave: a
-     * failed audit write or a failed server sign-out is logged inside and the
-     * local state is cleared regardless.
+     * It cannot trap someone in a session they asked to leave, by contract:
+     * it never rejects, it returns within about 9 seconds (each network step
+     * has a deadline), and it always clears this browser's session, cookies
+     * included, even when the server does not answer. When the server fails
+     * a GLOBAL sign-out, other devices may stay signed in until their session
+     * expires; this browser is signed out either way.
      */
     const result = await signOutUser({ scope: 'global', user, method: 'settings' });
     if (!result.ok) {

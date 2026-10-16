@@ -181,3 +181,39 @@ describe('Money M-4: leakCheckHref, the Costs & credits tab that runs the Leak c
     for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
   });
 });
+
+// ── Finance F-5 (SA-W7 (a), F5-R1): the "Charged AI cost" tile's link ──────
+import { k1AnalyticsHref } from '../financeLinks';
+
+describe('Finance F-5: k1AnalyticsHref, the K-1 tile → AI cost & usage on the tile’s own period (F5-R1)', () => {
+  it('all businesses: This month only, no account; the Analytics spec parses This month back', () => {
+    const href = k1AnalyticsHref(null);
+    expect(href).toBe('/admin/analytics?range=this_month');
+    const get = getter(paramsOf(href));
+    expect(ANALYTICS_FILTER_SPEC.window.parse(get)).toEqual({ kind: 'preset', preset: 'this_month' });
+    expect(ANALYTICS_FILTER_SPEC.account.parse(get)).toBeUndefined();
+  });
+
+  it('a business picked: This month and the account, in the target’s own keys', () => {
+    const href = k1AnalyticsHref(A);
+    expect(href).toBe(`/admin/analytics?range=this_month&account=${A}`);
+    const get = getter(paramsOf(href));
+    expect(ANALYTICS_FILTER_SPEC.account.parse(get)).toBe(A);
+    expect(ANALYTICS_FILTER_SPEC.window.parse(get)).toEqual({ kind: 'preset', preset: 'this_month' });
+  });
+
+  it('equals Section 3’s link when the page window is This month', () => {
+    const window = windowFor('this_month');
+    expect(k1AnalyticsHref(A)).toBe(section3AnalyticsHref(A, window));
+    expect(k1AnalyticsHref(null)).toBe(section3AnalyticsHref(null, window));
+  });
+
+  it.each(['today', '7d', '30d', 'custom'] as const)('with a %s page window it still carries This month, never the window', (preset) => {
+    const window = windowFor(preset);
+    const params = paramsOf(k1AnalyticsHref(A));
+    expect(params.get('range')).toBe('this_month');
+    expect(params.has('from')).toBe(false);
+    expect(params.has('to')).toBe(false);
+    expect(k1AnalyticsHref(A)).not.toBe(section3AnalyticsHref(A, window));
+  });
+});

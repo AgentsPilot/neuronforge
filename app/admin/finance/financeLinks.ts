@@ -63,8 +63,11 @@ export function costsHref(accountId: string, window: FinanceLinkWindow): string 
   return businessOsAiHref('costs', accountId, window);
 }
 
+/** An AI cost & usage address (F-5: typed, so the K-1 tile can take it as a cross-page link). */
+export type AnalyticsHref = `/admin/analytics?${string}`;
+
 /** AI cost & usage. `scope` is left out: its default is `bos`. */
-export function analyticsHref(accountId: string, window: FinanceLinkWindow): string {
+export function analyticsHref(accountId: string, window: FinanceLinkWindow): AnalyticsHref {
   const params = new URLSearchParams();
   analyticsWindow(params, window);
   params.set('account', accountId);
@@ -80,11 +83,25 @@ export function businessesHref(accountId: string): string {
 }
 
 /** Section 3's "AI cost & usage" link (CR G-8): the window always, the account when one is picked. */
-export function section3AnalyticsHref(accountId: string | null, window: FinanceLinkWindow): string {
+export function section3AnalyticsHref(accountId: string | null, window: FinanceLinkWindow): AnalyticsHref {
   if (accountId !== null) return analyticsHref(accountId, window);
   const params = new URLSearchParams();
   analyticsWindow(params, window);
   return `/admin/analytics?${params.toString()}`;
+}
+
+/** K-1 always measures this calendar month in UTC, whatever the page window is. */
+const K1_WINDOW: FinanceLinkWindow = { preset: 'this_month', from: '', to: '' };
+
+/**
+ * Finance F-5 (SA-W7 (a), F5-R1): the "Charged AI cost" tile's link to AI cost
+ * & usage. It carries the TILE's own period, This month (UTC), and the
+ * business when one is picked; never the page window, so the target opens the
+ * period the tile measures. Built through Section 3's helper, whose This month
+ * is the preset itself (the dates are not used for it).
+ */
+export function k1AnalyticsHref(accountId: string | null): AnalyticsHref {
+  return section3AnalyticsHref(accountId, K1_WINDOW);
 }
 
 /**

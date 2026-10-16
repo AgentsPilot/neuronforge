@@ -7,7 +7,7 @@
  */
 
 export const PRICE_REVIEW_NOTE =
-  'Nothing in the provider column is charged yet. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Applying a new price and each model’s price history come in later releases. Until then, Sync and Edit still change live prices directly.';
+  'Nothing in the provider column is charged yet. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Applying a new price and each model’s price history come in later releases. Until then, no live price can be changed on this page.';
 
 export const NO_PENDING_NOTICE =
   'No provider prices entered yet, so every row reads No new price. Use Enter provider price to add one.';
@@ -61,8 +61,6 @@ export const CACHED_PREFIX = 'cached:';
 
 /** Under the model of a charged stored row (SA F-1): when its price took effect. */
 export const IN_EFFECT_SINCE = 'In effect since';
-
-export const EDIT_UNIT_WORDS = 'per token';
 
 export const FORM_WORDS = {
   title: 'Enter a provider price',

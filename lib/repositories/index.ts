@@ -373,9 +373,6 @@ export type {
   FreeTierUpdateOutcome,
   // AI model pricing types
   AiModelPricing,
-  CreateAiModelPricingInput,
-  AiModelPricingSyncEntry,
-  AiModelPricingSyncResult,
   AiModelPricingExactRow,
   AiPriceSubmitLine,
   AiPriceSubmitInput,

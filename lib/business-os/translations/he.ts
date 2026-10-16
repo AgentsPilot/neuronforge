@@ -31,6 +31,10 @@ export const he = {
     // Loading
     'loading.dashboard': 'טוען את מערכת העסק שלך...',
     'loading.myday': 'טוען את היום שלך...',
+    'lazyDialog.loading': 'טוען…',
+    'lazyDialog.loadFailed.title': 'לא הצלחנו לטעון את זה',
+    'lazyDialog.loadFailed.body': 'בדקו את החיבור ונסו שוב.',
+    'lazyDialog.loadFailed.retry': 'נסו שוב',
 
     // Payments & Invoices
     'payments.invoices': 'חשבוניות',

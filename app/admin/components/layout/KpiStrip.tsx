@@ -11,8 +11,12 @@
  * L-1b builds what its pilot (Scheduled jobs & queues) uses: the same-page
  * anchor mode (`href="#…"`) and the red status row. L-2a (AI cost & usage)
  * adds the same-page filter mode (Q-14, R-7), the no-target tile and the
- * `amber` status. The cross-page link mode (SA Q-2) and the other statuses
- * (SA Q-3) arrive with their first consumer.
+ * `amber` status. Finance F-5, their first consumer, adds the cross-page link
+ * mode (`link`, `next/link`, SA Q-2), the other statuses (`green`,
+ * `not_measured`, `unavailable`, SA Q-3), a tile with no value, and an
+ * optional second line under the status row (`detail`). None of these
+ * changes what an existing caller renders (Pin A,
+ * `__tests__/KpiStrip.callers.pin.render.test.tsx`).
  *
  * Filter mode is still one real `<a>` with the filtered view's URL, so a
  * modified or middle click, and Copy link, use the address (Q-14). Only a plain
@@ -23,17 +27,19 @@
 
 import { useId } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
-import { AlertOctagon, AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
+import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDashed, HelpCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+
+import { OK_GREEN } from './StatusChip';
 
 /**
  * K-4 status keys. They mirror Health's `TileStatus` keys
  * (`lib/admin/health/healthTypes.ts`), so a page whose payload already carries
- * a `TileStatus` passes it straight through (SA M-1). L-1b builds `red` only;
- * later statuses use the same keys (`amber`, `green`, `not_measured`,
- * `unavailable`). An absent status is a neutral tile with no status row.
+ * a `TileStatus` passes it straight through (SA M-1); Health's `neutral` is an
+ * absent status here: a neutral tile with no status row (K-4).
  */
-export type KpiTileStatus = 'red' | 'amber';
+export type KpiTileStatus = 'red' | 'amber' | 'green' | 'not_measured' | 'unavailable';
 
 interface TileStatusStyle {
   label: string;
@@ -45,9 +51,11 @@ interface TileStatusStyle {
 /**
  * Values copied from Health's `STATUS_STYLES` (`app/admin/components/health/HealthTile.tsx`),
  * the K-4 colour source. Copied, not imported: the shared folder may not import
- * another app folder (§6.1 S-3). The card background is the neutral tile's.
- * When "Healthy" is added, its green comes from `StatusChip.tsx`'s single green
- * constant, never a second one here (S-7, SA Q-3).
+ * another app folder (§6.1 S-3). The card background is the neutral tile's:
+ * Health draws its two grey statuses on a lighter card, which is not copied,
+ * because overriding the base would rely on class order (S-9, F-5 SA-W2).
+ * "Healthy" takes its green from `StatusChip.tsx`'s single green constant,
+ * never a second one here (S-7, SA Q-3).
  */
 const TILE_STATUS_STYLES: Record<KpiTileStatus, TileStatusStyle> = {
   red: {
@@ -61,6 +69,24 @@ const TILE_STATUS_STYLES: Record<KpiTileStatus, TileStatusStyle> = {
     icon: AlertTriangle,
     card: 'border-amber-500/40',
     accent: 'text-amber-300',
+  },
+  green: {
+    label: 'Healthy',
+    icon: CheckCircle2,
+    card: OK_GREEN.card,
+    accent: OK_GREEN.accent,
+  },
+  not_measured: {
+    label: 'Not measured yet',
+    icon: CircleDashed,
+    card: 'border-dashed border-slate-600',
+    accent: 'text-slate-400',
+  },
+  unavailable: {
+    label: 'Could not check',
+    icon: HelpCircle,
+    card: 'border-slate-600',
+    accent: 'text-slate-400',
   },
 };
 
@@ -97,10 +123,18 @@ export function KpiStrip({ loading = false, placeholderCount = 4, children }: Kp
 
 interface KpiTileBase {
   label: string;
-  /** Already formatted by the page (formatCount, a money formatter, …). */
-  value: string;
+  /**
+   * Already formatted by the page (formatCount, a money formatter, …). Null
+   * or absent: the tile has no figure yet, so no value line (Finance F-5).
+   */
+  value?: string | null;
   /** K-3 / K-8 sub-line, e.g. "at least: 1 of 5 queues could not be checked". */
   sub?: string | null;
+  /**
+   * A second line, under the status row: the reason the status is what it is
+   * (Finance F-5, the payload's headline). Part of the description, not the name.
+   */
+  detail?: string | null;
   status?: KpiTileStatus | null;
   testId?: string;
 }
@@ -121,10 +155,13 @@ export type KpiTileProps = KpiTileBase &
         /** K-6 anchor mode: a same-page anchor such as "#queues" (L-1b). */
         href: `#${string}`;
         filter?: never;
+        link?: never;
       }
-    | { filter: KpiTileFilter; href?: never }
+    | { filter: KpiTileFilter; href?: never; link?: never }
+    /** K-6 cross-page mode: another admin page, through `next/link` (Finance F-5). */
+    | { link: `/${string}`; href?: never; filter?: never }
     /** No target: not a link (K-6). */
-    | { href?: never; filter?: never }
+    | { href?: never; filter?: never; link?: never }
   );
 
 /**
@@ -144,18 +181,25 @@ export function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean 
 }
 
 export function KpiTile(props: KpiTileProps) {
-  const { label, value, sub, status, testId } = props;
+  const { label, value, sub, detail, status, testId } = props;
   const subId = useId();
+  // Derived, not a second useId: an extra hook call would shift every later id on the page.
+  const detailId = `${subId}-detail`;
+  const hasValue = value !== null && value !== undefined;
   const style = status ? TILE_STATUS_STYLES[status] : null;
   // K-7: the name starts with the visible label (WCAG 2.5.3) and reads label,
-  // value and status. The sub-line is the description, not part of the name.
-  const name = style ? `${label}, ${value}, ${style.label.toLowerCase()}` : `${label}, ${value}`;
+  // value and status. The sub-line and the detail are the description, not the name.
+  const name = [label, hasValue ? value : null, style ? style.label.toLowerCase() : null]
+    .filter((part): part is string => part !== null)
+    .join(', ');
+  const describedBy =
+    [sub ? subId : null, detail ? detailId : null].filter((id): id is string => id !== null).join(' ') || undefined;
   const StatusIcon = style?.icon;
 
   const content = (
     <>
       <span className="block text-sm font-medium text-white">{label}</span>
-      <span className="mt-1 block text-2xl font-semibold tabular-nums text-white">{value}</span>
+      {hasValue && <span className="mt-1 block text-2xl font-semibold tabular-nums text-white">{value}</span>}
       {sub && (
         <span id={subId} className="mt-1 block text-xs text-slate-400">
           {sub}
@@ -167,13 +211,18 @@ export function KpiTile(props: KpiTileProps) {
           {style.label}
         </span>
       )}
+      {detail && (
+        <span id={detailId} className="mt-1 block text-xs text-slate-300">
+          {detail}
+        </span>
+      )}
     </>
   );
 
   const shared = {
     'data-testid': testId,
     'data-status': status ?? 'neutral',
-    'aria-describedby': sub ? subId : undefined,
+    'aria-describedby': describedBy,
   };
 
   if (props.filter) {
@@ -208,11 +257,28 @@ export function KpiTile(props: KpiTileProps) {
         data-testid={testId}
         data-status={status ?? 'neutral'}
         aria-label={name}
-        aria-describedby={sub ? subId : undefined}
+        aria-describedby={describedBy}
         className={`block rounded-xl border bg-slate-800 p-4 transition-colors hover:bg-slate-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${style ? style.card : NEUTRAL_CARD}`}
       >
         {content}
       </a>
+    );
+  }
+
+  // K-6 cross-page mode: `next/link`, so a plain click is a client navigation
+  // and a modified click, a middle click and Copy link use the real address.
+  if (props.link) {
+    return (
+      <Link
+        href={props.link}
+        data-testid={testId}
+        data-status={status ?? 'neutral'}
+        aria-label={name}
+        aria-describedby={describedBy}
+        className={`${TILE_BASE} ${LINK_EXTRAS} ${style ? style.card : NEUTRAL_CARD}`}
+      >
+        {content}
+      </Link>
     );
   }
 

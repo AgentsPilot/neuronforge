@@ -31,6 +31,11 @@ export const en = {
     // Loading
     'loading.dashboard': 'Loading your Business OS...',
     'loading.myday': 'Loading My Day...',
+    // A lazily loaded dialog (lazyDialogs.tsx) whose code could not be downloaded
+    'lazyDialog.loading': 'Loading…',
+    'lazyDialog.loadFailed.title': "Couldn't load this",
+    'lazyDialog.loadFailed.body': 'Check your connection and try again.',
+    'lazyDialog.loadFailed.retry': 'Try again',
 
     // Payments & Invoices
     'payments.invoices': 'Invoices',

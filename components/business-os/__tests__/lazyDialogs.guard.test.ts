@@ -5,7 +5,7 @@
  * WHAT THIS HOLDS
  *
  * `ConfigurationDialog` and `SchedulingDialog` are loaded through
- * `components/business-os/lazyDialogs.tsx` (`next/dynamic`, `ssr: false`), so
+ * `components/business-os/lazyDialogs.tsx` (a retrying loader, nothing server-rendered), so
  * neither chunk is part of a Business OS page's First Load JS
  * (docs/requirements/PERFORMANCE_IMPROVEMENT_SCOPING.md §11.2, PC-1).
  *
@@ -107,12 +107,21 @@ describe('PERF-1: configuration and scheduling dialogs load lazily', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('loads both dialogs through next/dynamic with ssr off', () => {
+  /*
+   * Through the retrying loader, not `next/dynamic`. `next/dynamic` caches
+   * whatever its loader resolves to for the life of the page, so a fallback for
+   * a failed chunk became a permanently dead dialog
+   * (docs/workplans/PERF_1_LAZY_DIALOG_FAILURE_FIX.md). The loader's behaviour —
+   * retry, visible error, nothing cached, nothing server-rendered — is pinned in
+   * `lazyDialogLoader.test.tsx`.
+   */
+  it('loads both dialogs through the retrying loader, not next/dynamic', () => {
     const code = stripComments(fs.readFileSync(path.join(ROOT, LAZY_MODULE), 'utf8'));
-    expect(code).toContain("import dynamic from 'next/dynamic'");
     expect(code).toContain("import('@/components/business-os/ConfigurationDialog')");
     expect(code).toContain("import('@/components/business-os/SchedulingDialog')");
-    expect(code.match(/ssr:\s*false/g)?.length).toBe(2);
+    expect(code.match(/createLazyDialog</g)?.length).toBe(2);
+    expect(code).not.toContain('next/dynamic');
+    expect(code).not.toMatch(/\.catch\(/);
   });
 
   it.each([

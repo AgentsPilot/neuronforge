@@ -6,7 +6,7 @@
 **Requirement:** [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md) §8a UF-7 (user feedback 2026-10-16)
 **Branch:** `feature/ai-model-price-review-page-layout` (worktree `neuronforge-model-pricing-s3`, off origin/main `067c4a3e`)
 **Date:** 2026-10-16
-**Status:** Code Complete, uncommitted; awaiting SA code review + QA (UI short path)
+**Status:** COMPLETE. MERGED 2026-10-16 (PR #431, commit 5aaba308, merge bc067640); user browser check (§8 / QA replacement list) owed
 
 ## Overview
 
@@ -266,7 +266,14 @@ Controls (no-op copies of `page.tsx` and `priceKpis.ts`): 23/23 pass. **13 of 13
 
 ## Commit Info
 
-_To be completed by RM._
+| Item | Value |
+|---|---|
+| Branch | `feature/ai-model-price-review-page-layout` |
+| Commit | `5aaba308` feat(pricing): Model pricing page KPIs, Show retired toggle and help drawer |
+| PR | #431 |
+| Merge | `bc067640` (2026-10-16) |
+| Migration | None |
+| Owed | User browser check after deploy (QA manual check list) |
 
 ## Change History
 
@@ -274,3 +281,4 @@ _To be completed by RM._
 |------|--------|---------|
 | 2026-10-16 | Created; code complete | User feedback UF-7 (retired toggle, KPIs, help drawer). UI only. Uncommitted, awaiting SA + QA |
 | 2026-10-16 | SA and QA fix pass | SA F-1 (Models in use counts switched-on area tags only; K-6 and L-4 extended), F-2 (D-4..D-7 recorded with rulings). QA: L-1 split into L-1a..L-1c with test-id and in-table queries; R-9 one `findByText` given 3 s (no re-read precedes it); T-15 cut to the saved row and one `waitFor`. Hidden line pluralised, the help text now says "when Apply arrives", and a second red unit pins the worst gap at page level. Uncommitted |
+| 2026-10-16 | Merged; COMPLETE | PR #431 merged (commit 5aaba308, merge bc067640). No migration. User browser check owed |

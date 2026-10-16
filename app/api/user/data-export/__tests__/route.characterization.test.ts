@@ -75,6 +75,19 @@
  *   and answers `maybeSingle` from `mockResults`, was: one queued page per
  *   `from()` whatever the terminal. Every DE-4 read is awaited, never
  *   `maybeSingle`, so the DE-4 tables see exactly what they saw before.
+ *
+ * Deliberately re-pinned AGAIN by DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md
+ * §8 M-10, SA C-6 / C-7). Every changed expectation carries a `DE-5:` comment.
+ * Insert-only for DE-3 / DE-4: the thirteen earlier selects (incl. `profiles`),
+ * their chains, groups and the clients source_metadata reshaping are untouched.
+ * - ten money tables are read, each keyset-paged like a DE-4 table, all on the
+ *   service-role client: `stripe_connect_accounts` and `payment_processors`
+ *   after the DE-3 tables (account), the eight client-money tables after the
+ *   DE-4 tables; their ten literal select strings are pinned;
+ * - the body gains ten sections; `payments.metadata` keeps `notes` and
+ *   `source` only; the audit `section_counts` / `data_categories` gain ten keys;
+ * - the five excluded money tables and the tables of money paid to AgentPilot
+ *   are seeded (raw, unprojected) and asserted NEVER read (SA C-6 a).
  */
 
 import { NextRequest } from 'next/server';
@@ -95,6 +108,9 @@ const mockQueues: Record<string, Result[]> = {};
 const MOCK_PAGED_TABLES = new Set([
   // DE-3: the four account tables read through the same paged reader.
   'user_preferences', 'notification_settings', 'business_profiles', 'business_addresses',
+  // DE-5: the ten money tables.
+  'stripe_connect_accounts', 'payment_processors', 'proposals', 'payment_invoices', 'payment_transactions',
+  'payment_refunds', 'payment_plans', 'payment_plan_subscriptions', 'payment_plan_installments', 'saved_payment_methods',
   'crm_pipeline_stages', 'crm_contacts', 'crm_activities', 'crm_tasks', 'contact_documents',
   'scheduling_services', 'scheduling_bookings', 'scheduling_availability_exceptions',
 ]);
@@ -201,13 +217,31 @@ const DE4_TABLES = [
   'scheduling_bookings', // bookings
   'scheduling_availability_exceptions', // time_off
 ] as const;
-// DE-3: + DE3_TABLES after the account table.
-const TABLES = [...ACCOUNT_TABLES, ...DE3_TABLES, ...DE4_TABLES] as const;
+// DE-5: the two account money tables, after the DE-3 tables (section in the comment).
+const DE5_ACCOUNT_TABLES = [
+  'stripe_connect_accounts', // payment_account
+  'payment_processors', // payment_providers
+] as const;
+// DE-5: the eight client-money tables, after the DE-4 tables, in registry order.
+const DE5_TABLES = [
+  'proposals', // quotes
+  'payment_invoices', // invoices
+  'payment_transactions', // payments
+  'payment_refunds', // refunds
+  'payment_plans', // payment_plans
+  'payment_plan_subscriptions', // client_payment_plans
+  'payment_plan_installments', // installments
+  'saved_payment_methods', // client_payment_methods
+] as const;
+// DE-3: + DE3_TABLES after the account table. DE-5: + DE5_ACCOUNT_TABLES, + DE5_TABLES.
+const TABLES = [...ACCOUNT_TABLES, ...DE3_TABLES, ...DE5_ACCOUNT_TABLES, ...DE4_TABLES, ...DE5_TABLES] as const;
 type Table = (typeof TABLES)[number];
 type De4Table = (typeof DE4_TABLES)[number];
 type De3Table = (typeof DE3_TABLES)[number];
-/** DE-3: every table read through the paged reader. */
-type PagedTable = De3Table | De4Table;
+/** DE-5: every money table. */
+type De5Table = (typeof DE5_ACCOUNT_TABLES)[number] | (typeof DE5_TABLES)[number];
+/** DE-3: every table read through the paged reader. DE-5: + De5Table. */
+type PagedTable = De3Table | De4Table | De5Table;
 
 const DE3_SECTION: Record<De3Table, string> = {
   user_preferences: 'preferences',
@@ -227,12 +261,41 @@ const DE4_SECTION: Record<De4Table, string> = {
   scheduling_availability_exceptions: 'time_off',
 };
 
+// DE-5: the section each money table backs.
+const DE5_SECTION: Record<De5Table, string> = {
+  stripe_connect_accounts: 'payment_account',
+  payment_processors: 'payment_providers',
+  proposals: 'quotes',
+  payment_invoices: 'invoices',
+  payment_transactions: 'payments',
+  payment_refunds: 'refunds',
+  payment_plans: 'payment_plans',
+  payment_plan_subscriptions: 'client_payment_plans',
+  payment_plan_installments: 'installments',
+  saved_payment_methods: 'client_payment_methods',
+};
+const DE5_ALL_TABLES: readonly De5Table[] = [...DE5_ACCOUNT_TABLES, ...DE5_TABLES];
+
 // DE-1 (new, required by SA C-7): the six tables that left the export are never read.
 // DE-4: + external_calendar_events (user BC-5: the synced calendar copy is not exported).
 // DE-4 (user 2026-10-15): + plugin_connections (connected apps are not exported).
+// DE-5: + the five excluded money tables (activity, built-in, dead; user BC-4 … BC-6) and,
+// SA C-6 (a), the tables of money paid to AgentPilot, seeded raw so a read would show.
+// SA F-1 (2026-10-16): `subscriptions` is not a live table, so it is not listed.
+const MONEY_TO_US_TABLES = [
+  'billing_events', 'boost_pack_purchases', 'user_subscriptions', 'credit_transactions', 'subscription_invoices',
+  'business_os_account_plans',
+  'business_os_billing_accounts', 'business_os_billing_events', 'business_os_credit_charges', 'business_os_credit_totals',
+  'business_os_credit_lots', 'business_os_credit_lot_draws', 'business_os_boost_purchases',
+] as const;
+const EXCLUDED_MONEY_TABLES = [
+  'payment_events', 'payment_reminders', 'payment_automation_rules', 'payment_automation_executions', 'payment_methods',
+] as const;
 const REMOVED_TABLES = [
-  'agents', 'agent_executions', 'agent_configurations', 'user_subscriptions', 'credit_transactions', 'audit_trail',
+  'agents', 'agent_executions', 'agent_configurations', 'audit_trail',
   'external_calendar_events', 'plugin_connections',
+  ...EXCLUDED_MONEY_TABLES,
+  ...MONEY_TO_US_TABLES,
 ] as const;
 
 // DE-4 (user 2026-10-15, new): the owner's clock for the file name, read after the sections.
@@ -299,6 +362,54 @@ const SELECTS: Record<Table, string> = {
     'internal_notes, payment_status, payment_method, payment_amount, payment_currency, payment_id, invoice_id, ' +
     'payment_plan_id, intake_responses, intake_completed_at, created_at, updated_at',
   scheduling_availability_exceptions: 'id, exception_type, start_date, end_date, custom_hours, reason, created_at',
+  // DE-5 (new): the ten money selects, from the descriptors (SA C-2), byte for byte.
+  stripe_connect_accounts:
+    'id, stripe_account_id, stripe_account_type, charges_enabled, payouts_enabled, details_submitted, ' +
+    'onboarding_completed, country, currency, business_type, stripe_email, created_at, updated_at',
+  payment_processors:
+    'id, processor_type, is_active, is_default, connection_status, last_verified_at, created_at, ' +
+    'updated_at',
+  proposals:
+    'id, contact_id, service_id, booking_id, package_booking_id, document_id, supersedes_id, ' +
+    'created_invoice_id, created_plan_id, title, description, currency, total, prices_include_tax, ' +
+    'tax_rate, tax_label, payment_shape, payment_terms_days, sessions, status, valid_until, ' +
+    'decline_reason, decline_note, stop_reason, stop_note, accepted_snapshot, sent_at, viewed_at, ' +
+    'decided_at, stopped_at, created_at, updated_at',
+  payment_invoices:
+    'id, contact_id, booking_id, service_id, invoice_number, amount, currency, status, line_items, ' +
+    'due_date, payment_terms, notes, internal_notes, sent_at, paid_at, payment_method, ' +
+    'payment_received_at, payment_notes, processor_type, processor_checkout_id, processor_payment_id, ' +
+    'processor_customer_id, processor_payment_method_id, stripe_invoice_id, stripe_hosted_invoice_url, ' +
+    'stripe_invoice_pdf, client_name, client_email, client_address, refunded_amount, refund_status, ' +
+    'refunded_at, allow_online_payment, created_at, updated_at',
+  payment_transactions:
+    'id, contact_id, invoice_id, booking_id, service_id, amount, currency, status, payment_method, ' +
+    'description, metadata, failure_reason, paid_at, refund_status, refunded_amount, refunded_at, ' +
+    'refund_reason, processor_type, processor_refund_id, processor_fee, net_amount, fee_currency, ' +
+    'stripe_payment_intent_id, stripe_charge_id, stripe_customer_id, stripe_connect_account_id, ' +
+    'created_at, updated_at',
+  payment_refunds:
+    'id, transaction_id, invoice_id, amount, amount_minor, currency, status, reason, reason_note, ' +
+    'processor_type, processor_refund_id, stripe_connect_account_id, source, failure_code, ' +
+    'failure_message, fee_returned, refund_fee, created_at, updated_at, succeeded_at',
+  payment_plans:
+    'id, service_id, name, description, total_amount, currency, supported_currencies, installment_count, ' +
+    'installment_amount, installment_frequency, allowed_processors, preferred_processor, is_active, ' +
+    'created_at, updated_at',
+  payment_plan_subscriptions:
+    'id, contact_id, booking_id, service_id, payment_plan_id, stripe_subscription_id, stripe_schedule_id, ' +
+    'stripe_price_id, stripe_customer_id, stripe_connect_account_id, installment_count, ' +
+    'installment_amount, currency, frequency, periods_paid, status, next_charge_at, next_charge_amount, ' +
+    'last_failure_code, last_failure_at, card_brand, card_last4, cancel_reason, cancel_note, cancelled_by, ' +
+    'created_at, updated_at, completed_at, cancelled_at',
+  payment_plan_installments:
+    'id, payment_plan_id, subscription_id, booking_id, contact_id, proposal_id, invoice_id, ' +
+    'transaction_id, installment_number, label, trigger, amount, currency, due_date, status, paid_at, ' +
+    'payment_method, processor_type, stripe_invoice_id, completed_at, cancel_reason, cancel_note, ' +
+    'cancelled_by, cancelled_at, created_at, updated_at',
+  saved_payment_methods:
+    'id, contact_id, processor_type, processor_customer_id, processor_method_id, method_type, brand, ' +
+    'last_four, is_default, is_valid, created_at, updated_at',
 };
 
 // DE-4: one row per client_records table (two clients), ids in ascending order.
@@ -328,8 +439,41 @@ const DE3_ROWS: Record<De3Table, Array<Record<string, unknown>>> = {
   business_profiles: [{ id: id(23), company_name: 'Acme Studio', address_id: id(24), invoice_tax_id: '515151515' }],
   business_addresses: [{ id: id(24), label: 'Studio', parts: { city: 'Tel Aviv', country: 'IL' }, is_default: true }],
 };
-/** DE-3: the rows of every paged table, for its last id. */
-const PAGED_ROWS: Record<PagedTable, Array<Record<string, unknown>>> = { ...DE3_ROWS, ...DE4_ROWS };
+// DE-5: one row per money table (incl. a failed payment, a positive refund, a
+// cancelled instalment), ids after the DE-3 ones. As this mock never honours
+// `select`, payments.metadata is seeded raw and must leave with notes / source only.
+const DE5_ROWS: Record<De5Table, Array<Record<string, unknown>>> = {
+  stripe_connect_accounts: [{ id: id(31), stripe_account_id: 'acct_owner', currency: 'usd', charges_enabled: true }],
+  payment_processors: [{ id: id(32), processor_type: 'stripe', connection_status: 'connected', is_active: true }],
+  proposals: [{ id: id(33), contact_id: id(2), title: 'Package', currency: 'ILS', total: 1200, status: 'superseded' }],
+  payment_invoices: [{ id: id(34), contact_id: id(2), amount: 350, currency: 'USD', status: 'cancelled', stripe_invoice_pdf: 'https://pay.example/pdf' }],
+  payment_transactions: [
+    {
+      id: id(35),
+      contact_id: id(2),
+      amount: 200,
+      currency: 'ILS',
+      status: 'failed',
+      processor_fee: 1.75,
+      fee_currency: 'USD',
+      metadata: { notes: 'cash at the desk', source: 'manual_mark_paid', checkout_session_id: 'never-exported-checkout', connect_account_id: 'never-exported-acct' },
+    },
+  ],
+  payment_refunds: [{ id: id(36), transaction_id: id(35), amount: 50, currency: 'ILS', status: 'succeeded', fee_returned: 0.5 }],
+  payment_plans: [{ id: id(37), name: 'Three payments', total_amount: 900, currency: 'ILS', is_active: false }],
+  payment_plan_subscriptions: [{ id: id(38), payment_plan_id: id(37), installment_amount: 300, currency: 'ILS', status: 'completed', card_last4: '4242' }],
+  payment_plan_installments: [{ id: id(39), subscription_id: id(38), amount: 300, currency: 'ILS', status: 'cancelled' }],
+  saved_payment_methods: [{ id: id(40), contact_id: id(2), brand: 'visa', last_four: '4242', is_valid: false }],
+};
+// DE-5: what the payments section writes: metadata allow-listed in place.
+const MAPPED_DE5_ROWS: Record<De5Table, Array<Record<string, unknown>>> = {
+  ...DE5_ROWS,
+  payment_transactions: [
+    { ...DE5_ROWS.payment_transactions[0], metadata: { notes: 'cash at the desk', source: 'manual_mark_paid' } },
+  ],
+};
+/** DE-3: the rows of every paged table, for its last id. DE-5: + DE5_ROWS. */
+const PAGED_ROWS: Record<PagedTable, Array<Record<string, unknown>>> = { ...DE3_ROWS, ...DE4_ROWS, ...DE5_ROWS };
 
 // DE-4: what the clients section writes: source_metadata allow-listed in place.
 const MAPPED_DE4_ROWS: Record<De4Table, Array<Record<string, unknown>>> = {
@@ -366,6 +510,8 @@ const EXPECTED_CHAINS: Record<Table, Call[]> = {
   // DE-4 (user 2026-10-15): the plugin_connections chain is gone; REMOVED_TABLES pins it unread.
   // DE-4 (new): a data page, then the empty page after its last id that ends the read.
   ...(Object.fromEntries(DE4_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De4Table, Call[]>),
+  // DE-5 (new): a data page, then the empty page, on every money table.
+  ...(Object.fromEntries(DE5_ALL_TABLES.map((t) => [t, [...pageQuery(t, null), ...pageQuery(t, lastId(t))]])) as Record<De5Table, Call[]>),
 };
 
 const PROFILE = { id: OWNER.id, full_name: 'Ada Owner', company: 'Acme' };
@@ -422,6 +568,12 @@ function seed(): void {
   for (const t of DE4_TABLES) mockQueues[t] = [{ data: DE4_ROWS[t], error: null }];
   // DE-3: and per DE-3 account table.
   for (const t of DE3_TABLES) mockQueues[t] = [{ data: DE3_ROWS[t], error: null }];
+  // DE-5: and per money table.
+  for (const t of DE5_ALL_TABLES) mockQueues[t] = [{ data: DE5_ROWS[t], error: null }];
+  // DE-5 (SA C-6 a): the excluded money tables and money paid to us hold rows; a read would leak them.
+  for (const t of [...EXCLUDED_MONEY_TABLES, ...MONEY_TO_US_TABLES]) {
+    mockResults[t] = { data: [{ user_id: OWNER.id, amount: 999, currency: 'USD', note: `never-exported-${t}` }], error: null };
+  }
 }
 
 // DE-4 (user 2026-10-15): MAPPED_CONNECTIONS is gone with the section.
@@ -429,7 +581,8 @@ type SectionRows = unknown[] | 'failed';
 
 /** One section as the route writes it. DE-4: the client_records sections are group client_records, processor. */
 function section(id: string, rows: SectionRows): Record<string, unknown> {
-  const isRecord = Object.values(DE4_SECTION).includes(id);
+  // DE-5: + the eight client-money sections.
+  const isRecord = Object.values(DE4_SECTION).includes(id) || DE5_TABLES.some((t) => DE5_SECTION[t] === id);
   const group = isRecord ? 'client_records' : 'account';
   const gdpr_role = isRecord ? 'processor' : 'controller';
   return rows === 'failed'
@@ -453,6 +606,8 @@ type BodyParts = {
   profile: SectionRows;
   records?: Partial<Record<De4Table, SectionRows>>;
   details?: Partial<Record<De3Table, SectionRows>>;
+  // DE-5: the ten money sections by table (default: the mapped seed).
+  money?: Partial<Record<De5Table, SectionRows>>;
 };
 
 function expectedBody(parts: BodyParts): Record<string, unknown> {
@@ -461,8 +616,12 @@ function expectedBody(parts: BodyParts): Record<string, unknown> {
     section('user_profile', parts.profile),
     // DE-3: the four account sections, after user_profile.
     ...DE3_TABLES.map((t) => section(DE3_SECTION[t], parts.details?.[t] ?? DE3_ROWS[t])),
+    // DE-5: the two account money sections, after the DE-3 ones.
+    ...DE5_ACCOUNT_TABLES.map((t) => section(DE5_SECTION[t], parts.money?.[t] ?? MAPPED_DE5_ROWS[t])),
     // DE-4 (user 2026-10-15): no plugin_connections section.
     ...DE4_TABLES.map((t) => section(DE4_SECTION[t], parts.records?.[t] ?? MAPPED_DE4_ROWS[t])),
+    // DE-5: the eight client-money sections, after the DE-4 ones.
+    ...DE5_TABLES.map((t) => section(DE5_SECTION[t], parts.money?.[t] ?? MAPPED_DE5_ROWS[t])),
   ];
   const head = {
     export_metadata: {
@@ -507,6 +666,9 @@ const FULL: BodyParts = { profile: [PROFILE] };
 const DE4_COUNTS = Object.fromEntries(DE4_TABLES.map((t) => [DE4_SECTION[t], DE4_ROWS[t].length]));
 // DE-3: the row count of each DE-3 account section for the seed.
 const DE3_COUNTS = Object.fromEntries(DE3_TABLES.map((t) => [DE3_SECTION[t], DE3_ROWS[t].length]));
+// DE-5: the row count of each money section for the seed, in registry order (account two first).
+const DE5_ACCOUNT_COUNTS = Object.fromEntries(DE5_ACCOUNT_TABLES.map((t) => [DE5_SECTION[t], DE5_ROWS[t].length]));
+const DE5_COUNTS = Object.fromEntries(DE5_TABLES.map((t) => [DE5_SECTION[t], DE5_ROWS[t].length]));
 
 function request(headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('http://localhost/api/user/data-export', { headers });
@@ -560,16 +722,23 @@ describe('GET /api/user/data-export: characterization pin', () => {
   // DE-4 (user 2026-10-15): nine section tables, was ten (plugin_connections out),
   // then user_preferences once for the file name's clock.
   // DE-3: thirteen section tables, was nine: the four account tables, paged, after profiles.
-  it('reads the thirteen section tables in order, then the timezone, all on the service-role client', async () => {
+  // DE-5: twenty-three, was thirteen: the two account money tables after the DE-3
+  // tables, the eight client-money tables after the DE-4 tables.
+  it('reads the twenty-three section tables in order, then the timezone, all on the service-role client', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     seed();
     await GET(request());
     expect(mockReadOrder).toEqual([
       ...ACCOUNT_TABLES.map((t) => `service:${t}`),
       ...DE3_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
+      ...DE5_ACCOUNT_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
       ...DE4_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
+      ...DE5_TABLES.flatMap((t) => [`service:${t}`, `service:${t}`]),
       'service:user_preferences',
     ]);
+    // DE-5 (SA C-6 a): the set of tables touched is exactly the registry's 23 (the timezone read is on one of them).
+    expect(new Set(mockReadOrder)).toEqual(new Set(TABLES.map((t) => `service:${t}`)));
+    expect(TABLES).toHaveLength(23);
     expect(Object.keys(mockCalls).filter((k) => k.startsWith('anon:'))).toEqual([]);
   });
 
@@ -636,6 +805,7 @@ describe('GET /api/user/data-export: characterization pin', () => {
     }
     // Credentials never reach the export. DE-4 (user 2026-10-15): the seeded
     // plugin_connections rows hold them raw; the table is not read, so none appears.
+    // DE-5: nor the raw payments.metadata keys, nor any excluded money or billing row.
     expect(text).not.toContain('never-exported');
     expect(body.sections.map((s: { id: string }) => s.id)).not.toContain('plugin_connections');
     for (const key of ['plugin_key', 'access_token', 'refresh_token', 'credentials', 'profile_data', 'account_profile']) {
@@ -674,6 +844,8 @@ describe('GET /api/user/data-export: characterization pin', () => {
     ...(Object.fromEntries(DE4_TABLES.map((t) => [t, { records: { [t]: 'failed' } }])) as Record<De4Table, Partial<BodyParts>>),
     // DE-3 (new).
     ...(Object.fromEntries(DE3_TABLES.map((t) => [t, { details: { [t]: 'failed' } }])) as Record<De3Table, Partial<BodyParts>>),
+    // DE-5 (new).
+    ...(Object.fromEntries(DE5_ALL_TABLES.map((t) => [t, { money: { [t]: 'failed' } }])) as Record<De5Table, Partial<BodyParts>>),
   };
 
   /** DE-4: an error on `table`, whichever kind of read it is. */
@@ -709,8 +881,10 @@ describe('GET /api/user/data-export: characterization pin', () => {
     const records = Object.fromEntries(DE4_TABLES.map((t) => [t, 'failed'])) as Record<De4Table, SectionRows>;
     // DE-3: and the four account sections read from tables.
     const details = Object.fromEntries(DE3_TABLES.map((t) => [t, 'failed'])) as Record<De3Table, SectionRows>;
+    // DE-5: and the ten money sections.
+    const money = Object.fromEntries(DE5_ALL_TABLES.map((t) => [t, 'failed'])) as Record<De5Table, SectionRows>;
     // DE-4 (user 2026-10-15): no `connections: 'failed'`.
-    expect(await res.text()).toBe(JSON.stringify(expectedBody({ profile: 'failed', records, details }), null, 2));
+    expect(await res.text()).toBe(JSON.stringify(expectedBody({ profile: 'failed', records, details, money }), null, 2));
   });
 
   // DE-1 (WC-7, §3.7): through logAndFlush with its context; details carry section
@@ -734,8 +908,12 @@ describe('GET /api/user/data-export: characterization pin', () => {
         // DE-4: + the eight client_records sections.
         // DE-4 (user 2026-10-15): plugin_connections removed from both.
         // DE-3: + the four account sections, after user_profile.
-        data_categories: ['account_identity', 'user_profile', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE4_TABLES.map((t) => DE4_SECTION[t])],
-        section_counts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE4_COUNTS },
+        // DE-5: + the ten money sections (counts only: no amount, no currency).
+        data_categories: [
+          'account_identity', 'user_profile', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE5_ACCOUNT_TABLES.map((t) => DE5_SECTION[t]),
+          ...DE4_TABLES.map((t) => DE4_SECTION[t]), ...DE5_TABLES.map((t) => DE5_SECTION[t]),
+        ],
+        section_counts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS },
         failed_sections: [],
         gdpr_basis: 'Article 15 (Right to Access) & Article 20 (Data Portability)',
         ip_address: '203.0.113.7',
@@ -758,10 +936,13 @@ describe('GET /api/user/data-export: characterization pin', () => {
     await GET(request());
     const details = mockLogAndFlush.mock.calls[0][0].details;
     // DE-4: + the eight client_records sections.
-    // DE-3: + the four account sections.
-    expect(details.data_categories).toEqual(['account_identity', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE4_TABLES.map((t) => DE4_SECTION[t])]);
+    // DE-3: + the four account sections. DE-5: + the ten money sections.
+    expect(details.data_categories).toEqual([
+      'account_identity', ...DE3_TABLES.map((t) => DE3_SECTION[t]), ...DE5_ACCOUNT_TABLES.map((t) => DE5_SECTION[t]),
+      ...DE4_TABLES.map((t) => DE4_SECTION[t]), ...DE5_TABLES.map((t) => DE5_SECTION[t]),
+    ]);
     expect(details.failed_sections).toEqual(['user_profile']);
-    expect(details.section_counts).toEqual({ account_identity: 1, user_profile: 0, ...DE3_COUNTS, ...DE4_COUNTS });
+    expect(details.section_counts).toEqual({ account_identity: 1, user_profile: 0, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS });
     expect(JSON.stringify(details)).not.toContain('boom');
   });
 
@@ -780,8 +961,8 @@ describe('GET /api/user/data-export: characterization pin', () => {
       fields: {
         userId: OWNER.id,
         // DE-4: + the eight client_records counts. DE-4 (user 2026-10-15): no plugin_connections.
-        // DE-3: + the four account section counts.
-        sectionCounts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE4_COUNTS },
+        // DE-3: + the four account section counts. DE-5: + the ten money section counts.
+        sectionCounts: { account_identity: 1, user_profile: 1, ...DE3_COUNTS, ...DE5_ACCOUNT_COUNTS, ...DE4_COUNTS, ...DE5_COUNTS },
         failedSections: [],
         exportSizeKb: summary.export_size_kb,
         durationMs: 0,

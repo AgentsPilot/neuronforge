@@ -80,6 +80,12 @@
  * view and its hook; F-4 and F-5 extend the entry. No rule change. The one
  * shared source change is `readAdminResponse.ts` exporting `adminReadFallback`
  * (SA-W1), which adds no import.
+ *
+ * Amended by Finance F-5: the Finance entry gains the KPI strip (now the
+ * shared `KpiStrip` / `KpiTile`) and the section frame (the tiles' anchor
+ * targets). No rule change: `StatusChip.tsx` still holds the one green
+ * constant (now the object `OK_GREEN`, SA Q-3), and `KpiStrip.tsx` adds only
+ * `next/link` and `./StatusChip`, both on the S-3 allow-list.
  */
 
 import * as fs from 'fs';
@@ -690,6 +696,7 @@ const MIGRATED_PAGES = [
     // Finance F-2: the shared header (h1 "Finance") and states; the read on
     // readAdminResponse since F-3. Finance F-4: the shared filter bar and the
     // URL hook; DV-1 ended in F-4 (Refresh moved from the header to the bar).
+    // Finance F-5: the KPI strip on the shared tiles (BD-29, BD-31).
     page: '/admin/finance (Finance)',
     files: [
       'app/admin/finance/page.tsx',
@@ -697,6 +704,9 @@ const MIGRATED_PAGES = [
       'app/admin/finance/useFinanceData.ts',
       'app/admin/finance/components/FinanceFilterBar.tsx',
       'app/admin/finance/financeFilters.ts',
+      // Finance F-5: the shared KPI tiles, and the sections they jump to.
+      'app/admin/finance/components/FinanceKpiStrip.tsx',
+      'app/admin/finance/components/FinanceSection.tsx',
     ],
   },
 ] as const;

@@ -29,6 +29,13 @@
  * client_records sections, through the same mocked repository method. They
  * are group account, controller. DE-4's expectations are unchanged apart from
  * the four ids appearing ahead of them.
+ *
+ * DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §8 M-9, M-11; SA C-3, C-7):
+ * two account sections (payment_account, payment_providers) after
+ * business_addresses and eight client_records money sections after time_off.
+ * `payments.metadata` keeps only `notes` and `source`, through the new
+ * `pickStringKeys`; `sourceMetadata` is now a call to it and its DE-4 cases
+ * below are unchanged. Earlier expectations change only by the ten ids.
  */
 
 const mockFindProfile = jest.fn();
@@ -42,7 +49,10 @@ jest.mock('@/lib/repositories/BusinessDataExportRepository', () => ({
 
 import {
   EXPORT_SECTIONS,
+  PAYMENT_METADATA_KEYS,
   SOURCE_METADATA_KEYS,
+  paymentMetadata,
+  pickStringKeys,
   runExportSections,
   sourceMetadata,
   type AnyExportSectionDefinition,
@@ -61,6 +71,16 @@ const DE4_IDS: ExportSectionId[] = [
 const ACCOUNT_IDS: ExportSectionId[] = ['account_identity', 'user_profile'];
 /** DE-3: the account sections read from tables, after user_profile, in registry order. */
 const DE3_IDS: ExportSectionId[] = ['preferences', 'notification_settings', 'business_profile', 'business_addresses'];
+/** DE-5: the two account sections after business_addresses (SA-Q1). */
+const DE5_ACCOUNT_IDS: ExportSectionId[] = ['payment_account', 'payment_providers'];
+/** DE-5: the eight client-money sections after time_off, in registry order. */
+const DE5_IDS: ExportSectionId[] = [
+  'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
+];
+/** DE-5: every client_records section (DE-4 + DE-5). */
+const CLIENT_IDS: ExportSectionId[] = [...DE4_IDS, ...DE5_IDS];
+/** DE-5: every section read through the repository, in registry order. */
+const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS];
 
 /** Runs the registry and returns the sections, failing the test if it came back over the ceiling. */
 async function runAll(ctx: ExportContext, sections: readonly AnyExportSectionDefinition[], logger: { error: (f: Record<string, unknown>, m: string) => void }): Promise<AnyExportedSection[]> {
@@ -89,12 +109,14 @@ describe('runExportSections', () => {
     const { logger, lines } = recordingLogger();
     const sections = await runAll(CTX, EXPORT_SECTIONS, logger);
     // DE-4: + the eight client_records sections. DE-3: + the four account sections from tables.
-    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE4_IDS]);
+    // DE-5: + the two account and eight client-money sections.
+    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS]);
     for (const s of sections) {
       expect(s.status).toBe('ok');
       expect(s.row_count).toBe(s.rows.length);
-      expect(s.group).toBe(DE4_IDS.includes(s.id) ? 'client_records' : 'account');
-      expect(s.gdpr_role).toBe(DE4_IDS.includes(s.id) ? 'processor' : 'controller');
+      // DE-5: CLIENT_IDS, was DE4_IDS.
+      expect(s.group).toBe(CLIENT_IDS.includes(s.id) ? 'client_records' : 'account');
+      expect(s.gdpr_role).toBe(CLIENT_IDS.includes(s.id) ? 'processor' : 'controller');
     }
     expect(sections[0].rows).toEqual([{ id: USER, email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' }]);
     expect(sections[1].rows).toEqual([{ id: USER, full_name: 'Ada' }]);
@@ -103,7 +125,8 @@ describe('runExportSections', () => {
     expect(mockFindProfile).toHaveBeenCalledWith(USER);
     // DE-4: one read per client_records section, by SECTION id (C-4), the session's id, and the budget left.
     // DE-3 X-7: the four account sections from tables read the same way, first.
-    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual([...DE3_IDS, ...DE4_IDS]);
+    // DE-5: OWNED_IDS, was [...DE3_IDS, ...DE4_IDS].
+    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual(OWNED_IDS);
     for (const call of mockListOwned.mock.calls) {
       expect(call[1]).toBe(USER);
       // DE-4 (user 2026-10-15): - 2 account rows, was - 3 (plugin_connections gone).
@@ -158,7 +181,10 @@ describe('runExportSections', () => {
       ['account_identity', 'ok'],
       ['user_profile', 'failed'],
       ...DE3_IDS.map((id) => [id, 'failed']),
+      // DE-5: + the two account and eight client-money sections.
+      ...DE5_ACCOUNT_IDS.map((id) => [id, 'failed']),
       ...DE4_IDS.map((id) => [id, 'failed']),
+      ...DE5_IDS.map((id) => [id, 'failed']),
     ]);
     expect(sections[0].rows).toEqual([CTX.authUser]);
   });
@@ -322,9 +348,10 @@ describe('DE-4 U-8 the row ceiling (§0.4.1 C)', () => {
     const run = await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger, { rowCeiling: 10 });
     expect(run).toMatchObject({ overCeiling: true, atSection: 'clients' });
     // DE-3: the four (empty) account sections from tables come first.
-    expect(run.sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, 'pipeline_stages']);
+    // DE-5: + the two (empty) account money sections, before pipeline_stages.
+    expect(run.sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, 'pipeline_stages']);
     // pipeline_stages and clients were read; nothing after clients.
-    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual([...DE3_IDS, 'pipeline_stages', 'clients']);
+    expect(mockListOwned.mock.calls.map((c) => c[0])).toEqual([...DE3_IDS, ...DE5_ACCOUNT_IDS, 'pipeline_stages', 'clients']);
     // DE-4 (user 2026-10-15): 8 left, was 7. DE-3: clients is call 5, was 1.
     expect(mockListOwned.mock.calls.find((c) => c[0] === 'clients')?.[2]).toEqual({ maxRows: 8 });
   });
@@ -366,6 +393,9 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
     // DE-4
     pipeline_stages: true, clients: true, client_activities: true, client_tasks: true, client_documents: true,
     services: true, bookings: true, time_off: true,
+    // DE-5
+    payment_account: true, payment_providers: true, quotes: true, invoices: true, payments: true, refunds: true,
+    payment_plans: true, client_payment_plans: true, installments: true, client_payment_methods: true,
   };
 
   it('ids are unique and every ExportSectionId has exactly one definition', () => {
@@ -382,13 +412,19 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
   });
 
   // DE-3: 6 account (2 + the four from tables) + 8 client_records, was 2 + 8.
-  it('DE-4: registry order is 6 account + 8 client_records; the calendar copy is not a section (BC-5)', () => {
-    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE4_IDS]);
-    expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS]);
+  // DE-5: 8 account + 16 client_records, was 6 + 8.
+  it('DE-4: registry order is 8 account + 16 client_records; the calendar copy is not a section (BC-5)', () => {
+    // DE-5: + DE5_ACCOUNT_IDS after DE3_IDS, + DE5_IDS after DE4_IDS.
+    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS]);
+    expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS]);
     for (const s of EXPORT_SECTIONS.filter((x) => DE3_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
+    // DE-5 M-9 (SA-Q1): the Stripe account and providers are account / controller.
+    for (const s of EXPORT_SECTIONS.filter((x) => DE5_ACCOUNT_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
     // DE-4 (user 2026-10-15): connected apps are not a section.
     expect(EXPORT_SECTIONS.map((s) => s.id as string)).not.toContain('plugin_connections');
-    expect(EXPORT_SECTIONS.filter((s) => s.group === 'client_records').map((s) => s.id)).toEqual(DE4_IDS);
+    // DE-5: CLIENT_IDS (DE-4 + the eight money sections, processor), was DE4_IDS.
+    expect(EXPORT_SECTIONS.filter((s) => s.group === 'client_records').map((s) => s.id)).toEqual(CLIENT_IDS);
+    for (const s of EXPORT_SECTIONS.filter((x) => DE5_IDS.includes(x.id))) expect(s.gdprRole).toBe('processor');
     expect(EXPORT_SECTIONS.map((s) => s.id as string)).not.toContain('calendar_busy_times');
   });
 
@@ -466,10 +502,144 @@ describe('payload', () => {
     expect(payload.summary.section_counts).toEqual({
       account_identity: 1, user_profile: 0,
       ...Object.fromEntries(DE3_IDS.map((id) => [id, 0])),
+      // DE-5: + the ten money sections.
+      ...Object.fromEntries(DE5_ACCOUNT_IDS.map((id) => [id, 0])),
       ...Object.fromEntries(DE4_IDS.map((id) => [id, 0])),
+      ...Object.fromEntries(DE5_IDS.map((id) => [id, 0])),
     });
     expect(payload.summary.failed_sections).toEqual(['user_profile']);
     expect(payload.summary.export_duration_ms).toBe(7);
     expect(JSON.stringify(payload)).not.toContain('NeuronForge');
+  });
+});
+
+// ── DE-5 (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §8; SA review DE-5 C-3, C-7) ──
+
+describe('DE-5 the money sections', () => {
+  it('each is in its group and role, and passes its rows through as read (payments aside)', async () => {
+    mockListOwned.mockImplementation(async (section: string) => ({
+      data: { rows: [{ id: `${section}-1`, amount: 120.5, currency: 'ILS', metadata: { raw: 'kept-as-read' } }], overCeiling: false },
+      error: null,
+    }));
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    for (const id of [...DE5_ACCOUNT_IDS, ...DE5_IDS]) {
+      const s = sections.find((x) => x.id === id);
+      const client = DE5_IDS.includes(id);
+      expect(s).toMatchObject({ group: client ? 'client_records' : 'account', gdpr_role: client ? 'processor' : 'controller', status: 'ok', row_count: 1 });
+      if (id === 'payments') expect(s?.rows).toEqual([{ id: 'payments-1', amount: 120.5, currency: 'ILS', metadata: {} }]);
+      else expect(s?.rows).toEqual([{ id: `${id}-1`, amount: 120.5, currency: 'ILS', metadata: { raw: 'kept-as-read' } }]);
+    }
+  });
+
+  it('the ten money sections draw on the shared row budget, after the earlier sections (M-15)', async () => {
+    mockListOwned.mockImplementation(async (section: ExportSectionId, _user: string, opts: { maxRows: number }) => {
+      const n = section === 'payment_account' ? 1 : section === 'payments' ? 4 : section === 'time_off' ? 2 : 0;
+      return n > opts.maxRows
+        ? { data: { rows: [], overCeiling: true }, error: null }
+        : { data: { rows: Array.from({ length: n }, (_, i) => ({ id: `${section}-${i}` })), overCeiling: false }, error: null };
+    });
+    await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger, { rowCeiling: 100 });
+    const offered = Object.fromEntries(mockListOwned.mock.calls.map((c) => [c[0], c[2].maxRows]));
+    // 2 account rows; payment_account 1 (before the client records); time_off 2; payments 4.
+    expect(offered).toMatchObject({ payment_account: 98, payment_providers: 97, pipeline_stages: 97, quotes: 95, payments: 95, refunds: 91 });
+    const over = await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger, { rowCeiling: 8 });
+    expect(over).toMatchObject({ overCeiling: true, atSection: 'payments' });
+  });
+
+  it('a failing money reader gives that section failed with no error text; the rest stay ok', async () => {
+    mockListOwned.mockImplementation(async (section: string) =>
+      section === 'refunds'
+        ? { data: null, error: new Error('column payment_refunds.secret does not exist') }
+        : { data: { rows: [], overCeiling: false }, error: null }
+    );
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    expect(sections.find((s) => s.id === 'refunds')).toEqual({
+      id: 'refunds', group: 'client_records', gdpr_role: 'processor', status: 'failed', row_count: 0, rows: [],
+    });
+    expect(sections.filter((s) => s.status === 'failed').map((s) => s.id)).toEqual(['refunds']);
+    expect(JSON.stringify(sections)).not.toContain('secret');
+  });
+});
+
+describe('DE-5 C-3 payments.metadata keeps only notes and source (SA-Q3, user BC-7)', () => {
+  const RAW = {
+    checkout_session_id: 'cs_QA_NEVER',
+    notes: 'Paid in cash at the studio',
+    connect_account_id: 'acct_QA_NEVER',
+    source: 'manual_mark_paid',
+    client_secret: 'pi_QA_secret_NEVER',
+    some_unknown_key: 'QA-UNKNOWN-NEVER',
+  };
+
+  /** The rows the registry's `payments` and `refunds` sections write for one seeded raw metadata. */
+  async function exported(metadata: unknown): Promise<Record<string, Record<string, unknown>>> {
+    mockListOwned.mockImplementation(async (section: string) =>
+      section === 'payments' || section === 'refunds'
+        ? { data: { rows: [{ id: `${section}-1`, amount: 50, metadata, currency: 'USD' }], overCeiling: false }, error: null }
+        : { data: { rows: [], overCeiling: false }, error: null }
+    );
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    return {
+      payments: sections.find((s) => s.id === 'payments')!.rows[0] as Record<string, unknown>,
+      refunds: sections.find((s) => s.id === 'refunds')!.rows[0] as Record<string, unknown>,
+    };
+  }
+
+  it('the section from the registry exports only { notes, source } as strings, in place (key order kept)', async () => {
+    const { payments } = await exported(RAW);
+    expect(Object.keys(payments)).toEqual(['id', 'amount', 'metadata', 'currency']);
+    expect(payments.metadata).toEqual({ notes: 'Paid in cash at the studio', source: 'manual_mark_paid' });
+    expect(Object.keys(payments.metadata as object)).toEqual(['notes', 'source']);
+    expect(JSON.stringify(payments)).not.toContain('NEVER');
+  });
+
+  it('a non-string notes is dropped; a missing source is simply absent; NULL gives {}', async () => {
+    expect((await exported({ notes: { nested: 'x' }, source: 'website_booking' })).payments.metadata).toEqual({ source: 'website_booking' });
+    expect((await exported({ notes: 42 })).payments.metadata).toEqual({});
+    expect((await exported(null)).payments.metadata).toEqual({});
+  });
+
+  it('negative control: a section built without the mapper (refunds has none) passes the raw keys through', async () => {
+    const { refunds } = await exported(RAW);
+    // The assertion above can see a leak: without the mapRow every raw key would reach the file.
+    expect(refunds.metadata).toEqual(RAW);
+    expect(JSON.stringify(refunds)).toContain('cs_QA_NEVER');
+  });
+
+  it('the allow-list is exactly the two keys; a prefix in the list matches nothing (no pattern growth)', () => {
+    expect(PAYMENT_METADATA_KEYS).toEqual(['notes', 'source']);
+    expect(paymentMetadata(RAW)).toEqual({ notes: 'Paid in cash at the studio', source: 'manual_mark_paid' });
+    // Negative control: widening the list by a prefix ('connect_', 'checkout') exports nothing more.
+    expect(pickStringKeys(RAW, [...PAYMENT_METADATA_KEYS, 'connect_', 'checkout', 'client_'])).toEqual(paymentMetadata(RAW));
+    // And an inherited property is not an own key.
+    const inherited = Object.create({ notes: 'from-prototype' }) as Record<string, unknown>;
+    expect(paymentMetadata(inherited)).toEqual({});
+  });
+});
+
+describe('DE-5 C-7 pickStringKeys keeps sourceMetadata byte-identical', () => {
+  const CASES: unknown[] = [
+    Object.fromEntries(SOURCE_METADATA_KEYS.map((k) => [k, `v-${k}`])),
+    { utm_content: 'last', capture_page_url: 'first', ip_hash: 'h', utm_source: 5, referrer_url: null },
+    { capture_channel: ['array'], device_type: 'mobile', session_id: 'SESS' },
+    null, undefined, 'a string', ['capture_channel'], 5, {},
+  ];
+
+  /** The DE-4 implementation, verbatim, as the reference. */
+  function de4SourceMetadata(value: unknown): Record<string, string> {
+    const kept: Record<string, string> = {};
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return kept;
+    const source = value as Record<string, unknown>;
+    for (const key of SOURCE_METADATA_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const item = source[key];
+      if (typeof item === 'string') kept[key] = item;
+    }
+    return kept;
+  }
+
+  it.each(CASES.map((c, i) => [i, c]))('case %i: same JSON text as the DE-4 implementation', (_i, value) => {
+    expect(JSON.stringify(sourceMetadata(value))).toBe(JSON.stringify(de4SourceMetadata(value)));
+    expect(JSON.stringify(pickStringKeys(value, SOURCE_METADATA_KEYS))).toBe(JSON.stringify(de4SourceMetadata(value)));
   });
 });

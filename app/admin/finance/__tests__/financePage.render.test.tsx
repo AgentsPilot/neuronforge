@@ -87,7 +87,6 @@ jest.mock('@/app/admin/components/layout/AdminBusinessPicker', () => ({
 }));
 
 import { FinanceView } from '../components/FinanceView';
-import { STATUS_STYLES } from '@/app/admin/components/health/HealthTile';
 import {
   AI_NO_ROWS,
   CREDITS_GIFTED_UNKNOWN,
@@ -166,6 +165,31 @@ import {
   REMINDERS_FAILED,
   REMINDERS_NOT_NARROWED,
 } from '../financeCopy';
+
+/**
+ * Finance F-5 (AC-179, SA-W1): the shared tile's status words (standard K-4).
+ * A neutral tile has no status row, so no word and no icon.
+ */
+const STATE_WORD: Record<string, string | null> = {
+  red: 'Needs action',
+  amber: 'Needs a look',
+  green: 'Healthy',
+  not_measured: 'Not measured yet',
+  unavailable: 'Could not check',
+  neutral: null,
+};
+function expectTileState(id: string): void {
+  const tile = screen.getByTestId(`tile-${id}`);
+  const word = STATE_WORD[tile.getAttribute('data-status') ?? ''];
+  expect(word).not.toBeUndefined();
+  if (word) {
+    expect(tile).toHaveTextContent(word);
+    expect(tile.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  } else {
+    expect(tile.querySelector('svg')).toBeNull();
+    expect(tile.textContent).not.toContain('For information');
+  }
+}
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -506,12 +530,10 @@ describe('the finance page', () => {
     await screen.findByTestId('kpi-strip');
     // Finance F-2: the h1 equals the sidebar label.
     expect(screen.getByRole('heading', { level: 1, name: 'Finance' })).toBeInTheDocument();
-    for (const id of ['k1_ai_cost', 'k3_founding_no_end_date', 'k5_our_revenue']) {
-      const status = screen.getByTestId(`tile-${id}`).getAttribute('data-status') as keyof typeof STATUS_STYLES;
-      expect(screen.getByTestId(`tile-${id}-state`)).toHaveTextContent(STATUS_STYLES[status].label);
-    }
+    for (const id of ['k1_ai_cost', 'k3_founding_no_end_date', 'k5_our_revenue']) expectTileState(id);
     expect(screen.getByText(TILE_LABELS.k1Sub)).toBeInTheDocument();
-    expect(screen.getByTestId('tile-k3_founding_no_end_date-headline')).toHaveTextContent('Founding Partners with no end date');
+    // Finance F-5: the headline is the tile's second line (the shared `detail`).
+    expect(screen.getByTestId('tile-k3_founding_no_end_date').lastElementChild).toHaveTextContent('Founding Partners with no end date');
     const order = ['kpi-strip', 'section-revenue', 'section-accounts', 'section-ai-cost'].map((id) => screen.getByTestId(id));
     for (let i = 1; i < order.length; i += 1) {
       expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -539,7 +561,7 @@ describe('the finance page', () => {
     expect(panel.textContent).not.toMatch(/\$|USD|0\.00/);
     const k5 = screen.getByTestId('tile-k5_our_revenue');
     expect(k5.textContent).not.toMatch(/\$|USD|0\.00/);
-    expect(screen.getByTestId('tile-k5_our_revenue-headline')).toHaveTextContent('No data yet');
+    expect(k5.lastElementChild).toHaveTextContent('No data yet');
     expect(k5.getAttribute('data-status')).toBe('neutral');
   });
 
@@ -694,8 +716,7 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
     for (const id of ['k1_ai_cost', 'k2_far_over_allowance', 'k3_founding_no_end_date', 'k4_gifted_outstanding', 'k5_our_revenue']) {
-      const status = screen.getByTestId(`tile-${id}`).getAttribute('data-status') as keyof typeof STATUS_STYLES;
-      expect(screen.getByTestId(`tile-${id}-state`)).toHaveTextContent(STATUS_STYLES[status].label);
+      expectTileState(id);
     }
     // The line comes from the payload (120 here), never a literal in the page.
     expect(screen.getByTestId('tile-k2_far_over_allowance')).toHaveTextContent(k2Subtitle(120));
@@ -735,7 +756,7 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     expect(screen.getByTestId('tile-k4_gifted_outstanding').textContent).not.toMatch(/\$|USD/);
   });
 
-  it('AC-8: no gifted credits → K-4 shows 0, grey, with its text state', async () => {
+  it('AC-8: no gifted credits → K-4 shows 0, neutral (F-5: no status row, K-4)', async () => {
     const p = payload();
     p.tiles.k4 = { ...p.tiles.k4, value: { value: 0, exact: true } };
     serve({ success: true, data: p });
@@ -743,7 +764,8 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     const tile = await screen.findByTestId('tile-k4_gifted_outstanding');
     expect(tile).toHaveAttribute('data-status', 'neutral');
     expect(tile).toHaveTextContent('0');
-    expect(screen.getByTestId('tile-k4_gifted_outstanding-state')).toHaveTextContent(STATUS_STYLES.neutral.label);
+    expectTileState('k4_gifted_outstanding');
+    expect(tile.className).toContain('border-slate-700');
   });
 
   it('AC-16: Section 4 could not load → its own Try again, the other sections render, and K-4 still shows its value (SA-W12)', async () => {
@@ -1442,7 +1464,7 @@ describe('Our revenue (slice 4a)', () => {
     expect(k5).toHaveTextContent(k5Caption(WINDOW_LABEL));
     expect(k5Caption(WINDOW_LABEL)).toContain('Credit boosts and plans');
     expect(k5.getAttribute('data-status')).toBe('neutral');
-    expect(k5.className).not.toContain(STATUS_STYLES.green.card);
+    expect(k5.className).not.toContain('emerald');
     // Every money cell names its currency.
     for (const cell of panel.querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/USD|Unknown/);
   });
@@ -1658,8 +1680,8 @@ describe('Money M-1 on the page', () => {
     render(<FinanceView />);
     const header = await screen.findByTestId('account-header');
     const summary = screen.getByTestId('account-summary');
-    // Above the KPI strip.
-    expect(header.compareDocumentPosition(screen.getByTestId('kpi-strip')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Finance F-5 (BD-29): the KPI strip now sits above the filter bar, so above the account header.
+    expect(header.compareDocumentPosition(screen.getByTestId('kpi-strip')) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(header.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(header).getByTestId('account-header-paying')).toHaveTextContent('Paying');
     // The same text as the section's own node.
@@ -1714,9 +1736,12 @@ describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
     expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
     const panel = screen.getByRole('tabpanel');
     expect(panel).toHaveAttribute('id', 'finance-panel-overview');
-    for (const id of ['kpi-strip', 'section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
+    for (const id of ['section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
       expect(within(panel).getByTestId(id)).toBeInTheDocument();
     }
+    // Finance F-5 (BD-29): the strip sits above the bar, outside the tab panel.
+    expect(within(panel).queryByTestId('kpi-strip')).toBeNull();
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
     expect(String(fetchMock.mock.calls[0][0])).not.toMatch(/tab=|sort=|group=|show=/);
   });
 
@@ -1931,7 +1956,9 @@ describe('Finance F-2: header and states', () => {
     const { release } = pending();
     fireEvent.click(screen.getByRole('button', { name: 'Refresh the finance page' }));
     expect(content).toHaveAttribute('aria-busy', 'true');
-    expect(within(content).getByTestId('kpi-strip')).toBeInTheDocument();
+    // Finance F-5 (BD-29): the strip is above the bar now; it and the sections stay during the refresh.
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+    expect(within(content).getByTestId('section-revenue')).toBeInTheDocument();
     expect(within(content).queryByText('Reading the finance page…')).toBeNull();
     await act(async () => release({ success: true, data: payload() }));
     await waitFor(() => expect(content).toHaveAttribute('aria-busy', 'false'));
@@ -1946,9 +1973,10 @@ describe('Finance F-2: header and states', () => {
     expect(screen.queryByTestId('finance-url-notice')).toBeNull();
     expect(screen.queryByText(/could not use/)).toBeNull();
     expect(screen.queryByText(/default view is shown/)).toBeNull();
-    // A tile may be amber; nothing amber sits outside the content area (where the notice was).
+    // A tile may be amber; nothing amber sits outside the content area (where the notice was) and the KPI strip (F-5, above the bar).
     const content = screen.getByTestId('finance-content');
-    const amberOutside = Array.from(document.querySelectorAll('.border-amber-500\\/40')).filter((el) => !content.contains(el));
+    const strip = screen.getByTestId('kpi-strip');
+    const amberOutside = Array.from(document.querySelectorAll('.border-amber-500\\/40')).filter((el) => !content.contains(el) && !strip.contains(el));
     expect(amberOutside).toEqual([]);
   });
 
@@ -1990,5 +2018,170 @@ describe('Finance F-2: header and states', () => {
     expect(retries.length).toBeGreaterThanOrEqual(2);
     for (const button of retries) expect(button.textContent).toBe('Try again');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+});
+
+// ── Finance F-5: the KPI tiles on the shared strip (AC-179, AC-180; BD-29, BD-31) ──
+// A separate import, so the lists above stay unedited.
+import { k1AnalyticsHref } from '../financeLinks';
+
+describe('Finance F-5: KPI tiles above the filter bar, clickable to their sections', () => {
+  const follows = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  const bar = () => screen.getByRole('button', { name: 'Refresh the finance page' });
+
+  it.each([
+    ['Overview', ''],
+    ['the Accounts tab', 'tab=accounts'],
+    ['a business picked', `account=${A}`],
+  ])('AC-179 on %s: the h1, then the KPI strip, then the filter bar, then the content', async (_view, search) => {
+    mockSearch = search;
+    serve({ success: true, data: payload(search.startsWith('account=') ? { accountId: A } : {}) });
+    render(<FinanceView />);
+    const strip = await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    const h1 = screen.getByRole('heading', { level: 1, name: 'Finance' });
+    expect(follows(h1, strip)).toBe(true);
+    expect(follows(strip, bar())).toBe(true);
+    expect(follows(bar(), screen.getByTestId('finance-content'))).toBe(true);
+    expect(screen.getByTestId('finance-content').contains(strip)).toBe(false);
+    expect(strip.querySelectorAll('[data-testid^="tile-k"][data-status]')).toHaveLength(5);
+  });
+
+  it('K-10: five placeholders above the bar while the first read runs, and no kpi-strip until figures arrive', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = jest.fn(() => new Promise(() => undefined));
+    render(<FinanceView />);
+    const placeholders = screen.getAllByTestId('kpi-placeholder');
+    expect(placeholders).toHaveLength(5);
+    expect(follows(placeholders[0], bar())).toBe(true);
+    expect(screen.queryByTestId('kpi-strip')).toBeNull();
+  });
+
+  it('K-10: a failed read shows the page error and no strip, and no placeholders', async () => {
+    serve({ success: false, error: 'Boom' }, 500);
+    render(<FinanceView />);
+    await screen.findByTestId('finance-error', {}, { timeout: 10_000 });
+    expect(screen.queryByTestId('kpi-strip')).toBeNull();
+    expect(screen.queryAllByTestId('kpi-placeholder')).toHaveLength(0);
+  });
+
+  it('AC-180: K-2 and K-4 jump to Credits, K-3 to Accounts by plan, K-5 to Our revenue; each target exists', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    const hrefs = {
+      k2_far_over_allowance: '#credits',
+      k3_founding_no_end_date: '#accounts',
+      k4_gifted_outstanding: '#credits',
+      k5_our_revenue: '#revenue',
+    };
+    for (const [id, href] of Object.entries(hrefs)) {
+      const tile = screen.getByTestId(`tile-${id}`);
+      expect({ id, tag: tile.tagName, href: tile.getAttribute('href') }).toEqual({ id, tag: 'A', href });
+      expect(document.getElementById(href.slice(1))).toBe(screen.getByTestId(`section-${href.slice(1)}`));
+    }
+    // Links, never buttons: the page's button count does not grow (K-6).
+    for (const button of screen.getAllByRole('button')) expect(button.getAttribute('data-testid') ?? '').not.toMatch(/^tile-/);
+  });
+
+  it('F5-R3: every section anchor id occurs exactly once, on Overview and in the picked view', async () => {
+    for (const search of ['', `account=${A}`]) {
+      mockSearch = search;
+      serve({ success: true, data: payload(search ? { accountId: A } : {}) });
+      const { unmount } = render(<FinanceView />);
+      await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+      for (const id of ['revenue', 'takings', 'accounts', 'ai-cost', 'credits', 'payment-problems']) {
+        expect({ search, id, count: document.querySelectorAll(`[id="${id}"]`).length }).toEqual({ search, id, count: 1 });
+      }
+      const ids = Array.from(document.querySelectorAll('[id]')).map((el) => el.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      unmount();
+    }
+  });
+
+  it('AC-180 / SA-W7 (a): K-1 opens AI cost & usage for This month, all businesses; equal to Section 3’s link on a This month window', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    const k1 = screen.getByTestId('tile-k1_ai_cost');
+    expect(k1.tagName).toBe('A');
+    expect(k1.getAttribute('href')).toBe('/admin/analytics?range=this_month');
+    expect(k1.getAttribute('href')).toBe(k1AnalyticsHref(null));
+    expect(k1.getAttribute('href')).toBe(screen.getByTestId('ai-analytics-link').getAttribute('href'));
+  });
+
+  it('SA-W7 (a): with a 7-day window and a business picked, K-1 still opens This month, with the business', async () => {
+    mockSearch = `range=7d&account=${A}`;
+    serve({ success: true, data: payload({ accountId: A, window: { preset: '7d', from: '2026-10-03', to: '2026-10-09', start: '2026-10-03T00:00:00.000Z', end: '2026-10-10T00:00:00.000Z' } }) });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    expect(screen.getByTestId('tile-k1_ai_cost').getAttribute('href')).toBe(`/admin/analytics?range=this_month&account=${A}`);
+    // Section 3's link keeps the page window: the two differ on purpose.
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).not.toBe(screen.getByTestId('tile-k1_ai_cost').getAttribute('href'));
+  });
+
+  describe('on the Accounts tab (SA-W3 (a), F5-R2)', () => {
+    let scrolled: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    beforeEach(() => {
+      scrolled = [];
+      Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
+        scrolled.push(this.id);
+      };
+    });
+    afterEach(() => {
+      Element.prototype.scrollIntoView = original;
+    });
+
+    it('a section tile is a real link to Overview at its section, with no tab key', async () => {
+      mockSearch = 'range=7d&tab=accounts&sort=credits';
+      serve({ success: true, data: payload() });
+      render(<FinanceView />);
+      await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+      expect(screen.getByTestId('tile-k2_far_over_allowance').getAttribute('href')).toBe('/admin/finance?range=7d#credits');
+      expect(screen.getByTestId('tile-k5_our_revenue').getAttribute('href')).toBe('/admin/finance?range=7d#revenue');
+      expect(screen.getByTestId('tile-k1_ai_cost').getAttribute('href')).toBe('/admin/analytics?range=this_month');
+    });
+
+    it('a plain click selects Overview in one write and scrolls to the section once; no hash is written', async () => {
+      mockSearch = 'tab=accounts';
+      window.history.replaceState(null, '', '/admin/finance?tab=accounts');
+      serve({ success: true, data: payload() });
+      render(<FinanceView />);
+      await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+      const replace = jest.spyOn(window.history, 'replaceState');
+      serve({ success: true, data: payload() });
+      fireEvent.click(screen.getByTestId('tile-k4_gifted_outstanding'));
+      await waitFor(() => expect(scrolled).toEqual(['credits']), { timeout: 10_000 });
+      expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(window.location.search).toBe('');
+      expect(window.location.hash).toBe('');
+      // The next read answers and re-renders: no second scroll (jumpTo was cleared).
+      await waitFor(() => expect(screen.getByTestId('finance-content')).toHaveAttribute('aria-busy', 'false'), { timeout: 10_000 });
+      expect(scrolled).toEqual(['credits']);
+      replace.mockRestore();
+    });
+
+    it('a modified click is left to the browser: no tab change and no scroll', async () => {
+      mockSearch = 'tab=accounts';
+      serve({ success: true, data: payload() });
+      render(<FinanceView />);
+      await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+      fireEvent.click(screen.getByTestId('tile-k2_far_over_allowance'), { ctrlKey: true });
+      expect(screen.getByRole('tab', { name: TAB_ACCOUNTS })).toHaveAttribute('aria-selected', 'true');
+      expect(scrolled).toEqual([]);
+    });
+  });
+
+  it('on Overview a section tile is a plain anchor: a click scrolls nothing itself (the browser follows the anchor)', async () => {
+    const original = Element.prototype.scrollIntoView;
+    const spy = jest.fn();
+    Element.prototype.scrollIntoView = spy;
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    fireEvent.click(screen.getByTestId('tile-k3_founding_no_end_date'));
+    expect(spy).not.toHaveBeenCalled();
+    Element.prototype.scrollIntoView = original;
   });
 });

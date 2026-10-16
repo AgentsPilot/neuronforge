@@ -402,7 +402,7 @@ The `system_settings_config` table is designed for ANY system-wide configuration
 - ✅ `app/admin/system-config/page.tsx`
 - ✅ `app/api/admin/system-config/route.ts`
 - ✅ `app/api/admin/system-config/pricing/route.ts`
-- ✅ `app/api/admin/system-config/pricing/sync/route.ts` - Automatic pricing sync from providers
+- ~~`app/api/admin/system-config/pricing/sync/route.ts` - Automatic pricing sync from providers~~ **Removed 2026-10-16 in AI model price review slice 6** (it never contacted a provider; it copied a built-in list). See [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md)
 - ✅ `scripts/check-routing-audit-logs.ts` - Verify routing decision audit logs
 - ✅ `docs/SYSTEM_CONFIG_IMPLEMENTATION.md` (this file)
 
