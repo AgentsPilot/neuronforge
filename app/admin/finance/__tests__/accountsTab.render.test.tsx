@@ -37,7 +37,11 @@ jest.mock('@/app/admin/components/layout/AdminBusinessPicker', () => ({
 // Finance F-4: leaving the tab (or picking a business) now changes the view at
 // once, so the Overview renders with this file's tab-only payload until the next
 // read answers. The Overview sections are not this file's subject: stand-ins.
-jest.mock('../components/FinanceKpiStrip', () => ({ FinanceKpiStrip: () => <div data-testid="kpi-strip" /> }));
+// Finance F-5: the strip now shows on the Accounts tab too (BD-29); its first-read placeholders join the stand-in.
+jest.mock('../components/FinanceKpiStrip', () => ({
+  FinanceKpiStrip: () => <div data-testid="kpi-strip" />,
+  FinanceKpiPlaceholders: () => null,
+}));
 jest.mock('../components/RevenuePanel', () => ({ RevenuePanel: () => null }));
 jest.mock('../components/TakingsSection', () => ({ TakingsSection: () => null }));
 jest.mock('../components/AccountsByPlanSection', () => ({
@@ -191,7 +195,9 @@ describe('AC-130: the tabs, through the real view', () => {
     expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'finance-tab-accounts');
     expect(String(fetchMock.mock.calls[0][0])).toContain('tab=accounts');
-    expect(screen.queryByTestId('kpi-strip')).toBeNull();
+    // Finance F-5 (BD-29): the KPI strip now shows on the Accounts tab too, above the bar, outside the tab panel.
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+    expect(within(screen.getByRole('tabpanel')).queryByTestId('kpi-strip')).toBeNull();
   });
 
   it('keyboard: Left / Right / Home / End move focus only (manual activation); Enter selects; roving tabIndex', async () => {

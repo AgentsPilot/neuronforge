@@ -369,3 +369,47 @@ describe('Finance F-2 source guards (header and states)', () => {
     expect(hook).toMatch(/setError\(adminReadFallback\(FINANCE_WHAT\)\)/);
   });
 });
+
+// ── Finance F-5 (AC-179): the tiles are the shared admin tile; Health's styles are not used ──
+describe('Finance F-5 source guards (the KPI tiles)', () => {
+  /** Every file under app/admin/finance, tests included, except this guard (which names the pattern). */
+  function walkAll(dir: string, out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkAll(full, out);
+      else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+  const ALL = walkAll(DIR).filter((file) => path.basename(file) !== 'source.guard.test.ts');
+  const HEALTH_STYLES = /components\/health\/HealthTile|STATUS_STYLES/;
+  const STRIP = path.join(DIR, 'components', 'FinanceKpiStrip.tsx');
+
+  it('scans the strip, the view and the tests (non-vacuity)', () => {
+    const names = ALL.map(rel);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'app/admin/finance/components/FinanceKpiStrip.tsx',
+        'app/admin/finance/components/FinanceView.tsx',
+        'app/admin/finance/__tests__/financePage.render.test.tsx',
+        'app/admin/finance/__tests__/financeTiles.pin.render.test.tsx',
+      ])
+    );
+  });
+
+  it('the Health-styles rule bites (planted)', () => {
+    expect(HEALTH_STYLES.test("import { STATUS_STYLES } from '@/app/admin/components/health/HealthTile';")).toBe(true);
+    expect(HEALTH_STYLES.test("import { KpiTile } from '@/app/admin/components/layout/KpiStrip';")).toBe(false);
+  });
+
+  it.each(ALL.map(rel))('%s: names neither Health’s tile file nor its STATUS_STYLES (AC-179)', (file) => {
+    expect({ file, hit: HEALTH_STYLES.test(read(path.join(ROOT, file))) }).toEqual({ file, hit: false });
+  });
+
+  it('FinanceKpiStrip.tsx renders the shared KpiStrip / KpiTile, imported by the alias (S-1)', () => {
+    const code = codeOf(STRIP);
+    expect(code).toMatch(/import \{ KpiStrip, KpiTile[^}]*\} from '@\/app\/admin\/components\/layout\/KpiStrip'/);
+    expect(code).toMatch(/<KpiStrip>/);
+    expect(code.match(/<KpiTile\b/g)).toHaveLength(5);
+  });
+});

@@ -33,8 +33,16 @@ export type StatusTone = IconTone | 'neutral';
  * constant, and it lives in this file). A later tile status "Healthy" takes its
  * green from here too; this constant may then become one object literal
  * (for example chip, card and accent classes), never a second constant (SA Q-3).
+ *
+ * Finance F-5: it is that one object literal now. `chip` is the chip's class
+ * string, unchanged; `card` and `accent` are the KPI tile's "Healthy" border
+ * and text (`KpiStrip.tsx` imports them from here, S-7).
  */
-const OK_TONE = 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
+export const OK_GREEN = {
+  chip: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300',
+  card: 'border-emerald-500/40',
+  accent: 'text-emerald-300',
+};
 
 /** Icon required for every meaning tone; `neutral` is the one tone typed without (SA M-4). */
 const TONES: Record<IconTone, { classes: string; icon: LucideIcon }> & {
@@ -42,7 +50,7 @@ const TONES: Record<IconTone, { classes: string; icon: LucideIcon }> & {
 } = {
   danger: { classes: 'border-red-500/40 bg-red-500/15 text-red-300', icon: AlertOctagon },
   warn: { classes: 'border-amber-500/40 bg-amber-500/15 text-amber-300', icon: AlertTriangle },
-  ok: { classes: OK_TONE, icon: CheckCircle2 },
+  ok: { classes: OK_GREEN.chip, icon: CheckCircle2 },
   info: { classes: 'border-sky-500/40 bg-sky-500/15 text-sky-300', icon: Info },
   unknown: { classes: 'border-dashed border-slate-600 bg-slate-800/60 text-slate-400', icon: CircleDashed },
   neutral: { classes: 'border-slate-600 bg-slate-700/40 text-slate-300', icon: null },

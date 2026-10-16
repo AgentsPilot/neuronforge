@@ -14,6 +14,10 @@
  * could-not-load line ONLY when the section is `unknown`: Section 3's recorded
  * AI cost is its own read and must still show when the charged read failed.
  * A section that passes none renders exactly the DOM it rendered before.
+ *
+ * Finance F-5 (SA-W8): the section carries its `id` as a DOM id, so a KPI
+ * tile can jump to it with a plain `#<id>` anchor, as on Jobs and Archiving.
+ * The landmark is unchanged: still named by its heading (A-9).
  */
 
 import type { ReactNode } from 'react';
@@ -56,6 +60,7 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
   );
   return (
     <section
+      id={id}
       aria-labelledby={headingId}
       data-testid={`section-${id}`}
       data-status={status}
