@@ -47,6 +47,14 @@
 // and drop rows without a word. A page whose last id is not strictly after the
 // previous page's last id fails the section (C-8) instead of looping.
 //
+// ── One row, keyed on user_id (DE-6 SA-Q1) ─────────────────────────────────
+// A descriptor with `rowKey: 'user_id'` (only `marketing_consent_settings`:
+// no `id`, PK `user_id`) is not paged. It is read once, inside the same
+// method, after the same E-2 and E-3 checks:
+// `.eq('user_id', userId).limit(2)`, no order, no `.gt`, no other filter.
+// Two rows fail the section closed (the key is not what the classification
+// says). E-1…E-6 are unchanged.
+//
 // ── Ceiling (§0.4.1 C) ─────────────────────────────────────────────────────
 // The caller passes the rows still left in the export's budget. Past
 // `maxRows` the read stops, returns `overCeiling: true` and NO rows, so a
@@ -127,11 +135,43 @@ export class BusinessDataExportRepository {
       }
       // E-3: deny check at call time.
       const columns = exportColumnsOf(table, this.descriptors);
+      const select = columns.join(', ');
+      const rowFilter = descriptor.export.kind === 'include' ? descriptor.export.rowFilter : undefined;
+      const rowKey = descriptor.export.kind === 'include' ? descriptor.export.rowKey : undefined;
+
+      if (rowKey !== undefined) {
+        // DE-6 SA-Q1 (4): the single-row read (no `id`; PK `user_id`). The
+        // type admits only 'user_id'; a planted value or a row filter beside
+        // it (Jest does not type-check) fails closed here as well as in CI.
+        if (rowKey !== 'user_id' || rowFilter) {
+          throw new ExportClassificationError('invalid_column', table, 'a single-row read needs rowKey user_id and no row filter');
+        }
+        // E-4: the tenant filter is first, and it is the only filter. No order, no gt.
+        const { data, error } = await this.supabase.from(table).select(select).eq('user_id', input.userId).limit(2);
+        if (error) throw error;
+        // A dynamic select string types as an error shape; the rows are plain objects.
+        const single = (data ?? []) as unknown as OwnedExportRow[];
+        if (single.length > 1) {
+          // Two rows: the key is not unique, so the classification is wrong. Counts only in the message.
+          throw new Error(`Data export single-row read found ${single.length} rows for one owner`);
+        }
+        if (single.length > input.maxRows) {
+          this.logger.warn(
+            { sectionId, table, userId: input.userId, pages: 1, maxRows: input.maxRows, duration: Date.now() - startTime },
+            'Data export section is over the row ceiling'
+          );
+          return { data: { rows: [], overCeiling: true }, error: null };
+        }
+        this.logger.info(
+          { sectionId, table, userId: input.userId, pages: 1, rows: single.length, duration: Date.now() - startTime },
+          'Data export section read'
+        );
+        return { data: { rows: single, overCeiling: false }, error: null };
+      }
+
       if (!columns.includes('id')) {
         throw new ExportClassificationError('invalid_column', table, 'keyset paging needs the id column');
       }
-      const select = columns.join(', ');
-      const rowFilter = descriptor.export.kind === 'include' ? descriptor.export.rowFilter : undefined;
       const notInList = rowFilter ? rowFilterInList(rowFilter) : undefined;
       const pageSize = this.pageSize ?? EXPORT_LIMITS.PAGE_SIZE;
 

@@ -49,6 +49,15 @@
  * the tables of money paid to AgentPilot and the excluded money tables are
  * never read even when seeded, a planted user id changes nothing in the ten
  * reads, and the money rows count toward the Phase 1 ceiling.
+ *
+ * DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §8 N-6, N-7, N-14, N-15; SA
+ * C-4): ten intake, email marketing and consent sections. Visitor-tracking
+ * values in consent evidence and subscriber attribution, and token-like query
+ * strings on page URLs, never reach the body (the page path does); the
+ * lead-message queue, the derived consent projection and email_sends are never
+ * read even when seeded; a planted user id changes nothing in the ten reads;
+ * the DE-6 rows count toward the Phase 1 ceiling. Earlier expectations change
+ * only by the ten section ids and their tables.
  */
 
 import { NextRequest } from 'next/server';
@@ -367,19 +376,25 @@ describe('GET /api/user/data-export', () => {
     // DE-4 (user 2026-10-15): plugin_connections removed; + user_preferences (the file name's clock).
     // DE-3: + the four account sections read from tables, after user_profile, and their tables.
     // DE-5: + payment_account, payment_providers after business_addresses; + the eight money sections after time_off.
+    // DE-6: + the ten intake, email marketing and consent sections after client_payment_methods.
     expect(sectionIds).toEqual([
       'account_identity', 'user_profile', 'preferences', 'notification_settings', 'business_profile', 'business_addresses',
       'payment_account', 'payment_providers',
       'pipeline_stages', 'clients', 'client_activities', 'client_tasks', 'client_documents', 'services', 'bookings', 'time_off',
       'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
+      'intake_settings', 'intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
+      'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
     ]);
-    // DE-5: + the ten money tables.
+    // DE-5: + the ten money tables. DE-6: + the ten DE-6 tables.
     expect(Object.keys(mockCalls).sort()).toEqual([
-      'business_addresses', 'business_profiles',
-      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks', 'notification_settings',
+      'business_addresses', 'business_intake_forms', 'business_profiles', 'business_subscribers',
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks',
+      'email_campaigns', 'email_sequence_enrollments', 'email_sequence_steps', 'email_sequences', 'email_unsubscribes',
+      'marketing_consent_events', 'marketing_consent_settings', 'notification_settings',
       'payment_invoices', 'payment_plan_installments', 'payment_plan_subscriptions', 'payment_plans', 'payment_processors',
       'payment_refunds', 'payment_transactions', 'profiles', 'proposals', 'saved_payment_methods',
-      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'stripe_connect_accounts', 'user_preferences',
+      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'stripe_connect_accounts',
+      'user_intake_settings', 'user_preferences',
     ]);
     // BC-5: the calendar copy is never read.
     expect(mockCalls.external_calendar_events).toBeUndefined();
@@ -807,7 +822,8 @@ describe('DE-5 C-6 (a): money paid to AgentPilot is never read, even when seeded
   const touchedForbidden = (touched: readonly string[]): string[] =>
     touched.map((k) => k.replace(/^anon:/, '')).filter((t) => MONEY_TO_US.includes(t) || EXCLUDED_MONEY.includes(t));
 
-  it('the run touches exactly the 23 section tables (+ the timezone read on user_preferences); none of these', async () => {
+  // DE-6: 33 section tables, was 23.
+  it('the run touches exactly the 33 section tables (+ the timezone read on user_preferences); none of these', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     for (const t of [...MONEY_TO_US, ...EXCLUDED_MONEY]) {
       mockSeeds[t] = [{ id: '70000000-0000-4000-8000-000000000007', user_id: OWNER.id, amount: 49, currency: 'USD', note: `QA-${t}-NEVER` }];
@@ -816,7 +832,7 @@ describe('DE-5 C-6 (a): money paid to AgentPilot is never read, even when seeded
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(touchedForbidden(Object.keys(mockCalls))).toEqual([]);
-    expect(Object.keys(mockCalls)).toHaveLength(23);
+    expect(Object.keys(mockCalls)).toHaveLength(33);
     expect(text).not.toContain('NEVER');
   });
 
@@ -837,5 +853,141 @@ describe('DE-5 M-15: the money sections draw on the Phase 1 row ceiling', () => 
     expect(mockAuditLog).not.toHaveBeenCalled();
     const warn = mockLogged.find((l) => l.msg === 'Data export refused: over the Phase 1 ceiling');
     expect(warn).toMatchObject({ level: 'warn', fields: { limit: 'rows', rowCeiling: 3, atSection: 'payments' } });
+  });
+});
+
+// ── DE-6 (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §8; SA review DE-6 C-2, C-4) ──
+
+describe('DE-6: intake, email marketing and consent through the route', () => {
+  const DE6_TABLES = [
+    'user_intake_settings', 'business_intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
+    'email_sequence_enrollments', 'business_subscribers', 'marketing_consent_events', 'marketing_consent_settings',
+    'email_unsubscribes',
+  ];
+
+  function seedDe6(): void {
+    mockSeeds.marketing_consent_events = [
+      {
+        id: '60000000-0000-4000-8000-000000000001',
+        user_id: OWNER.id,
+        email: 'dana@example.com',
+        decision: 'granted',
+        source_page_url: 'https://x.test/p?token=TOK-XYZ&sid=SID-XYZ',
+        privacy_policy_url: 'https://x.test/privacy',
+        evidence: { client_statement: 'Yes', confirmed_via: 'email_link', ip: 'EVIDENCE-IP-XYZ' },
+        ip_hash: 'IPHASH-XYZ',
+        ip_hash_salt: 'SALT-XYZ',
+        user_agent: 'UA-XYZ',
+        session_id: 'SESS-XYZ',
+        recorded_by: 'RECORDED-BY-XYZ',
+        email_normalized: 'NORMALIZED-XYZ',
+      },
+    ];
+    mockSeeds.business_subscribers = [
+      {
+        id: '60000000-0000-4000-8000-000000000002',
+        user_id: OWNER.id,
+        email: 'lee@example.com',
+        status: 'pending',
+        attribution: {
+          capture_page_url: 'https://x.test/join?code=CODE-XYZ',
+          capture_channel: 'website',
+          ip_hash: 'SUB-IPHASH-XYZ',
+          user_agent: 'SUB-UA-XYZ',
+          session_id: 'SUB-SESS-XYZ',
+          smart_link_id: 'SUB-SL-XYZ',
+        },
+      },
+    ];
+    mockSeeds.marketing_consent_settings = [{ user_id: OWNER.id, capture_enabled: true, statement_en: 'Email me offers' }];
+    mockSeeds.business_intake_forms = [
+      { id: '60000000-0000-4000-8000-000000000003', user_id: OWNER.id, status: 'archived', generated_from: { model: 'GEN-MODEL-XYZ' } },
+    ];
+    mockSeeds.email_sequence_enrollments = [
+      { id: '60000000-0000-4000-8000-000000000004', user_id: OWNER.id, status: 'cancelled', next_send_at: 'NEXT-SEND-XYZ' },
+    ];
+  }
+
+  it('N-6: no tracking value and no token-like query string reaches the body; the page path and the consent do', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedDe6();
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    for (const leaked of [
+      'IPHASH-XYZ', 'SALT-XYZ', 'UA-XYZ', 'SESS-XYZ', 'RECORDED-BY-XYZ', 'NORMALIZED-XYZ', 'EVIDENCE-IP-XYZ',
+      'TOK-XYZ', 'SID-XYZ', 'CODE-XYZ', 'SUB-SL-XYZ', 'GEN-MODEL-XYZ', 'NEXT-SEND-XYZ',
+    ]) {
+      expect(text).not.toContain(leaked);
+    }
+    expect(text).toContain('https://x.test/p');
+    const body = JSON.parse(text);
+    const consent = sectionOf(body, 'consent_records').rows[0];
+    expect(consent.source_page_url).toBe('https://x.test/p');
+    expect(consent.privacy_policy_url).toBe('https://x.test/privacy');
+    expect(consent.evidence).toEqual({ client_statement: 'Yes', confirmed_via: 'email_link' });
+    expect(sectionOf(body, 'newsletter_subscribers').rows[0].attribution).toEqual({ capture_page_url: 'https://x.test/join', capture_channel: 'website' });
+    expect(sectionOf(body, 'consent_settings').rows).toEqual([{ capture_enabled: true, statement_en: 'Email me offers' }]);
+    // N-10 through the route: an archived form and a cancelled enrollment are in.
+    expect(sectionOf(body, 'intake_forms').rows.map((r) => r.status)).toEqual(['archived']);
+    expect(sectionOf(body, 'email_sequence_enrollments').rows.map((r) => r.status)).toEqual(['cancelled']);
+    // The audit entry gains the ten counts, counts only.
+    const details = mockAuditLog.mock.calls[0][0].details;
+    expect(details.section_counts).toMatchObject({ consent_records: 1, newsletter_subscribers: 1, consent_settings: 1, intake_forms: 1 });
+    expect(JSON.stringify(details)).not.toContain('dana@example.com');
+  });
+
+  it('N-7: lead_responses, marketing_consent_state and email_sends are never read, even when seeded', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    for (const t of ['lead_responses', 'marketing_consent_state', 'email_sends']) {
+      mockSeeds[t] = [{ id: '70000000-0000-4000-8000-000000000008', user_id: OWNER.id, note: `QA-${t}-NEVER` }];
+    }
+    const res = await GET(request());
+    const text = await res.text();
+    for (const t of ['lead_responses', 'marketing_consent_state', 'email_sends']) {
+      expect(mockCalls[t]).toBeUndefined();
+      expect(mockCalls[`anon:${t}`]).toBeUndefined();
+    }
+    expect(text).not.toContain('NEVER');
+    for (const t of DE6_TABLES) expect(mockCalls[t]).toBeDefined();
+  });
+
+  it('N-14: a planted ?userId= and x-user-id change nothing in the ten reads', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedDe6();
+    const OTHER = '99999999-9999-4999-8999-999999999999';
+    const res = await GET(new NextRequest(`http://localhost/api/user/data-export?userId=${OTHER}`, { headers: { 'x-user-id': OTHER } }));
+    expect(res.status).toBe(200);
+    for (const table of DE6_TABLES) {
+      expect(mockCalls[table]).toContainEqual(['eq', 'user_id', OWNER.id]);
+      expect(mockCalls[table].filter((c) => c[0] === 'eq').every((c) => c[1] === 'user_id' && c[2] === OWNER.id)).toBe(true);
+    }
+    expect(JSON.stringify(mockCalls)).not.toContain(OTHER);
+    // The single-row read is one query: eq user_id, limit 2, no order, no gt.
+    expect(mockCalls.marketing_consent_settings.map((c) => c[0])).toEqual(['select', 'eq', 'limit']);
+    expect(mockCalls.marketing_consent_settings).toContainEqual(['limit', 2]);
+  });
+
+  it('N-15: the DE-6 rows draw on the Phase 1 row ceiling: 413, no file, no DATA_EXPORTED', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    mockSeeds.marketing_consent_events = Array.from({ length: 3 }, (_, n) => ({ id: `6100000${n}-0000-4000-8000-000000000000`, user_id: OWNER.id, decision: 'granted' }));
+    // identity 1 + consent records 3 = 4 > 3.
+    mockLimits.ROW_CEILING = 3;
+    const res = await GET(request());
+    expect(res.status).toBe(413);
+    expect(res.headers.get('Content-Disposition')).toBeNull();
+    expect(mockAuditLog).not.toHaveBeenCalled();
+    const warn = mockLogged.find((l) => l.msg === 'Data export refused: over the Phase 1 ceiling');
+    expect(warn).toMatchObject({ level: 'warn', fields: { limit: 'rows', rowCeiling: 3, atSection: 'consent_records' } });
+  });
+
+  it('N-15: the single-row consent settings counts too (identity 1 + settings 1 > 1)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    mockSeeds.marketing_consent_settings = [{ user_id: OWNER.id, capture_enabled: true }];
+    mockLimits.ROW_CEILING = 1;
+    const res = await GET(request());
+    expect(res.status).toBe(413);
+    const warn = mockLogged.find((l) => l.msg === 'Data export refused: over the Phase 1 ceiling');
+    expect(warn).toMatchObject({ fields: { atSection: 'consent_settings' } });
   });
 });
