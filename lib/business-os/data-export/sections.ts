@@ -11,7 +11,9 @@
 // What is in, today: the person's own account details (DX-1a, group
 // `account`), and since DE-4 the owner's client records and scheduling (DX-1b,
 // group `client_records`: clients, their notes and history, tasks, pipeline
-// stages, document details, services, bookings, time off). What is out:
+// stages, document details, services, bookings, time off). Since DE-3 the
+// account group also holds the person's preferences and notification choices,
+// the business profile and the business's saved addresses (DX-1a). What is out:
 // agents, agent settings and runs (BQ-SA-1, Business OS only), activity and
 // audit history (DX-1d), Pilot-Credit subscription and transactions (DX-1a),
 // the synced copy of the owner's outside calendar (user BC-5, 2026-10-15),
@@ -22,7 +24,8 @@
 // DE-4: the client-record readers all go through ONE repository method,
 // keyed on the section id (never a table name: SA C-4), paged to the end, and
 // bounded by the Phase 1 row ceiling (limits.ts). Over the ceiling, reading
-// stops and the route refuses: no partial file (§0.4.1 C).
+// stops and the route refuses: no partial file (§0.4.1 C). DE-3's four
+// account sections from tables use the same method and factory.
 //
 // FR-E12: a section that fails to read is written as `status: 'failed'`, never
 // as an empty-looking section. A reader that throws is treated the same way.
@@ -95,19 +98,26 @@ export interface AccountIdentityRow {
 export type UserProfileRow = Record<string, unknown>;
 
 /**
- * A `client_records` row (DE-4): the descriptor's columns, as the database
- * holds them, in descriptor order. One flat object per row, so DE-8b writes
- * the same rows as one CSV per section (§2.5). The one reshaped cell is
- * `clients.source_metadata` (allow-listed, SOURCE_METADATA_KEYS).
+ * A row of any descriptor-driven section (DE-4, DE-3): the descriptor's
+ * columns, as the database holds them, in descriptor order. One flat object
+ * per row, so DE-8b writes the same rows as one CSV per section (§2.5). Used
+ * by the `client_records` sections and by DE-3's four `account` sections, so
+ * it is not named after either (DE-3 SA C-8).
  */
-export type ClientRecordRow = Record<string, unknown>;
+export type OwnedRow = Record<string, unknown>;
 
-export type ExportRow = AccountIdentityRow | UserProfileRow | ClientRecordRow;
+/**
+ * A `client_records` row (DE-4). An alias of `OwnedRow`; the one reshaped
+ * cell is `clients.source_metadata` (allow-listed, SOURCE_METADATA_KEYS).
+ */
+export type ClientRecordRow = OwnedRow;
+
+export type ExportRow = AccountIdentityRow | UserProfileRow | OwnedRow;
 
 export type AnyExportSectionDefinition =
   | ExportSectionDefinition<AccountIdentityRow>
   | ExportSectionDefinition<UserProfileRow>
-  | ExportSectionDefinition<ClientRecordRow>;
+  | ExportSectionDefinition<OwnedRow>;
 
 export type AnyExportedSection = ExportedSection<ExportRow>;
 
@@ -163,19 +173,21 @@ const userProfileSection: ExportSectionDefinition<UserProfileRow> = {
 };
 
 /**
- * A `client_records` section (DE-4): one descriptor-driven read through
- * `BusinessDataExportRepository`, keyed on the session's id and on the section
- * id. AgentPilot is the processor of these records; the account holder is
- * the controller. `mapRow` is for the one reshaped cell (source_metadata).
+ * A descriptor-driven section (DE-4; generalised in DE-3, SA C-2): one read
+ * through `BusinessDataExportRepository`, keyed on the session's id and on the
+ * section id, bounded by the budget. `mapRow` is for a reshaped cell
+ * (source_metadata).
  */
-function clientRecordsSection(
+function ownedRowsSection(
   id: ExportSectionId,
-  mapRow?: (row: ClientRecordRow) => ClientRecordRow
-): ExportSectionDefinition<ClientRecordRow> {
+  group: ExportGroupId,
+  gdprRole: GdprRole,
+  mapRow?: (row: OwnedRow) => OwnedRow
+): ExportSectionDefinition<OwnedRow> {
   return {
     id,
-    group: 'client_records',
-    gdprRole: 'processor',
+    group,
+    gdprRole,
     read: async (ctx, budget) => {
       const { data, error } = await businessDataExportRepository.listOwnedRowsForExport(id, ctx.userId, {
         maxRows: budget.maxRows,
@@ -187,17 +199,43 @@ function clientRecordsSection(
   };
 }
 
+/**
+ * A `client_records` section (DE-4). AgentPilot is the processor of these
+ * records; the account holder is the controller.
+ */
+function clientRecordsSection(
+  id: ExportSectionId,
+  mapRow?: (row: ClientRecordRow) => ClientRecordRow
+): ExportSectionDefinition<ClientRecordRow> {
+  return ownedRowsSection(id, 'client_records', 'processor', mapRow);
+}
+
+/**
+ * An `account` section read from a table (DE-3): the account holder's own
+ * details, given to us to run their account. AgentPilot is the controller
+ * (§0.4.1 E; DE-3 SA-Q2).
+ */
+function accountTableSection(id: ExportSectionId): ExportSectionDefinition<OwnedRow> {
+  return ownedRowsSection(id, 'account', 'controller');
+}
+
 /** `clients`: the raw `source_metadata` never reaches the file, only its BC-4 keys. Key order is kept. */
 const clientRow = (row: ClientRecordRow): ClientRecordRow => ({ ...row, source_metadata: sourceMetadata(row.source_metadata) });
 
 /**
  * The registry, in file order. DE-4's eight sections follow the account group (§2.3).
+ * DE-3: the four account sections from tables follow `user_profile`; they
+ * draw on the same row ceiling, before the client records (DE-3 SA C-3).
  * DE-4 (user 2026-10-15): the `plugin_connections` section is gone, with its
  * reader and its `profile_data` allow-list: connected apps are not exported.
  */
 export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   accountIdentitySection,
   userProfileSection,
+  accountTableSection('preferences'),
+  accountTableSection('notification_settings'),
+  accountTableSection('business_profile'),
+  accountTableSection('business_addresses'),
   clientRecordsSection('pipeline_stages'),
   clientRecordsSection('clients', clientRow),
   clientRecordsSection('client_activities'),

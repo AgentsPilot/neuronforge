@@ -195,7 +195,8 @@ describe('P: Model pricing', () => {
     await screen.findByText('gpt-4o-mini');
 
     // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
-    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    // QA timing: the Sync button by its label text, not a page-wide role query (about 0.5 s a call under load); same button.
+    fireEvent.click(screen.getByText('Sync Latest Pricing').closest('button') as HTMLButtonElement);
 
     expect(await screen.findByText('ok')).toBeInTheDocument();
     // Intent kept: Sync re-reads once per list (slice 4: the comparison too).
@@ -232,7 +233,9 @@ describe('P: Model pricing', () => {
     fireEvent.click(within(row).getByTitle('Edit pricing'));
     fireEvent.click(within(row).getByTitle('Save'));
 
-    expect(await screen.findByText('Pricing updated successfully!')).toBeInTheDocument();
+    // QA timing: no re-read comes before this message (the PUT answer, then one batched render), but under
+    // parallel load that full-table render alone has passed the 1 s default, so this one wait gets 3 s.
+    expect(await screen.findByText('Pricing updated successfully!', undefined, { timeout: 3000 })).toBeInTheDocument();
     const after = screen.getByText('gpt-4o-mini').closest('tr') as HTMLElement;
     expect(await within(after).findByText('$2.5')).toBeInTheDocument();
     expect(within(after).queryByText('$0.15')).not.toBeInTheDocument();
@@ -267,7 +270,8 @@ describe('P: Model pricing', () => {
     await screen.findByText('gpt-4o-mini');
 
     // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
-    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    // QA timing: the Sync button by its label text, not a page-wide role query (about 0.5 s a call under load); same button.
+    fireEvent.click(screen.getByText('Sync Latest Pricing').closest('button') as HTMLButtonElement);
 
     await screen.findByText(READ_FAILED_BANNER);
     expectReadFailed();
@@ -305,6 +309,8 @@ describe('P: Model pricing', () => {
     stubFetch({ [PRICING_URL]: () => okRows([...ROWS, retired]), [COMPARISON_URL]: () => okComparison([...ROWS, retired]) });
 
     render(<ModelPricingPage />);
+    // Intent kept; page layout slice (UF-7): retired rows are hidden until "Show retired" is on.
+    fireEvent.click(await screen.findByTestId('show-retired-toggle'));
     const tr = (await screen.findByText('claude-3-haiku')).closest('tr') as HTMLElement;
 
     expect(within(tr).getByText('Retired 2026-10-11')).toBeInTheDocument();

@@ -132,7 +132,8 @@ import {
 import { formatMoney } from '../financeFormat';
 // Finance F-2: a separate import, so the lists above stay unedited.
 import { PAGE_PURPOSE, PAGE_TITLE, RETRY } from '../financeCopy';
-import { FINANCE_URL_NOTICE } from '../financeUrl';
+// Finance F-4: the URL notice is gone (BD-30, SA-W1); the request literals are AC-173's.
+import { pinnedRequest } from './financeRequestPins';
 // Slice 5a (Money M-2).
 import {
   REVENUE_PLANS_DELETED_NONE,
@@ -488,6 +489,8 @@ function serve(body: unknown, status = 200): jest.Mock {
 beforeEach(() => {
   jest.clearAllMocks();
   mockSearch = '';
+  // Finance F-4: the shared hook writes the address bar with history.replaceState.
+  window.history.replaceState(null, '', '/admin/finance');
 });
 
 /**
@@ -791,22 +794,29 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
   });
 });
 
-describe('the URL is the state (AC-24)', () => {
-  it('fetches with the parsed query; an invalid value falls back to the default with a notice', async () => {
+describe('the URL is the state (AC-24; Finance F-4: the shared hook, AC-175)', () => {
+  it('fetches with the parsed query; an invalid window falls back to This month silently (no notice)', async () => {
     mockSearch = 'preset=year';
     const fetchMock = serve({ success: true, data: payload() });
     render(<FinanceView />);
-    expect(await screen.findByTestId('finance-url-notice')).toBeInTheDocument();
+    await screen.findByTestId('kpi-strip');
+    expect(screen.queryByTestId('finance-url-notice')).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/business-os/finance?preset=this_month', expect.objectContaining({ cache: 'no-store' }));
   });
 
-  it('a preset click writes the URL with router.replace and scroll false', async () => {
+  it('a preset click sends the 7 days request and writes range with history.replaceState(null), never the router', async () => {
     mockSearch = `preset=this_month&accountId=${A}`;
-    serve({ success: true, data: payload({ accountId: A }) });
+    window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
+    const fetchMock = serve({ success: true, data: payload({ accountId: A }) });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
-    fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    expect(mockReplace).toHaveBeenCalledWith(`/admin/finance?preset=7d&accountId=${A}`, { scroll: false });
+    const replaceSpy = jest.spyOn(window.history, 'replaceState');
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
+    expect(fetchMock).toHaveBeenLastCalledWith(`/api/admin/business-os/finance?preset=7d&accountId=${A}`, expect.objectContaining({ cache: 'no-store' }));
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', `/admin/finance?range=7d&account=${A}`);
+    expect(mockReplace).not.toHaveBeenCalled();
+    replaceSpy.mockRestore();
+    await screen.findByTestId('kpi-strip');
   });
 });
 
@@ -1590,19 +1600,24 @@ describe('Money M-1 on the page', () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
+    const replaceSpy = jest.spyOn(window.history, 'replaceState');
+    const fetchMock = serve({ success: true, data: payload({ accountId: A }) });
     fireEvent.click(screen.getByTestId('picker-pick'));
-    expect(mockReplace).toHaveBeenCalledWith(`/admin/finance?preset=this_month&accountId=${A}`, { scroll: false });
-    for (const call of mockReplace.mock.calls) expect(String(call[0])).not.toContain('Acme');
+    expect(replaceSpy).toHaveBeenCalledWith(null, '', `/admin/finance?account=${A}`);
+    expect(fetchMock).toHaveBeenLastCalledWith(`/api/admin/business-os/finance?preset=this_month&accountId=${A}`, expect.objectContaining({ cache: 'no-store' }));
+    for (const call of replaceSpy.mock.calls) expect(String(call[2])).not.toContain('Acme');
+    for (const call of fetchMock.mock.calls) expect(String((call as unknown[])[0])).not.toContain('Acme');
+    replaceSpy.mockRestore();
+    await screen.findByTestId('account-header');
   });
 
   it('AC-109: the picked name shows in the chip and the header once the URL carries the account', async () => {
     serve({ success: true, data: payload() });
     const { rerender } = render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
-    fireEvent.click(screen.getByTestId('picker-pick'));
-    // The router mock does not change the URL; the next render sees it, as Next would.
-    mockSearch = `preset=this_month&accountId=${A}`;
+    // Finance F-4: the hook's state changes at once, so no new URL needs to reach the mock.
     const fetchMock = serve({ success: true, data: payload({ accountId: A }) });
+    fireEvent.click(screen.getByTestId('picker-pick'));
     rerender(<FinanceView />);
     expect(await screen.findByTestId('account-header')).toBeInTheDocument();
     expect(screen.getByTestId('business-filter-chip')).toHaveTextContent(`Business: ${PICKED_NAME}`);
@@ -1663,8 +1678,11 @@ describe('Money M-1 on the page', () => {
     serve({ success: true, data: payload({ accountId: A }) });
     render(<FinanceView />);
     await screen.findByTestId('account-header');
+    const fetchMock = serve({ success: true, data: payload() });
     fireEvent.click(screen.getByRole('button', { name: 'Remove business' }));
-    expect(mockReplace).toHaveBeenLastCalledWith('/admin/finance?preset=this_month', { scroll: false });
+    expect(window.location.pathname + window.location.search).toBe('/admin/finance');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/business-os/finance?preset=this_month', expect.objectContaining({ cache: 'no-store' }));
+    await screen.findByTestId('kpi-strip');
   });
 
   it('AC-113 (CR G-8): the Section 3 AI cost & usage link carries the window, and the account when picked', async () => {
@@ -1713,12 +1731,16 @@ describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
     expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
   });
 
-  it('clicking Accounts writes tab=accounts with router.replace and scroll false', async () => {
+  it('clicking Accounts writes tab=accounts (history.replaceState) and sends the tab request', async () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
+    const fetchMock = serve({ success: true, data: payload() });
     fireEvent.click(screen.getByRole('tab', { name: TAB_ACCOUNTS }));
-    expect(mockReplace).toHaveBeenCalledWith('/admin/finance?preset=this_month&tab=accounts', { scroll: false });
+    expect(window.location.pathname + window.location.search).toBe('/admin/finance?tab=accounts');
+    expect(fetchMock).toHaveBeenLastCalledWith(pinnedRequest(11), expect.objectContaining({ cache: 'no-store' }));
+    expect(mockReplace).not.toHaveBeenCalled();
+    await screen.findByRole('tabpanel');
   });
 });
 
@@ -1807,8 +1829,8 @@ describe('Money M-4 Part B: the recorded AI cost on the page', () => {
 
 /**
  * Finance F-2 (Admin Layout Standard §5.3, §5.10): the shared header and the
- * shared states. The DV-1 pin (Refresh in the header) is here on purpose: F-4
- * moves Refresh into the filter bar and must change that test deliberately.
+ * shared states. Finance F-4 inverted the DV-1 pin on purpose: Refresh is now in
+ * the shared filter bar ("Refresh the finance page"), not in the header.
  */
 describe('Finance F-2: header and states', () => {
   /** A fetch that never answers until `release` is called with a body. */
@@ -1842,11 +1864,13 @@ describe('Finance F-2: header and states', () => {
     expect(screen.getByTestId('as-of').className).toContain('text-slate-400');
   });
 
-  it('DV-1: Refresh is still a header action (until F-4), aria-busy while the first read runs', () => {
+  it('F-4 (DV-1 ended, inverted on purpose): Refresh is in the filter bar, not the header; aria-busy while the first read runs', () => {
     pending();
     render(<FinanceView />);
-    const refresh = screen.getByRole('button', { name: 'Refresh' });
-    expect(refresh.closest('header')).not.toBeNull();
+    const refresh = screen.getByRole('button', { name: 'Refresh the finance page' });
+    expect(refresh.closest('header')).toBeNull();
+    expect(screen.getByRole('search', { name: 'Filters' })).toContainElement(refresh);
+    expect(refresh).toHaveTextContent('Refresh');
     expect(refresh).toHaveAttribute('aria-busy', 'true');
     expect(refresh).toBeDisabled();
   });
@@ -1891,7 +1915,7 @@ describe('Finance F-2: header and states', () => {
     (global as any).fetch = fetchMock;
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the finance page' }));
     expect(await screen.findByTestId('finance-error')).toHaveTextContent('Boom');
     expect(screen.queryByTestId('kpi-strip')).toBeNull();
     expect(screen.queryByTestId('section-revenue')).toBeNull();
@@ -1905,7 +1929,7 @@ describe('Finance F-2: header and states', () => {
     const content = screen.getByTestId('finance-content');
     expect(content).toHaveAttribute('aria-busy', 'false');
     const { release } = pending();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the finance page' }));
     expect(content).toHaveAttribute('aria-busy', 'true');
     expect(within(content).getByTestId('kpi-strip')).toBeInTheDocument();
     expect(within(content).queryByText('Reading the finance page…')).toBeNull();
@@ -1914,16 +1938,36 @@ describe('Finance F-2: header and states', () => {
     expect(screen.getByTestId('finance-content')).toBe(content);
   });
 
-  it('URL notice: the shared amber notice with the sentence alone (no "Note:"), and no role', async () => {
-    mockSearch = 'preset=year';
+  it('Finance F-4 (AC-175, BD-30): a bad link shows no URL notice and no amber notice at all', async () => {
+    mockSearch = `preset=year&accountId=acme`;
     serve({ success: true, data: payload() });
     render(<FinanceView />);
-    const notice = await screen.findByTestId('finance-url-notice');
-    expect(notice.textContent).toBe(FINANCE_URL_NOTICE);
-    expect(notice).not.toHaveAttribute('role');
-    expect(notice.parentElement).not.toHaveAttribute('role');
-    expect(notice.parentElement?.className).toContain('border-amber-500/40');
-    expect(screen.queryByText(/Note:/)).toBeNull();
+    await screen.findByTestId('kpi-strip');
+    expect(screen.queryByTestId('finance-url-notice')).toBeNull();
+    expect(screen.queryByText(/could not use/)).toBeNull();
+    expect(screen.queryByText(/default view is shown/)).toBeNull();
+    // A tile may be amber; nothing amber sits outside the content area (where the notice was).
+    const content = screen.getByTestId('finance-content');
+    const amberOutside = Array.from(document.querySelectorAll('.border-amber-500\\/40')).filter((el) => !content.contains(el));
+    expect(amberOutside).toEqual([]);
+  });
+
+  it('Finance F-4: "Read at HH:mm UTC" sits in the bar once the first read is in', async () => {
+    const { release } = pending();
+    render(<FinanceView />);
+    expect(screen.queryByText(/Read at/)).toBeNull();
+    await act(async () => release({ success: true, data: payload() }));
+    const bar = await screen.findByRole('search', { name: 'Filters' });
+    await waitFor(() => expect(within(bar).getByText(/^Read at /)).toHaveTextContent('Read at 10:00 UTC'));
+  });
+
+  it('Finance F-4 (SA-W8): the as-of line reads "7 days" for range=7d', async () => {
+    mockSearch = 'range=7d';
+    const p = payload();
+    p.window = { ...p.window, preset: '7d', from: '2026-10-03', to: '2026-10-09' };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    expect(await screen.findByTestId('as-of')).toHaveTextContent('7 days, 2026-10-03 to 2026-10-09 UTC');
   });
 
   it('the Accounts tab waiting for its section says "Reading the accounts…"', async () => {

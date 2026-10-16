@@ -82,30 +82,8 @@ const exclude = (reason: string, detail?: string): TableExportClassification =>
 const planned = (slice: Extract<TableExportClassification, { kind: 'planned' }>['slice']): TableExportClassification =>
   ({ kind: 'planned', slice });
 
-/**
- * The `profiles` columns the export reads (section `user_profile`): the
- * person's own profile and onboarding answers. Listed by name so a column added
- * later is NOT exported until someone decides it should be. Changing this
- * changes what the export holds: a privacy decision. Order matters: the
- * repository selects `columns.join(', ')`, pinned byte for byte.
- *
- * `plan` is left out ON PURPOSE (DE-1, SA ruling Q-3): the export carries
- * profile details only, no plan or billing data (user decision DX-1a,
- * requirement §0.3.1). `hourly_rate_usd`, `role` and `org_id` stay until DE-3
- * decides the explicit Business OS profile set (§0.5).
- * Moved from UserProfileRepository PROFILE_DATA_EXPORT_COLUMNS (DE-2).
- */
-const PROFILES_EXPORT: TableExportClassification = {
-  kind: 'include',
-  section: 'user_profile',
-  columns: [
-    'id', 'full_name', 'avatar_url', 'company', 'job_title', 'timezone', 'language', 'created_at', 'updated_at',
-    'role', 'domain', 'onboarding', 'onboarding_goal', 'onboarding_mode', 'onboarding_data', 'hourly_rate_usd', 'org_id',
-  ],
-  excludedColumns: {
-    plan: 'DX-1a / DE-1 SA Q-3: no plan or billing data',
-  },
-};
+// `PROFILES_EXPORT` (section `user_profile`) moved to the DE-3 block below,
+// after EXPORT_COLUMN_REASON, whose AGENT_SETTING reason it now uses.
 
 /**
  * `plugin_connections` is NOT exported (user decision 2026-10-15, DE-4): the
@@ -137,6 +115,13 @@ const EXPORT_COLUMN_REASON = {
   REMINDER_SENT: 'DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)',
   INTAKE_SENT: 'DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)',
   CALENDAR_SYNC: 'calendar sync plumbing',
+  // DE-3. The two user reasons are VERBATIM (user decisions BC-A / BC-B,
+  // 2026-10-16; DE-3 SA C-1). Do not reword them.
+  AGENT_SETTING: 'user 2026-10-16: agent-platform setting, Business OS data only',
+  BANK_DETAILS: 'user 2026-10-16: bank details left out of the file',
+  ASSISTANT_OUTPUT: 'assistant output, not something the owner entered (DX-1d; as DE-4 BC-7)',
+  CONNECTED_APPS: 'connected apps are not exported (user DE4-U2, 2026-10-15)',
+  SETUP_STATE: 'setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)',
 } as const;
 
 /**
@@ -273,6 +258,158 @@ const SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT: TableExportClassification = {
   kind: 'include',
   section: 'time_off',
   columns: ['id', 'exception_type', 'start_date', 'end_date', 'custom_hours', 'reason', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+// ── DE-3: profile details (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §3) ────────
+// The person's account and their business's own details (DX-1a), group
+// `account` (AgentPilot is the controller; DE-3 SA-Q2). Every list below is
+// SA's "Final column lists" (SA review DE-3, 2026-10-16), reconciled with the
+// live schema on 2026-10-16 (workplan §10.1): `columns` ∪ `excludedColumns` is
+// exactly the live column set of each table. Order matters: the export
+// repository selects `columns.join(', ')`, pinned byte for byte in the route
+// characterization test. Changing a list changes what the export holds: a
+// privacy decision, and an SA item.
+
+/**
+ * The `profiles` columns the export reads (section `user_profile`): the
+ * person's own profile and onboarding answers. Listed by name so a column added
+ * later is NOT exported until someone decides it should be.
+ *
+ * `plan` is left out ON PURPOSE (DE-1, SA ruling Q-3): the export carries
+ * profile details only, no plan or billing data (user decision DX-1a,
+ * requirement §0.3.1). DE-3 settled the three columns DE-1 left open (§0.5):
+ * `role` (the persona picked in onboarding; it grants nothing, 20261002) is
+ * IN; `org_id` and `hourly_rate_usd` (the agent-platform ROI rate) are OUT.
+ * Moved from UserProfileRepository PROFILE_DATA_EXPORT_COLUMNS (DE-2).
+ */
+const PROFILES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'user_profile',
+  columns: [
+    'id', 'full_name', 'avatar_url', 'company', 'job_title', 'timezone', 'language', 'created_at', 'updated_at',
+    'role', 'domain', 'onboarding', 'onboarding_goal', 'onboarding_mode', 'onboarding_data',
+  ],
+  excludedColumns: {
+    plan: 'DX-1a / DE-1 SA Q-3: no plan or billing data',
+    org_id: 'DE-2 BC-2 (user 2026-10-15): the agent-platform organisation record is not exported; its id alone points at nothing in the file',
+    hourly_rate_usd: EXPORT_COLUMN_REASON.AGENT_SETTING,
+  },
+};
+
+/**
+ * `user_preferences` -> section `preferences`: the person's clock, language,
+ * currency and display / privacy choices. `timezone` here is the clock
+ * authority (`profiles.timezone` is a mirror); both are exported as held.
+ * The agent-platform AI tuning and developer flags are out (user BC-A,
+ * 2026-10-16; SA R-3). No jsonb column, no secret (workplan §10.1).
+ */
+const USER_PREFERENCES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'preferences',
+  columns: [
+    'id', 'preferred_language', 'timezone', 'timezone_confirmed_at', 'preferred_currency', 'theme', 'sidebar_collapsed',
+    'compact_mode', 'show_timestamps', 'enable_sounds', 'keyboard_shortcuts', 'data_retention_days', 'analytics_enabled',
+    'telemetry_enabled', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    default_model: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    max_tokens: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    temperature: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    auto_save_conversations: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    debug_mode: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    beta_features: EXPORT_COLUMN_REASON.AGENT_SETTING,
+  },
+};
+
+/**
+ * `notification_settings` -> section `notification_settings`: how we may
+ * contact the person. `quiet_hours_timezone` is the zone of the quiet hours
+ * only (SA-Q8). The three `*_agent_updates` toggles are about agent runs only:
+ * out (user BC-A, 2026-10-16; SA R-3). No jsonb, no token or push-subscription
+ * column (workplan §10.1).
+ */
+const NOTIFICATION_SETTINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'notification_settings',
+  columns: [
+    'id', 'email_enabled', 'email_frequency', 'email_system_alerts', 'email_security_alerts', 'email_marketing',
+    'push_enabled', 'push_system_alerts', 'push_mentions', 'desktop_enabled', 'desktop_system_alerts', 'inapp_enabled',
+    'inapp_sounds', 'inapp_popups', 'quiet_hours_enabled', 'quiet_hours_start', 'quiet_hours_end', 'quiet_hours_timezone',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    email_agent_updates: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    push_agent_updates: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    desktop_agent_updates: EXPORT_COLUMN_REASON.AGENT_SETTING,
+  },
+};
+
+/**
+ * `business_profiles` -> section `business_profile`: what the owner told us
+ * about their business, its contact details, public address, working hours,
+ * invoice profile and the automations they chose. The jsonb columns travel
+ * whole: the 2026-10-16 key census (workplan §10.1 Q4) shows owner-chosen
+ * content only (SA-Q5). `address_id` / `invoice_address_id` are bare ids: the
+ * addresses are read by their own `user_id` in `business_addresses`, never by
+ * following these pointers (tenant-isolation-guard; DE-3 SA).
+ *
+ * Out: the assistant's output and the onboarding chat (user BC-C), the
+ * connected apps (BC-F), calendar sync (BC-E), setup progress (BC-D) and the
+ * invoice bank details (BC-B). `invoice_payment_instructions` goes with the
+ * bank details (SA R-2); `invoice_tax_id` stays (SA R-1).
+ */
+const BUSINESS_PROFILES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'business_profile',
+  columns: [
+    'id',
+    'vertical', 'sub_vertical', 'company_name', 'company_size', 'clients_per_week', 'revenue_tier', 'description', 'services',
+    'pain_points', 'goals', 'tools', 'payment_mode', 'online_presence_mode', 'primary_crm', 'primary_calendar', 'primary_payment',
+    'phone', 'email', 'address', 'address_parts', 'address_id', 'invoice_address_id',
+    'website_url', 'landing_pages', 'logo_url', 'show_logo_on_smart_links', 'theme', 'template_id', 'subdomain', 'user_code',
+    'scheduling_availability', 'process_steps', 'language', 'currency',
+    'invoice_company_name', 'invoice_address', 'invoice_tax_id', 'invoice_footer_text', 'invoice_number_prefix',
+    'invoice_document_type', 'invoice_prices_include_tax', 'invoice_tax_rate', 'invoice_tax_label', 'invoice_payment_terms_days',
+    'collection_method', 'default_payment_processor', 'payment_retry_enabled', 'payment_retry_intervals', 'payment_max_retries',
+    'payment_reminder_enabled', 'payment_reminder_days_before', 'payment_overdue_reminder_days', 'payment_reminder_channels',
+    'daily_briefing_email_enabled', 'lead_alert_email_enabled', 'lead_autosend_enabled', 'chase_invoices_enabled',
+    'chase_intake_enabled', 'chase_quotes_enabled', 'automations_declined', 'meeting_reminder_enabled',
+    'meeting_reminder_hours_before', 'meeting_reminder_notify_client', 'meeting_reminder_notify_owner',
+    'auto_complete_meetings_enabled',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    website_analysis: `${EXPORT_COLUMN_REASON.ASSISTANT_OUTPUT}: scraped website data and the assistant's analysis of it`,
+    extracted_data: `${EXPORT_COLUMN_REASON.ASSISTANT_OUTPUT}: what the assistant extracted from the onboarding bio`,
+    onboarding_conversation: `${EXPORT_REASON.ACTIVITY}: the onboarding chat`,
+    connected_plugins: EXPORT_COLUMN_REASON.CONNECTED_APPS,
+    calendar_sync_enabled: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_provider: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_last_synced_at: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    onboarding_completed: EXPORT_COLUMN_REASON.SETUP_STATE,
+    profile_completeness: EXPORT_COLUMN_REASON.SETUP_STATE,
+    setup_checklist_dismissed: EXPORT_COLUMN_REASON.SETUP_STATE,
+    dismissed_setup_steps: EXPORT_COLUMN_REASON.SETUP_STATE,
+    needs_stripe_connect: `${EXPORT_COLUMN_REASON.SETUP_STATE}: derived from the onboarding answers`,
+    invoice_bank_name: EXPORT_COLUMN_REASON.BANK_DETAILS,
+    invoice_bank_account: EXPORT_COLUMN_REASON.BANK_DETAILS,
+    invoice_bank_routing: EXPORT_COLUMN_REASON.BANK_DETAILS,
+    invoice_payment_instructions:
+      `${EXPORT_COLUMN_REASON.BANK_DETAILS} (free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3)`,
+  },
+};
+
+/** `business_addresses` -> `business_addresses`: the saved address book. Not soft-deleted, so no rowFilter. */
+const BUSINESS_ADDRESSES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'business_addresses',
+  columns: ['id', 'label', 'parts', 'is_default', 'created_at', 'updated_at'],
   excludedColumns: {
     user_id: EXPORT_COLUMN_REASON.OWNER_ID,
   },
@@ -440,11 +577,11 @@ export const CASCADE_COUNT_EXEMPT: readonly string[] = ['crm_activities'];
 
 const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.1 Business profile ────────────────────────────────────────────────
-  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows', export: planned('DE-3'),
+  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows', export: BUSINESS_PROFILES_EXPORT,
     notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy. Alone in the final band (TENANCY_ROOT): 56 tables CASCADE from it (measured 2026-10-05; 57 with business_addresses, 20261037), so it goes last or their counts read 0 (F-SA-3).' },
   // Added 2026-10-06 (20261036_business_addresses_book.sql + 20261037_…_ownership_fk.sql):
   // the address book behind business_profiles.address_parts / invoice_address.
-  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-3'),
+  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: BUSINESS_ADDRESSES_EXPORT,
     notes: 'The business\'s saved addresses. Same level as business_profiles, which Reset keeps: its address_id / invoice_address_id point here and its address_parts / invoice_address are copies of these rows, so a Reset that emptied the book would leave the profile showing an address the picker no longer offers. CASCADE child of business_profiles (business_addresses_business_fk), so CONFIG keeps it ahead of TENANCY_ROOT for an accurate count. Its only inbound FKs are those two business_profiles columns, ON DELETE SET NULL — no blocking edge.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
@@ -581,7 +718,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'kernel_action_log', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
 
   // ── §3.14 Owner configuration ────────────────────────────────────────────
-  { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-3'),
+  { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: USER_PREFERENCES_EXPORT,
     notes: 'K* — RETAINED BY BOTH LEVELS. Holds preferred_language and currency. Deleting it resets the owner\'s language while they are reading the result screen, and renders their NEXT sign-in wrong — on a login that survives every level (D3).' },
 
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
@@ -805,7 +942,7 @@ const EXCLUDED: PurgeDescriptor[] = [
     'Actor reference on platform data: acknowledged_by -> auth.users is NO ACTION (sla_id -> automation_slas is CASCADE; automation_slas is never). FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
 
   // §8.12 Account configuration and unowned tables
-  never('notification_settings', U, planned('DE-3'), 'Account configuration that survives the business.'),
+  never('notification_settings', U, NOTIFICATION_SETTINGS_EXPORT, 'Account configuration that survives the business.'),
   never('security_settings', U, exclude(EXPORT_REASON.SECRET, 'security configuration, not in the DX-1a set (may hold second-factor material)'), 'Account configuration that survives the business.'),
   never('api_keys', U, exclude(EXPORT_REASON.SECRET), 'Account configuration.'),
   never('user_rewards', U, exclude(EXPORT_REASON.BILLING), 'Rewards ledger, adjacent to billing.'),

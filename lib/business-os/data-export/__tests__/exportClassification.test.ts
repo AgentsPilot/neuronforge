@@ -189,8 +189,9 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
   it('real registry: each include names a section, each table section has exactly one include', () => {
     // DE-4: + the eight client_records sections. DE-4 (user 2026-10-15):
     // plugin_connections removed, so the registry is 2 + 8, was 3 + 8.
+    // DE-3: + the four account sections from tables, after user_profile (6 + 8).
     expect(sectionIds).toEqual([
-      'account_identity', 'user_profile',
+      'account_identity', 'user_profile', 'preferences', 'notification_settings', 'business_profile', 'business_addresses',
       'pipeline_stages', 'clients', 'client_activities', 'client_tasks', 'client_documents', 'services', 'bookings', 'time_off',
     ]);
     expect(sectionRegistryProblems(PURGE_DESCRIPTORS, sectionIds, NON_TABLE_SECTIONS)).toEqual([]);
@@ -205,29 +206,40 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
     ]);
   });
 
-  // DE-4: the planted table is business_profiles (still planned, DE-3), was
-  // crm_tasks, which now backs client_tasks.
+  // DE-4: the planted table was business_profiles (then planned, DE-3), was
+  // crm_tasks. DE-3 (T-8): business_profiles now backs business_profile, so
+  // the plant moves to proposals (still planned, DE-5).
   it('negative control: a descriptor naming an unknown section', () => {
     const unknown = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'business_profiles' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
+      d.table === 'proposals' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
     );
     expect(sectionRegistryProblems(unknown, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'business_profiles: names unknown section client_records',
+      'proposals: names unknown section client_records',
     ]);
   });
 
   it('negative control: two descriptors on one section, and an include on a non-table section', () => {
     const two = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'business_profiles' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
+      d.table === 'proposals' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(two, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'user_profile: expected exactly one include descriptor, found 2 (business_profiles, profiles)',
+      'user_profile: expected exactly one include descriptor, found 2 (proposals, profiles)',
     ]);
     const onIdentity = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'business_profiles' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
+      d.table === 'proposals' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(onIdentity, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'account_identity: a non-table section has include descriptors (business_profiles)',
+      'account_identity: a non-table section has include descriptors (proposals)',
+    ]);
+  });
+
+  // DE-3 X-5: a registered DE-3 section whose descriptor is gone is reported.
+  it('negative control (DE-3): the business_profile section without its descriptor', () => {
+    const replanned = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'business_profiles' ? { ...d, export: { kind: 'planned' as const, slice: 'DE-3' as const } } : d
+    );
+    expect(sectionRegistryProblems(replanned, sectionIds, NON_TABLE_SECTIONS)).toEqual([
+      'business_profile: expected exactly one include descriptor, found 0',
     ]);
   });
 
@@ -363,13 +375,15 @@ describe('T-10 exportColumnsOf fails closed', () => {
   it('returns the include columns in descriptor order', () => {
     // DE-4 (user 2026-10-15): profiles, was plugin_connections (now excluded).
     expect(exportColumnsOf('profiles')[0]).toBe('id');
-    expect(exportColumnsOf('profiles')).toHaveLength(17);
+    // DE-3: 15, was 17 (org_id and hourly_rate_usd moved to excludedColumns).
+    expect(exportColumnsOf('profiles')).toHaveLength(15);
   });
 
   it.each([
     ['audit_logs', 'not_included'],
-    // DE-4: was crm_contacts, now included; business_profiles is still planned (DE-3).
-    ['business_profiles', 'not_included'],
+    // DE-4: was crm_contacts, now included. DE-3: was business_profiles, now
+    // included; proposals is still planned (DE-5).
+    ['proposals', 'not_included'],
     ['external_calendar_events', 'not_included'],
     // DE-4 (user 2026-10-15): connected apps left the export.
     ['plugin_connections', 'not_included'],
@@ -664,6 +678,316 @@ describe('DE-4 C-4 a section resolves to exactly one include descriptor', () => 
       d.table === 'crm_tasks' ? { ...d, export: { kind: 'include' as const, section: 'clients' as const, columns: ['id'] } } : d
     );
     expect(() => exportDescriptorOfSection('clients', two)).toThrow(/found 2/);
+  });
+});
+
+// ── DE-3 (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §3, §7; SA review DE-3) ────
+
+/**
+ * DE-3: the five include lists, pinned literally (SA "Final column lists",
+ * 2026-10-16). `excluded` is the key list of `excludedColumns`, in order.
+ */
+const DE3_PINS: Record<string, { section: string; columns: string[]; excluded: string[] }> = {
+  profiles: {
+    section: 'user_profile',
+    columns: [
+      'id', 'full_name', 'avatar_url', 'company', 'job_title', 'timezone', 'language', 'created_at', 'updated_at',
+      'role', 'domain', 'onboarding', 'onboarding_goal', 'onboarding_mode', 'onboarding_data',
+    ],
+    excluded: ['plan', 'org_id', 'hourly_rate_usd'],
+  },
+  user_preferences: {
+    section: 'preferences',
+    columns: [
+      'id', 'preferred_language', 'timezone', 'timezone_confirmed_at', 'preferred_currency', 'theme', 'sidebar_collapsed',
+      'compact_mode', 'show_timestamps', 'enable_sounds', 'keyboard_shortcuts', 'data_retention_days', 'analytics_enabled',
+      'telemetry_enabled', 'created_at', 'updated_at',
+    ],
+    excluded: ['user_id', 'default_model', 'max_tokens', 'temperature', 'auto_save_conversations', 'debug_mode', 'beta_features'],
+  },
+  notification_settings: {
+    section: 'notification_settings',
+    columns: [
+      'id', 'email_enabled', 'email_frequency', 'email_system_alerts', 'email_security_alerts', 'email_marketing',
+      'push_enabled', 'push_system_alerts', 'push_mentions', 'desktop_enabled', 'desktop_system_alerts', 'inapp_enabled',
+      'inapp_sounds', 'inapp_popups', 'quiet_hours_enabled', 'quiet_hours_start', 'quiet_hours_end', 'quiet_hours_timezone',
+      'created_at', 'updated_at',
+    ],
+    excluded: ['user_id', 'email_agent_updates', 'push_agent_updates', 'desktop_agent_updates'],
+  },
+  business_profiles: {
+    section: 'business_profile',
+    columns: [
+      'id',
+      'vertical', 'sub_vertical', 'company_name', 'company_size', 'clients_per_week', 'revenue_tier', 'description', 'services',
+      'pain_points', 'goals', 'tools', 'payment_mode', 'online_presence_mode', 'primary_crm', 'primary_calendar', 'primary_payment',
+      'phone', 'email', 'address', 'address_parts', 'address_id', 'invoice_address_id',
+      'website_url', 'landing_pages', 'logo_url', 'show_logo_on_smart_links', 'theme', 'template_id', 'subdomain', 'user_code',
+      'scheduling_availability', 'process_steps', 'language', 'currency',
+      'invoice_company_name', 'invoice_address', 'invoice_tax_id', 'invoice_footer_text', 'invoice_number_prefix',
+      'invoice_document_type', 'invoice_prices_include_tax', 'invoice_tax_rate', 'invoice_tax_label', 'invoice_payment_terms_days',
+      'collection_method', 'default_payment_processor', 'payment_retry_enabled', 'payment_retry_intervals', 'payment_max_retries',
+      'payment_reminder_enabled', 'payment_reminder_days_before', 'payment_overdue_reminder_days', 'payment_reminder_channels',
+      'daily_briefing_email_enabled', 'lead_alert_email_enabled', 'lead_autosend_enabled', 'chase_invoices_enabled',
+      'chase_intake_enabled', 'chase_quotes_enabled', 'automations_declined', 'meeting_reminder_enabled',
+      'meeting_reminder_hours_before', 'meeting_reminder_notify_client', 'meeting_reminder_notify_owner',
+      'auto_complete_meetings_enabled',
+      'created_at', 'updated_at',
+    ],
+    excluded: [
+      'user_id', 'website_analysis', 'extracted_data', 'onboarding_conversation', 'connected_plugins',
+      'calendar_sync_enabled', 'calendar_sync_provider', 'calendar_last_synced_at',
+      'onboarding_completed', 'profile_completeness', 'setup_checklist_dismissed', 'dismissed_setup_steps', 'needs_stripe_connect',
+      'invoice_bank_name', 'invoice_bank_account', 'invoice_bank_routing', 'invoice_payment_instructions',
+    ],
+  },
+  business_addresses: {
+    section: 'business_addresses',
+    columns: ['id', 'label', 'parts', 'is_default', 'created_at', 'updated_at'],
+    excluded: ['user_id'],
+  },
+};
+
+/** The user's reason texts, verbatim (BC-A / BC-B, 2026-10-16; DE-3 SA C-1). */
+const AGENT_SETTING_REASON = 'user 2026-10-16: agent-platform setting, Business OS data only';
+const BANK_DETAILS_REASON = 'user 2026-10-16: bank details left out of the file';
+
+type RuledExclusion = [table: string, column: string, reason: string];
+const ruled = (table: string, columns: string[], reason: string): RuledExclusion[] => columns.map((c) => [table, c, reason]);
+
+/**
+ * DE-3 X-2 / X-3 / C-1: each excluded column that carries a ruled reason, named
+ * one by one, with the reason it must carry ('' = any non-empty reason).
+ */
+const DE3_RULED_EXCLUSIONS: RuledExclusion[] = [
+  ['profiles', 'hourly_rate_usd', AGENT_SETTING_REASON],
+  ['profiles', 'org_id', ''],
+  ['profiles', 'plan', 'DX-1a / DE-1 SA Q-3: no plan or billing data'],
+  ...ruled('user_preferences', ['default_model', 'max_tokens', 'temperature', 'auto_save_conversations', 'debug_mode', 'beta_features'], AGENT_SETTING_REASON),
+  ...ruled('notification_settings', ['email_agent_updates', 'push_agent_updates', 'desktop_agent_updates'], AGENT_SETTING_REASON),
+  ...ruled('business_profiles', ['invoice_bank_name', 'invoice_bank_account', 'invoice_bank_routing'], BANK_DETAILS_REASON),
+  [
+    'business_profiles',
+    'invoice_payment_instructions',
+    BANK_DETAILS_REASON + ' (free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3)',
+  ],
+  ...ruled('business_profiles', ['website_analysis', 'extracted_data', 'onboarding_conversation'], ''),
+  ['business_profiles', 'connected_plugins', 'connected apps are not exported (user DE4-U2, 2026-10-15)'],
+  ...ruled('business_profiles', ['calendar_sync_enabled', 'calendar_sync_provider', 'calendar_last_synced_at'], 'calendar sync plumbing'),
+];
+
+/** DE-3 pins as a pure check, so a planted copy can be run through it (negative control). */
+function de3PinProblems(ds: readonly PurgeDescriptor[]): string[] {
+  const problems: string[] = [];
+  const includeOf = (table: string) => {
+    const e = ds.find((d) => d.table === table)?.export;
+    return e?.kind === 'include' ? e : undefined;
+  };
+  for (const [table, pin] of Object.entries(DE3_PINS)) {
+    const e = includeOf(table);
+    if (!e) {
+      problems.push(`${table} must be include`);
+      continue;
+    }
+    if (e.section !== pin.section) problems.push(`${table} must be section ${pin.section}`);
+    if (JSON.stringify(e.columns) !== JSON.stringify(pin.columns)) problems.push(`${table} columns changed`);
+    if (JSON.stringify(Object.keys(e.excludedColumns ?? {})) !== JSON.stringify(pin.excluded)) problems.push(`${table} excludedColumns changed`);
+    if (table !== 'profiles' && e.excludedColumns?.user_id !== OWNER_ID_REASON) problems.push(`${table} user_id must carry the OWNER_ID reason`);
+  }
+  for (const [table, column, reason] of DE3_RULED_EXCLUSIONS) {
+    const e = includeOf(table);
+    if (!e) continue;
+    if (e.columns.includes(column)) problems.push(`${table}.${column} must not be exported`);
+    const held = e.excludedColumns?.[column];
+    if (typeof held !== 'string' || held.trim() === '') problems.push(`${table}.${column} must be excluded with a reason`);
+    else if (reason && held !== reason) problems.push(`${table}.${column} must carry the ruled reason`);
+  }
+  if (!includeOf('profiles')?.columns.includes('role')) problems.push('profiles.role must be exported (BC-G)');
+  if (!includeOf('business_profiles')?.columns.includes('invoice_tax_id')) problems.push('business_profiles.invoice_tax_id must be exported (SA R-1)');
+  if (!includeOf('notification_settings')?.columns.includes('quiet_hours_timezone')) {
+    problems.push('notification_settings.quiet_hours_timezone must be exported (SA-Q8)');
+  }
+  if (ds.some((d) => d.export?.kind === 'planned' && d.export.slice === 'DE-3')) problems.push('a table is still planned for DE-3');
+  return problems;
+}
+
+/**
+ * DE-3 live columns, verbatim and in live order from the T-0 Q1 output (DE-3
+ * workplan §10.1, prod, 2026-10-16). Inline, not a fixture file: DE-3 adds no
+ * new file (SA C-7). A migration adding a column to one of these tables adds
+ * it here AND classifies it in its descriptor.
+ */
+const DE3_LIVE_TABLES: Record<string, string> = {
+  profiles:
+    'id full_name avatar_url plan company job_title timezone language created_at updated_at role domain onboarding ' +
+    'onboarding_goal onboarding_mode onboarding_data hourly_rate_usd org_id',
+  user_preferences:
+    'id user_id theme sidebar_collapsed compact_mode data_retention_days analytics_enabled telemetry_enabled default_model ' +
+    'max_tokens temperature auto_save_conversations show_timestamps enable_sounds keyboard_shortcuts debug_mode beta_features ' +
+    'created_at updated_at preferred_currency preferred_language timezone timezone_confirmed_at',
+  notification_settings:
+    'id user_id email_enabled email_frequency email_agent_updates email_system_alerts email_security_alerts email_marketing ' +
+    'push_enabled push_agent_updates push_system_alerts push_mentions desktop_enabled desktop_agent_updates ' +
+    'desktop_system_alerts inapp_enabled inapp_sounds inapp_popups quiet_hours_enabled quiet_hours_start quiet_hours_end ' +
+    'quiet_hours_timezone created_at updated_at',
+  business_profiles:
+    'id user_id vertical sub_vertical company_name company_size clients_per_week revenue_tier website_url landing_pages ' +
+    'website_analysis connected_plugins primary_crm primary_calendar primary_payment onboarding_completed ' +
+    'onboarding_conversation profile_completeness language created_at updated_at services scheduling_availability ' +
+    'calendar_sync_enabled calendar_sync_provider calendar_last_synced_at default_payment_processor payment_retry_enabled ' +
+    'payment_retry_intervals payment_max_retries payment_reminder_enabled payment_reminder_days_before ' +
+    'payment_overdue_reminder_days payment_reminder_channels process_steps dismissed_setup_steps invoice_company_name ' +
+    'invoice_address invoice_tax_id invoice_bank_name invoice_bank_account invoice_bank_routing invoice_payment_instructions ' +
+    'invoice_footer_text invoice_number_prefix logo_url pain_points goals tools payment_mode online_presence_mode ' +
+    'needs_stripe_connect extracted_data description user_code setup_checklist_dismissed show_logo_on_smart_links ' +
+    'collection_method theme template_id phone email address invoice_document_type invoice_prices_include_tax ' +
+    'invoice_tax_rate invoice_tax_label daily_briefing_email_enabled invoice_payment_terms_days subdomain ' +
+    'lead_alert_email_enabled lead_autosend_enabled chase_invoices_enabled chase_intake_enabled automations_declined currency ' +
+    'meeting_reminder_enabled meeting_reminder_hours_before meeting_reminder_notify_client meeting_reminder_notify_owner ' +
+    'address_parts address_id invoice_address_id auto_complete_meetings_enabled chase_quotes_enabled',
+  business_addresses: 'id user_id parts label is_default created_at updated_at',
+};
+const DE3_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE3_LIVE_TABLES).flatMap(([table_name, names]) =>
+  names.split(' ').map((column_name) => ({ table_name, column_name }))
+);
+const DE3_TABLES = Object.keys(DE3_PINS);
+
+/** A copy of the descriptors with one include rewritten (negative controls). */
+function withInclude(
+  table: string,
+  edit: (e: Extract<PurgeDescriptor['export'], { kind: 'include' }>) => Extract<PurgeDescriptor['export'], { kind: 'include' }>
+): PurgeDescriptor[] {
+  return PURGE_DESCRIPTORS.map((d) => (d.table === table && d.export.kind === 'include' ? { ...d, export: edit(d.export) } : d));
+}
+
+describe('DE-3 X-1 / X-2 / X-3 the profile-detail classifications are pinned', () => {
+  it('five include rows, the ruled exclusions, no DE-3 planned row left', () => {
+    expect(de3PinProblems(PURGE_DESCRIPTORS)).toEqual([]);
+    expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned' && d.export.slice === 'DE-3')).toEqual([]);
+  });
+
+  it('every DE-3 excludedColumns reason is non-empty, and the two user reasons are verbatim', () => {
+    for (const table of DE3_TABLES) {
+      const e = exportClassificationOf(table);
+      if (e?.kind !== 'include') throw new Error(`${table} not include`);
+      for (const reason of Object.values(e.excludedColumns ?? {})) expect(reason.trim().length).toBeGreaterThan(10);
+    }
+    const profiles = exportClassificationOf('profiles');
+    const business = exportClassificationOf('business_profiles');
+    if (profiles?.kind !== 'include' || business?.kind !== 'include') throw new Error('not include');
+    expect(profiles.excludedColumns?.hourly_rate_usd).toBe(AGENT_SETTING_REASON);
+    expect(business.excludedColumns?.invoice_bank_account).toBe(BANK_DETAILS_REASON);
+  });
+
+  it('X-1 negative control: re-planning business_addresses is reported', () => {
+    const replanned = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'business_addresses' ? { ...d, export: { kind: 'planned' as const, slice: 'DE-3' as const } } : d
+    );
+    expect(de3PinProblems(replanned)).toEqual(['business_addresses must be include', 'a table is still planned for DE-3']);
+  });
+
+  it('X-2 negative controls: org_id back in columns; hourly_rate_usd reworded', () => {
+    const orgBack = withInclude('profiles', (e) => {
+      const { org_id: _moved, ...rest } = e.excludedColumns ?? {};
+      void _moved;
+      return { ...e, columns: [...e.columns, 'org_id'], excludedColumns: rest };
+    });
+    expect(de3PinProblems(orgBack)).toEqual([
+      'profiles columns changed',
+      'profiles excludedColumns changed',
+      'profiles.org_id must not be exported',
+      'profiles.org_id must be excluded with a reason',
+    ]);
+    const reworded = withInclude('profiles', (e) => ({
+      ...e,
+      excludedColumns: { ...e.excludedColumns, hourly_rate_usd: 'agent setting' },
+    }));
+    expect(de3PinProblems(reworded)).toEqual(['profiles.hourly_rate_usd must carry the ruled reason']);
+  });
+
+  it('X-3 negative controls: onboarding_conversation planted into columns; an empty connected_plugins reason', () => {
+    const planted = withInclude('business_profiles', (e) => ({ ...e, columns: [...e.columns, 'onboarding_conversation'] }));
+    expect(de3PinProblems(planted)).toEqual([
+      'business_profiles columns changed',
+      'business_profiles.onboarding_conversation must not be exported',
+    ]);
+    expect(tableProblems(planted.filter((d) => d.table === 'business_profiles'))).toEqual([
+      'business_profiles: onboarding_conversation is both included and excluded',
+    ]);
+    const emptied = withInclude('business_profiles', (e) => ({
+      ...e,
+      excludedColumns: { ...e.excludedColumns, connected_plugins: '' },
+    }));
+    expect(tableProblems(emptied.filter((d) => d.table === 'business_profiles'))).toEqual([
+      'business_profiles: excluded column connected_plugins has no reason',
+    ]);
+    expect(de3PinProblems(emptied)).toEqual(['business_profiles.connected_plugins must be excluded with a reason']);
+  });
+
+  it('C-1 negative controls: a bank column and an agent toggle moved into columns are reported', () => {
+    const bank = withInclude('business_profiles', (e) => ({ ...e, columns: [...e.columns, 'invoice_bank_routing'] }));
+    expect(de3PinProblems(bank)).toEqual([
+      'business_profiles columns changed',
+      'business_profiles.invoice_bank_routing must not be exported',
+    ]);
+    const agent = withInclude('notification_settings', (e) => ({ ...e, columns: [...e.columns, 'push_agent_updates'] }));
+    expect(de3PinProblems(agent)).toEqual([
+      'notification_settings columns changed',
+      'notification_settings.push_agent_updates must not be exported',
+    ]);
+  });
+});
+
+describe('DE-3 X-4 the deny list holds for the DE-3 columns', () => {
+  it('no DE-3 column is denied; DENY_EXCEPTIONS still has its one entry', () => {
+    for (const table of DE3_TABLES) {
+      expect(exportColumnsOf(table).filter((c) => isDeniedColumn(table, c))).toEqual([]);
+    }
+    expect(Object.keys(DENY_EXCEPTIONS)).toEqual(['crm_pipeline_stages.stage_key']);
+  });
+
+  it('negative control: a planted push_token on notification_settings fails in CI and at request time', () => {
+    const planted = withInclude('notification_settings', (e) => ({ ...e, columns: [...e.columns, 'push_token'] }));
+    expect(tableProblems(planted.filter((d) => d.table === 'notification_settings'))).toEqual([
+      'notification_settings: column push_token is on the secret deny list',
+    ]);
+    expect(() => exportColumnsOf('notification_settings', planted)).toThrow(/secret deny list/);
+  });
+});
+
+describe('DE-3 the declared lists match the live columns (T-0 Q1, workplan §10.1)', () => {
+  it('the inline live set is the measured state: Q2 counts', () => {
+    const counts: Record<string, number> = {};
+    for (const c of DE3_LIVE_COLUMNS) counts[c.table_name] = (counts[c.table_name] ?? 0) + 1;
+    expect(counts).toEqual({ profiles: 18, user_preferences: 23, notification_settings: 24, business_profiles: 85, business_addresses: 7 });
+  });
+
+  it('no drift and nothing missing; columns + excludedColumns = the live set, exactly', () => {
+    expect(exportColumnDrift(DE3_LIVE_COLUMNS).filter((r) => DE3_TABLES.includes(r.table))).toEqual([]);
+    expect(exportColumnsMissing(DE3_LIVE_COLUMNS).filter((r) => DE3_TABLES.includes(r.table))).toEqual([]);
+    for (const table of DE3_TABLES) {
+      const e = exportClassificationOf(table);
+      if (e?.kind !== 'include') throw new Error(`${table} not include`);
+      const decided = [...e.columns, ...Object.keys(e.excludedColumns ?? {})].sort();
+      expect(decided).toEqual(DE3_LIVE_COLUMNS.filter((c) => c.table_name === table).map((c) => c.column_name).sort());
+    }
+  });
+
+  it('negative controls: an extra live column is drift; a declared column missing live is reported', () => {
+    const extra = [...DE3_LIVE_COLUMNS, { table_name: 'user_preferences', column_name: 'push_subscription' }];
+    expect(exportColumnDrift(extra).filter((r) => DE3_TABLES.includes(r.table))).toEqual([
+      { table: 'user_preferences', column: 'push_subscription' },
+    ]);
+    const without = DE3_LIVE_COLUMNS.filter((c) => !(c.table_name === 'business_profiles' && c.column_name === 'subdomain'));
+    expect(exportColumnsMissing(without).filter((r) => DE3_TABLES.includes(r.table))).toEqual([
+      { table: 'business_profiles', column: 'subdomain' },
+    ]);
+  });
+
+  it('each DE-3 section resolves to its one include descriptor', () => {
+    for (const [table, pin] of Object.entries(DE3_PINS)) {
+      expect(exportDescriptorOfSection(pin.section as never).table).toBe(table);
+    }
   });
 });
 
