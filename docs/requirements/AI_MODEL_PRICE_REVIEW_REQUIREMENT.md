@@ -1,6 +1,6 @@
 # Requirement: AI Model Price Review (proposal, approve, apply)
 
-> **Last Updated**: 2026-10-14
+> **Last Updated**: 2026-10-16
 
 **Created by:** BA
 **Date:** 2026-10-08
@@ -240,6 +240,7 @@ Recorded by TL from the user, 2026-10-14. SA rulings on it: [SA Re-review (2026-
 | **UF-4** | **Per-model price history view:** every past price, who applied it, when, the reason and the source, built from the retired rows plus the audit | New MP-FR-17; data sources in RR-6 |
 | **UF-5** | **(2026-10-14, slice 4 layout) One table.** Today's Model pricing table becomes the comparison: each model row shows our price and the new provider price side by side, per unit, with the gap and a status chip; an "Enter provider price" button on each row; retired rows labelled "Retired <date>"; sortable with undercharged first. No separate section | Slice 4 workplan revised; its B-1 (section above or below the table) is superseded |
 | **UF-6** | **(2026-10-14, slice 4 B-2) Yes:** the post-deploy browser check saves one real, current official price (for example for `gpt-4o-mini`) as a pending line, accepting that it cannot be dismissed before slice 8 | Slice 4 manual check U-6 |
+| **UF-7** | **(2026-10-16, page layout)** Three UI changes on Model pricing: (1) a **Show retired** toggle, off by default, so retired rows are hidden unless the admin turns it on; superseded rows (stored, never charged) follow the same toggle; (2) **KPIs at the top**: Undercharging (count of red rows and the worst gap in words), Pending prices (lines awaiting Apply), Last provider check (red when older than 90 days or never run; "now" is the server's `generatedAt`), Models in use (rows with a switched-on Business OS area tag); status always in words or an icon too; (3) the always-open "About Model Pricing" box moves behind a **?** button into the shared admin drawer, rewritten to explain the flow (check or enter a price, read green and red, Apply and History coming later) and that Sync and Edit change live prices directly until slice 6 removes them | UI-only slice on `feature/ai-model-price-review-page-layout` (UI short path); no route, repository, migration or charging change. Supersedes Admin Layout Standard §7.14 "KPI strip: none" for this page. Workplan: [AI_MODEL_PRICE_REVIEW_PAGE_LAYOUT_WORKPLAN.md](/docs/workplans/AI_MODEL_PRICE_REVIEW_PAGE_LAYOUT_WORKPLAN.md) |
 
 ---
 
@@ -557,6 +558,8 @@ Order follows the user's priority: **see** current vs new with colours and areas
 
 Slice 7 has no dependency on 3–6 and can run alongside them.
 
+**Page layout slice (UF-7, 2026-10-16), between slices 5 and 6:** UI only (retired toggle, KPI strip, help drawer). Not a numbered slice: it changes no data path. Code complete 2026-10-16, uncommitted, awaiting SA code review and QA ([workplan](/docs/workplans/AI_MODEL_PRICE_REVIEW_PAGE_LAYOUT_WORKPLAN.md)).
+
 **Notes for slice 8, recorded at the slice 3 SA code review (2026-10-14):**
 
 - **Stale check per basis.** A line's `current_cached_input_cost_per_token` is the derived OpenAI value (half the input) even when `current_basis = 'table'`, because no charge reads the cached-input column before slice 7. The apply RPC must re-derive it, never compare it with the table column. Values whose basis is the in-code table or the image setting are not table rows either; the stale check is defined per basis.
@@ -616,3 +619,5 @@ Slice 7 has no dependency on 3–6 and can run alongside them.
 | 2026-10-14 | Slice 4 merged; slice 5 workplan written | Slice 4: PR #385 merged (commit 579d54e1, merge 86dd3266); no migration; owed: the user browser checklist U-1..U-12 after deploy. Slice 5: [workplan](/docs/workplans/AI_MODEL_PRICE_REVIEW_SLICE5_WORKPLAN.md) on `feature/ai-model-price-review-slice5` (fetch route, OpenAI adapter, LiteLLM cross-check, per-provider status, button); no code written, awaiting SA |
 | 2026-10-15 | Slice 5: SA review and user decisions | SA approved the slice 5 workplan with SC-1..SC-16 (O-1 = function-only migration `20261069`). User decisions via TL: BQ-A yes (newest official reading supersedes a hand-typed pending price), BQ-B yes (image prices stay manual), migration `20261069` yes (production apply only with the user's go-ahead). R-9 row 5 Mig set to Yes. Implementation started |
 | 2026-10-15 | Slice 5 code complete | "Check provider prices" on `/admin/system-config`: route `model-pricing/fetch-runs` (POST runs one check, GET its status), the OpenAI adapter (Standard and Specialized Standard tables only, fail-loud anchors, no LLM), the LiteLLM cross-check (exact, never a price), per-provider status with last success and last failure, audit `AI_PRICE_FETCH_RUN`. Migration `20261069` (function-only) with rollback, checker and probe. Image prices stay manual (BQ-B). Charging files unchanged. Uncommitted, awaiting SA code review |
+| 2026-10-15 | Slice 5 merged and applied | PR #404 merged (commit 47c16a05, merge 5ce4203f). Production apply of `20261069` on 2026-10-15: before state 42/12/0, fingerprint `76c7cfe8e89e2464f9fa866668682426`; new checker PASS 9/0; slice 3 checker PASS 68/0; probe PASS P01..P05, rolled back, 0 rows left. Recorded in the slice 5 workplan Commit Info |
+| 2026-10-16 | User feedback UF-7; page layout slice | §8a UF-7 (retired toggle off by default, superseded rows included; KPI strip: Undercharging, Pending prices, Last provider check with the 90-day red rule, Models in use; the info box moved into a ? help drawer with a plain-words flow). UI-only slice, note under R-9. Code complete, uncommitted, awaiting SA + QA |

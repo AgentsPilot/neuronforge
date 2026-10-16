@@ -25,9 +25,17 @@
  * supplies the row id behind Edit, the dates and the retired rows (SA N-1,
  * NR-1). Either read failing fails the table (SA N-4, C2-4). There is no Apply,
  * no provider check and no history yet (slices 5, 8, 9).
+ *
+ * Page layout slice (user feedback UF-7, 2026-10-16): a KPI strip from the
+ * data already read (`priceKpis.ts`; the last check comes from the status
+ * `ProviderPriceCheck` reads, through `onStatus`), a "Show retired" toggle
+ * (off by default; superseded rows follow it), and the old always-open info
+ * box moved behind a ? button into the shared drawer. The Sync paragraph and
+ * the "within 1 hour" sentence stay verbatim in this file (source guard S-4,
+ * MT-2).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   RefreshCw,
@@ -39,13 +47,16 @@ import {
   Check,
   Download,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  HelpCircle
 } from 'lucide-react';
 
 import { clientLogger } from '@/lib/logger/client';
 import type { ComparisonModel } from '@/lib/ai/pricing-research/comparisonModel';
+import { AdminDrawer, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
-import { formatUtcDate } from '@/app/admin/components/layout/adminFormat';
+import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
+import { formatCount, formatUtcDate } from '@/app/admin/components/layout/adminFormat';
 import {
   ADMIN_BUTTON,
   ADMIN_TABLE,
@@ -65,18 +76,22 @@ import {
 } from '@/app/admin/system-config/components/PriceRowCells';
 import ProviderPriceCheck from '@/app/admin/system-config/components/ProviderPriceCheck';
 import { readPriceComparison } from '@/app/admin/system-config/priceComparisonRead';
+import { priceKpis, type CheckStatusState } from '@/app/admin/system-config/priceKpis';
 import {
   EDIT_UNIT_WORDS,
   ENTER_PROVIDER_PRICE,
+  HELP_WORDS,
   IN_EFFECT_SINCE,
+  KPI_WORDS,
   NO_MODELS_LINE,
   NO_PENDING_NOTICE,
   PRICE_REVIEW_NOTE,
+  RETIRED_FILTER_WORDS,
   SORT_LABEL,
   SORT_OPTIONS,
   type PriceSortMode,
 } from '@/app/admin/system-config/priceReviewCopy';
-import { buildPriceTableRows, sortPriceTableRows } from '@/app/admin/system-config/priceTableRows';
+import { buildPriceTableRows, sortPriceTableRows, type PriceTableRow } from '@/app/admin/system-config/priceTableRows';
 
 const logger = clientLogger.child({ module: 'AdminModelPricingPage' });
 
@@ -93,6 +108,72 @@ interface ModelPricing {
 
 /** The two sub-header rows of the unit groups (slice 4, SA NR-5). */
 const UNIT_SUB_HEADERS = ['ours', 'provider', 'gap'] as const;
+
+/** Rows hidden while "Show retired" is off (UF-7): neither is charged, today or later. */
+const HIDDEN_UNLESS_RETIRED_SHOWN: ReadonlySet<PriceTableRow<ModelPricing>['kind']> = new Set(['retired', 'superseded'] as const);
+
+const HELP_TEXT = 'text-sm leading-relaxed text-slate-300';
+const HELP_LABEL = 'text-green-300';
+
+/**
+ * The help drawer body (UF-7): the flow, the units and the buttons in plain
+ * words. Kept in this file because the source guard reads the Sync paragraph
+ * (S-4) and the "within 1 hour" sentence (MT-2) from `page.tsx`. MT-1 and G-2
+ * also scan this file, so some words are avoided on purpose.
+ */
+function PricingHelp() {
+  return (
+    <>
+      <DrawerSection title="What this page is">
+        <p className={HELP_TEXT}>
+          This table defines the cost per token for each AI model&apos;s input (prompts) and output (responses). Business OS credit charges for the models listed here are computed from these prices, so a wrong price here is a wrong charge for every customer who uses that model.
+        </p>
+      </DrawerSection>
+      <DrawerSection title="How a price review works">
+        <ol className={`list-decimal space-y-2 pl-5 ${HELP_TEXT}`}>
+          <li>
+            <strong className={HELP_LABEL}>Get the provider&apos;s price.</strong> Check provider prices reads OpenAI&apos;s official pricing page. For Anthropic, Google and Kimi, use Enter provider price and type the price from the provider&apos;s page. Either way the price is saved as a pending price: nothing is charged from it.
+          </li>
+          <li>
+            <strong className={HELP_LABEL}>Read green and red.</strong> Each row shows what we charge today (ours) next to the provider&apos;s new price, and the gap. Green (Covered) means we charge at or above the provider&apos;s price. Red (Undercharging) means we charge less than the provider charges us, so every call on that model loses money. Red rows sort first.
+          </li>
+          <li>
+            <strong className={HELP_LABEL}>Apply (coming later).</strong> Makes a pending price the live price, one model at a time, with a short reason.
+          </li>
+          <li>
+            <strong className={HELP_LABEL}>History (coming later).</strong> Every past price of a model: who applied it, when, why, and from which source.
+          </li>
+        </ol>
+      </DrawerSection>
+      <DrawerSection title="The units">
+        <div className="space-y-2">
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Input /1M:</strong> Price per 1M input tokens (prompts, context, memory), in USD, the figure providers publish. The table stores the price per token, and the Edit field still takes the per-token value. Example: $0.15 per 1M tokens = $0.00000015 per token.
+          </p>
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Output /1M:</strong> Price per 1M output tokens (AI responses, generated content), in USD. Usually higher than input. Example: $0.60 per 1M tokens = $0.0000006 per token.
+          </p>
+        </div>
+      </DrawerSection>
+      <DrawerSection title="The buttons">
+        <div className="space-y-2">
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Check provider prices and Enter provider price:</strong> only create pending prices. No charge changes.
+          </p>
+          <p className={HELP_TEXT}>
+            <strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.
+          </p>
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Edit (the pencil on a row):</strong> changes the stored price of that model directly.
+          </p>
+          <p className={HELP_TEXT}>
+            Sync and Edit change live prices directly, with no pending step and no review, and will be removed in a later update, when Apply arrives. Each server keeps its own copy of these prices for up to 1 hour, so a change (an edit or a Sync) is in effect on all servers within 1 hour. Changes don&apos;t alter provider billing.
+          </p>
+        </div>
+      </DrawerSection>
+    </>
+  );
+}
 
 export default function ModelPricingPage() {
   const [loading, setLoading] = useState(true);
@@ -121,6 +202,13 @@ export default function ModelPricingPage() {
   const [entryPrefill, setEntryPrefill] = useState<ManualEntryPrefill | null>(null);
   const [entryKey, setEntryKey] = useState(0);
   const [rereading, setRereading] = useState(false);
+
+  // UF-7: retired and superseded rows hidden by default; the help drawer; the
+  // provider check status reported by ProviderPriceCheck (undefined = not yet).
+  const [showRetired, setShowRetired] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
+  const [checkStatus, setCheckStatus] = useState<CheckStatusState>(undefined);
 
   useEffect(() => {
     fetchData();
@@ -319,7 +407,10 @@ export default function ModelPricingPage() {
 
   // Slice 4: the rows of the one table, sorted as the admin chose. Every
   // displayed price comes from the comparison (SA N-1); none is formatted here.
-  const tableRows = comparison ? sortPriceTableRows(buildPriceTableRows(pricingModels, comparison), sortMode) : [];
+  const allRows = comparison ? sortPriceTableRows(buildPriceTableRows(pricingModels, comparison), sortMode) : [];
+  const tableRows = showRetired ? allRows : allRows.filter((row) => !HIDDEN_UNLESS_RETIRED_SHOWN.has(row.kind));
+  const hiddenCount = allRows.length - tableRows.length;
+  const kpis = comparison ? priceKpis(comparison, checkStatus) : null;
 
   if (loading) {
     return (
@@ -342,7 +433,8 @@ export default function ModelPricingPage() {
               <p className="text-sm text-slate-400">AI cost per token for each model. Every Business OS credit charge is computed from these prices.</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            {/* Refresh stays the first header button (E-3 reaches it by position). */}
             <button
               onClick={() => fetchData()}
               disabled={loading}
@@ -351,9 +443,30 @@ export default function ModelPricingPage() {
             >
               <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
             </button>
+            <button
+              ref={helpButtonRef}
+              type="button"
+              onClick={() => setHelpOpen(true)}
+              aria-label={HELP_WORDS.button}
+              aria-haspopup="dialog"
+              data-testid="pricing-help-button"
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+            >
+              <HelpCircle className="w-5 h-5 text-slate-400" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </header>
+
+      {/* UF-7: the KPI strip, from the reads the page already made. Not drawn when the table read failed (C2-4). */}
+      {kpis && (
+        <KpiStrip>
+          <KpiTile testId="kpi-undercharging" label={KPI_WORDS.undercharging} {...kpis.undercharging} />
+          <KpiTile testId="kpi-pending" label={KPI_WORDS.pending} {...kpis.pending} />
+          <KpiTile testId="kpi-last-check" label={KPI_WORDS.lastCheck} {...kpis.lastCheck} />
+          <KpiTile testId="kpi-models-in-use" label={KPI_WORDS.modelsInUse} {...kpis.modelsInUse} />
+        </KpiStrip>
+      )}
 
       {/* Success/Error Messages */}
       {success && (
@@ -434,38 +547,12 @@ export default function ModelPricingPage() {
 
         {pricingExpanded && (
           <div id="model-pricing-body" className="p-6 space-y-4">
-            {/* Info Box */}
-            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <DollarSign className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-                <div className="space-y-3">
-                  <p className="text-green-400 font-medium text-sm">About Model Pricing</p>
-                  <p className="text-slate-300 text-sm leading-relaxed">
-                    This table defines the cost per token for each AI model's input (prompts) and output (responses). Business OS credit charges for the models listed here are computed from these prices, so a wrong price here is a wrong charge for every customer who uses that model.
-                  </p>
-                  <div className="space-y-2 text-xs leading-relaxed">
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Input /1M:</strong> Price per 1M input tokens (prompts, context, memory), in USD, the figure providers publish. The table stores the price per token, and the Edit field still takes the per-token value. Example: $0.15 per 1M tokens = $0.00000015 per token.
-                    </p>
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Output /1M:</strong> Price per 1M output tokens (AI responses, generated content), in USD. Usually higher than input. Example: $0.60 per 1M tokens = $0.0000006 per token.
-                    </p>
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.
-                    </p>
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Manual Edits:</strong> Override prices for custom contracts, volume discounts, or testing. Each server keeps its own copy of these prices for up to 1 hour, so a change (an edit or a Sync) is in effect on all servers within 1 hour. Changes don't alter provider billing.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
           {/* Slice 5: "Check provider prices"; a stored check re-reads the table (silent, as after a manual entry). */}
           <ProviderPriceCheck
             onFinished={() => {
               void fetchData(true);
             }}
+            onStatus={setCheckStatus}
           />
 
           {/* Slice 4: the bar, note, notice and form sit above the table, so a failed read never hides them. */}
@@ -473,7 +560,17 @@ export default function ModelPricingPage() {
             <button type="button" onClick={() => openEntry(null)} className={ADMIN_BUTTON}>
               {ENTER_PROVIDER_PRICE}
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                aria-pressed={showRetired}
+                onClick={() => setShowRetired((shown) => !shown)}
+                data-testid="show-retired-toggle"
+                className={`${ADMIN_BUTTON} inline-flex items-center gap-1 ${showRetired ? 'ring-1 ring-purple-500' : ''}`}
+              >
+                {showRetired && <Check className="w-4 h-4" aria-hidden="true" />}
+                {RETIRED_FILTER_WORDS.toggle}
+              </button>
               <label htmlFor="price-sort" className="text-xs text-slate-300">
                 {SORT_LABEL}
               </label>
@@ -494,6 +591,11 @@ export default function ModelPricingPage() {
           <p data-testid="price-review-note" className="text-xs text-slate-400">
             {PRICE_REVIEW_NOTE}
           </p>
+          {hiddenCount > 0 && (
+            <p data-testid="retired-hidden-line" className="text-xs text-slate-400">
+              {`${formatCount(hiddenCount)} ${hiddenCount === 1 ? RETIRED_FILTER_WORDS.hiddenOne : RETIRED_FILTER_WORDS.hidden}`}
+            </p>
+          )}
           {comparison && comparison.rows.length > 0 && comparison.rows.every((row) => row.pending.length === 0) && (
             <AdminNotice testId="no-pending-notice">{NO_PENDING_NOTICE}</AdminNotice>
           )}
@@ -700,6 +802,17 @@ export default function ModelPricingPage() {
         </div>
         )}
       </motion.div>
+
+      {/* UF-7: the help that used to be an always-open info box. */}
+      <AdminDrawer
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onReturnFocus={() => helpButtonRef.current?.focus()}
+        title={HELP_WORDS.title}
+        testId="pricing-help-drawer"
+      >
+        <PricingHelp />
+      </AdminDrawer>
     </div>
   );
 }
