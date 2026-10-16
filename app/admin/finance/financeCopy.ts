@@ -9,24 +9,13 @@
  * headline under each carries the finance-specific reason.
  */
 
-import type { FinanceGroupKey, FinanceTriggerKey, FinanceWindowChoice } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceGroupKey, FinanceTriggerKey } from '@/lib/business-os/finance/financeTypes';
 
 // Finance F-2 (user decision 2026-10-15): the h1 equals the sidebar label (Admin Layout Standard §5.3).
 export const PAGE_TITLE = 'Finance';
 export const PAGE_PURPOSE =
   'How is Business OS doing this month: accounts, AI cost, credits, and what clients paid the businesses through the platform.';
 
-export const PRESET_LABELS: Record<FinanceWindowChoice, string> = {
-  today: 'Today',
-  '7d': '7d',
-  '30d': '30d',
-  this_month: 'This month',
-  custom: 'Custom',
-};
-
-export const FILTER_FROM = 'From (UTC)';
-export const FILTER_TO = 'To (UTC)';
-export const FILTER_APPLY = 'Apply';
 /**
  * Money M-1 (SA-W70 b): the picker's standing note, now a page-owned help line
  * under the bar, wired to the shared picker through `describedBy`. The sentence
@@ -34,7 +23,6 @@ export const FILTER_APPLY = 'Apply';
  */
 export const FILTER_BUSINESS_HELP =
   'Only accounts with a business profile can be found by name. Paste a full account id to filter by any other account.';
-export const REFRESH = 'Refresh';
 // Finance F-2 (SA F2-R2): the standard's word (§5.10), so the page error and every section's own button say the same.
 export const RETRY = 'Try again';
 /** Finance F-2: the Accounts tab's waiting state reads "Reading the accounts…" (shared `AdminLoading`). */

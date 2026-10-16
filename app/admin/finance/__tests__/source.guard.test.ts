@@ -3,8 +3,13 @@
  *
  * The finance page's source guards (slice 1a, T14): no repository import (the
  * page reads only through its admin route), no `console.`, `useSearchParams`
- * inside a Suspense boundary, `router.replace` not `push`, and no `route.ts`
- * anywhere under `app/admin` (the page is gated by the admin layout).
+ * inside a Suspense boundary, and no `route.ts` anywhere under `app/admin` (the
+ * page is gated by the admin layout).
+ *
+ * Finance F-4: the URL is the shared `useAdminFilters` hook's (S-6: only the
+ * hook writes history), so no page file calls the router or `history.*`; the
+ * local chip renderer is gone (the shared bar renders the chip); and the URL
+ * notice is gone (BD-30), so the shared states import no longer needs it.
  *
  * Money M-1 (finance health §11D.7) adds, each with a planted negative control:
  * the local chip renderer stays local and unexported (SA-WR-39); the new M-1
@@ -67,11 +72,23 @@ describe('app/admin/finance source guards', () => {
     expect(page).toMatch(/<Suspense[\s\S]*<FinanceView \/>[\s\S]*<\/Suspense>/);
   });
 
-  it('writes the URL with router.replace and scroll false, never push', () => {
-    const view = read(path.join(DIR, 'components', 'FinanceView.tsx'));
-    expect(view).toMatch(/router\.replace\([^)]*\{ scroll: false \}\)/);
-    expect(view).not.toMatch(/router\.push\(/);
-    expect(view).toMatch(/useSearchParams\(\)/);
+  // Finance F-4 (S-6, U-2): the hook writes the address bar; no page file does.
+  const URL_WRITER = /\brouter\.(?:replace|push)\(|\bhistory\.(?:replaceState|pushState)\(|\buseRouter\(/;
+  it('the URL-writer rule bites (planted)', () => {
+    expect(URL_WRITER.test("router.replace(`/admin/finance?${qs}`, { scroll: false });")).toBe(true);
+    expect(URL_WRITER.test('router.push(href);')).toBe(true);
+    expect(URL_WRITER.test("window.history.replaceState(null, '', url);")).toBe(true);
+    expect(URL_WRITER.test("window.history.pushState(null, '', url);")).toBe(true);
+    expect(URL_WRITER.test('const router = useRouter();')).toBe(true);
+    expect(URL_WRITER.test('setFilters({ window: next });')).toBe(false);
+  });
+
+  it('F-4: FinanceView takes its state from useAdminFilters(FINANCE_FILTER_SPEC); no page file writes the URL itself', () => {
+    const view = codeOf(path.join(DIR, 'components', 'FinanceView.tsx'));
+    expect(view).toMatch(/useAdminFilters\(FINANCE_FILTER_SPEC\)/);
+    expect(view).toMatch(/import \{ useAdminFilters \} from '@\/app\/admin\/components\/layout\/useAdminFilters'/);
+    expect(view).not.toMatch(/useSearchParams\(/);
+    for (const file of files) expect({ file: rel(file), writesUrl: URL_WRITER.test(codeOf(file)) }).toEqual({ file: rel(file), writesUrl: false });
   });
 
   it('has no route.ts under app/admin (the layout gates the page; data comes from app/api/admin)', () => {
@@ -107,25 +124,31 @@ describe('Money M-1 source guards', () => {
     expect(files.map(rel)).toEqual(expect.arrayContaining(M1_FILES.map(rel)));
   });
 
-  // SA-WR-39: the local chip renderer.
+  // SA-WR-39, closed by Finance F-4: the local chip renderer is gone; the shared bar renders the chip.
   const CHIP_DEFINED = /function\s+FinanceActiveChip\b|(?:const|let|var)\s+FinanceActiveChip\b/;
   const CHIP_EXPORTED = /export\s+(?:default\s+)?(?:function|const|let|var)\s+FinanceActiveChip\b|export\s*\{[^}]*\bFinanceActiveChip\b/;
+  const SHARED_BAR = /import\s*\{[^}]*\bAdminFilterBar\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminFilterBar'/;
+  const SHARED_CHIP = /import\s*\{[^}]*\bbusinessFilterChip\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminBusinessPicker'/;
 
   it('SA-WR-39: the chip rules bite (planted)', () => {
     expect(CHIP_EXPORTED.test('export function FinanceActiveChip({ chip }) {}')).toBe(true);
     expect(CHIP_EXPORTED.test('export { FinanceActiveChip };')).toBe(true);
     expect(CHIP_EXPORTED.test('function FinanceActiveChip({ chip }) {}')).toBe(false);
     expect(CHIP_DEFINED.test('const FinanceActiveChip = () => null;')).toBe(true);
+    expect(CHIP_DEFINED.test('function FinanceActiveChip({ chip }) {}')).toBe(true);
+    expect("import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';").toMatch(SHARED_BAR);
+    expect("import { AdminFilterBar } from '../../components/layout/AdminFilterBar';").not.toMatch(SHARED_BAR);
+    expect("import { AdminBusinessPicker, businessFilterChip } from '@/app/admin/components/layout/AdminBusinessPicker';").toMatch(SHARED_CHIP);
   });
 
-  it('SA-WR-39: FinanceActiveChip is defined only in FinanceFilterBar.tsx, never exported, renders the shared chip object unchanged, and names M-6', () => {
-    const definers = files.filter((file) => CHIP_DEFINED.test(codeOf(file))).map(rel);
-    expect(definers).toEqual(['app/admin/finance/components/FinanceFilterBar.tsx']);
+  it('F-4 (AC-177): FinanceActiveChip is defined nowhere; FinanceFilterBar.tsx uses the shared AdminFilterBar and businessFilterChip by alias', () => {
+    expect(files.filter((file) => CHIP_DEFINED.test(codeOf(file))).map(rel)).toEqual([]);
     for (const file of files) expect({ file: rel(file), exported: CHIP_EXPORTED.test(codeOf(file)) }).toEqual({ file: rel(file), exported: false });
     const bar = codeOf(BAR);
-    for (const field of ['chip.label', 'chip.title', 'chip.testId', 'chip.removeLabel', 'chip.onRemove']) expect(bar).toContain(field);
+    expect(bar).toMatch(SHARED_BAR);
+    expect(bar).toMatch(SHARED_CHIP);
+    expect(bar).toMatch(/<AdminFilterBar\b/);
     expect(bar).toMatch(/businessFilterChip\(/);
-    expect(read(BAR)).toMatch(/M-6/);
   });
 
   // SA-W69: the new M-1 files are held to text-slate-400.
@@ -141,18 +164,20 @@ describe('Money M-1 source guards', () => {
   });
 
   // AC-109: the picked name never reaches the URL or a request.
-  /** The argument text of every call to one of the three sinks. */
+  /** The argument text of every call to one of the sinks (Finance F-4: the hook's `setFilters(` too). */
   const sinkCalls = (code: string) =>
-    [...code.matchAll(/(?:serialiseFinanceUrl|router\.replace|fetch)\(([^;]*)/g)].map((m) => m[1]);
+    [...code.matchAll(/(?:serialiseFinanceUrl|router\.replace|fetch|setFilters)\(([^;]*)/g)].map((m) => m[1]);
   it('the name-sink rule bites (planted)', () => {
     expect(sinkCalls('router.replace(`/x?${serialiseFinanceUrl({ ...q, name: pickedName })}`, { scroll: false });').some((a) => /pickedName/.test(a))).toBe(true);
     expect(sinkCalls('setPickedName({ accountId, name }); setQuery({ ...query, accountId });').some((a) => /pickedName/.test(a))).toBe(false);
+    expect(sinkCalls('setFilters({ account, name: pickedName });').some((a) => /pickedName/.test(a))).toBe(true);
   });
 
-  it('AC-109: in FinanceView.tsx, pickedName never appears in a serialiseFinanceUrl(, router.replace( or fetch( call; the hook takes the query string only', () => {
+  it('AC-109: in FinanceView.tsx, pickedName never appears in a serialiseFinanceUrl(, router.replace(, fetch( or setFilters( call; the hook takes the query string only', () => {
     const view = codeOf(VIEW);
     expect(view).toMatch(/pickedName/);
     expect(sinkCalls(view).length).toBeGreaterThan(0);
+    expect(sinkCalls(view).filter((args) => args.length > 0).length).toBeGreaterThanOrEqual(5);
     for (const args of sinkCalls(view)) expect(args).not.toMatch(/pickedName|accountName|chipName/);
     // Finance F-2: the hook takes the query string and nothing else (fallbackError removed).
     expect(view).toMatch(/useFinanceData\(queryString\)/);
@@ -314,7 +339,8 @@ describe('Finance F-2 source guards (header and states)', () => {
   const HOOK = path.join(DIR, 'useFinanceData.ts');
   const H1 = /<h1\b/;
   const SHARED_HEADER = /import\s*\{\s*AdminPageHeader\s*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminPageHeader'/;
-  const SHARED_STATES = /import\s*\{[^}]*\bAdminError\b[^}]*\bAdminLoading\b[^}]*\bAdminNotice\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminStates'/;
+  // Finance F-4 (SA-W1): the URL notice is gone, so AdminNotice is no longer required here.
+  const SHARED_STATES = /import\s*\{[^}]*\bAdminError\b[^}]*\bAdminLoading\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/AdminStates'/;
   const HAND_NOTICE = /border-amber-500\/30/;
 
   it('the detectors bite (planted samples)', () => {
@@ -322,6 +348,8 @@ describe('Finance F-2 source guards (header and states)', () => {
     expect("import { AdminPageHeader } from '../../components/layout/AdminPageHeader';").not.toMatch(SHARED_HEADER);
     expect("import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';").toMatch(SHARED_HEADER);
     expect("import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';").toMatch(SHARED_STATES);
+    expect("import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';").toMatch(SHARED_STATES);
+    expect("import { AdminError, AdminLoading } from '../../components/layout/AdminStates';").not.toMatch(SHARED_STATES);
     expect('<p className="rounded border border-amber-500/30 bg-amber-500/10">').toMatch(HAND_NOTICE);
   });
 

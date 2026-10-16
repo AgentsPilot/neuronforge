@@ -11,7 +11,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import type {
   FinanceAccountEconomicsSection,
@@ -34,6 +34,19 @@ jest.mock('@/app/admin/components/layout/AdminBusinessPicker', () => ({
     </button>
   ),
 }));
+// Finance F-4: leaving the tab (or picking a business) now changes the view at
+// once, so the Overview renders with this file's tab-only payload until the next
+// read answers. The Overview sections are not this file's subject: stand-ins.
+jest.mock('../components/FinanceKpiStrip', () => ({ FinanceKpiStrip: () => <div data-testid="kpi-strip" /> }));
+jest.mock('../components/RevenuePanel', () => ({ RevenuePanel: () => null }));
+jest.mock('../components/TakingsSection', () => ({ TakingsSection: () => null }));
+jest.mock('../components/AccountsByPlanSection', () => ({
+  ...jest.requireActual('../components/AccountsByPlanSection'),
+  AccountsByPlanSection: () => null,
+}));
+jest.mock('../components/AiCostSection', () => ({ AiCostSection: () => null }));
+jest.mock('../components/CreditsSection', () => ({ CreditsSection: () => null }));
+jest.mock('../components/PaymentProblemsSection', () => ({ PaymentProblemsSection: () => null }));
 
 import { FinanceView } from '../components/FinanceView';
 import { AccountsTab } from '../components/AccountsTab';
@@ -132,9 +145,19 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
   };
 }
 
-/** Only what the Accounts tab and the shell read: the Overview sections are not rendered on this tab. */
+/**
+ * Only what the Accounts tab and the shell read: the Overview sections are not rendered on this tab.
+ * Finance F-4: plus the one field the view itself reads for the (stubbed) Overview, which now
+ * renders at once when the tab is left, before the next read answers.
+ */
 const tabPayload = (s: FinanceAccountEconomicsSection = section()) =>
-  ({ generatedAt: '2026-10-14T10:00:00.000Z', window: WINDOW, accountId: null, accountEconomics: s }) as unknown as FinancePayload;
+  ({
+    generatedAt: '2026-10-14T10:00:00.000Z',
+    window: WINDOW,
+    accountId: null,
+    accountEconomics: s,
+    credits: { farOverAllowancePercent: 150 },
+  }) as unknown as FinancePayload;
 
 function serve(body: unknown): jest.Mock {
   const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => body }));
@@ -151,7 +174,12 @@ const renderTab = (s = section(), onChange = jest.fn()) => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockSearch = '';
+  // Finance F-4: the shared hook writes the address bar with history.replaceState.
+  window.history.replaceState(null, '', '/admin/finance');
 });
+
+/** Finance F-4: what the hook wrote to the address bar. */
+const address = () => `${window.location.pathname}${window.location.search}`;
 
 describe('AC-130: the tabs, through the real view', () => {
   it('tab=accounts in the URL (a reload) → Accounts selected, its panel shown, the request carries tab=accounts', async () => {
@@ -184,21 +212,27 @@ describe('AC-130: the tabs, through the real view', () => {
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'ArrowLeft' });
     expect(accounts).toHaveFocus();
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(address()).toBe('/admin/finance?tab=accounts');
     // Enter / Space on a focused tab is the button's own click.
     fireEvent.click(overview);
-    expect(mockReplace).toHaveBeenCalledWith('/admin/finance?preset=this_month', { scroll: false });
+    expect(address()).toBe('/admin/finance');
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
   it('selecting Accounts writes tab=accounts with replace; leaving it resets sort, group and show', async () => {
     mockSearch = 'tab=accounts&sort=margin&group=trial&show=negative';
-    serve({ success: true, data: tabPayload() });
+    window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
+    const fetchMock = serve({ success: true, data: tabPayload() });
     render(<FinanceView />);
     await screen.findByTestId('econ-table');
     fireEvent.click(screen.getByRole('tab', { name: TAB_OVERVIEW }));
-    expect(mockReplace).toHaveBeenLastCalledWith('/admin/finance?preset=this_month', { scroll: false });
+    expect(address()).toBe('/admin/finance');
+    // Finance F-4: the hook's state really changes, so coming back shows the reset keys.
     fireEvent.click(screen.getByRole('tab', { name: TAB_ACCOUNTS }));
-    expect(mockReplace).toHaveBeenLastCalledWith('/admin/finance?preset=this_month&tab=accounts&sort=margin&group=trial&show=negative', { scroll: false });
+    expect(address()).toBe('/admin/finance?tab=accounts');
+    expect(String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0])).toBe('/api/admin/business-os/finance?preset=this_month&tab=accounts');
+    expect(mockReplace).not.toHaveBeenCalled();
+    await screen.findByTestId('econ-table');
   });
 
   it('picking a business from the Accounts tab drops tab, sort, group and show (M3-FR-1)', async () => {
@@ -206,11 +240,14 @@ describe('AC-130: the tabs, through the real view', () => {
     serve({ success: true, data: tabPayload() });
     render(<FinanceView />);
     await screen.findByTestId('econ-table');
+    const fetchMock = serve({ success: true, data: tabPayload() });
     fireEvent.click(screen.getByTestId('picker-pick'));
-    expect(mockReplace).toHaveBeenLastCalledWith(`/admin/finance?preset=this_month&accountId=${OWNER}`, { scroll: false });
+    expect(address()).toBe(`/admin/finance?account=${OWNER}`);
+    expect(String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0])).toBe(`/api/admin/business-os/finance?preset=this_month&accountId=${OWNER}`);
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it('a malformed tab key → the default view with the notice (and no tab key sent)', async () => {
+  it('a malformed tab key → the Overview, silently (Finance F-4, AC-175: no notice), and no tab key sent', async () => {
     mockSearch = 'tab=overview';
     // The request never answers: the default (Overview) view would need a full payload, and this
     // case is about the URL only. Answering with the tab-only payload raced the assertion.
@@ -218,8 +255,10 @@ describe('AC-130: the tabs, through the real view', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
     (global as any).fetch = fetchMock;
     render(<FinanceView />);
-    expect(await screen.findByTestId('finance-url-notice')).toBeInTheDocument();
-    expect(String(fetchMock.mock.calls[0][0])).not.toContain('tab=');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('finance-url-notice')).toBeNull();
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/admin/business-os/finance?preset=this_month');
+    expect(address()).toBe('/admin/finance');
   });
 });
 

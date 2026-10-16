@@ -12,7 +12,8 @@
  * `aria-controls`, and the panel names its tab with `aria-labelledby`.
  *
  * The selected tab is the URL's (`tab=accounts`; absent = Overview): selecting
- * one calls `onSelect`, which the view writes with `router.replace`.
+ * one calls `onSelect`, which the view writes through its URL filter state
+ * (`useAdminFilters`, Finance F-4).
  */
 
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';

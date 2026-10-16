@@ -125,23 +125,34 @@ describe('only the id travels (AC-113)', () => {
 
 // Slice 6a (AC-144, M3-FR-7): a separate import, so the lines above stay unedited.
 import { accountViewHref } from '../financeLinks';
-import { DEFAULT_FINANCE_QUERY, parseFinanceUrl } from '../financeUrl';
+// Finance F-4: the link keeps the old keys (SA-W9) and is read back through this page's own spec.
+import type { AdminFilterField } from '@/app/admin/components/layout/useAdminFilters';
+import { FINANCE_FILTER_SPEC } from '../financeFilters';
+
+/** The hook's U-9 getter: the canonical key's non-empty value, else the first non-empty alias. */
+const aliasGetter = (field: AdminFilterField<unknown>, params: URLSearchParams) => (key: string) => {
+  const canonical = params.get(key);
+  if (canonical) return canonical;
+  for (const [legacy, target] of Object.entries(field.aliases ?? {})) {
+    if (target === key && params.get(legacy)) return params.get(legacy);
+  }
+  return null;
+};
 
 describe('slice 6a: accountViewHref, an Accounts row → the one-account view on the same window (AC-144)', () => {
-  it.each(PRESETS)('%s: parsed back through parseFinanceUrl gives exactly the window and the id, and no tab key', (preset) => {
+  it.each(PRESETS)('%s: parsed back through FINANCE_FILTER_SPEC (aliases) gives exactly the window and the id, and no tab key', (preset) => {
     const window = windowFor(preset);
     const href = accountViewHref(A, window);
     expect(href.startsWith('/admin/finance?')).toBe(true);
     const params = paramsOf(href);
-    const parsed = parseFinanceUrl(params, NOW);
-    expect(parsed.notice).toBeNull();
-    expect(parsed.query).toEqual({
-      ...DEFAULT_FINANCE_QUERY,
-      preset,
-      from: preset === 'custom' ? window.from : null,
-      to: preset === 'custom' ? window.to : null,
-      accountId: A,
-    });
+    const S = FINANCE_FILTER_SPEC;
+    expect(S.window.parse(aliasGetter(S.window as AdminFilterField<unknown>, params))).toEqual(
+      preset === 'custom' ? { kind: 'custom', from: window.from, to: window.to } : { kind: 'preset', preset }
+    );
+    expect(S.account.parse(aliasGetter(S.account as AdminFilterField<unknown>, params))).toBe(A);
+    for (const key of ['tab', 'sort', 'group', 'show'] as const) {
+      expect({ key, parsed: S[key].parse(aliasGetter(S[key] as AdminFilterField<unknown>, params)) }).toEqual({ key, parsed: undefined });
+    }
     expect([...params.keys()]).toEqual(preset === 'custom' ? ['preset', 'from', 'to', 'accountId'] : ['preset', 'accountId']);
     for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
   });
