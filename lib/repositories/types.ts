@@ -363,6 +363,13 @@ export interface AiModelPricing {
    */
   input_cost_per_token: number | string;
   output_cost_per_token: number | string;
+  /**
+   * Per token, for input served from the provider's prompt cache. NULL means
+   * "not set": the charge then uses the provider's derived rule (OpenAI: half
+   * the input rate). A 0 is treated as not set too (AI model price review
+   * slice 7, O-5). Optional because some readers select a column subset.
+   */
+  cached_input_cost_per_token?: number | string | null;
   effective_date: string;
   retired_date: string | null;
   created_at: string;
@@ -380,6 +387,37 @@ export interface AiModelPricingExactRow {
   input_cost_per_token: string;
   output_cost_per_token: string;
   cached_input_cost_per_token: string | null;
+  effective_date: string;
+  created_at: string;
+}
+
+/**
+ * One active row of `ai_model_image_pricing` (AI model price review slice 7):
+ * the price of ONE generated image for a provider, model, size and quality.
+ * `cost_per_image` is `numeric`; PostgREST returns it as a number or a string
+ * depending on the path, so the union is the honest type (as on
+ * `AiModelPricing`). Read by the billing reader through
+ * `AiModelImagePricingRepository.listActive()`.
+ */
+export interface AiModelImagePricing {
+  id: string;
+  provider: string;
+  model_name: string;
+  size: string;
+  quality: string;
+  cost_per_image: number | string;
+  effective_date: string;
+  created_at: string;
+}
+
+/** The same row with `cost_per_image` cast to TEXT, so the exact decimal survives (admin comparison only). */
+export interface AiModelImagePricingExactRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  size: string;
+  quality: string;
+  cost_per_image: string;
   effective_date: string;
   created_at: string;
 }

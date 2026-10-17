@@ -65,6 +65,27 @@ jest.mock('@/lib/business-os/llm/modelSettings', () => {
   };
 });
 
+/*
+ * Slice 7: images are priced from the `ai_model_image_pricing` table first, then
+ * the in-code fallback. The table is empty by default, as in production; a test
+ * that needs a stored price puts it here (SA RC7-6: the prices that used to sit
+ * in `pricesUsd` move here, with the same expected outcome).
+ */
+const mockImageRows: { value: Array<Record<string, unknown>> } = { value: [] };
+jest.mock('@/lib/repositories/AiModelImagePricingRepository', () => ({
+  aiModelImagePricingRepository: { listActive: async () => ({ data: mockImageRows.value, error: null }) },
+}));
+
+/** One stored image price row for the table mock. */
+function imageRow(model: string, size: string, quality: string, cost: number): Record<string, unknown> {
+  return { id: `${model}-${size}-${quality}`, provider: 'openai', model_name: model, size, quality, cost_per_image: cost, effective_date: '2026-10-16', created_at: '2026-10-16T00:00:00Z' };
+}
+
+/** The loaded table form `resolveImagePrice` and `imagePriceResolver` take. */
+function priceTable(entries: Record<string, number> = {}): Map<string, number> {
+  return new Map(Object.entries(entries).map(([key, usd]) => [`openai:${key}`, usd]));
+}
+
 const mockGetImageConfig = jest.fn();
 jest.mock('@/lib/repositories/SystemConfigRepository', () => {
   const actual = jest.requireActual('@/lib/repositories/SystemConfigRepository');
@@ -88,6 +109,7 @@ import {
   type ImageGenerationConfig,
 } from '@/lib/repositories/SystemConfigRepository';
 import { AIAnalyticsService, type AICallData } from '@/lib/analytics/aiAnalytics';
+import { __resetImagePricesForTests } from '@/lib/ai/imagePricing';
 import type { BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 
 const OWNER: BosLlmOwner = {
@@ -115,6 +137,8 @@ const ORIGINAL_KEY = process.env.OPENAI_API_KEY;
 beforeEach(() => {
   logged.length = 0;
   resolvedImageModel.value = null;
+  mockImageRows.value = [];
+  __resetImagePricesForTests();
   mockGenerate.mockReset();
   mockUpload.mockReset();
   trackAICall.mockReset();
@@ -301,17 +325,26 @@ describe('a failed ledger write never fails the image (AC-11, FR-15)', () => {
 });
 
 describe('price resolution (AC-8, FR-13)', () => {
-  it('uses the configured price first', async () => {
+  // Slice 7 (RC7-6): the stored price now comes from the image price table.
+  it('uses the stored price first', async () => {
     const config = defaults();
-    config.pricesUsd = { [`${config.model}:1536x1024:high`]: 0.3 };
+    mockImageRows.value = [imageRow(config.model, '1536x1024', 'high', 0.3)];
     mockGetImageConfig.mockResolvedValue(config);
     await generateImage(OWNER, PROMPT, 'wide', 'hero');
     expect(rows()[0].cost_usd).toBe(0.3);
   });
 
+  it('ignores a price in the old image price setting (slice 7, O-1)', async () => {
+    const config = defaults();
+    config.pricesUsd = { [`${config.model}:1536x1024:high`]: 0.3 };
+    mockGetImageConfig.mockResolvedValue(config);
+    await generateImage(OWNER, PROMPT, 'wide', 'hero');
+    expect(rows()[0].cost_usd).toBe(IMAGE_FALLBACK_PRICING[`${config.model}:1536x1024:high`]);
+  });
+
   it('then the documented fallback', () => {
     const { model } = IMAGE_GENERATION_CONFIG_DEFAULTS;
-    expect(resolveImagePrice({}, model, '1024x1024', 'medium')).toEqual({
+    expect(resolveImagePrice(priceTable(), model, '1024x1024', 'medium')).toEqual({
       usdPerImage: IMAGE_FALLBACK_PRICING[`${model}:1024x1024:medium`],
       source: 'fallback',
     });
@@ -332,7 +365,7 @@ describe('price resolution (AC-8, FR-13)', () => {
   });
 
   it('keys the price on model, size and quality', () => {
-    const prices = { 'm:1024x1024:low': 0.01, 'm:1024x1024:high': 0.2 };
+    const prices = priceTable({ 'm:1024x1024:low': 0.01, 'm:1024x1024:high': 0.2 });
     expect(resolveImagePrice(prices, 'm', '1024x1024', 'low').usdPerImage).toBe(0.01);
     expect(resolveImagePrice(prices, 'm', '1024x1024', 'high').usdPerImage).toBe(0.2);
   });
@@ -394,14 +427,24 @@ describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
     expect(warnings()).toEqual([]);
   });
 
-  it('uses a configured price for the reported quality before the fallback', async () => {
+  // Slice 7 (RC7-6): the stored price now comes from the image price table.
+  it('uses a stored price for the reported quality before the fallback', async () => {
+    mockImageRows.value = [imageRow(MODEL, '1024x1024', 'medium', 0.05)];
+    mockGetImageConfig.mockResolvedValue(defaults());
+    respondWith('medium');
+
+    await generateImage(OWNER, PROMPT, 'square', 'hero');
+    expect(rows()[0].cost_usd).toBe(0.05);
+  });
+
+  it('ignores a setting price for the reported quality (slice 7, O-1)', async () => {
     const config = defaults();
     config.pricesUsd = { [`${MODEL}:1024x1024:medium`]: 0.05 };
     mockGetImageConfig.mockResolvedValue(config);
     respondWith('medium');
 
     await generateImage(OWNER, PROMPT, 'square', 'hero');
-    expect(rows()[0].cost_usd).toBe(0.05);
+    expect(rows()[0].cost_usd).toBe(IMAGE_FALLBACK_PRICING[`${MODEL}:1024x1024:medium`]);
   });
 
   it('under the default (high), a report of high is priced at high with no warning', async () => {
@@ -477,18 +520,19 @@ describe('pricing by the reported quality (CR-1 option C, CR-5)', () => {
   });
 
   it('the resolver never throws: a pricing error records $0 and keeps the image a success', () => {
-    const throwingPrices = new Proxy({} as Record<string, number>, {
+    // Slice 7: the resolver takes the loaded table (a map); any read of it throws here.
+    const throwingPrices = new Proxy({}, {
       get: () => {
         throw new Error('bad price table');
       },
-    });
+    }) as unknown as ReadonlyMap<string, number>;
     const resolver = imagePriceResolver(throwingPrices, MODEL, '1024x1024', 'auto');
     expect(resolver.priceFor('medium')).toBe(0);
     expect(logged.some((l) => l.level === 'error' && String(l.args[1]).includes('Could not price'))).toBe(true);
   });
 
   it('last() reports what was priced and on what basis', () => {
-    const resolver = imagePriceResolver({}, MODEL, '1024x1024', 'auto');
+    const resolver = imagePriceResolver(priceTable(), MODEL, '1024x1024', 'auto');
     expect(resolver.last()).toBeNull();
     resolver.priceFor('low');
     expect(resolver.last()).toEqual({

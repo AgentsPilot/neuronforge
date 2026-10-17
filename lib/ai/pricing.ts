@@ -7,7 +7,23 @@
 // product is computed from these numbers, so the cache is on the hot path of
 // every billed LLM call: `calculateCostSync` is called from inside the
 // providers' tracking.
+//
+// AI model price review slice 7 (R-1: the database is authoritative):
+//   - a row's `cached_input_cost_per_token`, when above 0, is the rate for
+//     input served from the provider's prompt cache
+//     (`calculateCostWithCachedSync`); otherwise the provider's derived rule
+//     applies, unchanged;
+//   - one load at a time (single-flight). `refreshPricingCache()` never joins a
+//     load already in flight: it starts a new read after it, and a generation
+//     counter stops an older read from overwriting a newer one (SA C-1);
+//   - `warmPricingCache()` lets the Business OS settings path load the rows
+//     before a call is priced (RC7-5). The sync lookup only reads the warm
+//     cache, so an instance nobody warmed charges from the in-code table;
+//   - `refreshPricingCache()` also marks the image prices stale
+//     (`lib/ai/imagePricing.ts`), without reading them (RC7-4).
 
+import { invalidateImagePrices } from '@/lib/ai/imagePricing';
+import { PRICING_CACHE_TTL_MS } from '@/lib/ai/pricingCacheTtl';
 import { createLogger } from '@/lib/logger';
 import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
 import type { AiModelPricing } from '@/lib/repositories/types';
@@ -17,6 +33,12 @@ const logger = createLogger({ module: 'AiPricing' });
 interface PricingInfo {
   input: number;
   output: number;
+  /**
+   * Per 1000 cached input tokens, from a database row whose
+   * `cached_input_cost_per_token` is above 0. Absent otherwise, and always
+   * absent for the in-code table: the provider's derived rule then applies.
+   */
+  cachedInput?: number;
 }
 
 /** The shape of one price row, per 1000 tokens. Exported as a type only (for `inCodeTokenPrices`). */
@@ -34,10 +56,32 @@ export type PriceStatus = 'priced' | 'unpriced';
 // In-memory cache to avoid repeated database queries
 let pricingCache: Map<string, PricingInfo> = new Map();
 let cacheLastUpdated: number = 0;
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour cache
+const CACHE_TTL_MS = PRICING_CACHE_TTL_MS; // 1 hour, shared with the image price cache
+
+/*
+ * Single-flight with an ordered refresh (slice 7, SA C-1).
+ *  - `inFlightLoad` is the read every lookup and the warm join.
+ *  - Every read gets a generation number when it STARTS. A read applies its rows
+ *    only if no newer read has applied already, so an older read finishing late
+ *    can never overwrite a newer one.
+ *  - `refreshPricingCache()` never joins: it starts a new read chained after the
+ *    one in flight (which may have begun before an apply committed), and that new
+ *    read becomes the one everybody joins.
+ */
+let startedGeneration = 0;
+let appliedGeneration = 0;
+let inFlightLoad: Promise<void> | null = null;
 
 // Fallback pricing if database is unavailable
 // Prices are per 1000 tokens (cost_per_million / 1000)
+//
+// NON-AUTHORITATIVE (AI model price review R-1): the active `ai_model_pricing`
+// rows are the prices; this table is the OUTAGE FALLBACK for a model with no row,
+// and what a cold instance charges until its rows load. It is also the source of
+// the CONSERVATIVE rates (`chargePricing.ts`, finding 3), so NEVER SHRINK IT:
+// removing or lowering an entry silently lowers those rates. An approved price
+// that differs from an entry here is updated by PR. It carries no cached-input
+// rate on purpose: without a row, OpenAI's derived rule applies.
 const FALLBACK_PRICING = {
   'openai': {
     // GPT-5.4 Series (March 2026 — Latest)
@@ -134,7 +178,7 @@ export function isInputOnlyPricedModel(provider: string, modelName: string): boo
  * makes every lookup fall back to FALLBACK_PRICING below), because a pricing
  * read must never break a call that is already running.
  */
-async function loadPricingFromDatabase(): Promise<void> {
+async function loadPricingFromDatabase(generation: number): Promise<void> {
   try {
     const { data, error } = await aiModelPricingRepository.listActive();
 
@@ -175,12 +219,26 @@ async function loadPricingFromDatabase(): Promise<void> {
       // Stored as cost per single token; the cache holds cost per 1000 tokens.
       // `numeric` columns come back as strings on some PostgREST paths and as
       // numbers on others, so both are normalised through Number().
-      next.set(key, {
+      const info: PricingInfo = {
         input: Number(row.input_cost_per_token) * 1000,
         output: Number(row.output_cost_per_token) * 1000,
-      });
+      };
+      // NULL, 0, NaN and negatives are "not set" (slice 7, O-5): a 0 would make
+      // cached tokens free, and the derived rule charges more, never less.
+      const cached = Number(row.cached_input_cost_per_token ?? NaN);
+      if (Number.isFinite(cached) && cached > 0) info.cachedInput = cached * 1000;
+      next.set(key, info);
     }
 
+    if (generation < appliedGeneration) {
+      // A newer read has already landed; these rows are older (SA C-1).
+      // BACKSTOP (SA F-4): reads are chained (`startLoad` waits for the read in
+      // flight), so they never overlap and this cannot fire today. Kept as
+      // defence in depth in case a future change starts reads in parallel.
+      logger.debug({ generation, appliedGeneration }, 'Discarded an older pricing read');
+      return;
+    }
+    appliedGeneration = generation;
     pricingCache = next;
     cacheLastUpdated = Date.now();
     logger.info(
@@ -192,14 +250,36 @@ async function loadPricingFromDatabase(): Promise<void> {
   }
 }
 
+/** Start a read after `after` settles (C-1), and make it the shared one. Never rejects. */
+function startLoad(after: Promise<void> | null): Promise<void> {
+  startedGeneration += 1;
+  const generation = startedGeneration;
+  const run = (after ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => loadPricingFromDatabase(generation));
+  const pending: Promise<void> = run.finally(() => {
+    if (inFlightLoad === pending) inFlightLoad = null;
+  });
+  inFlightLoad = pending;
+  return pending;
+}
+
+/** The read in flight, or a new one. What lookups and the warm use. */
+function sharedLoad(): Promise<void> {
+  return inFlightLoad ?? startLoad(null);
+}
+
+/** The rule every async reader uses: reload when older than the TTL, or when empty. */
+function isCacheStale(): boolean {
+  return Date.now() - cacheLastUpdated > CACHE_TTL_MS || pricingCache.size === 0;
+}
+
 /**
  * Get pricing from cache or database, with fallback to hardcoded values
  */
 async function getPricingInternal(provider: string, modelName: string): Promise<PricingInfo | null> {
-  // Check if cache needs refresh
-  const cacheAge = Date.now() - cacheLastUpdated;
-  if (cacheAge > CACHE_TTL_MS || pricingCache.size === 0) {
-    await loadPricingFromDatabase();
+  if (isCacheStale()) {
+    await sharedLoad();
   }
 
   // Try cache first
@@ -341,6 +421,78 @@ export function calculateCostSync(
   return inputCost + outputCost;
 }
 
+/** The token counts of one call whose input may have been partly served from the provider's cache. */
+export interface CachedInputUsage {
+  promptTokens: number;
+  /** Already clamped by the caller to `0..promptTokens`. */
+  cachedTokens: number;
+  completionTokens: number;
+  /**
+   * The provider's own rule for cached tokens, as a count of full-price input
+   * tokens (OpenAI: half of `cachedTokens`, rounded). Used only when the row
+   * has no cached-input rate.
+   */
+  derivedCachedTokens: number;
+}
+
+/**
+ * The cost of a call with cached input (slice 7, O-2), from ONE lookup, so the
+ * input, output and cached rates always come from the same row.
+ *
+ * - The row has a cached-input rate (database, above 0): uncached input at the
+ *   input rate, cached input at the cached rate, output at the output rate.
+ * - Otherwise: EXACTLY today's expression, `calculateCostSync` on
+ *   `prompt - cached + derived` input tokens. Same operations in the same
+ *   order, so the result is bit-identical, and a missing price warns once, from
+ *   `calculateCostSync`.
+ */
+export function calculateCostWithCachedSync(provider: string, modelName: string, usage: CachedInputUsage): number {
+  const pricing = lookupPricingSync(provider, modelName);
+  if (pricing && pricing.cachedInput !== undefined) {
+    const uncachedCost = ((usage.promptTokens - usage.cachedTokens) / 1000) * pricing.input;
+    const cachedCost = (usage.cachedTokens / 1000) * pricing.cachedInput;
+    const outputCost = (usage.completionTokens / 1000) * pricing.output;
+    return uncachedCost + cachedCost + outputCost;
+  }
+  return calculateCostSync(
+    provider,
+    modelName,
+    usage.promptTokens - usage.cachedTokens + usage.derivedCachedTokens,
+    usage.completionTokens
+  );
+}
+
+/**
+ * Load the price rows before a call is priced, waiting at most `maxWaitMs`
+ * (slice 7, RC7-5). Called from the Business OS settings refill, so a Business
+ * OS call is charged from the rows rather than the in-code table.
+ *
+ * - Fresh cache: returns at once, no read.
+ * - Otherwise: joins the read in flight, or starts one. On timeout it returns;
+ *   the read keeps going and lands for the next call.
+ * - Never throws.
+ */
+export async function warmPricingCache(maxWaitMs: number): Promise<void> {
+  if (!isCacheStale()) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        logger.warn({ maxWaitMs }, 'Pricing warm-up is slow; continuing without waiting for it');
+        resolve();
+      }, maxWaitMs);
+      // Never hold a serverless invocation open for the timer's sake.
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+    await Promise.race([sharedLoad(), timeout]);
+  } catch (error) {
+    // Unreachable: neither promise rejects. Kept so a warm can never fail a call.
+    logger.warn({ err: error }, 'Pricing warm-up failed; prices come from the in-code table until a read lands');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * Get pricing information for a specific model
  *
@@ -365,10 +517,16 @@ export async function hasPricing(provider: string, modelName: string): Promise<b
 }
 
 /**
- * Manually refresh pricing cache from database
+ * Refresh the price rows from the database, on THIS instance (finding 4).
+ *
+ * Never joins a read already in flight (SA C-1): that read may have begun
+ * before the change being refreshed for committed. A new read starts after it,
+ * and every later lookup joins the new one. The image prices are marked stale
+ * and reload on the next image request (RC7-4); nothing is read for them here.
  */
 export async function refreshPricingCache(): Promise<void> {
-  await loadPricingFromDatabase();
+  invalidateImagePrices();
+  await startLoad(inFlightLoad);
 }
 
 /** One priced model, in the same units the cache holds (cost per 1000 tokens). */
@@ -408,9 +566,8 @@ export async function listPricedModels(): Promise<{
 }> {
   // Same refresh rule as getPricingInternal, so the list and the lookup can
   // never be served from different snapshots within one request.
-  const cacheAge = Date.now() - cacheLastUpdated;
-  if (cacheAge > CACHE_TTL_MS || pricingCache.size === 0) {
-    await loadPricingFromDatabase();
+  if (isCacheStale()) {
+    await sharedLoad();
   }
 
   const models: PricedModel[] = [];

@@ -23,6 +23,8 @@ jest.mock('@/lib/ai/pricing', () => ({
   ...jest.requireActual('@/lib/ai/pricing'),
   listPricedModels: () => mockListPricedModels(),
   getPricing: (...a: unknown[]) => mockGetPricing(...a),
+  // Slice 7 (RC7-5): the settings refill warms the price cache; never a real read here.
+  warmPricingCache: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockGetPricing = jest.fn();

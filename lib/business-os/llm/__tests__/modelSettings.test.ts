@@ -39,6 +39,21 @@ jest.mock('@/lib/ai/pricing', () => ({
   calculateCostSync: () => 0,
   calculateCost: async () => 0,
   hasPricing: async () => true,
+  calculateCostWithCachedSync: () => 0,
+  // Slice 7 (RC7-5): the settings refill warms the price cache; never a real read here.
+  warmPricingCache: jest.fn().mockResolvedValue(undefined),
+}));
+
+// Slice 7: the image guardrail prices from the image price table (empty by
+// default, as in production) and then the in-code fallback (SA RC7-6).
+const mockImageRows: { value: Array<Record<string, unknown>>; reads: number } = { value: [], reads: 0 };
+jest.mock('@/lib/repositories/AiModelImagePricingRepository', () => ({
+  aiModelImagePricingRepository: {
+    listActive: async () => {
+      mockImageRows.reads += 1;
+      return { data: mockImageRows.value, error: null };
+    },
+  },
 }));
 
 const mockGetByKeys = jest.fn();
@@ -62,11 +77,14 @@ import {
   BOS_LLM_SETTINGS_CACHE_MS,
   BOS_LLM_SETTINGS_ERROR_RETRY_MS,
   BOS_LLM_SETTINGS_READ_TIMEOUT_MS,
+  BOS_PRICE_WARM_WAIT_MS,
   isBosLlmAreaEnabled,
   resolveBosLlmSettings,
 } from '../modelSettings';
-import { BOS_LLM_AREA_KEYS, bosLlmAreaKey, bosLlmSettingsCallNames } from '../modelSettingsPolicy';
+import { BOS_LLM_AREA_KEYS, bosLlmAreaKey, bosLlmSettingsCallNames, getBosLlmCallPolicy } from '../modelSettingsPolicy';
+import { warmPricingCache } from '@/lib/ai/pricing';
 import { IMAGE_GENERATION_CONFIG_DEFAULTS } from '@/lib/repositories/SystemConfigRepository';
+import { __resetImagePricesForTests } from '@/lib/ai/imagePricing';
 
 const PRICED = { input: 0.0025, output: 0.01 };
 
@@ -89,6 +107,9 @@ function issuesLogged(level: 'warn' | 'error' | 'info' | 'debug') {
 
 beforeEach(() => {
   logged.length = 0;
+  mockImageRows.value = [];
+  mockImageRows.reads = 0;
+  __resetImagePricesForTests();
   mockGetPricing.mockReset().mockResolvedValue(PRICED);
   mockGetByKeys.mockReset().mockResolvedValue({ data: [], error: null });
   mockGetByCategory.mockReset();
@@ -278,7 +299,24 @@ describe('guardrails: one bad field, one fallback, one error log (T1-6, AC-5, DE
     expect(issuesLogged('error').some((line) => line.fields.reason === 'image_price_missing')).toBe(true);
   });
 
+  // Slice 7 (RC7-6): the prices that sat in `pricesUsd` now sit in the image price table.
   it('accepts an image model priced for every configured size and quality', async () => {
+    const sizes = { wide: '1536x1024', portrait: '1024x1536', square: '1024x1024' };
+    for (const size of Object.values(sizes)) {
+      for (const quality of ['low', 'medium', 'high']) {
+        mockImageRows.value.push({
+          id: `gpt-image-2-${size}-${quality}`, provider: 'openai', model_name: 'gpt-image-2', size, quality,
+          cost_per_image: 0.2, effective_date: '2026-10-16', created_at: '2026-10-16T00:00:00Z',
+        });
+      }
+    }
+    mockGetImageGenerationConfig.mockResolvedValue({ ...IMAGE_GENERATION_CONFIG_DEFAULTS, sizes, pricesUsd: {} });
+    mockGetByKeys.mockResolvedValue(rows({ images: { model: 'gpt-image-2' } }));
+
+    expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe('gpt-image-2');
+  });
+
+  it('ignores prices in the old image price setting (slice 7, O-1)', async () => {
     const sizes = { wide: '1536x1024', portrait: '1024x1536', square: '1024x1024' };
     const pricesUsd: Record<string, number> = {};
     for (const size of Object.values(sizes)) {
@@ -287,7 +325,8 @@ describe('guardrails: one bad field, one fallback, one error log (T1-6, AC-5, DE
     mockGetImageGenerationConfig.mockResolvedValue({ ...IMAGE_GENERATION_CONFIG_DEFAULTS, sizes, pricesUsd });
     mockGetByKeys.mockResolvedValue(rows({ images: { model: 'gpt-image-2' } }));
 
-    expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe('gpt-image-2');
+    expect((await resolveBosLlmSettings('images', 'image_generation')).model).toBe(IMAGE_GENERATION_CONFIG_DEFAULTS.model);
+    expect(issuesLogged('error').some((line) => line.fields.reason === 'image_price_missing')).toBe(true);
   });
 
   it('refuses a row naming the retired gpt-image-1 and keeps the default (safe rollback, Q10)', async () => {
@@ -749,5 +788,88 @@ describe('S1-T4b: provenance does not disturb the serving path', () => {
     // One refill serves the whole area; provenance is computed from state the
     // loop already had, so it costs no additional I/O.
     expect(mockGetByKeys.mock.calls.length).toBe(readsAfterFirst);
+  });
+});
+
+describe('slice 7: the price warm-up on the settings refill (RC7-5)', () => {
+  const warm = warmPricingCache as unknown as jest.Mock;
+
+  beforeEach(() => {
+    __resetBosLlmSettingsForTests();
+    warm.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('every refill warms the price cache, bounded by BOS_PRICE_WARM_WAIT_MS (below the settings budget)', async () => {
+    await resolveBosLlmSettings('leads', 'reply_recommendation');
+    expect(warm).toHaveBeenCalledTimes(1);
+    expect(warm).toHaveBeenCalledWith(BOS_PRICE_WARM_WAIT_MS);
+    expect(BOS_PRICE_WARM_WAIT_MS).toBeLessThan(BOS_LLM_SETTINGS_READ_TIMEOUT_MS);
+    // Cached settings: no second refill, so no second warm.
+    await resolveBosLlmSettings('leads', 'reply_recommendation');
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rejected warm-up changes nothing: same settings, not fromFailedRead', async () => {
+    warm.mockRejectedValue(new Error('pricing down'));
+    mockGetByKeys.mockResolvedValue(rows({ leads: { temperature: 0.4 } }));
+    expect((await resolveBosLlmSettings('leads', 'reply_recommendation')).temperature).toBe(0.4);
+    expect(__bosLlmSettingsCacheStateForTests().fromFailedRead).toBe(false);
+  });
+
+  it('a warm-up that throws synchronously changes nothing either', async () => {
+    warm.mockImplementation(() => {
+      throw new Error('not even a promise');
+    });
+    mockGetByKeys.mockResolvedValue(rows({ leads: { temperature: 0.4 } }));
+    expect((await resolveBosLlmSettings('leads', 'reply_recommendation')).temperature).toBe(0.4);
+    expect(__bosLlmSettingsCacheStateForTests().fromFailedRead).toBe(false);
+  });
+
+  it('a warm-up that never settles cannot hold the refill: settings return within the budget, not fromFailedRead (QA M10)', async () => {
+    jest.useFakeTimers();
+    try {
+      warm.mockReturnValue(new Promise(() => undefined));
+      mockGetByKeys.mockResolvedValue(rows({ leads: { temperature: 0.4 } }));
+      let settled = false;
+      const pending = resolveBosLlmSettings('leads', 'reply_recommendation').then((value) => {
+        settled = true;
+        return value;
+      });
+      // Below the settings budget: the refill is waiting on the warm bound only.
+      await jest.advanceTimersByTimeAsync(BOS_PRICE_WARM_WAIT_MS - 1);
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      expect((await pending).temperature).toBe(0.4);
+      expect(BOS_PRICE_WARM_WAIT_MS).toBeLessThan(BOS_LLM_SETTINGS_READ_TIMEOUT_MS);
+      expect(__bosLlmSettingsCacheStateForTests().fromFailedRead).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a settings read failure still warms the price cache', async () => {
+    mockGetByKeys.mockResolvedValue({ data: null, error: new Error('settings down') });
+    expect((await resolveBosLlmSettings('leads', 'reply_recommendation')).model).toBe('gpt-4o-mini');
+    expect(__bosLlmSettingsCacheStateForTests().fromFailedRead).toBe(true);
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('slice 7: the image guardrail reads the price table lazily (RC7-11) and only for openai (RC7-14)', () => {
+  beforeEach(() => __resetBosLlmSettingsForTests());
+
+  it('no image price read when every area uses its default image model', async () => {
+    await resolveBosLlmSettings('images', 'image_generation');
+    expect(mockImageRows.reads).toBe(0);
+  });
+
+  it('one read when a non-default image model is checked', async () => {
+    mockGetByKeys.mockResolvedValue(rows({ images: { model: 'gpt-image-2' } }));
+    await resolveBosLlmSettings('images', 'image_generation');
+    expect(mockImageRows.reads).toBe(1);
+  });
+
+  it('the images call allows only openai, so the price key and the area row cannot drift apart (F-15)', () => {
+    expect(getBosLlmCallPolicy('images', 'image_generation')?.allowedProviders).toEqual(['openai']);
   });
 });
