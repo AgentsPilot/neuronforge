@@ -37,7 +37,7 @@ DF-6 adds one window choice, "Since it started", offered only while one business
 - **Wrapping a pinned block is better than re-freezing it.** D-1's `parseFinanceQuery` is a reusable pattern when frozen code needs a new branch.
 - **Still owed to the user:** BQ-16, and the live steps L-148 to L-154 with checks 29 and 30 for the owner test account. These are AC-272 and the live halves of AC-267 and AC-268.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-health-df6 — commit pending (RM)
+### Status: COMMITTED — feature/bos-finance-health-df6 — commit `fd7b7f02`, PR #450 (auto-merge on)
 
 ---
 
