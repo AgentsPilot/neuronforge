@@ -84,7 +84,7 @@ Slice 4b.1 is the writer half of BD-17: refunds and lost disputes count in the m
 
 ---
 
-### Status: PENDING RM COMMIT — feature/bos-finance-health-4b — (hash to be recorded by RM)
+### Status: COMMITTED — feature/bos-finance-health-4b — `240b14de` (merge of origin/main `6d8ecfb8`); PR [#447](https://github.com/AgentsPilot/neuronforge/pull/447) open, auto-merge OFF, awaiting user migration apply
 
 TL approval: approved for RM commit + PR (auto-merge OFF until the user applies 20261072 and 20261073)
 
