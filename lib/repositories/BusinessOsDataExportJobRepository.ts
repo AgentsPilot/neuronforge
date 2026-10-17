@@ -18,8 +18,9 @@
 // - The start function takes no job id. Its user id comes from the session
 //   (startForOwner) or from the admin route's path after requireAdmin
 //   (startForAdmin, SA-3), never from a body or a header (SA C-10).
-// - The two sweep reads (listDueForExpiry, findJobsByIds) are cross-account
-//   by design and are for the DE-8b cron only.
+// - The three sweep reads (listDueForExpiry, findJobsByIds and, since DE-8b,
+//   listStaleRunning) are cross-account by design and are for the DE-8b cron
+//   only.
 //
 // Not a soft-delete table and no delete method: rows are never deleted by the
 // app (D-7). ready turns expired when the file goes; the row stays as the
@@ -390,6 +391,35 @@ export class BusinessOsDataExportJobRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'listDueForExpiry' }, 'Failed to list data exports due for expiry');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * DE-8b (SA DE-8a Q-12): `running` jobs created before `before`, oldest
+   * first. The cron passes `now - STALE_RUNNING_SECONDS`, the same predicate
+   * the start function applies for one account, so a killed run of an owner
+   * who never exports again is still turned failed / timeout.
+   */
+  async listStaleRunning(before: Date, limit: number = DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX): Promise<RepositoryResult<DataExportJobRef[]>> {
+    if (!(before instanceof Date) || Number.isNaN(before.getTime())) return { data: null, error: invalid('before') };
+    if (!z.number().int().min(1).max(DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX).safeParse(limit).success) {
+      return { data: null, error: invalid('limit') };
+    }
+    try {
+      // Cross-account by design: the daily sweep has no user context; every effect it takes is scoped by the row's own user_id (tenant-isolation-guard Step 6).
+      const { data, error } = await this.supabase
+        .from(TABLE)
+        .select('id, user_id')
+        .eq('status', 'running')
+        .lt('created_at', before.toISOString())
+        .order('created_at', { ascending: true })
+        .limit(limit);
+      if (error) throw error;
+      return { data: (data as DataExportJobRef[] | null) ?? [], error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'listStaleRunning' }, 'Failed to list stale data export runs');
       return { data: null, error: safe };
     }
   }

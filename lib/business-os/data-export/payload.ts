@@ -26,7 +26,12 @@ export const EXPORT_ACCOUNT_HOLDER = 'account_holder';
 
 export interface ExportGroupMetadata {
   gdpr_role: GdprRole;
-  controller: typeof EXPORT_PROVIDER_NAME | typeof EXPORT_ACCOUNT_HOLDER;
+  /**
+   * DE-8b (SA Q-10): widened to `string`. In the zip's data.json the
+   * `account_holder` groups carry the business name when there is one; the
+   * JSON route passes no name, so its output is unchanged.
+   */
+  controller: string;
   description: string;
 }
 
@@ -61,13 +66,16 @@ export interface UserDataExportPayload {
     user_id: string;
     /** ISO 8601, UTC. */
     export_date: string;
-    export_format: 'JSON';
+    /** DE-8b: 'ZIP' in the zip's data.json; the JSON route stays 'JSON'. */
+    export_format: 'JSON' | 'ZIP';
     gdpr_article: typeof EXPORT_GDPR_ARTICLE;
     provider: typeof EXPORT_PROVIDER_NAME;
     groups: Record<ExportGroupId, ExportGroupMetadata>;
   };
   /** In registry order (EXPORT_SECTIONS). */
   sections: AnyExportedSection[];
+  /** DE-8b, zip only: one row per file in "Your files" (the same rows as files-index.csv). */
+  files?: readonly ExportFileIndexRow[];
   summary: {
     section_counts: Partial<Record<ExportSectionId, number>>;
     failed_sections: ExportSectionId[];
@@ -81,6 +89,48 @@ export interface BuildExportPayloadInput {
   now: Date;
   sections: AnyExportedSection[];
   durationMs: number;
+  /**
+   * DE-8b, the zip's data.json only. Absent (the JSON route), the payload is
+   * byte-identical to before: `export_format: 'JSON'`, no `files`, the
+   * `account_holder` controllers unchanged (characterization test).
+   */
+  zip?: {
+    /** Already cleaned (readme.ts cleanBusinessName), or null: keep 'account_holder'. */
+    accountHolderName: string | null;
+    files: readonly ExportFileIndexRow[];
+  };
+}
+
+/** One row of files-index.csv / data.json `files` (DE-8b §9.3). Never a storage key. */
+export interface ExportFileIndexRow {
+  path_in_export: string;
+  folder: string;
+  size_bytes: number;
+  content_type: string;
+  record_section: 'client_documents' | 'images' | '';
+  record_id: string;
+  status: 'included' | 'could_not_be_read';
+}
+
+/** files-index.csv columns, in order. */
+export const FILE_INDEX_COLUMNS: readonly (keyof ExportFileIndexRow)[] = [
+  'path_in_export',
+  'folder',
+  'size_bytes',
+  'content_type',
+  'record_section',
+  'record_id',
+  'status',
+];
+
+/** The groups with the business name as controller of the `account_holder` ones (DE-4 SA-Q13). */
+export function groupsWithController(name: string | null): Record<ExportGroupId, ExportGroupMetadata> {
+  if (!name) return EXPORT_GROUPS;
+  const out = {} as Record<ExportGroupId, ExportGroupMetadata>;
+  for (const [id, group] of Object.entries(EXPORT_GROUPS) as Array<[ExportGroupId, ExportGroupMetadata]>) {
+    out[id] = group.controller === EXPORT_ACCOUNT_HOLDER ? { ...group, controller: name } : group;
+  }
+  return out;
 }
 
 /** Row count per section, in section order. A failed section counts 0. */
@@ -100,13 +150,15 @@ export function buildExportPayload(input: BuildExportPayloadInput): UserDataExpo
       format_version: 2,
       user_id: input.userId,
       export_date: input.now.toISOString(),
-      export_format: 'JSON',
+      export_format: input.zip ? 'ZIP' : 'JSON',
       gdpr_article: EXPORT_GDPR_ARTICLE,
       provider: EXPORT_PROVIDER_NAME,
-      groups: EXPORT_GROUPS,
+      groups: input.zip ? groupsWithController(input.zip.accountHolderName) : EXPORT_GROUPS,
     },
     sections: input.sections,
   };
+  // Additive and zip-only, so `format_version` stays 2 (SA Q-10).
+  if (input.zip) head.files = input.zip.files;
   return {
     ...head,
     summary: {

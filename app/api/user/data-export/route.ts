@@ -48,8 +48,8 @@ import { createLogger } from '@/lib/logger';
 import { EXPORT_SECTIONS, runExportSections, type ExportContext } from '@/lib/business-os/data-export/sections';
 import { buildExportPayload, exportFileName, EXPORT_GDPR_ARTICLE, sectionCounts as countSections } from '@/lib/business-os/data-export/payload';
 import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
-import { userPreferencesRepository } from '@/lib/repositories/UserPreferencesRepository';
-import { FALLBACK_TIMEZONE, safeTimezone } from '@/lib/scheduling/businessTime';
+// DE-8b (SA Q-1): moved to ownerClock.ts unchanged, shared with the zip routes.
+import { ownerTimezone } from '@/lib/business-os/data-export/ownerClock';
 
 const logger = createLogger({ module: 'UserDataExportAPI' });
 
@@ -71,32 +71,6 @@ function tooLargeResponse(): NextResponse {
     },
     { status: 413, headers: { 'Cache-Control': NO_STORE } }
   );
-}
-
-/** Only the level ownerTimezone uses, typed structurally so the Pino child satisfies it. */
-interface WarnLogger {
-  warn: (context: Record<string, unknown>, message: string) => void;
-}
-
-/**
- * The owner's clock for the file name (DE-4, user 2026-10-15). NULL (never
- * set), blank, invalid or unreadable all give FALLBACK_TIMEZONE ('UTC'):
- * the name is a label, so it never fails the export. The repository logs its
- * own read error; this line says what the export did about it.
- */
-async function ownerTimezone(userId: string, log: WarnLogger): Promise<string> {
-  try {
-    const { data, error } = await userPreferencesRepository.findTimezone(userId);
-    if (error) {
-      log.warn({ userId }, 'Data export: timezone unreadable, file name in UTC');
-      return FALLBACK_TIMEZONE;
-    }
-    return safeTimezone(data);
-  } catch (err) {
-    // findTimezone never throws by contract; a throw must still not fail the export.
-    log.warn({ err, userId }, 'Data export: timezone unreadable, file name in UTC');
-    return FALLBACK_TIMEZONE;
-  }
 }
 
 /**
