@@ -13,7 +13,23 @@
 // window, layer A; slice 5a, workplan
 // docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md,
 // reads R-m and R-m′: the platform's own paid plan invoices in the window,
-// layer A).
+// layer A; slice 4b.2, workplan
+// docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4B2_REVERSAL_DISPLAY_WORKPLAN.md,
+// reads R-n and R-n′: the dated boost reversal events recorded in the window,
+// and R-l and R-l′: the boost purchases that need attention now, layer A).
+//
+// ── THE REVERSAL EVENTS (slice 4b.2, BD-17) ─────────────────────────────────
+// `business_os_boost_reversal_events` has NO account column: an event belongs
+// to an account through its purchase (the tenant-isolation "parent-owned"
+// shape). So R-n′ reads the account's purchases first (`.eq('user_id')` on
+// every page), then only the events whose `purchase_id` is in that set, and
+// drops any event outside it (fail closed). No caller ever supplies an id
+// list: every id list is built here from rows this file just read. Id lists
+// go out in chunks of at most `FINANCE_ID_CHUNK` (E-69), and every request,
+// each chunk included, keyset-pages at 1,000 rows (PostgREST's `max-rows`,
+// the C-1 lesson): no read relies on one large response. Before the table
+// exists (migration 20261076 not applied), the read fails with a typed
+// `FinanceReadTableAbsentError`, logged at warn (SA-W121).
 //
 // ── WHY A SEPARATE REPOSITORY (SA-F2) ────────────────────────────────────────
 // The money tables read here each have a writer repository whose callers are
@@ -61,17 +77,22 @@
 //     `listOverdueClientInvoicesAllAccounts` (R-g),
 //     `listOverdueClientInstalmentsAllAccounts` (R-h),
 //     `listClientPlansAllAccounts` (R-i),
-//     `listBoostPurchasesAllAccountsPaidInRange` (R-k) and
-//     `listPlanPaymentsAllAccountsPaidInRange` (R-m). Logged at info.
+//     `listBoostPurchasesAllAccountsPaidInRange` (R-k),
+//     `listPlanPaymentsAllAccountsPaidInRange` (R-m),
+//     `listBoostReversalEventsAllAccountsRecordedInRange` (R-n) and
+//     `listBoostPurchasesNeedingAttentionAllAccounts` (R-l). Logged at info.
 //   - ONE ACCOUNT: `findBillingStatusForAccount` (R-c′),
 //     `listClientPaymentsForAccountPaidInRange` (R-e′),
 //     `listClientRefundsForAccountCreatedInRange` (R-f′),
 //     `listOverdueClientInvoicesForAccount` (R-g′),
 //     `listOverdueClientInstalmentsForAccount` (R-h′),
 //     `listClientPlansForAccount` (R-i′),
-//     `listBoostPurchasesForAccountPaidInRange` (R-k′) and
-//     `listPlanPaymentsForAccountPaidInRange` (R-m′), with `.eq('user_id')`
-//     on every page.
+//     `listBoostPurchasesForAccountPaidInRange` (R-k′),
+//     `listPlanPaymentsForAccountPaidInRange` (R-m′) and
+//     `listBoostPurchasesNeedingAttentionForAccount` (R-l′), with
+//     `.eq('user_id')` on every page; and
+//     `listBoostReversalEventsForAccountRecordedInRange` (R-n′), scoped
+//     through the account's own purchases (see THE REVERSAL EVENTS).
 //   - PLATFORM-WIDE EXISTENCE: `countRevenueRows` (R-d), two head counts
 //     that read no account and no amount.
 //
@@ -168,10 +189,81 @@ export const FINANCE_CLIENT_PLAN_COLUMNS =
 /**
  * The boost purchase columns R-k / R-k′ select (slice 4a, §11C.6). No Stripe
  * id, no receipt URL, no flag reason, no lot id (S4-FR-9), no mode column
- * (BD-14) and no `created_at` (never a revenue date, S4-W-1).
+ * (BD-14) and no `created_at` (never a revenue date, S4-W-1). Slice 4b.2
+ * (SA-W119): no refunded amount either; refunds are dated by their events (R-n).
  */
 export const FINANCE_BOOST_PURCHASE_COLUMNS =
-  'id, user_id, status, package_id, package_version, currency, amount_total_minor, amount_tax_minor, amount_refunded_minor, credits_total, paid_at';
+  'id, user_id, status, package_id, package_version, currency, amount_total_minor, amount_tax_minor, credits_total, paid_at';
+
+/** Slice 4b.2 (E-69): the most ids sent in one `.in()` filter. */
+export const FINANCE_ID_CHUNK = 100;
+
+/**
+ * The reversal event columns R-n / R-n′ select (slice 4b.2, §11I.7). No Stripe
+ * dispute id, no mode column (BD-14), no status around the step, no cumulative.
+ */
+export const FINANCE_REVERSAL_EVENT_COLUMNS = 'id, purchase_id, kind, amount_minor, currency, recorded_at';
+
+/** The purchase columns an event needs (R-n's second read; R-n′'s first read). */
+export const FINANCE_REVERSAL_PURCHASE_COLUMNS =
+  'id, user_id, package_id, package_version, amount_total_minor, amount_tax_minor, paid_at';
+
+/** The purchase columns R-l / R-l′ select (§11C.6). No Stripe id, no flag reason, no lot. */
+export const FINANCE_BOOST_ATTENTION_COLUMNS =
+  'id, user_id, status, currency, amount_total_minor, amount_refunded_minor, status_changed_at';
+
+/** The opened-date columns of a dispute's opening event. */
+const DISPUTE_OPENED_COLUMNS = 'id, purchase_id, recorded_at';
+
+/** R-l / R-l′: the two statuses that need attention now (S4-FR-15). */
+const ATTENTION_STATUSES = ['disputed', 'flagged_mismatch'] as const;
+
+/** The purchase fields an event carries (null: the purchase was not found). */
+export interface FinanceReversalPurchase {
+  /** NULL: the account was deleted. */
+  user_id: string | null;
+  package_id: string | null;
+  package_version: number | null;
+  /** For the SA-Q74 note only (refunded plus lost above the total). */
+  amount_total_minor: number | null;
+  amount_tax_minor: number | null;
+  /**
+   * False: the purchase was never paid (a flagged purchase, FR-4B-8). A
+   * boolean, not the date: the builders read no date (AC-88).
+   */
+  paid: boolean;
+}
+
+/** One reversal event, as R-n / R-n′ return it, with its purchase's fields. */
+export interface FinanceBoostReversalRow {
+  id: string;
+  purchase_id: string;
+  kind: string | null;
+  amount_minor: number | null;
+  currency: string | null;
+  recorded_at: string | null;
+  purchase: FinanceReversalPurchase | null;
+}
+
+/** One purchase that needs attention now (R-l / R-l′), plus its open dispute's opened date. */
+export interface FinanceBoostAttentionRow {
+  id: string;
+  user_id: string | null;
+  status: string | null;
+  currency: string | null;
+  amount_total_minor: number | null;
+  amount_refunded_minor: number | null;
+  status_changed_at: string | null;
+  /** The latest `dispute_opened` event of a disputed purchase; null when none was found or the dates failed. */
+  disputeOpenedAt: string | null;
+}
+
+export interface FinanceBoostAttentionResult {
+  rows: FinanceBoostAttentionRow[];
+  reachedCeiling: boolean;
+  /** `failed`: the opened dates could not be read (for example, the events table is absent); the rows still stand. */
+  openedDates: 'read' | 'failed';
+}
 
 /**
  * One boost purchase, as "Our revenue" reads it (slice 4a). The amounts are
@@ -188,7 +280,6 @@ export interface FinanceBoostPurchaseRow {
   currency: string | null;
   amount_total_minor: number | null;
   amount_tax_minor: number | null;
-  amount_refunded_minor: number | null;
   credits_total: number | string | null;
   paid_at: string | null;
 }
@@ -349,6 +440,26 @@ export class FinanceReadDuplicateError extends Error {
   }
 }
 
+/**
+ * Slice 4b.2 (§7, SA-W121): the reversal events table does not exist yet
+ * (migration 20261076 not applied). A deploy state, not a failure: logged at
+ * warn, and the page shows the dated figures as Unknown.
+ */
+export class FinanceReadTableAbsentError extends Error {
+  constructor() {
+    super('The boost reversal events table is not available');
+    this.name = 'FinanceReadTableAbsentError';
+  }
+}
+
+/** 42P01: relation does not exist. PGRST205: PostgREST has no such table in its schema cache. */
+const TABLE_ABSENT_CODES: ReadonlySet<string> = new Set(['42P01', 'PGRST205']);
+
+function isTableAbsent(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && TABLE_ABSENT_CODES.has(code);
+}
+
 export class BusinessOsFinanceReadRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -362,6 +473,8 @@ export class BusinessOsFinanceReadRepository {
   private fail<T>(method: string, error: unknown): RepositoryResult<T> {
     if (error instanceof FinanceReadGuardError) {
       this.logger.warn({ method, err: error }, 'Finance read refused by its guard');
+    } else if (error instanceof FinanceReadTableAbsentError) {
+      this.logger.warn({ method, reason: 'table_absent' }, 'Finance read: the reversal events table is not available');
     } else {
       this.logger.error({ method, err: error }, 'Finance read failed');
     }
@@ -743,8 +856,8 @@ export class BusinessOsFinanceReadRepository {
     };
   }
 
-  /** R-e to R-f′, R-k to R-m′: a valid half-open range on the read's own column, as ISO strings. Checked inside the pager. */
-  private rangeFilter(dateColumn: 'paid_at' | 'created_at', range: FinanceClientRange): ClientFilter {
+  /** R-e to R-f′, R-k to R-n′: a valid half-open range on the read's own column, as ISO strings. Checked inside the pager. */
+  private rangeFilter(dateColumn: 'paid_at' | 'created_at' | 'recorded_at', range: FinanceClientRange): ClientFilter {
     return () => {
       const isValidDate = (d: unknown): d is Date => d instanceof Date && !Number.isNaN(d.getTime());
       if (!range || !isValidDate(range.from) || !isValidDate(range.to) || range.from.getTime() >= range.to.getTime()) {
@@ -795,35 +908,8 @@ export class BusinessOsFinanceReadRepository {
         throw new FinanceReadGuardError('An account id (UUID) is required');
       }
       const filter = prepare();
-      const pageSize = opts?.pageSize ?? FINANCE_READ_LIMITS.CLIENT_PAGE_SIZE;
-      const ceiling = opts?.ceiling ?? FINANCE_READ_LIMITS.CLIENT_CEILING;
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > FINANCE_READ_LIMITS.CLIENT_PAGE_SIZE) {
-        throw new FinanceReadGuardError(`pageSize must be an integer from 1 to ${FINANCE_READ_LIMITS.CLIENT_PAGE_SIZE}`);
-      }
-      if (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > FINANCE_READ_LIMITS.CLIENT_CEILING) {
-        throw new FinanceReadGuardError(`ceiling must be an integer from 1 to ${FINANCE_READ_LIMITS.CLIENT_CEILING}`);
-      }
-
-      const rows: T[] = [];
-      let reachedCeiling = false;
-      let last: string | null = null;
-      for (;;) {
-        const size = Math.min(pageSize, ceiling - rows.length);
-        let query = filter(start());
-        if (scope !== null) query = query.eq('user_id', scope.accountId);
-        if (last !== null) query = query.gt('id', last);
-        const { data, error } = await query.order('id', { ascending: true }).limit(size);
-        if (error) throw error;
-
-        const page = (data ?? []) as unknown as T[];
-        rows.push(...page);
-        if (rows.length >= ceiling) {
-          reachedCeiling = true;
-          break;
-        }
-        if (page.length < size) break;
-        last = page[page.length - 1].id;
-      }
+      const { pageSize, ceiling } = this.limitsOf(opts);
+      const { rows, reachedCeiling } = await this.collect<T>(start, filter, scope?.accountId ?? null, pageSize, ceiling);
 
       // Counts and timing only: never an amount, a currency, a date or an id.
       if (scope === null) {
@@ -839,6 +925,314 @@ export class BusinessOsFinanceReadRepository {
       return this.fail(method, error);
     }
   }
+
+  /** The page size and ceiling of a layer-B read, checked (a refusal is a guard error). */
+  private limitsOf(opts?: FinanceClientReadOptions): { pageSize: number; ceiling: number } {
+    const pageSize = opts?.pageSize ?? FINANCE_READ_LIMITS.CLIENT_PAGE_SIZE;
+    const ceiling = opts?.ceiling ?? FINANCE_READ_LIMITS.CLIENT_CEILING;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > FINANCE_READ_LIMITS.CLIENT_PAGE_SIZE) {
+      throw new FinanceReadGuardError(`pageSize must be an integer from 1 to ${FINANCE_READ_LIMITS.CLIENT_PAGE_SIZE}`);
+    }
+    if (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > FINANCE_READ_LIMITS.CLIENT_CEILING) {
+      throw new FinanceReadGuardError(`ceiling must be an integer from 1 to ${FINANCE_READ_LIMITS.CLIENT_CEILING}`);
+    }
+    return { pageSize, ceiling };
+  }
+
+  /**
+   * The keyset loop itself (no logging): `.gt('id', last)`, ascending, at most
+   * `pageSize` (<= 1,000) per request, until a short page or the ceiling (`>=`).
+   * `accountId` puts `.eq('user_id')` on EVERY page. Throws the query error.
+   */
+  private async collect<T extends { id: string }>(
+    start: () => ClientQuery,
+    filter: (query: ClientQuery) => ClientQuery,
+    accountId: string | null,
+    pageSize: number,
+    ceiling: number
+  ): Promise<FinanceClientReadResult<T>> {
+    const rows: T[] = [];
+    let reachedCeiling = false;
+    let last: string | null = null;
+    for (;;) {
+      const size = Math.min(pageSize, ceiling - rows.length);
+      let query = filter(start());
+      if (accountId !== null) query = query.eq('user_id', accountId);
+      if (last !== null) query = query.gt('id', last);
+      const { data, error } = await query.order('id', { ascending: true }).limit(size);
+      if (error) throw error;
+
+      const page = (data ?? []) as unknown as T[];
+      rows.push(...page);
+      if (rows.length >= ceiling) {
+        reachedCeiling = true;
+        break;
+      }
+      if (page.length < size) break;
+      last = page[page.length - 1].id;
+    }
+    return { rows, reachedCeiling };
+  }
+
+  /**
+   * Slice 4b.2 (E-69, 4B2-R1): `.in(column, chunk)` with at most
+   * `FINANCE_ID_CHUNK` ids per chunk, and EACH chunk keyset-paged at
+   * `pageSize` like any other read. The ceiling is shared across the chunks.
+   * The ids are always ones this file just read, never a caller's.
+   */
+  private async collectByIdChunks<T extends { id: string }>(
+    start: () => ClientQuery,
+    column: 'id' | 'purchase_id',
+    ids: readonly string[],
+    filter: (query: ClientQuery) => ClientQuery,
+    pageSize: number,
+    ceiling: number
+  ): Promise<FinanceClientReadResult<T>> {
+    const rows: T[] = [];
+    for (let i = 0; i < ids.length; i += FINANCE_ID_CHUNK) {
+      const chunk = ids.slice(i, i + FINANCE_ID_CHUNK);
+      const part = await this.collect<T>(start, (query) => filter(query.in(column, chunk)), null, pageSize, ceiling - rows.length);
+      rows.push(...part.rows);
+      if (part.reachedCeiling) return { rows, reachedCeiling: true };
+    }
+    return { rows, reachedCeiling: false };
+  }
+
+  /** Runs a read of the events table; its "no such table" error becomes the typed absent error (§7). */
+  private async eventsRead<T>(read: () => Promise<T>): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      if (isTableAbsent(error)) throw new FinanceReadTableAbsentError();
+      throw error;
+    }
+  }
+
+  /**
+   * R-n. Every account's boost reversal events RECORDED in the range (slice
+   * 4b.2, BD-17), every kind, keyset on `id`, then their purchases by id in
+   * chunks of 100 (E-69). An event whose purchase is not found carries
+   * `purchase: null`. Logged at info: counts and timing only.
+   */
+  async listBoostReversalEventsAllAccountsRecordedInRange(
+    range: FinanceClientRange,
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceClientReadResult<FinanceBoostReversalRow>>> {
+    const method = 'listBoostReversalEventsAllAccountsRecordedInRange';
+    const startedAt = Date.now();
+    try {
+      const inRange = this.rangeFilter('recorded_at', range)();
+      const { pageSize, ceiling } = this.limitsOf(opts);
+      const events = await this.eventsRead(() =>
+        this.collect<ReversalEventRaw>(
+          () => this.supabase.from('business_os_boost_reversal_events').select(FINANCE_REVERSAL_EVENT_COLUMNS),
+          inRange,
+          null,
+          pageSize,
+          ceiling
+        )
+      );
+      const purchaseIds = [...new Set(events.rows.map((event) => event.purchase_id))];
+      const purchases = await this.collectByIdChunks<ReversalPurchaseRaw>(
+        () => this.supabase.from('business_os_boost_purchases').select(FINANCE_REVERSAL_PURCHASE_COLUMNS),
+        'id',
+        purchaseIds,
+        (query) => query,
+        pageSize,
+        FINANCE_READ_LIMITS.CLIENT_CEILING
+      );
+      const byId = new Map(purchases.rows.map((purchase) => [purchase.id, purchase]));
+      const rows = events.rows.map((event) => withPurchase(event, byId.get(event.purchase_id) ?? null));
+
+      this.logger.info(
+        {
+          method,
+          rows: rows.length,
+          purchases: byId.size,
+          reachedCeiling: events.reachedCeiling,
+          durationMs: Date.now() - startedAt,
+        },
+        'Boost reversal events of all accounts read'
+      );
+      return { data: { rows, reachedCeiling: events.reachedCeiling }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * R-n′. ONE account's boost reversal events recorded in the range. The id is
+   * checked before any query; the account's purchases are read first
+   * (`.eq('user_id')` on every page, every status), then only the events of
+   * those purchases (chunks of 100), and any event outside that set is
+   * dropped (fail closed, 4B2-R2).
+   */
+  async listBoostReversalEventsForAccountRecordedInRange(
+    accountId: string,
+    range: FinanceClientRange,
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceClientReadResult<FinanceBoostReversalRow>>> {
+    const method = 'listBoostReversalEventsForAccountRecordedInRange';
+    try {
+      if (typeof accountId !== 'string' || !UUID_PATTERN.test(accountId)) {
+        throw new FinanceReadGuardError('An account id (UUID) is required');
+      }
+      const inRange = this.rangeFilter('recorded_at', range)();
+      const { pageSize, ceiling } = this.limitsOf(opts);
+      const purchases = await this.collect<ReversalPurchaseRaw>(
+        () => this.supabase.from('business_os_boost_purchases').select(FINANCE_REVERSAL_PURCHASE_COLUMNS),
+        (query) => query,
+        accountId,
+        pageSize,
+        ceiling
+      );
+      const owned = new Map(purchases.rows.map((purchase) => [purchase.id, purchase]));
+      const events = await this.eventsRead(() =>
+        this.collectByIdChunks<ReversalEventRaw>(
+          () => this.supabase.from('business_os_boost_reversal_events').select(FINANCE_REVERSAL_EVENT_COLUMNS),
+          'purchase_id',
+          [...owned.keys()],
+          inRange,
+          pageSize,
+          ceiling
+        )
+      );
+      const kept = events.rows.filter((event) => owned.has(event.purchase_id));
+      const rows = kept.map((event) => withPurchase(event, owned.get(event.purchase_id) ?? null));
+      const reachedCeiling = purchases.reachedCeiling || events.reachedCeiling;
+
+      this.logger.debug(
+        { method, rows: rows.length, purchases: owned.size, dropped: events.rows.length - kept.length, reachedCeiling },
+        'Boost reversal events of one account read'
+      );
+      return { data: { rows, reachedCeiling }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * R-l. Every account's boost purchases that need attention NOW (slice 4b.2,
+   * S4-FR-15): status disputed or flagged_mismatch, keyset on `id`; then each
+   * disputed purchase's latest `dispute_opened` event (chunks of 100). The
+   * opened dates failing never fails the read (`openedDates: 'failed'`), so
+   * the K-5 rule still counts the disputes. Logged at info.
+   */
+  async listBoostPurchasesNeedingAttentionAllAccounts(
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceBoostAttentionResult>> {
+    return this.readAttention('listBoostPurchasesNeedingAttentionAllAccounts', null, opts);
+  }
+
+  /** R-l′. ONE account's boost purchases that need attention now; the id is checked before any query. */
+  async listBoostPurchasesNeedingAttentionForAccount(
+    accountId: string,
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceBoostAttentionResult>> {
+    return this.readAttention('listBoostPurchasesNeedingAttentionForAccount', accountId, opts);
+  }
+
+  private async readAttention(
+    method: string,
+    accountId: string | null,
+    opts?: FinanceClientReadOptions
+  ): Promise<RepositoryResult<FinanceBoostAttentionResult>> {
+    const startedAt = Date.now();
+    try {
+      if (accountId !== null && (typeof accountId !== 'string' || !UUID_PATTERN.test(accountId))) {
+        throw new FinanceReadGuardError('An account id (UUID) is required');
+      }
+      const { pageSize, ceiling } = this.limitsOf(opts);
+      const purchases = await this.collect<AttentionRaw>(
+        () => this.supabase.from('business_os_boost_purchases').select(FINANCE_BOOST_ATTENTION_COLUMNS),
+        (query) => query.in('status', [...ATTENTION_STATUSES]),
+        accountId,
+        pageSize,
+        ceiling
+      );
+
+      const disputedIds = purchases.rows.filter((row) => row.status === ATTENTION_STATUSES[0]).map((row) => row.id);
+      const openedAt = new Map<string, string>();
+      let openedDates: FinanceBoostAttentionResult['openedDates'] = 'read';
+      try {
+        const opened = await this.eventsRead(() =>
+          this.collectByIdChunks<OpenedRaw>(
+            () => this.supabase.from('business_os_boost_reversal_events').select(DISPUTE_OPENED_COLUMNS),
+            'purchase_id',
+            disputedIds,
+            (query) => query.eq('kind', 'dispute_opened'),
+            pageSize,
+            FINANCE_READ_LIMITS.CLIENT_CEILING
+          )
+        );
+        if (opened.reachedCeiling) openedDates = 'failed';
+        for (const event of opened.rows) {
+          const previous = openedAt.get(event.purchase_id);
+          if (typeof event.recorded_at === 'string' && (previous === undefined || event.recorded_at > previous)) {
+            openedAt.set(event.purchase_id, event.recorded_at);
+          }
+        }
+      } catch (error) {
+        openedDates = 'failed';
+        if (error instanceof FinanceReadTableAbsentError) {
+          this.logger.warn({ method, reason: 'table_absent' }, 'Finance read: dispute opened dates are not available');
+        } else {
+          this.logger.error({ method, err: error }, 'Finance read: dispute opened dates failed');
+        }
+      }
+
+      const rows: FinanceBoostAttentionRow[] = purchases.rows.map((row) => ({
+        id: row.id,
+        user_id: row.user_id,
+        status: row.status,
+        currency: row.currency,
+        amount_total_minor: row.amount_total_minor,
+        amount_refunded_minor: row.amount_refunded_minor,
+        status_changed_at: row.status_changed_at,
+        disputeOpenedAt: openedDates === 'read' ? openedAt.get(row.id) ?? null : null,
+      }));
+
+      // Counts and timing only: never an amount, a currency, a date or an id.
+      const ctx = { method, rows: rows.length, reachedCeiling: purchases.reachedCeiling, openedDates };
+      if (accountId === null) {
+        this.logger.info({ ...ctx, durationMs: Date.now() - startedAt }, 'Boost purchases needing attention of all accounts read');
+      } else {
+        this.logger.debug(ctx, 'Boost purchases needing attention of one account read');
+      }
+      return { data: { rows, reachedCeiling: purchases.reachedCeiling, openedDates }, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+}
+
+/** Raw rows of the 4b.2 reads, before the purchase is attached. */
+type ReversalEventRaw = Omit<FinanceBoostReversalRow, 'purchase'>;
+type ReversalPurchaseRaw = Omit<FinanceReversalPurchase, 'paid'> & { id: string; paid_at: string | null };
+type AttentionRaw = Omit<FinanceBoostAttentionRow, 'disputeOpenedAt'>;
+type OpenedRaw = { id: string; purchase_id: string; recorded_at: string | null };
+
+/** Field by field: only the §11I.7 columns cross, never a spread of the raw row. */
+function withPurchase(event: ReversalEventRaw, purchase: ReversalPurchaseRaw | null): FinanceBoostReversalRow {
+  return {
+    id: event.id,
+    purchase_id: event.purchase_id,
+    kind: event.kind,
+    amount_minor: event.amount_minor,
+    currency: event.currency,
+    recorded_at: event.recorded_at,
+    purchase:
+      purchase === null
+        ? null
+        : {
+            user_id: purchase.user_id,
+            package_id: purchase.package_id,
+            package_version: purchase.package_version,
+            amount_total_minor: purchase.amount_total_minor,
+            amount_tax_minor: purchase.amount_tax_minor,
+            paid: purchase.paid_at !== null,
+          },
+  };
 }
 
 /** Singleton for convenience, matching the rest of the repository layer. */

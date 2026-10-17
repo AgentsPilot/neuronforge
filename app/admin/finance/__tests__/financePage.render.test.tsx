@@ -162,6 +162,7 @@ import {
   PROBLEMS_INSTALMENTS,
   PROBLEMS_INVOICES,
   PROBLEMS_TITLE,
+  PAYMENT_PROBLEMS_TITLE,
   REMINDERS_FAILED,
   REMINDERS_NOT_NARROWED,
 } from '../financeCopy';
@@ -414,8 +415,8 @@ function revenueSection(extra: Partial<FinanceRevenueSection> = {}, boosts: Part
 /** One currency line, the owner's test purchase by default (USD 10.00, 5,000 credits). */
 function boostLine(extra: Partial<FinanceBoostLine> = {}): FinanceBoostLine {
   return {
-    currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000,
-    unreadable: 0, unreadableCredits: 0, ...extra,
+    currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, lost: 0, net: 10, creditsSold: 5000,
+    unreadable: 0, unreadableEvents: 0, unreadableCredits: 0, ...extra,
   };
 }
 
@@ -1098,9 +1099,13 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
 
   it('L-32: the last block, after Credits; its title, chip, "As of now, UTC" subtitle and five parts, four with a status in words', async () => {
     const section = await renderWith(base());
-    expect(within(section).getByRole('heading', { name: PROBLEMS_TITLE })).toBeInTheDocument();
-    expect(screen.getByTestId('section-payment-problems-badge')).toHaveTextContent(PROBLEMS_CHIP);
-    expect(screen.getByTestId('section-payment-problems-badge')).toHaveAttribute('data-tone', 'neutral');
+    // SA-CR-4b2 CR-1: the frame is "Payment problems" with no chip; block B carries the client heading and chip.
+    expect(within(section).getByRole('heading', { name: PAYMENT_PROBLEMS_TITLE })).toBeInTheDocument();
+    expect(screen.queryByTestId('section-payment-problems-badge')).toBeNull();
+    const clients = within(section).getByTestId('problems-clients');
+    expect(within(clients).getByRole('heading', { name: PROBLEMS_TITLE })).toBeInTheDocument();
+    expect(within(clients).getByTestId('problems-clients-chip')).toHaveTextContent(PROBLEMS_CHIP);
+    expect(within(clients).getByTestId('problems-clients-chip')).toHaveAttribute('data-tone', 'neutral');
     expect(section).toHaveTextContent('As of now, UTC (2026-10-09)');
     expect(section).toHaveTextContent('Covers businesses that still exist');
     const order = ['section-credits', 'section-payment-problems'].map((id) => screen.getByTestId(id));
@@ -1476,7 +1481,7 @@ describe('Our revenue (slice 4a)', () => {
   });
 
   it('AC-90: an unreadable purchase → "excludes 1 unreadable", gross "At least", net "Unknown", a notice', async () => {
-    const revenue = paidRevenue([boostLine({ purchases: 2, unreadable: 1, held: null, lost: null, net: null })], { unreadablePurchases: 1 }, { status: 'partial' });
+    const revenue = paidRevenue([boostLine({ purchases: 2, unreadable: 1, net: null })], { unreadablePurchases: 1 }, { status: 'partial' });
     revenue.boosts.status = 'partial';
     serve({ success: true, data: k5With(payload({ revenue }), { kind: 'unknown', reason: 'unreadable' }) });
     render(<FinanceView />);
@@ -1512,15 +1517,16 @@ describe('Our revenue (slice 4a)', () => {
     expect(document.body.textContent).not.toMatch(/17\.00/);
   });
 
-  it('AC-93: the ceiling → "At least" on counts and amounts, "Unknown (a read was cut off)" on held, lost and net, the notice; K-5 "Unknown"', async () => {
-    const revenue = paidRevenue([boostLine({ held: null, lost: null, net: null })], { exact: false }, { status: 'partial' });
+  it('AC-93: the ceiling → "At least" on counts and amounts (refunded and lost included, 4b.2), "Unknown (a read was cut off)" on net, the notice; K-5 "Unknown"', async () => {
+    const revenue = paidRevenue([boostLine({ net: null })], { exact: false }, { status: 'partial' });
     revenue.boosts.status = 'partial';
     revenue.boosts.packages = revenue.boosts.packages!.map((p) => ({ ...p, net: null }));
     serve({ success: true, data: k5With(payload({ revenue }), { kind: 'unknown', reason: 'cut_off' }) });
     render(<FinanceView />);
     const line = await screen.findByTestId('revenue-line-USD');
-    for (const cell of ['gross', 'tax', 'refunded']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(/^At least USD/);
-    for (const cell of ['held', 'lost', 'net']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(REVENUE_CUT_OFF);
+    for (const cell of ['gross', 'tax', 'refunded', 'lost']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(/^At least USD/);
+    expect(line.querySelector('[data-money="held"]')).toBeNull();
+    expect(line.querySelector('[data-money="net"]')).toHaveTextContent(REVENUE_CUT_OFF);
     expect(line).toHaveTextContent('At least 1');
     expect(line).toHaveTextContent('At least 5,000');
     expect(screen.getByTestId('revenue-notice-cut')).toHaveTextContent(REVENUE_NOTICE_CUT);
@@ -1574,7 +1580,7 @@ describe('Our revenue (slice 4a)', () => {
   it.each([
     ['empty', revenueSection()],
     ['paid with a refund', paidRevenue([boostLine({ refunded: 3, net: 7 })], { refundOrDispute: true })],
-    ['cut off', paidRevenue([boostLine({ net: null, held: null, lost: null })], { exact: false })],
+    ['cut off', paidRevenue([boostLine({ net: null })], { exact: false })],
     ['boosts failed', revenueSection({ status: 'partial', plans: paidPlans(), totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
     ['plans failed', revenueSection({ status: 'partial', plans: PLANS_FAILED, totals: null })],
     ['both failed', revenueSection({ status: 'unknown', state: 'unknown', plans: PLANS_FAILED, totals: null }, { status: 'unknown', lines: null, packages: null, deletedAccounts: null, notes: null })],
@@ -2263,5 +2269,124 @@ describe('DF-6: "Since it started" on the page', () => {
     await screen.findByTestId('account-summary');
     expect(screen.queryByTestId('account-summary-window')).toBeNull();
     expect(document.body.textContent).not.toContain('Since it started:');
+  });
+});
+
+// ── Slice 4b.2 (BD-17): refunds by event date, held now, block A, bought credits, on the page ──
+import {
+  BOOST_PROBLEMS_NONE,
+  BOOST_PROBLEMS_TITLE,
+  CREDITS_BOUGHT,
+  CREDITS_BOUGHT_COLUMN,
+  CREDITS_NOT_TAKEN_BACK,
+  REVENUE_EVENTS_NOT_AVAILABLE,
+  REVENUE_HELD,
+  REVENUE_HELD_NONE,
+  REVENUE_UNKNOWN as REVENUE_UNKNOWN_4B2,
+} from '../financeCopy';
+
+describe('slice 4b.2 on the page', () => {
+  const events = { state: 'read' as const, exact: true, unreadable: 0, onUnpaidPurchases: 0, overTotal: 0, refundEvents: 1 };
+
+  it('AC-217: a refund-only window → a line with a negative net and its minus sign; the BD-17 sentence (AC-225)', async () => {
+    const revenue = paidRevenue([boostLine({ purchases: 0, gross: 0, refunded: 10, net: -10 })], { refundOrDispute: true });
+    revenue.boosts.events = events;
+    revenue.boosts.heldNow = [];
+    serve({ success: true, data: payload({ revenue }) });
+    render(<FinanceView />);
+    const line = await screen.findByTestId('revenue-line-USD');
+    expect(line.querySelector('[data-money="net"]')).toHaveTextContent('USD -10.00');
+    expect(screen.getByTestId('revenue-refund-note')).toHaveTextContent(REVENUE_REFUND_TIMING_NOTE);
+    expect(document.body.textContent).not.toMatch(/counted in the month of the purchase/);
+    expect(screen.getByTestId('revenue-held-now-none')).toHaveTextContent(REVENUE_HELD_NONE);
+  });
+
+  it('AC-219: held in open disputes now is its own table, per currency, beside the lines', async () => {
+    const revenue = paidRevenue([boostLine()], { refundOrDispute: true });
+    revenue.boosts.events = { ...events, refundEvents: 0 };
+    revenue.boosts.heldNow = [{ currency: 'USD', disputes: 1, amount: 8 }];
+    serve({ success: true, data: payload({ revenue }) });
+    render(<FinanceView />);
+    const held = await screen.findByTestId('revenue-held-now');
+    expect(held).toHaveTextContent(REVENUE_HELD);
+    expect(screen.getByTestId('revenue-held-now-USD').querySelector('[data-money="held"]')).toHaveTextContent('USD 8.00');
+    expect(screen.getByTestId('revenue-line-USD').querySelector('[data-money="net"]')).toHaveTextContent('USD 10.00');
+  });
+
+  it('AC-224 / §7: the events table not there yet → refunded, lost and net "Unknown" with one calm notice; the page renders', async () => {
+    const revenue = paidRevenue([boostLine({ refunded: null, lost: null, net: null })], {}, { status: 'partial' });
+    revenue.boosts.status = 'partial';
+    revenue.boosts.events = { state: 'not_available', exact: false, unreadable: 0, onUnpaidPurchases: 0, overTotal: 0, refundEvents: 0 };
+    revenue.boosts.heldNow = [];
+    serve({ success: true, data: payload({ revenue }) });
+    render(<FinanceView />);
+    const line = await screen.findByTestId('revenue-line-USD');
+    for (const cell of ['refunded', 'lost']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(REVENUE_UNKNOWN_4B2);
+    expect(screen.getByTestId('revenue-notice-events-not-available')).toHaveTextContent(REVENUE_EVENTS_NOT_AVAILABLE);
+    expect(screen.getByTestId('section-credits')).toBeInTheDocument();
+  });
+
+  it('AC-227: block A comes first in Section 6: an open dispute with its held amount and opened date', async () => {
+    const problems = paymentProblemsSection({
+      boosts: {
+        status: 'ok',
+        figures: {
+          empty: false, exact: true, openDisputes: 1, notCredited: 0, openedDates: 'read', eventsOnUnpaidPurchases: 0, overTotal: 0,
+          lines: [{ currency: 'USD', openDisputes: 1, held: 8, oldestDisputeOpenedAt: '2026-10-04T09:00:00.000Z', notCredited: 0, notCreditedAmount: null, oldestNotCreditedAt: null }],
+        },
+      },
+    });
+    serve({ success: true, data: payload({ paymentProblems: problems }) });
+    render(<FinanceView />);
+    const block = await screen.findByTestId('problems-boosts');
+    expect(block).toHaveTextContent(BOOST_PROBLEMS_TITLE);
+    const body = screen.getByTestId('payment-problems-body');
+    expect(body.firstElementChild).toBe(block);
+    const row = screen.getByTestId('problems-boosts-line-USD');
+    expect(row.querySelector('[data-money="held"]')).toHaveTextContent('USD 8.00');
+    expect(row).toHaveTextContent('2026-10-04');
+  });
+
+  it('AC-227: nothing to show → the calm empty line; no block at all when the payload has none (E-103)', async () => {
+    serve({
+      success: true,
+      data: payload({
+        paymentProblems: paymentProblemsSection({
+          boosts: { status: 'ok', figures: { empty: true, exact: true, openDisputes: 0, notCredited: 0, openedDates: 'read', eventsOnUnpaidPurchases: 0, overTotal: 0, lines: [] } },
+        }),
+      }),
+    });
+    const { unmount } = render(<FinanceView />);
+    expect(await screen.findByTestId('problems-boosts-none')).toHaveTextContent(BOOST_PROBLEMS_NONE);
+    unmount();
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('payment-problems-body');
+    expect(screen.queryByTestId('problems-boosts')).toBeNull();
+  });
+
+  it('AC-228: bought credits beside gifted, never one figure; the column; the not-taken-back sentence', async () => {
+    const base = creditsSection();
+    const credits = {
+      ...base,
+      figures: base.figures ? { ...base.figures, rows: base.figures.rows.map((r) => ({ ...r, boughtOutstanding: 5000 })) } : null,
+      bought: { outstanding: 5000, deletedAccountsOutstanding: 0, window: { credits: 5000, lots: 1 }, refundNotTakenBack: true },
+    };
+    serve({ success: true, data: payload({ credits }) });
+    render(<FinanceView />);
+    expect(await screen.findByTestId('credits-bought')).toHaveTextContent('5,000');
+    expect(screen.getByTestId('credits-summary')).toHaveTextContent(CREDITS_BOUGHT);
+    expect(screen.getByTestId('credits-gifted')).not.toHaveTextContent('5,0');
+    expect(screen.getByTestId('credits-table')).toHaveTextContent(CREDITS_BOUGHT_COLUMN);
+    expect(screen.getByTestId('credits-not-taken-back')).toHaveTextContent(CREDITS_NOT_TAKEN_BACK);
+  });
+
+  it('E-103: a payload without the 4b.2 fields renders exactly as before (no bought column, no held table)', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('credits-summary');
+    expect(screen.queryByTestId('credits-bought')).toBeNull();
+    expect(screen.getByTestId('credits-table')).not.toHaveTextContent(CREDITS_BOUGHT_COLUMN);
+    expect(screen.queryByTestId('revenue-held-now')).toBeNull();
   });
 });

@@ -122,6 +122,11 @@ const mockDeps = {
     // Slice 5a: R-m and R-m′.
     listPlanPaymentsAllAccountsPaidInRange: jest.fn(),
     listPlanPaymentsForAccountPaidInRange: jest.fn(),
+    // Slice 4b.2: R-n, R-n′, R-l and R-l′.
+    listBoostReversalEventsAllAccountsRecordedInRange: jest.fn(),
+    listBoostReversalEventsForAccountRecordedInRange: jest.fn(),
+    listBoostPurchasesNeedingAttentionAllAccounts: jest.fn(),
+    listBoostPurchasesNeedingAttentionForAccount: jest.fn(),
   },
   credits: {
     getSnapshots: jest.fn(),
@@ -331,6 +336,13 @@ function seed() {
   const noPlans = { data: { rows: [], reachedCeiling: false }, error: null };
   mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange.mockResolvedValue(noPlans);
   mockDeps.finance.listPlanPaymentsForAccountPaidInRange.mockResolvedValue(noPlans);
+  // Slice 4b.2: no reversal event and nothing needing attention by default (live today: 0 refunds, 0 disputes).
+  const noEvents = { data: { rows: [], reachedCeiling: false }, error: null };
+  mockDeps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockResolvedValue(noEvents);
+  mockDeps.finance.listBoostReversalEventsForAccountRecordedInRange.mockResolvedValue(noEvents);
+  const noAttention = { data: { rows: [], reachedCeiling: false, openedDates: 'read' }, error: null };
+  mockDeps.finance.listBoostPurchasesNeedingAttentionAllAccounts.mockResolvedValue(noAttention);
+  mockDeps.finance.listBoostPurchasesNeedingAttentionForAccount.mockResolvedValue(noAttention);
   // Money M-4: one recorded row each, against the one 1.2345 charge.
   mockRecordedAllAccounts.mockResolvedValue({ data: { rows: [costPoint()], reachedCeiling: false, completed: true, pages: 1 }, error: null });
   mockRecordedForAccount.mockResolvedValue({ data: { rows: [ledgerCall()], reachedCeiling: false }, error: null });
@@ -653,8 +665,9 @@ describe('slice 2a: takings through the route', () => {
 
   it('AC-45: the four takings reads are in allReads(), so every 401 / 403 / 400 case proves zero calls on them', () => {
     for (const fn of Object.values(mockDeps.finance)) expect(allReads()).toContain(fn);
-    // Slice 2b: the six overdue and plan reads joined the seven (thirteen); slice 4a: R-k and R-k′ (fifteen); slice 5a: R-m and R-m′ (seventeen).
-    expect(Object.keys(mockDeps.finance)).toHaveLength(17);
+    // Slice 2b: the six overdue and plan reads joined the seven (thirteen); slice 4a: R-k and R-k′ (fifteen); slice 5a: R-m and R-m′ (seventeen);
+    // slice 4b.2: R-n, R-n′, R-l and R-l′ (twenty-one).
+    expect(Object.keys(mockDeps.finance)).toHaveLength(21);
   });
 
   it('the payload carries takings; AC-48: every money key sits beside a currency, and no money key is top-level', async () => {
@@ -919,7 +932,8 @@ describe('slice 4a: our revenue through the route', () => {
     expect(Object.keys(revenue).sort()).toEqual(['boosts', 'plans', 'state', 'status', 'totals']);
     expect(revenue).toMatchObject({ status: 'ok', plans: { status: 'ok', lines: [] }, boosts: { status: 'ok', scope: 'all', deletedAccounts: [] } });
     expect(revenue.boosts.lines).toEqual([
-      { currency: 'USD', purchases: 1, gross: 1234.57, tax: 0, refunded: 0, held: 0, lost: 0, net: 1234.57, creditsSold: 5000, unreadable: 0, unreadableCredits: 0 },
+      // Slice 4b.2: no window `held` (held is now its own list), `unreadableEvents` added.
+      { currency: 'USD', purchases: 1, gross: 1234.57, tax: 0, refunded: 0, lost: 0, net: 1234.57, creditsSold: 5000, unreadable: 0, unreadableEvents: 0, unreadableCredits: 0 },
     ]);
     expect(revenue.boosts.packages).toEqual([
       { currency: 'USD', packageId: BOOST_PACKAGE, packageVersion: 3, purchases: 1, gross: 1234.57, refunded: 0, net: 1234.57, unreadable: 0 },
@@ -943,9 +957,9 @@ describe('slice 4a: our revenue through the route', () => {
     };
     walk(revenue.boosts, 0);
     walk({ money: body.data.tiles.k5.money }, 0);
-    // line (6) + package row (3) + K-5 money (1).
-    expect(moneyKeys).toBe(10);
-    expect(Object.keys(revenue.boosts).sort()).toEqual(['deletedAccounts', 'lines', 'notes', 'packages', 'scope', 'status']);
+    // line (5: no window held since 4b.2) + package row (3) + K-5 money (1); held now is an empty list here.
+    expect(moneyKeys).toBe(9);
+    expect(Object.keys(revenue.boosts).sort()).toEqual(['deletedAccounts', 'events', 'heldNow', 'lines', 'notes', 'packages', 'scope', 'status']);
 
     const text = JSON.stringify(revenue);
     for (const banned of ['stripe_', 'receipt_url', 'flag_reason', 'lot_id', 'paid_at', 'user_id', ACCOUNT]) expect(text).not.toContain(banned);
@@ -983,8 +997,14 @@ describe('slice 4a: our revenue through the route', () => {
     expect(ctx.sections.revenueBoosts).toBe('ok');
     expect(ctx.counts.boosts).toEqual({
       rows: 1, ceiling: false, counted: 1, otherStatus: 0, unreadable: 0, unreadableCredits: 0, currencies: 1, packages: 1, deletedAccountPurchases: 0,
+      // Slice 4b.2: counts, booleans and two fixed state words.
+      events: 0, eventsCeiling: false, eventsState: 'read', unreadableEvents: 0, attention: 0, openDisputes: 0, notCredited: 0, openedDates: 'read',
     });
-    for (const value of Object.values(ctx.counts.boosts)) expect(['number', 'boolean']).toContain(typeof value);
+    const STATE_WORDS = ['read', 'failed', 'not_available'];
+    for (const [key, value] of Object.entries(ctx.counts.boosts)) {
+      if (key === 'eventsState' || key === 'openedDates') expect(STATE_WORDS).toContain(value);
+      else expect(['number', 'boolean']).toContain(typeof value);
+    }
     const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls, mockLog.debug.mock.calls]);
     for (const secret of [String(BOOST_MINOR), '1234.57', BOOST_PACKAGE]) expect(logged).not.toContain(secret);
     expect(logged).not.toMatch(/\bUSD\b/);
@@ -1131,6 +1151,14 @@ describe('slice 5a: our plan revenue through the route', () => {
  * (`recorded.allAccounts`; `recorded.forAccount` is never called), and
  * `aiCost.recorded`, so the hash is refreshed. Every other read call, the
  * `findNames` calls and the top-level keys are unchanged.
+ *
+ * SA-Q72 (slice 4b.2, SA-WR-4b2, the second and last ruled update, as E-55):
+ * the Overview gains R-n and R-l with their exact arguments (R-n′ and R-l′ are
+ * never called), and the payload gains the 4b.2 keys (`revenue.boosts.heldNow`
+ * and `.events`, the lines' `unreadableEvents` in place of the window `held`,
+ * `paymentProblems.boosts`, `credits.bought` and each credit row's
+ * `boughtOutstanding`). One new hash; the E-55 hash is kept as a second
+ * assertion over the payload with exactly those keys put back as they were.
  */
 describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () => {
   const FROZEN_NOW = new Date('2026-10-14T12:00:00.000Z');
@@ -1194,6 +1222,11 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     'finance.listBoostPurchasesForAccountPaidInRange': [],
     'finance.listPlanPaymentsAllAccountsPaidInRange': [[RANGE]],
     'finance.listPlanPaymentsForAccountPaidInRange': [],
+    // SA-Q72 (4b.2): R-n with the window, R-l with no argument; the account-scoped pair never.
+    'finance.listBoostReversalEventsAllAccountsRecordedInRange': [[RANGE]],
+    'finance.listBoostReversalEventsForAccountRecordedInRange': [],
+    'finance.listBoostPurchasesNeedingAttentionAllAccounts': [[]],
+    'finance.listBoostPurchasesNeedingAttentionForAccount': [],
     'credits.getSnapshots': [[[ACCOUNT]]],
     'credits.findPeriodAnchorsBatch': [[[ACCOUNT]]],
     'credits.listTotalsForAccountsInRange': [
@@ -1218,8 +1251,10 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
   const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
   const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems'];
-  // E-55 (M-4): the new hash, and the 6a hash, which the payload still gives with `aiCost.recorded` taken out.
-  const EXPECTED_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
+  // SA-Q72 (4b.2): the new hash. E-55 (M-4): its hash, which the payload gives with the 4b.2 keys put back;
+  // and the 6a hash, which that payload still gives with `aiCost.recorded` taken out.
+  const EXPECTED_SHA256 = '39b35743527b3a1948efd30c3ebc2510eb0916301baa4ea8f2e0210d7e1556ea';
+  const M4_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
   const SLICE_6A_SHA256 = 'b4d10bc1256d32de808c435917c0a53d44229e3df4e9ff879a035911ae13588c';
 
   it('the read calls, the findNames calls, the top-level keys and the payload bytes', async () => {
@@ -1236,10 +1271,36 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     expect(body.data.aiCost).toHaveProperty('recorded');
     const sha = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
     expect(sha.update(JSON.stringify(body.data)).digest('hex')).toBe(EXPECTED_SHA256);
+    // SA-Q72: the only changes to the bytes are the 4b.2 keys. Put them back as they were (key order kept).
+    type Json = Record<string, unknown>;
+    const data = body.data as Json;
+    const revenue = data.revenue as Json;
+    const boosts = { ...(revenue.boosts as Json) };
+    delete boosts.heldNow;
+    delete boosts.events;
+    boosts.lines = (boosts.lines as Json[]).map((line) => ({
+      currency: line.currency, purchases: line.purchases, gross: line.gross, tax: line.tax, refunded: line.refunded,
+      // No dispute in this request, so the 6a window `held` was 0.
+      held: 0, lost: line.lost, net: line.net, creditsSold: line.creditsSold, unreadable: line.unreadable, unreadableCredits: line.unreadableCredits,
+    }));
+    const credits = { ...(data.credits as Json) };
+    delete credits.bought;
+    const figures = { ...(credits.figures as Json) };
+    figures.rows = (figures.rows as Json[]).map((row) => {
+      const copy = { ...row };
+      delete copy.boughtOutstanding;
+      return copy;
+    });
+    credits.figures = figures;
+    const problems = { ...(data.paymentProblems as Json) };
+    delete problems.boosts;
+    const before4b2: Json = { ...data, revenue: { ...revenue, boosts }, credits, paymentProblems: problems };
+    const shaM4 = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaM4.update(JSON.stringify(before4b2)).digest('hex')).toBe(M4_SHA256);
     // E-55: the only change to the bytes is that one key.
-    const section3 = { ...body.data.aiCost };
+    const section3 = { ...(before4b2.aiCost as Json) };
     delete section3.recorded;
-    const without = { ...body.data, aiCost: section3 };
+    const without = { ...before4b2, aiCost: section3 };
     const sha6a = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
     expect(sha6a.update(JSON.stringify(without)).digest('hex')).toBe(SLICE_6A_SHA256);
   });

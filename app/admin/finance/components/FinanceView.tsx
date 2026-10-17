@@ -305,7 +305,7 @@ export function FinanceView() {
                 <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
                 <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
-                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
+                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} accountId={data.accountId} />
               </OverviewBody>
             )}
           </div>
