@@ -497,7 +497,7 @@ export type FinanceHealthResult =
   | { kind: 'account_not_found' }
   | { kind: 'account_check_failed' };
 
-interface PlanWalk {
+export interface PlanWalk {
   rows: BusinessOsAccountPlan[];
   capped: boolean;
 }
@@ -508,8 +508,11 @@ const EMPTY_LEDGER: RepoResult<CreditLedgerPagedResult<CreditLedgerRow>> = {
   error: null,
 };
 
-/** The all-accounts plan walk (SA-Q3): keyset, stop on a short page, capped with `>=`. */
-async function walkPlans(plans: FinanceHealthDeps['plans']): Promise<RepoResult<PlanWalk>> {
+/**
+ * The all-accounts plan walk (SA-Q3): keyset, stop on a short page, capped with `>=`.
+ * Exported for the nightly history snapshot job (slice 8.2, SA-W-8.2-3 ruling 3): the same walk, never a copy.
+ */
+export async function walkPlans(plans: FinanceHealthDeps['plans']): Promise<RepoResult<PlanWalk>> {
   const rows: BusinessOsAccountPlan[] = [];
   let after: string | null = null;
   for (;;) {
@@ -522,6 +525,29 @@ async function walkPlans(plans: FinanceHealthDeps['plans']): Promise<RepoResult<
     if (page.data.length < FINANCE_LIMITS.PLAN_PAGE_SIZE) return { data: { rows, capped: false }, error: null };
     after = page.data[page.data.length - 1].user_id;
   }
+}
+
+/**
+ * The paying set Section 1 classifies with (slice 8.2 extract, 8.2-R3). Test and
+ * real billing rows count together (BD-14). `null` rows (the read failed) give
+ * `payingIds: null`, "paying unknown", never an empty set, so the classifier
+ * folds the paid groups into `tier_set` exactly as before.
+ *
+ * SA-Q20 fallback for a paying Founding Partner with no plan tier: the bought
+ * tier of the PAYING row only, validated by the classifier against
+ * config.tierOrder. Never logged.
+ */
+export function payingSetOf(rows: readonly FinanceBillingStatusRow[] | null): {
+  payingIds: Set<string> | null;
+  paidTierHints: Map<string, string>;
+} {
+  const payingRows = rows ? rows.filter(isPayingBillingRow) : null;
+  const payingIds = payingRows ? new Set(payingRows.map((row) => row.user_id)) : null;
+  const paidTierHints = new Map<string, string>();
+  for (const row of payingRows ?? []) {
+    if (row.bought_tier) paidTierHints.set(row.user_id, row.bought_tier);
+  }
+  return { payingIds, paidTierHints };
 }
 
 export async function buildFinanceHealth(
@@ -741,15 +767,7 @@ export async function buildFinanceHealth(
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
   // Test and real billing rows count together (BD-14); one row per account
   // (BD-16): two rows make the read itself fail, so they never reach here.
-  const payingRows = payingResult.data ? payingResult.data.filter(isPayingBillingRow) : null;
-  const payingIds = payingRows ? new Set(payingRows.map((row) => row.user_id)) : null;
-  // SA-Q20 fallback for a paying Founding Partner with no plan tier: the
-  // bought tier of the PAYING row only, validated by the classifier against
-  // config.tierOrder. Never logged.
-  const paidTierHints = new Map<string, string>();
-  for (const row of payingRows ?? []) {
-    if (row.bought_tier) paidTierHints.set(row.user_id, row.bought_tier);
-  }
+  const { payingIds, paidTierHints } = payingSetOf(payingResult.data);
   const classified = plansResult.data
     ? classifyAccounts({ rows: plansResult.data.rows, payingIds, paidTierHints, window, now, config: deps.config })
     : null;

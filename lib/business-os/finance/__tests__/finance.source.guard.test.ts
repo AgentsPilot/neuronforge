@@ -1624,3 +1624,73 @@ describe('slice 8.1 source guards (financeSnapshotShape.ts)', () => {
     expect(exportsOf(planted)).toHaveLength(3);
   });
 });
+
+// ── Slice 8.2 (§11M.7, SA-WR-8.2 8.2-R1 to 8.2-R4): the nightly history job ───
+describe('slice 8.2 source guards (the snapshot builder, job, wiring and writer)', () => {
+  const BUILDER = 'lib/business-os/finance/financeSnapshot.ts';
+  const JOB = 'lib/business-os/finance/financeSnapshotJob.ts';
+  const SNAP_DEPS = 'lib/business-os/finance/financeSnapshotDeps.ts';
+  const CLOCK = 'lib/business-os/finance/financeSnapshotClock.ts';
+  const ROUTE_8_2 = 'app/api/cron/finance-snapshot/route.ts';
+  const importsOf = (code: string) => [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  /** Every source file outside tests under app/ and lib/ (the writer's possible reachers). */
+  const walkAll = (dir: string, out: string[] = []): string[] => {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__' && entry.name !== 'node_modules') walkAll(rel, out);
+      } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(rel);
+    }
+    return out;
+  };
+  const SOURCES = [...walkAll('app'), ...walkAll('lib')];
+
+  it('scans the new files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([BUILDER, JOB, SNAP_DEPS, CLOCK]));
+    expect(SOURCES).toEqual(expect.arrayContaining([ROUTE_8_2, 'lib/repositories/BusinessOsFinanceSnapshotRepository.ts']));
+  });
+
+  it('the builder is pure: no repository, Supabase, server-only, entitlements path, clock, balance core or tier literal', () => {
+    const code = codeOf(BUILDER);
+    for (const spec of importsOf(code)) expect({ spec, bad: /repositories|supabase|server-only|entitlements/.test(spec) }).toEqual({ spec, bad: false });
+    expect(code).not.toMatch(/new Date\(|Date\.now\(/);
+    expect(code).not.toMatch(/\bextraCreditsAt\b/);
+    expect(code).not.toMatch(/'(basic|pro|plus|starter|business)'/);
+  });
+
+  it('8.2-R2: only the snapshot wiring imports the writer, and only the job calls insertSnapshotRows', () => {
+    const importers = SOURCES.filter((file) => /BusinessOsFinanceSnapshotRepository/.test(codeOf(file)) && file !== 'lib/repositories/BusinessOsFinanceSnapshotRepository.ts');
+    expect(importers).toEqual([SNAP_DEPS]);
+    const callers = SOURCES.filter((file) => /\.insertSnapshotRows\s*\(/.test(codeOf(file)));
+    expect(callers).toEqual([JOB]);
+    // No finance page file (the builder, the page orchestrator, any app/admin/finance file) reaches the writer.
+    for (const file of [BUILDER, 'lib/business-os/finance/financeHealth.ts', 'lib/business-os/finance/financeHealthDeps.ts', ...FILES.filter((f) => f.startsWith('app/admin/finance'))]) {
+      expect({ file, reaches: /financeSnapshotDeps|BusinessOsFinanceSnapshotRepository|insertSnapshotRows/.test(codeOf(file)) }).toEqual({ file, reaches: false });
+    }
+    // Planted control: a second caller would be seen.
+    expect(/\.insertSnapshotRows\s*\(/.test('await deps.writer.insertSnapshotRows(rows)')).toBe(true);
+  });
+
+  it('E-94: the wiring picks from financeHealthDeps and names no other repository', () => {
+    const code = codeOf(SNAP_DEPS);
+    expect(importsOf(code).sort()).toEqual(
+      ['./financeHealth', './financeHealthDeps', '@/lib/repositories/BusinessOsFinanceSnapshotRepository'].sort()
+    );
+    expect(code).toContain("import 'server-only';");
+    expect(code).toMatch(/const page = financeHealthDeps\(\);/);
+  });
+
+  it('8.2-R4: the clock module is the one clock; the job and the route read no clock of their own', () => {
+    expect(codeOf(CLOCK)).toMatch(/now: \(\): Date => new Date\(\)/);
+    for (const file of [JOB, ROUTE_8_2]) {
+      expect({ file, clock: /new Date\(\s*\)|Date\.now\(/.test(codeOf(file)) }).toEqual({ file, clock: false });
+    }
+    expect(codeOf(ROUTE_8_2)).toContain('financeSnapshotClock.now()');
+    expect(/new Date\(\s*\)/.test('const t = new Date();')).toBe(true);
+  });
+
+  it('E-87: the job passes the night budget to the credit pass', () => {
+    expect(codeOf(JOB)).toMatch(/budgetMs: SNAPSHOT_CREDIT_BUDGET_MS/);
+    expect(codeOf(JOB)).toMatch(/export const SNAPSHOT_CREDIT_BUDGET_MS = 30 \* 1000;/);
+  });
+});

@@ -37,6 +37,11 @@ jest.mock('@/lib/logger', () => {
 });
 
 // ── "Nothing to do" for every job ──────────────────────────────────────────
+// finance-snapshot (slice 8.2, E-97): its late gate reads the one clock seam; fixed at 00:07 UTC so
+// "nothing to do" is an on-time run whatever hour this suite runs.
+jest.mock('@/lib/business-os/finance/financeSnapshotClock', () => ({
+  financeSnapshotClock: { now: () => new Date('2026-10-18T00:07:00.000Z') },
+}));
 jest.mock('@/lib/supabaseServer', () => {
   const chain = (): unknown =>
     new Proxy(function () {} as unknown as object, {
