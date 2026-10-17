@@ -82,6 +82,9 @@ const CACHED_COLUMN_ALLOWED = [
   'lib/repositories/AiModelPricingRepository.ts',
   'lib/repositories/types.ts',
   'lib/ai/pricing-research/',
+  // AI model price review slice 8: selects the pending line's SNAPSHOT column
+  // `current_cached_input_cost_per_token` for Apply's stale check (compared, never charged).
+  'lib/repositories/AiPriceProposalRepository.ts',
 ];
 const IMAGE_FALLBACK_ALLOWED = [
   'lib/ai/imagePricing.ts',

@@ -62,6 +62,7 @@ describe('P: Model pricing fetches only the pricing routes (C2-2, G-1, G-2)', ()
     }
   });
 
+  // Slice 8 (SA O-18): still true. Apply, Dismiss and the margin review post from `priceApply.ts` only.
   it('NW-1 (slice 6): P sends no write request; its one fetch( is the pricing GET', () => {
     expect(pCode).not.toMatch(/method:\s*['"`](PUT|POST|DELETE|PATCH)['"`]/);
     const fetches = pCode.match(/(?<![A-Za-z0-9_])fetch[(]/g) ?? [];
@@ -95,9 +96,10 @@ describe('P: the header says what the page is (C2-2, G-8)', () => {
 });
 
 describe('P: Sync and the per-row Edit are removed (MP-FR-11; slice 6 R-5)', () => {
+  // Re-pinned by AI model price review slice 8 (SA 2026-10-17, RC-1..RC-16): Apply now exists.
   it('S-1: the helper text', () => {
     expect(P).toContain(
-      'Cost per token for each AI model, as charged today. Live prices cannot be changed on this page until Apply arrives.'
+      'Cost per token for each AI model, as charged today. A live price changes only when an admin applies a provider price.'
     );
   });
 
@@ -106,10 +108,11 @@ describe('P: Sync and the per-row Edit are removed (MP-FR-11; slice 6 R-5)', () 
     expect(P).not.toContain('Syncing...');
   });
 
-  it('S-4: the help paragraph on the removed buttons', () => {
+  it('S-4: the help paragraph on the removed buttons (slice 8: Apply exists)', () => {
     expect(P).toContain(
-      'The Sync button and the per-row Edit have been removed. Every price change will go through a pending price and Apply. Until Apply arrives, a live price can only be changed in the database by an operator, with the platform owner&apos;s approval.'
+      'The Sync button and the per-row Edit have been removed. Every price change goes through a pending price and Apply, which keeps the old price as history and records who applied it and why.'
     );
+    expect(P).not.toContain('Until Apply arrives');
   });
 
   it('S-5 to S-7: the Sync comment, route and messages are gone', () => {

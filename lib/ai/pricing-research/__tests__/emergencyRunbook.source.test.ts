@@ -1,6 +1,6 @@
 /**
  * Source test for the emergency price runbook (AI model price review slice 6;
- * user decision BQ-1 (a); SA SC6-5, CR-1, CR-5; QA E-4).
+ * user decision BQ-1 (a); SA SC6-5, CR-1, CR-5; QA E-4; slice 8 SA RC-4, RC-9).
  *
  * The runbook is the only way a live price changes before slice 8's Apply, and
  * an operator pastes it under pressure. These are the properties that make the
@@ -9,6 +9,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { decisionAnswer } from '../decisionErrors';
 
 const RUNBOOK = 'docs/runbooks/AI_MODEL_PRICE_EMERGENCY_SQL_RUNBOOK.md';
 const text = fs.readFileSync(path.join(process.cwd(), RUNBOOK), 'utf8').replace(/\r\n/g, '\n');
@@ -53,14 +55,31 @@ describe('emergency price runbook', () => {
     }
   });
 
-  it('each paste is exactly one statement (BEGIN; DO …; COMMIT; is one unit)', () => {
+  it('each paste is exactly one unit (BEGIN; LOCK …; DO …; COMMIT; is one unit)', () => {
     const [listing, counts, change] = pastes.map(statementsOf);
     expect(listing).toHaveLength(1);
     expect(counts).toHaveLength(1);
-    expect(change).toHaveLength(3);
+    expect(change).toHaveLength(4);
     expect(change[0]).toBe('BEGIN');
-    expect(change[1].startsWith(`DO ${DO_TAG}`)).toBe(true);
-    expect(change[2]).toBe('COMMIT');
+    expect(change[1]).toBe('LOCK TABLE public.ai_model_pricing IN SHARE ROW EXCLUSIVE MODE');
+    expect(change[2].startsWith(`DO ${DO_TAG}`)).toBe(true);
+    expect(change[3]).toBe('COMMIT');
+  });
+
+  it('slice 8 (SA RC-4): paste 2 locks the price table straight after BEGIN, so it serialises with Apply', () => {
+    expect(pastes[2].startsWith(['BEGIN;', 'LOCK TABLE public.ai_model_pricing IN SHARE ROW EXCLUSIVE MODE;', ''].join(String.fromCharCode(10)))).toBe(true);
+    expect(text).toContain('waits for any in-app Apply to finish');
+  });
+
+  it('slice 8 (SA RC-9): documents the emergency stop of Apply and its re-grant', () => {
+    expect(text).toContain('`REVOKE EXECUTE ON FUNCTION public.ai_price_apply_lines(uuid, jsonb, jsonb) FROM service_role;`');
+    expect(text).toContain('`GRANT EXECUTE ON FUNCTION public.ai_price_apply_lines(uuid, jsonb, jsonb) TO service_role;`');
+  });
+
+  it('slice 8 (SA CR8-1): quotes exactly the words the page shows while Apply is switched off', () => {
+    const words = decisionAnswer('not_admin_row').error;
+    expect(words).toContain('an operator has switched Apply off');
+    expect(text).toContain(`the page shows "${words}"`);
   });
 
   it('paste 1b shows the active row ids next to the count (CR-1)', () => {

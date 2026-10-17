@@ -515,6 +515,71 @@ export interface AiPricePendingLine {
 }
 
 /**
+ * A price line as Apply and Dismiss read it (AI model price review slice 8):
+ * the proposed prices as submitted (per 1M or per image), the snapshot of what
+ * was charged when it was recorded, and its state. Every number is exact TEXT
+ * (`::text` in the select, SA RC-6): it is compared by value with
+ * `lib/ai/pricing-research/decimal.ts`, never through a JS number.
+ */
+export interface AiPriceDecisionLine {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  current_basis: 'table' | 'in_code_fallback' | 'image_setting' | 'unpriced';
+  current_row_id: string | null;
+  current_input_cost_per_token: string | null;
+  current_output_cost_per_token: string | null;
+  current_cached_input_cost_per_token: string | null;
+  current_cost_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+  state: 'pending' | 'superseded' | 'applied' | 'dismissed';
+  created_by: string;
+}
+
+/** One line handed to `ai_price_apply_lines`: an id and the admin's own words, nothing else (slice 8, SA 2.5). */
+export interface AiPriceApplyLineInput {
+  line_id: string;
+  reason: string;
+  override_reason?: string;
+}
+
+/** The margin record stored on the apply batch; computed by the server, never by the client (MP-FR-14). */
+export interface AiPriceApplyMargin {
+  needed: boolean;
+  items: Array<Record<string, unknown>>;
+}
+
+/** One row of the apply function's result: one per applied line. */
+export interface AiPriceApplyResultRow {
+  batchId: string;
+  lineId: string;
+  /** Which live table took the new row: token prices or image prices. */
+  liveKind: 'token' | 'image';
+  newRowId: string;
+  retiredRowIds: string[];
+  appliedAt: string;
+}
+
+/** An apply whose margin review is still open (MP-FR-14), as the page shows it. */
+export interface AiPriceOpenMarginReview {
+  id: string;
+  applied_by: string;
+  applied_at: string;
+  line_count: number;
+  margin_items: Array<Record<string, unknown>>;
+}
+
+/**
  * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
  * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
  * for why the mandatory user scoping does not apply. PostgREST returns the

@@ -270,9 +270,11 @@ describe('Help drawer (UF-7)', () => {
     expect(within(dialog).queryByText(/Copies a built-in price list, kept in the code/)).not.toBeInTheDocument();
     expect(within(dialog).getByText(/The Sync button and the per-row Edit have been removed[.]/)).toBeInTheDocument();
     expect(within(dialog).getByText(/in effect on all servers within 1 hour/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Apply \(coming later\)/)).toBeInTheDocument();
+    // Slice 8: Apply and Dismiss exist; history is still a later slice.
+    expect(within(dialog).getByText(/Apply or Dismiss[.]/)).toBeInTheDocument();
     expect(within(dialog).getByText(/History \(coming later\)/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Until Apply arrives, a live price can only be changed in the database by an operator/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Every price change goes through a pending price and Apply/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Until Apply arrives/)).not.toBeInTheDocument();
 
     fireEvent.keyDown(dialog, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

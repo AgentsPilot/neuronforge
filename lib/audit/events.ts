@@ -503,6 +503,13 @@ export const AUDIT_EVENTS = {
   // AI model price review slice 5: an admin pressed "Check provider prices". The
   // fetched prices are PENDING only and change no charge until someone applies them.
   AI_PRICE_FETCH_RUN: 'AI_PRICE_FETCH_RUN',
+  // AI model price review slice 8: an admin applied a pending price. One entry per line;
+  // the charge for that model changes on every server within 1 hour (MP-FR-9).
+  AI_PRICING_APPLIED_LINE: 'AI_PRICING_APPLIED_LINE',
+  // Slice 8: an admin dismissed a pending price, with a reason. No charge changes.
+  AI_PRICE_LINE_DISMISSED: 'AI_PRICE_LINE_DISMISSED',
+  // Slice 8: an admin marked the margin review of one Apply done, with a note (MP-FR-14).
+  AI_PRICE_MARGIN_REVIEW_DONE: 'AI_PRICE_MARGIN_REVIEW_DONE',
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -1458,6 +1465,27 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Provider prices checked (stored as pending, not applied)',
+  },
+  // Warning: a live price changed, so every later charge on that model changes (SA O-13).
+  // Written with logAndFlush (one list call for the whole Apply, SA RC-12) by
+  // POST /api/admin/model-pricing/apply; entity 'ai_pricing', entity id the line id,
+  // entity_kind 'price_line' in details.
+  [AUDIT_EVENTS.AI_PRICING_APPLIED_LINE]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AI model price applied (a live price changed)',
+  },
+  // Info: nothing is charged differently. POST /api/admin/model-pricing/dismiss.
+  [AUDIT_EVENTS.AI_PRICE_LINE_DISMISSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Pending AI model price dismissed (not applied)',
+  },
+  // Info: the margin review prompt of one Apply marked done; entity_kind 'apply_batch'.
+  [AUDIT_EVENTS.AI_PRICE_MARGIN_REVIEW_DONE]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Margin review after an AI model price change marked done',
   },
 
   // Workflow Pilot events

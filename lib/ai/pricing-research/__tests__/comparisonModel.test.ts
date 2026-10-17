@@ -25,6 +25,11 @@ const mockListPending = jest.fn();
 jest.mock('@/lib/repositories/AiPriceProposalRepository', () => ({
   aiPriceProposalRepository: { listPendingLines: () => mockListPending() },
 }));
+// Slice 8 (SA O-8): the comparison also reads the open margin reviews.
+const mockListOpenMarginReviews = jest.fn(async () => ({ data: [] as unknown[], error: null as unknown }));
+jest.mock('@/lib/repositories/AiPriceApplyRepository', () => ({
+  aiPriceApplyRepository: { listOpenMarginReviews: () => mockListOpenMarginReviews() },
+}));
 jest.mock('@/lib/repositories/AdminUserRepository', () => ({
   adminUserRepository: {
     listActive: async () => ({ data: [{ user_id: 'admin-1', email: 'admin@example.com' }], error: null }),

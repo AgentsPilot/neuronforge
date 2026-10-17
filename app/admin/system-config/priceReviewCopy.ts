@@ -7,7 +7,7 @@
  */
 
 export const PRICE_REVIEW_NOTE =
-  'Nothing in the provider column is charged yet. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Applying a new price and each model’s price history come in later releases. Until then, no live price can be changed on this page.';
+  'Nothing in the provider column is charged until someone applies it. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Apply makes a provider price the live price for that model; Dismiss drops it. Each model’s price history comes in a later release.';
 
 export const NO_PENDING_NOTICE =
   'No provider prices entered yet, so every row reads No new price. Use Enter provider price to add one.';
@@ -203,4 +203,55 @@ export const RETIRED_FILTER_WORDS = {
 export const HELP_WORDS = {
   button: 'About model pricing',
   title: 'About model pricing',
+} as const;
+
+/** Slice 8: Apply, Dismiss and the margin review prompt (MP-FR-8, MP-FR-10, MP-FR-14; UF-3). */
+export const APPLY_WORDS = {
+  apply: 'Apply',
+  dismiss: 'Dismiss',
+  applySelected: 'Apply selected',
+  select: 'Select for bulk apply',
+  applyTitle: 'Apply provider prices',
+  dismissTitle: 'Dismiss provider prices',
+  applyIntro:
+    'Applying makes each price below the live price for its model. Charges use it on every server within 1 hour; charges already recorded never change. Plans, allowances and credits do not change.',
+  dismissIntro: 'Dismissing drops the provider prices below. No charge changes.',
+  ours: 'ours',
+  provider: 'provider',
+  reason: 'Reason',
+  reasonHint: 'Pre-filled from the provider page; edit it if needed.',
+  dismissReason: 'Reason for dismissing',
+  override: 'Override reason (required: this price is flagged)',
+  overrideHint: 'Say why it is right to apply this price despite the flag.',
+  reasonTooShort: 'Write at least 3 characters.',
+  confirmApply: 'Apply now',
+  confirmDismiss: 'Dismiss now',
+  working: 'Working…',
+  cancel: 'Cancel',
+  appliedAt: 'Applied at',
+  dismissed: 'Dismissed. No charge changed.',
+  marginFollows: 'A model Business OS uses changed: check plan margins in the prompt below.',
+  imageSetIncomplete:
+    'Business OS will keep refusing this image model until every size is priced at low, medium and high.',
+  cachedNotCharged: 'stored, not charged: only OpenAI cached reads are charged',
+  cachedRemoved: 'the stored cached rate is removed; half of input applies',
+  cachedDerived: 'derived (half of input)',
+  lines: 'Lines',
+  failedLines: 'Lines refused:',
+  tooManyLines: 'Apply takes at most 50 prices at a time. Select fewer rows',
+  selectedLines: 'prices selected',
+} as const;
+
+export const MARGIN_WORDS = {
+  title: 'Check plan margins',
+  intro:
+    'These price changes touch models Business OS uses. Nothing about plans, allowances or credits changed. Review the credit pricing, then mark this done with a note.',
+  link: 'Review credit pricing',
+  note: 'Note',
+  markDone: 'Mark done',
+  saving: 'Saving…',
+  appliedBy: 'Applied by',
+  fallbackDiffers: 'the built-in fallback price differs: update it by PR',
+  noChange: 'no earlier price',
+  more: 'More margin reviews are open than shown here. Mark these done to see the rest.',
 } as const;

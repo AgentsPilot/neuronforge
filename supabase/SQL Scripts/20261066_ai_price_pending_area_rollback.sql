@@ -1,5 +1,6 @@
 BEGIN;
 SET LOCAL lock_timeout = '2s';
+LOCK TABLE public.ai_model_pricing, public.ai_model_image_pricing, public.ai_price_proposal_lines IN SHARE ROW EXCLUSIVE MODE;
 
 DO $rollback_guard$
 BEGIN

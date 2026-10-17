@@ -70,6 +70,10 @@ jest.mock('@/lib/repositories/AiModelImagePricingRepository', () => ({
 jest.mock('@/lib/repositories/AiPriceProposalRepository', () => ({
   aiPriceProposalRepository: { listPendingLines: async () => ({ data: [], error: null }) },
 }));
+// Slice 8 (SA O-8): the comparison also reads the open margin reviews.
+jest.mock('@/lib/repositories/AiPriceApplyRepository', () => ({
+  aiPriceApplyRepository: { listOpenMarginReviews: async () => ({ data: [], error: null }) },
+}));
 jest.mock('@/lib/repositories/AdminUserRepository', () => ({
   adminUserRepository: { listActive: async () => ({ data: [], error: null }) },
 }));
