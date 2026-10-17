@@ -43,7 +43,7 @@ Before `20261078` is applied, it shows a calm "not available yet" notice instead
 - **Release order:** open the PRs in order, 8.1 (#452) → 8.2 → 8.3, each only after the previous one is in main. Before opening each, merge main into the branch (no rebase).
 - **Owed to the user (AC-294):** the browser steps L-159 to L-162, after 8.1 is applied and 8.2 has recorded at least one night.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-health-8-3 — commit pending (RM); PR held until 8.2 merges
+### Status: COMMITTED — feature/bos-finance-health-8-3 — commit `3209bda9`, main merged `bf5d93ee`, PR #461 (auto-merge on)
 
 ---
 
