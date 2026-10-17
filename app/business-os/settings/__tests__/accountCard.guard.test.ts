@@ -18,7 +18,9 @@
  *     accident. Since C-a (C-5) the consent drawer's reads may start early
  *     through `useDrawerPrefetch` and the read module `marketingDrawerReads`,
  *     which names the route, so the page still never does
- *     (`consentPrefetch.guard.test.ts` pins that wiring);
+ *     (`consentPrefetch.guard.test.ts` pins that wiring). Since C-b (C-2) the
+ *     plan drawer's read does the same through `planDrawerReads`
+ *     (`planPrefetch.guard.test.ts`);
  *   - the two dead log-out helpers stay gone.
  *
  * Positive pins run on comment-stripped source, so a commented-out line cannot
@@ -73,7 +75,7 @@ describe('S-5: the plan anchor stays (SA W-5)', () => {
 
 describe('S-5 / C-8: no row-value request from the page', () => {
   it.each(['/api/business-os/entitlements/my-plan', '/api/business-os/consent-settings'])(
-    'the page does not call %s (the drawers load it on open)',
+    "the page does not call %s (only the drawers' read modules name it)",
     (route) => {
       expect(code).not.toContain(route);
     }

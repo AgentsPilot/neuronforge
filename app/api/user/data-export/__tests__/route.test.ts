@@ -58,6 +58,16 @@
  * read even when seeded; a planted user id changes nothing in the ten reads;
  * the DE-6 rows count toward the Phase 1 ceiling. Earlier expectations change
  * only by the ten section ids and their tables.
+ *
+ * DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §8 D-11, D-12, D-13, D-18;
+ * SA review DE-7): five content sections. The mock now honours `.in()` (the
+ * blocks are read by the owner's page ids) and the mocked limits carry
+ * VIA_PARENT_CHUNK. The smart-link counters, the picture reuse key and our
+ * storage key never reach the body (`public_url` does); page views, link
+ * clicks and templates are never read; a planted user id or page id changes
+ * nothing; the content rows count toward the Phase 1 ceiling. `website_blocks`
+ * is queried only when the owner has a page, so a run with no pages touches
+ * 37 tables. Earlier expectations change only by the five ids and their tables.
  */
 
 import { NextRequest } from 'next/server';
@@ -80,6 +90,8 @@ function mockApplyNotFilters(rows: Array<Record<string, unknown>>, calls: Call[]
   let out = rows.filter((row) =>
     calls.every((c) => {
       if (c[0] === 'gt') return String(row[c[1] as string] ?? '') > String(c[2]);
+      // DE-7: `.in(column, values)`, values a plain array (the parent-scoped read).
+      if (c[0] === 'in') return (c[2] as unknown[]).includes(row[c[1] as string]);
       if (c[0] !== 'not') return true;
       const value = String(row[c[1] as string] ?? '');
       if (c[2] === 'in') return !String(c[3]).slice(1, -1).split(',').map((v) => v.replace(/^"|"$/g, '')).includes(value);
@@ -94,7 +106,8 @@ function mockApplyNotFilters(rows: Array<Record<string, unknown>>, calls: Call[]
 }
 
 // DE-4: the Phase 1 limits, lowered per test.
-const MOCK_DEFAULT_LIMITS = { ROW_CEILING: 100_000, PAGE_SIZE: 1_000, JSON_BODY_MAX_BYTES: 4_000_000 };
+// DE-7: + VIA_PARENT_CHUNK (without it the parent-scoped read fails closed).
+const MOCK_DEFAULT_LIMITS = { ROW_CEILING: 100_000, PAGE_SIZE: 1_000, JSON_BODY_MAX_BYTES: 4_000_000, VIA_PARENT_CHUNK: 100 };
 const mockLimits = { ...MOCK_DEFAULT_LIMITS };
 jest.mock('@/lib/business-os/data-export/limits', () => ({ EXPORT_LIMITS: mockLimits }));
 
@@ -117,7 +130,8 @@ function mockBuilder(key: string) {
     return { data: rows, error: null };
   };
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'eq', 'neq', 'not', 'gt', 'gte', 'order', 'limit']) {
+  // DE-7: + `in`.
+  for (const method of ['select', 'eq', 'neq', 'not', 'in', 'gt', 'gte', 'order', 'limit']) {
     builder[method] = (...args: unknown[]) => {
       calls.push([method, ...args]);
       recorded.push([method, ...args]);
@@ -384,8 +398,11 @@ describe('GET /api/user/data-export', () => {
       'quotes', 'invoices', 'payments', 'refunds', 'payment_plans', 'client_payment_plans', 'installments', 'client_payment_methods',
       'intake_settings', 'intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
       'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
+      // DE-7: + the five content sections.
+      'website_content', 'website_pages', 'website_blocks', 'smart_links', 'images',
     ]);
     // DE-5: + the ten money tables. DE-6: + the ten DE-6 tables.
+    // DE-7: + four content tables; website_blocks is not queried (no page seeded, so no page id to read it by).
     expect(Object.keys(mockCalls).sort()).toEqual([
       'business_addresses', 'business_intake_forms', 'business_profiles', 'business_subscribers',
       'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks',
@@ -393,8 +410,8 @@ describe('GET /api/user/data-export', () => {
       'marketing_consent_events', 'marketing_consent_settings', 'notification_settings',
       'payment_invoices', 'payment_plan_installments', 'payment_plan_subscriptions', 'payment_plans', 'payment_processors',
       'payment_refunds', 'payment_transactions', 'profiles', 'proposals', 'saved_payment_methods',
-      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'stripe_connect_accounts',
-      'user_intake_settings', 'user_preferences',
+      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services', 'smart_links', 'stripe_connect_accounts',
+      'user_intake_settings', 'user_media', 'user_preferences', 'website_content', 'website_pages',
     ]);
     // BC-5: the calendar copy is never read.
     expect(mockCalls.external_calendar_events).toBeUndefined();
@@ -823,7 +840,8 @@ describe('DE-5 C-6 (a): money paid to AgentPilot is never read, even when seeded
     touched.map((k) => k.replace(/^anon:/, '')).filter((t) => MONEY_TO_US.includes(t) || EXCLUDED_MONEY.includes(t));
 
   // DE-6: 33 section tables, was 23.
-  it('the run touches exactly the 33 section tables (+ the timezone read on user_preferences); none of these', async () => {
+  // DE-7: 37, was 33: + four content tables (website_blocks is queried only when the owner has a page).
+  it('the run touches exactly the 37 section tables (+ the timezone read on user_preferences); none of these', async () => {
     mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
     for (const t of [...MONEY_TO_US, ...EXCLUDED_MONEY]) {
       mockSeeds[t] = [{ id: '70000000-0000-4000-8000-000000000007', user_id: OWNER.id, amount: 49, currency: 'USD', note: `QA-${t}-NEVER` }];
@@ -832,7 +850,7 @@ describe('DE-5 C-6 (a): money paid to AgentPilot is never read, even when seeded
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(touchedForbidden(Object.keys(mockCalls))).toEqual([]);
-    expect(Object.keys(mockCalls)).toHaveLength(33);
+    expect(Object.keys(mockCalls)).toHaveLength(37);
     expect(text).not.toContain('NEVER');
   });
 
@@ -989,5 +1007,143 @@ describe('DE-6: intake, email marketing and consent through the route', () => {
     expect(res.status).toBe(413);
     const warn = mockLogged.find((l) => l.msg === 'Data export refused: over the Phase 1 ceiling');
     expect(warn).toMatchObject({ fields: { atSection: 'consent_settings' } });
+  });
+});
+
+// ── DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §8 D-11, D-12, D-13, D-18; SA review DE-7) ──
+
+describe('DE-7: website and content through the route', () => {
+  const PAGE_1 = '71000000-0000-4000-8000-000000000001';
+  const PAGE_2 = '71000000-0000-4000-8000-000000000002';
+  const OTHER = '99999999-9999-4999-8999-999999999999';
+  const OTHER_PAGE = '79000000-0000-4000-8000-000000000009';
+  const CONTENT_TABLES = ['website_content', 'website_pages', 'website_blocks', 'smart_links', 'user_media'];
+
+  function seedDe7(): void {
+    mockSeeds.website_content = [{ id: '70000000-0000-4000-8000-000000000001', user_id: OWNER.id, hero: { title: 'Welcome' } }];
+    mockSeeds.website_pages = [
+      { id: PAGE_1, user_id: OWNER.id, slug: 'home', status: 'archived', page_type: 'homepage' },
+      { id: PAGE_2, user_id: OWNER.id, slug: 'spring', status: 'draft', page_type: 'landing' },
+    ];
+    // This mock does not apply `.eq`, so another owner's page row is not seeded here (the
+    // cross-tenant cases are in BusinessDataExportRepository.test.ts, D-8). The block below
+    // sits on a page that is not the owner's: the `.in` on the owner's page ids keeps it out.
+    mockSeeds.website_blocks = [
+      { id: '72000000-0000-4000-8000-000000000001', page_id: PAGE_1, block_type: 'hero', enabled: false, content: { headline: 'Hi' } },
+      { id: '72000000-0000-4000-8000-000000000002', page_id: PAGE_2, block_type: 'faq', enabled: true, content: { q: 'When?' } },
+      // A block whose page is not one of the owner's (it even names the owner's page in its text).
+      { id: '79000000-0000-4000-8000-000000000001', page_id: OTHER_PAGE, block_type: 'hero', content: { note: `OTHER-BLOCK-XYZ on ${PAGE_1}` } },
+    ];
+    mockSeeds.smart_links = [
+      {
+        id: '73000000-0000-4000-8000-000000000001',
+        user_id: OWNER.id,
+        code: 'ig-bio',
+        destination_url: 'https://x.test/book?utm_source=ig',
+        is_active: false,
+        click_count: 918273,
+        conversion_count: 645372,
+        revenue_cents: 5647382,
+      },
+    ];
+    mockSeeds.user_media = [
+      {
+        id: '74000000-0000-4000-8000-000000000001',
+        user_id: OWNER.id,
+        public_url: 'https://cdn.test/website-images/owner/generated/1.png',
+        source: 'generated',
+        description: 'a calm therapy room with plants',
+        source_ref: 'openai:REUSE-KEY-XYZ',
+        storage_path: 'owner/generated/STORAGE-PATH-XYZ.png',
+      },
+    ];
+  }
+
+  it('D-12: counters, the reuse key and the storage key never reach the body; public_url, the description and code do', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedDe7();
+    const res = await GET(request());
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    for (const leaked of ['918273', '645372', '5647382', 'REUSE-KEY-XYZ', 'STORAGE-PATH-XYZ', 'OTHER-BLOCK-XYZ', OTHER_PAGE, OTHER]) {
+      expect(text).not.toContain(leaked);
+    }
+    for (const key of ['click_count', 'conversion_count', 'revenue_cents', 'source_ref', 'storage_path']) {
+      expect(text).not.toContain(`"${key}"`);
+    }
+    const body = JSON.parse(text);
+    // The owner id is in export_metadata only, never on a content row.
+    for (const id of ['website_content', 'website_pages', 'website_blocks', 'smart_links', 'images']) {
+      for (const row of sectionOf(body, id).rows) expect(Object.keys(row)).not.toContain('user_id');
+    }
+    expect(sectionOf(body, 'images').rows).toEqual([
+      { id: '74000000-0000-4000-8000-000000000001', public_url: 'https://cdn.test/website-images/owner/generated/1.png', source: 'generated', description: 'a calm therapy room with plants' },
+    ]);
+    expect(sectionOf(body, 'smart_links').rows).toEqual([
+      { id: '73000000-0000-4000-8000-000000000001', code: 'ig-bio', destination_url: 'https://x.test/book?utm_source=ig', is_active: false },
+    ]);
+    // All history: archived and draft pages, a hidden block (D-14 through the route).
+    expect(sectionOf(body, 'website_pages').rows.map((r) => r.status)).toEqual(['archived', 'draft']);
+    expect(sectionOf(body, 'website_blocks').rows.map((r) => [r.page_id, r.enabled])).toEqual([[PAGE_1, false], [PAGE_2, true]]);
+    expect(sectionOf(body, 'website_content').rows).toHaveLength(1);
+    expect(body.export_metadata.groups.content).toMatchObject({ gdpr_role: 'processor', controller: 'account_holder' });
+    // The audit entry gains the five counts, counts only.
+    const details = mockAuditLog.mock.calls[0][0].details;
+    expect(details.section_counts).toMatchObject({ website_content: 1, website_pages: 2, website_blocks: 2, smart_links: 1, images: 1 });
+    expect(JSON.stringify(details)).not.toContain('ig-bio');
+  });
+
+  it('D-11: website_page_views, smart_link_clicks and website_templates are never read, even when seeded; website_pages twice', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedDe7();
+    for (const t of ['website_page_views', 'smart_link_clicks', 'website_templates']) {
+      mockSeeds[t] = [{ id: '70000000-0000-4000-8000-000000000009', user_id: OWNER.id, page_id: PAGE_1, note: `QA-${t}-NEVER` }];
+    }
+    const text = await (await GET(request())).text();
+    for (const t of ['website_page_views', 'smart_link_clicks', 'website_templates']) {
+      expect(mockCalls[t]).toBeUndefined();
+      expect(mockCalls[`anon:${t}`]).toBeUndefined();
+    }
+    expect(text).not.toContain('NEVER');
+    for (const t of CONTENT_TABLES) expect(mockCalls[t]).toBeDefined();
+    // With pages seeded the run touches all 38 section tables.
+    expect(Object.keys(mockCalls)).toHaveLength(38);
+    // website_pages: its section read (data + empty page), then the parent ids (data + empty page).
+    expect(mockCalls.website_pages.filter((c) => c[0] === 'select').map((c) => c[1])).toEqual([
+      expect.stringMatching(/^id, page_type, /), expect.stringMatching(/^id, page_type, /), 'id', 'id',
+    ]);
+  });
+
+  it('D-13: a planted ?userId=, x-user-id and ?pageId= change nothing in the five reads', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedDe7();
+    const res = await GET(
+      new NextRequest(`http://localhost/api/user/data-export?userId=${OTHER}&pageId=${OTHER_PAGE}`, { headers: { 'x-user-id': OTHER } })
+    );
+    expect(res.status).toBe(200);
+    for (const table of ['website_content', 'website_pages', 'smart_links', 'user_media']) {
+      expect(mockCalls[table]).toContainEqual(['eq', 'user_id', OWNER.id]);
+      expect(mockCalls[table].filter((c) => c[0] === 'eq').every((c) => c[1] === 'user_id' && c[2] === OWNER.id)).toBe(true);
+    }
+    // The blocks are read only by the owner's own page ids, never by an id from the request.
+    expect(mockCalls.website_blocks.filter((c) => c[0] === 'eq')).toEqual([]);
+    for (const c of mockCalls.website_blocks.filter((x) => x[0] === 'in')) expect(c).toEqual(['in', 'page_id', [PAGE_1, PAGE_2]]);
+    expect(JSON.stringify(mockCalls)).not.toContain(OTHER);
+    expect(JSON.stringify(mockCalls)).not.toContain(OTHER_PAGE);
+    const text = await res.text();
+    expect(text).not.toContain('OTHER-BLOCK-XYZ');
+  });
+
+  it('D-18: the content rows draw on the Phase 1 row ceiling: 413, no file, no DATA_EXPORTED', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: OWNER }, error: null });
+    seedDe7();
+    // identity 1 + content 1 + pages 2 + blocks 2 = 6 > 5.
+    mockLimits.ROW_CEILING = 5;
+    const res = await GET(request());
+    expect(res.status).toBe(413);
+    expect(res.headers.get('Content-Disposition')).toBeNull();
+    expect(mockAuditLog).not.toHaveBeenCalled();
+    const warn = mockLogged.find((l) => l.msg === 'Data export refused: over the Phase 1 ceiling');
+    expect(warn).toMatchObject({ level: 'warn', fields: { limit: 'rows', rowCeiling: 5, atSection: 'website_blocks' } });
   });
 });

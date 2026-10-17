@@ -78,9 +78,10 @@ const EXPORT_REASON = {
 const exclude = (reason: string, detail?: string): TableExportClassification =>
   ({ kind: 'exclude', reason: detail ? `${reason}; ${detail}` : reason });
 
-/** In scope, not built yet: `slice` adds the section. Allowed until DE-7. */
-const planned = (slice: Extract<TableExportClassification, { kind: 'planned' }>['slice']): TableExportClassification =>
-  ({ kind: 'planned', slice });
+// DE-7 (SA-Q9): the `planned()` helper is gone. Every table is now `include`
+// or `exclude`, and the CI forbids `planned` on a table
+// (exportClassification.test.ts, PLANNED_TABLES_ALLOWED = false), so a new
+// table is classified on the spot. Buckets keep their own `planned` until DE-8b.
 
 // `PROFILES_EXPORT` (section `user_profile`) moved to the DE-3 block below,
 // after EXPORT_COLUMN_REASON, whose AGENT_SETTING reason it now uses.
@@ -860,6 +861,127 @@ const BUSINESS_SUBSCRIBERS_EXPORT: TableExportClassification = {
   },
 };
 
+// ── DE-7: website and content (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §3) ────
+// The business's website text, every website and landing page (draft, live
+// and archived), the blocks on those pages (hidden ones included), every
+// smart link (on or off) and the picture library. Five sections, group
+// `content` (AgentPilot the processor; the account holder the controller;
+// DE-7 SA-Q3). Every list was reconciled with the live schema on 2026-10-17
+// (workplan §11.1, SA review DE-7): `columns` ∪ `excludedColumns` is exactly
+// the live column set of each table. Order matters: the export repository
+// selects `columns.join(', ')`, pinned byte for byte in the route
+// characterization test.
+//
+// All history is in (DX-8; TL defaults BC-2, BC-3, BC-7, 2026-10-17): none of
+// these tables soft-deletes, so no rowFilter. These are the RECORDS; the
+// picture files arrive in DE-8b's "Your files". Out: the smart-link counters
+// and attributed revenue (BC-1), the picture reuse key and our storage key.
+// `website_blocks` has no `user_id`: it is read through its owner's pages
+// (`viaParent`, DE-7 SA-Q1, the one parent-scoped read). Changing a list
+// changes what the export holds: a privacy decision, and an SA item.
+
+/** Why a DE-7 COLUMN stays out. Repeated reasons are named, not retyped. */
+const CONTENT_COLUMN_REASON = {
+  VISIT_STATS: 'DX-1d: how many visits and sign-ups a link brought is activity (TL default BC-1, 2026-10-17)',
+  ATTRIBUTED_REVENUE:
+    'a running total derived from payments already in the file, with no currency of its own (DX-1d; CLAUDE.md § Currency; TL default BC-1, 2026-10-17)',
+  REUSE_KEY:
+    'our lookup key that stops the same picture being fetched or paid for twice (a stock library id, or a hash of a picture request); `source` says where the picture came from (DE-7 SA-Q6)',
+} as const;
+
+/**
+ * `website_content` -> `website_content`: the website text per section, one
+ * row per owner (UNIQUE user_id), the owner's edits merged over the block
+ * content. The 19 jsonb sections go out whole (Q6 census clean, SA-Q7).
+ * `payment_button` carries its own `currency` key: out exactly as held.
+ */
+const WEBSITE_CONTENT_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'website_content',
+  columns: [
+    'id', 'hero', 'about', 'services', 'testimonials', 'faq', 'team', 'contact', 'process', 'features', 'stats',
+    'pricing', 'gallery', 'cta', 'newsletter', 'logo_cloud', 'video', 'booking_widget', 'payment_button', 'intake_form',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `website_pages` -> `website_pages`: every website and landing page, every
+ * status (BC-3), with its public addresses (BC-6, as DE-3 SA-Q3) and
+ * `content_generated_at` (a timestamp only; BC-4, SA-Q12). `template_id` is a
+ * bare id; the platform template is never read. Also the PARENT of
+ * `website_blocks`: its `id` is the ownership oracle of the parent-scoped read.
+ */
+const WEBSITE_PAGES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'website_pages',
+  columns: [
+    'id', 'page_type', 'slug', 'title', 'meta_description', 'seo_keywords', 'published', 'published_at', 'template_id',
+    'theme', 'created_at', 'updated_at', 'subdomain', 'custom_domain', 'custom_domain_verified', 'status',
+    'last_published_at', 'favicon_url', 'og_image_url', 'client_flow', 'website_language', 'content_generated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `website_blocks` -> `website_blocks`: the content of every block on the
+ * owner's pages, hidden blocks included with `enabled` (BC-7). No `user_id`:
+ * ownership is `page_id -> website_pages.user_id`, so the reader takes the
+ * owner's page ids first and the blocks by `.in('page_id', ids)`, and checks
+ * every block against those ids (DE-7 SA-Q1, C-1…C-6). `viaParent` restates
+ * the purge scope on purpose (two-key opt-in, SA-Q2). Nothing to exclude.
+ */
+const WEBSITE_BLOCKS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'website_blocks',
+  viaParent: { parent: 'website_pages', fk: 'page_id' },
+  columns: ['id', 'page_id', 'block_type', 'position', 'content', 'styles', 'created_at', 'enabled', 'capability_config'],
+};
+
+/**
+ * `smart_links` -> `smart_links`: every link, on or off, system-created ones
+ * included (BC-2). `code` is the link's public short code (BC-6, SA-Q11); the
+ * UTM tags are the owner's settings. The counters and the attributed revenue
+ * are out (BC-1).
+ */
+const SMART_LINKS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'smart_links',
+  columns: [
+    'id', 'code', 'name', 'destination_url', 'destination_type', 'source', 'medium', 'campaign', 'content', 'is_active',
+    'created_at', 'updated_at', 'metadata',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    click_count: CONTENT_COLUMN_REASON.VISIT_STATS,
+    conversion_count: CONTENT_COLUMN_REASON.VISIT_STATS,
+    revenue_cents: CONTENT_COLUMN_REASON.ATTRIBUTED_REVENUE,
+  },
+};
+
+/**
+ * `user_media` -> `images`: the picture library records, every source
+ * (stock, generated, upload; BC-5), each with its public address and its
+ * description (for a generated picture, the request the owner typed; SA-Q12).
+ * `storage_path` is out with the same reason as `contact_documents` (SA-Q5);
+ * the file itself arrives in DE-8b.
+ */
+const USER_MEDIA_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'images',
+  columns: ['id', 'public_url', 'source', 'section', 'aspect', 'description', 'width', 'height', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    storage_path: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+    source_ref: CONTENT_COLUMN_REASON.REUSE_KEY,
+  },
+};
+
 /**
  * Ordering bands. Lower runs first.
  *
@@ -1041,10 +1163,10 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 
   // ── §3.3 Website ─────────────────────────────────────────────────────────
-  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-7') },
-  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids', export: planned('DE-7'),
+  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: WEBSITE_PAGES_EXPORT },
+  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids', export: WEBSITE_BLOCKS_EXPORT,
     notes: 'No user_id column. Child ids captured pre-delete so AC-5 has an oracle (C-13).' },
-  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-7'),
+  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: WEBSITE_CONTENT_EXPORT,
     notes: '1:1. No DELETE RLS policy.' },
   { table: 'website_page_views', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.VISITOR),
     notes: 'IDS ONLY (DEV-Q6). Unbounded, publicly writable (WITH CHECK true), append-only, forensically worthless row-by-row. A row ceiling here would make a busy business undeletable.' },
@@ -1126,7 +1248,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'No user_id. Child ids captured pre-delete for AC-5. Ordered one ahead of its parent so the reported count is the rows this delete actually removed, rather than 0 because the parent CASCADE got there first.' },
 
   // ── §3.10 Conversion / attribution ───────────────────────────────────────
-  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-7') },
+  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: SMART_LINKS_EXPORT },
   { table: 'smart_link_clicks', level: 'reset', area: 'smart_links', scope: { kind: 'via', parent: 'smart_links', fk: 'smart_link_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.VISITOR),
     notes: 'IDS ONLY (DEV-Q6) and no user_id. Publicly writable (WITH CHECK true). Ids-only still satisfies AC-5, which needs the ids and not the rows.' },
 
@@ -1174,7 +1296,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
   { table: 'daily_briefing_sends', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'A send log. It has the email_unsubscribes flavour but not its substance: a send history is the business\'s own activity record, not a third party\'s withdrawal of consent, so D8\'s retention reasoning does not extend to it.' },
-  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-7'),
+  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: USER_MEDIA_EXPORT,
     notes: 'CONFIRMED at T4: storage_path points at the EXISTING website-images bucket (GeneratedImageService and StockImageService both write BUCKET = website-images and record here). So NO fourth StorageDescriptor is needed and AC-4 does not extend to a new bucket.' },
 ];
 

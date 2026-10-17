@@ -45,6 +45,14 @@ export const EXPORT_GROUPS: Record<ExportGroupId, ExportGroupMetadata> = {
     description:
       'Records you keep about your clients. You, the account holder, are the controller of these records. AgentPilot keeps them on your behalf, as its processor.',
   },
+  // DE-7 (SA-Q3): the business's website and content. Additive, so
+  // `format_version` stays 2.
+  content: {
+    gdpr_role: 'processor',
+    controller: EXPORT_ACCOUNT_HOLDER,
+    description:
+      'Your website, landing pages, smart links and picture library. You, the account holder, are the controller of this content. AgentPilot hosts it on your behalf, as its processor.',
+  },
 };
 
 export interface UserDataExportPayload {

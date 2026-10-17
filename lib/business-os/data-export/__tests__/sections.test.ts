@@ -46,6 +46,11 @@
  * too, the one deliberate change to DE-4 output; for a value without `?` or
  * `#` it is byte-identical to DE-4 (the C-7 cases below). Earlier
  * expectations change only by the ten ids.
+ *
+ * DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §8 D-15; SA-Q3, SA-Q4): five
+ * sections in the new `content` group (processor; the account holder the
+ * controller) after email_unsubscribes, no row mapper (every cell as read).
+ * Earlier expectations change only by the five ids and the third group.
  */
 
 const mockFindProfile = jest.fn();
@@ -96,10 +101,14 @@ const DE6_IDS: ExportSectionId[] = [
   'intake_settings', 'intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
   'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
 ];
+/** DE-7: the five content sections after email_unsubscribes (§2.3, SA-Q4). */
+const DE7_IDS: ExportSectionId[] = ['website_content', 'website_pages', 'website_blocks', 'smart_links', 'images'];
 /** DE-5: every client_records section (DE-4 + DE-5). DE-6: + DE6_IDS. */
 const CLIENT_IDS: ExportSectionId[] = [...DE4_IDS, ...DE5_IDS, ...DE6_IDS];
-/** DE-5: every section read through the repository, in registry order. DE-6: + DE6_IDS. */
-const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS];
+/** DE-5: every section read through the repository, in registry order. DE-6: + DE6_IDS. DE-7: + DE7_IDS. */
+const OWNED_IDS: ExportSectionId[] = [...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS];
+/** DE-7: the group of a section id (three groups now). */
+const groupOf = (id: ExportSectionId): string => (DE7_IDS.includes(id) ? 'content' : CLIENT_IDS.includes(id) ? 'client_records' : 'account');
 
 /** Runs the registry and returns the sections, failing the test if it came back over the ceiling. */
 async function runAll(ctx: ExportContext, sections: readonly AnyExportSectionDefinition[], logger: { error: (f: Record<string, unknown>, m: string) => void }): Promise<AnyExportedSection[]> {
@@ -129,13 +138,14 @@ describe('runExportSections', () => {
     const sections = await runAll(CTX, EXPORT_SECTIONS, logger);
     // DE-4: + the eight client_records sections. DE-3: + the four account sections from tables.
     // DE-5: + the two account and eight client-money sections. DE-6: + the ten DE-6 sections.
-    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS]);
+    // DE-7: + the five content sections.
+    expect(sections.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS]);
     for (const s of sections) {
       expect(s.status).toBe('ok');
       expect(s.row_count).toBe(s.rows.length);
-      // DE-5: CLIENT_IDS, was DE4_IDS.
-      expect(s.group).toBe(CLIENT_IDS.includes(s.id) ? 'client_records' : 'account');
-      expect(s.gdpr_role).toBe(CLIENT_IDS.includes(s.id) ? 'processor' : 'controller');
+      // DE-5: CLIENT_IDS, was DE4_IDS. DE-7: groupOf (content is processor too).
+      expect(s.group).toBe(groupOf(s.id));
+      expect(s.gdpr_role).toBe(groupOf(s.id) === 'account' ? 'controller' : 'processor');
     }
     expect(sections[0].rows).toEqual([{ id: USER, email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' }]);
     expect(sections[1].rows).toEqual([{ id: USER, full_name: 'Ada' }]);
@@ -206,6 +216,8 @@ describe('runExportSections', () => {
       ...DE5_IDS.map((id) => [id, 'failed']),
       // DE-6: + the ten DE-6 sections.
       ...DE6_IDS.map((id) => [id, 'failed']),
+      // DE-7: + the five content sections.
+      ...DE7_IDS.map((id) => [id, 'failed']),
     ]);
     expect(sections[0].rows).toEqual([CTX.authUser]);
   });
@@ -421,6 +433,8 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
     intake_settings: true, intake_forms: true, email_campaigns: true, email_sequences: true, email_sequence_steps: true,
     email_sequence_enrollments: true, newsletter_subscribers: true, consent_records: true, consent_settings: true,
     email_unsubscribes: true,
+    // DE-7
+    website_content: true, website_pages: true, website_blocks: true, smart_links: true, images: true,
   };
 
   it('ids are unique and every ExportSectionId has exactly one definition', () => {
@@ -431,7 +445,8 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
 
   it('every section has a group and a GDPR role', () => {
     for (const s of EXPORT_SECTIONS) {
-      expect(['account', 'client_records']).toContain(s.group);
+      // DE-7: + content.
+      expect(['account', 'client_records', 'content']).toContain(s.group);
       expect(['controller', 'processor']).toContain(s.gdprRole);
     }
   });
@@ -441,7 +456,8 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
   // DE-6: 8 account + 26 client_records, was 8 + 16 (N-11).
   it('DE-4: registry order is 8 account + 26 client_records; the calendar copy is not a section (BC-5)', () => {
     // DE-5: + DE5_ACCOUNT_IDS after DE3_IDS, + DE5_IDS after DE4_IDS. DE-6: + DE6_IDS after DE5_IDS.
-    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS]);
+    // DE-7: + DE7_IDS after DE6_IDS (asserted in its own block below).
+    expect(EXPORT_SECTIONS.map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS, ...DE4_IDS, ...DE5_IDS, ...DE6_IDS, ...DE7_IDS]);
     expect(EXPORT_SECTIONS.filter((s) => s.group === 'account').map((s) => s.id)).toEqual([...ACCOUNT_IDS, ...DE3_IDS, ...DE5_ACCOUNT_IDS]);
     for (const s of EXPORT_SECTIONS.filter((x) => DE3_IDS.includes(x.id))) expect(s.gdprRole).toBe('controller');
     // DE-5 M-9 (SA-Q1): the Stripe account and providers are account / controller.
@@ -527,6 +543,13 @@ describe('payload', () => {
           description:
             'Records you keep about your clients. You, the account holder, are the controller of these records. AgentPilot keeps them on your behalf, as its processor.',
         },
+        // DE-7 (SA-Q3, D-15): the website and content, the same roles.
+        content: {
+          gdpr_role: 'processor',
+          controller: 'account_holder',
+          description:
+            'Your website, landing pages, smart links and picture library. You, the account holder, are the controller of this content. AgentPilot hosts it on your behalf, as its processor.',
+        },
       },
     });
     expect(EXPORT_GROUPS.client_records.gdpr_role).toBe('processor');
@@ -539,6 +562,8 @@ describe('payload', () => {
       ...Object.fromEntries(DE5_IDS.map((id) => [id, 0])),
       // DE-6: + the ten DE-6 sections.
       ...Object.fromEntries(DE6_IDS.map((id) => [id, 0])),
+      // DE-7: + the five content sections.
+      ...Object.fromEntries(DE7_IDS.map((id) => [id, 0])),
     });
     expect(payload.summary.failed_sections).toEqual(['user_profile']);
     expect(payload.summary.export_duration_ms).toBe(7);
@@ -841,5 +866,71 @@ describe('DE-6 (F-DE6-1) clients.source_metadata page URLs lose their query stri
     });
     expect(Object.keys(client.source_metadata as object)).toEqual(['capture_page_url', 'referrer_url', 'capture_channel', 'utm_source']);
     for (const leaked of ['TOK-F1', 'SID-F1', 'CODE-F1', 'frag', 'IPHASH-F1']) expect(JSON.stringify(sections)).not.toContain(leaked);
+  });
+});
+
+// ── DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §2.3, §8 D-15; SA-Q3, SA-Q4) ──
+
+describe('DE-7 D-15 the content sections', () => {
+  it('five sections after email_unsubscribes, group content, processor; website_blocks after its parent', () => {
+    const ids = EXPORT_SECTIONS.map((s) => s.id);
+    expect(ids.slice(-6)).toEqual(['email_unsubscribes', ...DE7_IDS]);
+    expect(ids.indexOf('website_blocks')).toBe(ids.indexOf('website_pages') + 1);
+    expect(EXPORT_SECTIONS.filter((s) => s.group === 'content').map((s) => s.id)).toEqual(DE7_IDS);
+    for (const s of EXPORT_SECTIONS.filter((x) => DE7_IDS.includes(x.id))) expect(s.gdprRole).toBe('processor');
+    expect(EXPORT_GROUPS.content).toEqual({
+      gdpr_role: 'processor',
+      controller: 'account_holder',
+      description:
+        'Your website, landing pages, smart links and picture library. You, the account holder, are the controller of this content. AgentPilot hosts it on your behalf, as its processor.',
+    });
+    // Exactly three groups; format_version stays 2 (additive).
+    expect(Object.keys(EXPORT_GROUPS)).toEqual(['account', 'client_records', 'content']);
+  });
+
+  it('no row mapper: every content row is passed through exactly as read (jsonb whole, URLs as held; SA-Q7, SA-Q8)', async () => {
+    const raw = {
+      id: 'x-1',
+      content: { headline: 'Hi', images: ['https://cdn.test/a.png?w=400'] },
+      destination_url: 'https://biz.test/book?utm_source=ig',
+      metadata: { journeyType: 'booking', serviceIds: ['s-1'] },
+      payment_button: { amount: 120, currency: 'USD' },
+    };
+    mockListOwned.mockImplementation(async () => ({ data: { rows: [raw], overCeiling: false }, error: null }));
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    for (const id of DE7_IDS) {
+      const s = sections.find((x) => x.id === id)!;
+      expect(s).toMatchObject({ group: 'content', gdpr_role: 'processor', status: 'ok', row_count: 1 });
+      expect(s.rows).toEqual([raw]);
+      expect(JSON.stringify(s.rows)).toBe(JSON.stringify([raw]));
+    }
+  });
+
+  it('a failing content reader gives that section failed with no error text; the rest stay ok', async () => {
+    mockListOwned.mockImplementation(async (section: string) =>
+      section === 'website_blocks'
+        ? { data: null, error: new Error('Data export parent-scoped read returned 2 rows outside the owned parents') }
+        : { data: { rows: [], overCeiling: false }, error: null }
+    );
+    const sections = await runAll(CTX, EXPORT_SECTIONS, recordingLogger().logger);
+    expect(sections.find((x) => x.id === 'website_blocks')).toEqual({
+      id: 'website_blocks', group: 'content', gdpr_role: 'processor', status: 'failed', row_count: 0, rows: [],
+    });
+    expect(sections.filter((x) => x.status === 'failed').map((x) => x.id)).toEqual(['website_blocks']);
+    expect(JSON.stringify(sections)).not.toContain('outside the owned parents');
+  });
+
+  it('the content rows draw on the same ceiling (each reader is offered what is left)', async () => {
+    mockListOwned.mockImplementation(async (section: string) => ({
+      data: { rows: section === 'website_pages' ? [{ id: 'p-1' }, { id: 'p-2' }] : [], overCeiling: false },
+      error: null,
+    }));
+    await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger, { rowCeiling: 100 });
+    const offered = Object.fromEntries(mockListOwned.mock.calls.map((c) => [c[0], (c[2] as { maxRows: number }).maxRows]));
+    // 2 account rows; the pages' 2 rows come off the budget of the sections after them.
+    expect(offered.website_content).toBe(98);
+    expect(offered.website_pages).toBe(98);
+    expect(offered.website_blocks).toBe(96);
+    expect(offered.images).toBe(96);
   });
 });

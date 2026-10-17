@@ -10,6 +10,12 @@
  * Every rule is a pure function (lib/business-os/data-export/classification.ts)
  * run twice: once over the real descriptors, once over a planted bad input
  * (the negative control), so an assertion that cannot fail is visible.
+ *
+ * DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §5, §8 D-1…D-4, D-14, D-17;
+ * SA review DE-7 C-7): the table flag is now false (no table is planned).
+ * Every negative control that planted on `smart_links` "because it is still
+ * planned" moved to `website_page_views` (excluded, visitor tracking) and
+ * keeps its asserted message. The DE-7 block is appended at the end.
  */
 
 import fs from 'fs';
@@ -41,6 +47,9 @@ import {
   staleDenyExceptions,
   storageExportProblems,
   tableExportProblems,
+  // DE-7: the parent-scoped read's CI and request-time rules.
+  viaParentOf,
+  viaParentProblems,
 } from '@/lib/business-os/data-export/classification';
 
 /**
@@ -68,11 +77,12 @@ const DE4_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE4_LIVE_FIXTURE.tables as
 );
 
 /**
- * `planned` expires. DE-7 flips the table flag to false (every table is then
- * include or exclude); DE-8b flips the files flag. Two flags because files
- * arrive after DE-7 (SA-Q2).
+ * `planned` expires. DE-7 flipped the table flag to false (every table is now
+ * include or exclude, and T-1 runs with it, so a planned table fails CI);
+ * DE-8b flips the files flag. Two flags because files arrive after DE-7
+ * (SA-Q2). DE-7: was `true`.
  */
-const PLANNED_TABLES_ALLOWED = true;
+const PLANNED_TABLES_ALLOWED = false;
 const PLANNED_FILES_ALLOWED = true;
 
 const REPO = path.join(__dirname, '..', '..', '..', '..');
@@ -209,6 +219,8 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
       // DE-6: the ten intake, email marketing and consent sections (8 + 26).
       'intake_settings', 'intake_forms', 'email_campaigns', 'email_sequences', 'email_sequence_steps',
       'email_sequence_enrollments', 'newsletter_subscribers', 'consent_records', 'consent_settings', 'email_unsubscribes',
+      // DE-7: the five content sections (8 + 26 + 5).
+      'website_content', 'website_pages', 'website_blocks', 'smart_links', 'images',
     ]);
     expect(sectionRegistryProblems(PURGE_DESCRIPTORS, sectionIds, NON_TABLE_SECTIONS)).toEqual([]);
   });
@@ -229,29 +241,32 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
   // lead_responses (still planned, DE-6).
   // DE-6 (T-9): lead_responses is now excluded, so the plant moves to
   // smart_links (still planned, DE-7).
+  // DE-7 (C-7): smart_links now backs its own section, so the plant moves to
+  // website_page_views (excluded, visitor tracking: never a section).
   it('negative control: a descriptor naming an unknown section', () => {
     const unknown = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'smart_links' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
+      d.table === 'website_page_views' ? ({ ...d, export: { kind: 'include', section: 'client_records', columns: ['id'] } } as unknown as PurgeDescriptor) : d
     );
     expect(sectionRegistryProblems(unknown, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'smart_links: names unknown section client_records',
+      'website_page_views: names unknown section client_records',
     ]);
   });
 
   // DE-5 (T-9): planted on lead_responses (still planned, DE-6), was proposals.
   // DE-6 (T-9): planted on smart_links (still planned, DE-7), was lead_responses.
+  // DE-7 (C-7): planted on website_page_views (excluded), was smart_links.
   it('negative control: two descriptors on one section, and an include on a non-table section', () => {
     const two = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'smart_links' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
+      d.table === 'website_page_views' ? { ...d, export: { kind: 'include' as const, section: 'user_profile' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(two, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'user_profile: expected exactly one include descriptor, found 2 (smart_links, profiles)',
+      'user_profile: expected exactly one include descriptor, found 2 (website_page_views, profiles)',
     ]);
     const onIdentity = PURGE_DESCRIPTORS.map((d) =>
-      d.table === 'smart_links' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
+      d.table === 'website_page_views' ? { ...d, export: { kind: 'include' as const, section: 'account_identity' as const, columns: ['id'] } } : d
     );
     expect(sectionRegistryProblems(onIdentity, sectionIds, NON_TABLE_SECTIONS)).toEqual([
-      'account_identity: a non-table section has include descriptors (smart_links)',
+      'account_identity: a non-table section has include descriptors (website_page_views)',
     ]);
   });
 
@@ -276,17 +291,25 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
 });
 
 describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
-  it('planned rows name a known slice', () => {
-    const planned = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned');
-    expect(planned.length).toBeGreaterThan(0);
-    expect(tableProblems(planned, true)).toEqual([]);
+  // DE-7 (§5, C-7): was "planned rows name a known slice". No table is planned now.
+  it('no table descriptor is planned (non-vacuous: every one of the 156 is include or exclude)', () => {
+    expect(PURGE_DESCRIPTORS).toHaveLength(156);
+    expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table)).toEqual([]);
+    expect(PURGE_DESCRIPTORS.every((d) => d.export.kind === 'include' || d.export.kind === 'exclude')).toBe(true);
+    expect(PLANNED_TABLES_ALLOWED).toBe(false);
   });
 
-  it('with the table flag false, every planned table is reported (the DE-7 flip will bite)', () => {
-    const planned = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table);
-    const reported = tableProblems(PURGE_DESCRIPTORS, false);
-    expect(reported).toHaveLength(planned.length);
-    for (const t of planned) expect(reported.some((p) => p.startsWith(`${t}: still planned`))).toBe(true);
+  // DE-7 (§5): was "with the table flag false, every planned table is reported
+  // (the DE-7 flip will bite)". The flag is false by default now (T-1 runs with
+  // it); this shows the flag is the only difference for a planted row.
+  it('negative control: a planted planned row is reported with the flag false (the default) and accepted with it true', () => {
+    const replanned = PURGE_DESCRIPTORS.map((d) =>
+      d.table === 'website_page_views' ? { ...d, export: { kind: 'planned' as const, slice: 'DE-7' as const } } : d
+    );
+    expect(tableProblems(replanned)).toEqual([
+      'website_page_views: still planned (DE-7); every table must be include or exclude by now',
+    ]);
+    expect(tableProblems(replanned, true)).toEqual([]);
   });
 
   it('with the files flag false, every planned bucket is reported (the DE-8b flip will bite)', () => {
@@ -407,8 +430,9 @@ describe('T-10 exportColumnsOf fails closed', () => {
     // included; proposals is still planned (DE-5). DE-5 (T-9): proposals is
     // now included; lead_responses is still planned (DE-6). DE-6 (T-9):
     // lead_responses is now excluded (activity, BC-2); smart_links is still
-    // planned (DE-7).
-    ['smart_links', 'not_included'],
+    // planned (DE-7). DE-7 (C-7): smart_links is now included, so the case
+    // moves to website_page_views ("classified exclude", visitor tracking).
+    ['website_page_views', 'not_included'],
     ['lead_responses', 'not_included'],
     ['marketing_consent_state', 'not_included'],
     // DE-5: an excluded money table (activity, user BC-5).
@@ -1294,8 +1318,9 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
   });
 
   // DE-6: 155 = 33 include + 5 planned (DE-7) + 117 exclude, was 23 + 17 (DE-6 12, DE-7 5) + 115.
-  // Finance 4b.1: 156 = 33 + 5 + 118, the new exclude is business_os_boost_reversal_events (billing).
-  it('the classification totals: 156 = 33 include + 5 planned (DE-7 5) + 118 exclude', () => {
+  // DE-7 (D-1): 155 = 38 include + 0 planned + 117 exclude, was 33 + 5 (DE-7) + 117.
+  // Finance 4b.1: 156 = 38 + 0 + 118, the new exclude is business_os_boost_reversal_events (billing).
+  it('the classification totals: 156 = 38 include + 0 planned + 118 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
@@ -1303,8 +1328,8 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
     expect(PURGE_DESCRIPTORS).toHaveLength(156);
-    expect(kinds).toEqual({ include: 33, planned: 5, exclude: 118 });
-    expect(bySlice).toEqual({ 'DE-7': 5 });
+    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 118 });
+    expect(bySlice).toEqual({});
   });
 
   it('every DE-5 excludedColumns reason is non-empty; credentials carries the SECRET reason', () => {
@@ -1908,9 +1933,10 @@ describe('DE-6 N-9 / SA-Q1 (2), (3) the rowKey rules in CI', () => {
     expect(tableProblems([settings])).toEqual([]);
   });
 
-  it('every include without rowKey lists id (the converse rule; all 32 pass)', () => {
+  // DE-7: 37, was 32 (+ the five content tables, website_blocks included).
+  it('every include without rowKey lists id (the converse rule; all 37 pass)', () => {
     const keyed = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'include' && d.export.rowKey === undefined);
-    expect(keyed).toHaveLength(32);
+    expect(keyed).toHaveLength(37);
     for (const d of keyed) expect(d.export.kind === 'include' && d.export.columns.includes('id')).toBe(true);
   });
 
@@ -1933,8 +1959,10 @@ describe('DE-6 N-9 / SA-Q1 (2), (3) the rowKey rules in CI', () => {
     expect(tableProblems([{ ...settings, export: { ...e, columns: ['user_id', ...e.columns], excludedColumns: {} } }])).toEqual([
       'marketing_consent_settings: rowKey user_id must not be in columns (it is the owner id)',
     ]);
+    // DE-7 (V-1): a via-scoped include without the viaParent opt-in is now reported too.
     expect(tableProblems([{ ...settings, scope: { kind: 'via', parent: 'business_profiles', fk: 'user_id' } as never }])).toEqual([
       'marketing_consent_settings: rowKey needs a user_id scope',
+      "marketing_consent_settings: a via-scoped include needs viaParent (the parent-scoped read's opt-in)",
     ]);
     expect(tableProblems([{ table: 'marketing_consent_settings', export: e }])).toEqual([
       'marketing_consent_settings: rowKey needs a user_id scope',
@@ -2005,5 +2033,287 @@ describe('DE-6 N-3 / SA-Q5 visitor tracking is never selected, and the deny list
       const e = exportClassificationOf(table);
       expect(e?.kind === 'include' && typeof e.excludedColumns?.[column] === 'string').toBe(true);
     }
+  });
+});
+
+// ── DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §3, §5, §8 D-1…D-4, D-14, D-17; SA review DE-7) ──
+
+/** DE-7 pins: each include's section, its columns in order, and its excluded columns in order (§3, T-0 §11.1). */
+const DE7_PINS: Record<string, { section: string; columns: string[]; excluded: string[] }> = {
+  website_content: {
+    section: 'website_content',
+    columns: [
+      'id', 'hero', 'about', 'services', 'testimonials', 'faq', 'team', 'contact', 'process', 'features', 'stats',
+      'pricing', 'gallery', 'cta', 'newsletter', 'logo_cloud', 'video', 'booking_widget', 'payment_button', 'intake_form',
+      'created_at', 'updated_at',
+    ],
+    excluded: ['user_id'],
+  },
+  website_pages: {
+    section: 'website_pages',
+    columns: [
+      'id', 'page_type', 'slug', 'title', 'meta_description', 'seo_keywords', 'published', 'published_at', 'template_id',
+      'theme', 'created_at', 'updated_at', 'subdomain', 'custom_domain', 'custom_domain_verified', 'status',
+      'last_published_at', 'favicon_url', 'og_image_url', 'client_flow', 'website_language', 'content_generated_at',
+    ],
+    excluded: ['user_id'],
+  },
+  website_blocks: {
+    section: 'website_blocks',
+    columns: ['id', 'page_id', 'block_type', 'position', 'content', 'styles', 'created_at', 'enabled', 'capability_config'],
+    excluded: [],
+  },
+  smart_links: {
+    section: 'smart_links',
+    columns: [
+      'id', 'code', 'name', 'destination_url', 'destination_type', 'source', 'medium', 'campaign', 'content', 'is_active',
+      'created_at', 'updated_at', 'metadata',
+    ],
+    excluded: ['user_id', 'click_count', 'conversion_count', 'revenue_cents'],
+  },
+  user_media: {
+    section: 'images',
+    columns: ['id', 'public_url', 'source', 'section', 'aspect', 'description', 'width', 'height', 'created_at'],
+    excluded: ['user_id', 'storage_path', 'source_ref'],
+  },
+};
+const DE7_TABLES = Object.keys(DE7_PINS);
+const DE7_VIA_PARENT = { parent: 'website_pages', fk: 'page_id' };
+
+/** DE-7 pins as a pure check, so a planted copy can be run through it (negative control). */
+function de7PinProblems(ds: readonly PurgeDescriptor[]): string[] {
+  const problems: string[] = [];
+  for (const [table, pin] of Object.entries(DE7_PINS)) {
+    const e = ds.find((d) => d.table === table)?.export;
+    if (e?.kind !== 'include') {
+      problems.push(`${table} must be include`);
+      continue;
+    }
+    if (e.section !== pin.section) problems.push(`${table} must be section ${pin.section}`);
+    if (JSON.stringify(e.columns) !== JSON.stringify(pin.columns)) problems.push(`${table} columns changed`);
+    if (JSON.stringify(Object.keys(e.excludedColumns ?? {})) !== JSON.stringify(pin.excluded)) problems.push(`${table} excludedColumns changed`);
+    if (pin.excluded.includes('user_id') && e.excludedColumns?.user_id !== OWNER_ID_REASON) problems.push(`${table} user_id must carry the OWNER_ID reason`);
+    // D-14 / DX-8: all history in; no DE-7 table soft-deletes, so no row filter.
+    if (e.rowFilter) problems.push(`${table} must have no rowFilter (all history in)`);
+    if (e.rowKey !== undefined) problems.push(`${table} must have no rowKey`);
+    const expectedVia = table === 'website_blocks' ? DE7_VIA_PARENT : undefined;
+    if (JSON.stringify(e.viaParent) !== JSON.stringify(expectedVia)) problems.push(`${table} viaParent changed`);
+  }
+  if (ds.some((d) => d.export?.kind === 'planned' && d.export.slice === 'DE-7')) problems.push('a table is still planned for DE-7');
+  return problems;
+}
+
+/**
+ * DE-7 live columns, verbatim and in live order from the T-0 Q1 output (DE-7
+ * workplan §11.1, prod, 2026-10-17). Inline, not a fixture file (no new file).
+ * A migration adding a column to one of these tables adds it here AND
+ * classifies it in its descriptor.
+ */
+const DE7_LIVE_TABLES: Record<string, string> = {
+  website_content:
+    'id user_id hero about services testimonials faq team contact process features stats pricing gallery cta newsletter ' +
+    'logo_cloud video booking_widget payment_button intake_form created_at updated_at',
+  website_pages:
+    'id user_id page_type slug title meta_description seo_keywords published published_at template_id theme created_at ' +
+    'updated_at subdomain custom_domain custom_domain_verified status last_published_at favicon_url og_image_url ' +
+    'client_flow website_language content_generated_at',
+  website_blocks: 'id page_id block_type position content styles created_at enabled capability_config',
+  smart_links:
+    'id user_id code name destination_url destination_type source medium campaign content click_count conversion_count ' +
+    'revenue_cents is_active created_at updated_at metadata',
+  user_media: 'id user_id storage_path public_url source source_ref section aspect description width height created_at',
+};
+const DE7_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE7_LIVE_TABLES).flatMap(([table_name, names]) =>
+  names.split(' ').map((column_name) => ({ table_name, column_name }))
+);
+
+/** A copy of the descriptors with one descriptor rewritten whole (negative controls). */
+const replaceDescriptor = (table: string, edit: (d: PurgeDescriptor) => PurgeDescriptor): PurgeDescriptor[] =>
+  PURGE_DESCRIPTORS.map((d) => (d.table === table ? edit(d) : d));
+const includeOf = (d: PurgeDescriptor) => d.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+
+describe('DE-7 D-1 / D-2 the website and content classifications are pinned', () => {
+  it('five include rows with the §2.3 section ids; no planned row anywhere', () => {
+    expect(de7PinProblems(PURGE_DESCRIPTORS)).toEqual([]);
+    expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned')).toEqual([]);
+    for (const [table, pin] of Object.entries(DE7_PINS)) expect(exportDescriptorOfSection(pin.section as never).table).toBe(table);
+  });
+
+  it('the excluded reasons: counters are activity (BC-1), revenue has no currency, storage_path is DE-4\'s reason byte for byte, source_ref is the reuse key', () => {
+    const links = includeOf(byTable.get('smart_links')!);
+    expect(links.excludedColumns?.click_count).toBe(links.excludedColumns?.conversion_count);
+    expect(links.excludedColumns?.click_count).toMatch(/^DX-1d: .*activity.*BC-1/);
+    expect(links.excludedColumns?.revenue_cents).toMatch(/no currency of its own.*Currency/);
+    const media = includeOf(byTable.get('user_media')!);
+    expect(media.excludedColumns?.storage_path).toBe(includeOf(byTable.get('contact_documents')!).excludedColumns?.storage_path);
+    expect(media.excludedColumns?.source_ref).toMatch(/fetched or paid for twice.*SA-Q6/);
+    for (const table of DE7_TABLES) {
+      for (const reason of Object.values(includeOf(byTable.get(table)!).excludedColumns ?? {})) expect(reason.trim().length).toBeGreaterThan(10);
+    }
+    // website_blocks has no user_id and nothing to exclude.
+    expect(includeOf(byTable.get('website_blocks')!).excludedColumns).toBeUndefined();
+  });
+
+  it('out columns are selected by no include anywhere; code and public_url are in', () => {
+    for (const d of PURGE_DESCRIPTORS) {
+      if (d.export.kind !== 'include') continue;
+      expect(d.export.columns.filter((c) => ['click_count', 'conversion_count', 'revenue_cents', 'source_ref', 'storage_path'].includes(c))).toEqual([]);
+    }
+    expect(exportColumnsOf('smart_links')).toContain('code');
+    expect(exportColumnsOf('user_media')).toContain('public_url');
+    expect(exportColumnsOf('user_media')).toContain('description');
+  });
+
+  it('negative controls: a re-planned smart_links, click_count or storage_path moved into columns, a rowFilter, a moved viaParent', () => {
+    const replanned = replaceDescriptor('smart_links', (d) => ({ ...d, export: { kind: 'planned', slice: 'DE-7' } }));
+    expect(de7PinProblems(replanned)).toEqual(['smart_links must be include', 'a table is still planned for DE-7']);
+    // D-1: and the CI rule reports it with the table flag false (the default).
+    expect(tableProblems(replanned.filter((d) => d.table === 'smart_links'))).toEqual([
+      'smart_links: still planned (DE-7); every table must be include or exclude by now',
+    ]);
+    const clicksIn = withInclude('smart_links', (e) => {
+      const { click_count: _c, ...rest } = e.excludedColumns ?? {};
+      void _c;
+      return { ...e, columns: [...e.columns, 'click_count'], excludedColumns: rest };
+    });
+    expect(de7PinProblems(clicksIn)).toEqual(['smart_links columns changed', 'smart_links excludedColumns changed']);
+    const pathIn = withInclude('user_media', (e) => {
+      const { storage_path: _p, ...rest } = e.excludedColumns ?? {};
+      void _p;
+      return { ...e, columns: [...e.columns, 'storage_path'], excludedColumns: rest };
+    });
+    expect(de7PinProblems(pathIn)).toEqual(['user_media columns changed', 'user_media excludedColumns changed']);
+    // D-14: a status filter on the pages would hide archived pages.
+    const filtered = withInclude('website_pages', (e) => ({ ...e, rowFilter: { column: 'status', notIn: ['archived'], reason: 'x' } }));
+    expect(de7PinProblems(filtered)).toEqual(['website_pages must have no rowFilter (all history in)']);
+    const viaOnLinks = withInclude('smart_links', (e) => ({ ...e, viaParent: DE7_VIA_PARENT }));
+    expect(de7PinProblems(viaOnLinks)).toEqual(['smart_links viaParent changed']);
+  });
+});
+
+describe('DE-7 D-2 the declared lists match the live columns (T-0 Q1, workplan §11.1)', () => {
+  it('the inline live set is the measured state: Q2 counts (84 columns)', () => {
+    const counts: Record<string, number> = {};
+    for (const c of DE7_LIVE_COLUMNS) counts[c.table_name] = (counts[c.table_name] ?? 0) + 1;
+    expect(counts).toEqual({ website_content: 23, website_pages: 23, website_blocks: 9, smart_links: 17, user_media: 12 });
+    expect(DE7_LIVE_COLUMNS).toHaveLength(84);
+  });
+
+  it('no drift and nothing missing; columns + excludedColumns = the live set, exactly (75 in + 9 out)', () => {
+    expect(exportColumnDrift(DE7_LIVE_COLUMNS).filter((r) => DE7_TABLES.includes(r.table))).toEqual([]);
+    expect(exportColumnsMissing(DE7_LIVE_COLUMNS).filter((r) => DE7_TABLES.includes(r.table))).toEqual([]);
+    let included = 0;
+    let excluded = 0;
+    for (const table of DE7_TABLES) {
+      const e = includeOf(byTable.get(table)!);
+      included += e.columns.length;
+      excluded += Object.keys(e.excludedColumns ?? {}).length;
+      const decided = [...e.columns, ...Object.keys(e.excludedColumns ?? {})].sort();
+      expect(decided).toEqual(DE7_LIVE_COLUMNS.filter((c) => c.table_name === table).map((c) => c.column_name).sort());
+    }
+    expect([included, excluded]).toEqual([75, 9]);
+  });
+
+  it('negative controls: an extra live column is drift; a declared column missing live is reported', () => {
+    const extra = [...DE7_LIVE_COLUMNS, { table_name: 'website_blocks', column_name: 'user_id' }];
+    expect(exportColumnDrift(extra).filter((r) => DE7_TABLES.includes(r.table))).toEqual([{ table: 'website_blocks', column: 'user_id' }]);
+    const without = DE7_LIVE_COLUMNS.filter((c) => !(c.table_name === 'website_content' && c.column_name === 'intake_form'));
+    expect(exportColumnsMissing(without).filter((r) => DE7_TABLES.includes(r.table))).toEqual([{ table: 'website_content', column: 'intake_form' }]);
+  });
+
+  it('the deny list matches no DE-7 column; DENY_EXCEPTIONS still has its one entry', () => {
+    for (const table of DE7_TABLES) expect(exportColumnsOf(table).filter((c) => isDeniedColumn(table, c))).toEqual([]);
+    expect(Object.keys(DENY_EXCEPTIONS)).toEqual(['crm_pipeline_stages.stage_key']);
+    expect(staleDenyExceptions()).toEqual([]);
+  });
+});
+
+describe('DE-7 D-4 the viaParent rules in CI (V-1…V-3, V-7, V-8; SA-Q2)', () => {
+  const blocks = byTable.get('website_blocks')!;
+  const blocksExport = includeOf(blocks);
+
+  it('only website_blocks carries viaParent, and it equals its purge scope (a second one is an SA item)', () => {
+    const withVia = PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'include' && d.export.viaParent !== undefined);
+    expect(withVia.map((d) => d.table)).toEqual(['website_blocks']);
+    expect(blocks.scope).toEqual({ kind: 'via', ...DE7_VIA_PARENT });
+    expect(blocksExport.viaParent).toEqual(DE7_VIA_PARENT);
+    expect(tableProblems([blocks])).toEqual([]);
+    expect(viaParentProblems(PURGE_DESCRIPTORS)).toEqual([]);
+    // Every other via-scoped table is excluded, so no other via table is ever read.
+    const otherVia = PURGE_DESCRIPTORS.filter((d) => d.scope.kind === 'via' && d.table !== 'website_blocks');
+    expect(otherVia.length).toBeGreaterThan(0);
+    for (const d of otherVia) expect(d.export.kind).toBe('exclude');
+  });
+
+  it('viaParentOf resolves the parent from the child descriptor at request time', () => {
+    expect(viaParentOf(blocks).table).toBe('website_pages');
+  });
+
+  it.each<[string, Record<string, unknown>, string[]]>([
+    ['a viaParent with a different fk', { ...blocks, export: { ...blocksExport, viaParent: { parent: 'website_pages', fk: 'id' } } }, ['website_blocks: viaParent must equal the via scope { parent, fk }']],
+    ['a viaParent with a different parent', { ...blocks, export: { ...blocksExport, viaParent: { parent: 'website_content', fk: 'page_id' } } }, ['website_blocks: viaParent must equal the via scope { parent, fk }']],
+    ['a viaParent on a user_id scope', { ...blocks, scope: { kind: 'user_id' } }, ['website_blocks: viaParent needs a via scope']],
+    ['a via include without viaParent', { ...blocks, export: { ...blocksExport, viaParent: undefined } }, ["website_blocks: a via-scoped include needs viaParent (the parent-scoped read's opt-in)"]],
+    ['a viaParent missing its fk', { ...blocks, export: { ...blocksExport, viaParent: { parent: 'website_pages' } } }, ['website_blocks: viaParent must be exactly { parent, fk }, both non-empty strings']],
+    ['a viaParent with an extra key', { ...blocks, export: { ...blocksExport, viaParent: { ...DE7_VIA_PARENT, user_id: 'x' } } }, ['website_blocks: viaParent must be exactly { parent, fk }, both non-empty strings']],
+    ['a child without the fk in columns', { ...blocks, export: { ...blocksExport, columns: blocksExport.columns.filter((c) => c !== 'page_id') } }, ['website_blocks: viaParent fk page_id must be in columns']],
+    ['a child with a rowFilter', { ...blocks, export: { ...blocksExport, rowFilter: { column: 'block_type', notIn: ['hero'], reason: 'x' } } }, ['website_blocks: viaParent and rowFilter together are not allowed']],
+  ])('V-1 / V-3 negative control: %s', (_name, planted, expected) => {
+    expect(tableProblems([planted as { table: string; export?: unknown; scope?: unknown }])).toEqual(expected);
+  });
+
+  it('V-3 negative control: a child with a rowKey', () => {
+    const planted = { ...blocks, export: { ...blocksExport, rowKey: 'user_id' } };
+    expect(tableProblems([planted])).toContain('website_blocks: viaParent and rowKey together are not allowed');
+  });
+
+  it.each<[string, PurgeDescriptor[], string]>([
+    ['the parent not include', replaceDescriptor('website_pages', (d) => ({ ...d, export: { kind: 'exclude', reason: 'x' } })), 'website_blocks: viaParent parent website_pages must be include'],
+    ['the parent via-scoped', replaceDescriptor('website_pages', (d) => ({ ...d, scope: { kind: 'via', parent: 'business_profiles', fk: 'user_id' } })), 'website_blocks: viaParent parent website_pages must be user_id-scoped (one hop only)'],
+    ['the parent with a rowFilter', replaceDescriptor('website_pages', (d) => ({ ...d, export: { ...includeOf(d), rowFilter: { column: 'status', notIn: ['archived'], reason: 'x' } } })), 'website_blocks: viaParent parent website_pages must have no rowFilter'],
+    ['the parent with a rowKey', replaceDescriptor('website_pages', (d) => ({ ...d, export: { ...includeOf(d), rowKey: 'user_id' } })), 'website_blocks: viaParent parent website_pages must have no rowKey'],
+    ['the parent without id', replaceDescriptor('website_pages', (d) => ({ ...d, export: { ...includeOf(d), columns: includeOf(d).columns.filter((c) => c !== 'id') } })), 'website_blocks: viaParent parent website_pages must list id'],
+    ['the parent missing', PURGE_DESCRIPTORS.filter((d) => d.table !== 'website_pages'), 'website_blocks: viaParent parent website_pages must be exactly one descriptor, found 0'],
+  ])('V-2 negative control: %s', (_name, descriptors, expected) => {
+    expect(viaParentProblems(descriptors)).toEqual([expected]);
+    // The request-time half refuses the same set (C-5): fail closed, invalid_via_parent.
+    try {
+      viaParentOf(descriptors.find((d) => d.table === 'website_blocks')!, descriptors);
+      throw new Error('viaParentOf did not throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExportClassificationError);
+      expect((err as ExportClassificationError).code).toBe('invalid_via_parent');
+      expect((err as Error).message).toContain(expected.replace('website_blocks: ', ''));
+    }
+  });
+});
+
+describe('DE-7 D-17 the five rows keep their purge fields (the export is a second axis)', () => {
+  it('level, area, scope, snapshot, order band and notes are unchanged on the five rows', () => {
+    const fields = (t: string) => {
+      const d = byTable.get(t)!;
+      return { level: d.level, area: d.area, scope: d.scope, snapshot: d.snapshot, notes: d.notes };
+    };
+    expect(fields('website_pages')).toEqual({ level: 'reset', area: 'website', scope: { kind: 'user_id' }, snapshot: 'rows', notes: undefined });
+    expect(fields('website_blocks')).toEqual({
+      level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, snapshot: 'ids',
+      notes: 'No user_id column. Child ids captured pre-delete so AC-5 has an oracle (C-13).',
+    });
+    expect(fields('website_content')).toEqual({ level: 'reset', area: 'website', scope: { kind: 'user_id' }, snapshot: 'rows', notes: '1:1. No DELETE RLS policy.' });
+    expect(fields('smart_links')).toEqual({ level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, snapshot: 'rows', notes: undefined });
+    expect(fields('user_media')).toMatchObject({ level: 'reset', area: 'website', scope: { kind: 'user_id' }, snapshot: 'rows' });
+    expect(byTable.get('user_media')!.notes).toMatch(/^CONFIRMED at T4: storage_path points at the EXISTING website-images bucket/);
+    // Order bands: the two roots share crm_contacts' band, the three leaves website_page_views' band.
+    for (const t of ['website_pages', 'smart_links']) expect(byTable.get(t)!.order).toBe(byTable.get('crm_contacts')!.order);
+    for (const t of ['website_blocks', 'website_content', 'user_media']) expect(byTable.get(t)!.order).toBe(byTable.get('website_page_views')!.order);
+  });
+
+  it('descriptors.ts no longer defines the planned() helper; the planned variant and slice type stay (SA-Q9)', () => {
+    const source = fs.readFileSync(path.join(PURGE_DIR, 'descriptors.ts'), 'utf-8');
+    expect(source).not.toMatch(/const planned\s*=/);
+    expect(source).not.toMatch(/planned\(\s*'DE-/);
+    const types = fs.readFileSync(path.join(REPO, 'lib', 'business-os', 'data-export', 'classificationTypes.ts'), 'utf-8');
+    expect(types).toMatch(/export type PlannedTableSlice = /);
+    expect(types).toMatch(/\{ kind: 'planned'; slice: PlannedTableSlice \}/);
   });
 });
