@@ -40,6 +40,7 @@ const KEYS: DrawerPurposeKey[] = [
   'account-signin',
   'account-plugins',
   'activity',
+  'export',
 ];
 
 describe('DB-1: DrawerBox', () => {
@@ -79,7 +80,8 @@ describe('DB-2: PartPurpose', () => {
 });
 
 describe('DB-3: the sentences', () => {
-  it('one per box, exactly the 14 keys of the copy table', () => {
+  // Data export DE-10a: 15 with the Data export section (SA-9).
+  it('one per box, exactly the 15 keys of the copy table', () => {
     expect(Object.keys(DRAWER_PURPOSE).sort()).toEqual([...KEYS].sort());
     expect(new Set(Object.values(DRAWER_PURPOSE)).size).toBe(KEYS.length);
   });
@@ -117,6 +119,8 @@ describe('DB-5: the sentences are the approved copy, word for word (SA C1; TL co
       'account-signin': 'Email verification, sign-in methods, last sign-in, login counts and IPs.',
       'account-plugins': 'Plugins this account connected, and which of them are active.',
       activity: "This account's audit events, such as sign-ins and settings changes.",
+      // Data export DE-10a (workplan §7.1; SA-9).
+      export: "This account's exports; admin downloads are recorded with your name and reason.",
     });
   });
 });

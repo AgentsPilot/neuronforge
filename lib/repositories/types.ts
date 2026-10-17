@@ -1152,6 +1152,15 @@ export interface DataExportJobRef {
   user_id: string;
 }
 
+/**
+ * DE-10a (SA-2, W10-6): a sweep row with its requester kind, so the cron puts
+ * the audit row of an admin-prepared job off the owner's account. Typed as the
+ * stored kind, but the sweep treats any other value as admin (fails toward hidden).
+ */
+export interface DataExportSweepRef extends DataExportJobRef {
+  requested_by_kind: DataExportRequesterKind;
+}
+
 export interface DataExportJobState extends DataExportJobRef {
   status: DataExportJobStatus;
 }

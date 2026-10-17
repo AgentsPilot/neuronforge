@@ -22,8 +22,10 @@
 //      checked against the allow-list (SA C-4);
 //   6. finished size <= 45 MiB and elapsed <= 40 s, else nothing is uploaded;
 //   7. upload `{user_id}/{job_id}/1.zip`; 8. markReady; 9. older ready
-//      exports of this account expire and their objects go (best effort; the
-//      cron is the backstop).
+//      exports of this account AND OF THE SAME KIND expire and their objects
+//      go (best effort; the cron is the backstop). DE-10a (SA-4, BC-3): the
+//      kind is the ready row's own `requested_by_kind`, never an argument, so
+//      an owner export never replaces an admin-prepared one, or the reverse.
 //
 // FAILURE INVARIANT (SA C-1, C-2). Every exit BEFORE markReady succeeded runs
 // markFailed (once) and removes the uploaded object if step 7 ran. markReady
@@ -358,10 +360,12 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
     }
     settled = true;
 
-    // ── 9. A newer export replaces the old ones (best effort) ──────────────
+    // ── 9. A newer export replaces the old ones of its kind (best effort) ──
     let replacedJobIds: string[] = [];
     try {
-      const replaced = await deps.jobs.expireOtherReady(userId, jobId);
+      // SA-4: the kind from the row markReady (or the re-read) returned.
+      const readyJob = job as DataExportJob;
+      const replaced = await deps.jobs.expireOtherReady(userId, jobId, readyJob.requested_by_kind);
       if (replaced.error) {
         log.warn({ err: replaced.error, userId, jobId }, 'Data export: older exports not expired (the cron sweep will)');
       } else {

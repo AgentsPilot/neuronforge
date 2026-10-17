@@ -81,7 +81,11 @@ export type GdprRole = 'controller' | 'processor';
 export type { ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
 
 export interface ExportContext {
-  /** Always `getUser().id`, never a request value. */
+  /**
+   * The owner's `getUser().id`; or, on the DE-10a admin path, the route path
+   * id after `requireAdmin` and a confirmed identity read of that account.
+   * Never a body, query or header value.
+   */
   userId: string;
   authUser: { id: string; email: string | null; created_at: string };
 }
