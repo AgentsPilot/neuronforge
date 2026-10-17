@@ -44,7 +44,8 @@ export type BosCronJobId =
   | 'credit-leak-check'
   | 'stripe-settlement-gap'
   | 'bos-billing-reconcile'
-  | 'payment-reminders';
+  | 'payment-reminders'
+  | 'finance-snapshot';
 
 export type BosQueueId =
   | 'payment_reminders'
@@ -612,6 +613,38 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { key: 'invoicesMarkedOverdue', path: ['data', 'invoicesMarkedOverdue'], label: 'invoices marked overdue' },
     ],
     partlyDoneWhen: [{ kind: 'atLeast', key: 'remindersFailed', value: 1 }],
+  },
+  {
+    /*
+     * Finance slice 8.2 (§11M.7): last night's plan mix and credit position,
+     * counts and credits only, in one idempotent insert. Not a queue drain
+     * (HS-W-11): nothing is claimed, and a second run the same day writes
+     * nothing new. A run at or after 02:00 UTC writes nothing (lateRun).
+     * `metricsSkipped` alone does not make a run partly done (SA-WR-8.2).
+     */
+    id: 'finance-snapshot',
+    path: '/api/cron/finance-snapshot',
+    schedule: '7 0 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Finance history snapshot',
+    description: "Records last night's plan mix and credit position for the Finance history",
+    scheduleWords: 'Daily at 00:07 UTC',
+    // QA4b-B1: added after run recording began. RM sets this to the real deploy day in the PR.
+    addedOn: '2026-10-18',
+    drainsQueue: null,
+    counts: [
+      { key: 'metricsWritten', path: ['data', 'metricsWritten'], label: 'figures written' },
+      { key: 'metricsAlreadyThere', path: ['data', 'metricsAlreadyThere'], label: 'figures already recorded for the day' },
+      { key: 'metricsSkipped', path: ['data', 'metricsSkipped'], label: 'figures not recorded (source unreadable)' },
+      { key: 'familiesSkipped', path: ['data', 'familiesSkipped'], label: 'groups of figures not recorded' },
+      { key: 'accountsRead', path: ['data', 'accountsRead'], label: 'businesses read' },
+      { key: 'lateRun', path: ['data', 'lateRun'], label: 'started too late to record (1 = yes)' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'familiesSkipped', value: 1 },
+      { kind: 'atLeast', key: 'lateRun', value: 1 },
+    ],
   },
 ];
 

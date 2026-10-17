@@ -167,35 +167,58 @@ function windowGrants(grants: readonly FinanceLot[], window: { start: Date; end:
   return { granted: grantedMicro / MICRO, takenBack: takenBackMicro / MICRO, grants: count, grantingAdmins: admins.size };
 }
 
-function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput): GiftedByAccount {
-  const grants = lots.filter((lot) => lot.source === 'admin_grant');
+/** Outstanding credits of one lot source (K-4's loop, slice 8.2 extract): micro-credits, never a partial sum. */
+export interface OutstandingBySource {
+  /** Micro-credits outstanding per existing account; null for an account whose lots are unreadable. */
+  byAccount: Map<string, number | null>;
+  /** Σ over existing accounts (lots with an account), in micro-credits. Null when any account is unreadable. */
+  totalMicro: number | null;
+  /** Outstanding on lots of deleted accounts (`accountId` null), in micro-credits. Null when unreadable. */
+  deletedMicro: number | null;
+  /** Accounts with a lot that drew more than it granted (clamped to 0). */
+  inconsistentAccounts: number;
+}
 
-  const byAccount = new Map<string, FinanceLot[]>();
+/**
+ * One source's outstanding credits at `now`, through the one balance core,
+ * `extraCreditsAt`. K-4 is `outstandingBySource(lots, 'admin_grant', now)`; the
+ * nightly history's bought credits are the same rule over `'boost_purchase'`
+ * (slice 8.2, E-95): existing accounts are the lots that still have an account.
+ */
+export function outstandingBySource(lots: readonly FinanceLot[], source: FinanceLot['source'], now: Date): OutstandingBySource {
+  const byAccountLots = new Map<string, FinanceLot[]>();
   const deleted: FinanceLot[] = [];
-  for (const lot of grants) {
+  for (const lot of lots) {
+    if (lot.source !== source) continue;
     if (lot.accountId === null) {
       deleted.push(lot);
       continue;
     }
-    const list = byAccount.get(lot.accountId) ?? [];
+    const list = byAccountLots.get(lot.accountId) ?? [];
     list.push(lot);
-    byAccount.set(lot.accountId, list);
+    byAccountLots.set(lot.accountId, list);
   }
 
-  const outstanding = new Map<string, number | null>();
+  const byAccount = new Map<string, number | null>();
   let totalMicro: number | null = 0;
   let inconsistentAccounts = 0;
-  for (const [accountId, accountLots] of byAccount) {
-    const extra = extraCreditsAt(accountLots, input.now);
+  for (const [accountId, accountLots] of byAccountLots) {
+    const extra = extraCreditsAt(accountLots, now);
     const micro = extra === null ? null : toMicro(extra.extraCredits);
-    outstanding.set(accountId, micro);
+    byAccount.set(accountId, micro);
     if (extra?.hasInconsistentLot) inconsistentAccounts += 1;
     // Never a partial sum.
     totalMicro = totalMicro === null || micro === null ? null : totalMicro + micro;
   }
 
-  const deletedExtra = deleted.length === 0 ? null : extraCreditsAt(deleted, input.now);
+  const deletedExtra = deleted.length === 0 ? null : extraCreditsAt(deleted, now);
   const deletedMicro = deleted.length === 0 ? 0 : deletedExtra === null ? null : toMicro(deletedExtra.extraCredits);
+  return { byAccount, totalMicro, deletedMicro, inconsistentAccounts };
+}
+
+function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput): GiftedByAccount {
+  const grants = lots.filter((lot) => lot.source === 'admin_grant');
+  const { byAccount: outstanding, totalMicro, deletedMicro, inconsistentAccounts } = outstandingBySource(lots, 'admin_grant', input.now);
 
   let accountsNotListed: number | null = null;
   if (input.accountIds !== null) {
