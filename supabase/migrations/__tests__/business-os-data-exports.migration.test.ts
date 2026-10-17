@@ -513,3 +513,28 @@ describe('MT-NC planted broken copies fail their detector', () => {
     ))).not.toEqual([]);
   });
 });
+
+describe('DE-10a pins (workplan §9 T-21, T-22; SA W10-8)', () => {
+  it('T-21 (DX-4): the limits have no kind predicate, so an admin-started export counts against the account', () => {
+    const touching = statementsOf(bodyOf(migration)).filter((s) => /(FROM|UPDATE) public\.business_os_data_exports/.test(s));
+    expect(touching.length).toBeGreaterThan(0);
+    for (const statement of touching) {
+      expect({ statement: statement.slice(0, 80), kind: statement.includes('requested_by_kind') }).toEqual({ statement: statement.slice(0, 80), kind: false });
+    }
+    const index = squash(migration).match(/CREATE UNIQUE INDEX business_os_data_exports_one_in_progress [^;]*;/)?.[0] ?? '';
+    expect(index).not.toBe('');
+    expect(index).not.toContain('requested_by_kind');
+  });
+
+  it('T-22: the hard delete (20261075) counts AND lists for removal the export bucket under the account folder', () => {
+    const cleanup = read(CLEANUP_MIGRATION);
+    const lines = cleanup.split('\n');
+    const BUCKETS = "objects.bucket_id IN ('contact-documents', 'website-images', 'business-purge-snapshots', 'business-data-exports') AND starts_with(objects.name, target.user_id::text || '/')";
+    // Guard G-12, in both copies (the check and the delete): the login is not removed while such an object remains.
+    expect(lines.filter((line) => line.includes('SELECT count(*) FROM storage.objects AS objects') && line.includes(BUCKETS))).toHaveLength(2);
+    // The storage rows the delete runner removes exactly (runCleanupDelete empties what the check lists).
+    const storageRows = cleanup.indexOf("SELECT 3, 'storage', 0, 'empty this folder'");
+    expect(storageRows).toBeGreaterThan(0);
+    expect(cleanup.slice(storageRows, cleanup.indexOf('UNION ALL', storageRows))).toContain(`WHERE ${BUCKETS}`);
+  });
+});

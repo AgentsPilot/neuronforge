@@ -19,7 +19,8 @@ const mockFindById = jest.fn();
 const mockMarkOwnerDownloaded = jest.fn();
 jest.mock('@/lib/repositories/BusinessOsDataExportJobRepository', () => ({
   businessOsDataExportJobRepository: {
-    findById: (...a: unknown[]) => mockFindById(...a),
+    // DE-10a (SA-5): the route reads owner-requested jobs only.
+    findOwnerJobById: (...a: unknown[]) => mockFindById(...a),
     markOwnerDownloaded: (...a: unknown[]) => mockMarkOwnerDownloaded(...a),
   },
 }));
@@ -165,4 +166,29 @@ it('a signing failure is a 500 and records no download', async () => {
 it('exports POST only (SA C-7: no GET with side effects)', async () => {
   const route = await import('../route');
   expect((route as Record<string, unknown>).GET).toBeUndefined();
+});
+
+describe('DE-10a (SA-5, T-17): an admin-prepared job is not the owner\'s to download', () => {
+  it('the owner-only read answers null for an admin job: 404, no link, no download stamp, no audit', async () => {
+    // findOwnerJobById filters requested_by_kind = 'owner' (pinned in the repository test).
+    mockFindById.mockResolvedValueOnce({ data: null, error: null });
+    const response = await call(JOB, '1');
+    expect(response.status).toBe(404);
+    expect(await response.json()).not.toHaveProperty('code');
+    expect(mockFindById).toHaveBeenCalledWith(JOB, USER.id);
+    expect(mockSign).not.toHaveBeenCalled();
+    expect(mockMarkOwnerDownloaded).not.toHaveBeenCalled();
+    expect(mockAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('the route reads through findOwnerJobById, never the kind-blind findById, and names the file through downloadName.ts (source pin)', () => {
+    const { readFileSync } = jest.requireActual<typeof import('fs')>('fs');
+    const { join } = jest.requireActual<typeof import('path')>('path');
+    const source = readFileSync(join(process.cwd(), 'app/api/business-os/data-exports/[jobId]/parts/[partNo]/download/route.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(code).toContain('businessOsDataExportJobRepository.findOwnerJobById(jobId, user.id)');
+    expect(code).not.toMatch(/\.findById\(/);
+    expect(code).toContain("from '@/lib/business-os/data-export/downloadName'");
+    expect(code).not.toContain('findCompanyName');
+  });
 });

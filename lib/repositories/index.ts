@@ -351,6 +351,7 @@ export type {
   DataExportJobCounts,
   DataExportJobRef,
   DataExportJobState,
+  DataExportSweepRef,
   DataExportJobStatus,
   DataExportFailureReason,
   DataExportRequesterKind,

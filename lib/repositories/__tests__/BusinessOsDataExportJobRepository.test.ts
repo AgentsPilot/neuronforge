@@ -313,6 +313,8 @@ describe('markOwnerDownloaded / markExpired (M-7, M-10): idempotent', () => {
     expect(await repo(c).markOwnerDownloaded(JOB, OWNER)).toEqual({ data: true, error: null });
     expect(await repo(c).markOwnerDownloaded(JOB, OWNER)).toEqual({ data: false, error: null });
     expect(eqs(calls).slice(0, 3)).toEqual([['id', JOB], ['user_id', OWNER], ['status', 'ready']]);
+    // DE-10a (SA-5, T-18): owner-requested jobs only.
+    expect(eqs(calls).slice(3, 4)).toEqual([['requested_by_kind', 'owner']]);
     expect(calls).toContainEqual({ method: 'is', args: ['owner_downloaded_at', null] });
     expect(Object.keys(updatePayload(calls)).sort()).toEqual(['owner_downloaded_at', 'updated_at']);
   });
@@ -326,30 +328,60 @@ describe('markOwnerDownloaded / markExpired (M-7, M-10): idempotent', () => {
   });
 });
 
-describe('expireOtherReady (M-8)', () => {
-  it('expires the other ready jobs of this account only, never the kept one', async () => {
+describe('expireOtherReady (M-8; DE-10a SA-4: same kind only)', () => {
+  it.each(['owner', 'admin'] as const)('expires the other ready %s jobs of this account only, never the kept one', async (kind) => {
     const { c, calls } = client({ data: [{ id: JOB2 }], error: null });
-    expect(await repo(c).expireOtherReady(OWNER, JOB)).toEqual({ data: [JOB2], error: null });
-    expect(eqs(calls)).toEqual([['user_id', OWNER], ['status', 'ready']]);
+    expect(await repo(c).expireOtherReady(OWNER, JOB, kind)).toEqual({ data: [JOB2], error: null });
+    expect(eqs(calls)).toEqual([['user_id', OWNER], ['status', 'ready'], ['requested_by_kind', kind]]);
     expect(calls).toContainEqual({ method: 'neq', args: ['id', JOB] });
     expect(updatePayload(calls)).toMatchObject({ status: 'expired' });
   });
 
-  it('invalid ids never reach the database', async () => {
+  it('invalid ids and an invalid kind never reach the database (T-19)', async () => {
     const { c, calls } = client({ data: [], error: null });
-    expect((await repo(c).expireOtherReady(OWNER, 'x')).error).toBeInstanceOf(Error);
+    expect((await repo(c).expireOtherReady(OWNER, 'x', 'owner')).error).toBeInstanceOf(Error);
+    for (const kind of ['', 'OWNER', 'system', undefined]) {
+      expect((await repo(c).expireOtherReady(OWNER, JOB, kind as never)).error).toBeInstanceOf(Error);
+    }
     expect(calls).toEqual([]);
   });
 });
 
-describe('cross-account sweep reads (M-9, M-11)', () => {
-  it('listDueForExpiry: ready and past expiry, oldest first, at most 500, only id and user_id', async () => {
-    const now = new Date('2026-10-17T12:00:00.000Z');
-    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER }], error: null });
-    expect((await repo(c).listDueForExpiry(now)).data).toEqual([{ id: JOB, user_id: OWNER }]);
+describe('findOwnerJobById (DE-10a SA-5, T-18)', () => {
+  it('filters id, user_id AND requested_by_kind owner, explicit columns', async () => {
+    const { c, calls } = client({ data: { id: JOB, user_id: OWNER, requested_by_kind: 'owner' }, error: null });
+    expect((await repo(c).findOwnerJobById(JOB, OWNER)).data).toMatchObject({ id: JOB });
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_data_exports'] },
-      { method: 'select', args: ['id, user_id'] },
+      { method: 'select', args: [DATA_EXPORT_JOB_COLUMNS] },
+      { method: 'eq', args: ['id', JOB] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['requested_by_kind', 'owner'] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+  });
+
+  it('an admin job of the same account is null (the filter excludes it); bad ids never reach the database', async () => {
+    const { c } = client({ data: null, error: null });
+    expect(await repo(c).findOwnerJobById(JOB, OWNER)).toEqual({ data: null, error: null });
+    const bad = client({ data: null, error: null });
+    expect((await repo(bad.c).findOwnerJobById('x', OWNER)).error).toBeInstanceOf(Error);
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { message: 'down', code: 'XX000', details: 'secret detail' } });
+    const failed = await repo(failing.c).findOwnerJobById(JOB, OWNER);
+    expect(failed.data).toBeNull();
+    expect(failed.error?.message).toBe('down');
+  });
+});
+
+describe('cross-account sweep reads (M-9, M-11)', () => {
+  it('listDueForExpiry: ready and past expiry, oldest first, at most 500, only id, user_id and the kind (DE-10a SA-2)', async () => {
+    const now = new Date('2026-10-17T12:00:00.000Z');
+    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER, requested_by_kind: 'admin' }], error: null });
+    expect((await repo(c).listDueForExpiry(now)).data).toEqual([{ id: JOB, user_id: OWNER, requested_by_kind: 'admin' }]);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_data_exports'] },
+      { method: 'select', args: ['id, user_id, requested_by_kind'] },
       { method: 'eq', args: ['status', 'ready'] },
       { method: 'lte', args: ['expires_at', '2026-10-17T12:00:00.000Z'] },
       { method: 'order', args: ['expires_at', { ascending: true }] },
@@ -378,13 +410,13 @@ describe('cross-account sweep reads (M-9, M-11)', () => {
   });
 
   // DE-8b: was "both carry ..."; listStaleRunning is the third sweep read.
-  it('listStaleRunning: running and created before the cut, oldest first, at most 500, only id and user_id (DE-8b, SA DE-8a Q-12)', async () => {
+  it('listStaleRunning: running and created before the cut, oldest first, at most 500, only id, user_id and the kind (DE-8b, SA DE-8a Q-12; DE-10a SA-2)', async () => {
     const before = new Date('2026-10-17T11:58:30.000Z');
-    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER }], error: null });
-    expect((await repo(c).listStaleRunning(before)).data).toEqual([{ id: JOB, user_id: OWNER }]);
+    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER, requested_by_kind: 'owner' }], error: null });
+    expect((await repo(c).listStaleRunning(before)).data).toEqual([{ id: JOB, user_id: OWNER, requested_by_kind: 'owner' }]);
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_data_exports'] },
-      { method: 'select', args: ['id, user_id'] },
+      { method: 'select', args: ['id, user_id, requested_by_kind'] },
       { method: 'eq', args: ['status', 'running'] },
       { method: 'lt', args: ['created_at', '2026-10-17T11:58:30.000Z'] },
       { method: 'order', args: ['created_at', { ascending: true }] },
@@ -430,13 +462,14 @@ describe('tenant isolation negative control', () => {
       return eqs(calls).some(([column, value]) => column === 'user_id' && value === OWNER);
     };
     expect(await run((r) => r.findById(JOB, OWNER))).toBe(true);
+    expect(await run((r) => r.findOwnerJobById(JOB, OWNER))).toBe(true);
     expect(await run((r) => r.findLatestForUser(OWNER))).toBe(true);
     expect(await run((r) => r.findLatestCompletedForUser(OWNER))).toBe(true);
     expect(await run((r) => r.listForUser(OWNER))).toBe(true);
     expect(await run((r) => r.markReady(JOB, OWNER, { bytes: 0, fileCount: 0, rowCount: 0 }))).toBe(true);
     expect(await run((r) => r.markFailed(JOB, OWNER, 'timeout'))).toBe(true);
     expect(await run((r) => r.markOwnerDownloaded(JOB, OWNER))).toBe(true);
-    expect(await run((r) => r.expireOtherReady(OWNER, JOB))).toBe(true);
+    expect(await run((r) => r.expireOtherReady(OWNER, JOB, 'owner'))).toBe(true);
     expect(await run((r) => r.markExpired(JOB, OWNER))).toBe(true);
   });
 });

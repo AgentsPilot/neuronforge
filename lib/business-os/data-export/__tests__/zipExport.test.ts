@@ -3,6 +3,8 @@
  * the one-request zip builder. Every dependency is injected; fixtures are
  * KB-sized (C-15: the 40 MiB memory spike is local, recorded in the workplan).
  */
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { unzipSync } from 'fflate';
 import { EXPORT_SECTIONS, type AnyExportedSection, type ExportContext, type ExportRunResult } from '../sections';
 import { EXPORT_LIMITS } from '../limits';
@@ -473,5 +475,30 @@ describe('the failure invariant (SA C-1, C-2)', () => {
     h.jobs.expireOtherReady.mockResolvedValueOnce({ data: [OLD], error: null });
     h.storage.remove.mockResolvedValueOnce({ data: null, error: new Error('x') });
     expect((await run(h)).kind).toBe('ready');
+  });
+});
+
+describe('DE-10a (SA-4, T-20): a newer export replaces only older ready exports of its own kind', () => {
+  it.each(['owner', 'admin'] as const)('a ready %s job passes its own kind, read from the markReady row', async (kind) => {
+    const h = harness();
+    h.jobs.markReady.mockResolvedValueOnce({ data: { ...JOB_ROW, requested_by_kind: kind }, error: null });
+    expect((await run(h)).kind).toBe('ready');
+    expect(h.jobs.expireOtherReady).toHaveBeenCalledTimes(1);
+    expect(h.jobs.expireOtherReady).toHaveBeenCalledWith(USER, JOB, kind);
+  });
+
+  it('after an ambiguous markReady, the kind comes from the re-read row', async () => {
+    const h = harness();
+    h.jobs.markReady.mockResolvedValueOnce({ data: null, error: new Error('lost answer') });
+    h.jobs.findById.mockResolvedValueOnce({ data: { ...JOB_ROW, requested_by_kind: 'admin' }, error: null });
+    expect((await run(h)).kind).toBe('ready');
+    expect(h.jobs.expireOtherReady).toHaveBeenCalledWith(USER, JOB, 'admin');
+  });
+
+  it('runZipExport takes no kind from its caller (source pin)', () => {
+    const source = readFileSync(join(process.cwd(), 'lib/business-os/data-export/zipExport.ts'), 'utf8');
+    const input = source.slice(source.indexOf('export interface ZipExportInput'), source.indexOf('export interface ZipExportReady'));
+    expect(input).not.toMatch(/kind/i);
+    expect(source).toContain('deps.jobs.expireOtherReady(userId, jobId, readyJob.requested_by_kind)');
   });
 });
