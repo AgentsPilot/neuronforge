@@ -1,10 +1,10 @@
 # AI Model Price — Emergency SQL Runbook
 
-> **Last Updated**: 2026-10-16
+> **Last Updated**: 2026-10-17
 
 ## Overview
 
-Since AI model price review slice 6, nothing in the admin app can change a live AI model price: Sync and the per-row Edit were removed (MP-FR-11, user decision Q9). Until slice 8 ships the per-model **Apply**, the only way to change a price that customers are charged from is this runbook, run by hand in the Supabase SQL editor. The user decided this on 2026-10-16 (BQ-1 (a)) in [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md).
+Since AI model price review slice 6, Sync and the per-row Edit are gone (MP-FR-11, user decision Q9). Since slice 8 the normal way to change a price that customers are charged from is the per-model **Apply** on `/admin/system-config`. This runbook stays the operator's path for an emergency the app cannot handle, run by hand in the Supabase SQL editor. The user decided it on 2026-10-16 (BQ-1 (a)) in [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md).
 
 **Use it only for an emergency:** a provider raised a price and a Business OS model is undercharging (a red row on `/admin/system-config`), or a Business OS area must move to a model that has no price yet. Anything that can wait, waits for Apply.
 
@@ -30,7 +30,8 @@ Since AI model price review slice 6, nothing in the admin app can change a live 
 
 | Rule | Why |
 |---|---|
-| **Each paste is exactly one statement** (paste 2's `BEGIN; DO …; COMMIT;` is one unit). Run each paste on its own | The Supabase SQL editor shows only the last statement's result |
+| **Each paste is exactly one unit** (paste 2's `BEGIN; LOCK …; DO …; COMMIT;` is one unit). Run each paste on its own | The Supabase SQL editor shows only the last statement's result |
+| Paste 2 locks the price table first (`SHARE ROW EXCLUSIVE`, slice 8 SA RC-4): it waits for any in-app Apply to finish, and an Apply started meanwhile waits for it | The runbook and Apply can never interleave; no key to type, no deadlock |
 | The old row is **retired** (`retired_date` set), never deleted, never overwritten | Q9: no hard delete; the price history (slice 9) is built from the kept rows |
 | Prices are typed **per 1M tokens**, exactly as the provider's page shows them, and converted in SQL | R-1: no float, no rounding, no per-token typing mistakes |
 | A new price more than 10 times, or less than a tenth of, the old one is refused unless you deliberately confirm it | A slip such as `150` for `0.15` fails closed |
@@ -120,6 +121,7 @@ Only after the owner's written approval. Fill in the six placeholders in the `DE
 
 ```sql
 BEGIN;
+LOCK TABLE public.ai_model_pricing IN SHARE ROW EXCLUSIVE MODE;
 
 DO $emergency_price$
 DECLARE
@@ -229,8 +231,12 @@ If any check fails, do not run anything else: tell the owner and SA.
 ## 6. After the change
 
 - Fill in the run log row below in the same PR or doc edit.
-- Any **pending** price for this model on `/admin/system-config` was recorded against the old price. Slice 8's Apply will refuse it as stale, by design. Re-enter it, or let the next "Check provider prices" replace it.
-- For an image price: this runbook does not apply. Since slice 7 images are priced from `ai_model_image_pricing` first (then the in-code `IMAGE_FALLBACK_PRICING`), but that table has no runbook paste: an image price is added through slice 8's apply, or the in-code fallback changes by PR.
+- Any **pending** price for this model on `/admin/system-config` was recorded against the old price. Apply refuses it as stale, by design. Re-enter it, or let the next "Check provider prices" replace it.
+- For an image price: this runbook does not apply. Since slice 7 images are priced from `ai_model_image_pricing` first (then the in-code `IMAGE_FALLBACK_PRICING`), but that table has no runbook paste: an image price is added through Apply, or the in-code fallback changes by PR.
+
+### Stopping every in-app Apply at once (slice 8, SA RC-9)
+
+If an Apply must be stopped in any state (for example a wrong price is being applied over and over), an operator runs, as `postgres`, with the owner's approval: `REVOKE EXECUTE ON FUNCTION public.ai_price_apply_lines(uuid, jsonb, jsonb) FROM service_role;`. Every Apply then fails and the page shows "Prices cannot be changed right now: your admin access is not recorded, or an operator has switched Apply off. Ask an operator." (the same words an admin without an `admin_users` row sees); no price changes. To restore Apply: `GRANT EXECUTE ON FUNCTION public.ai_price_apply_lines(uuid, jsonb, jsonb) TO service_role;`. Write both in the run log.
 
 ---
 
@@ -255,3 +261,4 @@ If any check fails, do not run anything else: tell the owner and SA.
 | 2026-10-16 | Created | AI model price review slice 6 (SA SC6-5; user decision BQ-1 (a)): three pastes (read-only pre-check with the slice 2 fingerprint, one self-checking `DO` block that retires by id and never deletes, read-only post-check), the `20251030` warning, and the run log |
 | 2026-10-16 | SA code review and QA fixes | CR-1: paste 1 became 1a (rows) and 1b (count, `active_row_ids`, fingerprints), one statement per paste, and paste 3 runs 1a then 1b. CR-5: conversion `* 0.000001` (exact, as the pending area), "numerically equal" check, fingerprint compared only within one run. QA: no comments in any paste (hints moved to the text), "three places each". TL: a 10x / 0.1x check in paste 2 with the `v_confirm_large_change` override, skipped for a first price. Pinned by the source test `lib/ai/pricing-research/__tests__/emergencyRunbook.source.test.ts` |
 | 2026-10-16 | First run logged | BQ-7a (user: "Write it now"): `openai / text-embedding-3-small` first price, 0.02 / 0 per 1M, by TL; other models unchanged. Charge unchanged (equals the in-code fallback) |
+| 2026-10-17 | Slice 8: Apply ships | Paste 2 takes `LOCK TABLE public.ai_model_pricing IN SHARE ROW EXCLUSIVE MODE` straight after `BEGIN` (SA RC-4), so it serialises with the in-app Apply. Overview and section 6 updated for Apply; the emergency stop of Apply (`REVOKE EXECUTE`, SA RC-9) documented. Pinned by the runbook source test |

@@ -333,17 +333,20 @@ describe('one table: ours next to provider (UF-5)', () => {
     expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ read: 'comparison' }), 'Price comparison read failed');
   });
 
-  it('T-14: read-only note, notice rules, no Apply / Dismiss / History, one Check provider prices; toggle states', async () => {
+  it('T-14: the note, notice rules, Apply / Dismiss only on rows with a pending price, no History, one Check provider prices; toggle states', async () => {
     const calls = await renderTable();
     expect(calls.sort()).toEqual([`GET ${COMPARISON_URL}`, `GET ${PRICING_URL}`].sort());
-    expect(screen.getByTestId('price-review-note')).toHaveTextContent('Nothing in the provider column is charged yet.');
-    // Slice 6 (SA O-7): the note's last sentence is the new truth; the old "Sync and Edit" wording is gone (MT-1).
-    expect(screen.getByTestId('price-review-note')).toHaveTextContent(/Until then, no live price can be changed on this page[.]$/);
+    // Slice 8: the note says Apply exists; the old "until then" sentence is gone.
+    expect(screen.getByTestId('price-review-note')).toHaveTextContent('Nothing in the provider column is charged until someone applies it.');
+    expect(screen.getByTestId('price-review-note')).not.toHaveTextContent(/Until then/);
     // Lines are pending, so no "nothing entered" notice.
     expect(screen.queryByTestId('no-pending-notice')).not.toBeInTheDocument();
     const names = screen.getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent ?? '');
-    // Slice 5 deliberately adds the one "Check provider prices" button; Apply, Dismiss and History are still later slices.
-    for (const name of names) expect(name).not.toMatch(/apply|dismiss|history/i);
+    // Slice 8: one Apply and one Dismiss per row with a pending price; History is still a later slice.
+    const pendingRows = ROWS.filter((row) => row.pending.length > 0).length;
+    expect(names.filter((name) => /^Apply /.test(name))).toHaveLength(pendingRows);
+    expect(names.filter((name) => /^Dismiss /.test(name))).toHaveLength(pendingRows);
+    for (const name of names) expect(name).not.toMatch(/history/i);
     expect(names.filter((name) => /check|fetch/i.test(name))).toEqual(['Check provider prices']);
     expect(screen.getByTestId('pricing-toggle')).toHaveAttribute('aria-expanded', 'true');
   });

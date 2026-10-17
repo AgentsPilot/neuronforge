@@ -4,8 +4,10 @@
  *
  * After slice 6 nothing in the app writes `ai_model_pricing` or
  * `ai_model_image_pricing`: Sync and the single-row create / edit / hard delete
- * are gone. Slice 8's apply RPC will be the one writer, and it is added to the
- * allow-lists below deliberately, in a reviewed one-line edit (LW-3, LW-5).
+ * are gone. Slice 8's apply function `ai_price_apply_lines` is the one writer,
+ * added to the allow-lists below deliberately (SA SC6-8, slice 8 RC-16): LW-3
+ * names its repository, and LW-5 allows it in ONE migration file only, so a
+ * later `CREATE OR REPLACE` elsewhere fails here until it is reviewed.
  *
  * - LW-1 Code under `app/`, `lib/`, `scripts/` (tests and
  *   fixtures skipped) names a live table as a whole quoted literal only in an
@@ -17,8 +19,9 @@
  *   call and exactly its listed read methods (`READ_ONLY_REPOSITORIES`).
  * - LW-3 Each file under `lib/repositories/` holds exactly the expected
  *   `ai_price_*` / `ai_model_*` literals: no new table and no new function.
- * - LW-5 No SQL function in `supabase/migrations/` writes a live table, and
- *   top-level DML on them exists only in the historic files.
+ * - LW-5 No SQL function in `supabase/migrations/` writes a live table except
+ *   the apply function in its own migration, and top-level DML on them exists
+ *   only in the historic files.
  * - LW-4 Negative controls for every matcher.
  *
  * NOT A PROOF. Accepted gaps (SA CR-4, QA E-1), which are deliberate dodges
@@ -78,18 +81,27 @@ const LITERAL_ALLOWED: Record<string, string> = {
   'scripts/calculate-gpt4o-cost.ts': 'operator read script',
 };
 
-/** LW-3: tables and functions each repository file may name. Slice 8 adds its apply and dismiss functions and `ai_price_apply_batches`. */
+/** The slice 8 repository of the one live-price writer; it names the function, never a live table. */
+const APPLY_REPOSITORY = 'lib/repositories/AiPriceApplyRepository.ts';
+/** The one migration that may create the live-price writer. */
+const APPLY_MIGRATION = '20261079_ai_price_apply_and_dismiss.sql';
+
+/** LW-3: tables and functions each repository file may name. Slice 8 added Dismiss, Apply and `ai_price_apply_batches`. */
 const REPOSITORY_TABLES: Record<string, string[]> = {
   [REPOSITORY]: ['ai_model_pricing'],
   [IMAGE_REPOSITORY]: ['ai_model_image_pricing'],
   'lib/repositories/AiPriceProposalRepository.ts': ['ai_price_proposals', 'ai_price_proposal_lines'],
+  [APPLY_REPOSITORY]: ['ai_price_apply_batches'],
 };
 const REPOSITORY_FUNCTIONS: Record<string, string[]> = {
-  'lib/repositories/AiPriceProposalRepository.ts': ['ai_price_submit_pending'],
+  'lib/repositories/AiPriceProposalRepository.ts': ['ai_price_submit_pending', 'ai_price_dismiss_lines'],
+  [APPLY_REPOSITORY]: ['ai_price_apply_lines', 'ai_price_apply_batch_review_done'],
 };
 
-/** LW-5: SQL functions allowed to write a live table (slice 8 adds its apply function). */
-const SQL_FUNCTIONS_ALLOWED: string[] = [];
+/** LW-5: SQL functions allowed to write a live table, and the only migration files that may create each (slice 8). */
+const SQL_FUNCTIONS_ALLOWED: Record<string, string[]> = {
+  ai_price_apply_lines: [APPLY_MIGRATION],
+};
 /** LW-5: migrations whose top-level DML on a live table is history (immutable). */
 const SQL_HISTORIC_DML = [
   '20260213_add_claude_46_pricing.sql',
@@ -188,7 +200,7 @@ function sqlProblems(file: string, sql: string): string[] {
   let topLevel = noComments;
   for (const { name, body, whole } of sqlFunctions(noComments)) {
     topLevel = topLevel.replace(whole, '');
-    if (isLiveDml(body) && !SQL_FUNCTIONS_ALLOWED.includes(name)) {
+    if (isLiveDml(body) && !(SQL_FUNCTIONS_ALLOWED[name] ?? []).includes(file)) {
       problems.push(`${file}: function ${name} writes a live price table`);
     }
   }
@@ -257,7 +269,7 @@ describe('LW-3: repositories name only the expected price tables and functions',
   });
 });
 
-describe('LW-5: SQL has one writer, and it does not exist yet', () => {
+describe('LW-5: SQL has one writer, the apply function', () => {
   it('no migration function writes a live price table; top-level DML only in the historic files', () => {
     const dir = path.join(ROOT, 'supabase/migrations');
     const files = fs.readdirSync(dir).filter((name) => name.endsWith('.sql'));
@@ -274,6 +286,21 @@ describe('LW-5: SQL has one writer, and it does not exist yet', () => {
     const submit = sqlFunctions(sql.replace(/--.*$/gm, '')).find((fn) => fn.name === 'ai_price_submit_pending');
     expect(submit?.body).toContain('ai_price_proposal_lines');
     expect(isLiveDml(submit?.body ?? '')).toBe(false);
+  });
+
+  it('is not vacuous (slice 8): the apply function writes a live table; dismiss and the review never do', () => {
+    const sql = fs.readFileSync(path.join(ROOT, 'supabase/migrations', APPLY_MIGRATION), 'utf8');
+    const functions = sqlFunctions(sql.replace(/--.*$/gm, ''));
+    const byName = (name: string) => functions.find((fn) => fn.name === name)?.body ?? '';
+    expect(isLiveDml(byName('ai_price_apply_lines'))).toBe(true);
+    for (const name of ['ai_price_dismiss_lines', 'ai_price_apply_batch_review_done', 'ai_price_apply_batch_transition']) {
+      expect({ name, found: byName(name).length > 0, live: isLiveDml(byName(name)) }).toEqual({ name, found: true, live: false });
+    }
+    expect(sqlProblems(APPLY_MIGRATION, sql)).toEqual([]);
+  });
+
+  it('the apply migration file is still there (the allow-list is not stale)', () => {
+    expect(fs.existsSync(path.join(ROOT, 'supabase/migrations', APPLY_MIGRATION))).toBe(true);
   });
 
   it('the historic files are still there (the allow-list is not stale)', () => {
@@ -350,6 +377,13 @@ describe('LW-4: negative controls', () => {
       `${IMAGE_REPOSITORY}: methods listActive, listActiveExact, retire (expected listActive, listActiveExact)`,
     ]);
     expect(repositoryProblems(IMAGE_REPOSITORY, `${reads}  async apply() { await this.supabase.rpc('x'); }${NL}`)).toHaveLength(2);
+  });
+
+  it('LW-5 allows the apply function only in its own migration file', () => {
+    const fn =
+      'CREATE OR REPLACE FUNCTION public.ai_price_apply_lines(p uuid) RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN UPDATE public.ai_model_pricing SET retired_date = now(); END; $fn$;';
+    expect(sqlProblems(APPLY_MIGRATION, fn)).toEqual([]);
+    expect(sqlProblems('20991231_x.sql', fn)).toEqual(['20991231_x.sql: function ai_price_apply_lines writes a live price table']);
   });
 
   it('LW-3 reads literals, not comments', () => {

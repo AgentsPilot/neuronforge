@@ -256,7 +256,7 @@ describe('P: Model pricing', () => {
     expect(screen.queryAllByTitle('Save')).toHaveLength(0);
     expect(screen.queryByText(/Sync copies a built-in price list/)).not.toBeInTheDocument();
     expect(
-      screen.getByText('Cost per token for each AI model, as charged today. Live prices cannot be changed on this page until Apply arrives.')
+      screen.getByText('Cost per token for each AI model, as charged today. A live price changes only when an admin applies a provider price.')
     ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('price-check-stand-in'));
     await waitFor(() => expect(calls).toHaveLength(4));

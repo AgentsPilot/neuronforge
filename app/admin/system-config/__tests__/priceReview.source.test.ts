@@ -22,6 +22,10 @@ const NEW_FILES = [
   // Slice 5: "Check provider prices".
   `${DIR}/priceFetchRun.ts`,
   `${DIR}/components/ProviderPriceCheck.tsx`,
+  // Slice 8: Apply, Dismiss and the margin prompt.
+  `${DIR}/priceApply.ts`,
+  `${DIR}/components/PriceDecisionPanel.tsx`,
+  `${DIR}/components/MarginReviewNotice.tsx`,
 ];
 const sources = NEW_FILES.map((file) => [file, read(file)] as const);
 
@@ -59,6 +63,7 @@ describe('slice 4 new files', () => {
       `${DIR}/components/ManualPriceEntryForm.tsx`,
       `${DIR}/priceFetchRun.ts`,
       `${DIR}/components/ProviderPriceCheck.tsx`,
+      `${DIR}/priceApply.ts`,
     ]) {
       expect(read(file)).toContain("import { clientLogger } from '@/lib/logger/client';");
     }
@@ -69,6 +74,8 @@ describe('slice 4 new files', () => {
     expect(count('/api/admin/model-pricing/comparison')).toEqual([`${DIR}/priceComparisonRead.ts`]);
     expect(count('/api/admin/model-pricing/manual-entries')).toEqual([`${DIR}/components/ManualPriceEntryForm.tsx`]);
     expect(count('/api/admin/model-pricing/fetch-runs')).toEqual([`${DIR}/priceFetchRun.ts`]);
+    expect(count('/api/admin/model-pricing/apply')).toEqual([`${DIR}/priceApply.ts`]);
+    expect(count('/api/admin/model-pricing/dismiss')).toEqual([`${DIR}/priceApply.ts`]);
     for (const [, source] of sources) {
       const apis = codeOf(source).match(/[/]api[/][a-z0-9/-]+/g) ?? [];
       for (const api of apis) expect(api.startsWith('/api/admin/model-pricing/')).toBe(true);
@@ -83,6 +90,24 @@ describe('slice 4 new files', () => {
     expect(page.match(/<ProviderPriceCheck/g)).toHaveLength(1);
     // Intent kept; page layout slice (UF-7): `onStatus` hands the page the status this component already read (the Last provider check KPI).
     expect(page.replace(/[ \n]+/g, ' ')).toContain('<ProviderPriceCheck onFinished={() => { void fetchData(true); }} onStatus={setCheckStatus} />');
+  });
+
+  it('slice 8 (SA O-18): only priceApply.ts sends a write; the panel and the notice post through it', () => {
+    const writers = sources.filter(([, source]) => /method:\s*['"`](POST|PUT|PATCH|DELETE)['"`]/.test(codeOf(source))).map(([file]) => file);
+    expect(writers.sort()).toEqual([`${DIR}/components/ManualPriceEntryForm.tsx`, `${DIR}/priceApply.ts`, `${DIR}/priceFetchRun.ts`].sort());
+    for (const file of [`${DIR}/components/PriceDecisionPanel.tsx`, `${DIR}/components/MarginReviewNotice.tsx`]) {
+      const source = codeOf(read(file));
+      expect({ file, fetches: /(?<![A-Za-z0-9_])fetch[(]/.test(source) }).toEqual({ file, fetches: false });
+      expect(source).toContain("from '@/app/admin/system-config/priceApply'");
+    }
+  });
+
+  it('slice 8 (RR-2, RR-5): the reason pre-fill is built in the page; the override field is never pre-filled', () => {
+    expect(read(`${DIR}/priceApply.ts`)).toContain('return `Provider price change — source ${sourceUrl} (checked ${checkedOn})`;');
+    const panel = codeOf(read(`${DIR}/components/PriceDecisionPanel.tsx`));
+    expect(panel).toContain('prefilledReason(line.sourceUrl, line.checkedOn)');
+    expect(panel).toContain("value={overrides[line.lineId] ?? ''}");
+    expect(panel).not.toMatch(/setOverrides[(][^)]*prefilledReason/);
   });
 
     it('no raw .json( read: bodies go through readJsonBody or readAdminResponse', () => {

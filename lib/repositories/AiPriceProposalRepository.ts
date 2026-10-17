@@ -21,8 +21,14 @@
 // Slice 5 adds the fetch round: `submitFetchRound` (the same RPC, `fetch`) and
 // three newest-round reads for the 60 s refusal and the per-provider status.
 //
+// Slice 8 adds Dismiss (`dismissLines`, the function `ai_price_dismiss_lines`,
+// which sets a pending line `dismissed` with the admin's reason and still never
+// names a live table) and `findLinesForDecision`, the exact read Apply and
+// Dismiss check before they call a function. Apply itself, the one live-price
+// writer, lives in `AiPriceApplyRepository`, so this file keeps its promise.
+//
 // There is deliberately NO update or delete method. Line state moves only
-// inside database functions, and a database trigger refuses any move that is
+// inside database functions (submit, dismiss, apply), and a database trigger refuses any move that is
 // not pending → superseded, applied or dismissed (SA C-2). Do not add one.
 //
 // No method throws: every failure comes back as `{ data: null, error }`, with
@@ -36,6 +42,7 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   AgentRepositoryResult as RepositoryResult,
+  AiPriceDecisionLine,
   AiPriceFetchRoundRow,
   AiPriceFetchRoundSubmitResult,
   AiPricePendingLine,
@@ -47,6 +54,7 @@ import type {
 const LINES_TABLE = 'ai_price_proposal_lines';
 const ROUNDS_TABLE = 'ai_price_proposals';
 const SUBMIT_FUNCTION = 'ai_price_submit_pending';
+const DISMISS_FUNCTION = 'ai_price_dismiss_lines';
 
 const PENDING_LINE_COLUMNS =
   'id, proposal_id, kind, provider, model_name, image_size, image_quality, input_per_1m, output_per_1m, ' +
@@ -55,9 +63,22 @@ const PENDING_LINE_COLUMNS =
 
 const ROUND_COLUMNS = 'id, created_at, created_by, provider_outcomes';
 
+/**
+ * Slice 8 (SA RC-6): every snapshot number as exact text, never a JSON number,
+ * so the route compares decimals by value. Prices per 1M are text columns.
+ */
+const DECISION_LINE_COLUMNS =
+  'id, proposal_id, kind, provider, model_name, image_size, image_quality, input_per_1m, output_per_1m, ' +
+  'cached_input_per_1m, price_per_image, current_basis, current_row_id, ' +
+  'current_input_cost_per_token::text, current_output_cost_per_token::text, ' +
+  'current_cached_input_cost_per_token::text, current_cost_per_image::text, ' +
+  'source_url, checked_on, flags, state, created_by';
+
 /** An error carrying the Postgres SQLSTATE, when there is one. */
 export interface PriceRepositoryError extends Error {
   code?: string;
+  /** Slice 8: the function's DETAIL (the line id a refusal names), when there is one. */
+  details?: string;
 }
 
 function toError(error: unknown): PriceRepositoryError {
@@ -67,6 +88,7 @@ function toError(error: unknown): PriceRepositoryError {
     typeof record.message === 'string' ? record.message : 'Pending price query failed'
   );
   if (typeof record.code === 'string') wrapped.code = record.code;
+  if (typeof (record as { details?: unknown }).details === 'string') wrapped.details = (record as { details: string }).details;
   return wrapped;
 }
 
@@ -247,6 +269,65 @@ export class AiPriceProposalRepository {
     } catch (error) {
       const wrapped = toError(error);
       methodLogger.error({ err: wrapped, duration: Date.now() - startTime }, 'Failed to fetch pending price lines');
+      return { data: null, error: wrapped };
+    }
+  }
+
+  /**
+   * Slice 8: the lines Apply or Dismiss was asked about, by id, with their state
+   * and the snapshot of what was charged when each was recorded (exact text).
+   * Lines not found are simply absent; the caller compares the counts.
+   */
+  async findLinesForDecision(ids: readonly string[]): Promise<RepositoryResult<AiPriceDecisionLine[]>> {
+    const methodLogger = this.logger.child({ method: 'findLinesForDecision', count: ids.length });
+    const startTime = Date.now();
+
+    try {
+      const { data, error } = await this.supabase.from(LINES_TABLE).select(DECISION_LINE_COLUMNS).in('id', [...ids]);
+
+      if (error) throw toError(error);
+
+      methodLogger.debug({ found: data?.length || 0, duration: Date.now() - startTime }, 'Decision lines fetched');
+      return { data: (data as unknown as AiPriceDecisionLine[]) || [], error: null };
+    } catch (error) {
+      const wrapped = toError(error);
+      methodLogger.error({ err: wrapped, duration: Date.now() - startTime }, 'Failed to fetch decision lines');
+      return { data: null, error: wrapped };
+    }
+  }
+
+  /**
+   * Slice 8: dismiss pending lines with the admin's reason, through
+   * `ai_price_dismiss_lines` (one transaction; the same lock order as submit and
+   * apply, SA RC-5). Changes no price.
+   */
+  async dismissLines(input: {
+    adminUserId: string;
+    lineIds: readonly string[];
+    reason: string;
+  }): Promise<RepositoryResult<Array<{ lineId: string; decidedAt: string }>>> {
+    const methodLogger = this.logger.child({ method: 'dismissLines', lineCount: input.lineIds.length });
+    const startTime = Date.now();
+
+    try {
+      const { data, error } = await this.supabase.rpc(DISMISS_FUNCTION, {
+        p_admin_user_id: input.adminUserId,
+        p_line_ids: [...input.lineIds],
+        p_reason: input.reason,
+      });
+
+      if (error) throw toError(error);
+
+      const rows = ((data as Array<{ out_line_id: string; out_decided_at: string }> | null) ?? []).map((row) => ({
+        lineId: row.out_line_id,
+        decidedAt: row.out_decided_at,
+      }));
+
+      methodLogger.info({ count: rows.length, duration: Date.now() - startTime }, 'Pending price lines dismissed');
+      return { data: rows, error: null };
+    } catch (error) {
+      const wrapped = toError(error);
+      methodLogger.error({ err: wrapped, code: wrapped.code, duration: Date.now() - startTime }, 'Failed to dismiss pending price lines');
       return { data: null, error: wrapped };
     }
   }

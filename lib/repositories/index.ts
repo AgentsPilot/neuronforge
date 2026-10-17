@@ -15,6 +15,7 @@ export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRe
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
 export { AiModelImagePricingRepository, aiModelImagePricingRepository } from './AiModelImagePricingRepository';
 export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
+export { AiPriceApplyRepository, aiPriceApplyRepository } from './AiPriceApplyRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
@@ -408,6 +409,11 @@ export type {
   AiPriceSubmitInput,
   AiPriceSubmitResultLine,
   AiPricePendingLine,
+  AiPriceDecisionLine,
+  AiPriceApplyLineInput,
+  AiPriceApplyMargin,
+  AiPriceApplyResultRow,
+  AiPriceOpenMarginReview,
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,

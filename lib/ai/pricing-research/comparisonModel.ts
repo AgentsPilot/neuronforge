@@ -43,6 +43,7 @@ import { IMAGE_PRICE_REQUIRED_QUALITIES } from '@/lib/business-os/llm/modelSetti
 import { selectActiveImagePrices, resolveImagePriceFrom, imagePriceKey } from '@/lib/ai/imagePricing';
 import { aiModelImagePricingRepository } from '@/lib/repositories/AiModelImagePricingRepository';
 import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
+import { aiPriceApplyRepository } from '@/lib/repositories/AiPriceApplyRepository';
 import { aiPriceProposalRepository } from '@/lib/repositories/AiPriceProposalRepository';
 import { adminUserRepository } from '@/lib/repositories/AdminUserRepository';
 import { IMAGE_FALLBACK_PRICING, systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
@@ -143,15 +144,39 @@ export interface ComparisonRow {
   /** The lowest (most negative) unit gap in basis points, for sorting by gap. */
   worstGapBasisPoints: number | null;
   pending: PendingView[];
+  /**
+   * Slice 8 (SA slice 7 note 4, O-19): image rows only. True when, even after
+   * applying every pending price of the row, some configured size is still not
+   * priced at low, medium and high, so the image guardrail keeps refusing the
+   * model. Absent on token rows and on rows with nothing pending.
+   */
+  imageSetIncomplete?: boolean;
+}
+
+/** An Apply whose margin review is still open (slice 8, MP-FR-14), as the page shows it. */
+export interface OpenMarginReviewView {
+  batchId: string;
+  appliedAt: string;
+  appliedBy: string;
+  lineCount: number;
+  /** As stored on the batch by the apply route (`marginItemsFor`). */
+  items: Array<Record<string, unknown>>;
 }
 
 export interface ComparisonModel {
   generatedAt: string;
   embedding: EmbeddingSettingState;
   rows: ComparisonRow[];
+  /** Slice 8: open margin reviews, newest first. Optional so read-model doubles written before slice 8 stay valid. */
+  openMarginReviews?: OpenMarginReviewView[];
+  /** Slice 8: more open reviews exist than `openMarginReviews` holds (the read is capped). */
+  moreMarginReviews?: boolean;
 }
 
 const NOT_USED_LABEL = 'not used by Business OS';
+
+/** Open margin reviews shown on the page; the repository reads one more, so the page can say more are open. */
+const OPEN_MARGIN_REVIEWS_SHOWN = 20;
 
 function perTokenFromPer1k(value: number): string {
   return formatDecimal(shiftDecimal(decimalFromNumberLiteral(value), -3));
@@ -541,6 +566,17 @@ function imageRows(snapshot: PricingSnapshot): ComparisonRow[] {
       );
       if (line) pending.push(pendingView(snapshot, line, unit));
     }
+    // O-19: would the guardrail still refuse the model after these pending prices are applied?
+    let imageSetIncomplete: boolean | undefined;
+    if (pending.length > 0) {
+      imageSetIncomplete = snapshot.imageSizes.some((size) =>
+        IMAGE_PRICE_REQUIRED_QUALITIES.some(
+          (quality) =>
+            imageCurrent(snapshot, provider ?? '', model, size, quality).basis === 'unpriced' &&
+            !pendingByUnit.has(imageKey(model, size, quality))
+        )
+      );
+    }
     rows.push(
       finishRow({
         kind: 'image',
@@ -554,6 +590,7 @@ function imageRows(snapshot: PricingSnapshot): ComparisonRow[] {
         currentNote: null,
         units,
         pending,
+        ...(imageSetIncomplete === undefined ? {} : { imageSetIncomplete }),
       })
     );
   }
@@ -581,6 +618,22 @@ export function buildComparisonFromSnapshot(snapshot: PricingSnapshot, now: Date
   };
 }
 
+/**
+ * The page's one read (slice 4), plus the open margin reviews (slice 8, SA O-8):
+ * read here, never in `loadPricingSnapshot()`, which the apply route also calls.
+ */
 export async function buildComparison(): Promise<ComparisonModel> {
-  return buildComparisonFromSnapshot(await loadPricingSnapshot());
+  const [snapshot, reviews] = await Promise.all([loadPricingSnapshot(), aiPriceApplyRepository.listOpenMarginReviews()]);
+  if (reviews.error || !reviews.data) throw reviews.error ?? new Error('Open margin reviews unreadable');
+  return {
+    ...buildComparisonFromSnapshot(snapshot),
+    moreMarginReviews: reviews.data.length > OPEN_MARGIN_REVIEWS_SHOWN,
+    openMarginReviews: reviews.data.slice(0, OPEN_MARGIN_REVIEWS_SHOWN).map((review) => ({
+      batchId: review.id,
+      appliedAt: review.applied_at,
+      appliedBy: snapshot.adminEmailById.get(review.applied_by) ?? 'former admin',
+      lineCount: review.line_count,
+      items: Array.isArray(review.margin_items) ? review.margin_items : [],
+    })),
+  };
 }

@@ -15,17 +15,22 @@
  * read returned, never an empty or stale list posing as current.
  *
  * AI_MODEL_PRICE_REVIEW slice 6 (MP-FR-11, user decision Q9): Sync and the
- * per-row Edit are gone, and this page changes no live price. Until Apply
- * (slice 8) ships, a live price changes only through the emergency SQL runbook,
- * with the platform owner's approval (BQ-1 (a)).
+ * per-row Edit are gone. Since slice 8 the one way a live price changes in the
+ * app is Apply on a pending provider price (`PriceDecisionPanel`, through
+ * `priceApply.ts`, the only file here that sends a write; `page.tsx` sends none,
+ * NW-1). The emergency SQL runbook stays the operator path.
  *
  * AI_MODEL_PRICE_REVIEW slice 4 (user decision UF-5): this table IS the price
  * comparison. Every displayed price, gap, status, area and flag comes from
  * `GET /api/admin/model-pricing/comparison` (read in `priceComparisonRead.ts`),
  * printed from the server's decimal strings. The pricing list read here only
  * supplies the row ids, the dates and the retired rows (SA N-1, NR-1). Either
- * read failing fails the table (SA N-4, C2-4). There is no Apply and no history
- * yet (slices 8, 9).
+ * read failing fails the table (SA N-4, C2-4). No history yet (slice 9).
+ *
+ * AI_MODEL_PRICE_REVIEW slice 8 (MP-FR-8, MP-FR-10, MP-FR-14; UF-3): per-row
+ * Apply and Dismiss, bulk Apply of the selected rows, and the margin-check
+ * prompt (`MarginReviewNotice`) for each Apply that touched a model Business OS
+ * uses. After Apply the page says "in effect on all servers within 1 hour".
  *
  * Page layout slice (user feedback UF-7, 2026-10-16): a KPI strip from the
  * data already read (`priceKpis.ts`; the last check comes from the status
@@ -53,7 +58,7 @@ import type { ComparisonModel } from '@/lib/ai/pricing-research/comparisonModel'
 import { AdminDrawer, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
-import { formatCount, formatUtcDate } from '@/app/admin/components/layout/adminFormat';
+import { formatCount, formatUtcDate, formatUtcTime } from '@/app/admin/components/layout/adminFormat';
 import {
   ADMIN_BUTTON,
   ADMIN_TABLE,
@@ -64,6 +69,8 @@ import {
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 import { ManualPriceEntryForm, type ManualEntryPrefill } from '@/app/admin/system-config/components/ManualPriceEntryForm';
+import { MarginReviewNotice } from '@/app/admin/system-config/components/MarginReviewNotice';
+import { PriceDecisionPanel, type DecisionMode, type DecisionOutcome } from '@/app/admin/system-config/components/PriceDecisionPanel';
 import {
   EmptyPriceCells,
   PriceCells,
@@ -75,6 +82,7 @@ import ProviderPriceCheck from '@/app/admin/system-config/components/ProviderPri
 import { readPriceComparison } from '@/app/admin/system-config/priceComparisonRead';
 import { priceKpis, type CheckStatusState } from '@/app/admin/system-config/priceKpis';
 import {
+  APPLY_WORDS,
   ENTER_PROVIDER_PRICE,
   HELP_WORDS,
   IN_EFFECT_SINCE,
@@ -101,6 +109,9 @@ interface ModelPricing {
   /** Set on a retired row (slice 4 labels it, SA RC-4). */
   retired_date?: string | null;
 }
+
+/** Slice 8: the most lines one Apply may carry (the route and the function enforce the same, SA O-17). */
+const MAX_APPLY_LINES = 50;
 
 /** The two sub-header rows of the unit groups (slice 4, SA NR-5). */
 const UNIT_SUB_HEADERS = ['ours', 'provider', 'gap'] as const;
@@ -135,7 +146,7 @@ function PricingHelp() {
             <strong className={HELP_LABEL}>Read green and red.</strong> Each row shows what we charge today (ours) next to the provider&apos;s new price, and the gap. Green (Covered) means we charge at or above the provider&apos;s price. Red (Undercharging) means we charge less than the provider charges us, so every call on that model loses money. Red rows sort first.
           </li>
           <li>
-            <strong className={HELP_LABEL}>Apply (coming later).</strong> Makes a pending price the live price, one model at a time, with a short reason.
+            <strong className={HELP_LABEL}>Apply or Dismiss.</strong> Apply makes a pending price the live price for that model, with a short reason that is filled in from the provider page for you to confirm. A flagged price also needs your own override reason. Select several rows to apply them together. Dismiss drops a pending price, with a reason; no charge changes.
           </li>
           <li>
             <strong className={HELP_LABEL}>History (coming later).</strong> Every past price of a model: who applied it, when, why, and from which source.
@@ -158,7 +169,7 @@ function PricingHelp() {
             <strong className={HELP_LABEL}>Check provider prices and Enter provider price:</strong> only create pending prices. No charge changes.
           </p>
           <p className={HELP_TEXT}>
-            The Sync button and the per-row Edit have been removed. Every price change will go through a pending price and Apply. Until Apply arrives, a live price can only be changed in the database by an operator, with the platform owner&apos;s approval.
+            The Sync button and the per-row Edit have been removed. Every price change goes through a pending price and Apply, which keeps the old price as history and records who applied it and why. After an Apply that touches a model Business OS uses, a Check plan margins prompt appears until someone marks it done; plans, allowances and credits never change on their own.
           </p>
           <p className={HELP_TEXT}>
             Each server keeps its own copy of these prices for up to 1 hour, so a change is in effect on all servers within 1 hour. Changes don&apos;t alter provider billing.
@@ -196,6 +207,15 @@ export default function ModelPricingPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const [checkStatus, setCheckStatus] = useState<CheckStatusState>(undefined);
+
+  // Slice 8: the Apply / Dismiss panel (which rows, which mode), the rows picked
+  // for bulk Apply (by table row key), and the line shown after a decision.
+  const [decision, setDecision] = useState<{ mode: DecisionMode; keys: string[] } | null>(null);
+  const [decisionKey, setDecisionKey] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
+  // CR8-2: the button that opened the panel gets focus back on Cancel.
+  const decisionOpenerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -267,6 +287,33 @@ export default function ModelPricingPage() {
     }
   };
 
+  const openDecision = (mode: DecisionMode, keys: string[], opener: HTMLElement | null) => {
+    decisionOpenerRef.current = opener;
+    setDecisionNotice(null);
+    setDecision({ mode, keys });
+    setDecisionKey((key) => key + 1);
+  };
+
+  const finishDecision = (outcome: DecisionOutcome) => {
+    setDecision(null);
+    setSelected(new Set());
+    setDecisionNotice(
+      outcome.kind === 'applied'
+        ? `${APPLY_WORDS.appliedAt} ${formatUtcTime(outcome.appliedAt)}. ${outcome.effective}${outcome.marginNeeded ? ` ${APPLY_WORDS.marginFollows}` : ''}`
+        : APPLY_WORDS.dismissed
+    );
+    void fetchData(true);
+  };
+
+  const toggleSelected = (key: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const openEntry = (prefill: ManualEntryPrefill | null) => {
     setEntryPrefill(prefill);
     setEntryKey((key) => key + 1);
@@ -279,6 +326,14 @@ export default function ModelPricingPage() {
   const tableRows = showRetired ? allRows : allRows.filter((row) => !HIDDEN_UNLESS_RETIRED_SHOWN.has(row.kind));
   const hiddenCount = allRows.length - tableRows.length;
   const kpis = comparison ? priceKpis(comparison, checkStatus) : null;
+  const decisionRows = decision
+    ? allRows.flatMap((row) => (row.kind === 'compared' && decision.keys.includes(row.key) && row.comparison.pending.length > 0 ? [row.comparison] : []))
+    : [];
+  const selectedRows = allRows.filter((row) => selected.has(row.key) && row.kind === 'compared' && row.comparison.pending.length > 0);
+  const selectedKeys = selectedRows.map((row) => row.key);
+  // QA edge case: the server takes at most 50 lines per Apply; say so before sending.
+  const selectedLineCount = selectedRows.reduce((total, row) => total + (row.kind === 'compared' ? row.comparison.pending.length : 0), 0);
+  const tooManySelected = selectedLineCount > MAX_APPLY_LINES;
 
   if (loading) {
     return (
@@ -363,7 +418,7 @@ export default function ModelPricingPage() {
                 AI Model Pricing
               </h2>
               <p className="text-sm text-slate-400 mt-1">
-                Cost per token for each AI model, as charged today. Live prices cannot be changed on this page until Apply arrives.
+                Cost per token for each AI model, as charged today. A live price changes only when an admin applies a provider price.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -397,9 +452,28 @@ export default function ModelPricingPage() {
 
           {/* Slice 4: the bar, note, notice and form sit above the table, so a failed read never hides them. */}
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <button type="button" onClick={() => openEntry(null)} className={ADMIN_BUTTON}>
-              {ENTER_PROVIDER_PRICE}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => openEntry(null)} className={ADMIN_BUTTON}>
+                {ENTER_PROVIDER_PRICE}
+              </button>
+              {selectedKeys.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(event) => openDecision('apply', selectedKeys, event.currentTarget)}
+                  disabled={tooManySelected}
+                  aria-describedby={tooManySelected ? 'apply-selected-too-many' : undefined}
+                  data-testid="apply-selected"
+                  className={ADMIN_BUTTON}
+                >
+                  {`${APPLY_WORDS.applySelected} (${formatCount(selectedKeys.length)})`}
+                </button>
+              )}
+              {tooManySelected && (
+                <span id="apply-selected-too-many" role="alert" data-testid="apply-selected-too-many" className="text-xs text-amber-200">
+                  {`${APPLY_WORDS.tooManyLines} (${formatCount(selectedLineCount)} ${APPLY_WORDS.selectedLines})`}
+                </span>
+              )}
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
@@ -438,6 +512,31 @@ export default function ModelPricingPage() {
           )}
           {comparison && comparison.rows.length > 0 && comparison.rows.every((row) => row.pending.length === 0) && (
             <AdminNotice testId="no-pending-notice">{NO_PENDING_NOTICE}</AdminNotice>
+          )}
+          {/* Slice 8: what the last Apply or Dismiss did; always mounted so a screen reader announces it. */}
+          <div role="status" data-testid="decision-notice" className={decisionNotice ? 'rounded-lg border border-slate-600 bg-slate-800 p-3 text-sm text-slate-200' : undefined}>
+            {decisionNotice}
+          </div>
+          {comparison && (
+            <MarginReviewNotice
+              reviews={comparison.openMarginReviews ?? []}
+              more={comparison.moreMarginReviews === true}
+              onDone={() => {
+                void fetchData(true);
+              }}
+            />
+          )}
+          {decision && decisionRows.length > 0 && (
+            <PriceDecisionPanel
+              key={decisionKey}
+              mode={decision.mode}
+              rows={decisionRows}
+              onFinished={finishDecision}
+              onClose={() => {
+                setDecision(null);
+                decisionOpenerRef.current?.focus();
+              }}
+            />
           )}
           {entryOpen && (
             <ManualPriceEntryForm
@@ -512,8 +611,37 @@ export default function ModelPricingPage() {
                     <StatusCell row={row} />
                     <SourceCell row={comparisonRow} />
                     <td className={`${ADMIN_TD} whitespace-nowrap text-right`}>
-                      {/* Slice 6 (MP-FR-11): no Edit; the one row action records a pending price. */}
+                      {/* Slice 6 (MP-FR-11): no Edit. Slice 8: a row with a pending price gets Apply, Dismiss and a bulk checkbox. */}
                       <div className="flex items-center justify-end gap-2">
+                        {comparisonRow && comparisonRow.pending.length > 0 && (
+                          <>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(row.key)}
+                              onChange={() => toggleSelected(row.key)}
+                              aria-label={`${APPLY_WORDS.select}: ${comparisonRow.modelName}`}
+                              data-testid={`select-${row.key}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={(event) => openDecision('apply', [row.key], event.currentTarget)}
+                              aria-label={`${APPLY_WORDS.apply} ${comparisonRow.modelName}`}
+                              data-testid={`apply-${row.key}`}
+                              className={ADMIN_BUTTON}
+                            >
+                              {APPLY_WORDS.apply}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => openDecision('dismiss', [row.key], event.currentTarget)}
+                              aria-label={`${APPLY_WORDS.dismiss} ${comparisonRow.modelName}`}
+                              data-testid={`dismiss-${row.key}`}
+                              className={ADMIN_BUTTON}
+                            >
+                              {APPLY_WORDS.dismiss}
+                            </button>
+                          </>
+                        )}
                         {comparisonRow && (
                           <button
                             type="button"
