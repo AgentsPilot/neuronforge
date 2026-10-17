@@ -40,7 +40,7 @@ Slice 6b adds "Margin after Stripe fees (estimate, USD)" beside the AI margin, n
 - **Still owed to the user:** BQ-15 (the real fee rate; changing it is a one-line data edit), and the live steps L-142 to L-147 with checks 27 and 28 (owner October `usd_fee_minor` should be 318). These are AC-256 and the live halves of AC-246, AC-249 and AC-250.
 - **Landing with 4b.2:** whoever lands second rebases, and the fee stays on the charge list. The 6b-11 tripwire test enforces this.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-health-6b — commit pending (RM)
+### Status: COMMITTED — feature/bos-finance-health-6b — commit `8d2f5ff6`, PR #449 (auto-merge on)
 
 ---
 
