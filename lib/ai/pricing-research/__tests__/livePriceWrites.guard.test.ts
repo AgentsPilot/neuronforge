@@ -12,7 +12,9 @@
  *   allow-listed file; outside the repository the name sits inline in
  *   `.from('…')` (an alias would dodge the chain check), and no such chain
  *   (from `.from(` to the next `;` or `.from(`) calls a write verb.
- * - LW-2 `AiModelPricingRepository` is read-only.
+ * - LW-2 The live-table repositories are read-only: `AiModelPricingRepository` and,
+ *   since slice 7 (SA RC7-2), `AiModelImagePricingRepository`. Each has no write
+ *   call and exactly its listed read methods (`READ_ONLY_REPOSITORIES`).
  * - LW-3 Each file under `lib/repositories/` holds exactly the expected
  *   `ai_price_*` / `ai_model_*` literals: no new table and no new function.
  * - LW-5 No SQL function in `supabase/migrations/` writes a live table, and
@@ -54,10 +56,23 @@ const CODE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const SKIP_DIRS = new Set(['node_modules', '__tests__', '__fixtures__', '.next']);
 
 const REPOSITORY = 'lib/repositories/AiModelPricingRepository.ts';
+const IMAGE_REPOSITORY = 'lib/repositories/AiModelImagePricingRepository.ts';
+
+/**
+ * LW-1 / LW-2: the repositories that hold a live table's TABLE constant, and the
+ * only methods each may have. All read-only. Slice 7 (SA RC7-2) added the image
+ * table's billing and comparison reader; slice 8 must not add a writer here (its
+ * writer is the apply function).
+ */
+const READ_ONLY_REPOSITORIES: Record<string, string[]> = {
+  [REPOSITORY]: ['listActive', 'listActiveExact', 'listAll'],
+  [IMAGE_REPOSITORY]: ['listActive', 'listActiveExact'],
+};
 
 /** LW-1: files that may name a live table in code, and why. All read-only. */
 const LITERAL_ALLOWED: Record<string, string> = {
   [REPOSITORY]: 'the TABLE constant; read-only, pinned by LW-2',
+  [IMAGE_REPOSITORY]: 'the TABLE constant; read-only, pinned by LW-2 (slice 7)',
   'app/api/admin/agent-generation-config/route.ts': 'legacy direct read of active models (flagged, CLAUDE.md rule 1)',
   'scripts/analyze-pricing-discrepancies.ts': 'operator read script',
   'scripts/calculate-gpt4o-cost.ts': 'operator read script',
@@ -66,6 +81,7 @@ const LITERAL_ALLOWED: Record<string, string> = {
 /** LW-3: tables and functions each repository file may name. Slice 8 adds its apply and dismiss functions and `ai_price_apply_batches`. */
 const REPOSITORY_TABLES: Record<string, string[]> = {
   [REPOSITORY]: ['ai_model_pricing'],
+  [IMAGE_REPOSITORY]: ['ai_model_image_pricing'],
   'lib/repositories/AiPriceProposalRepository.ts': ['ai_price_proposals', 'ai_price_proposal_lines'],
 };
 const REPOSITORY_FUNCTIONS: Record<string, string[]> = {
@@ -145,13 +161,23 @@ function literalProblems(file: string, code: string): string[] {
   const hits = code.match(LIVE_LITERAL) ?? [];
   if (hits.length === 0) return [];
   if (!(file in LITERAL_ALLOWED)) return [`${file}: names a live price table and is not allow-listed`];
-  if (file === REPOSITORY) return [];
+  if (file in READ_ONLY_REPOSITORIES) return [];
   const problems: string[] = [];
   const inline = code.match(LIVE_INLINE_FROM) ?? [];
   if (inline.length !== hits.length) problems.push(`${file}: a live table name outside an inline .from('…')`);
   for (const chain of liveChains(code)) {
     if (WRITE_VERB.test(chain)) problems.push(`${file}: a write on a live price table`);
   }
+  return problems;
+}
+
+/** LW-2 for one read-only repository's code: problems, or [] when clean. */
+function repositoryProblems(file: string, code: string): string[] {
+  const problems: string[] = [];
+  if (/[.](insert|update|upsert|delete|rpc)[(]/.test(code)) problems.push(`${file}: a write call in a read-only repository`);
+  const methods = [...code.matchAll(/^ {2}async ([A-Za-z]+)[(]/gm)].map((match) => match[1]).sort();
+  const expected = [...(READ_ONLY_REPOSITORIES[file] ?? [])].sort();
+  if (methods.join(',') !== expected.join(',')) problems.push(`${file}: methods ${methods.join(', ')} (expected ${expected.join(', ')})`);
   return problems;
 }
 
@@ -192,7 +218,7 @@ describe('LW-1: no app path writes a live price table', () => {
   });
 
   it('is not vacuous: the matcher finds the known reads in the allow-listed files', () => {
-    for (const file of Object.keys(LITERAL_ALLOWED).filter((name) => name !== REPOSITORY)) {
+    for (const file of Object.keys(LITERAL_ALLOWED).filter((name) => !(name in READ_ONLY_REPOSITORIES))) {
       const code = candidates.find((entry) => entry.file === file)?.code ?? '';
       expect({ file, chains: liveChains(code).length }).toEqual({ file, chains: 1 });
     }
@@ -204,16 +230,17 @@ describe('LW-1: no app path writes a live price table', () => {
   });
 });
 
-describe('LW-2: the pricing repository is read-only', () => {
-  const code = stripComments(read(REPOSITORY));
+describe.each(Object.keys(READ_ONLY_REPOSITORIES))('LW-2: %s is read-only', (file) => {
+  const code = stripComments(read(file));
 
   it('has no write call', () => {
-    expect(code).not.toMatch(/[.](insert|update|upsert|delete)[(]/);
+    expect(code).not.toMatch(/[.](insert|update|upsert|delete|rpc)[(]/);
   });
 
-  it('has exactly the three read methods', () => {
+  it('has exactly its read methods', () => {
     const methods = [...code.matchAll(/^ {2}async ([A-Za-z]+)[(]/gm)].map((match) => match[1]);
-    expect(methods.sort()).toEqual(['listActive', 'listActiveExact', 'listAll']);
+    expect(methods.sort()).toEqual([...READ_ONLY_REPOSITORIES[file]].sort());
+    expect(repositoryProblems(file, code)).toEqual([]);
   });
 });
 
@@ -307,6 +334,22 @@ describe('LW-4: negative controls', () => {
       sqlProblems('20991231_x.sql', 'GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE public.ai_model_pricing TO service_role;')
     ).toEqual([]);
     expect(sqlProblems('20991231_x.sql', 'REVOKE TRUNCATE ON TABLE public.ai_model_pricing FROM service_role;')).toEqual([]);
+  });
+
+  // SA RC7-2: the image repository's exemption is the read-only map, and LW-2 bites on it.
+  it('LW-1 exempts only a mapped repository; LW-2 catches a write or an extra method in the image repository', () => {
+    const NL = String.fromCharCode(10);
+    expect(literalProblems(IMAGE_REPOSITORY, "const TABLE = 'ai_model_image_pricing';")).toEqual([]);
+    expect(literalProblems('lib/repositories/OtherRepository.ts', "const TABLE = 'ai_model_image_pricing';")).toEqual([
+      'lib/repositories/OtherRepository.ts: names a live price table and is not allow-listed',
+    ]);
+    const reads = ['  async listActive() {}', '  async listActiveExact() {}', ''].join(NL);
+    expect(repositoryProblems(IMAGE_REPOSITORY, reads)).toEqual([]);
+    expect(repositoryProblems(IMAGE_REPOSITORY, `${reads}  async retire() { await this.supabase.from(TABLE).update({ retired_date: d }); }${NL}`)).toEqual([
+      `${IMAGE_REPOSITORY}: a write call in a read-only repository`,
+      `${IMAGE_REPOSITORY}: methods listActive, listActiveExact, retire (expected listActive, listActiveExact)`,
+    ]);
+    expect(repositoryProblems(IMAGE_REPOSITORY, `${reads}  async apply() { await this.supabase.rpc('x'); }${NL}`)).toHaveLength(2);
   });
 
   it('LW-3 reads literals, not comments', () => {

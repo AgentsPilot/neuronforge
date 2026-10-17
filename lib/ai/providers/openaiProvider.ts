@@ -2,7 +2,7 @@
 import OpenAI from 'openai';
 import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
-import { calculateCostSync, getPriceStatusSync } from '@/lib/ai/pricing';
+import { calculateCostWithCachedSync, getPriceStatusSync } from '@/lib/ai/pricing';
 import { getModelMaxOutputTokens } from '../context-limits';
 import { createLogger } from '@/lib/logger';
 
@@ -569,16 +569,21 @@ export class OpenAIProvider extends BaseAIProvider {
      * owner-facing credits card both read. Split rather than scaled: the two
      * halves are priced differently and only the uncached half is new work.
      *
-     * OpenAI's published rate for a cache read is half the input rate, so the
-     * cached half is costed as if it were half as many tokens. Kept here rather
-     * than in the shared pricing table because it is a property of HOW the
-     * request was served, not of the model.
+     * The rate for the cached half: the model's `cached_input_cost_per_token`
+     * when the price table sets one (AI model price review slice 7; the database
+     * is authoritative, and OpenAI's discount varies by model family).
+     * Otherwise OpenAI's long-standing rule, a cache read at half the input
+     * rate: the cached half is costed as if it were half as many tokens. That
+     * derived count is worked out here, because it is a property of HOW OpenAI
+     * served the request, and the pricing layer applies it only when the row
+     * has no cached rate. Without one, the result is exactly what it was before
+     * slice 7.
      */
-    return calculateCostSync(
-      'openai',
-      model,
-      prompt - cached + Math.round(cached / 2),
-      usage?.completion_tokens || 0
-    );
+    return calculateCostWithCachedSync('openai', model, {
+      promptTokens: prompt,
+      cachedTokens: cached,
+      completionTokens: usage?.completion_tokens || 0,
+      derivedCachedTokens: Math.round(cached / 2),
+    });
   }
 }
