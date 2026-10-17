@@ -49,7 +49,7 @@ It adds the shape constants module, the purge and export classification entry (a
 
   RM then merges by hand, and 8.2 starts.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-health-8 — commit pending (RM); merge held for the user's apply of 20261078
+### Status: COMMITTED — feature/bos-finance-health-8 — commit `0439f94f`, PR #452 (auto-merge OFF); merge held for the user's apply of 20261078
 
 ---
 
