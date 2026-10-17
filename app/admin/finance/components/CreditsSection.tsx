@@ -25,6 +25,13 @@ import {
 } from '@/app/admin/components/layout/adminTable';
 import {
   CREDITS_ALLOWANCE,
+  CREDITS_BOUGHT,
+  CREDITS_BOUGHT_BOOSTS,
+  CREDITS_BOUGHT_COLUMN,
+  CREDITS_BOUGHT_DELETED_NOTE,
+  CREDITS_BOUGHT_IN_WINDOW,
+  CREDITS_BOUGHT_UNKNOWN,
+  CREDITS_NOT_TAKEN_BACK,
   CREDITS_BUSINESS,
   CREDITS_DELETED_NOTE,
   CREDITS_FAR_OVER,
@@ -99,22 +106,36 @@ export function CreditsSection({
 }) {
   const f = section.figures;
   const gifted = section.gifted;
+  // Slice 4b.2 (S4-FR-18 to S4-FR-20): bought credits beside gifted, never added to them. Absent only in
+  // fixtures written before it (E-103), which then render exactly as before.
+  const hasBought = section.bought !== undefined;
+  const bought = section.bought ?? null;
   const count = (value: number | null) => (value === null ? CREDITS_UNKNOWN : formatCount(value));
 
   return (
     <FinanceSection id="credits" title={CREDITS_TITLE} subtitle={`${CREDITS_SOURCE}, ${windowLabel}`} status={section.status} onRetry={onRetry}>
       {f && (
         <div className="space-y-3">
-          <dl className="grid gap-3 sm:grid-cols-3" data-testid="credits-summary">
+          <dl className={`grid gap-3 ${hasBought ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`} data-testid="credits-summary">
             <div><dt className="text-xs text-slate-400">{CREDITS_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-over">{formatCount(f.overAllowance)}</dd></div>
             <div><dt className="text-xs text-slate-400">{CREDITS_FAR_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-far-over">{count(f.farOverAllowance)}</dd></div>
             <div><dt className="text-xs text-slate-400">{CREDITS_GIFTED}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-gifted">{credits(gifted?.outstanding)}</dd></div>
+            {hasBought && (
+              <div><dt className="text-xs text-slate-400">{CREDITS_BOUGHT}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-bought">{credits(bought?.outstanding)}</dd></div>
+            )}
           </dl>
           <p className="text-xs text-slate-400" data-testid="credits-window">
             {gifted?.window
               ? `${CREDITS_GRANTED}: ${formatCredits(gifted.window.granted)} (${formatCount(gifted.window.grants)} ${CREDITS_GRANTS}, ${formatCount(gifted.window.grantingAdmins)} ${CREDITS_GRANTING_ADMINS}) · ${CREDITS_TAKEN_BACK}: ${formatCredits(gifted.window.takenBack)}`
               : CREDITS_GIFTED_UNKNOWN}
           </p>
+          {hasBought && (
+            <p className="text-xs text-slate-400" data-testid="credits-bought-window">
+              {bought?.window
+                ? `${CREDITS_BOUGHT_IN_WINDOW}: ${formatCredits(bought.window.credits)} (${formatCount(bought.window.lots)} ${CREDITS_BOUGHT_BOOSTS})`
+                : CREDITS_BOUGHT_UNKNOWN}
+            </p>
+          )}
 
           {f.rows.length === 0 ? (
             <p className="text-sm text-slate-300">{CREDITS_NO_ACCOUNTS}</p>
@@ -130,6 +151,7 @@ export function CreditsSection({
                     <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_USED_PERCENT}</th>
                     <th scope="col" className={ADMIN_TH}>{CREDITS_OVER_COLUMN}</th>
                     <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_GIFTED_COLUMN}</th>
+                    {hasBought && <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_BOUGHT_COLUMN}</th>}
                   </tr>
                 </thead>
                 <tbody className={ADMIN_TBODY}>
@@ -151,6 +173,7 @@ export function CreditsSection({
                         <td className={ADMIN_TD} colSpan={4}>{row.kind === 'no_allowance' ? CREDITS_NO_ALLOWANCE : CREDITS_UNKNOWN}</td>
                       )}
                       <td className={ADMIN_TD_NUM}>{credits(row.giftedOutstanding)}</td>
+                      {hasBought && <td className={ADMIN_TD_NUM} data-testid="credits-bought-cell">{credits(row.boughtOutstanding ?? null)}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -169,6 +192,10 @@ export function CreditsSection({
             )}
             {gifted?.accountsNotListed ? <li>{CREDITS_NOT_LISTED_NOTE(gifted.accountsNotListed)}</li> : null}
             {gifted && gifted.inconsistentAccounts > 0 && <li>{CREDITS_INCONSISTENT_NOTE(gifted.inconsistentAccounts)}</li>}
+            {bought && bought.deletedAccountsOutstanding !== 0 && (
+              <li>{CREDITS_BOUGHT_DELETED_NOTE(credits(bought.deletedAccountsOutstanding))}</li>
+            )}
+            {bought?.refundNotTakenBack && <li data-testid="credits-not-taken-back">{CREDITS_NOT_TAKEN_BACK}</li>}
           </ul>
         </div>
       )}

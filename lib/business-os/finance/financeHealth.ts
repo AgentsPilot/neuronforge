@@ -132,6 +132,8 @@ import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCredit
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
 import { buildTakings } from './takings';
 import { buildBoostRevenue } from './boostRevenue';
+import { buildBoostProblems } from './boostProblems';
+import { k5DisputeHeadline, K5_DISPUTE_CHECK_FAILED } from '@/app/admin/finance/financeCopy';
 import { buildPlanRevenue } from './planRevenue';
 import { combineOurRevenue } from './ourRevenue';
 import { buildAccountEconomics, buildAccountMargin } from './accountEconomics';
@@ -269,6 +271,10 @@ export interface FinanceHealthDeps {
     | 'listBoostPurchasesForAccountPaidInRange'
     | 'listPlanPaymentsAllAccountsPaidInRange'
     | 'listPlanPaymentsForAccountPaidInRange'
+    | 'listBoostReversalEventsAllAccountsRecordedInRange'
+    | 'listBoostReversalEventsForAccountRecordedInRange'
+    | 'listBoostPurchasesNeedingAttentionAllAccounts'
+    | 'listBoostPurchasesNeedingAttentionForAccount'
   >;
   /** Business names for display. Injected by the admin route (admin identity reads stay in `app/api/admin/**`). */
   findNames: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ user_id: string; company_name: string | null }>>>;
@@ -407,6 +413,16 @@ export interface FinanceHealthCounts {
     currencies: number;
     packages: number;
     deletedAccountPurchases: number;
+    /** Slice 4b.2: reversal events read (R-n / R-n′); null when that read failed. */
+    events: number | null;
+    eventsCeiling: boolean;
+    eventsState: 'read' | 'failed' | 'not_available';
+    unreadableEvents: number;
+    /** Slice 4b.2: purchases needing attention now (R-l / R-l′); null when that read failed. */
+    attention: number | null;
+    openDisputes: number;
+    notCredited: number;
+    openedDates: 'read' | 'failed' | null;
   };
   /** Our revenue, plans (slice 5a): counts and booleans only, never an amount, a currency, a tier or a name (M2-FR-11). */
   plans: {
@@ -614,6 +630,8 @@ export async function buildFinanceHealth(
     boostPurchases,
     planPayments,
     recordedRead,
+    reversalEvents,
+    boostAttention,
   ] = await Promise.all([
     plansPromise,
     accountId !== null
@@ -679,6 +697,19 @@ export async function buildFinanceHealth(
       : accountId !== null
         ? underDeadline('recorded', recordedTimings, () => readRecordedOne(accountId), FINANCE_LIMITS.RECORDED_DEADLINE_MS)
         : underDeadline('recorded', recordedTimings, (signal) => readRecordedAll(signal), FINANCE_LIMITS.RECORDED_DEADLINE_MS),
+    // R-n / R-n′ (slice 4b.2, BD-17): our boost refunds and disputes RECORDED in the window; R-n never
+    // with a business picked (AC-229). In this same Promise.all, so the page still makes one request (AC-173).
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listBoostReversalEventsForAccountRecordedInRange(accountId, windowRange)
+        : deps.finance.listBoostReversalEventsAllAccountsRecordedInRange(windowRange)
+    ),
+    // R-l / R-l′ (slice 4b.2, S4-FR-15): our boost purchases that need attention NOW; R-l never with a business picked.
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listBoostPurchasesNeedingAttentionForAccount(accountId)
+        : deps.finance.listBoostPurchasesNeedingAttentionAllAccounts()
+    ),
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -695,6 +726,11 @@ export async function buildFinanceHealth(
   if (clientPlans.error) failed('client_plans', clientPlans.error);
   if (boostPurchases.error) failed('boost_purchases', boostPurchases.error);
   if (planPayments.error) failed('plan_payments', planPayments.error);
+  // Slice 4b.2 (§7, SA-W121): the events table missing is a deploy state, logged at warn, never an alarm.
+  const eventsAbsent = reversalEvents.error?.name === 'FinanceReadTableAbsentError';
+  if (eventsAbsent) logger.warn({ read: 'boost_reversal_events', reason: 'table_absent' }, 'Finance read: reversal events not available');
+  else if (reversalEvents.error) failed('boost_reversal_events', reversalEvents.error);
+  if (boostAttention.error) failed('boost_attention', boostAttention.error);
   // Logged as `{ err }`, like every other finance read (CLAUDE.md logging standard). It cannot
   // carry client data: R-j is head counts filtered by fixed statuses and server-computed times,
   // and its repository wraps a PostgREST error to its message and code only; a deadline is the
@@ -806,7 +842,22 @@ export async function buildFinanceHealth(
   // sets `state`; with a business picked `state` comes from that business's own
   // two reads (E-36). The section's status comes from the two money parts only (SA-W62).
   const scope = accountId !== null ? 'one' : 'all';
-  const builtBoosts = buildBoostRevenue({ purchases: boostPurchases.data, scope });
+  // Slice 4b.2: block A and held now come from R-l / R-l′ (as of now); refunds and lost disputes
+  // from R-n / R-n′ (recorded in the window). The problems block takes the revenue's event notes.
+  const preProblems = buildBoostProblems({ attention: boostAttention.data, eventsOnUnpaidPurchases: null, overTotal: null });
+  const builtBoosts = buildBoostRevenue({
+    purchases: boostPurchases.data,
+    events: reversalEvents.data,
+    eventsAbsent,
+    heldNow: preProblems.heldNow,
+    scope,
+  });
+  const eventsKnown = builtBoosts.events !== null && builtBoosts.events.state === 'read';
+  const builtProblems = buildBoostProblems({
+    attention: boostAttention.data,
+    eventsOnUnpaidPurchases: eventsKnown && builtBoosts.events ? builtBoosts.events.onUnpaidPurchases : null,
+    overTotal: eventsKnown && builtBoosts.events ? builtBoosts.events.overTotal : null,
+  });
   // SA-W65: a tier outside the config's tier order is "Unknown plan" (null), never its raw id.
   const tierOrder: readonly string[] = deps.config.tierOrder;
   const planLabelOf = (tier: string | null): string | null =>
@@ -916,6 +967,8 @@ export async function buildFinanceHealth(
       packages: builtBoosts.packages,
       deletedAccounts: builtBoosts.deletedAccounts,
       notes: builtBoosts.notes,
+      heldNow: builtBoosts.heldNow,
+      events: builtBoosts.events,
     },
     totals: combined.totals,
   };
@@ -936,6 +989,8 @@ export async function buildFinanceHealth(
     now,
     farOverAllowancePercent,
     displayCap: FINANCE_LIMITS.CREDIT_ROWS_SHOWN,
+    // FR-4B-13 / BQ-13: a refund recorded in the window keeps its credits; the section says so.
+    refundNotTakenBack: (builtBoosts.events?.refundEvents ?? 0) > 0,
   });
 
   // Names for the rows shown only, ids taken from the plan rows already read;
@@ -967,6 +1022,7 @@ export async function buildFinanceHealth(
     farOverAllowancePercent,
     figures: builtCredits.figures ? { ...builtCredits.figures, rows: creditRows } : null,
     gifted: builtCredits.gifted,
+    bought: builtCredits.bought,
   };
 
   // ── 6a. The Accounts tab, or the picked business's margin (slice 6a, §11E) ──
@@ -978,6 +1034,8 @@ export async function buildFinanceHealth(
     coverage: clamp.coverage,
     aiCost: aiCostUnits && windowResult.data ? { units: aiCostUnits, reachedCeiling: windowResult.data.reachedCeiling } : null,
     boosts: boostPurchases.data,
+    // Slice 4b.2 (FR-4B-11): the same events as Our revenue, so the two tabs agree.
+    events: reversalEvents.data,
     plans: planPayments.data,
     feeEstimate,
   };
@@ -1143,7 +1201,13 @@ export async function buildFinanceHealth(
       : null,
   });
   const paymentProblems: FinancePaymentProblemsSection = {
-    status: paymentProblemsStatus([builtInvoices.status, builtInstalments.status, builtPlans.status, reminders.status]),
+    status: paymentProblemsStatus([
+      builtInvoices.status,
+      builtInstalments.status,
+      builtPlans.status,
+      reminders.status,
+      builtProblems.part.status,
+    ]),
     scope: accountId !== null ? 'one' : 'all',
     today,
     failedPayments: { state: 'not_stored' },
@@ -1151,6 +1215,8 @@ export async function buildFinanceHealth(
     overdueInstalments: namedPart(builtInstalments),
     clientPlans: { status: builtPlans.status, figures: builtPlans.figures },
     reminders,
+    // Slice 4b.2, block A (FR-4B-12): our boost problems, as of now.
+    boosts: builtProblems.part,
   };
 
   // ── 7. Tiles ──────────────────────────────────────────────────────────────
@@ -1188,15 +1254,30 @@ export async function buildFinanceHealth(
   // K-5 (slice 4a, SA-W47; slice 5a, SA-W60): boost net plus plans received in ONE currency, from the
   // combiner (the same `totals` the account summary reads). Information only (no rule, never green).
   // Either money read failing is "Unknown"; R-d failing changes `state` only, never K-5.
+  // Slice 4b.2 (S4-FR-17, AC-103): its colour comes from the dispute rule (data, `FINANCE_RULES`) over
+  // R-l / R-l′'s open disputes. Precedence: the money failing stays "unavailable" as before; else the
+  // dispute read failing is grey with "Dispute check failed", value unchanged; else the rule list.
   const k5Money = combined.k5;
-  const k5Colour = colourFinanceTile(
+  const k5Information = k5Money.kind === 'none' ? K5_NO_DATA_YET : K5_REVENUE_HEADLINE;
+  const moneyFailed = k5Money.kind === 'unknown' && k5Money.reason === 'failed';
+  const openDisputes = builtProblems.openDisputes;
+  let k5Colour = colourFinanceTile(
     'k5_our_revenue',
     rules.k5_our_revenue,
-    k5Money.kind === 'unknown' && k5Money.reason === 'failed'
+    moneyFailed
       ? null
-      : { metrics: {}, information: k5Money.kind === 'none' ? K5_NO_DATA_YET : K5_REVENUE_HEADLINE },
+      : {
+          metrics: openDisputes === null ? {} : { boostOpenDisputes: { value: openDisputes.value, exact: openDisputes.exact } },
+          information: k5Information,
+        },
     { onRuleError }
   );
+  if (!moneyFailed && openDisputes === null && k5Colour.ruleId === null && k5Colour.status !== 'unavailable') {
+    k5Colour = { ...k5Colour, status: 'neutral', headline: K5_DISPUTE_CHECK_FAILED };
+  } else if (k5Colour.ruleId !== null && openDisputes !== null) {
+    // Every K-5 rule can only name `boostOpenDisputes`, so a match is a dispute: say how many (SA-W120).
+    k5Colour = { ...k5Colour, headline: k5DisputeHeadline(openDisputes.value) };
+  }
 
   // K-2 (SA-WR-8): an account that could not be read makes the count a lower bound.
   const creditFigures = credits.figures;
@@ -1321,6 +1402,14 @@ export async function buildFinanceHealth(
         currencies: builtBoosts.lines?.length ?? 0,
         packages: builtBoosts.packages?.length ?? 0,
         deletedAccountPurchases: builtBoosts.counts.deletedAccountPurchases,
+        events: reversalEvents.data ? reversalEvents.data.rows.length : null,
+        eventsCeiling: reversalEvents.data?.reachedCeiling ?? false,
+        eventsState: builtBoosts.events?.state ?? (eventsAbsent ? 'not_available' : 'failed'),
+        unreadableEvents: builtBoosts.events?.unreadable ?? 0,
+        attention: builtProblems.counts.openedDates === null ? null : builtProblems.counts.rows,
+        openDisputes: builtProblems.counts.openDisputes,
+        notCredited: builtProblems.counts.notCredited,
+        openedDates: builtProblems.counts.openedDates,
       },
       plans: {
         rows: planPayments.data ? planPayments.data.rows.length : null,

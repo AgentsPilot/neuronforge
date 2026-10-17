@@ -70,6 +70,10 @@ export const k5Caption = (windowLabel: string) => `${TILE_LABELS.k5Sub} · ${win
 /** S4-FR-7: K-5 with several currencies, never a sum. */
 export const k5SeveralCurrencies = (count: number) => `${count} currencies, see Our revenue`;
 export const K5_UNKNOWN = 'Unknown';
+/** Slice 4b.2 (S4-FR-17, SA-W120): the dispute rule's headline, the number filled in by the builder. */
+export const k5DisputeHeadline = (count: number) =>
+  `${count} boost ${count === 1 ? 'payment' : 'payments'} in dispute`;
+export const K5_DISPUTE_CHECK_FAILED = 'Dispute check failed';
 
 // ── Plans received (slice 5a, M2-FR-1 to M2-FR-4, M2-FR-8). Received is what
 // Stripe recorded as paid: tax included, Stripe fees not deducted, before any
@@ -121,10 +125,14 @@ export const REVENUE_PURCHASES = 'Purchases';
 export const REVENUE_GROSS = 'Gross charged';
 export const REVENUE_TAX = 'Of which tax';
 export const REVENUE_REFUNDED = 'Refunded';
-export const REVENUE_HELD = 'Held in open disputes';
+/** Slice 4b.2 (FR-4B-4, E-104): held is a NOW figure, its own table, never in a window's net. */
+export const REVENUE_HELD = 'Held in open disputes now (not taken off any month)';
+export const REVENUE_HELD_DISPUTES = 'Open disputes';
+export const REVENUE_HELD_NONE = 'No boost payment is in an open dispute now';
+export const REVENUE_HELD_FAILED = 'Open disputes could not be checked.';
 export const REVENUE_LOST = 'Lost in disputes';
-/** S4-W-6: what net is, and what it is not. */
-export const REVENUE_NET = 'Net of refunds and disputes (Stripe fees not deducted; includes any tax)';
+/** FR-4B-5: what net is, and what it is not. */
+export const REVENUE_NET = 'Net of refunds and lost disputes (Stripe fees not deducted; includes any tax)';
 export const REVENUE_NET_SHORT = 'Net';
 export const REVENUE_CREDITS_SOLD = 'Credits sold';
 export const REVENUE_PACKAGE_NOT_RECORDED = 'Not recorded';
@@ -140,25 +148,34 @@ export const revenueDeletedLine = (purchases: number, net: string) =>
 export const REVENUE_OTHER_STATUS = (count: number) =>
   `${count} ${count === 1 ? 'purchase' : 'purchases'} with another status not counted`;
 export const REVENUE_NOTICE_CUT =
-  'The boost purchases were read only up to their limit: counts and amounts are "at least", and net and the dispute amounts are unknown.';
+  'The boost purchases or their refunds were read only up to their limit: counts and amounts are "at least", and net is unknown.';
+/** FR-4B-16 / §7: the event read failed, or the table is not there yet. No purchase-month fallback. */
+export const REVENUE_EVENTS_FAILED =
+  'Refund and dispute dates could not be loaded, so refunded, lost and net are unknown.';
+export const REVENUE_EVENTS_NOT_AVAILABLE =
+  'Refund and dispute dates are not available yet, so refunded, lost and net are unknown.';
+export const REVENUE_EVENTS_UNREADABLE = (count: number) =>
+  `${count} ${count === 1 ? 'refund or dispute has an amount' : 'refunds or disputes have amounts'} that could not be read: net unknown on that line.`;
+/** SA-Q74: counted as recorded, never clamped. */
+export const REVENUE_EVENTS_OVER_TOTAL = (count: number) =>
+  `${count} ${count === 1 ? 'purchase has' : 'purchases have'} refunds and lost disputes above its total in this window; each is counted as recorded.`;
 export const REVENUE_NOTICE_UNREADABLE = (count: number) =>
   `${count} ${count === 1 ? 'purchase has an amount' : 'purchases have amounts'} that could not be read: left out of the sums, net unknown on that line.`;
 export const REVENUE_NOTICE_UNREADABLE_CREDITS = (count: number) =>
   `${count} ${count === 1 ? 'purchase has credits' : 'purchases have credits'} that could not be read: credits sold is "at least".`;
 /**
- * DF-5 / S4-W-3 (SA-W53): the ONE sentence about when a refund or dispute
- * counts. Shown only by the revenue panel, whenever a refund or dispute amount
- * is non-zero. Pinned by the finance source guard (SA-WR-35).
+ * BD-17 / FR-4B-6 (slice 4b.2, replaces the S4-W-3 sentence): the ONE sentence
+ * about when a refund or dispute counts. Shown whenever a refund, lost or held
+ * figure is non-zero. Pinned by the finance source guard (SA-WR-35).
  */
 export const REVENUE_REFUND_TIMING_NOTE =
-  'Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.';
+  'Refunds and lost disputes count in the month we recorded them, so a finished month does not change. A refund we learn of late counts in the month we learned of it. Open disputes are shown as held now.';
 export const REVENUE_CANNOT_TITLE = 'Not shown here';
 /** M2-FR-13: what this section cannot produce yet. */
 export const REVENUE_CANNOT: readonly string[] = [
   'MRR and active subscriptions (a later update)',
   'Plan refunds and disputes (not recorded yet)',
   'Real Stripe fees (none are recorded for our payments yet)',
-  'The date of a refund or dispute',
   'One total across currencies',
 ];
 
@@ -298,6 +315,15 @@ export const CREDITS_NOT_LISTED_NOTE = (count: number) =>
 export const CREDITS_INCONSISTENT_NOTE = (count: number) =>
   `${count} ${count === 1 ? 'account has' : 'accounts have'} a lot that gave back more than it granted (shown as 0).`;
 export const CREDITS_GIFTED_UNKNOWN = 'Gifted credits could not be read.';
+/** Slice 4b.2 (S4-FR-18 to S4-FR-20): bought credits, beside gifted, never added to them. */
+export const CREDITS_BOUGHT = 'Bought credits outstanding';
+export const CREDITS_BOUGHT_COLUMN = 'Bought outstanding';
+export const CREDITS_BOUGHT_IN_WINDOW = 'Bought in the window';
+export const CREDITS_BOUGHT_BOOSTS = 'boosts';
+export const CREDITS_BOUGHT_DELETED_NOTE = (credits: string) => `${credits} bought credits on deleted accounts, not counted.`;
+export const CREDITS_BOUGHT_UNKNOWN = 'Bought credits could not be read.';
+/** BQ-13 open: a refunded boost keeps its credits. */
+export const CREDITS_NOT_TAKEN_BACK = 'Credits of a refunded boost are not taken back.';
 
 // ── Section 2 block B, takings through the platform (slice 2a) ─────────────
 // The businesses' client payments: NOT our revenue (BD-1). No test-mode
@@ -374,7 +400,28 @@ export const TAKINGS_NOTICE_UNREADABLE_FEES = (count: number) =>
 // Where the businesses' clients are not paying: the businesses' problem, not
 // ours (BD-2). No test-mode wording (BD-13). Every amount is the FULL invoice
 // or instalment amount, never what is still owed (S2-F7).
+/** SA-CR-4b2 CR-1: the Section 6 frame title. It names neither ours nor the clients'; each block says whose. */
+export const PAYMENT_PROBLEMS_TITLE = 'Payment problems';
+/** Block B's own heading (with PROBLEMS_CHIP), never the frame's. */
 export const PROBLEMS_TITLE = 'Client payment problems';
+
+/** Slice 4b.2, block A (FR-4B-12, S4-FR-15): OUR boost problems, as of now, before the clients' blocks. */
+export const BOOST_PROBLEMS_TITLE = 'Our payment problems (boosts)';
+export const BOOST_PROBLEMS_SUBTITLE = 'As of now, UTC';
+export const BOOST_PROBLEMS_NONE = 'No boost payment in dispute and none waiting for credits';
+export const BOOST_PROBLEMS_OPEN = 'Open disputes';
+export const BOOST_PROBLEMS_HELD = 'Held now';
+export const BOOST_PROBLEMS_OPENED = 'Oldest opened';
+export const BOOST_PROBLEMS_NOT_CREDITED = 'Not credited';
+export const BOOST_PROBLEMS_NOT_CREDITED_HELP = 'Payment received by Stripe, credits not given; check the purchase';
+export const BOOST_PROBLEMS_NOT_CREDITED_AMOUNT = 'Amount recorded';
+export const BOOST_PROBLEMS_SINCE = 'Oldest since';
+export const BOOST_PROBLEMS_NOT_RECORDED = 'Not recorded';
+export const BOOST_PROBLEMS_DATES_FAILED = 'The dates the disputes opened could not be read.';
+export const BOOST_PROBLEMS_CUT = 'The purchases were read only up to their limit: counts and amounts are "at least".';
+export const boostProblemsOnUnpaid = (count: number) =>
+  `${count} ${count === 1 ? 'refund or dispute' : 'refunds or disputes'} recorded on purchases not credited (not revenue).`;
+export const BOOST_PROBLEMS_LINK = 'Boost purchases of one business';
 export const PROBLEMS_CHIP = "The businesses' problem, not ours";
 export const PROBLEMS_SUBTITLE = (today: string, windowLabel: string) =>
   `Problems with clients paying the businesses · As of now, UTC (${today}); plans cancelled or completed: ${windowLabel} · Covers businesses that still exist`;

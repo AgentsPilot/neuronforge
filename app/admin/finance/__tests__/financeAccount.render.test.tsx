@@ -95,7 +95,7 @@ function aiCost(extra: Partial<FinanceAiCostSection> = {}, exact = true): Financ
 }
 
 const boostLine = (extra: Partial<FinanceBoostLine> = {}): FinanceBoostLine => ({
-  currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableCredits: 0, ...extra,
+  currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableEvents: 0, unreadableCredits: 0, ...extra,
 });
 
 function boosts(lines: FinanceBoostLine[] | null, notes: Partial<NonNullable<FinanceBoostRevenue['notes']>> = {}): FinanceBoostRevenue {

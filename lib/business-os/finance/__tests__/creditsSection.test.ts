@@ -90,11 +90,11 @@ describe('the over-allowance figures (S1-FR-21, S1-FR-22)', () => {
     expect(result.figures?.rows).toEqual([
       {
         accountId: B, group: TIER_KEY, tierLabel: 'Tier label from config', kind: 'position', allowance: 100, used: 160,
-        usedTenths: 1600, trial: false, overAllowance: true, farOverAllowance: true, giftedOutstanding: 0,
+        usedTenths: 1600, trial: false, overAllowance: true, farOverAllowance: true, giftedOutstanding: 0, boughtOutstanding: 0,
       },
       {
         accountId: A, group: 'founding_partner', tierLabel: null, kind: 'position', allowance: 100, used: 40,
-        usedTenths: 400, trial: false, overAllowance: false, farOverAllowance: false, giftedOutstanding: 0,
+        usedTenths: 400, trial: false, overAllowance: false, farOverAllowance: false, giftedOutstanding: 0, boughtOutstanding: 0,
       },
     ]);
   });
@@ -327,5 +327,42 @@ describe('slice 6a: the non-wire rowByAccount (SA-W78)', () => {
   it('is null exactly when figures is null (no pass, or the walk failed)', () => {
     expect(buildCreditsSection(input({ positions: null })).rowByAccount).toBeNull();
     expect(buildCreditsSection(input({ accountIds: null })).rowByAccount).toBeNull();
+  });
+});
+
+// ── Slice 4b.2: bought credits beside gifted, never combined (S4-FR-18 to S4-FR-20, AC-104, AC-105, AC-228) ──
+describe('slice 4b.2: bought credits', () => {
+  const boostLot = (accountId: string | null, credits: number, extra: Partial<FinanceLot> = {}) =>
+    lot(accountId, credits, { source: 'boost_purchase', actorAdminId: null, ...extra });
+
+  it('AC-104: bought outstanding and bought in the window over boost lots only; K-4 and gifted unchanged', () => {
+    const lots = [lot(A, 10), boostLot(A, 5000, { createdAt: '2026-11-02T00:00:00.000Z' }), boostLot(B, 1000)];
+    const result = buildCreditsSection(input({ lots }));
+    expect(result.gifted).toMatchObject({ outstanding: 10, window: { granted: 0, grants: 0 } });
+    expect(result.bought).toEqual({ outstanding: 6000, deletedAccountsOutstanding: 0, window: { credits: 5000, lots: 1 }, refundNotTakenBack: false });
+    const rows = new Map(result.figures!.rows.map((r) => [r.accountId, r]));
+    expect(rows.get(A)).toMatchObject({ giftedOutstanding: 10, boughtOutstanding: 5000 });
+    expect(rows.get(B)).toMatchObject({ giftedOutstanding: 0, boughtOutstanding: 1000 });
+  });
+
+  it('AC-105: deleted accounts’ bought lots are their own figure; 0 for an account with no boost lot; null when the lots failed', () => {
+    const result = buildCreditsSection(input({ lots: [boostLot(null, 300)] }));
+    expect(result.bought).toMatchObject({ outstanding: 0, deletedAccountsOutstanding: 300 });
+    expect(result.figures!.rows.every((r) => r.boughtOutstanding === 0)).toBe(true);
+    const failed = buildCreditsSection(input({ lots: null }));
+    expect(failed.bought).toBeNull();
+    expect(failed.figures!.rows.map((r) => r.boughtOutstanding)).toEqual([null, null]);
+  });
+
+  it('AC-228: the "not taken back" flag follows the input only; nothing here reads an event', () => {
+    expect(buildCreditsSection(input({ refundNotTakenBack: true })).bought?.refundNotTakenBack).toBe(true);
+    expect(buildCreditsSection(input()).bought?.refundNotTakenBack).toBe(false);
+  });
+
+  it('E-103: bought is always set (null or figures), and every row carries boughtOutstanding', () => {
+    for (const result of [buildCreditsSection(input()), buildCreditsSection(input({ positions: null }))]) {
+      expect(result).toHaveProperty('bought');
+      for (const row of result.figures?.rows ?? []) expect(row).toHaveProperty('boughtOutstanding');
+    }
   });
 });

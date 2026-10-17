@@ -329,10 +329,12 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
   });
 
   /** Slice 2b (S2-F1): the five of 1a / 2a plus the client invoices, plan instalments and client plans. Slice 4a: R-k and R-k′ read the boost table too (already here for R-d). Slice 5a: R-m and R-m′ read the billing events too (already here for R-d). */
+  // Slice 4b.2 (§11I.8): the table set grows by ONE, the reversal events (R-n, R-n′, and R-l's opened dates).
   const REPOSITORY_TABLES = [
     'business_os_billing_accounts',
     'business_os_billing_events',
     'business_os_boost_purchases',
+    'business_os_boost_reversal_events',
     'payment_invoices',
     'payment_plan_installments',
     'payment_plan_subscriptions',
@@ -340,10 +342,10 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     'payment_transactions',
   ];
 
-  it('the repository reads exactly its eight tables, and every .from( names its table as a literal', () => {
+  it('the repository reads exactly its nine tables, and every .from( names its table as a literal', () => {
     const code = codeOf(REPOSITORY);
     const tables = tablesOf(code);
-    expect(tables.length).toBeGreaterThanOrEqual(8);
+    expect(tables.length).toBeGreaterThanOrEqual(9);
     // SA-WR-16: a .from(TABLE) with a non-literal argument cannot escape the set below.
     expect(fromCallsOf(code)).toBe(tables.length);
     expect([...new Set(tables)].sort()).toEqual(REPOSITORY_TABLES);
@@ -360,6 +362,32 @@ describe('finance slice 2a source guards (layer B, S2-F1, §12.1)', () => {
     const planted = codeOf(REPOSITORY).replace("from('payment_plan_installments')", "from('payment_plans')");
     expect(planted).not.toBe(codeOf(REPOSITORY));
     expect([...new Set(tablesOf(planted))].sort()).not.toEqual(REPOSITORY_TABLES);
+  });
+
+  it('4b.2 (planted control): a near miss of the events table name is caught', () => {
+    const code = codeOf(REPOSITORY);
+    const planted = code.split("from('business_os_boost_reversal_events')").join("from('business_os_boost_reversal_event')");
+    expect(planted).not.toBe(code);
+    expect([...new Set(tablesOf(planted))].sort()).not.toEqual(REPOSITORY_TABLES);
+  });
+
+  // 4B2-R1 (the C-1 lesson): every list read keyset-pages at most 1,000 rows per request; no
+  // `.range(` and no literal large `.limit(` anywhere; the one `.limit(` is the pager's `size`.
+  it('4B2-R1: the repository has no .range( and exactly the pager\u2019s .limit(size) (plus the head and single reads)', () => {
+    const code = codeOf(REPOSITORY);
+    expect(code).not.toMatch(/\.range\(/);
+    const limits = code.match(/\.limit\([^)]*\)/g) ?? [];
+    for (const limit of limits) expect(limit).not.toMatch(/\.limit\(\s*\d{4,}/);
+    expect(limits).toContain('.limit(size)');
+    // The 4b.2 reads all go through the keyset loop: no .from( of the events table outside `collect` callers.
+    const events = code.split("from('business_os_boost_reversal_events')").length - 1;
+    expect(events).toBe(3);
+  });
+
+  it('4B2-R1 (planted control): a .range( or a .limit(5000) would be seen', () => {
+    expect(/\.range\(/.test('q.range(0, 4999)')).toBe(true);
+    expect(/\.limit\(\s*\d{4,}/.test('q.limit(5000)')).toBe(true);
+    expect(/\.limit\(\s*\d{4,}/.test('q.limit(size)')).toBe(false);
   });
 
   // ── No livemode in a layer-B method body (BD-13, AC-55) ──
@@ -721,38 +749,76 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     expect(/\bpaid_at\b/.test(stripComments('const d = row.paid_at;'))).toBe(true);
   });
 
-  // (d) SA-W53: the DF-5 rule lives in refundsAndDisputesOf only.
-  const DF5_TOKENS = /amount_refunded_minor|'disputed'|'dispute_lost'/;
-  /** The builder's code with the three places allowed to name the tokens cut out. */
-  const outsideDf5 = (code: string) => {
-    const fnStart = code.indexOf('function refundsAndDisputesOf(');
-    const fnEnd = code.indexOf('\n}\n', fnStart);
-    const ifaceStart = code.indexOf('export interface BoostPurchaseInput');
-    const ifaceEnd = code.indexOf('\n}\n', ifaceStart);
-    if (fnStart < 0 || fnEnd < 0 || ifaceStart < 0 || ifaceEnd < 0) return null;
-    return code
-      .slice(0, Math.min(fnStart, ifaceStart))
-      .concat(code.slice(Math.min(fnEnd, ifaceEnd), Math.max(fnStart, ifaceStart)))
-      .concat(code.slice(Math.max(fnEnd, ifaceEnd)))
-      .replace(/export const BOOST_PAID_FAMILY = \[[^\]]*\] as const;/, '');
+  // (d) Slice 4b.2 re-pin of SA-W53 (BD-17, §11I.8): the rule now reads the reversal EVENTS.
+  // - boostRevenue.ts names the refunded amount column NOWHERE (the purchase row moves no refund money);
+  // - the event kinds and `amount_minor` appear only in `reversalsOf` and the event input type;
+  // - the held-now remainder (the refunded amount, the disputed status) lives in boostProblems.ts's
+  //   `heldNowOf` only (plus its input type and the status constant it is compared with).
+  const EVENT_TOKENS = /\bamount_minor\b|'refund'|'dispute_lost'|'dispute_opened'|'dispute_won'/;
+  /** Cut `[start marker, next '\\n}\\n')` blocks out of the code. */
+  const without = (code: string, markers: readonly string[]) => {
+    let rest = code;
+    for (const marker of markers) {
+      const start = rest.indexOf(marker);
+      if (start < 0) return null;
+      const end = rest.indexOf('\n}\n', start);
+      if (end < 0) return null;
+      rest = rest.slice(0, start) + rest.slice(end + 3);
+    }
+    return rest;
   };
+  /** The paid-family literal names two statuses by design (S4-W-2); it is cut out before the token scans. */
+  const withoutFamily = (code: string) => code.replace(/export const BOOST_PAID_FAMILY = \[[^\]]*\] as const;/, '');
+  const outsideReversals = (code: string) => without(withoutFamily(code), ['function reversalsOf(', 'interface BoostReversalInput']);
 
-  it('DF-5: the refunded amount and the dispute statuses appear only in refundsAndDisputesOf, the paid-family literal and the input type', () => {
+  it('DF-5 / BD-17: boostRevenue.ts never names the refunded amount column; the event kinds and amount live in reversalsOf and its input type only', () => {
     const code = codeOf(BUILDER);
-    const rest = outsideDf5(code);
+    expect(code).not.toMatch(/amount_refunded_minor/);
+    expect(withoutFamily(code)).not.toMatch(/'disputed'/);
+    const rest = outsideReversals(code);
     expect(rest).not.toBeNull();
     expect((rest as string).length).toBeGreaterThan(1000);
-    expect(rest).not.toMatch(DF5_TOKENS);
-    // The function itself holds all three.
-    const fn = code.slice(code.indexOf('function refundsAndDisputesOf('), code.indexOf('function readMoney('));
-    for (const token of ['amount_refunded_minor', "'disputed'", "'dispute_lost'"]) expect(fn).toContain(token);
+    expect(rest).not.toMatch(EVENT_TOKENS);
+    const fn = code.slice(code.indexOf('function reversalsOf('), code.indexOf('export function readReversalMoney('));
+    for (const token of ['amount_minor', "'refund'", "'dispute_lost'"]) expect(fn).toContain(token);
   });
 
-  it('the DF-5 pin bites (planted): a refund read outside the function is caught', () => {
-    const planted = `${codeOf(BUILDER)}\nconst leak = (r: BoostPurchaseInput) => r.amount_refunded_minor;\n`;
-    expect(outsideDf5(planted)).toMatch(DF5_TOKENS);
-    const plantedStatus = codeOf(BUILDER).replace('function readMoney(', "const x = (s: string) => s === 'disputed';\nfunction readMoney(");
-    expect(outsideDf5(plantedStatus)).toMatch(DF5_TOKENS);
+  it('the DF-5 / BD-17 pin bites (planted): an event read outside reversalsOf, or a refunded-amount read, is caught', () => {
+    const planted = `${codeOf(BUILDER)}\nconst leak = (e: BoostReversalInput) => e.amount_minor;\n`;
+    expect(outsideReversals(planted)).toMatch(EVENT_TOKENS);
+    const plantedKind = codeOf(BUILDER).replace('function readMoney(', "const x = (k: string) => k === 'refund';\nfunction readMoney(");
+    expect(outsideReversals(plantedKind)).toMatch(EVENT_TOKENS);
+    expect(`${codeOf(BUILDER)}\nconst r = (row: { amount_refunded_minor: number }) => row.amount_refunded_minor;`).toMatch(/amount_refunded_minor/);
+  });
+
+  const PROBLEMS_BUILDER = 'lib/business-os/finance/boostProblems.ts';
+  const HELD_TOKENS = /amount_refunded_minor|\btotal - refunded\b/;
+  const outsideHeldNow = (code: string) => without(code, ['function heldNowOf(', 'export interface BoostAttentionInput']);
+
+  it('BD-17: the held-now remainder is computed in boostProblems.ts heldNowOf only, and nowhere else in finance', () => {
+    const code = codeOf(PROBLEMS_BUILDER);
+    const rest = outsideHeldNow(code);
+    expect(rest).not.toBeNull();
+    expect(rest).not.toMatch(HELD_TOKENS);
+    const fn = code.slice(code.indexOf('function heldNowOf('), code.indexOf('function notCreditedTotalOf('));
+    expect(fn).toContain('amount_refunded_minor');
+    expect(fn).toContain('total - refunded');
+    // No other finance builder computes held: the refunded amount column is named only in the repository and here.
+    const holders = FILES.filter((file) => /amount_refunded_minor/.test(codeOf(file)));
+    expect(holders.sort()).toEqual([REPOSITORY, PROBLEMS_BUILDER].sort());
+  });
+
+  it('the held-now pin bites (planted): a second remainder outside heldNowOf is caught', () => {
+    const planted = `${codeOf(PROBLEMS_BUILDER)}\nconst again = (r: BoostAttentionInput) => r.amount_refunded_minor;\n`;
+    expect(outsideHeldNow(planted)).toMatch(HELD_TOKENS);
+  });
+
+  it('boostProblems.ts is pure: no repository, no Supabase client, no table, no clock, no write', () => {
+    const raw = read(PROBLEMS_BUILDER);
+    expect(raw).not.toMatch(/@\/lib\/repositories|supabase/i);
+    expect(codeOf(PROBLEMS_BUILDER)).not.toMatch(/business_os_boost_purchases|business_os_boost_reversal_events|payment_/);
+    expect(codeOf(PROBLEMS_BUILDER)).not.toMatch(/new Date\(|Date\.now\(|Date\.parse\(/);
+    expect(codeOf(PROBLEMS_BUILDER)).not.toMatch(/\.(insert|update|upsert|delete|rpc)\s*\(/);
   });
 
   // SA-WR-35: the one DF-5 copy line. Slice 5a, SA-W58 (a) / SA-WR-38: the revenue panel and the
@@ -766,7 +832,10 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
     const users = refundNoteUsers(FILES, codeOf);
     expect([...users].sort()).toEqual([SUMMARY, PANEL, ACCOUNTS_TAB].sort());
     expect(codeOf(COPY)).toMatch(/export const REVENUE_REFUND_TIMING_NOTE =/);
-    expect(read(COPY)).toContain('Refunds and disputes are counted in the month of the purchase, as recorded today, so a past month can still change.');
+    // Slice 4b.2 (FR-4B-6, AC-225): the BD-17 sentence replaces the S4-W-3 one.
+    expect(read(COPY)).toContain(
+      'Refunds and lost disputes count in the month we recorded them, so a finished month does not change. A refund we learn of late counts in the month we learned of it. Open disputes are shown as held now.'
+    );
   });
 
   it('the SA-WR-35 pin bites (planted): a second user would join the list', () => {
@@ -812,20 +881,21 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
   // (g) BD-12: boostRevenue.ts's exports are pinned exactly; none is a cross-currency total.
   // Slice 6a (SA-Q45, E-44, SA-W80): `readMoney` joins the list, so the account economics builder
   // reads boost money through the one reader. Exactly five names; `refundsAndDisputesOf` stays private.
-  const BOOST_EXPORTS = ['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue', 'readMoney'];
+  // Slice 4b.2 (SA-W118): `readReversalMoney` joins, so accountEconomics.ts reads an event's money without a token. Six names.
+  const BOOST_EXPORTS = ['BOOST_PAID_FAMILY', 'BoostPurchaseInput', 'BoostRevenueResult', 'buildBoostRevenue', 'readMoney', 'readReversalMoney'];
   const boostExportsOf = (code: string) =>
     [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
-  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult, buildBoostRevenue and readMoney (SA-Q45)', () => {
+  it('boostRevenue.ts exports exactly BOOST_PAID_FAMILY, BoostPurchaseInput, BoostRevenueResult, buildBoostRevenue, readMoney and readReversalMoney (SA-Q45, SA-W118)', () => {
     const code = codeOf(BUILDER);
     expect(boostExportsOf(code)).toEqual(BOOST_EXPORTS);
     expect(code).not.toMatch(/export\s*\{|export\s+default/);
     expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
-    expect(code).not.toMatch(/export\s+function\s+refundsAndDisputesOf\b/);
+    expect(code).not.toMatch(/export\s+function\s+reversalsOf\b/);
   });
 
-  it('SA-WR-45 (planted control): a sixth boost export breaks the exact five-name pin', () => {
+  it('SA-WR-45 (planted control, moved by SA-W118): a seventh boost export breaks the exact six-name pin', () => {
     const planted = `${codeOf(BUILDER)}\nexport function refundedOf(row: BoostPurchaseInput) { return row; }\n`;
-    expect(boostExportsOf(planted)).toHaveLength(6);
+    expect(boostExportsOf(planted)).toHaveLength(7);
     expect(boostExportsOf(planted)).not.toEqual(BOOST_EXPORTS);
   });
 
