@@ -257,6 +257,7 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
   // DE-3: thirteen, + business_addresses, business_profiles, notification_settings, user_preferences.
   // DE-5: twenty-three, + the ten money tables (payment_*, proposals, saved_payment_methods, stripe_connect_accounts).
   // DE-6: thirty-three, + the ten intake, email marketing and consent tables.
+  // DE-7: thirty-eight, + smart_links, user_media, website_blocks, website_content, website_pages.
   it('the real set: drift is computed for every included table', () => {
     // Every real include column live, plus one unclassified live column each.
     const columns = PURGE_DESCRIPTORS.flatMap((x) =>
@@ -285,11 +286,17 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
       // DE-5.
       'proposals', 'saved_payment_methods',
       'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services',
+      // DE-7.
+      'smart_links',
       // DE-5.
       'stripe_connect_accounts',
       // DE-6.
       'user_intake_settings',
+      // DE-7.
+      'user_media',
       'user_preferences',
+      // DE-7.
+      'website_blocks', 'website_content', 'website_pages',
     ]);
     expect(r.exportColumnDrift).toEqual(included.map((table) => ({ table, column: 'zz_unclassified' })));
     expect(r.exportColumnsMissing).toEqual([]);

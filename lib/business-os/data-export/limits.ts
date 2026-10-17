@@ -15,6 +15,10 @@
 //   Vercel refuses a function response over 4.5 MB with a platform crash, not
 //   a message (F-4); we refuse first, at 4 MB of the exact bytes sent. DE-8b's
 //   signed-URL zip removes this cap (requirement §0.7, SA C-11).
+// - VIA_PARENT_CHUNK (DE-7 SA-Q10): owner-scoped parent ids per child query
+//   of the parent-scoped read (`website_blocks` by `.in('page_id', chunk)`).
+//   100 canonical uuids are about 3.7 kB of URL, well inside the PostgREST
+//   and gateway limits.
 //
 // Read these at call time (`EXPORT_LIMITS.X`), never destructured at module
 // load, so a test can lower one.
@@ -23,6 +27,7 @@ export const EXPORT_LIMITS = {
   ROW_CEILING: 100_000,
   PAGE_SIZE: 1_000,
   JSON_BODY_MAX_BYTES: 4_000_000,
+  VIA_PARENT_CHUNK: 100,
 } as const;
 
 export type ExportLimits = { readonly [K in keyof typeof EXPORT_LIMITS]: number };

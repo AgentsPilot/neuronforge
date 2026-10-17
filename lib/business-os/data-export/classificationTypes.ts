@@ -38,6 +38,11 @@
  * the intake settings and forms, the email campaigns, sequences, their steps
  * and who is enrolled, the newsletter sign-ups, the consent records, the
  * consent settings and the do-not-email list (DE-6 workplan §2.3).
+ *
+ * DE-7 adds five `content` sections after `email_unsubscribes`: the website
+ * text, the website and landing pages, the blocks on those pages, the smart
+ * links and the picture library (`images`, the `user_media` records; the
+ * files arrive in DE-8b) (DE-7 workplan §2.3).
  */
 export type ExportSectionId =
   | 'account_identity'
@@ -73,9 +78,19 @@ export type ExportSectionId =
   | 'newsletter_subscribers'
   | 'consent_records'
   | 'consent_settings'
-  | 'email_unsubscribes';
+  | 'email_unsubscribes'
+  | 'website_content'
+  | 'website_pages'
+  | 'website_blocks'
+  | 'smart_links'
+  | 'images';
 
-/** The slices that add a table's section. `planned` is allowed until DE-7. */
+/**
+ * The slices that added a table's section. `planned` is FORBIDDEN on tables
+ * since DE-7 (every table is include or exclude; exportClassification.test.ts
+ * runs with PLANNED_TABLES_ALLOWED = false). The type stays so the CI rule and
+ * its negative controls can still name a planted `planned` row (DE-7 SA-Q9).
+ */
 export type PlannedTableSlice = 'DE-3' | 'DE-4' | 'DE-5' | 'DE-6' | 'DE-7';
 
 /** Files arrive in DE-8b, after DE-7, so buckets have their own expiry. */
@@ -89,7 +104,8 @@ export type PlannedFilesSlice = 'DE-8b';
  *   the reason it stays out; a live column in neither list is reported by
  *   `npm run schema:reconcile` (FR-E19, report-only).
  * - `exclude`: never in the file. `reason` is what a reviewer reads.
- * - `planned`: in scope, not built yet; `slice` adds it.
+ * - `planned`: in scope, not built yet; `slice` adds it. Forbidden on tables
+ *   since DE-7 (kept for the CI rule and its negative controls, SA-Q9).
  */
 export type TableExportClassification =
   | {
@@ -107,6 +123,17 @@ export type TableExportClassification =
        * `marketing_consent_settings` carries it; a second one is an SA item.
        */
       rowKey?: 'user_id';
+      /**
+       * DE-7 SA-Q1 / SA-Q2: a `via` table (no `user_id` of its own) read
+       * through its owner-scoped parent. Must deep-equal the descriptor's
+       * purge `scope` `{ parent, fk }` (two-key opt-in: a purge scope changed
+       * to `via` without this still fails closed, and this without a matching
+       * `via` scope is a CI problem). The parent must be a `user_id`-scoped
+       * `include` with `id` in its columns, no `rowKey` and no `rowFilter`
+       * (one hop only). Only `website_blocks` carries it; a second one is an
+       * SA item.
+       */
+      viaParent?: { parent: string; fk: string };
     }
   | { kind: 'exclude'; reason: string }
   | { kind: 'planned'; slice: PlannedTableSlice };

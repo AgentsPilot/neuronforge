@@ -39,6 +39,13 @@
  * enrollment, B's consent event and B's subscriber all point at A's rows;
  * A's file holds none of them. The DE-6 cases are appended; nothing above
  * changed.
+ *
+ * DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §2.6, §8 D-5…D-10, D-14,
+ * D-19; SA review DE-7 C-1…C-6): four content sections go through the keyset
+ * reader unchanged; `website_blocks` through the new parent-scoped read (the
+ * owner's page ids first, then `.in('page_id', chunk)`, every block checked
+ * against its chunk). The fake gains `in` and a negative-control option that
+ * ignores it. The DE-7 cases are appended; nothing above changed but the fake.
  */
 
 import fs from 'fs';
@@ -82,12 +89,16 @@ import type { PurgeDescriptor } from '@/lib/business-os/purge/types';
 import { exportColumnsOf } from '@/lib/business-os/data-export/classification';
 import type { ExportSectionId } from '@/lib/business-os/data-export/classificationTypes';
 import { EXPORT_SECTIONS, runExportSections, type ExportContext } from '@/lib/business-os/data-export/sections';
+// DE-7: the parent-scoped read's chunk size and parent-id bound, lowered per test (read at call time).
+import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
 
 // ── The fake ────────────────────────────────────────────────────────────────
 
 interface FakeOptions {
   /** NEGATIVE CONTROL ONLY: drop `.eq('user_id', …)`, as a buggy reader would. */
   ignoreUserIdFilter?: boolean;
+  /** DE-7 NEGATIVE CONTROL ONLY: drop `.in(…)`, as a PostgREST or proxy that ignored it would. */
+  ignoreInFilter?: boolean;
   /** A PostgREST `max-rows` below the page size. */
   maxPerResponse?: number;
   errorOn?: Record<string, unknown>;
@@ -129,6 +140,12 @@ function fakeClient(db: Record<string, Row[]>, options: FakeOptions = {}) {
             rows = rows.filter((r) => !values.includes(String(r[String(args[0])])));
           } else if (method === 'gt') {
             rows = rows.filter((r) => String(r[String(args[0])]) > String(args[1]));
+          } else if (method === 'in') {
+            // DE-7: PostgREST `in`, from a plain array (C-6), never a hand-built string.
+            if (!Array.isArray(args[1])) throw new Error('in needs an array');
+            if (options.ignoreInFilter) continue;
+            const values = args[1] as unknown[];
+            rows = rows.filter((r) => values.includes(r[String(args[0])]));
           } else if (method === 'order') {
             order = { column: String(args[0]), ascending: (args[1] as { ascending?: boolean })?.ascending !== false };
           } else if (method === 'limit') {
@@ -973,5 +990,518 @@ describe('DE-6 N-10 all history is in: every status, no row filter on a DE-6 tab
     const result = await new BusinessDataExportRepository(client).listOwnedRowsForExport(DE6_PAGED_SECTIONS[table], USER_A, { maxRows: 100 });
     expect(result.data?.rows).toHaveLength(states.length);
     expect(log.flatMap((l) => l.calls).some((c) => c[0] === 'not')).toBe(false);
+  });
+});
+
+// ── DE-7 (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §2.6, §8 D-5…D-10, D-14, D-19; SA review DE-7 C-1…C-6) ──
+
+
+/** DE-7: the four content sections read by their own user_id. */
+const DE7_KEYSET_SECTIONS: Record<string, ExportSectionId> = {
+  website_content: 'website_content',
+  website_pages: 'website_pages',
+  smart_links: 'smart_links',
+  user_media: 'images',
+};
+const BLOCKS_SELECT = 'id, page_id, block_type, position, content, styles, created_at, enabled, capability_config';
+
+/** A block row: every declared column, NO user_id (the live table has none), on `pageId`. */
+function blockRow(tenant: 'a' | 'b', n: number, pageId: unknown, extra: Row = {}): Row {
+  const row = rowFor('website_blocks', tenant, n, { page_id: pageId, ...extra });
+  delete row.user_id;
+  return row;
+}
+
+/** A page row of `tenant` (user_id scoped). */
+const pageRow = (tenant: 'a' | 'b', n: number, extra: Row = {}): Row => rowFor('website_pages', tenant, n, extra);
+
+/** Lower an EXPORT_LIMITS value for one test (read at call time, limits.ts), then restore it. */
+async function withLimit<T>(key: 'VIA_PARENT_CHUNK' | 'ROW_CEILING', value: number, run: () => Promise<T>): Promise<T> {
+  const limits = EXPORT_LIMITS as unknown as Record<string, number>;
+  const before = limits[key];
+  limits[key] = value;
+  try {
+    return await run();
+  } finally {
+    limits[key] = before;
+  }
+}
+
+const readBlocks = (client: SupabaseClient, opts: { pageSize?: number; maxRows?: number; descriptors?: PurgeDescriptor[] } = {}) =>
+  new BusinessDataExportRepository(client, { pageSize: opts.pageSize, descriptors: opts.descriptors }).listOwnedRowsForExport(
+    'website_blocks',
+    USER_A,
+    { maxRows: opts.maxRows ?? 1_000 }
+  );
+
+const sortedIds = (rows: Row[]) => rows.map((r) => String(r.id)).sort();
+
+describe('DE-7 the four user_id content tables go through the keyset reader unchanged', () => {
+  it.each(Object.entries(DE7_KEYSET_SECTIONS))('%s: select = exportColumnsOf, eq user_id first, keyset on id', async (table, section) => {
+    const db: Record<string, Row[]> = { [table]: [0, 1, 2].map((n) => rowFor(table, 'a', n)) };
+    const { client, log } = fakeClient(db);
+    const result = await new BusinessDataExportRepository(client, { pageSize: 2 }).listOwnedRowsForExport(section, USER_A, { maxRows: 100 });
+    expect(result.error).toBeNull();
+    expect(result.data?.rows).toHaveLength(3);
+    const select = exportColumnsOf(table).join(', ');
+    expect(log[0].calls).toEqual([['select', select], ['eq', 'user_id', USER_A], ['order', 'id', { ascending: true }], ['limit', 2]]);
+    expect(log).toHaveLength(3);
+    for (const r of result.data?.rows ?? []) expect(Object.keys(r)).toEqual(exportColumnsOf(table));
+    expect(JSON.stringify(result.data)).not.toContain('EXCLUDED');
+  });
+});
+
+describe('DE-7 D-5 the parent-scoped read: query shape, order, logging', () => {
+  it("parent ids by eq(user_id), then the blocks by in('page_id', chunk) first, keyset on id; rows sorted by id; counts only in the log", async () => {
+    const aPages = [pageRow('a', 0), pageRow('a', 1)];
+    const db: Record<string, Row[]> = {
+      website_pages: [...aPages, pageRow('b', 0)],
+      website_blocks: [
+        ...[0, 1, 2].map((n) => blockRow('a', n, aPages[0].id, { content: { headline: `QA-A-CONTENT-${n}` } })),
+        ...[3, 4, 5].map((n) => blockRow('a', n, aPages[1].id)),
+        blockRow('b', 0, uid('b', 'website_pages', 0)),
+      ],
+    };
+    const { client, log } = fakeClient(db);
+    const result = await readBlocks(client, { pageSize: 2 });
+    expect(result.error).toBeNull();
+    const aIds = sortedIds(db.website_blocks.filter((r) => r.page_id !== uid('b', 'website_pages', 0)));
+    expect(result.data?.rows.map((r) => r.id)).toEqual(aIds);
+    for (const r of result.data?.rows ?? []) expect(Object.keys(r)).toEqual(exportColumnsOf('website_blocks'));
+
+    // Parent: 2 ids, then the empty page. Children: 6 blocks at 2 a page, then the empty page.
+    expect(log.map((l) => l.table)).toEqual(['website_pages', 'website_pages', 'website_blocks', 'website_blocks', 'website_blocks', 'website_blocks']);
+    const pageIds = aPages.map((p) => String(p.id)).sort();
+    expect(log[0].calls).toEqual([['select', 'id'], ['eq', 'user_id', USER_A], ['order', 'id', { ascending: true }], ['limit', 2]]);
+    expect(log[1].calls).toEqual([['select', 'id'], ['eq', 'user_id', USER_A], ['gt', 'id', pageIds[1]], ['order', 'id', { ascending: true }], ['limit', 2]]);
+    // V-5: the in filter is the first filter of every child query, a plain array of owned ids.
+    expect(log[2].calls).toEqual([['select', BLOCKS_SELECT], ['in', 'page_id', pageIds], ['order', 'id', { ascending: true }], ['limit', 2]]);
+    for (const entry of log.slice(2)) {
+      expect(entry.calls[1]).toEqual(['in', 'page_id', pageIds]);
+      expect(entry.calls.some((c) => c[0] === 'eq')).toBe(false);
+    }
+    expect(log[3].calls).toContainEqual(['gt', 'id', aIds[1]]);
+    expect(BLOCKS_SELECT).toBe(exportColumnsOf('website_blocks').join(', '));
+
+    const info = mockLogged.find((l) => l.msg === 'Data export section read');
+    expect(Object.keys(info?.fields ?? {}).sort()).toEqual(['duration', 'pages', 'parents', 'rows', 'sectionId', 'table', 'userId']);
+    expect(info?.fields).toMatchObject({ sectionId: 'website_blocks', table: 'website_blocks', userId: USER_A, pages: 6, parents: 2, rows: 6 });
+    expect(JSON.stringify(mockLogged)).not.toContain('QA-A-CONTENT');
+  });
+});
+
+describe('DE-7 D-6 chunks and paging (C-3)', () => {
+  it('0 pages: one query, ok and empty, no child query', async () => {
+    const { client, log } = fakeClient({ website_pages: [pageRow('b', 0)], website_blocks: [blockRow('b', 0, uid('b', 'website_pages', 0))] });
+    expect(await readBlocks(client)).toEqual({ data: { rows: [], overCeiling: false }, error: null });
+    expect(log.map((l) => l.table)).toEqual(['website_pages']);
+    expect(mockLogged.find((l) => l.msg === 'Data export section read')?.fields).toMatchObject({ pages: 1, parents: 0, rows: 0 });
+  });
+
+  it('101 pages: two chunks (100 + 1), each a non-empty subset of the owned ids', async () => {
+    const pages = Array.from({ length: 101 }, (_, n) => pageRow('a', n));
+    const ids = pages.map((p) => String(p.id)).sort();
+    const db = { website_pages: pages, website_blocks: [blockRow('a', 0, ids[0]), blockRow('a', 1, ids[100])] };
+    const { client, log } = fakeClient(db);
+    const result = await readBlocks(client);
+    expect(result.data?.rows.map((r) => r.id)).toEqual(sortedIds(db.website_blocks));
+    const ins = log.filter((l) => l.table === 'website_blocks').map((l) => l.calls.find((c) => c[0] === 'in')?.[2] as string[]);
+    expect(ins.map((chunk) => chunk.length)).toEqual([100, 100, 1, 1]);
+    expect(ins[0]).toEqual(ids.slice(0, 100));
+    expect(ins[2]).toEqual([ids[100]]);
+    expect(EXPORT_LIMITS.VIA_PARENT_CHUNK).toBe(100);
+  });
+
+  it("C-3: chunk 2's block ids sort before chunk 1's last id; lastId resets per chunk and the final sort holds", async () => {
+    const [p0, p1] = [pageRow('a', 0), pageRow('a', 1)].sort((x, y) => (String(x.id) < String(y.id) ? -1 : 1));
+    const late = blockRow('a', 0, p0.id, { id: 'ffffffff-0000-4000-8000-00000000000f' });
+    const early = blockRow('a', 1, p1.id, { id: '00000000-0000-4000-8000-000000000001' });
+    const { client, log } = fakeClient({ website_pages: [p0, p1], website_blocks: [late, early] });
+    const result = await withLimit('VIA_PARENT_CHUNK', 1, () => readBlocks(client));
+    expect(result.data?.rows.map((r) => r.id)).toEqual([early.id, late.id]);
+    const child = log.filter((l) => l.table === 'website_blocks');
+    // Chunk 1: data page, empty page after `late`. Chunk 2 starts again with no gt.
+    expect(child.map((l) => l.calls.find((c) => c[0] === 'in')?.[2])).toEqual([[p0.id], [p0.id], [p1.id], [p1.id]]);
+    expect(child[2].calls.some((c) => c[0] === 'gt')).toBe(false);
+    expect(child[1].calls).toContainEqual(['gt', 'id', late.id]);
+  });
+
+  it('a chunk with more blocks than the page size pages to an empty page', async () => {
+    const page = pageRow('a', 0);
+    const db = { website_pages: [page], website_blocks: [0, 1, 2, 3, 4].map((n) => blockRow('a', n, page.id)) };
+    const { client, log } = fakeClient(db);
+    const result = await readBlocks(client, { pageSize: 2 });
+    expect(result.data?.rows).toHaveLength(5);
+    expect(log.filter((l) => l.table === 'website_blocks')).toHaveLength(4);
+  });
+
+  it('a PostgREST max-rows below the page size (short pages) still yields every block', async () => {
+    const page = pageRow('a', 0);
+    const db = { website_pages: [page], website_blocks: [0, 1, 2, 3, 4].map((n) => blockRow('a', n, page.id)) };
+    const { client, log } = fakeClient(db, { maxPerResponse: 2 });
+    const result = await readBlocks(client);
+    expect(result.data?.rows.map((r) => r.id)).toEqual(sortedIds(db.website_blocks));
+    expect(log.filter((l) => l.table === 'website_blocks')).toHaveLength(4);
+  });
+});
+
+describe('DE-7 D-7 the ceiling across chunks (and the parent-id bound, C-4)', () => {
+  function twoPagesTwoBlocksEach() {
+    const pages = [pageRow('a', 0), pageRow('a', 1)];
+    return { website_pages: pages, website_blocks: [0, 1, 2, 3].map((n) => blockRow('a', n, pages[n < 2 ? 0 : 1].id)) };
+  }
+
+  it('exactly maxRows blocks is ok', async () => {
+    const result = await withLimit('VIA_PARENT_CHUNK', 1, () => readBlocks(fakeClient(twoPagesTwoBlocksEach()).client, { maxRows: 4 }));
+    expect(result.data).toMatchObject({ overCeiling: false });
+    expect(result.data?.rows).toHaveLength(4);
+  });
+
+  it('maxRows + 1 split across two chunks: overCeiling, no rows, no further query', async () => {
+    const fake = fakeClient(twoPagesTwoBlocksEach());
+    const result = await withLimit('VIA_PARENT_CHUNK', 1, () => readBlocks(fake.client, { maxRows: 3 }));
+    expect(result).toEqual({ data: { rows: [], overCeiling: true }, error: null });
+    // Parent 2, chunk 1 (data + empty) 2, chunk 2 (data: 4 > 3) 1: stop.
+    expect(fake.log.map((l) => l.table)).toEqual(['website_pages', 'website_pages', 'website_blocks', 'website_blocks', 'website_blocks']);
+    expect(mockLogged.find((l) => l.msg === 'Data export section is over the row ceiling')?.fields).toMatchObject({ parents: 2, maxRows: 3 });
+  });
+
+  it('C-4: past ROW_CEILING parent ids the read stops overCeiling with no child query; parent ids never count against maxRows', async () => {
+    const pages = [0, 1, 2].map((n) => pageRow('a', n));
+    const over = fakeClient({ website_pages: pages, website_blocks: [blockRow('a', 0, pages[0].id)] });
+    const result = await withLimit('ROW_CEILING', 2, () => readBlocks(over.client, { maxRows: 1_000 }));
+    expect(result).toEqual({ data: { rows: [], overCeiling: true }, error: null });
+    expect(over.log.every((l) => l.table === 'website_pages')).toBe(true);
+    // Three pages with one block, maxRows 1: the pages do not count, the one block fits.
+    const fits = await readBlocks(fakeClient({ website_pages: pages, website_blocks: [blockRow('a', 0, pages[0].id)] }).client, { maxRows: 1 });
+    expect(fits.data?.rows).toHaveLength(1);
+  });
+});
+
+describe('DE-7 D-8 cross-tenant: a block whose page is another owner\'s never appears (tenant-isolation-guard)', () => {
+  /** A and B each with pages and blocks; B's block content names A's page id and A's picture URL. */
+  function crossedSeed() {
+    const aPages = [pageRow('a', 0), pageRow('a', 1)];
+    const bPages = [pageRow('b', 0), pageRow('b', 1)];
+    const aPicture = `https://cdn.test/storage/v1/object/public/website-images/${USER_A}/stock/1.jpg`;
+    const db: Record<string, Row[]> = {
+      plugin_connections: [],
+      website_pages: [...aPages, ...bPages],
+      website_blocks: [
+        blockRow('a', 0, aPages[0].id, { content: { image: aPicture } }),
+        blockRow('a', 1, aPages[1].id, { enabled: false }),
+        blockRow('b', 0, bPages[0].id, { content: { note: `QA-B-BLOCK-NEVER on ${String(aPages[0].id)}`, image: aPicture } }),
+        blockRow('b', 1, bPages[1].id, { content: { note: 'QA-B-BLOCK-NEVER-2' } }),
+      ],
+    };
+    const bBlocks = db.website_blocks.filter((r) => bPages.some((p) => p.id === r.page_id));
+    return { db, aPages, bPages, bBlocks };
+  }
+
+  it("A's export holds every A block and no B block; no B page id reaches the child queries", async () => {
+    const seeded = crossedSeed();
+    const fake = fakeClient(seeded.db);
+    mockActiveClient = fake.client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    expect(run.overCeiling).toBe(false);
+    const byId = Object.fromEntries(run.sections.map((s) => [s.id, s]));
+    expect(byId.website_blocks.status).toBe('ok');
+    const aBlockIds = seeded.db.website_blocks.filter((r) => seeded.aPages.some((p) => p.id === r.page_id)).map((r) => String(r.id)).sort();
+    expect(byId.website_blocks.rows.map((r) => String((r as Row).id))).toEqual(aBlockIds);
+    expect(byId.website_pages.rows.map((r) => String((r as Row).id))).toEqual(seeded.aPages.map((p) => String(p.id)).sort());
+    const text = JSON.stringify(run.sections);
+    expect(text).not.toContain('QA-B-BLOCK-NEVER');
+    for (const r of [...seeded.bBlocks, ...seeded.bPages]) expect(text).not.toContain(String(r.id));
+    expect(foreignMarkers(text, seeded.db)).toEqual([]);
+    // The parent read is E-4 scoped; every child in-list holds A's page ids only.
+    const parentReads = fake.log.filter((l) => l.table === 'website_pages' && String(l.calls[0][1]) === 'id');
+    expect(parentReads.length).toBeGreaterThan(0);
+    for (const entry of parentReads) expect(entry.calls[1]).toEqual(['eq', 'user_id', USER_A]);
+    const inLists = fake.log.filter((l) => l.table === 'website_blocks').map((l) => l.calls[1]);
+    expect(inLists.length).toBeGreaterThan(0);
+    for (const call of inLists) {
+      expect(call[0]).toBe('in');
+      for (const id of call[2] as string[]) expect(seeded.aPages.map((p) => p.id)).toContain(id);
+    }
+  });
+
+  it("negative control (a): a fake that ignores .eq(user_id) puts B's blocks in A's file (the test can see a leak)", async () => {
+    const seeded = crossedSeed();
+    mockActiveClient = fakeClient(seeded.db, { ignoreUserIdFilter: true }).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const blocks = run.sections.find((s) => s.id === 'website_blocks')!;
+    expect(blocks.rows.some((r) => seeded.bBlocks.some((b) => b.id === (r as Row).id))).toBe(true);
+  });
+
+  it('negative control (b): a fake that ignores .in fails the section (V-6); no B row is in the body', async () => {
+    const seeded = crossedSeed();
+    mockActiveClient = fakeClient(seeded.db, { ignoreInFilter: true }).client as unknown as { from: (table: string) => unknown };
+    const run = await runExportSections(CTX_A, EXPORT_SECTIONS, silentLogger);
+    const blocks = run.sections.find((s) => s.id === 'website_blocks')!;
+    expect(blocks).toMatchObject({ status: 'failed', row_count: 0, rows: [] });
+    const text = JSON.stringify(run.sections);
+    expect(text).not.toContain('QA-B-BLOCK-NEVER');
+    for (const r of seeded.bBlocks) expect(text).not.toContain(String(r.id));
+    // The other content sections are unaffected.
+    for (const id of ['website_content', 'website_pages', 'smart_links', 'images']) expect(run.sections.find((s) => s.id === id)?.status).toBe('ok');
+    // The log carries the count only, never a row.
+    const failure = mockLogged.find((l) => l.level === 'error' && l.fields.sectionId === 'website_blocks');
+    expect(String((failure?.fields.err as Error)?.message)).toBe('Data export parent-scoped read returned 2 rows outside the owned parents');
+    expect(JSON.stringify(mockLogged)).not.toContain('QA-B-BLOCK-NEVER');
+  });
+
+  it('negative control (c): V-6 is load-bearing; with the .in ignored, the raw child response DOES carry B\'s blocks', async () => {
+    // Without V-6, nothing else filters the child rows: the response below is what the section would hold.
+    const seeded = crossedSeed();
+    const inner = fakeClient(seeded.db, { ignoreInFilter: true });
+    const responses: Row[][] = [];
+    const recording = {
+      from(table: string) {
+        const builder = inner.client.from(table) as unknown as Record<string, unknown>;
+        if (table !== 'website_blocks') return builder;
+        const then = builder.then as (resolve: (v: unknown) => unknown, reject: (r: unknown) => unknown) => Promise<unknown>;
+        builder.then = (resolve: (v: unknown) => unknown, reject: (r: unknown) => unknown) =>
+          then((value) => {
+            responses.push(((value as { data: Row[] | null }).data ?? []) as Row[]);
+            return resolve(value);
+          }, reject);
+        return builder;
+      },
+    } as unknown as SupabaseClient;
+    const result = await readBlocks(recording);
+    expect(result.data).toBeNull();
+    expect(responses.flat().some((r) => seeded.bBlocks.some((b) => b.id === r.id))).toBe(true);
+  });
+});
+
+describe('DE-7 D-9 fails closed', () => {
+  it('a malformed parent id (not a canonical lowercase uuid) fails after the parent query only', async () => {
+    for (const bad of ['A0A0A0A0-0000-4000-8000-00000000000A', 'not-a-uuid', 42]) {
+      mockLogged.length = 0;
+      const { client, log } = fakeClient({ website_pages: [{ ...pageRow('a', 0), id: bad }], website_blocks: [] });
+      const r = await readBlocks(client);
+      expect(r.data).toBeNull();
+      expect(String(r.error?.message)).toBe('Data export parent id is not a canonical uuid');
+      expect(log.map((l) => l.table)).toEqual(['website_pages']);
+    }
+  });
+
+  it('repeated parent ids fail the section', async () => {
+    const page = pageRow('a', 0);
+    const r = await readBlocks(fakeClient({ website_pages: [page, { ...page }] }).client);
+    expect(r.data).toBeNull();
+  });
+
+  it('a PostgREST error on the parent read or on the child read fails the section', async () => {
+    const page = pageRow('a', 0);
+    const db = { website_pages: [page], website_blocks: [blockRow('a', 0, page.id)] };
+    const parentErr = fakeClient(db, { errorOn: { website_pages: { message: 'boom', code: 'XX000' } } });
+    expect((await readBlocks(parentErr.client)).data).toBeNull();
+    expect(parentErr.log.map((l) => l.table)).toEqual(['website_pages']);
+    const childErr = fakeClient(db, { errorOn: { website_blocks: { message: 'boom', code: '42703' } } });
+    expect((await readBlocks(childErr.client)).data).toBeNull();
+  });
+
+  it('C-1: a child row with a non-string id or page_id fails the section', async () => {
+    const page = pageRow('a', 0);
+    // A NULL page_id never matches a real `in`, so that case runs on a fake that ignores it.
+    for (const [extra, options] of [[{ id: 7 }, {}], [{ page_id: null }, { ignoreInFilter: true }]] as Array<[Row, FakeOptions]>) {
+      const r = await readBlocks(fakeClient({ website_pages: [page], website_blocks: [blockRow('a', 0, page.id, extra)] }, options).client);
+      expect(r.data).toBeNull();
+    }
+  });
+
+  it('C-1: a block in the wrong chunk fails the section, even when its page is the owner\'s', async () => {
+    // With one id per chunk, a fake that ignored `.in` would hand chunk 1 the block of A's other page.
+    const pages = [pageRow('a', 0), pageRow('a', 1)];
+    const db = { website_pages: pages, website_blocks: [blockRow('a', 0, pages[0].id), blockRow('a', 1, pages[1].id)] };
+    const r = await withLimit('VIA_PARENT_CHUNK', 1, () => readBlocks(fakeClient(db, { ignoreInFilter: true }).client));
+    expect(r.data).toBeNull();
+    expect(String(r.error?.message)).toMatch(/outside the owned parents/);
+  });
+
+  it('C-1: a repeated id after the final sort fails the section', async () => {
+    const pages = [pageRow('a', 0), pageRow('a', 1)];
+    const twin = 'cccccccc-0000-4000-8000-00000000000c';
+    const db = { website_pages: pages, website_blocks: [blockRow('a', 0, pages[0].id, { id: twin }), blockRow('a', 1, pages[1].id, { id: twin })] };
+    const r = await withLimit('VIA_PARENT_CHUNK', 1, () => readBlocks(fakeClient(db).client));
+    expect(r.data).toBeNull();
+    expect(String(r.error?.message)).toBe('Data export parent-scoped read found a repeated id');
+  });
+
+  describe('a bad descriptor fails with no query (V-1…V-3, E-3; C-5)', () => {
+    const blocks = PURGE_DESCRIPTORS.find((d) => d.table === 'website_blocks')!;
+    const be = blocks.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+    const replace = (table: string, patch: (d: PurgeDescriptor) => PurgeDescriptor): PurgeDescriptor[] =>
+      PURGE_DESCRIPTORS.map((d) => (d.table === table ? patch(d) : d));
+    const pagesInclude = (d: PurgeDescriptor) => d.export as Extract<PurgeDescriptor['export'], { kind: 'include' }>;
+
+    it.each<[string, PurgeDescriptor[], string]>([
+      ['the export opt-in removed (the DE-4 code and message, unchanged)', replace('website_blocks', (d) => ({ ...d, export: { ...be, viaParent: undefined } })), 'not_user_scoped'],
+      ['viaParent naming another fk', replace('website_blocks', (d) => ({ ...d, export: { ...be, viaParent: { parent: 'website_pages', fk: 'id' } } })), 'invalid_via_parent'],
+      ['viaParent with an empty parent', replace('website_blocks', (d) => ({ ...d, scope: { kind: 'via', parent: '', fk: 'page_id' }, export: { ...be, viaParent: { parent: '', fk: 'page_id' } } })), 'invalid_via_parent'],
+      ['viaParent beside a user_id scope', replace('website_blocks', (d) => ({ ...d, scope: { kind: 'user_id' } })), 'invalid_via_parent'],
+      ['the parent excluded', replace('website_pages', (d) => ({ ...d, export: { kind: 'exclude', reason: 'x' } })), 'invalid_via_parent'],
+      ['the parent via-scoped (via-of-via)', replace('website_pages', (d) => ({ ...d, scope: { kind: 'via', parent: 'business_profiles', fk: 'user_id' } })), 'invalid_via_parent'],
+      ['the parent filtered', replace('website_pages', (d) => ({ ...d, export: { ...pagesInclude(d), rowFilter: { column: 'status', notIn: ['archived'], reason: 'x' } } })), 'invalid_via_parent'],
+      ['the parent with a deny-listed column (E-3 on the parent)', replace('website_pages', (d) => ({ ...d, export: { ...pagesInclude(d), columns: [...pagesInclude(d).columns, 'access_token'] } })), 'denied_column'],
+      ['the child with a deny-listed column (E-3 on the child)', replace('website_blocks', (d) => ({ ...d, export: { ...be, columns: [...be.columns, 'api_key'] } })), 'denied_column'],
+      ['the child without page_id', replace('website_blocks', (d) => ({ ...d, export: { ...be, columns: be.columns.filter((c) => c !== 'page_id') } })), 'invalid_via_parent'],
+    ])('%s', async (_name, descriptors, code) => {
+      const page = pageRow('a', 0);
+      const { client, log } = fakeClient({ website_pages: [page], website_blocks: [blockRow('a', 0, page.id)] });
+      const r = await readBlocks(client, { descriptors });
+      expect(r.data).toBeNull();
+      expect((r.error as unknown as { code?: string }).code).toBe(code);
+      expect(log).toHaveLength(0);
+    });
+  });
+});
+
+describe('DE-7 D-10 no caller id reaches the parent-scoped read', () => {
+  const SECTIONS_FILE = path.join(REPO_ROOT, 'lib', 'business-os', 'data-export', 'sections.ts');
+  // QA-B1: any identifier ending in a page, parent or block id, singular or plural, snake or
+  // camel, with or without a prefix (pageId, page_ids, parentIds, ownedPageIds, blockIDs...).
+  const CALLER_ID = /\b\w*?(?:page|parent|block)_?ids?\b/gi;
+  const callerIdHits = (code: string): string[] => codeOnly(code).match(CALLER_ID) ?? [];
+
+  /**
+   * The parts of the repository a caller's value can travel through: the public signature, the
+   * `readThroughParent` parameter type and its one call. Scoped on purpose: the oracle's own local
+   * `parentIds` (read by E-4 inside the `readThroughParent` body) is the legitimate name and is
+   * not scanned. Each slice must be found, so the scan can never pass vacuously.
+   */
+  function callerFacingSlices(source: string): Record<string, string> {
+    const code = codeOnly(source);
+    const slice = (from: string, to: string): string => {
+      const start = code.indexOf(from);
+      const end = start < 0 ? -1 : code.indexOf(to, start + from.length);
+      if (start < 0 || end < 0) throw new Error(`D-10 slice not found: ${from}`);
+      return code.slice(start, end + to.length);
+    };
+    return {
+      signature: slice('async listOwnedRowsForExport(', '): Promise<'),
+      readThroughParentParams: slice('private async readThroughParent(args: {', '}): Promise<'),
+      readThroughParentCall: slice('this.readThroughParent({', '});'),
+    };
+  }
+  /** `opts.<key>` reads in the repository, other than the one declared key. */
+  const undeclaredOptReads = (source: string): string[] =>
+    (codeOnly(source).match(/\bopts\??\.\w+/g) ?? []).filter((m) => m.replace('?', '') !== 'opts.maxRows');
+
+  it('the method takes (section id, session user id, budget) only; sections.ts passes no page id', () => {
+    expect(BusinessDataExportRepository.prototype.listOwnedRowsForExport.length).toBe(3);
+    expect(callerIdHits(fs.readFileSync(SECTIONS_FILE, 'utf-8'))).toEqual([]);
+  });
+
+  it('QA-B1: no page / parent / block id in the signature, the readThroughParent parameters or its call; opts is read for maxRows only', () => {
+    const source = fs.readFileSync(REPO_FILE, 'utf-8');
+    const slices = callerFacingSlices(source);
+    for (const [name, code] of Object.entries(slices)) expect({ name, hits: callerIdHits(code) }).toEqual({ name, hits: [] });
+    expect(undeclaredOptReads(source)).toEqual([]);
+    // Why the scan is scoped: the body holds the oracle's own `parentIds`, which is correct code.
+    expect(callerIdHits(source)).toContain('parentIds');
+  });
+
+  it('negative control: a planted page id parameter is flagged', () => {
+    expect(callerIdHits('listOwnedRowsForExport(id, ctx.userId, { maxRows, pageId: req.pageId })')).toEqual(['pageId', 'pageId']);
+  });
+
+  it('negative control (QA-B1): plurals, snake case, prefixes and the opts object are flagged', () => {
+    expect(callerIdHits('f({ maxRows, parentIds: ctx.parentIds, page_ids: x, ownedPageIds, blockIDs, page_id })')).toEqual([
+      'parentIds',
+      'parentIds',
+      'page_ids',
+      'ownedPageIds',
+      'blockIDs',
+      'page_id',
+    ]);
+    // Legitimate names are not flagged.
+    expect(callerIdHits('const { sectionId, table, parentTable, fk, userId, maxRows } = args; pages += 1;')).toEqual([]);
+    const planted = fs
+      .readFileSync(REPO_FILE, 'utf-8')
+      .replace('opts: { maxRows: number }', 'opts: { maxRows: number; parentIds?: string[] }')
+      .replace('this.readThroughParent({', 'this.readThroughParent({ callerParentIds: opts.parentIds,');
+    const slices = callerFacingSlices(planted);
+    expect(callerIdHits(slices.signature)).toEqual(['parentIds']);
+    expect(callerIdHits(slices.readThroughParentCall)).toEqual(['callerParentIds', 'parentIds']);
+    expect(undeclaredOptReads(planted)).toEqual(['opts.parentIds']);
+  });
+
+  it("QA-B1 runtime: B's page id slipped into the options object fails the section closed, no query, no B block", async () => {
+    const aPage = pageRow('a', 0);
+    const bPage = pageRow('b', 0);
+    const db: Record<string, Row[]> = {
+      website_pages: [aPage, bPage],
+      website_blocks: [blockRow('a', 0, aPage.id), blockRow('b', 0, bPage.id, { content: { note: 'QA-B-BLOCK-NEVER' } })],
+    };
+    const { client, log } = fakeClient(db);
+    const result = await new BusinessDataExportRepository(client).listOwnedRowsForExport('website_blocks', USER_A, {
+      maxRows: 1_000,
+      parentIds: [bPage.id],
+      // Deliberately outside the declared type: the attack this test pins.
+    } as unknown as { maxRows: number });
+    expect(result.data).toBeNull();
+    expect(result.error).not.toBeNull();
+    expect(log).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain('QA-B-BLOCK-NEVER');
+    expect(JSON.stringify(result)).not.toContain(String(bPage.id));
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['an unknown key in opts', { maxRows: 10, extra: true }],
+    ['a pageId in opts', { maxRows: 10, pageId: 'x' }],
+    ['a userId in opts', { maxRows: 10, userId: USER_B }],
+  ])('ReadInputSchema is strict: %s fails closed with no query', async (_label, opts) => {
+    const { client, log } = fakeClient({ crm_contacts: [rowFor('crm_contacts', 'a', 0)] });
+    const result = await new BusinessDataExportRepository(client).listOwnedRowsForExport('clients', USER_A, opts as unknown as { maxRows: number });
+    expect(result).toEqual({ data: null, error: expect.anything() });
+    expect(log).toHaveLength(0);
+  });
+
+  it('control: the declared options object alone still reads', async () => {
+    const { client } = fakeClient({ crm_contacts: [rowFor('crm_contacts', 'a', 0)] });
+    const result = await new BusinessDataExportRepository(client).listOwnedRowsForExport('clients', USER_A, { maxRows: 10 });
+    expect(result.error).toBeNull();
+    expect(result.data?.rows).toHaveLength(1);
+  });
+});
+
+describe('DE-7 D-14 all history: every status, hidden blocks, inactive links, every picture source', () => {
+  it('draft, live and archived pages, landing pages, hidden blocks, inactive (system) links and every media source are exported', async () => {
+    const pages = [
+      pageRow('a', 0, { status: 'draft', page_type: 'homepage' }),
+      pageRow('a', 1, { status: 'live', page_type: 'landing' }),
+      pageRow('a', 2, { status: 'archived', page_type: 'landing' }),
+    ];
+    const db: Record<string, Row[]> = {
+      website_pages: pages,
+      website_blocks: [blockRow('a', 0, pages[0].id, { enabled: false }), blockRow('a', 1, pages[2].id, { enabled: true })],
+      smart_links: [rowFor('smart_links', 'a', 0, { is_active: false, metadata: { journeyType: 'booking' } }), rowFor('smart_links', 'a', 1, { is_active: true })],
+      user_media: ['stock', 'generated', 'upload'].map((source, n) => rowFor('user_media', 'a', n, { source })),
+    };
+    const { client, log } = fakeClient(db);
+    const repo = new BusinessDataExportRepository(client);
+    const read = async (section: ExportSectionId) => (await repo.listOwnedRowsForExport(section, USER_A, { maxRows: 100 })).data?.rows ?? [];
+    expect((await read('website_pages')).map((r) => r.status).sort()).toEqual(['archived', 'draft', 'live']);
+    expect((await read('website_blocks')).map((r) => r.enabled).sort()).toEqual([false, true]);
+    expect((await read('smart_links')).map((r) => r.is_active).sort()).toEqual([false, true]);
+    expect((await read('images')).map((r) => r.source).sort()).toEqual(['generated', 'stock', 'upload']);
+    expect(log.flatMap((l) => l.calls).some((c) => c[0] === 'not')).toBe(false);
+    // Out columns never selected, the owner id never in the rows.
+    const all = JSON.stringify(await Promise.all((['website_pages', 'website_blocks', 'smart_links', 'images'] as ExportSectionId[]).map(read)));
+    expect(all).not.toContain('EXCLUDED');
+    expect(all).not.toContain(USER_A);
+  });
+});
+
+describe('DE-7 C-2 the final sort is code-unit order, never locale order (source pin)', () => {
+  it('the repository never calls localeCompare', () => {
+    expect(codeOnly(fs.readFileSync(REPO_FILE, 'utf-8'))).not.toMatch(/localeCompare/);
+  });
+
+  it('negative control: a planted localeCompare is flagged; one in a comment is not', () => {
+    expect(/localeCompare/.test(codeOnly('rows.sort((a, b) => a.id.localeCompare(b.id));'))).toBe(true);
+    expect(/localeCompare/.test(codeOnly('// never localeCompare here'))).toBe(false);
   });
 });
