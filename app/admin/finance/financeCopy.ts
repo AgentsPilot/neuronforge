@@ -663,3 +663,34 @@ export const ECON_FEE_NOTE_UNREADABLE =
 export const ACCOUNT_MARGIN = 'AI margin (USD)';
 /** Slice 6b (FE-14): directly under the AI margin line. */
 export const ACCOUNT_AFTER_FEES = 'Margin after Stripe fees (estimate, USD)';
+
+// ── Slice 8.3 (§11M.8 HS-FR-11 to HS-FR-16, E-100, E-101): the History block ──
+export const HISTORY_TITLE = 'History';
+export const HISTORY_SUBTITLE = 'Each point is the state at the end of that UTC day. Credits are units, not money.';
+export const HISTORY_SHOW = 'Show history';
+export const HISTORY_HIDE = 'Hide history';
+export const HISTORY_ALL_BUSINESSES_ONLY = 'History is kept for all businesses together, not per business.';
+export const historyStartsOn = (date: string) => `History starts on ${date} (UTC).`;
+export const HISTORY_NONE_YET = 'No history yet: a snapshot is taken every night at 00:07 UTC.';
+export const historyNoneInWindow = (date: string) => `No snapshot in this window. History starts on ${date} (UTC).`;
+export const HISTORY_NOT_INSTALLED = 'History is not available yet: it starts once the nightly snapshot is installed.';
+export const HISTORY_WEEKLY = 'Weekly points';
+export const HISTORY_NO_SNAPSHOT = 'No snapshot';
+export const HISTORY_NOT_RECORDED = 'Not recorded';
+export const HISTORY_CHANGE = 'Change in this window';
+export const HISTORY_NOT_AVAILABLE = 'Not available';
+export const HISTORY_NO_LONGER_CONFIGURED = '(no longer configured)';
+export const HISTORY_PLAN_MIX = 'Plan mix';
+export const HISTORY_CREDITS = 'Credits';
+export const HISTORY_DATE = 'Date';
+export const HISTORY_COLUMN_LABELS = {
+  accounts_total: 'Total',
+  founding_no_end_date: 'Founding Partners with no end date',
+  credit_allowance: 'Included credits',
+  credit_used: 'Used this period',
+  gifted_outstanding: 'Gifted outstanding',
+  bought_outstanding: 'Bought outstanding',
+  credit_outstanding_total: 'Outstanding total',
+  credit_over_allowance: 'Accounts over allowance',
+  credit_far_over_allowance: 'Far over allowance',
+} as const;

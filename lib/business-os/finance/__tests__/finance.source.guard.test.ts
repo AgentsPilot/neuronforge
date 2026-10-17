@@ -1694,3 +1694,48 @@ describe('slice 8.2 source guards (the snapshot builder, job, wiring and writer)
     expect(codeOf(JOB)).toMatch(/export const SNAPSHOT_CREDIT_BUDGET_MS = 30 \* 1000;/);
   });
 });
+
+// ── Slice 8.3 (E-98, E-99, 8.3-R1): the History reads ─────────────────────────
+describe('slice 8.3 source guards (the History view, wiring and read repository)', () => {
+  const VIEW = 'lib/business-os/finance/historyView.ts';
+  const HIST_DEPS = 'lib/business-os/finance/financeHistoryDeps.ts';
+  const READ_REPO = 'lib/repositories/BusinessOsFinanceSnapshotReadRepository.ts';
+  const HIST_ROUTE = 'app/api/admin/business-os/finance/history/route.ts';
+  const importsOf = (code: string) => [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  const walkAll = (dir: string, out: string[] = []): string[] => {
+    for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const relPath = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__' && entry.name !== 'node_modules') walkAll(relPath, out);
+      } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(relPath);
+    }
+    return out;
+  };
+  const SOURCES = [...walkAll('app'), ...walkAll('lib')];
+
+  it('scans the new files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([VIEW, HIST_DEPS]));
+    expect(SOURCES).toEqual(expect.arrayContaining([READ_REPO, HIST_ROUTE]));
+  });
+
+  it('the view is pure: no repository, Supabase, server-only, entitlements path or clock; no tier literal', () => {
+    const code = codeOf(VIEW);
+    for (const spec of importsOf(code)) expect({ spec, bad: /repositories|supabase|server-only|entitlements/.test(spec) }).toEqual({ spec, bad: false });
+    expect(code).not.toMatch(/Date\.now\(|new Date\(\s*\)/);
+    expect(code).not.toMatch(/'(basic|pro|plus|starter|business)'/);
+  });
+
+  it('E-98: only the history wiring imports the read repository; only the history route imports the wiring (planted control)', () => {
+    const repoImporters = SOURCES.filter((f) => f !== READ_REPO && /BusinessOsFinanceSnapshotReadRepository/.test(codeOf(f)));
+    expect(repoImporters).toEqual([HIST_DEPS]);
+    const wiringImporters = SOURCES.filter((f) => f !== HIST_DEPS && /financeHistoryDeps/.test(codeOf(f)));
+    expect(wiringImporters).toEqual([HIST_ROUTE]);
+    expect(/BusinessOsFinanceSnapshotReadRepository/.test("import { x } from '@/lib/repositories/BusinessOsFinanceSnapshotReadRepository';")).toBe(true);
+  });
+
+  it('E-98: the read repository writes nothing, and the history wiring reaches no writer', () => {
+    expect(codeOf(READ_REPO)).not.toMatch(/\.(insert|upsert|update|delete|rpc)\s*\(/);
+    expect(codeOf(HIST_DEPS)).not.toMatch(/insertSnapshotRows|BusinessOsFinanceSnapshotRepository\b|financeSnapshotDeps/);
+    expect(importsOf(codeOf(HIST_DEPS)).sort()).toEqual(['./financeHealth', './financeHealthDeps', '@/lib/repositories/BusinessOsFinanceSnapshotReadRepository'].sort());
+  });
+});

@@ -49,9 +49,15 @@ interface Props {
   badge?: { tone: StatusTone; label: string };
   /** M-4 (SA-W98): content of its own read, shown under the could-not-load line when the section is unknown. */
   alsoWhenUnknown?: ReactNode;
+  /**
+   * Slice 8.3 (SA-W-8.3-2, E-100): false hides the right-hand status chip, for a
+   * block with nothing read yet (the closed History block). Default true: every
+   * other caller's DOM is unchanged.
+   */
+  statusChip?: boolean;
 }
 
-export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge, alsoWhenUnknown }: Props) {
+export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge, alsoWhenUnknown, statusChip = true }: Props) {
   const headingId = `${id}-heading`;
   const heading = (
     <h2 id={headingId} className="text-base font-semibold text-white">
@@ -80,9 +86,11 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
           )}
           <p className="text-xs text-slate-400">{subtitle}</p>
         </div>
-        <StatusChip tone={BADGE[status].tone} testId={`section-${id}-status`}>
-          {BADGE[status].text}
-        </StatusChip>
+        {statusChip && (
+          <StatusChip tone={BADGE[status].tone} testId={`section-${id}-status`}>
+            {BADGE[status].text}
+          </StatusChip>
+        )}
       </header>
       {status === 'unknown' ? (
         <div className="flex items-center gap-3 text-sm text-slate-300" role="status">

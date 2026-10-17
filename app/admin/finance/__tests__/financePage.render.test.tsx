@@ -2272,6 +2272,92 @@ describe('DF-6: "Since it started" on the page', () => {
   });
 });
 
+// ── Slice 8.3 (E-85 / S8-F1, 8.3-R3, AC-290): the History block sends nothing on load ──
+// The history request literal is pinned HERE, never in the AC-173 table.
+describe('slice 8.3: one request on load; the History request only on "Show history"', () => {
+  const FINANCE_REQ = '/api/admin/business-os/finance?preset=this_month';
+  const HISTORY_REQ = '/api/admin/business-os/finance/history?preset=this_month';
+  const urls = (mock: jest.Mock) => mock.mock.calls.map((c) => String((c as unknown[])[0]));
+  /** Answers each URL with its own body: the finance payload, or a ready history view. */
+  function serveBoth(): jest.Mock {
+    const history = {
+      window: { from: '2026-10-01', to: '2026-10-09' },
+      firstSnapshotDate: '2026-10-05',
+      state: 'ready',
+      weekly: false,
+      planMix: { columns: [{ id: 'accounts_total', unit: 'accounts' }], points: [{ date: '2026-10-08', kind: 'snapshot', cells: [{ kind: 'value', value: 8 }] }], change: [{ kind: 'not_available' }] },
+      credits: { columns: [{ id: 'credit_used', unit: 'credits' }], points: [{ date: '2026-10-08', kind: 'no_snapshot' }], change: [{ kind: 'not_available' }] },
+    };
+    const fetchMock = jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: String(url).includes('/history') ? history : payload() }),
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return fetchMock;
+  }
+
+  it('8.3-R3 (AC-173’s path): a failed finance read mounts no Overview and no History block, so exactly 1 fetch', async () => {
+    const fetchMock = serve({ success: false, error: 'Business not found' }, 404);
+    render(<FinanceView />);
+    await screen.findByTestId('finance-error');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByTestId('section-history')).toBeNull();
+    expect(urls(fetchMock)).toEqual([FINANCE_REQ]);
+  });
+
+  it('8.3-R3 (Pin B’s path): a loaded page shows the block CLOSED and still sends exactly 1 fetch', async () => {
+    const fetchMock = serveBoth();
+    render(<FinanceView />);
+    const block = await screen.findByTestId('section-history');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(urls(fetchMock)).toEqual([FINANCE_REQ]);
+    expect(within(block).getByTestId('history-toggle')).toHaveAttribute('aria-expanded', 'false');
+    expect(within(block).queryByTestId('section-history-status')).toBeNull();
+    // After Section 4 (HS-FR-11).
+    const credits = screen.getByTestId('section-credits');
+    expect(credits.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('AC-290: "Show history" sends exactly one more request, the pinned literal, never with a business', async () => {
+    const fetchMock = serveBoth();
+    render(<FinanceView />);
+    fireEvent.click(await screen.findByTestId('history-toggle'));
+    await screen.findByTestId('history-start-line');
+    expect(urls(fetchMock)).toEqual([FINANCE_REQ, HISTORY_REQ]);
+    expect(fetchMock.mock.calls[1]).toEqual([HISTORY_REQ, expect.objectContaining({ cache: 'no-store' })]);
+    for (const url of urls(fetchMock)) expect(url).not.toContain('accountId');
+    expect(screen.getByTestId('history-start-line')).toHaveTextContent('History starts on 2026-10-05 (UTC).');
+  });
+
+  it('a window change while closed sends no history request; while open, one more', async () => {
+    const fetchMock = serveBoth();
+    render(<FinanceView />);
+    await screen.findByTestId('section-history');
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
+    await waitFor(() => expect(urls(fetchMock)).toHaveLength(2));
+    expect(urls(fetchMock).filter((u) => u.includes('/history'))).toEqual([]);
+    fireEvent.click(await screen.findByTestId('history-toggle'));
+    await screen.findByTestId('history-start-line');
+    expect(urls(fetchMock).filter((u) => u.includes('/history'))).toEqual(['/api/admin/business-os/finance/history?preset=7d']);
+  });
+
+  it('HS-FR-11 / L-161: with a business picked, the one line, no button and no history request', async () => {
+    mockSearch = `account=${A}`;
+    window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
+    const fetchMock = serveBoth();
+    render(<FinanceView />);
+    await screen.findByTestId('history-all-businesses-only');
+    expect(screen.queryByTestId('history-toggle')).toBeNull();
+    expect(urls(fetchMock).filter((u) => u.includes('/history'))).toEqual([]);
+  });
+});
+
 // ── Slice 4b.2 (BD-17): refunds by event date, held now, block A, bought credits, on the page ──
 import {
   BOOST_PROBLEMS_NONE,
