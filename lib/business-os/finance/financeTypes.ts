@@ -494,6 +494,27 @@ export type FinanceMarginValue =
   | { kind: 'other_currency' }
   | { kind: 'unknown' };
 
+/**
+ * Slice 6b (§11K.4, FE-8 to FE-11): the AI margin minus the ESTIMATED Stripe
+ * fees, beside the AI margin and never in its place. A figure only when the AI
+ * margin is one; otherwise the AI margin's own word (SA-W82), and Unknown for an
+ * invalid fee config (E-73). `currency` is the fee's currency (always USD today).
+ */
+export type FinanceMarginAfterFeesValue =
+  | { kind: 'figure'; afterFeesUsd: number; feesUsd: number; currency: string; noRevenue: boolean }
+  | { kind: 'not_available' }
+  | { kind: 'other_currency' }
+  | { kind: 'unknown' };
+
+/** Slice 6b: the assumed fee, as display values divided on the server (FE-16). */
+export interface FinanceFeeEstimate {
+  currency: string;
+  /** Percent of the gross charge, e.g. 2.9. */
+  percent: number;
+  /** Fixed amount per charge in major units, e.g. 0.3. */
+  fixed: number;
+}
+
 /** The credits cell (Section 4's row for the account). */
 export type FinanceEconomicsCredits =
   | { kind: 'position'; used: number; allowance: number; usedTenths: number }
@@ -517,6 +538,7 @@ export interface FinanceEconomicsRow {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
   credits: FinanceEconomicsCredits;
 }
 
@@ -525,6 +547,7 @@ export interface FinanceEconomicsDeletedRow {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
 }
 
 /** Every account together, before any filter or cap (E-47). */
@@ -532,6 +555,7 @@ export interface FinanceEconomicsPlatformLine {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
   /** Account rows covered (the Deleted row is extra). */
   accountsCovered: number;
   includesDeleted: boolean;
@@ -549,6 +573,8 @@ export interface FinanceAccountEconomicsSection {
   counts: { accounts: number; matching: number; shown: number; notListed: number };
   /** The plan-group options for the filter, labelled by the server (no tier in the page). */
   groupOptions: Array<{ key: FinanceGroupKey; tierLabel: string | null }>;
+  /** Slice 6b: the assumed Stripe fee for the note; null when the config is invalid (E-73). */
+  feeEstimate: FinanceFeeEstimate | null;
   notes: {
     /** The plan walk failed or was capped: only accounts with money or AI use are listed (M3-FR-2). */
     walkIncomplete: boolean;
@@ -567,6 +593,7 @@ export interface FinanceAccountMargin {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
 }
 
 // ── Section 2 block B, takings through the platform (slice 2a, S2-FR-1 to S2-FR-14) ──

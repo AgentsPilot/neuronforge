@@ -315,6 +315,8 @@ describe('slice 6a: the summary’s AI margin line (M3-FR-8)', () => {
     paid: { failed: false, lines: [] },
     aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
     margin: m,
+    // Slice 6b: the margin after fees follows the AI margin's word; a figure with no fees here.
+    marginAfterFees: m.kind === 'figure' ? { kind: 'figure', afterFeesUsd: m.marginUsd, feesUsd: 0, currency: 'USD', noRevenue: m.noRevenue } : m,
   });
   const renderWith = (accountMargin: FinanceAccountMargin | null) => {
     cleanup();
@@ -403,5 +405,69 @@ describe('Money M-4: the summary’s "Recorded above charged" line (M4-FR-2)', (
   it('no recorded key → no line', () => {
     const summary = renderWith(undefined);
     expect(within(summary).queryByTestId('account-summary-recorded-above')).toBeNull();
+  });
+});
+
+// ── Slice 6b (FE-14, AC-250, AC-251): the summary's "Margin after Stripe fees (estimate, USD)" line ──
+// A separate import, so the lines above stay unedited.
+import { MarginAfterFeesValue } from '../components/AccountEconomicsTable';
+import { ACCOUNT_AFTER_FEES } from '../financeCopy';
+
+describe('slice 6b: the summary’s margin after Stripe fees line (FE-14)', () => {
+  const OWNER_MARGIN: FinanceAccountMargin = {
+    paid: { failed: false, lines: [{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }] },
+    aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+    margin: { kind: 'figure', marginUsd: 87.7655, noRevenue: false },
+    // The test account in October: plan 7900 + boost 1000 → fees 259 + 59 = 318.
+    marginAfterFees: { kind: 'figure', afterFeesUsd: 84.5855, feesUsd: 3.18, currency: 'USD', noRevenue: false },
+  };
+  const renderWith = (accountMargin: FinanceAccountMargin | null) => {
+    cleanup();
+    render(
+      <AccountSummary
+        accountId={A}
+        window={WINDOW}
+        aiCost={aiCost()}
+        revenue={revenue(boosts([boostLine()]))}
+        credits={credits(creditRow())}
+        accounts={accounts('tier:x')}
+        accountMargin={accountMargin}
+      />
+    );
+    return screen.getByTestId('account-summary');
+  };
+
+  it('sits directly under "AI margin (USD)", labelled exactly, with the fee line "Stripe fees, estimate: USD 3.18"', () => {
+    const summary = renderWith(OWNER_MARGIN);
+    const labels = [...summary.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels[labels.indexOf(ACCOUNT_MARGIN) + 1]).toBe('Margin after Stripe fees (estimate, USD)');
+    expect(ACCOUNT_AFTER_FEES).toBe('Margin after Stripe fees (estimate, USD)');
+    expect(within(summary).getByTestId('account-summary-after-fees-value')).toHaveTextContent(/^USD 84\.5855$/);
+    expect(within(summary).getByTestId('account-summary-after-fees-value-fees')).toHaveTextContent(/^Stripe fees, estimate: USD 3\.18$/);
+  });
+
+  it('AC-250: the summary prints the same text as the tab row cell for the same value', () => {
+    const summary = renderWith(OWNER_MARGIN);
+    const summaryText = within(summary).getByTestId('account-summary-after-fees').textContent;
+    cleanup();
+    render(<MarginAfterFeesValue value={OWNER_MARGIN.marginAfterFees} testId="row-cell" />);
+    expect(screen.getByTestId('row-cell').parentElement?.textContent).toBe(summaryText);
+  });
+
+  it.each([
+    [{ kind: 'not_available' } as const, ECON_MARGIN_NOT_AVAILABLE],
+    [{ kind: 'other_currency' } as const, ECON_MARGIN_OTHER_CURRENCY],
+    [{ kind: 'unknown' } as const, ACCOUNT_UNKNOWN],
+  ])('%o → its words, no fee line, never a 0', (value, text) => {
+    const summary = renderWith({ ...OWNER_MARGIN, marginAfterFees: value });
+    const line = within(summary).getByTestId('account-summary-after-fees');
+    expect(line).toHaveTextContent(text);
+    expect(within(summary).queryByTestId('account-summary-after-fees-value-fees')).toBeNull();
+    expect(line.textContent).not.toMatch(/0\.00/);
+  });
+
+  it('no accountMargin in the payload → "Unknown"', () => {
+    const summary = renderWith(null);
+    expect(within(summary).getByTestId('account-summary-after-fees')).toHaveTextContent(ACCOUNT_UNKNOWN);
   });
 });

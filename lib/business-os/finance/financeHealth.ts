@@ -149,9 +149,12 @@ import {
   colourFarOverAllowanceTile,
   colourFinanceTile,
   farOverAllowancePercentOf,
+  FEE_ESTIMATE_CURRENCY,
   FINANCE_METRIC_PARAMS,
   FINANCE_RULES,
   K4_INFORMATION_HEADLINE,
+  STRIPE_FEE_ESTIMATE,
+  stripeFeeEntryOf,
   type FinanceMeasurement,
   type FinanceRuleSet,
 } from './financeRules';
@@ -318,6 +321,8 @@ export interface FinanceHealthDeps {
   };
   /** Injected in tests (SA-W10); production uses `FINANCE_METRIC_PARAMS`. */
   metricParams?: unknown;
+  /** Slice 6b (FE-4, SA-Q81): injected in tests; production uses `STRIPE_FEE_ESTIMATE`. */
+  feeEstimate?: unknown;
 }
 
 export interface FinanceHealthInput {
@@ -966,12 +971,19 @@ export async function buildFinanceHealth(
 
   // ── 6a. The Accounts tab, or the picked business's margin (slice 6a, §11E) ──
   // No new read: R-a (through `units`), R-k, R-m, the walk and Section 4's rows.
+  // Slice 6b: the fee estimate config is data (FE-4); an invalid one is logged once,
+  // naming no value (SA-W-6b-9), and every margin after fees reads Unknown (E-73).
+  const feeEstimate = deps.feeEstimate ?? STRIPE_FEE_ESTIMATE;
   const economicsReads = {
     coverage: clamp.coverage,
     aiCost: aiCostUnits && windowResult.data ? { units: aiCostUnits, reachedCeiling: windowResult.data.reachedCeiling } : null,
     boosts: boostPurchases.data,
     plans: planPayments.data,
+    feeEstimate,
   };
+  if ((accountId !== null || input.accountsTab !== null) && stripeFeeEntryOf(feeEstimate, FEE_ESTIMATE_CURRENCY) === null) {
+    logger.error({ read: 'fee_estimate' }, 'Finance Stripe fee estimate config is invalid');
+  }
   let accountEconomics: FinanceAccountEconomicsSection | null = null;
   let accountEconomicsCounts: FinanceHealthCounts['accountEconomics'] = { built: false };
   let accountMargin: FinanceAccountMargin | null = null;

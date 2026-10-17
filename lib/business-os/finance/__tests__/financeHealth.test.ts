@@ -1978,12 +1978,37 @@ describe('slice 6a: account economics through the builder', () => {
     if (tab.result.kind !== 'ok' || picked.result.kind !== 'ok') throw new Error('expected ok');
     // The picked ledger read holds only A's charge (cost 3), as the tab row's cost.
     const row = tab.result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
-    expect(picked.result.payload.accountMargin).toEqual({ paid: row?.paid, aiCost: row?.aiCost, margin: row?.margin });
+    expect(picked.result.payload.accountMargin).toEqual({ paid: row?.paid, aiCost: row?.aiCost, margin: row?.margin, marginAfterFees: row?.marginAfterFees });
     expect(picked.result.payload).not.toHaveProperty('accountEconomics');
     expect(picked.result.counts.accountEconomics).toEqual({ built: false });
     expect(picked.deps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
     expect(picked.deps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
     expect(picked.deps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+  });
+
+  // Slice 6b (FE-4, SA-Q81, SA-W-6b-9, E-73): the fee config is injected like metricParams.
+  it('6b: production uses the default fee config; an injected one changes the fees; an invalid one is Unknown with one error line naming no value', async () => {
+    const plain = await runTab(ownerDeps());
+    if (plain.result.kind !== 'ok') throw new Error('expected ok');
+    expect(plain.result.payload.accountEconomics?.feeEstimate).toEqual({ currency: 'USD', percent: 2.9, fixed: 0.3 });
+    expect(plain.log.error).not.toHaveBeenCalledWith(expect.anything(), 'Finance Stripe fee estimate config is invalid');
+
+    const injected = ownerDeps();
+    Object.assign(injected, { feeEstimate: { USD: { percentBps: 350, fixedMinor: 25 } } });
+    const other = await runTab(injected);
+    if (other.result.kind !== 'ok') throw new Error('expected ok');
+    expect(other.result.payload.accountEconomics?.feeEstimate).toEqual({ currency: 'USD', percent: 3.5, fixed: 0.25 });
+
+    const broken = ownerDeps();
+    Object.assign(broken, { feeEstimate: { USD: { percentBps: 1001, fixedMinor: 30 } } });
+    const bad = await runTab(broken);
+    if (bad.result.kind !== 'ok') throw new Error('expected ok');
+    expect(bad.result.payload.accountEconomics?.feeEstimate).toBeNull();
+    const row = bad.result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+    expect(row?.marginAfterFees).toEqual({ kind: 'unknown' });
+    expect(bad.result.payload.accountEconomics?.platform.marginAfterFees).toEqual({ kind: 'unknown' });
+    expect(bad.log.error).toHaveBeenCalledWith({ read: 'fee_estimate' }, 'Finance Stripe fee estimate config is invalid');
+    expect(bad.result.payload.accountEconomics?.status).toBe(plain.result.payload.accountEconomics?.status);
   });
 
   it('BD-15: a paying Founding Partner in its tier group carries the chip (the same set as Section 1’s note)', async () => {

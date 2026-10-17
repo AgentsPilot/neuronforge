@@ -413,3 +413,32 @@ describe('Finance F-5 source guards (the KPI tiles)', () => {
     expect(code.match(/<KpiTile\b/g)).toHaveLength(5);
   });
 });
+
+// ── Slice 6b (§11K.7, AC-254, FE-16): the margin after fees is formatted, never computed ──
+describe('slice 6b source guards (the margin after Stripe fees)', () => {
+  const MONEY_6B = '(?:afterFeesUsd|feesUsd|marginUsd|percent|fixed)';
+  // A 6b field followed by an operator, or another money field minus or plus a 6b field.
+  const MONEY_6B_ARITHMETIC = new RegExp(
+    `\\b(?:afterFeesUsd|feesUsd)\\b\\s*[-+*/]|\\b${MONEY_6B}\\b\\s*[-+]\\s*[\\w.?!()]*\\b(?:afterFeesUsd|feesUsd)\\b`
+  );
+  it('the 6b money-arithmetic rule bites (planted)', () => {
+    expect(MONEY_6B_ARITHMETIC.test('const fees = margin.marginUsd - after.afterFeesUsd;')).toBe(true);
+    expect(MONEY_6B_ARITHMETIC.test('const m = value.afterFeesUsd + 1;')).toBe(true);
+    expect(MONEY_6B_ARITHMETIC.test('const c = value.feesUsd * 100;')).toBe(true);
+    expect(MONEY_6B_ARITHMETIC.test('formatMoney(value.feesUsd, value.currency)')).toBe(false);
+    expect(MONEY_6B_ARITHMETIC.test('formatUsd(value.afterFeesUsd)')).toBe(false);
+  });
+
+  it.each(files.map(rel))('%s: computes no fee, margin after fees or difference', (file) => {
+    expect(MONEY_6B_ARITHMETIC.test(codeOf(path.join(ROOT, file)))).toBe(false);
+  });
+
+  it('the fee note takes its numbers from the payload (feeEstimate), never from the price config', () => {
+    const tab = read(path.join(DIR, 'components', 'AccountsTab.tsx'));
+    expect(tab).toMatch(/econFeeNote\(formatCount\(feeEstimate\.percent\), formatMoney\(feeEstimate\.fixed, feeEstimate\.currency\)\)/);
+    // Code only (a comment may name the rules file): no page file imports the price or its module.
+    for (const file of files) {
+      expect({ file: rel(file), hit: /STRIPE_FEE_ESTIMATE|from ['"][^'"]*financeRules['"]/.test(codeOf(file)) }).toEqual({ file: rel(file), hit: false });
+    }
+  });
+});

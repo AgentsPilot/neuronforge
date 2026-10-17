@@ -22,6 +22,10 @@
  * Clicks (F-5, BD-31): K-1 opens AI cost & usage (cross-page); K-2 to K-5 jump
  * to their own section. The view decides how (`targetFor`): a plain anchor
  * where the sections are mounted, the same-page filter mode on the Accounts tab.
+ *
+ * Slice 6b (BD-35, §11K.6): ORDER ONLY. Revenue first (K-5), then cost (K-1),
+ * then the accounts: who they are (K-3), then credits, use before gifts (K-2,
+ * K-4). Each tile block moved whole; no prop, value, status or test id changed.
  */
 
 import { KpiStrip, KpiTile, type KpiTileFilter, type KpiTileStatus } from '@/app/admin/components/layout/KpiStrip';
@@ -81,6 +85,16 @@ export function FinanceKpiStrip({
   return (
     <div data-testid="kpi-strip">
       <KpiStrip>
+        {/* K-5: the boost net for the window, from `money` only (SA-W47); no value when there is no data yet. */}
+        <KpiTile
+          testId={`tile-${k5.id}`}
+          label={TILE_LABELS.k5}
+          value={k5Value(k5.money)}
+          sub={k5Caption(windowLabel)}
+          status={tileStatus(k5.status)}
+          detail={k5.headline}
+          {...targetFor('revenue')}
+        />
         <KpiTile
           testId={`tile-${k1.id}`}
           label={TILE_LABELS.k1}
@@ -91,6 +105,14 @@ export function FinanceKpiStrip({
           link={aiCostHref}
         />
         <KpiTile
+          testId={`tile-${k3.id}`}
+          label={TILE_LABELS.k3}
+          value={k3.value ? atLeast(formatCount(k3.value.value), k3.value.exact) : null}
+          status={tileStatus(k3.status)}
+          detail={k3.headline}
+          {...targetFor('accounts')}
+        />
+        <KpiTile
           testId={`tile-${k2.id}`}
           label={TILE_LABELS.k2}
           value={k2.value ? atLeast(formatCount(k2.value.value), k2.value.exact) : null}
@@ -98,14 +120,6 @@ export function FinanceKpiStrip({
           status={tileStatus(k2.status)}
           detail={k2.headline}
           {...targetFor('credits')}
-        />
-        <KpiTile
-          testId={`tile-${k3.id}`}
-          label={TILE_LABELS.k3}
-          value={k3.value ? atLeast(formatCount(k3.value.value), k3.value.exact) : null}
-          status={tileStatus(k3.status)}
-          detail={k3.headline}
-          {...targetFor('accounts')}
         />
         {/* K-4 is in credits, never money: no currency (§8.4). */}
         <KpiTile
@@ -116,16 +130,6 @@ export function FinanceKpiStrip({
           status={tileStatus(k4.status)}
           detail={k4.headline}
           {...targetFor('credits')}
-        />
-        {/* K-5: the boost net for the window, from `money` only (SA-W47); no value when there is no data yet. */}
-        <KpiTile
-          testId={`tile-${k5.id}`}
-          label={TILE_LABELS.k5}
-          value={k5Value(k5.money)}
-          sub={k5Caption(windowLabel)}
-          status={tileStatus(k5.status)}
-          detail={k5.headline}
-          {...targetFor('revenue')}
         />
       </KpiStrip>
     </div>

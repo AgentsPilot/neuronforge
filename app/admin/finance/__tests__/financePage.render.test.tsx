@@ -2185,3 +2185,50 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
     Element.prototype.scrollIntoView = original;
   });
 });
+
+// ── Slice 6b (BD-35, §11K.6, AC-253, SA-Q89): the tile ORDER ─────────────────
+// Order only: Pin B owns every value and status and is not edited. (A tab with a
+// business picked is refused by the route, SA-W84, so it is not a view.)
+import { REVENUE_NET as REVENUE_NET_6B, REVENUE_PLANS_RECEIVED as REVENUE_PLANS_RECEIVED_6B } from '../financeCopy';
+describe('slice 6b: the KPI tiles read K-5, K-1, K-3, K-2, K-4 (BD-35)', () => {
+  const ORDER = [
+    'tile-k5_our_revenue',
+    'tile-k1_ai_cost',
+    'tile-k3_founding_no_end_date',
+    'tile-k2_far_over_allowance',
+    'tile-k4_gifted_outstanding',
+  ];
+  const follows = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it.each([
+    ['Overview, all businesses', ''],
+    ['Overview, a business picked', `account=${A}`],
+    ['the Accounts tab', 'tab=accounts'],
+  ])('AC-253 on %s: revenue, then cost, then the accounts, in DOM order, above the filter bar', async (_view, search) => {
+    mockSearch = search;
+    serve({ success: true, data: payload(search.startsWith('account=') ? { accountId: A } : {}) });
+    render(<FinanceView />);
+    const strip = await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    const ids = [...strip.querySelectorAll('[data-testid^="tile-k"][data-status]')].map((tile) => tile.getAttribute('data-testid'));
+    expect(ids).toEqual(ORDER);
+    expect(follows(strip, screen.getByRole('button', { name: 'Refresh the finance page' }))).toBe(true);
+  });
+
+  it('AC-253: five placeholders while the first read runs (unchanged by the order)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = jest.fn(() => new Promise(() => undefined));
+    render(<FinanceView />);
+    expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5);
+  });
+
+  it('AC-251: Our revenue still says "Stripe fees not deducted"; no fee estimate on Overview', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    // The Our revenue strings that carry it are unchanged; the cannot-show item stays true.
+    expect(REVENUE_PLANS_RECEIVED_6B).toMatch(/Stripe fees not deducted/);
+    expect(REVENUE_NET_6B).toMatch(/Stripe fees not deducted/);
+    expect(screen.getByTestId('section-revenue').textContent).toContain('Real Stripe fees (none are recorded for our payments yet)');
+    expect(document.body.textContent).not.toMatch(/Stripe fees, estimate/);
+  });
+});
