@@ -1,4 +1,4 @@
--- Rollback of supabase/migrations/20261073_operator_test_account_cleanup_boost_reversal_events.sql. GENERATED, never edit by hand.
+-- Rollback of supabase/migrations/20261075_operator_test_account_cleanup_data_exports.sql. GENERATED, never edit by hand.
 -- Restores the function exactly as supabase/migrations/20261047_operator_test_account_cleanup_audit_actor.sql created it. Keeps the schema, the secret table and the stored hash
 -- Then redeploy an app build that pins the version stamp of 20261047_operator_test_account_cleanup_audit_actor, or the Danger Zone check and delete refuse
 -- To remove the whole feature instead, also run supabase/SQL Scripts/20261041_operator_test_account_cleanup_rollback.sql afterwards

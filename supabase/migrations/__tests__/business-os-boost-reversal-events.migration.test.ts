@@ -21,9 +21,9 @@ import { join } from 'path';
 const ROOT = process.cwd();
 const read = (...parts: string[]) => readFileSync(join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
 
-const migration = read('supabase', 'migrations', '20261072_business_os_boost_reversal_events.sql');
+const migration = read('supabase', 'migrations', '20261076_business_os_boost_reversal_events.sql');
 const original = read('supabase', 'migrations', '20261031_business_os_boost_crediting.sql');
-const rollback = read('supabase', 'SQL Scripts', '20261072_business_os_boost_reversal_events_rollback.sql');
+const rollback = read('supabase', 'SQL Scripts', '20261076_business_os_boost_reversal_events_rollback.sql');
 const check23 = read('scripts', 'precheck-bos-boost-reversal-events.sql');
 const check24 = read('scripts', 'check-bos-boost-reversal-events-migration.sql');
 const selftest = read('scripts', 'test-bos-boost-reversal-events.sql');
@@ -66,7 +66,7 @@ const inserts = [...newFn.matchAll(INSERT_RE)].map((m) => m[0]);
 /** Top-level single-quoted literals (no escaped quotes are used in these files). */
 const literalsOf = (sql: string) => [...sql.matchAll(/'([^']*)'/g)].map((m) => m[1]);
 
-describe('20261072: lock, then the two refusals, then the table (E-65, RV-9, SA-W107)', () => {
+describe('20261076: lock, then the two refusals, then the table (E-65, RV-9, SA-W107)', () => {
   it('is one transaction that times out instead of queueing', () => {
     expect(migration.startsWith('BEGIN;\n\nSET LOCAL lock_timeout = \'5s\';\n')).toBe(true);
     expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
@@ -98,7 +98,7 @@ describe('20261072: lock, then the two refusals, then the table (E-65, RV-9, SA-
   });
 });
 
-describe('20261072: the table (AC-204)', () => {
+describe('20261076: the table (AC-204)', () => {
   const create = migration.slice(migration.indexOf(`CREATE TABLE ${TABLE}`), migration.indexOf(');', migration.indexOf(`CREATE TABLE ${TABLE}`)) + 2);
 
   it('has the eleven columns, their types, NOT NULLs and defaults, and no user_id', () => {
@@ -142,7 +142,7 @@ describe('20261072: the table (AC-204)', () => {
   });
 });
 
-describe('20261072: RLS and grants (AC-205, §11I.5)', () => {
+describe('20261076: RLS and grants (AC-205, §11I.5)', () => {
   it('turns RLS on and creates no policy', () => {
     expect(migration).toContain(`ALTER TABLE ${TABLE} ENABLE ROW LEVEL SECURITY;`);
     expect(migration).not.toMatch(/CREATE POLICY/i);
@@ -164,7 +164,7 @@ describe('20261072: RLS and grants (AC-205, §11I.5)', () => {
   });
 });
 
-describe('20261072: the function (AC-206, RV-2, SA-Q67, SA-W109)', () => {
+describe('20261076: the function (AC-206, RV-2, SA-Q67, SA-W109)', () => {
   it('keeps the signature, argument names, return type, INVOKER and the empty search_path', () => {
     expect(newFn.startsWith('CREATE OR REPLACE FUNCTION public.business_os_transition_boost_purchase(\n  p_purchase_id uuid,\n  p_to_status text,\n  p_payment_intent_id text,\n  p_amount_refunded_minor integer,\n  p_dispute_id text,\n  p_flag_reason text\n)\nRETURNS TABLE (out_status text, out_user_id uuid, out_from_status text)\nLANGUAGE plpgsql\nVOLATILE\nSECURITY INVOKER\nSET search_path = \'\'\n')).toBe(true);
   });
@@ -299,13 +299,14 @@ describe('checks 23 and 24 (§6, SA-W113 / E-70, AC-216)', () => {
     expect(sql).not.toMatch(/^\s*set\b/im);
   });
 
-  it('check 23 pins the 20261031 body, BYPASSRLS, the 20261047 cleanup stamp and no refund or dispute', () => {
+  it('check 23 pins the 20261031 body, BYPASSRLS, DE-8a live (its table and the 20261075 cleanup stamp) and no refund or dispute', () => {
     expect(check23).toContain(`md5(replace(p.prosrc, chr(13), '')) = '${OLD_MD5}'`);
-    expect(check23).toContain("position('789e4758d674b561' in p.prosrc) > 0");
+    expect(check23).toContain("position('a824848e0a538477' in p.prosrc) > 0");
+    expect(check23).toContain("to_regclass('public.business_os_data_exports') is not null");
     expect(check23).toContain('r.rolbypassrls');
     expect(check23).toContain("'no boost purchase with a refund'");
     expect(check23).toContain("'no boost purchase with a dispute'");
-    expect(check23.match(/^select '/gm)).toHaveLength(8);
+    expect(check23.match(/^select '/gm)).toHaveLength(9);
   });
 
   it('check 24 has its 23 rows, including the column-level and nine-column grant rows and the E-65 row', () => {
@@ -318,7 +319,7 @@ describe('checks 23 and 24 (§6, SA-W113 / E-70, AC-216)', () => {
       'service_role cannot set id',
       'service_role bypasses row level security',
       'function names the events table six times',
-      'cleanup function is the 20261073 version',
+      'cleanup function is the 20261077 version',
       'no refund or dispute recorded without an event',
     ]) {
       expect(check24).toContain(`select '${item}'`);

@@ -337,6 +337,24 @@ export type {
 export { UserPreferencesRepository, userPreferencesRepository } from './UserPreferencesRepository';
 // Lineage (Slice 1b). Written only by the finalise function; read by the admin list.
 export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository } from './BusinessOsAccountLineageRepository';
+// Data export jobs (DE-8a). Service-role table: per-account methods filter
+// (id, user_id); the two sweep reads are cross-account for the DE-8b cron.
+export {
+  BusinessOsDataExportJobRepository,
+  businessOsDataExportJobRepository,
+  DATA_EXPORT_JOB_COLUMNS,
+  DATA_EXPORT_JOB_LIMITS,
+} from './BusinessOsDataExportJobRepository';
+export type {
+  DataExportJob,
+  DataExportJobCounts,
+  DataExportJobRef,
+  DataExportJobState,
+  DataExportJobStatus,
+  DataExportFailureReason,
+  DataExportRequesterKind,
+  DataExportStartOutcome,
+} from './types';
 
 // Types
 export type {

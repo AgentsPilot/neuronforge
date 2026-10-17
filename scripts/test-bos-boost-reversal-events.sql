@@ -2,7 +2,7 @@
 -- It refuses on a real Supabase database (auth.refresh_tokens exists there) and unless the runner
 -- set bos.selftest_local to on in the same transaction. Run it only between BEGIN and ROLLBACK
 -- on a throwaway local database (the PGlite harness of the finance 4b.1 workplan, section 7).
--- Finance slice 4b.1 self-check (E-66) for migration 20261072: AC-207 to AC-213, cases S-01 to S-20.
+-- Finance slice 4b.1 self-check (E-66) for migration 20261076: AC-207 to AC-213, cases S-01 to S-20.
 -- Every failed expectation raises SELFTEST FAIL. A full pass ends with NOTICE SELFTEST PASS and
 -- leaves the per-case report in the setting bos.selftest_report for the runner to read.
 DO $selftest$
@@ -33,7 +33,7 @@ BEGIN
     RAISE EXCEPTION 'SELFTEST REFUSED  the transaction is read only';
   END IF;
   IF to_regclass('public.business_os_boost_reversal_events') IS NULL THEN
-    RAISE EXCEPTION 'SELFTEST REFUSED  apply migration 20261072 first';
+    RAISE EXCEPTION 'SELFTEST REFUSED  apply migration 20261076 first';
   END IF;
 
   SELECT plan_row.user_id INTO v_owner FROM public.business_os_account_plans AS plan_row ORDER BY plan_row.user_id LIMIT 1;

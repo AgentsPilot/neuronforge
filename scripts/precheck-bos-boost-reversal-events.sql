@@ -1,7 +1,8 @@
--- Finance check 23: run BEFORE applying migration 20261072, read only.
+-- Finance check 23: run BEFORE applying migrations 20261076 and 20261077, read only.
 -- Every row must show ok = true. If one does not, stop and tell the session.
 -- The md5 is the body of the transition function as migration 20261031 wrote it.
--- The cleanup row shows the test-account cleanup function is the 20261047 version.
+-- The cleanup rows show data export DE-8a is live: its table exists and the test-account cleanup
+-- function is the 20261075 version, which 20261077 replaces and its rollback restores.
 select 'reversal events table absent' as item,
   to_regclass('public.business_os_boost_reversal_events') is null as ok,
   null::bigint as found
@@ -28,8 +29,12 @@ select 'service_role bypasses row level security',
 from pg_catalog.pg_roles r
 where r.rolname = 'service_role'
 union all
-select 'cleanup function is the 20261047 version',
-  coalesce(bool_and(position('789e4758d674b561' in p.prosrc) > 0), false),
+select 'data exports table present',
+  to_regclass('public.business_os_data_exports') is not null,
+  null::bigint
+union all
+select 'cleanup function is the 20261075 version',
+  coalesce(bool_and(position('a824848e0a538477' in p.prosrc) > 0), false),
   count(*)
 from pg_catalog.pg_proc p
 where p.oid = to_regprocedure('public.operator_test_account_cleanup(text, text, text, text, uuid, text)')

@@ -5,15 +5,15 @@
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md), **§11I** (4b.1 parts: §11I.1 to §11I.6, §11I.8, §11I.9 AC-204 to AC-216, §13 checks 23 and 24) and "SA Requirement Review — 4b (§11I) — 2026-10-17" (SA-Q65 to SA-Q74, E-65 to E-69). Scoping: [BUSINESS_OS_FINANCE_HEALTH_REFUND_TIMING_SCOPING.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REFUND_TIMING_SCOPING.md) (option ii).
 **Decisions in force:** BD-17 (refunds and lost disputes count in the month we recorded them; finished months never change), BD-14, BD-33 (full cycle, stop for a production migration), BQ-13 open (no take-back: nothing in 4b.1 writes a credit lot or a lot draw).
-**SA rulings implemented:** SA-Q65 (no `occurred_at`), SA-Q66 (CASCADE + regenerated cleanup `20261073` in this PR), SA-Q67 (`ON CONFLICT DO NOTHING`), SA-Q69 (INVOKER), SA-Q70 + E-67 (rollback refuses once rows exist; order 73 then 72), SA-Q71 (write-lockdown scan), E-65 (lock before the assertion; check 24 row), E-66 (local-only self-checking SQL). E-68 (Pin B) and E-69 (two reads, 100-id chunks) belong to 4b.2 and are noted only.
+**SA rulings implemented:** SA-Q65 (no `occurred_at`), SA-Q66 (CASCADE + regenerated cleanup `20261077` in this PR), SA-Q67 (`ON CONFLICT DO NOTHING`), SA-Q69 (INVOKER), SA-Q70 + E-67 (rollback refuses once rows exist; order 77 then 76), SA-Q71 (write-lockdown scan), E-65 (lock before the assertion; check 24 row), E-66 (local-only self-checking SQL). E-68 (Pin B) and E-69 (two reads, 100-id chunks) belong to 4b.2 and are noted only.
 **Skills applied:** `supabase-postgres-best-practices` (FK index, constraints, least privilege, short lock), `tenant-isolation-guard` (§3.8), `business-os-schema-check` (read-only live facts, §1).
 **Date:** 2026-10-17
 **Branch:** `feature/bos-finance-health-4b` (cut by RM from `main` `f0b5e9d4`; confirmed with `git branch --show-current` in worktree `neuronforge-finance-health`). `node_modules` is a junction to the main checkout: never `git worktree remove`, never `git stash`, never `npm install` in the worktree, never commit (RM commits).
-**Status:** Code Complete 2026-10-17 (SA workplan review: approved with conditions B1-R1 to B1-R3, all applied). Awaiting SA code review. Nothing applied to production, nothing committed.
+**Status:** Code Complete 2026-10-17 (SA workplan review: approved with conditions B1-R1 to B1-R3, all applied). SA code review and QA passed on the 20261072/20261073 numbering. **2026-10-17: rebased onto DE-8a (PR #451): renumbered to 20261076/20261077, cleanup regenerated (stamp b78b4579fc6631f8); merge staged, not committed; awaiting SA re-review of the merge diff.** See "Implementation Notes — rebase onto DE-8a". Nothing applied to production.
 
 ## Overview
 
-4b.1 is the writer half of BD-17. One hand-applied migration, `20261072`, creates the append-only table `business_os_boost_reversal_events` and replaces `business_os_transition_boost_purchase` with the same signature and the `20261031` body plus **six `INSERT … ON CONFLICT DO NOTHING` statements**, one per refund step or dispute stage that the function records. A second generated migration, `20261073`, re-issues the test-account cleanup so its G-18 guard knows the new link. There is no UI, no finance read, no webhook, handler, reconcile-pass or repository change, and no TypeScript runtime change apart from the generated cleanup version stamp.
+4b.1 is the writer half of BD-17. One hand-applied migration, `20261076`, creates the append-only table `business_os_boost_reversal_events` and replaces `business_os_transition_boost_purchase` with the same signature and the `20261031` body plus **six `INSERT … ON CONFLICT DO NOTHING` statements**, one per refund step or dispute stage that the function records. A second generated migration, `20261077`, re-issues the test-account cleanup so its G-18 guard knows the new link. There is no UI, no finance read, no webhook, handler, reconcile-pass or repository change, and no TypeScript runtime change apart from the generated cleanup version stamp.
 
 Ten points need an SA ruling (SA-W105 to SA-W115, §9). Two are real misfits between the requirement and the code: the test-account cleanup coverage test rejects a `never` `via` descriptor that the plan does not delete (SA-W105), and adding the table to the payment write-lockdown "fixed list" would break that list's own migration pins (SA-W106).
 
@@ -23,8 +23,8 @@ Ten points need an SA ruling (SA-W105 to SA-W115, §9). Two are real misfits bet
 
 1. [Verification Log](#1-verification-log)
 2. [Analysis Summary](#2-analysis-summary)
-3. [Migration 20261072](#3-migration-20261072)
-4. [Migration 20261073 (regenerated cleanup)](#4-migration-20261073-regenerated-cleanup)
+3. [Migration 20261076](#3-migration-20261076)
+4. [Migration 20261077 (regenerated cleanup)](#4-migration-20261077-regenerated-cleanup)
 5. [Rollback scripts and order](#5-rollback-scripts-and-order)
 6. [Checks 23 and 24](#6-checks-23-and-24)
 7. [E-66 local self-checking script](#7-e-66-local-self-checking-script)
@@ -74,7 +74,7 @@ Measured 2026-10-17 on `feature/bos-finance-health-4b` = `main` `f0b5e9d4` (plus
 | Area | What 4b.1 touches |
 |---|---|
 | DB tables | **New** `business_os_boost_reversal_events`. Reads `business_os_boost_purchases` (no column, grant or policy change) |
-| DB functions | `business_os_transition_boost_purchase(uuid, text, text, integer, text, text)` replaced, same signature, return type, INVOKER, `search_path = ''`, grants. `operator_test_account_cleanup` regenerated (`20261073`) |
+| DB functions | `business_os_transition_boost_purchase(uuid, text, text, integer, text, text)` replaced, same signature, return type, INVOKER, `search_path = ''`, grants. `operator_test_account_cleanup` regenerated (`20261077`) |
 | TypeScript runtime | Only `cleanupFunctionVersion.generated.ts` (new stamp). Webhook, `boostChargeHandler.ts`, `boostReconcilePass.ts`, `BusinessOsBoostPurchaseRepository.ts`: **unchanged** (RV-8) |
 | Registries | Purge descriptor, classification baseline + note, `USER_OWNED_TABLES`, export `BILLING_TABLES`, write-lockdown caller scan, cleanup generator |
 | Scripts | Check 23, check 24, E-66 self-check, rollback |
@@ -92,9 +92,9 @@ Measured 2026-10-17 on `feature/bos-finance-health-4b` = `main` `f0b5e9d4` (plus
 
 ---
 
-## 3. Migration 20261072
+## 3. Migration 20261076
 
-**File:** `supabase/migrations/20261072_business_os_boost_reversal_events.sql`. One transaction. No header comments (the `20261030`/`20261031` paste-safe precedent: the file starts with `BEGIN;`). ASCII only. No apostrophe and no `--` inside any string. The word "into" appears only as SQL keywords (§3.7). The phrase naming the definer security mode appears nowhere.
+**File:** `supabase/migrations/20261076_business_os_boost_reversal_events.sql`. One transaction. No header comments (the `20261030`/`20261031` paste-safe precedent: the file starts with `BEGIN;`). ASCII only. No apostrophe and no `--` inside any string. The word "into" appears only as SQL keywords (§3.7). The phrase naming the definer security mode appears nowhere.
 
 ### 3.1 Lock, then the two refusals (E-65, RV-9, SA-W107)
 
@@ -459,7 +459,7 @@ COMMIT;
 
 ### 3.6 The md5 of the new body
 
-Dev computes `md5` of the LF-normalised text between the `$transition_purchase$` tags of `20261072` at build time, records it here and in check 24, and PGlite confirms `md5(replace(prosrc, chr(13), ''))` equals it after the apply. The migration test pins that check 24 carries exactly that hash. **New body md5:** `018c4447f2b52dd87e4ae3b229e5b42c` (B1-R3; confirmed by PGlite after the apply, pinned by the migration test and check 24).
+Dev computes `md5` of the LF-normalised text between the `$transition_purchase$` tags of `20261076` at build time, records it here and in check 24, and PGlite confirms `md5(replace(prosrc, chr(13), ''))` equals it after the apply. The migration test pins that check 24 carries exactly that hash. **New body md5:** `018c4447f2b52dd87e4ae3b229e5b42c` (B1-R3; confirmed by PGlite after the apply, pinned by the migration test and check 24).
 
 ### 3.7 Paste and editor rules pinned by the migration test
 
@@ -469,28 +469,28 @@ Dev computes `md5` of the LF-normalised text between the `$transition_purchase$`
 
 ---
 
-## 4. Migration 20261073 (regenerated cleanup)
+## 4. Migration 20261077 (regenerated cleanup)
 
 **Generated, never hand-edited.** `npx tsx scripts/generate-test-account-cleanup-sql.ts` after the generator edits in §8.6 writes:
 
 | File | Change |
 |---|---|
-| `supabase/migrations/20261073_operator_test_account_cleanup_boost_reversal_events.sql` | **New.** `CREATE OR REPLACE` of `public.operator_test_account_cleanup(text, text, text, text, uuid, text)` with the new plan: the only SQL difference from `20261047` is one more `inbound_review` row `('business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', NULL)`, the header lines and the version stamp |
-| `supabase/SQL Scripts/20261073_operator_test_account_cleanup_boost_reversal_events_rollback.sql` | **New.** Restores the `20261047` function byte for byte (`previousFunctionSql`) |
+| `supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql` | **New.** `CREATE OR REPLACE` of `public.operator_test_account_cleanup(text, text, text, text, uuid, text)` with the new plan: the only SQL difference from `20261075` (DE-8a, which already deletes `business_os_data_exports`) is one more `inbound_review` row `('business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', NULL)`, the header lines and the version stamp |
+| `supabase/SQL Scripts/20261077_operator_test_account_cleanup_boost_reversal_events_rollback.sql` | **New.** Restores the `20261075` function (DE-8a) byte for byte (`previousFunctionSql`) |
 | `scripts/test-account-cleanup-check.sql`, `scripts/test-account-cleanup-delete.sql` | Regenerated (same `inbound_review` row) |
 | `lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts` | New stamp |
 
-Why it is needed although the FK cascades (PF-11, SA-Q66): G-18 blocks **any** catalogue edge into an emptied table that `INBOUND_FOREIGN_KEYS` does not list, whatever its delete action and whether or not rows exist. After `20261072`, until `20261073` is applied, every Danger Zone check refuses at G-18 ("not reviewed"). Owner column `null` means parent-owned: G-18 counts 0 for it and does not block. No delete step is added; the step-B delete of `business_os_boost_purchases` (ord 91) cascades the events. `FUNCTION_REQUIRED_TABLES` is **not** extended: the new name appears only as a string literal, never as a static table reference, so the cleanup compiles and runs with or without the table.
+Why it is needed although the FK cascades (PF-11, SA-Q66): G-18 blocks **any** catalogue edge into an emptied table that `INBOUND_FOREIGN_KEYS` does not list, whatever its delete action and whether or not rows exist. After `20261076`, until `20261077` is applied, every Danger Zone check refuses at G-18 ("not reviewed"). Owner column `null` means parent-owned: G-18 counts 0 for it and does not block. No delete step is added; the step-B delete of `business_os_boost_purchases` (ord 91) cascades the events. `FUNCTION_REQUIRED_TABLES` is **not** extended: the new name appears only as a string literal, never as a static table reference, so the cleanup compiles and runs with or without the table.
 
-**Version window:** after `20261073` is applied and before the 4b.1 build is deployed, the app's pinned stamp differs from the function's, so the Danger Zone check and delete refuse (designed behaviour, `runCleanupDelete.ts:99`, `check/route.ts:104`). The user must not need the Danger Zone in that window (§10).
+**Version window:** after `20261077` is applied and before the 4b.1 build is deployed, the app's pinned stamp differs from the function's, so the Danger Zone check and delete refuse (designed behaviour, `runCleanupDelete.ts:99`, `check/route.ts:104`). The user must not need the Danger Zone in that window (§10).
 
 ---
 
 ## 5. Rollback scripts and order
 
-**Order (E-67): `20261073`'s rollback first, then `20261072`'s.** Before either, the user runs one line: `select count(*) from public.business_os_boost_reversal_events;`. **If it is not 0, roll back neither**: the `20261072` rollback refuses once events exist, and rolling back only `20261073` would leave the events table with a cleanup that blocks every account at G-18. From the first event on, defects are fixed forward by a new migration (SA-W111).
+**Order (E-67): `20261077`'s rollback first, then `20261076`'s.** Before either, the user runs one line: `select count(*) from public.business_os_boost_reversal_events;`. **If it is not 0, roll back neither**: the `20261076` rollback refuses once events exist, and rolling back only `20261077` would leave the events table with a cleanup that blocks every account at G-18. From the first event on, defects are fixed forward by a new migration (SA-W111).
 
-### 5.1 `supabase/SQL Scripts/20261072_business_os_boost_reversal_events_rollback.sql`
+### 5.1 `supabase/SQL Scripts/20261076_business_os_boost_reversal_events_rollback.sql`
 
 ```sql
 BEGIN;
@@ -532,9 +532,9 @@ COMMIT;
 
 The function is restored **before** the table is dropped, under the same purchases lock as the migration (same lock order, no deadlock). After it, `md5(replace(prosrc, chr(13), ''))` is again `b9a5fe318eb25cdc65ba0402b23d7241` (PGlite proves it; check 23's md5 row then passes again).
 
-### 5.2 `20261073`'s rollback
+### 5.2 `20261077`'s rollback
 
-Generated. Restores the `20261047` function; its header already says to redeploy a build pinning the previous stamp. After a rollback of both, RM reverts the 4b.1 PR (the version file) so the Danger Zone stamp matches again.
+Generated. Restores the `20261075` function (DE-8a); its header already says to redeploy a build pinning the previous stamp. After a rollback of both, RM reverts the 4b.1 PR (the version file) so the Danger Zone stamp matches again.
 
 ---
 
@@ -545,10 +545,11 @@ Read-only, ASCII only, no apostrophe in any comment, never the word "into", **on
 ### 6.1 Check 23 — `scripts/precheck-bos-boost-reversal-events.sql`
 
 ```sql
--- Finance check 23: run BEFORE applying migration 20261072, read only.
+-- Finance check 23: run BEFORE applying migrations 20261076 and 20261077, read only.
 -- Every row must show ok = true. If one does not, stop and tell the session.
 -- The md5 is the body of the transition function as migration 20261031 wrote it.
--- The cleanup row shows the test-account cleanup function is the 20261047 version.
+-- The cleanup rows show data export DE-8a is live: its table exists and the test-account cleanup
+-- function is the 20261075 version, which 20261077 replaces and its rollback restores.
 select 'reversal events table absent' as item,
   to_regclass('public.business_os_boost_reversal_events') is null as ok,
   null::bigint as found
@@ -575,8 +576,12 @@ select 'service_role bypasses row level security',
 from pg_catalog.pg_roles r
 where r.rolname = 'service_role'
 union all
-select 'cleanup function is the 20261047 version',
-  coalesce(bool_and(position('789e4758d674b561' in p.prosrc) > 0), false),
+select 'data exports table present',
+  to_regclass('public.business_os_data_exports') is not null,
+  null::bigint
+union all
+select 'cleanup function is the 20261075 version',
+  coalesce(bool_and(position('a824848e0a538477' in p.prosrc) > 0), false),
   count(*)
 from pg_catalog.pg_proc p
 where p.oid = to_regprocedure('public.operator_test_account_cleanup(text, text, text, text, uuid, text)')
@@ -594,15 +599,15 @@ from public.business_os_boost_purchases b
 where b.stripe_dispute_id is not null;
 ```
 
-New rows: the body md5 (SA-W107), BYPASSRLS, the cleanup version (SA-W108). Expected on prod today: 8 rows, all `ok = true`.
+New rows: the body md5 (SA-W107), BYPASSRLS, the cleanup version (SA-W108). New on the rebase onto DE-8a: the data exports table row and the cleanup row now expect the `20261075` stamp `a824848e0a538477`. Expected on prod just before the apply: 9 rows, all `ok = true`.
 
 ### 6.2 Check 24 — `scripts/check-bos-boost-reversal-events-migration.sql`
 
 ```sql
--- Finance check 24: run AFTER applying migrations 20261072 and 20261073, read only.
+-- Finance check 24: run AFTER applying migrations 20261076 and 20261077, read only.
 -- Every row must show ok = true. If one does not, stop and tell the session.
 -- The function must name the events table six times, once per insert point.
--- The two md5 and stamp values are the files of this pull request.
+-- The md5 and the cleanup stamp are those of the files in this pull request.
 with t as (
   select to_regclass('public.business_os_boost_reversal_events') as tbl,
          to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)') as fn,
@@ -652,7 +657,7 @@ select 'two unique partial indexes and four indexes besides the key',
 union all
 select 'function still security invoker', coalesce((select not p.prosecdef from pg_catalog.pg_proc p where p.oid = t.fn), false) from t
 union all
-select 'function body is the 20261072 body',
+select 'function body is the 20261076 body',
   coalesce((select md5(replace(p.prosrc, chr(13), '')) = '018c4447f2b52dd87e4ae3b229e5b42c' from pg_catalog.pg_proc p where p.oid = t.fn), false) from t
 union all
 select 'function names the events table six times',
@@ -663,8 +668,8 @@ select 'anon cannot execute the function', not coalesce(has_function_privilege('
 union all
 select 'service_role can execute the function', coalesce(has_function_privilege('service_role', t.fn, 'EXECUTE'), false) from t
 union all
-select 'cleanup function is the 20261073 version',
-  coalesce((select position('f854486b31baf784' in p.prosrc) > 0 from pg_catalog.pg_proc p where p.oid = t.cleanup_fn), false) from t
+select 'cleanup function is the 20261077 version',
+  coalesce((select position('b78b4579fc6631f8' in p.prosrc) > 0 from pg_catalog.pg_proc p where p.oid = t.cleanup_fn), false) from t
 union all
 select 'no refund or dispute recorded without an event',
   not exists (select 1 from public.business_os_boost_purchases b
@@ -673,7 +678,7 @@ select 'no refund or dispute recorded without an event',
 from t;
 ```
 
-The values are `018c4447f2b52dd87e4ae3b229e5b42c` (new body) and `f854486b31baf784` (cleanup stamp); the migration test and the cleanup test each pin that check 24 carries the value their file produces (B1-R3). The last row is E-65. Expected on prod right after the apply: 23 rows, all `ok = true`.
+The values are `018c4447f2b52dd87e4ae3b229e5b42c` (new body) and `b78b4579fc6631f8` (cleanup stamp); the migration test and the cleanup test each pin that check 24 carries the value their file produces (B1-R3). The last row is E-65. Expected on prod right after the apply: 23 rows, all `ok = true`.
 
 Strengthened versus the requirement text (SA-W113): `has_table_privilege` alone misses a column-level grant, so the anon, authenticated and UPDATE rows also use `has_any_column_privilege`; plus the nine-column count, `id` not insertable, BYPASSRLS, index shape, body md5 and cleanup stamp rows.
 
@@ -720,11 +725,11 @@ Then it seeds an account and purchases **through the real functions** as `postgr
 1. Copy the 2b harness (`…/9515a9ff…/scratchpad/pglite/harness.mjs`) to this session's scratchpad `pglite/` and point it at this worktree; reuse an existing PGlite 0.5.8 install or `npm install @electric-sql/pglite@0.5.8` **in the scratchpad only**.
 2. `setup`: roles `anon`, `authenticated`, `service_role` (NOLOGIN, `service_role` BYPASSRLS), Supabase-style default privileges, the `auth.users` and `auth.uid()` stubs, the plan-row stub, one owner account (2a §6.8 steps 1 to 5).
 3. Apply `20261017`, `20261015`, `20261030`, `20261031`, `20261032` verbatim (CRLF working-tree files). Run **check 23**: expect all ok except the cleanup row (no cleanup function in PGlite; recorded as N/A).
-4. Apply `20261072`. Run **check 24** (cleanup row N/A). Confirm the new body md5.
+4. Apply `20261076`. Run **check 24** (cleanup row N/A). Confirm the new body md5.
 5. `BEGIN; SET LOCAL bos.selftest_local = 'on';` + the script + `ROLLBACK;`. Record every NOTICE.
 6. Regression: the 2b checker (`check-bos-boost-purchases-migration.sql`) still `VERDICT PASS`; the 2b probe still `PROBE PASS` (it now also writes events, rolled back).
-7. **AC-212:** fresh database, apply up to `20261031`, record a refund through the old function, run check 23 (refund row `ok = false`), apply `20261072` → `MIGRATION REFUSED … refund or a dispute`; table absent; md5 unchanged. Same with a dispute only. Then a hand-altered `20261031` body → the md5 refusal.
-8. **AC-215:** with events present the rollback answers `ROLLBACK REFUSED`, nothing changed; on a database with no events it restores md5 `b9a5fe31…`, drops the table, and `20261072` re-applies to a full check 24.
+7. **AC-212:** fresh database, apply up to `20261031`, record a refund through the old function, run check 23 (refund row `ok = false`), apply `20261076` → `MIGRATION REFUSED … refund or a dispute`; table absent; md5 unchanged. Same with a dispute only. Then a hand-altered `20261031` body → the md5 refusal.
+8. **AC-215:** with events present the rollback answers `ROLLBACK REFUSED`, nothing changed; on a database with no events it restores md5 `b9a5fe31…`, drops the table, and `20261076` re-applies to a full check 24.
 9. **Mutations** (each must make the script FAIL): drop insert [1]; drop insert [6]; swap `- v_refunded` for nothing (amount = cumulative); grant `INSERT (recorded_at)`; remove the `kind = 'refund'` arbiter (`ON CONFLICT DO NOTHING` without target still passes, recorded as a note); grant table `UPDATE`.
 10. Delete nothing in the repo; the harness stays in the scratchpad.
 
@@ -746,7 +751,7 @@ After `:1346` (the `business_os_boost_cap_overrides` entry), inside the "Credits
 
 - `:3` `"count": 155` → `156`.
 - After `:48` (`"business_os_boost_purchases": "never",`) add `"business_os_boost_reversal_events": "never",`.
-- `reviewNotes` (after `:166`-ish, alphabetical): `"business_os_boost_reversal_events": "2026-10-17 4b.1: new table (migration 20261072). No user_id; purchase_id -> business_os_boost_purchases CASCADE, no inbound FK, no trigger. Dated money history of a boost purchase: never, excluded from export as billing."` (the "every descriptor is in the baseline" test asks for a dated note, `descriptors.invariant.test.ts:745-749`).
+- `reviewNotes` (after `:166`-ish, alphabetical): `"business_os_boost_reversal_events": "2026-10-17 4b.1: new table (migration 20261076). No user_id; purchase_id -> business_os_boost_purchases CASCADE, no inbound FK, no trigger. Dated money history of a boost purchase: never, excluded from export as billing."` (the "every descriptor is in the baseline" test asks for a dated note, `descriptors.invariant.test.ts:745-749`).
 
 ### 8.3 Invariant count — `lib/business-os/purge/__tests__/descriptors.invariant.test.ts`
 
@@ -774,9 +779,9 @@ After the `business_os_boost_cap_overrides` entry (`:222-223`), in `USER_OWNED_T
 
 | Line | Edit |
 |---|---|
-| `:116` (end of the history comment) | Add: `* 20261073: the link business_os_boost_reversal_events -> business_os_boost_purchases (finance 4b.1, ON DELETE CASCADE) reviewed as parent-owned for G-18; no delete step, the purchase delete cascades.` |
-| `:117` | `FUNCTION_MIGRATION = '20261073_operator_test_account_cleanup_boost_reversal_events'` |
-| `:119` | `PREVIOUS_FUNCTION_MIGRATION = '20261047_operator_test_account_cleanup_audit_actor'` |
+| `:116` (end of the history comment) | Add: `* 20261077: the link business_os_boost_reversal_events -> business_os_boost_purchases (finance 4b.1, ON DELETE CASCADE) reviewed as parent-owned for G-18; no delete step, the purchase delete cascades.` |
+| `:117` | `FUNCTION_MIGRATION = '20261077_operator_test_account_cleanup_boost_reversal_events'` |
+| `:119` | `PREVIOUS_FUNCTION_MIGRATION = '20261075_operator_test_account_cleanup_data_exports'` |
 | `:377` (after the `business_os_boost_purchases` inbound row) | `['business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', null],` |
 | `:546` (`PARENT_OWNED_REASONS`, alphabetical) | `business_os_boost_reversal_events: 'Refund and dispute events of the target boost purchases. No owner column: the account comes through the purchase, which step B removes, and the link cascades.',` |
 | New export after `PARENT_OWNED_REASONS` (SA-W105) | `CASCADE_CHILDREN: ReadonlyArray<{ table: string; parent: string; fk: string; reason: string }> = [{ table: 'business_os_boost_reversal_events', parent: 'business_os_boost_purchases', fk: 'purchase_id', reason: '…' }]`. TypeScript only; not rendered into SQL |
@@ -789,8 +794,8 @@ Then run the generator. `git diff --stat` must show only the five generated file
 |---|---|
 | `:190-194` coverage | `handled` also contains each `CASCADE_CHILDREN.table` **only if** its `parent` is a plan table, its descriptor is `{ kind: 'via', parent, fk }` with the same values, and `INBOUND_FOREIGN_KEYS` lists the edge with owner `null`. Add a negative control: a planted cascade child whose parent is not in the plan is reported missing |
 | `:321-328` | Unchanged (the new `null` owner has its `PARENT_OWNED_REASONS` entry) |
-| `:433` | The rollback now restores `20261047`, which names the actor: expect `` `'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,\n    ${ACTOR}, ${ACTOR},` `` in `rollbackSql`; comment "The restored 20261047 function names the actor, as applied" |
-| `:647-659` `APPLIED` | Add the `20261047` migration and rollback with their LF sha256 (computed at build), comment "Applied to prod (AD-2 convention)"; only after check 23's cleanup row confirms it (SA-W108) |
+| `:433` | The rollback now restores `20261075` (DE-8a), which names the actor: expect `` `'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,\n    ${ACTOR}, ${ACTOR},` `` in `rollbackSql`; comment "The restored 20261047 function names the actor, as applied" |
+| `:647-659` `APPLIED` | Add the `20261075` migration and rollback (DE-8a already added `20261047`) with their LF sha256 (computed at build), comment "Applied to prod (AD-2 convention)"; only after check 23's cleanup row confirms it (SA-W108) |
 | New `describe('finance 4b.1: the reversal events link (PF-11, SA-Q66)')` | (a) `INBOUND_FOREIGN_KEYS` has the edge with owner `null`; (b) each of the four generated SQL artefacts carries the `inbound_review` row; (c) the plan has **no** entry for the events table (no delete step); (d) `FUNCTION_REQUIRED_TABLES` does not name it and no generated file names `public.business_os_boost_reversal_events` (no static reference); (e) check 24 carries `cleanupFunctionVersion()` |
 
 ### 8.8 Payment write-lockdown scan — `lib/repositories/__tests__/paymentTablesWriteLockdownMigration.test.ts` (SA-Q71, SA-W106)
@@ -814,7 +819,7 @@ Precedent `business-os-boost-crediting.migration.test.ts` (text pins, `read` LF-
 7. No mention of `business_os_credit_lots` or `business_os_credit_lot_draws` in the new body (AC-213); the table name occurs exactly 6 times in the body (check 24's rule).
 8. Paste safety: `\binto\b` exactly 7 times, all keywords (§3.7); no string with `;`, `--` or `'`-escape; ASCII only; no line comment; no "SECURITY DEFINER" text.
 9. Rollback: refusal before any `CREATE OR REPLACE`/`DROP`; its function text equals the `20261031` text with `CREATE FUNCTION` → `CREATE OR REPLACE FUNCTION`; the five grants; `DROP TABLE public.business_os_boost_reversal_events` after the function; same lock order.
-10. Checks 23 and 24: one statement each, ASCII, no apostrophe in comments, no "into"; check 23 holds the `20261031` md5 and the `20261047` stamp; check 24 holds `md5(functionBody(20261072))` and the E-65 row.
+10. Checks 23 and 24: one statement each, ASCII, no apostrophe in comments, no "into"; check 23 holds the `20261031` md5 and the `20261075` stamp and the DE-8a table; check 24 holds `md5(functionBody(20261076))` and the E-65 row.
 11. The E-66 script: starts with its three local-only guards before the first role switch; contains each case id S-01 to S-20; no "into" outside keywords.
 12. A planted negative control for (6): a body with a seventh insert, or one changed original line, fails the comparison.
 
@@ -846,17 +851,17 @@ Precedent `business-os-boost-crediting.migration.test.ts` (text pins, `read` LF-
 
 Only after SA code approval and QA pass, with the PGlite results recorded in §12. Production, Supabase SQL editor. Each step in a **new editor tab**.
 
-1. **Pre-check.** Paste `scripts/precheck-bos-boost-reversal-events.sql` (check 23) and run it. Expect **8 rows, every `ok = true`**. If any row is false, stop and send the rows to the session.
-2. **Apply `20261072`.** Paste the whole of `supabase/migrations/20261072_business_os_boost_reversal_events.sql` and run it once. Expect "Success. No rows returned".
+1. **Pre-check.** Paste `scripts/precheck-bos-boost-reversal-events.sql` (check 23) and run it. Expect **9 rows, every `ok = true`**; two of them prove data export DE-8a (`20261074` + `20261075`) is live, which 4b.1 must follow. If any row is false, stop and send the rows to the session.
+2. **Apply `20261076`.** Paste the whole of `supabase/migrations/20261076_business_os_boost_reversal_events.sql` and run it once. Expect "Success. No rows returned".
    - `MIGRATION REFUSED …`: nothing was applied. Stop and tell the session.
    - `canceling statement due to lock timeout` (55P03): nothing was applied. Run it once more; if it fails again, stop.
-3. **Apply `20261073`.** Paste the whole of `supabase/migrations/20261073_operator_test_account_cleanup_boost_reversal_events.sql` and run it. Expect success.
+3. **Apply `20261077`.** Paste the whole of `supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql` and run it. Expect success.
 4. **Post-check.** Paste `scripts/check-bos-boost-reversal-events-migration.sql` (check 24) and run it. Expect **23 rows, every `ok = true`**. If any row is false, stop and send the rows; do not roll back on your own.
 5. **Tell the session "applied"**, with the UTC time and the check 24 result. RM then merges 4b.1 by hand (not auto-merge).
 6. **Do not use the Danger Zone test-account cleanup from step 2 until the Vercel deploy of 4b.1** (B1-R1). From step 2 to step 3 it refuses at G-18 (the new link is not yet reviewed); from step 3 to the deploy it refuses on the version stamp. Both refusals are by design and change nothing.
 7. Nothing else for 4b.1. After the first real refund or dispute (test mode counts), run check 25 (4b.2's QA).
 
-**Rollback (only if the session asks):** run `select count(*) from public.business_os_boost_reversal_events;`. If it is not 0, stop: no rollback, the fix goes forward. If 0: run `supabase/SQL Scripts/20261073_…_rollback.sql`, then `supabase/SQL Scripts/20261072_…_rollback.sql`, then check 23 (all ok again), then RM reverts the 4b.1 PR.
+**Rollback (only if the session asks):** run `select count(*) from public.business_os_boost_reversal_events;`. If it is not 0, stop: no rollback, the fix goes forward. If 0: run `supabase/SQL Scripts/20261077_…_rollback.sql`, then `supabase/SQL Scripts/20261076_…_rollback.sql`, then check 23 (all ok again), then RM reverts the 4b.1 PR.
 
 ---
 
@@ -893,7 +898,7 @@ Run before SA code review; results pasted here.
 | 5 | Write-lockdown scan | `npx jest lib/repositories/__tests__/paymentTablesWriteLockdownMigration.test.ts --ci` |
 | 6 | Billing / boost | `npx jest lib/repositories/__tests__/BusinessOsBoostPurchaseRepository.test.ts app/api/stripe lib/business-os/boost lib/business-os/billing lib/payments/__tests__/planSurfaces.guard.test.ts --ci` |
 | 7 | `npm run test:bos-entitlements` | Expected unchanged plus the new migration test (it is under `supabase/migrations/__tests__`) |
-| 8 | `npm run test:authz-guard` | SECDEF surface: `20261073` compliant, `20261072` INVOKER |
+| 8 | `npm run test:authz-guard` | SECDEF surface: `20261077` compliant, `20261076` INVOKER |
 | 9 | `npm run lint:hooks`; eslint on touched `.ts` | 0 warnings |
 | 10 | Scoped `tsc` | Scratchpad config extending the repo `tsconfig.json` over every touched `.ts`; with a canary `const canary: number = 'x'` → exit 2 with only TS2322; without → exit 0; config and canary deleted. `NODE_OPTIONS=--max-old-space-size=8192`, exit code read directly (schema-check Rule 7) |
 | 11 | PGlite | §7.2 steps 1 to 9, every NOTICE and result recorded |
@@ -905,10 +910,10 @@ Run before SA code review; results pasted here.
 
 | File | Action | Reason |
 |---|---|---|
-| `supabase/migrations/20261072_business_os_boost_reversal_events.sql` | create | Table, RLS, grants, function with six inserts (§3) |
-| `supabase/SQL Scripts/20261072_business_os_boost_reversal_events_rollback.sql` | create | §5.1 |
-| `supabase/migrations/20261073_operator_test_account_cleanup_boost_reversal_events.sql` | create (generated) | §4 |
-| `supabase/SQL Scripts/20261073_operator_test_account_cleanup_boost_reversal_events_rollback.sql` | create (generated) | §5.2 |
+| `supabase/migrations/20261076_business_os_boost_reversal_events.sql` | create | Table, RLS, grants, function with six inserts (§3) |
+| `supabase/SQL Scripts/20261076_business_os_boost_reversal_events_rollback.sql` | create | §5.1 |
+| `supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql` | create (generated) | §4 |
+| `supabase/SQL Scripts/20261077_operator_test_account_cleanup_boost_reversal_events_rollback.sql` | create (generated) | §5.2 |
 | `scripts/test-account-cleanup-check.sql`, `scripts/test-account-cleanup-delete.sql` | modify (generated) | New `inbound_review` row |
 | `lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts` | modify (generated) | New stamp |
 | `scripts/generate-test-account-cleanup-sql.ts` | modify | §8.6 |
@@ -938,8 +943,8 @@ No `console.*` file is touched: the generator writes with `process.stdout.write`
 | R-3 | A refund lands in the old body during the apply (E-65 window) and has no event | Very low (1 test purchase, 0 refunds) / medium | `LOCK … EXCLUSIVE` first; check 24 E-65 row; if false, stop (a dated row cannot be invented) |
 | R-4 | Lock timeout during the apply | Low / none | Nothing applied; re-run once |
 | R-5 | PGlite (PG 18.3) differs from prod (PG 17.4) or from Supabase's real privileges | Low / medium | The SQL uses only long-stable features; check 24 on prod is the proof for grants and RLS |
-| R-6 | Cleanup unusable between `20261072` and the 4b.1 deploy | Certain / low | Designed refusals (G-18, then version stamp); user told (§10 step 6) |
-| R-7 | `20261047` not actually applied on prod | Unknown / medium | Check 23 cleanup row before anything is applied (SA-W108) |
+| R-6 | Cleanup unusable between `20261076` and the 4b.1 deploy | Certain / low | Designed refusals (G-18, then version stamp); user told (§10 step 6) |
+| R-7 | DE-8a `20261075` not live on prod at apply time | Unknown / medium | Check 23 cleanup row before anything is applied (SA-W108) |
 | R-8 | Rollback half done (73 rolled back, 72 refuses) | Low / medium | Count first; both or neither (SA-W111) |
 | R-9 | Re-opened dispute (existing behaviour) leaves `dispute_ok = false` | Rare / low | Recorded (SA-W112); check 25 shows it |
 | R-10 | Editor paste hazards ("into", apostrophes, semicolons in strings) | Low / medium | Migration test paste pins (§3.7, §8.9 item 8) |
@@ -951,7 +956,7 @@ No `console.*` file is touched: the generator writes with `process.stdout.write`
 
 | Work | Days |
 |---|---|
-| Migration `20261072`, rollback, md5 work | 0.4 |
+| Migration `20261076`, rollback, md5 work | 0.4 |
 | Checks 23 and 24 | 0.15 |
 | Migration test (incl. the byte-for-byte pin and controls) | 0.4 |
 | Generator edits, regeneration, cleanup test edits | 0.35 |
@@ -965,8 +970,8 @@ No `console.*` file is touched: the generator writes with `process.stdout.write`
 ## 16. Task List
 
 - [x] T0: SA workplan review; apply rulings on SA-W105 to SA-W115
-- [x] T1: Write `20261072` (§3), compute and record the new body md5
-- [x] T2: Write the `20261072` rollback (§5.1)
+- [x] T1: Write `20261076` (§3), compute and record the new body md5
+- [x] T2: Write the `20261076` rollback (§5.1)
 - [x] T3: Write checks 23 and 24 (§6) with the md5 and stamp values
 - [x] T4: Generator edits (§8.6), run the generator, `git diff --stat` check
 - [x] T5: Cleanup test edits (§8.7), incl. `APPLIED` pins for `20261047`
@@ -1338,6 +1343,124 @@ The self-check is never named in §10 (B1-R2). **One addition:** start step 1 on
 
 ---
 
+## Implementation Notes — rebase onto DE-8a (Dev, 2026-10-17)
+
+**Why.** PR #451 (data export DE-8a) merged first. It took `20261074` (the `business_os_data_exports` table) and `20261075`, a new cleanup function with stamp `a824848e0a538477`, chained on `20261047`. Applying our old `20261073` after `20261075` would have replaced DE-8a's cleanup function with one that never deletes `business_os_data_exports`. So 4b.1 is renumbered above `20261075`, and its cleanup is regenerated from the merged tree, chained on `20261075`. The generator header sets this rule: the branch that lands second takes the next free number, chains on the first, pins it and regenerates. The `git merge origin/main` (at `e5bc1e1f`) is resolved and staged, **not committed**.
+
+**Free numbers.** `gh pr list` shows one open PR, #447 (this one). Running `git ls-tree` over every remote branch finds no `20261076` to `20261079`. The latest on `origin/main` is `20261075`. Slice 8, in another worktree, planned `20261074` and will move; it is ignored as instructed.
+
+| Was | Now | Content |
+|---|---|---|
+| `20261072_business_os_boost_reversal_events.sql` + rollback | `20261076_…` + rollback (`git mv`) | **Byte-identical**: `git diff` of the old and new blobs is empty. The body md5 is still `018c4447f2b52dd87e4ae3b229e5b42c`. Its guard still expects the `20261031` body, `b9a5fe318eb25cdc65ba0402b23d7241` |
+| `20261073_operator_test_account_cleanup_boost_reversal_events.sql` + rollback. Stamp `f854486b31baf784`; the rollback restores `20261047` | `20261077_…` + rollback (`git mv`, then regenerated). Stamp **`b78b4579fc6631f8`**; the rollback restores `20261075` | The only SQL differences from `20261075`: the two header lines, the one reviewed `inbound_review` edge in each of the two CTE copies, and the stamp. Every DE-8a line stays: the `business_os_data_exports` step A row, the `20261074` required-table guard and the bucket handling |
+
+**Transition function on main (step 4 of the brief).** A `grep` of `supabase/migrations/*.sql` in the merged tree finds only two files that define `public.business_os_transition_boost_purchase`: `20261031` and our `20261076`. Neither `20261074` nor `20261075` touches it. So the body needs no rebase, and the md5 is unchanged.
+
+**Conflicts resolved (both sides kept).**
+
+| File | Resolution |
+|---|---|
+| `lib/business-os/businessOwnedTables.ts` | Both entries kept. Our comment now names `20261076` |
+| `classification-baseline.json` | Both `reviewNotes` kept. `count` goes from 156 to **157**. The `levels` merged cleanly with both |
+| `descriptors.invariant.test.ts` | Both history lines kept; the count is `157` |
+| `exportClassification.test.ts` | T-7: `157`. Totals: **157 = 38 include + 0 planned + 119 exclude** (main's 118 plus ours) |
+| `no-deletion-paths.guard.test.ts` | `PREVIOUS_MIGRATION_FILE` is now `20261075`. `20261047` is added as older applied history, built from the generator constant like `20261046` |
+| `generate-test-account-cleanup-sql.ts` | `FUNCTION_MIGRATION = 20261077_…` and `PREVIOUS_FUNCTION_MIGRATION = 20261075_…`. Both history paragraphs kept. `FUNCTION_REQUIRED_TABLES` keeps DE-8a's `business_os_data_exports`. The `CASCADE_CHILDREN` reason names `20261076` |
+| `cleanupFunctionVersion.generated.ts` | Regenerated: `b78b4579fc6631f8` |
+| `testAccountCleanupSql.test.ts` | Main's audit-row assertions kept, plus `PREVIOUS_FUNCTION_MIGRATION` = `20261075`. `APPLIED` gains LF sha256 pins for the `20261075` migration (`d4fd31d5…d5c3`) and its rollback (`25c8e89e…8c1b`). Check 23 gates them, as it gated `20261047` (the SA-W108 pattern). The 4b.1 block now expects four things: `20261077`, the new stamp, check 23 on `a824848e0a538477`, and `20261077` still naming `business_os_data_exports` |
+| `business-os-credit-lots.migration.test.ts` | Both history comments kept. The `20261075` migration and rollback are added to the L8 allow-list |
+
+**Not a conflict, but broken by the merge (fixed).** DE-8a's own test, `supabase/migrations/__tests__/business-os-data-exports.migration.test.ts`, compared its checker and rollback guard with the live `CLEANUP_FUNCTION_VERSION`. Those DE-8a scripts name the `20261075` function itself, so the test now pins the literal `a824848e0a538477`, with a comment.
+
+**SA, please note.** `scripts/rollback-business-os-data-exports.sql` refuses only while the `20261075` stamp is live. Once `20261077` is live, it would no longer refuse, even though `20261077` also deletes `business_os_data_exports`. Rolling back DE-8a after 4b.1 would then leave a cleanup function that fails with 42P01. I did not change DE-8a's script. Two options:
+- Widen its guard to the `20261077` stamp, or to "the cleanup body names `business_os_data_exports`".
+- Record that DE-8a's rollback must come after 4b.1's cleanup rollback.
+
+**Checks and self-test.**
+- Check 23 now has **9 rows**. There is a new `data exports table present` row, and the cleanup row expects the `20261075` stamp `a824848e0a538477` (it was the `20261047` stamp `789e4758d674b561`).
+- Check 24 expects `b78b4579fc6631f8`, and its row labels name `20261076` and `20261077`.
+- The self-test names `20261076`.
+- The migration test pins all of this, including the 9 rows of check 23.
+
+**User runbook (§10) is now:** check 23 (9 rows ok, proving DE-8a is live) → apply `20261076` → apply `20261077` → check 24 (23 rows ok). To roll back, run `20261077`'s rollback first, then `20261076`'s.
+
+**Docs.**
+- This workplan: the forward-looking sections are renumbered (header, §2 to §8, §10 to §16).
+- Kept with the old numbers, as the record of what was reviewed: §1 (Verification Log), §9 (questions to SA), the SA reviews, the first Implementation Notes and the QA Report.
+- The requirement: §0.1, §11I and the Change History are updated.
+
+### Verification (real results, 2026-10-17, merged tree)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `npx jest` over `lib/business-os/purge`, `lib/business-os/data-export`, `lib/business-os/test-account-cleanup`, `lib/business-os/finance`, `scripts/__tests__`, `supabase/migrations/__tests__`, `app/admin/finance`, `app/api/admin/test-account-cleanup` and `paymentTablesWriteLockdownMigration.test.ts`. This covers every conflicted test file | ✅ **110 suites, 5,792 tests passed.** Before the DE-8a stamp fix, 2 tests failed in `business-os-data-exports.migration.test.ts` |
+| 2 | `npm run test:bos-entitlements` | ✅ **284 suites, 8,728 tests passed** |
+| 3 | Cleanup drift test (regenerate and compare) | ✅ Part of #1: the committed SQL, the stamp file and the generator agree |
+| 4 | PGlite 0.5.8 (PostgreSQL 18.3), scratchpad harness `pglite/h4b1r.mjs` (the `h4b1.mjs` run with the new numbers) | ✅ **`FAILURES 0`**. Steps and results are listed below the table |
+| 5 | Checker against the local DB | Run as part of #4 (checks 23 and 24 on PGlite). The two cleanup rows and the DE-8a table row can be proven only on prod |
+
+PGlite run, step by step:
+- md5 before: `b9a5fe31…`.
+- Check 23: 9 rows, all ok except the two DE-8a rows. Those are N/A, because PGlite has no cleanup function and no DE-8a.
+- Apply `20261076`: md5 after is `018c4447…`.
+- Check 24: 23 rows, all ok (the cleanup row is N/A).
+- A second apply is refused by the md5 guard.
+- Self-test: **`SELFTEST PASS 20 cases S-01 … S-20  events written 16`**, with 0 rows kept.
+- 2b checker: `PASS VERDICT 22 pass 0 fail`. 2b probe: `PROBE PASS`.
+- The rollback is refused while an event exists. A clean rollback restores `b9a5fe31…` and drops the table; after a re-apply, check 24 is all ok.
+- The refund, dispute and drifted-body cases are all refused.
+- The mutations are caught as before. Only the bare `ON CONFLICT DO NOTHING` passes, which is the known note.
+
+## SA Code Review — rebase onto DE-8a (2026-10-17)
+
+**Reviewed by SA: the staged merge (MERGE_HEAD `e5bc1e1f`), read with `git diff --cached` against HEAD and against `origin/main`.**
+**Status: APPROVED WITH CONDITIONS (SA-CR-4B1-R).** Fix R-1 before RM commits the merge. R-2 and R-3 are small and go in the same commit.
+
+### Verified
+
+| Item | Result |
+|---|---|
+| `20261076` = old `20261072` | ✅ A rename with 0 changed lines (`--stat` shows `0`) |
+| `20261077` vs `20261075` | ✅ SA diffed them with CR stripped: exactly 8 changed lines. Header lines 1 and 6, the `business_os_boost_reversal_events_purchase_id_fkey` edge in both `inbound_review` blocks, and the stamp `a824848e…` → `b78b4579fc6631f8`. Nothing else |
+| `20261077`'s rollback | ✅ A generated restore: after its 4-line header it is the `20261075` function. The order is `20261077` first, then `20261076` |
+| Transition function | ✅ Only `20261031` and `20261076` define `business_os_transition_boost_purchase`; nothing in between |
+| Numbers free | ✅ `git log --remotes -- 'supabase/migrations/2026107[6-9]*'` is empty, and no open PR holds them |
+| Counts | ✅ 157 (baseline, invariant comment), 38 + 0 + 119; the reviewNotes entry names `20261076, first numbered 20261072` |
+| Check 23 | ✅ 9 rows. The DE-8a rows check that the table is present and the cleanup is the `20261075` stamp `a824848e0a538477` (it appears in that file's `RETURN`) |
+| Runbook (workplan §10, requirement §11I.6) | ✅ Check 23 → `20261076` → `20261077` → check 24, and rollback `20261077` then `20261076` |
+| Stale references | ✅ In code, `20261072` / `20261073` appear only as history ("first numbered", "first written as") in the baseline note and the generator header. `f854486b` appears only in history rows. Doc hits are dated reviews and history |
+| Paste-safety | ✅ Checks 23 and 24 and the migration / rollback are ASCII. Their only "into" words are the `INSERT INTO` / `SELECT … INTO` keywords, as in the previously approved file. No apostrophe in a comment |
+
+### Rulings
+
+| # | Ruling |
+|---|---|
+| (a) The DE-8a test's stamp became a literal | **Acceptable.** That test pins DE-8a's own artefacts (its checker and rollback name the `20261075` function), and an applied migration's stamp never changes. The literal is not unanchored: `:387` asserts the `20261075` file contains it, so it cannot drift. Keep the comment |
+| (b) DE-8a's rollback guard goes blind after `20261077` | **Fix required, in this PR** (R-1). This PR is what creates the hole. Once `20261077` is live, the guard's `position('a824848e0a538477' …)` is false, so the rollback would drop `business_os_data_exports` while the live cleanup function still deletes from it. PL/pgSQL bodies are not dependency-tracked, so the DROP succeeds, and every Danger Zone run then fails at runtime. A note is not enough |
+
+### Conditions
+
+- **R-1 (High).** In `scripts/rollback-business-os-data-exports.sql`, the second guard tests **content, not a stamp**. The rollback refuses while the live `operator_test_account_cleanup` body contains `business_os_data_exports`: `position('business_os_data_exports' IN fn.prosrc) > 0`. The message reads: "a test-account cleanup function that names business_os_data_exports is still live. Roll back the live cleanup version (20261077, then 20261075) first. Nothing was changed". This holds for every later cleanup version too. Update the matching pin at `business-os-data-exports.migration.test.ts:444`. In PGlite, prove that the rollback refuses with `20261077` live, refuses with `20261075` live, and runs after both cleanup rollbacks. Tell the DE stream (one line in its requirement's change history).
+- **R-2 (Low).** The DE-8a post-apply checker (`check-business-os-data-exports.sql`) still asserts the `20261075` stamp. It is a point-in-time check, so it is left as is, but after `20261077` that row reads false by design. Add that sentence to the DE-8a workplan's runbook or user steps, so a re-run is not misread.
+- **R-3 (Low).** Requirement §11I.6 step 3 still says "if SA-Q66 rules it is needed". It is needed: change it to "Apply `20261077`".
+
+### Tests
+
+Dev's numbers are accepted: Jest 5,792; entitlements 8,728; PGlite self-test 20/20. Re-run the DE-8a migration test and the cleanup suite after R-1.
+
+---
+
+### SA-CR-4B1-R conditions applied (Dev, 2026-10-17)
+
+| Condition | Done |
+|---|---|
+| **R-1** | `scripts/rollback-business-os-data-exports.sql`: the second guard now refuses while `position('business_os_data_exports' IN fn.prosrc) > 0` on the live `operator_test_account_cleanup`. The message is "a test-account cleanup function that names business_os_data_exports is still live. Roll back the live cleanup version (20261077, then 20261075) first. Nothing was changed". The pin in `business-os-data-exports.migration.test.ts` (MT-15) now expects the content test and the new message, and asserts that no stamp test is left |
+| R-1 PGlite proof (`pglite/hr1.mjs`, stubbed prerequisites, the real `20261075` / `20261077` files and their rollbacks) | With `20261077` live (stamp `b78b4579fc6631f8`): **refused**, table kept. After the `20261077` rollback (`20261075` live, `a824848e0a538477`): **refused**, table kept. After the `20261075` rollback (`20261047` live, `789e4758d674b561`, the body does not name the table): **ran**, table dropped. `FAILURES 0` |
+| **R-2** | DE-8a workplan §10: a dated note says the checker's cleanup-stamp row reads false by design after `20261077`, and gives the new rollback order. The DE stream is told in one line of the DE requirement's Change History |
+| **R-3** | Requirement §11I.6 step 3 now reads "Apply `20261077`" (it is needed, SA-Q66) |
+
+---
+
 ## Commit Info
 
 _RM populates. AC-216 (user apply record) goes here before the merge._
@@ -1350,3 +1473,5 @@ _RM populates. AC-216 (user apply record) goes here before the merge._
 |------|--------|---------|
 | 2026-10-17 | Created (Dev) | Workplan for slice 4b.1: migration `20261072` (table, RLS, grants, six inserts), regenerated cleanup `20261073`, rollbacks, checks 23/24, E-66 PGlite self-check, guard edits, SA-W105 to SA-W115. No code written |
 | 2026-10-17 | SA workplan review: **APPROVED WITH CONDITIONS** | SA-W105 to SA-W115 ruled (W108: check 23 is the gate for 20261047; W110: PGlite satisfies E-66, no user test-mode refund). B1-R1 to B1-R3 (Danger Zone wording from step 2, self-check header, md5 and stamp placeholders filled and pinned). E-70 applied to the requirement. No user action beyond the planned apply steps |
+| 2026-10-17 | Rebased onto DE-8a (Dev) | main took 20261074/20261075 (PR #451). Migrations renumbered 20261072 → **20261076** (unchanged bytes, md5 018c4447f2b52dd87e4ae3b229e5b42c) and 20261073 → **20261077** (regenerated over 20261075, stamp f854486b31baf784 → **b78b4579fc6631f8**, keeps data_exports). Check 23 now expects DE-8a live (9 rows, stamp a824848e0a538477). Conflicts resolved keeping both tables (157 descriptors = 38 + 0 + 119). Merge staged, uncommitted. See "Implementation Notes — rebase onto DE-8a" |
+| 2026-10-17 | SA code review of the rebase | APPROVED WITH CONDITIONS (SA-CR-4B1-R): (a) literal 20261075 stamp OK; (b) R-1 fix DE-8a rollback guard by content in this PR; R-2, R-3 |

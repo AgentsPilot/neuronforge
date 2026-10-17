@@ -72,6 +72,9 @@ const EXPORT_REASON = {
   CACHE: "cache or derived data, not the owner's data",
   MODULE_SETUP: 'PLATFORM: module setup, not data the owner entered (user 2026-10-15)',
   ORGANISATION: 'PLATFORM: agent-platform organisation record (user 2026-10-15)',
+  // Data export DE-8a (requirement §0.3.3): the jobs table and the bucket that
+  // hold the export are not exported again inside a later export.
+  EXPORT_ITSELF: "the export itself: a short-lived copy of this account's data",
 } as const;
 
 /** Not in the export. `detail` adds what is specific to this table. */
@@ -1298,6 +1301,10 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'A send log. It has the email_unsubscribes flavour but not its substance: a send history is the business\'s own activity record, not a third party\'s withdrawal of consent, so D8\'s retention reasoning does not extend to it.' },
   { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: USER_MEDIA_EXPORT,
     notes: 'CONFIRMED at T4: storage_path points at the EXISTING website-images bucket (GeneratedImageService and StockImageService both write BUCKET = website-images and record here). So NO fourth StorageDescriptor is needed and AC-4 does not extend to a new bucket.' },
+
+  // ── §3.16 Data export (DE-8a, migration 20261074) ────────────────────────
+  { table: 'business_os_data_exports', level: 'purge', area: 'data_exports', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.EXPORT_ITSELF),
+    notes: 'The "Download my data" jobs (data export requirement §0.4.1 A). user_id -> auth.users CASCADE, no FK to business_profiles (an agent-platform user may export too), requested_by has no FK (SA Q-2), no inbound FK, no trigger: LEAF. A row holds dates, counts and bytes, never content. snapshot ids: the pre-purge snapshot must not copy another copy of the business. Kept by Reset (an owner may export, then start over); Purge and account deletion remove it, and the business-data-exports bucket with it.' },
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1466,7 +1473,7 @@ const EXCLUDED: PurgeDescriptor[] = [
     'Boost purchases: one row per attempt to buy credits, with the price, the Stripe references and the link to the credit lot. A financial record: never purged and never archived — a Reset that removed it would erase what the account paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
   never('business_os_boost_cap_overrides', U, exclude(EXPORT_REASON.BILLING),
     "Admin changes to the account's boost purchase cap, ended and never deleted. An audited admin record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles."),
-  // Finance slice 4b.1 (BD-17, migration 20261072): the dated refund and dispute history of a boost purchase.
+  // Finance slice 4b.1 (BD-17, migration 20261076): the dated refund and dispute history of a boost purchase.
   never('business_os_boost_reversal_events', { kind: 'via', parent: 'business_os_boost_purchases', fk: 'purchase_id' }, exclude(EXPORT_REASON.BILLING),
     'One append-only, dated row per refund step or dispute stage of a boost purchase: the date Finance counts it in. A financial record: never purged and never archived. No user_id: the account comes through the purchase, and the row is removed only with its purchase (ON DELETE CASCADE).'),
 
@@ -1531,6 +1538,9 @@ export const STORAGE_DESCRIPTORS: readonly StorageDescriptor[] = [
   { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'planned', slice: 'DE-8b' } },
   { bucket: 'business-purge-snapshots', level: 'never', pathPrefix: '{user_id}/', purpose: 'The pre-purge snapshot itself. NEVER emptied by a purge — deleting the forensic artefact as part of the act it records would defeat its purpose. Private, no RLS policy granting authenticated anything (AC-36).',
     export: { kind: 'exclude', reason: 'an internal copy taken before a purge, not the live data' } },
+  // Data export DE-8a (migration 20261074). Objects sit at {user_id}/{job_id}/1.zip.
+  { bucket: 'business-data-exports', level: 'purge', pathPrefix: '{user_id}/', purpose: 'Phase 1 "Download my data" zips, kept 3 days. Private, no policy (AC-36 pattern). Emptied by Purge and account deletion, kept by Reset like its jobs table.',
+    export: { kind: 'exclude', reason: EXPORT_REASON.EXPORT_ITSELF } },
 ];
 
 /** The single structure the executor iterates. Nothing else may enumerate tables. */

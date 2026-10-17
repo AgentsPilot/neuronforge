@@ -482,10 +482,13 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(migrationSql).toContain("IF p_mode = 'delete' AND p_actor IS NULL THEN");
     // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
     expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
-    // Finance 4b.1: the rollback now restores the applied 20261047 function, which already names the admin.
+    // The rollback restores the previous function (PREVIOUS_FUNCTION_MIGRATION). Since
+    // 20261075 (data export DE-8a) that names the admin too, and since finance 4b.1's 20261077
+    // the previous function is 20261075 itself; the 20261046 shape (user_id NULL) is gone from it.
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261047_operator_test_account_cleanup_audit_actor');
+    expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261075_operator_test_account_cleanup_data_exports');
   });
 });
 
@@ -620,7 +623,9 @@ ${planted}`)).toMatch(FORBIDDEN_DDL);
       const file = `supabase/migrations/${required.migration}.sql`;
       expect([file, existsSync(join(REPO, ...file.split('/')))]).toEqual([file, true]);
       expect(readSql(file)).toContain(`CREATE TABLE public.${required.table} (`);
-      expect(fn).toContain(`public.${required.table}`);
+      // Static SQL names it schema-qualified; the generated step A plan names it as a
+      // dynamic format('%I') row literal. Either way the function reaches it (SA C-8, DE-8a).
+      expect([required.table, fn.includes(`public.${required.table}`) || fn.includes(`'A', '${required.table}', `)]).toEqual([required.table, true]);
       expect(required.reason.length).toBeGreaterThan(20);
     }
   });
@@ -710,10 +715,15 @@ describe('applied history: a function migration is never edited once applied', (
     // Applied to prod 2026-10-08 (scheduling_bookings before crm_contacts, G-19).
     ['supabase/migrations/20261046_operator_test_account_cleanup_notnull_order.sql', 'e401f27fbe77e7a67fadb54e74fd36fc568a904c90eec410cc37d73ab45fa3b9'],
     ['supabase/SQL Scripts/20261046_operator_test_account_cleanup_notnull_order_rollback.sql', 'd86a4874dcf2161d1849433061ce2b9c9c7841c1a216175cee3d4d20c1d7293b'],
-    // Applied to prod (AD-2 convention, stamp 789e4758d674b561). Gated by check 23 of finance 4b.1 (SA-W108):
-    // if that row is false, nothing of 4b.1 is applied and these two pins are withdrawn.
+    // Applied to prod (audit actor, AD-2 convention). Confirmed live by TL 2026-10-17:
+    // the function returns stamp 789e4758d674b561 (data export DE-8a pre-check Q9).
     ['supabase/migrations/20261047_operator_test_account_cleanup_audit_actor.sql', '8294bb810be6b4c314bde18807777c204fe4035788a0096fff6d2fcc134862f9'],
     ['supabase/SQL Scripts/20261047_operator_test_account_cleanup_audit_actor_rollback.sql', '3a808ed17d6522cf82aadbf8e9f6241243a895d69c5a798cca65e3e1d1c6c2de'],
+    // Data export DE-8a (PR #451, on main): the version 20261077 chains on and its rollback restores.
+    // Pinned as history now because 4b.1 is applied only after it: check 23 requires its stamp
+    // a824848e0a538477 live (SA-W108 pattern). If that row is false, nothing of 4b.1 is applied.
+    ['supabase/migrations/20261075_operator_test_account_cleanup_data_exports.sql', 'd4fd31d565ddefdc83d84121bf90d97c5d815356e119ae1d1e60bca50437d5c3'],
+    ['supabase/SQL Scripts/20261075_operator_test_account_cleanup_data_exports_rollback.sql', '25c8e89e662e857022267aed995665b07a86f44eb56bff87aa3b3d366f2d8c1b'],
   ];
 
   it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {
@@ -881,14 +891,16 @@ describe('finance 4b.1: the reversal events link (PF-11, SA-Q66, SA-W105, SA-W10
     for (const sql of [checkSql, deleteSql, migrationSql]) expect(sql).not.toContain('public.business_os_boost_reversal_events');
   });
 
-  it('is the 20261073 function, its rollback restores 20261047, and check 24 pins the new stamp', () => {
-    expect(MIGRATION_FILE).toBe('supabase/migrations/20261073_operator_test_account_cleanup_boost_reversal_events.sql');
-    expect(cleanupFunctionVersion()).toBe('f854486b31baf784');
-    expect(CLEANUP_FUNCTION_VERSION).toBe('f854486b31baf784');
+  it('is the 20261077 function, its rollback restores 20261075 (DE-8a), and check 24 pins the new stamp', () => {
+    expect(MIGRATION_FILE).toBe('supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql');
+    expect(cleanupFunctionVersion()).toBe('b78b4579fc6631f8');
+    expect(CLEANUP_FUNCTION_VERSION).toBe('b78b4579fc6631f8');
     const check24 = readSql('scripts/check-bos-boost-reversal-events-migration.sql');
     expect(check24).toContain(`position('${cleanupFunctionVersion()}' in p.prosrc) > 0`);
     const check23 = readSql('scripts/precheck-bos-boost-reversal-events.sql');
-    expect(check23).toContain("position('789e4758d674b561' in p.prosrc) > 0");
-    expect(readSql(PREVIOUS_MIGRATION_FILE)).toContain("'version', '789e4758d674b561'");
+    expect(check23).toContain("position('a824848e0a538477' in p.prosrc) > 0");
+    expect(readSql(PREVIOUS_MIGRATION_FILE)).toContain("'version', 'a824848e0a538477'");
+    // The DE-8a plan survives the regeneration: the export jobs are still deleted.
+    expect(migrationSql).toContain("'business_os_data_exports'");
   });
 });

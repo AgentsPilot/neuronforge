@@ -1,4 +1,4 @@
--- Finance check 24: run AFTER applying migrations 20261072 and 20261073, read only.
+-- Finance check 24: run AFTER applying migrations 20261076 and 20261077, read only.
 -- Every row must show ok = true. If one does not, stop and tell the session.
 -- The function must name the events table six times, once per insert point.
 -- The md5 and the cleanup stamp are those of the files in this pull request.
@@ -51,7 +51,7 @@ select 'two unique partial indexes and four indexes besides the key',
 union all
 select 'function still security invoker', coalesce((select not p.prosecdef from pg_catalog.pg_proc p where p.oid = t.fn), false) from t
 union all
-select 'function body is the 20261072 body',
+select 'function body is the 20261076 body',
   coalesce((select md5(replace(p.prosrc, chr(13), '')) = '018c4447f2b52dd87e4ae3b229e5b42c' from pg_catalog.pg_proc p where p.oid = t.fn), false) from t
 union all
 select 'function names the events table six times',
@@ -62,8 +62,8 @@ select 'anon cannot execute the function', not coalesce(has_function_privilege('
 union all
 select 'service_role can execute the function', coalesce(has_function_privilege('service_role', t.fn, 'EXECUTE'), false) from t
 union all
-select 'cleanup function is the 20261073 version',
-  coalesce((select position('f854486b31baf784' in p.prosrc) > 0 from pg_catalog.pg_proc p where p.oid = t.cleanup_fn), false) from t
+select 'cleanup function is the 20261077 version',
+  coalesce((select position('b78b4579fc6631f8' in p.prosrc) > 0 from pg_catalog.pg_proc p where p.oid = t.cleanup_fn), false) from t
 union all
 select 'no refund or dispute recorded without an event',
   not exists (select 1 from public.business_os_boost_purchases b

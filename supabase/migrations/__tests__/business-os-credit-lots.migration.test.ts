@@ -798,9 +798,11 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
     // (test-account cleanup first live run) and its rollback, which restores 20261042: same again.
     // 20261045 (scheduling_bookings before crm_contacts, G-19) and its rollback, which restores
     // 20261043: same again. 20261047 (the audit row names the admin as user_id) and its rollback,
-    // which restores 20261046: same again. 20261073 (finance 4b.1: the reversal events link reviewed
-    // for G-18) and its rollback, which restores 20261047: same again. Taken from the generator's
-    // constants, so this file does not spell the next version's name (R-7).
+    // which restores 20261046: same again. 20261075 (data export DE-8a: the plan gained
+    // business_os_data_exports) and its rollback, which restores 20261047: same again. 20261077
+    // (finance 4b.1: the reversal events link reviewed for G-18) and its rollback, which restores
+    // 20261075: same again. Taken from the generator's constants, so this file does not spell the
+    // next version's name (R-7).
     const testAccountCleanup = [
       join(ROOT, ...CLEANUP_MIGRATION_FILE.split('/')),
       join(ROOT, ...CLEANUP_ROLLBACK_FILE.split('/')),
@@ -813,6 +815,8 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       join(SQL_SCRIPTS_DIR, '20261046_operator_test_account_cleanup_notnull_order_rollback.sql'),
       join(MIGRATIONS_DIR, '20261047_operator_test_account_cleanup_audit_actor.sql'),
       join(SQL_SCRIPTS_DIR, '20261047_operator_test_account_cleanup_audit_actor_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261075_operator_test_account_cleanup_data_exports.sql'),
+      join(SQL_SCRIPTS_DIR, '20261075_operator_test_account_cleanup_data_exports_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

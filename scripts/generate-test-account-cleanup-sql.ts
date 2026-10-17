@@ -115,13 +115,20 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * 20261047: the audit row names the admin as user_id as well as actor_id (the
  * AD-2 convention), so /admin/audit-trail shows who removed the account. The
  * pasted operator_sql path has no signed-in admin and still writes NULL.
- * 20261073: the link business_os_boost_reversal_events -> business_os_boost_purchases
- * (finance slice 4b.1, migration 20261072, ON DELETE CASCADE) reviewed as
+ * 20261075: the plan gained business_os_data_exports and the
+ * business-data-exports bucket (data export DE-8a, created by 20261074). Chained
+ * on 20261047, confirmed live on prod 2026-10-17 (stamp 789e4758d674b561).
+ * Finance 4b.1 (20261072 + 20261073) was not on main yet: per SA C-7 it now
+ * renumbers its regenerated cleanup above 20261075 and chains on this file.
+ * 20261077: the link business_os_boost_reversal_events -> business_os_boost_purchases
+ * (finance slice 4b.1, migration 20261076, ON DELETE CASCADE) reviewed as
  * parent-owned for G-18. No delete step: the step B purchase delete cascades.
+ * First written as 20261073 over 20261047; renumbered and regenerated on
+ * 2026-10-17 to chain on 20261075, so it keeps the data_exports plan.
  */
-export const FUNCTION_MIGRATION = '20261073_operator_test_account_cleanup_boost_reversal_events';
+export const FUNCTION_MIGRATION = '20261077_operator_test_account_cleanup_boost_reversal_events';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261047_operator_test_account_cleanup_audit_actor';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261075_operator_test_account_cleanup_data_exports';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -139,6 +146,11 @@ export const FUNCTION_REQUIRED_TABLES: ReadonlyArray<{ table: string; migration:
     table: 'business_os_billing_events',
     migration: '20261027_business_os_billing_events',
     reason: 'Guard G-5 counts its live-mode rows and the plan deletes it, both in static SQL (plan payments P-3b.1).',
+  },
+  {
+    table: 'business_os_data_exports',
+    migration: '20261074_business_os_data_exports',
+    reason: 'The plan deletes the export jobs of the account (data export DE-8a). Required whether the plan names it in static or dynamic SQL (SA C-8): a missing table would fail every check and delete with 42P01.',
   },
 ];
 export const VERSION_FILE = 'lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts';
@@ -573,7 +585,7 @@ export const CASCADE_CHILDREN: ReadonlyArray<{ table: string; parent: string; fk
     parent: 'business_os_boost_purchases',
     fk: 'purchase_id',
     constraint: 'business_os_boost_reversal_events_purchase_id_fkey',
-    reason: 'Dated refund and dispute history of a boost purchase (migration 20261072). Removed by the step B purchase delete through ON DELETE CASCADE (SA-Q66).',
+    reason: 'Dated refund and dispute history of a boost purchase (migration 20261076). Removed by the step B purchase delete through ON DELETE CASCADE (SA-Q66).',
   },
 ];
 
