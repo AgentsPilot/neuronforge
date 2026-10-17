@@ -182,6 +182,77 @@ describe('findById / findLatestForUser / listForUser (M-2 to M-4)', () => {
   });
 });
 
+/**
+ * A fake that APPLIES eq / in / order / limit to a row set, so a test can show
+ * which rows a read can return, not only which filters it sent (SA DE-9 C-4).
+ */
+function filteringClient(rows: Array<Record<string, unknown>>) {
+  type Filter = (row: Record<string, unknown>) => boolean;
+  const filters: Filter[] = [];
+  let orderBy: { column: string; ascending: boolean } | null = null;
+  let max = Infinity;
+  const builder: Record<string, unknown> = {
+    select: () => builder,
+    eq: (column: string, value: unknown) => (filters.push((r) => r[column] === value), builder),
+    in: (column: string, values: unknown[]) => (filters.push((r) => values.includes(r[column])), builder),
+    order: (column: string, opts: { ascending: boolean }) => ((orderBy = { column, ascending: opts.ascending }), builder),
+    limit: (n: number) => ((max = n), builder),
+  };
+  builder.then = (resolve: (value: unknown) => void) => {
+    let out = rows.filter((r) => filters.every((f) => f(r)));
+    if (orderBy) {
+      const { column, ascending } = orderBy;
+      out = [...out].sort((a, b) => (String(a[column]) < String(b[column]) ? -1 : 1) * (ascending ? 1 : -1));
+    }
+    resolve({ data: out.slice(0, max), error: null });
+  };
+  return { from: () => builder } as unknown as SupabaseClient;
+}
+
+describe('findLatestCompletedForUser (DE-9 status route; SA C-4)', () => {
+  it('scoped by user_id first, owner-requested only, ready or expired, newest one', async () => {
+    const { c, calls } = client({ data: [{ id: JOB }], error: null });
+    expect(await repo(c).findLatestCompletedForUser(OWNER)).toEqual({ data: { id: JOB }, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_data_exports'] },
+      { method: 'select', args: [DATA_EXPORT_JOB_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['requested_by_kind', 'owner'] },
+      { method: 'in', args: ['status', ['ready', 'expired']] },
+      { method: 'order', args: ['created_at', { ascending: false }] },
+      { method: 'limit', args: [1] },
+    ]);
+  });
+
+  it('no row is null; a bad id never reaches the database; an error is returned, not thrown', async () => {
+    expect((await repo(client({ data: [], error: null }).c).findLatestCompletedForUser(OWNER)).data).toBeNull();
+    const bad = client({ data: [{ id: JOB }], error: null });
+    expect((await repo(bad.c).findLatestCompletedForUser('not-a-uuid')).error).toBeInstanceOf(Error);
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
+    expect(await repo(failing.c).findLatestCompletedForUser(OWNER)).toEqual({ data: null, error: expect.any(Error) });
+  });
+
+  const rows = [
+    { id: 'old-owner-expired', user_id: OWNER, requested_by_kind: 'owner', status: 'expired', created_at: '2026-10-10T00:00:00Z' },
+    { id: 'owner-ready', user_id: OWNER, requested_by_kind: 'owner', status: 'ready', created_at: '2026-10-15T00:00:00Z' },
+    { id: 'owner-failed-newer', user_id: OWNER, requested_by_kind: 'owner', status: 'failed', created_at: '2026-10-16T00:00:00Z' },
+    { id: 'admin-ready-newest', user_id: OWNER, requested_by_kind: 'admin', status: 'ready', created_at: '2026-10-17T00:00:00Z' },
+    { id: 'other-tenant-ready', user_id: OTHER, requested_by_kind: 'owner', status: 'ready', created_at: '2026-10-17T01:00:00Z' },
+  ];
+
+  it('an admin-prepared ready export, a newer failed one and another tenant row are never returned', async () => {
+    expect((await repo(filteringClient(rows)).findLatestCompletedForUser(OWNER)).data).toMatchObject({ id: 'owner-ready' });
+    // Only an admin row and a failed row: nothing to show the owner.
+    const onlyHidden = rows.filter((r) => r.id === 'admin-ready-newest' || r.id === 'owner-failed-newer');
+    expect((await repo(filteringClient(onlyHidden)).findLatestCompletedForUser(OWNER)).data).toBeNull();
+  });
+
+  it('negative control: the fake does filter, so a read without the kind filter WOULD return the admin row', async () => {
+    expect((await repo(filteringClient(rows)).findLatestForUser(OWNER)).data).toMatchObject({ id: 'admin-ready-newest' });
+  });
+});
+
 function updatePayload(calls: Call[]): Record<string, unknown> {
   const update = calls.find((call) => call.method === 'update');
   expect(update).toBeDefined();
@@ -360,6 +431,7 @@ describe('tenant isolation negative control', () => {
     };
     expect(await run((r) => r.findById(JOB, OWNER))).toBe(true);
     expect(await run((r) => r.findLatestForUser(OWNER))).toBe(true);
+    expect(await run((r) => r.findLatestCompletedForUser(OWNER))).toBe(true);
     expect(await run((r) => r.listForUser(OWNER))).toBe(true);
     expect(await run((r) => r.markReady(JOB, OWNER, { bytes: 0, fileCount: 0, rowCount: 0 }))).toBe(true);
     expect(await run((r) => r.markFailed(JOB, OWNER, 'timeout'))).toBe(true);

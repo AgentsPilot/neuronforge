@@ -1,9 +1,10 @@
 // lib/business-os/data-export/payload.ts
 //
-// The typed body of GET /api/user/data-export (DE-1,
-// BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md §3.3, §3.4). Pure: no I/O, no clock
-// of its own (the route passes `now` and the duration), so it is tested on its
-// own and the route has no `any` (CLAUDE.md rule 6).
+// The typed `data.json` of the "Download my data" zip (DE-1,
+// BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md §3.3, §3.4; since DE-8b written by
+// the zip builder, and since DE-9 the only export: the JSON route is
+// retired). Pure: no I/O, no clock of its own (the caller passes `now` and the
+// duration), so it is tested on its own and has no `any` (CLAUDE.md rule 6).
 //
 // `format_version: 2` marks the break from the 2025 shape (top-level `agents`,
 // `transactions`, `audit_logs`, …), so anyone who scripted against the old
@@ -11,7 +12,6 @@
 // and the business-name file name (DX-10) are DE-8b.
 
 import type { AnyExportedSection, ExportGroupId, ExportSectionId, GdprRole } from './sections';
-import { FALLBACK_TIMEZONE, toBusinessLocalInput } from '@/lib/scheduling/businessTime';
 
 /** One name for the provider, kept in DE-8b (SA C-4: `meta.controller` per group). */
 export const EXPORT_PROVIDER_NAME = 'AgentPilot';
@@ -169,26 +169,4 @@ export function buildExportPayload(input: BuildExportPayloadInput): UserDataExpo
       export_duration_ms: input.durationMs,
     },
   };
-}
-
-/**
- * `agentpilot-data-export-YYYY-MM-DD-HHmm.json` (user decision 2026-10-15,
- * DE-4): the date AND the time of the export, on the OWNER's clock. No user id:
- * the name reaches the downloads folder and is often forwarded. DE-8b swaps
- * the `agentpilot-data-export` prefix for the business-name slug and adds
- * `filename*`.
- *
- * `now` is the route's one `exportedAt` instant, the same one written as
- * `export_date` (UTC) inside the file, so the name and the contents cannot
- * disagree about when the export ran. `timezone` is the owner's
- * `user_preferences.timezone` (CLAUDE.md: the clock authority;
- * `business_profiles.timezone` does not exist). Absent, blank or not a zone
- * Intl can resolve, the name is in UTC, explicitly: `toBusinessLocalInput`
- * applies `safeTimezone`, whose fallback is FALLBACK_TIMEZONE ('UTC').
- */
-export function exportFileName(now: Date, timezone: string | null = FALLBACK_TIMEZONE): string {
-  // 'YYYY-MM-DDTHH:mm' on that clock, midnight as 00 (never 24).
-  const local = toBusinessLocalInput(now, timezone ?? FALLBACK_TIMEZONE);
-  const [date, time] = local.split('T');
-  return `agentpilot-data-export-${date}-${time.replace(':', '')}.json`;
 }

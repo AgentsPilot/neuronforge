@@ -199,6 +199,36 @@ export class BusinessOsDataExportJobRepository {
     }
   }
 
+  /**
+   * DE-9: the owner's newest export that was DELIVERED, for "Last export …"
+   * (GET /api/business-os/data-exports). `ready` or `expired` only: a failed
+   * or running job was not handed over and never counts as the last export.
+   *
+   * SA DE-9 C-4: owner-requested jobs only. DE-10a writes admin-prepared jobs
+   * onto the customer's own user_id, and BQ-SA-2 rules out telling the owner
+   * about an export an admin made, so an admin-kind row is never returned.
+   */
+  async findLatestCompletedForUser(userId: string): Promise<RepositoryResult<DataExportJob>> {
+    if (!uuid.safeParse(userId).success) return { data: null, error: invalid('user id') };
+    try {
+      const { data, error } = await this.supabase
+        .from(TABLE)
+        .select(DATA_EXPORT_JOB_COLUMNS)
+        .eq('user_id', userId)
+        .eq('requested_by_kind', 'owner')
+        .in('status', ['ready', 'expired'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const rows = (data as unknown as DataExportJob[] | null) ?? [];
+      return { data: rows[0] ?? null, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'findLatestCompletedForUser', userId }, 'Failed to read the last completed data export');
+      return { data: null, error: safe };
+    }
+  }
+
   async listForUser(userId: string, options?: { limit?: number }): Promise<RepositoryResult<DataExportJob[]>> {
     const limit = options?.limit ?? DATA_EXPORT_JOB_LIMITS.LIST_DEFAULT;
     if (!uuid.safeParse(userId).success) return { data: null, error: invalid('user id') };

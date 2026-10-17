@@ -100,6 +100,9 @@ jest.mock('@/lib/ai/pricing', () => ({
   calculateCostSync: () => 0,
   imagePriceResolver: () => async () => 0,
   resolveImagePrice: async () => 0,
+  calculateCostWithCachedSync: () => 0,
+  // Slice 7 (RC7-5): the settings refill warms the price cache; never a real read here.
+  warmPricingCache: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockGetUser = jest.fn();

@@ -18,6 +18,9 @@ jest.mock('@/lib/ai/pricing', () => ({
   calculateCostSync: () => 0,
   calculateCost: async () => 0,
   hasPricing: async () => true,
+  calculateCostWithCachedSync: () => 0,
+  // Slice 7 (RC7-5): the settings refill warms the price cache; never a real read here.
+  warmPricingCache: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockGetByKeys = jest.fn();
