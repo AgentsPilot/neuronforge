@@ -430,8 +430,12 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(migrationSql).toContain("IF p_mode = 'delete' AND p_actor IS NULL THEN");
     // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
     expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
-    // The restored 20261046 function still writes user_id NULL: the rollback really is the old behaviour.
-    expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
+    // The rollback restores the previous function (PREVIOUS_FUNCTION_MIGRATION). Since
+    // 20261075 (data export DE-8a) that is 20261047 itself, so the restored function
+    // names the admin too; the 20261046 shape (user_id NULL) is gone from it.
+    expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
+    ${ACTOR}, ${ACTOR},`);
+    expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
   });
 });
 
@@ -566,7 +570,9 @@ ${planted}`)).toMatch(FORBIDDEN_DDL);
       const file = `supabase/migrations/${required.migration}.sql`;
       expect([file, existsSync(join(REPO, ...file.split('/')))]).toEqual([file, true]);
       expect(readSql(file)).toContain(`CREATE TABLE public.${required.table} (`);
-      expect(fn).toContain(`public.${required.table}`);
+      // Static SQL names it schema-qualified; the generated step A plan names it as a
+      // dynamic format('%I') row literal. Either way the function reaches it (SA C-8, DE-8a).
+      expect([required.table, fn.includes(`public.${required.table}`) || fn.includes(`'A', '${required.table}', `)]).toEqual([required.table, true]);
       expect(required.reason.length).toBeGreaterThan(20);
     }
   });
@@ -656,6 +662,10 @@ describe('applied history: a function migration is never edited once applied', (
     // Applied to prod 2026-10-08 (scheduling_bookings before crm_contacts, G-19).
     ['supabase/migrations/20261046_operator_test_account_cleanup_notnull_order.sql', 'e401f27fbe77e7a67fadb54e74fd36fc568a904c90eec410cc37d73ab45fa3b9'],
     ['supabase/SQL Scripts/20261046_operator_test_account_cleanup_notnull_order_rollback.sql', 'd86a4874dcf2161d1849433061ce2b9c9c7841c1a216175cee3d4d20c1d7293b'],
+    // Applied to prod (audit actor, AD-2 convention). Confirmed live by TL 2026-10-17:
+    // the function returns stamp 789e4758d674b561 (data export DE-8a pre-check Q9).
+    ['supabase/migrations/20261047_operator_test_account_cleanup_audit_actor.sql', '8294bb810be6b4c314bde18807777c204fe4035788a0096fff6d2fcc134862f9'],
+    ['supabase/SQL Scripts/20261047_operator_test_account_cleanup_audit_actor_rollback.sql', '3a808ed17d6522cf82aadbf8e9f6241243a895d69c5a798cca65e3e1d1c6c2de'],
   ];
 
   it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {

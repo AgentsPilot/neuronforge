@@ -1,6 +1,6 @@
 {
  "generated": "2026-10-04",
- "count": 155,
+ "count": 156,
  "levels": {
   "admin_users": "never",
   "advisor_reports": "never",
@@ -50,6 +50,7 @@
   "business_os_credit_lot_draws": "never",
   "business_os_credit_lots": "never",
   "business_os_credit_totals": "never",
+  "business_os_data_exports": "purge",
   "business_os_entitlement_overrides": "never",
   "business_os_entitlement_shadow_events": "never",
   "business_os_invites": "never",
@@ -163,6 +164,7 @@
   "ais_system_config": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users SET NULL. Actor reference on platform data: never.",
   "auth_handoff_codes": "2026-10-04 AD-1a SC-8: live user_id column, user_id -> auth.users CASCADE, no inbound FK. Ephemeral identity-level sign-in handoff, not business data: never.",
   "business_addresses": "2026-10-06: added by 20261036_business_addresses_book.sql; FK business_profiles CASCADE (20261037); inbound FKs business_profiles.address_id / invoice_address_id SET NULL. Business configuration kept by Reset with its profile: purge/CONFIG.",
+  "business_os_data_exports": "2026-10-17 DE-8a: added by 20261074_business_os_data_exports.sql; user_id -> auth.users CASCADE (no FK to business_profiles: an agent-platform user may export too), requested_by has no FK, no inbound FK, no trigger. The account's Download my data jobs: kept by Reset (an owner may export, then start over), removed by Purge and account deletion. purge/LEAF, snapshot ids (the snapshot never copies another copy of the business).",
   "business_subscribers": "2026-10-07: measured live (purge_schema_introspect): FK business_profiles CASCADE (business_subscribers_business_fk), promoted_contact_id -> crm_contacts SET NULL, no inbound FK, no trigger. The newsletter audience is business data a rebuilt business must earn again: reset/LEAF. Added late; it predates the freeze but was never entered (c1a427e6).",
   "exchange_rate_history": "2026-10-04 AD-1a SC-8: no tenancy column; changed_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
   "exchange_rates": "2026-10-04 AD-1a SC-8: no tenancy column; updated_by -> auth.users NO ACTION. Actor reference on platform data: never. FU-9 must handle the NO ACTION FK.",
