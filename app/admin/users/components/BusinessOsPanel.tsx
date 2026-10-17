@@ -394,7 +394,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
                 href={`/admin/analytics?scope=bos&user=${encodeURIComponent(accountId)}`}
                 className={`inline-block ${LINK_CLASS}`}
               >
-                Open in AI cost & usage
+                Open in AI calls & usage
               </Link>
             </div>
 

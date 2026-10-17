@@ -449,14 +449,14 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ...DAILY,
     ...MAX_60,
     label: 'Credit leak check',
-    description: "Checks that yesterday's Business OS AI spend was all charged",
+    description: "Checks that yesterday's recorded Business OS AI cost was all charged",
     scheduleWords: 'Daily at 04:45 UTC',
     // QA4b-B1: added after run recording began (2026-09-27/28); the deploy day.
     addedOn: '2026-09-30',
     drainsQueue: null,
     counts: [
       { key: 'accountsChecked', path: ['data', 'accountsChecked'], label: 'businesses checked' },
-      { key: 'accountsWithLeak', path: ['data', 'accountsWithLeak'], label: 'businesses with uncharged AI spend' },
+      { key: 'accountsWithLeak', path: ['data', 'accountsWithLeak'], label: 'businesses with recorded AI cost not charged' },
       { key: 'unchargedGroups', path: ['data', 'unchargedGroups'], label: 'AI actions with no charge' },
       { key: 'ungroupedCalls', path: ['data', 'ungroupedCalls'], label: 'AI calls with no grouping id' },
       { key: 'underchargedGroups', path: ['data', 'underchargedGroups'], label: 'AI actions charged less than they cost' },

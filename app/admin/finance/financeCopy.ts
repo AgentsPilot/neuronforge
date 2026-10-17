@@ -214,7 +214,7 @@ export const AI_BUSINESS = 'Business';
 export const AI_COST = 'Cost (USD)';
 export const AI_DELETED = 'Deleted accounts';
 export const AI_NO_ROWS = 'No AI actions charged in this window';
-export const AI_LINK = 'AI cost & usage';
+export const AI_LINK = 'AI calls & usage';
 export const AI_LINK_NOTE = 'Every recorded AI call, charged or not:';
 export const AI_UNRESOLVED = 'corrections whose charge could not be found';
 export const AI_UNREADABLE = 'amounts could not be read and count as 0';
@@ -523,8 +523,8 @@ export const accountCreditsNoAllowance = (gifted: string) => `No allowance · gi
 /** M1-FR-7 / SA-W56: every link carries this business and the window. Only the account id travels. */
 export const ACCOUNT_LINKS_TITLE = 'Open this business in';
 export const ACCOUNT_LINK_ACTIVITY = 'Business OS AI Activity';
-export const ACCOUNT_LINK_COSTS = 'Business OS AI Costs & credits';
-export const ACCOUNT_LINK_ANALYTICS = 'AI cost & usage';
+export const ACCOUNT_LINK_COSTS = 'Charge checks';
+export const ACCOUNT_LINK_ANALYTICS = 'AI calls & usage';
 export const ACCOUNT_LINK_BUSINESSES = 'Businesses';
 
 // ── The Accounts tab: account economics and AI margin (slice 6a, Money M-3, §11E) ──

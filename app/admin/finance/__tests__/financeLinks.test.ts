@@ -49,14 +49,16 @@ function datesOfParsed(value: ReturnType<typeof ACTIVITY_FILTER_SPEC.window.pars
   return resolved.kind === 'dates' ? { from: resolved.from, to: resolved.to } : null;
 }
 
+// Money M-5 (R-3): Costs & credits became its own page, Charge checks, so
+// each link names its target path, and only Activity still carries a `tab`.
 describe.each([
-  ['Activity', activityHref, ACTIVITY_FILTER_SPEC, 'activity'],
-  ['Costs & credits', costsHref, COSTS_FILTER_SPEC, 'costs'],
-] as const)('%s link', (_name, hrefOf, spec, tab) => {
+  ['Activity', activityHref, ACTIVITY_FILTER_SPEC, '/admin/business-os-llm?', 'activity'],
+  ['Charge checks', costsHref, COSTS_FILTER_SPEC, '/admin/finance/charges?', null],
+] as const)('%s link', (_name, hrefOf, spec, prefix, tab) => {
   it.each(PRESETS)('window %s: the target parses the same dates and the account; nothing else is sent', (preset) => {
     const window = windowFor(preset);
     const href = hrefOf(A, window);
-    expect(href.startsWith('/admin/business-os-llm?')).toBe(true);
+    expect(href.startsWith(prefix)).toBe(true);
     const params = paramsOf(href);
     expect(params.get('tab')).toBe(tab);
     const get = getter(params);
@@ -65,13 +67,13 @@ describe.each([
     expect(datesOfParsed(parsed)).toEqual({ from: window.from, to: window.to });
     // A preset stays a preset (same rule, same dates); custom stays custom.
     expect(parsed?.kind).toBe(preset === 'custom' ? 'custom' : 'preset');
-    // Every key is one the target owns (or the page's tab): none is ignored.
-    const owned = new Set(['tab', ...spec.window.keys, ...spec.account.keys]);
+    // Every key is one the target owns (or Activity's page tab): none is ignored.
+    const owned = new Set([...(tab === null ? [] : ['tab']), ...spec.window.keys, ...spec.account.keys]);
     for (const key of params.keys()) expect({ key, owned: owned.has(key) }).toEqual({ key, owned: true });
   });
 });
 
-describe('AI cost & usage link (SA-W56)', () => {
+describe('AI calls & usage link (SA-W56)', () => {
   it.each(PRESETS)('window %s: the target parses the same dates and the account', (preset) => {
     const window = windowFor(preset);
     const href = analyticsHref(A, window);
@@ -161,23 +163,23 @@ describe('slice 6a: accountViewHref, an Accounts row → the one-account view on
 // Money M-4 (SA-W99, T8-B): a separate import, so the lines above stay unedited.
 import { leakCheckHref } from '../financeLinks';
 
-describe('Money M-4: leakCheckHref, the Costs & credits tab that runs the Leak check (SA-W99)', () => {
-  it('no business picked: the Costs tab only; no window and no account', () => {
+describe('Money M-4: leakCheckHref, the page that runs the Leak check (SA-W99; Charge checks since M-5, R-4)', () => {
+  it('no business picked: Charge checks only; no window and no account', () => {
     const href = leakCheckHref(null);
-    expect(href).toBe('/admin/business-os-llm?tab=costs');
+    expect(href).toBe('/admin/finance/charges');
     const get = getter(paramsOf(href));
     expect(COSTS_FILTER_SPEC.account.parse(get)).toBeUndefined();
     expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
   });
 
-  it('a business picked: the tab’s own `account` key, which the Costs spec parses back; still no window key', () => {
+  it('a business picked: the page’s own `account` key, which the Costs spec parses back; still no window key', () => {
     const href = leakCheckHref(A);
-    expect(href).toBe(`/admin/business-os-llm?tab=costs&account=${A}`);
+    expect(href).toBe(`/admin/finance/charges?account=${A}`);
     const params = paramsOf(href);
     const get = getter(params);
     expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
     expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
-    expect([...params.keys()]).toEqual(['tab', 'account']);
+    expect([...params.keys()]).toEqual(['account']);
     for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
   });
 });
@@ -215,5 +217,20 @@ describe('Finance F-5: k1AnalyticsHref, the K-1 tile → AI cost & usage on the 
     expect(params.has('from')).toBe(false);
     expect(params.has('to')).toBe(false);
     expect(k1AnalyticsHref(A)).not.toBe(section3AnalyticsHref(A, window));
+  });
+});
+
+// ── Money M-5 (AC-193): no in-app link to the old Costs tab is left ──────────
+import * as fs from 'fs';
+import * as path from 'path';
+
+describe('Money M-5: financeLinks.ts sends nothing to the old Costs & credits tab (AC-193)', () => {
+  it('no link built here names tab=costs, and both Costs links point at Charge checks', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'app/admin/finance/financeLinks.ts'), 'utf8');
+    expect(source).not.toMatch(/'costs'/);
+    expect(source).not.toContain('tab=costs');
+    for (const preset of PRESETS) expect(paramsOf(costsHref(A, windowFor(preset))).has('tab')).toBe(false);
+    expect(leakCheckHref(null)).not.toContain('tab=');
+    expect(leakCheckHref(A)).not.toContain('tab=');
   });
 });

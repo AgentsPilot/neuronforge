@@ -135,7 +135,7 @@ function arrive(search: string) {
   mockSearch = search;
 }
 
-const refreshButton = () => screen.getByRole('button', { name: 'Refresh AI cost and usage' }) as HTMLButtonElement;
+const refreshButton = () => screen.getByRole('button', { name: 'Refresh AI calls and usage' }) as HTMLButtonElement;
 
 /** Wait until the read in flight has settled (Refresh is enabled again). */
 async function settled() {
@@ -177,15 +177,15 @@ afterEach(() => {
 });
 
 describe('the standard header, strip, bar and states', () => {
-  it('first read: header and bar mounted, KPI placeholders, and "Reading AI cost and usage…"', () => {
+  it('first read: header and bar mounted, KPI placeholders, and "Reading AI calls and usage…"', () => {
     answer = { kind: 'pending' };
     render(<AdminCostAnalytics />);
     const headings = screen.getAllByRole('heading', { level: 1 });
     expect(headings).toHaveLength(1);
-    expect(headings[0].textContent).toBe('AI cost & usage');
+    expect(headings[0].textContent).toBe('AI calls & usage (detail)');
     expect(screen.getByRole('search', { name: 'Filters' })).toBeTruthy();
     expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(4);
-    expect(screen.getByRole('status').textContent).toBe('Reading AI cost and usage…');
+    expect(screen.getByRole('status').textContent).toBe('Reading AI calls and usage…');
     expect(refreshButton().disabled).toBe(true);
   });
 
@@ -201,7 +201,7 @@ describe('the standard header, strip, bar and states', () => {
     await settled();
     const headings = screen.getAllByRole('heading', { level: 1 });
     expect(headings).toHaveLength(1);
-    expect(headings[0].textContent).toBe('AI cost & usage');
+    expect(headings[0].textContent).toBe('AI calls & usage (detail)');
     expect(document.body.textContent).toContain(
       'What Business OS and agent-platform AI calls cost, by provider, model and feature.',
     );
@@ -287,7 +287,7 @@ describe('errors (§5.10, F-43, F-55; SA Q-10)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.queryByTestId('analytics-error')).toBeNull());
     expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(4);
-    expect(screen.getByRole('status').textContent).toBe('Reading AI cost and usage…');
+    expect(screen.getByRole('status').textContent).toBe('Reading AI calls and usage…');
     expect(screen.queryByTestId('category-card-total')).toBeNull();
     expect(document.body.textContent).not.toContain('$0.00');
     expect(document.body.textContent).not.toContain('No data found');
@@ -302,7 +302,7 @@ describe('errors (§5.10, F-43, F-55; SA Q-10)', () => {
     answer = { kind: 'html', status: 502 };
     render(<AdminCostAnalytics />);
     expect((await screen.findByTestId('analytics-error')).textContent).toBe(
-      'Could not read AI cost and usage. Try again in a moment.',
+      'Could not read AI calls and usage. Try again in a moment.',
     );
     expect(document.body.textContent).not.toContain('Unexpected token');
   });
@@ -311,7 +311,7 @@ describe('errors (§5.10, F-43, F-55; SA Q-10)', () => {
     answer = { kind: 'html', status: 200 };
     render(<AdminCostAnalytics />);
     expect((await screen.findByTestId('analytics-error')).textContent).toBe(
-      'Could not read AI cost and usage. Try again in a moment.',
+      'Could not read AI calls and usage. Try again in a moment.',
     );
   });
 

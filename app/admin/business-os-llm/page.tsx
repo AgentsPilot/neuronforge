@@ -40,12 +40,20 @@
  * ── Three tabs, addressable by URL (AI Activity view, Gap B slice B1a) ───
  * **Activity** (`components/activity/ActivityTab.tsx`) lists one row per
  * Business OS AI action from the credit ledger. It is mounted lazily and then
- * kept mounted, exactly like Costs & credits. The chosen tab is in the URL as
- * `?tab=settings|costs|activity` (SA-RC-13): read once on first render — which
+ * kept mounted, exactly like Costs & credits was. The chosen tab is in the URL as
+ * `?tab=settings|activity` (SA-RC-13): read once on first render — which
  * also opens that tab's lazy panel (SA-B1-8) — and written back with
  * `history.replaceState`, so there is no navigation and no refetch. An unknown
  * value means Settings; any other parameter (a future `actionId`, B3) is left
  * alone and ignored.
+ *
+ * ── Two tabs again (Money M-5, finance health §11H.4 CC-5) ─────────────────
+ * The Costs & credits tab, Leak check included, moved to its own page,
+ * Charge checks (`/admin/finance/charges`), which mounts the same `CostsTab`.
+ * This page keeps Settings and Activity. An old `?tab=costs` link is sent on
+ * by the temporary redirect in `next.config.js`, which keeps the window and the
+ * business; if that is ever bypassed, `costs` is an unknown value here and
+ * opens Settings, like any other.
  *
  * ── The standard header and tabs (Admin Layout Standard L-8a) ────────────
  * The header is the shared `AdminPageHeader`: the page's only h1, the
@@ -63,14 +71,14 @@
  * request itself is unchanged, and a failed refresh keeps the cards.
  *
  * The strip, the bar and the states render only while Settings is shown (SA
- * M-1): Costs and Activity stay mounted hidden, and a page-wide query in their
- * suites must not count Settings' placeholders or "Read at". The standing note
+ * M-1): Activity stays mounted hidden, and a page-wide query in its
+ * suite must not count Settings' placeholders or "Read at". The standing note
  * is the exception: it is always rendered, hidden with its panel.
  *
  * The tabs follow the APG tablist with MANUAL activation (SA Q-5): Left / Right
  * move focus (wrapping), Home / End go to the first / last, Enter or Space
  * selects; only the selected tab is in the Tab order (roving `tabIndex`).
- * Focus alone never selects, because selecting Costs or Activity for the first
+ * Focus alone never selects, because selecting Activity for the first
  * time starts a read.
  *
  * `?tab=` is written with `replaceState(null, …)` (SA Q-2, the L-1c M-1
@@ -79,9 +87,11 @@
  * Activity KPI tiles (real links built from that string) would carry the old
  * tab. With `null` Next syncs it.
  *
- * ── Two filter tabs, one address bar (L-9a, F-113) ──────────────────────
- * Costs and Activity both own `range`, `from`, `to` and `account` through the
- * shared `useAdminFilters`, and both stay mounted once opened. The rule: the
+ * ── Filter tabs, one address bar (L-9a, F-113) ──────────────────────────
+ * Built when Costs and Activity both owned `range`, `from`, `to` and `account`
+ * through the shared `useAdminFilters`. Since M-5 Activity is the only filter
+ * tab, and the coordination is kept as it was, minus the `costs` entries
+ * (SA-Q61: smallest diff; it still governs Activity ↔ Settings). The rule: the
  * address bar describes the VISIBLE tab only. A tab's hook is `active` only
  * while its tab is shown AND the page's own `useSearchParams` already names it
  * (Next delivers the page's tab write in a later transition render, so in the
@@ -110,22 +120,19 @@ import type { AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilt
 import { AreaCard } from './components/AreaCard';
 import { SettingsKpis } from './components/SettingsKpis';
 import { ActivityTab } from './components/activity/ActivityTab';
-import { CostsTab } from './components/costs/CostsTab';
 import { ACTIVITY_FILTER_SPEC } from './activityFilters';
-import { COSTS_FILTER_SPEC } from './costsFilters';
 import { ACTIVITY_INTRO, ACTIVITY_TAB_LABEL, TIMES_ARE_UTC } from './activityCopy';
 import { PAGE_STANDING_NOTE, PAGE_SUBTITLE, SETTINGS_EMPTY, SETTINGS_WHAT } from './copy';
-import { COSTS_INTRO, COSTS_TAB_LABEL, SETTINGS_TAB_LABEL } from './costCopy';
+import { SETTINGS_TAB_LABEL } from './costCopy';
 import type { SettingsPayload } from './types';
 
-type PageTab = 'settings' | 'costs' | 'activity';
+type PageTab = 'settings' | 'activity';
 
 const tabId = (id: PageTab) => `bos-llm-tab-${id}`;
 const panelId = (id: PageTab) => `bos-llm-panel-${id}`;
 
 const TABS: readonly (readonly [PageTab, string])[] = [
   ['settings', SETTINGS_TAB_LABEL],
-  ['costs', COSTS_TAB_LABEL],
   ['activity', ACTIVITY_TAB_LABEL],
 ];
 
@@ -134,7 +141,6 @@ const TAB_PARAM = 'tab';
 /** The header's purpose line follows the tab (F-68). The words moved here from each tab; none is new. */
 const PURPOSE: Readonly<Record<PageTab, string>> = {
   settings: PAGE_SUBTITLE,
-  costs: COSTS_INTRO,
   activity: `${ACTIVITY_INTRO} ${TIMES_ARE_UTC}`,
 };
 
@@ -154,12 +160,11 @@ function ownedKeys<S>(spec: AdminFilterSpec<S>): string[] {
 /** The keys each tab's filters own in the address bar (L-9a). Settings has no filters. */
 const TAB_KEYS: Readonly<Record<PageTab, readonly string[]>> = {
   settings: [],
-  costs: ownedKeys(COSTS_FILTER_SPEC),
   activity: ownedKeys(ACTIVITY_FILTER_SPEC),
 };
 
 /** The union: a stray key of the other tab never survives a switch (the address bar is the visible tab only). */
-const ALL_TAB_KEYS: readonly string[] = [...new Set([...TAB_KEYS.costs, ...TAB_KEYS.activity])];
+const ALL_TAB_KEYS: readonly string[] = [...new Set([...TAB_KEYS.activity])];
 
 type SavedKeys = Partial<Record<PageTab, Array<[string, string]>>>;
 
@@ -208,12 +213,10 @@ function BusinessOsLlmSettingsContent() {
   const onSettings = tab === 'settings';
   // A lazy tab is not read until asked for — by a click OR by the URL it was
   // opened with (SA-B1-8) — and once asked, it stays mounted.
-  const [costsOpened, setCostsOpened] = useState(initialTab === 'costs');
   const [activityOpened, setActivityOpened] = useState(initialTab === 'activity');
   // L-9a: each filter tab's keys as it left them, put back when it is shown again.
   const saved = useRef<SavedKeys>({});
   const chooseTab = (id: PageTab) => {
-    if (id === 'costs') setCostsOpened(true);
     if (id === 'activity') setActivityOpened(true);
     setTab(id);
     writeTabToUrl(tab, id, saved.current);
@@ -308,10 +311,6 @@ function BusinessOsLlmSettingsContent() {
             </button>
           ))}
         </nav>
-      </div>
-
-      <div role="tabpanel" id={panelId('costs')} aria-labelledby={tabId('costs')} hidden={tab !== 'costs'}>
-        {costsOpened && <CostsTab active={owns('costs')} />}
       </div>
 
       <div role="tabpanel" id={panelId('activity')} aria-labelledby={tabId('activity')} hidden={tab !== 'activity'}>

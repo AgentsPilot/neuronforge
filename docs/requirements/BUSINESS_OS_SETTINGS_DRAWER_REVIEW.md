@@ -1,6 +1,6 @@
 # Review: Business OS Settings Page and the Drawer Pattern
 
-> **Last Updated**: 2026-10-16
+> **Last Updated**: 2026-10-17
 
 **Created by:** BA
 **Date:** 2026-10-14
@@ -74,7 +74,7 @@ Note for D-slices: Phase A moved lines in `page.tsx` — find code by symbol, no
 - Worktree used for Phase A: `../neuronforge-settings-drawers` (its `node_modules` is a **junction to the main checkout's** — unlink the junction before any `git worktree remove`; never `--force`).
 - Never `git stash` in this repo (shared stash list across worktrees).
 
-### 0.6 Phase C — improvements: ⏸ PARKED (user, 2026-10-15: "we will come back to them later") → 🟡 PLANNING 2026-10-16 (slice plan in §0.6.1)
+### 0.6 Phase C — improvements: ⏸ PARKED (user, 2026-10-15: "we will come back to them later") → 🟡 PLANNING 2026-10-16 (slice plan in §0.6.1) → ✅ **Phase C complete (C-a #442, C-c #440, C-b this PR); C-6/C-7 deferred** (2026-10-17)
 
 **Origin:** user observation 2026-10-15 — the Plan drawer takes 1–2 s to show the plan, Marketing permission 1–3 s. Read-only investigation on `origin/main` `ba29f058` (estimates from code, nothing measured; server region assumed Vercel default `iad1`, Supabase `us-east-2`).
 
@@ -100,6 +100,8 @@ Note for D-slices: Phase A moved lines in `page.tsx` — find code by symbol, no
 Recommended when resumed: C-4 + C-3 (or C-5) for Marketing permission, C-1 + C-2 for Plan — about 2–3 days, all client-side, no server or DB change. No overlap with the performance stream (`PERFORMANCE_IMPROVEMENT_SCOPING.md`, `PERFORMANCE_BUSINESS_ROUND_REQUIREMENT.md` do not cover these routes).
 
 #### 0.6.1 Phase C slice plan (Dev, 2026-10-16) — SA-reviewed 2026-10-16 (rulings at the end of this subsection)
+
+**Status (2026-10-17):** ✅ Phase C complete (C-a #442, C-c #440, C-b this PR); C-6/C-7 deferred.
 
 Planned on `feature/settings-drawer-phase-c` from `origin/main` `447d17a2` (Phases A and B merged; `page.tsx` last changed in `988d714c`). No code yet.
 
@@ -154,6 +156,26 @@ Planned on `feature/settings-drawer-phase-c` from `origin/main` `447d17a2` (Phas
 - **B-2** The warmed read serves only the first read, and only when there is no valid `checkoutMarker` and no `completedSession`. The `[language]` re-run, the bounded checkout and upgrade re-reads and "Check again" always fetch. Success still comes only from a server answer read after the action (M-6, U-5). QA covers checkout return and upgrade (SA condition C-11).
 - **B-3** `my-plan` sends no language: names come from the stored preference. The key still includes the language, so a switch drops the held set.
 - **B-4** The `my-plan` literal stays out of `page.tsx` (`accountCard.guard`). If a C-b read module imports anything from `lib/business-os/entitlements/` (type-only included), walk the `business-os-entitlements` checklist.
+
+**C-b progress (2026-10-16):** Dev workplan ([C-b workplan](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_C_B_WORKPLAN.md)) on `feature/settings-drawer-c-b` (from C-a's head `16242704`; `origin/main` `fcce705a` merged in by fast-forward after #442 landed). No code. Plan: a new `planDrawerReads.ts` holds the one copy of the `my-plan` request (never rejects, sends no language). `PlanSection` gains an optional `takePrefetched`. It takes the warmed read once per mount in a ref-guarded effect, outside the cancellable `[language]` effect (B-1), and uses it only with no valid checkout marker and the same language (B-2, B-3). The re-reads, Check again and the language re-read always fetch, and success still comes only from the server (M-6, U-5). The page adds a second `useDrawerPrefetch` call with `paused: planDrawer.open` and warm handlers on the Plan row; the route literal stays out of `page.tsx` (B-4). The hook, `PlanPurchase`, `PlanUpgrade`, `PlanEmbeddedCheckout`, the route and every existing Plan test are unchanged. No entitlements import, so the registration checklist does not apply; `test:bos-entitlements` still runs. New finding: the Plan drawer has no busy lock, and an upgrade can land after it closes, so Dev proposes no warm after the first close (Q-1). Questions Q-1..Q-10 for SA, including a planned edit to `consentPrefetch.guard` (Q-7). Next: SA workplan review.
+
+**SA workplan review of C-b (2026-10-16): APPROVED WITH CONDITIONS** SA-CB-1..11 ([C-b workplan → SA Workplan Review](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_C_B_WORKPLAN.md#sa-workplan-review-2026-10-16)). The rulings:
+- **Q-1: option (b).** Plan warms only until the drawer has been opened and closed once. The Plan drawer has no busy lock, and `PlanUpgrade` reports after the POST with no mounted guard. A warm after the close could therefore predate an upgrade or the webhook, and a reopen would show the old plan with a live Upgrade button. (b) keeps every later open exactly as today.
+- **Q-2 to Q-10 approved.** No hook edit. No entitlements import, so the registration checklist does not apply, but `test:bos-entitlements` runs. B-1 to B-4 and SA condition C-11 are met by the plan.
+- **Conditions:**
+  - `readMyPlan` uses one `try` over fetch and json, reads only `json` and `status`, and writes the URL inline.
+  - The effect order is pinned.
+  - Logging parity is exact.
+  - The four Plan render suites stay unedited through the whole slice.
+  - The `consentPrefetch.guard` edit gets exact anchor, count and negative controls.
+  - The stale Plan-row comment in `page.tsx` is reworded.
+  - P-G7 matches import specifiers only.
+  - Three added mutations (MB-21 to MB-23).
+- **User decision:** should merge wait for a hands-on Stripe test-mode buy and upgrade (M-6 to M-10)? SA recommends not; list them as owed after deploy.
+
+**C-b code complete (Dev, 2026-10-17), not committed.** All of SA-CB-1..11 are applied ([C-b workplan → Implementation Notes](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_C_B_WORKPLAN.md#implementation-notes)). The spent flag is derived in render (SA optimisation 1), so the warm stops in the very render that closes the drawer. The four Plan render suites, `useLinkOpenedDrawer.test` and `settingsDeepLinks.guard` were not edited and pass. Results: must-stay-green 935/935, `test:bos-entitlements` 8459/8459, `typecheck:bos-llm` 0 new, tsc 0 errors in the touched files, `lint:hooks` clean. Every mutation is killed except MB-6, which is equivalent (a question for SA). Manual M-6..M-10 were NOT RUN; a human owes them after deploy. Next: SA code review and QA, in parallel.
+
+**C-b committed + PR (RM, 2026-10-17):** SA code review APPROVED; QA PASS WITH NOTES (QA-14/QA-15 optional test gaps accepted; MB-6 accepted as equivalent). Committed on `feature/settings-drawer-c-b`, PR opened against `main` with auto-merge under the Phase C fast-track. Manual M-1..M-12 (M-6..M-10 Stripe test mode, test account only) owed by a human after deploy, not a merge gate. **Phase C complete (C-a #442, C-c #440, C-b this PR); C-6/C-7 deferred.**
 
 ---
 
@@ -988,3 +1010,7 @@ Either way C-3's behaviour is unchanged. `window.history` hand-edits are not a s
 | 2026-10-16 | C-c SA workplan review + code complete (Dev) | SA approved with conditions SA-CC-1..16; applied. `signOutUser` hardened (deadlines, cookie and storage clear by shape, network-free local fallback, measured `clearedLocally`, single flight); `SignOutButton` proceeds when cleared locally; settings `handleLogout` comment only. New tests: unit, caller guard, `AdminHeader` 9 s deadline, two awaiting-payment cases. New §7 row **F-30** (Low, middleware hard-coded project ref, not in C-c). Not committed; awaiting SA code review and QA |
 | 2026-10-16 | C-c reviewed (SA, QA, Dev) | SA code review APPROVED (CR-CC-1..7, all Low). QA PASS WITH NOTES; test gaps QA-CC-1 (cookie expiry attributes, nested path) and QA-CC-2 (unexpected-throw log) closed by Dev, CR-CC-1 hardened (a throwing logger cannot make `signOutUser` reject). QA mutations QM-2, QM-3, QM-8b now killed. **Ready to commit** |
 | 2026-10-16 | C-a committed + PR (RM) | SA APPROVED + re-check APPROVED; QA PASS WITH NOTES (QA-B1-3 Low gap accepted). Committed on `feature/settings-drawer-phase-c`, `origin/main` merged in (C-c #440 already on `main`; the C-c progress paragraph moved under §0.6.1), PR opened with auto-merge under the user's Phase C fast-track. CR-CA-1 (placeholder height) and the manual M-list deferred to the user after deploy |
+| 2026-10-16 | C-b workplan (Dev) | Plan drawer prefetch (C-2, C-1 folded in) planned on `feature/settings-drawer-c-b` ([C-b workplan](/docs/workplans/BUSINESS_OS_SETTINGS_DRAWER_C_B_WORKPLAN.md)): `planDrawerReads.ts`, a once-per-mount first read in `PlanSection` (B-1..B-3), page wiring through the existing hook with `paused: planDrawer.open` (B-4). The checkout return, re-reads, Check again and the language re-read always fetch. Proposed: no warm after the first close (Q-1). Q-1..Q-10. No code; awaiting SA workplan review |
+| 2026-10-16 | C-b SA workplan review | APPROVED WITH CONDITIONS SA-CB-1..11 (in the C-b workplan). Q-1 option (b) approved: no Plan warm after the first close (no busy lock; an upgrade can land after close). Q-2..Q-10 approved; no hook edit; no entitlements import, `test:bos-entitlements` still runs. User decision surfaced: merge does not wait for a hands-on Stripe test-mode buy/upgrade (SA recommendation), M-6..M-10 owed after deploy |
+| 2026-10-17 | C-b code complete (Dev) | SA-CB-1..11 applied, not committed. New `planDrawerReads.ts`. `PlanSection` takes the first read once, in a ref-guarded effect declared before `[language]`. Page wiring uses a render-derived spent flag (SA optimisation 1). `consentPrefetch.guard` edited per SA-CB-6. New R, P, D and P-G suites. The four Plan suites, `useLinkOpenedDrawer.test` and `settingsDeepLinks.guard` were not edited. Must-stay-green 935/935; `test:bos-entitlements` 8459/8459; `typecheck:bos-llm` 0 new; `lint:hooks` clean. Mutations: all killed except MB-6 (equivalent). M-6..M-10 NOT RUN (owed after deploy). Next: SA code review and QA |
+| 2026-10-17 | C-b committed + PR (RM); Phase C complete | SA APPROVED; QA PASS WITH NOTES. Committed on `feature/settings-drawer-c-b`, PR with auto-merge under the Phase C fast-track. §0.6 / §0.6.1 status: Phase C complete (C-a #442, C-c #440, C-b this PR); C-6/C-7 deferred. M-1..M-12 owed after deploy |
