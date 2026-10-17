@@ -1117,3 +1117,71 @@ export interface DataExportJobRef {
 export interface DataExportJobState extends DataExportJobRef {
   status: DataExportJobStatus;
 }
+
+// ============================================================================
+// Data export files and the export bucket (DE-8b)
+// ============================================================================
+
+/**
+ * A listing budget shared (mutated) across calls: a wall-clock deadline and a
+ * number of storage calls left. Hitting it gives `truncated: true`.
+ */
+export interface ExportFileBudget {
+  deadlineAt: number;
+  callsLeft: number;
+}
+
+/** One stored object of the owner, as the listing reported it. */
+export interface ExportOwnerObject {
+  /** The full storage key, always `${userId}/...`. Internal: never written to the zip. */
+  key: string;
+  /** `metadata.size`; 0 when the listing did not say (the real bytes are counted on download). */
+  size: number;
+  contentType: string | null;
+}
+
+export interface ExportOwnerObjects {
+  objects: ExportOwnerObject[];
+  /** Names dropped as unsafe (F-3); should always be 0. */
+  rejected: number;
+  truncated: boolean;
+}
+
+/** The uuid folders at a bucket's root (the size watch). */
+export interface ExportOwnerFolders {
+  owners: string[];
+  /** Root entries that are not a uuid folder (never descended). */
+  skipped: number;
+  truncated: boolean;
+}
+
+/** A live `contact_documents` row, for matching files (never exported as such). */
+export interface ExportLiveDocumentFile {
+  id: string;
+  contact_id: string | null;
+  storage_path: string | null;
+  storage_bucket: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+}
+
+/** A `user_media` row's id and key, for linking pictures to records. */
+export interface ExportMediaPath {
+  id: string;
+  storage_path: string | null;
+}
+
+/** One `{user_id}/{job_id}/1.zip` found by the export bucket sweep. */
+export interface ExportBucketObject {
+  userId: string;
+  jobId: string;
+  /** ISO timestamp, or null when Storage did not say (kept, never guessed). */
+  createdAt: string | null;
+}
+
+export interface ExportBucketListing {
+  objects: ExportBucketObject[];
+  /** Anything not shaped `{uuid}/{uuid}/1.zip`: counted, never removed (SA C-10). */
+  unexpected: number;
+  truncated: boolean;
+}

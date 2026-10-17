@@ -73,6 +73,10 @@
     {
       "path": "/api/cron/bos-billing-reconcile",
       "schedule": "41 5 * * *"
+    },
+    {
+      "path": "/api/cron/data-export",
+      "schedule": "25 5 * * *"
     }
   ],
   "rewrites": [
