@@ -37,6 +37,14 @@
 // allow-lists; page URLs without their query string), and so do delivery
 // counters and the lead-message queue (TL defaults BC-1…BC-3, 2026-10-16).
 //
+// DE-7: the business's website and content (DX-1c, group `content`, the
+// account holder the controller, AgentPilot the processor; SA-Q3): the
+// website text, every website and landing page, the blocks on those pages
+// (read through the owner's own pages: the one parent-scoped read), the
+// smart links and the picture library records (the files are DE-8b). Smart
+// link click, sign-up and revenue counters stay out (TL default BC-1,
+// 2026-10-17), and so do our storage key and the picture reuse key.
+//
 // DE-4: the client-record readers all go through ONE repository method,
 // keyed on the section id (never a table name: SA C-4), paged to the end, and
 // bounded by the Phase 1 row ceiling (limits.ts). Over the ceiling, reading
@@ -61,7 +69,7 @@ import type { ExportSectionId } from '@/lib/business-os/data-export/classificati
 import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
 
 /** DE-4 adds 'client_records'; DE-7 adds 'content'. */
-export type ExportGroupId = 'account' | 'client_records';
+export type ExportGroupId = 'account' | 'client_records' | 'content';
 
 export type GdprRole = 'controller' | 'processor';
 
@@ -320,6 +328,16 @@ function accountTableSection(id: ExportSectionId): ExportSectionDefinition<Owned
 }
 
 /**
+ * A `content` section (DE-7, SA-Q3): the business's website and content.
+ * AgentPilot hosts it on the account holder's behalf, so it is the processor;
+ * the account holder is the controller (as `client_records`). No row mapper:
+ * every cell goes out as held (SA-Q7, SA-Q8).
+ */
+function contentSection(id: ExportSectionId): ExportSectionDefinition<OwnedRow> {
+  return ownedRowsSection(id, 'content', 'processor');
+}
+
+/**
  * `clients`: the raw `source_metadata` never reaches the file, only its BC-4 keys. Key order is kept.
  * DE-6 (F-DE6-1): `sourceMetadata` now also cuts the two page URLs at their query string.
  */
@@ -356,6 +374,8 @@ const consentEventRow = (row: ClientRecordRow): ClientRecordRow => ({
  * DE-5: the Stripe account and payment providers follow `business_addresses`
  * (account, SA-Q1); the eight client-money sections follow `time_off`. All
  * draw on the same row ceiling.
+ * DE-7: the five `content` sections follow `email_unsubscribes`, on the same
+ * row ceiling.
  */
 export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   accountIdentitySection,
@@ -397,6 +417,14 @@ export const EXPORT_SECTIONS: readonly AnyExportSectionDefinition[] = [
   // One row, read by user_id (no id column; SA-Q1).
   clientRecordsSection('consent_settings'),
   clientRecordsSection('email_unsubscribes'),
+  // DE-7: website and content, every status and on/off state in (SA-Q4, §2.3).
+  contentSection('website_content'),
+  contentSection('website_pages'),
+  // After its parent: read through the owner's own pages (viaParent, SA-Q1).
+  contentSection('website_blocks'),
+  contentSection('smart_links'),
+  // The user_media records; the picture files arrive in DE-8b.
+  contentSection('images'),
 ];
 
 /** Only the level this module uses, typed structurally so a Pino child logger satisfies it. */

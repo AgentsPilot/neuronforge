@@ -99,7 +99,9 @@ export type ExportClassificationErrorCode =
   // DE-4: resolving a section to its one descriptor, and the reader's bounds.
   | 'unknown_section'
   | 'not_user_scoped'
-  | 'invalid_row_filter';
+  | 'invalid_row_filter'
+  // DE-7: a `viaParent` opt-in that breaks V-1…V-3 (SA-Q1, C-5).
+  | 'invalid_via_parent';
 
 /** Thrown by `exportColumnsOf`. The repositories catch it and return `{ error }`. */
 export class ExportClassificationError extends Error {
@@ -206,6 +208,10 @@ const nonEmpty = (value: unknown): boolean => typeof value === 'string' && value
  * `rowKey` must have `rowKey: 'user_id'`, a `user_id` scope, no `user_id` in
  * `columns` (it is the owner id) and no `rowFilter`. `scope` is read off the
  * descriptor for that reason.
+ *
+ * DE-7 (SA-Q2, V-1 / V-3): the `viaParent` opt-in is checked against the same
+ * `scope` (`viaShapeProblems`); its parent half needs the whole set
+ * (`viaParentProblems`).
  */
 export function tableExportProblems(
   descriptor: { table: string; export?: unknown; scope?: unknown },
@@ -248,6 +254,7 @@ export function tableExportProblems(
       }
       if (value.rowFilter !== undefined) problems.push(...rowFilterProblems(table, value.rowFilter, seen));
       problems.push(...rowKeyProblems(descriptor, value, seen));
+      problems.push(...viaShapeProblems(descriptor, value, seen));
       break;
     }
     case 'exclude':
@@ -313,6 +320,97 @@ function rowKeyProblems(
   if (declared.has('user_id')) problems.push(`${table}: rowKey user_id must not be in columns (it is the owner id)`);
   if (value.rowFilter !== undefined) problems.push(`${table}: rowKey and rowFilter together are not allowed`);
   return problems;
+}
+
+/**
+ * DE-7 V-1 / V-3 (SA-Q2, the two-key opt-in), on ONE descriptor. A `via`
+ * scope on an include needs `viaParent`; `viaParent` needs a `via` scope and
+ * must equal it (`{ parent, fk }`, nothing else, non-empty strings); the
+ * child lists its `fk` (and `id`, by `rowKeyProblems`, so it keyset pages)
+ * and has no `rowKey` and no `rowFilter`. The parent half (V-2) needs the
+ * whole descriptor set: `viaParentProblems`.
+ */
+function viaShapeProblems(
+  descriptor: { table: string; scope?: unknown },
+  value: Record<string, unknown>,
+  declared: ReadonlySet<string>
+): string[] {
+  const { table } = descriptor;
+  const scope = isObject(descriptor.scope) ? descriptor.scope : undefined;
+  const isVia = scope?.kind === 'via';
+  if (!('viaParent' in value) || value.viaParent === undefined) {
+    return isVia ? [`${table}: a via-scoped include needs viaParent (the parent-scoped read's opt-in)`] : [];
+  }
+  const via = value.viaParent;
+  if (!isObject(via) || !nonEmpty(via.parent) || !nonEmpty(via.fk) || Object.keys(via).length !== 2) {
+    return [`${table}: viaParent must be exactly { parent, fk }, both non-empty strings`];
+  }
+  const problems: string[] = [];
+  if (!isVia) problems.push(`${table}: viaParent needs a via scope`);
+  else if (via.parent !== scope?.parent || via.fk !== scope?.fk) problems.push(`${table}: viaParent must equal the via scope { parent, fk }`);
+  if (!declared.has(String(via.fk))) problems.push(`${table}: viaParent fk ${String(via.fk)} must be in columns`);
+  if (value.rowKey !== undefined) problems.push(`${table}: viaParent and rowKey together are not allowed`);
+  if (value.rowFilter !== undefined) problems.push(`${table}: viaParent and rowFilter together are not allowed`);
+  return problems;
+}
+
+/**
+ * DE-7 V-2: the parent a `viaParent` names is ONE descriptor of the same set,
+ * `user_id`-scoped (one hop: no via-of-via), an `include` with `id` in its
+ * columns, no `rowKey` and no `rowFilter` (a filtered parent would need its
+ * children filtered the same way: an SA item).
+ */
+function viaParentLinkProblems(child: { table: string; export?: unknown }, descriptors: readonly PurgeDescriptor[]): string[] {
+  const value = child.export;
+  if (!isObject(value) || !isObject(value.viaParent) || !nonEmpty(value.viaParent.parent)) return [];
+  const parentTable = String(value.viaParent.parent);
+  const parents = descriptors.filter((d) => d.table === parentTable);
+  if (parents.length !== 1) return [`${child.table}: viaParent parent ${parentTable} must be exactly one descriptor, found ${parents.length}`];
+  const parent = parents[0];
+  const problems: string[] = [];
+  if (parent.scope.kind !== 'user_id') problems.push(`${child.table}: viaParent parent ${parentTable} must be user_id-scoped (one hop only)`);
+  const pe = parent.export as unknown;
+  if (!isObject(pe) || pe.kind !== 'include') {
+    problems.push(`${child.table}: viaParent parent ${parentTable} must be include`);
+    return problems;
+  }
+  if (!Array.isArray(pe.columns) || !(pe.columns as unknown[]).includes('id')) problems.push(`${child.table}: viaParent parent ${parentTable} must list id`);
+  if (pe.rowKey !== undefined) problems.push(`${child.table}: viaParent parent ${parentTable} must have no rowKey`);
+  if (pe.rowFilter !== undefined) problems.push(`${child.table}: viaParent parent ${parentTable} must have no rowFilter`);
+  return problems;
+}
+
+/**
+ * DE-7 V-8: the parent half of the `viaParent` rules (V-2) over the whole
+ * descriptor set, so a bad descriptor fails CI before it fails a section at
+ * request time. Pure: the parent is looked up in the same array.
+ */
+export function viaParentProblems(descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS): string[] {
+  return descriptors
+    .filter((d) => d.export?.kind === 'include' && d.export.viaParent !== undefined)
+    .flatMap((d) => viaParentLinkProblems(d, descriptors));
+}
+
+/**
+ * DE-7 C-5: the request-time half. Runs V-1…V-3 on a `via` include that
+ * carries `viaParent` and returns its parent descriptor, resolved by the table
+ * name ON THE CHILD DESCRIPTOR (a code constant), never from any input.
+ * Throws `ExportClassificationError` (`invalid_via_parent`) on any problem:
+ * fail closed, no query. Jest does not type-check, so the shape is
+ * re-checked here, not trusted.
+ */
+export function viaParentOf(child: PurgeDescriptor, descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS): PurgeDescriptor {
+  const value = child.export as unknown;
+  if (!isObject(value) || value.kind !== 'include' || !Array.isArray(value.columns)) {
+    throw new ExportClassificationError('invalid_via_parent', child.table, 'a parent-scoped read needs an include');
+  }
+  const declared = new Set((value.columns as unknown[]).filter((c): c is string => typeof c === 'string'));
+  const problems = [...viaShapeProblems(child, value, declared), ...viaParentLinkProblems(child, descriptors)];
+  if (!declared.has('id')) problems.push(`${child.table}: a parent-scoped read needs the id column`);
+  if (!isObject(value.viaParent)) problems.push(`${child.table}: no viaParent`);
+  if (problems.length > 0) throw new ExportClassificationError('invalid_via_parent', child.table, problems.join('; '));
+  const parentTable = String((value.viaParent as Record<string, unknown>).parent);
+  return descriptors.filter((d) => d.table === parentTable)[0];
 }
 
 /** Problems with one bucket descriptor's `export` value (T-1, T-2, T-7). */
