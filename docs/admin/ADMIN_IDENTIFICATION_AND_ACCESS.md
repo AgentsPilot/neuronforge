@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-16
+> **Last Updated**: 2026-10-17
 
 ## Overview
 
@@ -232,8 +232,8 @@ the right unit for the register.
 | 19 | `boost-packs` | `POST` | ✅ gated | `requireAdmin` |
 | 20 | `boost-packs` | `PUT` | ✅ gated | `requireAdmin` |
 | 21 | `calculator-config` | `PUT` | ✅ gated | `requireAdmin` |
-| 22 | `dashboard` | `GET` | ✅ gated | `requireAdmin` |
-| 23 | `dashboard` | `HEAD` | ✅ gated | `requireAdmin` |
+| 22 | `dashboard` | `GET` | ✅ gated | `requireAdmin` (redundant since Money M-8, BD-34: kept and gated; its only caller is the redundant Platform dashboard page) |
+| 23 | `dashboard` | `HEAD` | ✅ gated | `requireAdmin` (redundant since Money M-8, BD-34; as row 22) |
 | 24 | `execution-stats` | `GET` | ✅ gated | `requireAdmin` |
 | 25 | `execution-tiers` | `DELETE` | ✅ gated | `requireAdmin` |
 | 26 | `execution-tiers` | `GET` | ✅ gated | `requireAdmin` |
@@ -723,3 +723,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-15 | AI model price review slice 5: register rows 108–109, census 106 = 100 + 6 + 0, 75 files | Rows **108** `model-pricing/fetch-runs#POST` ("Check provider prices") and **109** `model-pricing/fetch-runs#GET` (its status), both gated from birth with `requireAdmin` as the first statement. Census re-counted from disk on `86dd3266` plus this slice: 75 route files. No guard cap changes |
 | 2026-10-16 | AI model price review slice 6: rows 57/59/60/61 struck, row 110 added, census 103 = 97 + 6 + 0, 75 files | Sync (`system-config/pricing/sync#POST`) and the single-row `system-config/pricing` `PUT`, `POST` and `DELETE` deleted (MP-FR-11); `GET` (row 58) stays. Row **110** `business-os/test/plan-test-clock#POST` registered: gated, landed in `be3eab13` without a row. Re-counted from disk; no guard cap moved (no exemption names either pricing file). Stale totals in the truth table and the register summary corrected |
 | 2026-10-16 | Money M-5: the cost report's page moved | Rows 85 and 86 name the page their routes serve: Charge checks (`/admin/finance/charges`), where the Business OS AI "Costs & credits" tab moved. No route, gate or count changed |
+| 2026-10-17 | Money M-8: the dashboard route marked redundant | Rows 22 and 23 note that `/api/admin/dashboard` is redundant (BD-34): kept, still gated by `requireAdmin`, comment-only change; its only caller is the redundant Platform dashboard page, whose hidden sidebar item was removed. No census change |

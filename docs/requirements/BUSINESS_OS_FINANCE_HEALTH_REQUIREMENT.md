@@ -1,6 +1,6 @@
 # Requirement: Business OS Finance & Business Health (admin page)
 
-> **Last Updated**: 2026-10-16
+> **Last Updated**: 2026-10-17
 
 **Created by:** BA
 **Date:** 2026-10-09
@@ -39,6 +39,7 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11F. Money M-4: two measures, one vocabulary (OV-1 copy, OV-5 recorded above charged)](#11f-money-m-4-two-measures-one-vocabulary-ov-1-copy-ov-5-recorded-above-charged)
     - [11G. Finance shell on the Admin Layout Standard (F-2, F-4, F-5)](#11g-finance-shell-on-the-admin-layout-standard-f-2-f-4-f-5)
     - [11H. Money M-5: the Money section](#11h-money-m-5-the-money-section)
+    - [11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant](#11j-money-m-8-mark-the-platform-dashboard-and-exchange-rates-pages-redundant)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -68,6 +69,7 @@ This document is the feature's **single source of truth**: every slice decision,
 | F-4 | **M-6 / DF-4, Finance shell part 2: filter bar and URL state** (full cycle, about 2 days): `AdminFilterBar` + `useAdminFilters`, canonical `range` / `from` / `to` / `account` with aliases `preset` / `accountId`; bad link drops only the bad filter (BD-30) (§11G) | Owned by the finance stream 2026-10-15; F-0 #414, F-1 #418 merged; F-3 #420 merged. Starts after F-2 merges | ✅ **Merged** (PR #434, main `447d17a2`; SA-CR-F4 approved, QA PASS; fast track). User browser look L-112 to L-119 owed | — | [#434](https://github.com/AgentsPilot/neuronforge/pull/434) |
 | F-5 | **M-6 / DF-4, Finance shell part 3: KPI tiles** (full cycle, about 2 days): shared `KpiTile` / `KpiStrip` extended; tiles above the filter bar (BD-29), clickable to their sections (BD-31); C-14 registry entry (§11G) | Owned by the finance stream 2026-10-15; F-0 #414, F-1 #418 merged; F-3 #420 merged. Starts after F-4 merges | ✅ **Merged** (PR #437, in main `98735db9`; committed `24cf0c3d` on `feature/finance-f5-kpi-tiles`, origin/main merged in `e8fee379`; SA-CR-F5 approved, QA PASS; fast track). With F-5 merged, M-6 / DF-4 is complete. User browser look L-120 to L-127 owed | [FINANCE_F5_KPI_TILES_WORKPLAN.md](/docs/workplans/FINANCE_F5_KPI_TILES_WORKPLAN.md) | [#437](https://github.com/AgentsPilot/neuronforge/pull/437) |
 | M-5 | **Money M-5** (CR §8) "The Money section": a **Money** sidebar section after Monitor holding Finance (first), **Charge checks** (today's Business OS AI "Costs & credits" tab, Leak check included, mounted at `/admin/finance/charges`) and **AI calls & usage (detail)** (`/admin/analytics`, relabelled); the Costs & credits tab leaves Business OS AI and its old links redirect; the Business OS AI description drops "costs"; the FU-M4-1 wording (Health rule descriptions and metric labels, the leak-check cron description) moves to the Recorded vocabulary; the Health "Recorded AI cost" tile gains its page link to Finance (SA-Q55) (§11H) | M-1 to M-4 and M-6 merged; **no data, money, API route or migration change**. Sidebar sign-off: given 2026-10-14 by BQ-1 and BQ-6 (BD-21, BD-24) | 🔵 **PR open, auto-merge on** (PR #444; committed `1c7b7554` on `feature/bos-money-m5`, origin/main merged in `4e96e719`; SA-CR-M5 approved, QA PASS, TL approved; BD-33 fast track). User browser look L-128 to L-136 owed after merge | [BUSINESS_OS_FINANCE_HEALTH_M5_MONEY_SECTION_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M5_MONEY_SECTION_WORKPLAN.md) | [#444](https://github.com/AgentsPilot/neuronforge/pull/444) |
+| M-8 | **Money M-8** (CR §8) "Mark the Platform dashboard and Exchange rates pages redundant" (BD-34): both pages and the dashboard's API route get a REDUNDANT header comment; the dashboard's hidden parked sidebar item is removed; both routes stay reachable by URL with a one-line redundant notice (BQ-14 default); a source guard keeps the product from linking to them; Exchange rates' one `console.error` goes to Pino (§11J) | M-5 merged; **nothing deleted; no data, money, API logic or migration change**. Sign-off: BD-34 (§11J.0) | 🟡 **PR open (2026-10-17): [#448](https://github.com/AgentsPilot/neuronforge/pull/448), auto-merge on; commit `92ef1454`. SA code approved, QA passed, TL approved (BD-33).** Specified 2026-10-17 (§11J, AC-233 to AC-242, SA-Q75 to SA-Q80; BQ-14 resolved by BD-34). UI short path, about 1 day; BD-33 fast track; no user browser look (parked pages) | [BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md) | [#448](https://github.com/AgentsPilot/neuronforge/pull/448) |
 | 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b. **2026-10-16:** 6b also re-orders the KPI tiles, revenue first, then cost, then user and account data (BD-35); in the BD-32 order it runs after M-8, about 1.5 to 2 days | — | — |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
 | 8 | History snapshots (plan mix, credits) for trend lines | A migration and a cron (SA) | ⬜ Not started | — | — |
@@ -141,6 +143,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-15 — The admin-layout session reviewed /admin/finance against the layout standard §5 and the user approved a six-slice plan (F-0 #414 and F-1 #418 merged; F-3 #420 merged). **F-2, F-4 and F-5 move to the finance stream** as DF-4 / Money M-6. User decisions **BD-28 to BD-31** (h1 "Finance"; tiles above the filter bar on both tabs; a bad link drops only the bad filter; tiles clickable to their sections). BA added §11G (AC-169 to AC-183) and §0.1 rows F-2, F-4, F-5. F-2 starts once #420 merges. No code changed.
 - 2026-10-16 — With F-5 (#437) merged, M-6 / DF-4 is complete and M-1 to M-4 are merged. BA specified **Money M-5** "The Money section" in §11H from CR §1, §5.1, the M-5 row, SA-Q-4, BQ-1, BQ-6 and BQ-10, BD-21, BD-24, BD-27, FU-M4-1, SA-Q55 and the code at main `98735db9`. **Sidebar sign-off already given:** the Admin Layout Standard treats the sidebar as fixed (LAY §2.3 X-1, X-2 and §3 rule 9), so moving pages between sections needs the user; the user gave that sign-off on **2026-10-14 by accepting CR BQ-1 (BD-21) and BQ-6 (BD-24)**. No new question goes to the user for M-5. Scope: a Money section (Finance, Charge checks, AI calls & usage (detail)); the Costs & credits tab, Leak check included, moves to `/admin/finance/charges` and old links redirect; Business OS AI keeps Settings and Activity; FU-M4-1 reworded (wording only); the Health tile gains a page link to Finance. AC-184 to AC-203; SA-Q58 to SA-Q64; manual QA L-128 to L-136. About 2 days, UI short path. Awaiting SA review.
 - 2026-10-16 — The user's roadmap decisions, relayed by the coordinator, are recorded as **BD-32** (order M-5 → 4b → M-8 → 6b → DF-6 → 5b → 7 → 3 → 8, with estimates), **BD-33** (no per-slice user approval: SA, QA and TL approve, then RM commits, opens the PR and turns on auto-merge; a genuine business question or a production migration still stops for the user), **BD-34** (M-8 marks the Platform dashboard and Exchange rates pages redundant in code comments and stops using or linking them; it does not delete them; amends BD-25) and **BD-35** (6b also re-orders the KPI tiles: revenue, then cost, then user and account data). **BQ-13 stays open** and is attached to 4b: does a refunded boost take its credits back? Until the user answers, 4b keeps today's behaviour (the customer keeps the credits) (§0.4). CR's M-8 row updated to match BD-34.
+- 2026-10-17 — BA specified **Money M-8** in §11J from BD-34 (amends BD-25), the CR M-8 row and inventory I-15, I-19, and the code at main `5c214310` (CF-1 to CF-12): REDUNDANT header comments in both pages and in `/api/admin/dashboard` (its only caller is the dashboard); the dashboard's hidden parked sidebar item removed (parked 15 → 14, hrefs 29 → 28; visible sidebar unchanged; BD-34 is the sign-off, §11J.0); both routes kept with a one-line notice; a new source guard against in-app links; Exchange rates' `console.error` to Pino. AC-233 to AC-242 and SA-Q75 to SA-Q80 (numbered after PR #447's AC-232 and SA-Q74). New **BQ-14** (visible notice or comments only; default: notice) and **FU-M8-1** (Exchange rates still writes from the browser; not changed by M-8). CR M-8 row marked in progress. No code changed.
 
 ### 0.3 SA rulings
 
@@ -227,6 +230,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-RR-M5** | **2026-10-16 SA requirement review (Money M-5, §11H): APPROVED, edits applied.**<br>• SA-Q58 own entry; SA-Q59 stay; SA-Q60 `next.config.js` temporary redirect; SA-Q61 keep L-9a minus `costs`; SA-Q62 "(detail)" in both h1 and sidebar; SA-Q63 contrast key now; SA-Q64 no window; CR SA-Q-4 confirmed.<br>• Code facts re-checked: admin layout `requireAdminPage` gates the new page; the Health rules are code constants (wording only, never persisted).<br>• E-63: S-18 `ANALYTICS_WHAT` → "AI calls and usage"; AC-195 now covers S-1 to S-18.<br>• E-64: `tabCoexistence` X-8, X-8b and X-10 kept and re-scoped. | 2026-10-16 | §11H |
 | **SA-WP-M5** | **2026-10-16 SA workplan review (M-5): APPROVED WITH CONDITIONS.**<br>• W1: the stray `tab=costs` is harmless (no reader; the sidebar matches by pathname).<br>• W2 dual-mount Pin C approved.<br>• W3 Next internals accepted, with M5-R3 (shape block separate, version in the title, curl recorded).<br>• W4 rename; W5 stay; W6 not as listed (M5-R1: re-scope X-8, X-8b, X-10); W7 rename (S-18, M5-R2); W8 to W11 approved.<br>• M5-R4: pins C and D frozen with 10 s waits; the four existing hashes unchanged.<br>• Nav 28 → 29 is correct; C-14 entry and uniqueness case; `test:bos-entitlements` runs. | 2026-10-16 | §11H |
 | **SA-CR-M5** | **2026-10-17 SA code review (Money M-5): Code Approved.**<br>• M5-R1 (X-8, X-8b, X-10 re-scoped; only X-1, X-2, X-3, X-12 and one `costsTab` case deleted), M5-R2 (S-18), M5-R3 (shape and internals blocks, curl recorded) all met.<br>• M5-R4: all seven hashes recomputed and equal (C `98ea0507…`, C helper `02813360…`, D `1f7cf07a…`, A, B, the AC-173 pair).<br>• `evaluateHealth.ts`: link and wording only; Health results change only in the spend tile's `pageLink`.<br>• Deviations approved: the 18-file vocabulary guard; X-6 kept to `keep=1` (no coverage lost).<br>• The costs files are not moved; no API, data or money change.<br>• Follow-up chip: harden `qa-slice5-pr2.route.test.ts` (wall-clock `< 1000` ms) together with `bosLens` P-8.<br>• SA re-run all exit 0 (finance 564, business-os-llm 850, components 816, Health 319, entitlements 8472, authz 203). | 2026-10-17 | §11H |
+| **SA-RR-M8** | **2026-10-17 SA requirement review (Money M-8, §11J): APPROVED, E-71 applied.**<br>• **BD-34 reading:** "just add comments it is redundant for now and not use them" means code comments only and **no visible notice**. BQ-14 is resolved by BD-34 and not sent to the user. RP-4, AC-236, the §11J.2 scope row, §11J.4 and the BQ-14 paragraph are amended.<br>• `docs/MULTI_CURRENCY_SYSTEM.md` is added to the pointer notes.<br>• Estimate about 0.75 day.<br>• Q75 remove the hidden item; Q76 and Q77 moot; Q78 comment only; Q79 a new guard; Q80 FU-M8-1. | 2026-10-17 | §11J |
+| **SA-WP-M8** | **2026-10-17 SA workplan review (M-8): APPROVED WITH CONDITIONS.**<br>• References re-found by `git grep` (sidebar, the dashboard's fetch, the route comment); the visible nav is unchanged; Pino matches the dashboard; no Health, C-14, contrast or authz edit; the seven pins are unchanged (LF-normalised, clean against HEAD).<br>• M8-R1: drop the notice, Step 2 and the render test. M8-R2: the MULTI_CURRENCY doc pointer. M8-R3: planted controls for every guard rule. M8-R4: LF-normalised hashes. | 2026-10-17 | §11J |
+| **SA-CR-M8** | **2026-10-17 SA code review (M-8): Code Approved.**<br>• Comment-only page and route diffs, plus Exchange rates' Pino lines; no notice (G-3); `'use client'` stays first.<br>• Hidden item and icon removed; visible nav unedited; parked 15 → 14 (both pins) and hrefs 29 → 28.<br>• G-1 to G-5 each have a planted control.<br>• MULTI_CURRENCY, ADMIN_IDENTIFICATION and reorganisation doc edits were needed (stale references to the removed item and the route).<br>• Seven pins unchanged (LF-normalised).<br>• SA re-run exit 0 (components 818, guards 401, authz 203). | 2026-10-17 | §11J |
 
 ### 0.4 Deferrals and parked items
 
@@ -1926,6 +1932,100 @@ Technical only. **No business question needs the user**: BD-21, BD-24 and BD-27 
 
 ---
 
+## 11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant
+
+Specified 2026-10-17 from **BD-34** (which amends BD-25 and CR BQ-7), the CR M-8 row and inventory rows I-15 and I-19, LAY §2.3 X-1, X-2 and §3 rule 9, and the code at main `5c214310` (citations are `path:line` there). Nothing was checked in a browser or against the database. **UI short path, about 1 day. Nothing is deleted. No data, money, API logic, read, request or migration change.**
+
+**Numbering note.** PR #447 (4b.1, §11I) claims AC-204 to AC-232 and SA-Q65 to SA-Q74 in this file, so M-8 starts at **AC-233** and **SA-Q75** to keep both PRs mergeable.
+
+### 11J.0 Sign-off
+
+BD-34 is the user's decision that nothing in the product uses or links to the two pages any more, and that both routes stay. The one sidebar change is the removal of the Platform dashboard item from the **hidden** "AgentsPilot (parked)" section; the visible sidebar (Monitor, Money, Businesses, Settings) does not change. BD-34 is recorded as the sign-off for exactly that removal, as §11H.0 did for M-5 (LAY X-1, X-2, rule 9). Under BD-33, M-8 proceeds on SA, QA and TL approval with no user step.
+
+### 11J.1 Code facts (at `5c214310`)
+
+| # | Fact | Evidence |
+|---|---|---|
+| CF-1 | Platform dashboard is `/admin/platform-dashboard`, one client file (578 lines). Its header already says URL-only (U-6) and "the user decides later whether it stays at all (FU-4)" | `app/admin/platform-dashboard/page.tsx:1`, `:23-33` |
+| CF-2 | Its only data call is `/api/admin/dashboard?period=` | `platform-dashboard/page.tsx:106` |
+| CF-3 | `/api/admin/dashboard` (GET and HEAD, `requireAdmin` first in each) has **no other caller** in `app/`, `lib/` or `components/`. Its only other references are the admin gate test and the route register | `app/api/admin/dashboard/route.ts:15-23`, `:274-283`; `app/api/admin/__tests__/adminGate.writes.test.ts:237`, `:341-342`; ADMIN_IDENTIFICATION register rows 22, 23 |
+| CF-4 | The **only thing in the product that points at the dashboard** is its sidebar item in the hidden parked section, kept "so every admin page keeps exactly one sidebar entry". The sidebar header comment names its path. `LayoutDashboard` is imported only for that item | `app/admin/components/AdminSidebar.tsx:225-241`, `:66-69`, `:8` |
+| CF-5 | The dashboard's own links to Businesses, AI calls & usage, learning system, AIS config and the agent queue lead **out** of it; they stay | `platform-dashboard/page.tsx:242-356`, `:520-573` |
+| CF-6 | Exchange rates is `/admin/exchange-rates`, one client file (531 lines). It reads and writes `exchange_rates` from the browser (`supabaseClient`, `CurrencyService.updateRate`) and fetches `api.exchangerate-api.com` | `app/admin/exchange-rates/page.tsx:20-21`, `:64-72`, `:106-150`, `:167` |
+| CF-7 | Exchange rates has no sidebar item and no link. The nav test lists it as unlisted and asserts the sidebar file never contains `exchange-rates` | `app/admin/components/__tests__/AdminSidebar.nav.test.ts:87-89`, `:192-194`; sidebar comment `:82-83` |
+| CF-8 | Exchange rates has **no API route of its own**. `CurrencyService` is shared with the user settings currency picker and the currency helpers, so it is not "used only by" the page and is out of scope | `components/settings/CurrencySelector.tsx:9`; `lib/utils/currencyHelpers.ts:4` |
+| CF-9 | Exchange rates has one `console.error` (CLAUDE.md rule 3: flagged; converted here because the file is touched). The dashboard and its route have none | `exchange-rates/page.tsx:92` |
+| CF-10 | Tests that pin the two pages: the nav test (parked section has 15 items and contains the dashboard `:135-141`; the on-disk scan finds both routes `:160-170`; 29 hrefs `:179`; no `exchange-rates` in the sidebar `:192-194`) and the Health guards (no Health file links to the dashboard `health.source.guard.test.ts:67-69`, `health.render.test.tsx:241-246`; the dashboard is still a `'use client'` page with its fetch and Pino logger `health.source.guard.test.ts:146-153`) | as cited |
+| CF-11 | Neither page is in the C-14 `MIGRATED_PAGES` registry or in the contrast guard's `PAGES` | `app/admin/components/layout/__tests__/layoutFolder.guard.test.ts:511`; `app/admin/__tests__/contrast.lf1.source.guard.test.ts:56-64` |
+| CF-12 | No `next.config.js` redirect and no `middleware.ts` rule names either route | search at `5c214310` |
+
+### 11J.2 Scope
+
+| In | Out |
+|---|---|
+| Remove the Platform dashboard item from the hidden parked section (and its now-unused icon import); reword the sidebar comments so the sidebar file names neither path | Deleting any page, route, file, table or service (BD-34) |
+| The redundant header comment (RP-1) in both page files and in `app/api/admin/dashboard/route.ts` | Any change to a read, write, request, figure, period option or the external rates fetch |
+| **No visible notice** (BD-34 reading, RP-4, E-71): the pages render exactly as today | Making Exchange rates read-only (FU-M8-1, a later step) |
+| A source guard that nothing in `app/`, `lib/`, `components/` or `hooks/` links to either page, and that only the dashboard calls its route (RP-5) | `CurrencyService`, `CurrencySelector`, `currencyHelpers` (CF-8) |
+| Exchange rates' one `console.error` converted to Pino (CF-9) | Moving either page onto the Admin Layout Standard; the other 14 parked pages |
+| Pointer notes in the admin reorganisation requirement (U-6, S4-b), ADMIN_IDENTIFICATION (register rows 22, 23) and `docs/MULTI_CURRENCY_SYSTEM.md` (`:43`, `:233`, `:286` tell admins to visit `/admin/exchange-rates`; E-71) | Any browser look by the user at these parked AgentsPilot pages (they are parked) |
+
+**Estimate:** about 0.75 day (sidebar and nav test 0.25 day; comments and logger 0.15 day; guard 0.15 day; verification and doc pointers 0.2 day). With no notice there is no page restructuring and no render test (E-71).
+
+### 11J.3 Rules
+
+- **RP-1 Header comment.** Exactly `REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.`, followed by one line saying why: the dashboard's AI cost is in AI calls & usage (all products); no figure uses an exchange rate (BD-12); the route's only caller is the redundant dashboard. In both pages it sits directly after `'use client'`, which stays the first line (CF-10). In the route it sits at the top of the file.
+- **RP-2 Sidebar.** The parked section stays hidden and holds 14 items; the visible sections are unchanged. The sidebar file names neither `platform-dashboard` nor `exchange-rates`, comments included (the rule CF-7 already applies to Exchange rates).
+- **RP-3 Routes stay.** Both pages still load by direct URL for an admin with today's content and behaviour, admin-only through the admin layout.
+- **RP-4 No visible notice (BD-34 reading, E-71).** The user's instruction for M-8 was "no need to remove, we can just add comments it is redundant for now and not use them". The treatment is therefore **code comments only**. Neither page shows a notice, and neither page's markup or component structure changes. BQ-14 is resolved by BD-34 and is not sent to the user.
+- **RP-5 No in-app use.** No non-test file under `app/`, `lib/`, `components/` or `hooks/` contains `/admin/platform-dashboard` or `/admin/exchange-rates` in its code (comments stripped), and only `app/admin/platform-dashboard/page.tsx` contains `/api/admin/dashboard`.
+- **RP-6 Route unchanged.** `/api/admin/dashboard` gains only the comment: `requireAdmin` stays the first statement of GET and HEAD; the gate test and register rows 22 and 23 are unchanged.
+- **RP-7 Logging.** Exchange rates logs through `createLogger({ module: 'AdminExchangeRates' })`, error as `{ err }`. No other change to that file's behaviour.
+
+### 11J.4 Guards and tests affected
+
+| Guard or test | Change |
+|---|---|
+| `AdminSidebar.nav.test.ts` | The unlisted list gains `/admin/platform-dashboard` (BD-34); parked count 15 → 14 and "contains the dashboard" becomes "does not contain it"; href count 29 → 28; new case: the sidebar file never contains `platform-dashboard` (beside the `exchange-rates` case). The on-disk scan's `toContain` lines for both routes (`:167`, `:169`) stay, which proves the routes are kept |
+| `health.source.guard.test.ts`, `health.render.test.tsx` | **No edit.** "No link to the legacy dashboard" and "the legacy dashboard still exists as a client page" must stay green |
+| `redundantPages.source.guard.test.ts` (new, `app/admin/__tests__/`) | RP-1 exact header in the three files; RP-2 sidebar; RP-4: no `redundant-page-notice` and no `AdminNotice` import in either page; RP-5 walk; no-dead-regex self-tests and a planted control for each rule (E-71). No render test: neither page's markup changes, and `git diff` proves it |
+| `layoutFolder.guard.test.ts` (C-14) | **No edit.** Neither page joins `MIGRATED_PAGES`: they are not migrated and are not to be extended. Importing `AdminNotice` from outside the folder is allowed (S-3 governs files inside the folder) |
+| `contrast.lf1.source.guard.test.ts` | **No edit.** Neither page joins `PAGES`; the notice uses `AdminNotice`'s amber text, never `text-slate-500` or `-600` |
+| `adminGate.writes.test.ts`, `npm run test:authz-guard` | No edit; run (comment-only route change) |
+| `aiCostVocabulary.source.guard.test.ts` | No edit; neither file is scanned, and the notice copy uses none of its forbidden words |
+| Frozen pins (AC-173 pin and helper, Pins A, B, C with helper, D) | Not opened; hashes checked at the start and at handover |
+| `npm run lint:hooks` | Run |
+
+### 11J.5 Acceptance criteria
+
+- [ ] **AC-233** The sidebar data holds no item for `/admin/platform-dashboard` or `/admin/exchange-rates`; the parked section is still hidden and holds 14 items; the visible sections and their items are unchanged; the sidebar file names neither path.
+- [ ] **AC-234** No non-test file under `app/`, `lib/`, `components/` or `hooks/` links to either page, and only the Platform dashboard calls `/api/admin/dashboard` (RP-5).
+- [ ] **AC-235** Both routes still load by direct URL for an admin, with today's content, requests and actions unchanged.
+- [ ] **AC-236** *(amended by E-71, BD-34 reading)* Neither page shows a redundant notice. Each page file's diff is the RP-1 comment lines only, plus, for Exchange rates, the RP-7 logger lines.
+- [ ] **AC-237** Both page files and `app/api/admin/dashboard/route.ts` carry the exact RP-1 header comment; both pages still start with `'use client'`.
+- [ ] **AC-238** `/api/admin/dashboard` is unchanged apart from the comment: `requireAdmin` first, the same GET and HEAD responses; the gate test and `test:authz-guard` pass with no edit.
+- [ ] **AC-239** A non-admin is refused on both routes, as today (admin layout).
+- [ ] **AC-240** Exchange rates has no `console.*`; its history-load error logs through Pino with `{ err }`; nothing else in it changes.
+- [ ] **AC-241** No data, money, read, request, migration or API logic change; `git diff --stat -- supabase lib/repositories lib/services` is empty.
+- [ ] **AC-242** The frozen pins (AC-173 pin and helper, Pins A to D, C's helper) are byte-identical; the nav, Health, C-14, contrast and new redundant-page guards pass; the C-14 registry and the contrast `PAGES` are unchanged.
+
+No manual step for the user: both pages are parked AgentsPilot pages. AC-235 and AC-236 are proven by the comment-only diffs, the nav test's on-disk scan and the Health guard's "still a client page" check (E-71).
+
+### 11J.6 Open questions
+
+| # | Question | BA's suggested answer |
+|---|---|---|
+| **SA-Q75** | Remove the dashboard's hidden sidebar item (it then joins the nav test's unlisted list), or keep the hidden item and only add comments? | Remove: BD-34 says nothing links to it, and the item exists only for the "one entry per page" rule, which the unlisted list already handles for Exchange rates |
+| **SA-Q76** | How does the notice show in every state without editing the early returns? | Rename each page's component to an inner `…Content` function; the default export renders the notice, then the content. Hooks stay inside the inner component |
+| **SA-Q77** | Notice: text only, or a link to Finance? | Text only. "Do not link" is about links **to** these pages; a link out is harmless but not needed |
+| **SA-Q78** | The route: comment only, or also a log line or response header marking it redundant? | Comment only: any runtime marker is an API logic change |
+| **SA-Q79** | One new source guard file, or extend the nav test? | A new `redundantPages.source.guard.test.ts`: RP-5 walks folders the nav test does not read |
+| **SA-Q80** | Exchange rates still writes from the browser (CF-6). Record it only? | Record it as **FU-M8-1** (make it read-only or close the write); M-8 changes no behaviour |
+
+**BQ-14: resolved by BD-34, not sent to the user (SA-RR-M8, E-71).** BD-34 says "just add comments it is redundant for now and not use them", so the answer is code comments only and no visible notice. Whether Exchange rates should stop accepting edits is a separate later choice (FU-M8-1); M-8 leaves it as it is.
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -3363,3 +3463,7 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-16 | SA requirement and workplan review, Money M-5 (§11H) | SA-RR-M5 approved and SA-WP-M5 approved with conditions (§0.3). SA applied E-63 (S-18 `ANALYTICS_WHAT`, AC-195 to S-18) and E-64 (§11H.6: `tabCoexistence` X-8, X-8b, X-10 re-scoped, not deleted). M5-R1 to M5-R4 in the workplan. |
 | 2026-10-17 | SA code review, Money M-5 | Code Approved (SA-CR-M5 in §0.3). No conditions. Follow-up chip: harden the load-sensitive timing tests (`app/api/admin/jobs-queues/__tests__/qa-slice5-pr2.route.test.ts`, `bosLens.render` P-8). No requirement body text changed. |
 | 2026-10-17 | RM: Money M-5 committed, PR #444 opened, auto-merge on | Commit `1c7b7554` on `feature/bos-money-m5`; origin/main (`16cb2a1f`) merged in `4e96e719` (one trivial Change History conflict in ADMIN_IDENTIFICATION_AND_ACCESS.md, both rows kept). All seven frozen pin hashes verified. Re-run green after the merge. §0.1 M-5 row: status, workplan and PR columns |
+| 2026-10-17 | BA: Money M-8 specified (§11J) | New §11J "Mark the Platform dashboard and Exchange rates pages redundant" from BD-34, CR M-8, I-15, I-19 and main `5c214310`: scope, rules RP-1 to RP-7, guards, AC-233 to AC-242, SA-Q75 to SA-Q80, BQ-14 (default: visible notice), FU-M8-1. §0.1 row M-8 (in progress), §0.2 log line, TOC entry. No code changed. |
+| 2026-10-17 | SA requirement and workplan review, Money M-8 (§11J) | SA-RR-M8 approved and SA-WP-M8 approved with conditions (§0.3). E-71 applied: BD-34 read as code comments only, no visible notice (RP-4, AC-236, scope, §11J.4, BQ-14 resolved); MULTI_CURRENCY doc pointer added; estimate about 0.75 day. |
+| 2026-10-17 | SA code review, Money M-8 | Code Approved (SA-CR-M8 in §0.3). No conditions. |
+| 2026-10-17 | RM: Money M-8 committed, PR #448 opened, auto-merge on | Commit `92ef1454` on `feature/bos-money-m8`; origin/main (`5c214310`) had not moved, so no merge was needed. Seven frozen pins byte-identical (LF-normalised). Re-run: app/admin/components 818, redundant-pages guard 17, Health guards 56, test:authz-guard 203, all passed. §0.1 M-8 row updated. |

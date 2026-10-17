@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { Logo } from '@/components/brand/Logo';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard,
   MessageSquare,
   Server,
   X,
@@ -65,8 +64,8 @@ interface NavSection {
  * page that only configures or shows AgentsPilot says so.
  *
  * Slice 4 made `/admin` the Health landing and moved the old AgentsPilot
- * dashboard to `/admin/platform-dashboard`, listed only in the hidden parked
- * section (URL-only, user decision U-6).
+ * dashboard to its own URL-only page (user decision U-6). Money M-8 (BD-34)
+ * marked that page redundant and removed its hidden parked item.
  *
  * ADMIN_BOS_CLEANUP slice 2 split Model pricing from the AgentsPilot billing
  * settings, which moved to a new URL-only parked page, and moved Free tier &
@@ -81,6 +80,8 @@ interface NavSection {
  *
  * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
  * the database straight from the browser, so surfacing it would widen exposure.
+ * Money M-8 (BD-34) marked it and the old dashboard redundant: neither is
+ * listed, and this file names neither route.
  *
  * Pinned by `app/admin/components/__tests__/AdminSidebar.nav.test.ts` (section
  * order, one entry per admin page) and by the per-page nav tests next to the
@@ -226,20 +227,11 @@ const navigationSections: NavSection[] = [
     // URL. Hidden from the sidebar (user decision after slice 1 review,
     // 2026-09-25): twelve always-open items forced a scrollbar for pages
     // nobody operates day to day. Fifteen items after ADMIN_BOS_CLEANUP
-    // slice 2 (2026-10-03).
+    // slice 2 (2026-10-03); fourteen since Money M-8 (BD-34) removed the old
+    // AgentsPilot dashboard's item (the page is kept, redundant, URL-only).
     title: 'AgentsPilot (parked)',
     hidden: true,
     items: [
-      {
-        // The old `/admin` landing, moved in slice 4 when Health replaced it.
-        // URL-only by user decision (U-6): this entry exists so every admin
-        // page keeps exactly one sidebar entry, and it is hidden with its
-        // section. Nothing else links to it.
-        name: 'Platform dashboard (legacy)',
-        href: '/admin/platform-dashboard',
-        icon: LayoutDashboard,
-        description: 'AgentsPilot totals (old landing)'
-      },
       {
         name: 'Agent execution queue',
         href: '/admin/queues',

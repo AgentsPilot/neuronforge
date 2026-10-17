@@ -22,7 +22,10 @@
  *      and nothing with action buttons;
  *   9. (M-5) Charge checks lives at a NESTED route, `/admin/finance/charges`,
  *      which the one-level page scan cannot see, so it is allowed for
- *      explicitly (`NESTED_LISTED`) and checked to exist on disk.
+ *      explicitly (`NESTED_LISTED`) and checked to exist on disk;
+ *  10. (Money M-8, finance health §11J, BD-34) the old dashboard is redundant:
+ *      its hidden parked item is removed and it joins Exchange Rates in
+ *      `UNLISTED`. Both pages stay on disk (the on-disk scan still finds them).
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -85,8 +88,9 @@ const adminPageRoutes = (): string[] => {
 };
 
 // Unlisted on purpose (requirement §4.3): it writes from the browser straight
-// to the database, so surfacing it would widen exposure.
-const UNLISTED = ['/admin/exchange-rates'];
+// to the database, so surfacing it would widen exposure. Money M-8 (BD-34): the
+// redundant old dashboard is unlisted too; both routes are kept.
+const UNLISTED = ['/admin/exchange-rates', '/admin/platform-dashboard'];
 
 // Listed pages below the one-level scan (M-5): each must exist on disk.
 const NESTED_LISTED = ['/admin/finance/charges'];
@@ -132,9 +136,9 @@ describe('section order', () => {
     ]);
   });
 
-  it('parks the fifteen AgentsPilot pages, the legacy dashboard included (slice 4)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(15);
-    expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/platform-dashboard');
+  it('parks the fourteen AgentsPilot pages; the redundant legacy dashboard is no longer listed (M-8, BD-34)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(14);
+    expect(hrefsOf('AgentsPilot (parked)')).not.toContain('/admin/platform-dashboard');
     // ADMIN_BOS_CLEANUP slice 2: the free tier and the AgentsPilot billing page.
     expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/onboarding');
     expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/agentspilot-billing');
@@ -175,8 +179,9 @@ describe('every admin page is reachable, exactly once', () => {
     // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
     // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
     // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
-    // Finance (finance & business health slice 1a) + Charge checks (M-5).
-    expect(allHrefs).toHaveLength(29);
+    // Finance (finance & business health slice 1a) + Charge checks (M-5)
+    // − the redundant legacy dashboard (M-8, BD-34).
+    expect(allHrefs).toHaveLength(28);
   });
 
   it('every nested listed page exists on disk (M-5)', () => {
@@ -191,6 +196,10 @@ describe('every admin page is reachable, exactly once', () => {
 
   it('keeps Exchange Rates unlisted', () => {
     expect(sidebar).not.toContain('exchange-rates');
+  });
+
+  it('keeps the redundant Platform dashboard unlisted (M-8, BD-34)', () => {
+    expect(sidebar).not.toContain('platform-dashboard');
   });
 
   it('parsed every item (guards the parser: one href literal per parsed item)', () => {
@@ -266,8 +275,8 @@ describe('the parked AgentsPilot section is hidden, not removed', () => {
     expect(navBlock.match(/hidden: true/g)).toHaveLength(1);
   });
 
-  it('keeps all fifteen parked items in the data (routes are untouched)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(15);
+  it('keeps all fourteen parked items in the data (routes are untouched; M-8 removed only the redundant dashboard item)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(14);
   });
 
   it('renders only the visible sections, and draws separators between those alone', () => {

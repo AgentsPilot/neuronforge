@@ -40,6 +40,8 @@ When users visit the billing page:
 - Stripe handles the USD payment
 
 ### 5. **Admin Management**
+> **Redundant (BD-34, 2026-10-17, Money M-8):** the `/admin/exchange-rates` page is kept but redundant: no figure on the platform uses an exchange rate (BD-12), nothing links to it, and it is not to be extended. It still writes `exchange_rates` from the browser (FU-M8-1). See [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) §11J.
+
 - Exchange rates viewable at `/admin/exchange-rates`
 - Manual rate editing capability
 - Rate history tracking
@@ -230,6 +232,8 @@ When users visit the billing page:
 5. User pays in USD
 
 ### Admin Management
+> Redundant page (BD-34): see the note in Features §5.
+
 1. Admin visits `/admin/exchange-rates`
 2. Views all 47 currencies with current rates
 3. Can manually edit rates
@@ -282,6 +286,8 @@ FIXER_API_KEY=your_fixer_key_here        # Alternative provider
 4. Verify Stripe shows prices in selected currency
 
 ### Test Admin Panel
+> Redundant page (BD-34): see the note in Features §5.
+
 1. Login as admin
 2. Go to `/admin/exchange-rates`
 3. Edit a rate
@@ -406,3 +412,9 @@ The database stores critical metadata that the API doesn't provide:
 **Documentation Version:** 1.0
 **Last Updated:** January 2025
 **Status:** ✅ Production Ready
+
+## Change History
+
+| Date | Change | Details |
+|---|---|---|
+| 2026-10-17 | Exchange rates page marked redundant (Money M-8) | Pointer notes at Features §5, Admin Management and Test Admin Panel: the `/admin/exchange-rates` page is kept but redundant and unlinked (BD-34); it still writes from the browser (FU-M8-1). Finance requirement §11J |
