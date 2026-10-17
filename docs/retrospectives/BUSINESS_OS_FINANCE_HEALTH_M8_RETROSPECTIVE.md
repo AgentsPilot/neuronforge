@@ -39,7 +39,7 @@ Money M-8 carries out BD-34. The Platform dashboard (legacy) and Exchange rates 
 - **Follow-up FU-M8-1:** Exchange rates still writes from the browser. It is recorded only (a header comment and a MULTI_CURRENCY note), not fixed.
 - **Next slice in the BD-32 order: 6b.** AI margin net of an estimated Stripe fee, plus the KPI re-order (revenue, then cost, then users), per BD-35.
 
-### Status: APPROVED FOR COMMIT — feature/bos-money-m8 — commit hash pending (RM)
+### Status: COMMITTED — feature/bos-money-m8 — commit `92ef1454`, PR [#448](https://github.com/AgentsPilot/neuronforge/pull/448) (auto-merge on)
 
 ---
 
