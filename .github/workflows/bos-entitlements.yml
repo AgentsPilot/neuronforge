@@ -18,10 +18,15 @@
 #   app/api/admin/business-os/entitlements/__tests__/**,
 #   lib/business-os/credits/__tests__/**   the admin plan and credit ops and
 #                                          the credit maths (11b audit F2)
-#   lib/audit/__tests__/**, app/api/audit/__tests__/**,
-#   app/api/user/data-export/__tests__/**  the audit registries, the owner
+#   lib/audit/__tests__/**, app/api/audit/__tests__/**
+#                                          the audit registries, the owner
 #                                          visibility rule and its policy
-#                                          mirror, the owner-read guard (BD-26)
+#                                          mirror, the owner-read guard (BD-26;
+#                                          since data export DE-9 it also pins
+#                                          that the zip routes read no audit
+#                                          rows, the coverage the retired
+#                                          app/api/user/data-export/__tests__
+#                                          gave this job)
 #   app/admin/users/__tests__/**           the admin users screen (11b audit F2)
 #
 # Paths live in the `test:bos-entitlements` script in package.json (one Jest

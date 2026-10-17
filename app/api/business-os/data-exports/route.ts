@@ -16,10 +16,12 @@
 // The ONLY account id is the session's (SA DE-8a C-10). There is no id from a
 // body, header or query.
 //
-// No env flag (SA ruling 2026-10-17): DE-8b ships no UI and the four "Export
-// data" buttons keep calling the JSON route until DE-9 switches them over.
-// The route acts only on the caller's own data, behind getUser(), the
-// database limit and the throttle.
+// No env flag (SA ruling 2026-10-17): DE-9 switched all four "Download my
+// data" entry points to this route and retired the JSON route; merging DE-9
+// was the switch. The route acts only on the caller's own data, behind
+// getUser(), the database limit and the throttle.
+//
+// GET (DE-9): "Last export …" for the control. See GET below.
 //
 // SA C-1: after markReady succeeded, a signing failure keeps the job `ready`
 // and answers 500 `export_ready_sign_failed` (DE-9 offers "download again");
@@ -79,6 +81,66 @@ async function readBody(request: NextRequest): Promise<{ ok: true; value: unknow
     return { ok: true, value: JSON.parse(text) };
   } catch {
     return { ok: false };
+  }
+}
+
+/**
+ * GET: "Last export …" for the one "Download my data" control (data export
+ * DE-9, workplan §3.1; SA DE-9 Q3, C-4).
+ *
+ * There is no input. The query string is IGNORED (a `?userId=` changes
+ * nothing): the only account is the session's. No audit, because it is a read
+ * of the owner's own status; no counts and no file name leave the server. A
+ * job id is sent only while that export can still be downloaded, and only for
+ * an owner-requested job (the repository filters requested_by_kind).
+ */
+export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  try {
+    const user = await getUser();
+    if (!user) return json({ success: false, error: 'Unauthorized' }, 401);
+
+    const throttle = await rateLimit(request, 'data-export-status', RATE_LIMITS.read);
+    if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
+
+    const latest = await businessOsDataExportJobRepository.findLatestCompletedForUser(user.id);
+    if (latest.error) {
+      requestLogger.error({ userId: user.id }, 'Data export status could not be read');
+      return json({ success: false, error: 'Could not read your last export. Please try again.' }, 500);
+    }
+
+    const job = latest.data;
+    if (!job) {
+      requestLogger.debug({ userId: user.id, hasLastExport: false }, 'Data export status read');
+      return json({ success: true, data: { lastExport: null } }, 200);
+    }
+
+    const isDownloadable = job.status === 'ready' && !!job.expires_at && Date.parse(job.expires_at) > Date.now();
+    requestLogger.debug({ userId: user.id, jobId: job.id, isDownloadable }, 'Data export status read');
+    return json(
+      {
+        success: true,
+        data: {
+          lastExport: {
+            createdAt: job.created_at,
+            downloadable: isDownloadable ? { jobId: job.id, expiresAt: job.expires_at } : null,
+          },
+        },
+      },
+      200
+    );
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Data export status request failed');
+    return json(
+      {
+        success: false,
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : String(error)) : undefined,
+      },
+      500
+    );
   }
 }
 
