@@ -193,7 +193,7 @@ describe('Money M-1 source guards', () => {
   it('financeLinks.ts imports only the wire types (planted control)', () => {
     const importsOf = (code: string) => [...code.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
     expect(importsOf("import { ACTIVITY_FILTER_SPEC } from '@/app/admin/business-os-llm/activityFilters';")).toEqual(['@/app/admin/business-os-llm/activityFilters']);
-    expect(importsOf(codeOf(LINKS))).toEqual(['@/lib/business-os/finance/financeTypes']);
+    expect(importsOf(codeOf(LINKS))).toEqual(['@/lib/business-os/finance/financeTypes', '@/app/admin/components/adminWindowPresets']);
   });
 });
 

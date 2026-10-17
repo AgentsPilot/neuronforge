@@ -2232,3 +2232,36 @@ describe('slice 6b: the KPI tiles read K-5, K-1, K-3, K-2, K-4 (BD-35)', () => {
     expect(document.body.textContent).not.toMatch(/Stripe fees, estimate/);
   });
 });
+
+// ── DF-6 (DF6-FR-9, E-81, E-82, DF6-R2): the since-start window line on the page ──
+describe('DF-6: "Since it started" on the page', () => {
+  const LINE = 'Since it started: 2026-09-29 16:50 to now (UTC)';
+  const SINCE_WINDOW = { preset: 'since_start', from: '2026-09-29', to: '2026-10-09', start: '2026-09-29T16:50:53.914Z', end: '2026-10-09T10:00:00.000Z' } as const;
+
+  it('AC-266: the header, a section subtitle and the account summary read the one line built from the payload', async () => {
+    mockSearch = `range=since_start&account=${A}`;
+    window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
+    const fetchMock = serve({ success: true, data: payload({ accountId: A, window: SINCE_WINDOW }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-summary');
+    expect(fetchMock).toHaveBeenCalledWith(`/api/admin/business-os/finance?preset=since_start&accountId=${A}`, expect.objectContaining({ cache: 'no-store' }));
+    expect(screen.getByTestId('account-summary-window')).toHaveTextContent(LINE);
+    expect(screen.getByTestId('section-ai-cost').textContent).toContain(LINE);
+    expect(screen.getAllByText(LINE).length).toBeGreaterThanOrEqual(2);
+    expect(document.body.textContent).not.toContain('UTC to now');
+    // AC-269 on the page: a short span goes out as custom dates, never range=since_start.
+    for (const link of within(screen.getByTestId('account-summary-links')).getAllByRole('link')) {
+      expect(link.getAttribute('href')).not.toContain('since_start');
+    }
+  });
+
+  it('E-82: with any other window the summary has no window line', async () => {
+    mockSearch = `account=${A}`;
+    window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
+    serve({ success: true, data: payload({ accountId: A }) });
+    render(<FinanceView />);
+    await screen.findByTestId('account-summary');
+    expect(screen.queryByTestId('account-summary-window')).toBeNull();
+    expect(document.body.textContent).not.toContain('Since it started:');
+  });
+});

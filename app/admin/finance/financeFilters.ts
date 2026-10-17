@@ -20,10 +20,15 @@
  * are the only bridge (U-8), and the request is byte-identical to before F-4
  * for every state a valid link or an in-page choice reaches (AC-173, pinned in
  * `__tests__/financeRequest.pin.render.test.tsx`).
+ *
+ * DF-6 (§11L.5, DF6-FR-7 to DF6-FR-9): `range=since_start` is Finance's one
+ * window extra. The field always parses it; `toFinanceQuery` sends it only with
+ * a business (else the default window, so the route's 400 is never asked for,
+ * SA-W-DF6-4); the cross-key repair drops it without a business (U-4).
  */
 
 import { customRangeProblem } from '@/app/admin/components/adminWindowPresets';
-import { windowEquals, windowFilter, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
+import { windowEquals, windowFilter, type AdminWindowExtra, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import { textFilter, type AdminFilterField, type AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
 import type { FinanceAccountsShow, FinanceAccountsSort } from '@/lib/business-os/finance/financeTypes';
 
@@ -52,6 +57,14 @@ export interface FinanceFilters {
 
 export const FINANCE_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
 
+/** DF-6 (SA-W-DF6-5): Finance's own window extra; the bar offers it only with a business picked. */
+export const FINANCE_WINDOW_EXTRAS = ['since_start'] as const satisfies readonly AdminWindowExtra[];
+
+/** DF-6: the "Since it started" window. */
+export function isSinceStart(value: AdminWindowValue): boolean {
+  return value.kind === 'extra' && value.extra === 'since_start';
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** One key holding one of a fixed set of values; anything else is ignored (U-4). */
@@ -76,13 +89,15 @@ function choiceFilter<T extends string, D extends T | ''>(key: string, values: r
  * 92 days never becomes invalid later, and the cap is the route's own rule.
  */
 function financeWindowField(): AdminFilterField<AdminWindowValue> {
-  const base = windowFilter({ defaultValue: FINANCE_DEFAULT_WINDOW });
+  const base = windowFilter({ defaultValue: FINANCE_DEFAULT_WINDOW, extras: FINANCE_WINDOW_EXTRAS });
   return {
     ...base,
     aliases: { preset: 'range' },
     parse: (get) => {
       const value = base.parse(get);
-      if (value === undefined || value.kind === 'linked' || value.kind === 'extra') return undefined;
+      if (value === undefined || value.kind === 'linked') return undefined;
+      // DF-6: `since_start` is the one extra; whether a business is picked is the repair's job.
+      if (value.kind === 'extra' && !isSinceStart(value)) return undefined;
       if (value.kind === 'custom') {
         if (value.from === null || value.to === null) return undefined;
         if (customRangeProblem(value.from, value.to, new Date()) !== null) return undefined;
@@ -115,8 +130,10 @@ export const FINANCE_FILTER_SPEC: AdminFilterSpec<FinanceFilters> = {
 };
 
 /** The window part of the request; anything the route cannot take is the default (defensive: the spec never holds it). */
-function windowQuery(window: AdminWindowValue): Pick<FinanceQuery, 'preset' | 'from' | 'to'> {
+function windowQuery(window: AdminWindowValue, account: string): Pick<FinanceQuery, 'preset' | 'from' | 'to'> {
   if (window.kind === 'preset') return { preset: window.preset, from: null, to: null };
+  // DF-6 (SA-W-DF6-4): only with a business, as the tab only without one; else the default below.
+  if (isSinceStart(window) && account !== '') return { preset: 'since_start', from: null, to: null };
   if (window.kind === 'custom' && window.from !== null && window.to !== null) {
     return { preset: 'custom', from: window.from, to: window.to };
   }
@@ -131,7 +148,7 @@ function windowQuery(window: AdminWindowValue): Pick<FinanceQuery, 'preset' | 'f
  */
 export function toFinanceQuery(filters: FinanceFilters): FinanceQuery {
   return {
-    ...windowQuery(filters.window),
+    ...windowQuery(filters.window, filters.account),
     accountId: filters.account === '' ? null : filters.account,
     tab: filters.tab === 'accounts' && filters.account === '' ? 'accounts' : null,
     sort: filters.sort,
@@ -143,11 +160,13 @@ export function toFinanceQuery(filters: FinanceFilters): FinanceQuery {
 /** The Accounts tab's `onChange` (its API stays `FinanceQuery`) → a patch for the hook. */
 export function fromFinanceQuery(query: FinanceQuery): Partial<FinanceFilters> {
   const window: AdminWindowValue =
-    query.preset === 'custom'
-      ? query.from !== null && query.to !== null
-        ? { kind: 'custom', from: query.from, to: query.to }
-        : FINANCE_DEFAULT_WINDOW
-      : { kind: 'preset', preset: query.preset };
+    query.preset === 'since_start'
+      ? { kind: 'extra', extra: 'since_start' }
+      : query.preset === 'custom'
+        ? query.from !== null && query.to !== null
+          ? { kind: 'custom', from: query.from, to: query.to }
+          : FINANCE_DEFAULT_WINDOW
+        : { kind: 'preset', preset: query.preset };
   return {
     window,
     account: query.accountId ?? '',
@@ -172,8 +191,12 @@ const tabKeysAtDefault = (filters: FinanceFilters) =>
  * picked the tab and its keys go (the business wins, as a pick already drops
  * the tab, M3-FR-1); with no tab, `sort` / `group` / `show` go. Null when the
  * combination is already valid.
+ *
+ * DF-6 (DF6-FR-8 (a)): "Since it started" with no business: the window is the
+ * dependent, bad filter and falls back to This month. Nothing else changes.
  */
 export function financeFilterRepair(filters: FinanceFilters): Partial<FinanceFilters> | null {
+  if (filters.account === '' && isSinceStart(filters.window)) return { window: FINANCE_DEFAULT_WINDOW };
   if (filters.account !== '' && (filters.tab !== '' || !tabKeysAtDefault(filters))) {
     return { tab: '', ...TAB_KEYS_DEFAULT };
   }

@@ -160,3 +160,11 @@ describe('the route query (unchanged for the same filter values)', () => {
     expect(search).toBe(`from=2026-07-01&to=2026-07-31&accountId=${A}`);
   });
 });
+
+// Finance DF-6 (E-76, U-4): Finance's own "Since it started" is not an extra of this page.
+describe('DF-6: range=since_start is ignored here', () => {
+  it('parses to undefined, so the page keeps its default window', () => {
+    expect(COSTS_WINDOW_EXTRAS).not.toContain('since_start');
+    expect(parseField('window', 'range=since_start')).toBeUndefined();
+  });
+});

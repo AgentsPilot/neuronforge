@@ -20,32 +20,73 @@
  * Only the account ID travels, never a name or an email. Paths and keys are
  * literals: this file imports nothing from another admin page (their specs are
  * imported by the contract test only, which parses every href back).
+ *
+ * DF-6 (DF6-FR-10, E-77, SA-Q95): `since_start` NEVER goes out as
+ * `range=since_start`. While its span is at most the targets' own cap
+ * (`ADMIN_WINDOW_MAX_DAYS` inclusive days, from the shared presets module, E-83)
+ * it goes out as the payload's custom dates; past it, the link carries the
+ * account only and the target opens on its own default. Both window helpers
+ * switch exhaustively on the choice, so no new choice can fall through.
  */
 
 import type { FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
+import { ADMIN_WINDOW_MAX_DAYS, inclusiveDays } from '@/app/admin/components/adminWindowPresets';
 
 /** The window the payload resolved: inclusive UTC dates and the choice. */
 export type FinanceLinkWindow = Pick<FinanceWindowInfo, 'preset' | 'from' | 'to'>;
 
+function setDates(params: URLSearchParams, window: FinanceLinkWindow): void {
+  params.set('range', 'custom');
+  params.set('from', window.from);
+  params.set('to', window.to);
+}
+
+/** DF-6 (SA-Q95): a since-start span goes out as dates only while every target accepts it. */
+function sinceStartFitsLinks(window: FinanceLinkWindow): boolean {
+  return inclusiveDays(window.from, window.to) <= ADMIN_WINDOW_MAX_DAYS;
+}
+
 /** Activity and Charge checks: the same preset, or the custom dates. */
 function wholeDayWindow(params: URLSearchParams, window: FinanceLinkWindow): void {
-  if (window.preset === 'custom') {
-    params.set('range', 'custom');
-    params.set('from', window.from);
-    params.set('to', window.to);
-  } else {
-    params.set('range', window.preset);
+  switch (window.preset) {
+    case 'today':
+    case '7d':
+    case '30d':
+    case 'this_month':
+      params.set('range', window.preset);
+      return;
+    case 'custom':
+      setDates(params, window);
+      return;
+    case 'since_start':
+      if (sinceStartFitsLinks(window)) setDates(params, window);
+      return;
+    default: {
+      const unreachable: never = window.preset;
+      return unreachable;
+    }
   }
 }
 
 /** AI calls & usage: equal presets where they exist, otherwise the exact dates (SA-W56). */
 function analyticsWindow(params: URLSearchParams, window: FinanceLinkWindow): void {
-  if (window.preset === 'today' || window.preset === 'this_month') {
-    params.set('range', window.preset);
-  } else {
-    params.set('range', 'custom');
-    params.set('from', window.from);
-    params.set('to', window.to);
+  switch (window.preset) {
+    case 'today':
+    case 'this_month':
+      params.set('range', window.preset);
+      return;
+    case '7d':
+    case '30d':
+    case 'custom':
+      setDates(params, window);
+      return;
+    case 'since_start':
+      if (sinceStartFitsLinks(window)) setDates(params, window);
+      return;
+    default: {
+      const unreachable: never = window.preset;
+      return unreachable;
+    }
   }
 }
 

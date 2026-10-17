@@ -90,3 +90,13 @@ describe('slice 6a: the Accounts tab keys (SA-Q43, SA-Q44, E-48, SA-W84)', () =>
     }
   });
 });
+
+// ── DF-6 (DF6-FR-7): the since-start request ───────────────────────────────
+describe('DF-6: serialiseFinanceUrl with since_start', () => {
+  it('writes preset=since_start and the business, and never the dates', () => {
+    expect(serialiseFinanceUrl({ ...DEFAULT_FINANCE_QUERY, preset: 'since_start', accountId: A })).toBe(`preset=since_start&accountId=${A}`);
+    expect(serialiseFinanceUrl({ ...DEFAULT_FINANCE_QUERY, preset: 'since_start', from: '2026-09-29', to: '2026-10-17', accountId: A })).toBe(
+      `preset=since_start&accountId=${A}`
+    );
+  });
+});

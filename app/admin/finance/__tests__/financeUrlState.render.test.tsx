@@ -355,3 +355,74 @@ describe('Refresh and Read at, in the bar (DV-1 ended)', () => {
   });
 });
 
+
+// ── DF-6 (§11L.5, AC-264, AC-265): since it started. A NEW state beside the AC-173 table (SA-Q96) ──
+describe('DF-6: since it started (one business)', () => {
+  const SINCE = REQ(`preset=since_start&accountId=${A}`);
+
+  it('AC-264: range=since_start with a business loads the choice and sends exactly its request', async () => {
+    await open(`range=since_start&account=${A}`);
+    expect(requests()).toEqual([SINCE]);
+    expect(address()).toBe(`/admin/finance?range=since_start&account=${A}`);
+    expect(screen.getByRole('button', { name: 'Since it started' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('AC-264: the legacy preset=since_start&accountId reaches the same state and request', async () => {
+    await open(`preset=since_start&accountId=${A}`);
+    expect(requests()).toEqual([SINCE]);
+    expect(address()).toBe(`/admin/finance?range=since_start&account=${A}`);
+  });
+
+  it.each([
+    ['no business', 'range=since_start'],
+    ['a bad business', 'range=since_start&account=acme'],
+  ])('AC-264 / SA-W-DF6-4: %s → This month, all businesses, exactly ONE request (preset=this_month)', async (_name, link) => {
+    await open(link);
+    await settle();
+    expect(requests()).toEqual([pinnedRequest(1)]);
+    expect(address()).toBe('/admin/finance');
+    expect(screen.queryByTestId('finance-url-notice')).toBeNull();
+  });
+
+  it('AC-264: dates beside it are ignored; the choice and the business are kept', async () => {
+    await open(`range=since_start&from=2026-10-01&to=2026-10-02&account=${A}`);
+    expect(requests()).toEqual([SINCE]);
+    expect(address()).toBe(`/admin/finance?range=since_start&account=${A}`);
+  });
+
+  it('AC-264: with tab=accounts and a business, the tab is dropped and the window kept', async () => {
+    await open(`range=since_start&tab=accounts&account=${A}`);
+    expect(requests()).toEqual([SINCE]);
+    expect(address()).toBe(`/admin/finance?range=since_start&account=${A}`);
+  });
+
+  it('AC-265: offered only with a business picked', async () => {
+    const view = await open('');
+    expect(screen.queryByRole('button', { name: 'Since it started' })).toBeNull();
+    view.unmount();
+    await open(`account=${A}`);
+    expect(screen.getByRole('button', { name: 'Since it started' })).toBeInTheDocument();
+  });
+
+  it('AC-265: choosing it sends its request; removing the business switches to This month in ONE write', async () => {
+    await open(`account=${A}`);
+    fireEvent.click(screen.getByRole('button', { name: 'Since it started' }));
+    await settle();
+    expect(address()).toBe(`/admin/finance?range=since_start&account=${A}`);
+    expect(requests()).toEqual([pinnedRequest(7), SINCE]);
+    const writes = replaceCalls().length;
+    fireEvent.click(screen.getByRole('button', { name: 'Remove business' }));
+    await settle();
+    expect(replaceCalls().length).toBe(writes + 1);
+    expect(address()).toBe('/admin/finance');
+    expect(requests()).toEqual([pinnedRequest(7), SINCE, pinnedRequest(1)]);
+  });
+
+  it('AC-265: Clear resets it to This month and all businesses', async () => {
+    await open(`range=since_start&account=${A}`);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await settle();
+    expect(address()).toBe('/admin/finance');
+    expect(requests()).toEqual([SINCE, pinnedRequest(1)]);
+  });
+});

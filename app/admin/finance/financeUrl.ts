@@ -26,7 +26,8 @@ import type { AdminWindowChoice } from '@/app/admin/components/adminWindowPreset
 import type { FinanceAccountsShow, FinanceAccountsSort } from '@/lib/business-os/finance/financeTypes';
 
 export interface FinanceQuery {
-  preset: AdminWindowChoice;
+  /** DF-6 (E-80): `since_start` is Finance's own choice, sent only with `accountId`. */
+  preset: AdminWindowChoice | 'since_start';
   /** Set only for `custom`. */
   from: string | null;
   /** Set only for `custom`. */

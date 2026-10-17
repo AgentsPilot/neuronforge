@@ -200,7 +200,7 @@ describe('window extras (L-2a, D-2 (b))', () => {
   // E-9 (L-8a): retitled and widened from "24 hours and 90 days" when Business
   // OS AI Activity's four existing windows joined the extras (D-2 (b)).
   it("are 24 hours, 90 days and Activity's four whole-date windows, labelled in words", () => {
-    expect(ADMIN_WINDOW_EXTRAS).toEqual(['24h', '90d', 'yesterday', 'this_week', 'last_week', 'last_month']);
+    expect(ADMIN_WINDOW_EXTRAS).toEqual(['24h', '90d', 'yesterday', 'this_week', 'last_week', 'last_month', 'since_start']);
     expect(ADMIN_WINDOW_EXTRA_LABELS).toEqual({
       '24h': '24 hours',
       '90d': '90 days',
@@ -208,6 +208,7 @@ describe('window extras (L-2a, D-2 (b))', () => {
       this_week: 'This week',
       last_week: 'Last week',
       last_month: 'Last month',
+      since_start: 'Since it started',
     });
   });
 
@@ -297,5 +298,29 @@ describe('the four whole-date extras (L-8a, D-2 (b))', () => {
     const newYear = new Date('2027-01-01T00:10:00.000Z');
     expect(resolveWindow({ kind: 'extra', extra: 'last_month' }, newYear)).toEqual({ kind: 'dates', from: '2026-12-01', to: '2026-12-31' });
     expect(resolveWindow({ kind: 'extra', extra: 'yesterday' }, newYear)).toEqual({ kind: 'dates', from: '2026-12-31', to: '2026-12-31' });
+  });
+});
+
+// ── Finance DF-6 (E-76, SA-Q93): since it started, never resolved by the shared folder ──
+describe('the since_start extra (DF-6)', () => {
+  it('parses only where a page lists it (U-4 elsewhere)', () => {
+    expect(parseWindow(getter('range=since_start'), ['since_start'])).toEqual({ kind: 'extra', extra: 'since_start' });
+    expect(parseWindow(getter('range=since_start'))).toBeUndefined();
+    expect(parseWindow(getter('range=since_start'), ['24h', '90d'])).toBeUndefined();
+  });
+
+  it('dates beside it are dropped: the extra wins, and it serialises as range only', () => {
+    expect(parseWindow(getter('range=since_start&from=2026-10-01&to=2026-10-02'), ['since_start'])).toEqual({ kind: 'extra', extra: 'since_start' });
+    expect(serialiseWindow({ kind: 'extra', extra: 'since_start' })).toEqual({ range: 'since_start' });
+  });
+
+  it('resolves to none at any clock (the finance route resolves it)', () => {
+    for (const now of [new Date('2026-10-17T12:00:00Z'), new Date('2027-06-01T00:00:00Z')]) {
+      expect(resolveWindow({ kind: 'extra', extra: 'since_start' }, now)).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('is labelled in words', () => {
+    expect(ADMIN_WINDOW_EXTRA_LABELS.since_start).toBe('Since it started');
   });
 });
