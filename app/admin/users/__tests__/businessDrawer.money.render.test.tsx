@@ -207,6 +207,9 @@ function routePost(url: string): Queued {
   return answer(404, { success: false, error: 'not mocked' });
 }
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function routeGet(url: string): Queued {
   // The top-ups data is read when the gate opens, as the real answer would be.
   if (boostGate && url === BOOST_URL) return boostGate.then(() => okBody(boostData));
@@ -234,6 +237,8 @@ function routeGet(url: string): Queued {
   if (url === BOOST_URL) return okBody(boostData);
   if (url === CREDITS_URL) return okBody(creditsData);
   if (url === '/api/admin/archiving') return okBody({ sources: [] });
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return okBody(NO_EXPORTS);
   if (url === '/api/admin/test-account-cleanup/check') return okBody({ configured: true });
   unexpected.push(`GET ${url}`);
   return answer(404, { success: false, error: 'not mocked' });

@@ -21,6 +21,8 @@ const J1 = '11111111-1111-4111-8111-111111111111';
 const J2 = '22222222-2222-4222-8222-222222222222';
 const J3 = '33333333-3333-4333-8333-333333333333';
 const J4 = '44444444-4444-4444-8444-444444444444';
+// DE-10a: the sweep reads return the requester kind; these DE-8b cases are owner jobs.
+const OWNER_KIND = 'owner';
 const NOW = Date.parse('2026-10-18T05:25:00.000Z');
 const OLD = new Date(NOW - 60 * 60_000).toISOString();
 const YOUNG = new Date(NOW - 2 * 60_000).toISOString();
@@ -36,9 +38,9 @@ const inv = (bytes: number, count: number): FileInventory => ({
 
 function harness() {
   const jobs = {
-    listStaleRunning: jest.fn(async () => ({ data: [] as Array<{ id: string; user_id: string }>, error: null as Error | null })),
+    listStaleRunning: jest.fn(async () => ({ data: [] as Array<{ id: string; user_id: string; requested_by_kind: string }>, error: null as Error | null })),
     markFailed: jest.fn(async () => ({ data: { id: 'x' } as unknown, error: null as Error | null })),
-    listDueForExpiry: jest.fn(async () => ({ data: [] as Array<{ id: string; user_id: string }>, error: null as Error | null })),
+    listDueForExpiry: jest.fn(async () => ({ data: [] as Array<{ id: string; user_id: string; requested_by_kind: string }>, error: null as Error | null })),
     markExpired: jest.fn(async () => ({ data: true as boolean | null, error: null as Error | null })),
     findJobsByIds: jest.fn(async () => ({ data: [] as Array<{ id: string; user_id: string; status: string }>, error: null as Error | null })),
   };
@@ -88,7 +90,7 @@ describe('nothing to do', () => {
 describe('1 reap (SA DE-8a Q-12)', () => {
   it('uses the 90 s cut; marks failed/timeout per row own user; removes; audits as system with no actor id', async () => {
     const h = harness();
-    h.jobs.listStaleRunning.mockResolvedValueOnce({ data: [{ id: J1, user_id: A }], error: null });
+    h.jobs.listStaleRunning.mockResolvedValueOnce({ data: [{ id: J1, user_id: A, requested_by_kind: OWNER_KIND }], error: null });
     const result = await h.run();
     expect((h.jobs.listStaleRunning.mock.calls[0] as unknown[])[0]).toEqual(new Date(NOW - 90_000));
     expect(h.jobs.markFailed).toHaveBeenCalledWith(J1, A, 'timeout');
@@ -107,7 +109,7 @@ describe('1 reap (SA DE-8a Q-12)', () => {
 
   it('a row already settled (markFailed null) is left alone: no remove, no audit', async () => {
     const h = harness();
-    h.jobs.listStaleRunning.mockResolvedValueOnce({ data: [{ id: J1, user_id: A }], error: null });
+    h.jobs.listStaleRunning.mockResolvedValueOnce({ data: [{ id: J1, user_id: A, requested_by_kind: OWNER_KIND }], error: null });
     h.jobs.markFailed.mockResolvedValueOnce({ data: null, error: null });
     const result = await h.run();
     expect(h.storage.remove).not.toHaveBeenCalled();
@@ -120,7 +122,7 @@ describe('2 expire', () => {
   it('removes the object FIRST, then marks expired and audits retention', async () => {
     const h = harness();
     const order: string[] = [];
-    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A }], error: null });
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A, requested_by_kind: OWNER_KIND }], error: null });
     h.storage.remove.mockImplementationOnce(async () => (order.push('remove'), { data: true, error: null }));
     h.jobs.markExpired.mockImplementationOnce(async () => (order.push('mark'), { data: true, error: null }));
     const result = await h.run();
@@ -132,7 +134,7 @@ describe('2 expire', () => {
 
   it('a failed remove keeps the row ready (no markExpired) and the run is partly done', async () => {
     const h = harness();
-    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A }], error: null });
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A, requested_by_kind: OWNER_KIND }], error: null });
     h.storage.remove.mockResolvedValueOnce({ data: null, error: new Error('down') });
     const result = await h.run();
     expect(h.jobs.markExpired).not.toHaveBeenCalled();
@@ -142,7 +144,7 @@ describe('2 expire', () => {
 
   it('a full page (500) counts as an incomplete step (backlog visible)', async () => {
     const h = harness();
-    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: Array.from({ length: 500 }, () => ({ id: J1, user_id: A })), error: null });
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: Array.from({ length: 500 }, () => ({ id: J1, user_id: A, requested_by_kind: OWNER_KIND })), error: null });
     h.jobs.markExpired.mockResolvedValue({ data: false, error: null });
     expect((await h.run()).incompleteSteps).toBe(1);
   });
@@ -236,7 +238,7 @@ describe('robustness', () => {
   it('a step that throws is counted and the next steps still run', async () => {
     const h = harness();
     h.jobs.listStaleRunning.mockRejectedValueOnce(new Error('boom'));
-    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A }], error: null });
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A, requested_by_kind: OWNER_KIND }], error: null });
     const result = await h.run();
     expect(result.incompleteSteps).toBe(1);
     expect(result.expired).toBe(1);
@@ -247,5 +249,66 @@ describe('robustness', () => {
     h.jobs.listStaleRunning.mockResolvedValueOnce({ data: null as never, error: new Error('x') });
     h.storage.listForSweep.mockResolvedValueOnce({ data: null as never, error: new Error('x') });
     expect((await h.run()).incompleteSteps).toBe(2);
+  });
+});
+
+describe('DE-10a placement of the system rows (SA-1, SA-2, W10-6, T-15)', () => {
+  const ADMIN_ROW = { id: J2, user_id: B, requested_by_kind: 'admin' };
+
+  it('an admin job reaped: the row is on no account (null user, null actor), the target in entity and details', async () => {
+    const h = harness();
+    h.jobs.listStaleRunning.mockResolvedValueOnce({ data: [ADMIN_ROW], error: null });
+    const result = await h.run();
+    expect(h.jobs.markFailed).toHaveBeenCalledWith(J2, B, 'timeout');
+    expect(h.storage.remove).toHaveBeenCalledWith(B, J2);
+    expect(result.auditEntries).toEqual([
+      expect.objectContaining({
+        action: 'DATA_EXPORT_FAILED',
+        entityType: 'user',
+        entityId: B,
+        userId: null,
+        actorId: null,
+        details: { job_id: J2, reason: 'timeout', actor_kind: 'system', target_user_id: B, requested_by_kind: 'admin' },
+      }),
+    ]);
+  });
+
+  it('an admin job expired: the same placement, retention', async () => {
+    const h = harness();
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [ADMIN_ROW], error: null });
+    const result = await h.run();
+    expect(result.auditEntries).toEqual([
+      expect.objectContaining({
+        action: 'DATA_EXPORT_EXPIRED',
+        entityId: B,
+        userId: null,
+        actorId: null,
+        details: { job_id: J2, reason: 'retention', actor_kind: 'system', target_user_id: B, requested_by_kind: 'admin' },
+      }),
+    ]);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['unknown', 'robot'],
+    ['upper case', 'OWNER'],
+  ])('a %s kind is placed as admin (fails toward hidden, never the owner)', async (_label, kind) => {
+    const h = harness();
+    h.jobs.listStaleRunning.mockResolvedValueOnce({ data: [{ id: J3, user_id: A, requested_by_kind: kind as never }], error: null });
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J4, user_id: A, requested_by_kind: kind as never }], error: null });
+    const result = await h.run();
+    expect(result.auditEntries).toHaveLength(2);
+    for (const entry of result.auditEntries) {
+      expect({ userId: entry.userId, actorId: entry.actorId, entityId: entry.entityId }).toEqual({ userId: null, actorId: null, entityId: A });
+      expect(entry.details).toMatchObject({ target_user_id: A, requested_by_kind: 'admin' });
+    }
+  });
+
+  it('an owner job keeps the DE-8b placement (the owner account, no target fields)', async () => {
+    const h = harness();
+    h.jobs.listDueForExpiry.mockResolvedValueOnce({ data: [{ id: J1, user_id: A, requested_by_kind: OWNER_KIND }], error: null });
+    const result = await h.run();
+    expect(result.auditEntries[0]).toMatchObject({ userId: A, entityId: A, actorId: null });
+    expect(result.auditEntries[0].details).toEqual({ job_id: J1, reason: 'retention', actor_kind: 'system' });
   });
 });

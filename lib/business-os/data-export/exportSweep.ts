@@ -38,6 +38,16 @@
 //
 // Every effect is scoped by the row's own user_id or the folder's uuids
 // (tenant-isolation-guard Step 6). Counts only: no money, no names.
+//
+// DE-10a (SA-1, SA-2, W10-6): where the step 1 and step 2 audit rows go.
+// An OWNER job's row is written on the owner's account, as in DE-8b. An ADMIN
+// job's row is written with `userId: null` and `actorId: null` (the invites
+// N-6 precedent): no owner policy and no owner reader can return it, so the
+// owner never learns of an export an admin prepared (BQ-SA-2), and writing
+// the requesting admin as the user would forge an admin action through the
+// D-7 actor fallback. The target is `entityId` and `details.target_user_id`.
+// Any kind other than exactly 'owner' (a schema surprise) gets the admin
+// placement, so an unknown row fails toward hidden, never toward the owner.
 
 import 'server-only';
 import { EXPORT_JOB_POLICY } from '@/lib/business-os/data-export/jobPolicy';
@@ -48,7 +58,7 @@ import type { AuditLogInput } from '@/lib/audit/types';
 import type { BusinessOsDataExportJobRepository } from '@/lib/repositories/BusinessOsDataExportJobRepository';
 import { DATA_EXPORT_JOB_LIMITS } from '@/lib/repositories/BusinessOsDataExportJobRepository';
 import type { BusinessOsDataExportStorageRepository } from '@/lib/repositories/BusinessOsDataExportStorageRepository';
-import type { ExportFileBudget } from '@/lib/repositories/types';
+import type { DataExportSweepRef, ExportFileBudget } from '@/lib/repositories/types';
 
 export const SWEEP_LIMITS = {
   REAP_MS: 8_000,
@@ -88,33 +98,47 @@ export interface ExportSweepResult {
 
 const KEPT_STATUSES = new Set(['running', 'ready']);
 
-function systemFailedEntry(userId: string, jobId: string): AuditLogInput {
+/**
+ * Who the row is written on (DE-10a W10-6). Only an exact 'owner' is an owner
+ * job; anything else, a missing value included, is placed as an admin job.
+ */
+function isOwnerJob(row: DataExportSweepRef): boolean {
+  return row.requested_by_kind === 'owner';
+}
+
+/** The system row of one swept job, placed by its kind. SA Q-12: no system actor id exists, and none is invented. */
+function systemEntry(
+  row: DataExportSweepRef,
+  action: string,
+  reason: 'timeout' | 'retention',
+  severity: 'warning' | 'info'
+): AuditLogInput {
+  const isOwner = isOwnerJob(row);
+  const details: Record<string, unknown> = { job_id: row.id, reason, actor_kind: 'system' };
+  if (!isOwner) {
+    details.target_user_id = row.user_id;
+    details.requested_by_kind = 'admin';
+  }
   return {
-    action: AUDIT_EVENTS.DATA_EXPORT_FAILED,
+    action,
     entityType: 'user',
-    entityId: userId,
-    userId,
-    // SA Q-12: no system actor id exists, and none is invented.
+    entityId: row.user_id,
+    // An admin job's row is on no account (null), never the owner's (SA-2).
+    userId: isOwner ? row.user_id : null,
     actorId: null,
     resourceName: 'Data export',
-    details: { job_id: jobId, reason: 'timeout', actor_kind: 'system' },
-    severity: 'warning',
+    details,
+    severity,
     complianceFlags: ['GDPR'],
   };
 }
 
-function expiredEntry(userId: string, jobId: string): AuditLogInput {
-  return {
-    action: AUDIT_EVENTS.DATA_EXPORT_EXPIRED,
-    entityType: 'user',
-    entityId: userId,
-    userId,
-    actorId: null,
-    resourceName: 'Data export',
-    details: { job_id: jobId, reason: 'retention', actor_kind: 'system' },
-    severity: 'info',
-    complianceFlags: ['GDPR'],
-  };
+function systemFailedEntry(row: DataExportSweepRef): AuditLogInput {
+  return systemEntry(row, AUDIT_EVENTS.DATA_EXPORT_FAILED, 'timeout', 'warning');
+}
+
+function expiredEntry(row: DataExportSweepRef): AuditLogInput {
+  return systemEntry(row, AUDIT_EVENTS.DATA_EXPORT_EXPIRED, 'retention', 'info');
 }
 
 function budget(nowMs: number, maxMs: number, calls: number): ExportFileBudget {
@@ -157,7 +181,7 @@ export async function runExportSweep(deps: ExportSweepDeps, log: SweepLogger): P
       if (failed.error || !failed.data) continue; // already settled elsewhere: nothing to do
       result.staleReaped += 1;
       await deps.storage.remove(row.user_id, row.id);
-      result.auditEntries.push(systemFailedEntry(row.user_id, row.id));
+      result.auditEntries.push(systemFailedEntry(row));
     }
     return stale.data.length < DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX;
   });
@@ -182,7 +206,7 @@ export async function runExportSweep(deps: ExportSweepDeps, log: SweepLogger): P
       }
       if (marked.data) {
         result.expired += 1;
-        result.auditEntries.push(expiredEntry(row.user_id, row.id));
+        result.auditEntries.push(expiredEntry(row));
       }
     }
     // A full page means a backlog: visible as an incomplete step (SA optimisation).

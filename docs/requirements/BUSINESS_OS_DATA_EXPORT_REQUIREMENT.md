@@ -52,6 +52,7 @@ Evidence tags: ✅ read in code or docs, or measured live, on 2026-10-05 · 🧠
 | **DE-0 — security (token exposure)** | **Separate from the feature.** The finding (§1.2) is independent of export: the browser can read and write the owner's own OAuth tokens, whether or not anyone presses Export. **User decision pending:** does DE-0 jump the queue? BA recommends yes (DX-11) |
 | **Consequence of the order** | Admin delete AD-2…AD-4 will ship **before** the business data can be exported. Until DE-3/DE-4 ship, a deleted owner can take away only today's agent-platform export. See DX-12 |
 | **DE-2 — classification, CI check, skill rule** | Code complete, uncommitted (2026-10-15), see §0.6. **§0.3.6 tsc clause superseded by SA DE-2 review: T-1 Jest runtime check is the enforcement.** Drift command is `npm run schema:reconcile` (SA-Q4). BC-1 = BC-2 = No (user, 2026-10-15) |
+| **Phase 1 (2026-10-17)** | **Every Phase 1 slice is built; DE-10a, the last one, is code complete (§0.15).** Phase 1 is complete once DE-8b T-14 is recorded, DE-9 (#454) merges, and DE-10a passes SA, QA and its merge. Then the user decides Phase 2 (§0.4.1 F) |
 
 ### 0.1 SA ruling — DE-0 re-baseline and implementation conditions (2026-10-13)
 
@@ -1106,6 +1107,60 @@ Between the deploy and step 3 (minutes) the deployed build names a table that is
 
 **Follow-ups (Low):** QA E-1 daily_limit refusal with no retryAt shows the in-progress text (useDownloadMyData noticeFor); E-2 focus after dismiss; E-3 stale snippet docs/CLIENT_DATA_REMOVAL_IMPLEMENTATION.md L339; E-4 --v2-border fallback on /settings; SA: when the support address is swapped also clean lib/agentkit/v6/translation/NaturalLanguageCorrectionHandler.ts and prompt templates that send the personal email to an LLM as sample text; SA: SecurityTab.tsx direct Supabase calls (rule 1) on the parked agent-platform screen.
 
+### 0.15 DE-10a status, SA rulings and TL defaults (2026-10-17)
+
+**Status:** DE-10a (admin: export status, prepare, audited download) **code complete, uncommitted** on `feature/data-export-de10a` (worktree `neuronforge-de10a`; merged `origin/main` and then `origin/feature/data-export-de9` at `e7fbc24a`, by merge, never rebase). Awaiting SA code review, then QA. No migration, no env flag, no new dependency, no new table, bucket or CI job. Workplan: [BUSINESS_OS_DATA_EXPORT_DE10A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10A_WORKPLAN.md). SA workplan review 2026-10-17: approved, rulings SA-1 … SA-11, binding conditions W10-1 … W10-12.
+
+**Depends on DE-9 (PR #454, held until T-14).** This branch carries DE-9's commit. Its PR targets `main` and merges only **after #454 is on `main`** (no stacked PR into the DE-9 branch). DE-10a is the **last Phase 1 slice** (user request 2026-10-16, §0.4.1 G).
+
+**What DE-10a built.**
+
+- **Three admin routes**, `requireAdmin` the first statement of each, registered in the gate oracle (`adminGate.writes`, 65 → 68 handlers): `GET /api/admin/users/[id]/data-exports` (the last 10 exports: who, when, state, sizes, owner downloaded or not; no link, no file name; not audited), `POST /api/admin/users/[id]/data-exports` `{ reason }` (prepares an export with the owner's own `runZipExport` and the target's context; counts against the account's 3 a day, DX-4; returns **no link**) and `POST …/data-exports/[jobId]/parts/1/download` `{ reason }` (the only admin link: job read scoped by the path account → **write-ahead `DATA_EXPORT_DOWNLOADED_BY_ADMIN` with `writeNow`, critical** → 503 `audit_unavailable` and nothing signed if it was not written → a 60 s link). Ids from the path and the session only; bodies `.strict()`.
+- **One audit builder**, `lib/business-os/data-export/adminExportAudit.ts`: every admin-path row is admin-owned (below).
+- **Owner path changes (DE-9 C-4 notes):** owner "download again" reads `findOwnerJobById` (owner-requested jobs only), so an admin job id is a 404; `markOwnerDownloaded` is owner-kind only; `expireOtherReady` replaces only older exports **of the same kind**, the kind read from the ready row; the file name rule moved, unchanged, to `lib/business-os/data-export/downloadName.ts` (both routes name the file one way).
+- **Cron sweep:** the reap and retention rows of an admin-kind job (or any kind that is not exactly `owner`) are written with no user and no actor.
+- **UI:** a sixth boxed section **"Data export"** in the `/admin/users` business drawer, between Activity and the Danger area (admin dark tone): the status list, "Prepare export" and "Download (audited)…" with a reason dialog, the "owner has not downloaded" warning, nothing in the Danger area disabled or hidden by it.
+
+**SA rulings (DE-10a workplan review, 2026-10-17):**
+
+| # | Ruling |
+|---|---|
+| SA-1 | **Admin-owned audit rows** satisfy DE-8b Q-8's "otherwise proven hidden" branch: `user_id = actor_id = the admin`, `entity_type 'user'`, `entity_id = the target`, `details.target_user_id`. The owner reads audit rows only where `user_id` is theirs (the one owner policy, verified on PROD by TL §13.1; every in-app owner reader filters by the session id). Covers every row about an admin job: REQUESTED, READY, FAILED, replaced EXPIRED, DOWNLOADED_BY_ADMIN. No operator entity type, no migration. Supersedes nothing (§0.3.4 already said `user_id = admin`) |
+| SA-2 | Cron rows on admin-kind jobs: `userId: null`, `actorId: null`, `details.actor_kind 'system'`, `requested_by_kind 'admin'`, `target_user_id` (the invites N-6 precedent). Owner-kind rows unchanged |
+| SA-3 | `AuditTrailService` untouched. D-7 is **closed for admin-path rows** by an explicit `actorId = admin` on every input; "explicit null means no actor" stays open (F-3) |
+| SA-4 | `expireOtherReady(userId, keepJobId, kind)`; the kind comes from the row `markReady` returned, never a caller argument |
+| SA-5 | `findOwnerJobById` for the owner route; `findById` unchanged for the admin route and the engine re-read; `markOwnerDownloaded` owner-kind only |
+| SA-6 | `downloadName.ts` is a pure move; the owner file name is byte-identical (the owner route's name assertions were kept unedited) |
+| SA-7 | A signing failure after a written DOWNLOADED_BY_ADMIN is a 500 with no compensating row |
+| SA-8 | The status GET is not audited; REQUESTED non-blocking; READY / FAILED bounded flushes; DOWNLOADED_BY_ADMIN is the only write-ahead row |
+| SA-9 | **BD-4 amended: six drawer sections, not five** (Data export between Activity and the Danger area, at the user's request); the L-12 "five groups" pins became six, the Danger area is still last |
+| SA-10 | The prepare returns no link; the download route is the only admin link minter |
+| SA-11 | **Changed from the workplan:** status throttled on `RATE_LIMITS.read`, prepare on `RATE_LIMITS.create`, **download on `RATE_LIMITS.write`** (every call writes a critical row and raises the Health tile) |
+
+**TL defaults 2026-10-17 (workplan §14.1; autonomous run — user may change):**
+
+| # | Business call | TL default 2026-10-17 — user may change |
+|---|---|---|
+| BC-1 | Prepare and download: one action or two? | **Two**, each with a reason; the download reason is pre-filled with the reason of the prepare the admin just made |
+| BC-2 | May an admin download an export the owner made (within its 3 days)? | **Yes**, recorded the same way (DX-7) |
+| BC-3 | Do an owner's and an admin's new exports replace each other? | **No**; each replaces only its own kind. An account can hold two ready files for up to 3 days |
+| BC-4 | When does the box warn "the owner has not downloaded an export"? | When the owner's newest export was not downloaded by them, or they never exported. In the new box; the hidden AD-2 delete preview gets its line when AD-2 is switched on |
+| BC-5 | Show the box for a login with no Business OS business? | **Yes** |
+| BC-6 | May an admin use the admin path on their own account? | **No** (refused server-side; they use "Download my data") |
+| BC-7 | Must an admin download appear in that business's Activity list in the drawer? | **No**: it is in the Audit trail and raises the Health "Critical audit events" tile |
+| BC-8 | (DX-4 consequence) An admin-prepared export uses one of the owner's 3 per day | Noted; no new decision |
+
+**Accepted side effect (for the user, no change):** because the 3-a-day limit is shared (DX-4), an owner whose own "Download my data" is refused with "in progress" or "daily limit" can infer that *something* used their allowance or is running. That reveals no admin identity, reason or file and is not an owner notice in the BQ-SA-2 sense.
+
+**Follow-ups (not DE-10a scope):**
+
+- **F-1 (Medium, pre-existing class).** Admin-owned rows live under the admin's own `user_id`, so the admin's **own** Purge "activity history" option, or a deletion of the admin's own account, would erase the record of their admin actions on other accounts. This already applies to AD-1b, AD-2a and the test-account cleanup outcome rows. Purge is inert today: **fix before Purge is enabled** (for example exclude admin-on-target rows from that scope, or store them with `user_id NULL`, `actor_id = admin`). A platform-wide decision.
+- **F-2 (Low).** The admin sees these rows in their own `/monitoring` (target id and reason in details). Their own action, as AD-1b; revisit with F-1.
+- **F-3.** D-7: "explicit null means no actor" across the null-actor callers (SA-3).
+- **Follow-ups (Low):** QA — add `?userId=` query cases to both admin POST route tests; padded-reason trim test on prepare; daily-limit wording 'its 3 exports'; pre-existing gate-oracle KNOWN GAP (handler missing from oracle not detected). SA — write an admin FAILED row when `runZipExport` throws in prepare (today the cron reaps it null/null); count 404/410 download answers in the failure throttle bucket.
+
+**Phase 1 status: complete in code, pending T-14 and the merges.** With DE-10a every Phase 1 slice of §0.4.1 B is built. Phase 1 is done once DE-8b T-14 is recorded, DE-9 (#454) is merged, and this slice passes SA, QA and its merge. Then the user decides the Phase 2 next steps (§0.4.1 F).
+
 ---
 
 ## 1. Discovery: what exists today
@@ -1469,3 +1524,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-17 | DE-8a code complete; SA rulings Q-1 (SECURITY INVOKER replaces the DEFINER wording) and Q-9 (severities); two-migration shape; TL defaults B-1…B-3; PROD apply plan (§0.12) | Uncommitted on `feature/data-export-de8a`, awaiting SA code review and QA; nothing applied to PROD. Jobs table `business_os_data_exports` (service role only, RLS on with no policy, NULL-safe 72-hour expiry CHECK), start function `business_os_data_export_start` (INVOKER, VOLATILE, service_role EXECUTE only; one at a time, three per rolling 24 h, failed never counts, 90 s stale rule), private 50 MB zip bucket `business-data-exports` (empty until DE-8b), repository with `startForOwner` / `startForAdmin`, registrations (156 = 38 include + 0 planned + 118 exclude), six audit names (READY info, DOWNLOADED_BY_ADMIN critical), `fflate` 0.8.3 exact. Migrations `20261074` + generated cleanup `20261075` (stamp `a824848e0a538477`, chained on 20261047; finance 4b.1 renumbers above it if DE-8a lands first, SA C-7). Pre-check, checker, probe, rollback and measure scripts; local PGlite evidence |
 | 2026-10-17 | DE-8b code complete; SA workplan amendments (no env flag, Q-1, Q-3, Q-6, Q-7, C-7, C-16), DE-10a audit-visibility forward note (Q-8), Q-12; TL defaults BC-1…BC-8 (§0.13) | Uncommitted on `feature/data-export-de8b`, awaiting SA code review and QA; no migration, no dependency. One-request zip route (`POST /api/business-os/data-exports`), POST download-again route, daily `/api/cron/data-export` (`25 5 * * *`: reap, 3-day expiry, orphan sweep with 10-minute grace, 60% size watch on the export's own inventory). File buckets classified `include` (`client-documents`, `website-images`); `planned` forbidden on buckets. No env flag: the owner switch is DE-9. JSON route and 4 MB cap unchanged (cap removal moves to DE-9). File name keeps `-HHmm`; fallback `agentpilot-data-export-…zip`. T-14 Preview check owed after merge |
 | 2026-10-17 | DE-9 code complete; SA rulings Q1–Q9, C-1…C-11; TL defaults BC-1…BC-6; FR-E15 / AC-E22 / AC-E1 superseded; DE-10a forward notes (§0.14) | Uncommitted on `feature/data-export-de9`, awaiting SA code review and QA; no migration, no dependency. One `DownloadMyDataButton` on all four entry points (UI-1 option A: inline notice, nothing auto-dismisses); one browser seam `lib/client/businessOsDataExport.ts` (save mode A, https-only); `GET /api/business-os/data-exports` "Last export" (owner-requested jobs only, C-4). Retired: `GET /api/user/data-export` + tests, `downloadUserDataExport`, `JSON_BODY_MAX_BYTES`, `exportFileName`, the dead `export_*` copy. `PLACEHOLDER_ERASURE_CONTACT` moved unchanged to `lib/business-os/supportContact.ts` (single swap point; the user to supply a support address, BC-3). **Merge gated on T-14** (no flag: the merge is the switch). DE-10a must 404 download-again for admin jobs and settle `expireOtherReady` owner vs admin |
+| 2026-10-17 | DE-10a code complete; SA rulings SA-1…SA-11 (SA-11 changed: download on the write throttle); TL defaults BC-1…BC-8; follow-ups F-1…F-3; Phase 1 complete in code (§0.15) | Uncommitted on `feature/data-export-de10a`, carrying DE-9 (#454); the PR merges only after #454 is on `main`. No migration, flag or dependency. Three admin routes (status, prepare, audited download with a write-ahead critical `DATA_EXPORT_DOWNLOADED_BY_ADMIN`, 503 if not recorded, 60 s link), gated from birth and in the gate oracle (68). Every admin-path audit row admin-owned through one builder; admin-job cron rows with no user and no actor; owner download-again 404 on admin jobs; same-kind replacement; shared `downloadName.ts`. Sixth drawer section "Data export" above the Danger area (BD-4 → six sections). Accepted side effect: the shared 3-a-day limit lets an owner infer usage, no notice. F-1: admin-owned rows erasable by the admin's own activity purge or account deletion (also AD-1b, AD-2a, cleanup rows), fix before Purge is enabled; F-2 rows in the admin's own `/monitoring`; F-3 D-7 null actor. **Phase 1: every slice built; complete pending T-14 and the merges** |
