@@ -537,7 +537,7 @@ export const ECON_TITLE = 'Accounts';
 export const ECON_SUBTITLE = 'Every account: what it paid us, what its AI cost us, and the AI margin';
 /** M3-FR-9: shown on the tab at all times. */
 export const ECON_NOTES: readonly string[] = [
-  'Paid us is after tax, net of refunds and disputes. Stripe fees are not deducted.',
+  'Paid us is after tax, net of refunds and disputes. The AI margin does not deduct Stripe fees.',
   'AI cost is the charged AI cost (credits we billed); the recorded AI cost is not used here.',
   'AI margin is shown only for accounts paid in USD. No exchange rate is used.',
   'Plan refunds and disputes are not recorded yet.',
@@ -594,5 +594,20 @@ export const ECON_BOOSTS_FAILED = 'Boost payments could not be loaded.';
 export const ECON_PLANS_FAILED = 'Plan payments could not be loaded.';
 export const ECON_CREDITS_FAILED = 'Credits could not be loaded.';
 
+// Slice 6b (§11K.5, FE-11, FE-12): the margin after the ESTIMATED card fees.
+// Every string says "estimate" (the vocabulary guard forbids the other form).
+export const ECON_AFTER_FEES = 'Margin after Stripe fees (estimate, USD)';
+export const ECON_PLATFORM_AFTER_FEES = 'Margin after Stripe fees (estimate)';
+export const ECON_FEES = 'Stripe fees, estimate';
+export const econFeesLine = (amount: string) => `Stripe fees, estimate: ${amount}`;
+/** Always shown on the tab; the numbers come from the payload (FE-16). */
+export const econFeeNote = (percent: string, fixed: string) =>
+  `Stripe fees are an estimate: none are recorded for plan or boost payments. Assumed ${percent}% + ${fixed} per card charge. A refunded charge keeps its fee. Dispute fees are not included.`;
+/** E-73: the fee config could not be read. */
+export const ECON_FEE_NOTE_UNREADABLE =
+  'Stripe fees are an estimate: none are recorded for plan or boost payments. The assumed fee could not be read, so no margin after Stripe fees is shown.';
+
 /** M3-FR-8: the account summary's margin line, under "Paid us, total". */
 export const ACCOUNT_MARGIN = 'AI margin (USD)';
+/** Slice 6b (FE-14): directly under the AI margin line. */
+export const ACCOUNT_AFTER_FEES = 'Margin after Stripe fees (estimate, USD)';

@@ -1436,3 +1436,46 @@ describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
     expect(codeOf(WIRING)).not.toMatch(READER);
   });
 });
+
+// ── Slice 6b (§11K.7, AC-244, AC-255, SA-W-6b-1 to SA-W-6b-3): the Stripe fee estimate ──
+// Every rule has a planted control. No 6a rule above is edited: the 6a scale,
+// 'USD', rate, export, DF-5 and mode pins keep biting on the 6b builder.
+describe('slice 6b source guards (the Stripe fee estimate)', () => {
+  const ECON = 'lib/business-os/finance/accountEconomics.ts';
+  const RULES = 'lib/business-os/finance/financeRules.ts';
+
+  it('scans the 6b files (non-vacuity)', () => {
+    expect(FILES).toEqual(expect.arrayContaining([ECON, RULES]));
+    expect(codeOf(ECON)).toMatch(/\bestimateChargeFeeMinor\(/);
+    expect(codeOf(RULES)).toMatch(/export const STRIPE_FEE_ESTIMATE\b/);
+  });
+
+  // AC-244: no fee number in the builder; the price is data in financeRules.ts.
+  const FEE_LITERAL = /\b290\b|\b30\b|\b0?\.029\b|\b0?\.3\b|\b10_?000\b|\b5_?000\b/;
+  it('the fee-literal rule bites (planted)', () => {
+    expect(FEE_LITERAL.test('const fee = gross * 290;')).toBe(true);
+    expect(FEE_LITERAL.test('return fee + 30;')).toBe(true);
+    expect(FEE_LITERAL.test('const pct = 0.029;')).toBe(true);
+    expect(FEE_LITERAL.test('const scaled = (x + 5000) / 10000;')).toBe(true);
+    expect(FEE_LITERAL.test('estimateChargeFeeMinor(gross, entry)')).toBe(false);
+  });
+
+  it('accountEconomics.ts holds no fee literal and no formula of its own: it imports the formula and the validator from ./financeRules', () => {
+    const code = codeOf(ECON);
+    expect(code).not.toMatch(FEE_LITERAL);
+    expect(code).toMatch(/import \{[^}]*\bestimateChargeFeeMinor\b[^}]*\bstripeFeeEntryOf\b[^}]*\} from '\.\/financeRules';/);
+    expect(code).not.toMatch(/\bSTRIPE_FEE_ESTIMATE\b/);
+    expect(code).not.toMatch(/\bpercentBps\s*[*/]|\bfixedMinor\s*[+-]/);
+  });
+
+  it('the formula and the price are defined only in financeRules.ts', () => {
+    const definers = FILES.filter((file) => /export (?:const STRIPE_FEE_ESTIMATE\b|function estimateChargeFeeMinor\b)/.test(codeOf(file)));
+    expect(definers).toEqual([RULES]);
+    const planted = `${codeOf(ECON)}\nexport const STRIPE_FEE_ESTIMATE = {};\n`;
+    expect(/export const STRIPE_FEE_ESTIMATE\b/.test(planted)).toBe(true);
+  });
+
+  it('FE-17: no Stripe id, mode or tier literal is added to the 6b builder or the price file', () => {
+    for (const file of [ECON, RULES]) expect({ file, hit: /stripe_|livemode/.test(codeOf(file)) }).toEqual({ file, hit: false });
+  });
+});

@@ -35,6 +35,19 @@
  * normalised non-USD line) > Unknown (a failed or ceiling read, an inexact
  * cost or USD line, an Unknown-currency line, an overflow) > the figure.
  *
+ * SLICE 6b (§11K, FE-1 to FE-17, E-72 to E-74): "Margin after Stripe fees
+ * (estimate)", BESIDE the AI margin, never replacing it. A charge is a counted
+ * plan payment above 0 or a paid-family boost with a total above 0 (E-72); its
+ * fee is estimated on the GROSS charged (tax included), per charge, by
+ * `estimateChargeFeeMinor` from the config passed in (`feeEstimate`: data, no
+ * fee number here, SA-WR-4). The fee belongs to the CHARGE: a refund or a
+ * dispute never removes or re-dates it (FE-5 to FE-7, SA-W-6b-11). The fee is
+ * subtracted from the revenue in minor units BEFORE the one scale step, through
+ * the one `marginUnitsOf` (E-74), so `(r − f)·k − c` equals `(r·k − c) − f·k`
+ * exactly and the AI margin's value is unchanged. When the AI margin is not a
+ * figure, the margin after fees takes its word; an invalid config is Unknown
+ * (E-73). Sort and filter still read the AI margin (FE-15).
+ *
  * @module lib/business-os/finance/accountEconomics
  */
 
@@ -44,6 +57,7 @@ import { PLAN_PAYMENT_KIND, readPlanMoney, type PlanPaymentInput } from './planR
 import { CURRENCY_SCALE, groupByCurrency, normaliseCurrencyCode, type CurrencyLine } from './currencyGroups';
 import type { AiCostUnitBucket, AiCostUnits } from './aiCost';
 import type { CreditsSectionRow } from './creditsSection';
+import { estimateChargeFeeMinor, feeEstimateNoteOf, stripeFeeEntryOf, type FeeEstimateEntry } from './financeRules';
 import type {
   FinanceAccountEconomicsSection,
   FinanceAccountMargin,
@@ -56,6 +70,7 @@ import type {
   FinanceEconomicsPaidLine,
   FinanceEconomicsRow,
   FinanceGroupKey,
+  FinanceMarginAfterFeesValue,
   FinanceMarginValue,
 } from './financeTypes';
 
@@ -96,6 +111,8 @@ export interface AccountEconomicsInput {
   groupOptions: ReadonlyArray<{ key: FinanceGroupKey; tierLabel: string | null }>;
   /** The S4-W-3 condition, from the boost builder over the same read (one definition). */
   refundOrDispute: boolean;
+  /** Slice 6b (FE-4): the assumed card fee config, as data; validated here, never trusted. */
+  feeEstimate: unknown;
 }
 
 /** One account's money entries, before grouping. */
@@ -105,9 +122,11 @@ interface MoneyOf {
   inexact: Map<string | null, number>;
   /** Counted revenue rows (a paid-family boost, a plan payment above 0, or an unreadable one). */
   revenueRows: number;
+  /** Slice 6b (FE-1, E-72): the gross minor units of each readable charge above 0, tax included. */
+  charges: number[];
 }
 
-const emptyMoney = (): MoneyOf => ({ entries: [], inexact: new Map(), revenueRows: 0 });
+const emptyMoney = (): MoneyOf => ({ entries: [], inexact: new Map(), revenueRows: 0, charges: [] });
 
 /**
  * E-45 for one readable boost, in minor units, or null when inexact. Reads the
@@ -129,6 +148,8 @@ function addBoost(target: MoneyOf, row: BoostPurchaseInput): void {
     target.entries.push({ currency: row.currency, field: 'afterTax', hundredths: null });
     return;
   }
+  // FE-5 / FE-6: the fee is on the gross charge, whatever happened to it later (E-72: a total of 0 is no charge).
+  if (money.total > 0) target.charges.push(money.total);
   const afterTax = boostAfterTax(money);
   if (afterTax === null) {
     const code = normaliseCurrencyCode(row.currency);
@@ -152,6 +173,8 @@ function addPlan(target: MoneyOf, row: PlanPaymentInput): void {
   // M2-W-5: a readable invoice of 0 is not a payment; it adds nothing and makes no line.
   if (money.amount === 0) return;
   target.revenueRows += 1;
+  // FE-2: the gross invoice amount, tax included.
+  target.charges.push(money.amount);
   const afterTax = money.amount - money.tax;
   target.entries.push({ currency: row.currency, field: 'planAfterTax', hundredths: afterTax });
   target.entries.push({ currency: row.currency, field: 'afterTax', hundredths: afterTax });
@@ -232,19 +255,60 @@ function buildCost(bucket: AiCostUnitBucket | undefined, reads: ReadState): Buil
   return { wire: { kind: 'figure', costUsd: usdOfUnits(cost), exact }, units: cost, exact };
 }
 
-/** SA-W82's precedence, then SA-W75's integer subtraction. */
-function buildMargin(paid: BuiltPaid, cost: BuiltCost, reads: ReadState): FinanceMarginValue {
-  if (reads.coverage !== 'after_cutover') return { kind: 'not_available' };
-  if (paid.otherCurrency) return { kind: 'other_currency' };
+/**
+ * SA-W75's integer subtraction, the ONE scale step (E-74): revenue in minor
+ * units to ledger units, minus the cost. Null when either leaves the safe range.
+ */
+function marginUnitsOf(revenueMinor: number, costUnits: number): number | null {
+  const revenueUnits = revenueMinor * MINOR_TO_COST_UNITS;
+  const marginUnits = revenueUnits - costUnits;
+  if (!Number.isSafeInteger(revenueUnits) || !Number.isSafeInteger(marginUnits)) return null;
+  return marginUnits;
+}
+
+/** Slice 6b (FE-2, SA-Q83): every charge's fee, rounded per charge, then summed; null when not exact. */
+function buildFees(charges: readonly number[], entry: FeeEstimateEntry | null): number | null {
+  if (entry === null) return null;
+  let total = 0;
+  for (const gross of charges) {
+    const fee = estimateChargeFeeMinor(gross, entry);
+    if (fee === null) return null;
+    total += fee;
+    if (!Number.isSafeInteger(total)) return null;
+  }
+  return total;
+}
+
+interface BuiltMargins {
+  margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
+}
+
+/**
+ * SA-W82's precedence, then SA-W75's integer subtraction; then (6b) the same
+ * subtraction with the estimated fees taken off the revenue first (E-74). The
+ * margin after fees is a figure only when the AI margin is one (FE-9).
+ */
+function buildMargins(paid: BuiltPaid, cost: BuiltCost, reads: ReadState, charges: readonly number[], entry: FeeEstimateEntry | null): BuiltMargins {
+  const word = (kind: 'not_available' | 'other_currency' | 'unknown'): BuiltMargins => ({ margin: { kind }, marginAfterFees: { kind } });
+  if (reads.coverage !== 'after_cutover') return word('not_available');
+  if (paid.otherCurrency) return word('other_currency');
   const readsCut =
     reads.ledgerFailed || reads.ledgerCeiling || reads.boostsFailed || reads.boostsCeiling || reads.plansFailed || reads.plansCeiling;
-  if (readsCut || !cost.exact || cost.units === null || paid.unknownCurrency) return { kind: 'unknown' };
-  if (paid.hasUsd && paid.usdMinor === null) return { kind: 'unknown' };
+  if (readsCut || !cost.exact || cost.units === null || paid.unknownCurrency) return word('unknown');
+  if (paid.hasUsd && paid.usdMinor === null) return word('unknown');
   const revenueMinor = paid.usdMinor ?? 0;
-  const revenueUnits = revenueMinor * MINOR_TO_COST_UNITS;
-  const marginUnits = revenueUnits - cost.units;
-  if (!Number.isSafeInteger(revenueUnits) || !Number.isSafeInteger(marginUnits)) return { kind: 'unknown' };
-  return { kind: 'figure', marginUsd: usdOfUnits(marginUnits), noRevenue: !paid.hasUsd };
+  const marginUnits = marginUnitsOf(revenueMinor, cost.units);
+  if (marginUnits === null) return word('unknown');
+  const noRevenue = !paid.hasUsd;
+  const margin: FinanceMarginValue = { kind: 'figure', marginUsd: usdOfUnits(marginUnits), noRevenue };
+  const fees = buildFees(charges, entry);
+  const afterFeesUnits = fees === null ? null : marginUnitsOf(revenueMinor - fees, cost.units);
+  if (fees === null || afterFeesUnits === null) return { margin, marginAfterFees: { kind: 'unknown' } };
+  return {
+    margin,
+    marginAfterFees: { kind: 'figure', afterFeesUsd: usdOfUnits(afterFeesUnits), feesUsd: moneyOfMinor(fees), currency: MARGIN_CURRENCY, noRevenue },
+  };
 }
 
 function creditsCell(id: string, noPlanRow: boolean, credits: ReadonlyMap<string, CreditsSectionRow> | null): FinanceEconomicsCredits {
@@ -256,8 +320,8 @@ function creditsCell(id: string, noPlanRow: boolean, credits: ReadonlyMap<string
   return { kind: 'position', used: row.used, allowance: row.allowance, usedTenths: row.usedTenths };
 }
 
-/** The reads a margin depends on: the same four for the tab and for the picked business. */
-type MarginReads = Pick<AccountEconomicsInput, 'coverage' | 'aiCost' | 'boosts' | 'plans'>;
+/** The reads a margin depends on: the same four for the tab and for the picked business, plus the 6b fee config. */
+type MarginReads = Pick<AccountEconomicsInput, 'coverage' | 'aiCost' | 'boosts' | 'plans' | 'feeEstimate'>;
 
 function readStateOf(input: MarginReads): ReadState {
   return {
@@ -381,6 +445,7 @@ interface AccountEconomicsBuilt {
 /** The Accounts tab (all businesses). */
 export function buildAccountEconomics(input: AccountEconomicsInput): AccountEconomicsBuilt {
   const reads = readStateOf(input);
+  const feeEntry = stripeFeeEntryOf(input.feeEstimate, MARGIN_CURRENCY);
   const units = input.aiCost?.units ?? null;
   const { byAccount: money, all } = moneyByAccount(input);
 
@@ -408,7 +473,7 @@ export function buildAccountEconomics(input: AccountEconomicsInput): AccountEcon
         noPlanRow,
         paid: paid.wire,
         aiCost: cost.wire,
-        margin: buildMargin(paid, cost, reads),
+        ...buildMargins(paid, cost, reads, accountMoney.charges, feeEntry),
         credits: creditsCell(id, noPlanRow, input.credits),
       },
       paid,
@@ -425,7 +490,7 @@ export function buildAccountEconomics(input: AccountEconomicsInput): AccountEcon
   const platform = {
     paid: platformPaid.wire,
     aiCost: platformCost.wire,
-    margin: buildMargin(platformPaid, platformCost, reads),
+    ...buildMargins(platformPaid, platformCost, reads, all.charges, feeEntry),
     accountsCovered: works.length,
     includesDeleted: deletedExists,
   };
@@ -441,10 +506,11 @@ export function buildAccountEconomics(input: AccountEconomicsInput): AccountEcon
   // ── The Deleted row (SA-W86): last, outside the cap and the count ─────────
   let deleted: FinanceEconomicsDeletedRow | null = null;
   if (deletedExists && query.group === null) {
-    const paid = buildPaid(deletedMoney ?? emptyMoney(), reads);
+    const deletedOrEmpty = deletedMoney ?? emptyMoney();
+    const paid = buildPaid(deletedOrEmpty, reads);
     const cost = buildCost(units?.deleted, reads);
-    const margin = buildMargin(paid, cost, reads);
-    if (query.show !== 'negative' || isNegative(margin)) deleted = { paid: paid.wire, aiCost: cost.wire, margin };
+    const { margin, marginAfterFees } = buildMargins(paid, cost, reads, deletedOrEmpty.charges, feeEntry);
+    if (query.show !== 'negative' || isNegative(margin)) deleted = { paid: paid.wire, aiCost: cost.wire, margin, marginAfterFees };
   }
 
   // ── Status (M3-FR-10) ──────────────────────────────────────────────────────
@@ -474,6 +540,7 @@ export function buildAccountEconomics(input: AccountEconomicsInput): AccountEcon
       deleted,
       counts: { accounts: works.length, matching: matching.length, shown: shown.length, notListed: matching.length - shown.length },
       groupOptions: input.groupOptions.map((option) => ({ key: option.key, tierLabel: option.tierLabel })),
+      feeEstimate: feeEstimateNoteOf(input.feeEstimate, MARGIN_CURRENCY),
       notes: {
         walkIncomplete: !walkComplete,
         ledgerFailed: reads.ledgerFailed,
@@ -512,5 +579,5 @@ export function buildAccountMargin(input: MarginReads & { accountId: string }): 
   }
   const paid = buildPaid(accountMoney, reads);
   const cost = buildCost(input.aiCost?.units.byAccount.get(input.accountId), reads);
-  return { paid: paid.wire, aiCost: cost.wire, margin: buildMargin(paid, cost, reads) };
+  return { paid: paid.wire, aiCost: cost.wire, ...buildMargins(paid, cost, reads, accountMoney.charges, stripeFeeEntryOf(input.feeEstimate, MARGIN_CURRENCY)) };
 }

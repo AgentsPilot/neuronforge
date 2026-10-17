@@ -12,6 +12,11 @@
  * turns it into one write of its URL filter state (`useAdminFilters`, Finance
  * F-4), which refetches. The plan-group options and their
  * labels come from the server (`groupOptions`): no tier is written here.
+ *
+ * Slice 6b (§11K.5): the platform line gains "Margin after Stripe fees
+ * (estimate)" and "Stripe fees, estimate"; the notes gain the fee note, whose
+ * numbers come from the payload's `feeEstimate` (FE-16), or the unreadable
+ * sentence when the config is invalid (E-73).
  */
 
 import type { FinanceAccountEconomicsSection, FinanceAccountsShow, FinanceAccountsSort, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
@@ -21,6 +26,8 @@ import { formatCount } from '@/app/admin/components/layout/adminFormat';
 import { FINANCE_ACCOUNTS_SHOWS, FINANCE_ACCOUNTS_SORTS, type FinanceQuery } from '../financeUrl';
 import {
   ECON_ALL_GROUPS,
+  ECON_FEE_NOTE_UNREADABLE,
+  ECON_FEES,
   ECON_BOOSTS_FAILED,
   ECON_COST,
   ECON_CREDITS_FAILED,
@@ -33,6 +40,7 @@ import {
   ECON_NOTES,
   ECON_PAID,
   ECON_PLANS_FAILED,
+  ECON_PLATFORM_AFTER_FEES,
   ECON_PLATFORM_TITLE,
   ECON_SHOW,
   ECON_SHOW_LABELS,
@@ -42,12 +50,13 @@ import {
   ECON_TITLE,
   ECON_UNKNOWN,
   ECON_WALK_INCOMPLETE,
+  econFeeNote,
   econNotListed,
   econPlatformCovers,
   econShowing,
   REVENUE_REFUND_TIMING_NOTE,
 } from '../financeCopy';
-import { AccountEconomicsTable, costText, MarginValue } from './AccountEconomicsTable';
+import { AccountEconomicsTable, costText, feesText, marginAfterFeesText, MarginValue } from './AccountEconomicsTable';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
 import { atLeast, formatMoney } from '../financeFormat';
@@ -73,7 +82,7 @@ export function AccountsTab({
   onChange: (query: FinanceQuery) => void;
   onRetry: () => void;
 }) {
-  const { platform, notes, counts } = section;
+  const { platform, notes, counts, feeEstimate } = section;
   const notices = [
     notes.walkIncomplete && ECON_WALK_INCOMPLETE,
     notes.ledgerFailed && ECON_LEDGER_FAILED,
@@ -91,6 +100,11 @@ export function AccountsTab({
             <li key={note}>{note}</li>
           ))}
           {notes.refundOrDispute && <li data-testid="econ-refund-note">{REVENUE_REFUND_TIMING_NOTE}</li>}
+          <li data-testid="econ-fee-note">
+            {feeEstimate
+              ? econFeeNote(formatCount(feeEstimate.percent), formatMoney(feeEstimate.fixed, feeEstimate.currency))
+              : ECON_FEE_NOTE_UNREADABLE}
+          </li>
         </ul>
 
         {notices.map((text) =>
@@ -104,7 +118,7 @@ export function AccountsTab({
         <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3" data-testid="econ-platform">
           <p className="text-sm font-medium text-white">{ECON_PLATFORM_TITLE}</p>
           <p className={NOTE}>{econPlatformCovers(formatCount(platform.accountsCovered), platform.includesDeleted)}</p>
-          <dl className="mt-2 grid gap-3 sm:grid-cols-3">
+          <dl className="mt-2 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <div>
               <dt className={NOTE}>{ECON_PAID}</dt>
               <dd className="text-sm text-slate-200" data-testid="econ-platform-paid">
@@ -131,6 +145,18 @@ export function AccountsTab({
               <dt className={NOTE}>{ECON_MARGIN}</dt>
               <dd className="text-sm text-slate-200">
                 <MarginValue margin={platform.margin} testId="econ-platform-margin" />
+              </dd>
+            </div>
+            <div>
+              <dt className={NOTE}>{ECON_PLATFORM_AFTER_FEES}</dt>
+              <dd className="text-sm text-slate-200" data-testid="econ-platform-after-fees">
+                {marginAfterFeesText(platform.marginAfterFees)}
+              </dd>
+            </div>
+            <div>
+              <dt className={NOTE}>{ECON_FEES}</dt>
+              <dd className="text-sm text-slate-200" data-testid="econ-platform-fees">
+                {feesText(platform.marginAfterFees)}
               </dd>
             </div>
           </dl>
