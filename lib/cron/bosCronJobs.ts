@@ -672,8 +672,9 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     label: 'Finance history snapshot',
     description: "Records last night's plan mix and credit position for the Finance history",
     scheduleWords: 'Daily at 00:07 UTC',
-    // QA4b-B1: added after run recording began. RM sets this to the real deploy day in the PR.
-    addedOn: '2026-10-18',
+    // QA4b-B1: added after run recording began. The UTC date of the first 00:07 run after the
+    // production deploy (SA D-3: later shows only "No run yet", earlier shows "Stopped").
+    addedOn: '2026-10-19',
     drainsQueue: null,
     counts: [
       { key: 'metricsWritten', path: ['data', 'metricsWritten'], label: 'figures written' },
