@@ -48,7 +48,7 @@ There is no migration, no write, no new route and no new page request. Nothing w
   3. Open the PR, then turn on auto-merge and Auto-fix.
 - **Owed to the user:** the browser steps for AC-107 and AC-232, after deploy.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-health-4b2 — commit pending (RM); PR held until #447 merges
+### Status: COMMITTED — feature/bos-finance-health-4b2 — commit `81d688e3`, main merged `ba6772c8`, PR #459 (auto-merge on)
 
 ---
 
