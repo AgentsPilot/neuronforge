@@ -1600,3 +1600,27 @@ describe('slice DF-6 source guards (since it started)', () => {
     expect(code).toMatch(/end: new Date\(now\.getTime\(\)\)/);
   });
 });
+
+// ── Slice 8.1 (E-90, SA-W-8.1-2): the snapshot shape module is pure ───────────
+describe('slice 8.1 source guards (financeSnapshotShape.ts)', () => {
+  const SHAPE = 'lib/business-os/finance/financeSnapshotShape.ts';
+  const exportsOf = (code: string) => [...code.matchAll(/export (?:const|function|type|interface) (\w+)/g)].map((m) => m[1]);
+
+  it('is scanned by the finance guards (non-vacuity)', () => {
+    expect(FILES).toContain(SHAPE);
+  });
+
+  it('imports nothing, reads no clock, names no tier and exports exactly the two shapes', () => {
+    const code = codeOf(SHAPE);
+    expect(code).not.toMatch(/\bimport\b|\brequire\(/);
+    expect(code).not.toMatch(/new Date\(|Date\.now\(/);
+    expect(code).not.toMatch(/'(basic|pro|plus|starter|business)'/);
+    expect(exportsOf(code)).toEqual(['SNAPSHOT_METRIC_SHAPE', 'SNAPSHOT_DIMENSION_SHAPE']);
+  });
+
+  it('planted: an import and a third export are caught', () => {
+    const planted = `import { x } from './y';\n${codeOf(SHAPE)}\nexport const SNAPSHOT_THIRD = 1;\n`;
+    expect(/\bimport\b/.test(planted)).toBe(true);
+    expect(exportsOf(planted)).toHaveLength(3);
+  });
+});
