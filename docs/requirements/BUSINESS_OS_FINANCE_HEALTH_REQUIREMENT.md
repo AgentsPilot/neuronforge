@@ -43,6 +43,7 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant](#11j-money-m-8-mark-the-platform-dashboard-and-exchange-rates-pages-redundant)
     - [11K. Slice 6b: margin after estimated Stripe fees, and KPI order](#11k-slice-6b-margin-after-estimated-stripe-fees-and-kpi-order)
     - [11L. Slice DF-6: since it started (one account)](#11l-slice-df-6-since-it-started-one-account)
+    - [11M. Slice 8: history snapshots](#11m-slice-8-history-snapshots)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -77,7 +78,7 @@ This document is the feature's **single source of truth**: every slice decision,
 | 6b | **Margin after estimated Stripe fees, and KPI order** (§11K): "Margin after Stripe fees (estimate)" beside the AI margin on the Accounts rows, the platform line and the one-account summary, from a per-charge estimate held as config data (default 2.9% + USD 0.30, USD only; BQ-15); tiles re-ordered K-5, K-1, K-3, K-2, K-4 (BD-35), order only | M-8 merged (#448); **no migration, no new read or repository method**; nothing from 4b.1 (#447) | 🟡 **PR #449 opened 2026-10-17, auto-merge on** (commit `8d2f5ff6` on `feature/bos-finance-health-6b`; SA-CR-6b approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_6B_RETROSPECTIVE.md)). BQ-15 still open (does not block); user owes L-142 to L-147 and checks 27 and 28 | [BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md) | [#449](https://github.com/AgentsPilot/neuronforge/pull/449) |
 | DF-6 | **Since it started (one account)** (§11L, BD-26): a "Since it started" window, offered only with one business picked, from the charging cut-over (2026-09-29 16:50:53.914 UTC) to now, beyond the 92-day cap (E-75); refused for all businesses (400); the 92-day cap otherwise unchanged; URL `range=since_start` with `account`, a bad link drops only the window (U-4) | 6b (#449); **no migration, no new read or repository method**; the start is the cut-over constant, resolved in the route | 🟡 **PR #450 opened 2026-10-17, auto-merge on** (commit `fd7b7f02` on `feature/bos-finance-health-df6`, origin/main merged in `e73ec431`; SA-CR-DF6 approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_DF6_RETROSPECTIVE.md)) (§11L; AC-257 to AC-272). BQ-16 open with a default, not blocking; user owes L-148 to L-154 and checks 29 and 30 | [BUSINESS_OS_FINANCE_HEALTH_DF6_SINCE_START_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_DF6_SINCE_START_WORKPLAN.md) | [#450](https://github.com/AgentsPilot/neuronforge/pull/450) |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
-| 8 | History snapshots (plan mix, credits) for trend lines | A migration and a cron (SA) | ⬜ Not started | — | — |
+| 8 | History snapshots (plan mix, credits) for trend lines (§11M): a nightly 00:07 UTC snapshot of the states that cannot be rebuilt (plan mix, credit positions, gifted, bought and outstanding credits; no money, no account), a **History** block on Finance for all businesses with "History starts on {date}"; split **8.1** migration, **8.2** job, **8.3** History block | **One migration** (`20261078`, one new table, applied by the user on production, BD-33) and **one new cron** (`finance-snapshot`, on Jobs & queues); one new admin read route; BQ-17 to BQ-19 on defaults | 🟡 **8.1: PR #452 opened 2026-10-17, auto-merge OFF, merge held until the user applies `20261078` on production** (commit `0439f94f` on `feature/bos-finance-health-8`; SA-CR-8.1 approved, QA passed, TL approved; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_8_1_RETROSPECTIVE.md)). User owes L-155: check 31 (6 ok) → apply → check 32 (16 ok) → "applied". MR-1 against #447 (recount to 158 / 120). Then 8.2, 8.3. Specified 2026-10-17 (§11M); SA-RR-8 approved with conditions (E-85 to E-88) | [BUSINESS_OS_FINANCE_HEALTH_SLICE_8_1_SNAPSHOTS_MIGRATION_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_8_1_SNAPSHOTS_MIGRATION_WORKPLAN.md) (8.1) | [#452](https://github.com/AgentsPilot/neuronforge/pull/452) (8.1) |
 
 ### 0.2 Decisions log
 
@@ -152,6 +153,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-17 — BA specified **Money M-8** in §11J from BD-34 (amends BD-25), the CR M-8 row and inventory I-15, I-19, and the code at main `5c214310` (CF-1 to CF-12): REDUNDANT header comments in both pages and in `/api/admin/dashboard` (its only caller is the dashboard); the dashboard's hidden parked sidebar item removed (parked 15 → 14, hrefs 29 → 28; visible sidebar unchanged; BD-34 is the sign-off, §11J.0); both routes kept with a one-line notice; a new source guard against in-app links; Exchange rates' `console.error` to Pino. AC-233 to AC-242 and SA-Q75 to SA-Q80 (numbered after PR #447's AC-232 and SA-Q74). New **BQ-14** (visible notice or comments only; default: notice) and **FU-M8-1** (Exchange rates still writes from the browser; not changed by M-8). CR M-8 row marked in progress. No code changed.
 - 2026-10-17 — With M-8 merged (#448, main `e43dcb60`), BA specified **slice 6b** in §11K from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8 and the 6a builder, with a read-only live check (no Stripe fee is stored for plan or boost payments; client payments carry `processor_fee`). Fee estimate per successful charge on the gross amount, rounded half up per charge, as config data (default 2.9% + USD 0.30, USD only); a refunded charge keeps its fee; dispute fees not estimated. "Margin after Stripe fees (estimate)" shown beside the AI margin, never replacing it, on the Accounts rows, the platform line and the one-account summary. Tiles re-ordered K-5, K-1, K-3, K-2, K-4, order only. Wording says "estimate", because the vocabulary guard forbids "estimated" in `financeCopy.ts`. AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91; new **BQ-15** (the fee rate) with its default, not blocking. No code changed.
 - 2026-10-17 — With 6b open as PR #449, BA specified **slice DF-6** "Since it started (one account)" in §11L from BD-26, CR G-9, CR SA-Q-6, BD-30, BD-32 and BD-33 and the code at `ea56ad04` (6b tip). A `since_start` window, valid only with a business picked (400 for all businesses), from the later of the cut-over instant and the account's first activity (the earliest of the plan row's `onboarding_started_at` and `profile_created_at`; never `created_at`, a backfill time) to now; resolved on the server after the plan check from the row already read; the 92-day cap unchanged for every other window; read ceilings unchanged ("At least" / Unknown); no timezone read (both ends are instants; `user_preferences.timezone` remains the authority if local dates are ever shown); URL `range=since_start` as a window extra, a bad link drops only the window (U-4); links out carry the dates only up to 92 days. **No migration, no new read or repository method.** AC-257 to AC-272, checks 29 and 30, L-148 to L-154, SA-Q92 to SA-Q99; new **BQ-16** (client takings before the cut-over) with its default, not blocking. About 1.5 days. Awaiting SA review. No code changed.
+- 2026-10-17 — With DF-6 open as PR #450, BA specified **slice 8** "History snapshots" in §11M from the §0.1 and §9 slice 8 rows, §8.1, CF-7 of §11L, BD-32 and BD-33, the §8.1 cron pattern of the event-driven plan, the `durable-queue-drain` and `tenant-isolation-guard` skills, `bosCronJobs.ts`, `20261011` and the `20261072` house style (PR #447), on `feature/bos-finance-health-8` (DF-6 tip `f6182697`). A nightly job at 00:07 UTC records, for the UTC day just ended, the states that cannot be rebuilt: plan mix (groups, states, K-3, dormant, ending soon), credit positions (counts, K-2, included credits and use) and the gifted, bought and outstanding credits (K-4); flows (AI cost, revenue, takings, gifts and purchases in a window) are rebuilt from their dated rows and never copied. One row per day, metric and dimension, `ON CONFLICT DO NOTHING`; only exact figures written, gaps stay gaps; no money, no currency, no account id. New table `business_os_finance_snapshots` in **migration `20261074`** (RLS on, no policy, service-role SELECT and a five-column INSERT only), job `finance-snapshot` on Jobs & queues, a separate admin history route, and a History block (all businesses only) with "History starts on {date}". Split **8.1** migration (stops for the user), **8.2** job, **8.3** History block; about 3.5 days. AC-273 to AC-294, checks 31 to 34, L-155 to L-162, SA-Q100 to SA-Q107; new **BQ-17** (daily), **BQ-18** (keep forever) and **BQ-19** (no backfill) with defaults, none blocking; **DF-9** (overdue history) deferred. Awaiting SA review. No code changed.
 
 ### 0.3 SA rulings
 
@@ -253,6 +255,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-RR-DF6** | **2026-10-17 SA requirement review (DF-6, §11L): APPROVED WITH CONDITIONS.**<br>• DF6-F1 (Medium): the start is the cut-over instant only. The first-activity rule could drop an early charge and adds nothing (E-75).<br>• DF6-F2: shared `resolveWindow` gives `none` for `since_start`; one ruled update to the extras list pin (E-76).<br>• DF6-F3: the link helpers never send `range=since_start` (E-77).<br>• DF6-F4 to DF6-F6: AC-262 end, Section 1 "new in window", type widening (E-78 to E-80).<br>• SA-Q92: resolved in the route, pure. SA-Q93: shared extras. SA-Q94: the cut-over. SA-Q95 to SA-Q99 as the BA suggests.<br>• Cap, `requireAdmin` first, ceilings, columns, no timezone read, isolation and pins all verified. BQ-16 default accepted. About 1.25 to 1.5 days. | 2026-10-17 | §11L |
 | **SA-WR-DF6** | **2026-10-17 SA workplan review (DF-6): APPROVED WITH CONDITIONS.**<br>• W-DF6-1: `formatUtc` with " UTC" stripped, "Since it started: 2026-09-29 16:50 to now (UTC)" (E-81).<br>• W-DF6-2: summary window line for `since_start` only, text computed once in `FinanceView` and passed in (E-82).<br>• W-DF6-3: one ruled update of the links import pin, adding `adminWindowPresets` (E-83).<br>• W-DF6-4: `toFinanceQuery` sends the default without a business; the route 400 stays the backstop.<br>• W-DF6-5 to W-DF6-8 as Dev suggests; line ref `planGroups.ts:224` (E-84).<br>• DF6-R1: the folder-wide `user_preferences` / `timezone` ban skips `__tests__`. DF6-R2: one label source. DF6-R3: the ruled pin edits are listed exactly in the handover. | 2026-10-17 | §11L |
 | **SA-CR-DF6** | **2026-10-17 SA code review (DF-6): Code Approved.**<br>• **D-1 approved; SA-Q96 corrected:** AC-173 part B hashes the route's `DATE` + `buildQuerySchema` text, so the schema stays unedited and `parseFinanceQuery` admits `since_start` around it (only with `accountId`, else 400).<br>• **D-2 approved, DF6-R3 amended:** a third ruled test edit, the `financeLinks.test.ts:34`/`:39` type narrowing, applied by SA. Scoped `tsc`: canary 1, clean 0.<br>• Isolation, the single first request, links, U-4, the timezone ban and the label verified. Seven pins recomputed and equal; AC-145 untouched; vocabulary guard untouched.<br>• SA re-run: 37 suites, 2605 passed. | 2026-10-17 | §11L |
+| **SA-RR-8** | **2026-10-17 SA requirement review (slice 8, §11M): APPROVED WITH CONDITIONS.**<br>• S8-F1 (High): AC-173 asserts exactly one fetch, so the History block opens on demand and sends no request on load (E-85).<br>• S8-F2 (High): the dimension CHECK must admit `tier:` keys with a hyphen, and the builder checks every row first, so a bad key skips only `plan` (E-86).<br>• S8-F3: the job passes a 30 s credit budget (E-87).<br>• S8-F4: an upsert that ignores duplicates, plus `.select('id')` (E-88).<br>• SA-Q100 to SA-Q107 as the BA suggests; SA-Q104: keep the `day_ended` CHECK.<br>• `20261074` is free (main 20261071; #447 holds 72 and 73). House style, columns, cron and descriptors verified. 3.5 days. | 2026-10-17 | §11M |
+| **SA-WR-8.1** | **2026-10-17 SA workplan review (slice 8.1): APPROVED WITH CONDITIONS.**<br>• E-91: the migration is now **`20261078`**, superseding SA-RR-8's `20261074` (#451 took 74 and 75; #447 is taking 76 and 77).<br>• Cleanup function: no new version, confirmed on main (a global `never` is filtered out; no FK, no `user_id`).<br>• E-89: `NOTIFY pgrst` in the migration and the rollback. E-90: the pure shape module ships in 8.1.<br>• E-92: count pins recomputed from merged main at code time (main is 156 / 118); the second of #447 and 8.1 to land re-counts.<br>• E-93: check 32's tier row is an exact-pattern match; the uuid row is dropped, so check 32 has 16 rows.<br>• 8.1-R1: merge `origin/main` first. 8.1-R2: UTC dates in the self-test. About 1 day. | 2026-10-17 | §11M |
+| **SA-CR-8.1** | **2026-10-17 SA code review (slice 8.1): Code Approved.**<br>• `20261078` meets §11M.6 and E-86 / E-89 / E-93: append-only, RLS on with no policy, `service_role`-only grants, the unique key, the exact dimension pattern, `day_ended`, `NOTIFY`.<br>• The rollback refuses with rows. Checks 31 and 32 have 6 and 16 rows. Self-test and runner pass S-01 to S-21; all 17 mutations are caught.<br>• Shape module pinned to both CHECKs and to `FINANCE_GROUP_SHAPE`. Descriptor and counts 157 / 119. Cleanup untouched; seven pins equal; SA re-run 1715 passed.<br>• D-1, D-2 and D-3 approved.<br>• The one scoped-`tsc` error (TS2353, `exportClassification.test.ts`) **exists on `origin/main` itself** (line 1962, DE-7 `adf9e37f`): a main defect for the DE stream, not fixed here.<br>• **MR-1:** whichever of #447 and 8.1 merges second recounts to **158 / 120**. | 2026-10-17 | §11M |
 
 ### 0.4 Deferrals and parked items
 
@@ -270,6 +275,10 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | BQ-16 | **Open business question, attached to DF-6 (does not block it):** with "Since it started" picked, should the business's **client takings** (layer B, clients paying the business) also start at the charging cut-over, or show the business's whole history? | **Default, used to build DF-6:** the same window for every section, starting at the cut-over (DF6-W-7), so the page has one span and one label. Client payments before 29 Sep 2026 are not shown in this view (check 30 counts them). Showing all-time takings would need a second window on one page | 2026-10-17 |
 | DF-7 | **Refused plan payments with an amount** (`mismatch_refused` rows) | Live: 8 test-mode rows, no account (`unknown_customer`), amounts recorded (§11D.1). They are not revenue of any account and M-2 never counts them (M2-W-2). Showing them belongs to platform payment problems (slice 7) | 2026-10-14 |
 | DF-8 | **Stripe fee estimate in the AI margin** (BD-7) | M-3 shows AI margin with the label "Stripe fees not deducted" and no estimate. The labelled estimate (the boost requirement's assumed 2.9% + USD 0.30) needs a per-payment rule for plans and boosts and its own exactness rule; it moves to slice 6b with K-7 and the per-plan margin (BD-8). DF-6 also stays deferred after M-3 (it changes the 92-day cap, a route and validation change; §11E.2) | 2026-10-14 |
+| BQ-17 | **Open business question, attached to slice 8 (does not block it):** should the history be recorded **daily or monthly**? | **Default, used to build slice 8:** daily, at the end of each UTC day (HS-W-1). A monthly view is the last day of each month, so daily loses nothing and shows a change within the month. Monthly would mean about 30 times fewer rows, which does not matter at this size | 2026-10-17 |
+| BQ-18 | **Open business question, attached to slice 8 (does not block it):** how long should the snapshots be kept? | **Default:** forever. They are a few dozen rows a day (about 13,000 a year), hold no personal data, and cannot be rebuilt once deleted. Keeping them for a fixed time (for example two years) would need a later prune job and a migration that grants delete | 2026-10-17 |
+| BQ-19 | **Open business question, attached to slice 8 (does not block it):** should past days be filled in? | **Default:** no backfill. Plan mix and credit positions cannot be rebuilt for the past (§11M.2), so history starts on the first night after slice 8.2 ships, and the page says so ("History starts on {date}"). Gifted and bought credits could be estimated for past days, but a series that is exact from one date and estimated before it would mislead | 2026-10-17 |
+| DF-9 | **History of overdue client invoices and instalments** (Section 6 block B, as of now) | Not rebuildable, but it is money in the clients' currencies; slice 8 stores no money (HS-W-9). It needs its own metric family with a `currency` column and one row per currency (CUR-1), in a later slice if wanted | 2026-10-17 |
 
 ---
 
@@ -566,7 +575,7 @@ Small numbered slices of a few days each, reusing existing infrastructure. Each 
 | **5** | Plan revenue and MRR (P-8a definition); paying vs comped made exact in Section 1; trial-to-paid; funnel "paid" stage. | **P-3b.2** (webhook writer), **P-8a**, **P-5** | No (expected) |
 | **6** | AI margin overall and per current plan (BD-7, BD-8), Stripe fee as labelled estimate; K-7 (needs a new condition kind, SA). | Slices 4, 5 | No (expected) |
 | **7** | Platform payment problems and paid churn (BD-5): failures, grace, paused, `ended_at`; webhook health; K-6 for plan disputes. | **P-6a**, **P-6b**, **P-8b** | No (expected) |
-| **8** | History snapshots (plan mix, credit position) for trend lines and churn of free accounts; scale path for any aggregate. | A migration and a cron on the `bos_cron_runs` pattern (SA) | **Yes** |
+| **8** | History snapshots (plan mix, credit position) for trend lines and churn of free accounts; scale path for any aggregate. **Specified in §11M (2026-10-17)** as 8.1 / 8.2 / 8.3; churn of free accounts is out of slice 8 (§11M.3). | A migration and a cron on the `bos_cron_runs` pattern (SA) | **Yes** (`20261078`) |
 
 ---
 
@@ -2880,6 +2889,485 @@ Technical only. The one business point, whether client takings also start at the
 
 ---
 
+## 11M. Slice 8: history snapshots
+
+Specified 2026-10-17 from the §0.1 slice 8 row ("a migration and a cron (SA)"), the §9 slice 8 row, §8.1 "Cannot produce" ("Plan mix at the end of a past month → slice 8"), §11L CF-7 ("Slice 8 (history snapshots) is where trends belong"), **BD-32** (slice 8 last, about 3 to 4 days), **BD-33** (fast track, but a production migration stops for the user), the cron pattern of `docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md` §8.1 and §9, the `durable-queue-drain` and `tenant-isolation-guard` skills, `lib/cron/bosCronJobs.ts`, the `20261011_bos_cron_runs.sql` run record and the house style of `20261072` (PR #447) with its checker, pre-check and rollback. Code read on `feature/bos-finance-health-8`, cut from the DF-6 tip `f6182697` (6b and DF-6 included). **One migration (one new table), one new cron, one new admin read route and one new repository; no change to any existing table, function, read or payload.** Columns were confirmed by reading the migrations (the `business-os-schema-check` approach), not by a live query.
+
+**Numbering note.** PR #447 (4b.1, not on main) reserves AC-204 to AC-232, SA-Q65 to SA-Q74, checks 23 to 26 and L-137 to L-141; 6b used AC-243 to AC-256, SA-Q81 to SA-Q91, checks 27 and 28 and L-142 to L-147; DF-6 used AC-257 to AC-272, SA-Q92 to SA-Q99, checks 29 and 30 and L-148 to L-154. Slice 8 therefore starts at **AC-273**, **SA-Q100**, **check 31**, **L-155** and **BQ-17**. Its checks sit in this section, as in 6b and DF-6. **Migration number:** the highest on `origin/main` is `20261071`; the highest on any open PR or remote branch is `20261073` (#447: `20261072` and `20261073`). Slice 8 proposes **`20261074_business_os_finance_snapshots.sql`**; RM re-checks the number when 8.1 opens and renumbers if another PR has taken it. **Renumbered by SA, 2026-10-17 (E-91, SA-WR-8.1):** #451 (DE-8a) merged `20261074_business_os_data_exports` and `20261075`, and #447 is being renumbered to `20261076` and `20261077`, so slice 8.1 is **`20261078_business_os_finance_snapshots.sql`** (every later mention in §11M says so). RM re-checks the number when 8.1 opens.
+
+**The question it answers.** "Is the business growing, and are credits piling up?" Today every Finance figure is a total for the window or a state as of now (§11L CF-7). A state as of now (how many accounts are on each plan, how many credits are outstanding) is gone the next day: nothing records yesterday's. Slice 8 records those states once a night, so a trend can be drawn from the first night on.
+
+### 11M.1 Code facts (read at `f6182697`, 2026-10-17)
+
+| # | Fact | Where |
+|---|---|---|
+| CF-1 | **Plan mix is derived, not stored.** Section 1 groups each plan row through `deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)` and `groupFor` / `paidTierOf`, with the paying set from the billing rows' **current** `subscription_status`. The plan row holds only the current `tier`, `cohort` and expiries (overwritten on change); there is no plan history table. **A past plan mix cannot be rebuilt** | `lib/business-os/finance/planGroups.ts`; `20261005_business_os_entitlements.sql` |
+| CF-2 | **Credit positions are derived for the current period.** `readAdminCreditPositions` gives `{ allowance, used, trial }` per account from the entitlement snapshot (`getSnapshots`), the period anchors (`findPeriodAnchorsBatch`) and `business_os_credit_totals`. The allowance follows the plan in force now and the anchor moves each period. **A past allowance, period use or "over allowance" count cannot be rebuilt** | `lib/business-os/credits/adminCreditPercent.ts:72-100, :382` |
+| CF-3 | **Gifted and bought outstanding are rebuildable, approximately.** `extraCreditsAt(lots, at)` takes any instant: a lot counts from `created_at`, draws count at or before `at`, a lot is expired when `expires_at <= at`. The lots and draws are kept (`business_os_credit_lots`: `user_id`, `source` in (`admin_grant`, `boost_purchase`), `credits_granted`, `expires_at`, `created_at`; `business_os_credit_lot_draws`: `lot_id`, `kind` `reversal`, `credits`, `created_at`). **But** K-4 counts existing accounts only, and an account deleted later has its lots set to `user_id` NULL, so a rebuild drifts after a deletion | `lib/business-os/credits/creditLots.ts:93-155`; `20261017_business_os_credit_lots.sql` |
+| CF-4 | **Flows are rebuildable from dated rows.** Charged AI cost and credits charged (`business_os_credit_charges.created_at`), recorded AI cost (`token_usage`), our revenue (`business_os_billing_events.paid_at`, `business_os_boost_purchases.paid_at`; boost refunds dated from 4b.1 on), takings and client refunds (`payment_transactions.paid_at`, `payment_refunds.created_at`), gifts granted and taken back (lots and draws `created_at`), credits bought (`business_os_boost_purchases.credits_total` by `paid_at`), new plan rows (`created_at`, with the backfill caveat of §8.1) | the finance reads in `BusinessOsFinanceReadRepository.ts`, `BusinessOsCreditLedgerReadRepository.ts`, `BusinessOsCreditLotRepository.ts` |
+| CF-5 | **The cron pattern.** A cron route checks `CRON_SECRET` fail-closed (401 and an `error` log without it in production) and runs inside `withCronRunRecord`, which writes `bos_cron_runs` (job `^[a-z][a-z0-9-]{0,63}$`, counts numbers only, keys `^[a-zA-Z][a-zA-Z0-9]{0,39}$`, **no money word** in a key, kept 30 days). Every job is one entry in `BOS_CRON_JOBS`, pinned by `bosCronJobs.test.ts` to `vercel.json` and to the route's `maxDuration`; that entry is what the Jobs & queues page and the Health tiles read. A job added after recording began sets `addedOn` to its real deploy day | `app/api/cron/credit-leak-check/route.ts:1-60`; `lib/cron/bosCronJobs.ts`; `20261011_bos_cron_runs.sql:320-350` |
+| CF-6 | **Taken cron minutes.** Hourly or more often: every 5 minutes, every 15 minutes, `:00`, `:10`, `:15`, `:20`, `:30`, `:40`. Daily: 03:00, 03:30, 04:45, 04:55, 05:17, 05:41; weekly Sunday 04:30. **Minute 7 of hour 0 is free** | `vercel.json` |
+| CF-7 | **The house style for a server-only table** (`20261072`): RLS on, no policy, `REVOKE ALL` from `PUBLIC`, `anon`, `authenticated` **and** `service_role`, then `GRANT SELECT` and a column-list `GRANT INSERT` to `service_role` only; no UPDATE, no DELETE; `id` and the time column take their defaults; a `COMMENT ON TABLE` with no apostrophe and not the editor word; a pre-check, a post-apply checker and a rollback in `supabase/SQL Scripts/` that refuses once the table holds history | `20261072_business_os_boost_reversal_events.sql` (PR #447); `scripts/check-bos-boost-reversal-events-migration.sql`; `scripts/precheck-bos-boost-reversal-events.sql` |
+| CF-8 | **Every table is classified.** A new table needs a `descriptors.ts` entry (platform tables: `never(…, G, exclude(EXPORT_REASON.PLATFORM), …)`, as `bos_cron_runs` and `archive_runs`), checked by `businessOwnedTables.test.ts`, which scans the migrations | `lib/business-os/purge/descriptors.ts:1470-1478`; `lib/business-os/__tests__/businessOwnedTables.test.ts` |
+| CF-9 | **The Overview payload is pinned.** AC-145 keeps the no-tab, no-business payload byte-identical, and AC-173 pins the page's request literals. A new key in the finance payload would break both | `app/admin/finance/__tests__/financeRequestPins.ts`; §11L.8 |
+| CF-10 | **No chart is drawn in admin today.** `recharts` is a dependency, but no file under `app/admin/` imports it | `grep` over `app/admin/` |
+
+### 11M.2 What is snapshotted, and what is not
+
+**Rule of thumb:** a figure is snapshotted only if it is a **state** the page shows today that **cannot be rebuilt for a past date** from dated rows. Every **flow** (something that happened at a dated moment) is rebuilt from its own rows when a later slice draws its trend, and is never copied.
+
+| Figure on the page today | Rebuildable for a past date? | Snapshotted? |
+|---|---|---|
+| Section 1: accounts per plan group, the total, grace and past due per group, lifecycle state counts, Founding Partners with no end date (K-3), dormant Founding Partners, ending in the next 30 days | **No** (CF-1) | **Yes**, family `plan` |
+| Section 4: accounts counted, over allowance, far over allowance (K-2), unknown, no allowance; included credits (allowance) and credits used in the current periods, summed | **No** (CF-2) | **Yes**, family `credit` |
+| Gifted outstanding (K-4), gifted outstanding on deleted accounts, bought outstanding (boost lots) | **Approximately** (CF-3: drifts after a deletion) | **Yes**, family `lots`: the outstanding total needs all three parts at one instant, and the rows are cheap |
+| Outstanding total (included credits left + gifted + bought) | No (it has a CF-2 part) | **Yes**, family `lots`, only when every part is exact |
+| Charged AI cost (K-1, Section 3), recorded AI cost, credits charged | Yes (CF-4) | **No** |
+| Our revenue (K-5, Section 2 block A), takings and client refunds (block B), the Stripe fee estimate, the AI margins (6a, 6b) | Yes (CF-4); margins are computed from those | **No** |
+| Gifts granted and taken back in a window, credits bought in a window | Yes (CF-4) | **No** |
+| New plan rows in the window | Yes (CF-4, backfill caveat) | **No** |
+| Section 6 block B overdue invoices and instalments "as of now" | No | **No, deferred (DF-9):** it is money in the clients' currencies, and slice 8 stores no money (HS-W-9) |
+| Section 1 with one business, the Accounts tab (6a), the account summary | Per account | **Never** (HS-W-8) |
+
+### 11M.3 Scope
+
+| In scope | Not in scope |
+|---|---|
+| The table `business_os_finance_snapshots` (migration `20261078`) with its pre-check, checker, local self-test and rollback (§11M.6, §11M.9); the nightly job `finance-snapshot`, registered on the Jobs page (§11M.7); the snapshot builder, which reuses Section 1's and Section 4's own functions (§11M.5); a read route and a **History** block on Finance, all businesses only, with an honest start line (§11M.8); checks 31 to 34 | Any money in a snapshot (HS-W-9); any per-account row; a trend of a rebuildable flow (charged AI cost, revenue, takings): a later slice reads its own dated rows; backfill of past days (BQ-19); a chart library (SA-Q106); churn of free accounts (the §9 row mentions it: aggregate counts give the net change only; per-account churn needs per-account history and stays with slice 7 or later); pruning (BQ-18); Section 6 overdue history (DF-9); any change to an existing table, read, payload or pin, or to the 92-day cap |
+
+### 11M.4 Rules: grain, timing, idempotency, isolation, currency
+
+| # | Rule |
+|---|---|
+| HS-W-1 | **Grain: daily (BQ-17, default).** One snapshot per UTC day, **as of the end of that day**. A monthly view is the last daily snapshot of each month; it needs no second table. |
+| HS-W-2 | **When: 00:07 UTC** (`7 0 * * *`, a free minute, CF-6). A run that starts on UTC date D records **`as_of_date` = D − 1**, the day that has just ended. The state read is the state at the run's start (`taken_at`), about seven minutes after the day ended. |
+| HS-W-3 | **Late runs write nothing.** A run that starts at or after **02:00 UTC** (constant `SNAPSHOT_LATEST_START_HOUR_UTC` = 2, SA-Q103) writes no row and reports `lateRun = 1` (partly done). Its state is too far from the day's end to label that day; the day becomes a gap. |
+| HS-W-4 | **Idempotent.** The key is **(`as_of_date`, `metric`, `dimension`)**, enforced by a unique index. Every insert is `ON CONFLICT DO NOTHING` on that key, so a re-run, an overlapping run or a retry writes nothing new and changes nothing. The first row of a day stands; nothing is ever updated (append-only). |
+| HS-W-5 | **Only exact figures are written.** A family whose source read failed, timed out or reached its ceiling is **not written that day** (no row, never a lower bound, never 0), and the run is "partly done" (`familiesSkipped`). In detail: `plan` only when the plan walk completed under its ceiling **and** the paying read succeeded (so history never mixes the folded "Tier set" group with the real groups); the `credit` counts only when the credit pass is `ok`; the `credit` sums (`credit_allowance`, `credit_used`, `credit_included_left`) only when, in addition, no account is unknown; `credit_far_over_allowance` only when the configured line is valid; the `lots` parts only when the lots read succeeded; `credit_outstanding_total` only when its three parts are written. **A row outside the dimension shape (E-86)**, such as a tier key the CHECK would refuse, is caught by the builder before the insert and skips the `plan` family only (`familiesSkipped`); it never fails the batch, so the other families are still written. |
+| HS-W-6 | **No gap filling.** A missing day (no run, a late run, a skipped family) stays missing. The page shows it as a gap; nothing interpolates, carries forward or backfills it. |
+| HS-W-7 | **Same definitions as the page.** The builder calls the functions Section 1 and Section 4 use (`classifyAccounts` / `groupFor` / `paidTierOf`, the report predicates, the credits section core, `extraCreditsAt`), with `now` = the run's start and all businesses. A snapshot therefore equals what the page would have shown at that instant with all businesses (AC-280). No second definition is written. |
+| HS-W-8 | **Isolation: platform aggregates only.** No row holds an account id, a name, an email, an admin id, a reason text, a Stripe id or any free text. `dimension` is a group key, a lifecycle state or `all`, constrained by a pattern. Deleting an account changes no snapshot (they are counts of the past). The table has no `user_id`, so it is not tenant data and is not in `USER_OWNED_TABLES` or the test-account cleanup. |
+| HS-W-9 | **Currency: no money is stored.** Every value is a count of accounts or an amount of credits (the platform's own unit, never money). `unit` is CHECKed to `accounts` or `credits`. Nothing is summed across currencies because no currency is stored. A later money metric needs a new migration with a `currency` column and one row per currency (CUR-1, BD-12); it is never added to this table's `value` as it stands. |
+| HS-W-10 | **Tier keys are data.** A tier group's `dimension` is the group key as the classifier builds it (`tier:` + the config tier). No tier string is written in code or SQL (the tier-literal guard; no CHECK lists tiers, as in `20261005`). A tier later removed from config keeps its stored key; the page shows the stored key with "(no longer configured)". |
+| HS-W-11 | **Not a queue drain.** The job claims nothing, dispatches nothing and has no per-row effect; its one write is idempotent by key (HS-W-4; §9 of the event-driven plan). The `durable-queue-drain` claim pattern does not apply, exactly as for `credit-leak-check` (CF-5); the route's header says so. |
+
+### 11M.5 Metrics (one row each per day)
+
+`unit` `accounts` values are whole numbers; `credits` values have up to 6 decimal places (the ledger scale). `dimension` is `all` unless stated.
+
+| Family | `metric` | `dimension` | `unit` | Page source |
+|---|---|---|---|---|
+| plan | `accounts_total` | `all` | accounts | Section 1 Total |
+| plan | `accounts_in_group` | the group key (`trial`, `founding_partner`, `comped`, `tier:<tier>`, `unknown_held`); every seeded group, zeros included (BD-3) | accounts | Section 1 groups |
+| plan | `accounts_in_grace`, `accounts_past_due` | the group key | accounts | Section 1 grace and past due beside each group |
+| plan | `accounts_in_state` | the lifecycle state as `deriveLifecycle` names it | accounts | Section 1 `byState` |
+| plan | `founding_no_end_date` | `all` | accounts | K-3 (all businesses) |
+| plan | `founding_dormant` | `all` | accounts | Section 1 dormant Founding Partners |
+| plan | `accounts_ending_soon` | `all` | accounts | Section 1 "ending in the next 30 days" |
+| credit | `credit_accounts`, `credit_over_allowance`, `credit_unknown_accounts`, `credit_no_allowance_accounts` | `all` | accounts | Section 4 counts |
+| credit | `credit_far_over_allowance` | `all` | accounts | K-2 |
+| credit | `credit_allowance` | `all` | credits | Σ allowance of the accounts with a position (the included credits granted for the current periods) |
+| credit | `credit_used` | `all` | credits | Σ used in the current periods |
+| credit | `credit_included_left` | `all` | credits | Σ max(allowance − used, 0) |
+| lots | `gifted_outstanding` | `all` | credits | K-4 (existing accounts) |
+| lots | `gifted_outstanding_deleted` | `all` | credits | Section 4's gifted figure for deleted accounts (SA-W9) |
+| lots | `bought_outstanding` | `all` | credits | `extraCreditsAt` over the `boost_purchase` lots of existing accounts (the 4b bought-credits figure). Until BQ-13 is answered a refunded boost keeps its credits, and the figure follows the lots as they are |
+| lots | `credit_outstanding_total` | `all` | credits | `credit_included_left` + `gifted_outstanding` + `bought_outstanding` |
+
+About 30 to 40 rows a night today (about 13,000 a year). The metric list is one exported constant in the builder, pinned by a test; the migration CHECKs only the shape (SA-Q101).
+
+### 11M.6 The migration (`20261078_business_os_finance_snapshots.sql`, slice 8.1)
+
+| Column | Type | Rule |
+|---|---|---|
+| `id` | `uuid NOT NULL DEFAULT gen_random_uuid()` | Primary key; not in the INSERT grant |
+| `as_of_date` | `date NOT NULL` | The UTC day whose end the state describes (HS-W-2) |
+| `metric` | `text NOT NULL` | CHECK `metric ~ '^[a-z][a-z0-9_]{0,47}$'` |
+| `dimension` | `text NOT NULL` | CHECK `dimension ~ '^([a-z][a-z0-9_]{0,47}\|tier:[a-z0-9_-]{1,40})$'` (E-86: a hyphen only after `tier:`, as Finance's `FINANCE_GROUP_SHAPE` admits, so a uuid still cannot pass; no space, no `@`, no free text; HS-W-8). The builder checks every row against one exported shape constant, pinned equal to this CHECK by the migration test, before the insert (HS-W-5) |
+| `unit` | `text NOT NULL` | CHECK `unit IN ('accounts', 'credits')` (HS-W-9) |
+| `value` | `numeric(18,6) NOT NULL` | CHECK `value >= 0`; CHECK `unit <> 'accounts' OR value = trunc(value)` |
+| `taken_at` | `timestamptz NOT NULL DEFAULT now()` | When the state was read; not in the INSERT grant. CHECK that the day had ended in UTC when it was taken: `taken_at >= ((as_of_date + 1)::timestamp AT TIME ZONE 'UTC')` (SA-Q104 ruling: deterministic, kept) |
+
+**Constraint and index names:** `business_os_finance_snapshots_pkey`; six checks `…_metric_shape`, `…_dimension_shape`, `…_unit_known`, `…_value_not_negative`, `…_accounts_whole`, `…_day_ended`; the unique index **`business_os_finance_snapshots_day_metric_key`** on `(as_of_date, metric, dimension)`, not partial (it is the `ON CONFLICT` target and serves the date-range read, so no other index).
+
+**Order inside the file** (one transaction, `20261072` style): `BEGIN; SET LOCAL lock_timeout = '5s';` → `CREATE TABLE` with the columns and the primary key → the six `ALTER TABLE … ADD CONSTRAINT … CHECK` → the unique index → `COMMENT ON TABLE` (text: one row per platform figure per UTC day, counts and credits only, no money, no account, append only, written only by the nightly finance snapshot job, server only, never purged) → `ENABLE ROW LEVEL SECURITY` → `REVOKE ALL ON TABLE` from `PUBLIC`, `anon`, `authenticated`, `service_role` → `GRANT SELECT` to `service_role` → `GRANT INSERT (as_of_date, metric, dimension, unit, value)` to `service_role` → `NOTIFY pgrst, 'reload schema';` (E-89, house style; the rollback ends the same way) → `COMMIT`. **No policy, no UPDATE, DELETE or TRUNCATE grant, no trigger, no function** (`ON CONFLICT DO NOTHING` needs the INSERT privilege only; SA-Q102 confirms it with the PostgREST write used). No quoted string in the file contains an apostrophe or the editor word (the migration test pins both).
+
+**In the same change (8.1):** `supabase/migrations/__tests__/business-os-finance-snapshots.migration.test.ts` (source test: columns, CHECKs, the unique index, RLS, no policy, the exact grants, no UPDATE or DELETE, no trigger, no function, the editor-word and apostrophe pins, and the metric and dimension CHECK patterns equal to the shape constants in `lib/business-os/finance/financeSnapshotShape.ts`, a pure module with no import that 8.1 creates and 8.2's builder imports, with no second copy allowed; its tier branch pinned equal to the tier part of `FINANCE_GROUP_SHAPE`; E-86, E-90); a `descriptors.ts` entry `never('business_os_finance_snapshots', G, exclude(EXPORT_REASON.PLATFORM), …)` (platform history, no `user_id`, never purged, never archived; CF-8); `supabase/SQL Scripts/20261078_business_os_finance_snapshots_rollback.sql`; `scripts/precheck-bos-finance-snapshots.sql` (check 31); `scripts/check-bos-finance-snapshots-migration.sql` (check 32); `scripts/test-bos-finance-snapshots.sql` (the local-only self-test, §11M.9).
+
+**Rollback:** `DROP TABLE public.business_os_finance_snapshots;` in one transaction, which **refuses** (raises and changes nothing) once the table holds any row: the history cannot be rebuilt (CF-1, CF-2), so a defect found after the first night is fixed forward. Apply it only together with a revert of 8.2's code (otherwise the job fails each night, visibly on Jobs & queues).
+
+**The user's hand-apply steps (8.1; the BD-33 stop):**
+
+1. Run **check 31** on production. Every row must show `ok = true`; otherwise stop and tell the session.
+2. Apply `20261078` in the SQL editor, the whole file at once.
+3. Run **check 32**. Every row must show `ok = true`; if one does not, run the rollback and tell the session.
+4. Tell the session "applied". RM merges 8.1 by hand (it is **not** on auto-merge: the migration-gated rule). 8.2 starts after that.
+5. After 8.2's first night: run **check 33**, then **check 34** (L-158).
+
+### 11M.7 The nightly job (slice 8.2)
+
+| # | Rule |
+|---|---|
+| HS-FR-1 | **Route** `app/api/cron/finance-snapshot/route.ts`, `GET` (as the other crons), `runtime = 'nodejs'`, `maxDuration = 60`. `CRON_SECRET` is checked **fail-closed**, copied from `credit-leak-check` (CF-5): in production a missing secret refuses with 401 and an `error` log. It runs inside `withCronRunRecord`. Pino `createLogger({ module: 'FinanceSnapshotCron' })` with a `correlationId` child logger; no `console.`. |
+| HS-FR-2 | **Registry:** a `finance-snapshot` entry in `BOS_CRON_JOBS` (`BosCronJobId` widened): path `/api/cron/finance-snapshot`, schedule `7 0 * * *`, byte for byte as in `vercel.json`, `DAILY`, `MAX_60`, label **"Finance history snapshot"**, description **"Records last night's plan mix and credit position for the Finance history"**, `scheduleWords` **"Daily at 00:07 UTC"**, `drainsQueue: null`, `addedOn` = the real deploy day (RM sets it in the PR). It then appears on Jobs & queues (late, stopped, keeps failing after 2) and in the Health tiles with no other edit. |
+| HS-FR-3 | **Counts** (numbers only, no money word in a key; CF-5): `metricsWritten`, `metricsAlreadyThere`, `metricsSkipped`, `familiesSkipped`, `accountsRead`, `lateRun` (1 = yes). `partlyDoneWhen`: `familiesSkipped` at least 1; `lateRun` at least 1. |
+| HS-FR-4 | **Builder** `lib/business-os/finance/financeSnapshot.ts`, **pure** (no repository, no clock, no entitlements import beyond what `planGroups.ts` already has): input = the plan rows, the paying set, the config, the credit positions pass, the lots and `now`; output = the rows of §11M.5 and the skipped families. It calls the Section 1 and Section 4 functions (HS-W-7). The wiring `financeSnapshotDeps.ts` reuses the finance wiring's reads (the plan walk, R-c, `adminCreditPercentDeps()`, `listLotsWithDrawsAllAccounts` through a `Pick`), maps lots field by field (SA-W14) and passes `getEntitlementConfig()`; whether it reuses `financeHealthDeps` or a narrow wiring is SA-Q105. |
+| HS-FR-5 | **Writer:** a new `BusinessOsFinanceSnapshotRepository` (the `new-repository` skill), service role (`supabaseServer`); its header documents why there is no `.eq('user_id')`: the table has none, it holds platform aggregates (the CLAUDE.md rule 4 bypass). `insertSnapshotRows(rows)`: one batched insert, **`upsert(rows, { onConflict: 'as_of_date,metric,dimension', ignoreDuplicates: true }).select('id')`** (E-88: `ON CONFLICT DO NOTHING`, returning the ids of the rows actually written; it needs only `SELECT` and the column `INSERT` grant, never UPDATE), only the five granted fields, built field by field (tenant-isolation-guard step 3). Written = the returned ids; already there = rows sent minus rows returned. No update or delete method. |
+| HS-FR-6 | **Order:** secret → late-run gate (HS-W-3) → reads → builder → one insert → the response `{ success: true, data: { asOfDate, …counts } }`. A read that fails skips its family (HS-W-5); an insert error is a 500 with `success: false`, a generic error and development-only details, and the run record marks it failed. |
+| HS-FR-7 | **Logs:** one `info` line with `asOfDate`, the counts and `durationMs`; never a value, an account id or a name. |
+| HS-FR-8 | **Time:** the reads are the all-businesses Section 1 and Section 4 reads the page makes today, under the same ceilings. **The credit pass gets a night budget (E-87):** the job passes `budgetMs` = 30 s to `readAdminCreditPositions` (a named constant beside `maxDuration` 60, with a test that it is below it); the page keeps its 2 s. The same functions with a longer budget, not a new read. QA records `durationMs` and `familiesSkipped` (L-157). No read is added to the page's own request. |
+
+### 11M.8 The History block (slice 8.3)
+
+| # | Rule |
+|---|---|
+| HS-FR-9 | **Read route** `GET /api/admin/business-os/finance/history` (the `new-api-route` skill): `requireAdmin` is the **first statement**; a strict Zod schema with the finance route's window input (`preset`, `from`, `to`), re-resolved on the server with its own clock (SA-Q2); **`accountId` is a 400** (history is all businesses only), `since_start` is a 400 (it needs a business), and an unknown key is a 400. It returns `{ success: true, data: { window: { from, to }, firstSnapshotDate, rows } }`, the rows being the snapshots with `as_of_date` from `from` to `to`. A separate route keeps the Overview payload (AC-145) and the AC-173 request pins untouched (CF-9). |
+| HS-FR-10 | **Reads:** `listSnapshotsInRange(fromDate, toDate)` (at most 93 days of about 40 rows; ceiling 5,000 rows, **an error at the ceiling**, never a partial list) and `findFirstSnapshotDate()`, on the same repository. Selected columns: `as_of_date`, `metric`, `dimension`, `unit`, `value` only. |
+| HS-FR-11 | **Where:** one **History** block on the Overview, after Section 4, in the shared `FinanceSection` shell, **all businesses only**. With a business picked it shows one line, **"History is kept for all businesses together, not per business."**, and sends no history request. **E-85: the block renders closed**, with a **"Show history"** button; the history request is sent **only when the admin opens it**, never on page load, so the page still sends exactly one request on load (AC-173 and the other one-fetch render tests are unchanged). It is never part of the finance request. If the closed block's markup trips Pin A or Pin B, Dev stops and raises it to SA (no silent re-freeze). The history request literal is pinned in its own new test, never in the AC-173 table. |
+| HS-FR-12 | **Honest start line**, always first: **"History starts on {firstSnapshotDate} (UTC)."** With no snapshot at all: **"No history yet: the first snapshot is taken at 00:07 UTC tonight."** With snapshots but none in the window: **"No snapshot in this window. History starts on {firstSnapshotDate} (UTC)."** Dates are `YYYY-MM-DD`. Below it: **"Each point is the state at the end of that UTC day. Credits are units, not money."** |
+| HS-FR-13 | **Two small tables, no chart** (minimal; SA-Q106). **Plan mix:** Date, one column per group in Section 1's order (labels from config; a stored key no longer in config shows the key and "(no longer configured)", HS-W-10), Total, Founding Partners with no end date. **Credits:** Date, Included credits, Used this period, Gifted outstanding, Bought outstanding, Outstanding total, Accounts over allowance, Far over allowance. Newest first. |
+| HS-FR-14 | **Points:** a window of up to 31 days shows **one row per day**; a longer window shows one row per 7 days, counting back from its last day, and says "Weekly points". A day with no row shows **"No snapshot"** across the table (HS-W-6). A metric not written that day shows **"Not recorded"** in its cell, never 0. |
+| HS-FR-15 | **Change line** under each table: the newest point minus the oldest point in the window, per column, **only** when both cells are recorded; otherwise "Not available". It is labelled "Change in this window". |
+| HS-FR-16 | **States:** the block uses `AdminLoading`, `AdminError` (with Try again) and `AdminNotice`, like the rest of Finance; a failed history read fails the block only, never the page. |
+
+### 11M.9 Scripts and SQL checks (31 to 34)
+
+Read-only, ASCII only, no apostrophes in comments, the editor word never used, one final result set each. Written against §11M.1 and §11M.6; not executed by BA. Checks 31 and 32 are the files named in §11M.6; checks 33 and 34 are pasted from here.
+
+**Local self-test (not a check):** `scripts/test-bos-finance-snapshots.sql`, in the shape of `scripts/test-bos-boost-reversal-events.sql`: **local only**; it refuses on a real Supabase database (`auth.refresh_tokens` exists) and unless `bos.selftest_local` is `on`, and runs between BEGIN and ROLLBACK on the PGlite harness. Cases: a valid row of each unit is written; the same key a second time writes nothing (`ON CONFLICT DO NOTHING`, idempotency); a negative value, a fraction of an account, an unknown unit, a metric or dimension with a space or `@`, a bare uuid as a dimension, and a `taken_at` before the day ended are each refused by their CHECK; a hyphenated tier key such as `tier:pro-plus` is accepted (E-86); as `service_role` with no UPDATE grant, the `ON CONFLICT DO NOTHING` insert with a returned `id` works and returns only the new rows (E-88); as `service_role`, UPDATE and DELETE are refused (42501), and so is setting `id` or `taken_at`; the rollback refuses with a row present and drops an empty table.
+
+**File:** `scripts/precheck-bos-finance-snapshots.sql` (check 31, before applying `20261078`; AC-273, L-155)
+
+```sql
+-- Finance check 31: run BEFORE applying migration 20261078, read only.
+-- Every row must show ok = true. If one does not, stop and tell the session.
+select 'snapshots table absent' as item,
+  to_regclass('public.business_os_finance_snapshots') is null as ok
+union all
+select 'snapshot key index name free',
+  to_regclass('public.business_os_finance_snapshots_day_metric_key') is null
+union all
+select 'no constraint already uses the snapshot table name',
+  not exists (select 1 from pg_catalog.pg_constraint c
+              where c.conname like 'business_os_finance_snapshots%')
+union all
+select 'service_role exists and bypasses row level security',
+  coalesce((select r.rolbypassrls from pg_catalog.pg_roles r where r.rolname = 'service_role'), false)
+union all
+select 'gen_random_uuid is available',
+  exists (select 1 from pg_catalog.pg_proc p where p.proname = 'gen_random_uuid')
+union all
+select 'cron run record installed',
+  to_regclass('public.bos_cron_runs') is not null;
+```
+
+**File:** `scripts/check-bos-finance-snapshots-migration.sql` (check 32, after applying `20261078`; AC-273, L-155)
+
+```sql
+-- Finance check 32: run AFTER applying migration 20261078, read only.
+-- Every row must show ok = true. If one does not, run the rollback and tell the session.
+with t as (
+  select to_regclass('public.business_os_finance_snapshots') as tbl
+)
+select 'table exists' as item, t.tbl is not null as ok from t
+union all
+select 'row level security on',
+  coalesce((select c.relrowsecurity from pg_catalog.pg_class c where c.oid = t.tbl), false) from t
+union all
+select 'no policy on the table',
+  not exists (select 1 from pg_catalog.pg_policy pol where pol.polrelid = t.tbl) from t
+union all
+select 'anon has no privilege on the table or any column',
+  not coalesce(has_table_privilege('anon', t.tbl, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+    or has_any_column_privilege('anon', t.tbl, 'SELECT, INSERT, UPDATE, REFERENCES'), true) from t
+union all
+select 'authenticated has no privilege on the table or any column',
+  not coalesce(has_table_privilege('authenticated', t.tbl, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+    or has_any_column_privilege('authenticated', t.tbl, 'SELECT, INSERT, UPDATE, REFERENCES'), true) from t
+union all
+select 'service_role can select',
+  coalesce(has_table_privilege('service_role', t.tbl, 'SELECT'), false) from t
+union all
+select 'service_role can insert exactly five columns',
+  coalesce((select count(*) from pg_catalog.pg_attribute a
+            where a.attrelid = t.tbl and a.attnum > 0 and not a.attisdropped
+              and has_column_privilege('service_role', t.tbl, a.attnum, 'INSERT')) = 5, false) from t
+union all
+select 'service_role cannot set id or taken_at',
+  not coalesce(has_column_privilege('service_role', t.tbl, 'id', 'INSERT')
+    or has_column_privilege('service_role', t.tbl, 'taken_at', 'INSERT'), true) from t
+union all
+select 'service_role cannot update',
+  not coalesce(has_table_privilege('service_role', t.tbl, 'UPDATE')
+    or has_any_column_privilege('service_role', t.tbl, 'UPDATE'), true) from t
+union all
+select 'service_role cannot delete or truncate',
+  not coalesce(has_table_privilege('service_role', t.tbl, 'DELETE, TRUNCATE'), true) from t
+union all
+select 'seven columns and no user_id column',
+  coalesce((select count(*) = 7 and bool_and(a.attname <> 'user_id')
+            from pg_catalog.pg_attribute a
+            where a.attrelid = t.tbl and a.attnum > 0 and not a.attisdropped), false) from t
+union all
+select 'unique key on day, metric and dimension, not partial',
+  exists (select 1 from pg_catalog.pg_index i
+          join pg_catalog.pg_class ic on ic.oid = i.indexrelid
+          where i.indrelid = t.tbl and i.indisunique and i.indpred is null
+            and ic.relname = 'business_os_finance_snapshots_day_metric_key') from t
+union all
+select 'the six checks are present',
+  coalesce((select count(*) from pg_catalog.pg_constraint c
+            where c.conrelid = t.tbl and c.contype = 'c'
+              and c.conname in ('business_os_finance_snapshots_metric_shape',
+                                'business_os_finance_snapshots_dimension_shape',
+                                'business_os_finance_snapshots_unit_known',
+                                'business_os_finance_snapshots_value_not_negative',
+                                'business_os_finance_snapshots_accounts_whole',
+                                'business_os_finance_snapshots_day_ended')) = 6, false) from t
+union all
+select 'dimension check is exactly the E-86 pattern',
+  coalesce((select position('^([a-z][a-z0-9_]{0,47}|tier:[a-z0-9_-]{1,40})$' in pg_catalog.pg_get_constraintdef(c.oid)) > 0
+            from pg_catalog.pg_constraint c
+            where c.conrelid = t.tbl and c.conname = 'business_os_finance_snapshots_dimension_shape'), false) from t
+union all
+select 'no trigger on the table',
+  not exists (select 1 from pg_catalog.pg_trigger tg where tg.tgrelid = t.tbl and not tg.tgisinternal) from t
+union all
+select 'table comment present',
+  obj_description(t.tbl, 'pg_class') is not null from t;
+```
+
+**File:** `check 33 - finance history, the last 14 snapshot days` (AC-283, L-158)
+
+```sql
+-- Finance check 33: the last 14 snapshot days, one row per day, read only.
+-- Run after the first nightly snapshot, and whenever the History block looks wrong.
+-- groups_match_total and taken_after_day_end must be true on every day.
+-- A day missing from the list is a missed or late night and shows as a gap on the page.
+with s as (
+  select f.as_of_date, f.metric, f.value, f.taken_at
+  from public.business_os_finance_snapshots f
+  where f.as_of_date >= (now() at time zone 'UTC')::date - 14
+),
+d as (
+  select s.as_of_date,
+         count(*) as snapshot_rows,
+         count(*) filter (where s.metric like 'credit%' or s.metric like 'gifted%' or s.metric like 'bought%') as credit_rows,
+         max(s.value) filter (where s.metric = 'accounts_total') as accounts_total,
+         sum(s.value) filter (where s.metric = 'accounts_in_group') as accounts_in_groups,
+         min(s.taken_at) as first_taken_at
+  from s
+  group by s.as_of_date
+),
+r as (
+  select (c.started_at at time zone 'UTC')::date - 1 as as_of_date,
+         string_agg(distinct c.outcome, ' ') as run_outcomes,
+         count(*) as runs
+  from public.bos_cron_runs c
+  where c.job = 'finance-snapshot'
+    and c.started_at >= now() - interval '15 days'
+  group by 1
+)
+select d.as_of_date,
+       d.snapshot_rows,
+       d.credit_rows,
+       d.accounts_total,
+       d.accounts_in_groups,
+       (d.accounts_total is null or d.accounts_total = d.accounts_in_groups) as groups_match_total,
+       (d.first_taken_at >= ((d.as_of_date + 1)::timestamp at time zone 'UTC')) as taken_after_day_end,
+       d.first_taken_at,
+       r.runs,
+       r.run_outcomes
+from d
+left join r on r.as_of_date = d.as_of_date
+order by d.as_of_date desc;
+```
+
+**File:** `check 34 - finance history, the newest snapshot against the lots and plan rows` (AC-280, L-158)
+
+```sql
+-- Finance check 34: the newest snapshot against the lots and plan rows, one row, read only.
+-- Gifted and bought outstanding are rebuilt from the lots and draws as they stood at taken_at,
+-- for lots that still have an account. A difference is expected only when an account was
+-- deleted after taken_at (its lots lose their account) or a lot was written in the same second.
+-- plan_rows_then counts plan rows created by taken_at. It can be lower than the snapshot
+-- only when an account was deleted since.
+with newest as (
+  select max(g.as_of_date) as as_of_date from public.business_os_finance_snapshots g
+),
+snap as (
+  select f.metric, f.value, f.taken_at
+  from public.business_os_finance_snapshots f
+  join newest n on n.as_of_date = f.as_of_date
+  where f.dimension = 'all'
+),
+at_time as (
+  select (select n.as_of_date from newest n) as as_of_date,
+         (select min(snap.taken_at) from snap) as taken_at
+),
+lots as (
+  select l.source,
+         greatest(l.credits_granted - coalesce((
+           select sum(dr.credits)
+           from public.business_os_credit_lot_draws dr
+           where dr.lot_id = l.id and dr.created_at <= a.taken_at), 0), 0) as remaining
+  from public.business_os_credit_lots l
+  cross join at_time a
+  where l.user_id is not null
+    and l.created_at <= a.taken_at
+    and (l.expires_at is null or l.expires_at > a.taken_at)
+)
+select a.as_of_date,
+       a.taken_at,
+       (select snap.value from snap where snap.metric = 'gifted_outstanding') as snapshot_gifted,
+       coalesce((select sum(lots.remaining) from lots where lots.source = 'admin_grant'), 0) as rebuilt_gifted,
+       (select snap.value from snap where snap.metric = 'bought_outstanding') as snapshot_bought,
+       coalesce((select sum(lots.remaining) from lots where lots.source = 'boost_purchase'), 0) as rebuilt_bought,
+       (select snap.value from snap where snap.metric = 'accounts_total') as snapshot_accounts,
+       (select count(*) from public.business_os_account_plans p where p.created_at <= a.taken_at) as plan_rows_then
+from at_time a;
+```
+
+### 11M.10 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| **Frozen pins** | AC-173 pin `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`; Pin A `30f5fc24…2e01`; Pin B `24ff0da7…df9f`; Pin C `98ea0507…1e4b` and helper `02813360…5bd8`; Pin D `1f7cf07a…f144` | All **byte-identical** (LF-normalised), hashed at Step 0 and at handover, in each of 8.1, 8.2 and 8.3. The history request is a new test, never a row of the AC-173 table; the Overview payload is unchanged (AC-145) because history has its own route |
+| `requireAdmin` first (`test:authz-guard`) | New admin route (8.3) | `requireAdmin` is the first statement of the history `GET`; the guard passes with no allow-list edit |
+| **tenant-isolation-guard** (skill) | A service-role write (8.2) and a service-role all-accounts read (8.3) | Apply the skill: the job takes no caller input; the insert allow-lists the five fields (step 3); no row can carry an account id (HS-W-8; the dimension pattern refuses a uuid with dashes, and the builder refuses any dimension outside its known keys); the history route refuses `accountId`; a test proves no account id, name or reason reaches a row or the response |
+| `aiCostVocabulary.source.guard.test.ts` | New strings in `financeCopy.ts` (8.3) and the registry label (8.2) | No edit and no ALLOWED entry: none of the History strings is about AI cost or uses an SA-Q51 word |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | New `financeSnapshot.ts` | Pure: no repository, data layer or clock import; no `user_preferences` or `timezone` token; no tier literal |
+| `tierLiteral.forbidden.test.ts`, `npm run test:bos-entitlements` | The wiring passes `getEntitlementConfig()` | Register the new importer as a **non-gate** importer in the same change (the `business-os-entitlements` skill), as `planGroups.ts` is; no tier or cohort literal anywhere |
+| `lib/cron/__tests__/bosCronJobs.test.ts` | New job (8.2) | The entry matches `vercel.json` byte for byte and the route's `maxDuration`; keys pass the key rule and the no-money rule; `addedOn` is set; the file still imports nothing |
+| Repository caller lists (the lot repository's and the G3 lists, the RC-15 deps pin) | A second caller of `listLotsWithDrawsAllAccounts` and of the plan walk (8.2) | One ruled update each, recorded in the workplan (SA-Q105) |
+| `businessOwnedTables.test.ts`, `descriptors.invariant.test.ts`, `no-deletion-paths.guard.test.ts` | New table (8.1) | The `never(…, G, exclude(EXPORT_REASON.PLATFORM))` entry; no deletion path is added |
+| **Descriptor count pins (E-92, SA-W-8.1-3)**: `classification-baseline.json` (`count`, `levels`, `reviewNotes`), `descriptors.invariant.test.ts` `baseline.count`, `exportClassification.test.ts` (two `toHaveLength`, the `kinds` exclude total, the test title) | New descriptor (8.1) | +1 each, with a dated comment. **The numbers are recomputed at code time from merged `origin/main`**, never copied from this document (main is already at 156 / exclude 118 after DE-8a). #447 and 8.1 each add one, so **whichever lands second re-counts** when it merges main |
+| Test-account cleanup function (`scripts/generate-test-account-cleanup-sql.ts`, drift test) | **None** (SA-WR-8.1): a global `never` is filtered out by `descriptorsForRun`, and the table has no FK and no `user_id` | No new function version; the drift test passes with no regeneration against main's generator state (`20261075`, and later #447's `20261077`) |
+| Migration source test (8.1) | New | The §11M.6 contents, the grants, the editor-word and apostrophe pins |
+| `app/admin/finance/__tests__/source.guard.test.ts`, `layoutFolder.guard` (C-14), contrast | New `HistorySection.tsx` (8.3) | Shared shell and states; type imports only; no date arithmetic in the component beyond formatting; no `console.` |
+| **CI time** | New Jest files only | They run inside the existing Jest job: **no new CI job and no added critical-path time** (the user's standing rule). The local self-test runs on the PGlite harness, not in CI, unless SA rules it fits an existing job |
+
+Dev runs before SA code review and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, cron and shared layout suites, the vocabulary guard, `npm run lint:hooks`, eslint on touched files, the scoped `tsc` with canary (AC-44), and the seven pin hashes.
+
+### 11M.11 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check.
+
+**8.1 (migration):**
+
+- [ ] **AC-273** *(8.1)* `20261078` creates `business_os_finance_snapshots` with the §11M.6 columns, the six CHECKs, the unique `(as_of_date, metric, dimension)` index, RLS on, no policy, `REVOKE ALL` from the four roles, `GRANT SELECT` and the five-column `GRANT INSERT` to `service_role` only, no trigger and no function (migration test; checks 31 and 32).
+- [ ] **AC-274** *(8.1)* The migration file, the rollback and checks 31 to 34 contain no apostrophe in a quoted string or comment and never the editor word; they are ASCII only (source test).
+- [ ] **AC-275** *(8.1)* The rollback drops the table when it is empty and **refuses**, changing nothing, when it holds a row (local self-test).
+- [ ] **AC-276** *(8.1)* The local self-test passes every case of §11M.9 (the idempotent key, each CHECK, `tier:pro-plus` accepted and a bare uuid refused (E-86), the returning insert with no UPDATE grant (E-88), no UPDATE, no DELETE, no `id` or `taken_at` from the writer); the migration test pins the dimension CHECK equal to the builder's shape constant.
+- [ ] **AC-277** *(8.1)* The `descriptors.ts` entry exists and the classification, invariant and no-deletion guards pass.
+
+**8.2 (the job):**
+
+- [ ] **AC-278** *(8.2)* The route refuses without the secret in production (401 and an `error` log) and runs in development without it; the run is recorded in `bos_cron_runs` with the HS-FR-3 counts.
+- [ ] **AC-279** *(8.2)* With an injected start at 00:07 UTC on date D the rows carry `as_of_date` = D − 1; a start at 02:00 UTC or later writes no row and reports `lateRun = 1` (partly done).
+- [ ] **AC-280** *(8.2)* **Same definitions:** for one fixture, every `plan`, `credit` and `lots` value equals the figure Section 1, Section 4, K-2, K-3 and K-4 give for all businesses with the same `now` (a builder test against `buildFinanceHealth`'s own output); on production, check 34's rebuilt gifted and bought figures equal the snapshot.
+- [ ] **AC-281** *(8.2)* **Idempotent (E-88):** the writer calls `upsert(…, { onConflict: 'as_of_date,metric,dimension', ignoreDuplicates: true }).select('id')`; `metricsWritten` = the ids returned and `metricsAlreadyThere` = rows sent minus rows returned; a second run for the same day writes 0 rows (`metricsAlreadyThere` = the first run's `metricsWritten`) and changes no value.
+- [ ] **AC-282** *(8.2)* **Only exact figures (HS-W-5):** a failed plan walk, a plan walk at its ceiling or a failed paying read writes no `plan` row; a failed or timed-out credit pass writes no `credit` row; an unknown account suppresses the three `credit` sums but not the counts; an invalid far-over line suppresses `credit_far_over_allowance` only; a failed lots read writes no `lots` row and no outstanding total; a row outside the dimension shape (for example a tier key with a character the CHECK refuses) skips the `plan` family only and every other family is still written (E-86); each case reports `familiesSkipped` or `metricsSkipped` and the run is partly done. Never a 0 in place of a missing figure. The credit pass runs with `budgetMs` = 30 s, a named constant below `maxDuration` 60 (E-87, unit test).
+- [ ] **AC-283** *(8.2)* Every seeded plan group is written, zeros included, and `accounts_in_group` sums to `accounts_total` (unit test; check 33 `groups_match_total`).
+- [ ] **AC-284** *(8.2)* **Isolation:** no written row holds an account id, name, email, reason, Stripe id or admin id; a planted account id as a dimension is refused by the builder before the insert (tenant-isolation test).
+- [ ] **AC-285** *(8.2)* **No money:** every row's unit is `accounts` or `credits`; the builder's pinned metric list holds no revenue, cost, fee, takings or currency metric.
+- [ ] **AC-286** *(8.2)* The registry entry shows on Jobs & queues with its label, schedule words and counts; `bosCronJobs.test.ts` passes with `vercel.json` `7 0 * * *` and `maxDuration` 60.
+
+**8.3 (the History block):**
+
+- [ ] **AC-287** *(8.3)* The history route runs `requireAdmin` first; with `accountId`, `since_start` or an unknown key it is a 400; the window is re-resolved on the server; it returns only `as_of_date`, `metric`, `dimension`, `unit` and `value` rows and `firstSnapshotDate`; at the 5,000-row ceiling it is an error, never a partial list (route tests: happy path, auth failure, invalid input).
+- [ ] **AC-288** *(8.3)* The History block shows the HS-FR-12 start line in each of its three forms (no history; none in the window; history), with `YYYY-MM-DD` dates.
+- [ ] **AC-289** *(8.3)* Daily rows for a window of up to 31 days and weekly rows beyond; "No snapshot" rows for missing days; "Not recorded" for a missing metric, never 0; the change line only between two recorded cells.
+- [ ] **AC-290** *(8.3)* **On demand (E-85):** on page load the block is closed with a "Show history" button and **no history request is sent** (AC-173's one fetch and the other one-fetch render tests pass unedited); the request is sent only on "Show history", and its literal is pinned in its own new test. With a business picked, the block shows the "all businesses together" line, no button and no request; the finance request and its AC-173 literal are unchanged.
+- [ ] **AC-291** *(8.3)* A tier key no longer in config shows its stored key and "(no longer configured)"; group labels otherwise come from config; there is no tier literal in the component.
+- [ ] **AC-292** *(8.3)* A failed history read shows the block's error with Try again and leaves every other section rendered.
+- [ ] **AC-293** *(all)* Every §11M.10 row passes; the seven frozen pins are byte-identical; the Overview payload with no tab and no business is unchanged (AC-145); the vocabulary guard passes with no edit; no new CI job.
+- [ ] **AC-294** *(all)* **Manual QA (L-155 to L-162):** run the steps below and record them in the relevant workplan.
+
+**Manual steps** (user or QA, recorded in the workplan):
+
+- **L-155** *(8.1, user)* Run check 31 on production: every row `ok = true`. Apply `20261078`. Run check 32: every row `ok = true`. Tell the session "applied".
+- **L-156** *(8.2)* After the deploy, open Jobs & queues: "Finance history snapshot" is listed, "Daily at 00:07 UTC", with no run until the first night.
+- **L-157** *(8.2)* After the first night: the run is green; note `metricsWritten`, `familiesSkipped` (expected 0) and `durationMs` from the route line (E-87).
+- **L-158** *(8.2)* Run check 33 (one day; `groups_match_total` and `taken_after_day_end` true) and check 34 (the rebuilt gifted and bought figures equal the snapshot).
+- **L-159** *(8.3)* Open Finance, all businesses, This month: the History block is closed and the network panel shows one request; click "Show history": one history request, and the block reads "History starts on {first day} (UTC)." and shows one row per snapshot day.
+- **L-160** *(8.3)* The morning after a snapshot, compare its Plan mix row with Section 1 and its Credits row with Section 4, K-2 and K-4 (they may differ only by changes made since 00:07 UTC).
+- **L-161** *(8.3)* Pick the owner test account: the block shows the "all businesses together" line and nothing else.
+- **L-162** *(8.3)* Choose a custom window of 60 days: "Weekly points"; days before the first snapshot are not listed and nothing reads 0.
+
+### 11M.12 Open questions for SA (slice 8)
+
+Technical only. The business points are **BQ-17** (daily or monthly), **BQ-18** (how long to keep) and **BQ-19** (backfill) in §0.4; none blocks the build, and each has a default.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q100** | A long table (one row per metric and dimension, §11M.6) or a wide one (one row per day, a column per figure)? | Long: a new group or metric needs no migration, the idempotency key is natural, and the history read is one range scan |
+| **SA-Q101** | CHECK the metric list in SQL, or only its shape, with the list pinned in code? | Shape only (the `20261005` "no second source of truth" precedent); the code list is pinned by a test, and HS-W-9 is enforced by the `unit` CHECK |
+| **SA-Q102** | The write: a PostgREST insert that ignores duplicates on the key (INSERT grant only), or a SECURITY INVOKER SQL function? Does the insert with a returned count need anything beyond SELECT and the column INSERT grant? | The PostgREST insert, no function (no new function surface); the self-test proves the grants suffice |
+| **SA-Q103** | The late-run cut-off: 02:00 UTC, or none (always label the previous day)? | 02:00 UTC: a state read at noon is not "the end of yesterday", and a gap is more honest |
+| **SA-Q104** | The `…_day_ended` CHECK: which expression (the date to UTC midnight) is safe in a CHECK, or drop it and rely on the builder and check 33? | Keep it if an immutable form exists; otherwise drop it and keep check 33's `taken_after_day_end` |
+| **SA-Q105** | Wiring: reuse `financeHealthDeps` for the four reads, or a narrow `financeSnapshotDeps` with its own `Pick`s? Which caller-list pins change? | A narrow wiring that names only the four reads; one ruled update per caller list |
+| **SA-Q106** | The trend as two tables (no chart), or the first admin use of `recharts`? | Tables: minimal and no new pattern (CF-10, CLAUDE.md rule 7); a chart is a later UI slice |
+| **SA-Q107** | Path: 8.1 full cycle and migration-gated (merged by hand after the user applies it); 8.2 full cycle (a new cron and writer); 8.3 full cycle (a new admin route as well as UI, so not the UI short path)? | Yes to all three; 8.2 and 8.3 may auto-merge under BD-33 once 8.1 is applied |
+
+### 11M.13 Estimate and split
+
+**About 3.5 days** (inside BD-32's 3 to 4), in three small slices:
+
+| Slice | Contents | Estimate | Gate |
+|---|---|---|---|
+| **8.1** | Migration `20261078`, its source test, the descriptor entry, the rollback, checks 31 and 32, the local self-test; AC-273 to AC-277 | about 1 day | **Stops for the user**: the PR is off auto-merge; the user runs check 31, applies `20261078` on production by hand and runs check 32 (L-155); RM merges by hand |
+| **8.2** | The repository writer, the pure builder, the wiring, the cron route, the registry entry and `vercel.json`; checks 33 and 34; AC-278 to AC-286 | about 1.5 days | Starts after 8.1 is applied and merged; BD-33 fast track |
+| **8.3** | The repository reads, the history route, the History block and its copy; AC-287 to AC-292 | about 1 day | After 8.2; BD-33 fast track |
+
+AC-293 and AC-294 apply to every slice. Each slice gets its own workplan and PR (§9).
+
+### SA Requirement Review — Slice 8 (§11M) — 2026-10-17
+
+**Reviewed by SA, 2026-10-17, on `feature/bos-finance-health-8` (DF-6 tip) and `origin/feature/bos-finance-health-4b` (#447).**
+**Status: APPROVED WITH CONDITIONS (SA-RR-8).** The 8.1 workplan may start; E-85 to E-88 must be in the requirement before the 8.2 / 8.3 workplans.
+**BA, 2026-10-17: E-85 to E-88 applied** in §11M (E-85: HS-FR-11, AC-290, L-159; E-86: the §11M.6 dimension CHECK and migration test, HS-W-5, the self-test cases, AC-276, AC-282, a check 32 row; E-87: HS-FR-8, AC-282, L-157; E-88: HS-FR-5, the self-test, AC-276, AC-281; the SA-Q104 CHECK expression written in the §11M.6 `taken_at` row). Ready for the Dev workplan (8.1).
+
+**Verified**
+
+| Claim | Result |
+|---|---|
+| Migration number | ✅ The highest on `origin/main` is `20261071`. The only open PR touching `2026107x` is #447 (`20261072`, `20261073`). `20261074` is free; RM re-checks it when 8.1 opens |
+| House style (CF-7) | ✅ `20261072` on the #447 branch: `BEGIN`, `lock_timeout`, named `ADD CONSTRAINT … CHECK`, `COMMENT ON TABLE`, RLS, `REVOKE ALL` from the four roles, `GRANT SELECT` plus a column-list `GRANT INSERT`. Its precheck, checker, local self-test and refusing rollback exist in the paths §11M.6 copies |
+| Tables and columns named | ✅ Read from the migrations: lots (`source` CHECK `admin_grant` / `boost_purchase`, `credits_granted`, `expires_at`, `created_at`), draws (`kind` CHECK `reversal` only, `lot_id`, `credits`, `created_at`), `bos_cron_runs` (`job`, `started_at`, `outcome`), `business_os_account_plans.created_at`. `extraCreditsAt`, `readAdminCreditPositions` (with a `budgetMs` option), `listLotsWithDrawsAllAccounts` and `withCronRunRecord` exist |
+| Cron pattern (CF-5) | ✅ `credit-leak-check` uses `withCronRunRecord`; `BosCronJob` has `addedOn`; minute `7 0` is free in `vercel.json`. Not a queue drain (HS-W-11) is correct: no claim, an idempotent key-only write |
+| Descriptors (CF-8) | ✅ The `never('bos_cron_runs', G, exclude(EXPORT_REASON.PLATFORM), …)` precedent is at `descriptors.ts:1475` |
+| Isolation and currency | ✅ No `user_id` or free text, platform aggregates only, `unit` limited to accounts or credits, no money (HS-W-8, HS-W-9). DF-9 deferral is correct |
+| Reuse | ✅ HS-W-7 and AC-280 (builder output equals `buildFinanceHealth`'s figures for the same `now`) prevent a second definition |
+| SQL checks 31 to 34 | ✅ ASCII only, no apostrophe in a comment, never the editor word, one result set each. Columns match the migrations |
+| CI time, vocabulary, pins | ✅ Jest files only; no new job. The pins are untouched by 8.1 and 8.2; for 8.3 see E-85 |
+
+**Findings**
+
+| # | Sev | Finding | Edit |
+|---|---|---|---|
+| S8-F1 | High | **A History fetch on page load collides with frozen pins.** AC-173 (`financeRequest.pin.render.test.tsx:108`) asserts `fetch` is called **exactly once**, and Pin B mocks `fetch` with the finance body for every URL. Five other finance render tests also assert one fetch call. A second request "beside the finance request" (HS-FR-11) puts all of these at risk, and the pins cannot be edited. | **E-85:** HS-FR-11 and AC-290 become: the History block renders **closed**, with a "Show history" button. The history request is sent **only when the admin opens it**, never on load, so no existing request count changes. If the closed block's markup trips Pin A or Pin B, Dev stops and raises it to SA; no silent re-freeze. The history request literal is pinned in its own new test |
+| S8-F2 | High | **The dimension CHECK refuses real tier keys.** Tier ids are unconstrained text (`20261005`: no CHECK), and Finance's own `FINANCE_GROUP_SHAPE` admits `tier:[a-z0-9_-]{1,40}`. `^[a-z][a-z0-9_:]{0,47}$` refuses a hyphen, so one hyphenated tier would make the single batched insert fail, and **every** family would be lost that night. | **E-86:** the `…_dimension_shape` CHECK becomes `dimension ~ '^([a-z][a-z0-9_]{0,47}|tier:[a-z0-9_-]{1,40})$'`. A hyphen is allowed only after `tier:`, so a uuid still cannot pass. The builder checks every row against one exported shape constant, pinned equal to the CHECK by the migration test, **before** the insert. A tier key outside it skips the `plan` family only (`familiesSkipped`), never the batch. Self-test case: `tier:pro-plus` is accepted and a bare uuid is refused |
+| S8-F3 | Medium | **The 2 s credit-pass budget is a page budget.** At night, as accounts grow, it would skip the `credit` family every night with no visible cause. `readAdminCreditPositions` takes `budgetMs`. | **E-87:** HS-FR-8: the job passes `budgetMs` = 30 s (a named constant beside `maxDuration` 60, with a test that it is under it). These are the same functions with a longer budget, not a new read. L-157 also records `familiesSkipped` |
+| S8-F4 | Low | **Insert and select need the right PostgREST call.** It must be `upsert(rows, { onConflict: 'as_of_date,metric,dimension', ignoreDuplicates: true }).select('id')` (`ON CONFLICT DO NOTHING`, returning only rows written). It needs only `SELECT` plus the column `INSERT` grant. | **E-88:** HS-FR-5 names that call; "already there" = sent minus returned; the self-test covers the `service_role` path with no UPDATE grant |
+
+**Answers to SA-Q100 to SA-Q107**
+
+| # | Ruling |
+|---|---|
+| SA-Q100 | **Long**, as BA suggests |
+| SA-Q101 | **Shape only** in SQL (with E-86); the metric list is pinned in code |
+| SA-Q102 | **PostgREST insert, no function** (E-88); the self-test proves the grants |
+| SA-Q103 | **02:00 UTC** cut-off; late runs write nothing |
+| SA-Q104 | **Keep the CHECK:** `taken_at >= ((as_of_date + 1)::timestamp AT TIME ZONE 'UTC')`. It is deterministic (a literal zone; `date + integer` and the cast are immutable). Check 33 keeps its own test |
+| SA-Q105 | **Narrow `financeSnapshotDeps`** with its own `Pick`s, read-only; one ruled update per caller list, named in the 8.2 workplan; entitlements importer registered as a non-gate importer |
+| SA-Q106 | **Two tables, no chart** (no new pattern, rule 7) |
+| SA-Q107 | **Yes.** 8.1 is migration-gated and merged by hand. 8.2 and 8.3 run the full cycle and may auto-merge under BD-33 once 8.1 is applied |
+
+**Business questions.** The BQ-17 (daily), BQ-18 (keep forever) and BQ-19 (no backfill) defaults are sound and block nothing. **Estimate:** 3.5 days accepted (8.1 about 1, 8.2 about 1.5, 8.3 about 1).
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -4502,3 +4990,10 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-17 | RM: slice DF-6 committed, PR #450 opened, auto-merge on | Commit `fd7b7f02` on `feature/bos-finance-health-df6`; origin/main (`fdaf90c1`, 6b #449) merged in `e73ec431` with no conflicts. Re-run: finance UI, finance lib, finance route, admin layout, analytics and business-os-llm filters, 80 suites, 4218 tests, all passed. Seven frozen pins unchanged. §0.1 row DF-6: status and PR columns. |
 | 2026-10-17 | Dev: slice 4b.1 rebased onto DE-8a (PR #451) | main took `20261074`/`20261075`. 4b.1 renumbered: `20261072` → **`20261076`** (bytes unchanged, body md5 `018c4447f2b52dd87e4ae3b229e5b42c`; no migration since redefines the transition function) and `20261073` → **`20261077`** (regenerated over `20261075`, so it keeps `business_os_data_exports`; stamp `f854486b31baf784` → **`b78b4579fc6631f8`**; rollback restores `20261075`). Check 23 now expects DE-8a live (9 rows, stamp `a824848e0a538477`); check 24 pins the new stamp. Runbook: check 23 → `20261076` → `20261077` → check 24. Updated: §0.1, §11I (PF-1 note, 11I.2, 11I.4, 11I.6, 11I.8), §13 check headings. SA rulings and reviews keep the old numbers as history. Merge staged, not committed |
 | 2026-10-17 | SA code review, 4b.1 rebase onto DE-8a | APPROVED WITH CONDITIONS (SA-CR-4B1-R in §0.3). R-1: DE-8a rollback guard must test for any live cleanup body naming business_os_data_exports (fix in #447). R-2, R-3 small. No code changed by SA. |
+| 2026-10-17 | BA: slice 8 specified (§11M) | New §11M "Slice 8: history snapshots" on `feature/bos-finance-health-8` (DF-6 tip `f6182697`): code facts CF-1 to CF-10; what is snapshotted (states that cannot be rebuilt: plan mix, credit positions, gifted, bought and outstanding credits) and what is not (flows rebuilt from dated rows); rules HS-W-1 to HS-W-11 (daily at 00:07 UTC for the day just ended, late runs write nothing, key `(as_of_date, metric, dimension)` with `ON CONFLICT DO NOTHING`, only exact figures, no gap filling, the page's own functions, no account and no money); the metric list; migration `20261074` (`business_os_finance_snapshots`, RLS on, no policy, service-role SELECT and five-column INSERT, refusing rollback) with checks 31 and 32 and a local self-test; the `finance-snapshot` job HS-FR-1 to HS-FR-8; the History block HS-FR-9 to HS-FR-16 on its own admin route; checks 33 and 34; guards; AC-273 to AC-294; L-155 to L-162; SA-Q100 to SA-Q107; estimate about 3.5 days, split 8.1 / 8.2 / 8.3 (8.1 stops for the user's production apply). §0.1 slice 8 row, §9 slice 8 row, ToC, §0.2 log; §0.4 gains BQ-17, BQ-18, BQ-19 and DF-9. No code changed. |
+| 2026-10-17 | SA requirement review, slice 8 (§11M): **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — Slice 8 (§11M) — 2026-10-17" after §11M.13. §0.3 row SA-RR-8. Findings S8-F1 (History fetched on demand, AC-173 one-fetch pin) to S8-F4; BA edits E-85 to E-88. Migration number, house style, columns, cron pattern, descriptors and checks 31 to 34 verified. No code changed. |
+| 2026-10-17 | BA: SA-RR-8 edits E-85 to E-88 applied (§11M) | E-85 the History block opens closed and sends its request only on "Show history", so AC-173 and the one-fetch render tests keep one request per load (HS-FR-11, AC-290, L-159); E-86 the dimension CHECK admits `tier:` keys with hyphens (`^([a-z][a-z0-9_]{0,47}\|tier:[a-z0-9_-]{1,40})$`), pinned equal to a builder shape constant that pre-checks rows so a bad key skips only the `plan` family (§11M.6, HS-W-5, self-test, AC-276, AC-282, new check 32 row); E-87 the job gives the credit pass a 30 s night budget (HS-FR-8, AC-282, L-157); E-88 the writer uses upsert with ignoreDuplicates and `.select(id)`, written = ids returned (HS-FR-5, AC-276, AC-281). SA-Q104 CHECK expression written in. §0.1 slice 8 row: SA approved, ready for Dev workplan (8.1). No code changed. |
+| 2026-10-17 | SA workplan review, slice 8.1 (§11M): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-8.1. SA applied E-89 (NOTIFY pgrst in the §11M.6 order), E-90 (the pure shape module in 8.1), E-91 (migration renumbered 20261074 to 20261078 across §11M, the §0.1 row and the §9 row; numbering note), E-92 (§11M.10 rows: count pins recomputed from main, cleanup function needs no version) and E-93 (check 32 tier row is an exact pattern match). No code changed. |
+| 2026-10-17 | SA code review, slice 8.1 (§11M): **Code Approved** | §0.3 row SA-CR-8.1. D-1 to D-3 approved. The remaining scoped tsc TS2353 is reproduced on origin/main (DE-7 adf9e37f), outside scope. Merge rule MR-1: the second of #447 and 8.1 to merge recounts to 158 / 120. No code changed by SA. |
+| 2026-10-17 | RM: slice 8.1 committed, PR #452 opened, auto-merge OFF | Commit `0439f94f` on `feature/bos-finance-health-8`; origin/main (`e5bc1e1f`) had not moved, so no merge was needed. #447 still open, so MR-1 did not apply (counts stay as committed). `20261078` free on main and every remote branch. Re-run: finance UI and lib, purge, data-export, test-account-cleanup and the migration test, 57 suites, 2999 tests, all passed. Seven frozen pins unchanged. Merge held for the user's production apply (L-155). §0.1 row 8: status and PR columns. |
+| 2026-10-18 | Migrations applied to production (session, at the user's request) | #447: check 23 (8/9; cleanup row read the 20261047 version, DE-8a 20261075 never applied and superseded by 20261077), then `20261076` (transition body md5 `018c4447f2b52dd87e4ae3b229e5b42c` verified) and `20261077` (cleanup body md5 `42ae104365dce86933e99da3c62aaabc` = file), check 24 23/23; #447 MERGED. #452: check 31 6/6, then `20261078`, check 32 16/16. MR-1 applied in #452 (second to merge): classification 158 = 38 + 0 + 120, baseline 158. **20261075 must not be applied any more** (it would downgrade the cleanup) |
