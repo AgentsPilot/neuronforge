@@ -1294,15 +1294,16 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
   });
 
   // DE-6: 155 = 33 include + 5 planned (DE-7) + 117 exclude, was 23 + 17 (DE-6 12, DE-7 5) + 115.
-  it('the classification totals: 155 = 33 include + 5 planned (DE-7 5) + 117 exclude', () => {
+  // Finance 4b.1: 156 = 33 + 5 + 118, the new exclude is business_os_boost_reversal_events (billing).
+  it('the classification totals: 156 = 33 include + 5 planned (DE-7 5) + 118 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
       kinds[d.export.kind] += 1;
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
-    expect(PURGE_DESCRIPTORS).toHaveLength(155);
-    expect(kinds).toEqual({ include: 33, planned: 5, exclude: 117 });
+    expect(PURGE_DESCRIPTORS).toHaveLength(156);
+    expect(kinds).toEqual({ include: 33, planned: 5, exclude: 118 });
     expect(bySlice).toEqual({ 'DE-7': 5 });
   });
 
@@ -1593,6 +1594,8 @@ describe('DE-5 M-4 every amount travels with its own currency (SA C-4, SA-Q6, SA
 const BILLING_TABLES: readonly string[] = [
   'billing_events', 'boost_pack_purchases', 'user_subscriptions', 'credit_transactions',
   'subscription_invoices', 'business_os_account_plans', 'business_os_boost_purchases',
+  // Finance 4b.1: the boost_ prefix is not matched below, so the reversal events are listed by hand.
+  'business_os_boost_reversal_events',
   ...PURGE_DESCRIPTORS.map((d) => d.table).filter((t) => t.startsWith('business_os_billing_') || t.startsWith('business_os_credit_')),
 ];
 

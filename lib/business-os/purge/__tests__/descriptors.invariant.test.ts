@@ -867,7 +867,8 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // marketing_consent_state, marketing_consent_settings.
     // +1 data export DE-2 (2026-10-15): intent_examples (never, global), the USER_OWNED_TABLES
     // entry that had no descriptor.
-    expect(baseline.count).toBe(155);
+    // +1 finance 4b.1 (2026-10-17): business_os_boost_reversal_events (never, via its purchase).
+    expect(baseline.count).toBe(156);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

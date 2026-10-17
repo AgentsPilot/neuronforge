@@ -221,6 +221,11 @@ export const USER_OWNED_TABLES: Record<string, string> = {
 
   business_os_boost_cap_overrides:
     "Admin changes to the account's boost purchase cap; follows the account for the same reason.",
+
+  // Finance slice 4b.1 (migration 20261072): no user_id of its own; it follows its purchase.
+  business_os_boost_reversal_events:
+    'Dated refund and dispute history of a boost purchase. No user_id: it hangs off ' +
+    'business_os_boost_purchases (ON DELETE CASCADE), so it follows the account the same way.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',

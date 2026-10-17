@@ -407,6 +407,7 @@ inbound_review AS (
     ('business_health_summaries', 'business_health_summaries_business_fk', 'user_id'),
     ('business_intake_forms', 'business_intake_forms_business_fk', 'user_id'),
     ('business_os_boost_purchases', 'business_os_boost_purchases_lot_id_fkey', 'user_id'),
+    ('business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', NULL),
     ('business_os_credit_charges', 'business_os_credit_charges_adjusts_action_id_fkey', 'user_id'),
     ('business_os_credit_lot_draws', 'business_os_credit_lot_draws_lot_id_fkey', 'user_id'),
     ('business_os_entitlement_overrides', 'business_os_entitlement_overrides_user_id_fkey', 'user_id'),

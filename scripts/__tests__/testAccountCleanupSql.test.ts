@@ -25,6 +25,7 @@ import {
   AUDIT_ACTION,
   AUDIT_COMPLIANCE_FLAGS,
   AUDIT_SEVERITY,
+  CASCADE_CHILDREN,
   CHECK_FILE,
   DEFAULT_TEST_TAG,
   DELETE_FILE,
@@ -186,11 +187,62 @@ describe('drift: the committed SQL is what the generator writes', () => {
   });
 });
 
+/**
+ * SA-W105 (finance 4b.1): a `never` child removed by its parent's ON DELETE
+ * CASCADE counts as handled only when its parent is a plan table, its
+ * descriptor is `via` that parent with the same FK, and the link is reviewed
+ * parent-owned (owner column null) so G-18 lets it through.
+ */
+function handledCascadeChildren(
+  children: typeof CASCADE_CHILDREN,
+  planTables: ReadonlySet<string>,
+  descriptors: typeof PURGE_DESCRIPTORS,
+  inbound: typeof INBOUND_FOREIGN_KEYS
+): string[] {
+  return children
+    .filter((child) => {
+      const scope = descriptors.find((d) => d.table === child.table)?.scope;
+      return (
+        planTables.has(child.parent) &&
+        scope?.kind === 'via' &&
+        scope.parent === child.parent &&
+        scope.fk === child.fk &&
+        inbound.some(([table, constraint, owner]) => table === child.table && constraint === child.constraint && owner === null)
+      );
+    })
+    .map((child) => child.table);
+}
+
 describe('coverage (SA C-3)', () => {
-  it('handles every user-scoped descriptor: deleted, must be empty, or a final step', () => {
-    const handled = new Set([...plan.map((entry) => entry.table), ...Object.keys(MUST_BE_EMPTY)]);
-    const missing = PURGE_DESCRIPTORS.filter((d) => d.scope.kind !== 'global' && !handled.has(d.table)).map((d) => d.table);
-    expect(missing).toEqual([]);
+  const planTables = new Set(plan.map((entry) => entry.table));
+  const missingFrom = (handledChildren: readonly string[]) => {
+    const handled = new Set([...planTables, ...Object.keys(MUST_BE_EMPTY), ...handledChildren]);
+    return PURGE_DESCRIPTORS.filter((d) => d.scope.kind !== 'global' && !handled.has(d.table)).map((d) => d.table);
+  };
+
+  it('handles every user-scoped descriptor: deleted, must be empty, a final step, or a reviewed cascade child', () => {
+    expect(missingFrom(handledCascadeChildren(CASCADE_CHILDREN, planTables, PURGE_DESCRIPTORS, INBOUND_FOREIGN_KEYS))).toEqual([]);
+  });
+
+  it('accepts each cascade child only through its reviewed link (SA-W105)', () => {
+    expect(handledCascadeChildren(CASCADE_CHILDREN, planTables, PURGE_DESCRIPTORS, INBOUND_FOREIGN_KEYS)).toEqual(
+      CASCADE_CHILDREN.map((child) => child.table)
+    );
+    // A cascade child is never also deleted by the plan itself: there is no delete step (SA-Q66).
+    for (const child of CASCADE_CHILDREN) expect(planTables.has(child.table)).toBe(false);
+  });
+
+  it('negative controls: a cascade child is missing when its parent is not a plan table, its descriptor differs, or its link is unreviewed', () => {
+    const child = CASCADE_CHILDREN[0];
+    expect(missingFrom([])).toEqual([child.table]);
+    const notInPlan = [{ ...child, parent: 'not_a_plan_table' }];
+    expect(handledCascadeChildren(notInPlan, planTables, PURGE_DESCRIPTORS, INBOUND_FOREIGN_KEYS)).toEqual([]);
+    const otherFk = [{ ...child, fk: 'other_id' }];
+    expect(handledCascadeChildren(otherFk, planTables, PURGE_DESCRIPTORS, INBOUND_FOREIGN_KEYS)).toEqual([]);
+    const unreviewed = INBOUND_FOREIGN_KEYS.filter(([table]) => table !== child.table);
+    expect(handledCascadeChildren(CASCADE_CHILDREN, planTables, PURGE_DESCRIPTORS, unreviewed)).toEqual([]);
+    const ownedLink = INBOUND_FOREIGN_KEYS.map((edge) => (edge[0] === child.table ? ([edge[0], edge[1], 'user_id'] as const) : edge));
+    expect(handledCascadeChildren(CASCADE_CHILDREN, planTables, PURGE_DESCRIPTORS, ownedLink)).toEqual([]);
   });
 
   it('deletes every table a purge deletes, with every option on', () => {
@@ -430,8 +482,10 @@ describe('audit row (SA TQ-5, C-7)', () => {
     expect(migrationSql).toContain("IF p_mode = 'delete' AND p_actor IS NULL THEN");
     // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
     expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
-    // The restored 20261046 function still writes user_id NULL: the rollback really is the old behaviour.
-    expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
+    // Finance 4b.1: the rollback now restores the applied 20261047 function, which already names the admin.
+    expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
+    ${ACTOR}, ${ACTOR},`);
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261047_operator_test_account_cleanup_audit_actor');
   });
 });
 
@@ -656,6 +710,10 @@ describe('applied history: a function migration is never edited once applied', (
     // Applied to prod 2026-10-08 (scheduling_bookings before crm_contacts, G-19).
     ['supabase/migrations/20261046_operator_test_account_cleanup_notnull_order.sql', 'e401f27fbe77e7a67fadb54e74fd36fc568a904c90eec410cc37d73ab45fa3b9'],
     ['supabase/SQL Scripts/20261046_operator_test_account_cleanup_notnull_order_rollback.sql', 'd86a4874dcf2161d1849433061ce2b9c9c7841c1a216175cee3d4d20c1d7293b'],
+    // Applied to prod (AD-2 convention, stamp 789e4758d674b561). Gated by check 23 of finance 4b.1 (SA-W108):
+    // if that row is false, nothing of 4b.1 is applied and these two pins are withdrawn.
+    ['supabase/migrations/20261047_operator_test_account_cleanup_audit_actor.sql', '8294bb810be6b4c314bde18807777c204fe4035788a0096fff6d2fcc134862f9'],
+    ['supabase/SQL Scripts/20261047_operator_test_account_cleanup_audit_actor_rollback.sql', '3a808ed17d6522cf82aadbf8e9f6241243a895d69c5a798cca65e3e1d1c6c2de'],
   ];
 
   it.each(APPLIED)('%s is byte-identical to what was applied', (file, sha256) => {
@@ -798,5 +856,39 @@ describe('NOT NULL columns emptied by ON DELETE SET NULL (prod 23502, 2026-10-08
     }
     // In the delete, G-19 is part of the guard rows that raise before anything is removed.
     expect(deleteSql.indexOf("'G-19'::text AS guard")).toBeLessThan(deleteSql.indexOf("RAISE EXCEPTION 'BLOCKED, nothing was removed: %'"));
+  });
+});
+
+describe('finance 4b.1: the reversal events link (PF-11, SA-Q66, SA-W105, SA-W108)', () => {
+  const EDGE = "('business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', NULL)";
+
+  it('reviews the link as parent-owned, with a reason', () => {
+    expect(INBOUND_FOREIGN_KEYS).toContainEqual(['business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', null]);
+    expect(typeof PARENT_OWNED_REASONS.business_os_boost_reversal_events).toBe('string');
+  });
+
+  it.each([
+    [CHECK_FILE, checkSql],
+    [DELETE_FILE, deleteSql],
+    [MIGRATION_FILE, migrationSql],
+  ])('%s carries the reviewed link', (_file, sql) => {
+    expect(sql).toContain(EDGE);
+  });
+
+  it('adds no delete step and no static reference, so the cleanup runs with or without the table', () => {
+    expect(plan.some((entry) => entry.table === 'business_os_boost_reversal_events')).toBe(false);
+    expect(FUNCTION_REQUIRED_TABLES.map((r) => r.table)).not.toContain('business_os_boost_reversal_events');
+    for (const sql of [checkSql, deleteSql, migrationSql]) expect(sql).not.toContain('public.business_os_boost_reversal_events');
+  });
+
+  it('is the 20261073 function, its rollback restores 20261047, and check 24 pins the new stamp', () => {
+    expect(MIGRATION_FILE).toBe('supabase/migrations/20261073_operator_test_account_cleanup_boost_reversal_events.sql');
+    expect(cleanupFunctionVersion()).toBe('f854486b31baf784');
+    expect(CLEANUP_FUNCTION_VERSION).toBe('f854486b31baf784');
+    const check24 = readSql('scripts/check-bos-boost-reversal-events-migration.sql');
+    expect(check24).toContain(`position('${cleanupFunctionVersion()}' in p.prosrc) > 0`);
+    const check23 = readSql('scripts/precheck-bos-boost-reversal-events.sql');
+    expect(check23).toContain("position('789e4758d674b561' in p.prosrc) > 0");
+    expect(readSql(PREVIOUS_MIGRATION_FILE)).toContain("'version', '789e4758d674b561'");
   });
 });
