@@ -31,12 +31,12 @@ const A = '11111111-1111-4111-8111-111111111111';
 const NOW = new Date('2026-10-14T15:30:00.000Z');
 
 /** The payload's window for a choice, as the server resolves it. */
-function windowFor(preset: FinanceWindowChoice): FinanceLinkWindow {
+function windowFor(preset: Exclude<FinanceWindowChoice, 'since_start'>): FinanceLinkWindow {
   if (preset === 'custom') return { preset, from: '2026-09-20', to: '2026-10-03' };
   return { preset, ...resolveAdminWindow(preset, NOW) };
 }
 
-const PRESETS: FinanceWindowChoice[] = ['today', '7d', '30d', 'this_month', 'custom'];
+const PRESETS: Exclude<FinanceWindowChoice, 'since_start'>[] = ['today', '7d', '30d', 'this_month', 'custom'];
 
 /** The hook's getter: a canonical key's non-empty value, else null. */
 const paramsOf = (href: string) => new URL(href, 'http://admin.test').searchParams;
@@ -232,5 +232,53 @@ describe('Money M-5: financeLinks.ts sends nothing to the old Costs & credits ta
     for (const preset of PRESETS) expect(paramsOf(costsHref(A, windowFor(preset))).has('tab')).toBe(false);
     expect(leakCheckHref(null)).not.toContain('tab=');
     expect(leakCheckHref(A)).not.toContain('tab=');
+  });
+});
+
+// ── DF-6 (DF6-FR-10, E-77, SA-Q95, AC-269): links out never carry since_start ──
+import { accountViewHref as accountViewHrefDf6, k1AnalyticsHref as k1Df6, leakCheckHref as leakDf6 } from '../financeLinks';
+
+describe('DF-6: since-start links out', () => {
+  // 2026-09-29 to 2026-12-29 is 92 inclusive days; to 2026-12-30 is 93.
+  const FITS: FinanceLinkWindow = { preset: 'since_start', from: '2026-09-29', to: '2026-12-29' };
+  const TOO_LONG: FinanceLinkWindow = { preset: 'since_start', from: '2026-09-29', to: '2026-12-30' };
+  const HREFS = (window: FinanceLinkWindow) => [activityHref(A, window), costsHref(A, window), analyticsHref(A, window), section3AnalyticsHref(A, window)];
+
+  it.each([
+    ['Activity', activityHref, ACTIVITY_FILTER_SPEC],
+    ['Charge checks', costsHref, COSTS_FILTER_SPEC],
+    ['AI calls & usage', analyticsHref, ANALYTICS_FILTER_SPEC],
+  ] as const)('%s, at most 92 inclusive days: range=custom with the payload dates and the account, parsed back by the target', (_name, hrefOf, spec) => {
+    const params = paramsOf(hrefOf(A, FITS));
+    expect(params.get('range')).toBe('custom');
+    expect([params.get('from'), params.get('to')]).toEqual(['2026-09-29', '2026-12-29']);
+    const get = getter(params);
+    expect(spec.account.parse(get)).toBe(A);
+    expect(spec.window.parse(get)).toEqual({ kind: 'custom', from: '2026-09-29', to: '2026-12-29' });
+  });
+
+  it.each([
+    ['Activity', activityHref, ACTIVITY_FILTER_SPEC],
+    ['Charge checks', costsHref, COSTS_FILTER_SPEC],
+    ['AI calls & usage', analyticsHref, ANALYTICS_FILTER_SPEC],
+  ] as const)('%s, 93 days or more: the account only and no window, so the target opens on its default', (_name, hrefOf, spec) => {
+    const params = paramsOf(hrefOf(A, TOO_LONG));
+    for (const key of ['range', 'from', 'to']) expect(params.get(key)).toBeNull();
+    expect(spec.account.parse(getter(params))).toBe(A);
+    expect(spec.window.parse(getter(params))).toBeUndefined();
+  });
+
+  it('E-77: no link ever carries since_start, at either length', () => {
+    for (const href of [...HREFS(FITS), ...HREFS(TOO_LONG)]) expect(href).not.toContain('since_start');
+  });
+
+  it('Businesses, K-1 and the Leak check links are unchanged', () => {
+    expect(businessesHref(A)).toBe(`/admin/users?status=all&account=${A}`);
+    expect(k1Df6(A)).toBe(`/admin/analytics?range=this_month&account=${A}`);
+    expect(leakDf6(A)).toBe(`/admin/finance/charges?account=${A}`);
+  });
+
+  it('SA-W-DF6-7 (recorded, unreachable): accountViewHref would write a request the finance route accepts', () => {
+    expect(accountViewHrefDf6(A, FITS)).toBe(`/admin/finance?preset=since_start&accountId=${A}`);
   });
 });

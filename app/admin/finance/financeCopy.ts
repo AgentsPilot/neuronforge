@@ -507,6 +507,11 @@ export const ACCOUNT_PAYING_TEXT = { paying: 'Paying', not_paying: 'Not paying',
 export const ACCOUNT_UNKNOWN = 'Unknown';
 
 export const ACCOUNT_SUMMARY_TITLE = 'Account summary';
+/**
+ * DF-6 (DF6-FR-9, E-81): the "Since it started" window line, under the bar and
+ * in the account summary. `start` is the payload's start, already formatted.
+ */
+export const sinceStartWindowLine = (start: string) => `Since it started: ${start} to now (UTC)`;
 /** BD-18: the AI cost we charged (the credit ledger), USD. */
 export const ACCOUNT_AI_COST = 'Charged AI cost';
 export const ACCOUNT_CUTOVER_NOTE = 'The window starts before AI charging went live: see Charged AI cost in the window below.';

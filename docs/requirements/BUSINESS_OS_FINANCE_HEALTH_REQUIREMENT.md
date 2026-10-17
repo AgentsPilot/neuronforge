@@ -42,6 +42,7 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11I. Slice 4b: boost refund dates, boost problems, bought credits](#11i-slice-4b-boost-refund-dates-boost-problems-bought-credits)
     - [11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant](#11j-money-m-8-mark-the-platform-dashboard-and-exchange-rates-pages-redundant)
     - [11K. Slice 6b: margin after estimated Stripe fees, and KPI order](#11k-slice-6b-margin-after-estimated-stripe-fees-and-kpi-order)
+    - [11L. Slice DF-6: since it started (one account)](#11l-slice-df-6-since-it-started-one-account)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -74,6 +75,7 @@ This document is the feature's **single source of truth**: every slice decision,
 | M-8 | **Money M-8** (CR §8) "Mark the Platform dashboard and Exchange rates pages redundant" (BD-34): both pages and the dashboard's API route get a REDUNDANT header comment; the dashboard's hidden parked sidebar item is removed; both routes stay reachable by URL with a one-line redundant notice (BQ-14 default); a source guard keeps the product from linking to them; Exchange rates' one `console.error` goes to Pino (§11J) | M-5 merged; **nothing deleted; no data, money, API logic or migration change**. Sign-off: BD-34 (§11J.0) | 🟡 **PR open (2026-10-17): [#448](https://github.com/AgentsPilot/neuronforge/pull/448), auto-merge on; commit `92ef1454`. SA code approved, QA passed, TL approved (BD-33).** Specified 2026-10-17 (§11J, AC-233 to AC-242, SA-Q75 to SA-Q80; BQ-14 resolved by BD-34). UI short path, about 1 day; BD-33 fast track; no user browser look (parked pages) | [BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md) | [#448](https://github.com/AgentsPilot/neuronforge/pull/448) |
 | 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b. **2026-10-16:** 6b also re-orders the KPI tiles, revenue first, then cost, then user and account data (BD-35); in the BD-32 order it runs after M-8, about 1.5 to 2 days. **2026-10-17:** 6b specified as the row below (fee estimate and tile order); the margin per current plan (BD-8) and K-7 stay in this row for a later decision | — | — |
 | 6b | **Margin after estimated Stripe fees, and KPI order** (§11K): "Margin after Stripe fees (estimate)" beside the AI margin on the Accounts rows, the platform line and the one-account summary, from a per-charge estimate held as config data (default 2.9% + USD 0.30, USD only; BQ-15); tiles re-ordered K-5, K-1, K-3, K-2, K-4 (BD-35), order only | M-8 merged (#448); **no migration, no new read or repository method**; nothing from 4b.1 (#447) | 🟡 **PR #449 opened 2026-10-17, auto-merge on** (commit `8d2f5ff6` on `feature/bos-finance-health-6b`; SA-CR-6b approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_6B_RETROSPECTIVE.md)). BQ-15 still open (does not block); user owes L-142 to L-147 and checks 27 and 28 | [BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md) | [#449](https://github.com/AgentsPilot/neuronforge/pull/449) |
+| DF-6 | **Since it started (one account)** (§11L, BD-26): a "Since it started" window, offered only with one business picked, from the charging cut-over (2026-09-29 16:50:53.914 UTC) to now, beyond the 92-day cap (E-75); refused for all businesses (400); the 92-day cap otherwise unchanged; URL `range=since_start` with `account`, a bad link drops only the window (U-4) | 6b (#449); **no migration, no new read or repository method**; the start is the cut-over constant, resolved in the route | 🟡 **PR #450 opened 2026-10-17, auto-merge on** (commit `fd7b7f02` on `feature/bos-finance-health-df6`, origin/main merged in `e73ec431`; SA-CR-DF6 approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_DF6_RETROSPECTIVE.md)) (§11L; AC-257 to AC-272). BQ-16 open with a default, not blocking; user owes L-148 to L-154 and checks 29 and 30 | [BUSINESS_OS_FINANCE_HEALTH_DF6_SINCE_START_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_DF6_SINCE_START_WORKPLAN.md) | [#450](https://github.com/AgentsPilot/neuronforge/pull/450) |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
 | 8 | History snapshots (plan mix, credits) for trend lines | A migration and a cron (SA) | ⬜ Not started | — | — |
 
@@ -149,6 +151,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-17 — With M-5 merged (#444), BA specified **slice 4b** in §11I from §11C, BD-17 and its dispute defaults, DF-5, the refund-timing scoping (option (ii)) and a pre-work check against main `16cb2a1f` and the live database (1 boost purchase, 0 refunds, 0 disputes; the events table absent; next migration `20261072`). Split **4b.1** (writer: table `business_os_boost_reversal_events`, written inside the unchanged-signature transition function, server-write-only, service_role SELECT plus a column-level INSERT grant because the function is SECURITY INVOKER; regenerated test-account cleanup because guard G-18 blocks the new FK; about 2 days) and **4b.2** (refunds and lost disputes by event date, held now, boost problems, bought credits, the Accounts tab on the same rule; about 2.5 days). One hand-applied production migration (two with the cleanup); the 4b.1 PR stays off auto-merge until the user applies it. AC-204 to AC-232; checks 23 to 26; SA-Q65 to SA-Q74; L-137 to L-141. BQ-13 stays open: 4b keeps no take-back. No new business question. Awaiting SA review.
 - 2026-10-17 — BA specified **Money M-8** in §11J from BD-34 (amends BD-25), the CR M-8 row and inventory I-15, I-19, and the code at main `5c214310` (CF-1 to CF-12): REDUNDANT header comments in both pages and in `/api/admin/dashboard` (its only caller is the dashboard); the dashboard's hidden parked sidebar item removed (parked 15 → 14, hrefs 29 → 28; visible sidebar unchanged; BD-34 is the sign-off, §11J.0); both routes kept with a one-line notice; a new source guard against in-app links; Exchange rates' `console.error` to Pino. AC-233 to AC-242 and SA-Q75 to SA-Q80 (numbered after PR #447's AC-232 and SA-Q74). New **BQ-14** (visible notice or comments only; default: notice) and **FU-M8-1** (Exchange rates still writes from the browser; not changed by M-8). CR M-8 row marked in progress. No code changed.
 - 2026-10-17 — With M-8 merged (#448, main `e43dcb60`), BA specified **slice 6b** in §11K from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8 and the 6a builder, with a read-only live check (no Stripe fee is stored for plan or boost payments; client payments carry `processor_fee`). Fee estimate per successful charge on the gross amount, rounded half up per charge, as config data (default 2.9% + USD 0.30, USD only); a refunded charge keeps its fee; dispute fees not estimated. "Margin after Stripe fees (estimate)" shown beside the AI margin, never replacing it, on the Accounts rows, the platform line and the one-account summary. Tiles re-ordered K-5, K-1, K-3, K-2, K-4, order only. Wording says "estimate", because the vocabulary guard forbids "estimated" in `financeCopy.ts`. AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91; new **BQ-15** (the fee rate) with its default, not blocking. No code changed.
+- 2026-10-17 — With 6b open as PR #449, BA specified **slice DF-6** "Since it started (one account)" in §11L from BD-26, CR G-9, CR SA-Q-6, BD-30, BD-32 and BD-33 and the code at `ea56ad04` (6b tip). A `since_start` window, valid only with a business picked (400 for all businesses), from the later of the cut-over instant and the account's first activity (the earliest of the plan row's `onboarding_started_at` and `profile_created_at`; never `created_at`, a backfill time) to now; resolved on the server after the plan check from the row already read; the 92-day cap unchanged for every other window; read ceilings unchanged ("At least" / Unknown); no timezone read (both ends are instants; `user_preferences.timezone` remains the authority if local dates are ever shown); URL `range=since_start` as a window extra, a bad link drops only the window (U-4); links out carry the dates only up to 92 days. **No migration, no new read or repository method.** AC-257 to AC-272, checks 29 and 30, L-148 to L-154, SA-Q92 to SA-Q99; new **BQ-16** (client takings before the cut-over) with its default, not blocking. About 1.5 days. Awaiting SA review. No code changed.
 
 ### 0.3 SA rulings
 
@@ -246,6 +249,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-RR-6b** | **2026-10-17 SA requirement review (slice 6b, §11K): APPROVED, edits applied.**<br>• SA-Q81 to SA-Q91 as the BA suggests: `financeRules.ts` data constant; gross fee; per-charge rounding; sort and filter on the AI margin; the AC-145 baseline unchanged; "estimate" wording; Pins A and B unedited; the order test in the page test; one PR under BD-33; fee stays on the charge.<br>• E-72: a zero-total boost is not a charge (FE-1, AC-245, checks 27 and 28).<br>• E-73: a missing or invalid USD config gives Unknown (FE-9).<br>• E-74: fee subtracted in minor units before the single scale step (FE-8).<br>• Checks 27 and 28 are editor-safe. | 2026-10-17 | §11K |
 | **SA-WP-6b** | **2026-10-17 SA workplan review (6b): APPROVED WITH CONDITIONS.**<br>• Fee maths re-derived (7900 → 259, 4414 → 158, 1000 → 59, 500 → 45, 499 → 44).<br>• 6b-2 exact with no double scaling.<br>• Pin B sorts ids, so it is order-free; all seven pins unchanged.<br>• `route.test.ts:1357`/`:1385` and `financeHealth.test.ts:1981` are not frozen.<br>• 6b-1 to 6b-11 approved.<br>• 6B-R1: the FE-8 text. 6B-R2: note percent and fixed render test. 6B-R3: zero-total boost builder test. | 2026-10-17 | §11K |
 | **SA-CR-6b** | **2026-10-17 SA code review (6b): Code Approved.**<br>• E-72, E-73 and E-74 met; the AI margin is the unchanged `marginUnitsOf(revenue, cost)`, and after-fees is `marginUnitsOf(revenue − fees, cost)`.<br>• 6B-R2 and 6B-R3 tests present.<br>• Fees: 7900 → 259, 1000 → 59, total 318.<br>• The fee stays on the charge.<br>• Tile blocks moved whole into K-5, K-1, K-3, K-2, K-4, with an order test.<br>• Seven pins unchanged.<br>• D-1 to D-6 approved.<br>• SA re-run exit 0 (finance UI 613, finance lib 1652, route and vocabulary 272, authz 203). | 2026-10-17 | §11K |
+| **SA-RR-DF6** | **2026-10-17 SA requirement review (DF-6, §11L): APPROVED WITH CONDITIONS.**<br>• DF6-F1 (Medium): the start is the cut-over instant only. The first-activity rule could drop an early charge and adds nothing (E-75).<br>• DF6-F2: shared `resolveWindow` gives `none` for `since_start`; one ruled update to the extras list pin (E-76).<br>• DF6-F3: the link helpers never send `range=since_start` (E-77).<br>• DF6-F4 to DF6-F6: AC-262 end, Section 1 "new in window", type widening (E-78 to E-80).<br>• SA-Q92: resolved in the route, pure. SA-Q93: shared extras. SA-Q94: the cut-over. SA-Q95 to SA-Q99 as the BA suggests.<br>• Cap, `requireAdmin` first, ceilings, columns, no timezone read, isolation and pins all verified. BQ-16 default accepted. About 1.25 to 1.5 days. | 2026-10-17 | §11L |
+| **SA-WR-DF6** | **2026-10-17 SA workplan review (DF-6): APPROVED WITH CONDITIONS.**<br>• W-DF6-1: `formatUtc` with " UTC" stripped, "Since it started: 2026-09-29 16:50 to now (UTC)" (E-81).<br>• W-DF6-2: summary window line for `since_start` only, text computed once in `FinanceView` and passed in (E-82).<br>• W-DF6-3: one ruled update of the links import pin, adding `adminWindowPresets` (E-83).<br>• W-DF6-4: `toFinanceQuery` sends the default without a business; the route 400 stays the backstop.<br>• W-DF6-5 to W-DF6-8 as Dev suggests; line ref `planGroups.ts:224` (E-84).<br>• DF6-R1: the folder-wide `user_preferences` / `timezone` ban skips `__tests__`. DF6-R2: one label source. DF6-R3: the ruled pin edits are listed exactly in the handover. | 2026-10-17 | §11L |
+| **SA-CR-DF6** | **2026-10-17 SA code review (DF-6): Code Approved.**<br>• **D-1 approved; SA-Q96 corrected:** AC-173 part B hashes the route's `DATE` + `buildQuerySchema` text, so the schema stays unedited and `parseFinanceQuery` admits `since_start` around it (only with `accountId`, else 400).<br>• **D-2 approved, DF6-R3 amended:** a third ruled test edit, the `financeLinks.test.ts:34`/`:39` type narrowing, applied by SA. Scoped `tsc`: canary 1, clean 0.<br>• Isolation, the single first request, links, U-4, the timezone ban and the label verified. Seven pins recomputed and equal; AC-145 untouched; vocabulary guard untouched.<br>• SA re-run: 37 suites, 2605 passed. | 2026-10-17 | §11L |
 
 ### 0.4 Deferrals and parked items
 
@@ -259,7 +265,8 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | DF-3 | **Filter out test businesses or users (future)** | BD-13: test and real client payments are shown together and all layer-B data is treated as real for now; no test-mode label and no livemode migration. A later slice may let the admin exclude chosen test businesses or users from the layer-B figures. Needs its own business decision on how a business or user is marked as test | 2026-10-11 |
 | DF-4 | The finance page **shell** adopts the shared admin layout standard ([ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md)): `AdminPageHeader`, `AdminFilterBar` through `useAdminFilters` (canonical `range` / `account`, with `preset` / `accountId` read as legacy aliases), the shared `KpiStrip` with its cross-page tile mode, and the C-14 registry entry | Not in slice 2: a layout migration is UI-only and must not ride in a data slice (layout standard §3 rules 1, 4 and 5). Slice 2's **new** blocks use the shared components from the start (S2-FR-13). Its own slice, after 2b (SA-Q18). **2026-10-15: being delivered as Money M-6 by slices F-2, F-4 and F-5 (§11G), owned by the finance stream** | 2026-10-11 |
 | DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** **Decided 2026-10-14 (BD-17): refund month; lost dispute in the month lost; held means held now.** The writer-side date and the page change stay deferred with FIN 4b (paused during Money M-1 to M-3). **2026-10-17: specified in §11I** (4b.1 writes dated reversal events; 4b.2 reads them; closed when 4b.2 merges) | 2026-10-13 |
-| DF-6 | **"Since it started" view for one account** (CR BQ-9: a window beyond the 92-day cap, from the charging cut-over, for a picked account only) | Not needed for M-1: the account summary answers the picked window. It raises the cap for account-scoped reads only, a route and validation change (CR SA-Q-6), so it is not UI-only. A later Money item, after M-3 | 2026-10-14 |
+| DF-6 | **"Since it started" view for one account** (CR BQ-9: a window beyond the 92-day cap, from the charging cut-over, for a picked account only) | Not needed for M-1: the account summary answers the picked window. It raises the cap for account-scoped reads only, a route and validation change (CR SA-Q-6), so it is not UI-only. A later Money item, after M-3. **2026-10-17: scheduled as slice DF-6, specified in §11L** (after 6b in the BD-32 order; the cap is lifted only for `since_start` with a business picked; no migration) | 2026-10-14 |
+| BQ-16 | **Open business question, attached to DF-6 (does not block it):** with "Since it started" picked, should the business's **client takings** (layer B, clients paying the business) also start at the charging cut-over, or show the business's whole history? | **Default, used to build DF-6:** the same window for every section, starting at the cut-over (DF6-W-7), so the page has one span and one label. Client payments before 29 Sep 2026 are not shown in this view (check 30 counts them). Showing all-time takings would need a second window on one page | 2026-10-17 |
 | DF-7 | **Refused plan payments with an amount** (`mismatch_refused` rows) | Live: 8 test-mode rows, no account (`unknown_customer`), amounts recorded (§11D.1). They are not revenue of any account and M-2 never counts them (M2-W-2). Showing them belongs to platform payment problems (slice 7) | 2026-10-14 |
 | DF-8 | **Stripe fee estimate in the AI margin** (BD-7) | M-3 shows AI margin with the label "Stripe fees not deducted" and no estimate. The labelled estimate (the boost requirement's assumed 2.9% + USD 0.30) needs a per-payment rule for plans and boosts and its own exactness rule; it moves to slice 6b with K-7 and the per-plan margin (BD-8). DF-6 also stays deferred after M-3 (it changes the 92-day cap, a route and validation change; §11E.2) | 2026-10-14 |
 
@@ -2557,6 +2564,321 @@ Technical only. The one business assumption, the fee rate, is **BQ-15** (§0.4);
 
 ---
 
+## 11L. Slice DF-6: since it started (one account)
+
+Specified 2026-10-17 from **BD-26** (CR BQ-9: "Yes to a 'since it started' view for one account, beyond the 92-day cap, only when one account is picked, starting from the charging cut-over"), CR G-9 and **CR SA-Q-6** ("raise the 92-day cap for account-scoped reads only; bounded below by the cut-over; the ledger per account is small"), **BD-32** (DF-6 after 6b, about 1.5 days), **BD-33** (fast track), **BD-30** (U-4), the 6a and 6b margin rules (§11E.3, §11K.4) and the code on `feature/bos-finance-health-df6` (cut from the 6b tip `ea56ad04`, which includes 6b). **No migration, no new SQL function, no new table, no write, no new read and no new repository method.** It adds one window choice, valid only with a business picked, resolved on the server from the cut-over constant and the request clock (E-75).
+
+**Numbering note.** PR #447 (4b.1, §11I, not on main) reserves AC-204 to AC-232, SA-Q65 to SA-Q74, checks 23 to 26 and L-137 to L-141; M-8 used AC-233 to AC-242 and SA-Q75 to SA-Q80; 6b used AC-243 to AC-256, SA-Q81 to SA-Q91, checks 27 and 28 and L-142 to L-147. DF-6 therefore starts at **AC-257**, **SA-Q92**, **check 29** and **L-148**. As in 6b, its checks sit in this section, not in §13, so this PR and #447 do not touch the same lines.
+
+**The question it answers.** "Has this customer been worth it, since we started charging?" For the owner test account: everything it paid us, everything it cost us in charged AI, the AI margin and the margin after Stripe fees (estimate), from 29 Sep 2026 to now, on one screen, even once that span is longer than 92 days.
+
+### 11L.1 Code facts (read at `ea56ad04`, 2026-10-17)
+
+No live query was needed: DF-6 adds no read. Checks 29 and 30 (§11L.9) were written against these facts and the live facts of §11E.1 and §11K.1, and not executed by BA.
+
+| # | Fact | Where |
+|---|---|---|
+| CF-1 | **The 92-day cap is a route and page rule, not a read rule.** `customRangeProblem` (shared `adminWindowPresets.ts`, `ADMIN_WINDOW_MAX_DAYS = 92`, pinned equal to `CREDIT_REPORT_LIMITS.MAX_WINDOW_DAYS`) is applied by the finance route's strict Zod schema (`superRefine`, custom windows only) and by the page's URL parser (`financeFilters.ts`). No finance read checks the window length | `app/api/admin/business-os/finance/route.ts` `buildQuerySchema`; `app/admin/finance/financeFilters.ts` `financeWindowField` |
+| CF-2 | **Every account-scoped read already has a row ceiling** and reports reaching it: the ledger read (`FINANCE_LIMITS.LEDGER_CEILING` 20,000, `reachedCeiling`), client payments and refunds (`FINANCE_READ_LIMITS.CLIENT_CEILING` 5,000, the `>=` rule), boost and plan payments (same paging), the recorded AI cost read (`TOKEN_USAGE_READ_LIMITS.MAX_CEILING` 5,000). An inexact or ceiling read already gives "At least X" or Unknown (AGG-3) | `financeHealth.ts`, `BusinessOsFinanceReadRepository.ts`, `TokenUsageRepository.ts` |
+| CF-3 | **The cut-over is an instant**, `CHARGING_CUTOVER_FLOOR_MS` = 2026-09-29 16:50:53.914 UTC. `cutoverClamp(start, end)` gives `after_cutover` only when the window starts at or after it; a whole-day window from 2026-09-29 00:00 UTC is `starts_before_cutover`, and every margin then reads "Not available" (`buildMargins`) | `lib/business-os/credits/aiActivity.ts:146, :219` |
+| CF-4 | **The picked account's plan row is read first**, before any other read (`findPlanForAccount`, step 1, SEC-3); it carries `onboarding_started_at` and `profile_created_at` ("facts: written once by the provisioning triggers") and `created_at`. **`created_at` is not the account's start:** for every backfilled account it is the moment the backfill ran (repository comment on `findRecentOnboardedPlans`). **Since E-75, DF-6 uses none of these facts** for its window | `financeHealth.ts` step 1; `BusinessOsAccountPlanRepository.ts:41-61, :413-416` |
+| CF-5 | **The shared Window control already supports a page's own extra windows** (`ADMIN_WINDOW_EXTRAS`, `windowFilter({ extras })`, `DatePresets extras`), opt-in per page, so a page that lists none ignores the value (U-4). Names use underscores (`this_week`, `last_month`) | `app/admin/components/layout/adminWindow.ts:16-18, :48`, `DatePresets.tsx:74` |
+| CF-6 | **Links out carry the window** in the target's keys (`financeLinks.ts`): Activity and Charge checks take `range=<preset>` or `range=custom&from&to`; AI calls & usage takes `today` / `this_month` or custom dates. Activity's and Charge checks' routes cap custom windows at 92 days | `app/admin/finance/financeLinks.ts`; `app/api/admin/business-os/ai-activity/route.ts:121`; `.../credits/report/route.ts:78` |
+| CF-7 | **No time buckets.** The page has no monthly or daily trend; every section is a total for the window or a state as of now. Slice 8 (history snapshots) is where trends belong | `lib/business-os/finance/*`, `app/admin/finance/components/*` |
+| CF-8 | **No timezone is read by the page.** Windows resolve in UTC (TZ-1); no finance file reads `user_preferences.timezone` | `grep` over `lib/business-os/finance/` and `app/admin/finance/` |
+| CF-9 | **The AC-173 request pin** (`financeRequestPins.ts`, 15 rows) holds no row with a since-start value, and its self-check requires every request to start `?preset=` | `app/admin/finance/__tests__/financeRequestPins.ts` |
+
+### 11L.2 Scope
+
+| In scope | Not in scope |
+|---|---|
+| One new window choice, **"Since it started"**, offered only with one business picked; its server-side resolution (§11L.3); the route's validation change (§11L.4); the URL value and U-4 behaviour (§11L.5); how every tile and section reads over it (§11L.6); its link-out rule (DF6-FR-9); checks 29 and 30 | The choice with **all businesses** (BD-26: refused); the Accounts tab (it is all businesses only, SA-W84); any change to the 92-day cap for Today, 7 days, 30 days, This month or Custom; any time bucket or trend line (CF-7, slice 8); the account's own local clock (§11L.3 DF6-W-4); history before the cut-over; any new read, repository method, SQL function or migration; raising any read ceiling; the 92-day caps of Activity, Charge checks and AI calls & usage |
+
+### 11L.3 Window rules
+
+| # | Rule |
+|---|---|
+| DF6-W-1 | **Start (E-75, DF6-F1).** The window starts at **the charging cut-over instant**, `CHARGING_CUTOVER_FLOOR_MS` (2026-09-29 16:50:53.914 UTC, CF-3), for every account. No plan-row fact is used (not `onboarding_started_at`, not `profile_created_at`, never `created_at`): an account newer than the cut-over simply has no rows before it starts, so the totals are the same and no row can be dropped. Because the start is the cut-over instant, coverage is always `after_cutover` (CF-3), so the margins are figures, not "Not available". |
+| DF6-W-2 | **End.** The window ends at **now**, the request's one clock (`now`, exclusive end), not at the end of today. The end is never a client value. |
+| DF6-W-3 | **Resolved on the server only (E-75, SA-Q92).** The client sends only the choice and the account id. The route resolves the window by a pure `since_start` branch of `resolveFinanceWindow` (`now` passed in): `start` = `CHARGING_CUTOVER_FLOOR_MS`, `end` = `now`, `from` = `2026-09-29`, `to` = today UTC. No plan row is needed and the builder is unchanged. Any `from` or `to` sent with the choice is format-checked and **ignored**, as for every preset (SA-W6). |
+| DF6-W-4 | **Timezone.** `user_preferences.timezone` is the authority for an account's clock (CLAUDE.md); `business_profiles.timezone` does not exist and is never selected. DF-6 has **no day or month boundary to place**: both ends are instants (DF6-W-1, DF6-W-2), so the window does not depend on any timezone and nothing reads `user_preferences.timezone`. Labels stay UTC (TZ-1). If a later slice shows the account's own local dates (for example monthly buckets in its clock), `user_preferences.timezone` is the only source and NULL ("not asked") is labelled UTC, never assumed. |
+| DF6-W-5 | **Payload window.** `window.preset` = `since_start`; `window.start` = the start instant (ISO); `window.end` = now (ISO); `window.from` = the UTC date of the start; `window.to` = today's UTC date. `from` and `to` are labels and link inputs only; no read uses them. |
+| DF6-W-6 | **Read ceilings are unchanged** (CF-2). The window passes through the same reads with the same page sizes and ceilings as a 92-day window. A read that reaches its ceiling gives "At least X", "partial" or Unknown under AGG-3 and the per-section rules already in force (Section 3's charged figure, M-4's recorded figure, the 6a and 6b margins), **never a guessed or truncated figure**. No ceiling is raised for DF-6. |
+| DF6-W-7 | **One window for every section.** Every window-based section and tile reads the same span. Client takings (layer B) therefore start at the cut-over too, although client payments exist before it (BQ-16, default: same window). |
+
+### 11L.4 Validation change
+
+| # | Rule |
+|---|---|
+| DF6-FR-1 | The route's `preset` enum becomes the shared `ADMIN_WINDOW_CHOICES` **plus `since_start`**, a Finance-local addition in the route (the shared `ADMIN_WINDOW_CHOICES` list is not edited, so the Activity and credit report routes are unchanged). |
+| DF6-FR-2 | `preset=since_start` **without `accountId` is a 400** (`INVALID_QUERY`; development detail "since_start needs a business picked"). This is the only way a window longer than 92 days can be asked for, and it cannot be asked for all businesses (BD-26). |
+| DF6-FR-3 | `preset=since_start` with `tab` is already a 400 through SA-W84 (no tab with a business); no new rule. `sort`, `group` and `show` are 400 without the tab (E-48), unchanged. |
+| DF6-FR-4 | **The 92-day cap is otherwise unchanged:** `custom` still goes through `customRangeProblem` (at most 92 inclusive days, `to` not after today UTC), with or without a business picked. A custom window of 93 days with a business picked is still a 400. |
+| DF6-FR-5 | **Order is unchanged:** `requireAdmin` first (nothing above it), the repeated-key check, the strict schema, the platform-account 404, then the builder's plan check (404 / 500) before any other read. With `since_start`, the window is resolved in the route from the constant and `now` only (DF6-W-3); the builder's order is unchanged. |
+| DF6-FR-6 | The route's info line logs `window.preset` = `since_start` and the resolved `from` / `to` dates, as for every preset; never the plan row's facts, an amount or a name (SEC-8). |
+
+### 11L.5 URL value, U-4 and the page control
+
+| # | Rule |
+|---|---|
+| DF6-FR-7 | **URL value:** `range=since_start` (underscore, as the existing extras, CF-5), always with `account=<uuid>`. It is a Finance **window extra**: `since_start` is added to the shared `ADMIN_WINDOW_EXTRAS`, and `ADMIN_WINDOW_EXTRA_LABELS` gains **"Since it started"** (SA-Q93). The shared resolver (`adminWindow.ts:228-231`, which today sends every other extra to `resolveDateExtra`) gets an **explicit `since_start` case returning `{ kind: 'none' }`**: the shared folder never resolves it to dates, Finance resolves it on the server (E-76, DF6-F2). The exact-list pin of the extras (`adminWindow.test.ts:203`) is updated **once**, by this ruling. Finance lists the extra in its window field only. No `from` / `to` are written for it. The legacy alias `preset=since_start` is read as `range` like every other value (U-9). The request it sends is `preset=since_start&accountId=<uuid>`. |
+| DF6-FR-8 | **U-4 (BD-30): a bad link drops only the bad filter.** (a) `range=since_start` with no valid `account`: the **window** is the dependent, bad filter, so it falls back to This month and nothing else changes (the cross-key repair in `financeFilterRepair`, the SA-W3 precedent). (b) `range=since_start&account=<bad>`: the account is dropped by its own parser, then (a) applies. (c) `range=since_start&from=…&to=…`: the dates are ignored, the choice kept. (d) `range=since_start&tab=accounts&account=<uuid>`: the existing rule drops the tab and its keys (the business wins). No notice, no reset of other filters, and no request is ever sent that the route would refuse. |
+| DF6-FR-9 | **Page control:** the Window control shows **"Since it started"** after the standard choices **only while a business is picked** (`DatePresets extras` passed only then). Picking **All businesses** while it is selected sets the window to This month in the same single write (DF6-FR-8 (a)). **Clear** resets to This month and all businesses, as today. The window label under the bar reads **"Since it started: {from} to now (UTC)"**, `{from}` from the payload: `formatUtc(window.start)` with its trailing " UTC" removed, so the line reads **"Since it started: 2026-09-29 16:50 to now (UTC)"** (E-81, SA-W-DF6-1). |
+| DF6-FR-10 | **Links out** (CF-6): with `since_start`, a link to Activity, Charge checks or AI calls & usage carries `range=custom&from={window.from}&to={window.to}` **while that span is at most 92 inclusive days**; once it is longer, the link carries **the account only and no window**, so the target opens on its own default, never on a window it would refuse (SA-Q95). **No link ever carries `range=since_start`** (E-77, DF6-F3): `wholeDayWindow` (Activity, Charge checks) and `analyticsWindow` each branch on `since_start` explicitly, with an exhaustive `never` check on `FinanceWindowChoice`, so no choice can fall through to `range=<preset>`. The Businesses link carries no window, as today. K-1's link is unchanged (This month, F5-R1). |
+
+### 11L.6 Tiles, account summary and margins over the long window
+
+| Where | Behaviour with "Since it started" |
+|---|---|
+| **K-5 Our revenue** | Follows the page window, as for any window: the account's plan payments received plus boost net since the start, per currency (M2-FR-5, 4a rules). Its information line names the window ("since it started"). |
+| **K-1 Charged AI cost this month** | Unchanged: always this calendar month in UTC against the same span of last month (§7.1), whatever the window. |
+| **K-2, K-3, K-4** | Unchanged: as of now (credit period, cohort, lots), not window-based. |
+| **Section 1 Accounts by plan** | The picked account's group, as of now. **Note (E-79, DF6-F5):** the "new in window" count is not as of now: `classifyAccounts` counts it by the plan row's `created_at` (`planGroups.ts:224`), which follows the window. Over the long window a backfilled account counts as new, because its backfill time falls after the cut-over (CF-4). This is existing behaviour for any window that covers the backfill and DF-6 does not change it. |
+| **Section 2 Our revenue and Takings** | Window-based: every plan payment, boost and client payment of the account since the start, per currency, no FX (BD-12). The plan payments list keeps its defensive cap (`PLAN_PAYMENTS_SHOWN` 50, about four years of monthly payments); above it the existing "first 50 shown" wording applies and the totals still cover every row read. |
+| **Section 3 Charged AI cost, Recorded AI cost, Recorded above charged** | Window-based, from the start; coverage `after_cutover` (DF6-W-1). The recorded read's 5,000-call ceiling (CF-2) can be reached by a busy account over a long window: then the recorded figure is "At least X" and "Recorded above charged" reads Unknown, exactly as M-4 already does (R4 rules). Never 0. |
+| **Section 4 Credits, Section 6 Payment problems** | Unchanged: as of now. |
+| **Account summary (M-1) and margins (6a, 6b)** | "Paid us", charged AI cost, **AI margin (USD)** and **Margin after Stripe fees (estimate, USD)** cover the whole window by the same builder functions (`buildAccountMargin`), with the same SA-W82 precedence: "n/a, different currency" when any non-USD line exists, Unknown on any failed, ceiling or inexact read, a figure otherwise. "Not available: AI cost is charged only from 29 Sep 2026" can no longer appear (coverage is always after the cut-over). The fee estimate counts every charge in the window (FE-1 to FE-7). The summary gains a window line **for `since_start` only** (there is none today; every other window's summary is unchanged), with the same text as the page label, computed once and passed in (E-82, SA-W-DF6-2). |
+| **Monthly trend buckets** | None exist (CF-7) and DF-6 adds none. |
+| **Accounts tab** | Not reachable: the tab is all businesses only (SA-W84), and the choice needs a business. |
+
+### 11L.7 Reads and performance bounds
+
+| # | Rule |
+|---|---|
+| DF6-P-1 | **Same reads, same count.** A since-start request makes exactly the reads a picked-business request with a 92-day window makes (same methods, same `accountId`, same page sizes and ceilings), only with a different `start`. No platform-wide read runs with a business picked (unchanged: R-d not called, SA-Q35; the all-accounts recorded read not called, AC-157). |
+| DF6-P-2 | **Bounded by ceilings, not by days.** The window has no day limit, but every read stops at its ceiling (CF-2, DF6-W-6). The worst case is therefore the same number of pages as today's worst case for one account: ledger 20 pages of 1,000, recorded 5 pages of 1,000, client payments and refunds 5 pages each, boosts and plans their own. |
+| DF6-P-3 | **Timing is recorded, not gated.** QA records `durationMs` from the route's info line for the owner test account with "Since it started", beside This month and a 92-day custom window (L-153). A slow read follows the existing rules (the recorded read's 2 s deadline is race-only; a timed-out read is Unknown, never a wrong figure). No new CI job and no added critical-path time. |
+
+### 11L.8 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| `requireAdmin` first (`test:authz-guard`) | Route edited | Unchanged order (DF6-FR-5); the guard passes with no edit |
+| **tenant-isolation-guard** (skill) | The route is a service-role, cross-account admin read that takes a caller-supplied `accountId` | Apply the skill: the window does not depend on account data at all (E-75); every account-scoped read still receives that id and no other; no all-accounts read is reachable with `since_start`; a test proves a since-start request for account A never passes account B's id to any dep, and that a since-start request with no account never reaches the builder (400) |
+| **Frozen pins** | AC-173 pin `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`; Pin A `30f5fc24…2e01`; Pin B `24ff0da7…df9f`; Pin C `98ea0507…1e4b` and helper `02813360…5bd8`; Pin D `1f7cf07a…f144` | All **byte-identical** (LF-normalised), hashes at Step 0 and at handover. The since-start request is a **new** state (CF-9), pinned in a new test, never by editing the AC-173 table. If SA finds a pin must change, one ruled re-freeze as E-55 (SA-Q96) |
+| `aiCostVocabulary.source.guard.test.ts` | New strings in `financeCopy.ts` | No edit and no ALLOWED entry: "Since it started" and the window line use none of the SA-Q51 words |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | New `since_start` branch of `resolveFinanceWindow` | Pure (no repository, data layer, entitlements or clock import; `now` passed in); no `user_preferences` or `timezone` token in `lib/business-os/finance/`; `financeWindow.ts` reads no plan-row field |
+| **Type changes (E-80, DF6-F6)** | `since_start` widens three types | `FinanceWindowChoice` (`financeTypes.ts:56`) gains `since_start`; `FinanceQuery.preset` (`financeUrl.ts:29`, today `AdminWindowChoice`) becomes `AdminWindowChoice \| 'since_start'`; the route's `preset` enum gains it (DF6-FR-1). `windowQuery` maps `{ kind: 'extra', extra: 'since_start' }` to `preset: 'since_start'` and `fromFinanceQuery` maps it back. The AC-173 table stays untouched |
+| `app/admin/finance/__tests__/source.guard.test.ts` | Filter bar and summary | Type imports only; no date arithmetic on the window in components; no `console.` |
+| Shared window tests (`adminWindow`, `DatePresets`, the extras parity tests) | `ADMIN_WINDOW_EXTRAS` gains `since_start` | An explicit `since_start` case returns `{ kind: 'none' }` (E-76); the `adminWindow.test.ts:203` exact-list pin is updated once (SA-Q93 ruling); one test each on Analytics, Activity and Costs that `range=since_start` is ignored (U-4) |
+| `financeFilters.test.ts`, `financeUrl.test.ts`, `financeUrlState.render.test.tsx` | New value and repair | New cases for DF6-FR-7 and DF6-FR-8 (a) to (d); the existing cases unchanged |
+| `financeLinks.test.ts` | New link rule | New cases for DF6-FR-10 at 92 and 93 inclusive days |
+| `app/admin/finance/__tests__/source.guard.test.ts:192-196` (SA-W56 links import pin) | **Tripped:** the 92-day rule needs the shared day count | **One ruled update (E-83, SA-W-DF6-3):** the exact list becomes `['@/lib/business-os/finance/financeTypes', '@/app/admin/components/adminWindowPresets']`; `financeLinks.ts` imports `inclusiveDays` and `ADMIN_WINDOW_MAX_DAYS` from there, never a local `92`; the planted control stays |
+| Route tests, AC-145 baseline | New enum value and rule | The no-tab, no-business Overview payload is byte-identical (AC-145 unchanged) |
+| Repository caller lists, `serviceColumn.guard`, `tierLiteral.forbidden`, `test:bos-entitlements`, `layoutFolder.guard` (C-14), contrast | Not tripped (no new read, no tier literal, no entitlements import; the filter bar is already migrated) | Run unchanged |
+
+Dev runs before SA code review and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, shared layout and Health suites, the vocabulary guard, `npm run lint:hooks`, eslint on touched files, the scoped `tsc` with canary (AC-44), and the seven pin hashes.
+
+### 11L.9 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check. Figures are compared with checks 29 and 30 run at test time.
+
+- [ ] **AC-257** **Start rule (unit, E-75):** the start is `CHARGING_CUTOVER_FLOOR_MS` and the end is the injected `now`; `from` is `2026-09-29` and `to` is today UTC.
+- [ ] **AC-258** **Coverage:** for the AC-257 start, `cutoverClamp` gives `after_cutover`, and no margin cell reads "Not available".
+- [ ] **AC-259** **Validation:** `preset=since_start&accountId=<uuid>` is accepted; `preset=since_start` alone is a 400 with the `INVALID_QUERY` message; with `tab=accounts` it is a 400; `from` / `to` sent with it are ignored (the resolved window is the same); an unknown value such as `since-start` is a 400.
+- [ ] **AC-260** **Cap unchanged:** a custom window of 93 inclusive days is a 400 with and without `accountId`; 92 days is accepted; Today, 7 days, 30 days and This month resolve exactly as before (route tests unchanged).
+- [ ] **AC-261** **Order and isolation:** `requireAdmin` runs first; with `since_start`, the plan check runs before any other read, a missing plan row is a 404 and a failed check a 500; every account-scoped dep receives exactly the picked id; no all-accounts read is called (`countRevenueRows` and the all-accounts recorded read: zero calls).
+- [ ] **AC-262** **Same reads:** a since-start request calls the same deps with the same page sizes and ceilings as a picked 92-day custom request; only the range start and end differ (E-78: a custom window ends at the next UTC midnight, `since_start` at `now`) (DF6-P-1).
+- [ ] **AC-263** **Ceilings honoured:** with a fixture where the ledger read reaches its ceiling, Section 3 shows "At least X" and both margins read Unknown; where the recorded read reaches its ceiling, "Recorded above charged" reads Unknown; never 0 and never a figure (DF6-W-6).
+- [ ] **AC-264** **URL and U-4:** `range=since_start&account=<uuid>` loads the choice and sends `preset=since_start&accountId=<uuid>`; `range=since_start` with no account, or with a bad account, shows This month and all businesses and sends `preset=this_month`; dates beside `since_start` are dropped; with `tab=accounts` and an account the tab is dropped; the legacy `preset=since_start&accountId=<uuid>` reaches the same state; every AC-173 row still sends its pinned literal.
+- [ ] **AC-265** **Control:** "Since it started" is offered only with a business picked; choosing All businesses while it is selected switches to This month in one URL write; Clear resets to This month and all businesses; pages that do not list the extra ignore `range=since_start`.
+- [ ] **AC-266** **Labels:** the choice reads "Since it started"; the window line under the bar and in the account summary reads "Since it started: {from} to now (UTC)" with `{from}` from the payload (for the cut-over: "Since it started: 2026-09-29 16:50 to now (UTC)", E-81); the summary line appears for `since_start` only and every other window's summary is unchanged (E-82); the vocabulary guard passes with no edit.
+- [ ] **AC-267** **Tiles:** K-5 equals check 29's revenue for the account (per currency); K-1 equals its This month value with the same account picked; K-2, K-3 and K-4 equal their values with This month picked (as of now).
+- [ ] **AC-268** **Summary and margins:** for the owner test account, "Paid us", charged AI cost, AI margin and the margin after Stripe fees (estimate) with its fee line equal check 29 (`usd_revenue_after_tax_minor`, `ai_cost_usd`, `ai_margin_usd`, `usd_fee_minor`); an ILS line gives "n/a, different currency"; Section 3 and the summary show the same charged figure.
+- [ ] **AC-269** **Links out:** with a since-start span of at most 92 inclusive days, the Activity, Charge checks and AI calls & usage links carry `range=custom&from&to` from the payload and the account; at 93 days or more they carry the account and no window; no link ever carries `range=since_start` (E-77); the Businesses and K-1 links are unchanged.
+- [ ] **AC-270** **No timezone, no new read:** no file under `lib/business-os/finance/` or `app/admin/finance/` names `user_preferences` or `timezone`; no write, migration, SQL function, read or repository method is added; scoped `tsc` with canary.
+- [ ] **AC-271** **Guards and pins:** every §11L.8 row passes; the seven frozen pins are byte-identical (or re-frozen once by SA ruling, recorded); the Overview payload with no tab and no business is unchanged (AC-145); the route info line carries no plan fact, amount or name.
+- [ ] **AC-272** **Manual QA (L-148 to L-154):** run the steps below and record them in the workplan.
+
+**Manual browser steps** (user or QA, recorded in the workplan):
+
+- **L-148** Open Finance with all businesses: the Window control has no "Since it started".
+- **L-149** Pick the owner test account: "Since it started" appears; choose it. The URL reads `range=since_start&account=…`; the window line reads "Since it started: 2026-09-29 16:50 to now (UTC)" (E-81).
+- **L-150** Compare K-5, "Paid us", charged AI cost, AI margin and the margin after Stripe fees (estimate) with check 29 for the account; run check 30 and note the rows before the cut-over that the view leaves out (BQ-16).
+- **L-151** Choose All businesses: the window becomes This month, in one step. Paste `…/admin/finance?range=since_start` (no account): This month, all businesses, no error.
+- **L-152** Pick the account again with "Since it started" and open the Activity, Charge checks and AI calls & usage links: each opens on the same account with the window from the payload (or, past 92 days, on its own default).
+- **L-153** Record `durationMs` from the route line for "Since it started", This month and a 92-day custom window, for the owner test account.
+- **L-154** Set Custom to 93 days with the account picked: Apply is refused with the 92-day sentence, as before.
+
+### 11L.10 SQL cross-checks (29 and 30)
+
+Read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live together (BD-14). Revenue amounts are **minor units** (divide by 100); AI cost is USD at the ledger scale. Replace `null` in each `p` block with the quoted account id. Revenue and AI cost follow check 19; fees follow check 27 at the 6b default. Written against §11L.1, §11E.1 and §11K.1; not executed by BA.
+
+**File:** `check 29 - one account since it started` (AC-257, AC-267, AC-268, L-150)
+
+```sql
+-- Finance page check 29: one account since it started, one row, read only.
+-- Compare with K-5, the account summary and Section 3 when Since it started is picked.
+-- Replace null in the p block below with the quoted account id, such as
+-- 1a2b3c4d-1111-4111-8111-abcdefabcdef. With null the row holds zeros only.
+-- The start is the charging cut-over (2026-09-29 16:50:53.914 UTC) for every account.
+-- The end is now.
+-- Revenue is after tax, as in check 19. Fees are 290 basis points plus 30 minor units
+-- per USD charge above 0, as in check 27. A margin is given only when all revenue is USD
+-- and nothing is inexact.
+with p as (
+  select null::uuid as account_id,
+         timestamptz '2026-09-29 16:50:53.914+00' as cutover_at,
+         now() as end_at
+),
+s as (
+  select p.account_id,
+         p.end_at,
+         p.cutover_at as start_at
+  from p
+),
+rev as (
+  select upper(btrim(e.currency)) as currency,
+         e.amount_minor - e.amount_tax_minor as after_tax_minor,
+         e.amount_minor::bigint as gross_minor
+  from public.business_os_billing_events e
+  cross join s
+  where e.user_id = s.account_id
+    and e.kind = 'invoice_paid'
+    and e.paid_at >= s.start_at
+    and e.paid_at < s.end_at
+  union all
+  select upper(btrim(b.currency)) as currency,
+         case
+           when b.status = 'paid' then b.amount_total_minor - b.amount_tax_minor
+           when b.status in ('disputed', 'dispute_lost') then 0
+           when b.amount_refunded_minor = b.amount_total_minor then 0
+           when b.amount_tax_minor = 0 then b.amount_total_minor - b.amount_refunded_minor
+           else null
+         end as after_tax_minor,
+         b.amount_total_minor::bigint as gross_minor
+  from public.business_os_boost_purchases b
+  cross join s
+  where b.user_id = s.account_id
+    and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+    and b.paid_at >= s.start_at
+    and b.paid_at < s.end_at
+),
+cost as (
+  select coalesce(sum(c.cost_usd), 0) as ai_cost_usd,
+         count(*) as ledger_rows
+  from public.business_os_credit_charges c
+  cross join s
+  where c.user_id = s.account_id
+    and c.created_at >= s.start_at
+    and c.created_at < s.end_at
+),
+t as (
+  select
+    coalesce(sum(r.after_tax_minor) filter (where r.currency = 'USD'), 0) as usd_revenue_after_tax_minor,
+    count(r.currency) filter (where r.currency is distinct from 'USD') as other_currency_rows,
+    count(r.currency) filter (where r.after_tax_minor is null) as inexact_revenue_rows,
+    coalesce(sum((r.gross_minor * 290 + 5000) / 10000 + 30)
+      filter (where r.currency = 'USD' and r.gross_minor > 0), 0) as usd_fee_minor
+  from rev r
+)
+select
+  (select start_at from s) as window_start,
+  (select end_at from s) as window_end,
+  t.usd_revenue_after_tax_minor,
+  t.other_currency_rows,
+  t.inexact_revenue_rows,
+  t.usd_fee_minor,
+  cost.ai_cost_usd,
+  cost.ledger_rows,
+  case
+    when t.other_currency_rows > 0 or t.inexact_revenue_rows > 0 then null
+    else round(t.usd_revenue_after_tax_minor / 100.0 - cost.ai_cost_usd, 6)
+  end as ai_margin_usd,
+  case
+    when t.other_currency_rows > 0 or t.inexact_revenue_rows > 0 then null
+    else round((t.usd_revenue_after_tax_minor - t.usd_fee_minor) / 100.0 - cost.ai_cost_usd, 6)
+  end as margin_after_fees_usd
+from t
+cross join cost;
+```
+
+**File:** `check 30 - one account, rows before the charging cut-over` (BQ-16, L-150)
+
+```sql
+-- Finance page check 30: rows of one account dated before the charging cut-over, one row, read only.
+-- Replace null in the p block below with the quoted account id.
+-- The page never counts these rows when Since it started is picked. They are expected for
+-- an account that existed before the cut-over. Client payments are counted for BQ-16.
+with p as (
+  select null::uuid as account_id,
+         timestamptz '2026-09-29 16:50:53.914+00' as cutover_at
+)
+select
+  p.cutover_at as window_start,
+  (select count(*) from public.business_os_credit_charges c
+    where c.user_id = p.account_id and c.created_at < p.cutover_at) as ledger_rows_before_cutover,
+  (select count(*) from public.payment_transactions x
+    where x.user_id = p.account_id and x.paid_at < p.cutover_at) as client_payments_before_cutover
+from p;
+```
+
+### 11L.11 Open questions for SA (DF-6)
+
+Technical only. The one business point, whether client takings also start at the cut-over, is **BQ-16** (§0.4); it does not block the build.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q92** | Where is the start resolved: a pure helper in `financeWindow.ts` called by `buildFinanceHealth` right after the step 1 plan check (the route passes a provisional window), or the route reading the plan row itself? | The builder, after step 1: the plan row is already read there, so there is no second read and no read before the check (SEC-3). The route never resolves `since_start` |
+| **SA-Q93** | `since_start` cannot be resolved to dates by the shared folder (the start needs the account's plan row, and the shared folder may not import `lib/business-os/`). Add it to `ADMIN_WINDOW_EXTRAS` with a label and have the shared date resolver return "no dates" for it, or keep it a Finance-local value outside the shared extras? Any exact-list pin on `ADMIN_WINDOW_EXTRAS`? | Add it to the shared extras (the "a later page adds its own here" rule, CF-5), with the shared resolver giving `none` for it; Finance resolves it on the server. If an exact-list pin exists, one ruled update |
+| **SA-Q94** | First activity: the earliest of `onboarding_started_at` and `profile_created_at` (BA, CF-4), or only `onboarding_started_at` (the repository's "the account's own start")? | The earliest of the two: it can only make the window wider, never drop a row; check 30 proves it on live data |
+| **SA-Q95** | Links out past 92 days: no window (the target's default), or the last 92 days ending today? | No window: a "last 92 days" link would show a different span under the same label. The Finance page itself is the place for the long view |
+| **SA-Q96** | Pins: confirm none of the seven pins reads the window choice list or the route enum, so all stay byte-identical, and that the since-start request belongs in a new test, not in the AC-173 table (CF-9) | Confirm both; a new request case beside the pin, never inside it |
+| **SA-Q97** | The tenant-isolation-guard test shape: is a since-start case added to the existing route isolation test (two accounts, a spy on every dep) enough? | Yes, one case per account-scoped dep, plus the 400 case with no account |
+| **SA-Q98** | The recorded read's 5,000-call ceiling over a long window (Section 3, M-4): leave as is (Unknown at the ceiling), or raise it for one account? | Leave it: raising a ceiling is a read change, out of DF-6 (DF6-W-6); L-153 records whether the owner account comes near it |
+| **SA-Q99** | Path: full cycle (route validation and window change), one workplan and one PR, under BD-33's fast track? | Yes: no migration, no business question that blocks |
+
+### 11L.12 Estimate
+
+**About 1.5 days** (BD-32): the window helper, the route enum and rule, with unit and route tests, about 0.5 day; the URL value, the cross-key repair, the control and the labels about 0.5 day; the link rule, the isolation test, guards, pin hashes, checks 29 and 30 and QA about 0.5 day.
+
+### SA Requirement Review — DF-6 (§11L) — 2026-10-17
+
+**Reviewed by SA, 2026-10-17, against `ea56ad04` on `feature/bos-finance-health-df6`.**
+**Status: APPROVED WITH CONDITIONS (SA-RR-DF6).** The workplan starts after BA applies E-75 to E-80.
+**BA, 2026-10-17: E-75 to E-80 applied** in §11L (E-75: DF6-W-1, DF6-W-3, DF6-FR-5, CF-4, the isolation and source-guard rows, AC-257, AC-258, AC-261, L-149, L-150, checks 29 and 30; E-76: DF6-FR-7 and the shared window tests row; E-77: DF6-FR-10 and AC-269; E-78: AC-262; E-79: the §11L.6 Section 1 row; E-80: a new type-changes row in §11L.8). Ready for the Dev workplan.
+
+**Verified in the code**
+
+| Claim | Result |
+|---|---|
+| The 92-day cap is a route and page rule only (CF-1) | ✅ `buildQuerySchema` applies `customRangeProblem` to `custom` only; no finance read checks the length |
+| `requireAdmin` is the first statement (DF6-FR-5) | ✅ `route.ts` GET: correlation id, then `requireAdmin`; nothing reads the request above it |
+| Account-scoped reads have ceilings and report them (CF-2) | ✅ ledger `reachedCeiling`, client, boost and plan paging, recorded `MAX_CEILING`; a longer window only reaches them sooner, and the existing "At least" / Unknown rules hold |
+| Columns in checks 29 and 30 | ✅ `BusinessOsFinanceReadRepository` column lists (billing events, boosts, `payment_transactions`), `PLAN_COLUMNS` (`onboarding_started_at`, `profile_created_at`); same tables and rules as checks 19 and 27; editor-safe (no "into", no apostrophes) |
+| Provisioning facts are real history | ✅ `20261005b` backfill sets them from `MIN(onboarding_conversations.created_at)` and `business_profiles.created_at`, not the run time; `created_at` is the run time (CF-4) |
+| No timezone read | ✅ no file under `lib/business-os/finance/` or `app/admin/finance/` names `user_preferences` or `timezone`; both ends are instants, so DF6-W-4 is right |
+| No buckets (CF-7) | ✅ |
+| Tenant isolation | ✅ every account-scoped dep already takes the checked `accountId`; with E-75 the window does not depend on account data at all |
+
+**Findings**
+
+| # | Sev | Finding | Edit |
+|---|---|---|---|
+| DF6-F1 | Medium | **The first-activity start can drop rows and adds nothing.** For an account older than the cut-over the start is the cut-over either way. For a newer one, the rule gives the same totals only if no charge is dated before the earliest fact. The first AI charge and the first `onboarding_conversations` row are written by different code, so a charge a few ms earlier is possible and would silently leave the window. Check 30 on the owner account (older than the cut-over) cannot catch it. BD-26 says "starting from the charging cut-over". | **E-75:** DF6-W-1 becomes "the start is the cut-over instant `CHARGING_CUTOVER_FLOOR_MS`"; the plan-row facts are not used. DF6-W-3: resolved in the route by a pure `since_start` branch of `resolveFinanceWindow` (`now` passed in), with no plan row needed. AC-257 is reduced to "start = cut-over, end = injected `now`". Check 29's `s` block uses `p.cutover_at`. Check 30 keeps only `ledger_rows_before_cutover` and `client_payments_before_start` (renamed `_before_cutover`), for BQ-16 |
+| DF6-F2 | Medium | **The shared resolver routes every unknown extra to `resolveDateExtra`** (`adminWindow.ts:228-231`). With `since_start` in `ADMIN_WINDOW_EXTRAS`, an explicit branch is needed. TS forces one, but the requirement must say what it returns. `adminWindow.test.ts:203` is an exact-list pin of the extras. | **E-76:** DF6-FR-7: `resolveWindow` returns `{ kind: 'none' }` for `since_start`, from an explicit case; `ADMIN_WINDOW_EXTRA_LABELS` gains "Since it started"; the `:203` list pin is updated once (ruled here, SA-Q93); one test per extras page (Analytics, Activity, Costs) that `range=since_start` is ignored |
+| DF6-F3 | Medium | **`financeLinks.ts` `wholeDayWindow` falls through to `range=<preset>`**, so `since_start` would be sent to Activity and Charge checks, which would drop it to their own default without saying so. | **E-77:** DF6-FR-10: both link helpers branch on `since_start` explicitly, with an exhaustive `never` check on `FinanceWindowChoice`; AC-269 adds "no link ever carries `range=since_start`" |
+| DF6-F4 | Low | **AC-262 says only `from` differs.** The end differs too: a custom window ends at the next UTC midnight (`windowInstants`), `since_start` ends at `now`. | **E-78:** AC-262 reads "only the range start and end differ" |
+| DF6-F5 | Low | **Section 1 is not entirely "as of now".** `classifyAccounts` counts "new in window" by the plan row's `created_at` (`planGroups.ts:225`). Over the long window, a backfilled account counts as new, because its backfill time falls after the cut-over. This already happens for any window that covers the backfill; it is not fixed here. | **E-79:** the §11L.6 Section 1 row notes the "new in window" count follows the window by `created_at` (existing behaviour, CF-4) |
+| DF6-F6 | Low | **Types widen in three places:** `FinanceWindowChoice` (`financeTypes.ts:56`), `FinanceQuery.preset` (`financeUrl.ts:29`, today `AdminWindowChoice`) and the route enum. `fromFinanceQuery` and `windowQuery` must map `since_start` to and from `{ kind: 'extra' }`. | **E-80:** add these to the §11L.8 rows so the workplan lists them; the AC-173 table stays untouched |
+
+**Answers to SA-Q92 to SA-Q99**
+
+| # | Ruling |
+|---|---|
+| SA-Q92 | **Route, pure.** After E-75 the start needs no plan row: `resolveFinanceWindow` gains a `since_start` branch (`start = CHARGING_CUTOVER_FLOOR_MS`, `end = now`, `from` = `2026-09-29`, `to` = today UTC). The builder is unchanged. The 400 for a missing `accountId` is in `superRefine`. The info line already logs the resolved window |
+| SA-Q93 | **Shared extras**, with the `none` resolution (E-76). Exactly one ruled update to the `adminWindow.test.ts:203` list pin |
+| SA-Q94 | **Neither: the cut-over** (DF6-F1, E-75). Use no plan-row fact, and never `created_at` |
+| SA-Q95 | **No window past 92 inclusive days**, as BA suggests |
+| SA-Q96 | **Confirmed:** the since-start request is a new test beside the AC-173 pin, never a row in it. All seven pins stay byte-identical (LF-normalised), hashed at Step 0 and at handover. No re-freeze is expected; if one is needed, it is a ruled re-freeze as for E-55 |
+| SA-Q97 | **Yes:** a since-start case in the existing route isolation test, one assertion per account-scoped dep (picked id only; `countRevenueRows` and the all-accounts reads called zero times), plus the 400 with no account (builder never called) |
+| SA-Q98 | **Leave the ceiling** (DF6-W-6). L-153 records whether the owner account comes near it |
+| SA-Q99 | **Yes:** full cycle, one workplan and one PR, BD-33 fast track |
+
+**Other checks.** U-4 (DF6-FR-8) fits `financeFilterRepair`: add one branch, "no account and `since_start`, so window to default". Vocabulary guard: "Since it started" uses no SA-Q51 word, so no ALLOWED entry. No new CI job: the new cases go into the existing finance, layout and route suites. BQ-16 default accepted (one window); it does not block the build. **Estimate:** about 1.25 days after E-75; 1.5 days accepted as the plan figure.
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -4171,3 +4493,9 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-17 | SA requirement and workplan review, slice 6b (§11K) | SA-RR-6b approved and SA-WP-6b approved with conditions (§0.3). SA applied E-72 (zero-total boost is no charge; checks 27 and 28 filter it), E-73 (invalid fee config gives Unknown) and E-74 (fee subtracted in minor units before the one scale step). |
 | 2026-10-17 | SA code review, slice 6b | Code Approved (SA-CR-6b in §0.3). No conditions. |
 | 2026-10-17 | RM: slice 6b committed, PR #449 opened, auto-merge on | Commit `8d2f5ff6` on `feature/bos-finance-health-6b`; origin/main (`e43dcb60`) had not moved, so no merge was needed. Re-run: app/admin/finance, lib/business-os/finance and the finance route, 36 suites, 2355 tests, all passed. Seven frozen pins unchanged. §0.1 row 6b: status, workplan and PR columns. |
+| 2026-10-17 | BA: slice DF-6 specified (§11L) | New §11L "Slice DF-6: since it started (one account)" from BD-26, CR G-9 and SA-Q-6, BD-30, BD-32, BD-33 and the code at `ea56ad04`: window rules DF6-W-1 to DF6-W-7 (start = later of the cut-over instant and the earliest plan-row start fact, end = now, server-resolved, no timezone read, ceilings unchanged), validation DF6-FR-1 to DF6-FR-6 (`since_start` only with `accountId`, else 400; 92-day cap otherwise unchanged), URL and U-4 DF6-FR-7 to DF6-FR-10, tile and section behaviour, reads and bounds DF6-P-1 to DF6-P-3, guards; AC-257 to AC-272, checks 29 and 30, L-148 to L-154, SA-Q92 to SA-Q99; new BQ-16 in §0.4. No migration. §0.1 DF-6 row added; §0.4 DF-6 row scheduled; ToC; §0.2 log. |
+| 2026-10-17 | SA requirement review, DF-6 (§11L): **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — DF-6 (§11L) — 2026-10-17" after §11L.12, checked against `ea56ad04`. §0.3 row SA-RR-DF6 added; SA-Q92 to SA-Q99 ruled. Findings DF6-F1 (start is the cut-over only) to DF6-F6; BA edits E-75 to E-80. Cap, admin gate, ceilings, columns, timezone, isolation and pins verified in code. No code changed. |
+| 2026-10-17 | BA: SA-RR-DF6 edits E-75 to E-80 applied (§11L) | E-75 the window starts at the cut-over instant only, resolved in the route by a pure `since_start` branch of `resolveFinanceWindow` (no plan-row fact; AC-257, checks 29 and 30 reduced); E-76 shared extras case resolving to none, one ruled update of the `adminWindow.test.ts:203` list pin; E-77 no link carries `range=since_start` (exhaustive branch); E-78 AC-262 start and end differ; E-79 Section 1 "new in window" note; E-80 type changes listed in §11L.8. §0.1 DF-6: SA approved, ready for Dev workplan. |
+| 2026-10-17 | SA workplan review, DF-6 (§11L): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-DF6. SA applied E-81 (label "Since it started: 2026-09-29 16:50 to now (UTC)" in DF6-FR-9, AC-266, L-149), E-82 (summary window line for since_start only, §11L.6, AC-266), E-83 (§11L.8 row: one ruled update of the links import pin to add adminWindowPresets) and E-84 (planGroups.ts:224). No code changed. |
+| 2026-10-17 | SA code review, DF-6 (§11L): **Code Approved** | §0.3 row SA-CR-DF6. D-1 approved (schema pinned by AC-173 part B; SA-Q96 corrected). D-2 approved and applied by SA (DF6-R3 amended: financeLinks.test.ts type narrowing); scoped tsc clean 0. Seven pins equal; 2605 tests passed. |
+| 2026-10-17 | RM: slice DF-6 committed, PR #450 opened, auto-merge on | Commit `fd7b7f02` on `feature/bos-finance-health-df6`; origin/main (`fdaf90c1`, 6b #449) merged in `e73ec431` with no conflicts. Re-run: finance UI, finance lib, finance route, admin layout, analytics and business-os-llm filters, 80 suites, 4218 tests, all passed. Seven frozen pins unchanged. §0.1 row DF-6: status and PR columns. |

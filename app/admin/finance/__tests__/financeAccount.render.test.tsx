@@ -471,3 +471,37 @@ describe('slice 6b: the summary’s margin after Stripe fees line (FE-14)', () =
     expect(within(summary).getByTestId('account-summary-after-fees')).toHaveTextContent(ACCOUNT_UNKNOWN);
   });
 });
+
+// ── DF-6 (E-82, DF6-R2): the summary shows the view's since-start line as given ──
+describe('DF-6: the summary window line', () => {
+  const SINCE: FinanceWindowInfo = { preset: 'since_start', from: '2026-09-29', to: '2026-10-17', start: '2026-09-29T16:50:53.914Z', end: '2026-10-17T12:00:00.000Z' };
+  const renderLine = (window: FinanceWindowInfo, windowLine?: string | null) => {
+    cleanup();
+    render(
+      <AccountSummary
+        accountId={A}
+        window={window}
+        aiCost={aiCost()}
+        revenue={revenue(boosts([boostLine()]))}
+        credits={credits(creditRow())}
+        accounts={accounts('tier:x')}
+        windowLine={windowLine}
+      />
+    );
+    return screen.getByTestId('account-summary');
+  };
+
+  it('AC-266: shows the line it is given, under the heading, unformatted', () => {
+    const summary = renderLine(SINCE, 'Since it started: 2026-09-29 16:50 to now (UTC)');
+    expect(within(summary).getByTestId('account-summary-window')).toHaveTextContent('Since it started: 2026-09-29 16:50 to now (UTC)');
+  });
+
+  it('E-82: no line when none is given (every other window)', () => {
+    expect(within(renderLine(WINDOW)).queryByTestId('account-summary-window')).toBeNull();
+    expect(within(renderLine(WINDOW, null)).queryByTestId('account-summary-window')).toBeNull();
+  });
+
+  it('AC-258: over the since-start window no margin reads "Not available"', () => {
+    expect(renderLine(SINCE, 'x').textContent).not.toContain('Not available');
+  });
+});
