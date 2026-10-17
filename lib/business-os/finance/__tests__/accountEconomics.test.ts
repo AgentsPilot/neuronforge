@@ -42,11 +42,25 @@ function boost(extra: Partial<BoostPurchaseInput> = {}): BoostPurchaseInput {
     currency: 'USD',
     amount_total_minor: 1000,
     amount_tax_minor: 0,
-    amount_refunded_minor: 0,
     credits_total: '5000.000000',
     ...extra,
   };
 }
+/** Slice 4b.2: a reversal event recorded in the window (R-n), on a purchase of `user_id`. */
+type EventInput = NonNullable<AccountEconomicsInput['events']>['rows'][number];
+function ev(amount: number, extra: Partial<EventInput> = {}, purchase: Partial<NonNullable<EventInput['purchase']>> = {}): EventInput {
+  seq += 1;
+  return {
+    id: `cccccccc-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+    purchase_id: 'pppppppp-0000-4000-8000-000000000001',
+    kind: 'refund',
+    amount_minor: amount,
+    currency: 'USD',
+    purchase: { user_id: OWNER, package_id: 'pkg-small', package_version: 1, amount_total_minor: 1000, amount_tax_minor: 0, paid: true, ...purchase },
+    ...extra,
+  };
+}
+const events = (rows: EventInput[]) => ({ rows, reachedCeiling: false });
 function invoice(extra: Partial<PlanPaymentInput> = {}): PlanPaymentInput {
   seq += 1;
   return {
@@ -132,18 +146,13 @@ function sqlRevenue(boosts: BoostPurchaseInput[], plans: PlanPaymentInput[]): Re
     if (e.kind !== PLAN_KIND) continue;
     out.push({ account: e.user_id ?? 'deleted accounts', currency: String(e.currency).trim().toUpperCase(), afterTax: (e.amount_minor as number) - (e.amount_tax_minor as number) });
   }
+  // Slice 4b.2 (FR-4B-11): a purchase of the window gives total minus tax whatever its status; its
+  // refunds and lost disputes are separate dated events (check 26), so this port reads no refund column.
   for (const b of boosts) {
     if (!PAID.includes(b.status as string)) continue;
     const total = b.amount_total_minor as number;
     const tax = b.amount_tax_minor as number;
-    const refunded = b.amount_refunded_minor as number;
-    let afterTax: number | null;
-    if (b.status === 'paid') afterTax = total - tax;
-    else if (b.status === 'disputed' || b.status === 'dispute_lost') afterTax = 0;
-    else if (refunded === total) afterTax = 0;
-    else if (tax === 0) afterTax = total - refunded;
-    else afterTax = null;
-    out.push({ account: b.user_id ?? 'deleted accounts', currency: String(b.currency).trim().toUpperCase(), afterTax });
+    out.push({ account: b.user_id ?? 'deleted accounts', currency: String(b.currency).trim().toUpperCase(), afterTax: total - tax });
   }
   return out;
 }
@@ -234,10 +243,11 @@ describe('AC-133: paid us after tax, one case per rule (E-45)', () => {
   it.each<[string, Rows, number]>([
     ['plan 7900 / tax 500 → 74.00', { plans: [invoice({ amount_minor: 7900, amount_tax_minor: 500 })] }, 74],
     ['boost paid 1000 / tax 100 → 9.00', { boosts: [boost({ amount_tax_minor: 100 })] }, 9],
-    ['boost refunded in full → 0', { boosts: [boost({ status: 'refunded', amount_refunded_minor: 1000, amount_tax_minor: 100 })] }, 0],
-    ['partially_refunded, tax 0 → total − refunded', { boosts: [boost({ status: 'partially_refunded', amount_refunded_minor: 400 })] }, 6],
-    ['disputed → 0', { boosts: [boost({ status: 'disputed', amount_tax_minor: 100 })] }, 0],
-    ['dispute_lost → 0', { boosts: [boost({ status: 'dispute_lost' })] }, 0],
+    // Slice 4b.2 (FR-4B-11): the purchase status moves no money; refunds and losses are dated events.
+    ['a refunded purchase paid in the window, tax 100 → 9.00 (its refund is an event)', { boosts: [boost({ status: 'refunded', amount_tax_minor: 100 })] }, 9],
+    ['partially_refunded, tax 0 → its total', { boosts: [boost({ status: 'partially_refunded' })] }, 10],
+    ['disputed, tax 100 → 9.00 (held now is never deducted)', { boosts: [boost({ status: 'disputed', amount_tax_minor: 100 })] }, 9],
+    ['dispute_lost → its total (the loss is an event)', { boosts: [boost({ status: 'dispute_lost' })] }, 10],
   ])('%s', (_name, rows, expected) => {
     const row = paidOf(rows);
     expect(row?.paid.lines[0].afterTax).toBe(expected);
@@ -247,12 +257,19 @@ describe('AC-133: paid us after tax, one case per rule (E-45)', () => {
     expect(figure(row?.margin)).toBe(check?.marginUsd);
   });
 
-  it('SA-Q47: partially_refunded with tax > 0 → the line and its boost part Unknown, margin Unknown (check 19 inexact too)', () => {
-    const rows = { boosts: [boost({ status: 'partially_refunded', amount_refunded_minor: 400, amount_tax_minor: 100 })], plans: [invoice()] };
-    const row = paidOf(rows);
+  it('SA-Q47 (4b.2): a refund event on a taxed purchase → the line and its boost part Unknown, margin Unknown', () => {
+    const row = rowOf(
+      buildAccountEconomics(
+        input({
+          boosts: { rows: [boost({ amount_tax_minor: 100 })], reachedCeiling: false },
+          events: events([ev(400, {}, { amount_tax_minor: 100 })]),
+          plans: { rows: [invoice()], reachedCeiling: false },
+        })
+      ),
+      OWNER
+    );
     expect(row?.paid.lines[0]).toEqual({ currency: 'USD', afterTax: null, exact: true, planAfterTax: 79, boostsAfterTax: null });
     expect(row?.margin).toEqual({ kind: 'unknown' });
-    expect(checkNineteen(rows.boosts, rows.plans, {}).get(OWNER)?.inexact).toBe(1);
   });
 
   it('SA-W81 (i): a paid boost whose tax is above its amount → Unknown on the page (check 19 gives a negative figure: a recorded difference)', () => {
@@ -263,12 +280,40 @@ describe('AC-133: paid us after tax, one case per rule (E-45)', () => {
     expect(checkNineteen(rows.boosts, [], {}).get(OWNER)?.usdMinor).toBe(-20);
   });
 
-  it('SA-W81 (ii): status paid with a refund recorded follows E-45 (status-free), not check 19 (a recorded difference)', () => {
-    const rows = { boosts: [boost({ amount_refunded_minor: 400 })] };
-    const row = paidOf(rows);
-    // E-45: net = 600, tax 0 → 600. Check 19 branches on status first: total − tax = 1000.
-    expect(row?.paid.lines[0].afterTax).toBe(6);
-    expect(checkNineteen(rows.boosts, [], {}).get(OWNER)?.usdMinor).toBe(1000);
+  it('AC-226 (4b.2): a refund event on an untaxed purchase is taken off in the window it was recorded', () => {
+    const built = buildAccountEconomics(input({ events: events([ev(400)]), plans: { rows: [], reachedCeiling: false } }));
+    expect(rowOf(built, OWNER)?.paid.lines[0].afterTax).toBe(6);
+  });
+
+  it('SA-Q49 (4b.2): an account whose only boost money in the window is a refund is listed, negative', () => {
+    const built = buildAccountEconomics(
+      input({ boosts: { rows: [], reachedCeiling: false }, events: events([ev(1000, {}, { user_id: B })]), plans: { rows: [], reachedCeiling: false } })
+    );
+    expect(rowOf(built, B)?.paid.lines[0].afterTax).toBe(-10);
+  });
+
+  it('a lost dispute event is taken off; an opened dispute and an event on a never-paid purchase move nothing', () => {
+    const built = buildAccountEconomics(
+      input({
+        events: events([ev(300, { kind: 'dispute_lost' }), ev(1000, { kind: 'dispute_opened' }), ev(500, {}, { paid: false })]),
+        plans: { rows: [], reachedCeiling: false },
+      })
+    );
+    expect(rowOf(built, OWNER)?.paid.lines[0].afterTax).toBe(7);
+  });
+
+  it('the event read failing makes the boost figures Unknown (as the purchase read failing does)', () => {
+    const built = buildAccountEconomics(input({ events: null }));
+    expect(rowOf(built, OWNER)?.paid.lines[0].boostsAfterTax).toBeNull();
+    expect(built.section.notes.boostsFailed).toBe(true);
+  });
+
+  it('the picked business: buildAccountMargin takes the same events, so the summary equals the tab row (AC-226)', () => {
+    const shared = { events: events([ev(400)]) };
+    const tab = rowOf(buildAccountEconomics(input(shared)), OWNER);
+    const one = buildAccountMargin({ ...input(shared), accountId: OWNER });
+    expect(one.paid).toEqual(tab?.paid);
+    expect(one.margin).toEqual(tab?.margin);
   });
 
   it('a non-paid-family boost and another plan kind are not counted (filtered by the exported family and kind)', () => {
@@ -697,8 +742,8 @@ describe('slice 6b: margin after Stripe fees (estimate)', () => {
 
   it('AC-245 / FE-5 / FE-6: refunded, partly refunded, disputed and lost boosts keep their fee on the gross; a boost outside the family has none', () => {
     const rows = [
-      boost({ status: 'refunded', amount_refunded_minor: 1000 }),
-      boost({ status: 'partially_refunded', amount_refunded_minor: 400 }),
+      boost({ status: 'refunded' }),
+      boost({ status: 'partially_refunded' }),
       boost({ status: 'disputed' }),
       boost({ status: 'dispute_lost' }),
       boost({ status: 'pending' }),
@@ -711,8 +756,9 @@ describe('slice 6b: margin after Stripe fees (estimate)', () => {
 
   it('SA-W-6b-11: the fee stays on the charge: the same purchase refunded later carries the same fee as when it was only paid', () => {
     const paid = buildAccountEconomics(input({ boosts: { rows: [boost()], reachedCeiling: false }, plans: noPlans }));
+    // Slice 4b.2: the refund is a dated event; the purchase keeps its fee.
     const refunded = buildAccountEconomics(
-      input({ boosts: { rows: [boost({ status: 'refunded', amount_refunded_minor: 1000 })], reachedCeiling: false }, plans: noPlans })
+      input({ boosts: { rows: [boost({ status: 'refunded' })], reachedCeiling: false }, events: events([ev(1000)]), plans: noPlans })
     );
     expect(feesOf(afterFeesOf(paid, OWNER))).toBe(0.59);
     expect(feesOf(afterFeesOf(refunded, OWNER))).toBe(0.59);
@@ -757,7 +803,10 @@ describe('slice 6b: margin after Stripe fees (estimate)', () => {
       kind: 'unknown',
     });
     const inexact = buildAccountEconomics(
-      input({ boosts: { rows: [boost({ status: 'partially_refunded', amount_tax_minor: 100, amount_refunded_minor: 300 })], reachedCeiling: false } })
+      input({
+        boosts: { rows: [boost({ status: 'partially_refunded', amount_tax_minor: 100 })], reachedCeiling: false },
+        events: events([ev(300, {}, { amount_tax_minor: 100 })]),
+      })
     );
     expect(afterFeesOf(inexact, OWNER)).toEqual({ kind: 'unknown' });
   });

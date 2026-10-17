@@ -81,6 +81,8 @@ import type {
 import type { FinanceBillingStatusRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 // Slice 4a: a separate import too.
 import type { FinanceBoostPurchaseRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+// Slice 4b.2: a separate import, so the line above stays unedited.
+import type { FinanceBoostAttentionResult, FinanceBoostAttentionRow, FinanceBoostReversalRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 // Slice 5a: a separate import too.
 import type { FinancePlanPaymentRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import { tierLabelForGroup } from '../planGroups';
@@ -99,6 +101,8 @@ import { financeHealthDeps, findPlanWithoutOverrides, toFinanceLot } from '../fi
 import type { FinanceLot } from '../creditsSection';
 import { resolveFinanceWindow } from '../financeWindow';
 import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../financeRules';
+// Slice 4b.2: a separate import, so the line above stays unedited.
+import { FINANCE_RULES } from '../financeRules';
 // Slice 6a: a separate import, so the lines above stay unedited.
 import type { FinanceAccountsTabQuery } from '../financeTypes';
 
@@ -297,6 +301,19 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       listPlanPaymentsForAccountPaidInRange: jest.fn<Result<ClientRead<FinancePlanPaymentRow>>, unknown[]>(() =>
         ok({ rows: [], reachedCeiling: false })
       ),
+      // Slice 4b.2: empty by default; the 4b.2 describes seed their own rows.
+      listBoostReversalEventsAllAccountsRecordedInRange: jest.fn<Result<ClientRead<FinanceBoostReversalRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listBoostReversalEventsForAccountRecordedInRange: jest.fn<Result<ClientRead<FinanceBoostReversalRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listBoostPurchasesNeedingAttentionAllAccounts: jest.fn<Result<FinanceBoostAttentionResult>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false, openedDates: 'read' as const })
+      ),
+      listBoostPurchasesNeedingAttentionForAccount: jest.fn<Result<FinanceBoostAttentionResult>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false, openedDates: 'read' as const })
+      ),
     },
     readReminderFigures: jest.fn<Result<FinanceReminderFiguresInput>, [Date, AbortSignal]>(() => ok(REMINDERS)),
     // M-4 (OV-5): the two route-injected recorded AI cost reads. All accounts: USD 7 recorded against
@@ -472,7 +489,6 @@ function boostRow(user_id: string | null, extra: Partial<FinanceBoostPurchaseRow
     currency: 'USD',
     amount_total_minor: 1000,
     amount_tax_minor: 0,
-    amount_refunded_minor: 0,
     credits_total: '5000.000000',
     paid_at: '2026-11-05T10:00:00.000Z',
     ...extra,
@@ -536,7 +552,8 @@ describe('R-d sets `state` with all businesses only (SA-WR-32 kept; SA-W61, SA-W
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.revenue.status).toBe('unknown');
     expect(result.payload.revenue.totals).toBeNull();
-    expect(result.payload.revenue.boosts).toEqual({ status: 'unknown', scope: 'all', lines: null, packages: null, deletedAccounts: null, notes: null });
+    // Slice 4b.2: held now (R-l, read fine) and the events note still travel (E-103).
+    expect(result.payload.revenue.boosts).toEqual({ status: 'unknown', scope: 'all', lines: null, packages: null, deletedAccounts: null, notes: null, heldNow: [], events: null });
     expect(result.payload.revenue.plans).toMatchObject({ status: 'unknown', lines: null, accounts: null, notes: null });
     expect(result.payload.accounts.status).toBe('ok');
     expect(result.payload.takings.status).toBe('ok');
@@ -560,7 +577,7 @@ describe('our boost revenue, all businesses (slice 4a)', () => {
     const boosts = result.payload.revenue.boosts;
     expect(boosts).toMatchObject({ status: 'ok', scope: 'all', deletedAccounts: [] });
     expect(boosts.lines).toEqual([
-      { currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableCredits: 0 },
+      { currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableEvents: 0, unreadableCredits: 0 },
     ]);
     expect(boosts.packages).toEqual([
       { currency: 'USD', packageId: 'pkg-small', packageVersion: 1, purchases: 1, gross: 10, refunded: 0, net: 10, unreadable: 0 },
@@ -607,7 +624,8 @@ describe('our boost revenue, all businesses (slice 4a)', () => {
     const { result } = await run(boostDeps([boostRow(A)], true));
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.revenue).toMatchObject({ status: 'partial', boosts: { status: 'partial', notes: { exact: false } } });
-    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ net: null, held: null, lost: null });
+    // Slice 4b.2: lost is an event figure (the events were read in full); net is still Unknown.
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ net: null, lost: 0 });
     expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', money: { kind: 'unknown', reason: 'cut_off' } });
     expect(result.counts.boosts).toMatchObject({ rows: 1, ceiling: true });
   });
@@ -650,6 +668,15 @@ describe('our boost revenue, all businesses (slice 4a)', () => {
       currencies: 1,
       packages: 1,
       deletedAccountPurchases: 0,
+      // Slice 4b.2: counts, states and booleans only.
+      events: 0,
+      eventsCeiling: false,
+      eventsState: 'read',
+      unreadableEvents: 0,
+      attention: 0,
+      openDisputes: 0,
+      notCredited: 0,
+      openedDates: 'read',
     });
     const text = JSON.stringify(result.counts);
     for (const secret of ['9876', 'USD', 'pkg-small']) expect(text).not.toContain(secret);
@@ -1572,13 +1599,17 @@ describe('AC-65 (2a): with a business picked, R-e′ and R-f′ get exactly the 
 });
 
 describe('the wiring (slices 2a and 2b)', () => {
-  it('exposes exactly the seventeen finance reads: the four of 2a, the six of 2b, the two of 4a and the two of 5a included', () => {
+  it('exposes exactly the twenty-one finance reads: the four of 2a, the six of 2b, the two of 4a, the two of 5a and the four of 4b.2 included', () => {
     expect(Object.keys(financeHealthDeps().finance).sort()).toEqual([
       'countRevenueRows',
       'findBillingStatusForAccount',
       'listBillingStatusesAllAccounts',
       'listBoostPurchasesAllAccountsPaidInRange',
       'listBoostPurchasesForAccountPaidInRange',
+      'listBoostPurchasesNeedingAttentionAllAccounts',
+      'listBoostPurchasesNeedingAttentionForAccount',
+      'listBoostReversalEventsAllAccountsRecordedInRange',
+      'listBoostReversalEventsForAccountRecordedInRange',
       'listClientPaymentsAllAccountsPaidInRange',
       'listClientPaymentsForAccountPaidInRange',
       'listClientPlansAllAccounts',
@@ -2403,5 +2434,146 @@ describe('DF-6: a since-start window through the builder', () => {
     const margin = (await picked(deps)).payload.accountMargin;
     expect(margin?.margin).toEqual({ kind: 'other_currency' });
     expect(margin?.marginAfterFees).toEqual({ kind: 'other_currency' });
+  });
+});
+
+// ── Slice 4b.2: the reversal events and the purchases needing attention (BD-17, FR-4B-1 to FR-4B-16) ──
+describe('slice 4b.2: refunds by event date, held now, block A, the K-5 dispute rule', () => {
+  let evSeq = 0;
+  const evRow = (extra: Partial<FinanceBoostReversalRow> = {}): FinanceBoostReversalRow => {
+    evSeq += 1;
+    return {
+      id: `dddddddd-0000-4000-8000-${String(evSeq).padStart(12, '0')}`,
+      purchase_id: 'pppppppp-0000-4000-8000-000000000001',
+      kind: 'refund',
+      amount_minor: 400,
+      currency: 'USD',
+      recorded_at: '2026-11-06T10:00:00.000Z',
+      purchase: { user_id: A, package_id: 'pkg-small', package_version: 1, amount_total_minor: 1000, amount_tax_minor: 0, paid: true },
+      ...extra,
+    };
+  };
+  const disputed = (extra: Partial<FinanceBoostAttentionRow> = {}): FinanceBoostAttentionRow => ({
+    id: 'qqqqqqqq-0000-4000-8000-000000000001',
+    user_id: A,
+    status: 'disputed',
+    currency: 'USD',
+    amount_total_minor: 1000,
+    amount_refunded_minor: 0,
+    status_changed_at: '2026-11-04T00:00:00.000Z',
+    disputeOpenedAt: '2026-11-04T00:00:00.000Z',
+    ...extra,
+  });
+  const withAttention = (deps: ReturnType<typeof makeDeps>, rows: FinanceBoostAttentionRow[]) => {
+    deps.finance.listBoostPurchasesNeedingAttentionAllAccounts.mockImplementation(() => ok({ rows, reachedCeiling: false, openedDates: 'read' as const }));
+    deps.finance.listBoostPurchasesNeedingAttentionForAccount.mockImplementation(() => ok({ rows, reachedCeiling: false, openedDates: 'read' as const }));
+    return deps;
+  };
+
+  it('AC-217: a refund recorded in the window lowers net and K-5 there; R-n gets the window', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => ok({ rows: [evRow()], reachedCeiling: false }));
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ gross: 10, refunded: 4, net: 6 });
+    expect(result.payload.tiles.k5.money).toEqual({ kind: 'one', currency: 'USD', net: 6 });
+    expect(deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mock.calls).toEqual([[{ from: WINDOW.start, to: WINDOW.end }]]);
+    expect(result.payload.credits.bought?.refundNotTakenBack).toBe(true);
+  });
+
+  it('AC-103 / AC-219: one open dispute → K-5 red "1 boost payment in dispute", value unchanged; held now shown, not in net', async () => {
+    const { result } = await run(withAttention(boostDeps(), [disputed()]));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'red', headline: '1 boost payment in dispute', money: { kind: 'one', currency: 'USD', net: 10 } });
+    expect(result.payload.revenue.boosts.heldNow).toEqual([{ currency: 'USD', disputes: 1, amount: 10 }]);
+    expect(result.payload.revenue.boosts.lines![0].net).toBe(10);
+    expect(result.payload.paymentProblems.boosts?.figures).toMatchObject({ openDisputes: 1, empty: false });
+    expect(Object.keys(result.payload.tiles)).toHaveLength(5);
+  });
+
+  it('AC-103: the threshold is data: raising it to 2 keeps K-5 grey with no code change', async () => {
+    const deps = withAttention(boostDeps(), [disputed()]);
+    const rules = {
+      ...FINANCE_RULES,
+      k5_our_revenue: [{ ...FINANCE_RULES.k5_our_revenue[0], condition: { kind: 'atLeast', metric: 'boostOpenDisputes', value: 2 } }],
+    };
+    const { result } = await run({ ...deps, rules } as typeof deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5.status).toBe('neutral');
+  });
+
+  it('AC-103: R-l failing → K-5 grey "Dispute check failed", its value unchanged; block A unknown, the others render', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostPurchasesNeedingAttentionAllAccounts.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Dispute check failed', money: { kind: 'one', currency: 'USD', net: 10 } });
+    expect(result.payload.paymentProblems.boosts).toEqual({ status: 'unknown', figures: null });
+    expect(result.payload.revenue.boosts.heldNow).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_attention' }), 'Finance read failed');
+  });
+
+  it('AC-224 / §7: the events table absent → refunded, lost and net Unknown, partial, logged at warn not error; every other section renders', async () => {
+    const deps = boostDeps();
+    const absent = Object.assign(new Error('The boost reversal events table is not available'), { name: 'FinanceReadTableAbsentError' });
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => Promise.resolve({ data: null, error: absent }) as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ gross: 10, refunded: null, lost: null, net: null });
+    expect(result.payload.revenue.boosts.events).toMatchObject({ state: 'not_available' });
+    expect(result.payload.revenue.status).toBe('partial');
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_reversal_events', reason: 'table_absent' }), expect.any(String));
+    expect(log.error).not.toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_reversal_events' }), expect.anything());
+    for (const section of ['accounts', 'aiCost', 'credits', 'takings'] as const) expect(result.payload[section].status).toBe('ok');
+  });
+
+  it('AC-224: any other event read failure is an error log and the same Unknown figures', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.events).toMatchObject({ state: 'failed' });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_reversal_events' }), 'Finance read failed');
+  });
+
+  it('AC-229: a business picked → R-n′ and R-l′ with exactly that id; R-n and R-l never called', async () => {
+    const deps = boostDeps();
+    await run(deps, A);
+    expect(deps.finance.listBoostReversalEventsForAccountRecordedInRange.mock.calls).toEqual([[A, { from: WINDOW.start, to: WINDOW.end }]]);
+    expect(deps.finance.listBoostPurchasesNeedingAttentionForAccount.mock.calls).toEqual([[A]]);
+    expect(deps.finance.listBoostReversalEventsAllAccountsRecordedInRange).not.toHaveBeenCalled();
+    expect(deps.finance.listBoostPurchasesNeedingAttentionAllAccounts).not.toHaveBeenCalled();
+  });
+
+  it('AC-226: the Accounts tab reads the same events as Our revenue', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => ok({ rows: [evRow()], reachedCeiling: false }));
+    const { result } = await run(deps, null, logger(), NOW, WINDOW, { sort: 'ai_cost', group: null, show: 'all' });
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const row = result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+    expect(row?.paid.lines[0].boostsAfterTax).toBe(6);
+  });
+
+  it('E-103: every new 4b.2 wire field is set on every built payload', async () => {
+    for (const deps of [makeDeps(), boostDeps(), withAttention(boostDeps(), [disputed()])]) {
+      for (const accountId of [null, A]) {
+        const { result } = await run(deps, accountId);
+        if (result.kind !== 'ok') throw new Error('expected ok');
+        expect(result.payload.revenue.boosts).toHaveProperty('heldNow');
+        expect(result.payload.revenue.boosts).toHaveProperty('events');
+        expect(result.payload.paymentProblems.boosts).toBeDefined();
+        expect(result.payload.credits).toHaveProperty('bought');
+        for (const row of result.payload.credits.figures?.rows ?? []) expect(row).toHaveProperty('boughtOutstanding');
+      }
+    }
+  });
+
+  it('AC-230: the payload carries no Stripe id, mode or purchase id from the new reads', async () => {
+    const deps = withAttention(boostDeps(), [disputed()]);
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => ok({ rows: [evRow()], reachedCeiling: false }));
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const text = JSON.stringify([result.payload, result.counts]);
+    for (const secret of ['pppppppp', 'qqqqqqqq', 'dddddddd', 'livemode', 'stripe_']) expect(text).not.toContain(secret);
   });
 });

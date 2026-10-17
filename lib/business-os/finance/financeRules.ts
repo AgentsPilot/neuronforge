@@ -26,7 +26,13 @@ import { firstMatchingRule, GREEN_HEADLINE, validateRuleListAgainst } from '@/li
 import type { FinanceTileId } from './financeTypes';
 import { CURRENCY_SCALE } from './currencyGroups';
 
-export type FinanceMetric = 'aiCostMonth' | 'aiCostPrevSpan' | 'foundingNoEndDate' | 'accountsFarOverAllowance';
+export type FinanceMetric =
+  | 'aiCostMonth'
+  | 'aiCostPrevSpan'
+  | 'foundingNoEndDate'
+  | 'accountsFarOverAllowance'
+  // Slice 4b.2 (S4-FR-17): boost purchases in dispute now.
+  | 'boostOpenDisputes';
 
 export interface FinanceRule {
   /** Stable id, e.g. 'aiCost.doubled'. */
@@ -49,7 +55,7 @@ export const FINANCE_TILE_VOCABULARY: Readonly<
   k2_far_over_allowance: { metrics: ['accountsFarOverAllowance'], flags: [] },
   k3_founding_no_end_date: { metrics: ['foundingNoEndDate'], flags: [] },
   k4_gifted_outstanding: { metrics: [], flags: [] },
-  k5_our_revenue: { metrics: [], flags: [] },
+  k5_our_revenue: { metrics: ['boostOpenDisputes'], flags: [] },
 };
 
 /**
@@ -97,7 +103,17 @@ export const FINANCE_RULES: FinanceRuleSet = {
   ],
   // Information only (§7.1): never coloured by a rule.
   k4_gifted_outstanding: [],
-  k5_our_revenue: [],
+  // Slice 4b.2 (BD-11, S4-FR-17, SA-Q29): any boost payment in dispute now is red.
+  // Its value stays the revenue; the tile's headline gives the count (financeCopy.ts).
+  k5_our_revenue: [
+    {
+      id: 'boosts.openDispute',
+      priority: 1,
+      colour: 'red',
+      description: 'Boost payments in dispute',
+      condition: { kind: 'atLeast', metric: 'boostOpenDisputes', value: 1 },
+    },
+  ],
 };
 
 /**

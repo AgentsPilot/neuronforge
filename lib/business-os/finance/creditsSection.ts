@@ -21,8 +21,13 @@
  * admin-grant lots at `now`. Lots of deleted accounts (no account) are never
  * in K-4 or the column; they are their own figure (SA-W9), and the window's
  * grant figures still include them (the grant did happen). Never a partial
- * sum: one account's unreadable lots make K-4 unknown. Boost lots are skipped
- * here (slice 4).
+ * sum: one account's unreadable lots make K-4 unknown.
+ *
+ * BOUGHT CREDITS (slice 4b.2, S4-FR-18 to S4-FR-20): the same definition over
+ * the boost-purchase lots, BESIDE the gifted figures and never added to them:
+ * K-4 and every gifted figure still count admin-grant lots only. Bought
+ * credits are paid for; gifts are given away. BQ-13 is open, so a refunded
+ * boost keeps its credits (nothing here, or anywhere in finance, writes a lot).
  *
  * @module lib/business-os/finance/creditsSection
  */
@@ -30,6 +35,7 @@
 import type { AdminCreditPosition } from '@/lib/business-os/credits/adminCreditPercent';
 import { extraCreditsAt, type CreditLotDrawForBalance } from '@/lib/business-os/credits/creditLots';
 import type {
+  FinanceBoughtFigures,
   FinanceCreditRow,
   FinanceCreditsFigures,
   FinanceGiftedFigures,
@@ -67,6 +73,8 @@ export interface CreditsSectionInput {
   farOverAllowancePercent: number | null;
   /** Rows shown at most (SA-W15). Counts always cover every account. */
   displayCap: number;
+  /** Slice 4b.2 (FR-4B-13): a refund was recorded in the window, so the "not taken back" sentence shows. */
+  refundNotTakenBack?: boolean;
 }
 
 /** A row before names are added (the builder looks them up for the rows shown only). */
@@ -75,6 +83,8 @@ export type CreditsSectionRow = Omit<FinanceCreditRow, 'name' | 'nameStatus'>;
 export interface CreditsSectionResult {
   figures: (Omit<FinanceCreditsFigures, 'rows'> & { rows: CreditsSectionRow[] }) | null;
   gifted: FinanceGiftedFigures | null;
+  /** Slice 4b.2: bought credits; null when the lots read failed or reached its ceiling. */
+  bought: FinanceBoughtFigures | null;
   /**
    * NON-WIRE (slice 6a, SA-W78): EVERY account's row, before the display cap,
    * from the same computation as `figures.rows`, so Section 4 and the
@@ -115,6 +125,7 @@ function unknownRow(accountId: string, group: FinanceGroupKey | null, tierLabel:
     overAllowance: null,
     farOverAllowance: null,
     giftedOutstanding: null,
+    boughtOutstanding: null,
   };
 }
 
@@ -167,12 +178,16 @@ function windowGrants(grants: readonly FinanceLot[], window: { start: Date; end:
   return { granted: grantedMicro / MICRO, takenBack: takenBackMicro / MICRO, grants: count, grantingAdmins: admins.size };
 }
 
-function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput): GiftedByAccount {
-  const grants = lots.filter((lot) => lot.source === 'admin_grant');
-
+/** Outstanding credits per account over ONE source's lots (the one definition, `extraCreditsAt`). */
+function outstandingOf(sourceLots: readonly FinanceLot[], now: Date): {
+  outstanding: Map<string, number | null>;
+  totalMicro: number | null;
+  deletedMicro: number | null;
+  inconsistentAccounts: number;
+} {
   const byAccount = new Map<string, FinanceLot[]>();
   const deleted: FinanceLot[] = [];
-  for (const lot of grants) {
+  for (const lot of sourceLots) {
     if (lot.accountId === null) {
       deleted.push(lot);
       continue;
@@ -186,7 +201,7 @@ function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput):
   let totalMicro: number | null = 0;
   let inconsistentAccounts = 0;
   for (const [accountId, accountLots] of byAccount) {
-    const extra = extraCreditsAt(accountLots, input.now);
+    const extra = extraCreditsAt(accountLots, now);
     const micro = extra === null ? null : toMicro(extra.extraCredits);
     outstanding.set(accountId, micro);
     if (extra?.hasInconsistentLot) inconsistentAccounts += 1;
@@ -194,8 +209,14 @@ function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput):
     totalMicro = totalMicro === null || micro === null ? null : totalMicro + micro;
   }
 
-  const deletedExtra = deleted.length === 0 ? null : extraCreditsAt(deleted, input.now);
+  const deletedExtra = deleted.length === 0 ? null : extraCreditsAt(deleted, now);
   const deletedMicro = deleted.length === 0 ? 0 : deletedExtra === null ? null : toMicro(deletedExtra.extraCredits);
+  return { outstanding, totalMicro, deletedMicro, inconsistentAccounts };
+}
+
+function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput): GiftedByAccount {
+  const grants = lots.filter((lot) => lot.source === 'admin_grant');
+  const { outstanding, totalMicro, deletedMicro, inconsistentAccounts } = outstandingOf(grants, input.now);
 
   let accountsNotListed: number | null = null;
   if (input.accountIds !== null) {
@@ -215,11 +236,43 @@ function giftedFigures(lots: readonly FinanceLot[], input: CreditsSectionInput):
   };
 }
 
+/** Slice 4b.2 (S4-FR-18): bought credits over the boost-purchase lots, never combined with gifted. */
+function boughtFigures(lots: readonly FinanceLot[], input: CreditsSectionInput): { outstanding: Map<string, number | null>; bought: FinanceBoughtFigures } {
+  const boosts = lots.filter((lot) => lot.source === 'boost_purchase');
+  const { outstanding, totalMicro, deletedMicro } = outstandingOf(boosts, input.now);
+  const startMs = input.window.start.getTime();
+  const endMs = input.window.end.getTime();
+  let windowMicro: number | null = 0;
+  let windowLots = 0;
+  for (const lot of boosts) {
+    const inWindow = within(lot.createdAt, startMs, endMs);
+    const credits = toMicro(lot.creditsGranted);
+    if (inWindow === null || credits === null) {
+      windowMicro = null;
+      break;
+    }
+    if (inWindow) {
+      windowMicro += credits;
+      windowLots += 1;
+    }
+  }
+  return {
+    outstanding,
+    bought: {
+      outstanding: totalMicro === null ? null : totalMicro / MICRO,
+      deletedAccountsOutstanding: deletedMicro === null ? null : deletedMicro / MICRO,
+      window: windowMicro === null ? null : { credits: windowMicro / MICRO, lots: windowLots },
+      refundNotTakenBack: input.refundNotTakenBack ?? false,
+    },
+  };
+}
+
 export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionResult {
   const giftedResult = input.lots === null ? null : giftedFigures(input.lots, input);
+  const boughtResult = input.lots === null ? null : boughtFigures(input.lots, input);
 
   if (input.accountIds === null || input.positions === null) {
-    return { figures: null, gifted: giftedResult?.gifted ?? null, rowByAccount: null };
+    return { figures: null, gifted: giftedResult?.gifted ?? null, bought: boughtResult?.bought ?? null, rowByAccount: null };
   }
 
   const line = input.farOverAllowancePercent;
@@ -234,17 +287,20 @@ export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionR
     const tierLabel = group === null ? null : input.tierLabelOf(group);
     const gifted = giftedResult === null ? null : giftedResult.outstanding.has(accountId) ? giftedResult.outstanding.get(accountId) ?? null : 0;
     const giftedOutstanding = gifted === null ? null : gifted / MICRO;
+    // S4-FR-20: 0 with no boost lot; null under the same lot-failure rules as gifted.
+    const bought = boughtResult === null ? null : boughtResult.outstanding.has(accountId) ? boughtResult.outstanding.get(accountId) ?? null : 0;
+    const boughtOutstanding = bought === null ? null : bought / MICRO;
 
     const position = input.positions.get(accountId) ?? { kind: 'unknown' as const };
     if (position.kind === 'no_allowance') {
       noAllowanceAccounts += 1;
-      rows.push({ ...unknownRow(accountId, group, tierLabel, 'no_allowance'), giftedOutstanding });
+      rows.push({ ...unknownRow(accountId, group, tierLabel, 'no_allowance'), giftedOutstanding, boughtOutstanding });
       continue;
     }
     const micro = position.kind === 'position' ? microFigures(position.allowance, position.used) : null;
     if (position.kind !== 'position' || micro === null) {
       unknownAccounts += 1;
-      rows.push({ ...unknownRow(accountId, group, tierLabel, 'unknown'), giftedOutstanding });
+      rows.push({ ...unknownRow(accountId, group, tierLabel, 'unknown'), giftedOutstanding, boughtOutstanding });
       continue;
     }
 
@@ -265,6 +321,7 @@ export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionR
       overAllowance: over,
       farOverAllowance: far,
       giftedOutstanding,
+      boughtOutstanding,
     });
   }
 
@@ -280,6 +337,7 @@ export function buildCreditsSection(input: CreditsSectionInput): CreditsSectionR
       rows: rows.slice(0, input.displayCap),
     },
     gifted: giftedResult?.gifted ?? null,
+    bought: boughtResult?.bought ?? null,
     rowByAccount,
   };
 }
