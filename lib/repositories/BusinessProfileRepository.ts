@@ -1328,6 +1328,30 @@ export class BusinessProfileRepository {
   }
 
   /**
+   * The business name (`business_profiles.company_name`, confirmed live as the
+   * name every surface shows: DE-8b S-4), or `null` when unset or no row.
+   * ONE column, scoped to the caller's own id. Read by the data export's
+   * "download again" route to rebuild the zip's file name (DE-8b SA C-8); the
+   * name is never logged here or by the caller.
+   */
+  async findCompanyName(userId: string): Promise<BusinessProfileRepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('company_name')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const name = (data as { company_name?: unknown } | null)?.company_name;
+      return { data: typeof name === 'string' && name.trim() ? name : null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read the business name');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Save the business's DEFAULT currency.
    *
    * A default, not a constraint: `scheduling_services.currency` stays the

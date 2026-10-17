@@ -36,10 +36,15 @@ import { userMediaRepository } from '@/lib/repositories/UserMediaRepository';
 import {
   systemConfigRepository,
   IMAGE_GENERATION_CONFIG_DEFAULTS,
-  IMAGE_FALLBACK_PRICING,
   type ImageGenerationConfig,
 } from '@/lib/repositories/SystemConfigRepository';
-import { ProviderFactory } from '@/lib/ai/providerFactory';
+import {
+  loadImagePricesWithin,
+  resolveImagePriceFrom,
+  type ImagePriceSource,
+  type ImagePriceTable,
+} from '@/lib/ai/imagePricing';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import type {
   ImageGenerationParams,
   ImagePriceResolver,
@@ -94,31 +99,31 @@ function isImageQuality(value: string): value is ImageGenerationParams['quality'
   return (IMAGE_QUALITIES as readonly string[]).includes(value);
 }
 
-export type ImagePriceSource = 'config' | 'fallback' | 'unpriced';
+export type { ImagePriceSource };
 
 /**
- * The per-image dollar price (Layer 1.5 FR-13): configuration, then the
- * documented fallback map, then 0 with an error log. The row is written in
- * every case — spend is never dropped — but an image must never be recorded at
- * $0 silently.
+ * The per-image dollar price (Layer 1.5 FR-13), for the provider that bills
+ * every image here (`ProviderFactory.getOpenAI()`, so `PROVIDERS.OPENAI`).
+ *
+ * Since AI model price review slice 7 it delegates to the one shared resolver
+ * (`lib/ai/imagePricing.ts`): the price table `ai_model_image_pricing`
+ * (authoritative, R-1), then the documented in-code fallback, then 0 with an
+ * error log. The setting `image_generation_prices_usd` is no longer read (O-1,
+ * BQ-7b). The row is written in every case (spend is never dropped), but an
+ * image is never recorded at $0 silently.
  */
 export function resolveImagePrice(
-  pricesUsd: Readonly<Record<string, number>>,
+  prices: ImagePriceTable,
   model: string,
   size: string,
   quality: string
 ): { usdPerImage: number; source: ImagePriceSource } {
-  const key = `${model}:${size}:${quality}`;
-  const configured = pricesUsd[key];
-  if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
-    return { usdPerImage: configured, source: 'config' };
+  const resolved = resolveImagePriceFrom(prices, PROVIDERS.OPENAI, model, size, quality);
+  if (resolved.source === 'unpriced') {
+    // Names the three parts of the key only, never the prompt.
+    logger.error({ model, size, quality }, 'No price for this image model, size and quality; recording $0');
   }
-  const fallback = IMAGE_FALLBACK_PRICING[key];
-  if (typeof fallback === 'number') return { usdPerImage: fallback, source: 'fallback' };
-
-  // Names the three parts of the key only — never the prompt.
-  logger.error({ model, size, quality }, 'No price for this image model, size and quality; recording $0');
-  return { usdPerImage: 0, source: 'unpriced' };
+  return resolved;
 }
 
 /** What one generated image was priced at, and on what basis. */
@@ -143,7 +148,7 @@ export interface ImagePricing {
  * into a failure row.
  */
 export function imagePriceResolver(
-  pricesUsd: Readonly<Record<string, number>>,
+  prices: ImagePriceTable,
   model: string,
   size: string,
   requestedQuality: string
@@ -167,7 +172,7 @@ export function imagePriceResolver(
         );
       }
 
-      const { usdPerImage, source } = resolveImagePrice(pricesUsd, model, size, pricedQuality);
+      const { usdPerImage, source } = resolveImagePrice(prices, model, size, pricedQuality);
       last = { usdPerImage, source, pricedQuality, qualityReported };
       return usdPerImage;
     } catch (error) {
@@ -364,7 +369,13 @@ export async function generateImage(
   }
 
   try {
-    const config = await systemConfigRepository.getImageGenerationConfig();
+    // Read together (slice 7): the sizes and quality from configuration, and the
+    // image price table, waited for at most IMAGE_PRICE_WAIT_MS (on a slow read the
+    // last loaded prices are used: the in-code fallback on a cold instance).
+    const [config, imagePrices] = await Promise.all([
+      systemConfigRepository.getImageGenerationConfig(),
+      loadImagePricesWithin(),
+    ]);
     const request = effectiveRequest(config, aspect);
     if (!request) {
       logger.error({ aspect }, 'No usable image size or quality, even from the defaults');
@@ -382,7 +393,8 @@ export async function generateImage(
     /*
      * The model comes from the `images` area row (Layer 2 FR-12). The seed
      * copied `image_generation_model` into it; `config` still supplies the
-     * sizes, the quality and the prices, which are not model settings.
+     * sizes and the quality (not model settings), and the prices come from
+     * the image price table (slice 7).
      *
      * RC-W4 — the price resolver is built INSIDE the attempt, from the SAME
      * `model` the request carries. Both halves matter:
@@ -398,7 +410,7 @@ export async function generateImage(
      * reports (Layer 1.5 D-7); only the key follows the model that ran.
      */
     const { result: { response, priced } } = await withModelFallback(settings, async (model) => {
-      const pricing = imagePriceResolver(config.pricesUsd, model, size, quality);
+      const pricing = imagePriceResolver(imagePrices, model, size, quality);
 
       // The provider records the ledger row, success or failure, before this
       // returns or throws. n is always 1: one row per image (WC-3).

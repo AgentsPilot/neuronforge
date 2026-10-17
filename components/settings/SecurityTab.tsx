@@ -8,12 +8,11 @@ import {
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities'
 import { supabase } from '@/lib/supabaseClient'
-import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport'
+import { DownloadMyDataButton } from '@/components/business-os/data-export/DownloadMyDataButton'
 import { DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel'
 import { createLogger } from '@/lib/logger'
 import {
   Key,
-  Download,
   Trash2,
   CheckCircle,
   AlertCircle,
@@ -205,30 +204,6 @@ export default function SecurityTab() {
       setSuccessMessage('Two-factor authentication setup started! This feature will be available soon.')
     } catch (error) {
       setErrorMessage('Failed to enable 2FA. Please try again.')
-    }
-  }
-
-  const handleExportData = async () => {
-    if (!user) return
-
-    try {
-      setSuccessMessage('')
-      setErrorMessage('')
-
-      // The server export, not a client read (DE-0a): reading the tables here
-      // with `select('*')` put every plugin's OAuth tokens in the file. The
-      // server also records the export in the audit trail.
-      const result = await downloadUserDataExport()
-      if (!result.success) {
-        logger.error({ code: result.code, status: result.status }, 'User data export failed')
-        setErrorMessage('Failed to export data. Please try again.')
-        return
-      }
-
-      setSuccessMessage('Data exported successfully! Check your downloads folder.')
-    } catch (error) {
-      logger.error({ err: error }, 'User data export failed')
-      setErrorMessage('Failed to export data. Please try again.')
     }
   }
 
@@ -448,18 +423,15 @@ export default function SecurityTab() {
         </div>
 
         <div className="space-y-3">
-          <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-br from-gray-50 to-white border border-gray-200/50 hover:shadow-md transition-all duration-300">
+          {/* Data export DE-9 (BC-1): the one shared "Download my data" control,
+              the same zip as every other surface. It owns its own status line
+              and notice, so the banners below carry no export message. */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-gray-50 to-white border border-gray-200/50 space-y-3">
             <div>
-              <h4 className="font-semibold text-sm text-gray-900">Export Account Data</h4>
+              <h4 className="font-semibold text-sm text-gray-900">Download my data</h4>
               <p className="text-xs text-gray-600">Download all your data</p>
             </div>
-            <button
-              onClick={handleExportData}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all duration-300 text-xs font-semibold shadow-md"
-            >
-              <Download className="w-4 h-4" />
-              Export Data
-            </button>
+            <DownloadMyDataButton variant="button" />
           </div>
 
           <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200/50">
@@ -470,7 +442,7 @@ export default function SecurityTab() {
               <div>
                 <h4 className="font-semibold text-sm text-emerald-900">Data Portability</h4>
                 <p className="text-xs text-emerald-800 mt-0.5">
-                  Your data export includes all agents, conversations, and settings in JSON format.
+                  Your download is one zip file with your records, your files and a README that explains them.
                 </p>
               </div>
             </div>

@@ -131,6 +131,23 @@ jest.mock('@/lib/stripe/StripeService', () => ({
   getStripeService: () => ({ listPaidInvoices: async () => ({ invoices: [], hasMore: false }) }),
 }));
 
+// data-export (DE-8b): the bucket holds nothing and no account has files.
+// Storage is mocked because the database proxy above has no storage client.
+jest.mock('@/lib/repositories/BusinessOsDataExportStorageRepository', () => ({
+  businessOsDataExportStorageRepository: {
+    remove: async () => ({ data: true, error: null }),
+    listForSweep: async () => ({ data: { objects: [], unexpected: 0, truncated: false }, error: null }),
+  },
+}));
+jest.mock('@/lib/business-os/data-export/fileManifest', () => ({
+  createExportFileSource: () => ({
+    includedBuckets: () => [],
+    inventory: async () => ({ ok: false, reason: 'error' }),
+    download: async () => null,
+    listOwnerFolders: async () => ({ owners: [], skipped: 0, truncated: false }),
+  }),
+}));
+
 import { BOS_CRON_JOBS } from '@/lib/cron/bosCronJobs';
 import { resetCronRunRecorderState } from '@/lib/cron/cronRunRecorder';
 

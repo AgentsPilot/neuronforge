@@ -81,20 +81,16 @@ jest.mock('@/lib/repositories/SystemConfigRepository', () => {
   const defaults = actual.IMAGE_GENERATION_CONFIG_DEFAULTS;
 
   /*
-   * EVERY configured size at low, medium and high, for both models.
-   *
-   * Not decoration: `checkImageModel` refuses an image model unless all of
-   * them are priced (RC-5), because `quality: 'auto'` is priced after the call
-   * by whatever the provider reports. A partial table here would make the
-   * override be REJECTED by the guardrail and silently fall back to the code
-   * default — and the override tests below would be passing for the wrong
-   * reason.
+   * Slice 7 (O-1, RC7-6): the old image price setting is no longer read. It
+   * holds a DECOY price here (99) for every key the image price table below
+   * prices, so every price assertion in this file also proves the setting is
+   * ignored: a read of it would log 99, never the table's 0.25 / 0.5.
    */
   const pricesUsd: Record<string, number> = {};
   for (const size of Object.values(defaults.sizes) as string[]) {
     for (const quality of ['low', 'medium', 'high']) {
-      pricesUsd[defaults.model + ':' + size + ':' + quality] = 0.25;
-      pricesUsd['gpt-image-1-mini:' + size + ':' + quality] = 0.5;
+      pricesUsd[defaults.model + ':' + size + ':' + quality] = 99;
+      pricesUsd['gpt-image-1-mini:' + size + ':' + quality] = 99;
     }
   }
 
@@ -108,11 +104,37 @@ jest.mock('@/lib/repositories/SystemConfigRepository', () => {
   };
 });
 
+/*
+ * The image price table (slice 7; the prices that sat in `pricesUsd` before).
+ * EVERY configured size at low, medium and high, for both models.
+ *
+ * Not decoration: `checkImageModel` refuses an image model unless all of them
+ * are priced (RC-5), because `quality: 'auto'` is priced after the call by
+ * whatever the provider reports. A partial table here would make the override
+ * be REJECTED by the guardrail and silently fall back to the code default, and
+ * the override tests below would be passing for the wrong reason.
+ */
+jest.mock('@/lib/repositories/AiModelImagePricingRepository', () => {
+  const defaults = jest.requireActual('@/lib/repositories/SystemConfigRepository').IMAGE_GENERATION_CONFIG_DEFAULTS;
+  const rows: Array<Record<string, unknown>> = [];
+  for (const size of Object.values(defaults.sizes) as string[]) {
+    for (const quality of ['low', 'medium', 'high']) {
+      for (const [model, cost] of [[defaults.model, 0.25], ['gpt-image-1-mini', 0.5]] as Array<[string, number]>) {
+        rows.push({ id: `${model}-${size}-${quality}`, provider: 'openai', model_name: model, size, quality, cost_per_image: cost, effective_date: '2026-10-16', created_at: '2026-10-16T00:00:00Z' });
+      }
+    }
+  }
+  return { aiModelImagePricingRepository: { listActive: async () => ({ data: rows, error: null }) } };
+});
+
 jest.mock('@/lib/ai/pricing', () => ({
   getPricing: async () => ({ input: 0.0025, output: 0.01 }),
   hasPricing: async () => true,
   calculateCost: async () => 0,
   calculateCostSync: () => 0,
+  calculateCostWithCachedSync: () => 0,
+  // Slice 7 (RC7-5): the settings refill warms the price cache; never a real read here.
+  warmPricingCache: jest.fn().mockResolvedValue(undefined),
 }));
 
 /** Everything the planner, the plan cache and the verified questions read. */
@@ -652,6 +674,8 @@ describe('T3-S: a refused model is retried on the code default, with the request
     await driveImages();
     expect(generateImageSpy.mock.calls[0][0].model).toBe(OVERRIDE_IMAGE_MODEL);
     expect(lastLoggedPrice()).toBe(PRICE_OVERRIDE_MODEL);
+    // Slice 7 (O-1, RC7-6): the decoy in the old image price setting is ignored.
+    expect(lastLoggedPrice()).not.toBe(99);
 
     // Then: the override is refused, and the default runs.
     logged.length = 0;

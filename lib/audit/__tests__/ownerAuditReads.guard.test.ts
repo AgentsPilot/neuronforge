@@ -4,7 +4,7 @@
  *
  * Owner-hidden entries (lib/audit/ownerVisibility.ts) are left out by two
  * readers: the owner RLS policy and AuditTrailRepository.listOwnerEntries. The
- * data export route reads NO audit rows at all since DE-1
+ * data export routes (the zip routes since DE-9) read NO audit rows at all since DE-1
  * (BUSINESS_OS_DATA_EXPORT_DE1_WORKPLAN.md §3.6: activity left the export,
  * DX-1d), and its read method `listOwnerEntriesForExport` was deleted; a check
  * below keeps the route from reading them again. A NEW owner-facing reader of
@@ -38,12 +38,19 @@ const ALLOWED_FILES: Record<string, string> = {
 };
 
 /**
- * The data export route. NOT allow-listed, and since DE-1 it reads no audit
- * rows at all (DX-1d): it neither names the table nor calls
- * `auditTrailRepository`. Its own `DATA_EXPORTED` entry is a WRITE through
- * `logAndFlush`, which does not count.
+ * The data export routes. NOT allow-listed, and since DE-1 the export reads no
+ * audit rows at all (DX-1d): neither names the table nor calls
+ * `auditTrailRepository`. Their own `DATA_EXPORT_*` entries are WRITES
+ * (`AuditTrail.log` / `logAndFlush`), which do not count.
+ *
+ * Data export DE-9 (SA C-2): re-pointed from the retired JSON route
+ * (app/api/user/data-export/route.ts) to the two zip routes that replaced it:
+ * the start + "Last export" status route (POST and GET) and "Download again".
  */
-const DATA_EXPORT_ROUTE = 'app/api/user/data-export/route.ts';
+const DATA_EXPORT_ROUTES = [
+  'app/api/business-os/data-exports/route.ts',
+  'app/api/business-os/data-exports/[jobId]/parts/[partNo]/download/route.ts',
+];
 
 /**
  * Data export DE-2 (DE-1 SA S-1): the export's own module is held to the same
@@ -196,10 +203,16 @@ describe('owner reads of audit_trail (BD-26, W26-6)', () => {
     }
   });
 
-  it('the data export route reads no audit rows at all (DE-1, DX-1d)', () => {
-    const entry = files.find(({ file }) => file === DATA_EXPORT_ROUTE);
+  it.each(DATA_EXPORT_ROUTES)('the data export route %s reads no audit rows at all (DE-1, DX-1d; DE-9 C-2)', (route) => {
+    const entry = files.find(({ file }) => file === route);
     expect(entry).toBeDefined();
     expect(readsNoAuditRows(entry!.source)).toBe(true);
+    // Non-vacuity: the scan sees the route's audit WRITES, which do not count.
+    expect(entry!.source).toMatch(/AUDIT_EVENTS\.DATA_EXPORT_/);
+  });
+
+  it('the retired JSON route stays retired (DE-9)', () => {
+    expect(files.find(({ file }) => file === 'app/api/user/data-export/route.ts')).toBeUndefined();
   });
 
   it('no file of the data export module reads audit or archived rows (DE-2, S-1 / SA-Q10)', () => {
@@ -237,7 +250,7 @@ describe('the guard itself (negative controls)', () => {
   it('fails the data export route if it names audit_trail again, even with both exclusions (OP-3)', () => {
     const both =
       "from('audit_trail').select('*').not('entity_type', 'in', `(${OWNER_HIDDEN_ENTITY_TYPES.join(',')})`).not('action', 'like', `${AI_ACTION_EVENT_PREFIX}%`)";
-    expect(violation(DATA_EXPORT_ROUTE, both)).not.toBeNull();
+    for (const route of DATA_EXPORT_ROUTES) expect(violation(route, both)).not.toBeNull();
   });
 
   it('flags a data export route that reads audit rows again (DE-1)', () => {

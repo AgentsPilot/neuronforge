@@ -8,7 +8,9 @@
  *
  * Order (Admin Layout follow-ups LF-4a.2, BD-4): the Business OS panel (its
  * header line, the summary strip, Credits & billing, Plan & entitlements, AI
- * usage), then Account & security, Activity, and the danger area last. The
+ * usage), then Account & security, Activity, Data export (data export DE-10a,
+ * SA-9: directly above the danger area, at the user's request), and the
+ * danger area last. The
  * "All products" AI figures come from this body's stats and are handed to the
  * panel, which shows them inside AI usage (BD-7).
  *
@@ -25,6 +27,7 @@ import { AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { BusinessOsPanel } from './BusinessOsPanel';
 import { BusinessAuditSection } from './BusinessAuditSection';
+import { DataExportBlock } from './DataExportBlock';
 import { AllProductsUsage } from './AllProductsUsage';
 import { DeleteBusinessDialog } from './DeleteBusinessDialog';
 import { DrawerBox, PART_BOX, PartPurpose } from './DrawerBox';
@@ -231,6 +234,10 @@ export function BusinessDetail({
       </DrawerBox>
 
       <BusinessAuditSection logs={auditLogs} filter={auditFilter} onFilterChange={onAuditFilterChange} />
+
+      {/* Data export (DE-10a, BC-5: every login, with or without a business):
+          the account's exports, prepare, audited download. Never gates the danger area. */}
+      <DataExportBlock key={user.id} accountId={user.id} />
 
       {/* Danger area (admin delete AD-1c, FR-A1): inside the open drawer only, never the list row. */}
       <div

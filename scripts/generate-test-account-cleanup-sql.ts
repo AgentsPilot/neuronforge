@@ -120,10 +120,15 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * on 20261047, confirmed live on prod 2026-10-17 (stamp 789e4758d674b561).
  * Finance 4b.1 (20261072 + 20261073) was not on main yet: per SA C-7 it now
  * renumbers its regenerated cleanup above 20261075 and chains on this file.
+ * 20261077: the link business_os_boost_reversal_events -> business_os_boost_purchases
+ * (finance slice 4b.1, migration 20261076, ON DELETE CASCADE) reviewed as
+ * parent-owned for G-18. No delete step: the step B purchase delete cascades.
+ * First written as 20261073 over 20261047; renumbered and regenerated on
+ * 2026-10-17 to chain on 20261075, so it keeps the data_exports plan.
  */
-export const FUNCTION_MIGRATION = '20261075_operator_test_account_cleanup_data_exports';
+export const FUNCTION_MIGRATION = '20261077_operator_test_account_cleanup_boost_reversal_events';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261047_operator_test_account_cleanup_audit_actor';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261075_operator_test_account_cleanup_data_exports';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -385,6 +390,7 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['business_health_summaries', 'business_health_summaries_business_fk', 'user_id'],
   ['business_intake_forms', 'business_intake_forms_business_fk', 'user_id'],
   ['business_os_boost_purchases', 'business_os_boost_purchases_lot_id_fkey', 'user_id'],
+  ['business_os_boost_reversal_events', 'business_os_boost_reversal_events_purchase_id_fkey', null],
   ['business_os_credit_charges', 'business_os_credit_charges_adjusts_action_id_fkey', 'user_id'],
   ['business_os_credit_lot_draws', 'business_os_credit_lot_draws_lot_id_fkey', 'user_id'],
   ['business_os_entitlement_overrides', 'business_os_entitlement_overrides_user_id_fkey', 'user_id'],
@@ -554,6 +560,8 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
 export const PARENT_OWNED_REASONS: Readonly<Record<string, string>> = {
   agent_group_memberships: 'Group memberships of the target agents. The agent belongs to the target.',
   agent_scheduler_state: 'Scheduler state of the target agents (a purge descriptor, reached through agents).',
+  business_os_boost_reversal_events:
+    'Refund and dispute events of the target boost purchases. No owner column: the account comes through the purchase, which step B removes, and the link cascades.',
   execution_metrics: 'Metrics of the target agents and workflow runs.',
   execution_routing_decisions: 'Routing decisions of the target agent runs.',
   sla_events: 'Events of the target SLAs. The actor column is checked separately by G-10.',
@@ -562,6 +570,24 @@ export const PARENT_OWNED_REASONS: Readonly<Record<string, string>> = {
   website_blocks: 'Blocks of the target pages (a purge descriptor, reached through website_pages).',
   workflow_groups: 'Groups of an organisation the target owns. G-13 refuses when another account is inside it.',
 };
+
+/**
+ * `never` descriptors scoped `via` a plan table that the plan does NOT delete
+ * itself: the parent's delete removes them through an ON DELETE CASCADE link
+ * (finance 4b.1, SA-W105). TypeScript only, never rendered into SQL. The
+ * coverage test accepts an entry only when the parent is a plan table, the
+ * descriptor is `via` that parent with the same FK, and the link is reviewed
+ * parent-owned in INBOUND_FOREIGN_KEYS (so G-18 does not block it).
+ */
+export const CASCADE_CHILDREN: ReadonlyArray<{ table: string; parent: string; fk: string; constraint: string; reason: string }> = [
+  {
+    table: 'business_os_boost_reversal_events',
+    parent: 'business_os_boost_purchases',
+    fk: 'purchase_id',
+    constraint: 'business_os_boost_reversal_events_purchase_id_fkey',
+    reason: 'Dated refund and dispute history of a boost purchase (migration 20261076). Removed by the step B purchase delete through ON DELETE CASCADE (SA-Q66).',
+  },
+];
 
 // ════════════════════════════════════════════════════════════════════════════
 // The plan
