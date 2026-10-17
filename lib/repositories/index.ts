@@ -356,6 +356,14 @@ export type {
   DataExportRequesterKind,
   DataExportStartOutcome,
 } from './types';
+// Data export zip bucket (DE-8b): paths only from exportObjectPath. The files
+// repository (BusinessDataExportFilesRepository) is deliberately NOT exported
+// here: its one importer is lib/business-os/data-export/fileManifest.ts (F-6).
+export {
+  BusinessOsDataExportStorageRepository,
+  businessOsDataExportStorageRepository,
+} from './BusinessOsDataExportStorageRepository';
+export type { ExportBucketListing, ExportBucketObject, ExportFileBudget } from './types';
 
 // Types
 export type {

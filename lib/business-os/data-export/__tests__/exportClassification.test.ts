@@ -83,7 +83,8 @@ const DE4_LIVE_COLUMNS: LiveColumn[] = Object.entries(DE4_LIVE_FIXTURE.tables as
  * (SA-Q2). DE-7: was `true`.
  */
 const PLANNED_TABLES_ALLOWED = false;
-const PLANNED_FILES_ALLOWED = true;
+// DE-8b (T-1): was `true`. Both file buckets are classified now.
+const PLANNED_FILES_ALLOWED = false;
 
 const REPO = path.join(__dirname, '..', '..', '..', '..');
 const PURGE_DIR = path.join(REPO, 'lib', 'business-os', 'purge');
@@ -313,10 +314,34 @@ describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
     expect(tableProblems(replanned, true)).toEqual([]);
   });
 
-  it('with the files flag false, every planned bucket is reported (the DE-8b flip will bite)', () => {
-    const planned = STORAGE_DESCRIPTORS.filter((s) => s.export.kind === 'planned');
-    expect(planned.length).toBeGreaterThan(0);
-    expect(bucketProblems(STORAGE_DESCRIPTORS, false)).toHaveLength(planned.length);
+  // DE-8b (T-1): was "with the files flag false, every planned bucket is
+  // reported (the DE-8b flip will bite)". The flip happened: no bucket is
+  // planned and T-1 runs with the flag false.
+  it('no bucket descriptor is planned (non-vacuous: every one is include or exclude)', () => {
+    expect(STORAGE_DESCRIPTORS.length).toBeGreaterThanOrEqual(4);
+    expect(STORAGE_DESCRIPTORS.filter((s) => s.export.kind === 'planned').map((s) => s.bucket)).toEqual([]);
+    expect(PLANNED_FILES_ALLOWED).toBe(false);
+  });
+
+  it('DE-8b (SA Q-17): the two file buckets are included under their pinned zip folders; the other two stay excluded', () => {
+    const byBucket = new Map(STORAGE_DESCRIPTORS.map((s) => [s.bucket, s.export] as const));
+    expect(byBucket.get('contact-documents')).toEqual({ kind: 'include', folder: 'client-documents' });
+    expect(byBucket.get('website-images')).toEqual({ kind: 'include', folder: 'website-images' });
+    expect(byBucket.get('business-purge-snapshots')?.kind).toBe('exclude');
+    expect(byBucket.get('business-data-exports')?.kind).toBe('exclude');
+    expect(STORAGE_DESCRIPTORS.filter((s) => s.export.kind === 'include').map((s) => s.bucket)).toEqual([
+      'contact-documents',
+      'website-images',
+    ]);
+  });
+
+  // The negative control moved to an EXCLUDED bucket (no bucket is planned any more).
+  it('negative control: a planted planned bucket is reported with the flag false (the default) and accepted with it true', () => {
+    const replanned = STORAGE_DESCRIPTORS.map((s) =>
+      s.bucket === 'business-purge-snapshots' ? { ...s, export: { kind: 'planned' as const, slice: 'DE-8b' as const } } : s
+    );
+    expect(bucketProblems(replanned)).toEqual(['business-purge-snapshots: still planned (DE-8b)']);
+    expect(bucketProblems(replanned, true)).toEqual([]);
   });
 
   it('negative control: a table planned for a file slice, a bucket planned for a table slice', () => {
@@ -1665,6 +1690,22 @@ function currencyConversionHits(source: string): string[] {
   return hits;
 }
 
+/**
+ * DE-8b: lower-casing that is about file names, not currency, by file and with
+ * its reason. Only `.toLowerCase(` and only these files; every other pattern
+ * still applies to them (negative control below). SA reviews this list.
+ */
+const LOWER_CASE_EXEMPT: Readonly<Record<string, string>> = {
+  'fileName.ts': 'the business-name slug of the zip file name is lower case by rule (requirement §0.4.1 E)',
+  'zipEntries.ts': 'duplicate entry names in one zip folder are compared case-insensitively (Windows and macOS file systems)',
+};
+const LOWER_CASE_HIT = String(/\.toLowerCase\s*\(/);
+
+function exportSourceHits(file: string, source: string): string[] {
+  const exempt = path.basename(file) in LOWER_CASE_EXEMPT;
+  return currencyConversionHits(source).filter((hit) => !(exempt && hit === LOWER_CASE_HIT));
+}
+
 describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA C-5)', () => {
   const DATA_EXPORT_DIR = path.join(REPO, 'lib', 'business-os', 'data-export');
   const scanned = [
@@ -1679,8 +1720,15 @@ describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA
     expect(scanned.map((f) => path.basename(f))).toEqual(
       expect.arrayContaining(['sections.ts', 'payload.ts', 'classification.ts', 'BusinessDataExportRepository.ts', 'route.ts'])
     );
-    const offenders = scanned.flatMap((f) => currencyConversionHits(fs.readFileSync(f, 'utf-8')).map((h) => `${path.basename(f)}: ${h}`));
+    const offenders = scanned.flatMap((f) => exportSourceHits(f, fs.readFileSync(f, 'utf-8')).map((h) => `${path.basename(f)}: ${h}`));
     expect(offenders).toEqual([]);
+  });
+
+  it('DE-8b negative control: the lower-case exemption covers only its two files and only .toLowerCase(', () => {
+    const planted = ['const a = name.toLowerCase();', 'const b = code.toUpperCase();', ''].join('\n');
+    expect(exportSourceHits('lib/business-os/data-export/fileName.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/)]);
+    expect(exportSourceHits('lib/business-os/data-export/zipExport.ts', planted)).toEqual([String(/\.toUpperCase\s*\(/), LOWER_CASE_HIT]);
+    for (const file of Object.keys(LOWER_CASE_EXEMPT)) expect(scanned.map((f) => path.basename(f))).toContain(file);
   });
 
   it('negative controls: a rate lookup, an FX import, an upper-cased currency are flagged; comments and strings are not', () => {

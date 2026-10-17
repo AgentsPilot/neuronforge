@@ -41,7 +41,7 @@ function client(...results: Result[]) {
   let next = 0;
   const take = () => results[Math.min(next++, results.length - 1)] ?? { data: null, error: null };
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'update', 'eq', 'neq', 'is', 'in', 'lte', 'order', 'limit', 'maybeSingle']) {
+  for (const method of ['select', 'update', 'eq', 'neq', 'is', 'in', 'lt', 'lte', 'order', 'limit', 'maybeSingle']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -306,10 +306,33 @@ describe('cross-account sweep reads (M-9, M-11)', () => {
     expect(bad.calls).toEqual([]);
   });
 
-  it('both carry the cross-account comment, and no other method reads without user_id (source scan)', () => {
+  // DE-8b: was "both carry ..."; listStaleRunning is the third sweep read.
+  it('listStaleRunning: running and created before the cut, oldest first, at most 500, only id and user_id (DE-8b, SA DE-8a Q-12)', async () => {
+    const before = new Date('2026-10-17T11:58:30.000Z');
+    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER }], error: null });
+    expect((await repo(c).listStaleRunning(before)).data).toEqual([{ id: JOB, user_id: OWNER }]);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_data_exports'] },
+      { method: 'select', args: ['id, user_id'] },
+      { method: 'eq', args: ['status', 'running'] },
+      { method: 'lt', args: ['created_at', '2026-10-17T11:58:30.000Z'] },
+      { method: 'order', args: ['created_at', { ascending: true }] },
+      { method: 'limit', args: [500] },
+    ]);
+    const bad = client({ data: [], error: null });
+    expect((await repo(bad.c).listStaleRunning(before, 501)).error).toBeInstanceOf(Error);
+    expect((await repo(bad.c).listStaleRunning(new Date('nope'))).error).toBeInstanceOf(Error);
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { message: 'down', code: 'XX000', details: 'secret detail' } });
+    const failed = await repo(failing.c).listStaleRunning(before);
+    expect(failed.data).toBeNull();
+    expect(failed.error?.message).toBe('down');
+  });
+
+  it('the three sweep reads carry the cross-account comment, and no other method reads without user_id (source scan)', () => {
     const source = readFileSync(join(__dirname, '..', 'BusinessOsDataExportJobRepository.ts'), 'utf8').replace(/\r\n/g, '\n');
     const comment = "// Cross-account by design: the daily sweep has no user context; every effect it takes is scoped by the row's own user_id (tenant-isolation-guard Step 6).";
-    expect(source.split(comment).length - 1).toBe(2);
+    expect(source.split(comment).length - 1).toBe(3);
     // Code only: the header comment names .or() to say it is never used.
     const code = source.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
     expect(code).not.toMatch(/select\('\*'\)/);
