@@ -182,6 +182,77 @@ describe('findById / findLatestForUser / listForUser (M-2 to M-4)', () => {
   });
 });
 
+/**
+ * A fake that APPLIES eq / in / order / limit to a row set, so a test can show
+ * which rows a read can return, not only which filters it sent (SA DE-9 C-4).
+ */
+function filteringClient(rows: Array<Record<string, unknown>>) {
+  type Filter = (row: Record<string, unknown>) => boolean;
+  const filters: Filter[] = [];
+  let orderBy: { column: string; ascending: boolean } | null = null;
+  let max = Infinity;
+  const builder: Record<string, unknown> = {
+    select: () => builder,
+    eq: (column: string, value: unknown) => (filters.push((r) => r[column] === value), builder),
+    in: (column: string, values: unknown[]) => (filters.push((r) => values.includes(r[column])), builder),
+    order: (column: string, opts: { ascending: boolean }) => ((orderBy = { column, ascending: opts.ascending }), builder),
+    limit: (n: number) => ((max = n), builder),
+  };
+  builder.then = (resolve: (value: unknown) => void) => {
+    let out = rows.filter((r) => filters.every((f) => f(r)));
+    if (orderBy) {
+      const { column, ascending } = orderBy;
+      out = [...out].sort((a, b) => (String(a[column]) < String(b[column]) ? -1 : 1) * (ascending ? 1 : -1));
+    }
+    resolve({ data: out.slice(0, max), error: null });
+  };
+  return { from: () => builder } as unknown as SupabaseClient;
+}
+
+describe('findLatestCompletedForUser (DE-9 status route; SA C-4)', () => {
+  it('scoped by user_id first, owner-requested only, ready or expired, newest one', async () => {
+    const { c, calls } = client({ data: [{ id: JOB }], error: null });
+    expect(await repo(c).findLatestCompletedForUser(OWNER)).toEqual({ data: { id: JOB }, error: null });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_data_exports'] },
+      { method: 'select', args: [DATA_EXPORT_JOB_COLUMNS] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['requested_by_kind', 'owner'] },
+      { method: 'in', args: ['status', ['ready', 'expired']] },
+      { method: 'order', args: ['created_at', { ascending: false }] },
+      { method: 'limit', args: [1] },
+    ]);
+  });
+
+  it('no row is null; a bad id never reaches the database; an error is returned, not thrown', async () => {
+    expect((await repo(client({ data: [], error: null }).c).findLatestCompletedForUser(OWNER)).data).toBeNull();
+    const bad = client({ data: [{ id: JOB }], error: null });
+    expect((await repo(bad.c).findLatestCompletedForUser('not-a-uuid')).error).toBeInstanceOf(Error);
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { code: 'XX000', message: 'boom' } });
+    expect(await repo(failing.c).findLatestCompletedForUser(OWNER)).toEqual({ data: null, error: expect.any(Error) });
+  });
+
+  const rows = [
+    { id: 'old-owner-expired', user_id: OWNER, requested_by_kind: 'owner', status: 'expired', created_at: '2026-10-10T00:00:00Z' },
+    { id: 'owner-ready', user_id: OWNER, requested_by_kind: 'owner', status: 'ready', created_at: '2026-10-15T00:00:00Z' },
+    { id: 'owner-failed-newer', user_id: OWNER, requested_by_kind: 'owner', status: 'failed', created_at: '2026-10-16T00:00:00Z' },
+    { id: 'admin-ready-newest', user_id: OWNER, requested_by_kind: 'admin', status: 'ready', created_at: '2026-10-17T00:00:00Z' },
+    { id: 'other-tenant-ready', user_id: OTHER, requested_by_kind: 'owner', status: 'ready', created_at: '2026-10-17T01:00:00Z' },
+  ];
+
+  it('an admin-prepared ready export, a newer failed one and another tenant row are never returned', async () => {
+    expect((await repo(filteringClient(rows)).findLatestCompletedForUser(OWNER)).data).toMatchObject({ id: 'owner-ready' });
+    // Only an admin row and a failed row: nothing to show the owner.
+    const onlyHidden = rows.filter((r) => r.id === 'admin-ready-newest' || r.id === 'owner-failed-newer');
+    expect((await repo(filteringClient(onlyHidden)).findLatestCompletedForUser(OWNER)).data).toBeNull();
+  });
+
+  it('negative control: the fake does filter, so a read without the kind filter WOULD return the admin row', async () => {
+    expect((await repo(filteringClient(rows)).findLatestForUser(OWNER)).data).toMatchObject({ id: 'admin-ready-newest' });
+  });
+});
+
 function updatePayload(calls: Call[]): Record<string, unknown> {
   const update = calls.find((call) => call.method === 'update');
   expect(update).toBeDefined();
@@ -242,6 +313,8 @@ describe('markOwnerDownloaded / markExpired (M-7, M-10): idempotent', () => {
     expect(await repo(c).markOwnerDownloaded(JOB, OWNER)).toEqual({ data: true, error: null });
     expect(await repo(c).markOwnerDownloaded(JOB, OWNER)).toEqual({ data: false, error: null });
     expect(eqs(calls).slice(0, 3)).toEqual([['id', JOB], ['user_id', OWNER], ['status', 'ready']]);
+    // DE-10a (SA-5, T-18): owner-requested jobs only.
+    expect(eqs(calls).slice(3, 4)).toEqual([['requested_by_kind', 'owner']]);
     expect(calls).toContainEqual({ method: 'is', args: ['owner_downloaded_at', null] });
     expect(Object.keys(updatePayload(calls)).sort()).toEqual(['owner_downloaded_at', 'updated_at']);
   });
@@ -255,30 +328,60 @@ describe('markOwnerDownloaded / markExpired (M-7, M-10): idempotent', () => {
   });
 });
 
-describe('expireOtherReady (M-8)', () => {
-  it('expires the other ready jobs of this account only, never the kept one', async () => {
+describe('expireOtherReady (M-8; DE-10a SA-4: same kind only)', () => {
+  it.each(['owner', 'admin'] as const)('expires the other ready %s jobs of this account only, never the kept one', async (kind) => {
     const { c, calls } = client({ data: [{ id: JOB2 }], error: null });
-    expect(await repo(c).expireOtherReady(OWNER, JOB)).toEqual({ data: [JOB2], error: null });
-    expect(eqs(calls)).toEqual([['user_id', OWNER], ['status', 'ready']]);
+    expect(await repo(c).expireOtherReady(OWNER, JOB, kind)).toEqual({ data: [JOB2], error: null });
+    expect(eqs(calls)).toEqual([['user_id', OWNER], ['status', 'ready'], ['requested_by_kind', kind]]);
     expect(calls).toContainEqual({ method: 'neq', args: ['id', JOB] });
     expect(updatePayload(calls)).toMatchObject({ status: 'expired' });
   });
 
-  it('invalid ids never reach the database', async () => {
+  it('invalid ids and an invalid kind never reach the database (T-19)', async () => {
     const { c, calls } = client({ data: [], error: null });
-    expect((await repo(c).expireOtherReady(OWNER, 'x')).error).toBeInstanceOf(Error);
+    expect((await repo(c).expireOtherReady(OWNER, 'x', 'owner')).error).toBeInstanceOf(Error);
+    for (const kind of ['', 'OWNER', 'system', undefined]) {
+      expect((await repo(c).expireOtherReady(OWNER, JOB, kind as never)).error).toBeInstanceOf(Error);
+    }
     expect(calls).toEqual([]);
   });
 });
 
-describe('cross-account sweep reads (M-9, M-11)', () => {
-  it('listDueForExpiry: ready and past expiry, oldest first, at most 500, only id and user_id', async () => {
-    const now = new Date('2026-10-17T12:00:00.000Z');
-    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER }], error: null });
-    expect((await repo(c).listDueForExpiry(now)).data).toEqual([{ id: JOB, user_id: OWNER }]);
+describe('findOwnerJobById (DE-10a SA-5, T-18)', () => {
+  it('filters id, user_id AND requested_by_kind owner, explicit columns', async () => {
+    const { c, calls } = client({ data: { id: JOB, user_id: OWNER, requested_by_kind: 'owner' }, error: null });
+    expect((await repo(c).findOwnerJobById(JOB, OWNER)).data).toMatchObject({ id: JOB });
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_data_exports'] },
-      { method: 'select', args: ['id, user_id'] },
+      { method: 'select', args: [DATA_EXPORT_JOB_COLUMNS] },
+      { method: 'eq', args: ['id', JOB] },
+      { method: 'eq', args: ['user_id', OWNER] },
+      { method: 'eq', args: ['requested_by_kind', 'owner'] },
+      { method: 'maybeSingle', args: [] },
+    ]);
+  });
+
+  it('an admin job of the same account is null (the filter excludes it); bad ids never reach the database', async () => {
+    const { c } = client({ data: null, error: null });
+    expect(await repo(c).findOwnerJobById(JOB, OWNER)).toEqual({ data: null, error: null });
+    const bad = client({ data: null, error: null });
+    expect((await repo(bad.c).findOwnerJobById('x', OWNER)).error).toBeInstanceOf(Error);
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { message: 'down', code: 'XX000', details: 'secret detail' } });
+    const failed = await repo(failing.c).findOwnerJobById(JOB, OWNER);
+    expect(failed.data).toBeNull();
+    expect(failed.error?.message).toBe('down');
+  });
+});
+
+describe('cross-account sweep reads (M-9, M-11)', () => {
+  it('listDueForExpiry: ready and past expiry, oldest first, at most 500, only id, user_id and the kind (DE-10a SA-2)', async () => {
+    const now = new Date('2026-10-17T12:00:00.000Z');
+    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER, requested_by_kind: 'admin' }], error: null });
+    expect((await repo(c).listDueForExpiry(now)).data).toEqual([{ id: JOB, user_id: OWNER, requested_by_kind: 'admin' }]);
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_data_exports'] },
+      { method: 'select', args: ['id, user_id, requested_by_kind'] },
       { method: 'eq', args: ['status', 'ready'] },
       { method: 'lte', args: ['expires_at', '2026-10-17T12:00:00.000Z'] },
       { method: 'order', args: ['expires_at', { ascending: true }] },
@@ -307,13 +410,13 @@ describe('cross-account sweep reads (M-9, M-11)', () => {
   });
 
   // DE-8b: was "both carry ..."; listStaleRunning is the third sweep read.
-  it('listStaleRunning: running and created before the cut, oldest first, at most 500, only id and user_id (DE-8b, SA DE-8a Q-12)', async () => {
+  it('listStaleRunning: running and created before the cut, oldest first, at most 500, only id, user_id and the kind (DE-8b, SA DE-8a Q-12; DE-10a SA-2)', async () => {
     const before = new Date('2026-10-17T11:58:30.000Z');
-    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER }], error: null });
-    expect((await repo(c).listStaleRunning(before)).data).toEqual([{ id: JOB, user_id: OWNER }]);
+    const { c, calls } = client({ data: [{ id: JOB, user_id: OWNER, requested_by_kind: 'owner' }], error: null });
+    expect((await repo(c).listStaleRunning(before)).data).toEqual([{ id: JOB, user_id: OWNER, requested_by_kind: 'owner' }]);
     expect(calls).toEqual([
       { method: 'from', args: ['business_os_data_exports'] },
-      { method: 'select', args: ['id, user_id'] },
+      { method: 'select', args: ['id, user_id, requested_by_kind'] },
       { method: 'eq', args: ['status', 'running'] },
       { method: 'lt', args: ['created_at', '2026-10-17T11:58:30.000Z'] },
       { method: 'order', args: ['created_at', { ascending: true }] },
@@ -359,12 +462,14 @@ describe('tenant isolation negative control', () => {
       return eqs(calls).some(([column, value]) => column === 'user_id' && value === OWNER);
     };
     expect(await run((r) => r.findById(JOB, OWNER))).toBe(true);
+    expect(await run((r) => r.findOwnerJobById(JOB, OWNER))).toBe(true);
     expect(await run((r) => r.findLatestForUser(OWNER))).toBe(true);
+    expect(await run((r) => r.findLatestCompletedForUser(OWNER))).toBe(true);
     expect(await run((r) => r.listForUser(OWNER))).toBe(true);
     expect(await run((r) => r.markReady(JOB, OWNER, { bytes: 0, fileCount: 0, rowCount: 0 }))).toBe(true);
     expect(await run((r) => r.markFailed(JOB, OWNER, 'timeout'))).toBe(true);
     expect(await run((r) => r.markOwnerDownloaded(JOB, OWNER))).toBe(true);
-    expect(await run((r) => r.expireOtherReady(OWNER, JOB))).toBe(true);
+    expect(await run((r) => r.expireOtherReady(OWNER, JOB, 'owner'))).toBe(true);
     expect(await run((r) => r.markExpired(JOB, OWNER))).toBe(true);
   });
 });

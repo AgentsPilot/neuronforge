@@ -11,11 +11,14 @@
 //
 // auth -> Zod on the path (`jobId` a uuid; `partNo` exactly '1' in Phase 1)
 // and the empty body -> throttle (the existing `read` rule; SA Q-15) ->
-// findById(jobId, user.id): a foreign id returns null, so it is a 404 exactly
-// like a missing one -> `ready` and `expires_at` in the future, else 410
+// findOwnerJobById(jobId, user.id): a foreign id returns null, so it is a 404
+// exactly like a missing one; since DE-10a (SA-5) an admin-prepared job of
+// this same account is null too (owner-requested jobs only), so the owner
+// never learns of it (BQ-SA-2) -> `ready` and `expires_at` in the future, else 410
 // `export_expired` -> the file name re-derived (SA C-8: the job's created_at,
 // the owner's timezone and business name read again, never stored; a failed
-// name read gives the fallback name and a warn, never a failed download) ->
+// name read gives the fallback name and a warn, never a failed download; the
+// rule lives in downloadName.ts, shared with the DE-10a admin route) ->
 // sign 120 s -> markOwnerDownloaded -> DATA_EXPORT_DOWNLOADED (non-blocking)
 // -> 200, no-store.
 //
@@ -30,11 +33,8 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { RATE_LIMITS, rateLimit, tooManyRequests } from '@/lib/security/rateLimit';
 import { businessOsDataExportJobRepository } from '@/lib/repositories/BusinessOsDataExportJobRepository';
 import { businessOsDataExportStorageRepository } from '@/lib/repositories/BusinessOsDataExportStorageRepository';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { EXPORT_JOB_POLICY } from '@/lib/business-os/data-export/jobPolicy';
-import { exportZipFileNames } from '@/lib/business-os/data-export/fileName';
-import { ownerTimezone } from '@/lib/business-os/data-export/ownerClock';
-import { cleanBusinessName } from '@/lib/business-os/data-export/readme';
+import { exportDownloadNames } from '@/lib/business-os/data-export/downloadName';
 
 const logger = createLogger({ module: 'BusinessOsDataExportDownloadAPI' });
 
@@ -60,21 +60,6 @@ async function readBody(request: NextRequest): Promise<{ ok: true; value: unknow
   }
 }
 
-/** The business name, read again (C-8). A failed read is the fallback name, never a failed download. */
-async function businessName(userId: string, log: { warn: (c: Record<string, unknown>, m: string) => void }): Promise<string | null> {
-  try {
-    const { data, error } = await businessProfileRepository.findCompanyName(userId);
-    if (error) {
-      log.warn({ userId }, 'Data export download: business name unreadable, fallback file name');
-      return null;
-    }
-    return cleanBusinessName(data);
-  } catch (err) {
-    log.warn({ err, userId }, 'Data export download: business name unreadable, fallback file name');
-    return null;
-  }
-}
-
 export async function POST(request: NextRequest, { params }: { params: { jobId: string; partNo: string } }) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -93,8 +78,10 @@ export async function POST(request: NextRequest, { params }: { params: { jobId: 
     const throttle = await rateLimit(request, 'data-export-download', RATE_LIMITS.read);
     if (!throttle.allowed) return tooManyRequests(RATE_LIMITS.read.windowSeconds);
 
-    // Scoped by the session id: another account's job id is null, a 404 like a missing one.
-    const found = await businessOsDataExportJobRepository.findById(jobId, user.id);
+    // Scoped by the session id and to owner-requested jobs: another account's
+    // job id, or an admin-prepared one of this account (DE-10a SA-5), is null,
+    // a 404 like a missing one.
+    const found = await businessOsDataExportJobRepository.findOwnerJobById(jobId, user.id);
     if (found.error) {
       requestLogger.error({ userId: user.id, jobId }, 'Data export download: job unreadable');
       return json({ success: false, error: 'Could not read the export. Please try again.' }, 500);
@@ -105,8 +92,7 @@ export async function POST(request: NextRequest, { params }: { params: { jobId: 
       return json({ success: false, code: 'export_expired', error: 'This export is no longer available. Please prepare a new one.' }, 410);
     }
 
-    const [timezone, name] = await Promise.all([ownerTimezone(user.id, requestLogger), businessName(user.id, requestLogger)]);
-    const names = exportZipFileNames(new Date(job.created_at), timezone, name);
+    const names = await exportDownloadNames(user.id, job.created_at, requestLogger);
 
     const signed = await businessOsDataExportStorageRepository.sign(
       user.id,

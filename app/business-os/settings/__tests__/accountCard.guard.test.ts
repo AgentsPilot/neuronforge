@@ -50,12 +50,19 @@ describe('S-5: every account-card chevron mirrors in RTL', () => {
 
   it('every ChevronRight on the page takes its class from the helper', () => {
     const chevrons = code.match(/<ChevronRight\b[^>]*\/>/g) ?? [];
-    // Plan, consent, password, export, log out, delete. Invite has its own (mirrored) row.
-    expect(chevrons.length).toBeGreaterThanOrEqual(6);
+    // Plan, consent, password, log out, delete. Invite and, since data export
+    // DE-9, "Download my data" own their rows (and their mirrored chevrons).
+    expect(chevrons.length).toBeGreaterThanOrEqual(5);
     for (const chevron of chevrons) {
       expect(chevron).toMatch(/className=\{rowChevron\(/);
       expect(chevron).toContain('aria-hidden="true"');
     }
+  });
+
+  it('the "Download my data" row, which owns its own chevron since DE-9, mirrors it', () => {
+    expect(code).toMatch(/<DownloadMyDataButton variant="row" \/>/);
+    const control = stripComments(read('components/business-os/data-export/DownloadMyDataButton.tsx'));
+    expect(control).toMatch(/<ChevronRight[\s\S]*?(?<![!\w])isRTL && 'scale-x-\[-1\]'[\s\S]*?\/>/);
   });
 
   it('the invite row, which owns its own chevron, keeps its mirror', () => {

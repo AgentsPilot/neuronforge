@@ -190,6 +190,9 @@ const PANEL_READS: Record<string, { entitlements: Reply; summary: Reply }> = {
   [SARA_ID]: { entitlements: { status: 200, body: recordedAccountBody }, summary: SERVER_ERROR },
 };
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function routeGet(url: string): Queued {
   if (url.startsWith('/api/admin/users?')) {
     return { status: 200, body: { success: true, data: listRows, stats: { totalUsers: listRows.length, activeUsers: 0, newUsersToday: 0 } } };
@@ -204,6 +207,8 @@ function routeGet(url: string): Queued {
     if (url === `/api/admin/business-os/credits/accounts/${id}/boost`) return ok(boost(id));
   }
   if (url === ARCHIVING_URL) return { status: 200, body: ARCHIVING };
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return ok(NO_EXPORTS);
   if (url === CLEANUP_CHECK_URL) return ok({ configured: true });
   unexpected.push(`GET ${url}`);
   return refused(404, 'not mocked');

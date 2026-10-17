@@ -41,8 +41,9 @@ import type {
   DataExportFailureReason,
   DataExportJob,
   DataExportJobCounts,
-  DataExportJobRef,
   DataExportJobState,
+  DataExportRequesterKind,
+  DataExportSweepRef,
   DataExportStartOutcome,
 } from './types';
 
@@ -54,6 +55,9 @@ export const DATA_EXPORT_JOB_COLUMNS =
   'id, user_id, requested_by, requested_by_kind, status, failure_reason, bytes, file_count, row_count, ' +
   'created_at, finished_at, ready_at, expires_at, expired_at, owner_downloaded_at, updated_at';
 
+/** The two sweep reads (DE-10a: the kind decides where the audit row goes, SA-2). */
+const SWEEP_REF_COLUMNS = 'id, user_id, requested_by_kind';
+
 export const DATA_EXPORT_JOB_LIMITS = {
   LIST_DEFAULT: 10,
   LIST_MAX: 20,
@@ -63,6 +67,7 @@ export const DATA_EXPORT_JOB_LIMITS = {
 } as const;
 
 const uuid = z.string().uuid();
+const requesterKind = z.enum(['owner', 'admin']);
 const failureReason = z.enum(['over_ceiling', 'timeout', 'error']);
 const count = z.number().int().nonnegative().safe();
 const counts = z.object({ bytes: count, fileCount: count, rowCount: count }).strict();
@@ -180,6 +185,31 @@ export class BusinessOsDataExportJobRepository {
     }
   }
 
+  /**
+   * DE-10a (SA-5, DE-9 C-4 note 1): the owner's OWN export by id, for the
+   * owner "download again" route. An admin-prepared job of the same account is
+   * exactly a missing one (null), so an owner who learns its id gets a 404,
+   * never a link, a 410 hint or an audit row (BQ-SA-2).
+   */
+  async findOwnerJobById(jobId: string, userId: string): Promise<RepositoryResult<DataExportJob>> {
+    if (!uuid.safeParse(jobId).success || !uuid.safeParse(userId).success) return { data: null, error: invalid('id') };
+    try {
+      const { data, error } = await this.supabase
+        .from(TABLE)
+        .select(DATA_EXPORT_JOB_COLUMNS)
+        .eq('id', jobId)
+        .eq('user_id', userId)
+        .eq('requested_by_kind', 'owner')
+        .maybeSingle();
+      if (error) throw error;
+      return { data: (data as DataExportJob | null) ?? null, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'findOwnerJobById', jobId, userId }, 'Failed to read the owner data export job');
+      return { data: null, error: safe };
+    }
+  }
+
   async findLatestForUser(userId: string): Promise<RepositoryResult<DataExportJob>> {
     if (!uuid.safeParse(userId).success) return { data: null, error: invalid('user id') };
     try {
@@ -195,6 +225,36 @@ export class BusinessOsDataExportJobRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'findLatestForUser', userId }, 'Failed to read the latest data export job');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * DE-9: the owner's newest export that was DELIVERED, for "Last export …"
+   * (GET /api/business-os/data-exports). `ready` or `expired` only: a failed
+   * or running job was not handed over and never counts as the last export.
+   *
+   * SA DE-9 C-4: owner-requested jobs only. DE-10a writes admin-prepared jobs
+   * onto the customer's own user_id, and BQ-SA-2 rules out telling the owner
+   * about an export an admin made, so an admin-kind row is never returned.
+   */
+  async findLatestCompletedForUser(userId: string): Promise<RepositoryResult<DataExportJob>> {
+    if (!uuid.safeParse(userId).success) return { data: null, error: invalid('user id') };
+    try {
+      const { data, error } = await this.supabase
+        .from(TABLE)
+        .select(DATA_EXPORT_JOB_COLUMNS)
+        .eq('user_id', userId)
+        .eq('requested_by_kind', 'owner')
+        .in('status', ['ready', 'expired'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const rows = (data as unknown as DataExportJob[] | null) ?? [];
+      return { data: rows[0] ?? null, error: null };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'findLatestCompletedForUser', userId }, 'Failed to read the last completed data export');
       return { data: null, error: safe };
     }
   }
@@ -300,7 +360,11 @@ export class BusinessOsDataExportJobRepository {
     }
   }
 
-  /** Records the owner's FIRST download only. true if this call recorded it. */
+  /**
+   * Records the owner's FIRST download only. true if this call recorded it.
+   * DE-10a (SA-5): owner-requested jobs only, so nothing (an admin download
+   * included) can stamp an admin-prepared job as downloaded by the owner.
+   */
   async markOwnerDownloaded(jobId: string, userId: string): Promise<RepositoryResult<boolean>> {
     if (!uuid.safeParse(jobId).success || !uuid.safeParse(userId).success) return { data: null, error: invalid('id') };
     const nowIso = new Date().toISOString();
@@ -311,6 +375,7 @@ export class BusinessOsDataExportJobRepository {
         .eq('id', jobId)
         .eq('user_id', userId)
         .eq('status', 'ready')
+        .eq('requested_by_kind', 'owner')
         .is('owner_downloaded_at', null)
         .select('id');
       if (error) throw error;
@@ -324,10 +389,17 @@ export class BusinessOsDataExportJobRepository {
 
   /**
    * "A newer export replaces the old one" (§0.4.1 A): every other ready job of
-   * this account turns expired. Returns their ids; DE-8b removes their objects.
+   * this account AND OF THE SAME KIND turns expired. Returns their ids; DE-8b
+   * removes their objects.
+   *
+   * DE-10a (SA-4, TL default BC-3): an owner export never expires an
+   * admin-prepared one and an admin export never expires the owner's, so
+   * neither side silently deletes the other's file. `kind` is the ready job's
+   * own (runZipExport reads it from markReady's row, never from a caller).
    */
-  async expireOtherReady(userId: string, keepJobId: string): Promise<RepositoryResult<string[]>> {
+  async expireOtherReady(userId: string, keepJobId: string, kind: DataExportRequesterKind): Promise<RepositoryResult<string[]>> {
     if (!uuid.safeParse(userId).success || !uuid.safeParse(keepJobId).success) return { data: null, error: invalid('id') };
+    if (!requesterKind.safeParse(kind).success) return { data: null, error: invalid('kind') };
     const nowIso = new Date().toISOString();
     try {
       const { data, error } = await this.supabase
@@ -335,11 +407,12 @@ export class BusinessOsDataExportJobRepository {
         .update({ status: 'expired', expired_at: nowIso, updated_at: nowIso })
         .eq('user_id', userId)
         .eq('status', 'ready')
+        .eq('requested_by_kind', kind)
         .neq('id', keepJobId)
         .select('id');
       if (error) throw error;
       const ids = ((data as Array<{ id: string }> | null) ?? []).map((row) => row.id);
-      this.logger.info({ method: 'expireOtherReady', userId, keepJobId, expired: ids.length }, 'Older data exports expired');
+      this.logger.info({ method: 'expireOtherReady', userId, keepJobId, kind, expired: ids.length }, 'Older data exports expired');
       return { data: ids, error: null };
     } catch (err) {
       const safe = toError(err);
@@ -371,8 +444,12 @@ export class BusinessOsDataExportJobRepository {
 
   // ============ Cross-account sweep reads (DE-8b cron only) ============
 
-  /** Ready jobs whose 72 hours are over, oldest first. */
-  async listDueForExpiry(now: Date, limit: number = DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX): Promise<RepositoryResult<DataExportJobRef[]>> {
+  /**
+   * Ready jobs whose 72 hours are over, oldest first. DE-10a (SA-2): with the
+   * requester kind, so the sweep places the audit row of an admin job off the
+   * owner's account.
+   */
+  async listDueForExpiry(now: Date, limit: number = DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX): Promise<RepositoryResult<DataExportSweepRef[]>> {
     if (!(now instanceof Date) || Number.isNaN(now.getTime())) return { data: null, error: invalid('now') };
     if (!z.number().int().min(1).max(DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX).safeParse(limit).success) {
       return { data: null, error: invalid('limit') };
@@ -381,13 +458,13 @@ export class BusinessOsDataExportJobRepository {
       // Cross-account by design: the daily sweep has no user context; every effect it takes is scoped by the row's own user_id (tenant-isolation-guard Step 6).
       const { data, error } = await this.supabase
         .from(TABLE)
-        .select('id, user_id')
+        .select(SWEEP_REF_COLUMNS)
         .eq('status', 'ready')
         .lte('expires_at', now.toISOString())
         .order('expires_at', { ascending: true })
         .limit(limit);
       if (error) throw error;
-      return { data: (data as DataExportJobRef[] | null) ?? [], error: null };
+      return { data: (data as unknown as DataExportSweepRef[] | null) ?? [], error: null };
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'listDueForExpiry' }, 'Failed to list data exports due for expiry');
@@ -399,9 +476,10 @@ export class BusinessOsDataExportJobRepository {
    * DE-8b (SA DE-8a Q-12): `running` jobs created before `before`, oldest
    * first. The cron passes `now - STALE_RUNNING_SECONDS`, the same predicate
    * the start function applies for one account, so a killed run of an owner
-   * who never exports again is still turned failed / timeout.
+   * who never exports again is still turned failed / timeout. With the
+   * requester kind since DE-10a (SA-2), as listDueForExpiry.
    */
-  async listStaleRunning(before: Date, limit: number = DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX): Promise<RepositoryResult<DataExportJobRef[]>> {
+  async listStaleRunning(before: Date, limit: number = DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX): Promise<RepositoryResult<DataExportSweepRef[]>> {
     if (!(before instanceof Date) || Number.isNaN(before.getTime())) return { data: null, error: invalid('before') };
     if (!z.number().int().min(1).max(DATA_EXPORT_JOB_LIMITS.DUE_FOR_EXPIRY_MAX).safeParse(limit).success) {
       return { data: null, error: invalid('limit') };
@@ -410,13 +488,13 @@ export class BusinessOsDataExportJobRepository {
       // Cross-account by design: the daily sweep has no user context; every effect it takes is scoped by the row's own user_id (tenant-isolation-guard Step 6).
       const { data, error } = await this.supabase
         .from(TABLE)
-        .select('id, user_id')
+        .select(SWEEP_REF_COLUMNS)
         .eq('status', 'running')
         .lt('created_at', before.toISOString())
         .order('created_at', { ascending: true })
         .limit(limit);
       if (error) throw error;
-      return { data: (data as DataExportJobRef[] | null) ?? [], error: null };
+      return { data: (data as unknown as DataExportSweepRef[] | null) ?? [], error: null };
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'listStaleRunning' }, 'Failed to list stale data export runs');

@@ -3,8 +3,9 @@
 // The owner's clock for an export's file name and README (DE-4, user
 // 2026-10-15). Moved out of app/api/user/data-export/route.ts by DE-8b
 // (BUSINESS_OS_DATA_EXPORT_DE8B_WORKPLAN.md §4; SA Q-1: a pure move, the JSON
-// route's characterization test is the proof) so the JSON route and the zip
-// routes read the clock the same way.
+// route's characterization test was the proof) so the JSON route and the zip
+// routes read the clock the same way. DE-9 retired the JSON route; the zip
+// routes are its only readers now.
 //
 // `user_preferences.timezone` is the authority (CLAUDE.md § Currency &
 // Timezone; `business_profiles.timezone` does not exist). NULL (never set),

@@ -12,7 +12,7 @@ import {
   linkedOAuthLabel,
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities';
-import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
+import { DownloadMyDataButton } from '@/components/business-os/data-export/DownloadMyDataButton';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
@@ -21,7 +21,6 @@ import {
   DollarSign,
   Clock,
   Lock,
-  Download,
   Trash2,
   ChevronRight,
   ChevronDown,
@@ -197,8 +196,6 @@ function BusinessOSSettingsContent() {
     maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
     warmOnIdle: true,
   });
-
-  const [exporting, setExporting] = useState(false);
 
   // Delete account dialog state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -520,31 +517,6 @@ function BusinessOSSettingsContent() {
       </div>
     </div>
   );
-
-  const handleExportData = async () => {
-    if (!user) return;
-
-    try {
-      setExporting(true);
-
-      // The server export, not a client read (DE-0a): reading the tables here
-      // with `select('*')` put every plugin's OAuth tokens in the file.
-      const result = await downloadUserDataExport();
-      if (!result.success) {
-        logger.error({ code: result.code, status: result.status }, 'Failed to export the account data');
-        setErrorMessage(t('settings.security.export_error'));
-        return;
-      }
-
-      setSuccessMessage(t('settings.security.export_success'));
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to export the account data');
-      setErrorMessage(t('settings.security.export_error'));
-    } finally {
-      setExporting(false);
-    }
-  };
 
   /**
    * Sign out, properly.
@@ -1177,18 +1149,10 @@ function BusinessOSSettingsContent() {
           </div>
           )}
 
-          {/* Export Data */}
-          <button
-            onClick={handleExportData}
-            disabled={exporting}
-            className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors disabled:opacity-50"
-          >
-            <div className="flex items-center gap-3">
-              <Download className="w-5 h-5 text-[var(--v2-text-muted)]" />
-              <span className="text-sm text-[var(--v2-text-primary)]">{t('settings.security.export_data')}</span>
-            </div>
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className={rowChevron()} aria-hidden="true" />}
-          </button>
+          {/* Download my data (data export DE-9): the one shared control. It
+              owns its request, status line and notice (UI-1); the page banner
+              above no longer carries export messages. */}
+          <DownloadMyDataButton variant="row" />
 
           {/* Log out.
               Between "export my data" and "destroy my account": the last

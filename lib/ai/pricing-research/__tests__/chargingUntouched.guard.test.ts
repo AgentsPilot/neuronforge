@@ -1,14 +1,17 @@
 /**
- * Charging untouched, at source level (AI model price review slice 3,
- * workplan §5 "the full proof", SA C-6).
+ * The review code never prices a call (AI model price review; written for
+ * slice 3, SA C-6; re-scoped in place by slice 7, SA O-4).
  *
- * Slice 3 must change no charge. The other three parts of the proof are the
- * empty `git diff` of the charging files (QA), the existing pricing suites
- * passing unedited, and the production checker (V-5, V-6). This guard pins
- * what the files of this slice can and cannot do:
- *   - they import from the charging modules only the named READ exports;
+ * Charging changes only in the charging modules, under their own suites
+ * (slice 7: `lib/ai/__tests__/chargeParity.test.ts`, frozen, and
+ * `lib/ai/__tests__/chargeSources.guard.test.ts`). This guard pins what the
+ * research and review files (the price comparison, manual entry, the provider
+ * fetch) can and cannot do:
+ *   - they import from the charging modules only the named READ exports, and
+ *     from `lib/ai/imagePricing.ts` only its PURE functions, never its cache;
  *   - none of them writes `ai_model_pricing` or `ai_model_image_pricing`;
- *   - the new repository has no write method at all besides the RPC.
+ *   - none of them refreshes the billing cache or prices a call;
+ *   - the price repositories are called only through their exact-text reads.
  */
 
 import { readdirSync, readFileSync } from 'fs';
@@ -49,12 +52,14 @@ it.each(SLICE_FILES)('%s imports only read exports from the charging modules', (
     '@/lib/business-os/llm/chargePricing': ['conservativeRateDerivation'],
     '@/lib/services/GeneratedImageService': ['resolveImagePrice'],
     '@/lib/business-os/llm/modelSettings': ['validateAreaRow'],
+    // Slice 7 (SA RC7-7): the pure selection rule and resolver, never `loadImagePrices`.
+    '@/lib/ai/imagePricing': ['selectActiveImagePrices', 'resolveImagePriceFrom', 'imagePriceKey'],
   };
   for (const [modulePath, names] of Object.entries(allowed)) {
     for (const name of importsFrom(source, modulePath)) expect({ file, modulePath, name, ok: names.includes(name) }).toEqual({ file, modulePath, name, ok: true });
   }
   // Nothing in this slice may refresh the billing cache or price a call.
-  expect(source).not.toMatch(/refreshPricingCache|calculateCost|priceActionForCharge/);
+  expect(source).not.toMatch(/refreshPricingCache|calculateCost|priceActionForCharge|warmPricingCache|loadImagePrices|invalidateImagePrices/);
 });
 
 it.each(SLICE_FILES)('%s never writes a live price table', (file) => {
@@ -62,14 +67,19 @@ it.each(SLICE_FILES)('%s never writes a live price table', (file) => {
   expect(source).not.toMatch(/from[(]'ai_model(_image)?_pricing'[)][\s\S]{0,200}[.](insert|update|upsert|delete)[(]/);
   expect(source).not.toMatch(/[.](syncMany|updateCosts|deleteById)[(]/);
   expect(source).not.toMatch(/aiModelPricingRepository[.](create|updateCosts|deleteById|syncMany)/);
+  expect(source).not.toMatch(/aiModelImagePricingRepository[.](insert|update|upsert|delete|rpc)/);
 });
 
-it('the only aiModelPricingRepository method this slice calls is listActiveExact', () => {
+it.each(['aiModelPricingRepository', 'aiModelImagePricingRepository'])('the only %s method the review code calls is listActiveExact', (repository) => {
+  let calls = 0;
   for (const file of SLICE_FILES) {
-    for (const match of read(file).matchAll(/aiModelPricingRepository[.]([a-zA-Z]+)/g)) {
+    for (const match of read(file).matchAll(new RegExp(`${repository}[.]([a-zA-Z]+)`, 'g'))) {
+      calls += 1;
       expect({ file, method: match[1] }).toEqual({ file, method: 'listActiveExact' });
     }
   }
+  // Not vacuous: the comparison reads both tables (slice 7 RC7-7 for the image table).
+  expect(calls).toBeGreaterThan(0);
 });
 
 // SA CR-3: the image price setting is a charging input, and both of these

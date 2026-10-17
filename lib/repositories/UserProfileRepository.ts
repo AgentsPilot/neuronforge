@@ -466,7 +466,9 @@ export class UserProfileRepository {
   }
 
   /**
-   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
+   * GDPR export only ("Download my data", Art. 15 / 20: the zip builder's
+   * `user_profile` section, lib/business-os/data-export/sections.ts; the JSON
+   * route GET /api/user/data-export was retired by DE-9). The caller's
    * profile row, the `profiles` descriptor's export columns only (DE-2:
    * lib/business-os/purge/descriptors.ts PROFILES_EXPORT, where the privacy
    * reasoning now lives). Changing that list changes what the export holds,

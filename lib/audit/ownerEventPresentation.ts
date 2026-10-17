@@ -13,7 +13,8 @@
 // Every other row is returned exactly as read (the existing response shape is
 // pinned by app/api/audit/__tests__/auditRoutes.test.ts).
 //
-// The owner's data export (app/api/user/data-export) is NOT changed: it is the
+// The owner's data export ("Download my data", app/api/business-os/data-exports
+// since DE-9 retired app/api/user/data-export) is NOT changed: it is the
 // owner's full record of their own data.
 //
 // Pure: no I/O. Safe in a client bundle.

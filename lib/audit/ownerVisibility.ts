@@ -16,7 +16,9 @@
 //     `ALTER POLICY "Users can view their own audit logs"`: 20261018, then
 //     20261035 for `bos_queue_item`, ADMIN_BOS_CLEANUP slice 7b);
 //   - AuditTrailRepository.listOwnerEntries (GET /api/audit/query, /monitoring);
-//   - the data export route (app/api/user/data-export).
+//   - the data export (app/api/business-os/data-exports and
+//     lib/business-os/data-export/, which since DE-1 read no audit rows at
+//     all; the JSON route app/api/user/data-export was retired by DE-9).
 // lib/audit/__tests__/ownerVisibility.test.ts fails if the policy's list and
 // this registry differ, and lib/audit/__tests__/ownerAuditReads.guard.test.ts
 // fails if a new owner-facing reader of `audit_trail` appears.

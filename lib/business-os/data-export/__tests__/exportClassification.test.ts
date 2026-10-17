@@ -1718,7 +1718,9 @@ describe('DE-5 M-5 no conversion, no FX, no currency rewriting in the export (SA
       .filter((e) => e.isFile() && /\.tsx?$/.test(e.name))
       .map((e) => path.join(DATA_EXPORT_DIR, e.name)),
     path.join(REPO, 'lib', 'repositories', 'BusinessDataExportRepository.ts'),
-    path.join(REPO, 'app', 'api', 'user', 'data-export', 'route.ts'),
+    // DE-9: the JSON route (app/api/user/data-export) is retired; the zip routes replace it.
+    path.join(REPO, 'app', 'api', 'business-os', 'data-exports', 'route.ts'),
+    path.join(REPO, 'app', 'api', 'business-os', 'data-exports', '[jobId]', 'parts', '[partNo]', 'download', 'route.ts'),
   ];
 
   it('scanned the export source (non-vacuous, by name), and none of it converts or rewrites a currency', () => {

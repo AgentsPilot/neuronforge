@@ -11,12 +11,10 @@
 //   `max-rows` without saying so (F-3), so every DE-4+ section is read page by
 //   page to the end. The reader ends on an EMPTY page, so a project `max-rows`
 //   below this value still yields every row.
-// - JSON_BODY_MAX_BYTES: only while the export is a direct JSON response.
-//   Vercel refuses a function response over 4.5 MB with a platform crash, not
-//   a message (F-4); we refuse first, at 4 MB of the exact bytes sent. The
-//   signed-URL zip removes this cap (requirement §0.7, SA C-11) in DE-9, the
-//   slice that switches the buttons over and retires the JSON route (DE-8b
-//   SA Q-1: DE-8b leaves the JSON route byte-identical).
+// - (JSON_BODY_MAX_BYTES, the 4 MB cap of the direct JSON response, is gone:
+//   DE-9 retired the JSON route with it. The browser receives only a signed
+//   Storage URL, so the 4.5 MB function response cap no longer applies;
+//   requirement §0.7 C-11, DE-8b SA Q-1.)
 // - VIA_PARENT_CHUNK (DE-7 SA-Q10): owner-scoped parent ids per child query
 //   of the parent-scoped read (`website_blocks` by `.in('page_id', chunk)`).
 //   100 canonical uuids are about 3.7 kB of URL, well inside the PostgREST
@@ -49,7 +47,6 @@
 export const EXPORT_LIMITS = {
   ROW_CEILING: 100_000,
   PAGE_SIZE: 1_000,
-  JSON_BODY_MAX_BYTES: 4_000_000,
   VIA_PARENT_CHUNK: 100,
   FILE_BYTES_CEILING: 41_943_040,
   FILE_COUNT_CEILING: 150,

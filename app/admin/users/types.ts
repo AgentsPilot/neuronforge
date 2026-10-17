@@ -385,3 +385,36 @@ export interface AuditLogEntry {
 
 /** The per-account audit event filter of the drawer's audit section (replaces an `as any` cast, L-4b). */
 export type AuditEventFilter = 'all' | 'login' | 'security' | 'settings';
+
+/**
+ * `GET /api/admin/users/[id]/data-exports`, one export (data export DE-10a,
+ * workplan §5.1). Metadata only: never a link, a file name or a business name.
+ * `requestedByShort` is the first 8 characters of the admin's id, for admin
+ * exports; the full id never reaches the browser.
+ */
+export interface AdminDataExportRow {
+  jobId: string;
+  requestedByKind: 'owner' | 'admin';
+  requestedByShort: string | null;
+  isRequestedByYou: boolean;
+  status: 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+  failureReason: 'over_ceiling' | 'timeout' | 'error' | null;
+  createdAt: string;
+  readyAt: string | null;
+  expiresAt: string | null;
+  ownerDownloadedAt: string | null;
+  isDownloadable: boolean;
+  bytes: number | null;
+  fileCount: number | null;
+  rowCount: number | null;
+}
+
+/** `GET /api/admin/users/[id]/data-exports` payload (DE-10a). */
+export interface AdminDataExportStatus {
+  exports: AdminDataExportRow[];
+  /** BC-4: the owner downloaded their newest delivered export. False when they never exported. */
+  ownerDownloadedLatest: boolean;
+  /** BC-6: the drawer is open on the admin's own account (the box offers no action). */
+  isOwnAccount: boolean;
+  dailyLimit: number;
+}
