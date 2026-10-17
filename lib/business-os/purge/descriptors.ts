@@ -84,7 +84,8 @@ const exclude = (reason: string, detail?: string): TableExportClassification =>
 // DE-7 (SA-Q9): the `planned()` helper is gone. Every table is now `include`
 // or `exclude`, and the CI forbids `planned` on a table
 // (exportClassification.test.ts, PLANNED_TABLES_ALLOWED = false), so a new
-// table is classified on the spot. Buckets keep their own `planned` until DE-8b.
+// table is classified on the spot. Buckets kept their own `planned` until
+// DE-8b, which classified the last two (PLANNED_FILES_ALLOWED = false).
 
 // `PROFILES_EXPORT` (section `user_profile`) moved to the DE-3 block below,
 // after EXPORT_COLUMN_REASON, whose AGENT_SETTING reason it now uses.
@@ -1534,8 +1535,12 @@ const EXCLUDED: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 export const STORAGE_DESCRIPTORS: readonly StorageDescriptor[] = [
-  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'planned', slice: 'DE-8b' } },
-  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'planned', slice: 'DE-8b' } },
+  // DE-8b (SA Q-17): both buckets are in "Your files", under these zip folders
+  // (`files/<folder>/...`). Classification only: the purge fields are untouched.
+  // Documents: only objects a live contact_documents row points at (C-11);
+  // images: every object in the owner's folder (Q10b, BC-4).
+  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'include', folder: 'client-documents' } },
+  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'include', folder: 'website-images' } },
   { bucket: 'business-purge-snapshots', level: 'never', pathPrefix: '{user_id}/', purpose: 'The pre-purge snapshot itself. NEVER emptied by a purge — deleting the forensic artefact as part of the act it records would defeat its purpose. Private, no RLS policy granting authenticated anything (AC-36).',
     export: { kind: 'exclude', reason: 'an internal copy taken before a purge, not the live data' } },
   // Data export DE-8a (migration 20261074). Objects sit at {user_id}/{job_id}/1.zip.
