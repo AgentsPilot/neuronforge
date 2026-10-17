@@ -15,10 +15,16 @@
  * (never a status or kind literal here), in integer minor units of its own
  * currency:
  *   - a plan invoice: amount minus tax (a zero invoice is not a payment);
- *   - a boost: with net = total minus refunded, held and lost: net 0 is 0; no
- *     refund gives net minus tax, and tax above net is INEXACT (SA-W81 (i));
- *     no tax gives net; any other row (a partial refund of a taxed boost) is
- *     INEXACT (SA-Q47). The rule reads the reader's result only: no status.
+ *   - a boost paid in the window: its total minus tax (a zero total is 0; tax
+ *     above the total is INEXACT, SA-W81 (i)). Slice 4b.2 (FR-4B-11, BD-17):
+ *     a purchase no longer carries its refunds; held now is never deducted;
+ *   - a reversal EVENT recorded in the window (R-n / R-n′), through the one
+ *     reader `readReversalMoney` (SA-W118): its refund or lost amount is taken
+ *     off its own account and currency; on a TAXED (or unreadable-tax)
+ *     purchase it is INEXACT (SA-Q47); an event on a never-paid purchase is
+ *     not revenue. An account whose only boost money is a refund is listed
+ *     with a negative figure (SA-Q49). The rules read the readers' results
+ *     only: no status, no kind, no amount column.
  * Lines come from `groupByCurrency`. NOTHING here adds two currencies (BD-12).
  *
  * THE MARGIN (SA-W75). Revenue is integer minor units (two decimals, behind
@@ -52,7 +58,7 @@
  */
 
 import { COST_SCALE } from '@/lib/business-os/credits/creditReport';
-import { BOOST_PAID_FAMILY, readMoney, type BoostPurchaseInput } from './boostRevenue';
+import { BOOST_PAID_FAMILY, readMoney, readReversalMoney, type BoostPurchaseInput } from './boostRevenue';
 import { PLAN_PAYMENT_KIND, readPlanMoney, type PlanPaymentInput } from './planRevenue';
 import { CURRENCY_SCALE, groupByCurrency, normaliseCurrencyCode, type CurrencyLine } from './currencyGroups';
 import type { AiCostUnitBucket, AiCostUnits } from './aiCost';
@@ -97,6 +103,12 @@ export interface AccountEconomicsInput {
   coverage: FinanceCoverage;
   aiCost: { units: AiCostUnits; reachedCeiling: boolean } | null;
   boosts: { rows: readonly BoostPurchaseInput[]; reachedCeiling: boolean } | null;
+  /**
+   * Slice 4b.2 (FR-4B-11): the reversal events of the window (R-n, or R-n′ for
+   * the picked business). Null: the read failed (the boost figures are
+   * Unknown). Absent (older callers and fixtures): no event.
+   */
+  events?: { rows: readonly ReversalEventInput[]; reachedCeiling: boolean } | null;
   plans: { rows: readonly PlanPaymentInput[]; reachedCeiling: boolean } | null;
   /** The plan walk's ids; null when the walk failed. */
   walk: { accountIds: readonly string[]; capped: boolean } | null;
@@ -114,6 +126,9 @@ export interface AccountEconomicsInput {
   /** Slice 6b (FE-4): the assumed card fee config, as data; validated here, never trusted. */
   feeEstimate: unknown;
 }
+
+/** One reversal event, as the one reader takes it (structural, SA-W22). */
+type ReversalEventInput = Parameters<typeof readReversalMoney>[0];
 
 /** One account's money entries, before grouping. */
 interface MoneyOf {
@@ -133,11 +148,38 @@ const emptyMoney = (): MoneyOf => ({ entries: [], inexact: new Map(), revenueRow
  * reader's result only (no status, no column).
  */
 function boostAfterTax(money: NonNullable<ReturnType<typeof readMoney>>): number | null {
-  const net = money.total - money.refunded - money.held - money.lost;
-  if (net === 0) return 0;
-  if (money.refunded === 0) return money.tax > net ? null : net - money.tax;
-  if (money.tax === 0) return net;
-  return null;
+  if (money.total === 0) return 0;
+  return money.tax > money.total ? null : money.total - money.tax;
+}
+
+/** The account an event belongs to: its purchase's (NULL = deleted, or no purchase found). */
+const accountOfEvent = (event: ReversalEventInput): string | null => event.purchase?.user_id ?? null;
+
+/**
+ * FR-4B-11: one reversal event's effect on an account, in minor units, through
+ * the one reader. A refund or loss is taken off; on a taxed purchase it is
+ * inexact (SA-Q47). An opened or won dispute moves no money and adds no row.
+ */
+function addReversal(target: MoneyOf, event: ReversalEventInput): void {
+  const money = readReversalMoney(event);
+  if (money === null) {
+    target.revenueRows += 1;
+    target.entries.push({ currency: event.currency, field: 'boostsAfterTax', hundredths: null });
+    target.entries.push({ currency: event.currency, field: 'afterTax', hundredths: null });
+    return;
+  }
+  if (money.kind === 'not_revenue') return;
+  const taken = money.refunded + money.lost;
+  if (taken === 0) return;
+  target.revenueRows += 1;
+  if (money.tax !== 0) {
+    const code = normaliseCurrencyCode(event.currency);
+    target.inexact.set(code, (target.inexact.get(code) ?? 0) + 1);
+    target.entries.push({ currency: event.currency, field: 'boostsAfterTax', hundredths: 0 });
+    return;
+  }
+  target.entries.push({ currency: event.currency, field: 'boostsAfterTax', hundredths: -taken });
+  target.entries.push({ currency: event.currency, field: 'afterTax', hundredths: -taken });
 }
 
 function addBoost(target: MoneyOf, row: BoostPurchaseInput): void {
@@ -321,15 +363,16 @@ function creditsCell(id: string, noPlanRow: boolean, credits: ReadonlyMap<string
 }
 
 /** The reads a margin depends on: the same four for the tab and for the picked business, plus the 6b fee config. */
-type MarginReads = Pick<AccountEconomicsInput, 'coverage' | 'aiCost' | 'boosts' | 'plans' | 'feeEstimate'>;
+type MarginReads = Pick<AccountEconomicsInput, 'coverage' | 'aiCost' | 'boosts' | 'events' | 'plans' | 'feeEstimate'>;
 
 function readStateOf(input: MarginReads): ReadState {
   return {
     coverage: input.coverage,
     ledgerFailed: input.aiCost === null,
     ledgerCeiling: input.aiCost?.reachedCeiling ?? false,
-    boostsFailed: input.boosts === null,
-    boostsCeiling: input.boosts?.reachedCeiling ?? false,
+    // Slice 4b.2: the boost figures need both the purchases and the events of the window.
+    boostsFailed: input.boosts === null || input.events === null,
+    boostsCeiling: (input.boosts?.reachedCeiling ?? false) || (input.events?.reachedCeiling ?? false),
     plansFailed: input.plans === null,
     plansCeiling: input.plans?.reachedCeiling ?? false,
   };
@@ -350,6 +393,10 @@ function moneyByAccount(input: AccountEconomicsInput): { byAccount: Map<string |
     if (row.status === null || !PAID_FAMILY.has(row.status)) continue;
     addBoost(of(row.user_id), row);
     addBoost(all, row);
+  }
+  for (const event of input.events?.rows ?? []) {
+    addReversal(of(accountOfEvent(event)), event);
+    addReversal(all, event);
   }
   for (const row of input.plans?.rows ?? []) {
     if (row.kind !== PLAN_PAYMENT_KIND) continue;
@@ -572,6 +619,10 @@ export function buildAccountMargin(input: MarginReads & { accountId: string }): 
   for (const row of input.boosts?.rows ?? []) {
     if (row.user_id !== input.accountId || row.status === null || !PAID_FAMILY.has(row.status)) continue;
     addBoost(accountMoney, row);
+  }
+  for (const event of input.events?.rows ?? []) {
+    if (accountOfEvent(event) !== input.accountId) continue;
+    addReversal(accountMoney, event);
   }
   for (const row of input.plans?.rows ?? []) {
     if (row.user_id !== input.accountId || row.kind !== PLAN_PAYMENT_KIND) continue;

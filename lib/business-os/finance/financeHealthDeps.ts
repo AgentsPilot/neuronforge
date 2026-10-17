@@ -14,8 +14,10 @@
  *   - the finance read repository: billing status and revenue head counts,
  *     the client payments and refunds (layer B, slice 2a), and the overdue
  *     invoices and instalments, and client plans (layer B, slice 2b), and the
- *     boost purchases paid in the window (layer A, slice 4a), and the paid
- *     plan invoices in the window (layer A, slice 5a): the
+ *     boost purchases paid in the window (layer A, slice 4a), the paid
+ *     plan invoices in the window (layer A, slice 5a), and the boost reversal
+ *     events recorded in the window and the boost purchases needing attention
+ *     now (layer A, slice 4b.2): the
  *     named all-accounts reads only when no business is picked, the
  *     account-scoped ones with exactly the picked id (the builder chooses);
  *   - slice 1b, the credit-position pass: `adminCreditPercentDeps()`, the
@@ -150,6 +152,15 @@ export function financeHealthDeps(): Omit<
         businessOsFinanceReadRepository.listPlanPaymentsAllAccountsPaidInRange(range, opts),
       listPlanPaymentsForAccountPaidInRange: (accountId, range, opts) =>
         businessOsFinanceReadRepository.listPlanPaymentsForAccountPaidInRange(accountId, range, opts),
+      // Slice 4b.2: the dated reversal events (R-n / R-n′) and the purchases needing attention now (R-l / R-l′).
+      listBoostReversalEventsAllAccountsRecordedInRange: (range, opts) =>
+        businessOsFinanceReadRepository.listBoostReversalEventsAllAccountsRecordedInRange(range, opts),
+      listBoostReversalEventsForAccountRecordedInRange: (accountId, range, opts) =>
+        businessOsFinanceReadRepository.listBoostReversalEventsForAccountRecordedInRange(accountId, range, opts),
+      listBoostPurchasesNeedingAttentionAllAccounts: (opts) =>
+        businessOsFinanceReadRepository.listBoostPurchasesNeedingAttentionAllAccounts(opts),
+      listBoostPurchasesNeedingAttentionForAccount: (accountId, opts) =>
+        businessOsFinanceReadRepository.listBoostPurchasesNeedingAttentionForAccount(accountId, opts),
     },
     // SA-WR-4: the classifier takes the config as a parameter; this is where it is read.
     config: getEntitlementConfig(),

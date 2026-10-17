@@ -46,7 +46,14 @@ const SCREEN_FILES = [
   `${ROOT}/components/moneyBlockUi.ts`,
   // Admin Layout follow-ups LF-4d (a box and a purpose line per section, BD-16)
   `${ROOT}/components/DrawerBox.tsx`,
+  // Data export DE-10a (the Data export section above the danger area)
+  ...DATA_EXPORT_FILES(),
 ];
+
+/** Data export DE-10a: the Data export box, its reason dialog and its copy. */
+function DATA_EXPORT_FILES(): string[] {
+  return [`${ROOT}/components/DataExportBlock.tsx`, `${ROOT}/components/DataExportReasonDialog.tsx`, `${ROOT}/dataExportCopy.ts`];
+}
 
 /**
  * LF-4a.2: the summary strip, the folds and the "All products" block. They
@@ -527,6 +534,8 @@ describe('the dialogs use the shared admin class (Admin Layout Standard L-4a; D-
     `${ROOT}/components/CreditFormDialog.tsx`,
     `${ROOT}/components/DeleteBusinessDialog.tsx`,
     `${ROOT}/components/BoostCapDialog.tsx`,
+    // Data export DE-10a
+    `${ROOT}/components/DataExportReasonDialog.tsx`,
     // BoostReconcileDialog.tsx moved to app/admin/components/jobs/ReconcileTopUpsDialog.tsx
     // in Admin Layout LF-4c; the Jobs source guard carries these checks for it (SA-W7).
   ];
@@ -613,5 +622,60 @@ describe('the screen logs through the client logger, never the server one (follo
     const source = read(file);
     expect(source.trimStart().startsWith("'use client'")).toBe(true);
     expect(source).toContain("import { clientLogger } from '@/lib/logger/client';");
+  });
+});
+
+describe('the Data export box (data export DE-10a; SA-10, W10-5, W10-10)', () => {
+  const block = () => codeOf(read(`${ROOT}/components/DataExportBlock.tsx`));
+
+  it('calls exactly three URLs: the status read, the prepare and the audited download; nothing else', () => {
+    const code = block();
+    expect(code.match(/fetch\(/g)).toHaveLength(2);
+    expect(code).toContain('const baseUrl = `/api/admin/users/${encodeURIComponent(accountId)}/data-exports`;');
+    expect(code).toContain("fetch(baseUrl, { cache: 'no-store' })");
+    expect(code).toContain('postReason(baseUrl, reason, controller.signal)');
+    expect(code).toContain('postReason(`${baseUrl}/${encodeURIComponent(jobId)}/parts/1/download`, reason)');
+    // The owner's routes and helpers are not this box's (BQ-SA-2).
+    expect(code).not.toMatch(/api\/business-os\/data-exports|startDataExport|downloadDataExportAgain/);
+  });
+
+  it('follows a link only after the https check, through the one navigation seam; never logs or stores it', () => {
+    const code = block();
+    expect(code).toContain("import { browserNavigation, isSafeDownloadUrl } from '@/lib/client/businessOsDataExport';");
+    const check = code.indexOf('if (!isSafeDownloadUrl(url))');
+    const assign = code.indexOf('browserNavigation.assign(url)');
+    expect(check).toBeGreaterThan(0);
+    expect(assign).toBeGreaterThan(check);
+    expect(code.match(/browserNavigation\.assign\(/g)).toHaveLength(1);
+    expect(code).not.toMatch(/window\.location|localStorage|sessionStorage|document\.cookie/);
+    expect(code).not.toMatch(/logger\.\w+\([^)]*\burl\b/);
+    expect(code).not.toMatch(/useState<[^>]*downloadUrl/);
+  });
+
+  it('one request at a time: an in-flight ref guards both POSTs; the prepare has a client timeout cleared in finally', () => {
+    const code = block();
+    expect(code.match(/if \(inFlight\.current\) return;/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(code).toContain('setTimeout(() => controller.abort(), PREPARE_TIMEOUT_MS)');
+    expect(code).toContain('clearTimeout(timer);');
+  });
+
+  it('the box never touches the danger area: no danger-area id, no cleanup panel, no delete dialog', () => {
+    const code = block();
+    expect(code).not.toMatch(/danger-area|TestAccountCleanupPanel|DeleteBusinessDialog|refreshList/);
+  });
+
+  it('the detail mounts it once, after the Activity section and before the danger area, keyed by the row', () => {
+    const detail = codeOf(read(DETAIL));
+    expect(detail.match(/<DataExportBlock\b/g)).toHaveLength(1);
+    const audit = detail.indexOf('<BusinessAuditSection');
+    const exportAt = detail.indexOf('<DataExportBlock key={user.id} accountId={user.id} />');
+    const danger = detail.indexOf('data-testid="danger-area"');
+    expect(audit).toBeGreaterThan(-1);
+    expect(exportAt).toBeGreaterThan(audit);
+    expect(danger).toBeGreaterThan(exportAt);
+  });
+
+  it('the copy file has no backslash (the Tailwind CSS-escape hazard)', () => {
+    expect(read(`${ROOT}/dataExportCopy.ts`)).not.toContain(String.fromCharCode(92));
   });
 });

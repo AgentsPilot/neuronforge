@@ -9,8 +9,8 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS fn
               WHERE fn.oid = pg_catalog.to_regprocedure('public.operator_test_account_cleanup(text, text, text, text, uuid, text)')
-                AND position('a824848e0a538477' IN fn.prosrc) > 0) THEN
-    RAISE EXCEPTION 'Data exports rollback refused: the test-account cleanup function of 20261075 is still live. Run supabase/SQL Scripts/20261075_operator_test_account_cleanup_data_exports_rollback.sql first. Nothing was changed';
+                AND position('business_os_data_exports' IN fn.prosrc) > 0) THEN
+    RAISE EXCEPTION 'Data exports rollback refused: a test-account cleanup function that names business_os_data_exports is still live. Roll back the live cleanup version (20261077, then 20261075) first. Nothing was changed';
   END IF;
 END
 $rollback_guard$;

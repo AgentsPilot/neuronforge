@@ -44,6 +44,7 @@ export type BosCronJobId =
   | 'credit-leak-check'
   | 'stripe-settlement-gap'
   | 'bos-billing-reconcile'
+  | 'data-export'
   | 'payment-reminders'
   | 'finance-snapshot';
 
@@ -582,6 +583,47 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ],
   },
   {
+    /*
+     * Data export DE-8b (requirement §0.4.1 A, C): the daily sweep of the
+     * "Download my data" zips. Reaps runs killed mid-build, deletes zips after
+     * their 3 days, removes orphan objects, and watches how close each
+     * account's stored files are to the Phase 1 ceiling. NOT a queue drain:
+     * every step is idempotent. Counts only.
+     *
+     * Near/over-ceiling accounts are a FINDING (the
+     * `data_export_accounts_near_ceiling` warn), shown as numbers that do not
+     * colour the job. "Partly done" = a step could not finish, or a due zip
+     * could not be removed.
+     */
+    id: 'data-export',
+    path: '/api/cron/data-export',
+    schedule: '25 5 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Data export sweep',
+    description: 'Deletes data export zips after 3 days, cleans up after failed runs and watches account size against the export limit',
+    scheduleWords: 'Daily at 05:25 UTC',
+    // QA4b-B1: the deploy day (merge 2026-10-17, set by RM).
+    addedOn: '2026-10-17',
+    drainsQueue: null,
+    counts: [
+      { key: 'staleReaped', path: ['data', 'staleReaped'], label: 'stuck exports marked failed' },
+      { key: 'expired', path: ['data', 'expired'], label: 'exports deleted after 3 days' },
+      { key: 'expireFailed', path: ['data', 'expireFailed'], label: 'due exports not deleted (retried tomorrow)' },
+      { key: 'orphansRemoved', path: ['data', 'orphansRemoved'], label: 'leftover zips removed' },
+      { key: 'orphansKept', path: ['data', 'orphansKept'], label: 'zips kept' },
+      { key: 'orphansUnexpected', path: ['data', 'orphansUnexpected'], label: 'unexpected objects left alone' },
+      { key: 'accountsWatched', path: ['data', 'accountsWatched'], label: 'accounts with files checked' },
+      { key: 'accountsNearCeiling', path: ['data', 'accountsNearCeiling'], label: 'accounts at 60% or more of the file limit' },
+      { key: 'accountsOverCeiling', path: ['data', 'accountsOverCeiling'], label: 'accounts over the file limit' },
+      { key: 'incompleteSteps', path: ['data', 'incompleteSteps'], label: 'steps that could not finish' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'incompleteSteps', value: 1 },
+      { kind: 'atLeast', key: 'expireFailed', value: 1 },
+    ],
+  },
+  {
     id: 'payment-reminders',
     path: '/api/cron/payment-reminders',
     /*
@@ -630,8 +672,9 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     label: 'Finance history snapshot',
     description: "Records last night's plan mix and credit position for the Finance history",
     scheduleWords: 'Daily at 00:07 UTC',
-    // QA4b-B1: added after run recording began. RM sets this to the real deploy day in the PR.
-    addedOn: '2026-10-18',
+    // QA4b-B1: added after run recording began. The UTC date of the first 00:07 run after the
+    // production deploy (SA D-3: later shows only "No run yet", earlier shows "Stopped").
+    addedOn: '2026-10-19',
     drainsQueue: null,
     counts: [
       { key: 'metricsWritten', path: ['data', 'metricsWritten'], label: 'figures written' },

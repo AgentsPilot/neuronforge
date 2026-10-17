@@ -50,7 +50,7 @@ The job also handles three failure cases:
   5. Turn on auto-merge only after that, and only once `20261078` is applied.
 - **Owed to the user after the first night (AC-294):** L-156 (the job is listed), L-157 (a green run, with `metricsWritten` and `familiesSkipped` 0) and L-158 (checks 33 and 34).
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-health-8-2 — commit pending (RM); PR held until #452 merges
+### Status: COMMITTED — feature/bos-finance-health-8-2 — commit `9bb0395c`, main merged `2043dffb`, addedOn `6225e6e5`, PR #460 (auto-merge on)
 
 ---
 

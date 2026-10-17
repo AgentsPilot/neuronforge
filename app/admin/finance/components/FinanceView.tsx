@@ -308,7 +308,7 @@ export function FinanceView() {
                 <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
                 {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
                 {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
-                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
+                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} accountId={data.accountId} />
               </OverviewBody>
             )}
           </div>

@@ -192,6 +192,9 @@ const PANEL_READS: Record<string, { entitlements: Reply; summary: Reply }> = {
   [SARA_ID]: { entitlements: { status: 200, body: recordedAccountBody }, summary: SERVER_ERROR },
 };
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function routeGet(url: string): Queued {
   if (url.startsWith('/api/admin/users?')) {
     return { status: 200, body: { success: true, data: listRows, stats: { totalUsers: listRows.length, activeUsers: 0, newUsersToday: 0 } } };
@@ -206,6 +209,8 @@ function routeGet(url: string): Queued {
     if (url === `/api/admin/business-os/credits/accounts/${id}/boost`) return ok(boost(id));
   }
   if (url === ARCHIVING_URL) return { status: 200, body: ARCHIVING };
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return ok(NO_EXPORTS);
   if (url === CLEANUP_CHECK_URL) return ok({ configured: true });
   unexpected.push(`GET ${url}`);
   return refused(404, 'not mocked');
@@ -312,6 +317,8 @@ const commonReads = (id: string) => [
   `GET /api/admin/business-os/accounts/${id}/summary cache=no-store headers=none`,
   `GET ${ARCHIVING_URL} cache=none headers=none`,
   `GET ${CLEANUP_CHECK_URL} cache=none headers=none`,
+  // Data export DE-10a (BC-5, W10-10): the Data export box's one status read, for every login.
+  `GET /api/admin/users/${id}/data-exports cache=no-store headers=none`,
 ];
 const moneyReads = (id: string) => [
   `GET /api/admin/business-os/credits/accounts/${id} cache=no-store headers=none`,
@@ -319,12 +326,12 @@ const moneyReads = (id: string) => [
 ];
 
 describe('PIN-k / AC-4.3: the requests one opening sends', () => {
-  it('READS-1: a Business OS account: the nine reads below, each exactly once, and no POST', async () => {
+  it('READS-1: a Business OS account: the ten reads below, each exactly once, and no POST', async () => {
     const sent = await requestsOfOneOpen('Dana Cohen', 'boost-cap');
     expect(sent).toEqual([...commonReads(DANA_ID), ...moneyReads(DANA_ID)].sort());
   });
 
-  it('READS-2 (BD-13 today): a login with no Business OS business: the seven common reads, no credits or top-ups read; the one-line note; no money block', async () => {
+  it('READS-2 (BD-13 today): a login with no Business OS business: the eight common reads, no credits or top-ups read; the one-line note; no money block', async () => {
     const sent = await requestsOfOneOpen('Oren Levi', 'bos-panel-not-bos');
     expect(sent).toEqual([...commonReads(OREN_ID)].sort());
     const drawer = screen.getByTestId('users-drawer');
@@ -340,7 +347,7 @@ describe('PIN-k / AC-4.3: the requests one opening sends', () => {
     expect(within(drawer).getByTestId('test-account-cleanup-panel')).toBeTruthy();
   });
 
-  it('READS-3: a failed entitlements read: the same nine reads once each (the money blocks still mount); the plan error is shown', async () => {
+  it('READS-3: a failed entitlements read: the same ten reads once each (the money blocks still mount); the plan error is shown', async () => {
     const sent = await requestsOfOneOpen('Eli Plan', 'boost-cap');
     expect(sent).toEqual([...commonReads(ELI_ID), ...moneyReads(ELI_ID)].sort());
     const drawer = screen.getByTestId('users-drawer');
@@ -348,7 +355,7 @@ describe('PIN-k / AC-4.3: the requests one opening sends', () => {
     expect(within(drawer).getByTestId('credits-block')).toBeTruthy();
   });
 
-  it('READS-4: a failed summary read: the same nine reads once each; the summary error is shown under a neutral header', async () => {
+  it('READS-4: a failed summary read: the same ten reads once each; the summary error is shown under a neutral header', async () => {
     const sent = await requestsOfOneOpen('Sara Summary', 'boost-cap');
     expect(sent).toEqual([...commonReads(SARA_ID), ...moneyReads(SARA_ID)].sort());
     const drawer = screen.getByTestId('users-drawer');

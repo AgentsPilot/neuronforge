@@ -79,7 +79,7 @@ import {
   type ExportContext,
   type ExportSectionId,
 } from '@/lib/business-os/data-export/sections';
-import { EXPORT_GROUPS, buildExportPayload, exportFileName } from '@/lib/business-os/data-export/payload';
+import { EXPORT_GROUPS, buildExportPayload } from '@/lib/business-os/data-export/payload';
 import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
 
 /** DE-4: the eight client_records sections, in registry order. */
@@ -408,7 +408,8 @@ describe('DE-4 U-8 the row ceiling (§0.4.1 C)', () => {
   it('defaults to EXPORT_LIMITS.ROW_CEILING (100,000)', async () => {
     expect(EXPORT_LIMITS.ROW_CEILING).toBe(100_000);
     expect(EXPORT_LIMITS.PAGE_SIZE).toBe(1_000);
-    expect(EXPORT_LIMITS.JSON_BODY_MAX_BYTES).toBe(4_000_000);
+    // DE-9 (SA C-11 / DE-8b Q-1): the JSON route and its 4 MB body cap are retired.
+    expect(EXPORT_LIMITS).not.toHaveProperty('JSON_BODY_MAX_BYTES');
     await runExportSections(CTX, EXPORT_SECTIONS, recordingLogger().logger);
     // DE-4 (user 2026-10-15): - 2, was - 3.
     expect(mockListOwned.mock.calls[0][2]).toEqual({ maxRows: 100_000 - 2 });
@@ -484,39 +485,8 @@ describe('the registry (guard; DE-2 extends this against the descriptors)', () =
 });
 
 describe('payload', () => {
-  // DE-4 (user 2026-10-15): the name carries the time, on the owner's clock; was `<UTC date>.json`.
-  describe("exportFileName: agentpilot-data-export-YYYY-MM-DD-HHmm.json on the owner's clock", () => {
-    const LATE = new Date('2026-07-15T23:30:00.000Z');
-
-    it("the owner's timezone moves the name across midnight (Asia/Jerusalem, UTC+3 in July)", () => {
-      expect(exportFileName(LATE, 'Asia/Jerusalem')).toBe('agentpilot-data-export-2026-07-16-0230.json');
-      expect(exportFileName(LATE, 'UTC')).toBe('agentpilot-data-export-2026-07-15-2330.json');
-      // A zone behind UTC crosses the other way.
-      expect(exportFileName(new Date('2026-07-16T01:05:00.000Z'), 'America/New_York')).toBe('agentpilot-data-export-2026-07-15-2105.json');
-    });
-
-    it('winter time is honoured (Asia/Jerusalem is UTC+2 in January)', () => {
-      expect(exportFileName(new Date('2026-01-15T22:30:00.000Z'), 'Asia/Jerusalem')).toBe('agentpilot-data-export-2026-01-16-0030.json');
-    });
-
-    it('midnight is 0000, never 2400', () => {
-      expect(exportFileName(new Date('2026-07-15T21:00:00.000Z'), 'Asia/Jerusalem')).toBe('agentpilot-data-export-2026-07-16-0000.json');
-    });
-
-    it.each<[string, string | null | undefined]>([
-      ['NULL (never set)', null],
-      ['blank', '   '],
-      ['not an IANA zone', 'Mars/Olympus_Mons'],
-      ['no argument', undefined],
-    ])('%s falls back to UTC', (_label, zone) => {
-      expect(exportFileName(LATE, zone)).toBe('agentpilot-data-export-2026-07-15-2330.json');
-    });
-
-    it('no user id in the name', () => {
-      expect(exportFileName(LATE, 'Asia/Jerusalem')).not.toContain(USER);
-    });
-  });
-
+  // DE-9: `exportFileName` (the JSON route's `.json` name) is retired with the
+  // route; the zip's name on the owner's clock is pinned in fileName.test.ts.
   it('buildExportPayload: format_version 2, provider and per-group controller, counts and failed list', async () => {
     // DE-4 (user 2026-10-15): the failing section is user_profile, was plugin_connections.
     mockFindProfile.mockResolvedValue({ data: null, error: new Error('down') });

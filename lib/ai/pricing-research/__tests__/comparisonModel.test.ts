@@ -16,6 +16,11 @@ const mockListActiveExact = jest.fn();
 jest.mock('@/lib/repositories/AiModelPricingRepository', () => ({
   aiModelPricingRepository: { listActiveExact: () => mockListActiveExact() },
 }));
+// Slice 7 (RC7-7): the comparison also reads the image price table, fresh and exact.
+const mockListImageActiveExact = jest.fn();
+jest.mock('@/lib/repositories/AiModelImagePricingRepository', () => ({
+  aiModelImagePricingRepository: { listActiveExact: () => mockListImageActiveExact() },
+}));
 const mockListPending = jest.fn();
 jest.mock('@/lib/repositories/AiPriceProposalRepository', () => ({
   aiPriceProposalRepository: { listPendingLines: () => mockListPending() },
@@ -101,6 +106,7 @@ beforeEach(() => {
     error: null,
   });
   mockListPending.mockResolvedValue({ data: [], error: null });
+  mockListImageActiveExact.mockResolvedValue({ data: [], error: null });
   mockImageConfig.mockResolvedValue({ model: 'ignored', quality: 'auto', sizes: { wide: '1536x1024', portrait: '1024x1536', square: '1024x1024' }, pricesUsd: {} });
   mockResolveImagePrice.mockImplementation((prices: Record<string, number>, model: string, size: string, quality: string) => {
     const key = `${model}:${size}:${quality}`;
@@ -135,8 +141,15 @@ describe('current = what we charge today', () => {
     expect(row.units.find((unit) => unit.unit === 'output')?.current).toBe('0.6');
   });
 
-  it('cached input is derived (half the input) for OpenAI, ignoring a stored cached column (no reader until slice 7)', async () => {
+  // Slice 7 (O-3, RC7-7): a stored cached rate above 0 IS what is charged now.
+  // Before slice 7 this case expected the derived half ('0.075', 'derived').
+  it('cached input is the stored cached column when it is above 0 (slice 7)', async () => {
     const cached = rowOf((await buildComparison()).rows, liveModel).units.find((unit) => unit.unit === 'cached_input');
+    expect(cached).toMatchObject({ current: '0.01', currentBasis: 'table' });
+  });
+
+  it('cached input is derived (half the input) for OpenAI when no cached rate is stored', async () => {
+    const cached = rowOf((await buildComparison()).rows, fallbackModel).units.find((unit) => unit.unit === 'cached_input');
     expect(cached).toMatchObject({ current: '0.075', currentBasis: 'derived' });
   });
 
@@ -292,7 +305,8 @@ describe('lineContextFor (manual entry)', () => {
       current_row_id: 'row-new',
       current_input_cost_per_token: '0.00000015',
       current_output_cost_per_token: '0.0000006',
-      current_cached_input_cost_per_token: '0.000000075',
+      // Slice 7 (O-3): the stored cached rate (was the derived '0.000000075').
+      current_cached_input_cost_per_token: '0.00000001',
     });
     expect(context).toMatchObject({ inCoverage: true, inputOnly: false, conservative: { input: '0.00003', output: '0.00018' } });
   });

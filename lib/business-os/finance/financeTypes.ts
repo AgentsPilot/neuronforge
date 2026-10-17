@@ -212,19 +212,52 @@ export interface FinanceBoostLine {
   gross: number;
   /** Of which tax (shown, not deducted). */
   tax: number;
-  refunded: number;
-  /** Held in open disputes; null when it cannot be exact ("Unknown"). */
-  held: number | null;
-  /** Lost in disputes; null when it cannot be exact. */
+  /**
+   * Slice 4b.2 (BD-17, FR-4B-2): refunds RECORDED in the window, whatever month
+   * the purchase was paid. Null: the event read failed (FR-4B-16, "Unknown").
+   * "At least" when the events are not exact or `unreadableEvents` > 0.
+   */
+  refunded: number | null;
+  /** Lost disputes recorded in the window (FR-4B-3); null when the event read failed. */
   lost: number | null;
-  /** gross − refunded − held − lost, only when exact; otherwise null (never a lower bound minus a figure). */
+  /**
+   * gross − refunded − lost (FR-4B-5), only when exact; otherwise null (never a
+   * lower bound minus a figure). May be negative. Held now is never in it (FR-4B-4).
+   */
   net: number | null;
   /** Credits sold (credits, not money). "At least" when not exact or `unreadableCredits` > 0. */
   creditsSold: number;
   /** Purchases with an unreadable amount (excluded from every sum, never 0). */
   unreadable: number;
+  /** Events of the window with an unreadable amount, kind or purchase (slice 4b.2, FR-4B-9). */
+  unreadableEvents: number;
   /** Purchases whose credits could not be read (excluded from credits sold). */
   unreadableCredits: number;
+}
+
+/** One currency's open disputes, as of NOW (slice 4b.2, FR-4B-4, E-104): never part of a window's net. */
+export interface FinanceBoostHeldNowLine {
+  currency: string | null;
+  /** Purchases in status `disputed` now. */
+  disputes: number;
+  /** Held in those disputes (total minus refunded); null when an amount could not be read. */
+  amount: number | null;
+}
+
+/** How the reversal event read went (slice 4b.2, FR-4B-8, FR-4B-9, FR-4B-16, SA-Q74). */
+export interface FinanceBoostEventsNote {
+  /** `not_available`: the events table does not exist yet (migration not applied, §7). */
+  state: 'read' | 'failed' | 'not_available';
+  /** False when the event read reached its ceiling, or failed. */
+  exact: boolean;
+  /** Events with an unreadable amount, kind or purchase. */
+  unreadable: number;
+  /** Events on purchases that were never paid: not revenue, counted for the problems note. */
+  onUnpaidPurchases: number;
+  /** Purchases whose refunds plus lost disputes in this window exceed their total (SA-Q74). */
+  overTotal: number;
+  /** Refund events with an amount above 0 in the window (the "not taken back" sentence, FR-4B-13). */
+  refundEvents: number;
 }
 
 /** One (currency, package, version) row, as stored on the purchase (SA-Q30). */
@@ -235,8 +268,10 @@ export interface FinanceBoostPackageRow {
   packageVersion: number | null;
   purchases: number;
   gross: number;
-  refunded: number;
+  /** Null: the event read failed. */
+  refunded: number | null;
   net: number | null;
+  /** Unreadable purchases and events. */
   unreadable: number;
 }
 
@@ -257,7 +292,10 @@ export interface FinanceBoostNotes {
   otherStatusPurchases: number;
   /** Counted purchases with an unreadable amount. */
   unreadablePurchases: number;
-  /** A refund or dispute amount is non-zero (or unknown on a refund or dispute row): the S4-W-3 note shows. */
+  /**
+   * A refund, lost or held-now figure is non-zero, or a refund or lost amount is
+   * unknown: the refund-timing note (FR-4B-6) shows. Kept by name: Pin B names it.
+   */
   refundOrDispute: boolean;
 }
 
@@ -270,6 +308,14 @@ export interface FinanceBoostRevenue {
   /** Null with a business picked (S4-FR-8) or when the read failed. */
   deletedAccounts: FinanceBoostDeletedLine[] | null;
   notes: FinanceBoostNotes | null;
+  /**
+   * Slice 4b.2 (E-104): held in open disputes NOW, per currency, beside the
+   * lines. Null when the attention read failed. Optional only so the frozen
+   * Pin B literals compile (E-103); the builder always sets it.
+   */
+  heldNow?: FinanceBoostHeldNowLine[] | null;
+  /** Slice 4b.2: the event read's note. Optional for Pin B (E-103); always set by the builder. */
+  events?: FinanceBoostEventsNote | null;
 }
 
 // ── Our revenue, plans (slice 5a, §11D.4 M2-FR-1 to M2-FR-11) ───────────────
@@ -717,6 +763,12 @@ export interface FinanceCreditRow {
   farOverAllowance: boolean | null;
   /** Admin-granted credits still available now. Null when the lots could not be read. */
   giftedOutstanding: number | null;
+  /**
+   * Slice 4b.2 (S4-FR-20): bought (boost) credits still available now, beside
+   * gifted, never added to it. 0 with no boost lot; null when the lots could
+   * not be read. Optional for Pin B (E-103); always set by the builder.
+   */
+  boughtOutstanding?: number | null;
 }
 
 /** The figures that need the credits pass. Null when the section is `unknown`. */
@@ -757,6 +809,20 @@ export interface FinanceCreditsSection {
   figures: FinanceCreditsFigures | null;
   /** Null when the lots read failed or reached its ceiling (AC-38). */
   gifted: FinanceGiftedFigures | null;
+  /** Slice 4b.2 (S4-FR-18): bought credits. Optional for Pin B (E-103); always set by the builder. */
+  bought?: FinanceBoughtFigures | null;
+}
+
+/** Bought (boost) credits (slice 4b.2, S4-FR-18 to S4-FR-20). Never combined with gifted. */
+export interface FinanceBoughtFigures {
+  /** Σ outstanding over the boost lots of existing accounts. Null when any account's lots are unreadable. */
+  outstanding: number | null;
+  /** Outstanding on boost lots of deleted accounts: its own figure. Null when unreadable. */
+  deletedAccountsOutstanding: number | null;
+  /** Boost lots created in the window (deleted accounts included). Null when unreadable. */
+  window: { credits: number; lots: number } | null;
+  /** BQ-13: a refund was recorded in the window, so the "not taken back" sentence shows. */
+  refundNotTakenBack: boolean;
 }
 
 // ── Section 6 block B, client payment problems (slice 2b, S2-FR-15 to S2-FR-26) ──
@@ -869,4 +935,46 @@ export interface FinancePaymentProblemsSection {
   clientPlans: { status: FinanceSectionStatus; figures: FinanceClientPlansFigures | null };
   /** `not_narrowed`: a business is picked, so the platform-wide queue was not read. */
   reminders: { status: FinanceSectionStatus; state: 'read' | 'failed' | 'not_narrowed'; figures: FinanceReminderFigures | null };
+  /**
+   * Slice 4b.2, block A (FR-4B-12, S4-FR-15): our boost problems, as of now.
+   * Optional for Pin B (E-103); always set by the builder.
+   */
+  boosts?: FinanceBoostProblemsPart;
+}
+
+/** One currency's boost problems, as of now (S4-FR-15). */
+export interface FinanceBoostProblemsLine {
+  currency: string | null;
+  openDisputes: number;
+  /** Held in those disputes now; null when an amount could not be read. */
+  held: number | null;
+  /** The earliest opened date of an open dispute (ISO); null when none is known. */
+  oldestDisputeOpenedAt: string | null;
+  notCredited: number;
+  /** Σ the totals recorded on purchases not credited; null when one could not be read. */
+  notCreditedAmount: number | null;
+  /** The oldest `status_changed_at` of a purchase not credited (ISO); null when none is known. */
+  oldestNotCreditedAt: string | null;
+}
+
+export interface FinanceBoostProblemsFigures {
+  /** No open dispute and no purchase not credited. */
+  empty: boolean;
+  /** False when the read reached its ceiling: every count and amount is "At least". */
+  exact: boolean;
+  lines: FinanceBoostProblemsLine[];
+  openDisputes: number;
+  notCredited: number;
+  /** `failed`: the opened dates could not be read (for example, the events table is not there yet). */
+  openedDates: 'read' | 'failed';
+  /** FR-4B-8: refunds or disputes recorded in the window on purchases that were never paid. Null when not known. */
+  eventsOnUnpaidPurchases: number | null;
+  /** SA-Q74: purchases whose refunds plus lost disputes in the window exceed their total. Null when not known. */
+  overTotal: number | null;
+}
+
+export interface FinanceBoostProblemsPart {
+  status: FinanceSectionStatus;
+  /** Null when the read failed. */
+  figures: FinanceBoostProblemsFigures | null;
 }
