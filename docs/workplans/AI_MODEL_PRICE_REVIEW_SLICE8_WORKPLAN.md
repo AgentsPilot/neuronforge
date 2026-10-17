@@ -919,7 +919,24 @@ Slowest 3 in `app/admin/system-config`:
 
 ## Commit Info
 
-_RM to populate._
+| Item | Value |
+|---|---|
+| Branch | `feature/ai-model-price-review-slice8` |
+| Commit | `9111fb779b7ebcab3957062ca18de8f44b1c6e23` (45 files, +6329 / -56) |
+| PR | [#462](https://github.com/AgentsPilot/neuronforge/pull/462) |
+| Frozen `chargeParity.test.ts` | hash `d1231341bf6ae57ce4a7fe15314a015ffcbff65e`, unchanged |
+
+**Production apply (2026-10-18, by TL via the Supabase connector, user authorisation 2026-10-17):**
+
+| Step | Result |
+|---|---|
+| Before (slice 8 checker V5 / V6) | token active 43, token retired 12, image rows 0; fingerprint `8d6bbb2344a2c9940e65fd51ca6ccf82`; no proposal lines; `ai_price_apply_batches` absent |
+| Migration `20261079` | applied verbatim, no error |
+| Slice 8 checker | VERDICT PASS, 73 pass / 0 fail; V5 and V6 unchanged |
+| Probe | PROBE PASS, P01..P14 all PASS, rolled back |
+| After the probe | 43 / 12 / 0, fingerprint `8d6bbb2344a2c9940e65fd51ca6ccf82`; 0 proposals, 0 lines, 0 batches, 0 probe rows |
+
+Old checker rows that now FAIL by design (section 9 step 3): slice 2 VERDICT, rows 150 and 160; slice 3 VERDICT, rows 103 and 210.
 
 ---
 
