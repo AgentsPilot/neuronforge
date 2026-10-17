@@ -221,6 +221,12 @@ export const USER_OWNED_TABLES: Record<string, string> = {
 
   business_os_boost_cap_overrides:
     "Admin changes to the account's boost purchase cap; follows the account for the same reason.",
+
+  // Data export DE-8a (requirement §0.3.3, migration 20261074).
+  business_os_data_exports:
+    'An export request belongs to the person; it survives a Reset (an owner may export, then ' +
+    'start over); Purge and account deletion remove it. Not business-owned: an agent-platform ' +
+    'user with no business_profiles row can export too.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',

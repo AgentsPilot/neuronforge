@@ -40,6 +40,7 @@ export const DELETION_AREA_LABELS: Record<DeletionAreaView, string> = {
   integrations: 'Connected integrations (disconnected)',
   agents: 'AgentsPilot agents',
   activity_history: 'Activity history',
+  data_exports: 'Data exports',
   unassigned: 'Tables with no area (a platform problem)',
 };
 

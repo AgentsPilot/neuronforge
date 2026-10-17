@@ -115,6 +115,16 @@ export const AUDIT_EVENTS = {
   // The owner's own data download from the V2 security settings. Distinct from
   // DATA_EXPORTED, which is the server-side GDPR export.
   USER_DATA_EXPORTED: 'USER_DATA_EXPORTED',
+  // Business OS "Download my data" (data export DE-8a registers the names; the
+  // emitters arrive in DE-8b, DE-9 and DE-10a). entityType 'user', entityId =
+  // the account, details.job_id = the business_os_data_exports row. Never the
+  // business name, a file name or any exported content.
+  DATA_EXPORT_REQUESTED: 'DATA_EXPORT_REQUESTED',
+  DATA_EXPORT_READY: 'DATA_EXPORT_READY',
+  DATA_EXPORT_FAILED: 'DATA_EXPORT_FAILED',
+  DATA_EXPORT_DOWNLOADED: 'DATA_EXPORT_DOWNLOADED',
+  DATA_EXPORT_EXPIRED: 'DATA_EXPORT_EXPIRED',
+  DATA_EXPORT_DOWNLOADED_BY_ADMIN: 'DATA_EXPORT_DOWNLOADED_BY_ADMIN',
   DATA_DELETED: 'DATA_DELETED', // Right to erasure
   DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
   // Business OS purge (Reset / Purge of one business's data). Distinct from
@@ -865,6 +875,42 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'User data exported (GDPR Article 20)',
+  },
+  // Data export DE-8a (SA Q-9, 2026-10-17). An owner's own export is routine,
+  // so READY is info, not critical: critical feeds the Health "Critical audit
+  // events" tile and the 7-year class, and an ordinary self-export must not
+  // raise an operational alarm (as password changes and refunds, #157/#160).
+  // An admin downloading a customer's data is the one rare, high-impact act:
+  // critical (business call B-2, TL default 2026-10-17).
+  [AUDIT_EVENTS.DATA_EXPORT_REQUESTED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'A data export (Download my data) was started by the owner or an admin',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_READY]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'A data export finished and is ready to download for 3 days (GDPR Article 20)',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR'],
+    description: 'A data export failed (too large, timed out or an error); it does not count against the daily limit',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_DOWNLOADED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'The owner downloaded their data export',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_EXPIRED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'A data export file was removed after its 3 days, or replaced by a newer export',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_DOWNLOADED_BY_ADMIN]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: "An admin downloaded a customer's data export",
   },
   [AUDIT_EVENTS.DATA_DELETED]: {
     severity: 'critical',

@@ -151,6 +151,7 @@ export type DeletionAreaView =
   | 'integrations'
   | 'agents'
   | 'activity_history'
+  | 'data_exports'
   | 'unassigned';
 
 export interface DeletionTableCountView {

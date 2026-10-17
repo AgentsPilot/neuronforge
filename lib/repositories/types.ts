@@ -1064,3 +1064,56 @@ export type FriendFinaliseOutcome =
 export type AdminPaidFinaliseOutcome =
   | { outcome: 'finalised' | 'already_finalised'; inviteId: string }
   | { outcome: 'not_matched' };
+
+// ============================================================================
+// Data export jobs (DE-8a, table business_os_data_exports, migration 20261074)
+// ============================================================================
+
+/** `queued` is reserved for Phase 2 and never written in Phase 1. */
+export type DataExportJobStatus = 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+export type DataExportFailureReason = 'over_ceiling' | 'timeout' | 'error';
+export type DataExportRequesterKind = 'owner' | 'admin';
+
+/** One export job. Dates, counts and bytes only, never exported content (§0.4.1 E). */
+export interface DataExportJob {
+  id: string;
+  user_id: string;
+  /** The auth user id of whoever started it: the owner, or the admin from the session (SA Q-2). */
+  requested_by: string;
+  requested_by_kind: DataExportRequesterKind;
+  status: DataExportJobStatus;
+  failure_reason: DataExportFailureReason | null;
+  bytes: number | null;
+  file_count: number | null;
+  row_count: number | null;
+  created_at: string;
+  finished_at: string | null;
+  ready_at: string | null;
+  expires_at: string | null;
+  expired_at: string | null;
+  owner_downloaded_at: string | null;
+  updated_at: string;
+}
+
+/** What the start function answered. `retryAt` is when the refusal stops applying. */
+export type DataExportStartOutcome =
+  | { outcome: 'started'; jobId: string }
+  | { outcome: 'in_progress'; retryAt: string }
+  | { outcome: 'daily_limit'; retryAt: string };
+
+/** Sizes recorded when a job finishes. */
+export interface DataExportJobCounts {
+  bytes: number;
+  fileCount: number;
+  rowCount: number;
+}
+
+/** The cross-account sweep reads (cron only): just enough to scope each effect by the row's own owner. */
+export interface DataExportJobRef {
+  id: string;
+  user_id: string;
+}
+
+export interface DataExportJobState extends DataExportJobRef {
+  status: DataExportJobStatus;
+}
