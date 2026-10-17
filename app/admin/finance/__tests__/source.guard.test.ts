@@ -442,3 +442,37 @@ describe('slice 6b source guards (the margin after Stripe fees)', () => {
     }
   });
 });
+
+// ── Slice 8.3 (E-99, E-85): the History block formats only and never names a business ──
+describe('slice 8.3 source guards (the History block)', () => {
+  const BLOCK = path.join(DIR, 'components', 'HistoryBlock.tsx');
+  const HOOK = path.join(DIR, 'useFinanceHistory.ts');
+  const URL_FILE = path.join(DIR, 'historyUrl.ts');
+  const FOLD = /\.(sort|reduce|filter)\(/;
+  const DATE_MATH = /new Date\(|Date\.parse\(|Date\.UTC\(|getUTC|setUTC/;
+
+  it('scans the new files (non-vacuity)', () => {
+    expect(files.map(rel)).toEqual(expect.arrayContaining([BLOCK, HOOK, URL_FILE].map(rel)));
+  });
+
+  it('E-99: the block and the hook fold nothing and do no date arithmetic (planted controls)', () => {
+    for (const file of [BLOCK, HOOK]) {
+      expect({ file: rel(file), fold: FOLD.test(codeOf(file)), dates: DATE_MATH.test(codeOf(file)) }).toEqual({ file: rel(file), fold: false, dates: false });
+    }
+    expect(FOLD.test('points.filter((p) => p.kind)')).toBe(true);
+    expect(DATE_MATH.test('Date.parse(point.date)')).toBe(true);
+  });
+
+  it('only types cross from lib/business-os/finance into the block and the hook', () => {
+    for (const file of [BLOCK, HOOK]) {
+      const valueImports = [...codeOf(file).matchAll(/^import\s+(?!type\b)[^;]*from\s+['"]@\/lib\/business-os\/finance\/[^'"]+['"]/gm)];
+      expect({ file: rel(file), valueImports: valueImports.length }).toEqual({ file: rel(file), valueImports: 0 });
+    }
+  });
+
+  it('the history request never names a business, and the page request serialiser is not reused', () => {
+    const code = codeOf(URL_FILE);
+    expect(code).not.toMatch(/accountId|account\b/);
+    expect(code).not.toMatch(/serialiseFinanceUrl/);
+  });
+});

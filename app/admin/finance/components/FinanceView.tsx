@@ -83,6 +83,7 @@ import { AccountsTab } from './AccountsTab';
 import { FinanceTabPanel, FinanceTabs, type FinanceTab } from './FinanceTabs';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
+import { HistoryAllBusinessesLine, HistoryBlock } from './HistoryBlock';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import { FinanceKpiPlaceholders, FinanceKpiStrip, type FinanceTileSection, type FinanceTileTarget } from './FinanceKpiStrip';
@@ -305,6 +306,8 @@ export function FinanceView() {
                 <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
                 <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
+                {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
+                {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
                 <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
               </OverviewBody>
             )}
