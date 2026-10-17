@@ -75,3 +75,49 @@ describe('k1Spans', () => {
     expect(iso(s.previous.from)).toBe(iso(s.previous.to));
   });
 });
+
+// ── DF-6 (§11L, E-75, SA-Q92): since it started, one business ────────────────
+import { cutoverClamp, CHARGING_CUTOVER_FLOOR_MS } from '@/lib/business-os/credits/aiActivity';
+
+describe('DF-6: resolveFinanceWindow since_start (AC-257, AC-258)', () => {
+  const now = new Date('2026-10-17T12:34:56.789Z');
+
+  it('AC-257: starts at the cut-over instant and ends at the injected now; from / to are the UTC dates', () => {
+    const w = resolveFinanceWindow({ preset: 'since_start' }, now);
+    expect(w.preset).toBe('since_start');
+    expect(iso(w.start)).toBe('2026-09-29T16:50:53.914Z');
+    expect(w.start.getTime()).toBe(CHARGING_CUTOVER_FLOOR_MS);
+    expect(iso(w.end)).toBe('2026-10-17T12:34:56.789Z');
+    expect([w.from, w.to]).toEqual(['2026-09-29', '2026-10-17']);
+  });
+
+  it('client from / to are ignored (SA-W6)', () => {
+    const plain = resolveFinanceWindow({ preset: 'since_start' }, now);
+    const withDates = resolveFinanceWindow({ preset: 'since_start', from: '2020-01-01', to: '2020-01-02' }, now);
+    expect(withDates).toEqual(plain);
+  });
+
+  it('is not capped at 92 days (a clock in March 2027)', () => {
+    const w = resolveFinanceWindow({ preset: 'since_start' }, new Date('2027-03-01T08:00:00.000Z'));
+    expect([w.from, w.to]).toEqual(['2026-09-29', '2027-03-01']);
+    expect(iso(w.end)).toBe('2027-03-01T08:00:00.000Z');
+  });
+
+  it('the end is a copy of now, not the same object', () => {
+    const w = resolveFinanceWindow({ preset: 'since_start' }, now);
+    expect(w.end).not.toBe(now);
+  });
+
+  it('AC-258: coverage is after_cutover and the read starts at the cut-over', () => {
+    const w = resolveFinanceWindow({ preset: 'since_start' }, now);
+    const clamp = cutoverClamp(w.start, w.end);
+    expect(clamp.coverage).toBe('after_cutover');
+    expect(clamp.readFrom?.getTime()).toBe(CHARGING_CUTOVER_FLOOR_MS);
+  });
+
+  it('deliberate: a clock before the cut-over (tests only) gives an empty span, read as entirely before it', () => {
+    const w = resolveFinanceWindow({ preset: 'since_start' }, new Date('2026-09-01T00:00:00.000Z'));
+    expect(w.end.getTime()).toBeLessThan(w.start.getTime());
+    expect(cutoverClamp(w.start, w.end).coverage).toBe('entirely_before_cutover');
+  });
+});

@@ -54,23 +54,28 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
-import { ADMIN_WINDOW_LABELS, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { ADMIN_WINDOW_EXTRA_LABELS, ADMIN_WINDOW_LABELS, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
+
+import type { FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 
 import { serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
 import { k1AnalyticsHref } from '../financeLinks';
 import {
   FINANCE_CLEAR_PATCH,
+  FINANCE_DEFAULT_WINDOW,
   FINANCE_FILTER_SPEC,
   financeCanClear,
   financeFilterRepair,
   financeWindowProblem,
   fromFinanceQuery,
+  isSinceStart,
   toFinanceQuery,
   type FinanceFilters,
 } from '../financeFilters';
 import { FINANCE_WHAT, useFinanceData } from '../useFinanceData';
-import { ACCOUNTS_WHAT, NAME_PLATFORM, PAGE_PURPOSE, PAGE_TITLE } from '../financeCopy';
+import { ACCOUNTS_WHAT, NAME_PLATFORM, PAGE_PURPOSE, PAGE_TITLE, sinceStartWindowLine } from '../financeCopy';
 import { accountNameFor, type PickedName } from '../financeAccount';
 import { AccountHeader } from './AccountHeader';
 import { AccountSummary } from './AccountSummary';
@@ -90,6 +95,15 @@ const TAB_RESET: Partial<FinanceFilters> = { sort: 'ai_cost', group: '', show: '
 
 /** This page's path, for the Accounts-tab tiles' real links (F-5, SA-W3 (a)). */
 const FINANCE_PATH = '/admin/finance';
+
+/**
+ * SA-W8: one label set, the shared bar's. DF-6 (E-81): "Since it started" reads from the
+ * payload's start, `formatUtc` without its trailing " UTC" (the line ends in "(UTC)").
+ */
+function windowLabelOf(window: FinanceWindowInfo): string {
+  if (window.preset === 'since_start') return sinceStartWindowLine(formatUtc(window.start).replace(/ UTC$/, ''));
+  return `${ADMIN_WINDOW_LABELS[window.preset]}, ${window.from} to ${window.to} UTC`;
+}
 
 /**
  * Today's sections, unchanged. With no business picked they are the Overview
@@ -155,7 +169,11 @@ export function FinanceView() {
     },
     [setFilters]
   );
-  const onRemoveBusiness = useCallback(() => setFilters({ account: '' }), [setFilters]);
+  // DF-6 (DF6-FR-9): "Since it started" needs a business, so removing it also resets the window, in one write.
+  const onRemoveBusiness = useCallback(
+    () => setFilters(isSinceStart(filters.window) ? { account: '', window: FINANCE_DEFAULT_WINDOW } : { account: '' }),
+    [filters.window, setFilters]
+  );
   // SA-Q43: selecting a tab writes `tab`; leaving Accounts resets its sort and filters.
   const onSelectTab = useCallback(
     (tab: FinanceTab) => setFilters(tab === 'accounts' ? { tab: 'accounts' } : { tab: '', ...TAB_RESET }),
@@ -197,9 +215,14 @@ export function FinanceView() {
   const chipName = accountName === null ? null : accountName.platform ? NAME_PLATFORM : accountName.name;
 
   // SA-W8: one label set, the shared bar's ("7 days", "30 days").
+  // DF-6 (E-81, DF6-R2): the since-start line is built ONCE, here, from the payload's start
+  // (formatUtc without its trailing " UTC"), and handed to the summary.
   const windowLabel = data
-    ? `${ADMIN_WINDOW_LABELS[data.window.preset]}, ${data.window.from} to ${data.window.to} UTC`
-    : ADMIN_WINDOW_LABELS[query.preset];
+    ? windowLabelOf(data.window)
+    : query.preset === 'since_start'
+      ? ADMIN_WINDOW_EXTRA_LABELS.since_start
+      : ADMIN_WINDOW_LABELS[query.preset];
+  const sinceStartLine = data && data.window.preset === 'since_start' ? windowLabel : null;
 
   return (
     <div className="space-y-6">
@@ -255,6 +278,7 @@ export function FinanceView() {
                   credits={data.credits}
                   accounts={data.accounts}
                   accountMargin={data.accountMargin ?? null}
+                  windowLine={sinceStartLine}
                 />
               </>
             )}

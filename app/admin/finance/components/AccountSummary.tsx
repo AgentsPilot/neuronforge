@@ -175,6 +175,7 @@ export function AccountSummary({
   credits,
   accounts,
   accountMargin = null,
+  windowLine = null,
 }: {
   accountId: string;
   window: FinanceWindowInfo;
@@ -185,6 +186,11 @@ export function AccountSummary({
   accounts: FinanceAccountsSection;
   /** Slice 6a (M3-FR-8): the server's margin for this business; null or absent shows "Unknown". */
   accountMargin?: FinanceAccountMargin | null;
+  /**
+   * DF-6 (E-82, DF6-R2): the "Since it started" window line, built once by the view; null or
+   * absent for every other window, so their summary is unchanged. Shown as given, never formatted here.
+   */
+  windowLine?: string | null;
 }) {
   const headingId = 'account-summary-heading';
   const links: Array<{ label: string; href: string; testId: string }> = [
@@ -202,6 +208,11 @@ export function AccountSummary({
       <h2 id={headingId} className="text-base font-semibold text-white">
         {ACCOUNT_SUMMARY_TITLE}
       </h2>
+      {windowLine !== null && (
+        <p className={NOTE} data-testid="account-summary-window">
+          {windowLine}
+        </p>
+      )}
       <dl className="space-y-2">
         <Line label={ACCOUNT_AI_COST} testId="account-summary-ai-cost">
           <AiCostValue aiCost={aiCost} />

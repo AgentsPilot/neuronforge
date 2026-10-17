@@ -2353,3 +2353,55 @@ describe('Money M-4: the recorded AI cost through the builder', () => {
     expect(wired).not.toHaveProperty('readRecordedForAccount');
   });
 });
+
+// ── DF-6 (§11L): since it started, through the UNCHANGED builder (AC-263, AC-267, AC-268) ──
+describe('DF-6: a since-start window through the builder', () => {
+  const SINCE = resolveFinanceWindow({ preset: 'since_start' }, NOW);
+  const picked = async (deps: ReturnType<typeof makeDeps>, window = SINCE) => {
+    const { result } = await run(deps, A, logger(), NOW, window);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    return result;
+  };
+
+  it('every window-based read gets the since-start instants; coverage is after the cut-over; margins are figures', async () => {
+    const deps = ownerDeps();
+    const result = await picked(deps);
+    const range = { from: SINCE.start, to: SINCE.end };
+    expect(deps.finance.listBoostPurchasesForAccountPaidInRange).toHaveBeenCalledWith(A, range);
+    expect(deps.finance.listPlanPaymentsForAccountPaidInRange).toHaveBeenCalledWith(A, range);
+    expect(deps.ledger.listRowsForAccountCreatedInRange).toHaveBeenCalledWith(A, expect.objectContaining(range), expect.anything());
+    expect(result.payload.window).toEqual({ preset: 'since_start', from: '2026-09-29', to: '2026-11-09', start: '2026-09-29T16:50:53.914Z', end: NOW.toISOString() });
+    expect(result.payload.aiCost.coverage).toBe('after_cutover');
+    expect(result.payload.accountMargin?.margin.kind).toBe('figure');
+    expect(result.payload.accountMargin?.marginAfterFees.kind).toBe('figure');
+  });
+
+  it('AC-263: the ledger read at its ceiling → Section 3 "at least" (partial) and both margins Unknown, never 0', async () => {
+    const deps = ownerDeps();
+    deps.ledger.listRowsForAccountCreatedInRange.mockImplementation(() => ok({ rows: [charge(A, '3')], reachedCeiling: true }));
+    const result = await picked(deps);
+    expect(result.payload.aiCost.status).toBe('partial');
+    expect(result.payload.accountMargin?.margin).toEqual({ kind: 'unknown' });
+    expect(result.payload.accountMargin?.marginAfterFees).toEqual({ kind: 'unknown' });
+  });
+
+  it('AC-263: the recorded read at its ceiling → the recorded figure is not exact and "Recorded above charged" is Unknown', async () => {
+    const deps = makeDeps({ readRecordedForAccount: jest.fn(() => ok({ rows: [{ cost_usd: '3.5' }], reachedCeiling: true })) });
+    const recorded = (await picked(deps)).payload.aiCost.recorded;
+    expect(recorded).toMatchObject({ recordedExact: false, aboveCharged: { state: 'unknown', usd: null } });
+  });
+
+  it('AC-267: K-1 to K-4 equal their This month values; K-5 follows the window', async () => {
+    const since = await picked(ownerDeps());
+    const month = await picked(ownerDeps(), WINDOW);
+    for (const key of ['k1', 'k2', 'k3', 'k4'] as const) expect(since.payload.tiles[key]).toEqual(month.payload.tiles[key]);
+    expect(since.payload.tiles.k5.id).toBe('k5_our_revenue');
+  });
+
+  it('AC-268: an ILS boost in the window → both margins "n/a, different currency"', async () => {
+    const deps = boostDeps([boostRow(A), boostRow(A, { currency: 'ILS' })]);
+    const margin = (await picked(deps)).payload.accountMargin;
+    expect(margin?.margin).toEqual({ kind: 'other_currency' });
+    expect(margin?.marginAfterFees).toEqual({ kind: 'other_currency' });
+  });
+});

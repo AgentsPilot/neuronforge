@@ -24,6 +24,11 @@
  * did. The resolution is copied here, not imported, because the shared folder
  * may not import a page folder (S-3); a parity test beside the existing one in
  * `app/admin/components/__tests__/` pins the two equal.
+ *
+ * Finance DF-6 (§11L, E-76, SA-Q93) adds `since_start`, "Since it started":
+ * one business from the charging cut-over to now. The shared folder NEVER
+ * resolves it (it would need a Business OS constant, S-4): `resolveWindow`
+ * gives `none`, and the finance route resolves it on the server.
  */
 
 import {
@@ -45,7 +50,7 @@ export type AdminWindowValue =
   | { kind: 'extra'; extra: AdminWindowExtra };
 
 /** Only what a page keeps today (D-2 (b)); a later page adds its own here. */
-export const ADMIN_WINDOW_EXTRAS = ['24h', '90d', 'yesterday', 'this_week', 'last_week', 'last_month'] as const;
+export const ADMIN_WINDOW_EXTRAS = ['24h', '90d', 'yesterday', 'this_week', 'last_week', 'last_month', 'since_start'] as const;
 export type AdminWindowExtra = (typeof ADMIN_WINDOW_EXTRAS)[number];
 
 export const ADMIN_WINDOW_EXTRA_LABELS: Readonly<Record<AdminWindowExtra, string>> = {
@@ -55,6 +60,7 @@ export const ADMIN_WINDOW_EXTRA_LABELS: Readonly<Record<AdminWindowExtra, string
   this_week: 'This week',
   last_week: 'Last week',
   last_month: 'Last month',
+  since_start: 'Since it started',
 };
 
 export const ADMIN_WINDOW_LABELS: Readonly<Record<AdminWindowPreset | 'custom', string>> = {
@@ -226,6 +232,8 @@ export function resolveWindow(value: AdminWindowValue, now: Date): ResolvedWindo
     case 'linked':
       return { kind: 'linked', from: value.from, to: value.to };
     case 'extra':
+      // DF-6 (E-76): resolved by the finance route, never here.
+      if (value.extra === 'since_start') return { kind: 'none' };
       if (value.extra !== '24h' && value.extra !== '90d') {
         return { kind: 'dates', ...resolveDateExtra(value.extra, now) };
       }

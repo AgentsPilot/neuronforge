@@ -145,3 +145,20 @@ describe('Finance F-4: the shared filter bar (AC-177)', () => {
     expect(screen.getByRole('search', { name: 'Filters' })).not.toContainElement(problem);
   });
 });
+
+// ── DF-6 (DF6-FR-9, L-148): "Since it started" only with a business picked ──
+describe('DF-6: the since-start choice in the Window group', () => {
+  const labels = (bar: HTMLElement) => within(within(bar).getByRole('group', { name: 'Window' })).getAllByRole('button').map((b) => b.textContent);
+
+  it('all businesses: the five standard choices only', () => {
+    const { bar } = renderBar();
+    expect(labels(bar)).toEqual(['Today', '7 days', '30 days', 'This month', 'Custom']);
+  });
+
+  it('a business picked: "Since it started" after Custom; a click applies the extra', () => {
+    const { bar, props } = renderBar({ filters: { ...DEFAULTS, account: A } });
+    expect(labels(bar)).toEqual(['Today', '7 days', '30 days', 'This month', 'Custom', 'Since it started']);
+    fireEvent.click(within(bar).getByRole('button', { name: 'Since it started' }));
+    expect(props.onWindowChange).toHaveBeenLastCalledWith({ kind: 'extra', extra: 'since_start' });
+  });
+});

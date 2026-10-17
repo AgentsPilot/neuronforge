@@ -1479,3 +1479,54 @@ describe('slice 6b source guards (the Stripe fee estimate)', () => {
     for (const file of [ECON, RULES]) expect({ file, hit: /stripe_|livemode/.test(codeOf(file)) }).toEqual({ file, hit: false });
   });
 });
+
+// ── DF-6 (§11L.8, AC-270, SA-W-DF6-6, DF6-R1) ─────────────────────────────────
+describe('slice DF-6 source guards (since it started)', () => {
+  const WINDOW_FILE = 'lib/business-os/finance/financeWindow.ts';
+  // DF6-R1: non-test sources only (walk skips __tests__/), because this guard itself names the tokens.
+  const DF6_SCOPE = [...walk('lib/business-os/finance'), ...walk('app/admin/finance')];
+  const NO_ACCOUNT_CLOCK = /user_preferences|timezone/i;
+  const READS_CLOCK = /Date\.now\(|new Date\(\s*\)/;
+  const PLAN_FACT = /\b(onboarding_started_at|profile_created_at|created_at)\b/;
+  const IMPORTS = /from\s+['"]([^'"]+)['"]/g;
+
+  it('the rules bite (planted controls)', () => {
+    expect(NO_ACCOUNT_CLOCK.test("select('timezone')")).toBe(true);
+    expect(NO_ACCOUNT_CLOCK.test("from('user_preferences')")).toBe(true);
+    expect(READS_CLOCK.test('const t = new Date();')).toBe(true);
+    expect(READS_CLOCK.test('const t = Date.now();')).toBe(true);
+    expect(READS_CLOCK.test('new Date(CHARGING_CUTOVER_FLOOR_MS)')).toBe(false);
+    expect(PLAN_FACT.test('plan.onboarding_started_at')).toBe(true);
+    expect(PLAN_FACT.test('row.created_at')).toBe(true);
+  });
+
+  it('scans the window file and both folders, and no test file (non-vacuity, DF6-R1)', () => {
+    expect(DF6_SCOPE).toEqual(expect.arrayContaining([WINDOW_FILE, 'app/admin/finance/financeLinks.ts', 'app/admin/finance/components/FinanceView.tsx']));
+    expect(DF6_SCOPE.some((file) => file.includes('__tests__'))).toBe(false);
+  });
+
+  it('AC-270: no finance source names user_preferences or timezone (comments included)', () => {
+    for (const file of DF6_SCOPE) expect({ file, hit: NO_ACCOUNT_CLOCK.test(read(file)) }).toEqual({ file, hit: false });
+  });
+
+  it('financeWindow.ts reads no clock, no plan-row fact, and imports no repository, Supabase, entitlements or server-only module', () => {
+    const code = codeOf(WINDOW_FILE);
+    expect(code).not.toMatch(READS_CLOCK);
+    expect(code).not.toMatch(PLAN_FACT);
+    const imports = [...code.matchAll(IMPORTS)].map((m) => m[1]);
+    expect(imports).toEqual([
+      '@/app/admin/components/adminWindowPresets',
+      '@/lib/business-os/credits/aiActivity',
+      '@/lib/business-os/credits/creditReport',
+      './financeTypes',
+    ]);
+    for (const spec of imports) expect(spec).not.toMatch(/repositories|supabase|entitlements|server-only/);
+  });
+
+  it('the since_start branch starts at the cut-over constant and ends at the passed-in now', () => {
+    const code = codeOf(WINDOW_FILE);
+    expect(code).toMatch(/if \(query\.preset === 'since_start'\)/);
+    expect(code).toMatch(/start: new Date\(CHARGING_CUTOVER_FLOOR_MS\)/);
+    expect(code).toMatch(/end: new Date\(now\.getTime\(\)\)/);
+  });
+});

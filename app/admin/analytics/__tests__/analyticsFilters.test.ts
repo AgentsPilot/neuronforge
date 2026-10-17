@@ -409,3 +409,11 @@ describe('rowClickPatch (the P-4, P-5, P-10, P-11 paths at unit level)', () => {
     expect(rowClickPatch(ROW, filters)).toEqual({ component: 'row-1', groupBy: 'component' });
   });
 });
+
+// Finance DF-6 (E-76, U-4): Finance's own "Since it started" is not an extra of this page.
+describe('DF-6: range=since_start is ignored here', () => {
+  it('parses to undefined, so the page keeps its default window', () => {
+    expect(ANALYTICS_FILTER_SPEC.window.parse(getter('range=since_start'))).toBeUndefined();
+    expect(ANALYTICS_FILTER_SPEC.window.parse(getter('range=since_start&from=2026-10-01&to=2026-10-02'))).toEqual({ kind: 'custom', from: '2026-10-01', to: '2026-10-02' });
+  });
+});

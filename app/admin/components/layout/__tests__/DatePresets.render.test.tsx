@@ -309,3 +309,22 @@ describe('alignment on one label row (L-4a, user request 2026-10-11; SA Q-4, Q-6
     expect(spacer.textContent).toBe(String.fromCharCode(160));
   });
 });
+
+describe('the since_start extra (Finance DF-6)', () => {
+  const MONTH: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
+
+  it('renders "Since it started" after Custom, pressed when held; Custom opens with empty inputs (it resolves to none)', () => {
+    render(<DatePresets value={{ kind: 'extra', extra: 'since_start' }} defaultValue={MONTH} onChange={jest.fn()} extras={['since_start']} requireBothDates />);
+    const buttons = within(screen.getByRole('group', { name: 'Window' })).getAllByRole('button');
+    expect(buttons.map((b) => b.textContent)).toEqual(['Today', '7 days', '30 days', 'This month', 'Custom', 'Since it started']);
+    expect(pressed()).toEqual(['Since it started']);
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    expect((screen.getByLabelText('From (UTC)') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('');
+  });
+
+  it('is not offered when the page does not list it', () => {
+    render(<DatePresets value={MONTH} defaultValue={MONTH} onChange={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Since it started' })).toBeNull();
+  });
+});

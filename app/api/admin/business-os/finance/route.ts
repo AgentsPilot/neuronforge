@@ -3,7 +3,7 @@
  * S1-FR-11, SEC-1 to SEC-10). Workplan
  * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md § The route.
  *
- *   GET /api/admin/business-os/finance?preset=today|7d|30d|this_month|custom
+ *   GET /api/admin/business-os/finance?preset=today|7d|30d|this_month|custom|since_start
  *       [&from=YYYY-MM-DD&to=YYYY-MM-DD][&accountId=<uuid>]
  *
  * ADMIN ONLY, a deliberate CROSS-ACCOUNT READ. Order, and nothing before it:
@@ -71,6 +71,15 @@
  * read, how it ended, counts and flags): never an amount, a difference, a
  * feature value, a session id or a name (M4-FR-9). Still no new query
  * parameter.
+ *
+ * DF-6 (§11L, E-75, SA-Q92) adds one window choice, `since_start`, Finance's
+ * own (the shared `ADMIN_WINDOW_CHOICES` is not edited, so Activity and the
+ * credit report are unchanged). It is accepted ONLY with `accountId` (a 400
+ * otherwise, BD-26) and resolved here, purely, from the cut-over constant and
+ * this request's clock: no plan row, no read, no timezone. It is the only
+ * window longer than 92 days; `custom` keeps the 92-day cap with or without a
+ * business. The pinned schema is untouched: `parseFinanceQuery` admits the
+ * choice around it. The builder, its order and every read are unchanged.
  *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
@@ -160,6 +169,41 @@ function buildQuerySchema(now: Date) {
     });
 }
 
+/** The validated query; `preset` also takes Finance's own `since_start` (DF-6, E-80). */
+type FinanceRouteQuery = Omit<z.infer<ReturnType<typeof buildQuerySchema>>, 'preset'> & {
+  preset: z.infer<ReturnType<typeof buildQuerySchema>>['preset'] | 'since_start';
+};
+
+/** DF-6 (DF6-FR-2, BD-26): the only window longer than 92 days is for one business. */
+const SINCE_START_NEEDS_A_BUSINESS = 'since_start needs a business picked';
+
+/**
+ * DF-6 (DF6-FR-1, DF6-FR-2). The schema above is pinned byte for byte (AC-173
+ * part B), so Finance's own `since_start` is admitted here, AROUND it, and the
+ * shared `ADMIN_WINDOW_CHOICES` is not edited: every other key of a since-start
+ * request goes through the same strict schema (unknown keys, the date format of
+ * an ignored `from` / `to`, E-48, SA-W84 all unchanged), and the choice is then
+ * accepted only with `accountId`. Any other `preset` value, `since-start`
+ * included, is the schema's own 400.
+ */
+function parseFinanceQuery(
+  raw: Record<string, string>,
+  now: Date
+): { success: true; data: FinanceRouteQuery } | { success: false; error: z.ZodError } {
+  if (raw.preset !== 'since_start') return buildQuerySchema(now).safeParse(raw);
+  // Every key but the choice goes through the pinned schema (its default window is then replaced).
+  const rest = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'preset'));
+  const parsed = buildQuerySchema(now).safeParse(rest);
+  if (!parsed.success) return parsed;
+  if (parsed.data.accountId === undefined) {
+    return {
+      success: false,
+      error: new z.ZodError([{ code: z.ZodIssueCode.custom, message: SINCE_START_NEEDS_A_BUSINESS, path: ['preset'] }]),
+    };
+  }
+  return { success: true, data: { ...parsed.data, preset: 'since_start' } };
+}
+
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const baseLogger = logger.child({ correlationId });
@@ -185,7 +229,7 @@ export async function GET(request: NextRequest) {
 
     // The request's one clock: the window, K-1's spans, the cut-over and generatedAt.
     const now = new Date();
-    const parsed = buildQuerySchema(now).safeParse(Object.fromEntries(params.entries()));
+    const parsed = parseFinanceQuery(Object.fromEntries(params.entries()), now);
     if (!parsed.success) {
       // Zod's own detail only in development (QA-3).
       return errorResponse(400, INVALID_QUERY, {
