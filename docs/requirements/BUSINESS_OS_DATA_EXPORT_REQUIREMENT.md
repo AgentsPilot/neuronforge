@@ -1041,6 +1041,71 @@ Between the deploy and step 3 (minutes) the deployed build names a table that is
 
 **Follow-ups (Low, not blocking):** SA L-1 pin listOwnerFolders to exportSweep only; L-2 a throw after markReady reports failed while the job is ready (cosmetic); L-3 explicit maxDuration on download-again; L-4 body size cap; L-5 count failed reap removals; QA edge notes 1–5 (README orphan wording, Unicode look-alike separators, trailing-space test, 413 copy for rows → DE-9, nul.tar.gz); QA c2 test gap. T-14 Preview/prod manual check owed by TL BEFORE DE-9 switches the buttons.
 
+### 0.14 DE-9 status, SA rulings and TL defaults (2026-10-17)
+
+**Status:** DE-9 **code complete, uncommitted** on `feature/data-export-de9` (worktree `neuronforge-de9`, merged with `origin/main` at `4e10ebba`, DE-8b PR #453). Awaiting SA code review, then QA. No migration, no new dependency, no entitlements import, no new table or bucket. Workplan: [BUSINESS_OS_DATA_EXPORT_DE9_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE9_WORKPLAN.md). SA workplan review 2026-10-17: approved with conditions C-1 … C-11.
+
+**Merge gate (T-0b): T-14 is NOT yet recorded.** There is no env flag (§0.13), so **merging DE-9 is the owner-facing switch**. The PR must not merge until TL records the DE-8b T-14 Preview result in the DE-8b workplan. DE-9 is built in save mode A (the page navigates to the signed URL, Storage answers `Content-Disposition: attachment`). If T-14 shows a wrong `filename*`, mode A is replaced by mode B (fetch and blob with the Unicode `fileName`), about +0.5 d (SA Q9: one mode ships, never both).
+
+**What DE-9 built.**
+
+- **One control, `DownloadMyDataButton`** (`components/business-os/data-export/`), on all four entry points: the Business OS settings Security list (`row`), the Danger zone (`button`, inside `ErasureRequestContent`), `/settings` `SecurityTab` and `/v2/settings` `SecurityTabV2` (`button`, BC-1). Every outcome of the zip routes has its own copy in en / he / es (`downloadMyDataCopy.ts`; he and es are drafts for native review). The status line reads "Last export {date}. You can download it again until {until}. Download again".
+- **One browser seam**, `lib/client/businessOsDataExport.ts`: `startDataExport`, `downloadDataExportAgain`, `fetchLastDataExport`, `saveSignedDownload`. Refusals are read from the body `code`; 401 and 429 by status; a non-JSON body (a platform 502 / 504) is `timeout`; a 75 s client timer (AbortController + setTimeout) is `client_timeout`.
+- **`GET /api/business-os/data-exports`** ("Last export") on the existing route file, backed by the new `BusinessOsDataExportJobRepository.findLatestCompletedForUser` (`user_id`, `requested_by_kind = 'owner'`, status `ready` or `expired`, newest one). The query string is ignored; a job id leaves the server only while that export is downloadable; no counts; no audit; `read` throttle under `data-export-status`.
+- **Retired:** `GET /api/user/data-export` and both its test files, `lib/client/downloadUserDataExport.ts` and its test, `EXPORT_LIMITS.JSON_BODY_MAX_BYTES` (the §0.7 C-11 cap), `exportFileName` and its `sections.test.ts` block (its winter-time and behind-UTC clock cases moved to `fileName.test.ts`), the five `settings.security.export_*` keys in en / he / es and the three in the Danger zone's `FALLBACK_COPY`. `app/api/user/data-export/__tests__` left `test:bos-entitlements`.
+- **Kept:** `EXPORT_GDPR_ARTICLE` (written into `data.json` meta), `findForUserDataExport` (the zip builder's profile read), `AUDIT_EVENTS.DATA_EXPORTED` (historical rows carry it).
+- **Support contact moved, unchanged:** `PLACEHOLDER_ERASURE_CONTACT` and its `TEMP-ERASURE-CONTACT` marker now live in `lib/business-os/supportContact.ts`, the single swap point read by both the Danger zone and the new control (SA C-3). The N2 pin is repo-wide.
+
+**SA rulings (DE-9 workplan review, 2026-10-17):**
+
+| # | Ruling |
+|---|---|
+| Q1 / UI-1 | **Option A, an inline notice inside the control** (`DataExportNotice`, in the control's folder, presentation only; no `components/ui` primitive until a second consumer and SA review). Both live regions (`role="status"`, `role="alert"`) exist from the first paint. **Nothing auto-dismisses.** The email in "too large" is wrapped in `<bdi>` so Hebrew cannot reorder it. `sonner` and the hybrid were rejected |
+| Q2 | The JSON route is **deleted (404)**, not a 410 tombstone |
+| Q3 + C-4 | `GET` status route + `findLatestCompletedForUser`, **owner-requested jobs only** |
+| Q4 | Closing the dialog while preparing keeps the request; the file is still saved on 200 |
+| Q5 + C-5 | 75 s client timeout, AbortController + setTimeout, cleared in `finally`; the one-shot 30 s status reload after a client timeout is cleared on unmount |
+| Q6 | `test:bos-entitlements` drops the deleted folder only; the zip route tests run in the required Jest gate |
+| Q7 | Owner audit labels for `DATA_EXPORT_*`: out of DE-9 (follow-up) |
+| Q8 + C-7 | `EXPORT_GDPR_ARTICLE` and `findForUserDataExport` stay; `exportFileName` and `JSON_BODY_MAX_BYTES` go |
+| Q9 | One save mode only (A), no `EXPORT_SAVE_MODE` constant |
+| C-1 | Dates use explicit Intl fields (`year`, `month: 'short'`, `day`, `hour`, `minute`, `timeZoneName: 'short'`): `dateStyle` / `timeStyle` with `timeZoneName` throws. Tested with the real Intl |
+| C-2 | `lib/audit/__tests__/ownerAuditReads.guard.test.ts` re-pointed at the two zip routes (they read no audit rows), negative controls kept |
+| C-3 | The contact constant moved to one neutral module (above) |
+| C-6 | `saveSignedDownload` follows `https:` only (`http:` only for localhost in development); anything else is a failure and never navigates |
+| C-8 | In the Danger zone the control is one stacked block beside "Contact us"; no `flex-row-reverse` wrapper |
+| C-9 | Live regions as in Q1; a notice stays until dismissed or replaced by the next action |
+| C-10 | `{limit}` from `EXPORT_JOB_POLICY.DAILY_LIMIT`, dates through the C-1 formatter; the parity test checks every placeholder in all three languages |
+| C-11 | This splice; §0.4.1 B's "flag on after QA" is superseded by §0.13 (no flag: the switch is this merge) |
+
+**TL defaults 2026-10-17 (§10.1 of the workplan; autonomous run — user may change):**
+
+| # | Business call | TL default 2026-10-17 — user may change |
+|---|---|---|
+| BC-1 | The agent-platform settings screens' own export card | The same "Download my data" button (one export everywhere) |
+| BC-2 | The old JSON download | Retired (route, browser helper, 4 MB limit) |
+| BC-3 | The email named in "too large, contact support" | The same contact as the Danger zone, `PLACEHOLDER_ERASURE_CONTACT`. **It is today the product owner's personal Gmail address, shown to every owner.** The code keeps one swap point (`lib/business-os/supportContact.ts`); **the user is asked to supply a support address** (accept for now and swap later is technically fine, a one-line change) |
+| BC-4 | "Download my data" when an export is already ready | Always prepares a fresh one; "Download again" below hands over the existing one |
+| BC-5 | Button name | "Download my data" (DX-5), he / es to match |
+| BC-6 | A "what's included" line under the button | No; the README in the zip explains it |
+
+**Supersessions (each also noted in place):**
+
+- §0.4.1 B row DE-9, "the old GET route is retired": **done**.
+- §0.7 C-11, the 4 MB body cap: **removed**.
+- **FR-E14** (one export control): met by `DownloadMyDataButton` on all four entry points.
+- **FR-E15** and **AC-E22** ("every export writes `DATA_EXPORTED`"; "Last exported shows the latest `DATA_EXPORTED` date"): **superseded**. The zip writes `DATA_EXPORT_REQUESTED` / `READY` / `FAILED` / `DOWNLOADED` / `EXPIRED`, and "Last export" reads the jobs table through `GET /api/business-os/data-exports`.
+- **AC-E1** ("each export button downloads `GET /api/user/data-export`"): **superseded**; each entry point renders the one control, which calls the zip routes. The first half (no browser request to the four tables) still holds and is pinned by `pluginConnectionsBrowserAccess.guard.test.ts`.
+
+**Forward notes, binding on DE-10a (from SA C-4):**
+
+1. **Download again must answer 404 to the owner for an admin-kind job.** Today `findById` filters only by `id` and `user_id`, so an owner who learned an admin job's id could fetch it. The status route already never returns one; DE-10a closes the download route the same way.
+2. **`expireOtherReady` treats owner and admin jobs alike today**: a new owner export expires a ready admin export of the same account, and the reverse. DE-10a must decide (and pin) how the two kinds replace each other, so neither silently replaces the other's export.
+
+**Owed / follow-ups:** T-14 (merge gate, above); the manual browser check after deploy (TL list in the workplan); native review of the he / es copy; owner audit labels for `DATA_EXPORT_*` (SA Q7); a support mailbox (BC-3).
+
+**Follow-ups (Low):** QA E-1 daily_limit refusal with no retryAt shows the in-progress text (useDownloadMyData noticeFor); E-2 focus after dismiss; E-3 stale snippet docs/CLIENT_DATA_REMOVAL_IMPLEMENTATION.md L339; E-4 --v2-border fallback on /settings; SA: when the support address is swapped also clean lib/agentkit/v6/translation/NaturalLanguageCorrectionHandler.ts and prompt templates that send the personal email to an LLM as sample text; SA: SecurityTab.tsx direct Supabase calls (rule 1) on the parked agent-platform screen.
+
 ---
 
 ## 1. Discovery: what exists today
@@ -1222,7 +1287,9 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 
 13. **FR-E13** Format per DX-3, delivery per DX-4. If a link is used, it is a private bucket, a signed URL valid ≤ 24 h, owner-only, and the file is deleted after expiry.
 14. **FR-E14** One export control in the UI (DX-5). Settings, the Danger zone, `SecurityTab` and `SecurityTabV2` all use it.
+    *DE-9 note (2026-10-17): met by `DownloadMyDataButton` on all four entry points (§0.14).*
 15. **FR-E15** Every export writes a `DATA_EXPORTED` audit row, non-blocking, with section counts and never contents. An admin-triggered send (DE-10) also writes an `operator`-class row.
+    *DE-9 note (2026-10-17): superseded. The JSON route that wrote `DATA_EXPORTED` is retired; the zip writes `DATA_EXPORT_REQUESTED` / `READY` / `FAILED` / `DOWNLOADED` / `EXPIRED` (§0.13, §0.14). `DATA_EXPORTED` stays as a constant for historical rows.*
 16. **FR-E16** Rate limit: one export in progress per account, plus a cool-down (SQ-E8).
 
 ### 6.4 Classification and enforcement (DE-2)
@@ -1258,6 +1325,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 
 **DE-0a**
 - [ ] AC-E1 None of the three settings surfaces sends a browser request to `profiles`, `user_preferences`, `plugin_connections` or `notification_settings` for export. Each export button downloads `GET /api/user/data-export`.
+  *DE-9 note (2026-10-17): the second sentence is superseded. Each entry point renders the one control, which calls the zip routes (`POST /api/business-os/data-exports`, download again); the JSON route is retired (§0.14). The first sentence still holds.*
 - [ ] AC-E2 A Jest guard fails if any `'use client'` file calls `.from('plugin_connections')` (negative control included).
 - [ ] AC-E3 The downloaded file contains no `access_token`, `refresh_token` or other credential key (test account with a connected plugin).
 
@@ -1290,6 +1358,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 - [ ] AC-E20 An account above the threshold gets the DX-4 path. The link works for the owner only, and expires.
 - [ ] AC-E21 Files in the zip match that account's storage objects (count and size).
 - [ ] AC-E22 One export control. "Last exported" shows the latest `DATA_EXPORTED` date.
+  *DE-9 note (2026-10-17): the date source is superseded. "Last export" reads the newest owner-requested `ready` or `expired` job through `GET /api/business-os/data-exports` (§0.14), not `DATA_EXPORTED`.*
 - [ ] AC-E23 The customer delete flow cannot reach the preview without an export or an explicit decline. The admin preview shows last export. The admin send goes only to the target's own email and writes an `operator` audit row.
 
 **All slices:** route integration tests for happy path + 401 + invalid input where there is input. QA records a manual download check on a real test account.
@@ -1399,3 +1468,4 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-17 | DE-7 code complete; TL defaults BC-1…BC-8; SA rulings incl. the parent-scoped read; the planned flip (§0.11) | Uncommitted on `feature/data-export-de7`, awaiting SA code review and QA; T-10 drift check (Q14, 84 names, five tables) owed, TL runs it as read-only SQL. Five sections in the new `content` group (processor; the account holder the controller): website text, website and landing pages, blocks, smart links, picture library records. TL defaults 2026-10-17 (user may change): smart-link counters and attributed revenue out; switched-off links, drafts and archived pages, assistant-drafted text, every picture with its description, public addresses and hidden blocks in. **SA-Q1 (new pattern): `website_blocks` is read through the owner's own pages** (`viaParent` two-key opt-in, `.in('page_id', chunk)`, every block checked against its chunk, C-1…C-6). `storage_path` and `source_ref` out. **The planned flip: every table is classified; the CI now forbids `planned` on tables; the `planned()` helper is removed.** DE-8b file-mapping recorded as a PROPOSAL; Q10b owed to DE-8b. Totals 38 include / 0 planned / 117 exclude |
 | 2026-10-17 | DE-8a code complete; SA rulings Q-1 (SECURITY INVOKER replaces the DEFINER wording) and Q-9 (severities); two-migration shape; TL defaults B-1…B-3; PROD apply plan (§0.12) | Uncommitted on `feature/data-export-de8a`, awaiting SA code review and QA; nothing applied to PROD. Jobs table `business_os_data_exports` (service role only, RLS on with no policy, NULL-safe 72-hour expiry CHECK), start function `business_os_data_export_start` (INVOKER, VOLATILE, service_role EXECUTE only; one at a time, three per rolling 24 h, failed never counts, 90 s stale rule), private 50 MB zip bucket `business-data-exports` (empty until DE-8b), repository with `startForOwner` / `startForAdmin`, registrations (156 = 38 include + 0 planned + 118 exclude), six audit names (READY info, DOWNLOADED_BY_ADMIN critical), `fflate` 0.8.3 exact. Migrations `20261074` + generated cleanup `20261075` (stamp `a824848e0a538477`, chained on 20261047; finance 4b.1 renumbers above it if DE-8a lands first, SA C-7). Pre-check, checker, probe, rollback and measure scripts; local PGlite evidence |
 | 2026-10-17 | DE-8b code complete; SA workplan amendments (no env flag, Q-1, Q-3, Q-6, Q-7, C-7, C-16), DE-10a audit-visibility forward note (Q-8), Q-12; TL defaults BC-1…BC-8 (§0.13) | Uncommitted on `feature/data-export-de8b`, awaiting SA code review and QA; no migration, no dependency. One-request zip route (`POST /api/business-os/data-exports`), POST download-again route, daily `/api/cron/data-export` (`25 5 * * *`: reap, 3-day expiry, orphan sweep with 10-minute grace, 60% size watch on the export's own inventory). File buckets classified `include` (`client-documents`, `website-images`); `planned` forbidden on buckets. No env flag: the owner switch is DE-9. JSON route and 4 MB cap unchanged (cap removal moves to DE-9). File name keeps `-HHmm`; fallback `agentpilot-data-export-…zip`. T-14 Preview check owed after merge |
+| 2026-10-17 | DE-9 code complete; SA rulings Q1–Q9, C-1…C-11; TL defaults BC-1…BC-6; FR-E15 / AC-E22 / AC-E1 superseded; DE-10a forward notes (§0.14) | Uncommitted on `feature/data-export-de9`, awaiting SA code review and QA; no migration, no dependency. One `DownloadMyDataButton` on all four entry points (UI-1 option A: inline notice, nothing auto-dismisses); one browser seam `lib/client/businessOsDataExport.ts` (save mode A, https-only); `GET /api/business-os/data-exports` "Last export" (owner-requested jobs only, C-4). Retired: `GET /api/user/data-export` + tests, `downloadUserDataExport`, `JSON_BODY_MAX_BYTES`, `exportFileName`, the dead `export_*` copy. `PLACEHOLDER_ERASURE_CONTACT` moved unchanged to `lib/business-os/supportContact.ts` (single swap point; the user to supply a support address, BC-3). **Merge gated on T-14** (no flag: the merge is the switch). DE-10a must 404 download-again for admin jobs and settle `expireOtherReady` owner vs admin |

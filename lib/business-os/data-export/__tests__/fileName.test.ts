@@ -57,6 +57,17 @@ describe('the clock', () => {
   it('midnight is 00, never 24, and can change the date', () => {
     expect(exportStamp(new Date('2026-10-16T21:00:00Z'), 'Asia/Jerusalem')).toBe('2026-10-17-0000');
   });
+
+  // DE-9: carried over from the retired `exportFileName` block (sections.test.ts),
+  // so retiring the JSON name loses no clock case.
+  it('winter time is honoured (Asia/Jerusalem is UTC+2 in January)', () => {
+    expect(exportStamp(new Date('2026-01-15T22:30:00.000Z'), 'Asia/Jerusalem')).toBe('2026-01-16-0030');
+  });
+
+  it('a zone behind UTC crosses midnight the other way, and a blank zone is UTC', () => {
+    expect(exportStamp(new Date('2026-07-16T01:05:00.000Z'), 'America/New_York')).toBe('2026-07-15-2105');
+    expect(exportStamp(new Date('2026-07-15T23:30:00.000Z'), '   ')).toBe('2026-07-15-2330');
+  });
 });
 
 describe('hostile names (negative controls)', () => {

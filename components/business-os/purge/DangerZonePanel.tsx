@@ -31,43 +31,11 @@
  */
 
 import React, { useState } from 'react';
-import { Trash2, Download, Mail, Loader2 } from 'lucide-react';
+import { Trash2, Mail } from 'lucide-react';
 import { useOptionalLanguage } from '@/lib/business-os/LanguageContext';
-import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
-
-/**
- * The address a customer writes to when they want their business erased.
- *
- * ⚠️ **TEMP-ERASURE-CONTACT — this is a personal address, used as an interim
- * unblock. It must be replaced with a real support mailbox.**
- *
- * `meiribarak@gmail.com` is the product owner's own email. It is here because
- * no support account exists yet and the alternative was shipping a Danger Zone
- * whose only action pointed nowhere. **Barak owns the swap**, before or shortly
- * after launch.
- *
- * Three things make this worth replacing rather than forgetting:
- *
- *   1. **It is rendered to every customer**, on all three settings surfaces
- *      (`/business-os/settings`, `/v2/settings`, `/settings`). This is not an
- *      internal config value — it is customer-visible copy, so swapping it is a
- *      product decision rather than a config tidy.
- *   2. **It is a personal inbox.** Erasure requests are a compliance channel;
- *      routing them to one person's Gmail means they are unmonitored whenever
- *      that person is not reading it, and there is no record that they arrived.
- *   3. **It replaced a deliberately fake address.** The previous placeholder was
- *      `TODO-ERASURE-CONTACT@example.invalid`, chosen so it could never ship
- *      unnoticed. A real, plausible address loses that property — which is
- *      exactly why the marker below exists.
- *
- * **To find it: `grep -rn "TEMP-ERASURE-CONTACT"`.** The marker lives in this
- * comment rather than inside the address, so the address stays valid while the
- * reminder stays greppable. Tracked as an open item (N2) in
- * docs/workplans/business-os-business-data-purge.md.
- *
- * Defined here and ONLY here — the reason this shared component exists at all.
- */
-export const PLACEHOLDER_ERASURE_CONTACT = 'meiribarak@gmail.com';
+// TEMP-ERASURE-CONTACT: the one definition is in lib/business-os/supportContact.ts.
+import { PLACEHOLDER_ERASURE_CONTACT } from '@/lib/business-os/supportContact';
+import { DownloadMyDataButton } from '@/components/business-os/data-export/DownloadMyDataButton';
 
 /**
  * English fallbacks for surfaces outside a `LanguageProvider` (i.e. `/v2/**`).
@@ -87,9 +55,6 @@ const FALLBACK_COPY: Record<string, string> = {
   'settings.security.erasure_request_export_hint':
     'We recommend downloading a copy of your data first — erasure cannot be undone.',
   'settings.security.erasure_request_contact': 'Contact us',
-  'settings.security.export_button': 'Export Data',
-  'settings.security.export_success': 'Data exported successfully!',
-  'settings.security.export_error': 'Failed to export data. Please try again.',
 };
 
 /**
@@ -123,31 +88,13 @@ function useCopy() {
  * not the border radius.
  */
 export function ErasureRequestContent() {
-  const { tr, isRTL } = useCopy();
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportOutcome, setExportOutcome] = useState<'success' | 'error' | null>(null);
+  const { tr } = useCopy();
 
-  // Through the shared helper, not a plain link (SQ-E2, QA E4): a link cannot
-  // tell whether the download worked, so a signed-out click saved the 401 JSON
-  // as "my data". The helper never throws; it returns a verdict. No user id and
-  // no audit call here: the server takes the person from the session and writes
-  // DATA_EXPORTED itself.
-  const handleExport = async () => {
-    if (isExporting) return;
-    setIsExporting(true);
-    setExportOutcome(null);
-    try {
-      const result = await downloadUserDataExport();
-      setExportOutcome(result.success ? 'success' : 'error');
-    } catch {
-      // The helper returns a verdict and is not expected to throw; if it ever
-      // does, the person still sees the error message, never a false success.
-      setExportOutcome('error');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
+  // The export is the one shared control (data export DE-9, BC-1): the same
+  // zip, copy, status line and notice as every other entry point. No own
+  // fetch, no own message here. SA C-8: it sits on its own line as one stacked
+  // block, with the "Contact us" link as a sibling and no flex-row-reverse
+  // wrapper, so its logical classes are not reversed twice in Hebrew.
   return (
     <div className="space-y-3">
       <p className="text-xs text-[var(--v2-text-secondary)]">
@@ -157,41 +104,18 @@ export function ErasureRequestContent() {
         {tr('settings.security.erasure_request_export_hint')}
       </p>
 
-      <div
-        className={`flex flex-wrap items-center gap-2 ${
-          isRTL ? 'flex-row-reverse' : ''
-        }`}
-      >
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={isExporting}
-          aria-busy={isExporting}
-          className="inline-flex items-center gap-2 px-3 py-2 border border-[var(--v2-border)] text-xs font-medium hover:bg-[var(--v2-surface-hover)] disabled:opacity-60"
-          style={{ borderRadius: 'var(--v2-radius-button)' }}
-        >
-          {isExporting ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <Download className="w-3.5 h-3.5" aria-hidden="true" />
-          )}
-          {tr('settings.security.export_button')}
-        </button>
+      <DownloadMyDataButton variant="button" />
 
+      <div>
         <a
           href={`mailto:${PLACEHOLDER_ERASURE_CONTACT}`}
           className="inline-flex items-center gap-2 px-3 py-2 border border-[var(--v2-border)] text-xs font-medium hover:bg-[var(--v2-surface-hover)]"
           style={{ borderRadius: 'var(--v2-radius-button)' }}
         >
-          <Mail className="w-3.5 h-3.5" />
+          <Mail className="w-3.5 h-3.5" aria-hidden="true" />
           {tr('settings.security.erasure_request_contact')}
         </a>
       </div>
-
-      <p role="status" aria-live="polite" className="text-xs text-[var(--v2-text-secondary)]">
-        {exportOutcome === 'success' && tr('settings.security.export_success')}
-        {exportOutcome === 'error' && tr('settings.security.export_error')}
-      </p>
     </div>
   );
 }
