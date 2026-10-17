@@ -230,7 +230,7 @@ If any check fails, do not run anything else: tell the owner and SA.
 
 - Fill in the run log row below in the same PR or doc edit.
 - Any **pending** price for this model on `/admin/system-config` was recorded against the old price. Slice 8's Apply will refuse it as stale, by design. Re-enter it, or let the next "Check provider prices" replace it.
-- For an image price: this runbook does not apply. Image prices are still in code (`IMAGE_FALLBACK_PRICING`) until slice 7 and change by PR.
+- For an image price: this runbook does not apply. Since slice 7 images are priced from `ai_model_image_pricing` first (then the in-code `IMAGE_FALLBACK_PRICING`), but that table has no runbook paste: an image price is added through slice 8's apply, or the in-code fallback changes by PR.
 
 ---
 
@@ -244,7 +244,7 @@ If any check fails, do not run anything else: tell the owner and SA.
 
 | Date (UTC) | Who ran it | Owner approval (where, when) | Model | Old → new per 1M (input / output) | Large change confirmed? | Source URL and date checked | Fingerprint all, before → after | Other models unchanged |
 |---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+| 2026-10-16 19:56 | TL (Claude Code) via the Supabase connector | Owner, in chat, 2026-10-16 ("Write it now", BQ-7a) | openai / text-embedding-3-small (new row `549fcc6e-3f63-4d06-b959-71c77759a12e`) | none (first price) → 0.02 / 0 | No | https://developers.openai.com/api/docs/pricing, checked 2026-10-16 | `76c7cfe8e89e2464f9fa866668682426` → `8d6bbb2344a2c9940e65fd51ca6ccf82` | Yes (`fingerprint_other_models` `76c7cfe8…` before and after) |
 
 ---
 
@@ -254,3 +254,4 @@ If any check fails, do not run anything else: tell the owner and SA.
 |------|--------|---------|
 | 2026-10-16 | Created | AI model price review slice 6 (SA SC6-5; user decision BQ-1 (a)): three pastes (read-only pre-check with the slice 2 fingerprint, one self-checking `DO` block that retires by id and never deletes, read-only post-check), the `20251030` warning, and the run log |
 | 2026-10-16 | SA code review and QA fixes | CR-1: paste 1 became 1a (rows) and 1b (count, `active_row_ids`, fingerprints), one statement per paste, and paste 3 runs 1a then 1b. CR-5: conversion `* 0.000001` (exact, as the pending area), "numerically equal" check, fingerprint compared only within one run. QA: no comments in any paste (hints moved to the text), "three places each". TL: a 10x / 0.1x check in paste 2 with the `v_confirm_large_change` override, skipped for a first price. Pinned by the source test `lib/ai/pricing-research/__tests__/emergencyRunbook.source.test.ts` |
+| 2026-10-16 | First run logged | BQ-7a (user: "Write it now"): `openai / text-embedding-3-small` first price, 0.02 / 0 per 1M, by TL; other models unchanged. Charge unchanged (equals the in-code fallback) |

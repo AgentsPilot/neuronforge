@@ -14,7 +14,9 @@
 
 import { SupabaseClient } from '@supabase/supabase-js'
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { calculateCostSync } from '@/lib/ai/pricing'
 import type { CallContext } from '@/lib/ai/providers/baseProvider'
+import type { OpenAIProvider } from '@/lib/ai/providers/openaiProvider'
 import { SystemConfigService } from './SystemConfigService'
 import { createLogger } from '@/lib/logger'
 import { platformAccountId } from '@/lib/platformAccount'
@@ -78,15 +80,29 @@ export class EmbeddingService {
   }
 
   /**
-   * Calculate embedding cost based on model and tokens
+   * The cost this service reports for an embedding call: the SAME figure the
+   * provider charged (AI model price review slice 7, RC7-10).
+   *
+   * It runs right after the call, through the same synchronous lookup the
+   * provider's tracking used (`calculateCostSync`: the warm price rows, else the
+   * in-code table), on the input tokens the provider priced. Not the async
+   * `calculateCost`, which could load the rows on a cold instance after the
+   * charge was taken from the in-code table and report a different number. Not
+   * the old setting `helpbot_embedding_cost_per_1k_tokens` either, which was a
+   * copy of one model's price (requirement R-1).
    */
-  private async calculateCost(tokens: number): Promise<number> {
-    const costPer1kTokens = await SystemConfigService.getNumber(
-      this.supabase,
-      'helpbot_embedding_cost_per_1k_tokens',
-      0.00002 // Default: OpenAI text-embedding-3-small pricing
-    )
-    return (tokens / 1000) * costPer1kTokens
+  private reportedCost(model: string, promptTokens: number): number {
+    return calculateCostSync(PROVIDERS.OPENAI, model, promptTokens, 0)
+  }
+
+  /**
+   * The OpenAI provider, which implements `createEmbedding`.
+   * `getProvider(PROVIDERS.OPENAI)` returns the factory's OpenAI singleton, typed
+   * as the base class; the assertion only restores its real type (no runtime
+   * change, SA ruling 4 of slice 7).
+   */
+  private openaiProvider(): OpenAIProvider {
+    return ProviderFactory.getProvider(PROVIDERS.OPENAI) as OpenAIProvider
   }
 
   /**
@@ -116,7 +132,7 @@ export class EmbeddingService {
 
     try {
       // Get provider from factory for centralized token tracking
-      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const provider = this.openaiProvider()
       const context: CallContext = {
         userId: attribution?.userId ?? systemUserId(),
         feature: attribution?.feature ?? 'helpbot',
@@ -134,7 +150,7 @@ export class EmbeddingService {
 
       const embedding = response.data[0].embedding
       const tokens = response.usage?.total_tokens || 0
-      const cost = await this.calculateCost(tokens)
+      const cost = this.reportedCost(model, response.usage?.prompt_tokens || 0)
 
       return {
         embedding,
@@ -173,7 +189,7 @@ export class EmbeddingService {
 
     try {
       // Get provider from factory for centralized token tracking
-      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const provider = this.openaiProvider()
       const context: CallContext = {
         userId: systemUserId(),
         feature: 'helpbot',
@@ -190,7 +206,7 @@ export class EmbeddingService {
 
       const embeddings = response.data.map((item: any) => item.embedding)
       const totalTokens = response.usage?.total_tokens || 0
-      const totalCost = await this.calculateCost(totalTokens)
+      const totalCost = this.reportedCost(model, response.usage?.prompt_tokens || 0)
 
       return {
         embeddings,

@@ -119,7 +119,7 @@ describe('3. images, through the real resolver', () => {
     const sizes = Array.from(new Set(Object.values(IMAGE_GENERATION_CONFIG_DEFAULTS.sizes)));
     for (const size of sizes) {
       for (const quality of IMAGE_PRICE_REQUIRED_QUALITIES) {
-        const price = resolveImagePrice({}, model, size, quality);
+        const price = resolveImagePrice(new Map(), model, size, quality);
         expect({ size, quality, source: price.source }).not.toEqual({ size, quality, source: 'unpriced' });
         expect(price.usdPerImage).toBeGreaterThan(0);
       }
@@ -191,7 +191,7 @@ describe('4. the conservative rates are real, and never cheaper than a default t
     const model = IMAGE_GENERATION_CONFIG_DEFAULTS.model;
     for (const size of Object.values(IMAGE_GENERATION_CONFIG_DEFAULTS.sizes)) {
       for (const quality of IMAGE_PRICE_REQUIRED_QUALITIES) {
-        expect(rate.perImage!).toBeGreaterThanOrEqual(resolveImagePrice({}, model, size, quality).usdPerImage);
+        expect(rate.perImage!).toBeGreaterThanOrEqual(resolveImagePrice(new Map(), model, size, quality).usdPerImage);
       }
     }
   });

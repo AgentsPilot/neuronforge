@@ -5,16 +5,25 @@
  * request; nothing is cached and nothing is written (AI model price review
  * slice 3, workplan §4).
  *
- * "CURRENT" IS WHAT WE CHARGE TODAY (RR-4), unit by unit:
+ * "CURRENT" IS WHAT WE CHARGE TODAY (RR-4), unit by unit, by the same rules
+ * charging uses since slice 7 (SA RC7-7):
  *   - input and output: the newest active `ai_model_pricing` row (the same rule
  *     as `listActive()`), else the in-code outage table, else nothing;
- *   - cached input: OpenAI only, half the current input, labelled "derived"
- *     (the rule in `openaiProvider.ts`). Until slice 7 no charge reads the
- *     cached-input column, so a stored value there is NOT current. Other
- *     providers: "not compared" (SA O-8);
- *   - image: `resolveImagePrice` (setting, then in-code table), called only for
- *     a key that exists in one of them (SA C-7). `ai_model_image_pricing` has no
- *     reader until slice 7, so it is not current either.
+ *   - cached input: OpenAI only, the one provider whose charge reads it
+ *     (`openaiProvider.ts`, SA F-1). The row's `cached_input_cost_per_token`
+ *     when it is above 0 (basis `table`), otherwise half the current input,
+ *     labelled "derived"; a 0 counts as not set (O-5). Other providers: "not
+ *     compared" (SA O-8), even with a stored rate, because nothing charges it;
+ *   - image: the newest active `ai_model_image_pricing` row priced above 0
+ *     (basis `table`, with its row id), else the in-code table, else nothing.
+ *     The decision comes from the shared resolver in `lib/ai/imagePricing.ts`
+ *     (`selectActiveImagePrices`, `resolveImagePriceFrom`), so it cannot differ
+ *     from charging. The setting `image_generation_prices_usd` is no longer part
+ *     of it (O-1, BQ-7b), and the basis `image_setting` is no longer produced.
+ *
+ * FRESH: the rows are read on every request (`listActiveExact` on both price
+ * tables), never from a per-instance cache: the page shows what is stored now.
+ * Charging may lag by up to the cache window (`STORED_PRICE_NOTE`).
  *
  * EXACT: prices stay decimal strings end to end (`decimal.ts`). The in-code
  * tables hold JS number literals; they are turned back to the decimal they
@@ -22,8 +31,8 @@
  *
  * Read-only imports from the charging modules: `inCodeTokenPrices`,
  * `isInputOnlyPricedModel` (lib/ai/pricing.ts), `conservativeRateDerivation`
- * (chargePricing.ts), `resolveImagePrice` and `IMAGE_FALLBACK_PRICING`. None of
- * those files is edited by this slice (SA C-6).
+ * (chargePricing.ts), `IMAGE_FALLBACK_PRICING`, and the PURE functions of
+ * `lib/ai/imagePricing.ts` (never its cache). Nothing here prices a call.
  */
 
 import 'server-only';
@@ -31,12 +40,18 @@ import 'server-only';
 import { inCodeTokenPrices, isInputOnlyPricedModel } from '@/lib/ai/pricing';
 import { conservativeRateDerivation } from '@/lib/business-os/llm/chargePricing';
 import { IMAGE_PRICE_REQUIRED_QUALITIES } from '@/lib/business-os/llm/modelSettingsPolicy';
+import { selectActiveImagePrices, resolveImagePriceFrom, imagePriceKey } from '@/lib/ai/imagePricing';
+import { aiModelImagePricingRepository } from '@/lib/repositories/AiModelImagePricingRepository';
 import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
 import { aiPriceProposalRepository } from '@/lib/repositories/AiPriceProposalRepository';
 import { adminUserRepository } from '@/lib/repositories/AdminUserRepository';
 import { IMAGE_FALLBACK_PRICING, systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
-import type { AiModelPricingExactRow, AiPricePendingLine, AiPriceSubmitLine } from '@/lib/repositories/types';
-import { resolveImagePrice } from '@/lib/services/GeneratedImageService';
+import type {
+  AiModelImagePricingExactRow,
+  AiModelPricingExactRow,
+  AiPricePendingLine,
+  AiPriceSubmitLine,
+} from '@/lib/repositories/types';
 
 import { buildAreaTags, modelKey, type AreaTag, type AreaTagResult, type EmbeddingSettingState } from './areaTags';
 import { compareUnit, rowCoverage, type CoverageColour, type CurrentBasis, type UnitComparison } from './coverageColour';
@@ -47,6 +62,7 @@ import {
   parseDecimal,
   perTokenToPerMillion,
   shiftDecimal,
+  signOfDecimal,
 } from './decimal';
 import { FLAG_LABELS, type LineFlagContext, type PendingLineFlag, type UnitPrices } from './lineFlags';
 import type { PendingLineInput } from './pendingLineSchema';
@@ -59,7 +75,8 @@ export interface PricingSnapshot {
   /** `provider:model` → per-token decimal strings from the in-code outage table. */
   inCodeByKey: Map<string, { input: string; output: string }>;
   areas: AreaTagResult;
-  imagePricesUsd: Record<string, number>;
+  /** `provider:model:size:quality` → the active image row charged (the shared selection rule). */
+  imageRowsByKey: Map<string, AiModelImagePricingExactRow>;
   imageSizes: string[];
   pending: AiPricePendingLine[];
   adminEmailById: Map<string, string>;
@@ -71,12 +88,15 @@ export interface TokenCurrent {
   /** Per token. */
   input?: string;
   output?: string;
-  /** Per token, derived (OpenAI 50% rule). */
+  /** Per token: the stored rate (basis `table`) or the OpenAI 50% rule (basis `derived`). */
   cachedInput?: string;
+  cachedBasis?: 'table' | 'derived';
 }
 
 export interface ImageCurrent {
-  basis: 'image_setting' | 'in_code_fallback' | 'unpriced';
+  basis: 'table' | 'in_code_fallback' | 'unpriced';
+  /** The `ai_model_image_pricing` row behind a `table` price (the DB CHECK requires it on a line). */
+  rowId?: string;
   perImage?: string;
 }
 
@@ -159,14 +179,16 @@ async function buildAdminEmailById(): Promise<Map<string, string>> {
 
 /** Everything the comparison and the flag context read, in one round of queries. */
 export async function loadPricingSnapshot(): Promise<PricingSnapshot> {
-  const [active, areas, imageConfig, pending, adminEmailById] = await Promise.all([
+  const [active, imageActive, areas, imageConfig, pending, adminEmailById] = await Promise.all([
     aiModelPricingRepository.listActiveExact(),
+    aiModelImagePricingRepository.listActiveExact(),
     buildAreaTags(),
     systemConfigRepository.getImageGenerationConfig(),
     aiPriceProposalRepository.listPendingLines(),
     buildAdminEmailById(),
   ]);
   if (active.error || !active.data) throw active.error ?? new Error('Active prices unreadable');
+  if (imageActive.error || !imageActive.data) throw imageActive.error ?? new Error('Active image prices unreadable');
   if (pending.error || !pending.data) throw pending.error ?? new Error('Pending prices unreadable');
 
   // Newest first from the repository: the first row per model is the one charged.
@@ -190,7 +212,7 @@ export async function loadPricingSnapshot(): Promise<PricingSnapshot> {
     activeByKey,
     inCodeByKey,
     areas,
-    imagePricesUsd: imageConfig.pricesUsd,
+    imageRowsByKey: selectActiveImagePrices(imageActive.data),
     imageSizes: Array.from(new Set(Object.values(imageConfig.sizes))),
     pending: pending.data,
     adminEmailById,
@@ -212,30 +234,38 @@ export function tokenCurrent(snapshot: PricingSnapshot, provider: string, model:
     const inCode = snapshot.inCodeByKey.get(key);
     current = inCode ? { basis: 'in_code_fallback', input: inCode.input, output: inCode.output } : { basis: 'unpriced' };
   }
-  // Today's cached-read rule exists for OpenAI only (openaiProvider.ts).
-  if (provider === 'openai' && current.input !== undefined) {
+  // Cached input is charged only by the OpenAI provider (SA F-1): there the stored
+  // rate when it is above 0 (slice 7, O-5), else the derived half. Anthropic and
+  // Kimi charge through the plain token lookup, which never reads the column, so a rate
+  // stored on their rows is not "current" and is not shown as such.
+  const storedCached = row?.cached_input_cost_per_token ?? null;
+  if (provider === 'openai' && storedCached !== null && signOfDecimal(parseDecimal(storedCached)) > 0) {
+    current.cachedInput = formatDecimal(parseDecimal(storedCached));
+    current.cachedBasis = 'table';
+  } else if (provider === 'openai' && current.input !== undefined) {
     current.cachedInput = formatDecimal(halveDecimal(parseDecimal(current.input)));
+    current.cachedBasis = 'derived';
   }
   return current;
 }
 
-export function imageCurrent(snapshot: PricingSnapshot, model: string, size: string, quality: string): ImageCurrent {
-  const key = imageKey(model, size, quality);
-  // Known only when the setting holds a usable price (a finite number above 0)
-  // or the in-code table has the key; a configured 0 or non-number with no
-  // fallback would otherwise reach the resolver's "recording $0" error log.
-  const configured = snapshot.imagePricesUsd[key];
-  const known =
-    (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) || key in IMAGE_FALLBACK_PRICING;
-  // SA C-7: resolveImagePrice logs "recording $0" for an unknown key, so it is
-  // only asked about a key that exists in the setting or the in-code table.
-  if (!known) return { basis: 'unpriced' };
-  const resolved = resolveImagePrice(snapshot.imagePricesUsd, model, size, quality);
-  if (resolved.source === 'unpriced' || !(resolved.usdPerImage > 0)) return { basis: 'unpriced' };
-  return {
-    basis: resolved.source === 'config' ? 'image_setting' : 'in_code_fallback',
-    perImage: formatDecimal(decimalFromNumberLiteral(resolved.usdPerImage)),
-  };
+/**
+ * The image price charged today for one provider, model, size and quality. The
+ * decision is the shared charging resolver's; the value shown is the exact
+ * stored text for a table row, and the written decimal for the in-code table.
+ * The resolver is pure and silent, so an unknown key logs nothing (SA C-7 kept).
+ */
+export function imageCurrent(snapshot: PricingSnapshot, provider: string, model: string, size: string, quality: string): ImageCurrent {
+  const row = snapshot.imageRowsByKey.get(imagePriceKey(provider, model, size, quality));
+  const table = new Map<string, number>(row ? [[imagePriceKey(provider, model, size, quality), Number(row.cost_per_image)]] : []);
+  const resolved = resolveImagePriceFrom(table, provider, model, size, quality);
+  if (resolved.source === 'table' && row) {
+    return { basis: 'table', rowId: row.id, perImage: formatDecimal(parseDecimal(row.cost_per_image)) };
+  }
+  if (resolved.source === 'fallback') {
+    return { basis: 'in_code_fallback', perImage: formatDecimal(decimalFromNumberLiteral(resolved.usdPerImage)) };
+  }
+  return { basis: 'unpriced' };
 }
 
 /** The token models in the coverage set (SA finding 9), excluding pending lines. */
@@ -253,10 +283,11 @@ export function tokenCoverage(snapshot: PricingSnapshot): Set<string> {
 /** Image model names in the coverage set, excluding pending lines. */
 function imageCoverage(snapshot: PricingSnapshot): Set<string> {
   const models = new Set<string>();
-  for (const key of [...Object.keys(IMAGE_FALLBACK_PRICING), ...Object.keys(snapshot.imagePricesUsd)]) {
+  for (const key of Object.keys(IMAGE_FALLBACK_PRICING)) {
     const parsed = parseImageKey(key);
     if (parsed) models.add(parsed.model);
   }
+  for (const row of snapshot.imageRowsByKey.values()) models.add(row.model_name);
   for (const key of snapshot.areas.imageModelKeys) models.add(key.slice(key.indexOf(':') + 1));
   return models;
 }
@@ -282,7 +313,7 @@ export function lineContextFor(
   line: PendingLineInput
 ): { context: LineFlagContext; snapshotFields: Omit<AiPriceSubmitLine, 'kind' | 'provider' | 'model_name' | 'source_url' | 'checked_on' | 'flags'> } {
   if (line.kind === 'image') {
-    const current = imageCurrent(snapshot, line.model_name, line.image_size, line.image_quality);
+    const current = imageCurrent(snapshot, line.provider, line.model_name, line.image_size, line.image_quality);
     const fallbackPrice = IMAGE_FALLBACK_PRICING[imageKey(line.model_name, line.image_size, line.image_quality)];
     return {
       context: {
@@ -297,6 +328,7 @@ export function lineContextFor(
         image_quality: line.image_quality,
         price_per_image: line.price_per_image,
         current_basis: current.basis,
+        current_row_id: current.rowId,
         current_cost_per_image: current.perImage,
       },
     };
@@ -427,7 +459,7 @@ function tokenRows(snapshot: PricingSnapshot): ComparisonRow[] {
         {
           unit: 'cached_input',
           current: toPer1m(current.cachedInput),
-          currentBasis: current.cachedInput === undefined ? 'unpriced' : 'derived',
+          currentBasis: current.cachedInput === undefined ? 'unpriced' : current.cachedBasis ?? 'derived',
           pending: normalisePrice(line?.cached_input_per_1m ?? null),
         },
         { usedByBusinessOs: used }
@@ -463,9 +495,13 @@ function imageRows(snapshot: PricingSnapshot): ComparisonRow[] {
     unitsByModel.set(model, units);
   };
 
-  for (const key of [...Object.keys(IMAGE_FALLBACK_PRICING), ...Object.keys(snapshot.imagePricesUsd)]) {
+  for (const key of Object.keys(IMAGE_FALLBACK_PRICING)) {
     const parsed = parseImageKey(key);
     if (parsed) addUnit(parsed.model, parsed.size, parsed.quality);
+  }
+  for (const row of snapshot.imageRowsByKey.values()) {
+    if (!providerByModel.has(row.model_name)) providerByModel.set(row.model_name, row.provider);
+    addUnit(row.model_name, row.size, row.quality);
   }
   for (const key of snapshot.areas.imageModelKeys) {
     const separator = key.indexOf(':');
@@ -493,7 +529,7 @@ function imageRows(snapshot: PricingSnapshot): ComparisonRow[] {
     let basis: CurrentBasis = 'unpriced';
     for (const unitKey of [...unitKeys].sort()) {
       const [size, quality] = unitKey.split(':');
-      const current = imageCurrent(snapshot, model, size, quality);
+      const current = imageCurrent(snapshot, provider ?? '', model, size, quality);
       if (current.basis !== 'unpriced') basis = current.basis;
       const line = pendingByUnit.get(imageKey(model, size, quality));
       const unit = `image ${size} ${quality}`;
