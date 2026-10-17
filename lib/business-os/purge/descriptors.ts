@@ -1481,6 +1481,9 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Admin reorganisation slice 5 (SA SC-4): the Business OS cron run record.
   never('bos_cron_runs', G, exclude(EXPORT_REASON.PLATFORM),
     'The platform run record of the Business OS scheduled jobs: job name, times, an outcome word, an error class and numeric counts. No user_id and no business content. Platform monitoring data, pruned at 30 days by the recorder; never purged.'),
+  // Finance slice 8.1 (§11M.6, HS-W-8): the nightly platform history of states that cannot be rebuilt.
+  never('business_os_finance_snapshots', G, exclude(EXPORT_REASON.PLATFORM),
+    'One row per platform figure per UTC day: counts of accounts and amounts of credits, written by the nightly finance snapshot job. No user_id, no account, no money: platform aggregates, not tenant data. Append only; never purged and never archived (the history cannot be rebuilt).'),
   never('bos_cron_run_recording', G, exclude(EXPORT_REASON.PLATFORM),
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 
