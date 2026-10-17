@@ -53,7 +53,8 @@ import type { TileStatus } from '@/lib/admin/health/healthTypes';
 /** Per-section honesty (L-5): loaded, loaded but "at least", or could not load. */
 export type FinanceSectionStatus = 'ok' | 'partial' | 'unknown';
 
-export type FinanceWindowChoice = 'today' | '7d' | '30d' | 'this_month' | 'custom';
+/** DF-6 (§11L, E-80): `since_start` runs from the charging cut-over instant to now, one business only. */
+export type FinanceWindowChoice = 'today' | '7d' | '30d' | 'this_month' | 'custom' | 'since_start';
 
 /** The resolved window: inclusive UTC dates plus the half-open instants read. */
 export interface FinanceWindowInfo {
@@ -64,7 +65,7 @@ export interface FinanceWindowInfo {
   to: string;
   /** ISO instant, inclusive. */
   start: string;
-  /** ISO instant, exclusive. */
+  /** ISO instant, exclusive. For `since_start` it is the request's `now` (DF6-W-2). */
   end: string;
 }
 

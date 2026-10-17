@@ -17,6 +17,8 @@
  * SA-W5 (a): a custom window the finance route would refuse (an end after
  * today UTC, more than 92 days) is not applied; its sentence shows under the
  * bar as a red alert while the Custom row stays open to fix it.
+ *
+ * DF-6 (DF6-FR-9): "Since it started" is offered only while a business is picked.
  */
 
 import { useId } from 'react';
@@ -26,7 +28,7 @@ import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
 import type { AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 
 import { FILTER_BUSINESS_HELP } from '../financeCopy';
-import { FINANCE_DEFAULT_WINDOW, type FinanceFilters } from '../financeFilters';
+import { FINANCE_DEFAULT_WINDOW, FINANCE_WINDOW_EXTRAS, type FinanceFilters } from '../financeFilters';
 import { FINANCE_WHAT } from '../useFinanceData';
 
 interface Props {
@@ -73,6 +75,7 @@ export function FinanceFilterBar({
           value: filters.window,
           defaultValue: FINANCE_DEFAULT_WINDOW,
           onChange: onWindowChange,
+          extras: filters.account ? FINANCE_WINDOW_EXTRAS : [],
           requireBothDates: true,
         }}
         business={

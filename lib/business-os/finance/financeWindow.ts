@@ -5,20 +5,24 @@
  * - The selected window: inclusive UTC dates → the half-open instants read.
  *   For a preset the dates are resolved HERE from `now`; client dates are
  *   never used (SA-Q2, SA-W6).
+ * - DF-6 (§11L, E-75, SA-Q92): `since_start` is two INSTANTS, not whole
+ *   days: from the charging cut-over (`CHARGING_CUTOVER_FLOOR_MS`) to `now`.
+ *   It uses no plan-row fact and no account clock (DF6-W-4); client dates are
+ *   ignored, as for every preset. The route allows it only with a business.
  * - K-1's two spans (SA-Q12): this calendar month to `now`, and the SAME
  *   elapsed span of the previous month, clamped to that month's length.
  *
  * @module lib/business-os/finance/financeWindow
  */
 
-import { resolveAdminWindow } from '@/app/admin/components/adminWindowPresets';
+import { resolveAdminWindow, todayUtc } from '@/app/admin/components/adminWindowPresets';
 import { CHARGING_CUTOVER_FLOOR_MS } from '@/lib/business-os/credits/aiActivity';
 import { windowInstants } from '@/lib/business-os/credits/creditReport';
 import type { FinanceWindowChoice } from './financeTypes';
 
 export interface FinanceWindowQuery {
   preset: FinanceWindowChoice;
-  /** Used only for `custom` (validated by the route). */
+  /** Used only for `custom` (validated by the route); ignored for every other choice. */
   from?: string | null;
   to?: string | null;
 }
@@ -49,8 +53,22 @@ export interface K1Spans {
   previousBeforeCutover: boolean;
 }
 
+/** DF-6 (SA-W-DF6-8): the cut-over's UTC date, computed so the `from` label cannot drift from the constant. */
+const CUTOVER_DATE = new Date(CHARGING_CUTOVER_FLOOR_MS).toISOString().slice(0, 10);
+
 /** The window the page reads. A custom window must already have passed the route's checks. */
 export function resolveFinanceWindow(query: FinanceWindowQuery, now: Date): ResolvedFinanceWindow {
+  if (query.preset === 'since_start') {
+    // DF6-W-1 / DF6-W-2: start at the cut-over instant, end at this request's clock (exclusive).
+    // Start = the floor, so cutoverClamp gives after_cutover and every margin is computed (AC-258).
+    return {
+      preset: 'since_start',
+      from: CUTOVER_DATE,
+      to: todayUtc(now),
+      start: new Date(CHARGING_CUTOVER_FLOOR_MS),
+      end: new Date(now.getTime()),
+    };
+  }
   let dates: { from: string; to: string };
   if (query.preset === 'custom') {
     if (!query.from || !query.to) throw new Error('A custom window needs both dates');

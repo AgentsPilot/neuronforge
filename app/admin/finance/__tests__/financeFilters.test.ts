@@ -243,3 +243,70 @@ describe('SA-W5: the custom-window rules the shared control does not check', () 
     expect(financeWindowProblem({ kind: 'preset', preset: '30d' }, NOW)).toBeNull();
   });
 });
+
+// ── DF-6 (§11L.5, DF6-FR-7, DF6-FR-8, SA-W-DF6-4 / -5) ───────────────────────
+describe('DF-6: since it started in the URL state and the request', () => {
+  const SINCE = { kind: 'extra', extra: 'since_start' } as const;
+
+  it('DF6-FR-7: range=since_start and the legacy preset=since_start both parse, with the business', () => {
+    expect(parseLink(`range=since_start&account=${A}`)).toEqual({ ...DEFAULTS, window: SINCE, account: A });
+    expect(parseLink(`preset=since_start&accountId=${A}`)).toEqual({ ...DEFAULTS, window: SINCE, account: A });
+    expect(again.FINANCE_WINDOW_EXTRAS).toEqual(['since_start']);
+  });
+
+  it('only since_start is admitted among the extras', () => {
+    expect(parseLink('range=90d').window).toEqual(FINANCE_DEFAULT_WINDOW);
+    expect(parseLink('range=last_month').window).toEqual(FINANCE_DEFAULT_WINDOW);
+  });
+
+  it('SA-W-DF6-4: with a business it is sent; with none the default window is sent (never a request the route refuses)', () => {
+    expect(requestOf({ ...DEFAULTS, window: SINCE, account: A })).toBe(`${FINANCE_REQUEST_PATH}?preset=since_start&accountId=${A}`);
+    expect(requestOf({ ...DEFAULTS, window: SINCE })).toBe(`${FINANCE_REQUEST_PATH}?preset=this_month`);
+  });
+
+  it('fromFinanceQuery maps it back to the extra', () => {
+    expect(fromFinanceQuery({ ...DEFAULT_FINANCE_QUERY, preset: 'since_start', accountId: A }).window).toEqual(SINCE);
+  });
+
+  it('DF6-FR-8 (a): no business → the window falls back to This month, nothing else changes, same request', () => {
+    const filters = parseLink('range=since_start');
+    expect(filters).toEqual({ ...DEFAULTS, window: SINCE });
+    const fix = financeFilterRepair(filters);
+    expect(fix).toEqual({ window: FINANCE_DEFAULT_WINDOW });
+    expect(requestOf({ ...filters, ...fix })).toBe(requestOf(filters));
+  });
+
+  it('DF6-FR-8 (b): a bad business is dropped by its own parser, then (a)', () => {
+    const filters = parseLink('range=since_start&account=acme');
+    expect(filters.account).toBe('');
+    expect(financeFilterRepair(filters)).toEqual({ window: FINANCE_DEFAULT_WINDOW });
+  });
+
+  it('DF6-FR-8 (c): dates beside it are ignored and the choice is kept', () => {
+    const filters = parseLink(`range=since_start&from=2026-10-01&to=2026-10-02&account=${A}`);
+    expect(filters.window).toEqual(SINCE);
+    expect(financeFilterRepair(filters)).toBeNull();
+    expect(requestOf(filters)).toBe(`${FINANCE_REQUEST_PATH}?preset=since_start&accountId=${A}`);
+  });
+
+  it('DF6-FR-8 (d): with tab=accounts and a business the tab goes (the business wins); the window stays', () => {
+    const filters = parseLink(`range=since_start&tab=accounts&account=${A}`);
+    expect(financeFilterRepair(filters)).toEqual({ tab: '', sort: 'ai_cost', group: '', show: 'all' });
+    expect(requestOf(filters)).toBe(`${FINANCE_REQUEST_PATH}?preset=since_start&accountId=${A}`);
+  });
+
+  it('with no business and stray tab keys, the window is repaired first, then the keys (each a URL-only write)', () => {
+    const filters = parseLink('range=since_start&sort=margin');
+    const first = financeFilterRepair(filters);
+    expect(first).toEqual({ window: FINANCE_DEFAULT_WINDOW });
+    const next = { ...filters, ...first };
+    expect(financeFilterRepair(next)).toEqual({ sort: 'ai_cost', group: '', show: 'all' });
+    expect(requestOf(next)).toBe(requestOf(filters));
+  });
+
+  it('Clear resets it, and it counts as a non-default window', () => {
+    expect(financeCanClear({ ...DEFAULTS, window: SINCE, account: A })).toBe(true);
+    expect(FINANCE_CLEAR_PATCH.window).toEqual(FINANCE_DEFAULT_WINDOW);
+    expect(financeWindowProblem(SINCE, new Date())).toBeNull();
+  });
+});

@@ -1587,3 +1587,175 @@ describe('Money M-4: the recorded AI cost through the route', () => {
     expect(JSON.stringify(body.data)).not.toContain(String(sum));
   });
 });
+
+// ── DF-6 (§11L): since it started, one business (AC-259 to AC-262, AC-271) ───
+// The AC-145 baseline above is NOT edited; every DF-6 case lives here.
+describe('DF-6: since_start through the route', () => {
+  beforeEach(asAdmin);
+  const OTHER = '88888888-8888-4888-8888-888888888888';
+  const CUTOVER_ISO = '2026-09-29T16:50:53.914Z';
+  const infoLine = () => {
+    const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page');
+    return line?.[0] as Record<string, unknown> | undefined;
+  };
+
+  it('AC-259: since_start with accountId → 200; the window runs from the cut-over to now', async () => {
+    const before = Date.now();
+    const res = await call(`?preset=since_start&accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expectNoStore(res);
+    const { window } = (await res.json()).data;
+    expect(window.preset).toBe('since_start');
+    expect(window.start).toBe(CUTOVER_ISO);
+    expect(window.from).toBe('2026-09-29');
+    expect(window.to).toBe(todayUtc());
+    expect(Date.parse(window.end)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(window.end)).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('AC-259: since_start with no business → 400 INVALID_QUERY, no read', async () => {
+    const res = await call('?preset=since_start');
+    expect(res.status).toBe(400);
+    expectNoStore(res);
+    expect(await res.json()).toEqual({ success: false, error: INVALID_QUERY });
+    noReadHappened();
+  });
+
+  it('AC-259: in development the 400 says the business is needed', async () => {
+    const env = process.env as Record<string, string | undefined>;
+    const previous = env.NODE_ENV;
+    env.NODE_ENV = 'development';
+    try {
+      const body = await (await call('?preset=since_start')).json();
+      expect(body.error).toBe(INVALID_QUERY);
+      expect(body.details.issue).toBe('since_start needs a business picked');
+    } finally {
+      env.NODE_ENV = previous;
+    }
+  });
+
+  it.each([
+    ['with tab and a business (SA-W84)', `?preset=since_start&tab=accounts&accountId=${ACCOUNT}`],
+    ['with tab and no business', '?preset=since_start&tab=accounts'],
+    ['a hyphenated value', `?preset=since-start&accountId=${ACCOUNT}`],
+    ['a malformed from beside it (format-checked even when ignored)', `?preset=since_start&from=2026-1-1&accountId=${ACCOUNT}`],
+    ['an unknown key beside it (still strict)', `?preset=since_start&accountId=${ACCOUNT}&name=Acme`],
+    ['a repeated preset', `?preset=since_start&preset=since_start&accountId=${ACCOUNT}`],
+  ])('AC-259: %s → 400, no read', async (_name, query) => {
+    const res = await call(query);
+    expect(res.status).toBe(400);
+    expectNoStore(res);
+    noReadHappened();
+  });
+
+  it('AC-259: from / to sent with it are ignored (the same window)', async () => {
+    const plain = (await (await call(`?preset=since_start&accountId=${ACCOUNT}`)).json()).data.window;
+    const dated = (await (await call(`?preset=since_start&from=2020-01-01&to=2020-01-02&accountId=${ACCOUNT}`)).json()).data.window;
+    expect({ ...dated, end: null }).toEqual({ ...plain, end: null });
+  });
+
+  it('AC-260: the 92-day cap is unchanged with a business picked (92 → 200, 93 → 400)', async () => {
+    expect((await call(`?preset=custom&from=${daysFromToday(-91)}&to=${todayUtc()}&accountId=${ACCOUNT}`)).status).toBe(200);
+    expect((await call(`?preset=custom&from=${daysFromToday(-92)}&to=${todayUtc()}&accountId=${ACCOUNT}`)).status).toBe(400);
+  });
+
+  it('AC-261 / SA-Q97 (tenant isolation): account A picked → every scoped read gets exactly A, never B; no all-accounts read', async () => {
+    mockDeps.plans.pagePlans.mockResolvedValue({ data: [plan(ACCOUNT), plan(OTHER)], error: null });
+    const res = await call(`?preset=since_start&accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockDeps.findPlanForAccount).toHaveBeenCalledWith(ACCOUNT);
+    expect(mockDeps.finance.findBillingStatusForAccount).toHaveBeenCalledWith(ACCOUNT);
+    const scoped = [
+      mockDeps.ledger.listRowsForAccountCreatedInRange,
+      mockDeps.finance.listClientPaymentsForAccountPaidInRange,
+      mockDeps.finance.listClientRefundsForAccountCreatedInRange,
+      mockDeps.finance.listOverdueClientInvoicesForAccount,
+      mockDeps.finance.listOverdueClientInstalmentsForAccount,
+      mockDeps.finance.listClientPlansForAccount,
+      mockDeps.finance.listBoostPurchasesForAccountPaidInRange,
+      mockDeps.finance.listPlanPaymentsForAccountPaidInRange,
+      mockRecordedForAccount,
+    ];
+    for (const dep of scoped) {
+      expect(dep).toHaveBeenCalled();
+      for (const [id] of dep.mock.calls) expect(id).toBe(ACCOUNT);
+    }
+    const allAccounts = [
+      mockDeps.plans.pagePlans,
+      mockDeps.ledger.listRowsOfAllAccountsCreatedInRange,
+      mockDeps.finance.listBillingStatusesAllAccounts,
+      mockDeps.finance.countRevenueRows,
+      mockDeps.finance.listClientPaymentsAllAccountsPaidInRange,
+      mockDeps.finance.listClientRefundsAllAccountsCreatedInRange,
+      mockDeps.finance.listOverdueClientInvoicesAllAccounts,
+      mockDeps.finance.listOverdueClientInstalmentsAllAccounts,
+      mockDeps.finance.listClientPlansAllAccounts,
+      mockDeps.finance.listBoostPurchasesAllAccountsPaidInRange,
+      mockDeps.finance.listPlanPaymentsAllAccountsPaidInRange,
+      mockDeps.lots.allAccounts,
+      mockReadQueueFigures,
+      mockRecordedAllAccounts,
+    ];
+    for (const dep of allAccounts) expect(dep).not.toHaveBeenCalled();
+    expect(JSON.stringify(allReads().map((fn) => fn.mock.calls))).not.toContain(OTHER);
+  });
+
+  it('AC-261: with since_start, a missing plan row is a 404 and a failed check a 500; nothing else is read', async () => {
+    mockDeps.findPlanForAccount.mockResolvedValue({ data: { plan: null }, error: null });
+    expect((await call(`?preset=since_start&accountId=${ACCOUNT}`)).status).toBe(404);
+    mockDeps.findPlanForAccount.mockResolvedValue({ data: null, error: new Error('down') });
+    expect((await call(`?preset=since_start&accountId=${ACCOUNT}`)).status).toBe(500);
+    for (const fn of allReads().filter((f) => f !== mockDeps.findPlanForAccount)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('AC-261: a platform account id is still the pure 404 before any read', async () => {
+    expect((await call(`?preset=since_start&accountId=${PLATFORM}`)).status).toBe(404);
+    noReadHappened();
+  });
+
+  it('AC-262 / DF6-P-1: the same reads as a picked 92-day custom request; only the range instants differ', async () => {
+    const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+    const masked = (value: unknown): unknown => {
+      if (value instanceof Date) return '<instant>';
+      if (typeof value === 'string' && ISO.test(value)) return '<instant>';
+      if (Array.isArray(value)) return value.map(masked);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, typeof v === 'function' ? '<fn>' : masked(v)])
+        );
+      }
+      return value;
+    };
+    const snapshotCalls = () => allReads().map((fn) => masked(fn.mock.calls));
+    const ledgerRange = () => {
+      const [, range] = mockDeps.ledger.listRowsForAccountCreatedInRange.mock.calls[0] as unknown as [string, { from: Date; to: Date }];
+      return range;
+    };
+
+    const sinceRes = await call(`?preset=since_start&accountId=${ACCOUNT}`);
+    expect(sinceRes.status).toBe(200);
+    const sinceEnd = (await sinceRes.json()).data.window.end as string;
+    const sinceStart = snapshotCalls();
+    const sinceRange = ledgerRange();
+    jest.clearAllMocks();
+    seed();
+    expect((await call(`?preset=custom&from=${daysFromToday(-91)}&to=${todayUtc()}&accountId=${ACCOUNT}`)).status).toBe(200);
+    const custom = snapshotCalls();
+    const customRange = ledgerRange();
+
+    expect(sinceStart).toEqual(custom);
+    // E-78: a custom window ends at the next UTC midnight; since_start ends at now.
+    expect(customRange.to.toISOString()).toBe(`${daysFromToday(1)}T00:00:00.000Z`);
+    expect(sinceRange.to.toISOString()).toBe(sinceEnd);
+    expect(sinceRange.from.toISOString()).toBe(CUTOVER_ISO);
+  });
+
+  it('AC-271 / DF6-FR-6: the info line logs the choice and its dates; no plan fact, amount or name', async () => {
+    await call(`?preset=since_start&accountId=${ACCOUNT}`);
+    expect(infoLine()?.window).toEqual({ preset: 'since_start', from: '2026-09-29', to: todayUtc() });
+    const logged = JSON.stringify([mockLog.info.mock.calls, mockLog.warn.mock.calls, mockLog.error.mock.calls]);
+    for (const secret of [NAME, TAKINGS_FIGURE, String(BOOST_MINOR), 'onboarding_started_at', 'profile_created_at', '2026-09-01T00:00:00Z']) {
+      expect(logged).not.toContain(secret);
+    }
+  });
+});
