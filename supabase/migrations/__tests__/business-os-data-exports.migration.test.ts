@@ -17,7 +17,9 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { EXPORT_JOB_POLICY } from '@/lib/business-os/data-export/jobPolicy';
-import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
+// The stamp of the 20261075 cleanup function. Was the generated CLEANUP_FUNCTION_VERSION; finance 4b.1's
+// 20261077 moved that on (2026-10-17), and the DE-8a checker and rollback name the 20261075 function itself.
+const CLEANUP_FUNCTION_VERSION = 'a824848e0a538477';
 
 const ROOT = process.cwd();
 const FILE = {
@@ -436,11 +438,13 @@ describe('MT-15 the probe (SA C-3)', () => {
 describe('MT-15 the rollback', () => {
   const rollback = read(FILE.rollback);
 
-  it('refuses while the bucket holds files or the 20261075 cleanup function is live, then drops function before table', () => {
+  it('refuses while the bucket holds files or any live cleanup function names the table, then drops function before table', () => {
     const guard = between(rollback, 'DO $rollback_guard$', '$rollback_guard$;');
     expect(guard).toContain("obj.bucket_id = 'business-data-exports'");
-    expect(guard).toContain(`position('${CLEANUP_FUNCTION_VERSION}' IN fn.prosrc) > 0`);
-    expect(guard).toContain('20261075_operator_test_account_cleanup_data_exports_rollback.sql first');
+    // SA-CR-4B1-R R-1: content, not a stamp, so every later cleanup version (20261077 on) also blocks it.
+    expect(guard).toContain("position('business_os_data_exports' IN fn.prosrc) > 0");
+    expect(guard).not.toContain(`position('${CLEANUP_FUNCTION_VERSION}' IN fn.prosrc)`);
+    expect(guard).toContain('Roll back the live cleanup version (20261077, then 20261075) first');
     const dropFunction = rollback.indexOf('DROP FUNCTION IF EXISTS public.business_os_data_export_start(uuid, uuid, text);');
     const dropTable = rollback.indexOf('DROP TABLE IF EXISTS public.business_os_data_exports;');
     expect(rollback.indexOf('$rollback_guard$;')).toBeLessThan(dropFunction);

@@ -47,6 +47,14 @@ const TABLES = [
   'saved_payment_methods',
 ];
 
+/**
+ * Server-write-only payment tables created after 20261004 (finance 4b.1,
+ * SA-Q71, SA-W106). Scanned for callers only: the 20261004 content tests
+ * above keep TABLES exact, because that migration names exactly twelve.
+ */
+const LATER_SERVER_ONLY_TABLES = ['business_os_boost_reversal_events'];
+const CALLER_SCAN_TABLES = [...TABLES, ...LATER_SERVER_ONLY_TABLES];
+
 /** The eight `FOR ALL` policies, by their live names (read on 2026-09-21). */
 const ALL_POLICIES: Array<[string, string]> = [
   ['payment_automation_executions', 'Users can view their own automation executions'],
@@ -344,11 +352,11 @@ function writersOf(table: string, files: string[]): string[] {
 describe('the payment tables are never written with a caller\'s own credentials', () => {
   const clientFiles = sourceFiles.filter((f) => /^\s*['"]use client['"]/m.test(readFileSync(f, 'utf8')));
 
-  it.each(TABLES)('no browser module writes %s directly (reads are fine)', (table) => {
+  it.each(CALLER_SCAN_TABLES)('no browser module writes %s directly (reads are fine)', (table) => {
     expect(writersOf(table, clientFiles)).toEqual([]);
   });
 
-  it('no user-cookie server client writes any of the twelve tables', () => {
+  it('no user-cookie server client writes any of the server-only payment tables', () => {
     // The `'use client'` guard above only sees the browser. A route that builds
     // `createAuthenticatedServerClient()` and writes one of these tables is
     // equally RLS-respecting and would break on apply — `sync-subscription` was
@@ -359,7 +367,7 @@ describe('the payment tables are never written with a caller\'s own credentials'
     for (const f of sourceFiles) {
       const src = readFileSync(f, 'utf8');
       if (!USER_COOKIE.test(src)) continue;
-      for (const table of TABLES) {
+      for (const table of CALLER_SCAN_TABLES) {
         for (const needle of [`from('${table}')`, `from("${table}")`]) {
           for (let i = src.indexOf(needle); i !== -1; i = src.indexOf(needle, i + 1)) {
             const isWrite = WRITE_OP.test(src.slice(i + needle.length, i + needle.length + 200));

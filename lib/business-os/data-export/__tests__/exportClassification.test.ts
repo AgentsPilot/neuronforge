@@ -294,8 +294,9 @@ describe('T-6 the section registry and the descriptors agree (SA-Q8)', () => {
 describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
   // DE-7 (§5, C-7): was "planned rows name a known slice". No table is planned now.
   // DE-8a: 156 with business_os_data_exports (exclude, the export itself).
-  it('no table descriptor is planned (non-vacuous: every one of the 156 is include or exclude)', () => {
-    expect(PURGE_DESCRIPTORS).toHaveLength(156);
+  // Finance 4b.1 on top: 157 with business_os_boost_reversal_events (exclude, billing).
+  it('no table descriptor is planned (non-vacuous: every one of the 157 is include or exclude)', () => {
+    expect(PURGE_DESCRIPTORS).toHaveLength(157);
     expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table)).toEqual([]);
     expect(PURGE_DESCRIPTORS.every((d) => d.export.kind === 'include' || d.export.kind === 'exclude')).toBe(true);
     expect(PLANNED_TABLES_ALLOWED).toBe(false);
@@ -1345,16 +1346,18 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
 
   // DE-6: 155 = 33 include + 5 planned (DE-7) + 117 exclude, was 23 + 17 (DE-6 12, DE-7 5) + 115.
   // DE-7 (D-1): 155 = 38 include + 0 planned + 117 exclude, was 33 + 5 (DE-7) + 117.
+  // Finance 4b.1: 156 = 38 + 0 + 118, the new exclude is business_os_boost_reversal_events (billing).
   // DE-8a: 156 = 38 include + 0 planned + 118 exclude (business_os_data_exports, the export itself).
-  it('the classification totals: 156 = 38 include + 0 planned + 118 exclude', () => {
+  // Merged (finance 4b.1 + DE-8a): 157 = 38 + 0 + 119.
+  it('the classification totals: 157 = 38 include + 0 planned + 119 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
       kinds[d.export.kind] += 1;
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
-    expect(PURGE_DESCRIPTORS).toHaveLength(156);
-    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 118 });
+    expect(PURGE_DESCRIPTORS).toHaveLength(157);
+    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 119 });
     expect(bySlice).toEqual({});
   });
 
@@ -1645,6 +1648,8 @@ describe('DE-5 M-4 every amount travels with its own currency (SA C-4, SA-Q6, SA
 const BILLING_TABLES: readonly string[] = [
   'billing_events', 'boost_pack_purchases', 'user_subscriptions', 'credit_transactions',
   'subscription_invoices', 'business_os_account_plans', 'business_os_boost_purchases',
+  // Finance 4b.1: the boost_ prefix is not matched below, so the reversal events are listed by hand.
+  'business_os_boost_reversal_events',
   ...PURGE_DESCRIPTORS.map((d) => d.table).filter((t) => t.startsWith('business_os_billing_') || t.startsWith('business_os_credit_')),
 ];
 

@@ -647,6 +647,8 @@ Expected: Q1 all NULL; Q5 0 rows; Q6 0; Q8 false/false; Q9 `true` (or the 202610
 
 Re-apply after a rollback only works once the `business-data-exports` bucket row has been deleted in the Storage dashboard (the pre-guard refuses while it exists).
 
+**2026-10-17, after finance 4b.1 (SA-CR-4B1-R R-1, R-2).** 4b.1 replaces the cleanup function with `20261077` (stamp `b78b4579fc6631f8`), which still deletes `business_os_data_exports`. From then on, the checker's cleanup-stamp row (it expects the `20261075` stamp `a824848e0a538477`) reads **false by design**: it is a point-in-time check for this apply. A re-run after `20261077` is not a failure of DE-8a. The rollback guard now tests content, not a stamp: `scripts/rollback-business-os-data-exports.sql` refuses while the live cleanup function names `business_os_data_exports`. So the rollback order becomes: `20261077`'s rollback, then `20261075`'s, then this script (proven in PGlite, 4b.1 workplan).
+
 ---
 
 ## 11. Files to create / modify

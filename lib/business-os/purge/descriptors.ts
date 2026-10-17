@@ -1474,6 +1474,9 @@ const EXCLUDED: PurgeDescriptor[] = [
     'Boost purchases: one row per attempt to buy credits, with the price, the Stripe references and the link to the credit lot. A financial record: never purged and never archived — a Reset that removed it would erase what the account paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
   never('business_os_boost_cap_overrides', U, exclude(EXPORT_REASON.BILLING),
     "Admin changes to the account's boost purchase cap, ended and never deleted. An audited admin record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles."),
+  // Finance slice 4b.1 (BD-17, migration 20261076): the dated refund and dispute history of a boost purchase.
+  never('business_os_boost_reversal_events', { kind: 'via', parent: 'business_os_boost_purchases', fk: 'purchase_id' }, exclude(EXPORT_REASON.BILLING),
+    'One append-only, dated row per refund step or dispute stage of a boost purchase: the date Finance counts it in. A financial record: never purged and never archived. No user_id: the account comes through the purchase, and the row is removed only with its purchase (ON DELETE CASCADE).'),
 
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G, exclude(EXPORT_REASON.PLATFORM),
