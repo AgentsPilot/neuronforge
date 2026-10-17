@@ -14,9 +14,10 @@
  * BQ-SA-1). The profile read is `.maybeSingle()` (SA Q-4) and no longer selects
  * `plan` (SA Q-3).
  *
- * The full chain per table is NOT re-pinned here: the route's characterization
- * test (app/api/user/data-export/__tests__/route.characterization.test.ts) owns
- * that (C-6).
+ * The full chain per table is NOT re-pinned here: the JSON route's
+ * characterization test owned that (C-6) until DE-9 retired the route with it;
+ * the zip builder runs the same sections (lib/business-os/data-export/
+ * __tests__/sections.test.ts).
  *
  * DE-2 (BUSINESS_OS_DATA_EXPORT_DE2_WORKPLAN.md §2.4, T-10 / T-11, SA C-6): the
  * column lists moved onto the purge descriptors (`export.columns`). Each read

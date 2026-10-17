@@ -27,7 +27,13 @@ export interface ImageGenerationConfig {
    * it used.
    */
   quality: string;
-  /** `"<model>:<size>:<reported quality>"` → USD per image. Empty when nothing is configured. */
+  /**
+   * `"<model>:<size>:<reported quality>"` → USD per image, as configured in the
+   * setting `image_generation_prices_usd`. NO LONGER READ BY ANY PRICE PATH since
+   * AI model price review slice 7 (O-1, user decision BQ-7b): images are priced
+   * from `ai_model_image_pricing`, then `IMAGE_FALLBACK_PRICING`. Still parsed
+   * here until slice 14 removes it.
+   */
   pricesUsd: Record<string, number>;
 }
 
@@ -44,8 +50,9 @@ export interface ImageGenerationConfig {
  *   `high`. This supersedes CR-1 option C (2026-09-18, which kept `auto`) by
  *   user decision on 2026-10-14. Images are still priced AFTER the call, by
  *   the quality the provider reports it used.
- * - pricesUsd: empty. The documented per-image fallback prices are
- *   IMAGE_FALLBACK_PRICING below, applied only when configuration has no entry.
+ * - pricesUsd: empty, and no longer read by any price path (slice 7). The
+ *   per-image prices come from `ai_model_image_pricing`, then
+ *   IMAGE_FALLBACK_PRICING below.
  */
 export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> = Object.freeze({
   model: 'gpt-image-2.5-flare',
@@ -76,12 +83,19 @@ export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> =
  * so that rate is now the flare `1024x1024:max` price ($0.212, was $0.25); and
  * a row naming gpt-image-1 is now refused by the image guardrail
  * (`image_price_missing`) and resolves to the code default, so a rollback of
- * the row cannot put a retired model back in service. These are the
- * DEFAULT, not the rule: `image_generation_prices_usd` in configuration
- * overrides any entry, and is where a price change belongs. This mirrors
- * `FALLBACK_PRICING` in lib/ai/pricing.ts for token models. Resolved by
- * `resolveImagePrice` in GeneratedImageService; kept here, beside the other
- * documented defaults, so no model name is written in the service.
+ * the row cannot put a retired model back in service.
+ *
+ * NON-AUTHORITATIVE (AI model price review R-1, slice 7). The authoritative
+ * image prices are the active rows of `ai_model_image_pricing`, changed only by
+ * approving a price; this map is the OUTAGE FALLBACK for a key the table does
+ * not price (and the only source while the table is empty). The setting
+ * `image_generation_prices_usd` no longer overrides it (O-1, BQ-7b). It is also
+ * the source of the CONSERVATIVE image rate (its maximum, `chargePricing.ts`,
+ * finding 3), so NEVER SHRINK IT: removing or lowering an entry silently lowers
+ * that rate. An approved price that differs from an entry here is updated by PR.
+ * This mirrors `FALLBACK_PRICING` in lib/ai/pricing.ts for token models.
+ * Resolved by the shared resolver in `lib/ai/imagePricing.ts`; kept here,
+ * beside the other documented defaults, so no model name is written in a service.
  */
 export const IMAGE_FALLBACK_PRICING: Readonly<Record<string, number>> = Object.freeze({
   'gpt-image-2.5-flare:1024x1024:low': 0.007,
@@ -542,8 +556,8 @@ export class SystemConfigRepository {
    * must not leave images both unsized and unpriced. Logs key names and counts,
    * never configuration values.
    *
-   * The price key lives here while no per-image price table exists; it moves
-   * if one arrives with the credit-deduction layer.
+   * The price key is still parsed, but no price path reads it since slice 7:
+   * per-image prices live in `ai_model_image_pricing` (removal is slice 14).
    */
   async getImageGenerationConfig(): Promise<ImageGenerationConfig> {
     const methodLogger = this.logger.child({ method: 'getImageGenerationConfig' });

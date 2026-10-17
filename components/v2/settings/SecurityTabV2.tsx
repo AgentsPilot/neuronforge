@@ -9,11 +9,10 @@ import {
   linkedOAuthLabel,
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities'
-import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport'
+import { DownloadMyDataButton } from '@/components/business-os/data-export/DownloadMyDataButton'
 import { DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel'
 import { createLogger } from '@/lib/logger'
 import {
-  Download,
   Trash2,
   CheckCircle,
   AlertCircle,
@@ -97,30 +96,6 @@ export default function SecurityTabV2() {
     } catch (error) {
       logger.error({ err: error }, 'Password change failed')
       setErrorMessage('Failed to change password. Please try again.')
-    }
-  }
-
-  const handleExportData = async () => {
-    if (!user) return
-
-    try {
-      setSuccessMessage('')
-      setErrorMessage('')
-
-      // The server export, not a client read (DE-0a): reading the tables here
-      // with `select('*')` put every plugin's OAuth tokens in the file. The
-      // server also records the export in the audit trail.
-      const result = await downloadUserDataExport()
-      if (!result.success) {
-        logger.error({ code: result.code, status: result.status }, 'User data export failed')
-        setErrorMessage('Failed to export data. Please try again.')
-        return
-      }
-
-      setSuccessMessage('Data exported successfully! Check your downloads folder.')
-    } catch (error) {
-      logger.error({ err: error }, 'User data export failed')
-      setErrorMessage('Failed to export data. Please try again.')
     }
   }
 
@@ -263,19 +238,15 @@ export default function SecurityTabV2() {
       <div className="space-y-3">
         <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">Account Management</h3>
 
-        <div className="flex items-center justify-between p-3 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        {/* Data export DE-9 (BC-1): the one shared "Download my data" control,
+            the same zip as every other surface. It owns its own status line
+            and notice, so the banners below carry no export message. */}
+        <div className="p-3 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700 space-y-3" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <div>
-            <h4 className="font-semibold text-sm text-[var(--v2-text-primary)]">Export Account Data</h4>
+            <h4 className="font-semibold text-sm text-[var(--v2-text-primary)]">Download my data</h4>
             <p className="text-xs text-[var(--v2-text-secondary)]">Download all your data</p>
           </div>
-          <button
-            onClick={handleExportData}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-[var(--v2-shadow-button)]"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export Data
-          </button>
+          <DownloadMyDataButton variant="button" />
         </div>
 
         {/* Danger Zone — shared with /business-os/settings (N7) */}

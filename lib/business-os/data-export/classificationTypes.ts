@@ -93,7 +93,13 @@ export type ExportSectionId =
  */
 export type PlannedTableSlice = 'DE-3' | 'DE-4' | 'DE-5' | 'DE-6' | 'DE-7';
 
-/** Files arrive in DE-8b, after DE-7, so buckets have their own expiry. */
+/**
+ * Files arrive in DE-8b, after DE-7, so buckets have their own expiry. Since
+ * DE-8b `planned` is FORBIDDEN on buckets too (exportClassification.test.ts
+ * runs with PLANNED_FILES_ALLOWED = false); the type stays so the CI rule and
+ * its negative controls can still name a planted `planned` bucket (as DE-7
+ * SA-Q9 for tables).
+ */
 export type PlannedFilesSlice = 'DE-8b';
 
 /**

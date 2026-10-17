@@ -13,6 +13,7 @@ export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { AiModelImagePricingRepository, aiModelImagePricingRepository } from './AiModelImagePricingRepository';
 export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
@@ -350,11 +351,20 @@ export type {
   DataExportJobCounts,
   DataExportJobRef,
   DataExportJobState,
+  DataExportSweepRef,
   DataExportJobStatus,
   DataExportFailureReason,
   DataExportRequesterKind,
   DataExportStartOutcome,
 } from './types';
+// Data export zip bucket (DE-8b): paths only from exportObjectPath. The files
+// repository (BusinessDataExportFilesRepository) is deliberately NOT exported
+// here: its one importer is lib/business-os/data-export/fileManifest.ts (F-6).
+export {
+  BusinessOsDataExportStorageRepository,
+  businessOsDataExportStorageRepository,
+} from './BusinessOsDataExportStorageRepository';
+export type { ExportBucketListing, ExportBucketObject, ExportFileBudget } from './types';
 
 // Types
 export type {
@@ -392,6 +402,8 @@ export type {
   // AI model pricing types
   AiModelPricing,
   AiModelPricingExactRow,
+  AiModelImagePricing,
+  AiModelImagePricingExactRow,
   AiPriceSubmitLine,
   AiPriceSubmitInput,
   AiPriceSubmitResultLine,

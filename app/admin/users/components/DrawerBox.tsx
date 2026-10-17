@@ -11,7 +11,8 @@
  * - A part is a plain `div` with `PART_BOX` and a `PartPurpose` after its
  *   label. Never a labelled group and never a heading: `focusSectionHeading`
  *   takes the closest labelled group, so a labelled part would take focus
- *   from the section heading (BD-15), and D-20 counts exactly five groups.
+ *   from the section heading (BD-15), and D-20 counts exactly the section
+ *   groups (six since data export DE-10a added Data export, SA-9).
  *
  * Both components are declared here, at module level, and never inside a
  * render: a component type created during render would remount the money
@@ -50,12 +51,14 @@ export const DRAWER_PURPOSE = {
   'account-signin': 'Email verification, sign-in methods, last sign-in, login counts and IPs.',
   'account-plugins': 'Plugins this account connected, and which of them are active.',
   activity: "This account's audit events, such as sign-ins and settings changes.",
+  // Data export DE-10a (workplan §7.1, shortened to the DB-3 12-word rule): the sixth section, above the danger area.
+  export: "This account's exports; admin downloads are recorded with your name and reason.",
 } as const;
 
 export type DrawerPurposeKey = keyof typeof DRAWER_PURPOSE;
 
-/** The five drawer sections that get a box around their `DrawerSection`. */
-export type DrawerSectionKey = 'credits' | 'plan' | 'ai' | 'account' | 'activity';
+/** The six drawer sections that get a box around their `DrawerSection` (`export`: data export DE-10a). */
+export type DrawerSectionKey = 'credits' | 'plan' | 'ai' | 'account' | 'activity' | 'export';
 
 /** The purpose line of a box: a `p`, never a heading. */
 export function PartPurpose({ part }: { part: DrawerPurposeKey }) {

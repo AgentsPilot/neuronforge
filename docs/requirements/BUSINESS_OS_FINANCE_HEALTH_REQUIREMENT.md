@@ -39,6 +39,7 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11F. Money M-4: two measures, one vocabulary (OV-1 copy, OV-5 recorded above charged)](#11f-money-m-4-two-measures-one-vocabulary-ov-1-copy-ov-5-recorded-above-charged)
     - [11G. Finance shell on the Admin Layout Standard (F-2, F-4, F-5)](#11g-finance-shell-on-the-admin-layout-standard-f-2-f-4-f-5)
     - [11H. Money M-5: the Money section](#11h-money-m-5-the-money-section)
+    - [11I. Slice 4b: boost refund dates, boost problems, bought credits](#11i-slice-4b-boost-refund-dates-boost-problems-bought-credits)
     - [11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant](#11j-money-m-8-mark-the-platform-dashboard-and-exchange-rates-pages-redundant)
     - [11K. Slice 6b: margin after estimated Stripe fees, and KPI order](#11k-slice-6b-margin-after-estimated-stripe-fees-and-kpi-order)
     - [11L. Slice DF-6: since it started (one account)](#11l-slice-df-6-since-it-started-one-account)
@@ -63,7 +64,7 @@ This document is the feature's **single source of truth**: every slice decision,
 | 2 | Business takings and client payment problems (layer B); currency-grouping helper (CUR-1, CUR-2, AC-13) | None (real rows today); **no migration**; new reads R-e to R-i (§11A.7) plus the reused reminder read R-j; SA-Q9 resolved by BD-13; split **2a** (takings) and **2b** (client payment problems) | ⬜ **2a implemented (uncommitted); SA code review APPROVED (SA-CR-2a), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `502e5d5d` on `feature/bos-finance-health-2`, PR [#312](https://github.com/AgentsPilot/neuronforge/pull/312) opened 2026-10-12, merge pending; user manual QA L-23..L-31 owed. 2a MERGED PR #312 (2026-10-12, merge `045a4d06`). 2b: workplan written 2026-10-12 on branch `feature/bos-finance-health-2b`, 2b implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-2b; condition SA-CR-1 backspace fix done), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `b4e0fa2b` on `feature/bos-finance-health-2b` (origin/main merged in `a6caf75e`), PR [#318](https://github.com/AgentsPilot/neuronforge/pull/318) opened 2026-10-12, merge pending; user manual QA L-32..L-41 owed** (§11A; SA rulings SA-Q13 to SA-Q19 and SA-W18 to SA-W27 in §0.3; findings S2-F1 to S2-F9 applied 2026-10-11; workplan-review edits E-8 to E-10 applied 2026-10-11) | 2a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md); 2b: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md) | 2a: [#312](https://github.com/AgentsPilot/neuronforge/pull/312); 2b: [#318](https://github.com/AgentsPilot/neuronforge/pull/318) |
 | 1c | Fix slice: test-mode platform money counts (BD-14); a paying Founding Partner is grouped under its paid tier (BD-15); revenue panel copy no longer says the webhook is missing | Slices 1a, 1b; **no migration**; changes R-c, R-c′, R-d (§11B) | ⬜ **1c implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-1c; SA-CR-2 rename and SA-CR-3 test title done), QA PASS WITH ISSUES (no bugs), fix round 1 applied (FP note only while the FP period is current); user approved diff 2026-10-13; TL retrospective done; committed `fa7a4aad` on `feature/bos-finance-health-1c` (origin/main merged in `10e3c5f0`), PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened 2026-10-13, merge pending; user manual QA L-42..L-48 owed** | [BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md) | [#335](https://github.com/AgentsPilot/neuronforge/pull/335) |
 | 3 | Growth funnel (invites) | More invite volume to be meaningful; "paid" stage waits on P-5 | ⬜ Not started | — | — |
-| 4 | Boost revenue: **4a** boost revenue per currency and package, K-5 value; **4b** boost problems, K-5 dispute rule, bought credits in Section 4 (test and live together, BD-14; no switch) | **Met:** boost purchases are recorded (1 paid Starter, test mode, counted under BD-14; §11C.1); **no migration**; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`, not on the boost repository (§11C.6) | ⬜ **4a implemented (uncommitted); SA code review APPROVED with no conditions (SA-CR-4a), QA PASS WITH ISSUES (no bugs, no fix round); user approved diff 2026-10-14; TL retrospective done; 4a committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open, awaiting user merge; manual QA L-49 to L-58 owed; 4b next; DF-5 refund timing on default (a) pending user. 2026-10-14: DF-5 decided by the user (BD-17, refund month); **4b paused until Money M-3 merges** (CR §8; it edits `RevenuePanel`, `CreditsSection` and the K-5 tile, as M-1 and M-2 do)**. **2026-10-16 (BD-32): 4b runs next after M-5, about 4 days. Open business question BQ-13 (does a refunded boost take its credits back?) is attached to it (§0.4); until the user answers, 4b keeps today's behaviour, where the customer keeps the credits** (§11C; SA-Q25 to SA-Q31; about 2.5 + 1.5 days) | 4a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md) | 4a: [#358](https://github.com/AgentsPilot/neuronforge/pull/358) |
+| 4 | Boost revenue: **4a** boost revenue per currency and package, K-5 value; **4b** boost problems, K-5 dispute rule, bought credits in Section 4 (test and live together, BD-14; no switch) | **Met:** boost purchases are recorded (1 paid Starter, test mode, counted under BD-14; §11C.1); **no migration**; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`, not on the boost repository (§11C.6) | ⬜ **4a implemented (uncommitted); SA code review APPROVED with no conditions (SA-CR-4a), QA PASS WITH ISSUES (no bugs, no fix round); user approved diff 2026-10-14; TL retrospective done; 4a committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open, awaiting user merge; manual QA L-49 to L-58 owed; 4b next; DF-5 refund timing on default (a) pending user. 2026-10-14: DF-5 decided by the user (BD-17, refund month); **4b paused until Money M-3 merges** (CR §8; it edits `RevenuePanel`, `CreditsSection` and the K-5 tile, as M-1 and M-2 do)**. **2026-10-16 (BD-32): 4b runs next after M-5, about 4 days. Open business question BQ-13 (does a refunded boost take its credits back?) is attached to it (§0.4); until the user answers, 4b keeps today's behaviour, where the customer keeps the credits** (§11C; SA-Q25 to SA-Q31; about 2.5 + 1.5 days). **2026-10-17: 4b SPECIFIED in §11I, awaiting SA requirement review** (SA-Q65 to SA-Q74; AC-204 to AC-232). Split **4b.1** reversal events writer (migration `20261072` plus the regenerated cleanup `20261073`, no UI; PR off auto-merge until the user applies the migration; about 2 days) and **4b.2** finance reads and UI (refunds and lost disputes by event date, held now, boost problems, bought credits; about 2.5 days). BQ-13 open: 4b keeps no take-back | 4a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md) **4b.1 PR [#447](https://github.com/AgentsPilot/neuronforge/pull/447) open; awaiting user migration apply** (**20261076, 20261077**, renumbered from 20261072/20261073 on 2026-10-17 after DE-8a took 20261074/20261075; cleanup stamp b78b4579fc6631f8; rebase merge staged, awaiting SA re-review; auto-merge OFF). User runbook: check 23 → apply 20261076 → apply 20261077 → check 24. | 4a: [#358](https://github.com/AgentsPilot/neuronforge/pull/358); 4b.1: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4B1_REVERSAL_EVENTS_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4B1_REVERSAL_EVENTS_WORKPLAN.md) |; 4b.1: [#447](https://github.com/AgentsPilot/neuronforge/pull/447) (open) 
 | 5a | **Money M-1 / M-2** (CR §8): **M-1** "One account, one screen": the shared business picker (the original audit-trail picker is deleted), an account header and account summary with a business picked, links that carry the window and the account, both ways with the Businesses drawer; **M-2** "Plan payments received": cash received from plan payments per currency, per window, per account, in Our revenue and K-5 (no MRR) | M-1: none (**no new read**); M-2: P-3b `invoice_paid` rows (live: 1, §11D.1); **no migration**; new reads R-m, R-m′ in `BusinessOsFinanceReadRepository` (§11D.6). **FIN 4b is paused during M-1 to M-3** (it edits the same files, CR §8) | ⬜ **Implemented (M-1 checkpoint green, then M-2); SA code review APPROVED (SA-CR-5a; E-43 applied); QA PASS WITH ISSUES, no bugs; user pre-authorised commit + PR without diff review (2026-10-14); committed `e8ffc5da` and PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) opened (2026-10-14, not merged); user sync next** (specified 2026-10-14, §11D; SA-Q32 to SA-Q41; requirement SA-RR-5a). M-1 about 2 days (short path if SA agrees, SA-Q32), M-2 about 2.5 days (full cycle). **Amended 2026-10-14 (user, SA-W55):** M-1 and M-2 ship in **one workplan and one PR**. M-1 is finished first and proven at the M-1 checkpoint (no `lib/` or `app/api/` change; AC-111); M-2 starts only after it | [BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md) | [#383](https://github.com/AgentsPilot/neuronforge/pull/383) |
 | 5 | Plan revenue, MRR, paying vs comped, trial-to-paid | P-3b.2 (webhook writer), P-8a (MRR definition), P-5 (`first_paid_at` writer) | ⬜ **Split 2026-10-14 (BD-19):** cash received is **5a / M-2** (row above, needs no P-8a); **5b** = MRR, after PAY P-8a, plus paying vs comped exactness, trial-to-paid and the funnel "paid" stage | — | — |
 | 6a | **Money M-3** (CR §8) "Account economics and AI margin": a Finance **Accounts** tab, one row per account for the window (what it paid us, plan + boosts, after tax and refunds, per currency; charged AI cost; **AI margin, USD only**; credits; plan group), sorted and filtered on the server, capped at 200 rows, each row opening the M-1 one-account view; the AI margin line in the M-1 account summary; a platform AI margin line above the table | Slice 5a merged (#383); **no migration, no new read**: the all-accounts reads R-a, R-k, R-m, the plan walk and the credit-positions pass already carry `user_id` per row (§11E.1) | ✅ **MERGED PR [#392](https://github.com/AgentsPilot/neuronforge/pull/392) (2026-10-15), branch `feature/bos-money-m3`, commit `b8f59db1`; SA code review APPROVED (SA-CR-6a; E-52 applied); QA PASS WITH ISSUES, B-1 fixed in fix round 1; user pre-authorised commit + PR without diff review; awaiting user merge, manual QA L-75..L-88 owed, then user sync** (requirement SA-RR-6a, edits E-44..E-51 applied; specified 2026-10-14, §11E; SA-Q42 to SA-Q50). About 3 days, full cycle. FIN 4b stays paused until M-3 merges | [6a workplan](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_6A_MONEY_M3_WORKPLAN.md) | [#392](https://github.com/AgentsPilot/neuronforge/pull/392) |
@@ -148,6 +149,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-15 — The admin-layout session reviewed /admin/finance against the layout standard §5 and the user approved a six-slice plan (F-0 #414 and F-1 #418 merged; F-3 #420 merged). **F-2, F-4 and F-5 move to the finance stream** as DF-4 / Money M-6. User decisions **BD-28 to BD-31** (h1 "Finance"; tiles above the filter bar on both tabs; a bad link drops only the bad filter; tiles clickable to their sections). BA added §11G (AC-169 to AC-183) and §0.1 rows F-2, F-4, F-5. F-2 starts once #420 merges. No code changed.
 - 2026-10-16 — With F-5 (#437) merged, M-6 / DF-4 is complete and M-1 to M-4 are merged. BA specified **Money M-5** "The Money section" in §11H from CR §1, §5.1, the M-5 row, SA-Q-4, BQ-1, BQ-6 and BQ-10, BD-21, BD-24, BD-27, FU-M4-1, SA-Q55 and the code at main `98735db9`. **Sidebar sign-off already given:** the Admin Layout Standard treats the sidebar as fixed (LAY §2.3 X-1, X-2 and §3 rule 9), so moving pages between sections needs the user; the user gave that sign-off on **2026-10-14 by accepting CR BQ-1 (BD-21) and BQ-6 (BD-24)**. No new question goes to the user for M-5. Scope: a Money section (Finance, Charge checks, AI calls & usage (detail)); the Costs & credits tab, Leak check included, moves to `/admin/finance/charges` and old links redirect; Business OS AI keeps Settings and Activity; FU-M4-1 reworded (wording only); the Health tile gains a page link to Finance. AC-184 to AC-203; SA-Q58 to SA-Q64; manual QA L-128 to L-136. About 2 days, UI short path. Awaiting SA review.
 - 2026-10-16 — The user's roadmap decisions, relayed by the coordinator, are recorded as **BD-32** (order M-5 → 4b → M-8 → 6b → DF-6 → 5b → 7 → 3 → 8, with estimates), **BD-33** (no per-slice user approval: SA, QA and TL approve, then RM commits, opens the PR and turns on auto-merge; a genuine business question or a production migration still stops for the user), **BD-34** (M-8 marks the Platform dashboard and Exchange rates pages redundant in code comments and stops using or linking them; it does not delete them; amends BD-25) and **BD-35** (6b also re-orders the KPI tiles: revenue, then cost, then user and account data). **BQ-13 stays open** and is attached to 4b: does a refunded boost take its credits back? Until the user answers, 4b keeps today's behaviour (the customer keeps the credits) (§0.4). CR's M-8 row updated to match BD-34.
+- 2026-10-17 — With M-5 merged (#444), BA specified **slice 4b** in §11I from §11C, BD-17 and its dispute defaults, DF-5, the refund-timing scoping (option (ii)) and a pre-work check against main `16cb2a1f` and the live database (1 boost purchase, 0 refunds, 0 disputes; the events table absent; next migration `20261072`). Split **4b.1** (writer: table `business_os_boost_reversal_events`, written inside the unchanged-signature transition function, server-write-only, service_role SELECT plus a column-level INSERT grant because the function is SECURITY INVOKER; regenerated test-account cleanup because guard G-18 blocks the new FK; about 2 days) and **4b.2** (refunds and lost disputes by event date, held now, boost problems, bought credits, the Accounts tab on the same rule; about 2.5 days). One hand-applied production migration (two with the cleanup); the 4b.1 PR stays off auto-merge until the user applies it. AC-204 to AC-232; checks 23 to 26; SA-Q65 to SA-Q74; L-137 to L-141. BQ-13 stays open: 4b keeps no take-back. No new business question. Awaiting SA review.
 - 2026-10-17 — BA specified **Money M-8** in §11J from BD-34 (amends BD-25), the CR M-8 row and inventory I-15, I-19, and the code at main `5c214310` (CF-1 to CF-12): REDUNDANT header comments in both pages and in `/api/admin/dashboard` (its only caller is the dashboard); the dashboard's hidden parked sidebar item removed (parked 15 → 14, hrefs 29 → 28; visible sidebar unchanged; BD-34 is the sign-off, §11J.0); both routes kept with a one-line notice; a new source guard against in-app links; Exchange rates' `console.error` to Pino. AC-233 to AC-242 and SA-Q75 to SA-Q80 (numbered after PR #447's AC-232 and SA-Q74). New **BQ-14** (visible notice or comments only; default: notice) and **FU-M8-1** (Exchange rates still writes from the browser; not changed by M-8). CR M-8 row marked in progress. No code changed.
 - 2026-10-17 — With M-8 merged (#448, main `e43dcb60`), BA specified **slice 6b** in §11K from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8 and the 6a builder, with a read-only live check (no Stripe fee is stored for plan or boost payments; client payments carry `processor_fee`). Fee estimate per successful charge on the gross amount, rounded half up per charge, as config data (default 2.9% + USD 0.30, USD only); a refunded charge keeps its fee; dispute fees not estimated. "Margin after Stripe fees (estimate)" shown beside the AI margin, never replacing it, on the Accounts rows, the platform line and the one-account summary. Tiles re-ordered K-5, K-1, K-3, K-2, K-4, order only. Wording says "estimate", because the vocabulary guard forbids "estimated" in `financeCopy.ts`. AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91; new **BQ-15** (the fee rate) with its default, not blocking. No code changed.
 - 2026-10-17 — With 6b open as PR #449, BA specified **slice DF-6** "Since it started (one account)" in §11L from BD-26, CR G-9, CR SA-Q-6, BD-30, BD-32 and BD-33 and the code at `ea56ad04` (6b tip). A `since_start` window, valid only with a business picked (400 for all businesses), from the later of the cut-over instant and the account's first activity (the earliest of the plan row's `onboarding_started_at` and `profile_created_at`; never `created_at`, a backfill time) to now; resolved on the server after the plan check from the row already read; the 92-day cap unchanged for every other window; read ceilings unchanged ("At least" / Unknown); no timezone read (both ends are instants; `user_preferences.timezone` remains the authority if local dates are ever shown); URL `range=since_start` as a window extra, a bad link drops only the window (U-4); links out carry the dates only up to 92 days. **No migration, no new read or repository method.** AC-257 to AC-272, checks 29 and 30, L-148 to L-154, SA-Q92 to SA-Q99; new **BQ-16** (client takings before the cut-over) with its default, not blocking. About 1.5 days. Awaiting SA review. No code changed.
@@ -238,6 +240,12 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-RR-M5** | **2026-10-16 SA requirement review (Money M-5, §11H): APPROVED, edits applied.**<br>• SA-Q58 own entry; SA-Q59 stay; SA-Q60 `next.config.js` temporary redirect; SA-Q61 keep L-9a minus `costs`; SA-Q62 "(detail)" in both h1 and sidebar; SA-Q63 contrast key now; SA-Q64 no window; CR SA-Q-4 confirmed.<br>• Code facts re-checked: admin layout `requireAdminPage` gates the new page; the Health rules are code constants (wording only, never persisted).<br>• E-63: S-18 `ANALYTICS_WHAT` → "AI calls and usage"; AC-195 now covers S-1 to S-18.<br>• E-64: `tabCoexistence` X-8, X-8b and X-10 kept and re-scoped. | 2026-10-16 | §11H |
 | **SA-WP-M5** | **2026-10-16 SA workplan review (M-5): APPROVED WITH CONDITIONS.**<br>• W1: the stray `tab=costs` is harmless (no reader; the sidebar matches by pathname).<br>• W2 dual-mount Pin C approved.<br>• W3 Next internals accepted, with M5-R3 (shape block separate, version in the title, curl recorded).<br>• W4 rename; W5 stay; W6 not as listed (M5-R1: re-scope X-8, X-8b, X-10); W7 rename (S-18, M5-R2); W8 to W11 approved.<br>• M5-R4: pins C and D frozen with 10 s waits; the four existing hashes unchanged.<br>• Nav 28 → 29 is correct; C-14 entry and uniqueness case; `test:bos-entitlements` runs. | 2026-10-16 | §11H |
 | **SA-CR-M5** | **2026-10-17 SA code review (Money M-5): Code Approved.**<br>• M5-R1 (X-8, X-8b, X-10 re-scoped; only X-1, X-2, X-3, X-12 and one `costsTab` case deleted), M5-R2 (S-18), M5-R3 (shape and internals blocks, curl recorded) all met.<br>• M5-R4: all seven hashes recomputed and equal (C `98ea0507…`, C helper `02813360…`, D `1f7cf07a…`, A, B, the AC-173 pair).<br>• `evaluateHealth.ts`: link and wording only; Health results change only in the spend tile's `pageLink`.<br>• Deviations approved: the 18-file vocabulary guard; X-6 kept to `keep=1` (no coverage lost).<br>• The costs files are not moved; no API, data or money change.<br>• Follow-up chip: harden `qa-slice5-pr2.route.test.ts` (wall-clock `< 1000` ms) together with `bosLens` P-8.<br>• SA re-run all exit 0 (finance 564, business-os-llm 850, components 816, Health 319, entitlements 8472, authz 203). | 2026-10-17 | §11H |
+| **SA-Q65 to SA-Q74** | **4b rulings.**<br>• Q65: no `occurred_at`.<br>• Q66: CASCADE plus `20261073` regenerated in the same PR, applied right after; no DELETE grant needed.<br>• Q67: `ON CONFLICT DO NOTHING`.<br>• Q68: two reads, 100-id chunks (E-69).<br>• Q69: keep INVOKER.<br>• Q70: the rollback refuses; order `20261073` then `20261072`; fix forward once rows exist (E-67).<br>• Q71: add the table to the payment write-lockdown scan.<br>• Q72: one ruled update per pin (the AC-145 baseline as E-55; 6a pins only where FR-4B-11 changes a figure).<br>• Q73: Pin B not re-frozen; it serves fixed payloads (E-68).<br>• Q74: count each event as recorded, with a note. | 2026-10-17 | §11I |
+| **SA-RR-4b** | **2026-10-17 SA requirement review (§11I, slice 4b): APPROVED WITH CONDITIONS.**<br>• The function rewrite is safe: same transaction and row lock, retries and the reconcile pass hit `already`/`stale` before any write, the signature and grants are kept, and no DEFINER guard trips.<br>• RLS and grants fit the lockdown conventions.<br>• F-2: the RV-9 race is narrowed by `LOCK TABLE` and proven by a new check 24 row (E-65).<br>• F-4: AC-207 to AC-211 are proven by a local-only self-checking SQL script in `BEGIN … ROLLBACK` (E-66).<br>• The deploy order is honest; checks 23 to 26 are editor-safe; the split is sensible.<br>• **No user business decision.** The only possible user touchpoint is a Stripe test-mode refund if Dev has no local database (F-5). | 2026-10-17 | §11I |
+| **SA-W105 to SA-W115** | **4b.1 workplan rulings.**<br>• W105: TS-only `CASCADE_CHILDREN` accepted by the coverage test, with a planted control.<br>• W106: separate `LATER_SERVER_ONLY_TABLES`.<br>• W107: md5 fail-closed in the migration plus check 23.<br>• W108: no separate user confirmation; check 23's 20261047 row is the gate (if false, stop and re-plan).<br>• W109: `INSERT … SELECT`, proven byte-identical by subtraction.<br>• W110: PGlite 0.5.8 (PG 18.3) satisfies E-66; nothing used differs from prod PG 17; no test-mode refund needed.<br>• W111: both rollbacks or neither.<br>• W112: record only (FU-4B-1).<br>• W113: strengthened checks supersede §13 (E-70).<br>• W114: register in `USER_OWNED_TABLES`.<br>• W115: `NOTIFY pgrst` in the migration and its rollback. | 2026-10-17 | §11I |
+| **SA-WP-4b1** | **2026-10-17 SA workplan review (4b.1, reversal events): APPROVED WITH CONDITIONS.**<br>• E-65 to E-68 honoured.<br>• Grants and RLS follow the lockdown conventions; idempotency arbiters are explicit; INVOKER and the signature are unchanged.<br>• The guard list and AC mapping are complete; the checks are editor-safe; estimate about 2.1 days.<br>• B1-R1: the Danger Zone wording covers from step 2 to the deploy. B1-R2: the self-check header says local only. B1-R3: the md5 and stamp placeholders are filled and pinned.<br>• **No user action beyond the planned apply steps.** | 2026-10-17 | §11I |
+| **SA-CR-4b1** | **2026-10-17 SA code review (4b.1, reversal events): Code Approved.**<br>• `20261072` was verified by SA's own script: the body minus the six inserts is byte-equal to `20261031`, the header is byte-equal, and the arbiters are exact. Old and new md5 are `b9a5fe31…` and `018c4447…`; the rollback restores `b9a5fe31…`.<br>• Lock, RV-9 and md5 refusals come first; RLS is on with no policy; the nine-column INSERT excludes `id` and `recorded_at`; `NOTIFY` is present.<br>• `20261073` is the generator output (stamp `f854486b31baf784`).<br>• Checks 23 (8 rows) and 24 (23 rows) are editor-safe; the self-check is local only with three guards.<br>• The forced re-pins (155 → 156; allow-lists for `20261046` and `20261047`) are legitimate: those files are applied history pinned by sha256.<br>• `test:gate`'s 9 failing suites are Windows path and env failures outside every 4b.1 input; not blocking.<br>• All seven frozen pins unchanged.<br>• SA re-run all exit 0. The PR stays off auto-merge until the user's apply steps. | 2026-10-17 | §11I |
+| **SA-CR-4B1-R** | **2026-10-17 SA code review (4b.1 rebase onto DE-8a): APPROVED WITH CONDITIONS.**<br>• `20261076` is the old 72 unchanged (rename, 0 lines). `20261077` vs `20261075`: 8 lines (header, the reversal-events edge, stamp `b78b4579fc6631f8`). Its rollback restores `20261075`.<br>• Only `20261031` and `20261076` define the transition function. 76 and 77 are free on every remote. Counts 157 = 38 + 0 + 119. Check 23 has 9 rows. Runbook and rollback order are right; stale references are history only; scripts are paste-safe.<br>• (a) The DE-8a test's literal `20261075` stamp is acceptable (an applied, immutable stamp, cross-checked against that file).<br>• (b) **R-1 (High), fix in this PR:** DE-8a's rollback guard must refuse while any live cleanup body names `business_os_data_exports`, not match one stamp; pin and PGlite proof.<br>• R-2: note the DE-8a checker's stamp row reads false after 77. R-3: §11I.6 step 3 wording. | 2026-10-17 | §11I |
 | **SA-RR-M8** | **2026-10-17 SA requirement review (Money M-8, §11J): APPROVED, E-71 applied.**<br>• **BD-34 reading:** "just add comments it is redundant for now and not use them" means code comments only and **no visible notice**. BQ-14 is resolved by BD-34 and not sent to the user. RP-4, AC-236, the §11J.2 scope row, §11J.4 and the BQ-14 paragraph are amended.<br>• `docs/MULTI_CURRENCY_SYSTEM.md` is added to the pointer notes.<br>• Estimate about 0.75 day.<br>• Q75 remove the hidden item; Q76 and Q77 moot; Q78 comment only; Q79 a new guard; Q80 FU-M8-1. | 2026-10-17 | §11J |
 | **SA-WP-M8** | **2026-10-17 SA workplan review (M-8): APPROVED WITH CONDITIONS.**<br>• References re-found by `git grep` (sidebar, the dashboard's fetch, the route comment); the visible nav is unchanged; Pino matches the dashboard; no Health, C-14, contrast or authz edit; the seven pins are unchanged (LF-normalised, clean against HEAD).<br>• M8-R1: drop the notice, Step 2 and the render test. M8-R2: the MULTI_CURRENCY doc pointer. M8-R3: planted controls for every guard rule. M8-R4: LF-normalised hashes. | 2026-10-17 | §11J |
 | **SA-CR-M8** | **2026-10-17 SA code review (M-8): Code Approved.**<br>• Comment-only page and route diffs, plus Exchange rates' Pino lines; no notice (G-3); `'use client'` stays first.<br>• Hidden item and icon removed; visible nav unedited; parked 15 → 14 (both pins) and hrefs 29 → 28.<br>• G-1 to G-5 each have a planted control.<br>• MULTI_CURRENCY, ADMIN_IDENTIFICATION and reorganisation doc edits were needed (stale references to the removed item and the route).<br>• Seven pins unchanged (LF-normalised).<br>• SA re-run exit 0 (components 818, guards 401, authz 203). | 2026-10-17 | §11J |
@@ -256,13 +264,13 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | # | Item | Why | Date |
 |---|---|---|---|
 | FU-M4-1 | The Health tile's rule descriptions and metric labels (`lib/admin/health/rules.ts`) still say "spend" under the "Recorded AI cost" title | They are pinned by the Health rule tests, which AC-151 keeps unedited; reword them in M-5 (SA-W94). Same follow-up: the Jobs page cron description at `lib/cron/bosCronJobs.ts:452` ("Business OS AI spend", SA-CR-M4A). **2026-10-16: taken into M-5 (§11H.5 S-14 to S-17)** | 2026-10-15 |
-| BQ-13 | **Open business question, attached to 4b:** when a boost is refunded, does it take back the credits it bought? | Still open (user, 2026-10-16). Until the user decides, 4b keeps today's behaviour: the customer keeps the credits. If the user decides credits are taken back, that is a credit-ledger write in the boost module, not a Finance display change, and it is scoped with 4b | 2026-10-16 |
+| BQ-13 | **Open business question, attached to 4b:** when a boost is refunded, does it take back the credits it bought? | Still open (user, 2026-10-16). Until the user decides, 4b keeps today's behaviour: the customer keeps the credits. If the user decides credits are taken back, that is a credit-ledger write in the boost module, not a Finance display change, and it is scoped with 4b. **2026-10-17: still open; §11I specifies 4b with no take-back (RV-10, AC-213); a later decision is scoped on its own** | 2026-10-16 |
 | BQ-15 | **Open business question, attached to 6b (does not block it):** what Stripe fee rate should the "Margin after Stripe fees (estimate)" use for plan and boost payments? | **Default, used to build 6b:** (a) Stripe's standard card price, **2.9% + USD 0.30 per successful charge**, on the gross amount charged, USD only; (b) a refunded charge keeps its fee; (c) the separate dispute fee, and any Stripe Billing, Stripe Tax, international-card or currency-conversion surcharge, are **not** included. The rate is an assumption, not a recorded fee: our real Stripe rate has not been checked. It is config data (§11K.3 FE-4), so the user can change it later with no logic change | 2026-10-17 |
 | DF-1 | Currency-grouping helper (CUR-1, CUR-2) and AC-13 moved from slice 1 to **slice 2** | Slice 1 shows only USD AI cost; a helper with no production caller is dead code (SA-F10) | 2026-10-09 |
 | DF-2 | "Businesses without a plan row" is **not** shown in slice 1 | A shadow-report fact (`findTenantsMissingPlanRow`); the page links to Plans & entitlements instead (SA-F7) | 2026-10-09 |
 | DF-3 | **Filter out test businesses or users (future)** | BD-13: test and real client payments are shown together and all layer-B data is treated as real for now; no test-mode label and no livemode migration. A later slice may let the admin exclude chosen test businesses or users from the layer-B figures. Needs its own business decision on how a business or user is marked as test | 2026-10-11 |
 | DF-4 | The finance page **shell** adopts the shared admin layout standard ([ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md)): `AdminPageHeader`, `AdminFilterBar` through `useAdminFilters` (canonical `range` / `account`, with `preset` / `accountId` read as legacy aliases), the shared `KpiStrip` with its cross-page tile mode, and the C-14 registry entry | Not in slice 2: a layout migration is UI-only and must not ride in a data slice (layout standard §3 rules 1, 4 and 5). Slice 2's **new** blocks use the shared components from the start (S2-FR-13). Its own slice, after 2b (SA-Q18). **2026-10-15: being delivered as Money M-6 by slices F-2, F-4 and F-5 (§11G), owned by the finance stream** | 2026-10-11 |
-| DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** **Decided 2026-10-14 (BD-17): refund month; lost dispute in the month lost; held means held now.** The writer-side date and the page change stay deferred with FIN 4b (paused during Money M-1 to M-3). | 2026-10-13 |
+| DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** **Decided 2026-10-14 (BD-17): refund month; lost dispute in the month lost; held means held now.** The writer-side date and the page change stay deferred with FIN 4b (paused during Money M-1 to M-3). **2026-10-17: specified in §11I** (4b.1 writes dated reversal events; 4b.2 reads them; closed when 4b.2 merges) | 2026-10-13 |
 | DF-6 | **"Since it started" view for one account** (CR BQ-9: a window beyond the 92-day cap, from the charging cut-over, for a picked account only) | Not needed for M-1: the account summary answers the picked window. It raises the cap for account-scoped reads only, a route and validation change (CR SA-Q-6), so it is not UI-only. A later Money item, after M-3. **2026-10-17: scheduled as slice DF-6, specified in §11L** (after 6b in the BD-32 order; the cap is lifted only for `since_start` with a business picked; no migration) | 2026-10-14 |
 | BQ-16 | **Open business question, attached to DF-6 (does not block it):** with "Since it started" picked, should the business's **client takings** (layer B, clients paying the business) also start at the charging cut-over, or show the business's whole history? | **Default, used to build DF-6:** the same window for every section, starting at the cut-over (DF6-W-7), so the page has one span and one label. Client payments before 29 Sep 2026 are not shown in this view (check 30 counts them). Showing all-time takings would need a second window on one page | 2026-10-17 |
 | DF-7 | **Refused plan payments with an amount** (`mismatch_refused` rows) | Live: 8 test-mode rows, no account (`unknown_customer`), amounts recorded (§11D.1). They are not revenue of any account and M-2 never counts them (M2-W-2). Showing them belongs to platform payment problems (slice 7) | 2026-10-14 |
@@ -1955,6 +1963,288 @@ Technical only. **No business question needs the user**: BD-21, BD-24 and BD-27 
 
 ---
 
+## 11I. Slice 4b: boost refund dates, boost problems, bought credits
+
+Specified 2026-10-17 by BA from §11C (4b outline, S4-FR-15 to S4-FR-22), **BD-17** and its dispute defaults, DF-5, BD-9, BD-12, BD-14, BD-32, BD-33, BQ-13, the refund-timing scoping ([BUSINESS_OS_FINANCE_HEALTH_REFUND_TIMING_SCOPING.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REFUND_TIMING_SCOPING.md), option (ii), cited as **RT**) and a fresh pre-work check against main `16cb2a1f` and the live database (2026-10-17, read-only; §11I.1). The code facts below were re-read at main `f0b5e9d4` (M-5 merged, #444).
+
+**This section governs 4b.** Where it differs from §11C (S4-W-3, S4-W-6, S4-FR-5, S4-FR-13, S4-FR-16, §11C.6 "no migration", §11C.7 "no new table"), §11I wins: 4b now carries BD-17, which needs **one hand-applied production migration**. S4-FR-15, S4-FR-17 to S4-FR-22 and AC-102 to AC-107 are kept and built in 4b.2, amended where §11I.5 says so.
+
+**BQ-13 stays open. 4b keeps no take-back:** a refunded or lost boost never takes its credits back automatically, exactly as today (T-9, FR-37). Nothing in 4b writes to `business_os_credit_lots` or `business_os_credit_lot_draws`. If the user later decides credits are taken back, that is a credit-ledger write in the boost module, scoped on its own.
+
+### 11I.1 Facts (pre-work, verified 2026-10-17)
+
+| # | Fact | Source |
+|---|---|---|
+| PF-1 | The next migration number is **`20261072`**. The latest on main is `20261071_website_images_bucket_lockdown.sql`; no open PR adds a migration. **2026-10-17: DE-8a (PR #451) took `20261074` and `20261075` first, so 4b.1 is renumbered `20261076` (table and function) and `20261077` (cleanup, regenerated over `20261075`)** | `supabase/migrations/` |
+| PF-2 | `business_os_transition_boost_purchase(uuid, text, text, integer, text, text)` is defined only in `20261031_business_os_boost_crediting.sql:174-376`. It is **SECURITY INVOKER**, `SET search_path = ''`, EXECUTE for service_role only (`:460-468`). Refund branch `:269-311`, dispute branches `:313-373` | Migration |
+| PF-3 | Because the function is INVOKER, it runs as service_role. **service_role needs an explicit INSERT grant on the new table**, or every refund or dispute RPC fails with 42501, which fails the webhook claim | PF-2 |
+| PF-4 | A refund on a `disputed`, `dispute_lost` or `flagged_mismatch` row only updates `amount_refunded_minor` (`:278-286`, outcome `recorded`). It must **also** write an event row | Migration |
+| PF-5 | A won dispute is not a status: the function moves the row back to `paid`, `partially_refunded` or `refunded` (`:351-373`). The event table needs its own kind to record "won" | Migration; CHECK `20261030…:51` |
+| PF-6 | A dispute on a `flagged_mismatch` row only stores the dispute id (`recorded`, `:316-326`); its close returns `already` (`:341-342`) and changes nothing, so no close event can be written for it | Migration |
+| PF-7 | Inside the function `now()` is **processing time**, not Stripe's event time. The nightly reconcile pass (`boostReconcilePass.ts`) applies a missed refund through the same function, so **a refund caught late is dated on the day we catch it** | RT §3; `boostReconcilePass.ts:585-598` |
+| PF-8 | The finance revenue read R-k / R-k′ fetches only purchases **paid in the window** (`rangeFilter('paid_at', …)`, `BusinessOsFinanceReadRepository.ts:669-700`). A refund in month M on a purchase paid before M is invisible to it, so 4b needs a **separate dated read** of reversal events | Repository |
+| PF-9 | `readMoney` (`boostRevenue.ts:164`, exported in 6a) is also used by `accountEconomics.ts:42,116,126` (the Accounts tab). **Changing the refund rule changes the Accounts tab too** | Code |
+| PF-10 | Live: `business_os_boost_purchases` has **1 row** (paid, test mode, 2026-10-12), **0 refunds, 0 disputes**. No refund or dispute date column exists. `business_os_boost_reversal_events` does not exist (42P01). **No backfill is needed** | Live DB |
+| PF-11 | The operator test-account cleanup (`20261047`) empties `business_os_boost_purchases` and its guard **G-18 blocks on any foreign key into an emptied table that the generator has not reviewed** (`generate-test-account-cleanup-sql.ts:332-346, 907-916`), whatever the FK's delete action. So the new FK to purchases needs the generator to classify it and a regenerated cleanup, even with `ON DELETE CASCADE` (this corrects the pre-work note that CASCADE avoids regeneration; SA-Q66) | Generator |
+
+### 11I.2 Scope and split
+
+About 4.5 days, so it is split. Both parts run the **full cycle** (a migration, money rules). Under BD-33 neither needs the user's per-slice approval, but **4b.1 stops for the user to apply the production migration**.
+
+| Part | In scope | Not in scope | Estimate |
+|---|---|---|---|
+| **4b.1: Reversal events (writer)** | Migration `20261076`: the table `business_os_boost_reversal_events`, its RLS, grants and indexes, and `CREATE OR REPLACE` of the transition function (same signature) writing one event row per recorded refund step or dispute stage; the guarded "no undated history" assertion. Rollback, pre-check and post-apply check scripts, migration test. Registration in purge descriptors, classification baseline, business-owned inventory, export classification. The regenerated test-account cleanup (`20261077`, if SA-Q66 rules so) | **Any UI or finance read.** Any webhook, handler, reconcile-pass or repository change. Any credit take-back (BQ-13) | About 2 days |
+| **4b.2: Finance reads and UI** | Two dated event reads (R-n, R-n′) and the attention reads (R-l, R-l′); the boost line dates refunds and lost disputes by event date; open disputes shown as **held now**; Section 6 block A "boost problems" (open disputes, payments never credited); the K-5 dispute rule; **bought credits beside gifted credits** in Section 4 (K-4 unchanged); the Accounts tab follows the same refund rule | Plan refunds and disputes (P-6b, slice 7); stuck checkouts (reconcile pass, FR-43); a sixth tile; a credit take-back | About 2.5 days |
+
+**Order:** 4b.1 merges and its migration is applied on production **before 4b.2 merges**. 4b.2 may be built in parallel against a local database with the migration applied.
+
+### 11I.3 Functional rules
+
+**Writer (4b.1)**
+
+| # | Rule |
+|---|---|
+| RV-1 | **One dated row per recorded step.** The transition function inserts exactly one event row, in the same transaction as the purchase update, whenever it returns `transitioned` or `recorded` for a refund or dispute target. It inserts nothing on `already`, `stale`, `not_allowed` or `not_found`, and nothing for `awaiting_payment`, `failed`, `expired` or `flagged_mismatch` targets |
+| RV-2 | **The six insert points** (line numbers of `20261031`): refund `recorded` on a disputed, lost or flagged row (`:282-285`, PF-4); refund `transitioned` to `partially_refunded` or `refunded` (`:303-306`); dispute `recorded` on a flagged row (`:322-325`); dispute `transitioned` to `disputed` (`:330-333`); `dispute_lost` `transitioned` (`:349-352`); dispute won `transitioned` back to a paid status (`:368-371`) |
+| RV-3 | **Kinds:** `refund`, `dispute_opened`, `dispute_won`, `dispute_lost` (PF-5) |
+| RV-4 | **Refund amount = the delta:** new cumulative minus the cumulative stored before, computed under the existing `FOR UPDATE` lock. The row also stores the new cumulative. A late, older event is already `stale` and writes nothing; its share is in the newer row |
+| RV-5 | **Dispute amount = the amount at stake at that moment:** `amount_total_minor - amount_refunded_minor` as stored when the stage is recorded (the same remainder 4a shows as held or lost). On a flagged row, whose total may be NULL, the amount is 0 when the total is NULL |
+| RV-6 | **The Finance date is `recorded_at = now()`**, the time we recorded it (PF-7). It is never supplied by a caller and never backdated: `recorded_at` is not in service_role's INSERT grant. A refund we learn of late, for example through the nightly reconcile pass, counts in the month we learned of it. Under BD-17 that is the price of "finished months never change", and the page says so (FR-4B-6) |
+| RV-7 | **Append-only.** No UPDATE or DELETE grant to any role. Rows leave only with their purchase (FK, SA-Q66) |
+| RV-8 | **No change outside the migration:** the RPC name, its six arguments, its return type and every outcome are unchanged, so the webhook, `boostChargeHandler.ts`, `boostReconcilePass.ts`, `BusinessOsBoostPurchaseRepository.ts` and their tests are unchanged. The reconcile pass is covered because it calls the same function |
+| RV-9 | **No undated history.** The migration refuses to apply (raises) if any purchase has `amount_refunded_minor > 0` or a `stripe_dispute_id` (PF-10: none today). If the pre-check finds one, the user stops and the session goes to SA; no backfill is invented |
+| RV-10 | **BQ-13: no take-back.** The function body gains only the inserts; the credit lot is never touched (T-9, FR-37 unchanged) |
+
+**Finance (4b.2)**
+
+| # | Rule |
+|---|---|
+| FR-4B-1 | **Gross stays by `paid_at`** (S4-W-1): purchases, gross charged, of which tax and credits sold count the purchases paid in the window, as in 4a |
+| FR-4B-2 | **Refunds by event date (BD-17):** "refunded" for a window = the sum of `refund` event amounts with `recorded_at` in the window, **whatever month the purchase was paid in**. A purchase paid in October and refunded in November lowers November, never October |
+| FR-4B-3 | **Lost disputes by event date (BD-17 default):** "lost in disputes" for a window = the sum of `dispute_lost` event amounts recorded in the window |
+| FR-4B-4 | **Held means held now (BD-17 default):** "held in open disputes" is the remainder of purchases whose status is `disputed` **right now** (R-l / R-l′), shown as its own figure, labelled "Held in open disputes now (not taken off any month)". It is **not** subtracted from any window's net. `dispute_opened` and `dispute_won` events are history and the problems block's source of dates; they move no money on the page |
+| FR-4B-5 | **Net for a window** = gross charged (paid in the window) − refunded (recorded in the window) − lost in disputes (recorded in the window). Labelled "Net of refunds and lost disputes (Stripe fees not deducted; includes any tax)". Net can be negative in a window with refunds and no sales, shown with a minus sign, never clamped |
+| FR-4B-6 | **The S4-W-3 note is replaced** by: "Refunds and lost disputes count in the month we recorded them, so a finished month does not change. A refund we learn of late counts in the month we learned of it. Open disputes are shown as held now." It shows whenever a refund, lost or held figure is non-zero |
+| FR-4B-7 | **Grouping:** an event is grouped by its own `currency` (copied from the purchase, per currency only, BD-12) and, in the by-package table, by its purchase's `package_id` and `package_version`. An event whose purchase's account was deleted goes to the "Deleted accounts" line (S4-W-7) |
+| FR-4B-8 | **Events on purchases never paid:** an event whose purchase has no `paid_at` (a `flagged_mismatch` purchase, PF-4, PF-6) is **not** revenue and never changes a figure of "Our revenue". It is counted in a note on the problems block ("N refunds or disputes recorded on purchases not credited") |
+| FR-4B-9 | **Exactness:** event amounts are integer minor units read like 4a's (S4-W-4: `minorUnitsPerMajor` must be 100, never `toUnits`, `toHundredths` or `× 100`); an unreadable event is counted and makes net Unknown on its line and the block `partial`. At the event read's ceiling, refunded and lost show "At least" and net shows "Unknown (a read was cut off)" (S4-W-8) |
+| FR-4B-10 | **K-5** shows the FR-4B-5 net (plus plan cash received, as M-2) for the filter window. Its colour comes from the dispute rule (FR-4B-12). K-5's value changes only where a refund or a lost dispute exists (none live) |
+| FR-4B-11 | **Accounts tab and account summary (PF-9):** they follow the **same** rule, so the two tabs agree. An account's boost "paid us" for the window = its boosts paid in the window after tax − its refunds recorded in the window − its lost disputes recorded in the window; held now is not deducted. A refund or loss on a taxed purchase gives Unknown (the SA-Q47 rule, unchanged). An account whose only boost money in the window is a refund is listed (SA-Q49) with a negative figure |
+| FR-4B-12 | **Section 6 block A, "Our payment problems (boosts)"**, as of now: S4-FR-15 (open disputes with the amount held now, payments never credited) and S4-FR-17 (K-5 red when open disputes ≥ 1, rule in `FINANCE_RULES`), each with **the date it started**: an open dispute shows the `recorded_at` of its `dispute_opened` event, a payment never credited shows its oldest `status_changed_at`. Lost disputes are not repeated in this block; they are in revenue in the month lost (amends S4-FR-16) |
+| FR-4B-13 | **Bought credits:** S4-FR-18 to S4-FR-20 unchanged: bought outstanding and bought in the window beside gifted, never combined; K-4 and the gifted figures still count `admin_grant` lots only. With BQ-13 open, bought outstanding of a refunded purchase still counts (the customer kept the credits); the section says "Credits of a refunded boost are not taken back" while any refund event exists |
+| FR-4B-14 | **Picked business:** R-n′, R-l′ and `listLotsWithDraws(accountId)` with exactly that id; R-n and R-l have zero calls (S4-FR-21) |
+| FR-4B-15 | **Payload and logs:** `revenue.boosts` lines gain `heldNow` and lose the window `held`; `paymentProblems.boosts` and the `credits` bought figures as S4-FR-22. Logs carry statuses, counts and timing only; never an amount, a Stripe id or a name |
+| FR-4B-16 | **Table absent:** if the event read fails (for example 42P01 before the migration), the boost part shows refunded, lost and net as "Unknown", the section is `partial`, and every other section renders. The page never falls back to DF-5's purchase-month rule |
+
+### 11I.4 Data model and migration outline (4b.1)
+
+**File:** `supabase/migrations/20261076_business_os_boost_reversal_events.sql` (name to SA). One file, one transaction.
+
+| Column | Type | Rule |
+|---|---|---|
+| `id` | `uuid` PK, default `gen_random_uuid()` | |
+| `purchase_id` | `uuid NOT NULL` FK → `business_os_boost_purchases(id)`, **`ON DELETE CASCADE`** (SA-Q66) | The account comes through the purchase. **No `user_id` column** (RT §3) |
+| `kind` | `text NOT NULL` | CHECK in `refund`, `dispute_opened`, `dispute_won`, `dispute_lost` |
+| `amount_minor` | `integer NOT NULL` | CHECK `>= 0` (RV-4, RV-5) |
+| `cumulative_refunded_minor` | `integer NOT NULL` | CHECK `>= 0`; the purchase's cumulative refunded after the step |
+| `currency` | `text NOT NULL` | Copied from the purchase |
+| `stripe_dispute_id` | `text NULL` | CHECK: NULL when `kind = 'refund'`, NOT NULL otherwise |
+| `status_before`, `status_after` | `text NOT NULL` | The purchase status around the step (a flagged purchase stays `flagged_mismatch`); history only |
+| `livemode` | `boolean NOT NULL` | Copied. Kept for DF-3; **the finance read never selects it** (BD-14) |
+| `recorded_at` | `timestamptz NOT NULL DEFAULT now()` | **The Finance date** (RV-6) |
+
+**Indexes:** unique `(purchase_id, cumulative_refunded_minor) WHERE kind = 'refund'`; unique `(purchase_id, kind, stripe_dispute_id) WHERE kind <> 'refund'`; `(recorded_at)` for the dated read; `(purchase_id)` for the FK and the cascade.
+
+**Migration order inside the file:**
+0. `LOCK TABLE public.business_os_boost_purchases IN EXCLUSIVE MODE;`, inside the file's one transaction (`LOCK TABLE` needs a transaction block; the SQL editor runs a pasted file as one implicit transaction). The migration test pins that it comes before the assertion. It means no new refund or dispute can start while the migration runs. A call already inside the old body can still finish with it; check 24's "no refund or dispute recorded without an event" row proves none did (E-65, SA F-2).
+1. Assertion (RV-9): raise if any purchase has a refund or a dispute id.
+2. `CREATE TABLE`, CHECKs, indexes, `COMMENT ON TABLE` (a retained financial record, append-only, written only by the transition function).
+3. RLS and grants (§11I.5).
+4. `CREATE OR REPLACE FUNCTION public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)`: the `20261031` body unchanged except the six inserts (RV-2), still `SECURITY INVOKER`, `SET search_path = ''`, every name schema-qualified. Each insert uses `ON CONFLICT DO NOTHING` on the two unique indexes (SA-Q67).
+5. Re-state the function's `REVOKE ALL` (PUBLIC, anon, authenticated, service_role) and `GRANT EXECUTE … TO service_role`, as `20261031:460-468`.
+
+**Rollback:** `supabase/SQL Scripts/20261076_business_os_boost_reversal_events_rollback.sql` restores the `20261031` function body byte for byte and drops the table. It **refuses** when the table holds any row (dropping dated money history must be a deliberate, separate act; SA-Q70).
+
+**Cleanup (PF-11):** `scripts/generate-test-account-cleanup-sql.ts` classifies the new edge as parent-owned (`INBOUND_FOREIGN_KEYS` with owner column `null`, a `PARENT_OWNED_REASONS` entry), bumps its version and emits `20261077_operator_test_account_cleanup_boost_reversal_events.sql` (name to SA) with its rollback; `scripts/__tests__/testAccountCleanupSql.test.ts` pins the new pair and keeps the prior hash pins. With CASCADE, no delete step is added (SA-Q66).
+
+### 11I.5 RLS, grants and idempotency
+
+| Item | Rule |
+|---|---|
+| RLS | `ENABLE ROW LEVEL SECURITY`. **No policy for any role** (server-write-only, the payment tables lockdown and `20261030…:133-167` precedent). No owner read: the owner never sees this table |
+| Grants | `REVOKE ALL ON TABLE` from `PUBLIC`, `anon`, `authenticated` **and `service_role`**; then `GRANT SELECT` to `service_role` and `GRANT INSERT (purchase_id, kind, amount_minor, cumulative_refunded_minor, currency, stripe_dispute_id, status_before, status_after, livemode)` to `service_role`. **No UPDATE, no DELETE, and `id` and `recorded_at` are not in the INSERT grant** (they take their defaults). The cascade from the purchase runs as the referential action and needs no DELETE grant (SA to confirm, SA-Q66) |
+| Why the INSERT grant is essential | PF-3: without it every refund or dispute fails at the RPC with 42501 and the webhook claim is marked failed. The migration test and check 24 both pin it |
+| Function | Stays `SECURITY INVOKER` (the SECURITY DEFINER surface guard is not tripped; SA-Q69) |
+| Idempotency | **Refunds:** keyed by `(purchase_id, cumulative_refunded_minor)`: each step raises the running total, so the total after the step names it, across webhook resends, out-of-order events and the reconcile pass, with no Stripe refund id. **Disputes:** keyed by `(purchase_id, kind, stripe_dispute_id)`. The state machine writes no row on `already` or `stale`; the unique indexes are the backstop, and check 25 reconciles events against the purchase rows |
+
+### 11I.6 Deploy order and the user's hand-apply steps
+
+**4b.1 PR stays off auto-merge until the user confirms the migration is applied** (the migration-gated rule; BD-33 still stops for a production migration). The DB change is entirely inside the migration, so 4b.1's TypeScript (tests, descriptors, generator, scripts) reads nothing new and is safe on either side of it; the off-auto-merge rule keeps the order honest.
+
+1. **Pre-check (production, read-only):** run check 23. Every row must show `ok = true`. Since the rebase onto DE-8a (2026-10-17) two of its 9 rows prove DE-8a is live: the `business_os_data_exports` table exists and the cleanup function is the `20261075` version (stamp `a824848e0a538477`), which `20261077` replaces. If not, stop and tell the session.
+2. **Apply `20261076`** in the Supabase SQL editor, the whole file at once. It raises and changes nothing if RV-9 fails. (Editor hazard: no quoted string in the file, the `COMMENT ON TABLE` text and exception messages included, may contain the word the editor misreads as a table target; the migration test pins this.)
+3. **Apply `20261077`** (the regenerated cleanup). It is needed (SA-Q66: G-18 must see the new edge reviewed).
+4. **Post-apply check:** run check 24. Every row must show `ok = true`.
+5. Tell the session "applied". RM then merges 4b.1 (manually, not auto-merge).
+6. **4b.2** is built, reviewed and opened after that; with the table live it may auto-merge under BD-33 (its code also tolerates the table being absent, FR-4B-16).
+7. **After the first real refund or dispute** (test mode counts, BD-14): run check 25 (events reconcile with the purchase) and check 26 (the month's figures).
+
+**Rollback (only if needed):** the rollback file of step 2 (and of step 3), applied by hand, **`20261077`'s first, then `20261076`'s**. It refuses while the events table holds rows: once any event exists, a defect is fixed forward by a new migration, never by dropping dated money history (E-67, SA F-6).
+
+### 11I.7 Reads (4b.2)
+
+All in `BusinessOsFinanceReadRepository`, with its rules (service role documented, exported column lists, no write method, one caller, never throws, **no `livemode`**, the boost repository named in words only).
+
+| # | Method (example name) | Scope | Table and filter | Columns |
+|---|---|---|---|---|
+| **R-n** | `listBoostReversalEventsAllAccountsRecordedInRange(range)` | Named all-accounts | `business_os_boost_reversal_events`, `recorded_at >= start` and `< end` (half-open, as `paid_at`) | `id, purchase_id, kind, amount_minor, currency, recorded_at`, plus the purchase's `user_id, package_id, package_version, amount_tax_minor, paid_at` (embed or second read: SA-Q68). No Stripe id, no `livemode` |
+| **R-n′** | `listBoostReversalEventsForAccountRecordedInRange(accountId, range)` | Account-scoped | Same, restricted to purchases of that account (through the purchase; SA-Q68); refuses a malformed UUID before querying | Same |
+| **R-l, R-l′** | As §11C.6 | As §11C.6 | As §11C.6 | As §11C.6, plus the opened date of an open dispute from its `dispute_opened` event (SA-Q68) |
+
+Paging: the layer-B pager (keyset on `id`, page 1,000, ceiling 5,000, `reachedCeiling`). Bought credits reuse R-b and `listLotsWithDraws` (S4-FR-18).
+
+**Read shape (SA-Q68, E-69):** two reads, with no PostgREST embed. R-n reads the events in range (keyset, capped), then their purchases by id. R-n′ reads the account's purchase ids first (account-scoped, refusing a malformed UUID), then the events whose `purchase_id` is in that set and whose `recorded_at` is in range. Every id list is sent in chunks of at most 100. R-l / R-l′'s opened date reads `dispute_opened` events by purchase id in the same way. A cut-off read makes the figures it feeds "At least" or Unknown (FR-4B-9).
+
+### 11I.8 Guards and tests affected
+
+| Guard or test | Effect | Part |
+|---|---|---|
+| Purge descriptors `lib/business-os/purge/descriptors.ts:1343` | Add `never('business_os_boost_reversal_events', {kind:'via', parent:'business_os_boost_purchases', fk:'purchase_id'}, exclude(EXPORT_REASON.BILLING), …)` next to the purchases (the `via` form exists at `:1045`) | 4b.1 |
+| `lib/business-os/purge/__tests__/classification-baseline.json` | Count **155 → 156**, add `"never"` | 4b.1 |
+| `descriptors.invariant.test.ts` | Runs on the two rows above | 4b.1 |
+| `lib/business-os/businessOwnedTables.ts:218` | Register beside `business_os_boost_purchases` with a reason | 4b.1 |
+| `lib/business-os/data-export/__tests__/exportClassification.test.ts:1593-1603` | **Add to `BILLING_TABLES` by hand** (the `business_os_boost_*` prefix is not matched automatically) | 4b.1 |
+| Test-account cleanup: `scripts/generate-test-account-cleanup-sql.ts`, `scripts/__tests__/testAccountCleanupSql.test.ts` | G-18 blocks an unreviewed inbound FK (PF-11): classify the edge, regenerate as `20261077`, pin the new pair | 4b.1 |
+| `lib/business-os/account/accountDeletionPolicy.ts:186`, `scripts/audit-deletion-coverage.ts` | Deprecated, "do not extend". Touch only if the audit script demands it | 4b.1 |
+| **New** `supabase/migrations/__tests__/business-os-boost-reversal-events.migration.test.ts` | Pins: RLS on, no policy; REVOKE from all four roles; SELECT and the column-level INSERT grant to service_role (no `recorded_at`, no `id`); no UPDATE or DELETE grant; the six-argument signature; `SECURITY INVOKER` and `search_path = ''`; the six insert points; the RV-9 assertion; the function re-grants. Precedent `business-os-boost-crediting.migration.test.ts` | 4b.1 |
+| `business-os-boost-crediting.migration.test.ts` | Unaffected (the `20261031` file is unchanged); run unchanged | 4b.1 |
+| `BusinessOsBoostPurchaseRepository.test.ts:519-574`, `boostRouting.integration.test.ts`, webhook placement guards | Not tripped (signature unchanged); run unchanged | 4b.1 |
+| Payment write-lockdown scan `lib/repositories/__tests__/paymentTablesWriteLockdownMigration.test.ts:35-48, :347` | Not tripped automatically; **SA-Q71** decides whether to add the table | 4b.1 |
+| SECURITY DEFINER surface `supabase/__tests__/security-definer-surface.guard.test.ts` | Not tripped while the function stays INVOKER (**SA-Q69**) | 4b.1 |
+| Rollback and check conventions | `supabase/SQL Scripts/20261076_…_rollback.sql`; `scripts/precheck-bos-boost-reversal-events.sql` (check 23); `scripts/check-bos-boost-reversal-events-migration.sql` (check 24) | 4b.1 |
+| `finance.source.guard.test.ts` DF-5 pin (`:724-751`) | **Re-pinned:** the event kinds and `amount_minor` are read in one function only (the BD-17 rule), the held-now remainder in one function only; `amount_refunded_minor` is no longer read by the revenue builder. With a planted control | 4b.2 |
+| Same guard, table pin `REPOSITORY_TABLES` (`:332`) | **Grows by one table** (`business_os_boost_reversal_events`), with its control | 4b.2 |
+| `BusinessOsFinanceReadRepository.ts:175` boost column list and its test | New exported column constant for R-n; one test per new method (column list, half-open `recorded_at`, account scoping, malformed id, paging, ceiling, never throws, no `livemode`) | 4b.2 |
+| Accounts tab tests (`accountEconomics`), the 6a export pins and AC-145 baseline | Change with FR-4B-11; SA rules on any baseline edit (SA-Q72) | 4b.2 |
+| `financeRules` data tests, `creditsSection` tests, G3 `creditLots.test.ts` | As §11C.7 (K-5 rule; bought credits in `creditsSection.ts`, G3 not tripped) | 4b.2 |
+| **Frozen pins** | AC-173 `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`, Pin A `30f5fc24…2e01`, Pin C `98ea0507…1e4b` and helper `02813360…5bd8`, Pin D `1f7cf07a…f144` stay **byte-identical**. **Pin B `24ff0da7…df9f`** also stays byte-identical. It serves fixed payloads to the page, so a server-side K-5 rule change cannot move it. If 4b.2 needs a tile wire change, stop and raise it to SA. The K-5 rule is proven by builder and rule tests (SA-Q73, E-68) | 4b.2 |
+| `npm run test:authz-guard`, `test:bos-entitlements` | Run, expected unchanged | 4b.1, 4b.2 |
+
+### 11I.9 Acceptance criteria
+
+**4b.1 (writer)**
+- [ ] **AC-204** *(4b.1)* The migration creates `business_os_boost_reversal_events` with the §11I.4 columns, CHECKs, the two unique partial indexes and the `recorded_at` and `purchase_id` indexes (migration test; check 24).
+- [ ] **AC-205** *(4b.1)* RLS is on with no policy; `anon` and `authenticated` hold no privilege; `service_role` holds SELECT and INSERT on exactly the nine §11I.5 columns, not on `id` or `recorded_at`, and no UPDATE or DELETE (migration test; check 24).
+- [ ] **AC-206** *(4b.1)* The function keeps the six-argument signature, return type, `SECURITY INVOKER`, `search_path = ''` and EXECUTE for service_role only; the boost repository and webhook tests pass unchanged.
+*How AC-207 to AC-211 are proven (E-66, SA F-4).* CI has no database, so the migration test pins the migration text only (AC-204 to AC-206). The behaviour in AC-207 to AC-211 is proven by `scripts/test-bos-boost-reversal-events.sql`. It is a self-checking script: it raises on any failed expectation. Dev runs it inside `BEGIN … ROLLBACK` against a **local** database only, never production, and records the output in the workplan.
+
+- [ ] **AC-207** *(4b.1)* A partial refund then a full refund of one purchase write two `refund` rows whose amounts are the deltas and whose cumulatives are the two totals; re-sending either, or an older cumulative (`stale`), writes nothing (integration test against a local database, or SQL test).
+- [ ] **AC-208** *(4b.1)* A refund on a `disputed`, a `dispute_lost` and a `flagged_mismatch` purchase (outcome `recorded`) each writes one `refund` row (PF-4).
+- [ ] **AC-209** *(4b.1)* Dispute opened, won and lost each write one row of their kind with the amount at stake (RV-5); a repeated stage writes nothing; a dispute recorded on a flagged purchase writes one `dispute_opened` row.
+- [ ] **AC-210** *(4b.1)* No row is written for `awaiting_payment`, `failed`, `expired` or `flagged_mismatch` targets, or for any `already`, `stale`, `not_allowed` or `not_found` outcome.
+- [ ] **AC-211** *(4b.1)* `recorded_at` is the transaction time; an insert by service_role that names `recorded_at` is refused (privilege).
+- [ ] **AC-212** *(4b.1)* The migration raises and changes nothing when any purchase has a refund or a dispute id (RV-9).
+- [ ] **AC-213** *(4b.1)* No credit lot or lot draw is written by any refund or dispute path (BQ-13: no take-back).
+- [ ] **AC-214** *(4b.1)* Purge descriptor, classification baseline (156), business-owned inventory and export `BILLING_TABLES` list the table; the descriptor invariants and export classification tests pass; the regenerated cleanup passes G-18 for a test account with boost purchases and events (cleanup test).
+- [ ] **AC-215** *(4b.1)* The rollback restores the `20261031` body byte for byte, drops the table, and refuses while the table holds a row.
+- [ ] **AC-216** *(4b.1, manual)* The user ran check 23 (all ok), applied the migration(s), and check 24 shows all ok; recorded in the workplan before the PR merges.
+
+**4b.2 (finance)**
+- [ ] **AC-217** *(4b.2)* A purchase paid in October and refunded in November: October's refunded and net are unchanged by the refund; November shows the refund and a net lowered by it (FR-4B-2), with injected events at `23:59:59.999999` and `00:00:00.000000` UTC on a month boundary each in exactly one month; the half-open bounds are asserted on R-n's query.
+- [ ] **AC-218** *(4b.2)* A dispute opened in October and lost in November: nothing in October; "lost" in November equals the event amount (FR-4B-3).
+- [ ] **AC-219** *(4b.2)* An open dispute appears as "held in open disputes now", equal to check 15's `held_minor`, the same whatever the window, and is not subtracted from any window's net (FR-4B-4).
+- [ ] **AC-220** *(4b.2)* For This month, per currency: purchases, gross, tax and credits sold match check 14; refunded and lost match check 26 (paid purchases only); net = gross − refunded − lost, negative shown with a minus sign.
+- [ ] **AC-221** *(4b.2)* An event on a purchase never paid changes no revenue figure and is counted in the problems note (FR-4B-8).
+- [ ] **AC-222** *(4b.2)* An event whose purchase belongs to a deleted account counts on the "Deleted accounts" line; by-package rows group events by their purchase's package.
+- [ ] **AC-223** *(4b.2)* Unreadable event amounts and an injected small ceiling give the FR-4B-9 states; no event amount passes through `toUnits`, `toHundredths` or `× 100` (source test).
+- [ ] **AC-224** *(4b.2)* R-n failing (including 42P01, mocked) gives refunded, lost and net "Unknown", the section `partial`, every other section rendering, and no purchase-month fallback (FR-4B-16).
+- [ ] **AC-225** *(4b.2)* The FR-4B-6 note replaces the S4-W-3 note; no copy says "counted in the month of the purchase".
+- [ ] **AC-226** *(4b.2)* The Accounts tab and the account summary give, for the same window and account, the boost figures of FR-4B-11, equal to the revenue section restricted to that account; a refund on a taxed purchase gives Unknown.
+- [ ] **AC-227** *(4b.2)* The problems block shows each open dispute's opened date from its event and each payment never credited with its oldest change date (FR-4B-12); AC-102 and AC-103 pass.
+- [ ] **AC-228** *(4b.2)* Bought credits: AC-104 and AC-105 pass; K-4 and gifted are unchanged (check 5); the "not taken back" sentence shows only while a refund event exists.
+- [ ] **AC-229** *(4b.2)* Picked business: R-n′, R-l′ and `listLotsWithDraws` receive exactly that id; R-n and R-l have zero calls (AC-106 extended).
+- [ ] **AC-230** *(4b.2)* No Stripe id, `livemode`, receipt, flag reason or lot id in R-n's columns, the payload or the logs; auth and input as AC-99, with zero event reads on 401, 403 and 400.
+- [ ] **AC-231** *(4b.2)* The finance source guard's re-pinned DF-5 rule, the grown table pin and their planted controls pass; the AC-173 pair and Pins A, B, C and D are byte-identical (SA-Q73, E-68).
+- [ ] **AC-232** *(4b.2, manual)* Admin opens Finance (This month and 30d, all businesses and the owner business): the owner test purchase shows as in 4a with no refund; no open dispute, no payment never credited; the owner account's 5,000 bought credits beside its gifted credits; cross-checked with checks 14, 15, 16 and 26. Manual QA steps **L-137 to L-141** (BD-33: after merge, no approval step).
+
+Manual QA (read-only, after 4b.2 merges): **L-137** Our revenue for This month and 30d, with the FR-4B-6 note absent while nothing is refunded; **L-138** "Held in open disputes now" reads none; **L-139** Section 6 block A "Our payment problems (boosts)" shows no open dispute and no payment never credited; **L-140** Section 4 shows bought credits beside gifted, K-4 unchanged; **L-141** the Accounts tab and the owner account summary show the same boost figure as Our revenue for that account.
+
+### 11I.10 Open questions for SA (4b)
+
+Technical only. **No new business question:** BD-17 and its dispute defaults decide the money rules; BQ-13 stays open and 4b keeps no take-back.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q65** | Store Stripe's `event.created` as `occurred_at` beside `recorded_at` (RT Q-1)? It changes the RPC signature, the handler and the repository argument pins | No. `recorded_at` only; the signature stays |
+| **SA-Q66** | FK delete action, and the cleanup: `ON DELETE CASCADE` plus a regenerated cleanup (`20261073`, the edge classified parent-owned for G-18, PF-11), or `NO ACTION` plus a delete step? Confirm the cascade needs no DELETE grant. Same PR as `20261072`, or a follow-up? | CASCADE; regenerate in the same 4b.1 PR as its own migration, applied right after `20261072` |
+| **SA-Q67** | Inserts: `ON CONFLICT DO NOTHING` (the purchase update still lands; check 25 catches a gap) or let a unique violation raise (the webhook then fails and retries)? | `ON CONFLICT DO NOTHING`; the state machine already writes no row on `already` and `stale` |
+| **SA-Q68** | R-n and R-n′ need purchase fields and account scoping through the purchase: a PostgREST embed (`business_os_boost_purchases!inner(...)`, new in this repository) or two reads (events in range, then purchases by id; for one account, its purchase ids first)? Same for the open dispute's opened date in R-l | Two reads: no new pattern, both keyset-paged and capped |
+| **SA-Q69** | Keep the function `SECURITY INVOKER` with a column-level INSERT grant, rather than DEFINER (which trips the SECURITY DEFINER surface guard R-a to R-d)? | Keep INVOKER |
+| **SA-Q70** | Rollback refuses while the events table holds rows? | Yes |
+| **SA-Q71** | Add the new table to the payment write-lockdown scan (`paymentTablesWriteLockdownMigration.test.ts`, the fixed list and the no-browser-writer check)? | Yes: cheap, and it is a payment table written only by the server |
+| **SA-Q72** | The Accounts tab follows the refund-month rule (FR-4B-11), which changes its figures and may touch the 6a export pins and the AC-145 baseline: approve and rule how the pins change | Approve; one ruled pin update, recorded |
+| **SA-Q73** | Pin B pins tile values. If its fixtures hold a refund or a dispute, K-5's value changes under FR-4B-5: re-freeze Pin B once, or change the fixture? | Check the fixture first; if it changes, re-freeze once by SA ruling with the new hash recorded |
+| **SA-Q74** | A refund recorded after a lost dispute, or on a flagged purchase, could make refunded + lost exceed a purchase's total across months. Count each in its month as recorded, with a note when it happens? | Yes; count as recorded, with the note; check 25 shows the purchase |
+
+### 11I.11 Estimates
+
+| Part | Work | Estimate |
+|---|---|---|
+| 4b.1 | Migration (table, RLS, grants, function body with six inserts, assertion), rollback, checks 23 and 24, migration test, purge, baseline, inventory, export list, cleanup regeneration and its pins | About 2 days |
+| 4b.2 | R-n, R-n′, attention reads, builder rule change and DF-5 re-pin, Accounts tab, problems block, K-5 rule, bought credits, render and route tests, checks 25 and 26 at QA | About 2.5 days |
+| **Total** | Close to BD-32's "about 4 days"; the half day is the cleanup regeneration (PF-11) | **About 4.5 days** |
+
+### SA Requirement Review — 4b (§11I) — 2026-10-17
+
+**Verdict: ✅ APPROVED WITH CONDITIONS.** 4b.1 may start after E-65 to E-69, which SA applied below. The design is sound: an append-only dated event table, written inside the existing transition function under its existing row lock, with RLS on, no policy, and a column-level INSERT grant. It fits the payment-tables and DB-exposure lockdown conventions. **No genuine user decision is needed for the design.** BD-17 and its defaults decide the money rules, and BQ-13 stays open, untouched. The user's only steps are the planned hand-apply (checks 23 and 24 around `20261072` and `20261073`), and possibly one operational choice in F-5.
+
+**How it was checked.**
+- **The function.** SA read `20261031:174-376` line by line.
+  - Every target takes `SELECT … FOR UPDATE` on the purchase row first. Every write is one `UPDATE` in the same function call, so the same transaction.
+  - Retries and the reconcile pass return `already` (equal cumulative, same dispute id) or `stale` (lower cumulative) **before** any write path.
+  - Each of the six RV-2 write branches is reached only on a real state change.
+- **The schema.** `20261030`: `currency` and `livemode` are `NOT NULL` (and `currency = 'USD'`), so the copied event columns cannot fail their NOT NULL. `amount_total_minor` is nullable on flagged rows (RV-5 covers it). `user_id` is `ON DELETE SET NULL`, so purchases outlive their account and events stay with them.
+- **The checks.** Checks 23 to 26 were scanned: ASCII only, no apostrophe in any comment, no "into", one final result set each. Their SQL was read for type and union consistency.
+
+**Findings**
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| F-1 | — | **Rewriting the function is safe.** The signature, return type, outcomes, `SECURITY INVOKER` and `search_path = ''` are kept. `CREATE OR REPLACE` keeps the ACL, and re-stating the grants is harmless. The inserts sit inside the same call, so an insert failure (for example a missing grant) rolls back the purchase update too, and the webhook claim retries. There is no half-applied state. No caller changes (RV-8). The SECURITY DEFINER surface guard is not tripped (INVOKER). The payment write-lockdown scan is not tripped automatically and gains the table (SA-Q71). | — |
+| F-2 | Medium | **The RV-9 guard is right, but it is not race-proof on its own.** A webhook call already running the **old** body when the migration starts can commit a refund with no event after the assertion. Locking narrows the window, but a call that has already entered the old body finishes with it. The window is tiny today (one test purchase, 0 refunds), but "no undated history" should be proven after the apply, not assumed. | **E-65 (applied):** the migration takes `LOCK TABLE public.business_os_boost_purchases IN EXCLUSIVE MODE` before the assertion, and check 24 gains the row "no refund or dispute recorded without an event". |
+| F-3 | — | **Grants and RLS match the lockdown conventions:** RLS on, no policy, `REVOKE ALL` from all four roles, then SELECT plus the nine-column INSERT to service_role, with no UPDATE or DELETE. Column-level INSERT is right: unnamed columns take their defaults and need no privilege, so `id` and `recorded_at` cannot be supplied. **The cascade needs no DELETE grant** (SA-Q66): referential actions run with the referencing table owner's rights, not the caller's. | — |
+| F-4 | Medium | **AC-207 to AC-211 cannot run in CI.** CI has no database, and the migration test pins text only. | **E-66 (applied):** these ACs are proven by a self-checking SQL script that Dev runs inside `BEGIN … ROLLBACK` against a **local** database, never production, with its output recorded; CI keeps the text pins. |
+| F-5 | Low (operational) | **If Dev has no local database,** the six insert paths are first exercised by a real event. The only real-event path is a Stripe **test-mode** refund (BD-14 counts it), checked with check 25. | **The one possible user touchpoint:** a test-mode refund of the owner test purchase after the apply. That is operational, not a business rule; TL asks only if F-4's local run is impossible. |
+| F-6 | Low | **The rollback order and the once-rows-exist rule were not stated.** | **E-67 (applied):** roll back `20261073` first, then `20261072`. Once the events table holds a row the rollback refuses, and from then on any defect is fixed forward by a new migration. |
+| F-7 | — | **The deploy order is honest.** 4b.1's TypeScript reads nothing new, so it is safe on either side of the apply, and the PR stays off auto-merge until the user says "applied". 4b.2 merges only after the apply and still tolerates a missing table (FR-4B-16, AC-224). There is no window in which merged code needs a table that is not there. | — |
+| F-8 | Medium | **SA-Q73 has a cleaner answer than a re-freeze.** Pin B serves **fixed payloads** to the page, so a server-side K-5 rule change (FR-4B-5, FR-4B-10) cannot move it. Pin B stays byte-identical. If 4b.2 must change the tile wire shape, that is a display change: stop and raise it to SA. The K-5 rule is proven by builder and rule tests. | **E-68 (applied)** on §11I.8 and AC-231. |
+| F-9 | — | **SA-Q68: two reads, with explicit chunking.** R-n reads events in range (keyset, capped), then their purchases by id. R-n′ reads the account's purchase ids first (account-scoped), then events by `purchase_id` in that set and range. Id lists are chunked at 100 per request. | **E-69 (applied)** on §11I.7. |
+| F-10 | — | **The split and estimates are sensible.** 4b.1 is writer-only, has no UI, and is migration-gated; 4b.2 is reads and UI. | — |
+
+**Rulings SA-Q65 to SA-Q74**
+
+| # | Ruling |
+|---|---|
+| SA-Q65 | **No `occurred_at`.** `recorded_at` only; the signature stays (BD-17 accepts "the month we learned of it"). |
+| SA-Q66 | **`ON DELETE CASCADE`, with the cleanup regenerated as `20261073` in the same 4b.1 PR** and applied right after `20261072`. G-18 needs the edge classified (PF-11). No DELETE grant is needed (F-3). |
+| SA-Q67 | **`ON CONFLICT DO NOTHING`.** A conflict can only mean the state machine already wrote the step. Raising would turn a duplicate into a webhook that fails and retries forever. Check 25 reconciles any gap. |
+| SA-Q68 | **Two reads**, as F-9 and E-69. No embed pattern in this repository. |
+| SA-Q69 | **Keep INVOKER** with the column-level INSERT grant. |
+| SA-Q70 | **Yes**, plus E-67 (order, fix forward). |
+| SA-Q71 | **Yes:** add the table to the payment write-lockdown scan (the fixed list and the no-browser-writer check). |
+| SA-Q72 | **Approved: one ruled update per pin, as E-55.** The AC-145 Overview baseline gains R-n and R-l with their exact arguments, plus the `heldNow` payload change and a refreshed hash, and nothing else. The 6a export pins and `accountEconomics` tests change only where FR-4B-11 changes a figure. Paste the hunk lists. |
+| SA-Q73 | **Pin B is not re-frozen** (F-8, E-68). |
+| SA-Q74 | **Yes.** Count each event in its month as recorded. The problems note shows when refunded plus lost exceeds a purchase's total; check 25's `over_total` shows the purchase. |
+
+**E-edits (all applied by SA)**
+- **E-65.** §11I.4 migration order gains step 0: `LOCK TABLE public.business_os_boost_purchases IN EXCLUSIVE MODE`. Check 24 gains the row "no refund or dispute recorded without an event".
+- **E-66.** §11I.9 gains a note before AC-207: AC-207 to AC-211 are proven by `scripts/test-bos-boost-reversal-events.sql`, a self-checking script (it raises on any failed expectation) run inside `BEGIN … ROLLBACK` against a local database only, with its output recorded in the workplan.
+- **E-67.** §11I.6 rollback paragraph: the order is `20261073` then `20261072`, and the fix-forward rule applies once rows exist.
+- **E-68.** §11I.8 frozen-pins row and AC-231: Pin B stays byte-identical; a needed tile wire change stops for SA.
+- **E-69.** §11I.7: the two-read shape and the 100-id chunking.
+
+---
+
 ## 11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant
 
 Specified 2026-10-17 from **BD-34** (which amends BD-25 and CR BQ-7), the CR M-8 row and inventory rows I-15 and I-19, LAY §2.3 X-1, X-2 and §3 rule 9, and the code at main `5c214310` (citations are `path:line` there). Nothing was checked in a browser or against the database. **UI short path, about 1 day. Nothing is deleted. No data, money, API logic, read, request or migration change.**
@@ -3131,6 +3421,7 @@ This table is SA's guard table from the SA review (SA-F5), replacing the earlier
 | Slice 5a rows (Money M-1 picker swap and account summary; M-2 plan payments received) | M-1 deletes the original picker named by four guards and touches the Businesses page; M-2 adds R-m, R-m′ on a table the repository already reads, and changes the plans line and K-5 | See §11D.7: the picker contract test, layout folder guard, contrast guard and finance render tests (M-1); the finance table pin does **not** grow, the repository test gains one test per method, the billing event caller list and the four billing placement guards are not tripped (run unchanged), the 4a plans-line and K-5 tests are updated (M-2) | 5a (M-1, M-2) |
 | Slice 6a rows (Money M-3 accounts tab and AI margin) | A new pure builder in `lib/business-os/finance/`, new route fields, a tab; no new read or repository method | See §11E.6: the finance source guards gain the new files; repository, ledger, lot and billing event caller lists, the finance table pin and the billing placement guards are not tripped (run unchanged); route and URL tests cover the new fields | 6a (M-3) |
 | Money M-4 rows (OV-1 labels; OV-5 recorded, not charged) | OV-1 changes strings pinned by tests in five admin folders; OV-5 makes the route name two usage-log repositories, which the finance "no token_usage" rule forbids | See §11F.8: string pins updated and a vocabulary guard added (OV-1); the finance source guard narrowed to allow the route only, its pattern widened to catch `AdminTokenUsageAnalyticsRepository`, a positive pin on the two read methods; the analytics repository isolation guard and the `TokenUsageRepository` contract are not tripped (headers amended); Health rule tests unchanged | M-4 (OV-1, OV-5) |
+| Slice 4b rows (reversal events writer; refund dates, problems, bought credits) | 4b.1 adds a table and replaces the boost transition function in a migration; 4b.2 adds R-n, R-n′ on the new table and changes the DF-5 rule | See §11I.8: purge descriptor, classification baseline (156), business-owned inventory, export `BILLING_TABLES`, the regenerated test-account cleanup, a new migration test, rollback and check scripts (4b.1); the finance table pin grows by one, the DF-5 pin is re-pinned, the repository test gains one test per method, the Accounts tab pins by SA ruling, the frozen pins kept (4b.2); boost repository, webhook placement and SECURITY DEFINER guards not tripped | 4b.1, 4b.2 |
 
 **Not tripped:** L8, BD-26 owner-read, `businessOwnedTables` / purge descriptors, `adminReadMethods`, `accountSeam.guard` (if SA-Q7 is followed), billing-account and billing-event caller lists, boost repository pins (SA-F2 keeps the page off them). **No new CI job and no added PR critical-path time:** every new test runs in the existing Jest gate or the existing `test:bos-entitlements` job.
 
@@ -3884,6 +4175,169 @@ from rec r
 cross join chg c;
 ```
 
+### Slice 4b checks (23 to 26)
+
+Checks 23 and 24 back 4b.1 (the user runs them on production around the hand-applied migration, §11I.6); checks 25 and 26 back 4b.2 (§11I). The same rules hold: read-only, ASCII only, no apostrophes in comments, never the word that the Supabase SQL editor misreads, one final result set each. Amounts are minor units (cents for USD). Written against the facts of §11I.1; not executed by BA. For 4b.1, checks 23 and 24 are the strengthened text in the 4b.1 workplan §6: added rows for column-level privileges, the nine INSERT columns, BYPASSRLS, the index shape, the body md5 and the cleanup version (SA-W113, SA-WP-4b1, E-70). The 4b.1 PR carries those files.
+
+**File:** `check 23 - before applying 20261076` (AC-212, AC-216)
+
+```sql
+-- Finance check 23: run BEFORE applying migration 20261076, read only.
+-- Every row must show ok = true. If one does not, stop and tell the session.
+select 'reversal events table absent' as item,
+  to_regclass('public.business_os_boost_reversal_events') is null as ok,
+  null::bigint as found
+union all
+select 'transition function present with six arguments',
+  to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)') is not null,
+  null::bigint
+union all
+select 'transition function is security invoker',
+  coalesce(bool_and(not p.prosecdef), false),
+  count(*)
+from pg_catalog.pg_proc p
+where p.oid = to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)')
+union all
+select 'no boost purchase with a refund',
+  count(*) = 0,
+  count(*)
+from public.business_os_boost_purchases b
+where b.amount_refunded_minor > 0
+union all
+select 'no boost purchase with a dispute',
+  count(*) = 0,
+  count(*)
+from public.business_os_boost_purchases b
+where b.stripe_dispute_id is not null;
+```
+
+**File:** `check 24 - after applying 20261076` (AC-204, AC-205, AC-206, AC-216)
+
+```sql
+-- Finance check 24: run AFTER applying migration 20261076, read only.
+-- Every row must show ok = true. If one does not, stop and tell the session.
+-- The function must name the events table six times, once per insert point.
+with t as (
+  select to_regclass('public.business_os_boost_reversal_events') as tbl,
+         to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)') as fn
+)
+select 'table exists' as item, t.tbl is not null as ok from t
+union all
+select 'row level security on', coalesce((select c.relrowsecurity from pg_catalog.pg_class c where c.oid = t.tbl), false) from t
+union all
+select 'no policy on the table', not exists (select 1 from pg_catalog.pg_policy pol where pol.polrelid = t.tbl) from t
+union all
+select 'anon has no select', not coalesce(has_table_privilege('anon', t.tbl, 'SELECT'), true) from t
+union all
+select 'authenticated has no select', not coalesce(has_table_privilege('authenticated', t.tbl, 'SELECT'), true) from t
+union all
+select 'authenticated cannot insert', not coalesce(has_table_privilege('authenticated', t.tbl, 'INSERT'), true) from t
+union all
+select 'service_role can select', coalesce(has_table_privilege('service_role', t.tbl, 'SELECT'), false) from t
+union all
+select 'service_role can insert kind', coalesce(has_column_privilege('service_role', t.tbl, 'kind', 'INSERT'), false) from t
+union all
+select 'service_role can insert purchase_id', coalesce(has_column_privilege('service_role', t.tbl, 'purchase_id', 'INSERT'), false) from t
+union all
+select 'service_role cannot set recorded_at', not coalesce(has_column_privilege('service_role', t.tbl, 'recorded_at', 'INSERT'), true) from t
+union all
+select 'service_role cannot update', not coalesce(has_table_privilege('service_role', t.tbl, 'UPDATE'), true) from t
+union all
+select 'service_role cannot delete', not coalesce(has_table_privilege('service_role', t.tbl, 'DELETE'), true) from t
+union all
+select 'foreign key to purchases cascades',
+  exists (select 1 from pg_catalog.pg_constraint con
+          where con.conrelid = t.tbl and con.contype = 'f'
+            and con.confrelid = 'public.business_os_boost_purchases'::regclass
+            and con.confdeltype = 'c') from t
+union all
+select 'function still security invoker', coalesce((select not p.prosecdef from pg_catalog.pg_proc p where p.oid = t.fn), false) from t
+union all
+select 'function names the events table six times',
+  coalesce((select (length(pg_get_functiondef(t.fn)) - length(replace(pg_get_functiondef(t.fn), 'business_os_boost_reversal_events', '')))
+            / length('business_os_boost_reversal_events') = 6), false) from t
+union all
+select 'anon cannot execute the function', not coalesce(has_function_privilege('anon', t.fn, 'EXECUTE'), true) from t
+union all
+select 'service_role can execute the function', coalesce(has_function_privilege('service_role', t.fn, 'EXECUTE'), false) from t
+union all
+select 'no refund or dispute recorded without an event',
+  not exists (select 1 from public.business_os_boost_purchases b
+              where (b.amount_refunded_minor > 0 or b.stripe_dispute_id is not null)
+                and not exists (select 1 from public.business_os_boost_reversal_events e where e.purchase_id = b.id))
+from t;
+```
+
+**File:** `check 25 - reversal events against purchases` (AC-207 to AC-209, SA-Q67, SA-Q74)
+
+```sql
+-- Finance check 25: boost reversal events against the purchase rows, read only.
+-- One row per purchase that has a refund, a dispute or an event.
+-- refunds_ok: the refund event amounts add up to the refunded amount on the purchase.
+-- dispute_ok: a purchase now in status disputed has more opened than closed dispute events.
+-- over_total: refunds plus lost disputes exceed the purchase total (see SA-Q74).
+with ev as (
+  select e.purchase_id,
+    coalesce(sum(e.amount_minor) filter (where e.kind = 'refund'), 0) as refund_events_minor,
+    count(*) filter (where e.kind = 'refund') as refund_events,
+    coalesce(sum(e.amount_minor) filter (where e.kind = 'dispute_lost'), 0) as lost_events_minor,
+    count(*) filter (where e.kind = 'dispute_opened') as disputes_opened,
+    count(*) filter (where e.kind in ('dispute_won', 'dispute_lost')) as disputes_closed,
+    min(e.recorded_at) as first_event,
+    max(e.recorded_at) as last_event
+  from public.business_os_boost_reversal_events e
+  group by e.purchase_id
+)
+select
+  b.id as purchase_id,
+  b.status,
+  b.paid_at is not null as was_paid,
+  b.amount_total_minor,
+  b.amount_refunded_minor,
+  coalesce(ev.refund_events_minor, 0) as refund_events_minor,
+  coalesce(ev.refund_events, 0) as refund_events,
+  coalesce(ev.lost_events_minor, 0) as lost_events_minor,
+  coalesce(ev.disputes_opened, 0) as disputes_opened,
+  coalesce(ev.disputes_closed, 0) as disputes_closed,
+  ev.first_event,
+  ev.last_event,
+  coalesce(ev.refund_events_minor, 0) = b.amount_refunded_minor as refunds_ok,
+  (b.status <> 'disputed' or coalesce(ev.disputes_opened, 0) > coalesce(ev.disputes_closed, 0)) as dispute_ok,
+  coalesce(ev.refund_events_minor, 0) + coalesce(ev.lost_events_minor, 0) > coalesce(b.amount_total_minor, 0) as over_total
+from public.business_os_boost_purchases b
+left join ev on ev.purchase_id = b.id
+where b.amount_refunded_minor > 0
+   or b.stripe_dispute_id is not null
+   or ev.purchase_id is not null
+order by b.id;
+```
+
+**File:** `check 26 - boost refunds and lost disputes recorded this month` (AC-217, AC-218, AC-220, AC-221)
+
+```sql
+-- Finance check 26: boost refunds and disputes recorded this UTC month, per currency, read only.
+-- Compare with the refunded and lost figures of Our revenue (boosts), window This month.
+-- An event counts in the UTC month of recorded_at, whatever month its purchase was paid in.
+-- Rows with on_paid_purchase = false are purchases never credited: not revenue, shown in the problems note.
+-- Net for the month = gross_minor of check 14 minus refunded_minor minus lost_minor of the paid rows here.
+select
+  upper(btrim(e.currency)) as currency,
+  b.paid_at is not null as on_paid_purchase,
+  count(*) filter (where e.kind = 'refund') as refunds,
+  coalesce(sum(e.amount_minor) filter (where e.kind = 'refund'), 0) as refunded_minor,
+  count(*) filter (where e.kind = 'dispute_lost') as disputes_lost,
+  coalesce(sum(e.amount_minor) filter (where e.kind = 'dispute_lost'), 0) as lost_minor,
+  count(*) filter (where e.kind = 'dispute_opened') as disputes_opened,
+  count(*) filter (where e.kind = 'dispute_won') as disputes_won,
+  count(*) filter (where b.user_id is null) as events_of_deleted_accounts
+from public.business_os_boost_reversal_events e
+join public.business_os_boost_purchases b on b.id = e.purchase_id
+where e.recorded_at >= date_trunc('month', now(), 'UTC')
+  and e.recorded_at < date_trunc('month', now(), 'UTC') + interval '1 month'
+group by 1, 2
+order by 1, 2;
+```
+
 ---
 
 ## 14. Open questions for SA
@@ -3919,7 +4373,7 @@ Technical questions only; none needs the user (BD-13 settled the only business q
 | **SA-Q18** | Layout standard: 2a / 2b import shared components but do not migrate the page shell (DF-4). 2b builds the deferred shared `formatUtcDate`, which runs that part on the full cycle (layout R-7). Confirm both, and confirm the shell adoption is its own slice after 2b (renaming the URL params to `range` / `account`, with `preset` / `accountId` as legacy aliases, and replacing `router.replace` with `useAdminFilters`). | Confirm: new blocks on the standard now; shell in its own UI slice after 2b, because a layout migration must not ride in a data slice | Ruled 2026-10-11 (§0.3) |
 | **SA-Q19** | Refunds by `created_at` or by `succeeded_at`? Both are present; every refund is succeeded today. | `created_at`: one window column for every status, so a refund that is not completed can be counted beside the succeeded ones; Stripe refunds succeed within seconds | Ruled 2026-10-11 (§0.3) |
 
-**Slice 4 questions** (SA-Q25 to SA-Q31) are in §11C.9 and ruled (§0.3). **Slice 5a questions** (Money M-1 and M-2, SA-Q32 to SA-Q41, raised 2026-10-14) are in §11D.9, open.
+**Slice 4 questions** (SA-Q25 to SA-Q31) are in §11C.9 and ruled (§0.3). **Slice 4b questions** (SA-Q65 to SA-Q74, raised 2026-10-17) are in §11I.10, open. **Slice 5a questions** (Money M-1 and M-2, SA-Q32 to SA-Q41, raised 2026-10-14) are in §11D.9, open.
 
 ---
 
@@ -4515,6 +4969,11 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-16 | SA requirement and workplan review, Money M-5 (§11H) | SA-RR-M5 approved and SA-WP-M5 approved with conditions (§0.3). SA applied E-63 (S-18 `ANALYTICS_WHAT`, AC-195 to S-18) and E-64 (§11H.6: `tabCoexistence` X-8, X-8b, X-10 re-scoped, not deleted). M5-R1 to M5-R4 in the workplan. |
 | 2026-10-17 | SA code review, Money M-5 | Code Approved (SA-CR-M5 in §0.3). No conditions. Follow-up chip: harden the load-sensitive timing tests (`app/api/admin/jobs-queues/__tests__/qa-slice5-pr2.route.test.ts`, `bosLens.render` P-8). No requirement body text changed. |
 | 2026-10-17 | RM: Money M-5 committed, PR #444 opened, auto-merge on | Commit `1c7b7554` on `feature/bos-money-m5`; origin/main (`16cb2a1f`) merged in `4e96e719` (one trivial Change History conflict in ADMIN_IDENTIFICATION_AND_ACCESS.md, both rows kept). All seven frozen pin hashes verified. Re-run green after the merge. §0.1 M-5 row: status, workplan and PR columns |
+| 2026-10-17 | BA: slice 4b specified (§11I) | New §11I from §11C, BD-17 and its dispute defaults, DF-5, the refund-timing scoping (option (ii)) and pre-work re-verified at main `16cb2a1f` and live (PF-1 to PF-11). **4b.1:** migration `20261072` (table `business_os_boost_reversal_events`, RLS with no policy, service_role SELECT and a column-level INSERT grant without `recorded_at`, append-only; the transition function replaced with the same signature, six insert points, refund delta and dispute amount at stake, `ON CONFLICT DO NOTHING`; refuse if any refund or dispute exists), rollback that refuses while rows exist, regenerated test-account cleanup `20261073` (G-18 blocks the new FK), purge, baseline 156, inventory and export registration; PR off auto-merge until the user applies the migration. **4b.2:** R-n, R-n′; refunds and lost disputes by `recorded_at`; held now, never taken off a month; boost problems; K-5 dispute rule; bought credits beside gifted (K-4 unchanged); Accounts tab on the same rule; table-absent tolerance. AC-204 to AC-232, L-137 to L-141, checks 23 to 26, SA-Q65 to SA-Q74. §0.1 row 4, §0.2 log, §0.4 BQ-13 and DF-5, §12.2 row, §14 pointer, TOC. BQ-13 open: no take-back. Awaiting SA review |
+| 2026-10-17 | SA requirement review, slice 4b (§11I) | APPROVED WITH CONDITIONS (SA-RR-4b, SA-Q65 to SA-Q74 in §0.3). New section "SA Requirement Review — 4b (§11I) — 2026-10-17". SA applied E-65 (`LOCK TABLE` step and a check 24 row "no refund or dispute recorded without an event"), E-66 (local-only SQL proof for AC-207 to AC-211), E-67 (rollback order, fix forward), E-68 (Pin B stays byte-identical) and E-69 (two reads, 100-id chunks). No code changed. |
+| 2026-10-17 | SA workplan review, slice 4b.1 (reversal events) | APPROVED WITH CONDITIONS (SA-WP-4b1; SA-W105 to SA-W115 in §0.3). SA applied E-70 (the §13 checks 23 and 24 are superseded by the strengthened 4b.1 workplan §6 text). PGlite satisfies E-66, so no user test-mode refund is needed. No user action beyond the planned apply steps. |
+| 2026-10-17 | SA code review, slice 4b.1 (reversal events) | Code Approved (SA-CR-4b1 in §0.3). Migration verified byte for byte by SA; checks editor-safe; frozen pins unchanged; the 9 local `test:gate` failures are Windows-only and outside 4b.1. The PR stays off auto-merge until the user applies 20261072 and 20261073 and check 24 is all ok. |
+| 2026-10-17 | RM: slice 4b.1 committed and PR opened | Commit `240b14de`, merge of origin/main `6d8ecfb8` (QA-4B1-1 applied: both `toHaveLength` 156, totals 38 + 0 + 118). PR [#447](https://github.com/AgentsPilot/neuronforge/pull/447) open, **auto-merge OFF**; awaiting the user apply of `20261072` and `20261073` (checks 23 and 24) before RM merges by hand |
 | 2026-10-17 | BA: Money M-8 specified (§11J) | New §11J "Mark the Platform dashboard and Exchange rates pages redundant" from BD-34, CR M-8, I-15, I-19 and main `5c214310`: scope, rules RP-1 to RP-7, guards, AC-233 to AC-242, SA-Q75 to SA-Q80, BQ-14 (default: visible notice), FU-M8-1. §0.1 row M-8 (in progress), §0.2 log line, TOC entry. No code changed. |
 | 2026-10-17 | SA requirement and workplan review, Money M-8 (§11J) | SA-RR-M8 approved and SA-WP-M8 approved with conditions (§0.3). E-71 applied: BD-34 read as code comments only, no visible notice (RP-4, AC-236, scope, §11J.4, BQ-14 resolved); MULTI_CURRENCY doc pointer added; estimate about 0.75 day. |
 | 2026-10-17 | SA code review, Money M-8 | Code Approved (SA-CR-M8 in §0.3). No conditions. |
@@ -4529,9 +4988,12 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-17 | SA workplan review, DF-6 (§11L): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-DF6. SA applied E-81 (label "Since it started: 2026-09-29 16:50 to now (UTC)" in DF6-FR-9, AC-266, L-149), E-82 (summary window line for since_start only, §11L.6, AC-266), E-83 (§11L.8 row: one ruled update of the links import pin to add adminWindowPresets) and E-84 (planGroups.ts:224). No code changed. |
 | 2026-10-17 | SA code review, DF-6 (§11L): **Code Approved** | §0.3 row SA-CR-DF6. D-1 approved (schema pinned by AC-173 part B; SA-Q96 corrected). D-2 approved and applied by SA (DF6-R3 amended: financeLinks.test.ts type narrowing); scoped tsc clean 0. Seven pins equal; 2605 tests passed. |
 | 2026-10-17 | RM: slice DF-6 committed, PR #450 opened, auto-merge on | Commit `fd7b7f02` on `feature/bos-finance-health-df6`; origin/main (`fdaf90c1`, 6b #449) merged in `e73ec431` with no conflicts. Re-run: finance UI, finance lib, finance route, admin layout, analytics and business-os-llm filters, 80 suites, 4218 tests, all passed. Seven frozen pins unchanged. §0.1 row DF-6: status and PR columns. |
+| 2026-10-17 | Dev: slice 4b.1 rebased onto DE-8a (PR #451) | main took `20261074`/`20261075`. 4b.1 renumbered: `20261072` → **`20261076`** (bytes unchanged, body md5 `018c4447f2b52dd87e4ae3b229e5b42c`; no migration since redefines the transition function) and `20261073` → **`20261077`** (regenerated over `20261075`, so it keeps `business_os_data_exports`; stamp `f854486b31baf784` → **`b78b4579fc6631f8`**; rollback restores `20261075`). Check 23 now expects DE-8a live (9 rows, stamp `a824848e0a538477`); check 24 pins the new stamp. Runbook: check 23 → `20261076` → `20261077` → check 24. Updated: §0.1, §11I (PF-1 note, 11I.2, 11I.4, 11I.6, 11I.8), §13 check headings. SA rulings and reviews keep the old numbers as history. Merge staged, not committed |
+| 2026-10-17 | SA code review, 4b.1 rebase onto DE-8a | APPROVED WITH CONDITIONS (SA-CR-4B1-R in §0.3). R-1: DE-8a rollback guard must test for any live cleanup body naming business_os_data_exports (fix in #447). R-2, R-3 small. No code changed by SA. |
 | 2026-10-17 | BA: slice 8 specified (§11M) | New §11M "Slice 8: history snapshots" on `feature/bos-finance-health-8` (DF-6 tip `f6182697`): code facts CF-1 to CF-10; what is snapshotted (states that cannot be rebuilt: plan mix, credit positions, gifted, bought and outstanding credits) and what is not (flows rebuilt from dated rows); rules HS-W-1 to HS-W-11 (daily at 00:07 UTC for the day just ended, late runs write nothing, key `(as_of_date, metric, dimension)` with `ON CONFLICT DO NOTHING`, only exact figures, no gap filling, the page's own functions, no account and no money); the metric list; migration `20261074` (`business_os_finance_snapshots`, RLS on, no policy, service-role SELECT and five-column INSERT, refusing rollback) with checks 31 and 32 and a local self-test; the `finance-snapshot` job HS-FR-1 to HS-FR-8; the History block HS-FR-9 to HS-FR-16 on its own admin route; checks 33 and 34; guards; AC-273 to AC-294; L-155 to L-162; SA-Q100 to SA-Q107; estimate about 3.5 days, split 8.1 / 8.2 / 8.3 (8.1 stops for the user's production apply). §0.1 slice 8 row, §9 slice 8 row, ToC, §0.2 log; §0.4 gains BQ-17, BQ-18, BQ-19 and DF-9. No code changed. |
 | 2026-10-17 | SA requirement review, slice 8 (§11M): **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — Slice 8 (§11M) — 2026-10-17" after §11M.13. §0.3 row SA-RR-8. Findings S8-F1 (History fetched on demand, AC-173 one-fetch pin) to S8-F4; BA edits E-85 to E-88. Migration number, house style, columns, cron pattern, descriptors and checks 31 to 34 verified. No code changed. |
 | 2026-10-17 | BA: SA-RR-8 edits E-85 to E-88 applied (§11M) | E-85 the History block opens closed and sends its request only on "Show history", so AC-173 and the one-fetch render tests keep one request per load (HS-FR-11, AC-290, L-159); E-86 the dimension CHECK admits `tier:` keys with hyphens (`^([a-z][a-z0-9_]{0,47}\|tier:[a-z0-9_-]{1,40})$`), pinned equal to a builder shape constant that pre-checks rows so a bad key skips only the `plan` family (§11M.6, HS-W-5, self-test, AC-276, AC-282, new check 32 row); E-87 the job gives the credit pass a 30 s night budget (HS-FR-8, AC-282, L-157); E-88 the writer uses upsert with ignoreDuplicates and `.select(id)`, written = ids returned (HS-FR-5, AC-276, AC-281). SA-Q104 CHECK expression written in. §0.1 slice 8 row: SA approved, ready for Dev workplan (8.1). No code changed. |
 | 2026-10-17 | SA workplan review, slice 8.1 (§11M): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-8.1. SA applied E-89 (NOTIFY pgrst in the §11M.6 order), E-90 (the pure shape module in 8.1), E-91 (migration renumbered 20261074 to 20261078 across §11M, the §0.1 row and the §9 row; numbering note), E-92 (§11M.10 rows: count pins recomputed from main, cleanup function needs no version) and E-93 (check 32 tier row is an exact pattern match). No code changed. |
 | 2026-10-17 | SA code review, slice 8.1 (§11M): **Code Approved** | §0.3 row SA-CR-8.1. D-1 to D-3 approved. The remaining scoped tsc TS2353 is reproduced on origin/main (DE-7 adf9e37f), outside scope. Merge rule MR-1: the second of #447 and 8.1 to merge recounts to 158 / 120. No code changed by SA. |
 | 2026-10-17 | RM: slice 8.1 committed, PR #452 opened, auto-merge OFF | Commit `0439f94f` on `feature/bos-finance-health-8`; origin/main (`e5bc1e1f`) had not moved, so no merge was needed. #447 still open, so MR-1 did not apply (counts stay as committed). `20261078` free on main and every remote branch. Re-run: finance UI and lib, purge, data-export, test-account-cleanup and the migration test, 57 suites, 2999 tests, all passed. Seven frozen pins unchanged. Merge held for the user's production apply (L-155). §0.1 row 8: status and PR columns. |
+| 2026-10-18 | Migrations applied to production (session, at the user's request) | #447: check 23 (8/9; cleanup row read the 20261047 version, DE-8a 20261075 never applied and superseded by 20261077), then `20261076` (transition body md5 `018c4447f2b52dd87e4ae3b229e5b42c` verified) and `20261077` (cleanup body md5 `42ae104365dce86933e99da3c62aaabc` = file), check 24 23/23; #447 MERGED. #452: check 31 6/6, then `20261078`, check 32 16/16. MR-1 applied in #452 (second to merge): classification 158 = 38 + 0 + 120, baseline 158. **20261075 must not be applied any more** (it would downgrade the cleanup) |

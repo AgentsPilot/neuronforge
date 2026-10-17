@@ -46,13 +46,10 @@
  */
 
 import { rejectsSamplingParameters, usesMaxCompletionTokens } from '@/lib/ai/providers/openaiProvider';
-import { getPricing } from '@/lib/ai/pricing';
+import { getPricing, warmPricingCache } from '@/lib/ai/pricing';
+import { loadImagePricesWithin, resolveImagePriceFrom, type ImagePriceTable } from '@/lib/ai/imagePricing';
 import { createLogger } from '@/lib/logger';
-import {
-  IMAGE_FALLBACK_PRICING,
-  systemConfigRepository,
-  type ImageGenerationConfig,
-} from '@/lib/repositories/SystemConfigRepository';
+import { systemConfigRepository, type ImageGenerationConfig } from '@/lib/repositories/SystemConfigRepository';
 import { BOS_LLM_AREAS, type BosLlmArea } from './callCatalog';
 import {
   BOS_LLM_AREA_KEYS,
@@ -82,6 +79,20 @@ export const BOS_LLM_SETTINGS_CACHE_MS = 60_000;
 
 /** How long it waits before retrying after a failed read (DEC-8). */
 export const BOS_LLM_SETTINGS_ERROR_RETRY_MS = 10_000;
+
+/**
+ * How long a refill waits for the price rows to load (AI model price review
+ * slice 7, RC7-5). Below the settings budget, and outside it: a slow price read
+ * delays a refill by at most this, and never fails or degrades the settings.
+ */
+export const BOS_PRICE_WARM_WAIT_MS = 1_500;
+
+/**
+ * How long the guardrail waits for the image price table when it checks an image
+ * model other than the default (slice 7, RC7-11). Inside the refill budget; on
+ * timeout the last loaded table is used (the in-code fallback on a cold instance).
+ */
+export const BOS_GUARDRAIL_IMAGE_PRICE_WAIT_MS = 1_000;
 
 /**
  * How long one refill may take before it counts as failed (D-Q2).
@@ -236,10 +247,16 @@ function defaultSnapshot(fromFailedRead: boolean): SettingsSnapshot {
 export interface GuardrailContext {
   price: Map<string, Promise<{ input: number; output: number } | null>>;
   imageConfig: Promise<ImageGenerationConfig> | null;
+  /**
+   * The image price table, read at most once per refill and only when an image
+   * model other than the default is checked (slice 7, RC7-11). Optional so a
+   * context built elsewhere without it still works: it is then read on demand.
+   */
+  imagePrices?: Promise<ImagePriceTable> | null;
 }
 
 function newGuardrailContext(): GuardrailContext {
-  return { price: new Map(), imageConfig: null };
+  return { price: new Map(), imageConfig: null, imagePrices: null };
 }
 
 function priceFor(
@@ -262,6 +279,17 @@ function priceFor(
 function imageConfigFor(ctx: GuardrailContext): Promise<ImageGenerationConfig> {
   if (!ctx.imageConfig) ctx.imageConfig = systemConfigRepository.getImageGenerationConfig();
   return ctx.imageConfig;
+}
+
+/** The image price table, lazily and at most once per context (RC7-11). Never rejects. */
+function imagePricesFor(ctx: GuardrailContext): Promise<ImagePriceTable> {
+  if (!ctx.imagePrices) {
+    ctx.imagePrices = loadImagePricesWithin(BOS_GUARDRAIL_IMAGE_PRICE_WAIT_MS).catch((error) => {
+      logger.warn({ err: error }, 'Image price lookup failed; checking against the in-code prices');
+      return new Map<string, number>();
+    });
+  }
+  return ctx.imagePrices;
 }
 
 export type FieldCheck = { ok: true } | { ok: false; reason: string };
@@ -310,17 +338,18 @@ async function checkTokenModel(
  * An image model is accepted only if EVERY configured size is priced at low,
  * medium and high (RC-5, SA V-7): `quality: 'auto'` is priced after the call by
  * the quality the provider reports, so one missing combination records $0.
+ *
+ * "Priced" is decided by the SAME resolver charging uses (AI model price review
+ * slice 7, finding 2): the price table, then the in-code fallback. The setting
+ * `image_generation_prices_usd` no longer counts (O-1, BQ-7b). The configuration
+ * still supplies the sizes.
  */
-async function checkImageModel(ctx: GuardrailContext, model: string): Promise<FieldCheck> {
-  const config = await imageConfigFor(ctx);
+async function checkImageModel(ctx: GuardrailContext, provider: BosLlmProvider, model: string): Promise<FieldCheck> {
+  const [config, prices] = await Promise.all([imageConfigFor(ctx), imagePricesFor(ctx)]);
   const sizes = Array.from(new Set(Object.values(config.sizes)));
   for (const size of sizes) {
     for (const quality of IMAGE_PRICE_REQUIRED_QUALITIES) {
-      const key = `${model}:${size}:${quality}`;
-      const configured = config.pricesUsd[key];
-      if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) continue;
-      const fallback = IMAGE_FALLBACK_PRICING[key];
-      if (typeof fallback === 'number' && fallback > 0) continue;
+      if (resolveImagePriceFrom(prices, provider, model, size, quality).usdPerImage > 0) continue;
       return { ok: false, reason: 'image_price_missing' };
     }
   }
@@ -344,7 +373,7 @@ async function checkModel(
   if (model === policy.default.model && provider === policy.default.provider) return OK;
 
   return policy.kind === 'image'
-    ? checkImageModel(ctx, model)
+    ? checkImageModel(ctx, provider, model)
     : checkTokenModel(ctx, provider, model, policy);
 }
 
@@ -366,7 +395,7 @@ export async function checkModelAcceptable(
   const policy = getBosLlmCallPolicy(area, callName);
   if (!policy) return { ok: false, reason: 'unknown_call_name' };
   return policy.kind === 'image'
-    ? checkImageModel(ctx, model)
+    ? checkImageModel(ctx, provider, model)
     : checkTokenModel(ctx, provider, model, policy);
 }
 
@@ -881,8 +910,19 @@ async function buildSnapshot(): Promise<BuiltSnapshot> {
 
 async function refill(): Promise<SettingsSnapshot> {
   const previous = snapshot;
+  /*
+   * RC7-5 (AI model price review slice 7): load the price rows alongside the
+   * settings, so the calls this refill serves are charged from the rows rather
+   * than the in-code table (the sync price lookup only reads a warm cache). In
+   * parallel with, and OUTSIDE, the settings budget; bounded by
+   * BOS_PRICE_WARM_WAIT_MS; never rejects. `allSettled` keeps the settings
+   * outcome exactly what it was: a slow or failed price read can neither fail
+   * the settings nor mark them `fromFailedRead`.
+   */
+  const [settled] = await Promise.allSettled([withReadBudget(buildSnapshot()), startPriceWarm()]);
   try {
-    const built = await withReadBudget(buildSnapshot());
+    if (settled.status === 'rejected') throw settled.reason;
+    const built = settled.value;
 
     for (const area of built.missingAreas) {
       logger.debug({ area, key: bosLlmAreaKey(area) }, 'No Business OS LLM settings row; using code defaults');
@@ -897,6 +937,32 @@ async function refill(): Promise<SettingsSnapshot> {
   } catch (error) {
     return onReadFailure(error);
   }
+}
+
+/**
+ * Start the price warm-up (RC7-5). Never throws, never rejects, and never waits
+ * longer than BOS_PRICE_WARM_WAIT_MS, whatever the pricing module does: the warm
+ * bounds itself, and this bounds it again so a refill can never hang on it (QA M10).
+ */
+function startPriceWarm(): Promise<void> {
+  let warming: Promise<void>;
+  try {
+    warming = Promise.resolve(warmPricingCache(BOS_PRICE_WARM_WAIT_MS)).catch((error: unknown) => {
+      logger.warn({ err: error }, 'Price warm-up failed; Business OS calls price from the in-code table until a read lands');
+    });
+  } catch (error) {
+    logger.warn({ err: error }, 'Price warm-up could not start; Business OS calls price from the in-code table until a read lands');
+    return Promise.resolve();
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, BOS_PRICE_WARM_WAIT_MS);
+    // Never hold a serverless invocation open for the timer's sake.
+    (timer as unknown as { unref?: () => void }).unref?.();
+  });
+  return Promise.race([warming, bound]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 /** Serve the last good settings (or the code defaults) and retry sooner (FR-6). */
