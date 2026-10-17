@@ -15,6 +15,7 @@ import type { AiCostUnitBucket, AiCostUnits } from '../aiCost';
 import type { BoostPurchaseInput } from '../boostRevenue';
 import type { CreditsSectionRow } from '../creditsSection';
 import type { PlanPaymentInput } from '../planRevenue';
+import { STRIPE_FEE_ESTIMATE } from '../financeRules';
 import type { FinanceAccountsTabQuery, FinanceGroupKey, FinanceMarginValue } from '../financeTypes';
 
 const TIER = getEntitlementConfig().tierOrder[0];
@@ -112,6 +113,8 @@ function input(over: Partial<AccountEconomicsInput> = {}): AccountEconomicsInput
     cap: 200,
     groupOptions: [{ key: TIER_KEY, tierLabel: 'Tier label' }],
     refundOrDispute: false,
+    // Slice 6b: the production config (290 bps + 30 minor units, USD).
+    feeEstimate: STRIPE_FEE_ESTIMATE,
     ...over,
   };
 }
@@ -467,6 +470,8 @@ describe('AC-131: which accounts (M3-FR-2, SA-Q49, SA-W85, SA-W86)', () => {
       paid: { failed: false, lines: [{ currency: 'USD', afterTax: 10, exact: true, planAfterTax: 0, boostsAfterTax: 10 }] },
       aiCost: { kind: 'figure', costUsd: 0.3, exact: true },
       margin: { kind: 'figure', marginUsd: 9.7, noRevenue: false },
+      // Slice 6b: the 1000 boost is one charge, fee 29 + 30 = 59.
+      marginAfterFees: { kind: 'figure', afterFeesUsd: 9.11, feesUsd: 0.59, currency: 'USD', noRevenue: false },
     });
     expect(built.section.platform.includesDeleted).toBe(true);
     expect(built.section.platform.paid.lines[0].afterTax).toBe(99);
@@ -638,14 +643,171 @@ describe('AC-142: buildAccountMargin uses the same functions as the tab row', ()
       aiCost: { units: units({ [OWNER]: 12_345_000_000 }), reachedCeiling: false },
       boosts: { rows: [boost()], reachedCeiling: false },
       plans: { rows: [invoice()], reachedCeiling: false },
+      feeEstimate: STRIPE_FEE_ESTIMATE,
     });
-    expect(picked).toEqual({ paid: tab?.paid, aiCost: tab?.aiCost, margin: tab?.margin });
+    expect(picked).toEqual({ paid: tab?.paid, aiCost: tab?.aiCost, margin: tab?.margin, marginAfterFees: tab?.marginAfterFees });
     expect(picked.margin).toEqual({ kind: 'figure', marginUsd: 87.7655, noRevenue: false });
   });
 
   it('a failed boost read → Unknown; before the cut-over → not_available', () => {
-    const base = { accountId: OWNER, coverage: 'after_cutover' as const, aiCost: { units: units({ [OWNER]: 1 }), reachedCeiling: false }, plans: { rows: [], reachedCeiling: false } };
+    const base = { accountId: OWNER, coverage: 'after_cutover' as const, aiCost: { units: units({ [OWNER]: 1 }), reachedCeiling: false }, plans: { rows: [], reachedCeiling: false }, feeEstimate: STRIPE_FEE_ESTIMATE };
     expect(buildAccountMargin({ ...base, boosts: null }).margin).toEqual({ kind: 'unknown' });
     expect(buildAccountMargin({ ...base, coverage: 'starts_before_cutover', boosts: { rows: [], reachedCeiling: false } }).margin).toEqual({ kind: 'not_available' });
+  });
+});
+
+// ── Slice 6b (§11K, AC-243 to AC-250, AC-252, E-72 to E-74, SA-W-6b-11) ─────
+// The margin after ESTIMATED Stripe fees, beside the AI margin. Fees in minor
+// units: 7900 → 259, 1000 → 59 at the default 290 bps + 30.
+describe('slice 6b: margin after Stripe fees (estimate)', () => {
+  const afterFeesOf = (built: ReturnType<typeof buildAccountEconomics>, id: string) => rowOf(built, id)?.marginAfterFees;
+  const feesOf = (value: unknown) => (value as { feesUsd?: number } | undefined)?.feesUsd;
+  const noPlans = { rows: [] as PlanPaymentInput[], reachedCeiling: false };
+
+  it('AC-250 / AC-246: the owner in October (plan 7900 + boost 1000) has fees 259 + 59 = 318 (USD 3.18); the AI margin is unchanged', () => {
+    const built = buildAccountEconomics(input());
+    expect(marginOf(built, OWNER)).toEqual({ kind: 'figure', marginUsd: 87.7655, noRevenue: false });
+    expect(afterFeesOf(built, OWNER)).toEqual({ kind: 'figure', afterFeesUsd: 84.5855, feesUsd: 3.18, currency: 'USD', noRevenue: false });
+    // AC-246: margin after fees = AI margin − fees / 100 (check 19 minus check 27).
+    expect(Math.round((87.7655 - 318 / 100) * 1e4) / 1e4).toBe(84.5855);
+    expect(built.section.feeEstimate).toEqual({ currency: 'USD', percent: 2.9, fixed: 0.3 });
+  });
+
+  it('AC-243: fees are rounded per charge, then summed (two 1000 boosts = 118, not round(2000 × 2.9%) + 30 = 88)', () => {
+    const built = buildAccountEconomics(input({ boosts: { rows: [boost(), boost()], reachedCeiling: false }, plans: noPlans }));
+    expect(feesOf(afterFeesOf(built, OWNER))).toBe(1.18);
+  });
+
+  it('AC-243 / AC-245: a zero invoice is no charge, and a refused plan row (another kind) is no charge', () => {
+    const built = buildAccountEconomics(
+      input({
+        boosts: { rows: [], reachedCeiling: false },
+        plans: { rows: [invoice(), invoice({ amount_minor: 0 }), invoice({ kind: 'invoice_voided' })], reachedCeiling: false },
+      })
+    );
+    expect(feesOf(afterFeesOf(built, OWNER))).toBe(2.59);
+  });
+
+  it('6B-R3 (E-72): a zero-total paid-family boost is no charge: fee 0, and the margin after fees equals the AI margin', () => {
+    const built = buildAccountEconomics(input({ boosts: { rows: [boost({ amount_total_minor: 0 })], reachedCeiling: false }, plans: noPlans }));
+    expect(marginOf(built, OWNER)).toEqual({ kind: 'figure', marginUsd: -1.2345, noRevenue: false });
+    expect(afterFeesOf(built, OWNER)).toEqual({ kind: 'figure', afterFeesUsd: -1.2345, feesUsd: 0, currency: 'USD', noRevenue: false });
+    expect(built.section.platform.marginAfterFees).toEqual({ kind: 'figure', afterFeesUsd: -1.2345, feesUsd: 0, currency: 'USD', noRevenue: false });
+  });
+
+  it('AC-245 / FE-5 / FE-6: refunded, partly refunded, disputed and lost boosts keep their fee on the gross; a boost outside the family has none', () => {
+    const rows = [
+      boost({ status: 'refunded', amount_refunded_minor: 1000 }),
+      boost({ status: 'partially_refunded', amount_refunded_minor: 400 }),
+      boost({ status: 'disputed' }),
+      boost({ status: 'dispute_lost' }),
+      boost({ status: 'pending' }),
+      boost({ status: 'failed' }),
+    ];
+    const built = buildAccountEconomics(input({ boosts: { rows, reachedCeiling: false }, plans: noPlans }));
+    expect(marginOf(built, OWNER)?.kind).toBe('figure');
+    expect(feesOf(afterFeesOf(built, OWNER))).toBe(2.36);
+  });
+
+  it('SA-W-6b-11: the fee stays on the charge: the same purchase refunded later carries the same fee as when it was only paid', () => {
+    const paid = buildAccountEconomics(input({ boosts: { rows: [boost()], reachedCeiling: false }, plans: noPlans }));
+    const refunded = buildAccountEconomics(
+      input({ boosts: { rows: [boost({ status: 'refunded', amount_refunded_minor: 1000 })], reachedCeiling: false }, plans: noPlans })
+    );
+    expect(feesOf(afterFeesOf(paid, OWNER))).toBe(0.59);
+    expect(feesOf(afterFeesOf(refunded, OWNER))).toBe(0.59);
+    // The revenue moved with the refund; the fee did not.
+    expect(marginOf(refunded, OWNER)).not.toEqual(marginOf(paid, OWNER));
+  });
+
+  it('AC-244: the config is data: 350 bps + 25 changes every fee (7900 → 302, 1000 → 60) with no code change', () => {
+    const built = buildAccountEconomics(input({ feeEstimate: { USD: { percentBps: 350, fixedMinor: 25 } } }));
+    expect(feesOf(afterFeesOf(built, OWNER))).toBe(3.62);
+    expect(built.section.feeEstimate).toEqual({ currency: 'USD', percent: 3.5, fixed: 0.25 });
+  });
+
+  it.each([
+    ['percentBps 1001', { USD: { percentBps: 1001, fixedMinor: 30 } }],
+    ['a fraction', { USD: { percentBps: 2.9, fixedMinor: 30 } }],
+    ['a negative', { USD: { percentBps: 290, fixedMinor: -1 } }],
+    ['no USD entry', { EUR: { percentBps: 290, fixedMinor: 30 } }],
+    ['null', null],
+  ])('AC-244 / E-73: an invalid config (%s) makes every margin after fees Unknown and feeEstimate null; the AI margin and status are unchanged', (_name, config) => {
+    const good = buildAccountEconomics(input());
+    const bad = buildAccountEconomics(input({ feeEstimate: config }));
+    expect(afterFeesOf(bad, OWNER)).toEqual({ kind: 'unknown' });
+    expect(bad.section.platform.marginAfterFees).toEqual({ kind: 'unknown' });
+    expect(bad.section.feeEstimate).toBeNull();
+    expect(marginOf(bad, OWNER)).toEqual(marginOf(good, OWNER));
+    expect(bad.section.status).toBe(good.section.status);
+    expect(buildAccountMargin({ ...input({ feeEstimate: config }), accountId: OWNER }).marginAfterFees).toEqual({ kind: 'unknown' });
+  });
+
+  it('AC-247: the word states follow the AI margin (SA-W82), never 0', () => {
+    const before = buildAccountEconomics(input({ coverage: 'starts_before_cutover' }));
+    expect(afterFeesOf(before, OWNER)).toEqual({ kind: 'not_available' });
+    expect(before.section.platform.marginAfterFees).toEqual({ kind: 'not_available' });
+    const ils = buildAccountEconomics(input({ boosts: { rows: [boost(), boost({ currency: 'ILS' })], reachedCeiling: false } }));
+    expect(afterFeesOf(ils, OWNER)).toEqual({ kind: 'other_currency' });
+    const ilsAlone = buildAccountEconomics(input({ boosts: { rows: [boost({ currency: 'ILS' })], reachedCeiling: false }, plans: noPlans }));
+    expect(afterFeesOf(ilsAlone, OWNER)).toEqual({ kind: 'other_currency' });
+    expect(afterFeesOf(buildAccountEconomics(input({ boosts: null })), OWNER)).toEqual({ kind: 'unknown' });
+    expect(afterFeesOf(buildAccountEconomics(input({ plans: { rows: [invoice()], reachedCeiling: true } })), OWNER)).toEqual({ kind: 'unknown' });
+    expect(afterFeesOf(buildAccountEconomics(input({ boosts: { rows: [boost({ amount_total_minor: 'x' })], reachedCeiling: false } })), OWNER)).toEqual({
+      kind: 'unknown',
+    });
+    const inexact = buildAccountEconomics(
+      input({ boosts: { rows: [boost({ status: 'partially_refunded', amount_tax_minor: 100, amount_refunded_minor: 300 })], reachedCeiling: false } })
+    );
+    expect(afterFeesOf(inexact, OWNER)).toEqual({ kind: 'unknown' });
+  });
+
+  it('AC-248: an account with AI cost and no charge has fees 0 and a margin after fees equal to its AI margin, with the no-revenue flag', () => {
+    const built = buildAccountEconomics(input({ aiCost: { units: units({ [OWNER]: 12_345_000_000, [B]: 5_000_000_000 }), reachedCeiling: false } }));
+    expect(marginOf(built, B)).toEqual({ kind: 'figure', marginUsd: -0.5, noRevenue: true });
+    expect(afterFeesOf(built, B)).toEqual({ kind: 'figure', afterFeesUsd: -0.5, feesUsd: 0, currency: 'USD', noRevenue: true });
+  });
+
+  it('AC-249: the platform line covers every account and the Deleted row, unchanged by any filter, sort or cap', () => {
+    const base = {
+      aiCost: { units: units({ [OWNER]: 12_345_000_000 }, bucket(3_000_000_000, 2)), reachedCeiling: false },
+      boosts: { rows: [boost(), boost({ user_id: null })], reachedCeiling: false },
+    };
+    const all = buildAccountEconomics(input(base));
+    // Plan 259 + two boosts 59 + 59 = 377; revenue 99.00, cost 1.2345 + 0.30 = 1.5345.
+    expect(all.section.platform.marginAfterFees).toEqual({ kind: 'figure', afterFeesUsd: 93.6955, feesUsd: 3.77, currency: 'USD', noRevenue: false });
+    const overs: Array<Partial<AccountEconomicsInput>> = [
+      { cap: 1 },
+      { query: { ...QUERY, sort: 'margin' } },
+      { query: { ...QUERY, show: 'negative' } },
+      { query: { ...QUERY, group: 'trial' } },
+    ];
+    for (const over of overs) {
+      expect(buildAccountEconomics(input({ ...base, ...over })).section.platform.marginAfterFees).toEqual(all.section.platform.marginAfterFees);
+    }
+  });
+
+  it('AC-252 / FE-15: sort and the negative filter read the AI margin, never the margin after fees', () => {
+    // OWNER: one 1000 boost, cost 9.90, AI margin +0.10, after fees −0.49. B: one 5 boost, no cost, AI margin +0.05.
+    const over: Partial<AccountEconomicsInput> = {
+      aiCost: { units: units({ [OWNER]: 99_000_000_000, [B]: 0 }), reachedCeiling: false },
+      boosts: { rows: [boost(), boost({ user_id: B, amount_total_minor: 5 })], reachedCeiling: false },
+      plans: noPlans,
+    };
+    const sorted = buildAccountEconomics(input({ ...over, query: { ...QUERY, sort: 'margin' } }));
+    expect(afterFeesOf(sorted, OWNER)).toEqual({ kind: 'figure', afterFeesUsd: -0.49, feesUsd: 0.59, currency: 'USD', noRevenue: false });
+    // Lowest AI margin first: B (+0.05) before OWNER (+0.10), whatever the fees say.
+    expect(sorted.section.rows.map((r) => r.accountId)).toEqual([B, OWNER]);
+    const sortedBadConfig = buildAccountEconomics(input({ ...over, query: { ...QUERY, sort: 'margin' }, feeEstimate: null }));
+    expect(sortedBadConfig.section.rows.map((r) => r.accountId)).toEqual([B, OWNER]);
+    // "Negative AI margin": neither AI margin is negative, so no row, although OWNER's margin after fees is.
+    expect(buildAccountEconomics(input({ ...over, query: { ...QUERY, show: 'negative' } })).section.rows).toEqual([]);
+  });
+
+  it('AC-250 (FE-14): buildAccountMargin gives the same margin after fees as the tab row', () => {
+    const tab = rowOf(buildAccountEconomics(input()), OWNER);
+    const picked = buildAccountMargin({ ...input(), accountId: OWNER });
+    expect(picked.marginAfterFees).toEqual(tab?.marginAfterFees);
+    expect(feesOf(picked.marginAfterFees)).toBe(3.18);
   });
 });

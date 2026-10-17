@@ -98,6 +98,8 @@ const row = (accountId: string, extra: Partial<FinanceEconomicsRow> = {}): Finan
   paid: { failed: false, lines: [{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }] },
   aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
   margin: { kind: 'figure', marginUsd: 87.7655, noRevenue: false },
+  // Slice 6b: plan 7900 + boost 1000 → fees 259 + 59 = 318.
+  marginAfterFees: { kind: 'figure', afterFeesUsd: 84.5855, feesUsd: 3.18, currency: 'USD', noRevenue: false },
   credits: { kind: 'position', used: 400, allowance: 1000, usedTenths: 400 },
   ...extra,
 });
@@ -111,6 +113,7 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
       paid: { failed: false, lines: [{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }] },
       aiCost: { kind: 'figure', costUsd: 3.5, exact: true },
       margin: { kind: 'figure', marginUsd: 85.5, noRevenue: false },
+      marginAfterFees: { kind: 'figure', afterFeesUsd: 82.32, feesUsd: 3.18, currency: 'USD', noRevenue: false },
       accountsCovered: 4,
       includesDeleted: true,
     },
@@ -126,6 +129,7 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
         paid: { failed: false, lines: [{ currency: 'ILS', afterTax: 10, exact: true, planAfterTax: 0, boostsAfterTax: 10 }] },
         aiCost: { kind: 'figure', costUsd: 0.25, exact: true },
         margin: { kind: 'other_currency' },
+        marginAfterFees: { kind: 'other_currency' },
         credits: { kind: 'no_plan_row' },
       }),
       row(C, {
@@ -134,16 +138,18 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
         paid: { failed: false, lines: [] },
         aiCost: { kind: 'figure', costUsd: 0.1234, exact: true },
         margin: { kind: 'figure', marginUsd: -0.1234, noRevenue: true },
+        marginAfterFees: { kind: 'figure', afterFeesUsd: -0.1234, feesUsd: 0, currency: 'USD', noRevenue: true },
         credits: { kind: 'no_allowance' },
       }),
-      row(PLATFORM, { kind: 'platform', name: null, nameStatus: 'platform', group: null, tierLabel: null, foundingPartner: false, margin: { kind: 'unknown' }, credits: { kind: 'unknown' } }),
+      row(PLATFORM, { kind: 'platform', name: null, nameStatus: 'platform', group: null, tierLabel: null, foundingPartner: false, margin: { kind: 'unknown' }, marginAfterFees: { kind: 'unknown' }, credits: { kind: 'unknown' } }),
     ],
-    deleted: { paid: { failed: false, lines: [] }, aiCost: { kind: 'figure', costUsd: 0.3, exact: true }, margin: { kind: 'figure', marginUsd: -0.3, noRevenue: true } },
+    deleted: { paid: { failed: false, lines: [] }, aiCost: { kind: 'figure', costUsd: 0.3, exact: true }, margin: { kind: 'figure', marginUsd: -0.3, noRevenue: true }, marginAfterFees: { kind: 'figure', afterFeesUsd: -0.89, feesUsd: 0.59, currency: 'USD', noRevenue: true } },
     counts: { accounts: 4, matching: 4, shown: 4, notListed: 0 },
     groupOptions: [
       { key: 'trial', tierLabel: null },
       { key: 'tier:x', tierLabel: 'Essentials-ish' },
     ],
+    feeEstimate: { currency: 'USD', percent: 2.9, fixed: 0.3 },
     notes: { walkIncomplete: false, ledgerFailed: false, boostsFailed: false, plansFailed: false, creditsUnavailable: false, refundOrDispute: false },
     ...extra,
   };
@@ -347,8 +353,8 @@ describe('the Accounts tab body (T10)', () => {
     renderTab(
       section({
         coverage: 'starts_before_cutover',
-        rows: [row(OWNER, { margin: { kind: 'not_available' } })],
-        platform: { ...section().platform, margin: { kind: 'not_available' } },
+        rows: [row(OWNER, { margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } })],
+        platform: { ...section().platform, margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } },
         notes: { ...section().notes, walkIncomplete: true },
       })
     );
@@ -361,7 +367,7 @@ describe('the Accounts tab body (T10)', () => {
   it('AC-137: an "At least" figure and an Unknown margin read as words, never a 0', () => {
     renderTab(
       section({
-        rows: [row(OWNER, { aiCost: { kind: 'figure', costUsd: 1.2345, exact: false }, margin: { kind: 'unknown' } })],
+        rows: [row(OWNER, { aiCost: { kind: 'figure', costUsd: 1.2345, exact: false }, margin: { kind: 'unknown' }, marginAfterFees: { kind: 'unknown' } })],
       })
     );
     expect(screen.getByTestId(`econ-cost-${OWNER}`)).toHaveTextContent('At least USD 1.2345');
@@ -401,5 +407,119 @@ describe('fix round 1 (QA B-1): only rows the one-account view can open are link
     expect(screen.getByTestId(`econ-open-${OWNER}`)).toHaveAttribute('href', accountViewHref(OWNER, WINDOW));
     expect(screen.getByTestId(`econ-open-${C}`)).toHaveAttribute('href', accountViewHref(C, WINDOW));
     expect(within(screen.getByTestId(`econ-row-${PLATFORM}`)).queryByRole('link')).toBeNull();
+  });
+});
+
+// ── Slice 6b (§11K.5, AC-247 to AC-251, 6B-R2): margin after Stripe fees (estimate) ──
+// A separate import, so the lines above stay unedited.
+import { cleanup } from '@testing-library/react';
+import {
+  ECON_AFTER_FEES,
+  ECON_FEE_NOTE_UNREADABLE,
+  ECON_FEES,
+  ECON_MARGIN as ECON_MARGIN_6B,
+  ECON_MARGIN_NOT_AVAILABLE as NOT_AVAILABLE_6B,
+  ECON_MARGIN_OTHER_CURRENCY as OTHER_CURRENCY_6B,
+  ECON_NO_REVENUE as NO_REVENUE_6B,
+  ECON_NOTES as ECON_NOTES_6B,
+  ECON_PLATFORM_AFTER_FEES,
+  ECON_UNKNOWN as UNKNOWN_6B,
+  econFeeNote,
+  econFeesLine,
+} from '../financeCopy';
+
+describe('slice 6b: margin after Stripe fees (estimate) on the Accounts tab', () => {
+  it('AC-251: the column sits directly after "AI margin (USD)", with the exact label', () => {
+    renderTab();
+    const headers = within(screen.getByTestId('econ-table')).getAllByRole('columnheader').map((th) => th.textContent);
+    expect(headers[headers.indexOf(ECON_MARGIN_6B) + 1]).toBe('Margin after Stripe fees (estimate, USD)');
+    expect(ECON_AFTER_FEES).toBe('Margin after Stripe fees (estimate, USD)');
+  });
+
+  it('a figure through formatUsd, with the fee line "Stripe fees, estimate: USD 3.18" under it', () => {
+    renderTab();
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(/^USD 84\.5855$/);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}-fees`)).toHaveTextContent(/^Stripe fees, estimate: USD 3\.18$/);
+    expect(econFeesLine('USD 3.18')).toBe('Stripe fees, estimate: USD 3.18');
+  });
+
+  it('AC-247: another currency → "n/a, different currency" with no fee line; Unknown and Not available are words, never 0', () => {
+    renderTab();
+    expect(screen.getByTestId(`econ-after-fees-${B}`)).toHaveTextContent(OTHER_CURRENCY_6B);
+    expect(screen.queryByTestId(`econ-after-fees-${B}-fees`)).toBeNull();
+    expect(screen.getByTestId(`econ-after-fees-${PLATFORM}`)).toHaveTextContent(UNKNOWN_6B);
+    expect(screen.queryByTestId(`econ-after-fees-${PLATFORM}-fees`)).toBeNull();
+    cleanup();
+    renderTab(
+      section({
+        coverage: 'starts_before_cutover',
+        rows: [row(OWNER, { margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } })],
+        platform: { ...section().platform, margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } },
+      })
+    );
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(NOT_AVAILABLE_6B);
+    expect(screen.getByTestId('econ-platform-after-fees')).toHaveTextContent(NOT_AVAILABLE_6B);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(NOT_AVAILABLE_6B);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`).textContent).not.toMatch(/0\.00/);
+  });
+
+  it('AC-248: no revenue → the fee line USD 0.00 and "No revenue in this window"; the sign is kept', () => {
+    renderTab();
+    expect(screen.getByTestId(`econ-after-fees-${C}`)).toHaveTextContent('USD -0.1234');
+    expect(screen.getByTestId(`econ-after-fees-${C}-fees`)).toHaveTextContent('Stripe fees, estimate: USD 0.00');
+    expect(screen.getByTestId(`econ-after-fees-${C}`).parentElement).toHaveTextContent(NO_REVENUE_6B);
+  });
+
+  it('the Deleted accounts row gets the same cell', () => {
+    renderTab();
+    expect(screen.getByTestId('econ-after-fees-deleted')).toHaveTextContent('USD -0.89');
+    expect(screen.getByTestId('econ-after-fees-deleted-fees')).toHaveTextContent('Stripe fees, estimate: USD 0.59');
+  });
+
+  it('AC-249 / AC-251: the platform pair is labelled "Margin after Stripe fees (estimate)" and "Stripe fees, estimate"', () => {
+    renderTab();
+    const platform = screen.getByTestId('econ-platform');
+    const labels = [...platform.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels.slice(labels.indexOf(ECON_MARGIN_6B) + 1)).toEqual(['Margin after Stripe fees (estimate)', 'Stripe fees, estimate']);
+    expect([ECON_PLATFORM_AFTER_FEES, ECON_FEES]).toEqual(['Margin after Stripe fees (estimate)', 'Stripe fees, estimate']);
+    expect(screen.getByTestId('econ-platform-after-fees')).toHaveTextContent(/^USD 82\.32$/);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(/^USD 3\.18$/);
+  });
+
+  it('6B-R2: the fee note reads exactly "Assumed 2.9% + USD 0.30 per card charge" at the default, and "3.5% + USD 0.25" at 350 / 25', () => {
+    renderTab();
+    const note = screen.getByTestId('econ-fee-note');
+    expect(note).toHaveTextContent(
+      /^Stripe fees are an estimate: none are recorded for plan or boost payments\. Assumed 2\.9% \+ USD 0\.30 per card charge\. A refunded charge keeps its fee\. Dispute fees are not included\.$/
+    );
+    cleanup();
+    renderTab(section({ feeEstimate: { currency: 'USD', percent: 3.5, fixed: 0.25 } }));
+    expect(screen.getByTestId('econ-fee-note')).toHaveTextContent('Assumed 3.5% + USD 0.25 per card charge.');
+    expect(econFeeNote('2.9', 'USD 0.30')).toContain('Assumed 2.9% + USD 0.30 per card charge.');
+  });
+
+  it('E-73: no fee config → the unreadable note, and every cell Unknown', () => {
+    renderTab(
+      section({
+        feeEstimate: null,
+        rows: [row(OWNER, { marginAfterFees: { kind: 'unknown' } })],
+        platform: { ...section().platform, marginAfterFees: { kind: 'unknown' } },
+      })
+    );
+    expect(screen.getByTestId('econ-fee-note')).toHaveTextContent(ECON_FEE_NOTE_UNREADABLE);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(UNKNOWN_6B);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(UNKNOWN_6B);
+  });
+
+  it('AC-251: the reworded 6a note; no new string says "actual", "real" or "recorded" beside a fee', () => {
+    renderTab();
+    expect(ECON_NOTES_6B[0]).toBe('Paid us is after tax, net of refunds and disputes. The AI margin does not deduct Stripe fees.');
+    const fresh = [ECON_AFTER_FEES, ECON_PLATFORM_AFTER_FEES, ECON_FEES, econFeesLine('USD 1.00'), ECON_FEE_NOTE_UNREADABLE];
+    for (const text of fresh) {
+      expect(text).toMatch(/estimate/);
+      expect(text).not.toMatch(/estimated|actual|\breal\b/i);
+    }
+    // "recorded" appears only in the sentence that says none are recorded.
+    expect(econFeeNote('2.9', 'USD 0.30')).not.toMatch(/\bactual\b|\breal\b|recorded fee/i);
   });
 });

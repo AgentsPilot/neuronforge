@@ -9,7 +9,10 @@ import {
   accountsNotReadHeadline,
   colourFarOverAllowanceTile,
   colourFinanceTile,
+  estimateChargeFeeMinor,
   farOverAllowancePercentOf,
+  FEE_ESTIMATE_CURRENCY,
+  feeEstimateNoteOf,
   FINANCE_GREEN_ELIGIBLE,
   FINANCE_LOWER_BOUND_HEADLINE,
   FINANCE_METRIC_PARAMS,
@@ -17,6 +20,9 @@ import {
   FINANCE_RULES_INVALID_HEADLINE,
   K4_INFORMATION_HEADLINE,
   NOT_ENOUGH_HISTORY_HEADLINE,
+  STRIPE_FEE_ESTIMATE,
+  STRIPE_FEE_ESTIMATE_RANGE,
+  stripeFeeEntryOf,
   type FinanceMeasurement,
   type FinanceRule,
 } from '../financeRules';
@@ -227,5 +233,76 @@ describe('slice 1b vocabulary and validation', () => {
   it('K-4 may never be green; K-2 may (code, not data)', () => {
     expect(FINANCE_GREEN_ELIGIBLE.has('k4_gifted_outstanding')).toBe(false);
     expect(FINANCE_GREEN_ELIGIBLE.has('k2_far_over_allowance')).toBe(true);
+  });
+});
+
+// ── Slice 6b (§11K.3, AC-243, AC-244, BQ-15, SA-Q81): the Stripe fee estimate ──
+describe('slice 6b: the Stripe fee estimate (data, its range check and the per-charge formula)', () => {
+  const DEFAULT = STRIPE_FEE_ESTIMATE[FEE_ESTIMATE_CURRENCY];
+
+  it('BQ-15: the default is 290 bps + 30 minor units, USD only', () => {
+    expect(STRIPE_FEE_ESTIMATE).toEqual({ USD: { percentBps: 290, fixedMinor: 30 } });
+    expect(FEE_ESTIMATE_CURRENCY).toBe('USD');
+    expect(STRIPE_FEE_ESTIMATE_RANGE).toEqual({ percentBps: { min: 0, max: 1000 }, fixedMinor: { min: 0, max: 1000 } });
+  });
+
+  it.each([
+    [7900, 259],
+    [4414, 158],
+    [1000, 59],
+    [500, 45], // 145,000 + 5,000 = 150,000 → 15 (an exact half rounds up), + 30
+    [499, 44], // 144,710 + 5,000 = 149,710 → 14 (below half rounds down), + 30
+    [0, 30],
+  ])('AC-243: gross %d → fee %d at the default', (gross, fee) => {
+    expect(estimateChargeFeeMinor(gross, DEFAULT)).toBe(fee);
+  });
+
+  it('AC-243: the test account in October, plan 7900 + boost 1000, is 259 + 59 = 318 minor units', () => {
+    expect((estimateChargeFeeMinor(7900, DEFAULT) as number) + (estimateChargeFeeMinor(1000, DEFAULT) as number)).toBe(318);
+  });
+
+  it('AC-243: not a safe integer, negative, or overflowing → null, never a guess', () => {
+    expect(estimateChargeFeeMinor(-1, DEFAULT)).toBeNull();
+    expect(estimateChargeFeeMinor(1.5, DEFAULT)).toBeNull();
+    expect(estimateChargeFeeMinor(Number.MAX_SAFE_INTEGER, DEFAULT)).toBeNull();
+  });
+
+  it('the division is exact near the safe limit (no float round-up)', () => {
+    // 9,007,199,254,730 × 1000 + 5000 is safe; floor((…)/10000) must equal the integer quotient.
+    const gross = 9_007_199_254_730;
+    const scaled = gross * 1000 + 5000;
+    expect(estimateChargeFeeMinor(gross, { percentBps: 1000, fixedMinor: 0 })).toBe((scaled - (scaled % 10_000)) / 10_000);
+  });
+
+  it('AC-244: another config changes the fee with no code change (350 bps + 25)', () => {
+    const entry = stripeFeeEntryOf({ USD: { percentBps: 350, fixedMinor: 25 } }, 'USD');
+    expect(entry).toEqual({ percentBps: 350, fixedMinor: 25 });
+    expect(estimateChargeFeeMinor(7900, entry as NonNullable<typeof entry>)).toBe(302);
+    expect(estimateChargeFeeMinor(1000, entry as NonNullable<typeof entry>)).toBe(60);
+  });
+
+  it.each([
+    ['percentBps 1001', { USD: { percentBps: 1001, fixedMinor: 30 } }],
+    ['fixedMinor 1001', { USD: { percentBps: 290, fixedMinor: 1001 } }],
+    ['a fraction', { USD: { percentBps: 2.9, fixedMinor: 30 } }],
+    ['a negative', { USD: { percentBps: -1, fixedMinor: 30 } }],
+    ['a string', { USD: { percentBps: '290', fixedMinor: 30 } }],
+    ['NaN', { USD: { percentBps: Number.NaN, fixedMinor: 30 } }],
+    ['no USD entry', { EUR: { percentBps: 290, fixedMinor: 30 } }],
+    ['a missing field', { USD: { percentBps: 290 } }],
+    ['null', null],
+    ['a number', 290],
+  ])('AC-244: %s → no entry (every fee Unknown)', (_name, config) => {
+    expect(stripeFeeEntryOf(config, 'USD')).toBeNull();
+    expect(feeEstimateNoteOf(config, 'USD')).toBeNull();
+  });
+
+  it('the range ends are valid (0 and 1000)', () => {
+    expect(stripeFeeEntryOf({ USD: { percentBps: 0, fixedMinor: 1000 } }, 'USD')).toEqual({ percentBps: 0, fixedMinor: 1000 });
+  });
+
+  it('FE-16: the note values are divided on the server: 2.9 and 0.3 at the default; 3.5 and 0.25 at 350 / 25', () => {
+    expect(feeEstimateNoteOf(STRIPE_FEE_ESTIMATE, 'USD')).toEqual({ currency: 'USD', percent: 2.9, fixed: 0.3 });
+    expect(feeEstimateNoteOf({ USD: { percentBps: 350, fixedMinor: 25 } }, 'USD')).toEqual({ currency: 'USD', percent: 3.5, fixed: 0.25 });
   });
 });

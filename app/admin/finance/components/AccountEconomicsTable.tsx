@@ -17,11 +17,16 @@
  * Deleted accounts row have no link (SA-W85, M3-W-8), and neither does a
  * "No plan row" account: the one-account view checks the plan table first and
  * would answer "Business not found" (fix round 1, QA B-1).
+ *
+ * Slice 6b (§11K.5, FE-9 to FE-11): "Margin after Stripe fees (estimate, USD)"
+ * directly after the AI margin, with the fee line under a figure. The server
+ * decides the figure and the word; this file only formats them, in the same
+ * words as the AI margin. Sorting stays on the AI margin (FE-15).
  */
 
 import Link from 'next/link';
 
-import type { FinanceEconomicsCost, FinanceEconomicsCredits, FinanceEconomicsDeletedRow, FinanceEconomicsPaid, FinanceEconomicsRow, FinanceMarginValue, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceEconomicsCost, FinanceEconomicsCredits, FinanceEconomicsDeletedRow, FinanceEconomicsPaid, FinanceEconomicsRow, FinanceMarginAfterFeesValue, FinanceMarginValue, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import {
   ADMIN_TABLE,
@@ -37,6 +42,7 @@ import {
 import { accountViewHref } from '../financeLinks';
 import {
   ACCOUNTS_FOUNDING_CHIP,
+  ECON_AFTER_FEES,
   CREDITS_LESS_THAN_TENTH,
   ECON_BUSINESS,
   ECON_COST,
@@ -57,6 +63,7 @@ import {
   ECON_PAID,
   ECON_UNKNOWN,
   econCreditsUsed,
+  econFeesLine,
   econOpenLabel,
   econPaidParts,
   NAME_MISSING,
@@ -95,6 +102,40 @@ export function MarginValue({ margin, testId }: { margin: FinanceMarginValue; te
     <>
       <span data-testid={testId}>{marginText(margin)}</span>
       {margin.kind === 'figure' && margin.noRevenue && <span className={NOTE}>{ECON_NO_REVENUE}</span>}
+    </>
+  );
+}
+
+/** Slice 6b: the margin after fees in the AI margin's words, or `formatUsd` (its sign kept). */
+export function marginAfterFeesText(value: FinanceMarginAfterFeesValue): string {
+  switch (value.kind) {
+    case 'not_available':
+      return ECON_MARGIN_NOT_AVAILABLE;
+    case 'other_currency':
+      return ECON_MARGIN_OTHER_CURRENCY;
+    case 'unknown':
+      return ECON_UNKNOWN;
+    default:
+      return formatUsd(value.afterFeesUsd);
+  }
+}
+
+/** Slice 6b: the estimated fees alone (the platform pair), or the same word when not a figure (SA-W-6b-7 (a)). */
+export function feesText(value: FinanceMarginAfterFeesValue): string {
+  return value.kind === 'figure' ? formatMoney(value.feesUsd, value.currency) : marginAfterFeesText(value);
+}
+
+/** Slice 6b: the cell, plus the fee line under a figure (FE-11) and the no-revenue note (FE-10). */
+export function MarginAfterFeesValue({ value, testId }: { value: FinanceMarginAfterFeesValue; testId: string }) {
+  return (
+    <>
+      <span data-testid={testId}>{marginAfterFeesText(value)}</span>
+      {value.kind === 'figure' && (
+        <span className={NOTE} data-testid={`${testId}-fees`}>
+          {econFeesLine(formatMoney(value.feesUsd, value.currency))}
+        </span>
+      )}
+      {value.kind === 'figure' && value.noRevenue && <span className={NOTE}>{ECON_NO_REVENUE}</span>}
     </>
   );
 }
@@ -159,6 +200,7 @@ export function AccountEconomicsTable({
             <th scope="col" className={ADMIN_TH_NUM}>{ECON_PAID}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{ECON_COST}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{ECON_MARGIN}</th>
+            <th scope="col" className={ADMIN_TH_NUM}>{ECON_AFTER_FEES}</th>
             <th scope="col" className={ADMIN_TH_NUM}>
               {ECON_CREDITS}
               <span className={`${NOTE} normal-case tracking-normal`}>{ECON_CREDITS_NOTE}</span>
@@ -196,6 +238,9 @@ export function AccountEconomicsTable({
                 <td className={ADMIN_TD_NUM}>
                   <MarginValue margin={row.margin} testId={`econ-margin-${row.accountId}`} />
                 </td>
+                <td className={ADMIN_TD_NUM}>
+                  <MarginAfterFeesValue value={row.marginAfterFees} testId={`econ-after-fees-${row.accountId}`} />
+                </td>
                 <td className={ADMIN_TD_NUM} data-testid={`econ-credits-${row.accountId}`}>
                   {creditsText(row.credits)}
                 </td>
@@ -228,6 +273,9 @@ export function AccountEconomicsTable({
               </td>
               <td className={ADMIN_TD_NUM}>
                 <MarginValue margin={deleted.margin} testId="econ-margin-deleted" />
+              </td>
+              <td className={ADMIN_TD_NUM}>
+                <MarginAfterFeesValue value={deleted.marginAfterFees} testId="econ-after-fees-deleted" />
               </td>
               <td className={ADMIN_TD_NUM} />
               <td className={ADMIN_TD} />

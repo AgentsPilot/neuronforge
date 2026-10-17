@@ -40,6 +40,7 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11G. Finance shell on the Admin Layout Standard (F-2, F-4, F-5)](#11g-finance-shell-on-the-admin-layout-standard-f-2-f-4-f-5)
     - [11H. Money M-5: the Money section](#11h-money-m-5-the-money-section)
     - [11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant](#11j-money-m-8-mark-the-platform-dashboard-and-exchange-rates-pages-redundant)
+    - [11K. Slice 6b: margin after estimated Stripe fees, and KPI order](#11k-slice-6b-margin-after-estimated-stripe-fees-and-kpi-order)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -70,7 +71,8 @@ This document is the feature's **single source of truth**: every slice decision,
 | F-5 | **M-6 / DF-4, Finance shell part 3: KPI tiles** (full cycle, about 2 days): shared `KpiTile` / `KpiStrip` extended; tiles above the filter bar (BD-29), clickable to their sections (BD-31); C-14 registry entry (§11G) | Owned by the finance stream 2026-10-15; F-0 #414, F-1 #418 merged; F-3 #420 merged. Starts after F-4 merges | ✅ **Merged** (PR #437, in main `98735db9`; committed `24cf0c3d` on `feature/finance-f5-kpi-tiles`, origin/main merged in `e8fee379`; SA-CR-F5 approved, QA PASS; fast track). With F-5 merged, M-6 / DF-4 is complete. User browser look L-120 to L-127 owed | [FINANCE_F5_KPI_TILES_WORKPLAN.md](/docs/workplans/FINANCE_F5_KPI_TILES_WORKPLAN.md) | [#437](https://github.com/AgentsPilot/neuronforge/pull/437) |
 | M-5 | **Money M-5** (CR §8) "The Money section": a **Money** sidebar section after Monitor holding Finance (first), **Charge checks** (today's Business OS AI "Costs & credits" tab, Leak check included, mounted at `/admin/finance/charges`) and **AI calls & usage (detail)** (`/admin/analytics`, relabelled); the Costs & credits tab leaves Business OS AI and its old links redirect; the Business OS AI description drops "costs"; the FU-M4-1 wording (Health rule descriptions and metric labels, the leak-check cron description) moves to the Recorded vocabulary; the Health "Recorded AI cost" tile gains its page link to Finance (SA-Q55) (§11H) | M-1 to M-4 and M-6 merged; **no data, money, API route or migration change**. Sidebar sign-off: given 2026-10-14 by BQ-1 and BQ-6 (BD-21, BD-24) | 🔵 **PR open, auto-merge on** (PR #444; committed `1c7b7554` on `feature/bos-money-m5`, origin/main merged in `4e96e719`; SA-CR-M5 approved, QA PASS, TL approved; BD-33 fast track). User browser look L-128 to L-136 owed after merge | [BUSINESS_OS_FINANCE_HEALTH_M5_MONEY_SECTION_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M5_MONEY_SECTION_WORKPLAN.md) | [#444](https://github.com/AgentsPilot/neuronforge/pull/444) |
 | M-8 | **Money M-8** (CR §8) "Mark the Platform dashboard and Exchange rates pages redundant" (BD-34): both pages and the dashboard's API route get a REDUNDANT header comment; the dashboard's hidden parked sidebar item is removed; both routes stay reachable by URL with a one-line redundant notice (BQ-14 default); a source guard keeps the product from linking to them; Exchange rates' one `console.error` goes to Pino (§11J) | M-5 merged; **nothing deleted; no data, money, API logic or migration change**. Sign-off: BD-34 (§11J.0) | 🟡 **PR open (2026-10-17): [#448](https://github.com/AgentsPilot/neuronforge/pull/448), auto-merge on; commit `92ef1454`. SA code approved, QA passed, TL approved (BD-33).** Specified 2026-10-17 (§11J, AC-233 to AC-242, SA-Q75 to SA-Q80; BQ-14 resolved by BD-34). UI short path, about 1 day; BD-33 fast track; no user browser look (parked pages) | [BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md) | [#448](https://github.com/AgentsPilot/neuronforge/pull/448) |
-| 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b. **2026-10-16:** 6b also re-orders the KPI tiles, revenue first, then cost, then user and account data (BD-35); in the BD-32 order it runs after M-8, about 1.5 to 2 days | — | — |
+| 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b. **2026-10-16:** 6b also re-orders the KPI tiles, revenue first, then cost, then user and account data (BD-35); in the BD-32 order it runs after M-8, about 1.5 to 2 days. **2026-10-17:** 6b specified as the row below (fee estimate and tile order); the margin per current plan (BD-8) and K-7 stay in this row for a later decision | — | — |
+| 6b | **Margin after estimated Stripe fees, and KPI order** (§11K): "Margin after Stripe fees (estimate)" beside the AI margin on the Accounts rows, the platform line and the one-account summary, from a per-charge estimate held as config data (default 2.9% + USD 0.30, USD only; BQ-15); tiles re-ordered K-5, K-1, K-3, K-2, K-4 (BD-35), order only | M-8 merged (#448); **no migration, no new read or repository method**; nothing from 4b.1 (#447) | 🟡 **PR #449 opened 2026-10-17, auto-merge on** (commit `8d2f5ff6` on `feature/bos-finance-health-6b`; SA-CR-6b approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_6B_RETROSPECTIVE.md)). BQ-15 still open (does not block); user owes L-142 to L-147 and checks 27 and 28 | [BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md) | [#449](https://github.com/AgentsPilot/neuronforge/pull/449) |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
 | 8 | History snapshots (plan mix, credits) for trend lines | A migration and a cron (SA) | ⬜ Not started | — | — |
 
@@ -144,6 +146,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-16 — With F-5 (#437) merged, M-6 / DF-4 is complete and M-1 to M-4 are merged. BA specified **Money M-5** "The Money section" in §11H from CR §1, §5.1, the M-5 row, SA-Q-4, BQ-1, BQ-6 and BQ-10, BD-21, BD-24, BD-27, FU-M4-1, SA-Q55 and the code at main `98735db9`. **Sidebar sign-off already given:** the Admin Layout Standard treats the sidebar as fixed (LAY §2.3 X-1, X-2 and §3 rule 9), so moving pages between sections needs the user; the user gave that sign-off on **2026-10-14 by accepting CR BQ-1 (BD-21) and BQ-6 (BD-24)**. No new question goes to the user for M-5. Scope: a Money section (Finance, Charge checks, AI calls & usage (detail)); the Costs & credits tab, Leak check included, moves to `/admin/finance/charges` and old links redirect; Business OS AI keeps Settings and Activity; FU-M4-1 reworded (wording only); the Health tile gains a page link to Finance. AC-184 to AC-203; SA-Q58 to SA-Q64; manual QA L-128 to L-136. About 2 days, UI short path. Awaiting SA review.
 - 2026-10-16 — The user's roadmap decisions, relayed by the coordinator, are recorded as **BD-32** (order M-5 → 4b → M-8 → 6b → DF-6 → 5b → 7 → 3 → 8, with estimates), **BD-33** (no per-slice user approval: SA, QA and TL approve, then RM commits, opens the PR and turns on auto-merge; a genuine business question or a production migration still stops for the user), **BD-34** (M-8 marks the Platform dashboard and Exchange rates pages redundant in code comments and stops using or linking them; it does not delete them; amends BD-25) and **BD-35** (6b also re-orders the KPI tiles: revenue, then cost, then user and account data). **BQ-13 stays open** and is attached to 4b: does a refunded boost take its credits back? Until the user answers, 4b keeps today's behaviour (the customer keeps the credits) (§0.4). CR's M-8 row updated to match BD-34.
 - 2026-10-17 — BA specified **Money M-8** in §11J from BD-34 (amends BD-25), the CR M-8 row and inventory I-15, I-19, and the code at main `5c214310` (CF-1 to CF-12): REDUNDANT header comments in both pages and in `/api/admin/dashboard` (its only caller is the dashboard); the dashboard's hidden parked sidebar item removed (parked 15 → 14, hrefs 29 → 28; visible sidebar unchanged; BD-34 is the sign-off, §11J.0); both routes kept with a one-line notice; a new source guard against in-app links; Exchange rates' `console.error` to Pino. AC-233 to AC-242 and SA-Q75 to SA-Q80 (numbered after PR #447's AC-232 and SA-Q74). New **BQ-14** (visible notice or comments only; default: notice) and **FU-M8-1** (Exchange rates still writes from the browser; not changed by M-8). CR M-8 row marked in progress. No code changed.
+- 2026-10-17 — With M-8 merged (#448, main `e43dcb60`), BA specified **slice 6b** in §11K from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8 and the 6a builder, with a read-only live check (no Stripe fee is stored for plan or boost payments; client payments carry `processor_fee`). Fee estimate per successful charge on the gross amount, rounded half up per charge, as config data (default 2.9% + USD 0.30, USD only); a refunded charge keeps its fee; dispute fees not estimated. "Margin after Stripe fees (estimate)" shown beside the AI margin, never replacing it, on the Accounts rows, the platform line and the one-account summary. Tiles re-ordered K-5, K-1, K-3, K-2, K-4, order only. Wording says "estimate", because the vocabulary guard forbids "estimated" in `financeCopy.ts`. AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91; new **BQ-15** (the fee rate) with its default, not blocking. No code changed.
 
 ### 0.3 SA rulings
 
@@ -233,6 +236,9 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-RR-M8** | **2026-10-17 SA requirement review (Money M-8, §11J): APPROVED, E-71 applied.**<br>• **BD-34 reading:** "just add comments it is redundant for now and not use them" means code comments only and **no visible notice**. BQ-14 is resolved by BD-34 and not sent to the user. RP-4, AC-236, the §11J.2 scope row, §11J.4 and the BQ-14 paragraph are amended.<br>• `docs/MULTI_CURRENCY_SYSTEM.md` is added to the pointer notes.<br>• Estimate about 0.75 day.<br>• Q75 remove the hidden item; Q76 and Q77 moot; Q78 comment only; Q79 a new guard; Q80 FU-M8-1. | 2026-10-17 | §11J |
 | **SA-WP-M8** | **2026-10-17 SA workplan review (M-8): APPROVED WITH CONDITIONS.**<br>• References re-found by `git grep` (sidebar, the dashboard's fetch, the route comment); the visible nav is unchanged; Pino matches the dashboard; no Health, C-14, contrast or authz edit; the seven pins are unchanged (LF-normalised, clean against HEAD).<br>• M8-R1: drop the notice, Step 2 and the render test. M8-R2: the MULTI_CURRENCY doc pointer. M8-R3: planted controls for every guard rule. M8-R4: LF-normalised hashes. | 2026-10-17 | §11J |
 | **SA-CR-M8** | **2026-10-17 SA code review (M-8): Code Approved.**<br>• Comment-only page and route diffs, plus Exchange rates' Pino lines; no notice (G-3); `'use client'` stays first.<br>• Hidden item and icon removed; visible nav unedited; parked 15 → 14 (both pins) and hrefs 29 → 28.<br>• G-1 to G-5 each have a planted control.<br>• MULTI_CURRENCY, ADMIN_IDENTIFICATION and reorganisation doc edits were needed (stale references to the removed item and the route).<br>• Seven pins unchanged (LF-normalised).<br>• SA re-run exit 0 (components 818, guards 401, authz 203). | 2026-10-17 | §11J |
+| **SA-RR-6b** | **2026-10-17 SA requirement review (slice 6b, §11K): APPROVED, edits applied.**<br>• SA-Q81 to SA-Q91 as the BA suggests: `financeRules.ts` data constant; gross fee; per-charge rounding; sort and filter on the AI margin; the AC-145 baseline unchanged; "estimate" wording; Pins A and B unedited; the order test in the page test; one PR under BD-33; fee stays on the charge.<br>• E-72: a zero-total boost is not a charge (FE-1, AC-245, checks 27 and 28).<br>• E-73: a missing or invalid USD config gives Unknown (FE-9).<br>• E-74: fee subtracted in minor units before the single scale step (FE-8).<br>• Checks 27 and 28 are editor-safe. | 2026-10-17 | §11K |
+| **SA-WP-6b** | **2026-10-17 SA workplan review (6b): APPROVED WITH CONDITIONS.**<br>• Fee maths re-derived (7900 → 259, 4414 → 158, 1000 → 59, 500 → 45, 499 → 44).<br>• 6b-2 exact with no double scaling.<br>• Pin B sorts ids, so it is order-free; all seven pins unchanged.<br>• `route.test.ts:1357`/`:1385` and `financeHealth.test.ts:1981` are not frozen.<br>• 6b-1 to 6b-11 approved.<br>• 6B-R1: the FE-8 text. 6B-R2: note percent and fixed render test. 6B-R3: zero-total boost builder test. | 2026-10-17 | §11K |
+| **SA-CR-6b** | **2026-10-17 SA code review (6b): Code Approved.**<br>• E-72, E-73 and E-74 met; the AI margin is the unchanged `marginUnitsOf(revenue, cost)`, and after-fees is `marginUnitsOf(revenue − fees, cost)`.<br>• 6B-R2 and 6B-R3 tests present.<br>• Fees: 7900 → 259, 1000 → 59, total 318.<br>• The fee stays on the charge.<br>• Tile blocks moved whole into K-5, K-1, K-3, K-2, K-4, with an order test.<br>• Seven pins unchanged.<br>• D-1 to D-6 approved.<br>• SA re-run exit 0 (finance UI 613, finance lib 1652, route and vocabulary 272, authz 203). | 2026-10-17 | §11K |
 
 ### 0.4 Deferrals and parked items
 
@@ -240,6 +246,7 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 |---|---|---|---|
 | FU-M4-1 | The Health tile's rule descriptions and metric labels (`lib/admin/health/rules.ts`) still say "spend" under the "Recorded AI cost" title | They are pinned by the Health rule tests, which AC-151 keeps unedited; reword them in M-5 (SA-W94). Same follow-up: the Jobs page cron description at `lib/cron/bosCronJobs.ts:452` ("Business OS AI spend", SA-CR-M4A). **2026-10-16: taken into M-5 (§11H.5 S-14 to S-17)** | 2026-10-15 |
 | BQ-13 | **Open business question, attached to 4b:** when a boost is refunded, does it take back the credits it bought? | Still open (user, 2026-10-16). Until the user decides, 4b keeps today's behaviour: the customer keeps the credits. If the user decides credits are taken back, that is a credit-ledger write in the boost module, not a Finance display change, and it is scoped with 4b | 2026-10-16 |
+| BQ-15 | **Open business question, attached to 6b (does not block it):** what Stripe fee rate should the "Margin after Stripe fees (estimate)" use for plan and boost payments? | **Default, used to build 6b:** (a) Stripe's standard card price, **2.9% + USD 0.30 per successful charge**, on the gross amount charged, USD only; (b) a refunded charge keeps its fee; (c) the separate dispute fee, and any Stripe Billing, Stripe Tax, international-card or currency-conversion surcharge, are **not** included. The rate is an assumption, not a recorded fee: our real Stripe rate has not been checked. It is config data (§11K.3 FE-4), so the user can change it later with no logic change | 2026-10-17 |
 | DF-1 | Currency-grouping helper (CUR-1, CUR-2) and AC-13 moved from slice 1 to **slice 2** | Slice 1 shows only USD AI cost; a helper with no production caller is dead code (SA-F10) | 2026-10-09 |
 | DF-2 | "Businesses without a plan row" is **not** shown in slice 1 | A shadow-report fact (`findTenantsMissingPlanRow`); the page links to Plans & entitlements instead (SA-F7) | 2026-10-09 |
 | DF-3 | **Filter out test businesses or users (future)** | BD-13: test and real client payments are shown together and all layer-B data is treated as real for now; no test-mode label and no livemode migration. A later slice may let the admin exclude chosen test businesses or users from the layer-B figures. Needs its own business decision on how a business or user is marked as test | 2026-10-11 |
@@ -2026,6 +2033,241 @@ No manual step for the user: both pages are parked AgentsPilot pages. AC-235 and
 
 ---
 
+## 11K. Slice 6b: margin after estimated Stripe fees, and KPI order
+
+Specified 2026-10-17 from **BD-7** (BQ-7's default: "AI only, Stripe fee as an estimate"), **BD-22** (margin on revenue after tax), **BD-12** (no FX), **BD-35** (6b re-orders the tiles: revenue, then cost, then user and account data), BD-29 and BD-31 (tiles above the bar, clickable), DF-8, CR G-10 and the CR M-3 row, the 6a rules (§11E.3), the F-5 tile mapping (§11G) and the code at main `e43dcb60` (M-8 merged, #448). A read-only live check was run from the main checkout (§11K.1). **No migration, no new SQL function, no new table, no write, no new read and no new repository method.** It adds one pure fee-estimate step inside the 6a builder, one config entry as data, new payload fields beside the existing margin, and a new tile order.
+
+**Numbering note.** PR #447 (4b.1, §11I, not on main) reserves AC-204 to AC-232, SA-Q65 to SA-Q74 and checks 23 to 26; M-8 used AC-233 to AC-242 and SA-Q75 to SA-Q80. 6b therefore starts at **AC-243**, **SA-Q81** and **check 27**. Its checks sit in this section, not in §13, so the two PRs do not touch the same lines.
+
+**The question it answers.** "After the card processor takes its cut, is this account still worth it?" For the owner test account in October 2026: paid us USD 89.00 after tax (plan 79.00 + boost 10.00); estimated Stripe fees USD 3.18 (2.59 on the plan charge + 0.59 on the boost charge, at the default rate); margin after Stripe fees (estimate) = AI margin minus 3.18.
+
+### 11K.1 Live facts and code facts (read-only, 2026-10-17)
+
+Live: a SELECT-only probe from the main checkout (`e49a4719`; zero-row column probes, counts and amount columns only; no row written, no DDL). Code: read at `e43dcb60` in the 6b worktree. Checks 27 and 28 (§11K.9) were written against these facts and not executed by BA.
+
+| # | Fact | Value |
+|---|---|---|
+| LF-1 | Client payments (layer B) record a Stripe fee | `payment_transactions.processor_fee`, `net_amount`, `fee_currency` exist; 70 of 128 rows carry a `processor_fee` (Section 2 block B already shows them, slice 2) |
+| LF-2 | **Plan payments record no fee** | `business_os_billing_events` (10 rows): no fee-like column; `processor_fee` and `fee_minor` both refused (42703). Two `invoice_paid` rows, both `usd`: `amount_minor` 7900 and 4414 (account and month of the second not checked) |
+| LF-3 | **Boost purchases record no fee** | `business_os_boost_purchases` (1 row): no fee-like column; `processor_fee`, `fee_minor`, `stripe_fee_minor` refused (42703). The row: `paid`, `USD`, total 1000, refunded 0 |
+| CF-1 | One builder already owns the margin | `lib/business-os/finance/accountEconomics.ts`: `buildPaid`, `buildCost`, `buildMargin` (SA-W82 precedence, SA-W75 integer subtraction at the ledger scale), used by `buildAccountEconomics` (tab and platform line) and `buildAccountMargin` (one-account summary) |
+| CF-2 | A charge is already defined | Boost rows in `BOOST_PAID_FAMILY` read by `readMoney`; plan rows of `PLAN_PAYMENT_KIND` read by `readPlanMoney`; a readable zero invoice is not a payment (M2-W-5) |
+| CF-3 | Thresholds are already data | `lib/business-os/finance/financeRules.ts` holds `FINANCE_RULES`, `FINANCE_METRIC_PARAMS` (`farOverAllowancePercent: 150`) and a range check (`FAR_OVER_ALLOWANCE_PERCENT_RANGE`) |
+| CF-4 | The tile order lives in one component | `app/admin/finance/components/FinanceKpiStrip.tsx` renders K-1, K-2, K-3, K-4, K-5 in that order as children of the shared `KpiStrip`; the shared `KpiStrip.tsx` holds no Finance order |
+| CF-5 | Pin B does not read order | `financeTiles.pin.render.test.tsx` (`24ff0da7…df9f`) finds each tile by `data-testid`, checks status and text, and counts five; its header says the line order is not pinned, by design. Pin A (`KpiStrip.callers.pin.render.test.tsx`, `30f5fc24…2e01`) covers the other ten callers, not Finance |
+| CF-6 | **Vocabulary guard** | `app/admin/__tests__/aiCostVocabulary.source.guard.test.ts` scans `financeCopy.ts` and forbids the word **"estimated"** (SA-Q51 list, case-insensitive, substring). The label "Margin after estimated Stripe fees" would trip it; see FE-12 and SA-Q86 |
+| CF-7 | Existing copy that stays true | `financeCopy.ts`: "Stripe fees are not deducted" (6a note, about the AI margin) and "Real Stripe fees (none are recorded for our payments yet)" (cannot-show list) |
+
+### 11K.2 Scope
+
+| In scope | Not in scope |
+|---|---|
+| The fee-estimate rule and its config (§11K.3); "Margin after Stripe fees (estimate)" **beside** the AI margin on the Accounts tab rows, the platform margin line and the one-account summary (§11K.5); the BD-35 tile order (§11K.6); BQ-15 recorded with its default | Replacing or changing the AI margin, its value, rules, sort or filter; real Stripe fees (none recorded, LF-2, LF-3; a webhook writer change); dispute fees; Stripe Billing, Stripe Tax, international-card or currency-conversion surcharges (BQ-15); any FX (BD-12); **anything that needs 4b.1's table** (`business_os_boost_reversal_events`, PR #447: refund-month dating of refunds stays with 4b.2); the margin per current plan (BD-8) and K-7 (a sixth tile is over the layout standard's five-tile maximum; both stay in the slice 6 row for a later decision); any tile value, status, label, link or test id change |
+
+### 11K.3 The estimate rule and config
+
+| # | Rule |
+|---|---|
+| FE-1 | **What a charge is.** One successful card charge per counted platform payment, from the rows the 6a builder already reads: each **plan payment** counted by M2-W-2 to M2-W-5 with an amount above 0, and each **boost purchase** in the paid family (`paid`, `partially_refunded`, `refunded`, `disputed`, `dispute_lost`, through the exported `BOOST_PAID_FAMILY`, no status literal) **with a total above 0**. A readable zero invoice is not a charge (M2-W-5), and a boost whose total is 0 is not a charge either: no money moved, so there is no card fee (E-72, SA-W-6b-4; checks 27 and 28 carry `and b.amount_total_minor > 0`). |
+| FE-2 | **Formula, per charge, in integer minor units of the charge's currency:** `fee_minor = round_half_up(gross_minor × percent_bps / 10000) + fixed_minor`, where `gross_minor` is the amount **charged, tax included** (plans `amount_minor`; boosts `amount_total_minor`), because Stripe takes its fee on the amount charged. Integer form: `(gross_minor × percent_bps + 5000) div 10000 + fixed_minor`, checked with `Number.isSafeInteger`. Fees are rounded **per charge**, then summed. |
+| FE-3 | **Default values (BQ-15, an estimate, not a recorded fee):** USD only: `percent_bps` = **290** (2.9%), `fixed_minor` = **30** (USD 0.30). This is Stripe's standard published price for a domestic card charge, the same assumption as the boost requirement's markup table (2.9% + USD 0.30, flagged there as an assumption to verify). Worked examples at the default: a USD 79.00 plan charge = 2.29 + 0.30 = **USD 2.59**; a USD 44.14 plan charge = 1.28 + 0.30 = **USD 1.58**; a USD 10.00 boost = 0.29 + 0.30 = **USD 0.59**. |
+| FE-4 | **Config is data, never a literal in logic.** One exported, read-only entry, `STRIPE_FEE_ESTIMATE`, a map from currency code to `{ percentBps, fixedMinor }`, holding only `USD` today, with a range check beside it in the style of `FAR_OVER_ALLOWANCE_PERCENT_RANGE` (`percentBps` an integer 0 to 1000, `fixedMinor` an integer 0 to 1000; a value out of range makes every fee Unknown, never a guessed fee). The builder takes it as an **input parameter** (SA-WR-4: pure; the formula imports no rate), so tests can pass other rates. Its file is SA-Q81. Changing the rate later is a one-line data change with no logic change. |
+| FE-5 | **Refunds.** A refunded or partly refunded charge **keeps its fee**: Stripe does not normally return its processing fee on a refund. The fee is counted on the gross charge, in the month of the charge (`paid_at`), whatever happens to the charge later. This is part of the estimate and the note says so (§11K.5). |
+| FE-6 | **Disputes.** A `disputed` or `dispute_lost` charge keeps its processing fee (FE-5). The separate fee Stripe charges for a dispute is **not** estimated in 6b (BQ-15 (c)); the note says so. |
+| FE-7 | **Dating.** A charge's fee is dated by the charge (`paid_at`), the same column as its revenue (M3-W-1), so the fee and the revenue it belongs to are always in the same window. 4b.2's refund-month rule (BD-17, needs 4b.1's table) moves refund amounts, never fees, and is out of scope. |
+
+### 11K.4 Margin and currency rules
+
+| # | Rule |
+|---|---|
+| FE-8 | **Margin after Stripe fees (estimate) = AI margin minus the estimated fees**, in USD, computed in the builder at the ledger scale. It is integer and safe-integer checked, with one division at the edge (SA-W75). The fee is subtracted from the revenue **in minor units, before the one scale step**: `(revenue_minor − fee_minor) × MINOR_TO_COST_UNITS − cost_units`. That equals `(revenue × k − cost) − fee × k` exactly, and it keeps the 6a pin of a single multiply (E-74, SA-W-6b-2). The AI margin is **never replaced or changed**; the new figure is shown beside it. |
+| FE-9 | **Same currency, and only when exact.** A figure is shown only when the AI margin of the same row (or the platform line, or the one account) is a figure under M3-W-4, **and** every USD charge of that row was readable with a config entry for USD, **and** the fee sum is a safe integer. Otherwise the cell takes the AI margin's word, in the same SA-W82 precedence: **"Not available: AI cost is charged only from 29 Sep 2026"** (window before the cut-over) > **"n/a, different currency"** (any non-USD line, so no fee is ever estimated in another currency today, and no USD-only partial) > **Unknown** (a failed or ceiling read, an inexact line, an unreadable charge, an out-of-range config, an overflow). USD is the only currency with a config entry. Any non-USD line already gives "n/a, different currency" through the AI margin, so a figure is only ever computed for USD. **A missing or out-of-range USD entry is a config fault:** every margin-after-fees cell reads Unknown, the section's fee note reads "Stripe fees are an estimate: none are recorded for plan or boost payments. The assumed fee could not be read, so no margin after Stripe fees is shown.", and the AI margin is unaffected (E-73, SA-W-6b-5). Unknown is never 0. |
+| FE-10 | **No revenue.** An account with no charge in the window has estimated fees **0** (exact) and its margin after fees equals its AI margin, with the AI margin's "No revenue in this window" note. |
+| FE-11 | **Estimated fees shown too.** Each figure cell carries a second small line "Stripe fees, estimate: USD X" (the fee sum, `formatMoney`, USD), so the reader sees what was taken off. When the margin after fees is not a figure, the fee line is not shown. |
+| FE-12 | **Wording (CF-6).** Every new string says **"estimate"**, never the guarded word "estimated", so `aiCostVocabulary.source.guard` passes with no ALLOWED entry and no edit (SA-Q86). |
+| FE-13 | **Platform line.** The platform line (M3-W-9) gains the same two figures over every account and the Deleted accounts row, before any filter and cap, by the same functions (E-47 precedent). |
+| FE-14 | **One account.** `buildAccountMargin` gains the same two figures from the account-scoped reads, so the Accounts row and the one-account summary show the same figure for the same window (the AC-142 rule extended). |
+| FE-15 | **Sort and filter unchanged.** "AI margin, lowest first" and "Negative AI margin" keep reading the AI margin; no new option in 6b (SA-Q84). |
+| FE-16 | **No client arithmetic** (M3-FR-13): the fee, the subtraction, every word state and the config values shown in the note come from the payload. The client formats only. |
+| FE-17 | **Logs and payload:** the route's info line gains no amount and no rate (SEC-8); the payload gains no Stripe id, tier literal or `livemode`. |
+
+### 11K.5 Display
+
+| Where | Change |
+|---|---|
+| Accounts tab table | A new column **"Margin after Stripe fees (estimate, USD)"** directly after "AI margin (USD)": the figure through `formatUsd` (sign kept, as the AI margin), or the FE-9 word; the FE-11 fee line under a figure. The Deleted accounts row gets the same cell. |
+| Platform margin line (above the table) | A new pair under "AI margin": **"Margin after Stripe fees (estimate)"** and **"Stripe fees, estimate"**. |
+| One-account summary | A new line **"Margin after Stripe fees (estimate, USD)"** directly under "AI margin (USD)", with the FE-11 fee line. |
+| Accounts tab notes (always shown) | One new note: **"Stripe fees are an estimate: none are recorded for plan or boost payments. Assumed {percent}% + {currency} {fixed} per card charge. A refunded charge keeps its fee. Dispute fees are not included."** The values come from the payload's copy of the config (FE-16), so the text cannot drift from the rate used. The 6a note is reworded so it is clearly about the AI margin column: **"Paid us is after tax, net of refunds and disputes. The AI margin does not deduct Stripe fees."** |
+| Never | The word "actual", "real" or "recorded" beside a fee; a fee in Section 2 block A (Our revenue) or on K-5 (they stay "Stripe fees not deducted"); removing the "Real Stripe fees" cannot-show item (it stays true) |
+
+### 11K.6 KPI tile order (BD-35)
+
+Order only. Every tile keeps its id, test id, label, value, status, sub-line, headline, link or jump target (BD-31, SA-W7) and the placeholder count (five). The strip stays above the filter bar on both tabs (BD-29). Keyboard and reading order follow the new DOM order.
+
+| Position | Before (F-5) | After (6b) | Group (BD-35) |
+|---|---|---|---|
+| 1 | K-1 Charged AI cost this month | **K-5 Our revenue** | Revenue |
+| 2 | K-2 Accounts far over allowance | **K-1 Charged AI cost this month** | Cost |
+| 3 | K-3 Founding Partners with no end date | **K-3 Founding Partners with no end date** | Accounts (plan) |
+| 4 | K-4 Gifted credits outstanding | **K-2 Accounts far over allowance** | Accounts (credit use) |
+| 5 | K-5 Our revenue | **K-4 Gifted credits outstanding** | Accounts (credits given) |
+
+K-3 leads the account group because it is about who the accounts are; K-2 and K-4 are both about credits and sit together, use before gifts. The change is in `FinanceKpiStrip.tsx` only; the shared `KpiStrip` and `KpiTile` do not change.
+
+### 11K.7 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| **Frozen pins** | AC-173 pin `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`; **Pin A** `30f5fc24…2e01`; **Pin B** `24ff0da7…df9f`; **Pin C** `98ea0507…1e4b` and helper `02813360…5bd8`; **Pin D** `1f7cf07a…f144` | All **byte-identical** (LF-normalised), hashes checked at Step 0 and at handover. BA reading (CF-5): Pin B does not pin order, so the reorder leaves it green and unedited; Pin A is untouched because `KpiStrip` is. If SA finds otherwise, **one** ruled re-freeze, as E-55, with the new hash recorded (SA-Q87, SA-Q88) |
+| New tile-order test | Pins the §11K.6 order | A new render case (not in Pin B): the five tile test ids follow the new DOM order on Overview and on the Accounts tab, five placeholders while loading |
+| `aiCostVocabulary.source.guard.test.ts` | Scans `financeCopy.ts` (CF-6) | No edit and no ALLOWED entry: the new strings say "estimate" (FE-12). The `financeCopy.ts` text floor (439) can only rise |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | Builder changes; config entry added | The builder stays pure (no repository, data layer, entitlements or clock import); the "no cross-currency total" control covers the fee step; the DF-5 zero-token pin on `accountEconomics.ts` stays at zero (no `amount_refunded_minor`, `'disputed'` or `'dispute_lost'`); no new export from `boostRevenue.ts` or `planRevenue.ts` (the 6a export pins unchanged). A new rule, with a planted control, fails a numeric fee literal in `accountEconomics.ts` |
+| `app/admin/finance/__tests__/source.guard.test.ts` | New cells and lines | Type imports only; no arithmetic on money in components; no `console.` |
+| Route tests, AC-145 Overview baseline | `accountEconomics` and `accountMargin` gain fields | Without `tab` and with no business picked: same reads and payload as before (AC-145 unchanged). The picked-business payload's `accountMargin` gains the fields: SA-Q85 rules whether that touches the baseline (one ruled update, as E-55, if it does) |
+| Repository caller lists, `serviceColumn.guard`, webhook placement guards, `tierLiteral.forbidden`, `test:bos-entitlements` | Not tripped (no new read, no `lib/business-os/billing/` file, no tier literal, no entitlements import) | Run unchanged |
+| `layoutFolder.guard` (C-14), contrast LF-1 | Finance components touched | Run; no exclusion added |
+| `financeUrl.test.ts`, `FINANCE_URL_KEYS`, AC-173 | No URL or request change | Run unchanged |
+
+Dev runs before SA code review and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, layout and Health suites, the vocabulary guard, `npm run lint:hooks`, eslint on touched files, the scoped `tsc` with canary (AC-44), and the seven pin hashes. No new CI job and no added critical-path time.
+
+### 11K.8 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check. Figures are compared with checks 19, 20, 27 and 28 run at test time.
+
+- [ ] **AC-243** **Formula (unit):** at the default rate, gross 7900 gives fee 259, 4414 gives 158, 1000 gives 59; a zero invoice is no charge; an exact half rounds up (gross 500: 145,000 + 5,000 div 10,000 = 15, plus 30 = 45) and below half rounds down (gross 499 gives 14 + 30 = 44); fees are rounded per charge, then summed.
+- [ ] **AC-244** **Config is data:** the builder takes the rate as a parameter; a test passing 350 / 25 changes every fee with no code change; an out-of-range value (`percentBps` 1001, a fraction, a negative) makes every fee and margin after fees Unknown; no fee literal (290, 30, 0.029, 0.3) appears in `accountEconomics.ts` (source guard with a planted control).
+- [ ] **AC-245** **Which charges:** a plan payment above 0 and each paid-family boost are one charge each; a zero invoice, a paid-family boost with total 0 (E-72), a refused plan row and a boost outside the paid family are not; `refunded`, `partially_refunded`, `disputed` and `dispute_lost` boosts keep their fee on the gross total.
+- [ ] **AC-246** **Margin after fees** per account equals check 19 `ai_margin_usd` minus check 27 `usd_fee_minor` / 100, for every row where both are figures; the AI margin column is unchanged from before 6b for the same fixture.
+- [ ] **AC-247** **Word states:** before the cut-over the new cell reads "Not available: AI cost is charged only from 29 Sep 2026"; an account with an ILS boost (alone or beside USD) reads "n/a, different currency" with no fee line; a ceiling, a failed read, an unreadable charge or an inexact refund reads Unknown, never 0; precedence as SA-W82.
+- [ ] **AC-248** **No revenue:** an account with AI cost and no charge shows fees 0 and a margin after fees equal to its AI margin.
+- [ ] **AC-249** **Platform line:** "Margin after Stripe fees (estimate)" and "Stripe fees, estimate" cover every account and the Deleted accounts row, are unchanged by any filter, sort or cap, and equal check 20's margin minus check 28 `usd_fee_minor` / 100.
+- [ ] **AC-250** **Same figure both ways:** for the owner test account and October 2026, the Accounts row and the one-account summary show the same margin after fees, and the fee line reads USD 3.18 while only its two known charges (plan 79.00, boost 10.00) fall in the window.
+- [ ] **AC-251** **Labels:** the new column, platform pair, summary line and note read exactly as §11K.5; the note's rate comes from the payload; every new string says "estimate"; none says "actual", "real" or "recorded" beside a fee; K-5 and Our revenue still say "Stripe fees not deducted".
+- [ ] **AC-252** **Sort and filter unchanged:** each sort and Show option orders and narrows exactly as before 6b for the same fixture (they read the AI margin, FE-15).
+- [ ] **AC-253** **Tile order:** on Overview and on the Accounts tab, with and without a business picked, the tiles render K-5, K-1, K-3, K-2, K-4 in DOM order; five placeholders while loading; every tile value, status, label, link and jump target equals the value before 6b (Pin B passes unedited).
+- [ ] **AC-254** **No client arithmetic, logs, payload:** the components compute no fee, sum or difference (source test); the route info line carries no amount or rate; the payload has no Stripe id, tier literal or `livemode`; the Overview payload with no tab and no business is unchanged (AC-145).
+- [ ] **AC-255** **Guards and read-only:** every §11K.7 row passes; the seven frozen pins are byte-identical (or re-frozen once by SA ruling, recorded); the vocabulary guard passes with no edit; no write, migration, SQL function, read or repository method added; scoped `tsc` with canary.
+- [ ] **AC-256** **Manual QA (L-142 to L-147; PR #447 holds L-137 to L-141):** open Finance, This month: the tiles read Our revenue, Charged AI cost, Founding Partners, Accounts far over allowance, Gifted credits; open Accounts: the owner test account shows its AI margin and, beside it, its margin after Stripe fees (estimate) with the fee line, matching checks 19 and 27; the platform line matches checks 20 and 28; open the row and see the same two lines in the one-account summary; set a window starting 2026-09-15 and see "Not available" in both margin cells; record it in the workplan.
+
+### 11K.9 SQL cross-checks (27 and 28)
+
+Read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live together (BD-14). Amounts are **minor units** (divide by 100). The rate is the **6b default** written in each check; if the config changes, change `pct_bps` and `fixed_minor` to match. Margin after fees = check 19 `ai_margin_usd` minus check 27 `usd_fee_minor` / 100 (per account), and check 20 margin minus check 28 `usd_fee_minor` / 100 (platform). Written against §11K.1; not executed by BA.
+
+**File:** `check 27 - estimated Stripe fees per account this month` (AC-243, AC-245, AC-246, AC-250, AC-256)
+
+```sql
+-- Finance page check 27: estimated Stripe fees per account in one UTC month, read only.
+-- Compare with the fee line under the margin after Stripe fees on the Accounts tab.
+-- The month is the current UTC month. To check another month, replace null in the
+-- p block below with a quoted UTC month start, such as 2026-10-01 00:00:00+00.
+-- The rate is the 6b default: 290 basis points plus 30 minor units per charge, USD only.
+-- One charge per plan payment above 0 and per boost in the paid family.
+-- The fee is on the gross amount charged, tax included, rounded half up per charge.
+-- A refunded or disputed charge keeps its fee. Dispute fees are not included.
+with p as (
+  select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start,
+         290::bigint as pct_bps,
+         30::bigint as fixed_minor
+),
+charges as (
+  select coalesce(e.user_id::text, 'deleted accounts') as account,
+         upper(btrim(e.currency)) as currency,
+         e.amount_minor::bigint as gross_minor
+  from public.business_os_billing_events e
+  cross join p
+  where e.kind = 'invoice_paid'
+    and e.amount_minor > 0
+    and e.paid_at >= p.month_start
+    and e.paid_at < p.month_start + interval '1 month'
+  union all
+  select coalesce(b.user_id::text, 'deleted accounts') as account,
+         upper(btrim(b.currency)) as currency,
+         b.amount_total_minor::bigint as gross_minor
+  from public.business_os_boost_purchases b
+  cross join p
+  where b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+    and b.amount_total_minor > 0
+    and b.paid_at >= p.month_start
+    and b.paid_at < p.month_start + interval '1 month'
+)
+select
+  c.account,
+  count(*) filter (where c.currency = 'USD') as usd_charges,
+  count(*) filter (where c.currency is distinct from 'USD') as other_currency_charges,
+  coalesce(sum((c.gross_minor * p.pct_bps + 5000) / 10000 + p.fixed_minor)
+    filter (where c.currency = 'USD'), 0) as usd_fee_minor
+from charges c
+cross join p
+group by c.account
+order by 4 desc, 1;
+```
+
+**File:** `check 28 - estimated Stripe fees for the platform this month` (AC-249, AC-256)
+
+```sql
+-- Finance page check 28: estimated Stripe fees over every account in one UTC month, one row, read only.
+-- Compare with the platform line pair Stripe fees, estimate and margin after Stripe fees.
+-- Same month rule, rate and charge rule as check 27. Deleted accounts are included.
+-- A non USD charge anywhere means the platform margin after fees reads n/a, different currency.
+with p as (
+  select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start,
+         290::bigint as pct_bps,
+         30::bigint as fixed_minor
+),
+charges as (
+  select upper(btrim(e.currency)) as currency,
+         e.amount_minor::bigint as gross_minor
+  from public.business_os_billing_events e
+  cross join p
+  where e.kind = 'invoice_paid'
+    and e.amount_minor > 0
+    and e.paid_at >= p.month_start
+    and e.paid_at < p.month_start + interval '1 month'
+  union all
+  select upper(btrim(b.currency)) as currency,
+         b.amount_total_minor::bigint as gross_minor
+  from public.business_os_boost_purchases b
+  cross join p
+  where b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+    and b.amount_total_minor > 0
+    and b.paid_at >= p.month_start
+    and b.paid_at < p.month_start + interval '1 month'
+)
+select
+  count(*) as charges,
+  count(*) filter (where c.currency = 'USD') as usd_charges,
+  count(*) filter (where c.currency is distinct from 'USD') as other_currency_charges,
+  coalesce(sum((c.gross_minor * p.pct_bps + 5000) / 10000 + p.fixed_minor)
+    filter (where c.currency = 'USD'), 0) as usd_fee_minor
+from charges c
+cross join p;
+```
+
+### 11K.10 Open questions for SA (slice 6b)
+
+Technical only. The one business assumption, the fee rate, is **BQ-15** (§0.4); it does not block the build.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q81** | Where does `STRIPE_FEE_ESTIMATE` live: in `financeRules.ts` beside `FINANCE_METRIC_PARAMS`, a new data file in `lib/business-os/finance/`, or a database setting? | A code data constant in `financeRules.ts` (the BD-11 "thresholds are data" precedent), passed to the builder by `financeHealth.ts`. A database setting is a new pattern and a migration, out of 6b |
+| **SA-Q82** | Fee on the gross amount charged (tax included) or on the after-tax revenue? | Gross: Stripe takes its fee on what it charged; the after-tax rule (BD-22) is about what we earn, not about the fee base |
+| **SA-Q83** | Round per charge (half up, integer) and sum, or sum the grosses and round once? | Per charge: that is how a processor fee arises, and it keeps checks 27 and 28 exact |
+| **SA-Q84** | Sort and filter: keep them on the AI margin (FE-15), or add "Margin after Stripe fees, lowest first"? | Keep them on the AI margin in 6b; the estimate is a second view, not the ranking key. A new option is a later, small change |
+| **SA-Q85** | Payload: the new fields sit inside `accountEconomics` rows, its platform line and `accountMargin`, plus one copy of the config for the note. Does the `accountMargin` change touch the AC-145 baseline (picked-business payload)? If so, one ruled update as E-55? | Yes to the shape; the no-tab, no-business baseline stays byte-identical; if the picked case is in the baseline, one ruled update with the new hash recorded |
+| **SA-Q86** | The vocabulary guard forbids "estimated" in `financeCopy.ts` (CF-6). Use "estimate" wording (FE-12, no guard edit), or add one ALLOWED entry for the fee strings? | "Estimate" wording: an ALLOWED entry is a substring exemption for the whole file and would also let the word back in for AI cost, which the guard exists to stop |
+| **SA-Q87** | **Pin B and order.** BA reads Pin B as not pinning tile order (CF-5: lookup by test id, a count of five, line order excluded by its header). Confirm it stays byte-identical and green after the reorder. If SA finds that any assertion depends on order, how is it updated honestly? | Confirm unedited. If an order dependency exists, **one** ruled re-freeze, as E-55: the only change is the order expectation, the new hash is recorded in §0.3 and in the workplan, and no value or status literal changes |
+| **SA-Q88** | **Pin A.** The reorder lives only in `FinanceKpiStrip.tsx` (CF-4); the shared `KpiStrip` and the ten other callers are untouched. Confirm Pin A needs no edit | Confirm: no shared-component change, so Pin A is byte-identical |
+| **SA-Q89** | The order test: a new case in `financePage.render.test.tsx` (or a new small file), never in Pin B? | A new case in the page render test; Pin B stays frozen |
+| **SA-Q90** | Path: full cycle for the fee (new money logic, payload fields), with the reorder in the same workplan and PR, under BD-33's fast track? | Yes: one workplan, one PR, full cycle; BD-33 applies (no migration, and BQ-15 does not block) |
+| **SA-Q91** | Landing order with 4b.2 (PR #447's second part edits `accountEconomics.ts` for the refund-month rule) | 6b needs nothing from 4b.1. Whichever lands second rebases; FE-7 keeps fees on the charge month, so the two rules do not conflict |
+
+### 11K.11 Estimate
+
+**About 1.75 days** (inside BD-32's 1.5 to 2): config and the fee step in the builder, with unit tests, about 0.5 day; payload and wiring in `financeHealth.ts` and the route about 0.25 day; the column, the platform pair, the summary line and the note about 0.5 day; the tile reorder and its test about 0.25 day; guards, pin hashes, checks 27 and 28 and QA about 0.25 day.
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -3467,3 +3709,7 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-17 | SA requirement and workplan review, Money M-8 (§11J) | SA-RR-M8 approved and SA-WP-M8 approved with conditions (§0.3). E-71 applied: BD-34 read as code comments only, no visible notice (RP-4, AC-236, scope, §11J.4, BQ-14 resolved); MULTI_CURRENCY doc pointer added; estimate about 0.75 day. |
 | 2026-10-17 | SA code review, Money M-8 | Code Approved (SA-CR-M8 in §0.3). No conditions. |
 | 2026-10-17 | RM: Money M-8 committed, PR #448 opened, auto-merge on | Commit `92ef1454` on `feature/bos-money-m8`; origin/main (`5c214310`) had not moved, so no merge was needed. Seven frozen pins byte-identical (LF-normalised). Re-run: app/admin/components 818, redundant-pages guard 17, Health guards 56, test:authz-guard 203, all passed. §0.1 M-8 row updated. |
+| 2026-10-17 | BA: slice 6b specified (§11K) | New §11K "Slice 6b: margin after estimated Stripe fees, and KPI order" from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8, the 6a builder at main `e43dcb60` and a read-only live check (LF-1 to LF-3): fee rule FE-1 to FE-7 (per charge, gross, half up, config data `STRIPE_FEE_ESTIMATE`, default 290 bps + 30 minor units, USD only; refunded charges keep their fee; no dispute fee), margin rules FE-8 to FE-17, display, tile order K-5, K-1, K-3, K-2, K-4 (order only), guards with the seven frozen pins and the vocabulary guard ("estimate", never "estimated"), AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91, estimate about 1.75 days. New BQ-15 (§0.4) with its default, not blocking. §0.1 row 6b, §0.2 log line, TOC entry. No code changed. |
+| 2026-10-17 | SA requirement and workplan review, slice 6b (§11K) | SA-RR-6b approved and SA-WP-6b approved with conditions (§0.3). SA applied E-72 (zero-total boost is no charge; checks 27 and 28 filter it), E-73 (invalid fee config gives Unknown) and E-74 (fee subtracted in minor units before the one scale step). |
+| 2026-10-17 | SA code review, slice 6b | Code Approved (SA-CR-6b in §0.3). No conditions. |
+| 2026-10-17 | RM: slice 6b committed, PR #449 opened, auto-merge on | Commit `8d2f5ff6` on `feature/bos-finance-health-6b`; origin/main (`e43dcb60`) had not moved, so no merge was needed. Re-run: app/admin/finance, lib/business-os/finance and the finance route, 36 suites, 2355 tests, all passed. Seven frozen pins unchanged. §0.1 row 6b: status, workplan and PR columns. |

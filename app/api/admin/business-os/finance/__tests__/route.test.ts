@@ -1355,7 +1355,11 @@ describe('slice 6a: the Accounts tab through the route', () => {
       paid: { failed: false, lines: [{ currency: 'USD', afterTax: 1234.57, exact: true, planAfterTax: 0, boostsAfterTax: 1234.57 }] },
       aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
       margin: { kind: 'figure', marginUsd: 1233.3355, noRevenue: false },
+      // Slice 6b: one 123457 boost, fee (123457 × 290 + 5000) div 10000 = 3580, + 30 = 3610 (USD 36.10).
+      marginAfterFees: { kind: 'figure', afterFeesUsd: 1197.2355, feesUsd: 36.1, currency: 'USD', noRevenue: false },
     });
+    // Slice 6b (FE-16): the note values, divided on the server.
+    expect(tab.feeEstimate).toEqual({ currency: 'USD', percent: 2.9, fixed: 0.3 });
     expect(tab.platform.aiCost).toEqual({ kind: 'figure', costUsd: body.data.aiCost.figures.costUsd, exact: true });
 
     const MONEY = new Set(['afterTax', 'planAfterTax', 'boostsAfterTax']);
@@ -1369,7 +1373,11 @@ describe('slice 6a: the Accounts tab through the route', () => {
           expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
         }
         // Only the USD-by-construction fields may carry money without a currency.
-        if (typeof value === 'number' && /usd$/i.test(key)) expect(['costUsd', 'marginUsd']).toContain(key);
+        // Slice 6b: the margin after fees and the fees carry their currency beside them.
+        if (typeof value === 'number' && /usd$/i.test(key)) {
+          if (key === 'afterFeesUsd' || key === 'feesUsd') expect({ key, hasCurrency: 'currency' in (node as object) }).toEqual({ key, hasCurrency: true });
+          else expect(['costUsd', 'marginUsd']).toContain(key);
+        }
         walk(value);
       }
     };
@@ -1386,6 +1394,8 @@ describe('slice 6a: the Accounts tab through the route', () => {
       paid: { failed: false, lines: [{ currency: 'USD', afterTax: 1234.57, exact: true, planAfterTax: 0, boostsAfterTax: 1234.57 }] },
       aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
       margin: { kind: 'figure', marginUsd: 1233.3355, noRevenue: false },
+      // Slice 6b (AC-250): the same margin after fees as the tab row.
+      marginAfterFees: { kind: 'figure', afterFeesUsd: 1197.2355, feesUsd: 36.1, currency: 'USD', noRevenue: false },
     });
     expect(body.data).not.toHaveProperty('accountEconomics');
     expect(mockDeps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
