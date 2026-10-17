@@ -1,6 +1,6 @@
 # Admin Cost and Revenue Consolidation Review
 
-> **Last Updated**: 2026-10-16
+> **Last Updated**: 2026-10-17
 
 **Created by:** BA
 **Date:** 2026-10-14
@@ -229,7 +229,7 @@ Ordered so the per-account view comes first. Each step takes a few days and reus
 | **M-5** | **The Money section** | The sidebar gains "Money" holding Finance and AI calls & usage (relabelled); Costs & credits mounts at `/admin/finance/charges` and leaves the Business OS AI tabs; the Business OS AI sidebar description drops "costs" | Short path, about 2 days; **needs user sign-off** (the layout stream treats the sidebar as fixed, LAY `:12`); sign-off given 2026-10-14 by accepting BQ-1 and BQ-6. **PR open (2026-10-17): [#444](https://github.com/AgentsPilot/neuronforge/pull/444), auto-merge on; commit `1c7b7554`; FIN §11H** | M-1. BQ-1, BQ-6 |
 | **M-6** | **Finance shell on the layout standard** (FIN DF-4, rest) | Shared header, KPI strip (with its cross-page link mode, LAY `:54`) and URL names `range` / `account`, keeping `preset` / `accountId` as aliases | Full cycle (it builds the deferred cross-page tile mode); about 2 days. **In progress (2026-10-15) via F-2/F-4/F-5**, specified in FIN §11G | M-1 (picker already done) |
 | **M-7** | **Resume FIN 4b, then 5b and 7** | 4b boost problems and bought credits; 5b MRR after PAY P-8a; 7 platform payment problems after PAY P-6a/P-6b/P-8b | As already specified in FIN | M-3 |
-| **M-8** | **Legacy clean-up** | **Changed 2026-10-16 (FIN BD-34): do not delete** Platform dashboard and Exchange rates. Mark both redundant with code comments, and stop using or linking them; the routes stay (BQ-7 as amended) | Short; about 1 day. Third in the FIN BD-32 order (after M-5 and FIN 4b) | User decision (given) |
+| **M-8** | **Legacy clean-up** | **Changed 2026-10-16 (FIN BD-34): do not delete** Platform dashboard and Exchange rates. Mark both redundant with code comments, and stop using or linking them; the routes stay (BQ-7 as amended) | Short; about 1 day. Third in the FIN BD-32 order (after M-5 and FIN 4b). **In progress (2026-10-17): specified in FIN §11J (AC-233 to AC-242); workplan [BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md); awaiting SA review** | User decision (given) |
 
 **How this fits the other streams.**
 
@@ -293,3 +293,4 @@ Ordered so the per-account view comes first. Each step takes a few days and reus
 | 2026-10-14 | Created | BA discovery and recommendation: re-check of OV against main `3b300f58` (six AI cost places, not four; Costs and Activity now in the URL with the shared picker; the old picker's deletion moved to Finance). Inventory I-1 to I-20 across both products. Finding: Finance already answers most of the per-account question. Target Money area with per-account view and account economics tab. Gaps G-1 to G-13. Steps M-1 to M-8. BQ-1 to BQ-10, SA-Q-1 to SA-Q-6 |
 | 2026-10-14 | Business questions answered (BA) | The user accepted the proposed default for all ten questions. §9 gains an Answer column; each is recorded in FIN §0.2 (BQ-2, BQ-4, BQ-8 as BD-18 to BD-20 with M-1 and M-2; the other seven as BD-21 to BD-27). Status line updated: M-1 and M-2 merged (#383), M-3 specified in FIN §11E. Body otherwise unchanged |
 | 2026-10-16 | M-5 in progress; M-8 changed (BA) | §8 M-5 row: in progress, specified in FIN §11H, sign-off recorded as given by BQ-1 and BQ-6. §8 M-8 row: no deletion; the two pages are marked redundant in code comments and unlinked (FIN BD-34). Body otherwise unchanged |
+| 2026-10-17 | M-8 in progress (BA) | §8 M-8 row: in progress, specified in FIN §11J (both pages and the dashboard's API route marked REDUNDANT in comments, the dashboard's hidden sidebar item removed, routes kept with a notice, no deletion; FIN BD-34). Body otherwise unchanged |
