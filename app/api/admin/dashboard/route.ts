@@ -1,4 +1,6 @@
 // app/api/admin/dashboard/route.ts
+// REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.
+// Its only caller is the redundant Platform dashboard page. Finance requirement §11J.
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';

@@ -1,6 +1,6 @@
 # Requirement: Admin Module Reorganisation for Business OS
 
-> **Last Updated**: 2026-10-02
+> **Last Updated**: 2026-10-17
 
 **Created by:** BA
 **Date:** 2026-09-24
@@ -270,14 +270,14 @@ Each slice ships alone, needs no later slice to make sense, and deletes no code 
 | **What the user sees** | One screen of red, amber or neutral tiles. Each links to its full page. |
 | **Effort** | M |
 | **Risk** | Med. Aggregating over `token_usage` across accounts has no suitable index today (B0 workplan V-3). A 24 h/7 d window must be measured, or wait for B0's index. SA decides. *(Closed by live check L-5: production has `idx_token_usage_created_at`, created outside the repo; the read is an index range scan of 1.6 ms.)* |
-| **Acceptance criteria** | ☐ Every tile links to a page that shows the same number ☐ No tile shows green for something that is not measured ☐ Page loads within the NFR budget (§9) at current volumes ☐ ~~The old dashboard is still reachable in one click from the parked group~~ **Replaced (U-6):** the old dashboard still loads at `/admin/platform-dashboard` with its code intact, and has one entry in the hidden parked section; nothing links to it |
+| **Acceptance criteria** | ☐ Every tile links to a page that shows the same number ☐ No tile shows green for something that is not measured ☐ Page loads within the NFR budget (§9) at current volumes ☐ ~~The old dashboard is still reachable in one click from the parked group~~ **Replaced (U-6):** the old dashboard still loads at `/admin/platform-dashboard` with its code intact, and has one entry in the hidden parked section; nothing links to it. **Amended 2026-10-17 by Finance BD-34 (Money M-8):** the hidden parked item is removed; the page is kept, redundant, URL-only |
 
 **As shipped (amendments recorded from the slice 4 workplan, T14):**
 
 | # | Amendment | Source |
 |---|---|---|
 | S4-a | Each tile is coloured by an **ordered list of rules held as data** (`lib/admin/health/rules.ts`). The first matching rule sets the colour and its description is the headline; no match gave grey "Normal". *Slice 5 changes the no-match result to green under strict conditions (see RC-5.1).* | U-1 |
-| S4-b | The old dashboard is at `/admin/platform-dashboard`, URL-only, with a hidden parked sidebar entry. | U-6 |
+| S4-b | The old dashboard is at `/admin/platform-dashboard`, URL-only, with a hidden parked sidebar entry. **Amended 2026-10-17 by Finance BD-34 (Money M-8):** the hidden entry is removed; the page is kept and marked redundant in its code. | U-6 |
 | S4-c | Documented link exceptions: the scheduled-jobs and queues tiles (no page yet), and the entitlements tile's "enforce requested but refused" reason (the linked page shows only the mode in effect). *Slice 5 removes the first exception.* | SA C-8 |
 | S4-d | Critical audit events are amber, never red. | U-5 |
 
@@ -724,3 +724,4 @@ Related: [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_A
 | 2026-09-27 | OQ-6 to OQ-9 answered | Option A run record with 30-day history approved; starting rules accepted (a dead-letter in 24 h is red); shadow mode confirmed deliberate (collect data first); Shadow is neutral, not green, on the entitlements tile |
 | 2026-09-27 | Slice 5 shipped; R-20 and R-21 added | PR #122 and PR #123 merged, migration applied and verified. The schema check found 32 pre-existing broken reads: the three admin ones become R-20 (next admin slice), the six Business OS / Stripe ones become R-21 (separate fix, money first) |
 | 2026-10-02 | Next slice cross-linked | Added a row to §7 pointing to the admin cleanup requirement, which carries R-6, R-18, R-20, the first R-3 sub-slices and the Settings clean-up |
+| 2026-10-17 | Old dashboard marked redundant (Finance BD-34, Money M-8) | Slice 4 acceptance criterion (old dashboard) and S4-b amended: the old dashboard's hidden parked sidebar item is removed; the page stays at its URL, marked redundant in code comments. See the finance health requirement §11J |

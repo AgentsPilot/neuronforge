@@ -1,5 +1,9 @@
 'use client';
 
+// REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.
+// No figure on the platform uses an exchange rate (BD-12). Finance requirement §11J.
+// FU-M8-1: this page still writes exchange_rates from the browser; left as is by M-8.
+
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -19,6 +23,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { createCurrencyService } from '@/lib/services/CurrencyService';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'AdminExchangeRates' });
 
 interface ExchangeRate {
   id: string;
@@ -89,7 +96,7 @@ export default function ExchangeRatesPage() {
       if (error) throw error;
       setHistory(data || []);
     } catch (err: any) {
-      console.error('Error loading history:', err);
+      logger.error({ err }, 'Error loading exchange rate history');
     }
   };
 
