@@ -33,7 +33,7 @@ R4 fixes the open item that blocked live Stripe keys: R-c′ errored when an acc
 - **Live Stripe keys are no longer blocked by R4.**
 - **Next:** Finance 5b (MRR, importing `lib/business-os/billing/planMrr.ts`), then FF-2.
 
-### Status: APPROVED FOR COMMIT — fix/bos-finance-r4-billing-mode — commit pending (RM)
+### Status: COMMITTED — fix/bos-finance-r4-billing-mode — commit `7afe71c5`, main merged `da560d79`, PR #471 (auto-merge on)
 
 ---
 
