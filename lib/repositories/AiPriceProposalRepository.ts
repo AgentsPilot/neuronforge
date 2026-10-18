@@ -27,6 +27,11 @@
 // Dismiss check before they call a function. Apply itself, the one live-price
 // writer, lives in `AiPriceApplyRepository`, so this file keeps its promise.
 //
+// Slice 9 adds `findAppliedLinesByIds`, the price history's read of the lines
+// that produced live prices (who applied, why, from which source). Read-only;
+// its only caller is the admin history route (pinned by
+// `adminReadMethods.guard.test.ts`).
+//
 // There is deliberately NO update or delete method. Line state moves only
 // inside database functions (submit, dismiss, apply), and a database trigger refuses any move that is
 // not pending → superseded, applied or dismissed (SA C-2). Do not add one.
@@ -42,6 +47,7 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   AgentRepositoryResult as RepositoryResult,
+  AiPriceAppliedLineRecord,
   AiPriceDecisionLine,
   AiPriceFetchRoundRow,
   AiPriceFetchRoundSubmitResult,
@@ -73,6 +79,21 @@ const DECISION_LINE_COLUMNS =
   'current_input_cost_per_token::text, current_output_cost_per_token::text, ' +
   'current_cached_input_cost_per_token::text, current_cost_per_image::text, ' +
   'source_url, checked_on, flags, state, created_by';
+
+/**
+ * Slice 9: what the price history shows of an applied line. The round's
+ * `source_kind` comes through the line's one FK to `ai_price_proposals` (an
+ * embedded select, not a second literal).
+ */
+export const APPLIED_LINE_HISTORY_COLUMNS =
+  'id, proposal_id, kind, image_size, image_quality, input_per_1m, output_per_1m, cached_input_per_1m, ' +
+  'price_per_image, source_url, checked_on, state, decided_by, decided_at, decision_reason, override_reason, ' +
+  'apply_batch_id, created_by, created_at, ai_price_proposals(source_kind)';
+
+/** Ids per `.in()` read (slice 9): keeps each request URL short. */
+export const LINE_ID_CHUNK = 50;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** An error carrying the Postgres SQLSTATE, when there is one. */
 export interface PriceRepositoryError extends Error {
@@ -292,6 +313,41 @@ export class AiPriceProposalRepository {
     } catch (error) {
       const wrapped = toError(error);
       methodLogger.error({ err: wrapped, duration: Date.now() - startTime }, 'Failed to fetch decision lines');
+      return { data: null, error: wrapped };
+    }
+  }
+
+  /**
+   * Slice 9: the lines behind live price rows, by id, for the price history
+   * (ADMIN ONLY: the history route). De-duplicated and read in chunks of
+   * `LINE_ID_CHUNK`; an empty list answers `[]` with no query; a non-UUID id is
+   * refused before any query. Lines not found are simply absent: the caller
+   * reports a missing record, never a guessed one.
+   */
+  async findAppliedLinesByIds(ids: readonly string[]): Promise<RepositoryResult<AiPriceAppliedLineRecord[]>> {
+    const unique = [...new Set(ids)];
+    const methodLogger = this.logger.child({ method: 'findAppliedLinesByIds', count: unique.length });
+    const startTime = Date.now();
+
+    try {
+      if (!unique.every((id) => typeof id === 'string' && UUID_PATTERN.test(id))) {
+        throw new Error('Every line id must be a UUID');
+      }
+      const found: AiPriceAppliedLineRecord[] = [];
+      for (let start = 0; start < unique.length; start += LINE_ID_CHUNK) {
+        const { data, error } = await this.supabase
+          .from(LINES_TABLE)
+          .select(APPLIED_LINE_HISTORY_COLUMNS)
+          .in('id', unique.slice(start, start + LINE_ID_CHUNK));
+        if (error) throw toError(error);
+        found.push(...((data as unknown as AiPriceAppliedLineRecord[]) || []));
+      }
+
+      methodLogger.debug({ found: found.length, duration: Date.now() - startTime }, 'Applied lines fetched for the price history');
+      return { data: found, error: null };
+    } catch (error) {
+      const wrapped = toError(error);
+      methodLogger.error({ err: wrapped, duration: Date.now() - startTime }, 'Failed to fetch applied lines for the price history');
       return { data: null, error: wrapped };
     }
   }

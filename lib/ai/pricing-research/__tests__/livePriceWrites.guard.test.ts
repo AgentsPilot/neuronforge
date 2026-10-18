@@ -65,11 +65,13 @@ const IMAGE_REPOSITORY = 'lib/repositories/AiModelImagePricingRepository.ts';
  * LW-1 / LW-2: the repositories that hold a live table's TABLE constant, and the
  * only methods each may have. All read-only. Slice 7 (SA RC7-2) added the image
  * table's billing and comparison reader; slice 8 must not add a writer here (its
- * writer is the apply function).
+ * writer is the apply function). Slice 9 (SA SC9-3) adds `listHistoryExact` to
+ * both, the admin price history's read: still read-only, and its callers are
+ * pinned to `app/api/admin/**` by `adminReadMethods.guard.test.ts`.
  */
 const READ_ONLY_REPOSITORIES: Record<string, string[]> = {
-  [REPOSITORY]: ['listActive', 'listActiveExact', 'listAll'],
-  [IMAGE_REPOSITORY]: ['listActive', 'listActiveExact'],
+  [REPOSITORY]: ['listActive', 'listActiveExact', 'listAll', 'listHistoryExact'],
+  [IMAGE_REPOSITORY]: ['listActive', 'listActiveExact', 'listHistoryExact'],
 };
 
 /** LW-1: files that may name a live table in code, and why. All read-only. */
@@ -370,11 +372,12 @@ describe('LW-4: negative controls', () => {
     expect(literalProblems('lib/repositories/OtherRepository.ts', "const TABLE = 'ai_model_image_pricing';")).toEqual([
       'lib/repositories/OtherRepository.ts: names a live price table and is not allow-listed',
     ]);
-    const reads = ['  async listActive() {}', '  async listActiveExact() {}', ''].join(NL);
+    // Slice 9 (SA SC9-3): the fixture carries the third read, the admin history.
+    const reads = ['  async listActive() {}', '  async listActiveExact() {}', '  async listHistoryExact() {}', ''].join(NL);
     expect(repositoryProblems(IMAGE_REPOSITORY, reads)).toEqual([]);
     expect(repositoryProblems(IMAGE_REPOSITORY, `${reads}  async retire() { await this.supabase.from(TABLE).update({ retired_date: d }); }${NL}`)).toEqual([
       `${IMAGE_REPOSITORY}: a write call in a read-only repository`,
-      `${IMAGE_REPOSITORY}: methods listActive, listActiveExact, retire (expected listActive, listActiveExact)`,
+      `${IMAGE_REPOSITORY}: methods listActive, listActiveExact, listHistoryExact, retire (expected listActive, listActiveExact, listHistoryExact)`,
     ]);
     expect(repositoryProblems(IMAGE_REPOSITORY, `${reads}  async apply() { await this.supabase.rpc('x'); }${NL}`)).toHaveLength(2);
   });

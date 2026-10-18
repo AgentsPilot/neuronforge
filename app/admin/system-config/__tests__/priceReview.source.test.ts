@@ -26,6 +26,9 @@ const NEW_FILES = [
   `${DIR}/priceApply.ts`,
   `${DIR}/components/PriceDecisionPanel.tsx`,
   `${DIR}/components/MarginReviewNotice.tsx`,
+  // Slice 9: the price history drawer.
+  `${DIR}/priceHistoryRead.ts`,
+  `${DIR}/components/PriceHistoryDrawerBody.tsx`,
 ];
 const sources = NEW_FILES.map((file) => [file, read(file)] as const);
 
@@ -35,7 +38,7 @@ function codeOf(source: string): string {
 }
 
 /** RC-1: the only pricing-research modules a browser file may take VALUES from. */
-const VALUE_ALLOWED = ['pendingLineSchema', 'officialSources', 'lineFlags', 'bounds', 'coverageColour'];
+const VALUE_ALLOWED = ['pendingLineSchema', 'officialSources', 'lineFlags', 'bounds', 'coverageColour', 'priceHistorySchema']; // priceHistorySchema: slice 9, client-safe (SA SC9-8)
 /** RC-2: server-only modules, reachable by a whole-statement `import type` only. */
 const TYPE_ONLY = ['comparisonModel', 'areaTags', 'fetchOutcomes']; // fetchOutcomes: slice 5, SA SC-14 (types only)
 
@@ -64,6 +67,7 @@ describe('slice 4 new files', () => {
       `${DIR}/priceFetchRun.ts`,
       `${DIR}/components/ProviderPriceCheck.tsx`,
       `${DIR}/priceApply.ts`,
+      `${DIR}/priceHistoryRead.ts`,
     ]) {
       expect(read(file)).toContain("import { clientLogger } from '@/lib/logger/client';");
     }
@@ -76,6 +80,7 @@ describe('slice 4 new files', () => {
     expect(count('/api/admin/model-pricing/fetch-runs')).toEqual([`${DIR}/priceFetchRun.ts`]);
     expect(count('/api/admin/model-pricing/apply')).toEqual([`${DIR}/priceApply.ts`]);
     expect(count('/api/admin/model-pricing/dismiss')).toEqual([`${DIR}/priceApply.ts`]);
+    expect(count('/api/admin/model-pricing/history')).toEqual([`${DIR}/priceHistoryRead.ts`]);
     for (const [, source] of sources) {
       const apis = codeOf(source).match(/[/]api[/][a-z0-9/-]+/g) ?? [];
       for (const api of apis) expect(api.startsWith('/api/admin/model-pricing/')).toBe(true);
@@ -112,5 +117,44 @@ describe('slice 4 new files', () => {
 
     it('no raw .json( read: bodies go through readJsonBody or readAdminResponse', () => {
     for (const [, source] of sources) expect(source).not.toContain('.json(');
+  });
+});
+
+describe('slice 9: the price history', () => {
+  const SCHEMA = 'lib/ai/pricing-research/priceHistorySchema.ts';
+  const BUILDER = 'lib/ai/pricing-research/priceHistory.ts';
+
+  it('SC9-8: the schema a browser file imports takes only zod and client-safe pricing-research pieces', () => {
+    const imports = [...read(SCHEMA).matchAll(/from '([^']+)'/g)].map((match) => match[1]).sort();
+    expect(imports).toEqual(['./officialSources', './pendingLineSchema', 'zod']);
+    // And those two import nothing server-side either.
+    for (const file of ['lib/ai/pricing-research/officialSources.ts', 'lib/ai/pricing-research/pendingLineSchema.ts']) {
+      const found = [...read(file).matchAll(/from '([^']+)'/g)].map((match) => match[1]);
+      expect({ file, ok: found.every((spec) => ['zod', './bounds', './officialSources'].includes(spec)) }).toEqual({ file, ok: true });
+    }
+  });
+
+  it('no number parsing or rounding of a price in the builder or the drawer body', () => {
+    for (const file of [BUILDER, `${DIR}/components/PriceHistoryDrawerBody.tsx`]) {
+      const code = codeOf(read(file));
+      for (const banned of ['Number(', 'parseFloat(', 'parseInt(', 'toFixed(']) expect({ file, banned, hit: code.includes(banned) }).toEqual({ file, banned, hit: false });
+    }
+  });
+
+  it('the drawer reads through priceHistoryRead only; the body and the page post nothing for it', () => {
+    const body = codeOf(read(`${DIR}/components/PriceHistoryDrawerBody.tsx`));
+    expect(/(?<![A-Za-z0-9_])fetch[(]/.test(body)).toBe(false);
+    const reader = codeOf(read(`${DIR}/priceHistoryRead.ts`));
+    expect(reader).toContain('new URLSearchParams(');
+    expect(reader).toContain("method: 'GET'");
+    const page = codeOf(read(`${DIR}/page.tsx`));
+    expect(page).toContain('useDrawerResource(historyTarget?.key ?? null, readPriceHistory)');
+    expect(page.match(/testId="price-history-drawer"/g)).toHaveLength(1);
+  });
+
+  it('no backslash in any new slice 9 file (the Tailwind escape rule, PR #180)', () => {
+    for (const file of [SCHEMA, BUILDER, `${DIR}/priceHistoryRead.ts`, `${DIR}/components/PriceHistoryDrawerBody.tsx`, 'app/api/admin/model-pricing/history/route.ts']) {
+      expect({ file, backslash: read(file).includes(String.fromCharCode(92)) }).toEqual({ file, backslash: false });
+    }
   });
 });

@@ -333,7 +333,7 @@ describe('one table: ours next to provider (UF-5)', () => {
     expect(mockError).toHaveBeenCalledWith(expect.objectContaining({ read: 'comparison' }), 'Price comparison read failed');
   });
 
-  it('T-14: the note, notice rules, Apply / Dismiss only on rows with a pending price, no History, one Check provider prices; toggle states', async () => {
+  it('T-14: the note, notice rules, Apply / Dismiss only on rows with a pending price, one History per row with a provider, one Check provider prices; toggle states', async () => {
     const calls = await renderTable();
     expect(calls.sort()).toEqual([`GET ${COMPARISON_URL}`, `GET ${PRICING_URL}`].sort());
     // Slice 8: the note says Apply exists; the old "until then" sentence is gone.
@@ -342,11 +342,17 @@ describe('one table: ours next to provider (UF-5)', () => {
     // Lines are pending, so no "nothing entered" notice.
     expect(screen.queryByTestId('no-pending-notice')).not.toBeInTheDocument();
     const names = screen.getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent ?? '');
-    // Slice 8: one Apply and one Dismiss per row with a pending price; History is still a later slice.
+    // Slice 8: one Apply and one Dismiss per row with a pending price.
     const pendingRows = ROWS.filter((row) => row.pending.length > 0).length;
     expect(names.filter((name) => /^Apply /.test(name))).toHaveLength(pendingRows);
     expect(names.filter((name) => /^Dismiss /.test(name))).toHaveLength(pendingRows);
-    for (const name of names) expect(name).not.toMatch(/history/i);
+    // Slice 9 (SA SC9-8, O-7): one History per shown row with a provider: every compared row but the
+    // image model known only from a price key, plus the starts-later stored row (retired and
+    // superseded rows are hidden by default). Apply / Dismiss counts are unchanged.
+    const history = names.filter((name) => /history/i.test(name));
+    expect(history).toHaveLength(ROWS.filter((row) => row.provider !== null).length + 1);
+    expect(history).toContain('Price history for gpt-future-row');
+    expect(history).not.toContain('Price history for gpt-image-1');
     expect(names.filter((name) => /check|fetch/i.test(name))).toEqual(['Check provider prices']);
     expect(screen.getByTestId('pricing-toggle')).toHaveAttribute('aria-expanded', 'true');
   });

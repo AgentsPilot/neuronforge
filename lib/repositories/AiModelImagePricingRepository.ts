@@ -28,14 +28,22 @@
 //      resulting cost reaches the caller's own ledger row.
 //
 //   2. THE ADMIN SURFACE, behind `requireAdmin`: the admin price comparison,
-//      `lib/ai/pricing-research/comparisonModel.ts` (`listActiveExact()` only).
+//      `lib/ai/pricing-research/comparisonModel.ts` (`listActiveExact()` only),
+//      and the per-model price history,
+//      `app/api/admin/model-pricing/history/route.ts` (`listHistoryExact()`
+//      only; slice 9).
 //
 //   Do not add a caller outside those two classes.
 //
 //   READ-ONLY. Live prices are written only by slice 8's apply function, never
 //   from here. `livePriceWrites.guard.test.ts` (LW-2) fails on any write call in
-//   this file, and on any method other than the two below. No method takes a
-//   caller-supplied filter; do not add one.
+//   this file, and on any method other than the three below.
+//
+//   Exactly one method, `listHistoryExact`, takes a key (slice 9, SA O-1): it is
+//   admin-only (class 2, the history route), the key is Zod-validated (provider
+//   enum, `MODEL_ID_REGEX`), and the billing reader never calls it (pinned by
+//   `adminReadMethods.guard.test.ts`: only `app/api/admin/**` may call it). No
+//   other method takes a caller-supplied filter; do not add one.
 //
 //   No data-export descriptor: a platform table with no owner column holds no
 //   account's data. Server-side only; never import this from a `'use client'`
@@ -50,9 +58,18 @@ import type {
   AgentRepositoryResult as RepositoryResult,
   AiModelImagePricing,
   AiModelImagePricingExactRow,
+  AiModelImagePricingHistoryRow,
+  PriceHistoryRowsPage,
 } from './types';
 
 const TABLE = 'ai_model_image_pricing';
+
+/** The most rows one model's history returns (slice 9, SA O-5); the same figure as the token repository's, pinned by test. */
+export const IMAGE_PRICE_HISTORY_ROW_LIMIT = 200;
+
+/** Every stored column the history shows, the price as exact TEXT (slice 9). */
+export const IMAGE_PRICE_HISTORY_COLUMNS =
+  'id, provider, model_name, size, quality, cost_per_image::text, effective_date, retired_date, created_at, proposal_id, proposal_line_id';
 
 export class AiModelImagePricingRepository {
   private supabase: SupabaseClient;
@@ -140,6 +157,48 @@ export class AiModelImagePricingRepository {
     } catch (error) {
       const duration = Date.now() - startTime;
       methodLogger.error({ err: error, duration }, 'Failed to fetch active image price rows as exact text');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (class 2, slice 9): every stored row of ONE image model, every
+   * size and quality, current and retired, newest first, the price as exact
+   * TEXT, at most `IMAGE_PRICE_HISTORY_ROW_LIMIT` (the newest), with `truncated`
+   * when more exist. The `listActive()` order, no retired filter; the key comes
+   * from the route's Zod-parsed query only and is refused here when empty.
+   */
+  async listHistoryExact(
+    key: { provider: string; modelName: string },
+    opts: { signal?: AbortSignal } = {}
+  ): Promise<RepositoryResult<PriceHistoryRowsPage<AiModelImagePricingHistoryRow>>> {
+    const methodLogger = this.logger.child({ method: 'listHistoryExact', provider: key?.provider });
+    const startTime = Date.now();
+
+    try {
+      if (!key || typeof key.provider !== 'string' || key.provider === '' || typeof key.modelName !== 'string' || key.modelName === '') {
+        throw new Error('A provider and a model name are required');
+      }
+
+      let query = this.supabase
+        .from(TABLE)
+        .select(IMAGE_PRICE_HISTORY_COLUMNS)
+        .eq('provider', key.provider)
+        .eq('model_name', key.modelName)
+        .order('effective_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(IMAGE_PRICE_HISTORY_ROW_LIMIT + 1);
+      if (opts.signal) query = query.abortSignal(opts.signal);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const all = (data as unknown as AiModelImagePricingHistoryRow[]) || [];
+      const truncated = all.length > IMAGE_PRICE_HISTORY_ROW_LIMIT;
+      methodLogger.debug({ count: all.length, truncated, duration: Date.now() - startTime }, 'Image price history rows fetched');
+      return { data: { rows: all.slice(0, IMAGE_PRICE_HISTORY_ROW_LIMIT), truncated }, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error, duration: Date.now() - startTime }, 'Failed to fetch image price history rows');
       return { data: null, error: error as Error };
     }
   }

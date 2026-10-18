@@ -580,6 +580,88 @@ export interface AiPriceOpenMarginReview {
 }
 
 /**
+ * One stored `ai_model_pricing` row of any state (current, later, superseded,
+ * retired) for the admin price history (AI model price review slice 9). Prices
+ * are exact TEXT (`::text`), never a JS float. `created_at` is nullable in the
+ * captured table definition, so a legacy row may have none.
+ */
+export interface AiModelPricingHistoryRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  input_cost_per_token: string;
+  output_cost_per_token: string;
+  cached_input_cost_per_token: string | null;
+  effective_date: string;
+  retired_date: string | null;
+  created_at: string | null;
+  proposal_id: string | null;
+  proposal_line_id: string | null;
+}
+
+/** The image twin of `AiModelPricingHistoryRow` (slice 9); `cost_per_image` as exact TEXT. */
+export interface AiModelImagePricingHistoryRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  size: string;
+  quality: string;
+  cost_per_image: string;
+  effective_date: string;
+  retired_date: string | null;
+  created_at: string | null;
+  proposal_id: string | null;
+  proposal_line_id: string | null;
+}
+
+/** A bounded history read (slice 9): the newest rows, and whether more exist. */
+export interface PriceHistoryRowsPage<R> {
+  rows: R[];
+  truncated: boolean;
+}
+
+/**
+ * A pending-price line as the price history reads it (slice 9): what Apply
+ * wrote on it (who, when, why), where the price came from, and how it was
+ * entered (the round's `source_kind`, embedded through the line's FK).
+ */
+export interface AiPriceAppliedLineRecord {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  state: 'pending' | 'superseded' | 'applied' | 'dismissed';
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_reason: string | null;
+  override_reason: string | null;
+  apply_batch_id: string | null;
+  created_by: string;
+  created_at: string;
+  ai_price_proposals: { source_kind: string } | null;
+}
+
+/** One apply batch as the price history reads it (slice 9): no margin items. */
+export interface AiPriceApplyBatchRecord {
+  id: string;
+  applied_by: string;
+  applied_at: string;
+  line_count: number;
+  margin_review_needed: boolean;
+  margin_review_done: boolean;
+  margin_review_by: string | null;
+  margin_review_at: string | null;
+  margin_review_note: string | null;
+}
+
+/**
  * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
  * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
  * for why the mandatory user scoping does not apply. PostgREST returns the
