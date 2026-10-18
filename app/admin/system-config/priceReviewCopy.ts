@@ -7,7 +7,7 @@
  */
 
 export const PRICE_REVIEW_NOTE =
-  'Nothing in the provider column is charged until someone applies it. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Apply makes a provider price the live price for that model; Dismiss drops it. History shows every stored price of a model, and who changed it and why.';
+  'Nothing in the provider column is charged until someone applies it. Check provider prices reads OpenAI’s and Anthropic’s official pricing pages; Google and Kimi prices are entered by hand for now. Apply makes a provider price the live price for that model; Dismiss drops it. History shows every stored price of a model, and who changed it and why.';
 
 export const NO_PENDING_NOTICE =
   'No provider prices entered yet, so every row reads No new price. Use Enter provider price to add one.';
@@ -133,6 +133,8 @@ export const PRICE_CHECK_WORDS = {
   stored: 'Saved as pending prices. Nothing is charged until a price is applied.',
   needsManualList: 'Needs manual entry',
   notFoundList: 'Not on the provider page',
+  /** Slice 10: a name note the provider wrote next to a model (shown, never interpreted). */
+  pageNotes: 'page notes',
 } as const;
 
 export const PROVIDER_NAMES: Readonly<Record<string, string>> = {

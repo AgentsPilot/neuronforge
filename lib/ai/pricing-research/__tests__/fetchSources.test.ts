@@ -7,10 +7,13 @@
 import { forbidRealNetwork } from '@/tests/helpers/noRealNetwork';
 
 import {
+  ANTHROPIC_PRICING_MARKDOWN_URL,
+  ANTHROPIC_PRICING_PAGE_URL,
   LITELLM_PRICES_URL,
   OPENAI_PRICING_MARKDOWN_URL,
   OPENAI_PRICING_PAGE_URL,
   PRICE_CHECK_USER_AGENT,
+  PRICE_PAGE_URLS,
   PRICE_SOURCES,
   fetchLimited,
   settledToResult,
@@ -37,8 +40,14 @@ function answering(...replies: Array<Response | Error>) {
 const small: PriceSource = { ...PRICE_SOURCES.openai, maxBytes: 16 };
 
 describe('pinned sources', () => {
-  it('are exactly the two literal URLs', () => {
-    expect(Object.keys(PRICE_SOURCES)).toEqual(['openai', 'litellm']);
+  // Slice 10 deliberate edit (SA O-7, RR-8): three fetched sources, Anthropic's added.
+  it('are exactly the three literal URLs', () => {
+    expect(Object.keys(PRICE_SOURCES)).toEqual(['openai', 'anthropic', 'litellm']);
+    expect(PRICE_SOURCES.anthropic.url).toBe('https://platform.claude.com/docs/en/about-claude/pricing.md');
+    expect(ANTHROPIC_PRICING_MARKDOWN_URL).toBe(PRICE_SOURCES.anthropic.url);
+    expect(ANTHROPIC_PRICING_PAGE_URL).toBe('https://platform.claude.com/docs/en/about-claude/pricing');
+    expect(PRICE_SOURCES.anthropic.maxBytes).toBe(5 * 1024 * 1024);
+    expect(PRICE_PAGE_URLS).toEqual({ openai: OPENAI_PRICING_PAGE_URL, anthropic: ANTHROPIC_PRICING_PAGE_URL });
     expect(PRICE_SOURCES.openai.url).toBe('https://developers.openai.com/api/docs/pricing.md');
     expect(PRICE_SOURCES.litellm.url).toBe(
       'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
@@ -157,5 +166,29 @@ describe('fetchLimited', () => {
 
   it('settledToResult maps a rejected promise to `network_error`', () => {
     expect(settledToResult({ status: 'rejected', reason: new Error('x') }).outcome).toBe('network_error');
+  });
+});
+
+describe('the Anthropic source (slice 10, SA O-7)', () => {
+  it('reads markdown with the same headers and no redirect', async () => {
+    const { fetchImpl, calls } = answering(new Response('# Pricing', { status: 200, headers: MARKDOWN }));
+    const result = await fetchLimited(PRICE_SOURCES.anthropic, { fetchImpl });
+    expect(result).toMatchObject({ outcome: 'ok', status: 200, text: '# Pricing' });
+    expect(calls[0].url).toBe(ANTHROPIC_PRICING_MARKDOWN_URL);
+    expect(calls[0].init.headers).toEqual({ 'User-Agent': PRICE_CHECK_USER_AGENT, Accept: 'text/markdown, text/plain' });
+    expect(calls[0].init.redirect).toBe('manual');
+    expect(calls[0].init.cache).toBe('no-store');
+  });
+
+  it('an HTML answer (a challenge page) is `blocked`', async () => {
+    const { fetchImpl } = answering(new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }));
+    expect((await fetchLimited(PRICE_SOURCES.anthropic, { fetchImpl })).outcome).toBe('blocked');
+  });
+
+  it('a redirect is `http_307`, never followed', async () => {
+    const { fetchImpl, calls } = answering(new Response(null, { status: 307, headers: { location: 'https://example.invalid/' } }));
+    const result = await fetchLimited(PRICE_SOURCES.anthropic, { fetchImpl });
+    expect(result.outcome).toBe('http_307');
+    expect(calls).toHaveLength(1);
   });
 });

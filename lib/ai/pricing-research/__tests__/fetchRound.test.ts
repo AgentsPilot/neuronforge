@@ -17,6 +17,7 @@ forbidRealNetwork();
 
 const PAGE = readFileSync(join(__dirname, '..', '__fixtures__', 'openai-pricing-2026-10-14.md'), 'utf8');
 const LIST = readFileSync(join(__dirname, '..', '__fixtures__', 'litellm-prices-2026-10-14.json'), 'utf8');
+const ANTHROPIC_PAGE = readFileSync(join(__dirname, '..', '__fixtures__', 'anthropic-pricing-2026-10-18.md'), 'utf8');
 const NOW = '2026-10-15T09:00:00.000Z';
 
 const ok = (text: string): FetchResult => ({ outcome: 'ok', status: 200, bytes: text.length, durationMs: 120, attempts: 1, text });
@@ -28,12 +29,37 @@ const CURRENT: Record<string, LineFlagContext['current']> = {
   'gpt-4o': { input: '0.000001', output: '0.00001' },
 };
 
-function input(overrides: Partial<FetchRoundInput> = {}): FetchRoundInput {
+/**
+ * Slice 10: the round input is per provider. This helper keeps the slice 5
+ * override names (`openai`, `coverage` = OpenAI's), so the slice 5 cases below
+ * are unedited; Anthropic defaults to the 2026-10-18 page with an EMPTY
+ * coverage, so it adds no line and no cross-check verdict to them.
+ */
+interface RoundOverrides {
+  openai?: FetchResult;
+  anthropic?: FetchResult;
+  litellm?: FetchResult;
+  coverage?: ReadonlySet<string>;
+  anthropicCoverage?: ReadonlySet<string>;
+}
+
+function input(overrides: RoundOverrides = {}): FetchRoundInput {
   return {
-    openai: ok(PAGE),
-    litellm: ok(LIST),
-    coverage: new Set(['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-nano', 'gpt-4-turbo', 'text-embedding-3-small']),
-    isInputOnly: (model) => model.startsWith('text-embedding-'),
+    providers: {
+      openai: {
+        result: overrides.openai ?? ok(PAGE),
+        coverage: overrides.coverage ?? new Set(['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-nano', 'gpt-4-turbo', 'text-embedding-3-small']),
+        isInputOnly: (model) => model.startsWith('text-embedding-'),
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+      },
+      anthropic: {
+        result: overrides.anthropic ?? ok(ANTHROPIC_PAGE),
+        coverage: overrides.anthropicCoverage ?? new Set(),
+        isInputOnly: () => false,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+      },
+    },
+    litellm: overrides.litellm ?? ok(LIST),
     contextFor: (line) => ({
       context: {
         current: CURRENT[line.model_name] ?? {},
@@ -44,11 +70,9 @@ function input(overrides: Partial<FetchRoundInput> = {}): FetchRoundInput {
       },
       snapshotFields: { current_basis: CURRENT[line.model_name] ? 'table' : 'unpriced' },
     }),
-    sourceUrl: 'https://developers.openai.com/api/docs/pricing',
     crossCheckSource: 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json',
     checkedOn: '2026-10-15',
     fetchedAt: NOW,
-    ...overrides,
   };
 }
 
@@ -76,7 +100,8 @@ describe('buildFetchRound', () => {
     });
     expect(round.submitLines.find((line) => line.model_name === 'gpt-4o')?.flags).toEqual(['large_move', 'cached_input_listed']);
     expect(round.problems).toEqual([]);
-    expect(round.failedAnchor).toBeNull();
+    // Slice 10 deliberate edit (SC10-6): the failed anchor is per provider.
+    expect(round.failedAnchors).toEqual([]);
   });
 
   it('LiteLLM disagreeing on every unit never reaches a price field (MP-FR-6a; QA bug 1, mutants M07a-c)', () => {
@@ -107,7 +132,8 @@ describe('buildFetchRound', () => {
     const { providerOutcomes } = buildFetchRound(input());
     expect(ProviderOutcomesSchema.safeParse(providerOutcomes).success).toBe(true);
     expect(providerOutcomes.openai).toMatchObject({ outcome: 'ok', lines_stored: 3, not_found: ['gpt-4-turbo', 'gpt-4.1-nano'] });
-    expect(providerOutcomes.anthropic).toEqual({ outcome: 'manual_only' });
+    // Slice 10 deliberate edit (SC10-2): Anthropic is read by its adapter, never `manual_only` again.
+    expect(providerOutcomes.anthropic).toMatchObject({ outcome: 'ok', lines_stored: 0, not_found: [] });
     expect(providerOutcomes.google).toEqual({ outcome: 'manual_only' });
     expect(providerOutcomes.kimi).toEqual({ outcome: 'manual_only' });
     expect(providerOutcomes.litellm).toMatchObject({ outcome: 'ok', agrees: 3, differs: 0, not_listed: 0, unavailable: 0 });
@@ -118,8 +144,9 @@ describe('buildFetchRound', () => {
     const round = buildFetchRound(input({ openai: ok(page) }));
     expect(round.submitLines.map((line) => line.model_name)).toEqual(['gpt-4o-mini', 'text-embedding-3-small']);
     expect(round.providerOutcomes.openai.refused).toEqual([{ model_name: 'gpt-4o', reason: 'refused_by_bounds' }]);
+    // Slice 10 deliberate edit (SC10-8): each problem names its provider.
     expect(round.problems).toEqual([
-      { model_name: 'gpt-4o', messages: ['The input price is above the sanity ceiling of $1000 per 1M tokens'] },
+      { provider: 'openai', model_name: 'gpt-4o', messages: ['The input price is above the sanity ceiling of $1000 per 1M tokens'] },
     ]);
   });
 
@@ -133,7 +160,8 @@ describe('buildFetchRound', () => {
     const round = buildFetchRound(input({ openai: ok(PAGE.replace('### Standard pricing data', '### Standard')) }));
     expect(round.submitLines).toEqual([]);
     expect(round.providerOutcomes.openai.outcome).toBe('layout_changed');
-    expect(round.failedAnchor).toBe('A1');
+    // Slice 10 deliberate edit (SC10-6): the failed anchor is per provider.
+    expect(round.failedAnchors).toEqual([{ provider: 'openai', anchor: 'A1' }]);
   });
 
   it('LiteLLM down: every line is `unavailable`, flagged, and still stored', () => {
@@ -193,5 +221,133 @@ describe('sourceStatus (SC-12)', () => {
     expect(sourceStatus('openai', null, null, null)).toEqual({ lastRun: null, lastOkAt: null, lastFailure: null, lastRunCounts: null, lastRunVerdicts: null });
     const odd: FetchRoundRow = { id: 'x', created_at: NOW, provider_outcomes: { openai: { outcome: 'ok', page: 'text' } } };
     expect(sourceStatus('openai', odd, null, null).lastRun).toEqual({ outcome: 'unknown', at: NOW });
+  });
+});
+
+describe('slice 10: one round, both providers (SA O-4, SC10-6)', () => {
+  const FRAGMENT = readFileSync(join(__dirname, '..', '__fixtures__', 'litellm-anthropic-entries-2026-10-18.json'), 'utf8');
+  /** SA O-9: the Anthropic fragment merged into the slice 5 list; the slice 5 fixture stays byte-identical. */
+  const MERGED = JSON.stringify({ ...JSON.parse(LIST), ...JSON.parse(FRAGMENT) });
+  const ANTHROPIC_COVERAGE = new Set([
+    'claude-3-5-haiku-20241022',
+    'claude-3-haiku-20240307',
+    'claude-haiku-4-5-20251001',
+    'claude-opus-4-1-20250805',
+    'claude-opus-4-20250514',
+    'claude-opus-4-5-20251101',
+    'claude-opus-4-6',
+    'claude-sonnet-4-20250514',
+    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-4-6',
+  ]);
+  const both = (overrides: RoundOverrides = {}) =>
+    buildFetchRound(input({ litellm: ok(MERGED), anthropicCoverage: ANTHROPIC_COVERAGE, ...overrides }));
+  const providersOf = (round: ReturnType<typeof buildFetchRound>) => round.submitLines.map((line) => `${line.provider}:${line.model_name}`);
+
+  it('the merged list still clears the LiteLLM key floor (SA O-9)', () => {
+    expect(Object.keys(JSON.parse(MERGED)).length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('both ok: one line set holding both providers, two adapter outcomes', () => {
+    const round = both();
+    expect(providersOf(round)).toEqual([
+      'openai:gpt-4o',
+      'openai:gpt-4o-mini',
+      'openai:text-embedding-3-small',
+      'anthropic:claude-haiku-4-5-20251001',
+      'anthropic:claude-opus-4-1-20250805',
+      'anthropic:claude-opus-4-20250514',
+      'anthropic:claude-opus-4-5-20251101',
+      'anthropic:claude-opus-4-6',
+      'anthropic:claude-sonnet-4-20250514',
+      'anthropic:claude-sonnet-4-5-20250929',
+      'anthropic:claude-sonnet-4-6',
+    ]);
+    expect(round.providerOutcomes.openai).toMatchObject({ outcome: 'ok', lines_stored: 3 });
+    expect(round.providerOutcomes.anthropic).toMatchObject({
+      outcome: 'ok',
+      lines_stored: 8,
+      needs_manual: [],
+      not_found: ['claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'],
+      refused: [],
+    });
+    expect(round.providerOutcomes.anthropic.name_notes.map((note) => note.model_name)).toEqual([
+      'claude-opus-4-1-20250805',
+      'claude-opus-4-20250514',
+      'claude-sonnet-4-20250514',
+    ]);
+    // 3 OpenAI + 5 Anthropic agree; the retired 4.0 / 4.1 ids are not in LiteLLM.
+    expect(round.providerOutcomes.litellm).toMatchObject({ outcome: 'ok', agrees: 8, differs: 0, not_listed: 3, unavailable: 0 });
+    expect(ProviderOutcomesSchema.safeParse(round.providerOutcomes).success).toBe(true);
+    expect(round.failedAnchors).toEqual([]);
+  });
+
+  it('an Anthropic line: its own source page, no cached price, `cached_input_listed`, cross-checked on input and output only', () => {
+    const line = both().submitLines.find((entry) => entry.model_name === 'claude-sonnet-4-6');
+    expect(line).toMatchObject({
+      provider: 'anthropic',
+      kind: 'token',
+      input_per_1m: '3',
+      output_per_1m: '15',
+      source_url: 'https://platform.claude.com/docs/en/about-claude/pricing',
+      checked_on: '2026-10-15',
+      cross_check_verdict: 'agrees',
+      // LiteLLM's cache-read price is shown, never compared; its cache-write price is not read at all.
+      cross_check_value: 'input 3, cached input 0.3, output 15 per 1M',
+    });
+    expect(line).not.toHaveProperty('cached_input_per_1m');
+    expect(line?.flags).toContain('cached_input_listed');
+    expect(JSON.stringify(line)).not.toContain('3.75');
+  });
+
+  it('LiteLLM deprecation date gives `retiring`; a page note never sets it (SA O-6)', () => {
+    const round = both();
+    expect(round.submitLines.find((line) => line.model_name === 'claude-sonnet-4-5-20250929')?.flags).toContain('retiring');
+    const retiredOnPage = round.submitLines.find((line) => line.model_name === 'claude-opus-4-1-20250805');
+    expect(retiredOnPage?.flags).not.toContain('retiring');
+    expect(retiredOnPage?.cross_check_verdict).toBe('not_listed');
+  });
+
+  it('OpenAI blocked, Anthropic ok: the Anthropic lines still load', () => {
+    const round = both({ openai: failed('blocked') });
+    expect(round.submitLines.every((line) => line.provider === 'anthropic')).toBe(true);
+    expect(round.submitLines).toHaveLength(8);
+    expect(round.providerOutcomes.openai).toMatchObject({ outcome: 'blocked', lines_stored: 0 });
+    expect(round.providerOutcomes.anthropic).toMatchObject({ outcome: 'ok', lines_stored: 8 });
+  });
+
+  it('Anthropic layout changed, OpenAI ok: zero Anthropic lines, its anchor for the log', () => {
+    const round = both({ anthropic: ok(ANTHROPIC_PAGE.replace('## Model pricing', '## Model prices')) });
+    expect(round.submitLines.every((line) => line.provider === 'openai')).toBe(true);
+    expect(round.submitLines).toHaveLength(3);
+    expect(round.providerOutcomes.anthropic).toMatchObject({ outcome: 'layout_changed', lines_stored: 0, not_found: [] });
+    expect(round.failedAnchors).toEqual([{ provider: 'anthropic', anchor: 'B1' }]);
+  });
+
+  it('both fail: zero lines, both outcomes recorded, still a valid round', () => {
+    const round = both({ openai: failed('timeout'), anthropic: failed('http_503') });
+    expect(round.submitLines).toEqual([]);
+    expect(round.providerOutcomes.openai.outcome).toBe('timeout');
+    expect(round.providerOutcomes.anthropic.outcome).toBe('http_503');
+    expect(ProviderOutcomesSchema.safeParse(round.providerOutcomes).success).toBe(true);
+  });
+
+  it('LiteLLM down: every line of both providers is `cross_check_unavailable`', () => {
+    const round = both({ litellm: failed('network_error') });
+    expect(round.submitLines).toHaveLength(11);
+    for (const line of round.submitLines) expect(line.flags).toContain('cross_check_unavailable');
+    expect(round.providerOutcomes.litellm).toMatchObject({ outcome: 'network_error', unavailable: 11 });
+  });
+
+  it('a refused Anthropic line names its provider and is listed under it', () => {
+    const page = ANTHROPIC_PAGE.replace(/\r\n/g, '\n');
+    const row = page.split('\n').find((line) => line.startsWith('| Claude Sonnet 4.6 ') && line.includes('$3.75')) ?? '';
+    expect(row).not.toBe('');
+    const round = both({ anthropic: ok(page.replace(row, row.replace('$3 / MTok ', '$2000 / MTok'))) });
+    expect(round.problems).toEqual([
+      { provider: 'anthropic', model_name: 'claude-sonnet-4-6', messages: ['The input price is above the sanity ceiling of $1000 per 1M tokens'] },
+    ]);
+    expect(round.providerOutcomes.anthropic.refused).toEqual([{ model_name: 'claude-sonnet-4-6', reason: 'refused_by_bounds' }]);
+    expect(round.providerOutcomes.openai.refused).toEqual([]);
   });
 });

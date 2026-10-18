@@ -32,6 +32,9 @@
 // its only caller is the admin history route (pinned by
 // `adminReadMethods.guard.test.ts`).
 //
+// Slice 10 widens the status reads to Anthropic (`FetchOutcomeSource`); still
+// select-only, still no `.or()`.
+//
 // There is deliberately NO update or delete method. Line state moves only
 // inside database functions (submit, dismiss, apply), and a database trigger refuses any move that is
 // not pending → superseded, applied or dismissed (SA C-2). Do not add one.
@@ -122,7 +125,24 @@ interface SubmitRow {
 }
 
 /** The sources whose fetch outcome the status read filters on (a closed set: no caller text reaches a filter). */
-export type FetchOutcomeSource = 'openai' | 'litellm';
+export type FetchOutcomeSource = 'openai' | 'anthropic' | 'litellm';
+
+/** The JSON path of each source's outcome (slice 10, SA SC10-3: a typed record, never caller text). */
+const OUTCOME_PATHS: Record<FetchOutcomeSource, string> = {
+  openai: 'provider_outcomes->openai->>outcome',
+  anthropic: 'provider_outcomes->anthropic->>outcome',
+  litellm: 'provider_outcomes->litellm->>outcome',
+};
+
+/**
+ * Stored outcomes that are not a failure although they are not `ok`: every
+ * round from before slice 10 holds Anthropic `manual_only` ("not checked yet").
+ */
+const NOT_A_FAILURE: Record<FetchOutcomeSource, readonly string[]> = {
+  openai: [],
+  anthropic: ['manual_only'],
+  litellm: [],
+};
 
 export class AiPriceProposalRepository {
   private supabase: SupabaseClient;
@@ -234,8 +254,10 @@ export class AiPriceProposalRepository {
 
   /**
    * The newest fetch round where one source's outcome is (`eq`) or is not
-   * (`neq`) `ok`: the last success and the last failure (SA SC-12). Two plain
-   * filters, never `.or()` (the PostgREST update+or+select bug class).
+   * (`neq`) `ok`: the last success and the last failure (SA SC-12). Plain
+   * filters, never `.or()` (the PostgREST update+or+select bug class). For
+   * Anthropic a failure also excludes `manual_only` with a second chained
+   * `.neq` (an AND; slice 10, SC10-3).
    */
   async latestFetchRoundByOutcome(
     source: FetchOutcomeSource,
@@ -254,8 +276,12 @@ export class AiPriceProposalRepository {
     try {
       let query = this.supabase.from(ROUNDS_TABLE).select(ROUND_COLUMNS).eq('source_kind', 'fetch');
       if (filter) {
-        const path = filter.source === 'openai' ? 'provider_outcomes->openai->>outcome' : 'provider_outcomes->litellm->>outcome';
-        query = filter.match === 'ok' ? query.eq(path, 'ok') : query.neq(path, 'ok');
+        const path = OUTCOME_PATHS[filter.source];
+        if (filter.match === 'ok') query = query.eq(path, 'ok');
+        else {
+          query = query.neq(path, 'ok');
+          for (const outcome of NOT_A_FAILURE[filter.source]) query = query.neq(path, outcome);
+        }
       }
       const { data, error } = await query.order('created_at', { ascending: false }).limit(1);
 

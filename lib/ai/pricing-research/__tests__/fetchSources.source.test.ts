@@ -41,6 +41,11 @@ const SLICE5_FILES = [
   ROUTE,
   'app/admin/system-config/priceFetchRun.ts',
   'app/admin/system-config/components/ProviderPriceCheck.tsx',
+  // Slice 10 deliberate edit (SA SC10-9): the new adapter files join the SC-15 scan.
+  `${RESEARCH_DIR}/anthropicPricingAdapter.ts`,
+  `${RESEARCH_DIR}/modelCellMatcher.ts`,
+  `${RESEARCH_DIR}/priceAdapters.ts`,
+  `${RESEARCH_DIR}/markdownTable.ts`,
 ];
 
 /** Comments out, including trailing `//` comments (URLs inside strings keep their `//`). */
@@ -87,6 +92,9 @@ describe('one outbound door (SC-9)', () => {
       ? [
           "'https://developers.openai.com/api/docs/pricing.md'",
           "'https://developers.openai.com/api/docs/pricing'",
+          // Slice 10 deliberate edit (SA O-7, RR-8 ruling 2026-10-18): Anthropic's page, fetched and stored.
+          "'https://platform.claude.com/docs/en/about-claude/pricing.md'",
+          "'https://platform.claude.com/docs/en/about-claude/pricing'",
           "'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'",
         ]
       : [];
