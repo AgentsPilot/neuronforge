@@ -32,7 +32,7 @@ P-8a.1 adds one pure MRR rule and the admin Subscriptions page at `/admin/subscr
 - **Open before live Stripe keys: Finance R4.** R-c′ errors when an account has both test and live rows. This must be fixed before any live key is used.
 - **Next:** P-8a.2 (the drawer's billing panel), then P-8a.3 (audit).
 
-### Status: APPROVED FOR COMMIT — feature/bos-plan-payments-p8a — commit pending (RM)
+### Status: COMMITTED — feature/bos-plan-payments-p8a — commit `5c31cb92`, main merged `62ea60d9`, PR #466 (auto-merge on)
 
 ---
 

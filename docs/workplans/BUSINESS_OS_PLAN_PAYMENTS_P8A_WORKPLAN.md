@@ -7,7 +7,7 @@
 **Depends on:** P-3b merged (#251, #299: billing record mirror, money history). P-6a merged (#405, #416: `failed_attempts`, `last_payment_failed_at`, `ended_at`, grace margin in `deriveLifecycle`).
 **Date:** 2026-10-18
 **Branch:** `feature/bos-plan-payments-p8a`, worktree `neuronforge-finance-health`, fresh from `origin/main` `f7429b57` (#462). Confirmed with `git branch --show-current` on 2026-10-18. Highest migration on that main: `20261079`.
-**Status:** SA APPROVED WITH CONDITIONS (SA-WP-P8a). **P-8a.1 Code Complete 2026-10-18, uncommitted** (Implementation Notes (P-8a.1)); awaiting SA code review. P-8a.2 and P-8a.3 not started.
+**Status:** SA APPROVED WITH CONDITIONS (SA-WP-P8a). **P-8a.1 Code Approved (SA-CR-P8a.1), QA passed; committed `5c31cb92`, PR [#466](https://github.com/AgentsPilot/neuronforge/pull/466) opened 2026-10-18, auto-merge on.** P-8a.2 and P-8a.3 not started.
 
 ## Overview
 
