@@ -7,7 +7,7 @@
 **Branch:** `feature/bos-finance-followups` (from main `f7429b57`)
 **Worktree:** `neuronforge-finance-m8` (node_modules is a junction: no `git worktree remove`, no `git stash`)
 **Date:** 2026-10-18
-**Status:** In Progress (FF-1b, FF-1c, FF-1d code complete, uncommitted; FF-1a waits for BQ-20)
+**Status:** FF-1b to FF-1d merged (#463); FF-1a code complete, uncommitted, on feature/bos-finance-ff1a (BQ-20 answered: read-only, BD-36)
 **Path:** about 1 day. No migration, no API route, no money or figure change. Approval flow BD-33 (SA, QA and TL approve, then RM commits, opens the PR and turns on auto-merge), **except** that FF-1a carries BQ-20 (below); if TL treats BQ-20 as needing the user, FF-1a is split out and FF-1b to FF-1d ship alone.
 
 ## Overview
@@ -329,10 +329,10 @@ If BQ-20 is held for the user, FF-1b to FF-1d (about 0.55 day) ship first and FF
 ## 14. Task List
 
 - [x] T0: Branch and pin check (VL-12)
-- [ ] T1: FF-1a page edit (§4 steps 1 to 5)
-- [ ] T2: FF-1a guard G-6 with planted controls
-- [ ] T3: FF-1a check 35 file and its paste-safety test
-- [ ] T4: FF-1a `MULTI_CURRENCY_SYSTEM.md` notes
+- [x] T1: FF-1a page edit (§4 steps 1 to 5)
+- [x] T2: FF-1a guard G-6 with planted controls
+- [x] T3: FF-1a check 35 file and its paste-safety test
+- [x] T4: FF-1a `MULTI_CURRENCY_SYSTEM.md` notes
 - [x] T5: FF-1b check 32 row, ruled 17-item test edit, metric pin
 - [x] T6: FF-1c checks 33 and 34 files, byte diff, tests
 - [x] T7: FF-1d guard (per SA-W-FF-1)
@@ -442,6 +442,61 @@ No finance file, page or route was touched.
 
 A note from the build: an inline Node edit once wrote raw backspace bytes into two regexes (`\b`). The read-only test then passed vacuously. The bad bytes were found and fixed, and the file now contains no 0x08 byte. The planted control is what caught it.
 
+### FF-1a (BQ-20 answered 2026-10-18: yes, read-only; BD-36)
+
+**2026-10-18, Dev. Implemented, uncommitted, on `feature/bos-finance-ff1a` (fresh from main `399070d4`, which includes #463). No database change, no migration.**
+
+| File | Change |
+|---|---|
+| `app/admin/exchange-rates/page.tsx` | Read-only (194 lines removed, 18 added). Five handlers are gone: `handleEditStart`, `handleEditCancel`, `handleEditSave`, `handleToggleEnabled` (the direct UPDATE) and the dead `handleFetchCurrentRates` (an outside fetch plus writes). The state only they used is gone (`saving`, `success`, `editingRate`, `editedValue`, `fetchingRates`), along with the success alert, which only writes could set. The `CurrencyService` import and the `Save`, `Edit`, `Check` and `CheckCircle` icons are removed. The rate cell is plain text, and the status toggle is a `<span>` with the same classes minus hover / cursor (SA-W-FF-5). The actions cell keeps only History. Line 3, the M-8 REDUNDANT header, is untouched; the line 5 FU-M8-1 comment now says read-only, check 35 and FF-2. Reads, Refresh, the history panel and the page copy are unchanged, and there is no visible notice (BD-34, G-3) |
+| `app/admin/__tests__/redundantPages.source.guard.test.ts` | Additions only: G-6a has no write, RPC, rate-service or `fetch(` token; G-6b allows only `.from('exchange_rates')` / `.from('exchange_rate_history')`, each followed by `.select(`. Planted controls for each of the 8 tokens, for a comment, for another table and for a from() that is not a select. G-1 to G-5 are unchanged |
+| `scripts/check-bos-exchange-rates-write-access.sql` | Check 35, per §6.1 plus FF1-R2: a `select_policies` column, and a header that says FF-2 revokes writes only and that `grant_select` for authenticated must stay true |
+| `supabase/migrations/__tests__/business-os-finance-snapshots.migration.test.ts` | `CHECK_35` joins `PASTED` (SA-W-FF-3); a new FF-1a describe: one statement with a header, read only once comments and literals are blanked, both tables and both roles, the FF1-R2 columns and policy commands, the FF-2 header rule, and a planted control |
+| `docs/MULTI_CURRENCY_SYSTEM.md` | Features §5 note says read-only since FF-1a, with check 35 and FF-2; Change History row |
+| `docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md` | BD-36 row; a §0.2 log line; §0.4 rows BQ-20 (answered), FU-M8-1 (closed by FF-1a) and FF-2 (follow-up); Change History row. Additions only (6 lines) |
+
+**`console.*` (CLAUDE.md, touched files):**
+- The page has 0, already converted to Pino by M-8. The guard, the test, the SQL and the docs have 0.
+- `lib/services/CurrencyService.ts` (9) and `components/settings/CurrencySelector.tsx` (3) are **not touched**: the page no longer imports `CurrencyService`. They are flagged for visibility only. Conversion is offered for whichever slice next opens them.
+
+**D-FF1a-1 (fixed at the coordinator's request):** the table subtitle was "All rates are relative to 1 USD. Update rates manually or connect to an API provider.", which became untrue. It now reads "Read only. All rates are relative to 1 USD; no calculation uses them." No test asserted the old text, and no pin was touched. The ESLint warnings left on the page were there before: `DollarSign` unused, and 2 `any` in the read loaders (down from 5, since the write handlers that held the other 3 are removed).
+
+**Proofs:**
+- **G-6 bites the old page.** With `git show HEAD:` of the page put back, the guard failed 2 tests (G-6a, G-6b). With the new page restored (`cmp` identical) it passed 21 of 21.
+- **Check 35 on PGlite 0.5.8, scratchpad only:**
+  - (A) With no tables, 4 rows, all null.
+  - (B) RLS on, an authenticated write grant, one SELECT policy only: the write grants show true, `write_policies` is null, so the database is closed. `select_policies = read_all`.
+  - (C) After adding an UPDATE policy, and with history on RLS off plus a PUBLIC INSERT grant: `write_policies = admin_write`, and history shows `rls_on = false` with `grant_insert = true`, so the database is open. The reading rule in §6.1 gives the right answer in each case.
+- **Scoped tsc with a canary.** A temp tsconfig included the page, the guard and the migration test. A planted `const __ff1aCanary: number = "canary"` gave TS2322 at `page.tsx(364,7)`, which proves the page was checked. The page was then restored from a copy, byte-identical (sha256 `36bde993…a53c`), and the clean run had 0 errors in the scoped files. The temp config was deleted.
+
+**Runs:**
+
+| Run | Result |
+|---|---|
+| `app/admin/__tests__` | 16 suites, 612 passed |
+| `app/admin/exchange-rates` | no tests in the folder |
+| `supabase/migrations/__tests__` + `scripts` | 58 suites, 2926 passed (migration test 41) |
+| `app/admin/components` | 25 suites, 824 passed |
+| Vocabulary guard `aiCostVocabulary.source.guard.test.ts` | 182 passed |
+| Range-cap guard | 21 passed |
+| `test:authz-guard` | 2 suites, 203 passed |
+| `test:bos-entitlements` | 294 suites, 8880 passed |
+| `lint:hooks` | exit 0 |
+| ESLint on the page and the guard | 0 errors |
+
+**Pins (recomputed, HEAD blob, `git diff --quiet`):** all seven unchanged.
+- AC-173 `3a1a2dd4…f6f8`
+- helper `b84e0c96…aabf`
+- A `30f5fc24…2e01`
+- B `24ff0da7…df9f`
+- C `98ea0507…1e4b`
+- helper `02813360…5bd8`
+- D `1f7cf07a…f144`
+
+No finance file, page or route was touched.
+
+**Owed to the user after merge (read only):** run check 35 once on production and send the result. It decides whether FF-2 is needed.
+
 ## SA Review Notes
 
 ### SA Workplan Review
@@ -531,6 +586,26 @@ What is lost is the admin's ability to edit stored rate values and the enabled f
 - **B-2.** Purge repository: the `via`-parent id reads use `.limit(5000)`, which PostgREST cuts to 1,000. The cuts are at `BusinessPurgeRepository.ts:181` (preview count) and `:417` (snapshot read). The preview under-counts with `truncated` never set (`:200`), and the pre-delete snapshot omits child rows of parents beyond the first 1,000. The delete (`purge_business_data` RPC) is unaffected. **Fix:** keyset-page the parent ids at 1,000. Send the `.in()` filter in chunks of 100 ids, because one URL with 1,000 uuids is about 37 KB. Make "truncated" mean the true ceiling. Test with a 1,000-row capped mock. **This must land before Reset or Purge is switched on.**
 
 #### Code Approved for QA: Yes
+
+### SA Code Review (FF-1a, BD-36)
+
+**Code Review by SA, 2026-10-18. Reviewed: the uncommitted tree on `feature/bos-finance-ff1a` (from main `399070d4`).**
+**Status: Code Approved (SA-CR-FF1a).** One trivial condition.
+
+| Item | Result |
+|---|---|
+| No write path | ✅ `page.tsx` has no `.insert(` / `.update(` / `.upsert(` / `.delete(` / `.rpc(`, no `updateRate`, no `createCurrencyService` and no `fetch(`. Its only Supabase calls are the `.from('exchange_rates')` and `.from('exchange_rate_history')` SELECTs (`:67`, `:83`). **No API route under `app/api/` names `exchange_rates`**, so no server write remains for this page. The G-6 guard pins all of this, with planted controls |
+| Currency picker | ✅ `lib/services/CurrencyService.ts` and `components/settings/CurrencySelector.tsx` are **unmodified** (`git diff --quiet`). The picker's browser SELECT (`getAllRates`) is unchanged, so it works, and the touched-file `console.*` rule does not apply. `components/settings` tests pass |
+| Display | ✅ The status is a `<span>` (no click). Only the History button remains. The subtitle "Read only. All rates are relative to 1 USD; no calculation uses them." is accurate (BD-12). There is no notice component (G-3) |
+| M-8 REDUNDANT header | ✅ Line 3 is kept verbatim, `'use client'` is first, and the FU-M8-1 lines are updated to point at check 35 and FF-2. G-1 to G-5 pass |
+| Check 35 | ✅ Paste-safe: ASCII, no editor word, no apostrophe in a comment, one result set, guarded for a missing table. It includes `select_policies` (FF1-R2) and the "FF-2 revokes writes only; authenticated SELECT must stay" rule. It is in the `PASTED` set |
+| Requirement | ✅ BD-36 (`§0.2`), BQ-20 answered, FU-M8-1 closed and FF-2 (writes-only lockdown, not scheduled) in §0.4, and the Change History row. `docs/MULTI_CURRENCY_SYSTEM.md` notes are updated |
+| Seven Finance pins (SA recomputed) | ✅ `3a1a2dd4` `b84e0c96` `30f5fc24` `24ff0da7` `98ea0507` `02813360` `1f7cf07a` |
+| SA re-run | ✅ The M-8 redundant-pages guard, the migration test (check 35), `components/settings` and the vocabulary guard: **259 passed** |
+
+**Condition FF1a-C1 (trivial):** remove the unused `DollarSign` import (`page.tsx:12`, eslint no-unused-vars). The file is touched, so it must leave no dead import. The two remaining `catch (err: any)` warnings are in the untouched read loaders (VL-6) and are left as planned. ESLint goes from 9 warnings at HEAD to 3 now.
+
+#### Code Approved for QA: Yes, after FF1a-C1
 
 ## QA Testing Report
 
@@ -650,6 +725,72 @@ None new. SA's B-1 (BizQL truncation flags never fire) and B-2 (purge via-parent
 - [x] FF-1b, FF-1c and FF-1d meet their criteria. One Low bug (QA-FF1-1) is recorded and not blocking; Dev may add the two-line pin before RM commits, or SA may rule it into FF-3. No High or Medium issue is open.
 - [ ] Issues found — Dev must address before commit
 
+## QA Report — FF-1a
+
+**QA — 2026-10-18** (worktree `neuronforge-finance-m8`, branch `feature/bos-finance-ff1a` on `399070d4`, uncommitted; BQ-20 answered yes, BD-36)
+**Test mode:** full
+**Strategy used:**
+- **A + C:** Jest guards and the migration test, run one at a time.
+- A code read of the page.
+- **PGlite 0.5.8** (scratchpad, never production) for check 35, with stand-in `exchange_rates` / `exchange_rate_history` tables and the roles.
+- A scoped tsc with a canary.
+
+**Focus:** security, ui
+**Skipped:** the live browser look (user, below).
+**Input source:** prompt + workplan
+
+**Verdict: PASS. No bugs.**
+
+### Checks
+
+| Item | Result |
+|---|---|
+| **No edit control renders** | The page's only buttons are **Refresh** (`loadExchangeRates`, a read), the error **dismiss**, and **History** (a toggle). The rate cell is plain text and the status is a `<span>` with no click (SA-W-FF-5) |
+| **No browser-side write to the rate tables remains** | 0 matches in `page.tsx` for `.update(`, `.insert(`, `.upsert(`, `.delete(`, `.rpc(`, `updateRate`, `createCurrencyService` and `fetch(`. Its only two `.from(` calls (`:67`, `:83`) are each followed by `.select('*')`. Guard G-6a / G-6b are green; Dev's "G-6 bites the old page" proof is recorded above |
+| **Subtitle** | `page.tsx:164` reads exactly "Read only. All rates are relative to 1 USD; no calculation uses them." (D-FF1a-1) |
+| **The settings currency picker still lists currencies** | `components/settings/CurrencySelector.tsx` and `lib/services/CurrencyService.ts` are **untouched** (`git diff --quiet HEAD`). The picker reads through `getAllRates()`, a browser `.select('*')`, and FF-1a changes no table, grant or policy, so its read is unchanged. It type-checks clean in the scoped tsc |
+| **Check 35, paste-safety** | `scripts/check-bos-exchange-rates-write-access.sql`: LF (0 CR), ASCII, 0 "into", 0 apostrophes in comments, no doubled quote, one `;` (one result set), no `SET`. Its 6 privilege words are all inside `has_*_privilege` string literals (**0** outside strings and comments) |
+| **Check 35 on PGlite** | (A) No tables: 4 rows, `table_exists` false. (B) RLS on, authenticated write grants, a SELECT-only policy: the reading rule says **closed**, `grant_select` true for authenticated, `select_policies = read_all` (FF1-R2). (C) An UPDATE policy added: `write_policies = admin_write`, so **open**. History with RLS off and a write grant reads **open**. anon, with no write grant, stays closed |
+| `console.*` | 0 in the page. `CurrencyService.ts` (9) and `CurrencySelector.tsx` (3) are not touched; already flagged by Dev |
+
+### Suite runs (each alone)
+
+| Suite | Result |
+|---|---|
+| `app/admin/__tests__` (touched: `redundantPages.source.guard`) | 16/16, **612/612**. My first run caught the page **mid-edit** (Dev's subtitle change landed at 15:00:56 during the run), and 2 G-6 cases failed. Re-run on the settled tree: green, and the guard alone 21/21 |
+| `supabase/migrations/__tests__` + `scripts` (touched: check 35 in `PASTED`) | 58/58, 2926/2926 |
+| `app/admin/components` | 25/25, 824/824 |
+| Vocabulary guard | 182/182; unedited |
+| Range-cap guard | 21/21 |
+| `npm run test:authz-guard` | 2/2, 203/203 |
+| `npm run test:bos-entitlements` | 294/294, 8880/8880 |
+| `npm run lint:hooks` | exit 0 |
+
+These match Dev's counts.
+
+**Scoped tsc** (the page, the guard, the migration test and `CurrencySelector.tsx`): a canary in `page.tsx` gave `(363,7) TS2322`; the file was restored with `cp` and checked with `cmp` (identical); the clean run gives **0 errors**.
+
+**Pins (LF-normalised):** `3a1a2dd4` `b84e0c96` `30f5fc24` `24ff0da7` `98ea0507` `02813360` `1f7cf07a`, all unchanged. `git diff --quiet HEAD` is clean on `app/admin/finance`, `lib/business-os/finance`, `app/api`, `app/admin/components`, `lib/repositories` and `20261078`.
+
+### Issues Found
+- **Bugs:** none.
+- **Performance:** none.
+- **Notes:** check 35 on production decides FF-2 (owed to the user, below).
+
+### User browser steps (after merge; signed in as an admin)
+1. Open `/admin/exchange-rates` by URL (it is not in the sidebar, by design).
+   - The rates table renders with the subtitle "Read only. All rates are relative to 1 USD; no calculation uses them."
+   - No Edit or Save control, no fetch-rates button, and clicking a status badge does nothing.
+   - **Refresh** reloads, and **History** still opens a currency's history.
+2. Open your **user settings → currency picker**: it still lists the currencies.
+3. Supabase SQL editor, new tab: paste `scripts/check-bos-exchange-rates-write-access.sql` (check 35) and send the 4 rows to the session.
+   - A browser write is still possible only where a `grant_insert`, `grant_update` or `grant_delete` is true **and** either `rls_on` is false or `write_policies` is set. That would mean FF-2.
+   - `grant_select` for authenticated must stay true.
+
+### Final Status
+- [x] FF-1a meets its criteria. No bugs. Ready for RM; the production check 35 run is owed by the user after merge.
+- [ ] Issues found
+
 ## Commit Info
 
 [RM will populate this section]
@@ -664,3 +805,5 @@ None new. SA's B-1 (BizQL truncation flags never fire) and B-2 (purge via-parent
 | 2026-10-18 | Implemented FF-1b to FF-1d (Dev) | Uncommitted. Check 32 metric row (PGlite proof), checks 33 and 34 as files (byte-identical), range-cap guard with an FF-3 baseline of 20 call sites in 12 files (D-1, D-2 for SA). Pins unchanged |
 | 2026-10-18 | SA workplan review | APPROVED WITH CONDITIONS (SA-WR-FF1): FF-1b to FF-1d may start; FF-1a technically approved, waits for BQ-20, can ship separately (read-only breaks nothing: the settings picker reads all rows, no FX). FF1-R1 widen the guard to .limit and object PAGE_SIZE keys, baseline 3 existing .limit offences (FF-3); FF1-R2 check 35 select_policies and keep authenticated SELECT; FF1-R3, FF1-R4 |
 | 2026-10-18 | SA code review (FF-1b to FF-1d) | Code Approved (SA-CR-FF1). 20-entry shrink-only baseline accepted (FF-3 split per owner). B-1 BizQL truncation flags never fire: latent, wrong answers above 1,000 rows. B-2 purge via-parent cap: latent; preview and snapshot incomplete, delete unaffected; must land before Reset or Purge is switched on |
+| 2026-10-18 | FF-1a implemented (Dev) | BQ-20 answered yes (BD-36). Page read-only, guard G-6, check 35 with select_policies, MULTI_CURRENCY note, requirement BD-36 / log / §0.4 rows. Uncommitted on feature/bos-finance-ff1a; pins unchanged; no migration |
+| 2026-10-18 | SA code review (FF-1a) | Code Approved (SA-CR-FF1a): no write path (page or API), picker and services untouched, check 35 paste-safe, REDUNDANT header kept, BD-36 and FF-2 rows present, pins unchanged; FF1a-C1 remove the unused DollarSign import |
