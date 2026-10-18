@@ -14,6 +14,9 @@
  *       names either page route in code (comments stripped), and only the
  *       dashboard page names its API route;
  *   G-5 (RP-7, AC-240) Exchange rates logs through Pino, never `console.`.
+ *   G-6 (FF-1a, FU-M8-1, BQ-20 answered 2026-10-18) Exchange rates is read
+ *       only: no write, RPC, rate service or outside fetch, and its only
+ *       Supabase calls are SELECTs on the two rate tables.
  *
  * Every rule is a pure function run on the real files AND on a planted control
  * that must trip it (M8-R3): a rule that cannot match looks exactly like a rule
@@ -75,6 +78,23 @@ const linkHits = (raw: string): string[] => {
 
 /** G-5: a console call in code. */
 const hasConsole = (raw: string): boolean => /\bconsole\./.test(stripComments(raw));
+
+/** G-6: write, RPC, rate-service and outside-fetch tokens in code (comments stripped). */
+const WRITE_TOKENS = ['.update(', '.insert(', '.upsert(', '.delete(', '.rpc(', 'updateRate', 'createCurrencyService', 'fetch('];
+const writeHits = (raw: string): string[] => {
+  const code = stripComments(raw);
+  return WRITE_TOKENS.filter((token) => code.includes(token));
+};
+
+/** G-6: the tables a file reads with `.from('…')`, and whether every `.from(` is followed by `.select(`. */
+const READ_TABLES = ['exchange_rate_history', 'exchange_rates'];
+const fromCalls = (raw: string): { tables: string[]; allSelect: boolean } => {
+  const code = stripComments(raw);
+  const tables = [...code.matchAll(/\.from\(\s*'([^']+)'\s*\)/g)].map((m) => m[1]);
+  const froms = (code.match(/\.from\(/g) ?? []).length;
+  const selects = (code.match(/\.from\(\s*'[^']+'\s*\)\s*\.select\(/g) ?? []).length;
+  return { tables: [...new Set(tables)].sort(), allSelect: froms === selects };
+};
 
 /** Every non-test `.ts` / `.tsx` file under `dir`, recursively. */
 function walk(dir: string): string[] {
@@ -148,6 +168,16 @@ describe('G-5: Exchange rates logs through Pino (RP-7, AC-240)', () => {
   });
 });
 
+describe('G-6: Exchange rates is read only (FF-1a, FU-M8-1)', () => {
+  it('has no write, RPC, rate service or outside fetch', () => {
+    expect(writeHits(read(EXCHANGE_PAGE))).toEqual([]);
+  });
+
+  it('only SELECTs the two rate tables', () => {
+    expect(fromCalls(read(EXCHANGE_PAGE))).toEqual({ tables: READ_TABLES, allSelect: true });
+  });
+});
+
 // ── Planted controls (M8-R3): each rule must trip ───────────────────────────
 
 describe('planted controls (no dead rule)', () => {
@@ -183,5 +213,28 @@ describe('planted controls (no dead rule)', () => {
   it('G-5 trips on a planted console call, and ignores one in a comment', () => {
     expect(hasConsole("    console.error('Error loading history:', err);")).toBe(true);
     expect(hasConsole('// the old console.error is gone\nlogger.error({ err }, "x");')).toBe(false);
+  });
+
+  it('G-6 trips on each planted write token, and ignores one in a comment', () => {
+    const planted: Record<string, string> = {
+      '.update(': "await supabase.from('exchange_rates').update({ is_enabled: false }).eq('id', id);",
+      '.insert(': "await supabase.from('exchange_rates').insert(row);",
+      '.upsert(': "await supabase.from('exchange_rates').upsert(row);",
+      '.delete(': "await supabase.from('exchange_rates').delete().eq('id', id);",
+      '.rpc(': "await supabase.rpc('set_rate', { code });",
+      updateRate: 'await service.updateRate(code, 1.2, userId);',
+      createCurrencyService: 'const service = createCurrencyService(supabase);',
+      'fetch(': "await fetch('https://api.example.com/latest/USD');",
+    };
+    for (const token of WRITE_TOKENS) {
+      expect({ token, hits: writeHits(planted[token]) }).toEqual({ token, hits: [token] });
+    }
+    expect(writeHits('// no .update( or fetch( here any more\nconst a = 1;')).toEqual([]);
+  });
+
+  it('G-6 trips on another table and on a from() that is not a select', () => {
+    expect(fromCalls("supabase.from('profiles').select('*');").tables).toEqual(['profiles']);
+    expect(fromCalls("supabase.from('exchange_rates').select('*');")).toEqual({ tables: ['exchange_rates'], allSelect: true });
+    expect(fromCalls("supabase.from('exchange_rates').eq('id', x);").allSelect).toBe(false);
   });
 });
