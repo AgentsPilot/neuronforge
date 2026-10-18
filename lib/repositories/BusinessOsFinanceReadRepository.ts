@@ -482,6 +482,12 @@ export class BusinessOsFinanceReadRepository {
   }
 
   /**
+   * NOT WIRED since Finance R4 (2026-10-18): with a test row and a live row for
+   * one account this read fails on the duplicate (P8A-R4). The finance wiring
+   * now reads status for the current Stripe mode through
+   * `lib/admin/billing/currentModeBillingStatus.ts`. Kept only as the
+   * source of the deps type; removal is follow-up R4-FU-1.
+   *
    * R-c. The billing status of EVERY account that has a billing row, test or
    * real mode (BD-14), keyset-paged on `user_id`. Rows detached from a deleted
    * account (`user_id` NULL) are skipped in the query: keyset paging cannot
@@ -541,6 +547,10 @@ export class BusinessOsFinanceReadRepository {
   }
 
   /**
+   * NOT WIRED since Finance R4 (2026-10-18), for the same reason as R-c: with
+   * two rows `maybeSingle` errors (P8A-R4). Kept only as the deps type source;
+   * removal is follow-up R4-FU-1.
+   *
    * R-c′. The billing status of ONE account, test or real mode (BD-14), or
    * `null` when it has no billing row. One row per account is assumed (BD-16):
    * with two, `maybeSingle` fails and the error is RETURNED, never thrown, so

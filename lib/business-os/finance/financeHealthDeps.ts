@@ -11,7 +11,11 @@
  *     response or a log;
  *   - the ledger read repository: the all-accounts and one-account reads by
  *     time, and the charges by action id (declared on its importer guard);
- *   - the finance read repository: billing status and revenue head counts,
+ *   - the billing status of every account or the picked one, read for the
+ *     CURRENT Stripe mode only (Finance R4, P8A-R4) through
+ *     `currentModeBillingStatus`, which reuses the plan payments one-mode
+ *     reader and its key resolution; R-c and R-c' are no longer wired;
+ *   - the finance read repository: revenue head counts,
  *     the client payments and refunds (layer B, slice 2a), and the overdue
  *     invoices and instalments, and client plans (layer B, slice 2b), and the
  *     boost purchases paid in the window (layer A, slice 4a), the paid
@@ -55,6 +59,10 @@ import 'server-only';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsCreditLedgerReadRepository } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import { businessOsFinanceReadRepository } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+import {
+  findCurrentModeBillingStatusForAccount,
+  listCurrentModeBillingStatusesAllAccounts,
+} from '@/lib/admin/billing/currentModeBillingStatus';
 import {
   businessOsCreditLotRepository,
   type BusinessOsCreditLotRepository,
@@ -123,8 +131,9 @@ export function financeHealthDeps(): Omit<
       findChargesByActionIds: (actionIds) => businessOsCreditLedgerReadRepository.findChargesByActionIds(actionIds),
     },
     finance: {
-      listBillingStatusesAllAccounts: (opts) => businessOsFinanceReadRepository.listBillingStatusesAllAccounts(opts),
-      findBillingStatusForAccount: (accountId) => businessOsFinanceReadRepository.findBillingStatusForAccount(accountId),
+      // Finance R4: billing STATUS is the current Stripe mode only (PF-15); revenue below still counts both (BD-14).
+      listBillingStatusesAllAccounts: (opts) => listCurrentModeBillingStatusesAllAccounts(opts),
+      findBillingStatusForAccount: (accountId) => findCurrentModeBillingStatusForAccount(accountId),
       countRevenueRows: () => businessOsFinanceReadRepository.countRevenueRows(),
       listClientPaymentsAllAccountsPaidInRange: (range, opts) =>
         businessOsFinanceReadRepository.listClientPaymentsAllAccountsPaidInRange(range, opts),
