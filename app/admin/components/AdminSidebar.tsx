@@ -28,7 +28,8 @@ import {
   Archive,
   Clock,
   MailPlus,
-  Wallet
+  Wallet,
+  CreditCard
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -77,6 +78,7 @@ interface NavSection {
  * check, moved out of the Business OS AI page) and AI calls & usage (detail).
  * Nothing with action buttons is in it. This is the user's recorded exception
  * to the fixed sidebar of the Admin Layout Standard (§11H.0, BQ-1 and BQ-6).
+ * Plan payments P-8a.1 (BD-23) adds Subscriptions, read-only, after Finance.
  *
  * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
  * the database straight from the browser, so surfacing it would widen exposure.
@@ -131,6 +133,14 @@ const navigationSections: NavSection[] = [
         href: '/admin/finance',
         icon: Wallet,
         description: 'Revenue, AI cost and credits, Business OS'
+      },
+      {
+        // Plan payments P-8a.1 (BD-23, AM-2, AM-3): the subscriptions list,
+        // its totals and MRR. Read-only.
+        name: 'Subscriptions',
+        href: '/admin/subscriptions',
+        icon: CreditCard,
+        description: 'Plan subscriptions and MRR, Business OS'
       },
       {
         // M-5 (BD-24, SA-Q58): the cost report and the Leak check, moved out of
