@@ -1,6 +1,6 @@
 # Test Account Cleanup Runbook
 
-> **Last Updated**: 2026-10-08
+> **Last Updated**: 2026-10-18
 
 ## Overview
 
@@ -205,6 +205,50 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 
 **The whole feature.** Roll back each newer version first (newest first), then run `supabase/SQL Scripts/20261041_operator_test_account_cleanup_rollback.sql` in the SQL editor. It drops the function, the secret table and the schema. Then remove `TEST_CLEANUP_SECRET` from Vercel and redeploy. The pasted files above keep working without either.
 
+## 7. Close and anonymise a real account (data export DE-10b.1)
+
+Requirement [BUSINESS_OS_DATA_EXPORT_DE10B_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_DATA_EXPORT_DE10B_REQUIREMENT.md), workplan [BUSINESS_OS_DATA_EXPORT_DE10B1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10B1_WORKPLAN.md).
+
+From 20261081 the same function has two more modes, `anonymise_check` and `anonymise`. On `/admin/users` the drawer's cleanup offers **"Customer account: close and anonymise (keeps our billing)"** (the default) beside **"Test account: remove completely"** (sections 1 to 6). `/test-business-os` stays hard-only.
+
+**What the anonymise does, in one transaction.** The business data is deleted (the hard plan minus the keep-set: our billing, the AI-cost ledger, the consent ledger, the invitation link). The kept rows stay under the same account id with their personal columns blanked (`BLANK_LIST` in the generator). Every invite the account sent is deleted. Invites it redeemed keep their row, with the email set to the placeholder and the notes emptied. The login is closed in place: email `deleted-{ref}@deleted.invalid`, no password, phone, identities, sessions, tokens or MFA, banned for 100 years, and its rows in Supabase's own auth log are deleted. The original email can sign up again. A deletion receipt is written last. Any failure rolls all of it back.
+
+**What still blocks.** G-1, G-2a (the email and the picked account are the same login), G-3, G-4, G-6 (a running plan), G-8, G-9 C1 and C2 (live client money), G-10 to G-13, G-16 to G-22. Reported only, never blocking: G-5 and G-7 (billing kept), G-9 C3 (sent or overdue invoices, deleted with the account), G-14 (consent kept), G-15 (invitation link kept).
+
+**Every admin delete needs a reason.** "The customer asked", "Test account" or "Other" (5 to 500 characters, no names or emails). The hard delete takes only "Test account": the server answers 400 for any other reason in that mode. The note is stored in the receipt only, never logged or audited.
+
+### 7.1 The receipt fingerprint key
+
+Every delete, hard or anonymise, writes a receipt with a keyed fingerprint of the email, never the email. The key is `DELETION_RECEIPT_FINGERPRINT_KEY` (server env, at least 32 characters, for example `openssl rand -base64 48`). Set it in Vercel **Production and Preview** before the deploy. Until it is set, every admin delete answers 503 "not configured" and removes nothing.
+
+⚠️ **Store a copy in the password manager.** Losing or changing the key makes every older receipt unsearchable by email (release 3 lookup). Never commit it. A rotation needs a new `FINGERPRINT_KEY_VERSION` in `lib/business-os/account-deletion/receiptFingerprint.ts`, and the old key kept for lookups.
+
+### 7.2 Apply order on prod (manual, in the SQL editor)
+
+| Step | What | Pass |
+|---|---|---|
+| 0 | Set `DELETION_RECEIPT_FINGERPRINT_KEY` in Vercel Production and Preview (7.1) | Before step 5 |
+| 1 | `scripts/precheck-de10b-deletion-receipts.sql` (read-only) | Every row `ok`. Row 1 proves 20261077 is live |
+| 2 | `supabase/migrations/20261080_business_os_deletion_receipts.sql` | Applies with no exception (it checks itself) |
+| 3 | `supabase/migrations/20261081_operator_account_cleanup_anonymise.sql` | Applies. It refuses until 20261080 is applied |
+| 4 | `scripts/check-de10b-deletion-receipts-migration.sql` (read-only) | Every row `ok` |
+| 5 | Merge, then the Vercel deploy | The admin Check answers (no `function_out_of_date`) |
+| 6 | Probe: the admin **Check** in both modes on one `+test` account and one real account | The verdict renders. Checks are read-only in the database |
+
+Between steps 3 and 5 every admin check and delete answers 503 `function_out_of_date`. Keep that window short.
+
+### 7.3 Roll back
+
+1. Run `supabase/SQL Scripts/20261081_operator_account_cleanup_anonymise_rollback.sql`. It drops the 8-argument function first, restores the 20261077 function byte for byte with its 6-argument grants, and reloads PostgREST.
+2. Redeploy the previous build (it pins the 20261077 stamp `b78b4579fc6631f8`).
+3. Leave 20261080 in place. Its rollback (`supabase/SQL Scripts/20261080_business_os_deletion_receipts_rollback.sql`) refuses once any receipt exists, and an empty table is harmless.
+
+Accounts already closed are **not** restored by a rollback. Nothing can restore them, by design (UD-6).
+
+### 7.4 A correction to the "kept" note of the hard check (SA W-12)
+
+The hard check's `kept` row says a redeemed invite "holds only the pseudonymous id". It also holds the invitee's email. For a test account this is low risk. The anonymise mode blanks that email (O-4). The pasted files keep the old wording so their bytes stay unchanged in DE-10b.1; correct it the next time the hard plan changes.
+
 ## What blocks, and why
 
 | Guard | Blocks when |
@@ -228,6 +272,10 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 | G-17 | A trigger nobody has reviewed sits on a table the script empties, or on a table the login delete reaches |
 | G-18 | A row of another account points at something the script removes, so it would be deleted or emptied with it. Or such a link has not been reviewed yet |
 | G-19 | Removing a row would empty a NOT NULL column of another table this script empties later (ON DELETE SET NULL or SET DEFAULT), which the database refuses with 23502. A plan defect, never an account one: engineering reorders the generator |
+| G-2a | (anonymise only) The email and the account picked on the row are not the same login |
+| G-20 | (anonymise only) The Supabase auth schema changed: a column the closure writes is missing, a new auth table links to the login or has a `user_id`, a must-be-empty auth row names the login, or the function owner lost a privilege |
+| G-21 | (anonymise only) An UPDATE trigger nobody reviewed sits on `auth.users` or on a table the anonymise blanks |
+| G-22 | (anonymise only) A kept table links to a table the anonymise empties, other than the two reviewed consent links (SET NULL on `contact_id`) |
 
 ---
 
@@ -235,6 +283,7 @@ On a `+test` account only: run one check, then one delete, from the Danger Zone 
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-18 | Section 7, DE-10b.1 | Close and anonymise (modes `anonymise_check` / `anonymise`, migration 20261081), the deletion receipt (20261080), the required reason, the fingerprint key and its loss warning, the apply order and the rollback. G-2a, G-20 to G-22. W-12 note on the hard check's kept row |
 | 2026-10-09 | AU-1, `/admin/users` | The same panel runs from each expanded business row on `/admin/users`, email locked, tag = email, any account; every other guard applies. "Never frees the email" now applies to the AD-2/AD-3 purge path only. See TEST_ACCOUNT_CLEANUP_ADMIN_USERS_AMENDMENT.md |
 | 2026-10-08 | Section 6.1.1, 20261047 | The admin page delete writes the admin as `user_id` and `actor_id` on its audit row (AD-2 convention); the pasted file still writes NULL |
 | 2026-10-08 | Cascade note | Reading the result: rows removed by a cascade from a deleted parent are not listed, so the TOTAL can be lower than the check's "Rows to remove" |

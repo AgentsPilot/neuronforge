@@ -149,7 +149,7 @@ describe('the check', () => {
   it('posts { email, tag } with the default +test tag, trimmed', async () => {
     await checked(`  ${EMAIL}  `);
     expect(posts('/check')).toHaveLength(1);
-    expect(posts('/check')[0].body).toEqual({ email: EMAIL, tag: '+test' });
+    expect(posts('/check')[0].body).toEqual({ mode: 'hard', email: EMAIL, tag: '+test' });
   });
 
   it('refuses to run with an empty tag, but accepts any other tag', async () => {
@@ -165,7 +165,7 @@ describe('the check', () => {
     expect(screen.queryByTestId('cleanup-empty-tag-hint')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Check' }));
     await screen.findByTestId('cleanup-check-result');
-    expect(posts('/check')[0].body).toEqual({ email: 'a@walla.co.il', tag: '@walla.co.il' });
+    expect(posts('/check')[0].body).toEqual({ mode: 'hard', email: 'a@walla.co.il', tag: '@walla.co.il' });
   });
 
   it('OK: verdict, rows (unknown not 0), triggers, kept; the confirm field appears', async () => {
@@ -335,7 +335,7 @@ describe('confirm and delete', () => {
     const report = await screen.findByTestId('cleanup-report');
 
     expect(posts('/delete')).toHaveLength(1);
-    expect(posts('/delete')[0].body).toEqual({ email: EMAIL, tag: '+test', confirmEmail: EMAIL });
+    expect(posts('/delete')[0].body).toEqual({ mode: 'hard', email: EMAIL, tag: '+test', confirmEmail: EMAIL, reason: { category: 'test_account' } });
 
     const rows = within(report).getAllByRole('row');
     expect(rows[1]).toHaveTextContent('business_os_contacts4');
@@ -501,7 +501,13 @@ describe('source guard', () => {
     for (const spec of imports) {
       expect(spec).not.toMatch(/lib\/repositories|server-only|supabase|lib\/server|lib\/logger|runCleanupDelete|cleanupFunctionVersion/);
     }
-    expect(imports.filter((spec) => spec.startsWith('@/'))).toEqual(['@/lib/business-os/test-account-cleanup/cleanupApiTypes']);
+    // DE-10b.1: the reason list is shared with the route; it is client-safe (zod only).
+    expect(imports.filter((spec) => spec.startsWith('@/'))).toEqual([
+      '@/lib/business-os/test-account-cleanup/cleanupApiTypes',
+      '@/lib/business-os/account-deletion/reason',
+    ]);
+    const reason = readFileSync(join(__dirname, '..', '..', '..', '..', 'lib', 'business-os', 'account-deletion', 'reason.ts'), 'utf-8');
+    expect([...reason.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1])).toEqual(['zod']);
   });
 
   it('its types file imports nothing', () => {

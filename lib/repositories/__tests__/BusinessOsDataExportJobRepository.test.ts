@@ -41,7 +41,7 @@ function client(...results: Result[]) {
   let next = 0;
   const take = () => results[Math.min(next++, results.length - 1)] ?? { data: null, error: null };
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'update', 'eq', 'neq', 'is', 'in', 'lt', 'lte', 'order', 'limit', 'maybeSingle']) {
+  for (const method of ['select', 'update', 'eq', 'neq', 'is', 'not', 'in', 'lt', 'lte', 'order', 'limit', 'maybeSingle']) {
     builder[method] = (...args: unknown[]) => {
       calls.push({ method, args });
       return builder;
@@ -471,5 +471,46 @@ describe('tenant isolation negative control', () => {
     expect(await run((r) => r.markOwnerDownloaded(JOB, OWNER))).toBe(true);
     expect(await run((r) => r.expireOtherReady(OWNER, JOB, 'owner'))).toBe(true);
     expect(await run((r) => r.markExpired(JOB, OWNER))).toBe(true);
+    expect(await run((r) => r.findDeletionFacts(OWNER))).toBe(true);
+  });
+});
+
+describe('findDeletionFacts (DE-10b.1, requirement §5.1)', () => {
+  it('reads the newest delivered owner export and whether an admin prepared one, both on user_id', async () => {
+    const { c, calls } = client(
+      { data: [{ ready_at: '2026-10-10T10:00:00Z', owner_downloaded_at: '2026-10-10T10:05:00Z' }], error: null },
+      { data: null, error: null, count: 2 } as Result
+    );
+    expect(await repo(c).findDeletionFacts(OWNER)).toEqual({
+      data: { ownerLastExportReadyAt: '2026-10-10T10:00:00Z', ownerExportDownloadedAt: '2026-10-10T10:05:00Z', adminExportExisted: true },
+      error: null,
+    });
+    expect(calls.filter((call) => call.method === 'from').map((call) => call.args[0])).toEqual(['business_os_data_exports', 'business_os_data_exports']);
+    expect(eqs(calls)).toEqual([
+      ['user_id', OWNER],
+      ['requested_by_kind', 'owner'],
+      ['user_id', OWNER],
+      ['requested_by_kind', 'admin'],
+    ]);
+    expect(calls).toContainEqual({ method: 'not', args: ['ready_at', 'is', null] });
+    expect(calls).toContainEqual({ method: 'order', args: ['ready_at', { ascending: false }] });
+  });
+
+  it('no export at all: nulls and false', async () => {
+    const { c } = client({ data: [], error: null }, { data: null, error: null, count: 0 } as Result);
+    expect((await repo(c).findDeletionFacts(OWNER)).data).toEqual({
+      ownerLastExportReadyAt: null,
+      ownerExportDownloadedAt: null,
+      adminExportExisted: false,
+    });
+  });
+
+  it('invalid id: an error without a database call; a database error is returned, never thrown', async () => {
+    const bad = client({ data: null, error: null });
+    expect((await repo(bad.c).findDeletionFacts('nope')).error).toBeInstanceOf(Error);
+    expect(bad.calls).toEqual([]);
+    const failing = client({ data: null, error: { message: 'boom', code: '57014' } });
+    expect(await repo(failing.c).findDeletionFacts(OWNER)).toEqual({ data: null, error: expect.any(Error) });
+    expect(JSON.stringify(logged)).toContain('findDeletionFacts');
   });
 });

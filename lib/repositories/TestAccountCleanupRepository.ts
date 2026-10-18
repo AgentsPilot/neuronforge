@@ -1,29 +1,53 @@
 /**
- * Data access for the operator-only test-account cleanup (OX-1r).
+ * Data access for the operator-only account cleanup (OX-1r, extended by data
+ * export DE-10b.1).
  *
  * Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
- * (SA-5, SA-6, SA-10, SA re-ruling R-2, R-5, R-6).
+ * (SA-5, SA-6, SA-10, SA re-ruling R-2, R-5, R-6) and
+ * docs/requirements/BUSINESS_OS_DATA_EXPORT_DE10B_REQUIREMENT.md (SA Review 2).
  *
  * Calls ONE database function, the generated secret-gated cleanup RPC, through
- * the service-role client. No SQL exists here: the guards G-1 to G-19, the
- * deletes, the survivor scan and the success audit row all run inside the
- * function, in PostgREST's single transaction, so any error rolls all of it
- * back. The function refuses with 42501 unless it is sent the second secret
+ * the service-role client. No SQL exists here: the guards, the deletes, the
+ * survivor scan, the success audit row and the deletion receipt all run inside
+ * the function, in PostgREST's single transaction, so any error rolls all of
+ * it back. The function refuses with 42501 unless it is sent the second secret
  * (read by lib/server/testCleanupSecret.ts), whose sha256 only the database holds.
+ *
+ * Four modes. `check` / `delete`: the test-account hard delete, login included
+ * (OX-1r), unchanged except that the delete now also writes a receipt.
+ * `anonymise_check` / `anonymise` (DE-10b.1): close and anonymise a real
+ * account in place. The business data is deleted, our billing rows stay under
+ * the same id with their personal columns blanked, and the login becomes a
+ * tombstone (placeholder email, no password, identities or sessions, banned).
+ *
+ * ── The receipt (SA R-2, O-9) ──────────────────────────────────────────────
+ * The RPC WRITES `business_os_deletion_receipts`: the function inserts the
+ * receipt last, inside its transaction, from `p_receipt` (built and checked by
+ * lib/business-os/account-deletion/receiptInput.ts) plus what it computes
+ * itself. No TS code reads or writes that table in this release; the read
+ * repository arrives with the lookup (release 3, `new-repository` skill).
  *
  * ── Service role, intentionally ────────────────────────────────────────────
  * Only `service_role` holds EXECUTE on the function (R-4), and Storage objects
  * can only be removed through the Storage API. Both uses are this module's
- * whole purpose and sit behind `requireAdmin` in the routes.
+ * whole purpose and sit behind `requireAdmin` in the routes. Only the routes
+ * and runners allow-listed by family 5 of
+ * lib/business-os/purge/__tests__/no-deletion-paths.guard.test.ts may import it.
  *
- * ── Why the user_id rule and tenant-isolation-guard do not apply ──────────
+ * ── tenant-isolation-guard ─────────────────────────────────────────────────
  * CLAUDE.md rule 4 and the `tenant-isolation-guard` skill protect one tenant's
  * request from touching another tenant. This is an operator tool: the target
- * is resolved by EMAIL inside the function, and the guards G-1 to G-19
- * (exactly one login, the email contains the test tag, not an admin, no real
- * money, no other account's rows affected) are its isolation.
+ * is resolved by EMAIL inside the function, and its guards are the isolation.
+ * In the anonymise modes the caller also sends `subject` (the account id the
+ * admin picked on its row), and guard G-2a proves IN THE DATABASE that the
+ * email resolves to exactly that login, so a mismatched pair refuses. The
+ * anonymise also blanks rows of ANOTHER account: the invites the subject
+ * redeemed or claimed, which their issuer keeps (O-4, W-6). Those rows are
+ * found by the subject's own id (`redeemed_account_id` / `claimed_account_id`
+ * equal to it), never by a caller-supplied id.
  *
- * Never log the rpc arguments: they carry the email, the tag and the secret.
+ * Never log the rpc arguments: they carry the email, the tag, the secret and
+ * the receipt (fingerprint, reason note).
  *
  * @module lib/repositories/TestAccountCleanupRepository
  */
@@ -34,6 +58,7 @@ import { createLogger, type Logger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { STORAGE_DESCRIPTORS } from '@/lib/business-os/purge/descriptors';
 import { readTestCleanupSecret } from '@/lib/server/testCleanupSecret';
+import type { DeletionReceiptInput } from '@/lib/business-os/account-deletion/receiptInput';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 
 /** The function's name. The only place under app/ lib/ components/ hooks/ that names it (R-7 guard). */
@@ -49,12 +74,24 @@ const PG_INSUFFICIENT_PRIVILEGE = '42501';
 /** PostgREST: no such function in the schema cache (migration not applied, or cache not reloaded). */
 const PGRST_FUNCTION_MISSING = 'PGRST202';
 
+export type CleanupRpcMode = 'check' | 'delete' | 'anonymise_check' | 'anonymise';
+
 export interface CleanupInput {
   email: string;
   tag: string;
 }
 
 export interface CleanupDeleteInput extends CleanupInput {
+  confirmEmail: string;
+}
+
+/** The anonymise check: the email and the account id picked on the row (G-2a). */
+export interface AnonymiseInput {
+  email: string;
+  subject: string;
+}
+
+export interface AnonymiseDeleteInput extends AnonymiseInput {
   confirmEmail: string;
 }
 
@@ -86,6 +123,11 @@ export interface CleanupCheckResult {
   /** The login the email resolved to, when exactly one matched. */
   targetUserId: string | null;
   blockers: CleanupBlocker[];
+  /**
+   * Informational guard rows (anonymise modes only, workplan §3.2): reported,
+   * never blocking. For example "billing will be kept". Always [] in hard mode.
+   */
+  notes: CleanupBlocker[];
   /** The files under the account folder (G-12), by bucket and path. */
   storageObjects: StorageObjectRef[];
   rows: CleanupCheckRow[];
@@ -109,9 +151,23 @@ export interface CleanupReport {
   };
 }
 
+/** What the anonymise returns, built in its own transaction (workplan §3.5). */
+export interface AnonymiseReport {
+  receiptId: string;
+  placeholderRef: string;
+  receiptMode: 'anonymised' | 'pseudonymised_billing_kept';
+  rowsRemoved: number;
+  tablesRemoved: number;
+  rowsBlanked: number;
+}
+
 export type CleanupRemoveOutcome =
-  | { kind: 'removed'; version: string; report: CleanupReport; serverMs: number | null }
+  | { kind: 'removed'; version: string; report: CleanupReport; serverMs: number | null; receiptId: string | null }
   /** The function raised on a guard: nothing was removed. `reason` is the plain SQL message (no email). */
+  | { kind: 'blocked'; guards: string[]; reason: string };
+
+export type AnonymiseOutcome =
+  | { kind: 'anonymised'; version: string; report: AnonymiseReport; serverMs: number | null }
   | { kind: 'blocked'; guards: string[]; reason: string };
 
 /**
@@ -152,13 +208,25 @@ export interface EmptyStorageResult {
 
 const rpcResultSchema = z.object({
   version: z.string().min(1),
-  mode: z.enum(['check', 'delete']),
+  mode: z.enum(['check', 'delete', 'anonymise_check', 'anonymise']),
   rows: z.array(z.record(z.unknown())),
   // Optional: the 20261041 function does not return it.
   server_ms: z.number().nonnegative().optional(),
+  // DE-10b.1: the delete and the anonymise return their receipt id.
+  receipt_id: z.string().uuid().optional(),
 });
 
-const GUARD_ID = /^G-\d+/;
+const anonymiseReportSchema = z.object({
+  receipt_id: z.string().uuid(),
+  placeholder_ref: z.string().regex(/^[0-9a-f]{12}$/),
+  receipt_mode: z.enum(['anonymised', 'pseudonymised_billing_kept']),
+  rows_removed: z.number().int().nonnegative(),
+  tables_removed: z.number().int().nonnegative(),
+  rows_blanked: z.number().int().nonnegative(),
+});
+
+/** A guard id: G-12, or G-2a (the anonymise replacement of G-2). */
+const GUARD_ID = /^G-\d+[a-z]?/;
 const toCount = (value: unknown): number | null => {
   if (value === null || value === undefined) return null;
   const n = Number(value);
@@ -168,13 +236,18 @@ const toText = (value: unknown): string => (value === null || value === undefine
 
 /** Every guard id named in a refusal message, in order, once each. */
 export function guardIdsIn(message: string): string[] {
-  return [...new Set(message.match(/G-\d+/g) ?? [])];
+  return [...new Set(message.match(/G-\d+[a-z]?/g) ?? [])];
 }
 
 /** What may be logged about an error: kind, `code` and `message` only (SA-12). */
 export function cleanupErrorFacts(err: unknown): { kind: CleanupErrorKind | null; code: string | null; message: string } {
   if (err instanceof CleanupRpcError) return { kind: err.kind, code: err.code, message: err.message };
   return { kind: null, code: null, message: err instanceof Error ? err.message : String(err) };
+}
+
+function toGuardRow(row: CleanupCheckRow): CleanupBlocker {
+  const guard = row.item.match(GUARD_ID)?.[0] ?? row.item;
+  return { guard, item: row.item.slice(guard.length).trim(), found: row.found, clears: row.detail };
 }
 
 function parseCheck(version: string, rows: Array<Record<string, unknown>>, serverMs: number | null): CleanupCheckResult {
@@ -187,12 +260,9 @@ function parseCheck(version: string, rows: Array<Record<string, unknown>>, serve
   }));
   const verdictRow = parsed.find((row) => row.section === 'VERDICT');
   const login = verdictRow?.item.match(/^login ([0-9a-f-]{36})$/i);
-  const blockers = parsed
-    .filter((row) => row.section === 'guard' && row.status === 'BLOCKED')
-    .map((row) => {
-      const guard = row.item.match(GUARD_ID)?.[0] ?? row.item;
-      return { guard, item: row.item.slice(guard.length).trim(), found: row.found, clears: row.detail };
-    });
+  const blockers = parsed.filter((row) => row.section === 'guard' && row.status === 'BLOCKED').map(toGuardRow);
+  // `info` rows never count towards BLOCKED (workplan §3.2).
+  const notes = parsed.filter((row) => row.section === 'guard' && row.status === 'info').map(toGuardRow);
   const buckets = STORAGE_DESCRIPTORS.map((descriptor) => descriptor.bucket);
   const storageObjects = parsed
     .filter((row) => row.section === 'storage')
@@ -205,6 +275,7 @@ function parseCheck(version: string, rows: Array<Record<string, unknown>>, serve
     verdict: verdictRow?.status === 'OK' && blockers.length === 0 ? 'OK' : 'BLOCKED',
     targetUserId: login ? login[1].toLowerCase() : null,
     blockers,
+    notes,
     storageObjects,
     rows: parsed,
     serverMs,
@@ -229,6 +300,15 @@ function parseReport(rows: Array<Record<string, unknown>>): CleanupReport {
   };
 }
 
+interface CallInput {
+  email: string;
+  tag?: string;
+  confirmEmail?: string;
+  subject?: string;
+}
+
+const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
+
 export class TestAccountCleanupRepository {
   private readonly client: CleanupRpcClient;
   private readonly secret: () => string | null;
@@ -241,23 +321,32 @@ export class TestAccountCleanupRepository {
     this.logger = createLogger({ service: 'TestAccountCleanupRepository' });
   }
 
-  /** One call of the function. Throws CleanupRpcError; returns the parsed jsonb. */
+  /**
+   * One call of the function. Throws CleanupRpcError; returns the parsed jsonb.
+   * `p_subject` and `p_receipt` are sent only by the modes that use them, so a
+   * hard check sends exactly the six arguments it always did.
+   */
   private async call(
-    mode: 'check' | 'delete',
-    input: CleanupInput & { confirmEmail?: string },
-    actorId: string | null
-  ): Promise<z.infer<typeof rpcResultSchema>> {
+    mode: CleanupRpcMode,
+    input: CallInput,
+    actorId: string | null,
+    receipt: DeletionReceiptInput | null
+  ): Promise<{ parsed: z.infer<typeof rpcResultSchema>; raw: Record<string, unknown> }> {
     const secret = this.secret();
     if (secret === null) throw new CleanupRpcError('not_configured', null, 'Test-account cleanup is not configured');
 
-    const { data, error } = await this.client.rpc(CLEANUP_RPC, {
+    const args: Record<string, unknown> = {
       p_mode: mode,
       p_email: input.email,
-      p_tag: input.tag,
+      p_tag: input.tag ?? '',
       p_confirm: input.confirmEmail ?? '',
       p_actor: actorId,
       p_secret: secret,
-    });
+    };
+    if (mode === 'anonymise_check' || mode === 'anonymise') args.p_subject = input.subject ?? null;
+    if (mode === 'delete' || mode === 'anonymise') args.p_receipt = receipt;
+
+    const { data, error } = await this.client.rpc(CLEANUP_RPC, args);
     if (error) {
       const code = error.code ?? null;
       const kind: CleanupErrorKind =
@@ -269,36 +358,100 @@ export class TestAccountCleanupRepository {
       this.logger.error({ mode }, 'Test-account cleanup function returned an unexpected shape');
       throw new CleanupRpcError('failed', null, 'Unexpected result from the cleanup function');
     }
-    return parsed.data;
+    return { parsed: parsed.data, raw: data as Record<string, unknown> };
   }
 
   /** The check (FR-5). The function sets the transaction read-only itself (R-2 c). */
   async check(input: CleanupInput): Promise<RepositoryResult<CleanupCheckResult>> {
     try {
-      const result = await this.call('check', input, null);
-      return { data: parseCheck(result.version, result.rows, result.server_ms ?? null), error: null };
+      const { parsed } = await this.call('check', input, null, null);
+      return { data: parseCheck(parsed.version, parsed.rows, parsed.server_ms ?? null), error: null };
     } catch (err) {
-      return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * The anonymise check (DE-10b.1). Read-only in the database like `check`.
+   * Blocking guards land in `blockers`, informational ones in `notes`.
+   */
+  async anonymiseCheck(input: AnonymiseInput): Promise<RepositoryResult<CleanupCheckResult>> {
+    try {
+      const { parsed } = await this.call('anonymise_check', { email: input.email, subject: input.subject }, null, null);
+      return { data: parseCheck(parsed.version, parsed.rows, parsed.server_ms ?? null), error: null };
+    } catch (err) {
+      return { data: null, error: asError(err) };
     }
   }
 
   /**
    * The delete (FR-7, FR-8). The function writes the success audit row with
-   * `actorId` as actor (SA-5) and returns the report from the same
-   * transaction. A guard that raises (P0001) is `blocked`, not an error.
+   * `actorId` as actor (SA-5), then the receipt, and returns the report from
+   * the same transaction. A guard that raises (P0001) is `blocked`, not an error.
    */
-  async remove(input: CleanupDeleteInput, actorId: string): Promise<RepositoryResult<CleanupRemoveOutcome>> {
+  async remove(
+    input: CleanupDeleteInput,
+    actorId: string,
+    receipt: DeletionReceiptInput
+  ): Promise<RepositoryResult<CleanupRemoveOutcome>> {
     try {
-      const result = await this.call('delete', input, actorId);
+      const { parsed } = await this.call('delete', input, actorId, receipt);
       return {
-        data: { kind: 'removed', version: result.version, report: parseReport(result.rows), serverMs: result.server_ms ?? null },
+        data: {
+          kind: 'removed',
+          version: parsed.version,
+          report: parseReport(parsed.rows),
+          serverMs: parsed.server_ms ?? null,
+          receiptId: parsed.receipt_id ?? null,
+        },
         error: null,
       };
     } catch (err) {
       if (err instanceof CleanupRpcError && err.code === PG_RAISE_EXCEPTION) {
         return { data: { kind: 'blocked', guards: guardIdsIn(err.message), reason: err.message }, error: null };
       }
-      return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+      return { data: null, error: asError(err) };
+    }
+  }
+
+  /**
+   * The anonymise (DE-10b.1). `actorId` is the admin, or null when the owner
+   * asked (DE-10b.2); the function refuses a mismatch with the receipt origin.
+   * A guard that raises (P0001) is `blocked`, not an error.
+   */
+  async anonymise(
+    input: AnonymiseDeleteInput,
+    actorId: string | null,
+    receipt: DeletionReceiptInput
+  ): Promise<RepositoryResult<AnonymiseOutcome>> {
+    try {
+      const { parsed, raw } = await this.call('anonymise', input, actorId, receipt);
+      const report = anonymiseReportSchema.safeParse(raw);
+      if (!report.success) {
+        this.logger.error({ mode: 'anonymise' }, 'The anonymise returned no report');
+        return { data: null, error: new CleanupRpcError('failed', null, 'Unexpected result from the cleanup function') };
+      }
+      return {
+        data: {
+          kind: 'anonymised',
+          version: parsed.version,
+          report: {
+            receiptId: report.data.receipt_id,
+            placeholderRef: report.data.placeholder_ref,
+            receiptMode: report.data.receipt_mode,
+            rowsRemoved: report.data.rows_removed,
+            tablesRemoved: report.data.tables_removed,
+            rowsBlanked: report.data.rows_blanked,
+          },
+          serverMs: parsed.server_ms ?? null,
+        },
+        error: null,
+      };
+    } catch (err) {
+      if (err instanceof CleanupRpcError && err.code === PG_RAISE_EXCEPTION) {
+        return { data: { kind: 'blocked', guards: guardIdsIn(err.message), reason: err.message }, error: null };
+      }
+      return { data: null, error: asError(err) };
     }
   }
 
@@ -335,7 +488,7 @@ export class TestAccountCleanupRepository {
         }
       }
     } catch (err) {
-      return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+      return { data: null, error: asError(err) };
     }
     return { data: { removed, failed }, error: null };
   }

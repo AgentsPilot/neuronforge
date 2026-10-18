@@ -296,8 +296,9 @@ describe('T-7 planned expires (DE-7 for tables, DE-8b for files)', () => {
   // DE-8a: 156 with business_os_data_exports (exclude, the export itself).
   // Finance 4b.1 on top: 157 with business_os_boost_reversal_events (exclude, billing).
   // Finance 8.1 on top (MR-1): 158 with business_os_finance_snapshots (exclude, platform data).
-  it('no table descriptor is planned (non-vacuous: every one of the 158 is include or exclude)', () => {
-    expect(PURGE_DESCRIPTORS).toHaveLength(158);
+  // DE-10b.1 on top: 159 with business_os_deletion_receipts (exclude, platform data).
+  it('no table descriptor is planned (non-vacuous: every one of the 159 is include or exclude)', () => {
+    expect(PURGE_DESCRIPTORS).toHaveLength(159);
     expect(PURGE_DESCRIPTORS.filter((d) => d.export.kind === 'planned').map((d) => d.table)).toEqual([]);
     expect(PURGE_DESCRIPTORS.every((d) => d.export.kind === 'include' || d.export.kind === 'exclude')).toBe(true);
     expect(PLANNED_TABLES_ALLOWED).toBe(false);
@@ -1351,15 +1352,16 @@ describe('DE-5 M-1 the client-money classifications are pinned', () => {
   // DE-8a: 156 = 38 include + 0 planned + 118 exclude (business_os_data_exports, the export itself).
   // Merged (finance 4b.1 + DE-8a): 157 = 38 + 0 + 119.
   // Finance 8.1 on top (MR-1): 158 = 38 include + 0 planned + 120 exclude (business_os_finance_snapshots, platform data).
-  it('the classification totals: 158 = 38 include + 0 planned + 120 exclude', () => {
+  // DE-10b.1 on top: 159 = 38 include + 0 planned + 121 exclude (business_os_deletion_receipts, platform data).
+  it('the classification totals: 159 = 38 include + 0 planned + 121 exclude', () => {
     const kinds = { include: 0, planned: 0, exclude: 0 } as Record<string, number>;
     const bySlice: Record<string, number> = {};
     for (const d of PURGE_DESCRIPTORS) {
       kinds[d.export.kind] += 1;
       if (d.export.kind === 'planned') bySlice[d.export.slice] = (bySlice[d.export.slice] ?? 0) + 1;
     }
-    expect(PURGE_DESCRIPTORS).toHaveLength(158);
-    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 120 });
+    expect(PURGE_DESCRIPTORS).toHaveLength(159);
+    expect(kinds).toEqual({ include: 38, planned: 0, exclude: 121 });
     expect(bySlice).toEqual({});
   });
 

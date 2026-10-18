@@ -1488,6 +1488,9 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Finance slice 8.1 (§11M.6, HS-W-8): the nightly platform history of states that cannot be rebuilt.
   never('business_os_finance_snapshots', G, exclude(EXPORT_REASON.PLATFORM),
     'One row per platform figure per UTC day: counts of accounts and amounts of credits, written by the nightly finance snapshot job. No user_id, no account, no money: platform aggregates, not tenant data. Append only; never purged and never archived (the history cannot be rebuilt).'),
+  // Data export DE-10b.1 (SA Review 2 §E, migration 20261080): the deletion receipt.
+  never('business_os_deletion_receipts', G, exclude(EXPORT_REASON.PLATFORM),
+    'One row per committed account deletion, inserted only by the cleanup function inside its own transaction. No user_id, no owner_user_id and no foreign key, so no cascade, purge, audit erasure or archiving reaches it: the proof of an erasure must outlive the account. Holds a keyed fingerprint of the email, never the email. Never purged by a business purge; retention is its own release-3 sweep.'),
   never('bos_cron_run_recording', G, exclude(EXPORT_REASON.PLATFORM),
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 

@@ -173,6 +173,21 @@ export const AUDIT_EVENTS = {
   // guard ids, the resolved login id if any and the correlationId. Never the
   // email and never the tag (the tag is free text and can itself be an email).
   BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED: 'BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED',
+  // Data export DE-10b.1 (SA Review 2 §D, O-8): an account closed and anonymised
+  // in place (the tombstone). Written ONLY inside the cleanup database function,
+  // in the same transaction as the deletes, the blanks, the login closure and
+  // the deletion receipt. Entity type 'user', id = the closed login. user_id =
+  // actor_id = the admin for an admin run, NULL for an owner run (the owner's
+  // login is closed, SA F-2). Details: source, receipt id, mode, counts. Never
+  // an email, a reason note or a fingerprint. The SQL literal is pinned to this
+  // registration by scripts/__tests__/testAccountCleanupSql.test.ts.
+  ACCOUNT_PSEUDONYMISED: 'ACCOUNT_PSEUDONYMISED',
+  // Data export DE-10b.1 (R-3): an account deletion in the anonymise mode that
+  // was refused or failed (a guard, the typed confirmation, the storage step, a
+  // missing key or an error). Written by the route through logAndFlush. Carries
+  // the guard ids, the resolved login id if any, files_removed and the
+  // correlationId. Never the email, the reason note or the fingerprint.
+  ACCOUNT_DELETION_REFUSED: 'ACCOUNT_DELETION_REFUSED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -1215,6 +1230,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin test-account removal was refused or failed; nothing or only storage files were removed',
+  },
+  // DE-10b.1. 'critical': an irreversible erasure of a real account (the receipt is the proof).
+  [AUDIT_EVENTS.ACCOUNT_PSEUDONYMISED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An account was closed and anonymised in place; our billing kept with personal details removed',
+  },
+  [AUDIT_EVENTS.ACCOUNT_DELETION_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An account deletion was refused or failed; nothing or only storage files were removed',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

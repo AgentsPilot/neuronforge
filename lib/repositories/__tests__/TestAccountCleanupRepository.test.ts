@@ -25,6 +25,7 @@ import {
   guardIdsIn,
   type CleanupRpcClient,
 } from '@/lib/repositories/TestAccountCleanupRepository';
+import type { DeletionReceiptInput } from '@/lib/business-os/account-deletion/receiptInput';
 
 const EMAIL = 'someone+test7@example.org';
 const TAG = '+test';
@@ -32,6 +33,8 @@ const SECRET = 'a'.repeat(64);
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
 const TARGET = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const VERSION = '0123456789abcdef';
+const RECEIPT = { email_fingerprint: 'e'.repeat(64), origin: 'admin', files_removed: 0 } as unknown as DeletionReceiptInput;
+const RECEIPT_ID = '99999999-9999-4999-8999-999999999999';
 
 type RpcReply = { data: unknown; error: { code?: string | null; message: string } | null };
 
@@ -137,11 +140,21 @@ describe('remove', () => {
       },
       error: null,
     }));
-    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).remove(input, ADMIN_ID);
-    expect(calls[0].args).toEqual({ p_mode: 'delete', p_email: EMAIL, p_tag: TAG, p_confirm: EMAIL, p_actor: ADMIN_ID, p_secret: SECRET });
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).remove(input, ADMIN_ID, RECEIPT);
+    expect(calls[0].args).toEqual({
+      p_mode: 'delete',
+      p_email: EMAIL,
+      p_tag: TAG,
+      p_confirm: EMAIL,
+      p_actor: ADMIN_ID,
+      p_secret: SECRET,
+      // DE-10b.1: the receipt rides on the delete; no subject in the hard mode.
+      p_receipt: RECEIPT,
+    });
     expect(result.data).toEqual({
       kind: 'removed',
       version: VERSION,
+      receiptId: null,
       report: {
         tables: [{ table: 'crm_contacts', rowsRemoved: 3 }],
         total: { result: 'CLEAN', rowsRemoved: 3, tablesRemoved: 1, removedLogin: TARGET, removedAt: '2026-10-07T10:00:00+00:00', sameRun: true },
@@ -155,15 +168,90 @@ describe('remove', () => {
       data: null,
       error: { code: 'P0001', message: 'BLOCKED, nothing was removed: G-12 no stored files, G-5 nothing ever ran in Stripe live mode' },
     }));
-    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).remove(input, ADMIN_ID);
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).remove(input, ADMIN_ID, RECEIPT);
     expect(result.data).toEqual({ kind: 'blocked', guards: ['G-12', 'G-5'], reason: expect.stringContaining('BLOCKED') });
   });
 
   it('42501 on delete is an error of kind not_authorised, not a block', async () => {
     const { client } = fakeClient(() => ({ data: null, error: { code: '42501', message: 'not authorised' } }));
-    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).remove(input, ADMIN_ID);
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).remove(input, ADMIN_ID, RECEIPT);
     expect(result.data).toBeNull();
     expect((result.error as CleanupRpcError).kind).toBe('not_authorised');
+  });
+});
+
+describe('anonymiseCheck / anonymise (DE-10b.1)', () => {
+  const anonRows = [
+    { section: 'VERDICT', status: 'OK', item: `login ${TARGET}`, found: 0, detail: '' },
+    { section: 'guard', status: 'info', item: 'G-14 no consent ledger rows', found: 3, detail: 'Reported only: kept' },
+    { section: 'guard', status: 'ok', item: 'G-2a the account id and the email name the same login', found: 1, detail: '' },
+  ];
+
+  it('the check sends the subject and no receipt, and puts info rows in notes, never in blockers', async () => {
+    const { client, calls } = fakeClient(() => ({ data: { version: VERSION, mode: 'anonymise_check', rows: anonRows }, error: null }));
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).anonymiseCheck({ email: EMAIL, subject: TARGET });
+    expect(calls[0].args).toEqual({ p_mode: 'anonymise_check', p_email: EMAIL, p_tag: '', p_confirm: '', p_actor: null, p_secret: SECRET, p_subject: TARGET });
+    expect(result.data).toMatchObject({ verdict: 'OK', targetUserId: TARGET, blockers: [], notes: [{ guard: 'G-14', found: 3, clears: 'Reported only: kept' }] });
+  });
+
+  it('parses G-2a as its own guard id', async () => {
+    const rows = [
+      { section: 'VERDICT', status: 'BLOCKED', item: 'login not found', found: 1, detail: '' },
+      { section: 'guard', status: 'BLOCKED', item: 'G-2a the account id and the email name the same login', found: 0, detail: 'Reload' },
+    ];
+    const { client } = fakeClient(() => ({ data: { version: VERSION, mode: 'anonymise_check', rows }, error: null }));
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).anonymiseCheck({ email: EMAIL, subject: TARGET });
+    expect(result.data?.blockers).toEqual([{ guard: 'G-2a', item: 'the account id and the email name the same login', found: 0, clears: 'Reload' }]);
+    expect(guardIdsIn('BLOCKED, nothing was removed: G-2a the account, G-12 files')).toEqual(['G-2a', 'G-12']);
+  });
+
+  it('the anonymise sends subject, actor and receipt, and parses its report', async () => {
+    const { client, calls } = fakeClient(() => ({
+      data: {
+        version: VERSION, mode: 'anonymise', rows: [], server_ms: 812,
+        receipt_id: RECEIPT_ID, placeholder_ref: '999999999999', receipt_mode: 'pseudonymised_billing_kept',
+        rows_removed: 12, tables_removed: 4, rows_blanked: 3,
+      },
+      error: null,
+    }));
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).anonymise(
+      { email: EMAIL, subject: TARGET, confirmEmail: EMAIL },
+      ADMIN_ID,
+      RECEIPT
+    );
+    expect(calls[0].args).toEqual({
+      p_mode: 'anonymise', p_email: EMAIL, p_tag: '', p_confirm: EMAIL, p_actor: ADMIN_ID, p_secret: SECRET, p_subject: TARGET, p_receipt: RECEIPT,
+    });
+    expect(result.data).toEqual({
+      kind: 'anonymised',
+      version: VERSION,
+      report: { receiptId: RECEIPT_ID, placeholderRef: '999999999999', receiptMode: 'pseudonymised_billing_kept', rowsRemoved: 12, tablesRemoved: 4, rowsBlanked: 3 },
+      serverMs: 812,
+    });
+  });
+
+  it('the owner path sends no actor (DE-10b.2)', async () => {
+    const { client, calls } = fakeClient(() => ({ data: null, error: { code: 'P0001', message: 'BLOCKED, nothing was removed: G-6 no live plan' } }));
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).anonymise(
+      { email: EMAIL, subject: TARGET, confirmEmail: EMAIL },
+      null,
+      RECEIPT
+    );
+    expect(calls[0].args.p_actor).toBeNull();
+    expect(result.data).toEqual({ kind: 'blocked', guards: ['G-6'], reason: expect.stringContaining('BLOCKED') });
+  });
+
+  it('an anonymise without its report is an error, and never logs the arguments', async () => {
+    const { client } = fakeClient(() => ({ data: { version: VERSION, mode: 'anonymise', rows: [] }, error: null }));
+    const result = await new TestAccountCleanupRepository({ client, secret: () => SECRET }).anonymise(
+      { email: EMAIL, subject: TARGET, confirmEmail: EMAIL },
+      ADMIN_ID,
+      RECEIPT
+    );
+    expect((result.error as CleanupRpcError).kind).toBe('failed');
+    const logged = JSON.stringify(mockLogged);
+    expect(logged).not.toContain(EMAIL);
+    expect(logged).not.toContain('e'.repeat(64));
   });
 });
 

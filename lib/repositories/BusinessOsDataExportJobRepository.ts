@@ -90,6 +90,13 @@ function invalid(what: string): Error {
   return new Error(`Invalid input: ${what}`);
 }
 
+/** The export facts a deletion receipt records (DE-10b.1). Timestamps as the database returns them. */
+export interface DataExportDeletionFacts {
+  ownerLastExportReadyAt: string | null;
+  ownerExportDownloadedAt: string | null;
+  adminExportExisted: boolean;
+}
+
 export class BusinessOsDataExportJobRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -255,6 +262,48 @@ export class BusinessOsDataExportJobRepository {
     } catch (err) {
       const safe = toError(err);
       this.logger.error({ err: safe, method: 'findLatestCompletedForUser', userId }, 'Failed to read the last completed data export');
+      return { data: null, error: safe };
+    }
+  }
+
+  /**
+   * DE-10b.1 (requirement §5.1): what our records show about the account's
+   * exports, copied into the deletion receipt BEFORE the delete (the export
+   * rows are deleted with the account). The owner's newest delivered export
+   * (`ready_at` set, owner-requested) and whether they downloaded it, and
+   * whether an admin ever prepared one. Two reads, both on `user_id`.
+   */
+  async findDeletionFacts(userId: string): Promise<RepositoryResult<DataExportDeletionFacts>> {
+    if (!uuid.safeParse(userId).success) return { data: null, error: invalid('user id') };
+    try {
+      const owner = await this.supabase
+        .from(TABLE)
+        .select('ready_at, owner_downloaded_at')
+        .eq('user_id', userId)
+        .eq('requested_by_kind', 'owner')
+        .not('ready_at', 'is', null)
+        .order('ready_at', { ascending: false })
+        .limit(1);
+      if (owner.error) throw owner.error;
+      const admin = await this.supabase
+        .from(TABLE)
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('requested_by_kind', 'admin');
+      if (admin.error) throw admin.error;
+      const rows = (owner.data as unknown as Array<{ ready_at: string | null; owner_downloaded_at: string | null }> | null) ?? [];
+      const latest = rows[0];
+      return {
+        data: {
+          ownerLastExportReadyAt: latest?.ready_at ?? null,
+          ownerExportDownloadedAt: latest?.owner_downloaded_at ?? null,
+          adminExportExisted: (admin.count ?? 0) > 0,
+        },
+        error: null,
+      };
+    } catch (err) {
+      const safe = toError(err);
+      this.logger.error({ err: safe, method: 'findDeletionFacts', userId }, 'Failed to read the export facts for a deletion receipt');
       return { data: null, error: safe };
     }
   }
