@@ -32,7 +32,7 @@ FF-1a closes FU-M8-1. M-8 marked the Exchange rates admin page as redundant, but
 - **Split a business-gated item out of a bundle early,** so the technical items do not wait on it.
 - **Follow-up FF-2 (recorded):** a later database lockdown that revokes browser writes on the rate tables, leaving reads untouched. It needs a migration, so it takes the user's hand-apply path, not BD-33. Check 35 is its before-and-after proof.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-ff1a — commit pending (RM)
+### Status: COMMITTED — feature/bos-finance-ff1a — commit `d9fe11f4`, PR #465 (auto-merge on)
 
 ---
 
