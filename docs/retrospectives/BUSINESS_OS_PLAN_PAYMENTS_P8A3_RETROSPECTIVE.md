@@ -37,7 +37,7 @@ Admin views are not audited (SA Q-6). There is no migration, and every frozen pi
 - **Status:** P-8a is complete once this merges. The P-8a MRR rule (`lib/business-os/billing/planMrr.ts`) now unblocks Finance 5b, which must import it, not redefine it (BD-19).
 - **Still open before live Stripe keys:** Finance R4 (R-c′ errors when an account has both test and live rows).
 
-### Status: APPROVED FOR COMMIT — feature/bos-plan-payments-p8a3 — commit pending (RM)
+### Status: COMMITTED — feature/bos-plan-payments-p8a3 — commit `679e765c`, main merged `ebf99655`, PR #469 (auto-merge on)
 
 ---
 
