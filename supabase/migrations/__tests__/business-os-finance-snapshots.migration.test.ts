@@ -1,6 +1,8 @@
 /**
  * Finance slice 8.1 (§11M.6, AC-273 to AC-277): the history snapshots table,
  * migration 20261078, its rollback, checks 31 and 32 and the local self-test.
+ * Finance follow-ups FF-1 (SA-WR-FF1): check 32 gains the metric pattern row
+ * (FF-1b, QA-81-N1) and checks 33 and 34 become script files (FF-1c).
  * Workplan docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_8_1_SNAPSHOTS_MIGRATION_WORKPLAN.md.
  *
  * Source pins only: the behaviour (each CHECK, the grants, the idempotent key,
@@ -22,6 +24,8 @@ const MIGRATION = read('supabase', 'migrations', '20261078_business_os_finance_s
 const ROLLBACK = read('supabase', 'SQL Scripts', '20261078_business_os_finance_snapshots_rollback.sql');
 const CHECK_31 = read('scripts', 'precheck-bos-finance-snapshots.sql');
 const CHECK_32 = read('scripts', 'check-bos-finance-snapshots-migration.sql');
+const CHECK_33 = read('scripts', 'check-bos-finance-history-days.sql');
+const CHECK_34 = read('scripts', 'check-bos-finance-history-newest.sql');
 const SELFTEST = read('scripts', 'test-bos-finance-snapshots.sql');
 const TABLE = 'public.business_os_finance_snapshots';
 
@@ -177,7 +181,7 @@ describe('AC-275: the rollback refuses while the table holds a row', () => {
 });
 
 describe('AC-274: paste safety over the migration, the rollback and checks 31 and 32', () => {
-  const PASTED = { migration: MIGRATION, rollback: ROLLBACK, check31: CHECK_31, check32: CHECK_32 };
+  const PASTED = { migration: MIGRATION, rollback: ROLLBACK, check31: CHECK_31, check32: CHECK_32, check33: CHECK_33, check34: CHECK_34 };
   const nonAscii = (s: string) => /[^\x00-\x7F]/.test(s);
   const editorWord = (s: string) => /\binto\b/i.test(s);
   /** A doubled quote inside a literal, or an apostrophe inside a line comment. */
@@ -224,7 +228,7 @@ describe('checks 31 and 32 (E-91, E-93)', () => {
     ]);
   });
 
-  it('check 32 has its sixteen items (SA-W-8.1-4: the uuid row dropped)', () => {
+  it('check 32 has its seventeen items (SA-W-8.1-4: the uuid row dropped; FF-1b: the metric row added)', () => {
     expect(items(CHECK_32)).toEqual([
       'table exists',
       'row level security on',
@@ -240,6 +244,7 @@ describe('checks 31 and 32 (E-91, E-93)', () => {
       'unique key on day, metric and dimension, not partial',
       'the six checks are present',
       'dimension check is exactly the E-86 pattern',
+      'metric check is exactly the shape pattern',
       'no trigger on the table',
       'table comment present',
     ]);
@@ -251,6 +256,52 @@ describe('checks 31 and 32 (E-91, E-93)', () => {
     }
     expect(CHECK_32).toContain("'business_os_finance_snapshots_day_metric_key'");
     expect(CHECK_32).toContain(`position('${SNAPSHOT_DIMENSION_SHAPE.source}' in pg_catalog.pg_get_constraintdef(c.oid))`);
+  });
+
+  it('FF-1b (QA-81-N1): check 32 holds the exact metric pattern, read from the metric constraint', () => {
+    const row = CHECK_32.slice(CHECK_32.indexOf("select 'metric check is exactly the shape pattern'"));
+    const body = row.slice(0, row.indexOf('union all'));
+    expect(body).toContain(`position('${SNAPSHOT_METRIC_SHAPE.source}' in pg_catalog.pg_get_constraintdef(c.oid))`);
+    expect(body).toContain("c.conname = 'business_os_finance_snapshots_metric_shape'");
+    // Planted: the metric pattern is not a substring of the dimension pattern, so the row
+    // cannot pass on the wrong constraint text.
+    expect(SNAPSHOT_DIMENSION_SHAPE.source.includes(SNAPSHOT_METRIC_SHAPE.source)).toBe(false);
+  });
+});
+
+describe('FF-1c: checks 33 and 34 as script files', () => {
+  const WRITE_WORDS = /\b(insert|update|delete|alter|drop|create|grant|revoke|truncate)\b/i;
+  const code = (sql: string) => sql.replace(/--.*$/gm, '');
+
+  it('each is one statement with its finance check header', () => {
+    for (const [sql, n] of [[CHECK_33, 33], [CHECK_34, 34]] as const) {
+      expect(code(sql).trim().split(';').filter((s) => s.trim())).toHaveLength(1);
+      expect(sql.startsWith(`-- Finance check ${n}:`)).toBe(true);
+    }
+  });
+
+  it('each is read only: no write or DDL word outside comments', () => {
+    for (const sql of [CHECK_33, CHECK_34]) expect(code(sql)).not.toMatch(WRITE_WORDS);
+  });
+
+  it('check 33 reads the snapshots and the finance-snapshot cron runs', () => {
+    expect(CHECK_33).toContain('from public.business_os_finance_snapshots f');
+    expect(CHECK_33).toContain("where c.job = 'finance-snapshot'");
+  });
+
+  it('check 34 reads only the snapshots, the lots, the draws and the plan rows', () => {
+    const tables = [...code(CHECK_34).matchAll(/\bpublic\.(\w+)/g)].map((m) => m[1]);
+    expect([...new Set(tables)].sort()).toEqual([
+      'business_os_account_plans',
+      'business_os_credit_lot_draws',
+      'business_os_credit_lots',
+      'business_os_finance_snapshots',
+    ]);
+  });
+
+  it('planted: the read-only rule bites', () => {
+    expect(code('select 1;\ndelete from public.x;')).toMatch(WRITE_WORDS);
+    expect(code('-- never delete anything\nselect 1;')).not.toMatch(WRITE_WORDS);
   });
 });
 

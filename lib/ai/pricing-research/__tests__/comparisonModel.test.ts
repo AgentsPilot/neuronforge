@@ -337,3 +337,73 @@ describe('lineContextFor (manual entry)', () => {
     expect(context).toMatchObject({ inCoverage: true, fallback: { perImage: '0.167' }, conservative: { perImage: '0.25' } });
   });
 });
+
+// AI model price review slice 9 (workplan §2.4, SA SC9-7): the history's "charged today" row is
+// the comparison's currentRowId on the same stored rows, including a row stored at 0 (still the
+// charged row: no zero skip for tokens) and a non-OpenAI row with a stored cached rate.
+describe('slice 9 parity: the price history marks the same current row as the comparison', () => {
+  const historyRow = (over: Record<string, unknown>) => ({
+    provider: 'openai',
+    model_name: liveModel,
+    input_cost_per_token: '0.00000015',
+    output_cost_per_token: '0.0000006',
+    cached_input_cost_per_token: null,
+    effective_date: '2026-06-29',
+    retired_date: null as string | null,
+    created_at: '2026-06-29T10:00:00Z',
+    proposal_id: null,
+    proposal_line_id: null,
+    ...over,
+  });
+
+  it.each([
+    [
+      'openai with a later row, a zero-priced charged row, a retired row and a shadowed row',
+      'openai',
+      liveModel,
+      [
+        historyRow({ id: 'h-future', effective_date: '2099-01-01' }),
+        historyRow({ id: 'h-zero', effective_date: '2026-10-11', input_cost_per_token: '0' }),
+        historyRow({ id: 'h-retired', effective_date: '2026-10-05', retired_date: '2026-10-11' }),
+        historyRow({ id: 'h-shadowed', effective_date: '2026-06-29' }),
+      ],
+    ],
+    [
+      'anthropic with a stored cached rate behind a retired newer row',
+      'anthropic',
+      tableOnlyModel,
+      [
+        historyRow({ id: 'a-retired', provider: 'anthropic', model_name: tableOnlyModel, effective_date: '2026-10-01', retired_date: '2026-10-02' }),
+        historyRow({ id: 'a-current', provider: 'anthropic', model_name: tableOnlyModel, effective_date: '2026-06-29', cached_input_cost_per_token: '0.0000003' }),
+      ],
+    ],
+  ])('%s', async (_label, provider, model, rows) => {
+    const { buildPriceHistory } = await import('../priceHistory');
+    const today = new Date().toISOString().slice(0, 10);
+    // The SQL filter of listActiveExact (not retired, already in effect), same order.
+    mockListActiveExact.mockResolvedValue({
+      data: rows.filter((row) => row.retired_date === null && String(row.effective_date) <= today),
+      error: null,
+    });
+    const comparisonId = rowOf((await buildComparison()).rows, model).currentRowId;
+    const history = buildPriceHistory({
+      query: { kind: 'token', provider: provider as 'openai', model },
+      now: new Date(),
+      tokenRows: rows as never,
+      imageRows: [],
+      truncated: false,
+      lines: [],
+      batches: [],
+      events: [],
+      auditTruncated: false,
+      syncRuns: [],
+      syncTruncated: false,
+      emailByUserId: new Map(),
+      systemActorIds: [],
+      inputOnly: false,
+    });
+    const current = history.units[0].rows.filter((row) => row.status === 'current');
+    expect(current).toHaveLength(1);
+    expect(current[0].rowId).toBe(comparisonId);
+  });
+});

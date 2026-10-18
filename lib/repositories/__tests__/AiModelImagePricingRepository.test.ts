@@ -115,7 +115,8 @@ describe.each([
   });
 });
 
-it('has no method besides the two reads', () => {
+// Slice 9: the admin history read is the third (LW-2 lists it too; its callers are pinned by adminReadMethods.guard).
+it('has no method besides the three reads', () => {
   const methods = Object.getOwnPropertyNames(AiModelImagePricingRepository.prototype).filter((name) => name !== 'constructor');
-  expect(methods.sort()).toEqual(['listActive', 'listActiveExact']);
+  expect(methods.sort()).toEqual(['listActive', 'listActiveExact', 'listHistoryExact']);
 });

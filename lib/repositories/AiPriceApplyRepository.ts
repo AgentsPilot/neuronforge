@@ -22,6 +22,11 @@
 // given (defence in depth). There is no tenant to cross (tenant-isolation-guard
 // step 5, a global catalog): any active admin may act on any pending line (Q2).
 //
+// Slice 9 adds `findBatchesByIds`, the price history's read of the batches its
+// applied lines belong to ("applied together with N prices", the margin review
+// status). Read-only; its only caller is the admin history route (pinned by
+// `adminReadMethods.guard.test.ts`).
+//
 // No method throws: every failure comes back as `{ data: null, error }`, with
 // the Postgres SQLSTATE and DETAIL kept on the error so the route can map
 // P8001..P8007, 42501, 23505, 55P03 and 40P01 to its answers.
@@ -33,6 +38,7 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type {
   AgentRepositoryResult as RepositoryResult,
+  AiPriceApplyBatchRecord,
   AiPriceApplyLineInput,
   AiPriceApplyMargin,
   AiPriceApplyResultRow,
@@ -50,6 +56,16 @@ const OPEN_REVIEW_COLUMNS = 'id, applied_by, applied_at, line_count, margin_item
 
 /** The page shows 20 open margin reviews; one more is read so it can say that more are open. */
 const OPEN_REVIEW_LIMIT = 21;
+
+/** Slice 9: what the price history shows of a batch. No `margin_items` (the comparison's prompt shows those). */
+export const BATCH_HISTORY_COLUMNS =
+  'id, applied_by, applied_at, line_count, margin_review_needed, margin_review_done, margin_review_by, ' +
+  'margin_review_at, margin_review_note';
+
+/** Ids per `.in()` read (slice 9). */
+export const BATCH_ID_CHUNK = 50;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** An error carrying the Postgres SQLSTATE and DETAIL, when there are any. */
 export interface ApplyRepositoryError extends Error {
@@ -161,6 +177,40 @@ export class AiPriceApplyRepository {
     } catch (error) {
       const wrapped = toError(error, 'Margin review read failed');
       methodLogger.error({ err: wrapped, duration: Date.now() - startTime }, 'Failed to read open margin reviews');
+      return { data: null, error: wrapped };
+    }
+  }
+
+  /**
+   * Slice 9: apply batches by id, for the price history (ADMIN ONLY: the
+   * history route). De-duplicated, read in chunks of `BATCH_ID_CHUNK`; an empty
+   * list answers `[]` with no query; a non-UUID id is refused before any query.
+   * Never logs a margin note.
+   */
+  async findBatchesByIds(ids: readonly string[]): Promise<RepositoryResult<AiPriceApplyBatchRecord[]>> {
+    const unique = [...new Set(ids)];
+    const methodLogger = this.logger.child({ method: 'findBatchesByIds', count: unique.length });
+    const startTime = Date.now();
+
+    try {
+      if (!unique.every((id) => typeof id === 'string' && UUID_PATTERN.test(id))) {
+        throw new Error('Every batch id must be a UUID');
+      }
+      const found: AiPriceApplyBatchRecord[] = [];
+      for (let start = 0; start < unique.length; start += BATCH_ID_CHUNK) {
+        const { data, error } = await this.supabase
+          .from(BATCHES_TABLE)
+          .select(BATCH_HISTORY_COLUMNS)
+          .in('id', unique.slice(start, start + BATCH_ID_CHUNK));
+        if (error) throw toError(error, 'Apply batch read failed');
+        found.push(...((data as unknown as AiPriceApplyBatchRecord[]) || []));
+      }
+
+      methodLogger.debug({ found: found.length, duration: Date.now() - startTime }, 'Apply batches fetched for the price history');
+      return { data: found, error: null };
+    } catch (error) {
+      const wrapped = toError(error, 'Apply batch read failed');
+      methodLogger.error({ err: wrapped, duration: Date.now() - startTime }, 'Failed to read apply batches for the price history');
       return { data: null, error: wrapped };
     }
   }

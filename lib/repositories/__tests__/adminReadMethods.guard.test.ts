@@ -8,6 +8,13 @@
  *   AuditTrailRepository.listAiActionEntriesAllAccountsByGroupIds (Gap B B1b, NFR-4.4)
  *   UserProfileRepository.listForAdmin
  *   UserProfileRepository.findAdminNamesByIds (ADMIN_BOS_CLEANUP slice 4)
+ *   AI model price review slice 9 (SA SC9-3), the per-model price history:
+ *     AiModelPricingRepository / AiModelImagePricingRepository.listHistoryExact
+ *     AdminUserRepository.findEmailsByUserIds (deactivated admins included)
+ *     AuditTrailRepository.listAdminPricingRowEvents / listAdminPricingSyncRuns
+ *     AiPriceProposalRepository.findAppliedLinesByIds
+ *     AiPriceApplyRepository.findBatchesByIds
+ *   (their read shapes are pinned in priceHistoryReads.test.ts)
  *
  * Two things are pinned: what each reads (columns, scoping, no filter-string
  * search), and WHO may call it — only `app/api/admin/**`, behind requireAdmin.
@@ -487,6 +494,14 @@ const ADMIN_METHODS = [
   'countAdminEventsAllAccountsInWindow',
   // Gap B slice B1b: the cross-account AI-entry join of the Activity view.
   'listAiActionEntriesAllAccountsByGroupIds',
+  // AI model price review slice 9 (SA SC9-3): the per-model price history route only.
+  // `listHistoryExact` here is what keeps the billing reader from ever calling it (SA O-1).
+  'listHistoryExact',
+  'findEmailsByUserIds',
+  'listAdminPricingRowEvents',
+  'listAdminPricingSyncRuns',
+  'findAppliedLinesByIds',
+  'findBatchesByIds',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -504,20 +519,26 @@ describe('only app/api/admin/** calls the admin read methods', () => {
     .filter((d) => fs.existsSync(path.join(ROOT, d)))
     .flatMap((d) => walk(path.join(ROOT, d)));
 
+  // AI model price review slice 9 (SA CR9-3): each non-test file is read and comment-stripped ONCE
+  // here, not once per method, so adding names to ADMIN_METHODS adds no tree walk (no added CI time).
+  const sources = files
+    .filter((file) => !file.includes('/__tests__/'))
+    .map((file) => ({
+      file,
+      code: fs
+        .readFileSync(path.join(ROOT, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1'),
+    }));
+
   it('scanned a real tree', () => {
     expect(files.length).toBeGreaterThan(500);
+    expect(sources.length).toBeGreaterThan(500);
   });
 
   it.each(ADMIN_METHODS)('%s is called only from app/api/admin/**', (method) => {
     const callPattern = new RegExp(`\\.${method}\\(`);
-    const callers = files.filter((file) => {
-      if (file.includes('/__tests__/')) return false;
-      const code = fs
-        .readFileSync(path.join(ROOT, file), 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/(^|[^:])\/\/.*$/gm, '$1');
-      return callPattern.test(code);
-    });
+    const callers = sources.filter(({ code }) => callPattern.test(code)).map(({ file }) => file);
     expect(callers.length).toBeGreaterThan(0);
     expect(callers.filter((file) => !file.startsWith('app/api/admin/'))).toEqual([]);
   });

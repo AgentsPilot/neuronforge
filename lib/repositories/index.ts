@@ -414,6 +414,11 @@ export type {
   AiPriceApplyMargin,
   AiPriceApplyResultRow,
   AiPriceOpenMarginReview,
+  AiModelPricingHistoryRow,
+  AiModelImagePricingHistoryRow,
+  PriceHistoryRowsPage,
+  AiPriceAppliedLineRecord,
+  AiPriceApplyBatchRecord,
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,

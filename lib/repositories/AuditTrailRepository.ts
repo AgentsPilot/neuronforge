@@ -56,6 +56,26 @@
 // policy (migration 20261018, then 20261035) mirrors the same list.
 // Only the admin exceptions above read AI entries.
 //
+// THE FOURTH AND FIFTH ADMIN EXCEPTIONS (AI model price review slice 9, SA
+// SC9-4): the per-model price history names who changed a price before the
+// review flow existed, from the old per-row pricing audit.
+//   - `listAdminPricingRowEvents` reads the `AI_PRICING_CREATED`,
+//     `AI_PRICING_UPDATED` and `AI_PRICING_ZERO_SET` entries whose entity type
+//     is `ai_pricing` and whose entity id is one of at most 200 price row ids.
+//   - `listAdminPricingSyncRuns` reads the `AI_PRICING_SYNCED` entries (entity
+//     `system` / `ai_pricing`), newest first: a Sync run recorded counts only,
+//     with no per-model record.
+// Neither is `.eq('user_id')`-scoped: these are events about the PLATFORM price
+// catalogue (`shared` audience, no tenant dimension; the user id on them is the
+// acting admin, not an owner). Both require an admin read context, select only
+// `ADMIN_PRICING_ROW_EVENT_COLUMNS` / `ADMIN_PRICING_SYNC_RUN_COLUMNS` (no hash,
+// no email, no ip, no user agent), filter actions by `AUDIT_EVENTS` constants,
+// are capped and report `reachedLimit` (a silent cap on a who-changed-it view
+// is not acceptable), and their only caller is
+// `app/api/admin/model-pricing/history/route.ts`, behind `requireAdmin` (pinned
+// by adminReadMethods.guard.test.ts). Live audit only: archived entries are not
+// read (SA O-4), and the history says "in the live audit trail".
+//
 // THE SERVER-SIDE EXISTENCE CHECK (credits boost slice 4b.2, SA CR-1):
 // `hasFindingEntry` answers one yes / no: does this account already hold a
 // `BOS_BOOST_FLAGGED` entry with this reason on this purchase? It is scoped
@@ -227,6 +247,52 @@ export interface AdminAiActionEntryRow {
 export interface AdminAiActionEntriesPage {
   rows: AdminAiActionEntryRow[];
   /** `rows.length >= MAX_ROWS`: more may match, so the read is incomplete. */
+  reachedLimit: boolean;
+}
+
+/** Slice 9: the only columns the price row event read selects. */
+export const ADMIN_PRICING_ROW_EVENT_COLUMNS = 'id, action, actor_id, user_id, created_at, entity_id, changes, details';
+
+/** Slice 9: the only columns the Sync run read selects. */
+export const ADMIN_PRICING_SYNC_RUN_COLUMNS = 'id, actor_id, user_id, created_at, details';
+
+/** Slice 9: the entity the old per-row pricing audit was written under (row id as entity id). */
+export const PRICING_ROW_ENTITY_TYPE = 'ai_pricing';
+
+export const ADMIN_PRICING_AUDIT_LIMITS = {
+  /** Price row ids per call: the history's own row cap. */
+  MAX_ROW_IDS: 200,
+  /** Ids per `.in()` (keeps each request URL short). */
+  ROW_ID_CHUNK: 50,
+  /** Row events per call; reaching it means older events may be missing. */
+  MAX_ROW_EVENTS: 200,
+  /** Sync runs per call; reaching it means older runs may be missing. */
+  MAX_SYNC_RUNS: 100,
+} as const;
+
+export interface AdminPricingRowEvent {
+  id: string;
+  action: string;
+  actor_id: string | null;
+  user_id: string | null;
+  created_at: string;
+  entity_id: string | null;
+  /** Untyped legacy JSON: the caller parses it leniently (SA SC9-5). */
+  changes: unknown;
+  details: unknown;
+}
+
+export interface AdminPricingSyncRun {
+  id: string;
+  actor_id: string | null;
+  user_id: string | null;
+  created_at: string;
+  details: unknown;
+}
+
+export interface AdminCappedRows<R> {
+  rows: R[];
+  /** The cap was reached: more may exist. */
   reachedLimit: boolean;
 }
 
@@ -596,6 +662,101 @@ export class AuditTrailRepository {
       this.logger.warn(
         { err: error, correlationId: context?.correlationId, method: 'listAiActionEntriesAllAccountsByGroupIds' },
         'Admin AI action entries read failed'
+      );
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * ADMIN ONLY — see the header (slice 9). The old per-row pricing audit
+   * entries (created, updated, set to zero) of the given price rows, newest
+   * first, at most `MAX_ROW_EVENTS`. Refuses no context, no id, more than
+   * `MAX_ROW_IDS` ids or a non-UUID id, before any query.
+   */
+  async listAdminPricingRowEvents(
+    context: AdminAuditReadContext,
+    rowIds: readonly string[]
+  ): Promise<RepositoryResult<AdminCappedRows<AdminPricingRowEvent>>> {
+    try {
+      if (!context?.correlationId || !context?.adminId) {
+        throw new Error('An admin read context (correlationId, adminId) is required');
+      }
+      const unique = Array.isArray(rowIds) ? [...new Set(rowIds)] : [];
+      if (unique.length === 0 || unique.length > ADMIN_PRICING_AUDIT_LIMITS.MAX_ROW_IDS) {
+        throw new Error(`Between 1 and ${ADMIN_PRICING_AUDIT_LIMITS.MAX_ROW_IDS} price row ids are required`);
+      }
+      if (!unique.every((id) => typeof id === 'string' && GROUP_ID_PATTERN.test(id))) {
+        throw new Error('Every price row id must be a UUID');
+      }
+
+      const cap = ADMIN_PRICING_AUDIT_LIMITS.MAX_ROW_EVENTS;
+      let reachedLimit = false;
+      const merged: AdminPricingRowEvent[] = [];
+      for (let start = 0; start < unique.length; start += ADMIN_PRICING_AUDIT_LIMITS.ROW_ID_CHUNK) {
+        const { data, error } = await this.supabase
+          .from('audit_trail')
+          .select(ADMIN_PRICING_ROW_EVENT_COLUMNS)
+          .eq('entity_type', PRICING_ROW_ENTITY_TYPE)
+          .in('action', [AUDIT_EVENTS.AI_PRICING_CREATED, AUDIT_EVENTS.AI_PRICING_UPDATED, AUDIT_EVENTS.AI_PRICING_ZERO_SET])
+          .in('entity_id', unique.slice(start, start + ADMIN_PRICING_AUDIT_LIMITS.ROW_ID_CHUNK))
+          .order('created_at', { ascending: false })
+          .limit(cap);
+        if (error) throw error;
+        const rows = (data ?? []) as unknown as AdminPricingRowEvent[];
+        if (rows.length >= cap) reachedLimit = true;
+        merged.push(...rows);
+      }
+      merged.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+      if (merged.length > cap) reachedLimit = true;
+      const rows = merged.slice(0, cap);
+
+      // info: an unscoped admin read. Counts only.
+      this.logger.info(
+        { correlationId: context.correlationId, adminId: context.adminId, method: 'listAdminPricingRowEvents', rowIds: unique.length, rows: rows.length, reachedLimit },
+        'Admin pricing row audit events read'
+      );
+      return { data: { rows, reachedLimit }, error: null };
+    } catch (error) {
+      this.logger.warn(
+        { err: error, correlationId: context?.correlationId, method: 'listAdminPricingRowEvents' },
+        'Admin pricing row audit events read failed'
+      );
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * ADMIN ONLY — see the header (slice 9). The recorded Sync runs of the old
+   * pricing Sync, newest first, at most `MAX_SYNC_RUNS`. Counts only: a run
+   * cannot be tied to a model. Refuses no admin context before any query.
+   */
+  async listAdminPricingSyncRuns(context: AdminAuditReadContext): Promise<RepositoryResult<AdminCappedRows<AdminPricingSyncRun>>> {
+    try {
+      if (!context?.correlationId || !context?.adminId) {
+        throw new Error('An admin read context (correlationId, adminId) is required');
+      }
+      const cap = ADMIN_PRICING_AUDIT_LIMITS.MAX_SYNC_RUNS;
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select(ADMIN_PRICING_SYNC_RUN_COLUMNS)
+        .eq('action', AUDIT_EVENTS.AI_PRICING_SYNCED)
+        .eq('entity_type', 'system')
+        .eq('entity_id', PRICING_ROW_ENTITY_TYPE)
+        .order('created_at', { ascending: false })
+        .limit(cap);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as AdminPricingSyncRun[];
+      const reachedLimit = rows.length >= cap;
+
+      this.logger.info(
+        { correlationId: context.correlationId, adminId: context.adminId, method: 'listAdminPricingSyncRuns', rows: rows.length, reachedLimit },
+        'Admin pricing Sync runs read'
+      );
+      return { data: { rows, reachedLimit }, error: null };
+    } catch (error) {
+      this.logger.warn(
+        { err: error, correlationId: context?.correlationId, method: 'listAdminPricingSyncRuns' },
+        'Admin pricing Sync runs read failed'
       );
       return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }
