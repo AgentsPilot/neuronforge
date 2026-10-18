@@ -6,7 +6,7 @@
 **Requirement:** [AI_MODEL_PRICE_REVIEW_REQUIREMENT.md](/docs/requirements/AI_MODEL_PRICE_REVIEW_REQUIREMENT.md): R-9 row 10; UF-1; MP-FR-3, MP-FR-6a, MP-FR-12 as amended; SA Re-review RR-1 (fetch design, generic name rule), RR-2 (pending-only writes), RR-7, RR-8 (a new outbound URL needs an SA ruling); BQ-4 (Google and Kimi stay manual); slice 5 BQ-A (a fetched reading supersedes a hand-typed pending price) and BQ-B (images manual); slice 7 SA code review F-1 (cached input is charged for OpenAI only); the follow-up note "Anthropic cache-read tokens are not costed"
 **Branch:** `feature/ai-model-price-review-slice10` (worktree `neuronforge-model-pricing-s10`, off origin/main `399070d4`, slices 1–9 merged; slice 9 as PR #464)
 **Date:** 2026-10-18
-**Status:** Code Complete (2026-10-18). SA approved with conditions SC10-1..SC10-9 (folded in); user decision B-1 "Oldest of the two"; T-0 clean. Uncommitted, awaiting SA code review and QA.
+**Status:** Code Complete (2026-10-18). SA approved with conditions SC10-1..SC10-9 (folded in); user decision B-1 "Oldest of the two"; T-0 clean. Committed 2026-10-18 (commit d201fbde, [PR #470](https://github.com/AgentsPilot/neuronforge/pull/470)) after SA code review approval and QA "Ready for commit"; awaiting merge.
 
 ## Overview
 
@@ -587,7 +587,12 @@ anthropicPricingAdapter.qa.test.ts Tests: 11 passed, 11 total
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/ai-model-price-review-slice10` (based on origin/main `5e9a59f1`; merge of origin/main was a no-op)
+- **Commit:** `d201fbde` feat(pricing): Anthropic price check in Check provider prices (price review slice 10)
+- **PR:** [PR #470](https://github.com/AgentsPilot/neuronforge/pull/470) to `main` (auto-merge not enabled)
+- **Pre-commit checks (RM):** only `openaiPricingAdapter.ts` shrinks (helpers moved to `markdownTable.ts`); no migration; charging files and guard tests untouched; no secrets, no added `console.*`, no backslash+hex in docs or fixtures
+- **Tests (RM, after merge of origin/main):** pricing-research + model-pricing route + repository + system-config: 929 passed, 6 failed (known local-only CRLF, `openaiPricingAdapter.test.ts`); `npm run test:authz-guard`: 203 passed
+- **Production filter check (TL, read-only, 2026-10-18):** the chained `.neq` filter on `provider_outcomes->anthropic->>outcome` is accepted by PostgREST (HTTP 200, `[]`)
 
 ---
 
@@ -597,3 +602,4 @@ anthropicPricingAdapter.qa.test.ts Tests: 11 passed, 11 total
 |------|--------|---------|
 | 2026-10-18 | Workplan written | Slice 10 (Anthropic adapter) on `feature/ai-model-price-review-slice10` off `399070d4`: one round for both providers, deterministic Anthropic adapter with anchors B1–B3, shared name matcher with a generic dated-snapshot rule, no Anthropic cache price proposed (not charged today), per-provider status and KPI, no migration. Sources captured 2026-10-18. Open questions O-1..O-10 for SA (RR-8 ruling on the new URL), business question B-1. No code |
 | 2026-10-18 | Code complete | SA conditions SC10-1..SC10-9 folded in (12.2); user decision B-1 "Oldest of the two"; T-0 production facts recorded (12.0, no stop); fixtures cut from a 16:07 UTC re-capture (12.1); deliberate test edits listed (12.3); deviations D-1..D-9 (12.4); results (12.5). Requirement spliced (RR-1 amendment, RR-8 slice 10 ruling, B-1, BQ-A awareness, status, Change History). No migration, no charge changed. Uncommitted, awaiting SA code review and QA |
+| 2026-10-18 | Committed, PR #470 | SA code review approved, QA "Ready for commit"; commit `d201fbde`, [PR #470](https://github.com/AgentsPilot/neuronforge/pull/470); TL production filter check recorded in Commit Info. Awaiting merge |
