@@ -43,7 +43,7 @@ This is a small bundle of low-risk leftovers that SA and QA flagged across the f
 - **Any allow-list in a guard must be pinned, with a test proving that it cannot grow** (QA-FF1-1).
 - **Open items:** BQ-20 (the user's call; FF-1a ships separately once answered), B-1 and B-2 (separate tasks), and the FF-3 burn-down.
 
-### Status: APPROVED FOR COMMIT — feature/bos-finance-followups — commit pending (RM)
+### Status: COMMITTED — feature/bos-finance-followups — commit `0a50f14a`, PR #463 (auto-merge on)
 
 ---
 
