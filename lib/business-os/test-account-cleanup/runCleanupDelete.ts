@@ -4,14 +4,20 @@
  *   1. the typed confirmation equals the email (G-3), before anything runs
  *   2. the check; it must come from the function version this build expects
  *      (R-6), and every blocker must be G-12, or there must be none
- *   3. remove exactly the storage objects the check returned
- *   4. the delete, whose own G-12 re-check proves the folders empty
+ *   3. the deletion receipt is prepared for the login the check resolved
+ *      (data export DE-10b.1): a failure here stops before any file goes
+ *   4. remove exactly the storage objects the check returned
+ *   5. the delete, whose own G-12 re-check proves the folders empty, and which
+ *      inserts the receipt last inside its transaction (R-2)
  *
  * Storage goes FIRST because it cannot join the database transaction, and
  * doing the delete first would need G-12 switched off (a fork of the logic)
  * and could leave files under a login that no longer exists. Residue case,
- * accepted by the user for test accounts (BQ-3): files removed, then step 4
+ * accepted by the user for test accounts (BQ-3): files removed, then step 5
  * blocks on a guard that appeared in between. The outcome says so.
+ *
+ * The close-and-anonymise sibling is
+ * lib/business-os/account-deletion/runAccountAnonymise.ts (same order).
  *
  * Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
  *
@@ -20,9 +26,11 @@
 
 import 'server-only';
 import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
+import { withFilesRemoved, type DeletionReceiptBase } from '@/lib/business-os/account-deletion/receiptInput';
 import {
   CleanupRpcError,
   type CleanupBlocker,
+  type CleanupCheckResult,
   type CleanupDeleteInput,
   type CleanupReport,
   type TestAccountCleanupRepository,
@@ -37,8 +45,18 @@ export interface CleanupServerMs {
   delete: number | null;
 }
 
+/** Builds the receipt for the login the check resolved. Throws to stop the run before the storage step. */
+export type PrepareReceipt = (targetUserId: string) => Promise<DeletionReceiptBase>;
+
 export type CleanupDeleteOutcome =
-  | { kind: 'removed'; targetUserId: string | null; filesRemoved: number; report: CleanupReport; serverMs: CleanupServerMs }
+  | {
+      kind: 'removed';
+      targetUserId: string | null;
+      filesRemoved: number;
+      report: CleanupReport;
+      serverMs: CleanupServerMs;
+      receiptId: string | null;
+    }
   | {
       kind: 'refused';
       reason: 'confirmation_mismatch' | 'blocked';
@@ -53,7 +71,7 @@ export type CleanupDeleteOutcome =
   | { kind: 'unavailable'; reason: CleanupUnavailableReason; targetUserId: string | null; filesRemoved: number; error: Error | null }
   | {
       kind: 'failed';
-      stage: 'check' | 'storage' | 'delete';
+      stage: 'check' | 'receipt' | 'storage' | 'delete';
       targetUserId: string | null;
       filesRemoved: number;
       error: Error;
@@ -61,20 +79,36 @@ export type CleanupDeleteOutcome =
 
 const normalise = (value: string): string => value.trim().toLowerCase();
 
+/** True when the typed confirmation equals the email (G-3, same rule as the function). */
+export function confirmationMatches(confirmEmail: string, email: string): boolean {
+  return normalise(confirmEmail) === normalise(email);
+}
+
 /** An rpc error that means "the tool is not usable here", not "this run failed". */
 export function unavailableReasonOf(error: Error | null): CleanupUnavailableReason | null {
   if (!(error instanceof CleanupRpcError)) return null;
   return error.kind === 'failed' ? null : error.kind;
 }
 
+/**
+ * Go on only on OK, or on BLOCKED where at least one blocker exists and every
+ * one is G-12. A BLOCKED verdict with no parsed blocker (a row the parser
+ * missed) must refuse: storage would go and the function would refuse.
+ */
+export function checkAllowsRun(check: CleanupCheckResult): boolean {
+  const storageOnly = check.blockers.length > 0 && check.blockers.every((blocker) => blocker.guard === 'G-12');
+  return (check.verdict === 'OK' || storageOnly) && check.targetUserId !== null;
+}
+
 export async function runCleanupDelete(
   repo: Pick<TestAccountCleanupRepository, 'check' | 'emptyStorage' | 'remove'>,
   input: CleanupDeleteInput,
-  actorId: string
+  actorId: string,
+  prepareReceipt: PrepareReceipt
 ): Promise<CleanupDeleteOutcome> {
   // G-3 here as well as in the function: a mismatch must refuse BEFORE the
   // storage step, or the files would go and the account would stay.
-  if (normalise(input.confirmEmail) !== normalise(input.email)) {
+  if (!confirmationMatches(input.confirmEmail, input.email)) {
     return {
       kind: 'refused',
       reason: 'confirmation_mismatch',
@@ -100,11 +134,7 @@ export async function runCleanupDelete(
     return { kind: 'unavailable', reason: 'function_out_of_date', targetUserId: check.targetUserId, filesRemoved: 0, error: null };
   }
 
-  // Go on only on OK, or on BLOCKED where at least one blocker exists and every
-  // one is G-12. A BLOCKED verdict with no parsed blocker (a row the parser
-  // missed) must refuse here: storage would go and the function would refuse.
-  const storageOnly = check.blockers.length > 0 && check.blockers.every((blocker) => blocker.guard === 'G-12');
-  if (!(check.verdict === 'OK' || storageOnly) || check.targetUserId === null) {
+  if (!checkAllowsRun(check) || check.targetUserId === null) {
     return {
       kind: 'refused',
       reason: 'blocked',
@@ -114,6 +144,19 @@ export async function runCleanupDelete(
       filesRemoved: 0,
       message: 'BLOCKED, nothing was removed.',
       serverMs: { check: check.serverMs, delete: null },
+    };
+  }
+
+  let receipt: DeletionReceiptBase;
+  try {
+    receipt = await prepareReceipt(check.targetUserId);
+  } catch (err) {
+    return {
+      kind: 'failed',
+      stage: 'receipt',
+      targetUserId: check.targetUserId,
+      filesRemoved: 0,
+      error: err instanceof Error ? err : new Error(String(err)),
     };
   }
 
@@ -133,7 +176,7 @@ export async function runCleanupDelete(
     filesRemoved = emptied.data.removed;
   }
 
-  const removed = await repo.remove(input, actorId);
+  const removed = await repo.remove(input, actorId, withFilesRemoved(receipt, filesRemoved));
   if (removed.error || !removed.data) {
     const error = removed.error ?? new Error('Delete returned nothing');
     const unavailable = unavailableReasonOf(error);
@@ -158,5 +201,6 @@ export async function runCleanupDelete(
     filesRemoved,
     report: removed.data.report,
     serverMs: { check: check.serverMs, delete: removed.data.serverMs },
+    receiptId: removed.data.receiptId,
   };
 }

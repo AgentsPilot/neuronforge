@@ -1,27 +1,38 @@
 /**
- * Test-account cleanup, the DELETE (OX-1r).
+ * Account cleanup, the DELETE (OX-1r, extended by data export DE-10b.1).
  *
- *   POST /api/admin/test-account-cleanup/delete   body { email, tag, confirmEmail }
+ *   POST /api/admin/test-account-cleanup/delete
+ *     { mode: 'hard', email, tag, confirmEmail, reason: { category: 'test_account' } }
+ *     { mode: 'anonymise', email, subject, confirmEmail, reason }
  *
  * ⚠️ DESTRUCTIVE AND LIVE once the second secret is set and the function is
- * applied (BQ-1): it removes one TEST account completely, login included, so
- * the email can sign up again. Every guard G-1 to G-19 runs inside the
- * generated, secret-gated database function; this route adds none and
- * removes none.
+ * applied (BQ-1). `hard` removes one TEST account completely, login included,
+ * so the email can sign up again. `anonymise` (DE-10b.1) closes and anonymises
+ * a real account in place: its business data is deleted, our billing rows stay
+ * with their personal columns blanked, and the login becomes a closed
+ * tombstone. Every guard runs inside the generated, secret-gated database
+ * function; this route adds none and removes none.
  *
  * Order, and nothing before it: `requireAdmin` (401 / 403) -> body, Zod
- * `.strict()` (400) -> the second secret present, else 503 (the off switch) ->
- * `runCleanupDelete`: G-3, the check, the function version (R-6, 503 before
- * any storage call), storage only when every blocker is G-12, then the delete
- * with its own G-12 re-check (SA-6). A refused secret (42501) or a missing
- * function is a 503, audited as refused.
+ * `.strict()` per mode (400) -> the second secret present, else 503 (the off
+ * switch) -> the receipt fingerprint key present, else 503 `not_configured`
+ * (C2-5: no receipt, no delete) -> the runner: G-3, the check, the function
+ * version (R-6, 503 before any storage call), the receipt facts, storage only
+ * when every blocker is G-12, then the delete or the anonymise with its own
+ * re-check. The function writes the receipt last, in its transaction (R-2).
  *
- * Audit: the success row is written INSIDE the transaction by the function, with
- * the admin as actor (SA-5). A refused or failed attempt writes
- * BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED from here, flushed before responding,
- * never failing the request (BQ-5). No email, no tag in either.
+ * Every admin delete needs a reason (BQ-4). The hard delete takes only "Test
+ * account" (O-10): any other reason is a 400.
  *
- * Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
+ * Audit: the success row is written INSIDE the transaction by the function,
+ * with the admin as actor (SA-5). A refused or failed attempt writes
+ * BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED (hard) or ACCOUNT_DELETION_REFUSED
+ * (anonymise, R-3) from here, flushed before responding, never failing the
+ * request (BQ-5). Never the email, the tag, the reason note or the
+ * fingerprint, in an audit row or a log line.
+ *
+ * Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md,
+ * docs/requirements/BUSINESS_OS_DATA_EXPORT_DE10B_REQUIREMENT.md
  *
  * @module app/api/admin/test-account-cleanup/delete
  */
@@ -33,8 +44,18 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { logAndFlush, type AuditFlushLogger } from '@/lib/audit/boundedAuditFlush';
 import { isTestCleanupConfigured } from '@/lib/server/testCleanupSecret';
 import { TestAccountCleanupRepository, cleanupErrorFacts } from '@/lib/repositories/TestAccountCleanupRepository';
-import { cleanupDeleteBodySchema } from '@/lib/business-os/test-account-cleanup/schemas';
-import { runCleanupDelete } from '@/lib/business-os/test-account-cleanup/runCleanupDelete';
+import { BusinessOsDataExportJobRepository } from '@/lib/repositories/BusinessOsDataExportJobRepository';
+import { cleanupDeleteBodySchema, type CleanupDeleteBody } from '@/lib/business-os/test-account-cleanup/schemas';
+import { runCleanupDelete, type CleanupDeleteOutcome, type PrepareReceipt } from '@/lib/business-os/test-account-cleanup/runCleanupDelete';
+import { runAccountAnonymise, type AnonymiseRunOutcome } from '@/lib/business-os/account-deletion/runAccountAnonymise';
+import {
+  FINGERPRINT_KEY_VERSION,
+  fingerprintEmail,
+  isFingerprintKeyAvailable,
+} from '@/lib/business-os/account-deletion/receiptFingerprint';
+import { buildAdminReceipt } from '@/lib/business-os/account-deletion/receiptInput';
+import { reasonNoteOf } from '@/lib/business-os/account-deletion/reason';
+import type { CleanupAnonymiseView } from '@/lib/business-os/test-account-cleanup/cleanupApiTypes';
 
 const logger = createLogger({ module: 'TestAccountCleanupDeleteAPI' });
 
@@ -43,23 +64,30 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-/** The refused/failed row (SA-5): guard ids, target login id, correlationId. Never the email or the tag. */
+type Mode = CleanupDeleteBody['mode'];
+
+/**
+ * The refused/failed row (SA-5, R-3): guard ids, target login id, correlationId.
+ * Never the email, the tag, the reason note or the fingerprint.
+ */
 async function auditRefused(
   request: NextRequest,
   requestLogger: AuditFlushLogger,
   adminId: string,
   correlationId: string,
+  mode: Mode | null,
   facts: { reason: string; targetUserId: string | null; guards: string[]; filesRemoved: number }
 ): Promise<void> {
   await logAndFlush(
     {
-      action: AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED,
+      action: mode === 'anonymise' ? AUDIT_EVENTS.ACCOUNT_DELETION_REFUSED : AUDIT_EVENTS.BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED,
       entityType: 'user',
       entityId: facts.targetUserId,
       userId: adminId,
       actorId: adminId,
       details: {
         source: 'admin_page',
+        mode: mode ?? 'unknown',
         reason: facts.reason,
         guards: facts.guards,
         target_user_id: facts.targetUserId,
@@ -69,9 +97,15 @@ async function auditRefused(
       request,
     },
     requestLogger,
-    { reason: 'test-account removal refused', continues: 'responding anyway' }
+    { reason: mode === 'anonymise' ? 'account deletion refused' : 'test-account removal refused', continues: 'responding anyway' }
   );
 }
+
+const notConfigured = (correlationId: string) =>
+  NextResponse.json(
+    { success: false, error: 'not_configured', message: 'The cleanup is not configured on this deployment.', correlationId },
+    { status: 503 }
+  );
 
 export async function POST(request: NextRequest) {
   const gate = await requireAdmin(logger.child({ route: 'test-account-cleanup-delete', method: 'POST' }));
@@ -98,29 +132,71 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  const input = parsed.data;
 
   if (!isTestCleanupConfigured()) {
-    requestLogger.warn({}, 'Test-account cleanup delete refused: not configured');
-    await auditRefused(request, requestLogger, adminId, correlationId, {
+    requestLogger.warn({ mode: input.mode }, 'Account cleanup delete refused: not configured');
+    await auditRefused(request, requestLogger, adminId, correlationId, input.mode, {
       reason: 'not_configured',
       targetUserId: null,
       guards: [],
       filesRemoved: 0,
     });
-    return NextResponse.json(
-      { success: false, error: 'not_configured', message: 'The cleanup is not configured on this deployment.', correlationId },
-      { status: 503 }
-    );
+    return notConfigured(correlationId);
   }
+
+  // C2-5: no fingerprint key, no receipt, so no delete in either mode.
+  if (!isFingerprintKeyAvailable()) {
+    requestLogger.warn({ mode: input.mode }, 'Account cleanup delete refused: the receipt fingerprint key is not configured');
+    await auditRefused(request, requestLogger, adminId, correlationId, input.mode, {
+      reason: 'not_configured',
+      targetUserId: null,
+      guards: [],
+      filesRemoved: 0,
+    });
+    return notConfigured(correlationId);
+  }
+
+  const requestedAt = new Date();
+  // Runs after the check and before the storage step: a failure here (the key,
+  // the export facts, a value the table would refuse) removes nothing.
+  const prepareReceipt: PrepareReceipt = async (targetUserId) => {
+    const facts = await new BusinessOsDataExportJobRepository().findDeletionFacts(targetUserId);
+    if (facts.error || !facts.data) throw facts.error ?? new Error('No export facts');
+    return buildAdminReceipt({
+      // In memory only: the email itself never leaves this request.
+      emailFingerprint: fingerprintEmail(input.email),
+      fingerprintKeyVersion: FINGERPRINT_KEY_VERSION,
+      adminEmail: gate.user.email ?? null,
+      reasonCategory: input.reason.category,
+      reasonNote: reasonNoteOf(input.reason),
+      ownerLastExportReadyAt: facts.data.ownerLastExportReadyAt,
+      ownerExportDownloadedAt: facts.data.ownerExportDownloadedAt,
+      adminExportExisted: facts.data.adminExportExisted,
+      requestedAt,
+      correlationId,
+    });
+  };
 
   const started = Date.now();
   try {
-    const outcome = await runCleanupDelete(new TestAccountCleanupRepository(), parsed.data, adminId);
+    const repo = new TestAccountCleanupRepository();
+    const outcome: CleanupDeleteOutcome | AnonymiseRunOutcome =
+      input.mode === 'hard'
+        ? await runCleanupDelete(repo, { email: input.email, tag: input.tag, confirmEmail: input.confirmEmail }, adminId, prepareReceipt)
+        : await runAccountAnonymise(
+            repo,
+            { email: input.email, subject: input.subject, confirmEmail: input.confirmEmail },
+            adminId,
+            prepareReceipt
+          );
 
     if (outcome.kind === 'removed') {
       requestLogger.info(
         {
+          mode: input.mode,
           targetUserId: outcome.targetUserId,
+          receiptId: outcome.receiptId,
           rows: outcome.report.total.rowsRemoved,
           tables: outcome.report.total.tablesRemoved,
           filesRemoved: outcome.filesRemoved,
@@ -141,9 +217,37 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (outcome.kind === 'anonymised') {
+      const data: CleanupAnonymiseView = {
+        mode: 'anonymise',
+        targetUserId: outcome.targetUserId,
+        filesRemoved: outcome.filesRemoved,
+        ...outcome.report,
+        serverMs: outcome.serverMs,
+      };
+      requestLogger.info(
+        {
+          mode: input.mode,
+          targetUserId: outcome.targetUserId,
+          receiptId: outcome.report.receiptId,
+          receiptMode: outcome.report.receiptMode,
+          rows: outcome.report.rowsRemoved,
+          tables: outcome.report.tablesRemoved,
+          rowsBlanked: outcome.report.rowsBlanked,
+          filesRemoved: outcome.filesRemoved,
+          notes: outcome.notes.map((note) => note.guard),
+          serverMs: outcome.serverMs,
+          elapsedMs: Date.now() - started,
+        },
+        'Account closed and anonymised'
+      );
+      return NextResponse.json({ success: true, data, correlationId });
+    }
+
     if (outcome.kind === 'refused') {
       requestLogger.warn(
         {
+          mode: input.mode,
           targetUserId: outcome.targetUserId,
           reason: outcome.reason,
           guards: outcome.guards,
@@ -151,9 +255,9 @@ export async function POST(request: NextRequest) {
           serverMs: outcome.serverMs,
           elapsedMs: Date.now() - started,
         },
-        'Test-account removal refused'
+        input.mode === 'anonymise' ? 'Account deletion refused' : 'Test-account removal refused'
       );
-      await auditRefused(request, requestLogger, adminId, correlationId, {
+      await auditRefused(request, requestLogger, adminId, correlationId, input.mode, {
         reason: outcome.reason,
         targetUserId: outcome.targetUserId,
         guards: outcome.guards,
@@ -176,15 +280,16 @@ export async function POST(request: NextRequest) {
     if (outcome.kind === 'unavailable') {
       requestLogger.error(
         {
+          mode: input.mode,
           err: outcome.error ? cleanupErrorFacts(outcome.error) : undefined,
           reason: outcome.reason,
           targetUserId: outcome.targetUserId,
           filesRemoved: outcome.filesRemoved,
           elapsedMs: Date.now() - started,
         },
-        'Test-account removal refused: the cleanup function is not usable'
+        'Account cleanup refused: the cleanup function is not usable'
       );
-      await auditRefused(request, requestLogger, adminId, correlationId, {
+      await auditRefused(request, requestLogger, adminId, correlationId, input.mode, {
         reason: outcome.reason,
         targetUserId: outcome.targetUserId,
         guards: [],
@@ -213,15 +318,16 @@ export async function POST(request: NextRequest) {
     const facts = cleanupErrorFacts(outcome.error);
     requestLogger.error(
       {
+        mode: input.mode,
         err: facts,
         stage: outcome.stage,
         targetUserId: outcome.targetUserId,
         filesRemoved: outcome.filesRemoved,
         elapsedMs: Date.now() - started,
       },
-      'Test-account removal failed'
+      'Account cleanup failed'
     );
-    await auditRefused(request, requestLogger, adminId, correlationId, {
+    await auditRefused(request, requestLogger, adminId, correlationId, input.mode, {
       reason: `${outcome.stage}_failed`,
       targetUserId: outcome.targetUserId,
       guards: [],
@@ -244,10 +350,10 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   } catch (error) {
-    requestLogger.error({ err: cleanupErrorFacts(error) }, 'Test-account removal failed unexpectedly');
+    requestLogger.error({ mode: input.mode, err: cleanupErrorFacts(error) }, 'Account cleanup failed unexpectedly');
     // Recorded like every other failed attempt (SA review item 2). The target
     // and the file count are unknown here; logAndFlush never throws.
-    await auditRefused(request, requestLogger, adminId, correlationId, {
+    await auditRefused(request, requestLogger, adminId, correlationId, input.mode, {
       reason: 'unexpected_failed',
       targetUserId: null,
       guards: [],

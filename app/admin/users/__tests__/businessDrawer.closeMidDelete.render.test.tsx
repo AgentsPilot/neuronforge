@@ -326,7 +326,7 @@ const CHECK_POST = {
   method: 'POST',
   headers: JSON_HEADERS,
   cache: undefined,
-  body: { email: DANA_EMAIL, tag: DANA_EMAIL },
+  body: { mode: 'hard', email: DANA_EMAIL, tag: DANA_EMAIL },
 };
 /** The whole expected cleanup delete request (PIN-e; no cache option today, F-4). */
 const DELETE_POST = {
@@ -334,14 +334,19 @@ const DELETE_POST = {
   method: 'POST',
   headers: JSON_HEADERS,
   cache: undefined,
-  body: { email: DANA_EMAIL, tag: DANA_EMAIL, confirmEmail: DANA_EMAIL },
+  body: { mode: 'hard', email: DANA_EMAIL, tag: DANA_EMAIL, confirmEmail: DANA_EMAIL, reason: { category: 'test_account' } },
 };
 
 const panelOf = (drawer: HTMLElement) => within(drawer).getByTestId('test-account-cleanup-panel');
 
-/** Check, then type the confirmation; returns the Delete button. */
+/**
+ * Pick "Test account" (the hard delete), Check, then type the confirmation;
+ * returns the Delete button. DE-10b.1: the drawer defaults to "Customer
+ * account" (close and anonymise); the hard flow is one click away.
+ */
 async function checkAndConfirm(drawer: HTMLElement): Promise<HTMLButtonElement> {
   const panel = panelOf(drawer);
+  fireEvent.click(within(panel).getByTestId('cleanup-mode-hard'));
   checkQueue.push(ok(checkView()));
   fireEvent.click(within(panel).getByRole('button', { name: 'Check' }));
   await within(panel).findByTestId('cleanup-confirm');

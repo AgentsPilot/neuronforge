@@ -15,8 +15,9 @@
  * panel, which shows them inside AI usage (BD-7).
  *
  * The danger area is byte-equivalent to the expanded row's: the gate, the
- * Delete… entry and its dialog, then the hard delete locked to this row's
- * email. It is never mounted while the drawer is closed: the drawer renders
+ * Delete… entry and its dialog, then the account cleanup locked to this row's
+ * email and id (the test-account hard delete, or close and anonymise, DE-10b.1).
+ * It is never mounted while the drawer is closed: the drawer renders
  * this body only when open (Radix unmounts closed content).
  */
 
@@ -275,11 +276,14 @@ export function BusinessDetail({
             />
           </>
         )}
-        {/* AU-1: the Danger Zone's hard delete, locked to this row's email (tag = email). */}
+        {/* AU-1: the Danger Zone's cleanup, locked to this row's email (tag = email). DE-10b.1: with the
+            row's account id it also offers "close and anonymise" (the default) beside the test-account
+            hard delete; G-2a proves in the database that the id and the email are the same login. */}
         {user.email ? (
           <TestAccountCleanupPanel
             key={user.id}
             lockedEmail={user.email}
+            lockedAccountId={user.id}
             tone="admin-dark"
             onRemoved={() => {
               // AU-C2: CLEAN only, once the admin clicks Done (or the panel unmounts); the row leaves the list.

@@ -870,7 +870,8 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // +1 finance 4b.1 (2026-10-17): business_os_boost_reversal_events (never, via its purchase).
     // +1 data export DE-8a (2026-10-17): business_os_data_exports, the export jobs (purge).
     // +1 finance slice 8.1 (2026-10-17): business_os_finance_snapshots (never, global).
-    expect(baseline.count).toBe(158);
+    // +1 data export DE-10b.1 (2026-10-18): business_os_deletion_receipts (never, global).
+    expect(baseline.count).toBe(159);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

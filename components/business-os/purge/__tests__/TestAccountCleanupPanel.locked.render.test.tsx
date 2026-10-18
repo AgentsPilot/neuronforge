@@ -123,7 +123,7 @@ describe('locked mode (AU-1)', () => {
     await user.click(screen.getByRole('button', { name: 'Check' }));
     await screen.findByTestId('cleanup-check-result');
     expect(posts('/check')).toHaveLength(1);
-    expect(posts('/check')[0].body).toEqual({ email: EMAIL, tag: EMAIL });
+    expect(posts('/check')[0].body).toEqual({ mode: 'hard', email: EMAIL, tag: EMAIL });
   });
 
   it('keeps the typed confirmation: Delete stays off until the email is typed again', async () => {
@@ -141,7 +141,7 @@ describe('locked mode (AU-1)', () => {
     const user = await checkedAndConfirmed(onRemoved);
     await user.click(screen.getByRole('button', { name: 'Delete this account' }));
     await screen.findByTestId('cleanup-report');
-    expect(posts('/delete')[0].body).toEqual({ email: EMAIL, tag: EMAIL, confirmEmail: EMAIL });
+    expect(posts('/delete')[0].body).toEqual({ mode: 'hard', email: EMAIL, tag: EMAIL, confirmEmail: EMAIL, reason: { category: 'test_account' } });
     expect(screen.getByTestId('cleanup-report')).toHaveTextContent('Account removed.');
     expect(screen.getByTestId('cleanup-copy-report')).not.toBeDisabled();
     expect(onRemoved).not.toHaveBeenCalled();

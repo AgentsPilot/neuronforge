@@ -11,6 +11,7 @@
  */
 
 import type {
+  CleanupAnonymiseView,
   CleanupBlockerView,
   CleanupCheckRowView,
   CleanupCheckView,
@@ -20,6 +21,7 @@ import type {
   CleanupStorageObjectView,
 } from '../cleanupApiTypes';
 import type {
+  AnonymiseReport,
   CleanupBlocker,
   CleanupCheckResult,
   CleanupCheckRow,
@@ -27,6 +29,7 @@ import type {
   StorageObjectRef,
 } from '@/lib/repositories/TestAccountCleanupRepository';
 import type { CleanupDeleteOutcome, CleanupUnavailableReason } from '../runCleanupDelete';
+import type { AnonymiseRunOutcome } from '@/lib/business-os/account-deletion/runAccountAnonymise';
 
 /** Fails to compile if `Actual` is not assignable to `Expected`. */
 type Satisfies<Expected, Actual extends Expected> = Actual;
@@ -35,6 +38,9 @@ type Satisfies<Expected, Actual extends Expected> = Actual;
 type ServerCheck = CleanupCheckResult & { functionUpToDate: boolean };
 /** What POST .../delete sends as `data` on success. */
 type ServerDelete = Pick<Extract<CleanupDeleteOutcome, { kind: 'removed' }>, 'targetUserId' | 'filesRemoved' | 'report' | 'serverMs'>;
+/** What POST .../delete sends as `data` on an anonymise success (DE-10b.1). */
+type ServerAnonymise = { mode: 'anonymise' } & Pick<Extract<AnonymiseRunOutcome, { kind: 'anonymised' }>, 'targetUserId' | 'filesRemoved' | 'serverMs'> &
+  AnonymiseReport;
 /**
  * Every `error` code of POST .../delete: the outcome reasons and stages from
  * runCleanupDelete, plus the two literals the route writes itself (invalid
@@ -42,8 +48,10 @@ type ServerDelete = Pick<Extract<CleanupDeleteOutcome, { kind: 'removed' }>, 'ta
  */
 type ServerDeleteCode =
   | Extract<CleanupDeleteOutcome, { kind: 'refused' }>['reason']
+  | Extract<AnonymiseRunOutcome, { kind: 'refused' }>['reason']
   | CleanupUnavailableReason
   | `${Extract<CleanupDeleteOutcome, { kind: 'failed' }>['stage']}_failed`
+  | `${Extract<AnonymiseRunOutcome, { kind: 'failed' }>['stage']}_failed`
   | 'invalid_body'
   | 'Internal server error';
 
@@ -61,6 +69,8 @@ type DeleteS2C = Satisfies<CleanupDeleteView, ServerDelete>;
 type DeleteC2S = Satisfies<ServerDelete, CleanupDeleteView>;
 type CodeS2C = Satisfies<CleanupDeleteErrorCode, ServerDeleteCode>;
 type CodeC2S = Satisfies<ServerDeleteCode, CleanupDeleteErrorCode>;
+type AnonymiseS2C = Satisfies<CleanupAnonymiseView, ServerAnonymise>;
+type AnonymiseC2S = Satisfies<ServerAnonymise, CleanupAnonymiseView>;
 
 describe('the cleanup panel wire types match what the routes send', () => {
   it('check, blocker, row, storage, report, delete and the delete error codes are assignable both ways (checked by tsc, not Jest)', () => {
@@ -79,8 +89,10 @@ describe('the cleanup panel wire types match what the routes send', () => {
       | DeleteC2S
       | CodeS2C
       | CodeC2S
+      | AnonymiseS2C
+      | AnonymiseC2S
       | null
-    > = new Array(14).fill(null);
-    expect(checks).toEqual(new Array(14).fill(null));
+    > = new Array(16).fill(null);
+    expect(checks).toEqual(new Array(16).fill(null));
   });
 });

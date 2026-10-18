@@ -40,6 +40,8 @@ export interface CleanupCheckView {
   verdict: 'OK' | 'BLOCKED';
   targetUserId: string | null;
   blockers: CleanupBlockerView[];
+  /** Informational rows (anonymise check only, DE-10b.1): reported, never blocking. [] in hard mode. */
+  notes: CleanupBlockerView[];
   storageObjects: CleanupStorageObjectView[];
   rows: CleanupCheckRowView[];
   /** false: the applied database function is from another build; the delete will refuse (R-6). */
@@ -69,6 +71,21 @@ export interface CleanupDeleteView {
   serverMs: { check: number | null; delete: number | null };
 }
 
+/** `data` of a successful POST .../delete in the anonymise mode (DE-10b.1). Ids and counts only. */
+export interface CleanupAnonymiseView {
+  mode: 'anonymise';
+  targetUserId: string;
+  filesRemoved: number;
+  receiptId: string;
+  /** The 12-hex reference of the closed login ("Deleted account {ref}"). */
+  placeholderRef: string;
+  receiptMode: 'anonymised' | 'pseudonymised_billing_kept';
+  rowsRemoved: number;
+  tablesRemoved: number;
+  rowsBlanked: number;
+  serverMs: { check: number | null; delete: number | null };
+}
+
 /**
  * Every `error` code POST .../delete can answer with. Pinned both ways against
  * the server's reasons in `__tests__/cleanupApiTypes.wireTypes.test.ts`, so a
@@ -84,6 +101,7 @@ export type CleanupDeleteErrorCode =
   | 'confirmation_mismatch'
   | 'blocked'
   | 'check_failed'
+  | 'receipt_failed'
   | 'storage_failed'
   | 'delete_failed'
   | 'Internal server error';

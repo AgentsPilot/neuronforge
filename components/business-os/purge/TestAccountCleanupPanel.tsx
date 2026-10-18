@@ -27,6 +27,16 @@
  * typed confirmation stays. Without the prop the Danger Zone render is
  * unchanged (AU-C1).
  *
+ * Close and anonymise (data export DE-10b.1): with `lockedAccountId` as well,
+ * the locked panel offers a mode choice. "Customer account" (the default)
+ * closes and anonymises the account in place and keeps our billing with its
+ * personal details removed; "Test account" is the hard delete above. The
+ * unlocked /test-business-os mount stays hard-only. Every delete needs a
+ * reason (BQ-4); the hard delete takes only "Test account" (O-10), so that
+ * mode pre-selects and locks it. The "Other" note says not to write names or
+ * emails (C-9) and is never logged. The check lists blocking guards and,
+ * apart, the informational notes (what is kept).
+ *
  * Tone: `tone="admin-dark"` (passed by /admin/users) swaps every inline light
  * style for Tailwind classes matching that page, with each text colour set
  * explicitly, and drops the panel's own card so it sits in the danger area.
@@ -39,6 +49,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import type {
+  CleanupAnonymiseView,
   CleanupBlockerView,
   CleanupCheckRowView,
   CleanupCheckView,
@@ -46,6 +57,14 @@ import type {
   CleanupDeleteView,
   CleanupErrorBody,
 } from '@/lib/business-os/test-account-cleanup/cleanupApiTypes';
+import {
+  ADMIN_DELETE_REASONS,
+  ADMIN_DELETE_REASON_LABELS,
+  REASON_NOTE_HINT,
+  REASON_NOTE_MAX,
+  isReasonComplete,
+  type AdminDeleteReasonCategory,
+} from '@/lib/business-os/account-deletion/reason';
 
 const CHECK_URL = '/api/admin/test-account-cleanup/check';
 const DELETE_URL = '/api/admin/test-account-cleanup/delete';
@@ -158,6 +177,7 @@ const DELETE_SENTENCES: Record<CleanupDeleteErrorCode, (facts: SentenceFacts) =>
       ? 'Files removed, account kept: the delete did not run to the end.'
       : 'The removal did not run. Nothing was removed.',
   check_failed: (facts) => DELETE_SENTENCES.delete_failed(facts),
+  receipt_failed: () => 'The deletion receipt could not be prepared. Nothing was removed.',
   'Internal server error': () => 'The removal stopped unexpectedly. Run the check again before retrying.',
 };
 
@@ -244,6 +264,31 @@ const LOCKED_REMOVED_TITLE = 'Account removed.';
 
 /** The fixed warning line of locked mode (user-accepted copy, SA SQ-3). */
 export const LOCKED_WARNING = 'Permanently removes a real account, its login and money history.';
+
+/** Locked mode with an account id: what the admin chooses between (DE-10b.1, O-10). */
+export type CleanupPanelMode = 'hard' | 'anonymise';
+export const MODE_LABELS: Readonly<Record<CleanupPanelMode, string>> = {
+  anonymise: 'Customer account: close and anonymise (keeps our billing)',
+  hard: 'Test account: remove completely',
+};
+/** The warning line of the anonymise mode. */
+export const ANONYMISE_WARNING =
+  'Closes this account for good: its business data is deleted, the login is closed and anonymised, and our billing records stay with personal details removed.';
+const ANONYMISED_TITLE = 'Account closed and anonymised.';
+
+/** The anonymise report as plain text, from the server view alone. */
+export function formatAnonymiseReportText(view: CleanupAnonymiseView): string {
+  const lines = [
+    ANONYMISED_TITLE,
+    `Deleted account ${view.placeholderRef} · receipt ${view.receiptId}`,
+    `Mode: ${view.receiptMode === 'pseudonymised_billing_kept' ? 'billing kept, personal details removed' : 'anonymised'}`,
+    `Removed ${view.rowsRemoved} rows in ${view.tablesRemoved} tables · blanked ${view.rowsBlanked} values · files removed ${view.filesRemoved}`,
+  ];
+  if (view.serverMs.check !== null || view.serverMs.delete !== null) {
+    lines.push(`Server time: check ${view.serverMs.check ?? '?'} ms · delete ${view.serverMs.delete ?? '?'} ms`);
+  }
+  return lines.join('\n');
+}
 
 /** The delete report block as plain text, from the same view the panel renders. */
 export function formatDeleteReportText(removed: CleanupDeleteView, title: string = REMOVED_TITLE): string {
@@ -383,6 +428,11 @@ export interface TestAccountCleanupPanelProps {
    */
   lockedEmail?: string;
   /**
+   * DE-10b.1: the account id of the same row. With `lockedEmail` it turns on
+   * the mode choice, and the anonymise check sends it as `subject` (G-2a).
+   */
+  lockedAccountId?: string;
+  /**
    * Called once after a delete whose report result is CLEAN, never otherwise.
    * Locked mode: when the admin clicks Done under the report, or on unmount,
    * or when the answer lands after the panel has unmounted (LF-F1).
@@ -397,10 +447,16 @@ type Probe = 'loading' | 'configured' | 'not_configured' | 'hidden' | 'unknown';
 export function TestAccountCleanupPanel({
   onLog,
   lockedEmail,
+  lockedAccountId,
   onRemoved,
   tone = 'light',
 }: TestAccountCleanupPanelProps = {}) {
   const isLocked = typeof lockedEmail === 'string' && lockedEmail.trim() !== '';
+  // The anonymise mode needs the row's account id; without it the panel stays hard-only.
+  const canAnonymise = isLocked && typeof lockedAccountId === 'string' && lockedAccountId.trim() !== '';
+  const [mode, setMode] = useState<CleanupPanelMode>(canAnonymise ? 'anonymise' : 'hard');
+  const [reasonCategory, setReasonCategory] = useState<AdminDeleteReasonCategory | null>(null);
+  const [reasonNote, setReasonNote] = useState('');
   const isDark = tone === 'admin-dark';
   const skin = skinFor(isDark);
   const [probe, setProbe] = useState<Probe>('loading');
@@ -417,6 +473,7 @@ export function TestAccountCleanupPanel({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<{ sentence: string; blockers: CleanupBlockerView[] } | null>(null);
   const [removed, setRemoved] = useState<CleanupDeleteView | null>(null);
+  const [anonymised, setAnonymised] = useState<CleanupAnonymiseView | null>(null);
 
   // A ref, not only state: a second click in the same tick must not post twice.
   const inFlight = useRef(false);
@@ -477,6 +534,20 @@ export function TestAccountCleanupPanel({
     setDeleteError(null);
   };
 
+  /** The hard delete takes only "Test account" (O-10): that mode locks it. */
+  const effectiveReason: AdminDeleteReasonCategory | null = mode === 'hard' ? 'test_account' : reasonCategory;
+  const reasonComplete = isReasonComplete(effectiveReason, reasonNote);
+
+  const chooseMode = (next: CleanupPanelMode) => {
+    if (next === mode) return;
+    setMode(next);
+    setReasonCategory(null);
+    setReasonNote('');
+    resetFlow();
+    setRemoved(null);
+    setAnonymised(null);
+  };
+
   const runCheck = async () => {
     if (inFlight.current) return;
     const target = { email: email.trim(), tag: tag.trim() };
@@ -485,11 +556,16 @@ export function TestAccountCleanupPanel({
     setChecking(true);
     resetFlow();
     setRemoved(null);
+    setAnonymised(null);
     try {
+      const body =
+        mode === 'anonymise'
+          ? { mode, email: target.email, subject: (lockedAccountId as string).trim() }
+          : { mode, email: target.email, tag: target.tag };
       const res = await fetch(CHECK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(target),
+        body: JSON.stringify(body),
       });
       const json = (await readJson(res)) as { success?: boolean; data?: CleanupCheckView } | CleanupErrorBody | null;
       if (!res.ok || !json || json.success !== true || !('data' in json) || !json.data) {
@@ -513,28 +589,47 @@ export function TestAccountCleanupPanel({
 
   const runDelete = async () => {
     if (inFlight.current || !check || normaliseEmail(confirmEmail) !== normaliseEmail(check.email)) return;
+    if (!reasonComplete || effectiveReason === null) return;
     inFlight.current = true;
     setDeleting(true);
     setDeleteError(null);
+    const reason = effectiveReason === 'other' ? { category: effectiveReason, note: reasonNote.trim() } : { category: effectiveReason };
     try {
+      const body =
+        mode === 'anonymise'
+          ? { mode, email: check.email, subject: (lockedAccountId as string).trim(), confirmEmail, reason }
+          : { mode, email: check.email, tag: check.tag, confirmEmail, reason };
       const res = await fetch(DELETE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: check.email, tag: check.tag, confirmEmail }),
+        body: JSON.stringify(body),
       });
-      const json = (await readJson(res)) as { success?: boolean; data?: CleanupDeleteView } | CleanupErrorBody | null;
+      const json = (await readJson(res)) as
+        | { success?: boolean; data?: CleanupDeleteView | CleanupAnonymiseView }
+        | CleanupErrorBody
+        | null;
       if (!res.ok || !json || json.success !== true || !('data' in json) || !json.data) {
-        const body = json as CleanupErrorBody | null;
-        setDeleteError({ sentence: deleteErrorSentence(res.status, body), blockers: body?.blockers ?? [] });
-        onLog?.('error', `Test-account removal refused (${res.status} ${body?.error ?? 'unknown'})`);
+        const failure = json as CleanupErrorBody | null;
+        setDeleteError({ sentence: deleteErrorSentence(res.status, failure), blockers: failure?.blockers ?? [] });
+        onLog?.('error', `Account removal refused (${res.status} ${failure?.error ?? 'unknown'})`);
         return;
       }
-      setRemoved(json.data);
-      onLog?.('success', `Test account removed · ${json.data.report.total.rowsRemoved} rows · ${json.data.filesRemoved} file(s)`);
+      const data = json.data;
       // The check now describes an account that no longer exists.
       resetFlow();
       if (!isLocked) setEmail('');
-      if (json.data.report.total.result === 'CLEAN') {
+      let clean: boolean;
+      if ('mode' in data && data.mode === 'anonymise') {
+        setAnonymised(data);
+        onLog?.('success', `Account closed and anonymised · ${data.rowsRemoved} rows · ${data.filesRemoved} file(s)`);
+        clean = true;
+      } else {
+        const hard = data as CleanupDeleteView;
+        setRemoved(hard);
+        onLog?.('success', `Test account removed · ${hard.report.total.rowsRemoved} rows · ${hard.filesRemoved} file(s)`);
+        clean = hard.report.total.result === 'CLEAN';
+      }
+      if (clean) {
         // Locked: the report stays until Done (or unmount), so the admin can read and copy it.
         // Unmounted already (LF-F1): no Done and no unmount cleanup is left to
         // report it, so report it now; this is the only call for this answer.
@@ -561,6 +656,8 @@ export function TestAccountCleanupPanel({
   const view = check?.view ?? null;
   const offerDelete = view !== null && canOfferDelete(view);
   const confirmMatches = check !== null && normaliseEmail(confirmEmail) === normaliseEmail(check.email);
+  // BQ-4: no delete without a reason; "Other" needs its note.
+  const deleteDisabled = !confirmMatches || deleting || disabled || !reasonComplete;
   const rowsOf = (section: string) => (view ? view.rows.filter((row) => row.section === section) : []);
   // Never drop a row silently: a section this build does not lay out is still listed.
   const otherRows = view ? view.rows.filter((row) => !KNOWN_SECTIONS.has(row.section)) : [];
@@ -575,7 +672,34 @@ export function TestAccountCleanupPanel({
       <h3 id="test-account-cleanup-title" {...skin('text-base font-semibold text-white mb-1', { margin: '0 0 6px' })}>
         {isDark ? 'Remove this account' : isLocked ? 'Remove this account permanently' : 'Remove a test account'}
       </h3>
-      {isLocked ? (
+      {canAnonymise && (
+        <fieldset data-testid="cleanup-mode" {...skin('mb-3 border-0 p-0', { border: 0, padding: 0, margin: '0 0 8px' })}>
+          <legend {...skin('text-sm font-semibold text-slate-200 mb-1', { fontSize: 13, fontWeight: 600 })}>What kind of account is this?</legend>
+          {(['anonymise', 'hard'] as const).map((option) => (
+            <label key={option} {...skin('flex items-center gap-2 text-sm text-slate-300', { display: 'flex', gap: 6, fontSize: 13 })}>
+              <input
+                type="radio"
+                name="cleanup-mode"
+                value={option}
+                checked={mode === option}
+                disabled={deleting || checking}
+                onChange={() => chooseMode(option)}
+                data-testid={`cleanup-mode-${option}`}
+              />
+              {MODE_LABELS[option]}
+            </label>
+          ))}
+        </fieldset>
+      )}
+
+      {isLocked && mode === 'anonymise' ? (
+        <p
+          data-testid="cleanup-anonymise-warning"
+          {...skin('text-sm font-semibold text-rose-300 mb-3', { margin: '0 0 8px', fontSize: 14, fontWeight: 700, color: '#b02a37' })}
+        >
+          {ANONYMISE_WARNING} <strong {...skin('text-slate-200')}>There is no undo.</strong>
+        </p>
+      ) : isLocked ? (
         <>
           <p
             data-testid="cleanup-locked-warning"
@@ -633,6 +757,7 @@ export function TestAccountCleanupPanel({
             autoComplete="off"
           />
         </label>
+        {mode === 'hard' && (
         <label {...skin('block text-sm text-slate-300', { fontSize: 13 })}>
           {isLocked ? 'Tag (the same email)' : 'Test tag (the email must contain it)'}
           <br />
@@ -651,6 +776,7 @@ export function TestAccountCleanupPanel({
             aria-describedby={!tag.trim() ? 'cleanup-empty-tag-hint' : undefined}
           />
         </label>
+        )}
         {/* Check is disabled on an empty tag on purpose (it would match every
             account); say so, or the button just looks broken. */}
         {!isLocked && !tag.trim() && !disabled && (
@@ -720,6 +846,21 @@ export function TestAccountCleanupPanel({
             </p>
           )}
           <BlockerList blockers={view.blockers} isDark={isDark} />
+          {/* Absent from a server build older than DE-10b.1: read as none. */}
+          {(view.notes ?? []).length > 0 && (
+            <>
+              <p {...skin(DARK_SUBHEAD, { margin: '10px 0 2px', fontSize: 13, fontWeight: 600 })}>Notes (do not block)</p>
+              <ul data-testid="cleanup-notes" {...skin(DARK_LIST, { margin: 0, paddingLeft: 20, fontSize: 12 })}>
+                {(view.notes ?? []).map((note, i) => (
+                  <li key={`${note.guard}-${i}`}>
+                    <strong {...skin('text-slate-200')}>{note.guard}</strong> {note.item}
+                    {note.found !== null && <> ({note.found})</>}
+                    {note.clears && <> — {note.clears}</>}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           {rowsOf('remove').length > 0 && (
             <>
@@ -815,17 +956,64 @@ export function TestAccountCleanupPanel({
                   autoComplete="off"
                 />
               </label>
+              <fieldset data-testid="cleanup-reason" {...skin('mt-3 border-0 p-0', { border: 0, padding: 0, margin: '8px 0 0' })}>
+                <legend {...skin('text-sm text-slate-300', { fontSize: 13 })}>Reason (required)</legend>
+                {mode === 'hard' ? (
+                  <p data-testid="cleanup-reason-locked" {...skin('text-sm text-slate-300', { margin: 0, fontSize: 13 })}>
+                    {ADMIN_DELETE_REASON_LABELS.test_account} (the only reason a complete removal takes)
+                  </p>
+                ) : (
+                  ADMIN_DELETE_REASONS.map((category) => (
+                    <label key={category} {...skin('flex items-center gap-2 text-sm text-slate-300', { display: 'flex', gap: 6, fontSize: 13 })}>
+                      <input
+                        type="radio"
+                        name="cleanup-reason"
+                        value={category}
+                        checked={reasonCategory === category}
+                        disabled={deleting}
+                        onChange={() => setReasonCategory(category)}
+                        data-testid={`cleanup-reason-${category}`}
+                      />
+                      {ADMIN_DELETE_REASON_LABELS[category]}
+                    </label>
+                  ))
+                )}
+                {mode === 'anonymise' && reasonCategory === 'other' && (
+                  <label {...skin('block text-sm text-slate-300 mt-2', { fontSize: 13, display: 'block', marginTop: 6 })}>
+                    Note
+                    <br />
+                    <textarea
+                      value={reasonNote}
+                      maxLength={REASON_NOTE_MAX}
+                      disabled={deleting}
+                      onChange={(e) => setReasonNote(e.target.value)}
+                      aria-describedby="cleanup-reason-hint"
+                      data-testid="cleanup-reason-note"
+                      {...skin(DARK_INPUT, { ...inputStyle, height: 60 })}
+                    />
+                    <span id="cleanup-reason-hint" data-testid="cleanup-reason-hint" {...skin('block text-xs text-slate-400', { display: 'block', fontSize: 12, color: '#666' })}>
+                      {REASON_NOTE_HINT} 5 to 500 characters.
+                    </span>
+                  </label>
+                )}
+              </fieldset>
               <div {...skin('mt-3', { marginTop: 8 })}>
                 <button
                   type="button"
                   onClick={runDelete}
-                  disabled={!confirmMatches || deleting || disabled}
+                  disabled={deleteDisabled}
                   {...skin(
-                    darkButtonClass('bg-rose-600 text-white', 'hover:bg-rose-500', !confirmMatches || deleting || disabled),
-                    actionButtonStyle('#dc3545', !confirmMatches || deleting || disabled)
+                    darkButtonClass('bg-rose-600 text-white', 'hover:bg-rose-500', deleteDisabled),
+                    actionButtonStyle('#dc3545', deleteDisabled)
                   )}
                 >
-                  {deleting ? 'Deleting…' : isLocked ? 'Delete this account' : 'Delete this test account'}
+                  {deleting
+                    ? 'Deleting…'
+                    : mode === 'anonymise'
+                      ? 'Close and anonymise this account'
+                      : isLocked
+                        ? 'Delete this account'
+                        : 'Delete this test account'}
                 </button>
               </div>
             </div>
@@ -895,6 +1083,49 @@ export function TestAccountCleanupPanel({
             </p>
           )}
           {isLocked && removed.report.total.result === 'CLEAN' && (
+            <div {...skin('mt-3', { marginTop: 10 })}>
+              <button
+                type="button"
+                data-testid="cleanup-done"
+                onClick={fireRemoved}
+                {...skin(
+                  darkButtonClass('bg-slate-700 text-slate-100', 'hover:bg-slate-600', false),
+                  actionButtonStyle('#6c757d', false)
+                )}
+              >
+                Done
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {anonymised && (
+        <div
+          role="status"
+          data-testid="cleanup-anonymised"
+          {...skin(DARK_BLOCK, { ...box, marginTop: 12, borderColor: '#198754', background: '#f0fff4' })}
+        >
+          <div {...skin('flex justify-between items-start gap-2', blockHeader)}>
+            <strong {...skin('font-semibold text-emerald-400')}>{ANONYMISED_TITLE}</strong>
+            <CopyButton
+              label="Copy the anonymise report"
+              testId="cleanup-copy-anonymised"
+              text={() => formatAnonymiseReportText(anonymised)}
+              isDark={isDark}
+            />
+          </div>
+          <p {...skin('mt-2 text-sm text-slate-300', { margin: '6px 0 0', fontSize: 13 })}>
+            Deleted account <code {...skin('text-slate-400')}>{anonymised.placeholderRef}</code> · receipt{' '}
+            <code {...skin('text-slate-400')}>{anonymised.receiptId}</code>
+          </p>
+          <p {...skin('mt-1 text-sm text-slate-300', { margin: '4px 0 0', fontSize: 13 })}>
+            {anonymised.receiptMode === 'pseudonymised_billing_kept'
+              ? 'Our billing records were kept, with personal details removed.'
+              : 'Nothing billed by us was kept.'}{' '}
+            Removed {anonymised.rowsRemoved} rows in {anonymised.tablesRemoved} tables, blanked {anonymised.rowsBlanked} values, files
+            removed {anonymised.filesRemoved}.
+          </p>
+          {isLocked && (
             <div {...skin('mt-3', { marginTop: 10 })}>
               <button
                 type="button"

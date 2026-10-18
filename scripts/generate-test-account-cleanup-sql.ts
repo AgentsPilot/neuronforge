@@ -53,10 +53,21 @@
 // randomness, LF line endings.
 //
 // ── SQL editor hazards (SA C-6) ─────────────────────────────────────────────
-// The Supabase SQL editor has failed on the word "into" in prose. The emitted
-// SQL contains exactly one such token, `INSERT INTO public.audit_trail (`, and
-// assigns plpgsql variables with `:=`, never `SELECT ... INTO`. Comments appear
+// The Supabase SQL editor has failed on the word "into" in prose. The pasted
+// files contain exactly one such token, `INSERT INTO public.audit_trail (`. The
+// function also holds the anonymise audit insert and, once, `INSERT INTO
+// public.business_os_deletion_receipts (` (DE-10b.1, W-9). Every plpgsql
+// variable is assigned with `:=`, never `SELECT ... INTO`. Comments appear
 // only on the edit lines at the top. The test enforces all of it.
+//
+// ── Anonymise (data export DE-10b.1, SA Review 2 §D) ─────────────────────────
+// The function also closes and anonymises a login in place (modes
+// anonymise_check / anonymise): the business data goes, KEEP_SET stays under the
+// same user_id with BLANK_LIST blanked, and the login becomes a tombstone. Its
+// direct writes to `auth.*` (UPDATE auth.users, the AUTH_CLOSURE deletes, the
+// auth log delete) are approved ONLY inside this generated function, as an
+// extension of OX-1r. lib/business-os/purge/__tests__/no-deletion-paths.guard
+// family 4 enforces it.
 
 import { createHash } from 'crypto';
 import { readFileSync, writeFileSync } from 'fs';
@@ -125,10 +136,18 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * parent-owned for G-18. No delete step: the step B purchase delete cascades.
  * First written as 20261073 over 20261047; renumbered and regenerated on
  * 2026-10-17 to chain on 20261075, so it keeps the data_exports plan.
+ * 20261081 (data export DE-10b.1): two new modes, anonymise_check and
+ * anonymise, that close and anonymise the login in place in the same
+ * transaction that deletes the business data, keep our billing (KEEP_SET) with
+ * its personal columns blanked (BLANK_LIST), and write the deletion receipt
+ * (20261080) last, inside the transaction. The hard delete of a test account is
+ * unchanged, and now writes a receipt too. Two new parameters, p_subject and
+ * p_receipt: the migration drops the 6-argument signature, so no old overload
+ * stays callable.
  */
-export const FUNCTION_MIGRATION = '20261077_operator_test_account_cleanup_boost_reversal_events';
+export const FUNCTION_MIGRATION = '20261081_operator_account_cleanup_anonymise';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261075_operator_test_account_cleanup_data_exports';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261077_operator_test_account_cleanup_boost_reversal_events';
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -152,10 +171,31 @@ export const FUNCTION_REQUIRED_TABLES: ReadonlyArray<{ table: string; migration:
     migration: '20261074_business_os_data_exports',
     reason: 'The plan deletes the export jobs of the account (data export DE-8a). Required whether the plan names it in static or dynamic SQL (SA C-8): a missing table would fail every check and delete with 42P01.',
   },
+  {
+    table: 'business_os_deletion_receipts',
+    migration: '20261080_business_os_deletion_receipts',
+    reason: 'The delete and the anonymise insert the deletion receipt last, inside their transaction, in static SQL (data export DE-10b.1, SA R-2). A missing table would fail every delete with 42P01.',
+  },
 ];
 export const VERSION_FILE = 'lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated.ts';
 export const FUNCTION_NAME = 'public.operator_test_account_cleanup';
-export const FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text)`;
+/** The 8-argument signature of 20261081 (DE-10b.1): p_subject and p_receipt added, both DEFAULT NULL. */
+export const FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text, uuid, jsonb)`;
+/** The 6-argument signature every version up to 20261077 had. 20261081 drops it; its rollback restores it. */
+export const PREVIOUS_FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text)`;
+/** The table the delete and the anonymise insert their receipt in (migration 20261080). */
+export const RECEIPTS_TABLE = 'public.business_os_deletion_receipts';
+/** The audit event the anonymise writes inside its transaction (O-8). Must equal the registry. */
+export const ANONYMISE_AUDIT_ACTION = 'ACCOUNT_PSEUDONYMISED';
+export const ANONYMISE_AUDIT_SEVERITY = 'critical';
+export const ANONYMISE_AUDIT_COMPLIANCE_FLAGS = ['GDPR', 'SOC2'] as const;
+/** The closed login's email domain (TQ-21). `.invalid` is reserved by RFC 2606 and never delivers. */
+export const CLOSED_EMAIL_DOMAIN = 'deleted.invalid';
+/** How long the closed login stays banned (O-5): GoTrue reads banned_until as a Go time, which cannot hold infinity. */
+export const CLOSED_BAN_INTERVAL = '100 years';
+
+/** hard: the test-account delete (OX-1r). anonymise: close and anonymise the login, keep our billing (DE-10b.1). */
+export type CleanupMode = 'hard' | 'anonymise';
 /** The row of operator_private.secrets holding the sha256 of TEST_CLEANUP_SECRET (R-3). */
 export const SECRET_ROW_NAME = 'test_account_cleanup';
 
@@ -589,6 +629,162 @@ export const CASCADE_CHILDREN: ReadonlyArray<{ table: string; parent: string; fk
   },
 ];
 
+// ── Anonymise mode (data export DE-10b.1, SA Review 2 §D, workplan §3) ──────
+
+/**
+ * The keep-set: tables whose rows stay, under the same user_id, when an account
+ * is closed and anonymised (SA §D verbatim, plus O-3). Everything else in the
+ * hard plan is deleted. `column` is the key naming the account; null when the
+ * table has none (its rows come through a kept parent).
+ */
+export const KEEP_SET: ReadonlyArray<{ table: string; column: string | null; reason: string }> = [
+  { table: 'business_os_billing_accounts', column: 'user_id', reason: 'Our plan billing (SA §D). Finance totals and history read it by account id.' },
+  { table: 'business_os_billing_events', column: 'user_id', reason: 'Our plan money history (SA §D). Append-only evidence for accounting and tax.' },
+  { table: 'business_os_boost_purchases', column: 'user_id', reason: 'Our boost revenue (SA §D). Finance totals read it.' },
+  { table: 'business_os_boost_reversal_events', column: null, reason: 'Refunds and disputes of kept boost purchases (SA §D). No owner column: kept with its purchase.' },
+  { table: 'business_os_credit_charges', column: 'user_id', reason: 'The credit bill (SA §D). The credit ledger figures read it.' },
+  { table: 'business_os_credit_lots', column: 'user_id', reason: 'Credits granted and bought (SA §D). The credit ledger figures read it.' },
+  { table: 'business_os_credit_lot_draws', column: 'user_id', reason: 'Credit taken back from lots (O-3). Ledger detail credit-leak-check reads; NO ACTION child of the kept lots.' },
+  { table: 'business_os_credit_totals', column: 'user_id', reason: 'Running credit totals (SA §D).' },
+  { table: 'credit_transactions', column: 'user_id', reason: 'Legacy credit ledger (SA §D). NO ACTION to the login, which stays.' },
+  { table: 'user_subscriptions', column: 'user_id', reason: 'Legacy subscription row (SA §D). NO ACTION to the login, which stays.' },
+  { table: 'billing_events', column: 'user_id', reason: 'Legacy billing history (SA §D).' },
+  { table: 'processed_webhook_events', column: 'user_id', reason: 'Webhook idempotency (SA §D): stops a replayed Stripe event applying twice to the kept rows.' },
+  { table: 'marketing_consent_events', column: 'user_id', reason: 'The consent ledger of the business clients (NBQ-3): proof a person said no. Kept whole, append-only.' },
+  { table: 'marketing_consent_state', column: 'user_id', reason: 'The consent projection (NBQ-3), kept with its ledger.' },
+  { table: 'business_os_account_lineage', column: 'account_id', reason: 'The nameless link in the invitation circle (NBQ-4). Ids only.' },
+  { table: 'token_usage', column: 'user_id', reason: 'Our AI cost (NBQ-2 yes). Personal columns blanked.' },
+  { table: 'boost_pack_purchases', column: 'user_id', reason: 'Legacy boost purchases (O-3), child of the kept credit_transactions. No personal column (TL W-2).' },
+  { table: 'user_rewards', column: 'user_id', reason: 'Legacy rewards ledger (O-3), child of the kept credit_transactions.' },
+  { table: 'subscription_invoices', column: 'user_id', reason: 'Legacy invoices (O-3): billing evidence. The Stripe-hosted links are blanked.' },
+];
+
+export type BlankTarget = 'null' | 'empty_object' | 'strip' | 'placeholder';
+
+/**
+ * The blank list: personal columns on kept rows, and what each becomes (TL
+ * SQL results 2026-10-18, TL W-2, O-4 / W-6). SQL-W1: every column is
+ * nullable; the jsonb columns with a `'{}'` default get `'{}'`, never NULL.
+ * `strip` removes the listed keys from a jsonb object. `placeholder` is the
+ * closed login's email (invites the subject redeemed or claimed: NOT NULL, and
+ * the placeholder passes its lower-case and length CHECK).
+ *
+ * `key`: `user_id` = the subject's own rows; `invite_redeemer` = invites the
+ * subject redeemed or claimed, which another account issued (W-6). Every blank
+ * runs behind a column-exists guard (G-11), and the anonymise re-reads every
+ * one afterwards and rolls everything back on a value left (workplan §3.3).
+ */
+export const BLANK_LIST: ReadonlyArray<{
+  table: string;
+  column: string;
+  target: BlankTarget;
+  keys?: readonly string[];
+  key: 'user_id' | 'invite_redeemer';
+  reason: string;
+}> = [
+  { table: 'business_os_billing_accounts', column: 'action_required_invoice_url', target: 'null', key: 'user_id', reason: 'Stripe-hosted invoice link: anyone holding it sees the billing details (F-4).' },
+  { table: 'business_os_billing_accounts', column: 'open_checkout_session_id', target: 'null', key: 'user_id', reason: 'A Stripe checkout pointer that resolves to the customer (F-4).' },
+  { table: 'business_os_boost_purchases', column: 'receipt_url', target: 'null', key: 'user_id', reason: 'Stripe-hosted receipt link (F-4).' },
+  { table: 'business_os_credit_lots', column: 'reason', target: 'null', key: 'user_id', reason: 'Admin free text (F-4). Nullable (SQL-W1).' },
+  { table: 'business_os_credit_lot_draws', column: 'reason', target: 'null', key: 'user_id', reason: 'Admin free text (TL W-2), same rule as credit_lots.reason.' },
+  { table: 'user_subscriptions', column: 'payment_method_last4', target: 'null', key: 'user_id', reason: 'Card detail (SQL-1).' },
+  { table: 'user_subscriptions', column: 'payment_method_brand', target: 'null', key: 'user_id', reason: 'Card detail (SQL-1).' },
+  { table: 'user_subscriptions', column: 'last_calculator_inputs', target: 'null', key: 'user_id', reason: 'Free-form inputs the person typed (SQL-1).' },
+  { table: 'credit_transactions', column: 'description', target: 'null', key: 'user_id', reason: 'Free text that may name the business (SQL-1).' },
+  { table: 'credit_transactions', column: 'metadata', target: 'strip', keys: ['agent_name'], key: 'user_id', reason: 'The agent name the person typed (SQL-1b). jsonb with a {} default: keys stripped, never NULL.' },
+  { table: 'billing_events', column: 'payload', target: 'empty_object', key: 'user_id', reason: 'Stripe event payload (SQL-1). jsonb with a {} default (SQL-W1).' },
+  { table: 'billing_events', column: 'error_message', target: 'null', key: 'user_id', reason: 'Free text (SQL-1).' },
+  { table: 'token_usage', column: 'error_message', target: 'null', key: 'user_id', reason: 'Provider error text may quote the prompt (SQL-1).' },
+  { table: 'token_usage', column: 'request_payload', target: 'null', key: 'user_id', reason: 'The prompt (SQL-1). Nullable, no default (SQL-W1).' },
+  { table: 'token_usage', column: 'response_metadata', target: 'null', key: 'user_id', reason: 'Provider response detail (SQL-1). Nullable, no default (SQL-W1).' },
+  { table: 'token_usage', column: 'metadata', target: 'strip', keys: ['user_goal', 'user_role', 'user_mode', 'agent_name'], key: 'user_id', reason: 'What the person said about themselves and their agent (SQL-1b). Cost keys stay.' },
+  { table: 'subscription_invoices', column: 'stripe_invoice_pdf', target: 'null', key: 'user_id', reason: 'Stripe-hosted document showing the name and email (TL W-2).' },
+  { table: 'subscription_invoices', column: 'stripe_hosted_invoice_url', target: 'null', key: 'user_id', reason: 'Stripe-hosted document showing the name and email (TL W-2).' },
+  { table: 'subscription_invoices', column: 'metadata', target: 'empty_object', key: 'user_id', reason: 'jsonb with a {} default (TL W-2), blanked defensively.' },
+  { table: 'user_rewards', column: 'metadata', target: 'empty_object', key: 'user_id', reason: 'jsonb with a {} default (TL W-2), blanked defensively.' },
+  { table: 'business_os_invites', column: 'email', target: 'placeholder', key: 'invite_redeemer', reason: 'The invitee email of an invite the subject redeemed or claimed (O-4). NOT NULL, so the closed placeholder.' },
+  { table: 'business_os_invites', column: 'personal_note', target: 'null', key: 'invite_redeemer', reason: 'Note addressed to the invitee (O-4).' },
+  { table: 'business_os_invites', column: 'email_problem_detail', target: 'null', key: 'invite_redeemer', reason: 'Delivery detail naming the invitee address (O-4).' },
+  { table: 'business_os_invites', column: 'redemption_error_message', target: 'null', key: 'invite_redeemer', reason: 'Free text of a failed redemption (O-4).' },
+];
+
+/**
+ * The closure of the login, exactly what `UPDATE auth.users` sets (SA §D, TL
+ * SQL-W2, O-5, O-6). The GoTrue token columns become '' and never NULL: GoTrue
+ * scans them as strings, and one NULL has broken auth.admin.listUsers() for
+ * every user elsewhere (K-1). `deleted_at` is left unset (O-7).
+ */
+export const AUTH_USERS_CLOSURE: ReadonlyArray<{ column: string; value: string }> = [
+  { column: 'email', value: 'v_placeholder' },
+  { column: 'phone', value: 'NULL' },
+  { column: 'encrypted_password', value: "''" },
+  { column: 'raw_user_meta_data', value: "'{}'::jsonb" },
+  { column: 'raw_app_meta_data', value: "pg_catalog.jsonb_build_object('provider', 'email', 'providers', pg_catalog.jsonb_build_array('email'), 'deleted', true)" },
+  { column: 'banned_until', value: `now() + interval '${CLOSED_BAN_INTERVAL}'` },
+  { column: 'confirmation_token', value: "''" },
+  { column: 'recovery_token', value: "''" },
+  { column: 'email_change_token_new', value: "''" },
+  { column: 'email_change_token_current', value: "''" },
+  { column: 'phone_change_token', value: "''" },
+  { column: 'reauthentication_token', value: "''" },
+  { column: 'email_change', value: "''" },
+  { column: 'phone_change', value: "''" },
+];
+
+/**
+ * Every `auth` table that names a login, and what the closure does with it
+ * (SA §D, TL SQL-4 and SQL-W2, O-7, W-5, W-11). `delete`: its rows for the
+ * subject are deleted by `column`. `via_sessions` / `via_factors`: removed by
+ * the cascade from a deleted session or factor; the survivor scan counts them
+ * by the ids captured before. `must_be_empty`: no row may name the subject
+ * (G-20), found through the table's foreign key to the login. G-20 refuses an
+ * auth table that links to the login, or has a user_id column, and is not here.
+ */
+export const AUTH_CLOSURE: ReadonlyArray<{
+  table: string;
+  column: string | null;
+  action: 'delete' | 'via_sessions' | 'via_factors' | 'must_be_empty';
+  reason: string;
+}> = [
+  { table: 'identities', column: 'user_id', action: 'delete', reason: 'Google and other sign-in links (SA §D).' },
+  { table: 'sessions', column: 'user_id', action: 'delete', reason: 'Live sessions (SA §D). Cascades refresh_tokens and mfa_amr_claims.' },
+  { table: 'refresh_tokens', column: 'user_id', action: 'delete', reason: 'Refresh tokens (SA §D). Its user_id is text: the %L literal compares as text.' },
+  { table: 'mfa_amr_claims', column: 'session_id', action: 'via_sessions', reason: 'Sign-in method claims of a session (SQL-4). Cascade from sessions.' },
+  { table: 'mfa_factors', column: 'user_id', action: 'delete', reason: 'MFA factors (SA §D). Cascades mfa_challenges.' },
+  { table: 'mfa_challenges', column: 'factor_id', action: 'via_factors', reason: 'Challenges of a factor (W2). Cascade from mfa_factors (O-7).' },
+  { table: 'mfa_recovery_code_sets', column: 'user_id', action: 'delete', reason: 'MFA recovery codes (SQL-4, O-7).' },
+  { table: 'one_time_tokens', column: 'user_id', action: 'delete', reason: 'Magic link and recovery tokens (SA §D).' },
+  { table: 'oauth_authorizations', column: 'user_id', action: 'delete', reason: 'OAuth grants (SQL-4, O-7).' },
+  { table: 'oauth_consents', column: 'user_id', action: 'delete', reason: 'OAuth consents (SQL-4, O-7).' },
+  { table: 'webauthn_credentials', column: 'user_id', action: 'delete', reason: 'Passkeys (SQL-4, O-7).' },
+  { table: 'webauthn_challenges', column: 'user_id', action: 'delete', reason: 'Passkey challenges (SQL-4, O-7).' },
+  { table: 'flow_state', column: 'user_id', action: 'delete', reason: 'PKCE flow state, holds provider tokens (W2, O-7). No foreign key, so listed by name.' },
+  { table: 'scim_users', column: null, action: 'must_be_empty', reason: 'SET NULL from users (SQL-4). G-20 requires no row naming the subject.' },
+];
+
+/**
+ * UPDATE triggers reviewed for G-21 (O-1, TL W5 and W-2): the only ones on
+ * auth.users, on a blanked table or on business_os_invites. Both only stamp
+ * updated_at on NEW. Any other blocks the anonymise.
+ */
+export const REVIEWED_UPDATE_TRIGGERS: ReadonlyArray<{ schema: string; table: string; trigger: string; note: string }> = [
+  { schema: 'public', table: 'token_usage', trigger: 'update_token_usage_updated_at', note: 'BEFORE UPDATE, sets updated_at (TL W5).' },
+  { schema: 'public', table: 'user_subscriptions', trigger: 'trigger_update_user_subscriptions_updated_at', note: 'BEFORE UPDATE, sets updated_at (TL W5).' },
+];
+
+/**
+ * Links from a kept table to a table the anonymise empties, reviewed for G-22
+ * (O-2). SET NULL on a nullable column only: deleting the business clients
+ * clears the link and keeps the consent row (NBQ-3). `trg_mce_guard`
+ * (20260930) lets exactly that update through. Any other such link blocks:
+ * CASCADE or SET NULL would damage kept rows silently, NO ACTION would roll the
+ * run back with a raw 23503.
+ */
+export const REVIEWED_KEPT_LINKS: ReadonlyArray<{ table: string; constraint: string; note: string }> = [
+  { table: 'marketing_consent_events', constraint: 'marketing_consent_events_contact_id_fkey', note: 'contact_id to crm_contacts, ON DELETE SET NULL, nullable (20260930).' },
+  { table: 'marketing_consent_state', constraint: 'marketing_consent_state_contact_id_fkey', note: 'contact_id to crm_contacts, ON DELETE SET NULL, nullable (20260930).' },
+];
+
 // ════════════════════════════════════════════════════════════════════════════
 // The plan
 // ════════════════════════════════════════════════════════════════════════════
@@ -602,8 +798,19 @@ export interface PlanEntry {
   parent: string | null;
 }
 
-/** Every delete, in order. The login itself follows the last entry. */
-export function buildCleanupPlan(): PlanEntry[] {
+/**
+ * Every delete, in order. The login itself follows the last entry in the hard
+ * mode. The anonymise plan is the same list, in the same order, minus the
+ * keep-set (so step C loses business_os_account_lineage): workplan §3.3.
+ */
+export function buildCleanupPlan(mode: CleanupMode = 'hard'): PlanEntry[] {
+  const hard = buildHardPlan();
+  if (mode === 'hard') return hard;
+  const kept = new Set(KEEP_SET.map((entry) => entry.table));
+  return hard.filter((entry) => !kept.has(entry.table));
+}
+
+function buildHardPlan(): PlanEntry[] {
   const stepA: PlanEntry[] = descriptorsForRun('purge', { integrations: true, agents: true, activityHistory: true })
     .filter((d) => !FINAL_STEPS.some((f) => f.table === d.table))
     .map((d) => {
@@ -642,8 +849,8 @@ const litList = (values: readonly string[]): string => values.map(lit).join(', '
 const countOf = (queryExpr: string): string =>
   `(xpath('/row/row_count/text()', query_to_xml(${queryExpr}, false, true, '')))[1]::text::bigint`;
 
-function planValues(indent: string): string {
-  const rows = buildCleanupPlan().map(
+function planValues(indent: string, mode: CleanupMode = 'hard'): string {
+  const rows = buildCleanupPlan(mode).map(
     (entry, index) =>
       `${indent}(${index + 1}, ${lit(entry.step)}, ${lit(entry.table)}, ${lit(entry.column)}, ${litOrNull(entry.parent)})`
   );
@@ -652,8 +859,12 @@ function planValues(indent: string): string {
   return rows.join(',\n');
 }
 
-/** The CTEs both files share: settings, the target, the plan and the catalog read. */
-function sharedCtes(): string {
+/**
+ * The CTEs both files share: settings, the target, the plan and the catalog
+ * read. The anonymise mode adds `params.subject_id` (G-2a) and reads its own
+ * plan; the hard rendering is byte-identical to 20261077 (W-10).
+ */
+function sharedCtes(mode: CleanupMode = 'hard'): string {
   const reviewed = [
     ...tenancyForeignKeys().map((fk) => `(${lit(fk.schema)}, ${lit(fk.table)}, ${lit(fk.column)}, 'tenancy', NULL)`),
     ...ACTOR_FOREIGN_KEYS.map(
@@ -664,10 +875,12 @@ function sharedCtes(): string {
   const inbound = INBOUND_FOREIGN_KEYS.map(([child, constraint, owner]) => `(${lit(child)}, ${lit(constraint)}, ${litOrNull(owner)})`);
   inbound[0] = inbound[0].replace(/^\(('[^']*'), ('[^']*'), (NULL|'[^']*')\)$/, '($1::text, $2::text, $3::text)');
 
+  const subjectParam =
+    mode === 'anonymise' ? `,\n    NULLIF(current_setting('cleanup.subject_id', true), '')::uuid AS subject_id` : '';
   return `params AS (
   SELECT
     NULLIF(lower(btrim(coalesce(current_setting('cleanup.target_email', true), ''))), '') AS target_email,
-    NULLIF(lower(btrim(coalesce(current_setting('cleanup.test_tag', true), ''))), '') AS test_tag
+    NULLIF(lower(btrim(coalesce(current_setting('cleanup.test_tag', true), ''))), '') AS test_tag${subjectParam}
 ),
 matches AS (
   SELECT users.id AS user_id
@@ -685,7 +898,7 @@ target_orgs AS (
 plan AS (
   SELECT plan_values.ord, plan_values.step, plan_values.table_name, plan_values.key_column, plan_values.parent_table
   FROM (VALUES
-${planValues('    ')}
+${planValues('    ', mode)}
   ) AS plan_values(ord, step, table_name, key_column, parent_table)
 ),
 plan_state AS (
@@ -802,14 +1015,168 @@ inbound_rows AS (
 )`;
 }
 
-/** One guard row. `countSql` may read `target.user_id` and `params.*`. */
-function guard(id: string, item: string, countSql: string, clears: string, blockedWhen = 'counted.found > 0'): string {
-  return `SELECT ${lit(id)}::text AS guard, ${lit(item)}::text AS item, counted.found::bigint AS found, (${blockedWhen}) AS blocked, ${lit(clears)}::text AS clears
+/**
+ * One guard row. `countSql` may read `target.user_id` and `params.*`. `info`
+ * is set only in the anonymise mode: every row then carries an `info` column,
+ * true for a row that is reported but never blocks (G-5, G-7, G-9 C3, G-14,
+ * G-15, workplan §3.2). Null keeps the hard rendering byte-identical.
+ */
+function guard(
+  id: string,
+  item: string,
+  countSql: string,
+  clears: string,
+  blockedWhen = 'counted.found > 0',
+  info: string | null = null
+): string {
+  const infoColumn = info === null ? '' : `, (${info}) AS info`;
+  return `SELECT ${lit(id)}::text AS guard, ${lit(item)}::text AS item, counted.found::bigint AS found, (${blockedWhen}) AS blocked, ${lit(clears)}::text AS clears${infoColumn}
   FROM (SELECT (${countSql}) AS found, params.target_email, params.test_tag FROM target CROSS JOIN params) AS counted`;
 }
 
-/** The guard rows (G-1, G-2, G-4 to G-19). G-3, the typed confirmation, is checked in the delete block. */
-function guardRowsCte(): string {
+/** Tables the anonymise blanks, once each, in BLANK_LIST order. */
+export function blankedTables(): string[] {
+  return [...new Set(BLANK_LIST.map((blank) => blank.table))];
+}
+
+/** The key columns a blank rule reads its rows by. */
+const blankKeyColumns = (key: 'user_id' | 'invite_redeemer'): string[] =>
+  key === 'user_id' ? ['user_id'] : ['redeemed_account_id', 'claimed_account_id'];
+
+/** The anonymise-only guard rows: G-11 for blank columns, G-20, G-21 and G-22. Each ends with `AS info`. */
+function anonymiseGuardRows(): string[] {
+  const blankState = BLANK_LIST.map(
+    (blank) =>
+      `(${lit(blank.table)}, ${lit(blank.column)}, ${blank.target === 'null' || blank.target === 'placeholder' ? 'false' : 'true'}, ${lit(`{${blankKeyColumns(blank.key).join(',')}}`)})`
+  );
+  blankState[0] = blankState[0].replace(/^\(('[^']*'), ('[^']*'), (true|false), ('[^']*')\)$/, '($1::text, $2::text, $3, $4::text[])');
+
+  const authColumns = AUTH_USERS_CLOSURE.map((closure) => `(${lit('users')}, ${lit(closure.column)})`);
+  authColumns.push(`(${lit('audit_log_entries')}, ${lit('payload')})`);
+  authColumns[0] = authColumns[0].replace(/^\(('[^']*'), ('[^']*')\)$/, '($1::text, $2::text)');
+
+  const closureTables = litList(AUTH_CLOSURE.map((closure) => closure.table));
+  const keyed = AUTH_CLOSURE.filter((closure) => closure.column !== null).map(
+    (closure) => `(${lit(closure.table)}, ${lit(closure.column as string)})`
+  );
+  keyed[0] = keyed[0].replace(/^\(('[^']*'), ('[^']*')\)$/, '($1::text, $2::text)');
+  const privileges = [
+    `(${lit('users')}, ${lit('UPDATE')})`,
+    `(${lit('audit_log_entries')}, ${lit('DELETE')})`,
+    ...AUTH_CLOSURE.filter((closure) => closure.action === 'delete').map((closure) => `(${lit(closure.table)}, ${lit('DELETE')})`),
+  ];
+  privileges[0] = privileges[0].replace(/^\(('[^']*'), ('[^']*')\)$/, '($1::text, $2::text)');
+  const mustBeEmpty = litList(AUTH_CLOSURE.filter((closure) => closure.action === 'must_be_empty').map((closure) => closure.table));
+
+  const updateTables = litList(blankedTables());
+  const reviewedUpdates = REVIEWED_UPDATE_TRIGGERS.map((t) => `(${lit(t.schema)}, ${lit(t.table)}, ${lit(t.trigger)})`).join(', ');
+  const keptTables = litList(KEEP_SET.map((entry) => entry.table));
+  const reviewedLinks = REVIEWED_KEPT_LINKS.map((link) => `(${lit(link.table)}, ${lit(link.constraint)})`).join(', ');
+
+  return [
+    `SELECT 'G-11'::text AS guard, blank_state.table_name || '.' || blank_state.column_name AS item, NULL::bigint AS found, true AS blocked,
+    'A column the anonymise blanks, or the column it finds the rows by, is missing or is not jsonb where it must be. Regenerate after the schema change.'::text AS clears, false AS info
+  FROM (VALUES
+    ${blankState.join(',\n    ')}
+  ) AS blank_state(table_name, column_name, needs_jsonb, key_columns)
+  WHERE to_regclass(format('public.%I', blank_state.table_name)) IS NOT NULL
+    AND (
+      NOT EXISTS (
+        SELECT 1 FROM information_schema.columns AS cols
+        WHERE cols.table_schema = 'public' AND cols.table_name = blank_state.table_name AND cols.column_name = blank_state.column_name
+          AND (NOT blank_state.needs_jsonb OR cols.data_type = 'jsonb')
+      )
+      OR (SELECT count(*) FROM information_schema.columns AS cols
+          WHERE cols.table_schema = 'public' AND cols.table_name = blank_state.table_name AND cols.column_name::text = ANY (blank_state.key_columns))
+        <> cardinality(blank_state.key_columns)
+    )`,
+    `SELECT 'G-20'::text AS guard, 'auth.' || needed.table_name || ' is missing' AS item, NULL::bigint AS found, true AS blocked,
+    'A table of the auth schema the closure relies on is missing. Supabase changed the auth schema. Engineering must review the generator first.'::text AS clears, false AS info
+  FROM (VALUES ('users'::text), ('sessions'), ('mfa_factors'), ('audit_log_entries')) AS needed(table_name)
+  WHERE to_regclass(format('auth.%I', needed.table_name)) IS NULL`,
+    `SELECT 'G-20'::text AS guard, 'auth.' || needed.table_name || '.' || needed.column_name AS item, NULL::bigint AS found, true AS blocked,
+    'A column the closure writes or reads is missing. Supabase changed the auth schema. Engineering must review the generator first.'::text AS clears, false AS info
+  FROM (VALUES
+    ${authColumns.join(',\n    ')},
+    ${keyed.join(',\n    ')}
+  ) AS needed(table_name, column_name)
+  WHERE to_regclass(format('auth.%I', needed.table_name)) IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns AS cols
+      WHERE cols.table_schema = 'auth' AND cols.table_name = needed.table_name AND cols.column_name = needed.column_name
+    )`,
+    `SELECT 'G-20'::text AS guard, 'auth.' || rel.relname || '.' || att.attname || ' links to the login' AS item, 1::bigint AS found, true AS blocked,
+    'A table of the auth schema that links to the login or to its sessions has not been reviewed. Engineering must add it to the closure in the generator first.'::text AS clears, false AS info
+  FROM pg_catalog.pg_constraint AS con
+  JOIN pg_catalog.pg_class AS rel ON rel.oid = con.conrelid
+  JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+  JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+  WHERE con.contype = 'f' AND nsp.nspname = 'auth'
+    AND con.confrelid IN (SELECT to_regclass('auth.users') UNION ALL SELECT to_regclass('auth.sessions'))
+    AND rel.relname::text NOT IN (${closureTables})`,
+    `SELECT 'G-20'::text AS guard, 'auth.' || cols.table_name || ' has a user_id column' AS item, 1::bigint AS found, true AS blocked,
+    'A table of the auth schema names a login without a link (W-5). Engineering must add it to the closure in the generator first.'::text AS clears, false AS info
+  FROM information_schema.columns AS cols
+  WHERE cols.table_schema = 'auth' AND cols.column_name = 'user_id' AND cols.table_name::text NOT IN (${closureTables})`,
+    `SELECT 'G-20'::text AS guard, 'auth.' || rel.relname || '.' || att.attname || ' names the login' AS item,
+    ${countOf(`format('SELECT count(*) AS row_count FROM auth.%I WHERE %I = %L', rel.relname, att.attname, target.user_id)`)} AS found, true AS blocked,
+    'A row of the auth schema that must not exist names the login. Engineering must review this account.'::text AS clears, false AS info
+  FROM pg_catalog.pg_constraint AS con
+  JOIN pg_catalog.pg_class AS rel ON rel.oid = con.conrelid
+  JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+  JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+  CROSS JOIN target
+  WHERE con.contype = 'f' AND nsp.nspname = 'auth' AND con.confrelid = 'auth.users'::regclass
+    AND rel.relname::text IN (${mustBeEmpty}) AND target.user_id IS NOT NULL
+    AND ${countOf(`format('SELECT count(*) AS row_count FROM auth.%I WHERE %I = %L', rel.relname, att.attname, target.user_id)`)} > 0`,
+    `SELECT 'G-20'::text AS guard, 'privilege ' || needed.privilege_name || ' on auth.' || needed.table_name AS item, NULL::bigint AS found, true AS blocked,
+    'The function owner may not write this auth table. Engineering must review the grants first.'::text AS clears, false AS info
+  FROM (VALUES
+    ${privileges.join(',\n    ')}
+  ) AS needed(table_name, privilege_name)
+  WHERE to_regclass(format('auth.%I', needed.table_name)) IS NOT NULL
+    AND NOT pg_catalog.has_table_privilege(format('auth.%I', needed.table_name), needed.privilege_name)`,
+    `SELECT 'G-20'::text AS guard, 'auth closure reviewed'::text AS item, 0::bigint AS found, false AS blocked, ''::text AS clears, false AS info`,
+    `SELECT 'G-21'::text AS guard, nsp.nspname || '.' || rel.relname || '.' || trg.tgname AS item, 1::bigint AS found, true AS blocked,
+    'An update trigger on the login or on a table the anonymise blanks has not been reviewed. Engineering must review it in the generator first.'::text AS clears, false AS info
+  FROM pg_catalog.pg_trigger AS trg
+  JOIN pg_catalog.pg_class AS rel ON rel.oid = trg.tgrelid
+  JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+  WHERE NOT trg.tgisinternal AND (trg.tgtype::integer & 16) <> 0
+    AND ((nsp.nspname = 'auth' AND rel.relname = 'users') OR (nsp.nspname = 'public' AND rel.relname::text IN (${updateTables})))
+    AND (nsp.nspname::text, rel.relname::text, trg.tgname::text) NOT IN (VALUES ${reviewedUpdates})`,
+    `SELECT 'G-22'::text AS guard, child_rel.relname || '.' || con.conname || ' to ' || parent_rel.relname AS item, 1::bigint AS found, true AS blocked,
+    'A kept table links to a table the anonymise empties, so deleting it would change or refuse kept rows. Engineering must review the link in the generator first.'::text AS clears, false AS info
+  FROM pg_catalog.pg_constraint AS con
+  JOIN pg_catalog.pg_class AS child_rel ON child_rel.oid = con.conrelid
+  JOIN pg_catalog.pg_namespace AS child_nsp ON child_nsp.oid = child_rel.relnamespace
+  JOIN pg_catalog.pg_class AS parent_rel ON parent_rel.oid = con.confrelid
+  JOIN pg_catalog.pg_namespace AS parent_nsp ON parent_nsp.oid = parent_rel.relnamespace
+  JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+  WHERE con.contype = 'f' AND child_nsp.nspname = 'public' AND parent_nsp.nspname = 'public' AND con.conrelid <> con.confrelid
+    AND child_rel.relname::text IN (${keptTables})
+    AND parent_rel.relname::text IN (SELECT plan.table_name FROM plan)
+    AND (
+      (child_rel.relname::text, con.conname::text) NOT IN (VALUES ${reviewedLinks})
+      OR con.confdeltype <> 'n' OR att.attnotnull OR cardinality(con.conkey) <> 1
+    )`,
+  ];
+}
+
+/**
+ * The guard rows (G-1, G-2, G-4 to G-19). G-3, the typed confirmation, is
+ * checked in the delete block. The anonymise mode (workplan §3.2) replaces G-2
+ * with G-2a, reports G-5, G-7, G-9 C3, G-14 and G-15 as `info`, and adds the
+ * blank-column G-11 rows, G-20, G-21 and G-22.
+ */
+function guardRowsCte(mode: CleanupMode = 'hard'): string {
+  const isAnonymise = mode === 'anonymise';
+  /** `, false AS info` on the inline rows in the anonymise mode, nothing in the hard mode. */
+  const ix = isAnonymise ? ', false AS info' : '';
+  const g = (id: string, item: string, countSql: string, clears: string, blockedWhen = 'counted.found > 0', info = false) =>
+    isAnonymise
+      ? guard(id, item, countSql, info ? KEPT_CLEARS[id] ?? clears : clears, info ? 'false' : blockedWhen, info ? 'counted.found > 0' : 'false')
+      : guard(id, item, countSql, clears, blockedWhen);
   const uid = 'target.user_id';
   const reviewedTriggers = [...REVIEWED_DELETE_TRIGGERS, ...EXTRA_REVIEWED_TRIGGERS]
     .map((t) => `(${lit(t.table)}, ${lit(t.trigger)})`)
@@ -817,60 +1184,76 @@ function guardRowsCte(): string {
   const buckets = litList(STORAGE_DESCRIPTORS.map((s) => s.bucket));
 
   const rows: string[] = [
-    guard(
+    g(
       'G-1',
       'exactly one login has this email',
       '(SELECT count(*) FROM matches)',
       'Edit the email line at the top. It must match exactly one login.',
       'counted.target_email IS NULL OR counted.found <> 1'
     ),
-    guard(
-      'G-2',
-      'the email contains the test tag',
-      `CASE WHEN params.test_tag IS NULL OR params.target_email IS NULL THEN 0 ELSE sign(strpos(params.target_email, params.test_tag)) END`,
-      'Only an email containing the test tag can be removed. Set the tag line (never empty) or pick a test account.',
-      'counted.test_tag IS NULL OR counted.found <> 1'
-    ),
-    guard(
+    isAnonymise
+      ? g(
+          'G-2a',
+          'the account id and the email name the same login',
+          `CASE WHEN ${uid} IS NOT NULL AND ${uid} = params.subject_id THEN 1 ELSE 0 END`,
+          'The account picked and the email do not resolve to the same login. Reload the page and pick the account again.',
+          'counted.found <> 1'
+        )
+      : g(
+          'G-2',
+          'the email contains the test tag',
+          `CASE WHEN params.test_tag IS NULL OR params.target_email IS NULL THEN 0 ELSE sign(strpos(params.target_email, params.test_tag)) END`,
+          'Only an email containing the test tag can be removed. Set the tag line (never empty) or pick a test account.',
+          'counted.test_tag IS NULL OR counted.found <> 1'
+        ),
+    g(
       'G-4',
       'not a platform admin',
       `(SELECT count(*) FROM public.admin_users AS admins WHERE admins.user_id = ${uid} OR lower(admins.email) = params.target_email)`,
       'Admins are never removed here. Remove the admin row by hand first if this really is a test account.'
     ),
-    guard(
+    g(
       'G-5',
       'nothing ever ran in Stripe live mode',
       `(SELECT count(*) FROM public.business_os_billing_accounts AS billing WHERE billing.user_id = ${uid} AND billing.livemode)
       + (SELECT count(*) FROM public.business_os_boost_purchases AS boosts WHERE boosts.user_id = ${uid} AND boosts.livemode)
       + (SELECT count(*) FROM public.business_os_billing_events AS money WHERE money.user_id = ${uid} AND money.livemode)`,
-      'Real money. This account is not a test account and must not be removed.'
+      'Real money. This account is not a test account and must not be removed.',
+      'counted.found > 0',
+      true
     ),
-    guard(
+    g(
       'G-6',
       'no live plan subscription, test or live mode',
       `(SELECT count(*) FROM public.business_os_billing_accounts AS billing WHERE billing.user_id = ${uid}
         AND (billing.subscription_status IN (${litList(R3_LIVE_STATUSES)}) OR (billing.stripe_subscription_id IS NOT NULL AND billing.ended_at IS NULL)))`,
       'Cancel the subscription in the Stripe dashboard, in its mode, then wait for the webhook.'
     ),
-    guard(
+    g(
       'G-7',
       'legacy subscription with a Stripe id',
       `(SELECT count(*) FROM public.user_subscriptions AS legacy WHERE legacy.user_id = ${uid} AND legacy.stripe_subscription_id IS NOT NULL)`,
-      'Legacy rows carry no Stripe mode, so they are treated as real money. Engineering must review this account.'
+      'Legacy rows carry no Stripe mode, so they are treated as real money. Engineering must review this account.',
+      'counted.found > 0',
+      true
     ),
-    guard(
+    g(
       'G-7',
       'legacy credit payment with a Stripe id',
       `(SELECT count(*) FROM public.credit_transactions AS legacy WHERE legacy.user_id = ${uid} AND legacy.stripe_payment_intent_id IS NOT NULL)`,
-      'Legacy rows carry no Stripe mode, so they are treated as real money. Engineering must review this account.'
+      'Legacy rows carry no Stripe mode, so they are treated as real money. Engineering must review this account.',
+      'counted.found > 0',
+      true
     ),
-    guard(
+    g(
       'G-7',
       'legacy billing event from Stripe',
       `(SELECT count(*) FROM public.billing_events AS legacy WHERE legacy.user_id = ${uid} AND legacy.stripe_event_id IS NOT NULL)`,
-      'Legacy rows carry no Stripe mode, so they are treated as real money. Engineering must review this account.'
+      'Legacy rows carry no Stripe mode, so they are treated as real money. Engineering must review this account.',
+      'counted.found > 0',
+      true
     ),
-    guard(
+    g(
       'G-8',
       'no Stripe account connected for client payments',
       `(SELECT count(*) FROM public.stripe_connect_accounts AS connect WHERE connect.user_id = ${uid})
@@ -878,58 +1261,68 @@ function guardRowsCte(): string {
       'Disconnect Stripe from the business first.'
     ),
     ...LOCAL_BLOCKING_CONDITIONS.map((condition) =>
-      guard(
+      g(
         'G-9',
         `money in flight: ${condition.label}`,
         `(SELECT count(*) FROM public.${condition.table} AS money WHERE money.user_id = ${uid} AND money.status IN (${litList(condition.statuses)}))`,
-        'Finish or cancel these in the app first.'
+        // TL-6: in the anonymise modes only live money blocks. Sent or overdue
+        // invoices are the business's own data and go with it (C3 is info).
+        isAnonymise && condition.condition === 'C3'
+          ? 'Reported only: these invoices are the business own data and are deleted with the account.'
+          : 'Finish or cancel these in the app first.',
+        'counted.found > 0',
+        isAnonymise && condition.condition === 'C3'
       )
     ),
     `SELECT 'G-10'::text AS guard, fk_rows.fk_schema || '.' || fk_rows.fk_table || '.' || fk_rows.fk_column AS item, fk_rows.found::bigint AS found, true AS blocked,
     CASE WHEN fk_rows.kind IS NULL OR fk_rows.key_width <> 1
       THEN 'A link to the login nobody has reviewed. Engineering must classify it in the generator first.'
-      ELSE 'Rows of other accounts or of the platform name this login. Clear them by hand first.' END AS clears
+      ELSE 'Rows of other accounts or of the platform name this login. Clear them by hand first.' END AS clears${ix}
   FROM fk_rows
   WHERE fk_rows.kind IS NULL OR fk_rows.key_width <> 1 OR (fk_rows.kind = 'actor' AND fk_rows.found > 0)`,
-    `SELECT 'G-10'::text AS guard, 'links to the login, reviewed'::text AS item, count(*)::bigint AS found, false AS blocked, ''::text AS clears FROM fk_catalog`,
+    `SELECT 'G-10'::text AS guard, 'links to the login, reviewed'::text AS item, count(*)::bigint AS found, false AS blocked, ''::text AS clears${ix} FROM fk_catalog`,
     `SELECT 'G-11'::text AS guard, plan_state.table_name || '.' || plan_state.key_column AS item, NULL::bigint AS found, true AS blocked,
-    'A column this script relies on is missing. Regenerate the script after the schema change.'::text AS clears
+    'A column this script relies on is missing. Regenerate the script after the schema change.'::text AS clears${ix}
   FROM plan_state
   WHERE plan_state.present AND NOT (plan_state.key_ok AND plan_state.parent_ok)`,
-    guard(
+    g(
       'G-12',
       'no stored files under the account folder',
       `(SELECT count(*) FROM storage.objects AS objects WHERE objects.bucket_id IN (${buckets}) AND starts_with(objects.name, ${uid}::text || '/'))`,
       'Empty the listed folders in the Supabase Storage dashboard, then run the check again.'
     ),
     ...ORG_CHILD_TABLES.map((child) =>
-      guard(
+      g(
         'G-13',
         `no other account in its organisation: ${child.table}`,
         `(SELECT count(*) FROM public.${child.table} AS org_child WHERE org_child.org_id IN (SELECT target_orgs.org_id FROM target_orgs) AND org_child.${child.ownerColumn} IS DISTINCT FROM ${uid})`,
         'Another account belongs to an organisation this login owns. Move it out first.'
       )
     ),
-    guard(
+    g(
       'G-14',
       'no consent ledger rows',
       `(SELECT count(*) FROM public.marketing_consent_events AS consent WHERE consent.user_id = ${uid})`,
-      'The consent ledger is append-only and cannot be removed. This account cannot be cleaned by this script.'
+      'The consent ledger is append-only and cannot be removed. This account cannot be cleaned by this script.',
+      'counted.found > 0',
+      true
     ),
-    guard(
+    g(
       'G-15',
       'nobody else hangs below it in the invitation circle',
       `(SELECT count(*) FROM public.business_os_account_lineage AS lineage WHERE (lineage.parent_account_id = ${uid} OR lineage.root_account_id = ${uid}) AND lineage.account_id IS DISTINCT FROM ${uid})`,
-      'It invited an account that still exists. Remove that account first.'
+      'It invited an account that still exists. Remove that account first.',
+      'counted.found > 0',
+      true
     ),
-    guard(
+    g(
       'G-16',
       'no other account imported its shared agents',
       `(SELECT count(*) FROM public.shared_agent_imports AS imports JOIN public.shared_agents AS shared ON shared.id = imports.shared_agent_id WHERE shared.user_id = ${uid} AND imports.imported_by_user_id IS DISTINCT FROM ${uid})`,
       'Another account imported an agent it shared. Engineering must review this account.'
     ),
     `SELECT 'G-17'::text AS guard, rel.relname || '.' || trg.tgname AS item, 1::bigint AS found, true AS blocked,
-    'A trigger on a table this script empties has not been reviewed. Engineering must review it in the generator first.'::text AS clears
+    'A trigger on a table this script empties has not been reviewed. Engineering must review it in the generator first.'::text AS clears${ix}
   FROM pg_catalog.pg_trigger AS trg
   JOIN pg_catalog.pg_class AS rel ON rel.oid = trg.tgrelid
   JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
@@ -948,10 +1341,10 @@ function guardRowsCte(): string {
       WHEN NOT inbound_rows.owner_ok
         THEN 'The owner column of this link is missing. Regenerate the script after the schema change.'
       ELSE 'Rows of another account point at rows this script removes, and would be deleted or emptied with them. Engineering must review this account.'
-    END AS clears
+    END AS clears${ix}
   FROM inbound_rows
   WHERE NOT inbound_rows.reviewed OR inbound_rows.key_width <> 1 OR NOT inbound_rows.owner_ok OR inbound_rows.found > 0`,
-    `SELECT 'G-18'::text AS guard, 'links pointing at removed tables, reviewed'::text AS item, count(*)::bigint AS found, false AS blocked, ''::text AS clears FROM inbound_catalog`,
+    `SELECT 'G-18'::text AS guard, 'links pointing at removed tables, reviewed'::text AS item, count(*)::bigint AS found, false AS blocked, ''::text AS clears${ix} FROM inbound_catalog`,
     // G-19 (2026-10-08): ON DELETE SET NULL / SET DEFAULT into a NOT NULL
     // column fails the parent delete with 23502, as NO ACTION fails it with
     // 23503. Read from pg_catalog, never from a list, so any such link between
@@ -959,7 +1352,7 @@ function guardRowsCte(): string {
     // refused before anything is removed. Every key column counts, the
     // conservative reading of a column-list SET NULL (none exists on prod).
     `SELECT 'G-19'::text AS guard, child_plan.table_name || '.' || att.attname || ' to ' || parent_plan.table_name AS item, 1::bigint AS found, true AS blocked,
-    'Removing a row of the second table empties a NOT NULL column of the first (ON DELETE SET NULL or SET DEFAULT), which the database refuses, and the plan removes the second table first. Engineering must order the first table before it in the generator.'::text AS clears
+    'Removing a row of the second table empties a NOT NULL column of the first (ON DELETE SET NULL or SET DEFAULT), which the database refuses, and the plan removes the second table first. Engineering must order the first table before it in the generator.'::text AS clears${ix}
   FROM pg_catalog.pg_constraint AS con
   JOIN pg_catalog.pg_class AS child_rel ON child_rel.oid = con.conrelid
   JOIN pg_catalog.pg_namespace AS child_nsp ON child_nsp.oid = child_rel.relnamespace
@@ -972,12 +1365,21 @@ function guardRowsCte(): string {
     AND parent_nsp.nspname = 'public' AND child_nsp.nspname = 'public'
     AND att.attnotnull AND (con.confdeltype = 'n' OR NOT att.atthasdef)
     AND child_plan.ord > parent_plan.ord`,
+    ...(isAnonymise ? anonymiseGuardRows() : []),
   ];
 
   return `guard_rows AS (
   ${rows.join('\n  UNION ALL\n  ')}
 )`;
 }
+
+/** What an informational guard row says in the anonymise mode: kept, not refused. */
+const KEPT_CLEARS: Readonly<Record<string, string>> = {
+  'G-5': 'Reported only: real money with us. Our billing rows are kept, with their personal details removed.',
+  'G-7': 'Reported only: legacy money with us. The billing rows are kept, with their personal details removed.',
+  'G-14': 'Reported only: the consent records of the business clients are kept under the closed account (NBQ-3).',
+  'G-15': 'Reported only: the invitation link stays as a nameless link (NBQ-4).',
+};
 
 const EDIT_LINES = `SELECT set_config('cleanup.target_email', ${lit(PLACEHOLDER_EMAIL)}, true) AS edit_target_email;
 -- 2. The test tag. Only an account whose email contains this text can be removed. Never leave it empty.
@@ -994,27 +1396,104 @@ ${buildCheckQuery()};
 }
 
 /** The check statement, no edit lines, no trailing `;`. Reads `cleanup.target_email` and `cleanup.test_tag`. */
-export function buildCheckQuery(): string {
-  return `${checkCtes()}
+export function buildCheckQuery(mode: CleanupMode = 'hard'): string {
+  return `${checkCtes(mode)}
 SELECT report.section, report.status, report.item, report.found, report.detail
 FROM report
 ORDER BY report.section_order, report.sort_order, report.item`;
 }
 
-/** The same check as one jsonb array, ordered by explicit keys (R-2 g). */
-export function buildCheckJson(): string {
-  return `${checkCtes()}
+/**
+ * The same check as one jsonb array, ordered by explicit keys (R-2 g). The
+ * anonymise mode also reads `cleanup.subject_id` (G-2a) and reports `info`
+ * rows apart from `BLOCKED` ones.
+ */
+export function buildCheckJson(mode: CleanupMode = 'hard'): string {
+  return `${checkCtes(mode)}
 SELECT jsonb_agg(jsonb_build_object('section', report.section, 'status', report.status, 'item', report.item, 'found', report.found, 'detail', report.detail)
   ORDER BY report.section_order, report.sort_order, report.item)
 FROM report`;
 }
 
-/** Every CTE of the check, ending with `report`. */
-function checkCtes(): string {
+/** The anonymise check: what stays, and the login, closed. The hard check lists the login under `remove`. */
+function anonymiseKeptRows(): string {
+  const kept = KEEP_SET.filter((entry) => entry.column !== null).map(
+    (entry, index) => `(${index + 1}, ${lit(entry.table)}, ${lit(entry.column as string)})`
+  );
+  kept[0] = kept[0].replace(/^\((\d+), ('[^']*'), ('[^']*')\)$/, '($1, $2::text, $3::text)');
+  return `  SELECT 5, 'kept', kept_values.ord, 'kept', kept_values.table_name,
+    CASE WHEN target.user_id IS NULL THEN NULL
+      ELSE ${countOf(`format('SELECT count(*) AS row_count FROM public.%I WHERE %I = %L', kept_values.table_name, kept_values.key_column, target.user_id)`)} END,
+    'Kept under the same account id. Personal columns are blanked.'
+  FROM (VALUES
+    ${kept.join(',\n    ')}
+  ) AS kept_values(ord, table_name, key_column)
+  CROSS JOIN target
+  WHERE EXISTS (
+    SELECT 1 FROM information_schema.columns AS cols
+    WHERE cols.table_schema = 'public' AND cols.table_name = kept_values.table_name AND cols.column_name = kept_values.key_column
+  )
+  UNION ALL
+  SELECT 5, 'kept', 1000, 'kept', 'business_os_invites redeemed or claimed by it',
+    (SELECT count(*) FROM public.business_os_invites AS invites CROSS JOIN target WHERE invites.redeemed_account_id = target.user_id OR invites.claimed_account_id = target.user_id),
+    'Kept for the inviter. The invitee email becomes the closed placeholder and the notes are emptied.'
+  UNION ALL
+  SELECT 5, 'kept', 1001, 'kept', 'the login (auth.users)', (SELECT count(*) FROM matches),
+    'Closed and anonymised in place: placeholder email, no password, phone, identities or sessions, banned. The email can sign up again.'
+  WHERE (SELECT target.user_id FROM target) IS NOT NULL`;
+}
+
+/**
+ * Every CTE of the check, ending with `report`. The hard rendering is
+ * byte-identical to 20261077 (W-10). The anonymise one sorts G-2a by its
+ * number, reports `info` rows with their note, lists the keep-set and the
+ * closed login under `kept`, and leaves out the login-trigger section (G-21
+ * reviews the triggers the closure fires).
+ */
+function checkCtes(mode: CleanupMode = 'hard'): string {
   const buckets = litList(STORAGE_DESCRIPTORS.map((s) => s.bucket));
+  const isAnonymise = mode === 'anonymise';
+  const guardSort = isAnonymise ? `substring(guard_rows.guard FROM '[0-9]+')::integer` : 'substring(guard_rows.guard FROM 3)::integer';
+  const guardStatus = isAnonymise
+    ? `CASE WHEN guard_rows.blocked THEN 'BLOCKED' WHEN guard_rows.info AND guard_rows.found > 0 THEN 'info' ELSE 'ok' END`
+    : `CASE WHEN guard_rows.blocked THEN 'BLOCKED' ELSE 'ok' END`;
+  const guardDetail = isAnonymise
+    ? `CASE WHEN guard_rows.blocked OR (guard_rows.info AND guard_rows.found > 0) THEN guard_rows.clears ELSE '' END`
+    : `CASE WHEN guard_rows.blocked THEN guard_rows.clears ELSE '' END`;
+  const tail = isAnonymise
+    ? `
+  UNION ALL
+  SELECT 3, 'storage', 0, 'empty this folder', objects.bucket_id || '/' || objects.name, NULL, 'The delete removes it first.'
+  FROM storage.objects AS objects
+  CROSS JOIN target
+  WHERE objects.bucket_id IN (${buckets}) AND starts_with(objects.name, target.user_id::text || '/')
+  UNION ALL
+${anonymiseKeptRows()}
+)`
+    : `
+  UNION ALL
+  SELECT 2, 'remove', 100000, 'remove', 'C the login (auth.users)', (SELECT count(*) FROM matches), 'Deleted last. Its cascades clear the rest.'
+  WHERE (SELECT target.user_id FROM target) IS NOT NULL
+  UNION ALL
+  SELECT 3, 'storage', 0, 'empty this folder', objects.bucket_id || '/' || objects.name, NULL, 'Delete it in the Supabase Storage dashboard.'
+  FROM storage.objects AS objects
+  CROSS JOIN target
+  WHERE objects.bucket_id IN (${buckets}) AND starts_with(objects.name, target.user_id::text || '/')
+  UNION ALL
+  SELECT 4, 'trigger', 0, 'info', 'auth.users.' || trg.tgname, NULL,
+    CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'Fires when the login is deleted. Events: ' ELSE 'Does not fire on this delete. Events: ' END
+      || concat_ws(' OR ', CASE WHEN (trg.tgtype::integer & 4) <> 0 THEN 'INSERT' END, CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'DELETE' END,
+        CASE WHEN (trg.tgtype::integer & 16) <> 0 THEN 'UPDATE' END, CASE WHEN (trg.tgtype::integer & 32) <> 0 THEN 'TRUNCATE' END) || '.'
+  FROM pg_catalog.pg_trigger AS trg
+  WHERE trg.tgrelid = 'auth.users'::regclass AND NOT trg.tgisinternal
+  UNION ALL
+  SELECT 5, 'kept', 0, 'kept', 'business_os_invites redeemed or claimed by it',
+    (SELECT count(*) FROM public.business_os_invites AS invites CROSS JOIN target WHERE invites.redeemed_account_id = target.user_id OR invites.claimed_account_id = target.user_id),
+    ${lit(KEPT_RESIDUE[0].reason)}
+)`;
   return `WITH
-${sharedCtes()},
-${guardRowsCte()},
+${sharedCtes(mode)},
+${guardRowsCte(mode)},
 removal AS (
   SELECT
     plan_state.ord, plan_state.step, plan_state.table_name, plan_state.present,
@@ -1036,35 +1515,15 @@ report AS (
       THEN 'Nothing blocks. Rows to remove: ' || coalesce((SELECT sum(removal.found) FROM removal)::text, '0') || '. Run the delete file next.'
       ELSE 'Fix every BLOCKED row below, then run this check again. Do not run the delete file.' END AS detail
   UNION ALL
-  SELECT 1, 'guard', substring(guard_rows.guard FROM 3)::integer, CASE WHEN guard_rows.blocked THEN 'BLOCKED' ELSE 'ok' END,
-    guard_rows.guard || ' ' || guard_rows.item, guard_rows.found, CASE WHEN guard_rows.blocked THEN guard_rows.clears ELSE '' END
+  SELECT 1, 'guard', ${guardSort}, ${guardStatus},
+    guard_rows.guard || ' ' || guard_rows.item, guard_rows.found, ${guardDetail}
   FROM guard_rows
   UNION ALL
   SELECT 2, 'remove', removal.ord,
     CASE WHEN NOT removal.present THEN 'absent' WHEN removal.found IS NULL THEN 'unknown' ELSE 'remove' END,
     removal.step || ' ' || removal.table_name, removal.found, ''
   FROM removal
-  WHERE removal.found IS DISTINCT FROM 0 AND (SELECT target.user_id FROM target) IS NOT NULL
-  UNION ALL
-  SELECT 2, 'remove', 100000, 'remove', 'C the login (auth.users)', (SELECT count(*) FROM matches), 'Deleted last. Its cascades clear the rest.'
-  WHERE (SELECT target.user_id FROM target) IS NOT NULL
-  UNION ALL
-  SELECT 3, 'storage', 0, 'empty this folder', objects.bucket_id || '/' || objects.name, NULL, 'Delete it in the Supabase Storage dashboard.'
-  FROM storage.objects AS objects
-  CROSS JOIN target
-  WHERE objects.bucket_id IN (${buckets}) AND starts_with(objects.name, target.user_id::text || '/')
-  UNION ALL
-  SELECT 4, 'trigger', 0, 'info', 'auth.users.' || trg.tgname, NULL,
-    CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'Fires when the login is deleted. Events: ' ELSE 'Does not fire on this delete. Events: ' END
-      || concat_ws(' OR ', CASE WHEN (trg.tgtype::integer & 4) <> 0 THEN 'INSERT' END, CASE WHEN (trg.tgtype::integer & 8) <> 0 THEN 'DELETE' END,
-        CASE WHEN (trg.tgtype::integer & 16) <> 0 THEN 'UPDATE' END, CASE WHEN (trg.tgtype::integer & 32) <> 0 THEN 'TRUNCATE' END) || '.'
-  FROM pg_catalog.pg_trigger AS trg
-  WHERE trg.tgrelid = 'auth.users'::regclass AND NOT trg.tgisinternal
-  UNION ALL
-  SELECT 5, 'kept', 0, 'kept', 'business_os_invites redeemed or claimed by it',
-    (SELECT count(*) FROM public.business_os_invites AS invites CROSS JOIN target WHERE invites.redeemed_account_id = target.user_id OR invites.claimed_account_id = target.user_id),
-    ${lit(KEPT_RESIDUE[0].reason)}
-)`;
+  WHERE removal.found IS DISTINCT FROM 0 AND (SELECT target.user_id FROM target) IS NOT NULL${tail}`;
 }
 
 export function renderDeleteSql(): string {
@@ -1201,6 +1660,281 @@ END`;
 }
 
 /**
+ * The predicate naming the subject in Supabase's own auth log (W-4, TL W3). The
+ * payload column is `json`, so it is cast. Every comparison is text. The email
+ * catches rows a failed or pre-signup action wrote without the subject's id.
+ */
+export function authLogPredicate(alias: string): string {
+  return `((${alias}.payload::jsonb ->> 'actor_id') = v_user_id::text
+      OR (${alias}.payload::jsonb -> 'traits' ->> 'user_id') = v_user_id::text
+      OR lower(${alias}.payload::jsonb ->> 'actor_username') = v_email
+      OR lower(${alias}.payload::jsonb -> 'traits' ->> 'user_email') = v_email)`;
+}
+
+/**
+ * The blank rules as rows, with the SET value, the "still holds a value" test
+ * and the key predicate already formatted. Read by the blank loop and by the
+ * re-read after it, so both use exactly the same rule. Reads `v_user_id` and
+ * `v_placeholder`.
+ */
+function blankRowsSql(indent: string): string {
+  const values = BLANK_LIST.map(
+    (blank, index) =>
+      `${indent}  (${index + 1}, ${lit(blank.table)}, ${lit(blank.column)}, ${lit(blank.target)}, ${lit(`{${(blank.keys ?? []).join(',')}}`)}, ${lit(blank.key)})`
+  );
+  values[0] = values[0].replace(/\((\d+), ('[^']*'), ('[^']*'), ('[^']*'), ('[^']*'), ('[^']*')\)$/, '($1, $2::text, $3::text, $4::text, $5::text[], $6::text)');
+  return `${indent}SELECT blank_values.ord, blank_values.table_name, blank_values.column_name,
+${indent}  CASE blank_values.target
+${indent}    WHEN 'null' THEN 'NULL'
+${indent}    WHEN 'empty_object' THEN format('%L::jsonb', '{}')
+${indent}    WHEN 'strip' THEN format('%I - %L::text[]', blank_values.column_name, blank_values.strip_keys)
+${indent}    WHEN 'placeholder' THEN format('%L', v_placeholder)
+${indent}  END AS set_sql,
+${indent}  CASE blank_values.target
+${indent}    WHEN 'null' THEN format('%I IS NOT NULL', blank_values.column_name)
+${indent}    WHEN 'empty_object' THEN format('%I IS DISTINCT FROM %L::jsonb', blank_values.column_name, '{}')
+${indent}    WHEN 'strip' THEN format('%I ?| %L::text[]', blank_values.column_name, blank_values.strip_keys)
+${indent}    WHEN 'placeholder' THEN format('%I IS DISTINCT FROM %L', blank_values.column_name, v_placeholder)
+${indent}  END AS still_sql,
+${indent}  CASE blank_values.key_kind
+${indent}    WHEN 'user_id' THEN format('user_id = %L', v_user_id)
+${indent}    WHEN 'invite_redeemer' THEN format('(redeemed_account_id = %L OR claimed_account_id = %L)', v_user_id, v_user_id)
+${indent}  END AS key_sql
+${indent}FROM (VALUES
+${values.join(',\n')}
+${indent}) AS blank_values(ord, table_name, column_name, target, strip_keys, key_kind)
+${indent}WHERE to_regclass(format('public.%I', blank_values.table_name)) IS NOT NULL`;
+}
+
+/** The closure tables as typed VALUES rows: (ord, table_name, key_column, action). */
+function authClosureValues(indent: string): string {
+  const rows = AUTH_CLOSURE.filter((closure) => closure.column !== null).map(
+    (closure, index) => `${indent}(${index + 1}, ${lit(closure.table)}, ${lit(closure.column as string)}, ${lit(closure.action)})`
+  );
+  rows[0] = rows[0].replace(/\((\d+), ('[^']*'), ('[^']*'), ('[^']*')\)$/, '($1, $2::text, $3::text, $4::text)');
+  return rows.join(',\n');
+}
+
+/**
+ * The anonymise (data export DE-10b.1, workplan §3), as one nested block of the
+ * function. Never in a pasted file: it reads and sets variables of the
+ * function around it (`v_receipt_id`, `v_receipt_mode`, `v_receipt_ref`,
+ * `v_removed_rows`, `v_removed_tables`, `v_blanked_rows`, `v_subject_id`,
+ * `v_report`).
+ *
+ * Order (§7.2): G-3 and every guard, then the anonymise plan, then the blanks
+ * and their re-read, then the login closure and the auth log, then the
+ * survivor scan, then the audit row. The function inserts the receipt after
+ * it. Any failure raises, and the whole transaction rolls back.
+ */
+export function buildAnonymiseBlock(): string {
+  const auditColumns = 'action, entity_type, entity_id, resource_name, user_id, actor_id, details, severity, compliance_flags, created_at';
+  const keptTables = litList(KEEP_SET.map((entry) => entry.table));
+  const closureSet = AUTH_USERS_CLOSURE.map((closure) => `${closure.column} = ${closure.value}`).join(',\n    ');
+  return `DECLARE
+  v_email text := NULLIF(lower(btrim(coalesce(current_setting('cleanup.target_email', true), ''))), '');
+  v_confirm text := NULLIF(lower(btrim(coalesce(current_setting('cleanup.confirm_email', true), ''))), '');
+  v_subject uuid := NULLIF(current_setting('cleanup.subject_id', true), '')::uuid;
+  v_guard jsonb;
+  v_blockers text;
+  v_survivors text;
+  v_user_id uuid;
+  v_rows bigint;
+  v_total bigint := 0;
+  v_tables integer := 0;
+  v_blanked_total bigint := 0;
+  v_counts jsonb := '{}'::jsonb;
+  v_blanked jsonb := '{}'::jsonb;
+  v_closed jsonb := '{}'::jsonb;
+  v_placeholder text;
+  v_session_ids uuid[];
+  v_factor_ids uuid[];
+  v_step record;
+  v_blank record;
+  v_auth record;
+BEGIN
+  IF v_email IS NULL OR v_subject IS NULL THEN
+    RAISE EXCEPTION 'No email or no account id. Nothing was removed.';
+  END IF;
+  IF v_confirm IS DISTINCT FROM v_email THEN
+    RAISE EXCEPTION 'G-3 the confirmation does not equal the email. Nothing was removed.';
+  END IF;
+
+  v_guard := (
+    WITH
+${sharedCtes('anonymise')},
+${guardRowsCte('anonymise')}
+    SELECT jsonb_build_object(
+      'blockers', string_agg(guard_rows.guard || ' ' || guard_rows.item, ', ' ORDER BY guard_rows.guard, guard_rows.item) FILTER (WHERE guard_rows.blocked),
+      'paid', coalesce(bool_or(guard_rows.info AND guard_rows.found > 0 AND guard_rows.guard IN ('G-5', 'G-7')), false))
+    FROM guard_rows
+  );
+  v_blockers := v_guard ->> 'blockers';
+  IF v_blockers IS NOT NULL THEN
+    RAISE EXCEPTION 'BLOCKED, nothing was removed: %', v_blockers;
+  END IF;
+
+  v_user_id := v_subject;
+  v_receipt_mode := CASE WHEN (v_guard ->> 'paid')::boolean THEN 'pseudonymised_billing_kept' ELSE 'anonymised' END;
+  v_receipt_ref := substr(replace(v_receipt_id::text, '-', ''), 1, 12);
+  v_placeholder := 'deleted-' || v_receipt_ref || '@' || ${lit(CLOSED_EMAIL_DOMAIN)};
+
+  FOR v_step IN
+    SELECT plan_values.table_name, plan_values.key_column, plan_values.parent_table
+    FROM (VALUES
+${planValues('      ', 'anonymise')}
+    ) AS plan_values(ord, step, table_name, key_column, parent_table)
+    ORDER BY plan_values.ord
+  LOOP
+    IF to_regclass(format('public.%I', v_step.table_name)) IS NULL THEN
+      CONTINUE;
+    END IF;
+    IF v_step.parent_table IS NULL THEN
+      EXECUTE format('DELETE FROM public.%I WHERE %I = %L', v_step.table_name, v_step.key_column, v_user_id);
+    ELSE
+      EXECUTE format('DELETE FROM public.%I WHERE %I IN (SELECT id FROM public.%I WHERE user_id = %L)', v_step.table_name, v_step.key_column, v_step.parent_table, v_user_id);
+    END IF;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows > 0 THEN
+      v_counts := v_counts || jsonb_build_object(v_step.table_name, v_rows);
+      v_total := v_total + v_rows;
+      v_tables := v_tables + 1;
+    END IF;
+  END LOOP;
+
+  FOR v_blank IN
+${blankRowsSql('    ')}
+    ORDER BY 1
+  LOOP
+    IF v_blank.set_sql IS NULL OR v_blank.still_sql IS NULL OR v_blank.key_sql IS NULL THEN
+      RAISE EXCEPTION 'A blank rule is not known, so everything was rolled back.';
+    END IF;
+    EXECUTE format('UPDATE public.%I SET %I = %s WHERE %s AND %s', v_blank.table_name, v_blank.column_name, v_blank.set_sql, v_blank.key_sql, v_blank.still_sql);
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows > 0 THEN
+      v_blanked := v_blanked || jsonb_build_object(v_blank.table_name || '.' || v_blank.column_name, v_rows);
+      v_blanked_total := v_blanked_total + v_rows;
+    END IF;
+  END LOOP;
+
+  v_survivors := (
+    SELECT string_agg(left_over.table_name || '.' || left_over.column_name, ', ' ORDER BY left_over.ord)
+    FROM (
+${blankRowsSql('      ')}
+    ) AS left_over
+    WHERE ${countOf(`format('SELECT count(*) AS row_count FROM public.%I WHERE %s AND %s', left_over.table_name, left_over.key_sql, left_over.still_sql)`)} > 0
+  );
+  IF v_survivors IS NOT NULL THEN
+    RAISE EXCEPTION 'A blanked value is still there, so everything was rolled back: %', v_survivors;
+  END IF;
+
+  v_session_ids := ARRAY(SELECT sessions.id FROM auth.sessions AS sessions WHERE sessions.user_id = v_user_id);
+  v_factor_ids := ARRAY(SELECT factors.id FROM auth.mfa_factors AS factors WHERE factors.user_id = v_user_id);
+
+  UPDATE auth.users SET
+    ${closureSet}
+  WHERE id = v_user_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 1 THEN
+    RAISE EXCEPTION 'The login was not closed. Everything was rolled back.';
+  END IF;
+
+  FOR v_auth IN
+    SELECT closure.table_name, closure.key_column
+    FROM (VALUES
+${authClosureValues('      ')}
+    ) AS closure(ord, table_name, key_column, action)
+    WHERE closure.action = 'delete' AND to_regclass(format('auth.%I', closure.table_name)) IS NOT NULL
+    ORDER BY closure.ord
+  LOOP
+    EXECUTE format('DELETE FROM auth.%I WHERE %I = %L', v_auth.table_name, v_auth.key_column, v_user_id);
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    IF v_rows > 0 THEN
+      v_closed := v_closed || jsonb_build_object(v_auth.table_name, v_rows);
+    END IF;
+  END LOOP;
+
+  DELETE FROM auth.audit_log_entries AS log_rows
+  WHERE ${authLogPredicate('log_rows')};
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows > 0 THEN
+    v_closed := v_closed || jsonb_build_object('audit_log_entries', v_rows);
+  END IF;
+
+  v_survivors := (
+    WITH plan_keys AS (
+      SELECT plan_values.table_name, plan_values.key_column
+      FROM (VALUES
+${planValues('        ', 'anonymise')}
+      ) AS plan_values(ord, step, table_name, key_column, parent_table)
+      WHERE plan_values.parent_table IS NULL
+    )
+    SELECT string_agg(left_over.item || ' ' || left_over.found, ', ' ORDER BY left_over.item)
+    FROM (
+      SELECT 'auth.users closed'::text AS item,
+        (1 - (SELECT count(*) FROM auth.users AS users
+          WHERE users.id = v_user_id AND users.email = v_placeholder AND users.phone IS NULL AND users.encrypted_password = ''
+            AND users.banned_until > now() + interval '99 years'))::bigint AS found
+      UNION ALL
+      SELECT plan_keys.table_name,
+        ${countOf(`format('SELECT count(*) AS row_count FROM public.%I WHERE %I = %L', plan_keys.table_name, plan_keys.key_column, v_user_id)`)}
+      FROM plan_keys
+      WHERE to_regclass(format('public.%I', plan_keys.table_name)) IS NOT NULL
+      UNION ALL
+      SELECT nsp.nspname || '.' || rel.relname || '.' || att.attname,
+        ${countOf(`format('SELECT count(*) AS row_count FROM %I.%I WHERE %I = %L', nsp.nspname, rel.relname, att.attname, v_user_id)`)}
+      FROM pg_catalog.pg_constraint AS con
+      JOIN pg_catalog.pg_class AS rel ON rel.oid = con.conrelid
+      JOIN pg_catalog.pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+      JOIN pg_catalog.pg_attribute AS att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+      WHERE con.contype = 'f' AND con.confrelid = 'auth.users'::regclass AND nsp.nspname <> 'auth'
+        AND NOT (nsp.nspname = 'public' AND (rel.relname::text, att.attname::text) IN (SELECT plan_keys.table_name, plan_keys.key_column FROM plan_keys))
+        AND NOT (nsp.nspname = 'public' AND rel.relname::text IN (${keptTables}))
+      UNION ALL
+      SELECT 'auth.' || closure.table_name,
+        ${countOf(`format('SELECT count(*) AS row_count FROM auth.%I WHERE %I = %L', closure.table_name, closure.key_column, v_user_id)`)}
+      FROM (VALUES
+${authClosureValues('        ')}
+      ) AS closure(ord, table_name, key_column, action)
+      WHERE closure.action = 'delete' AND to_regclass(format('auth.%I', closure.table_name)) IS NOT NULL
+      UNION ALL
+      SELECT 'auth.' || closure.table_name,
+        ${countOf(`format('SELECT count(*) AS row_count FROM auth.%I WHERE %I = ANY (%L::uuid[])', closure.table_name, closure.key_column, CASE WHEN closure.action = 'via_sessions' THEN v_session_ids ELSE v_factor_ids END)`)}
+      FROM (VALUES
+${authClosureValues('        ')}
+      ) AS closure(ord, table_name, key_column, action)
+      WHERE closure.action IN ('via_sessions', 'via_factors') AND to_regclass(format('auth.%I', closure.table_name)) IS NOT NULL
+      UNION ALL
+      SELECT 'auth.audit_log_entries'::text,
+        (SELECT count(*) FROM auth.audit_log_entries AS log_rows WHERE ${authLogPredicate('log_rows')})::bigint
+    ) AS left_over
+    WHERE left_over.found > 0
+  );
+  IF v_survivors IS NOT NULL THEN
+    RAISE EXCEPTION 'Something still names the login after the anonymise, so everything was rolled back: %', v_survivors;
+  END IF;
+
+  v_subject_id := v_user_id;
+  v_removed_rows := v_total;
+  v_removed_tables := v_tables;
+  v_blanked_rows := v_blanked_total;
+  v_report := jsonb_build_object('receipt_id', v_receipt_id, 'placeholder_ref', v_receipt_ref, 'receipt_mode', v_receipt_mode,
+    'rows_removed', v_total, 'tables_removed', v_tables, 'rows_blanked', v_blanked_total, 'counts', v_counts, 'blanked', v_blanked, 'closed', v_closed);
+
+  INSERT INTO public.audit_trail (${auditColumns})
+  VALUES (
+    ${lit(ANONYMISE_AUDIT_ACTION)}, 'user', v_user_id::text, NULL,
+    NULLIF(current_setting('cleanup.actor_id', true), '')::uuid, NULLIF(current_setting('cleanup.actor_id', true), '')::uuid,
+    jsonb_build_object('source', coalesce(NULLIF(current_setting('cleanup.source', true), ''), 'admin_page'), 'receipt_id', v_receipt_id, 'mode', v_receipt_mode,
+      'tables', v_tables, 'rows', v_total, 'rows_blanked', v_blanked_total, 'counts', v_counts, 'blanked', v_blanked, 'closed', v_closed),
+    ${lit(ANONYMISE_AUDIT_SEVERITY)}, ARRAY[${litList(ANONYMISE_AUDIT_COMPLIANCE_FLAGS)}]::text[], now()
+  );
+
+  RAISE NOTICE 'CLOSED. Removed % rows from % tables, blanked %, closed the login %', v_total, v_tables, v_blanked_total, v_user_id;
+END`;
+}
+
+/**
  * The per-table report alone. Read-only. Run inside the delete transaction,
  * before COMMIT, `created_at = now()` matches only this run's audit row (SA-3).
  */
@@ -1266,9 +2000,43 @@ summary AS (
 
 const VERSION_TOKEN = '__CLEANUP_FUNCTION_VERSION__';
 
+/** The receipt columns, in the order the INSERT names them (migration 20261080). */
+export const RECEIPT_COLUMNS = [
+  'id', 'status', 'mode', 'subject_user_id', 'placeholder_ref', 'email_fingerprint', 'fingerprint_key_version',
+  'origin', 'executor_kind', 'executor_admin_id', 'executor_admin_email', 'reason_category', 'reason_note',
+  'statement_language', 'statement_text', 'owner_last_export_ready_at', 'owner_export_downloaded_at', 'admin_export_existed',
+  'rows_removed', 'rows_blanked', 'files_removed', 'tables_removed', 'requested_at', 'completed_at', 'retain_until', 'correlation_id',
+] as const;
+
+/**
+ * The keys the function reads from `p_receipt` (W-7). Everything else the
+ * receipt holds the function computes itself (id, status, mode, the reference,
+ * the totals, completed_at) or takes from its parameters (executor_admin_id is
+ * p_actor), and any such key in `p_receipt` is ignored.
+ */
+export const RECEIPT_INPUT_KEYS = [
+  'email_fingerprint', 'fingerprint_key_version', 'origin', 'executor_kind', 'executor_admin_email', 'reason_category',
+  'reason_note', 'statement_language', 'statement_text', 'owner_last_export_ready_at', 'owner_export_downloaded_at',
+  'admin_export_existed', 'files_removed', 'requested_at', 'retain_until', 'correlation_id',
+] as const;
+
+/** The receipt, inserted last inside the transaction (R-2), for both the delete and the anonymise. */
+function receiptInsertSql(): string {
+  const r = (key: (typeof RECEIPT_INPUT_KEYS)[number]) => `(p_receipt ->> ${lit(key)})`;
+  return `  IF p_mode IN ('delete', 'anonymise') THEN
+    INSERT INTO ${RECEIPTS_TABLE} (${RECEIPT_COLUMNS.join(', ')})
+    VALUES (
+      v_receipt_id, 'completed', v_receipt_mode, v_subject_id, v_receipt_ref, ${r('email_fingerprint')}, ${r('fingerprint_key_version')}::smallint,
+      ${r('origin')}, ${r('executor_kind')}, p_actor, NULLIF(${r('executor_admin_email')}, ''), ${r('reason_category')}, ${r('reason_note')},
+      ${r('statement_language')}, ${r('statement_text')}, ${r('owner_last_export_ready_at')}::timestamptz, ${r('owner_export_downloaded_at')}::timestamptz, ${r('admin_export_existed')}::boolean,
+      v_removed_rows, v_blanked_rows, coalesce(${r('files_removed')}::bigint, 0), v_removed_tables, ${r('requested_at')}::timestamptz, now(), ${r('retain_until')}::timestamptz, ${r('correlation_id')}
+    );
+  END IF;`;
+}
+
 /** The function, with `version` either the token or the real stamp. */
 function renderFunctionSql(version: string): string {
-  return `CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text)
+  return `CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}(p_mode text, p_email text, p_tag text, p_confirm text, p_actor uuid, p_secret text, p_subject uuid DEFAULT NULL, p_receipt jsonb DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
@@ -1277,6 +2045,14 @@ SET search_path = pg_catalog, public, pg_temp
 AS $operator_cleanup$
 DECLARE
   v_result jsonb;
+  v_report jsonb := '{}'::jsonb;
+  v_receipt_id uuid := pg_catalog.gen_random_uuid();
+  v_receipt_mode text;
+  v_receipt_ref text;
+  v_subject_id uuid;
+  v_removed_rows bigint := 0;
+  v_removed_tables integer := 0;
+  v_blanked_rows bigint := 0;
 BEGIN
   IF p_secret IS NULL OR pg_catalog.length(p_secret) < 32 OR NOT EXISTS (
     SELECT 1 FROM operator_private.secrets AS stored
@@ -1285,35 +2061,92 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'not authorised' USING ERRCODE = '42501';
   END IF;
-  IF p_mode IS NULL OR p_mode NOT IN ('check', 'delete') THEN
+  IF p_mode IS NULL OR p_mode NOT IN ('check', 'delete', 'anonymise_check', 'anonymise') THEN
     RAISE EXCEPTION 'unknown mode' USING ERRCODE = '22023';
   END IF;
   IF p_mode = 'delete' AND p_actor IS NULL THEN
     RAISE EXCEPTION 'a delete needs the admin id' USING ERRCODE = '22023';
   END IF;
-  IF p_mode = 'check' THEN
+  IF p_mode IN ('delete', 'anonymise') AND (p_receipt IS NULL OR pg_catalog.jsonb_typeof(p_receipt) IS DISTINCT FROM 'object') THEN
+    RAISE EXCEPTION 'a delete needs the receipt' USING ERRCODE = '22023';
+  END IF;
+  IF p_mode IN ('anonymise_check', 'anonymise') AND p_subject IS NULL THEN
+    RAISE EXCEPTION 'an anonymise needs the account id' USING ERRCODE = '22023';
+  END IF;
+  IF p_mode = 'anonymise' AND p_actor IS NULL AND (p_receipt ->> 'origin') IS DISTINCT FROM 'owner' THEN
+    RAISE EXCEPTION 'an anonymise needs the admin id unless the owner asked' USING ERRCODE = '22023';
+  END IF;
+  IF p_mode IN ('delete', 'anonymise') THEN
+    IF (p_receipt ->> 'origin') IS NULL OR (p_receipt ->> 'origin') NOT IN ('owner', 'admin') THEN
+      RAISE EXCEPTION 'the receipt has no known origin' USING ERRCODE = '22023';
+    END IF;
+    IF ((p_receipt ->> 'origin') = 'owner') IS DISTINCT FROM ((p_receipt ->> 'executor_kind') = 'self_service') THEN
+      RAISE EXCEPTION 'the receipt origin and executor disagree' USING ERRCODE = '22023';
+    END IF;
+    IF (p_receipt ->> 'origin') = 'owner' AND p_actor IS NOT NULL THEN
+      RAISE EXCEPTION 'an owner deletion has no admin id' USING ERRCODE = '22023';
+    END IF;
+    IF (p_receipt ->> 'origin') = 'admin' AND p_actor IS NULL THEN
+      RAISE EXCEPTION 'an admin deletion needs the admin id' USING ERRCODE = '22023';
+    END IF;
+    IF p_mode = 'delete' AND (p_receipt ->> 'origin') <> 'admin' THEN
+      RAISE EXCEPTION 'a full delete is for admins only' USING ERRCODE = '22023';
+    END IF;
+  END IF;
+  IF p_mode IN ('check', 'anonymise_check') THEN
     PERFORM pg_catalog.set_config('transaction_read_only', 'on', true);
   END IF;
   PERFORM pg_catalog.set_config('cleanup.target_email', coalesce(p_email, ''), true);
-  PERFORM pg_catalog.set_config('cleanup.test_tag', coalesce(p_tag, ''), true);
-  PERFORM pg_catalog.set_config('cleanup.confirm_email', CASE WHEN p_mode = 'delete' THEN coalesce(p_confirm, '') ELSE '' END, true);
-  PERFORM pg_catalog.set_config('cleanup.actor_id', CASE WHEN p_mode = 'delete' THEN p_actor::text ELSE '' END, true);
-  PERFORM pg_catalog.set_config('cleanup.source', 'admin_page', true);
+  PERFORM pg_catalog.set_config('cleanup.test_tag', CASE WHEN p_mode IN ('check', 'delete') THEN coalesce(p_tag, '') ELSE '' END, true);
+  PERFORM pg_catalog.set_config('cleanup.confirm_email', CASE WHEN p_mode IN ('delete', 'anonymise') THEN coalesce(p_confirm, '') ELSE '' END, true);
+  PERFORM pg_catalog.set_config('cleanup.actor_id', CASE WHEN p_mode IN ('delete', 'anonymise') THEN coalesce(p_actor::text, '') ELSE '' END, true);
+  PERFORM pg_catalog.set_config('cleanup.source', CASE WHEN (p_receipt ->> 'origin') = 'owner' THEN 'self_service' ELSE 'admin_page' END, true);
+  PERFORM pg_catalog.set_config('cleanup.subject_id', CASE WHEN p_mode IN ('anonymise_check', 'anonymise') THEN p_subject::text ELSE '' END, true);
+  PERFORM pg_catalog.set_config('cleanup.mode', p_mode, true);
   PERFORM pg_catalog.set_config('lock_timeout', '5s', true);
 
   IF p_mode = 'check' THEN
     v_result := (
 ${buildCheckJson()}
     );
-  ELSE
+  ELSIF p_mode = 'anonymise_check' THEN
+    v_result := (
+${buildCheckJson('anonymise')}
+    );
+  ELSIF p_mode = 'delete' THEN
+    v_subject_id := (
+      SELECT CASE WHEN count(*) = 1 THEN min(users.id::text)::uuid END
+      FROM auth.users AS users
+      WHERE lower(users.email) = NULLIF(lower(btrim(coalesce(p_email, ''))), '')
+    );
 ${buildDeleteBlock()};
     v_result := (
 ${buildDeleteReportJson()}
     );
+    v_receipt_mode := 'full_delete';
+    v_removed_rows := (
+      SELECT (audit.details ->> 'rows')::bigint FROM public.audit_trail AS audit
+      WHERE audit.action = ${lit(AUDIT_ACTION)} AND audit.entity_id = v_subject_id::text AND audit.created_at = now()
+      LIMIT 1
+    );
+    v_removed_tables := (
+      SELECT (audit.details ->> 'tables')::integer FROM public.audit_trail AS audit
+      WHERE audit.action = ${lit(AUDIT_ACTION)} AND audit.entity_id = v_subject_id::text AND audit.created_at = now()
+      LIMIT 1
+    );
+    IF v_subject_id IS NULL OR v_removed_rows IS NULL OR v_removed_tables IS NULL THEN
+      RAISE EXCEPTION 'The removal left no audit row to take the receipt totals from, so everything was rolled back.';
+    END IF;
+    v_report := pg_catalog.jsonb_build_object('receipt_id', v_receipt_id, 'receipt_mode', v_receipt_mode);
+  ELSE
+${buildAnonymiseBlock()};
+    v_result := '[]'::jsonb;
   END IF;
 
+${receiptInsertSql()}
+
   RETURN pg_catalog.jsonb_build_object('version', ${lit(version)}, 'mode', p_mode, 'rows', coalesce(v_result, '[]'::jsonb),
-    'server_ms', (pg_catalog.date_part('epoch', pg_catalog.clock_timestamp() - pg_catalog.statement_timestamp()) * 1000)::bigint);
+    'server_ms', (pg_catalog.date_part('epoch', pg_catalog.clock_timestamp() - pg_catalog.statement_timestamp()) * 1000)::bigint) || v_report;
 END
 $operator_cleanup$`;
 }
@@ -1324,18 +2157,20 @@ export function cleanupFunctionVersion(): string {
 }
 
 /** The grants every version re-asserts. CREATE OR REPLACE keeps them, this makes it explicit. */
-function renderGrantsSql(): string {
-  return `ALTER FUNCTION ${FUNCTION_SIGNATURE} OWNER TO postgres;
-REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO service_role;`;
+function renderGrantsSql(signature: string = FUNCTION_SIGNATURE): string {
+  return `ALTER FUNCTION ${signature} OWNER TO postgres;
+REVOKE ALL ON FUNCTION ${signature} FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION ${signature} TO service_role;`;
 }
 
 /**
  * The migration (R-1 to R-4): CREATE OR REPLACE of the function, on top of the
  * schema, secret table and function the initial migration created. It never
  * touches the schema or the secret table, so the stored hash survives and no
- * setup step is repeated. Comments stay at the top, without semicolons or
- * apostrophes, so the file is as paste-safe as the operator files.
+ * setup step is repeated. 20261081 first drops the 6-argument signature, so
+ * the 8-argument one is the only overload (SA §D). Comments stay at the top,
+ * without semicolons or apostrophes, so the file is as paste-safe as the
+ * operator files.
  */
 export function renderMigrationSql(): string {
   const requiredChecks = FUNCTION_REQUIRED_TABLES.map(
@@ -1347,15 +2182,22 @@ export function renderMigrationSql(): string {
   return `-- ${FUNCTION_MIGRATION}. GENERATED by scripts/generate-test-account-cleanup-sql.ts. Never edit by hand, and never edit once applied
 -- A changed plan goes in a new dated file (generator constant FUNCTION_MIGRATION).
 -- Replaces the function public.operator_test_account_cleanup with the current plan. The schema operator_private and its secret table stay as they are
+-- Data export DE-10b.1. Adds the modes anonymise_check and anonymise and the parameters p_subject and p_receipt. Drops the 6 argument signature first
+-- The anonymise closes and anonymises the login in place, keeps our billing with its personal columns blanked, and deletes the rest of the account
+-- The delete and the anonymise write the deletion receipt last, inside their transaction
 -- Apply order. First ${INITIAL_FUNCTION_MIGRATION}${requiredNames ? ` and ${requiredNames}` : ''}, then this file. It refuses otherwise and applies nothing
 -- The app pins the version stamp this function returns. Until the deployed build and this function agree, the Danger Zone check and delete refuse
--- Rollback supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql restores the function of ${PREVIOUS_FUNCTION_MIGRATION}
--- Operator exception OX-1r. One secret-gated function for the admin-only test-account cleanup routes
--- It runs the same generated guards G-1 to G-19 as scripts/test-account-cleanup-delete.sql
+-- Rollback supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql drops this signature and restores the function of ${PREVIOUS_FUNCTION_MIGRATION}
+-- Operator exception OX-1r, extended by SA Review 2 section D. One secret-gated function for the admin-only cleanup routes
+-- Its direct writes to the auth schema exist only here, in this generated function
+-- It runs the same generated guards G-1 to G-19 as scripts/test-account-cleanup-delete.sql, and G-2a and G-20 to G-22 in the anonymise modes
 -- It refuses with 42501 unless the caller sends the second secret whose sha256 only this database holds
--- Requirement docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md, SA re-ruling R-1 to R-9
+-- Requirement docs/requirements/BUSINESS_OS_DATA_EXPORT_DE10B_REQUIREMENT.md and docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
 -- Runbook docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md, section 6
 -- search_path is pg_catalog, public, pg_temp (SA review) so the reviewed delete triggers resolve their tables as today
+-- The whole file is one transaction, so the old signature goes and the new function arrives together or not at all
+
+BEGIN;
 
 DO $create_guard$
 BEGIN
@@ -1367,18 +2209,22 @@ $create_guard$;
 
 DO $order_guard$
 BEGIN
-  IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR pg_catalog.to_regprocedure(${lit(FUNCTION_SIGNATURE)}) IS NULL THEN
+  IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR (pg_catalog.to_regprocedure(${lit(PREVIOUS_FUNCTION_SIGNATURE)}) IS NULL AND pg_catalog.to_regprocedure(${lit(FUNCTION_SIGNATURE)}) IS NULL) THEN
     RAISE EXCEPTION ${lit(`Apply ${INITIAL_FUNCTION_MIGRATION} first  Nothing was applied`)};
   END IF;
 ${requiredChecks}
 END
 $order_guard$;
 
+DROP FUNCTION IF EXISTS ${PREVIOUS_FUNCTION_SIGNATURE};
+
 ${renderFunctionSql(cleanupFunctionVersion())};
 
 ${renderGrantsSql()}
 
 NOTIFY pgrst, 'reload schema';
+
+COMMIT;
 `;
 }
 
@@ -1405,15 +2251,25 @@ export function previousFunctionSql(previousMigrationSql: string): string {
 
 export function renderRollbackSql(previousMigrationSql = readFileSync(join(__dirname, '..', ...PREVIOUS_MIGRATION_FILE.split('/')), 'utf8')): string {
   return `-- Rollback of supabase/migrations/${FUNCTION_MIGRATION}.sql. GENERATED, never edit by hand.
--- Restores the function exactly as supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql created it. Keeps the schema, the secret table and the stored hash
+-- Drops the 8 argument function first, so no two overloads stay live (SA W-3)
+-- Then restores the function exactly as supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql created it, with its 6 argument grants. Keeps the schema, the secret table and the stored hash
 -- Then redeploy an app build that pins the version stamp of ${PREVIOUS_FUNCTION_MIGRATION}, or the Danger Zone check and delete refuse
+-- Closed accounts and receipts already made stay as they are. Nothing can restore them
+-- The receipt table of 20261080 stays. Its own rollback refuses once any receipt exists
 -- To remove the whole feature instead, also run supabase/SQL Scripts/${INITIAL_FUNCTION_MIGRATION}_rollback.sql afterwards
+-- The whole file is one transaction
+
+BEGIN;
+
+DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};
 
 ${previousFunctionSql(previousMigrationSql)};
 
-${renderGrantsSql()}
+${renderGrantsSql(PREVIOUS_FUNCTION_SIGNATURE)}
 
 NOTIFY pgrst, 'reload schema';
+
+COMMIT;
 `;
 }
 

@@ -76,9 +76,10 @@ describe('AUDIT_EVENT_AUDIENCE is exhaustive over the catalogue', () => {
   // +3 Business OS (BOS_BILLING_PAYMENT_FAILED, _PAYMENT_ACTION_REQUIRED, _SUBSCRIPTION_ENDED): plan payments P-6a.2, renewal failures and the end (2026-10-15).
   // +6 shared (DATA_EXPORT_REQUESTED, _READY, _FAILED, _DOWNLOADED, _EXPIRED, _DOWNLOADED_BY_ADMIN): data export DE-8a, names only (2026-10-17).
   // +3 shared (AI_PRICING_APPLIED_LINE, AI_PRICE_LINE_DISMISSED, AI_PRICE_MARGIN_REVIEW_DONE): AI model price review slice 8, Apply and Dismiss (2026-10-17).
-  it('pins the split: 58 Business OS, 72 shared, 84 AgentsPilot', () => {
-    expect(registered).toHaveLength(214);
-    expect(eventsTagged('bos')).toHaveLength(58);
+  // +2 Business OS (ACCOUNT_PSEUDONYMISED, ACCOUNT_DELETION_REFUSED): data export DE-10b.1, close and anonymise (2026-10-18).
+  it('pins the split: 60 Business OS, 72 shared, 84 AgentsPilot', () => {
+    expect(registered).toHaveLength(216);
+    expect(eventsTagged('bos')).toHaveLength(60);
     expect(eventsTagged('shared')).toHaveLength(72);
     expect(eventsTagged('agentspilot')).toHaveLength(84);
   });

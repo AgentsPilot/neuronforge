@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-11
-> **Version**: 1.10.0
+> **Last Updated**: 2026-10-18
+> **Version**: 1.11.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-18 | 1.11.0 | Dev | Listed `DELETION_RECEIPT_FINGERPRINT_KEY` (data export DE-10b.1). **An env secret, not a flag**, listed here because operators look here. Server-only. Missing or under 32 characters: every admin delete answers 503 `not_configured`. Set in Vercel Production and Preview before the deploy, and keep a copy: losing it makes old receipts unsearchable. |
 | 2026-10-11 | 1.10.0 | Dev | Added `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` (test harness slice TC-1, TEST ONLY): server-only, default off. While off `POST /api/admin/business-os/test/take-credits` answers 404 `not_enabled`. Developer `.env.local` only, never Vercel. |
 | 2026-10-07 | 1.9.0 | Dev | Added `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` (plan payments P-3a): server-only, default off. While off `POST /api/business-os/billing/plan/checkout` answers 404 and reads nothing. Turn on only where `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (otherwise the route refuses every checkout, 503 with an alert), and never in production before P-3b. |
 | 2026-10-06 | 1.8.0 | Dev | Added `BUSINESS_OS_CREDITS_BOOST_ENABLED` and `BUSINESS_OS_CREDITS_BOOST_TEST_ACCOUNTS` (credits boost slice 3): the boost checkout's server-only kill switch, default off, and an optional allow-list of account UUIDs. **Stays unset on Vercel until slice 4a is deployed** (SA C-1). |
@@ -367,6 +368,21 @@ database.
 # .env.local — on only while testing low / zero / over-plan credit states
 BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED=false
 ```
+
+---
+
+### Env secret (not a flag): deletion receipt key — `DELETION_RECEIPT_FINGERPRINT_KEY`
+
+Data export DE-10b.1 ([runbook section 7.1](/docs/runbooks/TEST_ACCOUNT_CLEANUP_RUNBOOK.md)). **Not a flag: a secret. Server-only.** One reader:
+`lib/business-os/account-deletion/receiptFingerprint.ts` (`isFingerprintKeyAvailable()`, `fingerprintEmail()`).
+The raw value is stretched with HKDF and keys the HMAC of the email stored in every deletion receipt; the key never reaches the database.
+
+| State | What every admin delete (`POST /api/admin/test-account-cleanup/delete`) does |
+|---|---|
+| Unset, or under 32 characters | Answers **503** `not_configured`, audited as refused, and removes nothing (fails closed, SA C2-5) |
+| Set | Writes the receipt with the fingerprint and `fingerprint_key_version` |
+
+Set it in Vercel **Production and Preview**. Store a copy in the password manager: a lost or changed key makes older receipts unsearchable by email. Never commit it.
 
 ---
 
