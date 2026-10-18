@@ -30,6 +30,8 @@ export async function runPriceFetch(): Promise<AdminReadResult<FetchRunSummary>>
       cache: 'no-store',
     });
     const result = await readAdminResponse<FetchRunSummary>(response, { what: 'the provider price check', sessionEndedCopy: true });
+    // Slice 10 (SC10-8): only OpenAI's outcome is required. An older response with
+    // Anthropic `manual_only`, or `problems` without `provider`, still renders.
     if (result.ok && !(isRecord(result.data) && isRecord(result.data.providerOutcomes) && isRecord(result.data.providerOutcomes.openai))) {
       logger.error({ status: result.status }, 'Price check body had no outcomes');
       return { ok: false, status: result.status, message: 'Could not read the provider price check. Try again in a moment.' };
@@ -46,6 +48,7 @@ export async function readFetchStatus(): Promise<AdminReadResult<FetchStatus>> {
     const response = await fetch(PRICE_FETCH_RUNS_URL, { method: 'GET', cache: 'no-store' });
     const result = await readAdminResponse<FetchStatus>(response, { what: 'the provider price check status', sessionEndedCopy: true });
     // A body without both monitored sources is never drawn (as the comparison read checks `rows`).
+    // `anthropic` (slice 10) is not required: a status without it simply does not draw that provider.
     if (result.ok && !(isRecord(result.data) && isRecord(result.data.openai) && isRecord(result.data.litellm) && Array.isArray(result.data.manualProviders))) {
       logger.error({ status: result.status }, 'Price check status body had no sources');
       return { ok: false, status: result.status, message: 'Could not read the provider price check status. Try again in a moment.' };

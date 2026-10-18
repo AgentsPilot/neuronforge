@@ -6,9 +6,13 @@
  *
  * One button and one status block:
  *   - the button is disabled and `aria-busy` while a check runs;
- *   - per provider: OpenAI's last result (prices read, or why not, with the
- *     time), its last success and last failure; Anthropic, Google and Kimi
- *     "manual entry for now"; the LiteLLM cross-check counts; images manual;
+ *   - per provider: OpenAI's and Anthropic's last result (prices read, or why
+ *     not, with the time), each with its last success and last failure
+ *     (slice 10); Google and Kimi "manual entry for now"; the LiteLLM
+ *     cross-check counts; images manual;
+ *   - after a check: the models needing manual entry and those not on the
+ *     page, grouped by provider, and Anthropic's page notes (shown, never
+ *     interpreted: SA O-6);
  *   - a refusal (for example the 60 s guard) is shown in the alert box with
  *     the server's own words.
  * After a stored check, `onFinished` re-reads the price table.
@@ -28,7 +32,8 @@ import {
   PROVIDER_NAMES,
   sourceOutcomeWords,
 } from '@/app/admin/system-config/priceReviewCopy';
-import type { FetchRunSummary, FetchStatus, SourceStatus } from '@/lib/ai/pricing-research/fetchOutcomes';
+// One line on purpose: the RC-1 source rule reads the `import type {` on the line naming the module.
+import type { AdapterOutcome, AdapterProvider, FetchRunSummary, FetchStatus, SourceStatus } from '@/lib/ai/pricing-research/fetchOutcomes';
 import { clientLogger } from '@/lib/logger/client';
 
 const logger = clientLogger.child({ module: 'AdminProviderPriceCheck' });
@@ -52,8 +57,13 @@ function historyLines(status: SourceStatus): string[] {
   return lines;
 }
 
-function openaiLine(status: SourceStatus): string {
-  const name = PROVIDER_NAMES.openai;
+/** The automatically checked providers, in display order (names only; the server owns the list). */
+const ADAPTER_ORDER: readonly AdapterProvider[] = ['openai', 'anthropic'];
+/** Providers whose page notes carry status worth showing (Anthropic's "retired, except on …"). */
+const NOTE_PROVIDERS: readonly AdapterProvider[] = ['anthropic'];
+
+function providerLine(provider: AdapterProvider, status: SourceStatus): string {
+  const name = PROVIDER_NAMES[provider] ?? provider;
   const run = status.lastRun;
   if (!run) return `${name}: ${PRICE_CHECK_WORDS.notChecked}`;
   if (run.outcome !== 'ok') {
@@ -76,6 +86,23 @@ function crossCheckLine(status: SourceStatus): string | null {
   const verdicts = status.lastRunVerdicts;
   if (!verdicts) return null;
   return `${PRICE_CHECK_WORDS.crossCheckName} ${verdicts.agrees} ${PRICE_CHECK_WORDS.agree}, ${verdicts.differs} ${PRICE_CHECK_WORDS.differ}, ${verdicts.notListed} ${PRICE_CHECK_WORDS.notListed}.`;
+}
+
+/**
+ * A provider's adapter outcome from a check summary, or null when it has none
+ * (SC10-8: a response from before slice 10 holds Anthropic `manual_only`).
+ */
+function adapterOutcomeOf(summary: FetchRunSummary | null, provider: AdapterProvider): AdapterOutcome | null {
+  const outcome: unknown = summary?.providerOutcomes[provider];
+  if (typeof outcome !== 'object' || outcome === null) return null;
+  const candidate = outcome as Partial<AdapterOutcome>;
+  return Array.isArray(candidate.needs_manual) && Array.isArray(candidate.not_found) ? (outcome as AdapterOutcome) : null;
+}
+
+/** A status from before slice 10 has no `anthropic` key: that provider is simply not drawn. */
+function statusOfProvider(status: FetchStatus, provider: AdapterProvider): SourceStatus | null {
+  const source: SourceStatus | undefined = status[provider];
+  return source ?? null;
 }
 
 export interface ProviderPriceCheckProps {
@@ -133,7 +160,10 @@ export default function ProviderPriceCheck({ onFinished, onStatus }: ProviderPri
     }
   };
 
-  const openai = summary?.providerOutcomes.openai;
+  const ran = ADAPTER_ORDER.flatMap((provider) => {
+    const outcome = adapterOutcomeOf(summary, provider);
+    return outcome ? [{ provider, name: PROVIDER_NAMES[provider] ?? provider, outcome }] : [];
+  });
 
   return (
     <section aria-labelledby="price-check-heading" className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/40 p-3">
@@ -164,12 +194,20 @@ export default function ProviderPriceCheck({ onFinished, onStatus }: ProviderPri
         {statusFailed && <p className={MUTED}>{PRICE_CHECK_WORDS.statusUnavailable}</p>}
         {status && (
           <>
-            <p className={LINE}>{openaiLine(status.openai)}</p>
-            {historyLines(status.openai).map((line) => (
-              <p key={line} className={MUTED}>
-                {line}
-              </p>
-            ))}
+            {ADAPTER_ORDER.map((provider) => {
+              const source = statusOfProvider(status, provider);
+              if (!source) return null;
+              return (
+                <div key={provider} data-testid={`price-check-${provider}`}>
+                  <p className={LINE}>{providerLine(provider, source)}</p>
+                  {historyLines(source).map((line) => (
+                    <p key={line} className={MUTED}>
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              );
+            })}
             {status.manualProviders.length > 0 && (
               <p className={LINE}>
                 {`${listNames(status.manualProviders.map((provider) => PROVIDER_NAMES[provider] ?? provider))}: ${PRICE_CHECK_WORDS.manualForNow}`}
@@ -186,18 +224,29 @@ export default function ProviderPriceCheck({ onFinished, onStatus }: ProviderPri
           </>
         )}
         {summary && <p className={MUTED}>{PRICE_CHECK_WORDS.stored}</p>}
-        {openai && openai.needs_manual.length > 0 && (
-          <ul aria-label={PRICE_CHECK_WORDS.needsManualList} className="list-disc pl-5 text-xs text-amber-200">
-            {openai.needs_manual.map((entry) => (
-              <li key={`${entry.model_name}-${entry.reason}`}>
-                {`${PRICE_CHECK_WORDS.needsManualList}: ${entry.model_name} (${NEEDS_MANUAL_WORDS[entry.reason] ?? entry.reason}${entry.cell ? `: "${entry.cell}"` : ''})`}
-              </li>
-            ))}
-          </ul>
-        )}
-        {openai && openai.not_found.length > 0 && (
-          <p className={MUTED}>{`${PRICE_CHECK_WORDS.notFoundList}: ${openai.not_found.join(', ')}`}</p>
-        )}
+        {ran.map(({ provider, name, outcome }) => (
+          <div key={provider} data-testid={`price-check-run-${provider}`} className="space-y-1">
+            {outcome.needs_manual.length > 0 && (
+              <ul aria-label={`${name}: ${PRICE_CHECK_WORDS.needsManualList}`} className="list-disc pl-5 text-xs text-amber-200">
+                {outcome.needs_manual.map((entry) => (
+                  <li key={`${entry.model_name}-${entry.reason}`}>
+                    {`${name}: ${PRICE_CHECK_WORDS.needsManualList}: ${entry.model_name} (${NEEDS_MANUAL_WORDS[entry.reason] ?? entry.reason}${entry.cell ? `: "${entry.cell}"` : ''})`}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {outcome.not_found.length > 0 && (
+              <p className={MUTED}>{`${name}: ${PRICE_CHECK_WORDS.notFoundList}: ${outcome.not_found.join(', ')}`}</p>
+            )}
+            {NOTE_PROVIDERS.includes(provider) && outcome.name_notes.length > 0 && (
+              <ul aria-label={`${name} ${PRICE_CHECK_WORDS.pageNotes}`} className="list-none text-xs text-slate-400">
+                {outcome.name_notes.map((entry) => (
+                  <li key={entry.model_name}>{`${name} ${PRICE_CHECK_WORDS.pageNotes}: ${entry.model_name}: ${entry.note}`}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
       </div>
     </section>
   );

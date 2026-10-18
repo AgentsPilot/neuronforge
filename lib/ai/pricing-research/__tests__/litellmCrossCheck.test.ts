@@ -186,3 +186,36 @@ describe('every cost literal in the fixture converts to exactly the decimal its 
     }
   });
 });
+
+describe('Anthropic lines (slice 10; SA O-3, O-9)', () => {
+  const FRAGMENT = JSON.parse(readFileSync(join(__dirname, '..', '__fixtures__', 'litellm-anthropic-entries-2026-10-18.json'), 'utf8')) as Record<string, unknown>;
+  const MERGED = parseLiteLlmList(JSON.stringify({ ...JSON.parse(TEXT), ...FRAGMENT })) as LiteLlmList;
+
+  it('agrees on input and output; the cache-read price is shown, never compared, and cache writes are never read', () => {
+    const result = crossCheckLine(MERGED, 'anthropic', official('claude-sonnet-4-6', '3', '15'));
+    expect(result).toEqual({ verdict: 'agrees', flags: [], value: 'input 3, cached input 0.3, output 15 per 1M', diffPct: '0.00' });
+    expect(result.value).not.toContain('3.75');
+  });
+
+  it('a deprecation date gives `retiring`', () => {
+    const result = crossCheckLine(MERGED, 'anthropic', official('claude-sonnet-4-5-20250929', '3', '15'));
+    expect(result.flags).toEqual(['retiring']);
+    expect(result.value).toContain('retirement date 2026-11-30');
+  });
+
+  it('a retired id LiteLLM dropped is `not_listed`', () => {
+    expect(crossCheckLine(MERGED, 'anthropic', official('claude-opus-4-1-20250805', '15', '75')).verdict).toBe('not_listed');
+  });
+
+  it('a key under another provider is `not_listed`', () => {
+    const list = parseLiteLlmList(
+      JSON.stringify({ ...JSON.parse(TEXT), 'claude-haiku-4-5-20251001': { ...(FRAGMENT['claude-haiku-4-5-20251001'] as object), litellm_provider: 'bedrock' } })
+    ) as LiteLlmList;
+    expect(crossCheckLine(list, 'anthropic', official('claude-haiku-4-5-20251001', '1', '5')).verdict).toBe('not_listed');
+  });
+
+  it('the alias key never answers for a dated id', () => {
+    const list = parseLiteLlmList(JSON.stringify({ ...JSON.parse(TEXT), 'claude-sonnet-4-5': FRAGMENT['claude-sonnet-4-5'] })) as LiteLlmList;
+    expect(crossCheckLine(list, 'anthropic', official('claude-sonnet-4-5-20250929', '3', '15')).verdict).toBe('not_listed');
+  });
+});

@@ -2,13 +2,21 @@
  * The shape of one "Check provider prices" round's outcomes (AI model price
  * review slice 5; SA RR-1, SC-12, SC-14).
  *
- * The same strict schema is used to WRITE `ai_price_proposals.provider_outcomes`
- * and to READ it back for the per-provider status line, so the stored record
- * can never hold an unbounded list, a page body or a free-text reason:
+ * A strict schema guards what is WRITTEN to `ai_price_proposals.provider_outcomes`
+ * and a second one what is READ back for the per-provider status line, so the
+ * stored record can never hold an unbounded list, a page body or a free-text
+ * reason:
  *   - model ids pass `MODEL_ID_REGEX`;
  *   - reasons are enums;
  *   - a cell snippet is at most 80 characters;
  *   - every list holds at most 50 items.
+ *
+ * Slice 10 (SA SC10-2): Anthropic is read by an adapter. The WRITE schema
+ * (`ProviderOutcomesSchema`) accepts only the adapter shape for it, so a
+ * regression can never store `manual_only` again; the READ schema
+ * (`StoredProviderOutcomesSchema`) also accepts `manual_only`, because every
+ * round stored before slice 10 holds it. An old round reads as "Anthropic not
+ * checked yet", never as a failure (SC10-3).
  *
  * Pure: no I/O, no `server-only`, so browser files may import TYPES from here
  * (`import type`, SA SC-14).
@@ -44,13 +52,22 @@ export type NeedsManualReason = (typeof NEEDS_MANUAL_REASONS)[number];
 export const REFUSED_REASONS = ['refused_by_bounds', 'invalid_line'] as const;
 export type RefusedReason = (typeof REFUSED_REASONS)[number];
 
-/** How each provider's prices arrive today (BQ-4; Anthropic is slice 10). */
+/** How each provider's prices arrive today (BQ-4; Anthropic since slice 10). */
 export const PROVIDER_FETCH_MODE = {
   openai: 'adapter',
-  anthropic: 'manual',
+  anthropic: 'adapter',
   google: 'manual',
   kimi: 'manual',
 } as const satisfies Record<PriceProvider, 'adapter' | 'manual'>;
+
+/** The providers whose official page is read automatically (derived, so it cannot drift from the mode table). */
+export type AdapterProvider = {
+  [P in PriceProvider]: (typeof PROVIDER_FETCH_MODE)[P] extends 'adapter' ? P : never;
+}[PriceProvider];
+
+export const ADAPTER_PROVIDERS = (Object.keys(PROVIDER_FETCH_MODE) as PriceProvider[]).filter(
+  (provider): provider is AdapterProvider => PROVIDER_FETCH_MODE[provider] === 'adapter'
+);
 
 export const MAX_LIST_ITEMS = 50;
 export const MAX_CELL_TEXT = 80;
@@ -102,10 +119,22 @@ export const CrossCheckOutcomeSchema = z
   })
   .strict();
 
+/** WRITE schema: what a new round stores (SC10-2: Anthropic is always the adapter shape). */
 export const ProviderOutcomesSchema = z
   .object({
     openai: AdapterOutcomeSchema,
-    anthropic: ManualOnlySchema,
+    anthropic: AdapterOutcomeSchema,
+    google: ManualOnlySchema,
+    kimi: ManualOnlySchema,
+    litellm: CrossCheckOutcomeSchema,
+  })
+  .strict();
+
+/** READ schema: also accepts a round stored before slice 10 (Anthropic `manual_only`). */
+export const StoredProviderOutcomesSchema = z
+  .object({
+    openai: AdapterOutcomeSchema,
+    anthropic: z.union([AdapterOutcomeSchema, ManualOnlySchema]),
     google: ManualOnlySchema,
     kimi: ManualOnlySchema,
     litellm: CrossCheckOutcomeSchema,
@@ -118,9 +147,10 @@ export type NameNote = z.infer<typeof NameNoteSchema>;
 export type AdapterOutcome = z.infer<typeof AdapterOutcomeSchema>;
 export type CrossCheckOutcome = z.infer<typeof CrossCheckOutcomeSchema>;
 export type ProviderOutcomes = z.infer<typeof ProviderOutcomesSchema>;
+export type StoredProviderOutcomes = z.infer<typeof StoredProviderOutcomesSchema>;
 
-/** The sources whose runs are monitored (SC-12). */
-export type MonitoredSource = 'openai' | 'litellm';
+/** The sources whose runs are monitored (SC-12): every adapter provider and the cross-check list. */
+export type MonitoredSource = AdapterProvider | 'litellm';
 
 /** One stored fetch round, as the repository returns it. */
 export interface FetchRoundRow {
@@ -139,7 +169,7 @@ export interface SourceStatus {
   lastRun: SourceRun | null;
   lastOkAt: string | null;
   lastFailure: SourceRun | null;
-  /** OpenAI only: counts from the last run. */
+  /** Adapter providers only: counts from the last run. */
   lastRunCounts: { linesStored: number; needsManual: number; notFound: number; refused: number } | null;
   /** LiteLLM only: verdict counts from the last run. */
   lastRunVerdicts: { agrees: number; differs: number; notListed: number; unavailable: number } | null;
@@ -149,6 +179,7 @@ export interface SourceStatus {
 export interface FetchStatus {
   lastRunAt: string | null;
   openai: SourceStatus;
+  anthropic: SourceStatus;
   litellm: SourceStatus;
   manualProviders: PriceProvider[];
 }
@@ -157,23 +188,33 @@ export interface FetchStatus {
 export interface FetchRunSummary {
   roundId: string;
   providerOutcomes: ProviderOutcomes;
-  problems: Array<{ model_name: string; messages: string[] }>;
+  /** `provider` since slice 10 (SC10-8): an older response has none, and still renders. */
+  problems: Array<{ provider?: AdapterProvider; model_name: string; messages: string[] }>;
 }
 
 export function manualProviders(): PriceProvider[] {
   return (Object.keys(PROVIDER_FETCH_MODE) as PriceProvider[]).filter((provider) => PROVIDER_FETCH_MODE[provider] === 'manual');
 }
 
-function outcomesOf(row: FetchRoundRow | null): ProviderOutcomes | null {
+function outcomesOf(row: FetchRoundRow | null): StoredProviderOutcomes | null {
   if (!row) return null;
-  const parsed = ProviderOutcomesSchema.safeParse(row.provider_outcomes);
+  const parsed = StoredProviderOutcomesSchema.safeParse(row.provider_outcomes);
   return parsed.success ? parsed.data : null;
+}
+
+/** The adapter outcome a source stored, or null when it has none (a round from before the adapter). */
+function adapterOutcomeOf(outcomes: StoredProviderOutcomes, source: AdapterProvider): AdapterOutcome | null {
+  const stored = outcomes[source];
+  return 'needs_manual' in stored ? stored : null;
 }
 
 function runOf(row: FetchRoundRow | null, source: MonitoredSource): SourceRun | null {
   if (!row) return null;
   const outcomes = outcomesOf(row);
-  return { outcome: outcomes ? outcomes[source].outcome : 'unknown', at: row.created_at };
+  if (!outcomes) return { outcome: 'unknown', at: row.created_at };
+  // SC10-3: a round from before the adapter is "not checked yet", never a failure.
+  if (source !== 'litellm' && !adapterOutcomeOf(outcomes, source)) return null;
+  return { outcome: outcomes[source].outcome, at: row.created_at };
 }
 
 /**
@@ -187,19 +228,19 @@ export function sourceStatus(
   lastFailure: FetchRoundRow | null
 ): SourceStatus {
   const latestOutcomes = outcomesOf(latest);
+  const adapter = source !== 'litellm' && latestOutcomes ? adapterOutcomeOf(latestOutcomes, source) : null;
   return {
     lastRun: runOf(latest, source),
     lastOkAt: lastOk ? lastOk.created_at : null,
     lastFailure: runOf(lastFailure, source),
-    lastRunCounts:
-      source === 'openai' && latestOutcomes
-        ? {
-            linesStored: latestOutcomes.openai.lines_stored,
-            needsManual: latestOutcomes.openai.needs_manual.length,
-            notFound: latestOutcomes.openai.not_found.length,
-            refused: latestOutcomes.openai.refused.length,
-          }
-        : null,
+    lastRunCounts: adapter
+      ? {
+          linesStored: adapter.lines_stored,
+          needsManual: adapter.needs_manual.length,
+          notFound: adapter.not_found.length,
+          refused: adapter.refused.length,
+        }
+      : null,
     lastRunVerdicts:
       source === 'litellm' && latestOutcomes
         ? {

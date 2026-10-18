@@ -1,9 +1,12 @@
 /**
  * The ONLY outbound fetch in the price review (AI model price review slice 5;
- * SA RR-1, RR-8, SC-9).
+ * SA RR-1, RR-8, SC-9; slice 10 SA O-7).
  *
- * Exactly two fixed public URLs, pinned here as code constants. Nothing a
- * caller sends can choose, extend or redirect them (no SSRF surface):
+ * Exactly three fixed public URLs are fetched, pinned here as code constants:
+ * OpenAI's and Anthropic's official pricing pages (markdown form) and the
+ * LiteLLM list. The Anthropic URL was approved under RR-8 by SA on 2026-10-18
+ * (slice 10, O-7) for this feature only. Nothing a caller sends can choose,
+ * extend or redirect them (no SSRF surface):
  *   - redirects are reported (`http_3xx`), never followed;
  *   - only `User-Agent` and `Accept` are sent: no cookie, no auth, no key.
  *
@@ -17,12 +20,16 @@
 
 import 'server-only';
 
-import type { SourceOutcome } from './fetchOutcomes';
+import type { AdapterProvider, SourceOutcome } from './fetchOutcomes';
 
 /** The official OpenAI pricing page, markdown form (RR-1). Fetched. */
 export const OPENAI_PRICING_MARKDOWN_URL = 'https://developers.openai.com/api/docs/pricing.md';
 /** The human page, stored as each line's `source_url` (MP-FR-3). Never fetched. */
 export const OPENAI_PRICING_PAGE_URL = 'https://developers.openai.com/api/docs/pricing';
+/** The official Anthropic pricing page, markdown form (slice 10, SA O-7). Fetched. */
+export const ANTHROPIC_PRICING_MARKDOWN_URL = 'https://platform.claude.com/docs/en/about-claude/pricing.md';
+/** The human page, stored as each Anthropic line's `source_url` (MP-FR-3). Never fetched. */
+export const ANTHROPIC_PRICING_PAGE_URL = 'https://platform.claude.com/docs/en/about-claude/pricing';
 /** LiteLLM's public price list: the cross-check only, never a price (MP-FR-6a). */
 export const LITELLM_PRICES_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
@@ -33,7 +40,7 @@ export const PRICE_CHECK_USER_AGENT = 'AgentPilot-PriceCheck/1.0 (admin-triggere
 export const FETCH_TIMEOUT_MS = 10_000;
 
 export interface PriceSource {
-  readonly id: 'openai' | 'litellm';
+  readonly id: AdapterProvider | 'litellm';
   readonly url: string;
   readonly accept: string;
   /** Content types read as the source text; `text/html` is always `blocked`. */
@@ -41,10 +48,17 @@ export interface PriceSource {
   readonly maxBytes: number;
 }
 
-export const PRICE_SOURCES: { readonly openai: PriceSource; readonly litellm: PriceSource } = {
+export const PRICE_SOURCES: { readonly [P in AdapterProvider | 'litellm']: PriceSource } = {
   openai: {
     id: 'openai',
     url: OPENAI_PRICING_MARKDOWN_URL,
+    accept: 'text/markdown, text/plain',
+    contentTypes: ['text/markdown', 'text/plain'],
+    maxBytes: 5 * 1024 * 1024,
+  },
+  anthropic: {
+    id: 'anthropic',
+    url: ANTHROPIC_PRICING_MARKDOWN_URL,
     accept: 'text/markdown, text/plain',
     contentTypes: ['text/markdown', 'text/plain'],
     maxBytes: 5 * 1024 * 1024,
@@ -56,6 +70,12 @@ export const PRICE_SOURCES: { readonly openai: PriceSource; readonly litellm: Pr
     contentTypes: ['text/plain', 'application/json'],
     maxBytes: 8 * 1024 * 1024,
   },
+};
+
+/** The human page each adapter provider's lines name as their source (never fetched). */
+export const PRICE_PAGE_URLS: { readonly [P in AdapterProvider]: string } = {
+  openai: OPENAI_PRICING_PAGE_URL,
+  anthropic: ANTHROPIC_PRICING_PAGE_URL,
 };
 
 export interface FetchResult {

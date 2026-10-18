@@ -8,33 +8,47 @@
  * is NOT stored and supersedes nothing: it is listed as a problem, and the
  * other lines still load (RR-1 "line not stored, shown as a problem"). The
  * cross-check adds its verdict and flags; it never removes a line.
+ *
+ * Slice 10 (SA O-4, SC10-6): provider-generic. One round reads every adapter
+ * provider (`PRICE_ADAPTERS`: OpenAI and Anthropic) and holds every line of
+ * every provider that succeeded. Each provider keeps its own outcome, lines,
+ * refused list and failed anchor, so one provider failing never stops the
+ * other's lines. Google and Kimi stay manual entry (BQ-4).
  */
 
 import type { AiPriceSubmitLine } from '@/lib/repositories/types';
 
 import {
+  ADAPTER_PROVIDERS,
   MAX_LIST_ITEMS,
   ProviderOutcomesSchema,
+  type AdapterOutcome,
+  type AdapterProvider,
   type ProviderOutcomes,
   type RefusedEntry,
 } from './fetchOutcomes';
 import type { FetchResult } from './fetchSources';
-import { crossCheckLine, parseLiteLlmList, type CrossCheckVerdict } from './litellmCrossCheck';
+import { crossCheckLine, parseLiteLlmList, type CrossCheckVerdict, type LiteLlmList } from './litellmCrossCheck';
 import { evaluatePendingLine, PENDING_LINE_FLAGS, type LineFlagContext, type PendingLineFlag } from './lineFlags';
-import { parseOpenAiPricing, type AnchorId } from './openaiPricingAdapter';
 import { PendingLineSchema, type PendingLineInput } from './pendingLineSchema';
+import { PRICE_ADAPTERS, type AdapterParseResult } from './priceAdapters';
 
 type SnapshotFields = Omit<AiPriceSubmitLine, 'kind' | 'provider' | 'model_name' | 'source_url' | 'checked_on' | 'flags'>;
 
-export interface FetchRoundInput {
-  openai: FetchResult;
-  litellm: FetchResult;
-  /** OpenAI model ids in the coverage set. */
+/** One adapter provider's part of the round. */
+export interface ProviderFetchInput {
+  result: FetchResult;
+  /** This provider's model ids in the coverage set. */
   coverage: ReadonlySet<string>;
   isInputOnly: (model: string) => boolean;
-  contextFor: (line: PendingLineInput) => { context: LineFlagContext; snapshotFields: SnapshotFields };
   /** The human pricing page stored as each line's source (MP-FR-3). */
   sourceUrl: string;
+}
+
+export interface FetchRoundInput {
+  providers: { readonly [P in AdapterProvider]: ProviderFetchInput };
+  litellm: FetchResult;
+  contextFor: (line: PendingLineInput) => { context: LineFlagContext; snapshotFields: SnapshotFields };
   /** The cross-check list's URL, stored as `cross_check_source`. */
   crossCheckSource: string;
   /** UTC date, YYYY-MM-DD. */
@@ -43,12 +57,18 @@ export interface FetchRoundInput {
   fetchedAt: string;
 }
 
+export interface FetchRoundProblem {
+  provider: AdapterProvider;
+  model_name: string;
+  messages: string[];
+}
+
 export interface FetchRoundResult {
   submitLines: AiPriceSubmitLine[];
   providerOutcomes: ProviderOutcomes;
-  problems: Array<{ model_name: string; messages: string[] }>;
-  /** For the log line only: the first anchor that failed. */
-  failedAnchor: AnchorId | null;
+  problems: FetchRoundProblem[];
+  /** For the log lines only: each provider whose page failed an anchor (SC10-6). */
+  failedAnchors: Array<{ provider: AdapterProvider; anchor: string }>;
 }
 
 function orderedFlags(flags: readonly PendingLineFlag[]): PendingLineFlag[] {
@@ -56,39 +76,49 @@ function orderedFlags(flags: readonly PendingLineFlag[]): PendingLineFlag[] {
   return PENDING_LINE_FLAGS.filter((flag) => set.has(flag));
 }
 
-/** Anthropic (slice 10), Google and Kimi (BQ-4): manual entry for now, see `PROVIDER_FETCH_MODE`. */
+/** Google and Kimi (BQ-4): manual entry for now, see `PROVIDER_FETCH_MODE`. */
 const MANUAL_ONLY = { outcome: 'manual_only' as const };
 
-export function buildFetchRound(input: FetchRoundInput): FetchRoundResult {
-  const list = input.litellm.outcome === 'ok' && input.litellm.text !== undefined ? parseLiteLlmList(input.litellm.text) : null;
-  const litellmOutcome = input.litellm.outcome === 'ok' && !list ? 'layout_changed' : input.litellm.outcome;
+interface ProviderPart {
+  lines: AiPriceSubmitLine[];
+  outcome: AdapterOutcome;
+  problems: FetchRoundProblem[];
+  failedAnchor: string | null;
+}
 
-  const parsed =
-    input.openai.outcome === 'ok' && input.openai.text !== undefined
-      ? parseOpenAiPricing(input.openai.text, { coverage: input.coverage, isInputOnly: input.isInputOnly })
+function buildProviderPart(
+  provider: AdapterProvider,
+  part: ProviderFetchInput,
+  list: LiteLlmList | null,
+  verdicts: Record<CrossCheckVerdict, number>,
+  input: FetchRoundInput
+): ProviderPart {
+  const parsed: AdapterParseResult | null =
+    part.result.outcome === 'ok' && part.result.text !== undefined
+      ? PRICE_ADAPTERS[provider].parse(part.result.text, { coverage: part.coverage, isInputOnly: part.isInputOnly })
       : null;
-  const openaiOutcome = parsed && parsed.outcome === 'layout_changed' ? 'layout_changed' : input.openai.outcome;
+  const outcome = parsed && parsed.outcome === 'layout_changed' ? 'layout_changed' : part.result.outcome;
+  const cacheListed = new Set(parsed?.cacheListed ?? []);
 
-  const submitLines: AiPriceSubmitLine[] = [];
+  const lines: AiPriceSubmitLine[] = [];
   const refused: RefusedEntry[] = [];
-  const problems: Array<{ model_name: string; messages: string[] }> = [];
-  const verdicts: Record<CrossCheckVerdict, number> = { agrees: 0, differs: 0, not_listed: 0, unavailable: 0 };
+  const problems: FetchRoundProblem[] = [];
 
   for (const price of parsed?.outcome === 'ok' ? parsed.lines : []) {
     const candidate = {
       kind: 'token' as const,
-      provider: 'openai' as const,
+      provider,
       model_name: price.model_name,
       input_per_1m: price.input_per_1m,
       output_per_1m: price.output_per_1m,
       ...(price.cached_input_per_1m !== undefined ? { cached_input_per_1m: price.cached_input_per_1m } : {}),
-      source_url: input.sourceUrl,
+      source_url: part.sourceUrl,
       checked_on: input.checkedOn,
     };
     const valid = PendingLineSchema.safeParse(candidate);
     if (!valid.success) {
       refused.push({ model_name: price.model_name, reason: 'invalid_line' });
-      problems.push({ model_name: price.model_name, messages: valid.error.issues.map((issue) => issue.message) });
+      problems.push({ provider, model_name: price.model_name, messages: valid.error.issues.map((issue) => issue.message) });
       continue;
     }
     const line = valid.data;
@@ -96,13 +126,15 @@ export function buildFetchRound(input: FetchRoundInput): FetchRoundResult {
     const evaluation = evaluatePendingLine(line, context);
     if (evaluation.refusals.length > 0) {
       refused.push({ model_name: price.model_name, reason: 'refused_by_bounds' });
-      problems.push({ model_name: price.model_name, messages: evaluation.refusals });
+      problems.push({ provider, model_name: price.model_name, messages: evaluation.refusals });
       continue;
     }
 
-    const cross = crossCheckLine(list, 'openai', price);
+    const cross = crossCheckLine(list, provider, price);
     verdicts[cross.verdict] += 1;
-    submitLines.push({
+    // SA O-3: the page lists a cache price we deliberately do not propose; the flag records that it exists.
+    const listedOnly: PendingLineFlag[] = cacheListed.has(price.model_name) ? ['cached_input_listed'] : [];
+    lines.push({
       ...snapshotFields,
       kind: line.kind,
       provider: line.provider,
@@ -113,7 +145,7 @@ export function buildFetchRound(input: FetchRoundInput): FetchRoundResult {
       ...(price.cached_input_per_1m !== undefined ? { cached_input_per_1m: price.cached_input_per_1m } : {}),
       source_url: line.source_url,
       checked_on: line.checked_on,
-      flags: orderedFlags([...evaluation.flags, ...cross.flags]),
+      flags: orderedFlags([...evaluation.flags, ...listedOnly, ...cross.flags]),
       cross_check_verdict: cross.verdict,
       cross_check_value: cross.value,
       cross_check_source: input.crossCheckSource,
@@ -122,19 +154,37 @@ export function buildFetchRound(input: FetchRoundInput): FetchRoundResult {
     });
   }
 
-  const providerOutcomes = ProviderOutcomesSchema.parse({
-    openai: {
-      outcome: openaiOutcome,
+  return {
+    lines,
+    problems,
+    failedAnchor: parsed?.failedAnchor ?? null,
+    outcome: {
+      outcome,
       fetched_at: input.fetchedAt,
-      duration_ms: input.openai.durationMs,
-      bytes: input.openai.bytes,
-      lines_stored: submitLines.length,
+      duration_ms: part.result.durationMs,
+      bytes: part.result.bytes,
+      lines_stored: lines.length,
       needs_manual: (parsed?.needsManual ?? []).slice(0, MAX_LIST_ITEMS),
       not_found: (parsed?.notFound ?? []).slice(0, MAX_LIST_ITEMS),
       refused: refused.slice(0, MAX_LIST_ITEMS),
       name_notes: (parsed?.nameNotes ?? []).slice(0, MAX_LIST_ITEMS),
     },
-    anthropic: MANUAL_ONLY,
+  };
+}
+
+export function buildFetchRound(input: FetchRoundInput): FetchRoundResult {
+  const list = input.litellm.outcome === 'ok' && input.litellm.text !== undefined ? parseLiteLlmList(input.litellm.text) : null;
+  const litellmOutcome = input.litellm.outcome === 'ok' && !list ? 'layout_changed' : input.litellm.outcome;
+  const verdicts: Record<CrossCheckVerdict, number> = { agrees: 0, differs: 0, not_listed: 0, unavailable: 0 };
+
+  const parts = {} as Record<AdapterProvider, ProviderPart>;
+  for (const provider of ADAPTER_PROVIDERS) {
+    parts[provider] = buildProviderPart(provider, input.providers[provider], list, verdicts, input);
+  }
+
+  const providerOutcomes = ProviderOutcomesSchema.parse({
+    openai: parts.openai.outcome,
+    anthropic: parts.anthropic.outcome,
     google: MANUAL_ONLY,
     kimi: MANUAL_ONLY,
     litellm: {
@@ -149,5 +199,13 @@ export function buildFetchRound(input: FetchRoundInput): FetchRoundResult {
     },
   });
 
-  return { submitLines, providerOutcomes, problems, failedAnchor: parsed?.failedAnchor ?? null };
+  return {
+    submitLines: ADAPTER_PROVIDERS.flatMap((provider) => parts[provider].lines),
+    providerOutcomes,
+    problems: ADAPTER_PROVIDERS.flatMap((provider) => parts[provider].problems),
+    failedAnchors: ADAPTER_PROVIDERS.flatMap((provider) => {
+      const anchor = parts[provider].failedAnchor;
+      return anchor ? [{ provider, anchor }] : [];
+    }),
+  };
 }
