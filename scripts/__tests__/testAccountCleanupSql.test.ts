@@ -762,19 +762,14 @@ describe('applied history: a function migration is never edited once applied', (
     // a824848e0a538477 live (SA-W108 pattern). If that row is false, nothing of 4b.1 is applied.
     ['supabase/migrations/20261075_operator_test_account_cleanup_data_exports.sql', 'd4fd31d565ddefdc83d84121bf90d97c5d815356e119ae1d1e60bca50437d5c3'],
     ['supabase/SQL Scripts/20261075_operator_test_account_cleanup_data_exports_rollback.sql', '25c8e89e662e857022267aed995665b07a86f44eb56bff87aa3b3d366f2d8c1b'],
-  ];
-
-  /**
-   * Finance 4b.1's 20261077, the function 20261081 replaces and its rollback
-   * restores. Pinned by sha256 like applied history (its bytes equal origin/main
-   * at 399070d4), but kept apart from APPLIED on purpose (SA W-3): the DE-10b.1
-   * pre-check (step 1) is the proof it is live on prod. Move both lines into
-   * APPLIED once that pre-check has passed.
-   */
-  const PENDING_PREVIOUS: ReadonlyArray<[string, string]> = [
+    // Finance 4b.1 (PR #447): the function 20261081 replaces and its rollback restores. Applied to prod by
+    // the user 2026-10-18; TL confirmed stamp b78b4579fc6631f8 live (DE-10b.1 pre-check row 1, CR-1).
     ['supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql', 'b147d83eb21fe0424026d444a41ec7483d833b0de001882d8ce00a81124ff5aa'],
     ['supabase/SQL Scripts/20261077_operator_test_account_cleanup_boost_reversal_events_rollback.sql', '5304e26d92a95dcbc792c52a18ef3377cdb81938e1c601ade0db6cb07abf5d47'],
   ];
+
+  /** Nothing pending: 20261077 moved to APPLIED after the DE-10b.1 pre-check passed on prod (CR-1). */
+  const PENDING_PREVIOUS: ReadonlyArray<[string, string]> = [];
 
   it.each([...APPLIED, ...PENDING_PREVIOUS])('%s is byte-identical to what was applied', (file, sha256) => {
     expect(createHash('sha256').update(readSql(file)).digest('hex')).toBe(sha256);
