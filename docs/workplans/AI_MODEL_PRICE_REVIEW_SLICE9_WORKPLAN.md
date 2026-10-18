@@ -600,7 +600,16 @@ Still open: QA edge case 3 (source URL rendered as a link without an `https:` ch
 
 ## Commit Info
 
-[RM will populate this section]
+| Field | Value |
+|---|---|
+| Branch | `feature/ai-model-price-review-slice9` |
+| Commit | `6ff6d9b4` feat(pricing): per-model price history view (price review slice 9) |
+| PR | [#464](https://github.com/AgentsPilot/neuronforge/pull/464) (base `main`, merge commit; auto-merge left to TL) |
+| Base | `origin/main` `f7429b57` (unchanged at commit time, no merge needed) |
+| Migration | None (no file under `supabase/migrations`) |
+| RM pre-commit checks | `git diff --numstat` no file with more deletions than insertions; no secrets, no added `console.*`, no backslash-hex in .md/.sql/.txt; `.claude/` and `node_modules` not staged |
+| RM test run | Targeted suites (`lib/ai/pricing-research`, `app/admin/system-config`, `app/api/admin/model-pricing`, `lib/repositories/__tests__`, `lib/audit/__tests__`): 165 suites, 3604 passed, 6 failed (known local CRLF failures in `openaiPricingAdapter.test.ts`); `test:authz-guard` 203 passed |
+| Committed | 2026-10-18 |
 
 ---
 
@@ -608,6 +617,7 @@ Still open: QA edge case 3 (source URL rendered as a link without an `https:` ch
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-10-18 | Committed, PR #464 | RM: commit `6ff6d9b4`, [PR #464](https://github.com/AgentsPilot/neuronforge/pull/464); Commit Info filled. No migration |
 | 2026-10-18 | Workplan written | Slice 9 (MP-FR-17, RR-6): read-only history route, five new read methods (two live repositories, lines, batches, audit) plus one optional per BQ-9a, pure builder with the who-and-why precedence (applied / record missing / runbook / pre-review with audit / no record) and retirement words (clean-up 2026-10-11 / replaced / no record), History button opening the shared drawer. No migration (index on `proposal_line_id` confirmed from `20261066`). Open questions O-1..O-10; business question BQ-9a. No code |
 | 2026-10-18 | SA code review fixes | CR9-1 (replaced only with a started successor), CR9-2 (`not_recorded` actor), CR9-3 (guard reads the tree once: 21.7–25.4 s to 5.8–7.3 s), CR9-5 (footnote wording) applied with tests; CR9-4 production embed check by TL recorded in §9 (PASS). Suites re-run green except the known CRLF failures. Uncommitted |
 | 2026-10-18 | Code complete | SC9-1..SC9-11 and the O-rulings implemented; BQ-9a (keep the email) built as `findEmailsByUserIds`. T-0 recorded in §9 (no stop rule fired; register row 118, census 111 = 105 + 6 + 0, 82 files; `ADMIN_METHODS` 13). Deviations D-1..D-11 in §10. Tasks T-0..T-7 ticked. Uncommitted, awaiting SA code review and QA |
