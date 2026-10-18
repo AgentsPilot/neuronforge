@@ -304,6 +304,8 @@ export async function POST(request: NextRequest, context: { params: { accountId:
         correlationId,
         ...outcome.data,
         ...(outcome.audit?.details ?? {}),
+        // P-8a.3 (SA Q-7): assign_tier and add_override add `subscribed` here, never to the response.
+        ...(outcome.auditDetails ?? {}),
       },
       severity: 'warning',
       request,

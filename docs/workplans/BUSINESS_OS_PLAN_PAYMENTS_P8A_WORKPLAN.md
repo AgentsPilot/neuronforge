@@ -7,7 +7,7 @@
 **Depends on:** P-3b merged (#251, #299: billing record mirror, money history). P-6a merged (#405, #416: `failed_attempts`, `last_payment_failed_at`, `ended_at`, grace margin in `deriveLifecycle`).
 **Date:** 2026-10-18
 **Branch:** `feature/bos-plan-payments-p8a`, worktree `neuronforge-finance-health`, fresh from `origin/main` `f7429b57` (#462). Confirmed with `git branch --show-current` on 2026-10-18. Highest migration on that main: `20261079`.
-**Status:** SA APPROVED WITH CONDITIONS (SA-WP-P8a). **P-8a.1 Code Approved (SA-CR-P8a.1), QA passed; committed `5c31cb92`, PR [#466](https://github.com/AgentsPilot/neuronforge/pull/466) opened 2026-10-18, auto-merge on.** P-8a.1 MERGED (#466). **P-8a.2 Code Approved (SA-CR-P8a.2), QA passed; committed `56afcbe3`, PR [#467](https://github.com/AgentsPilot/neuronforge/pull/467) opened 2026-10-18, auto-merge on.** P-8a.3 not started.
+**Status:** SA APPROVED WITH CONDITIONS (SA-WP-P8a). **P-8a.1 Code Approved (SA-CR-P8a.1), QA passed; committed `5c31cb92`, PR [#466](https://github.com/AgentsPilot/neuronforge/pull/466) opened 2026-10-18, auto-merge on.** P-8a.1 MERGED (#466). **P-8a.2 Code Approved (SA-CR-P8a.2), QA passed; committed `56afcbe3`, PR [#467](https://github.com/AgentsPilot/neuronforge/pull/467) opened 2026-10-18, auto-merge on.** P-8a.2 MERGED (#467). **P-8a.3 Code Approved (SA-CR-P8a.3), QA passed; committed `679e765c`, PR [#469](https://github.com/AgentsPilot/neuronforge/pull/469) opened 2026-10-18, auto-merge on. P-8a COMPLETE when #469 merges.**
 
 ## Overview
 
@@ -302,8 +302,8 @@ AC-AM.1, AC-AM.2, AC-AM.4 and AC-F4.1 come from the requirement. **AC-P8a.n are 
 | ✅ T6 | Entitlements registration for .1; `npm run test:bos-entitlements` | SR-17 | .1 |
 | ✅ T7 | R-p′, `billingPanelView.ts`, panel route and tests (tenant order, UUID, platform, not a tenant) | AC-AM.1; AC-F4.1; **AC-P8a.6** the disagreement flag names each stored mismatch and says it is not the Stripe check | .2 |
 | ✅ T8 | `PlanBillingBlock` in the drawer; dashboard link kinds; purpose line; drawer pins re-run unchanged | AC-AM.1 (dashboard link) | .2 |
-| ⬜ T9 | AM-7 coverage pin | AC-AM.4 (coverage of what is built) | .3 |
-| ⬜ T10 | `subscribed` detail on admin plan changes (if Q-7 approves) | AC-AM.4 ("admin override on a subscribed account") | .3 |
+| ✅ T9 | AM-7 coverage pin | AC-AM.4 (coverage of what is built) | .3 |
+| ✅ T10 | `subscribed` detail on admin plan changes (if Q-7 approves) | AC-AM.4 ("admin override on a subscribed account") | .3 |
 | ⬜ T11 | Requirement §9.1 row and change history after each PR | — | all |
 
 ---
@@ -629,6 +629,59 @@ On a deployment with the Stripe test key, signed in as an admin: Businesses → 
 
 #### Code Approved for QA: Yes
 
+## Implementation Notes (P-8a.3)
+
+**Dev, 2026-10-18.** Branch `feature/bos-plan-payments-p8a3`, cut from the P-8a.2 tip `340d4a43`. Uncommitted (no stash, no commit), no PR until #467 merges.
+
+**D-12 withdrawn: coordinator brief error.** A first pass recorded admin views of the Subscriptions page and the drawer panel. That contradicted SA Q-6 (no audit for admin reads), which stands. All seven files were restored with `git restore --source=340d4a43`, and `git diff 340d4a43 --stat` then showed only this workplan. The scope below is the approved one: T9 and T10.
+
+### What was built
+
+| File | What | Task |
+|---|---|---|
+| `lib/business-os/billing/__tests__/moneyEventAudit.coverage.test.ts` | The AM-7 coverage pin. Each built money event maps to its `AUDIT_EVENTS` key and to its emitter, read in code with comments stripped. For `BOS_BILLING_*` keys, registry metadata is required. The unbuilt events (downgrade P-7b.2; cancel and reactivate P-7a; refund and dispute P-6b) must have no key yet. Every `BOS_BILLING_*` key must be mapped or listed as non-money (the test clock) | T9, AC-AM.4 |
+| `lib/business-os/entitlements/adminOps.ts` | `applyAnchorRule` returns what it read, so `assign_tier` adds `auditDetails: { subscribed }` from the ONE PF-13 read, and its refusal on a failed read is unchanged. `add_override` reads `hasLivePlanSubscription` for its audit entry only and is never refused by it (`null` = could not tell). New optional `auditDetails` on the success outcome: audit only, never the response | T10, SA Q-7 |
+| `app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts` | Spreads `outcome.auditDetails` into the entry's `details` (2 lines). The audit stays `recordPlanChange` (bounded flush; it never fails the request) | T10 |
+| `lib/business-os/entitlements/__tests__/adminOps.test.ts` | `add_override` leaves the "never reads the billing record" list (it now reads it, per Q-7). New cases: `assign_tier` with true and false (one read), its 500 unchanged, `add_override` with true, false and null (never refused, not in `data`), and `set_cohort` setting no `auditDetails` | T10 |
+| `app/api/admin/business-os/entitlements/__tests__/routes.test.ts` | One new `describe`: the `add_override` entry carries `subscribed: false`, the body does not, and the log runs before the flush. `createOverride` is added to the shared mock for that test only. The T11b.1 byte pin is unedited | T10 |
+
+**Unchanged:** severity (the route still passes `'warning'`). No metadata is added to the two entitlement events, because that would change their stored classification. The four known legacy severity writes are untouched (wontfix). Imports into the entitlements module are unchanged, so no registration is needed. No migration, no Stripe call. The drawer pins and the seven Finance pins are not in the diff.
+
+### Checks (each suite run alone)
+
+| Check | Result |
+|---|---|
+| Touched folders (`lib/business-os/billing`, `lib/business-os/entitlements`) | 82 suites, 4,884 tests, pass (the AM-7 pin: 18) |
+| Entitlements route tests (`app/api/admin/business-os/entitlements`) | 1 suite, 106 tests, pass; the T11b.1 byte pin unedited |
+| Audit tests (`lib/audit`, `app/api/audit`, `auditAdminGate`, `app/admin/audit-trail`) | 32 suites, 510 pass |
+| `npm run test:authz-guard` | 203 pass |
+| `npm run test:bos-entitlements` | 296 suites, 8,938 pass |
+| `npm run lint:hooks` | clean (exit 0) |
+| `app/admin/users` (drawer pins unedited) | 28 suites, 672 pass |
+| Scoped `tsc` (temporary config, removed) with a canary in `adminOps.ts` | canary: exactly 1 error `adminOps.ts(802,7) TS2322`; restored, SHA-256 `ec53bd7b…811c` identical; clean run 0 errors |
+| Revert check | the seven view-audit files are byte-identical to `340d4a43` (SHA-256 compared); `git diff 340d4a43 --stat` lists only the P-8a.3 files |
+
+### SA Code Review (P-8a.3)
+
+**Code Review by SA, 2026-10-18. Reviewed: the uncommitted tree on `feature/bos-plan-payments-p8a3`, stacked on P-8a.2 (#467).**
+**Status: Code Approved (SA-CR-P8a.3).** No conditions. The PR opens only after #467 merges.
+
+| Item | Result |
+|---|---|
+| Scope (D-12 withdrawn) | ✅ SA ran `git diff 340d4a43 --stat`, which lists exactly the T9/T10 files: `adminOps.ts` (+ test), the entitlements route (+ test) and this workplan. The one untracked file is `moneyEventAudit.coverage.test.ts`. There is no view-audit file, so SA Q-6 (no audit for admin reads) stands |
+| T9 AM-7 pin (AC-AM.4) | ✅ Each built event maps to its `AUDIT_EVENTS` key and to an emitter that names it in code (comments stripped, with a planted control). `BOS_BILLING_*` keys need registry metadata. The unbuilt events (P-7b.2, P-7a, P-6b) must have no key yet, so the pin fails when those slices land without updating it. Pure file reads, no write |
+| T10 `assign_tier` | ✅ It reuses the **one** PF-13 read (`applyAnchorRule` now returns what it read): no second read. The refusal on an unreadable answer (500 `billing_read_failed`) is unchanged, and `set_cohort` sets no `auditDetails` |
+| T10 `add_override` | ✅ One `hasLivePlanSubscription(ctx.accountId)` read, which is never a refusal: `null` is recorded. The read cannot throw, because `readPlanBilling` (`adminDeletionFacts.ts:34-46`) returns `'unreadable'` on an error or a throw |
+| Scoped to the target account | ✅ `ctx.accountId`, the route's checked target. Both reads go through `businessOsBillingAccountRepository.findByUser(targetId, livemode)` |
+| No extra read elsewhere | ✅ Only `assign_tier` (existing read) and `add_override` (one new read) read billing. The other ops are unchanged, as the "never reads the billing record" list shows |
+| Audit details only | ✅ `outcome.auditDetails` is spread into `details` only, and the response body is unchanged (route test). The value is a boolean: no amount, no Stripe id, no personal data |
+| Non-blocking and severity | ✅ The audit is still the route's existing bounded-flush call, which never fails the request. Severity stays `'warning'`. No registry metadata is added to the two entitlement events, so their stored classification is unchanged. The legacy severity writes are untouched |
+| Entitlements registration | ✅ No new import from or into the entitlements module, so none is needed. `test:bos-entitlements` passes |
+| Pins | ✅ The drawer pins are not in the diff. SA recomputed the seven Finance pins: `3a1a2dd4` `b84e0c96` `30f5fc24` `24ff0da7` `98ea0507` `02813360` `1f7cf07a`. The T11b.1 audit byte pin is unedited |
+| SA re-run | ✅ The AM-7 pin, `adminOps`, the entitlements routes, `lib/audit` and `app/admin/users`: **1093 passed** |
+
+#### Code Approved for QA: Yes
+
 ## QA Testing Report
 
 **QA — 2026-10-18** (P-8a.1 only: the MRR rule and `/admin/subscriptions`; P-8a.2 and P-8a.3 are not built)
@@ -815,6 +868,80 @@ These match Dev's counts.
 - [x] All P-8a.2 acceptance criteria pass in code. One Low note (QA-P8a2-N1). The browser look is the user's after merge. **Ready for RM once #466 merges** (no stacking).
 - [ ] Issues found
 
+## QA Report — P-8a.3
+
+**QA — 2026-10-18** (worktree `neuronforge-finance-health`, branch `feature/bos-plan-payments-p8a3` on `340d4a43`, uncommitted; T9 and T10)
+**Test mode:** full
+**Strategy used:**
+- **A + B:** Jest suites, run one at a time.
+- A code read of `adminOps.ts`, the route and `recordPlanChange`.
+- Temporary source edits to prove the AM-7 pin bites, each restored with `cp` and checked with `cmp` (byte-identical).
+- A scoped tsc with a canary.
+
+**Focus:** security (audit), api
+**Skipped:** the live browser step (user, below).
+**Input source:** prompt + workplan
+
+**Verdict: PASS. No bugs.**
+
+### T9: the AM-7 coverage pin (`moneyEventAudit.coverage.test.ts`)
+
+| Temporary edit | Pin |
+|---|---|
+| None (baseline) | 18/18 passed |
+| The checkout route (`app/api/business-os/billing/plan/checkout/route.ts`) no longer names `BOS_BILLING_CHECKOUT_STARTED` (both uses renamed) | **1 failed** |
+| The same, with the token left only in a `//` comment | **1 failed** (the code-only reader ignores comments) |
+| `add_override`'s `auditDetails: { subscribed }` emptied in `adminOps.ts` | **1 failed** (the T10 case in the pin) |
+
+Both files were restored byte-identical (`cmp`). The checkout route is clean against HEAD, and `adminOps.ts` carries only Dev's diff.
+
+### T10: `subscribed` in the admin plan-change audit
+
+| Item | Result | Evidence |
+|---|---|---|
+| `assign_tier` on a subscribed account writes `subscribed: true`, and on one without a subscription `false` | ✅ | `adminOps.test` `it.each([true, false])` "assign_tier records subscribed: %p, from the one PF-13 read, in auditDetails only". The value comes from the **same** `applyAnchorRule` read (no second read) |
+| `assign_tier` still refuses when the billing read fails | ✅ | "assign_tier still refuses when the billing read fails (PF-13, unchanged)": 500 `billing_read_failed`, as before |
+| `add_override` writes `subscribed` true, false, or `null` on a failed read, and is never refused | ✅ | `it.each([true, false, null])` "add_override records subscribed: %p and is never refused by it". The read cannot throw: `hasLivePlanSubscription` returns `null` on "unreadable", and `readPlanBilling` catches everything (`adminDeletionFacts.ts:34-46`) |
+| Responses unchanged | ✅ | `auditDetails` is spread only into the audit entry's `details` (`route.ts`, one line). Route test "the entry carries subscribed …, the body does not". The **T11b.1 byte-for-byte characterisation pin is unedited** (`routes.test.ts` diff is +34 / −0) and green. `set_cohort` sets no `auditDetails` |
+| An audit failure does not fail the request | ✅ | the route still writes through `recordPlanChange`, which never rejects (`logAndFlush` plus a defence-in-depth `catch`). `recordPlanChange.test.ts` "an audit failure is logged at error and resolves" is green. P-8a.3 only adds a field to `details` |
+| Severity and registration | ✅ | still `'warning'`; no metadata added to the two entitlement events; no new entitlements importer |
+
+**The withdrawn view-audit work (D-12):** `git diff 340d4a43 --name-only` lists only the 5 P-8a.3 files plus the new pin. The billing routes, the Subscriptions page, the drawer (`app/admin/users`), `lib/admin/billing`, `lib/audit` and `app/api/audit` are all `--quiet` identical to `340d4a43`. So **the seven view-audit files are identical to `340d4a43`**.
+
+### Suite runs (each alone)
+
+| Suite | Result |
+|---|---|
+| Touched folders: `lib/business-os/billing`, `lib/business-os/entitlements` | 82/82, 4884/4884 (the pin: 18) |
+| Entitlements route `app/api/admin/business-os/entitlements` | 1/1, 106/106 |
+| Audit: `lib/audit`, `app/api/audit`, `app/admin/audit-trail`, `auditAdminGate` | **32/32, 510/510** (run in band). In a parallel run, `aiCostPrecision.render.test.tsx` failed once under load and passed alone, 8/8; that is the known audit-trail render flake, and the folder is untouched by P-8a.3 |
+| `npm run test:authz-guard` | 2/2, 203/203 |
+| `npm run test:bos-entitlements` | 296/296, 8938/8938 |
+| `npm run lint:hooks` | exit 0 |
+| `app/admin/users` (drawer pins) | 28/28, 672/672; the folder is untouched |
+
+These match Dev's counts.
+
+**Scoped tsc:**
+- First config: `adminOps.ts`, its test, the route test and the AM-7 pin. A canary in `adminOps.ts` gave `(802,7) TS2322`; restored with `cmp`; clean run **0 errors**.
+- **The route had to be checked separately.** The route test loads it with `require()`, which tsc does not follow, and a bracketed path in `include` is read as a glob. So a second config listed the route in `files`: a canary gave `route.ts(328,7) TS2322`; restored with `cmp`; clean run **0 errors**.
+
+**Pins (LF-normalised):** `3a1a2dd4` `b84e0c96` `30f5fc24` `24ff0da7` `98ea0507` `02813360` `1f7cf07a`, all unchanged.
+
+### Issues Found
+- **Bugs:** none.
+- **Performance:** `add_override` now makes one billing read (two parallel single-row reads) before its write. It is negligible, and it is on an admin action only.
+- **Edge cases:** none new.
+
+### User browser step (§10 step 6; after #467 and this PR merge)
+1. In `/test-business-os` (or the admin entitlements route), make an admin **tier change** on the subscribed test owner account.
+2. Open **Audit trail** and find that `BOS_ENTITLEMENT_TIER_ASSIGNED` entry: its details show **`subscribed: true`**. The API response looks as before.
+3. Optional: add an override on an account with no subscription. Its entry shows `subscribed: false`, and the override is applied.
+
+### Final Status
+- [x] T9 and T10 meet AC-AM.4 for what is built. No bugs. **Ready for RM once #467 merges** (no stacking).
+- [ ] Issues found
+
 ## Commit Info
 
 _RM to populate._
@@ -832,3 +959,5 @@ _RM to populate._
 | 2026-10-18 | Dev: P-8a.2 implemented (uncommitted) | Billing panel in the Businesses drawer: R-p′, builder, route, read-on-demand block; T7, T8 done; deviations D-7 to D-11; drawer pins unedited and green; seven pins equal |
 | 2026-10-18 | SA code review (P-8a.2) | Code Approved (SA-CR-P8a.2): D-7 to D-11 and the Q-4 `customer` link kind approved; requireAdmin first, tenant order, stored mirror only, no secret columns, drawer pins unedited, seven pins unchanged; open the PR only after #466 merges |
 | 2026-10-18 | Dev: QA-P8a2-N1 fixed | Past-due marker in the drawer's In MRR line, one shared constant with the Subscriptions page; tests added |
+| 2026-10-18 | Dev: P-8a.3 implemented (uncommitted) | T9 AM-7 coverage pin; T10 `subscribed` in the audit details of assign_tier and add_override. The view-audit pass (D-12) was withdrawn (coordinator brief error) and reverted to `340d4a43` |
+| 2026-10-18 | SA code review (P-8a.3) | Code Approved (SA-CR-P8a.3): scope is T9 and T10 only (D-12 withdrawn, Q-6 stands); one PF-13 read reused; add_override read never refuses; boolean in audit details only; severity unchanged; pins unchanged |
