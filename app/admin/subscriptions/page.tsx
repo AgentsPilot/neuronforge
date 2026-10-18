@@ -44,6 +44,7 @@ import {
   MRR_LABEL,
   MRR_NONE,
   MRR_NONE_SUB,
+  MRR_PAST_DUE_COUNTED,
   MRR_PAST_DUE_NOT_COUNTED,
   MRR_UNKNOWN_CURRENCY,
   PAID_ACCOUNTS_LABEL,
@@ -77,7 +78,7 @@ function money(hundredths: number, currency: string | null): string {
 function mrrSub(line: SubscriptionsMrrLine): string {
   const parts = [`${formatCount(line.subscriptions)} subscription${line.subscriptions === 1 ? '' : 's'}`];
   if (line.cancellingHundredths > 0) parts.push(`of which cancelling ${money(line.cancellingHundredths, line.currency)}`);
-  if (line.pastDueHundredths > 0) parts.push(`of which past due ${money(line.pastDueHundredths, line.currency)}`);
+  if (line.pastDueHundredths > 0) parts.push(`of which ${MRR_PAST_DUE_COUNTED} ${money(line.pastDueHundredths, line.currency)}`);
   if (line.overflow) parts.push('not exact');
   return parts.join(' · ');
 }

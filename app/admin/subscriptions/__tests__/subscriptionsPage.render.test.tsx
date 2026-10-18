@@ -23,6 +23,7 @@ import SubscriptionsPage from '../page';
 import {
   EMPTY_ALL,
   EMPTY_FILTERED,
+  MRR_PAST_DUE_COUNTED,
   SUBSCRIPTIONS_TITLE,
   TEST_KEY_NOTE,
 } from '../subscriptionsCopy';
@@ -150,6 +151,17 @@ describe('Subscriptions page', () => {
     expect(tiles[1]).toHaveTextContent('MRR (USD)');
     expect(tiles[1]).toHaveTextContent('$208');
     expect(tiles[1]).toHaveTextContent('of which cancelling $79');
+  });
+
+  it('the past-due part of MRR uses the shared marker (BQ-P8a-4, QA-P8a2-N1)', async () => {
+    const data = payload();
+    data.totals.mrr = [
+      { currency: 'USD', totalHundredths: 15800, cancellingHundredths: 0, pastDueHundredths: 7900, subscriptions: 2, overflow: false },
+    ];
+    stub(() => ({ status: 200, body: { success: true, data } }));
+    openAt('');
+    await screen.findByTestId('subscriptions-table', undefined, WAIT);
+    expect(screen.getByTestId('kpi-mrr')).toHaveTextContent(`of which ${MRR_PAST_DUE_COUNTED} $79`);
   });
 
   it('no paying subscription: the MRR tile says None, and the list is empty', async () => {
