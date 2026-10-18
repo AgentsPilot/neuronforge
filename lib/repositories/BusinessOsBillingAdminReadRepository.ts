@@ -15,10 +15,10 @@
 // that the source names no insert, update, upsert, delete or rpc call).
 //
 // ── SERVICE ROLE (intentional RLS bypass, documented per CLAUDE.md) ─────────
-// The table is server-write-only with no client grant at all. The one caller
-// is the Subscriptions route's wiring (`lib/admin/billing/subscriptionsDeps.ts`),
-// reached only from `app/api/admin/business-os/billing/subscriptions` after
-// `requireAdmin`. It is an admin read ACROSS accounts, by a differently NAMED
+// The table is server-write-only with no client grant at all. The callers are
+// the Subscriptions route's wiring (`lib/admin/billing/subscriptionsDeps.ts`,
+// R-p) and the billing panel route (`app/api/admin/business-os/billing/
+// accounts/[accountId]`, R-p′, P-8a.2), both only after `requireAdmin`. It is an admin read ACROSS accounts, by a differently NAMED
 // method (`...AllAccounts`), never by leaving an account id out.
 //
 // ── MODE ─────────────────────────────────────────────────────────────────────
@@ -47,6 +47,20 @@ import type { AgentRepositoryResult as RepositoryResult } from './types';
 /** The only columns the admin billing reads select (P8A-R3). Exported for the tests. */
 export const ADMIN_BILLING_ROW_COLUMNS =
   'id, user_id, livemode, subscription_status, bought_tier, current_period_end, cancel_at_period_end, pending_tier, last_paid_at, last_payment_failed_at, failed_attempts, founder_discount_applied_at, ended_at';
+
+/**
+ * R-p′ (the billing panel, P-8a.2) also reads the Stripe customer id: the
+ * server builds the dashboard link from it (SA-WP-P8a Q-4, P8A-R3). Still no
+ * checkout lock, no bearer invoice link, no subscription or invoice id.
+ */
+export const ADMIN_BILLING_PANEL_COLUMNS = `${ADMIN_BILLING_ROW_COLUMNS}, stripe_customer_id`;
+
+/** One account's billing row for the panel: the list row plus the customer id. */
+export interface AdminBillingPanelRow extends AdminBillingRow {
+  stripe_customer_id: string;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const ADMIN_BILLING_READ_LIMITS = {
   /** PostgREST's `max-rows`; a larger page would be silently cut (FF-1d). */
@@ -145,6 +159,42 @@ export class BusinessOsBillingAdminReadRepository {
 
       this.logger.info({ method, livemode, rows: rows.length, durationMs: Date.now() - startedAt }, 'Billing rows of one mode read');
       return { data: rows, error: null };
+    } catch (error) {
+      if (error instanceof AdminBillingReadGuardError) {
+        this.logger.warn({ method, err: error }, 'Admin billing read refused by its guard');
+      } else {
+        this.logger.error({ method, err: error }, 'Admin billing read failed');
+      }
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * R-p′. ONE account's billing row in ONE Stripe mode, or `null` when it has
+   * none (P-8a.2). `.eq('user_id')` and `.eq('livemode')`: UNIQUE (user_id,
+   * livemode) makes `maybeSingle` safe. The account id is refused before any
+   * query unless it is a UUID (CLAUDE.md rule 4).
+   */
+  async findBillingRowForAccount(
+    accountId: string,
+    livemode: boolean
+  ): Promise<RepositoryResult<AdminBillingPanelRow | null>> {
+    const method = 'findBillingRowForAccount';
+    try {
+      if (typeof accountId !== 'string' || !UUID_PATTERN.test(accountId)) {
+        throw new AdminBillingReadGuardError('An account id (UUID) is required');
+      }
+      if (typeof livemode !== 'boolean') throw new AdminBillingReadGuardError('livemode must be a boolean');
+      const { data, error } = await this.supabase
+        .from('business_os_billing_accounts')
+        .select(ADMIN_BILLING_PANEL_COLUMNS)
+        .eq('user_id', accountId)
+        .eq('livemode', livemode)
+        .maybeSingle();
+      if (error) throw error;
+      const row = (data ?? null) as unknown as AdminBillingPanelRow | null;
+      this.logger.debug({ method, livemode, found: row !== null }, 'Billing row of one account read');
+      return { data: row, error: null };
     } catch (error) {
       if (error instanceof AdminBillingReadGuardError) {
         this.logger.warn({ method, err: error }, 'Admin billing read refused by its guard');

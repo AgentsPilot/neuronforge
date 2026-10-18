@@ -78,6 +78,12 @@ export const MRR_NONE_SUB = 'No paying subscription in this Stripe mode.';
 export const MRR_UNKNOWN_CURRENCY = 'Unknown currency';
 export const MRR_PAST_DUE_NOT_COUNTED = 'Past-due subscriptions are not counted.';
 
+/**
+ * BQ-P8a-4: a past-due subscription counts in MRR but is shown apart. The ONE
+ * wording, used by the Subscriptions tiles and the drawer's Plan billing block.
+ */
+export const MRR_PAST_DUE_COUNTED = 'past due (still counted)';
+
 export function mrrUnpricedNote(count: number): string {
   return `${count} paying subscription${count === 1 ? '' : 's'} on a plan with no list price, not counted.`;
 }

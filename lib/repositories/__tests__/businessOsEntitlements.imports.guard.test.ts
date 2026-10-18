@@ -220,6 +220,14 @@ const ALLOWED = new Set(
     'lib/admin/billing/subscriptionsView.ts',
     // Its test names it to type fixtures.
     'lib/admin/billing/__tests__/subscriptionsView.test.ts',
+    // ── Plan payments P-8a.2, 2026-10-18 — the billing panel in the Businesses drawer ─
+    // The admin route (requireAdmin first) calls `findEntitlementInputs` and passes the
+    // repository to `isBusinessOsTenant`, as the summary route does. The builder names it
+    // only through the `BusinessOsAccountPlan` type's import path (NO_STATE_WRITE_REFERRERS).
+    'app/api/admin/business-os/billing/accounts/[accountId]/route.ts',
+    'app/api/admin/business-os/billing/accounts/[accountId]/__tests__/route.test.ts',
+    'lib/admin/billing/billingPanelView.ts',
+    'lib/admin/billing/__tests__/billingPanelView.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -309,6 +317,8 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/admin/billing/subscriptionsDeps.ts',
   // Plan payments P-8a.1: the Subscriptions builder — the plan row TYPE only, pure.
   'lib/admin/billing/subscriptionsView.ts',
+  // Plan payments P-8a.2: the billing panel builder — the plan row TYPE only, pure.
+  'lib/admin/billing/billingPanelView.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {

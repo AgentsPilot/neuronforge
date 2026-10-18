@@ -81,8 +81,8 @@ function nameOf(config: EntitlementConfig, planId: string | null): SubscriptionP
   return planId === null || planId === '' ? null : { id: planId, name: planLabel(config, planId) };
 }
 
-/** The statuses of one subscription row; never empty. */
-function subscriptionStatuses(row: AdminBillingRow, lifecycle: LifecycleResult | null): SubscriptionStatus[] {
+/** The statuses of one subscription row; never empty. Exported for the billing panel (P-8a.2): one rule for both. */
+export function subscriptionStatuses(row: AdminBillingRow, lifecycle: LifecycleResult | null): SubscriptionStatus[] {
   const stripe = row.subscription_status;
   const ended = row.ended_at !== null || (stripe !== null && ENDED_STRIPE_STATUSES.has(stripe));
   const has: Record<SubscriptionStatus, boolean> = {

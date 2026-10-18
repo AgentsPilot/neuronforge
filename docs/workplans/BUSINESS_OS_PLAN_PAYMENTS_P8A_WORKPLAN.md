@@ -7,7 +7,7 @@
 **Depends on:** P-3b merged (#251, #299: billing record mirror, money history). P-6a merged (#405, #416: `failed_attempts`, `last_payment_failed_at`, `ended_at`, grace margin in `deriveLifecycle`).
 **Date:** 2026-10-18
 **Branch:** `feature/bos-plan-payments-p8a`, worktree `neuronforge-finance-health`, fresh from `origin/main` `f7429b57` (#462). Confirmed with `git branch --show-current` on 2026-10-18. Highest migration on that main: `20261079`.
-**Status:** SA APPROVED WITH CONDITIONS (SA-WP-P8a). **P-8a.1 Code Approved (SA-CR-P8a.1), QA passed; committed `5c31cb92`, PR [#466](https://github.com/AgentsPilot/neuronforge/pull/466) opened 2026-10-18, auto-merge on.** P-8a.2 and P-8a.3 not started.
+**Status:** SA APPROVED WITH CONDITIONS (SA-WP-P8a). **P-8a.1 Code Approved (SA-CR-P8a.1), QA passed; committed `5c31cb92`, PR [#466](https://github.com/AgentsPilot/neuronforge/pull/466) opened 2026-10-18, auto-merge on.** P-8a.1 MERGED (#466). **P-8a.2 Code Approved (SA-CR-P8a.2), QA passed; committed `56afcbe3`, PR [#467](https://github.com/AgentsPilot/neuronforge/pull/467) opened 2026-10-18, auto-merge on.** P-8a.3 not started.
 
 ## Overview
 
@@ -300,8 +300,8 @@ AC-AM.1, AC-AM.2, AC-AM.4 and AC-F4.1 come from the requirement. **AC-P8a.n are 
 | ✅ T4 | Subscriptions route and tests (happy path, 401/403, invalid `status`, repeated key, `stripe_mode_unknown`, read failure 500) | AC-SR.5; **AC-P8a.5** unknown mode shows no figure | .1 |
 | ✅ T5 | Page, sidebar entry, nav test, render tests (empty, test-key note, filters in URL, one MRR tile per currency) | AC-AM.2 | .1 |
 | ✅ T6 | Entitlements registration for .1; `npm run test:bos-entitlements` | SR-17 | .1 |
-| ⬜ T7 | R-p′, `billingPanelView.ts`, panel route and tests (tenant order, UUID, platform, not a tenant) | AC-AM.1; AC-F4.1; **AC-P8a.6** the disagreement flag names each stored mismatch and says it is not the Stripe check | .2 |
-| ⬜ T8 | `PlanBillingBlock` in the drawer; dashboard link kinds; purpose line; drawer pins re-run unchanged | AC-AM.1 (dashboard link) | .2 |
+| ✅ T7 | R-p′, `billingPanelView.ts`, panel route and tests (tenant order, UUID, platform, not a tenant) | AC-AM.1; AC-F4.1; **AC-P8a.6** the disagreement flag names each stored mismatch and says it is not the Stripe check | .2 |
+| ✅ T8 | `PlanBillingBlock` in the drawer; dashboard link kinds; purpose line; drawer pins re-run unchanged | AC-AM.1 (dashboard link) | .2 |
 | ⬜ T9 | AM-7 coverage pin | AC-AM.4 (coverage of what is built) | .3 |
 | ⬜ T10 | `subscribed` detail on admin plan changes (if Q-7 approves) | AC-AM.4 ("admin override on a subscribed account") | .3 |
 | ⬜ T11 | Requirement §9.1 row and change history after each PR | — | all |
@@ -552,6 +552,83 @@ P8A-R4 (Finance R-c′ with both modes) is still owed to Finance before live key
 
 #### Code Approved for QA: Yes
 
+## Implementation Notes (P-8a.2)
+
+**Dev, 2026-10-18.** Branch `feature/bos-plan-payments-p8a2`, cut from the P-8a.1 tip `d84e7b7b`. Uncommitted (no stash, no commit, no PR until #466 merges).
+
+### What was built
+
+| File | What |
+|---|---|
+| `lib/repositories/BusinessOsBillingAdminReadRepository.ts` (+ test) | R-p′ `findBillingRowForAccount(accountId, livemode)`: UUID guard, `.eq('user_id')` and `.eq('livemode')`, `maybeSingle`. `ADMIN_BILLING_PANEL_COLUMNS` = the list columns plus `stripe_customer_id` only (P8A-R3); no write (pinned) |
+| `lib/admin/billing/billingPanelTypes.ts` | Panel payload types (type-only import) |
+| `lib/admin/billing/billingPanelView.ts` (+ test) | Pure builder: the Stripe side (statuses from the list's own `subscriptionStatuses`, now exported; MRR from `mrrTreatment` with `catalogPriceOf`, label formatted on the server), the plan side (`deriveLifecycle` state, origin), stored-record disagreements (`tier_differs`, `paid_through_differs` beyond 1 s, `no_tier_on_plan`, only while paying), and the customer dashboard link |
+| `app/api/admin/business-os/billing/accounts/[accountId]/route.ts` (+ test) | `requireAdmin` first → UUID 400 → platform 409 → `isBusinessOsTenant` 404/500 → mode 409 → R-p′ and the plan row (overrides dropped) → builder; `no-store`; logs ids and states only |
+| `lib/business-os/boost/boostAdminView.ts` (+ test) | `stripeDashboardUrl` gains the `customer` kind (`cus_` → `customers`), per SA Q-4 (no boost guard pins its kinds) |
+| `app/admin/users/components/PlanBillingBlock.tsx` (+ render test) | "Plan billing" part in the Credits & billing box, after Credit top-ups: closed by default; on opening, one GET; Stripe (mirrored) and Plan row columns, status chips, "In MRR", disagreements with "not a check against Stripe", the Stripe dashboard link, the test-key note, "No Stripe subscription" (AC-F4.1), "Read again" |
+| `app/admin/users/components/BusinessOsPanel.tsx` | Mounts the block once (5 added lines) |
+| Registrations | `enforcementPoints.test.ts`: `billingPanelView.ts` and the route as non-gate importers. RC-15 guard: the route (admin_route), its test, the builder (NO_STATE_WRITE) and its test |
+
+### Deviations for SA
+
+| # | Deviation | Why |
+|---|---|---|
+| D-7 | The block is **read on demand**: closed when the drawer opens, one GET when the admin opens it | Every `businessDrawer.pins.*` suite records `unexpected` for any GET its route table does not know and fails on it, so a read on drawer open would move the pins. A closed block sends nothing (the Finance 8.3 history-block precedent). All drawer pin and layout suites pass **unedited** |
+| D-8 | The block sits **after** Credit top-ups, not first in the box (§5.4) | Risk R-4's fallback: it keeps the Credits and Top-ups blocks' positions exactly as pinned |
+| D-9 | The Credits & billing purpose line is **unchanged**; the block carries its own one-line purpose instead of a `DRAWER_PURPOSE` key | `drawerBox.render.test.tsx` pins the exact `DRAWER_PURPOSE` key set |
+| D-10 | The MRR amount is formatted on the server (`monthly.label`) | The drawer's source guard forbids any `lib/business-os` import in the screen's files; the new block follows the same rule |
+| D-11 | No `billingPanelDeps.ts`: the route names the two repositories itself | The summary route's pattern (admin routes are an allowed RC-15 category); one wiring file fewer |
+
+### Checks (each suite run alone)
+
+| Check | Result |
+|---|---|
+| Touched folders: `lib/admin`, `lib/business-os/boost`, `app/api/admin/business-os/billing`, `lib/business-os/entitlements`, `lib/repositories` | 195 suites, 5,415 tests, pass |
+| `app/admin/users` (drawer pins and layout unedited) | 28 suites, 670 tests, pass |
+| `app/admin/components` | 25 suites, 824 tests, pass |
+| Vocabulary guard | 182 pass, unedited |
+| Range-cap guard (`rangeCap.source.guard`, now on main) | 21 pass, no baseline entry |
+| `npm run test:authz-guard` | 203 pass |
+| `npm run test:bos-entitlements` | 296 suites, 8,923 pass |
+| `npm run lint:hooks`; eslint on the changed files | clean |
+| Scoped `tsc` (temporary config, removed) with a canary in `billingPanelView.ts` | canary: exactly 1 error `billingPanelView.ts(139,7) TS2322`; restored, SHA-256 `90afa987…9a19` identical; clean run 0 errors |
+| Seven Finance pins (LF-normalised) | unchanged: `3a1a2dd4…f6f8`, `b84e0c96…aabf`, `30f5fc24…2e01`, `24ff0da7…df9f`, `98ea0507…1e4b`, `02813360…5bd8`, `1f7cf07a…f144` |
+
+### QA note QA-P8a2-N1 (Low), fixed
+
+Fixed by Dev: for a `past_due` subscription the drawer's "In MRR" line now reads "$79 a month · past due (still counted)". The builder sends `monthly.pastDue` from `mrrTreatment`. The wording is one constant, `MRR_PAST_DUE_COUNTED` in `app/admin/subscriptions/subscriptionsCopy.ts`, and the Subscriptions MRR tile now uses it too ("of which past due (still counted) $79"). Tests: the builder's past-due case, two block cases (marker present, absent) and one page case. Re-run: `app/admin/users` 28 suites, 672 tests, pass, with the drawer pins unedited; the vocabulary and contrast guards pass (2 suites, 274 tests).
+
+### User browser steps (P-8a.2)
+
+On a deployment with the Stripe test key, signed in as an admin: Businesses → open the test owner → Credits & billing → **Show plan billing**. Expect Stripe (mirrored) "Active", the plan bought, the next renewal, "$79 a month" in MRR, the Plan row with the same plan and paid-through date, "Stored records agree", and **Open the customer in Stripe** opening the test dashboard. A business with an admin-assigned plan and no purchase reads **No Stripe subscription**.
+
+### SA Code Review (P-8a.2)
+
+**Code Review by SA, 2026-10-18. Reviewed: the uncommitted tree on `feature/bos-plan-payments-p8a2`, stacked on P-8a.1 (#466).**
+**Status: Code Approved (SA-CR-P8a.2).** No conditions. The PR is opened only after #466 merges; then merge main into this branch, with no stacked PR.
+
+| Item | Result |
+|---|---|
+| `requireAdmin` first | ✅ It is the first statement of `GET`, and `no-store` is on every response |
+| Tenant isolation | ✅ The route trusts only its path id. The order is the summary route's: Zod UUID (400) → `isPlatformAccount` (409) → `isBusinessOsTenant` (404 / 500) → the mode (409, fail closed) → reads scoped to that id. R-p′ re-guards the UUID and filters `.eq('user_id')` plus `.eq('livemode')`; `maybeSingle` is safe under UNIQUE (`user_id`, `livemode`). The block sends the drawer's selected `accountId`, URL-encoded, and the server re-checks it, so no other id is trusted |
+| Stored mirror only | ✅ The panel is built from the billing row and the plan row only. There is no Stripe API call, and the panel says "not a check against Stripe" |
+| Columns (P8A-R3) | ✅ `ADMIN_BILLING_PANEL_COLUMNS` is the list columns plus `stripe_customer_id`, used only for the server-built dashboard link. There is no `open_checkout_*`, no `action_required_invoice_url`, and no subscription or invoice id. The override rows (admin reasons) are not passed to the builder |
+| Paging | ✅ R-p′ is a one-row `maybeSingle`; no list read is added. SA ran main's FF-1d guard against this tree (a temporary probe, removed): it passed with no baseline entry |
+| `stripeDashboardUrl` (Q-4) | ✅ The `customer` kind is added (`cus_` pattern → `customers`), with the existing kinds unchanged and a test added. There is one rule for dashboard links |
+| Drawer pins and layout | ✅ No file under `app/admin/users/__tests__` is modified; the one new file there is `planBillingBlock.render.test.tsx`. `BusinessOsPanel.tsx` changes by a mount only |
+| Seven Finance pins (SA recomputed) | ✅ `3a1a2dd4` `b84e0c96` `30f5fc24` `24ff0da7` `98ea0507` `02813360` `1f7cf07a` |
+| Guards | ✅ The vocabulary guard needs no edit. RC-15 and `enforcementPoints` registrations are added. SA re-ran the billing routes, `lib/admin/billing`, `app/admin/users`, the boost view, the read repository, the vocabulary guard and the FF-1d probe: **36 suites, 1002 passed** |
+
+**Deviation rulings**
+
+- **D-7: approved.** On-demand loading keeps every drawer pin unedited, the Finance 8.3 precedent. "Show plan billing" sends exactly one GET.
+- **D-8: approved.** Placing it after Credit top-ups keeps the pinned part order, the planned fallback for R-4.
+- **D-9: approved.** The block's own purpose line avoids editing the pinned `DRAWER_PURPOSE` key set.
+- **D-10: approved.** Formatting on the server follows the drawer's "no `lib/business-os` import in screen files" rule.
+- **D-11: approved.** It matches the summary route's pattern; admin routes are an allowed RC-15 category.
+
+#### Code Approved for QA: Yes
+
 ## QA Testing Report
 
 **QA — 2026-10-18** (P-8a.1 only: the MRR rule and `/admin/subscriptions`; P-8a.2 and P-8a.3 are not built)
@@ -655,6 +732,89 @@ These match Dev's counts.
 - [x] All P-8a.1 acceptance criteria pass in code. The browser look (steps above) is the user's after merge. P-8a.2 and P-8a.3 are not in scope. No bugs. **Ready for RM** (merge `origin/main` first, then re-run).
 - [ ] Issues found
 
+## QA Report — P-8a.2
+
+**QA — 2026-10-18** (worktree `neuronforge-finance-health`, branch `feature/bos-plan-payments-p8a2`, cut from the P-8a.1 tip `d84e7b7b`, which already has `origin/main` merged; uncommitted; stacked on #466)
+**Test mode:** full
+**Strategy used:**
+- **A + B:** Jest unit, repository, route and render suites, plus guards, run one at a time.
+- A code read of `billingPanelView.ts` and `PlanBillingBlock.tsx`.
+- A temporary untracked probe through the real `buildBillingPanel`, reusing the view test's fixtures. It was deleted afterwards (`git status` clean of it).
+- A scoped tsc with a canary.
+
+**Focus:** api, ui, security
+**Skipped:** the live browser look (user, below).
+**Input source:** prompt + workplan
+
+**Verdict: PASS. No bugs; one Low note (QA-P8a2-N1).**
+
+### Suite runs (each alone)
+
+| Suite | Result |
+|---|---|
+| Touched folders: `lib/admin`, `lib/business-os/boost`, `app/api/admin/business-os/billing`, `lib/business-os/entitlements`, `lib/repositories` | 195/195, 5415/5415 |
+| `app/admin/users`, including the `businessDrawer.pins.*` and layout suites | 28/28, 670/670. The only change in `app/admin/users/__tests__` is the new `planBillingBlock.render.test.tsx`; **every drawer pin is unedited** |
+| `app/admin/components` | 25/25, 824/824 |
+| Vocabulary guard | 182/182; unedited |
+| Range-cap guard (on this branch through the main merge) | 21/21; unedited, no baseline entry |
+| `npm run test:authz-guard` | 2/2, 203/203 |
+| `npm run test:bos-entitlements` | 296/296, 8923/8923 |
+| `npm run lint:hooks` | exit 0 |
+
+These match Dev's counts.
+
+**Scoped tsc:**
+- Config in the scratchpad covering 25 files: the changed and new files, the billing routes and all seven pins.
+- A canary in `billingPanelView.ts` gave `(139,7) TS2322` only.
+- The file was restored with `cp` and checked with `cmp` (identical).
+- The clean run gives **exit 0, 0 errors**.
+
+**Pins (LF-normalised):** `3a1a2dd4` `b84e0c96` `30f5fc24` `24ff0da7` `98ea0507` `02813360` `1f7cf07a`, all unchanged. `git diff --quiet HEAD` is clean on `app/admin/finance`, `lib/business-os/finance`, the finance route, `app/admin/components`, `supabase`, `BusinessOsFinanceReadRepository.ts` and the billing writer repository.
+
+### Behaviour
+
+| Item | Result | Evidence |
+|---|---|---|
+| Loads only on "Show plan billing"; opening the drawer adds no request | ✅ | render: "starts closed and sends nothing until opened (D-7)"; "opening reads once; closing and opening again does not read again"; "calls exactly one URL, and never Stripe". The drawer pin suites, which fail on any unknown GET, pass unedited |
+| Stripe's stored mirror beside our plan row | ✅ | render "Stripe beside the plan row…" (AC-AM.1). The Stripe column shows the status chip(s), Stripe status, plan bought, next renewal or "Ends on", scheduled change, last payment, failed attempts and "In MRR". The plan-row column shows the lifecycle state and origin. Mode: the test-key note shows on a test key and is absent on a live key; the dashboard link is mode-aware (`/test/`) |
+| Price and MRR | ✅ | `mrrTreatment` (the one rule) with `catalogPriceOf`. Probe: an active row gives `counted`, "$79" ("$79 a month"); a cancelling row is counted, "$79"; a founder discount is `discount_unknown`, never at list price; trialing is not counted |
+| `past_due` counted and shown apart | ✅, with a Low note | probe: a `past_due` row gives `mrrKind: counted`, "$79", status chip **Failed**, Stripe status **`past_due`**. The panel shows it apart through the chip and the raw status, but the "In MRR" line itself reads "$79 a month" with no past-due marker (QA-P8a2-N1). The account-level view has no "of which" split; that lives on the Subscriptions totals (P-8a.1) |
+| Dashboard link uses the `customer` kind | ✅ | `billingPanelView.ts:135` `stripeDashboardUrl('customer', row.stripe_customer_id, row.livemode)`. `boostAdminView.ts:106` adds `'customer'` (`cus_` → `customers`); boost tests are green. There is no link without a customer |
+| No billing row: empty state, no error | ✅ | view and route "No Stripe subscription" (AC-F4.1); render: no dashboard link without a customer; an abandoned checkout (a customer with no subscription) gives no Stripe side but keeps the customer link; a row of the other mode is ignored (PF-15) |
+| A read error shows inside the panel | ✅ | render `it.each`: 404, 409 (`stripe_mode_unknown`) and 500 each show their sentence in `plan-billing-error`, and "Read again" reads again; a network failure shows the fallback sentence. The drawer itself is unaffected |
+| Non-admin refused | ✅ | route: 401 without a session, 403 for a non-admin, both before any read; `requireAdmin` is the first statement. Then UUID 400, platform 409, not a tenant 404, tenant check 500, all before the billing read; "every read receives exactly the checked id" |
+| No secret columns in the payload | ✅ | `ADMIN_BILLING_PANEL_COLUMNS` = the list columns plus `stripe_customer_id` only (repository test "nothing secret"); "carries no Stripe id but the customer's, and only inside its dashboard link"; the route "never sends an override reason, and logs no Stripe id"; probe: no `sub_`, `pi_`, `in_`, `open_checkout` or `action_required` in the built panel |
+
+### Test Coverage
+
+| AC | Verdict | Evidence |
+|---|---|---|
+| AC-AM.1 (panel beside the plan row, dashboard link) | PASS (code), browser owed | above |
+| AC-F4.1 ("No Stripe subscription") | PASS | view, route and render |
+| AC-P8a.6 (disagreement flag names each stored mismatch, says it is not the Stripe check) | PASS | view: `tier_differs`, `paid_through_differs` (beyond 1 s; "the same instant written differently is not a disagreement"), `no_tier_on_plan`, only while paying; render "…says it is not the Stripe check" |
+| P8A-R1 / R3 / R5 | PASS | registrations green; columns; pins; drawer pins unedited; `requireAdmin` first and the tenant order |
+| AC-AM.4 (AM-7) | NOT-TESTED | P-8a.3, not built |
+
+### Issues Found
+- **Bugs:** none.
+- **Performance:** none. One GET, only on demand.
+- **Edge cases (nice to fix):**
+  1. **QA-P8a2-N1 (Low).** `app/admin/users/components/PlanBillingBlock.tsx:200-208`: for a `past_due` subscription, the "In MRR" line reads "$79 a month" with no marker that the counted amount is past due. The user's decision is "past_due counts and is shown separately". The panel does show it through the **Failed** chip and "Stripe status: past_due", so nothing is wrong or hidden. Optional: append "(past due)" when `stripeStatus === 'past_due'`. This is copy only and needs no server change.
+
+### User browser steps (after #466 and this PR merge; signed in as an admin, Stripe test key)
+1. **Businesses →** open the test owner. The drawer opens with **no** new request in the network panel.
+2. **Credits & billing →** "Plan billing" (after Credit top-ups) → **Show plan billing.** Exactly one request, `/api/admin/business-os/billing/accounts/<id>`. Expect:
+   - the Stripe (mirrored) side: "Active", the plan bought, the next renewal, "In MRR $79 a month";
+   - the Plan row side: the same plan and its paid-through date;
+   - "Stored records agree", and the test-key note.
+3. Click **Open the customer in Stripe**: the **test** dashboard opens on that customer.
+4. Close and reopen the part: no second request.
+5. Open a business with an admin-assigned plan and no purchase: **No Stripe subscription**, with no error and no dashboard link.
+
+### Final Status
+- [x] All P-8a.2 acceptance criteria pass in code. One Low note (QA-P8a2-N1). The browser look is the user's after merge. **Ready for RM once #466 merges** (no stacking).
+- [ ] Issues found
+
 ## Commit Info
 
 _RM to populate._
@@ -669,3 +829,6 @@ _RM to populate._
 | 2026-10-18 | SA workplan review | APPROVED WITH CONDITIONS (SA-WP-P8a): one genuine BQ (P8a-4), five settled; P8A-R1 to R5 |
 | 2026-10-18 | Dev: P-8a.1 implemented (uncommitted) | MRR rule, read-only admin billing read, builder, route, `/admin/subscriptions` page and Money entry; T0 to T6 done; deviations D-1 to D-6; all checks green, seven pins equal |
 | 2026-10-18 | SA code review (P-8a.1) | Code Approved (SA-CR-P8a.1); D-1, D-2 and D-6 approved; BQ-P8a-4 recorded in the requirement |
+| 2026-10-18 | Dev: P-8a.2 implemented (uncommitted) | Billing panel in the Businesses drawer: R-p′, builder, route, read-on-demand block; T7, T8 done; deviations D-7 to D-11; drawer pins unedited and green; seven pins equal |
+| 2026-10-18 | SA code review (P-8a.2) | Code Approved (SA-CR-P8a.2): D-7 to D-11 and the Q-4 `customer` link kind approved; requireAdmin first, tenant order, stored mirror only, no secret columns, drawer pins unedited, seven pins unchanged; open the PR only after #466 merges |
+| 2026-10-18 | Dev: QA-P8a2-N1 fixed | Past-due marker in the drawer's In MRR line, one shared constant with the Subscriptions page; tests added |

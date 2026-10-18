@@ -565,6 +565,17 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['EntitlementConfig', 'getEntitlementConfig'],
       why: 'Plan payments P-8a.1: the production wiring of the admin Subscriptions page reads the entitlement config once and hands it to the pure builder as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Plan payments P-8a.2, 2026-10-18 — the billing panel in the Businesses drawer ─
+    {
+      file: 'lib/admin/billing/billingPanelView.ts',
+      symbols: ['EntitlementConfig', 'deriveLifecycle', 'fromPlanRow', 'lifecycleInputs', 'planLabel'],
+      why: "Plan payments P-8a.2 (SA-WP-P8a): builds one account's admin billing panel for DISPLAY only: the plan row's lifecycle state with `deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)`, as the Subscriptions list does, and plan names from `planLabel`. The config arrives as a parameter. It never calls check() / decide() and refuses nothing. If it ever does, it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
+    {
+      file: 'app/api/admin/business-os/billing/accounts/[accountId]/route.ts',
+      symbols: ['getEntitlementConfig', 'isBusinessOsTenant'],
+      why: 'Plan payments P-8a.2: the admin billing panel route asks whether the account is a Business OS tenant (the same check as the summary route, tenant-isolation-guard order) and reads the config once for the pure builder. Read-only; it refuses no capability and calls no check() / decide().',
+    },
     // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
     {
       file: 'lib/business-os/billing/planBillingHandler.ts',

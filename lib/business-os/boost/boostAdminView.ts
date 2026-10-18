@@ -101,16 +101,20 @@ export function adminBoostFlagReasonWords(code: string | null): string | null {
 
 // ── Stripe dashboard links (SA C-4) ──────────────────────────────────────────
 
-export type StripeDashboardKind = 'payment' | 'dispute';
+// Plan payments P-8a.2 (SA-WP-P8a Q-4): `customer` added for the admin billing
+// panel, so dashboard links keep one rule. No other kind was changed.
+export type StripeDashboardKind = 'payment' | 'dispute' | 'customer';
 
 const STRIPE_ID: Readonly<Record<StripeDashboardKind, RegExp>> = {
   payment: /^pi_[A-Za-z0-9]{1,250}$/,
   dispute: /^(dp|du)_[A-Za-z0-9]{1,250}$/,
+  customer: /^cus_[A-Za-z0-9]{1,250}$/,
 };
 
 const STRIPE_PATH: Readonly<Record<StripeDashboardKind, string>> = {
   payment: 'payments',
   dispute: 'disputes',
+  customer: 'customers',
 };
 
 /**

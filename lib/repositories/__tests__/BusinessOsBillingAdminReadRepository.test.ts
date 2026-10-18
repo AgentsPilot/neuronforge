@@ -24,6 +24,7 @@ jest.mock('@/lib/logger', () => {
 });
 
 import {
+  ADMIN_BILLING_PANEL_COLUMNS,
   ADMIN_BILLING_READ_LIMITS,
   ADMIN_BILLING_ROW_COLUMNS,
   AdminBillingReadCeilingError,
@@ -42,7 +43,7 @@ function recordingClient(respond: (calls: Call[], index: number) => Response) {
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'gt', 'order', 'limit']) {
+      for (const method of ['select', 'eq', 'gt', 'order', 'limit', 'maybeSingle']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -211,8 +212,61 @@ describe('source: read-only', () => {
   });
 
   it('every .from( names the billing-accounts table, and every read filters livemode', () => {
-    expect([...code.matchAll(/\.from\(\s*'([a-z_]+)'\s*\)/g)].map((m) => m[1])).toEqual(['business_os_billing_accounts']);
-    expect((code.match(/\.from\s*\(/g) ?? []).length).toBe(1);
-    expect(code).toMatch(/\.eq\('livemode', livemode\)/);
+    // P-8a.2: two reads (R-p and R-p′), each with its own mode filter.
+    expect([...code.matchAll(/\.from\(\s*'([a-z_]+)'\s*\)/g)].map((m) => m[1])).toEqual([
+      'business_os_billing_accounts',
+      'business_os_billing_accounts',
+    ]);
+    expect((code.match(/\.from\s*\(/g) ?? []).length).toBe(2);
+    expect((code.match(/\.eq\('livemode', livemode\)/g) ?? []).length).toBe(2);
+  });
+});
+
+describe('findBillingRowForAccount (R-p′, P-8a.2)', () => {
+  const ACCOUNT = '11111111-1111-4111-8111-000000000001';
+
+  it('selects the panel columns: the list columns plus the customer id, nothing secret', () => {
+    const columns = ADMIN_BILLING_PANEL_COLUMNS.split(',').map((c) => c.trim());
+    expect(columns).toEqual([...ADMIN_BILLING_ROW_COLUMNS.split(',').map((c) => c.trim()), 'stripe_customer_id']);
+    for (const column of columns) {
+      expect(column).not.toMatch(/open_checkout|action_required_invoice_url|stripe_subscription_id|invoice_id/);
+    }
+  });
+
+  it('reads one account in one mode, maybeSingle', async () => {
+    const row = { ...billingRow(1), stripe_customer_id: 'cus_Test1' };
+    const { client, queries } = recordingClient(() => ({ data: row, error: null }));
+    const result = await new BusinessOsBillingAdminReadRepository(client).findBillingRowForAccount(ACCOUNT, true);
+    expect(result).toEqual({ data: row, error: null });
+    const q = queries[0];
+    expect(q[0].args).toEqual(['business_os_billing_accounts']);
+    expect(argsOf(q, 'select')).toEqual([[ADMIN_BILLING_PANEL_COLUMNS]]);
+    expect(argsOf(q, 'eq')).toEqual([
+      ['user_id', ACCOUNT],
+      ['livemode', true],
+    ]);
+    expect(argsOf(q, 'maybeSingle')).toEqual([[]]);
+  });
+
+  it('no row is null, not an error', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: null }));
+    expect(await new BusinessOsBillingAdminReadRepository(client).findBillingRowForAccount(ACCOUNT, false)).toEqual({
+      data: null,
+      error: null,
+    });
+  });
+
+  it.each(['', 'not-a-uuid', "x' or 1=1"])('refuses the account id %p before querying', async (id) => {
+    const { client, queries } = recordingClient(() => ({ data: null, error: null }));
+    const result = await new BusinessOsBillingAdminReadRepository(client).findBillingRowForAccount(id, false);
+    expect(result.error).toBeInstanceOf(Error);
+    expect(queries).toHaveLength(0);
+  });
+
+  it('a database error is returned, never thrown', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    const result = await new BusinessOsBillingAdminReadRepository(client).findBillingRowForAccount(ACCOUNT, false);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('boom');
   });
 });
