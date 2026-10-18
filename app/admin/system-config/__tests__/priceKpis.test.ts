@@ -72,12 +72,16 @@ const source = (lastOkAt: string | null): SourceStatus => ({
   lastRunCounts: null,
   lastRunVerdicts: null,
 });
-const status = (lastOkAt: string | null): FetchStatus => ({
-  lastRunAt: lastOkAt,
-  openai: source(lastOkAt),
-  litellm: source(null),
-  manualProviders: ['anthropic', 'google', 'kimi'],
-});
+// A status from before slice 10: no `anthropic` key (D-5), which the current type requires.
+const status = (lastOkAt: string | null): FetchStatus => {
+  const legacy: Omit<FetchStatus, 'anthropic'> = {
+    lastRunAt: lastOkAt,
+    openai: source(lastOkAt),
+    litellm: source(null),
+    manualProviders: ['anthropic', 'google', 'kimi'],
+  };
+  return legacy as FetchStatus;
+};
 
 describe('Undercharging', () => {
   it('K-1: no red row is a neutral 0', () => {
