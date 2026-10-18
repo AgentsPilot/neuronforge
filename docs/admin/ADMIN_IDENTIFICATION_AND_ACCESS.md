@@ -1,6 +1,6 @@
 # Admin Identification & Access
 
-> **Last Updated**: 2026-10-17
+> **Last Updated**: 2026-10-18
 
 ## Overview
 
@@ -40,7 +40,8 @@ It exists because, before this work, the system had **no trustworthy admin signa
 > version of it described an *intended* end state and a reader would have
 > concluded the system was protected when it was not.
 
-Re-derived **2026-10-18** (AI model price review slice 8, on `f7f69aaf` plus that slice): **110 handlers across 81
+Re-derived **2026-10-18** (AI model price review slice 9, on `f7429b57` plus that slice): **111 handlers across 82
+route files = 105 `requireAdmin` + 6 inline + 0 open.** Slice 9 adds one file with one handler, row 118 (`model-pricing/history#GET`). Before that, **2026-10-18** (AI model price review slice 8, on `f7f69aaf` plus that slice): **110 handlers across 81
 route files = 104 `requireAdmin` + 6 inline + 0 open.** Slice 8 adds three files with one handler each, rows 111–113; three files with four handlers landed on main without a row (finance history, admin data exports) and are registered as rows 114–117, doc only. Before that, **2026-10-16** (AI model price review slice 6, on `447d17a2` plus that slice): **103 handlers across 75
 route files = 97 `requireAdmin` + 6 inline + 0 open.** Slice 6 deletes four pricing handlers and one route file (Sync, and the single-row `PUT`/`POST`/`DELETE`; rows 57, 59, 60 and 61 struck through) and registers `business-os/test/plan-test-clock#POST` (row 110), which landed on main in `be3eab13` (plan payments P-6a.1) without a row. Before that, **2026-10-15** (AI model price review slice 5, on `86dd3266` plus that slice): **106 handlers across 75
 route files = 100 `requireAdmin` + 6 inline + 0 open.** Slice 5 adds one file with two handlers, rows 108–109. Before that, **2026-10-14** (slice 3, on `799f8018` plus that slice): **104 handlers across 74
@@ -208,7 +209,7 @@ verbs open in the *same* files, so a file-level table would have been misleading
 That asymmetry is gone now — every row below is gated — but the handler remains
 the right unit for the register.
 
-**97 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 rows 99–103 on 2026-10-09 rows 104–107 on 2026-10-14, rows 108–109 on 2026-10-15 and row 110 on 2026-10-16; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02; rows 57, 59, 60 and 61 likewise, deleted on 2026-10-16. **110 rows, 103 live**, equal to the measured handler count.)
+**105 `requireAdmin` · 6 correct-but-inline · 0 open.** (Rows 73–80 were added 2026-09-25, rows 81–83 on 2026-09-26, row 84 on 2026-09-27, rows 85–86 on 2026-09-29/30, rows 87–90 on 2026-10-02, rows 91–97 on 2026-10-04, row 98 on 2026-10-06 rows 99–103 on 2026-10-09 rows 104–107 on 2026-10-14, rows 108–109 on 2026-10-15, row 110 on 2026-10-16, rows 111–113 on 2026-10-17 and rows 114–118 on 2026-10-18; the numbering of rows 1–72 is kept so older references still resolve. Rows 47–49 are struck through, not removed: their handlers were deleted on 2026-10-02; rows 57, 59, 60 and 61 likewise, deleted on 2026-10-16. **118 rows, 111 live**, equal to the measured handler count.)
 
 | # | Route | Verb | State | Note |
 |---|---|---|---|---|
@@ -329,6 +330,7 @@ the right unit for the register.
 | 115 | `users/[id]/data-exports` | `GET` | ✅ gated | `requireAdmin`. Landed on main with the data export work (before `f7f69aaf`) without a register row; registered 2026-10-18 (doc only) by the slice 8 re-count |
 | 116 | `users/[id]/data-exports` | `POST` | ✅ gated | `requireAdmin`. As row 115; registered 2026-10-18 (doc only) by the slice 8 re-count |
 | 117 | `users/[id]/data-exports/[jobId]/parts/[partNo]/download` | `POST` | ✅ gated | `requireAdmin`. As row 115; registered 2026-10-18 (doc only) by the slice 8 re-count |
+| 118 | `model-pricing/history` | `GET` | ✅ gated | `requireAdmin` first statement, new in AI model price review slice 9: the read-only per-model price history (every stored price of one model, current and retired, and who changed it and why). Strict Zod query (`kind`, `provider` from the official list, `model` by the model id rule; an unknown or repeated key is 400). Reads only through repositories; the admin-only methods (`listHistoryExact`, `findAppliedLinesByIds`, `findBatchesByIds`, `listAdminPricingRowEvents`, `listAdminPricingSyncRuns`, `findEmailsByUserIds`) are pinned to `app/api/admin/**` by `adminReadMethods.guard`. Admin emails only, never an id. No audit (a read). 401/403 before the query is read or any repository is called, pinned by its route test |
 
 ### CI enforcement
 
@@ -734,3 +736,4 @@ npx eslint app lib components hooks --rule '{"no-console":"error"}'
 | 2026-10-17 | Money M-8: the dashboard route marked redundant | Rows 22 and 23 note that `/api/admin/dashboard` is redundant (BD-34): kept, still gated by `requireAdmin`, comment-only change; its only caller is the redundant Platform dashboard page, whose hidden sidebar item was removed. No census change |
 | 2026-10-17 | AI model price review slice 8: register rows 111–113, census 106 = 100 + 6 + 0, 78 files | Rows **111** `model-pricing/apply#POST` (the one in-app live-price writer, through `ai_price_apply_lines`), **112** `model-pricing/dismiss#POST` and **113** `model-pricing/apply-batches/[batchId]/margin-review#POST`, all `requireAdmin` first statement. Census re-counted from disk on `c32a0093` plus the slice: 78 `route.ts` files under `app/api/admin/`, 106 exported handlers (HEAD included, as before), 6 without `requireAdmin` (the 6 inline rows). No guard cap moved |
 | 2026-10-18 | Slice 8 re-count after merging `f7f69aaf`: rows 114–117, census 110 = 104 + 6 + 0, 81 files | Main added `business-os/finance/history#GET`, `users/[id]/data-exports#GET`, `#POST` and `users/[id]/data-exports/[jobId]/parts/[partNo]/download#POST`, all `requireAdmin`, without register rows; registered here (doc only). Re-counted from disk: 81 `route.ts` files, 110 handlers (HEAD included), 6 without `requireAdmin`. No guard cap moved |
+| 2026-10-18 | AI model price review slice 9: register row 118, census 111 = 105 + 6 + 0, 82 files | Row **118** `model-pricing/history#GET` (the read-only per-model price history), `requireAdmin` first statement. Census re-counted from disk on `f7429b57` plus the slice: 82 `route.ts` files under `app/api/admin/`, 111 exported handlers, 6 without `requireAdmin` (the 6 inline rows). The register summary line, stale since slice 6, corrected to 105 · 6 · 0 and 118 rows / 111 live. No guard cap moved |

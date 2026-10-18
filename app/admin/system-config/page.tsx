@@ -25,7 +25,13 @@
  * `GET /api/admin/model-pricing/comparison` (read in `priceComparisonRead.ts`),
  * printed from the server's decimal strings. The pricing list read here only
  * supplies the row ids, the dates and the retired rows (SA N-1, NR-1). Either
- * read failing fails the table (SA N-4, C2-4). No history yet (slice 9).
+ * read failing fails the table (SA N-4, C2-4).
+ *
+ * AI_MODEL_PRICE_REVIEW slice 9 (MP-FR-17, UF-4): a History button on every
+ * row with a provider and a valid model id (SA SC9-8) opens the price history
+ * drawer: every stored price of that model and who changed it and why. The
+ * drawer owns its read (`useDrawerResource` with `priceHistoryRead.ts`, so the
+ * page still has one `fetch(`, NW-1); it is read only and touches nothing else.
  *
  * AI_MODEL_PRICE_REVIEW slice 8 (MP-FR-8, MP-FR-10, MP-FR-14; UF-3): per-row
  * Apply and Dismiss, bulk Apply of the selected rows, and the margin-check
@@ -55,7 +61,9 @@ import {
 
 import { clientLogger } from '@/lib/logger/client';
 import type { ComparisonModel } from '@/lib/ai/pricing-research/comparisonModel';
+import { isHistoryQueryable } from '@/lib/ai/pricing-research/priceHistorySchema';
 import { AdminDrawer, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
+import { useDrawerResource } from '@/app/admin/components/layout/useDrawerResource';
 import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
 import { formatCount, formatUtcDate, formatUtcTime } from '@/app/admin/components/layout/adminFormat';
@@ -71,6 +79,7 @@ import {
 import { ManualPriceEntryForm, type ManualEntryPrefill } from '@/app/admin/system-config/components/ManualPriceEntryForm';
 import { MarginReviewNotice } from '@/app/admin/system-config/components/MarginReviewNotice';
 import { PriceDecisionPanel, type DecisionMode, type DecisionOutcome } from '@/app/admin/system-config/components/PriceDecisionPanel';
+import { PriceHistoryDrawerBody } from '@/app/admin/system-config/components/PriceHistoryDrawerBody';
 import {
   EmptyPriceCells,
   PriceCells,
@@ -80,11 +89,13 @@ import {
 } from '@/app/admin/system-config/components/PriceRowCells';
 import ProviderPriceCheck from '@/app/admin/system-config/components/ProviderPriceCheck';
 import { readPriceComparison } from '@/app/admin/system-config/priceComparisonRead';
+import { priceHistoryKey, readPriceHistory } from '@/app/admin/system-config/priceHistoryRead';
 import { priceKpis, type CheckStatusState } from '@/app/admin/system-config/priceKpis';
 import {
   APPLY_WORDS,
   ENTER_PROVIDER_PRICE,
   HELP_WORDS,
+  HISTORY_WORDS,
   IN_EFFECT_SINCE,
   KPI_WORDS,
   NO_MODELS_LINE,
@@ -149,7 +160,7 @@ function PricingHelp() {
             <strong className={HELP_LABEL}>Apply or Dismiss.</strong> Apply makes a pending price the live price for that model, with a short reason that is filled in from the provider page for you to confirm. A flagged price also needs your own override reason. Select several rows to apply them together. Dismiss drops a pending price, with a reason; no charge changes.
           </li>
           <li>
-            <strong className={HELP_LABEL}>History (coming later).</strong> Every past price of a model: who applied it, when, why, and from which source.
+            <strong className={HELP_LABEL}>{HISTORY_WORDS.helpTitle}</strong> {HISTORY_WORDS.helpBody}
           </li>
         </ol>
       </DrawerSection>
@@ -216,6 +227,12 @@ export default function ModelPricingPage() {
   const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
   // CR8-2: the button that opened the panel gets focus back on Cancel.
   const decisionOpenerRef = useRef<HTMLElement | null>(null);
+
+  // Slice 9: the price history drawer (which model, and the basis for its empty
+  // state), the button that opened it (focus returns there, D-6), and its read.
+  const [historyTarget, setHistoryTarget] = useState<{ key: string; modelName: string; basis: string | null } | null>(null);
+  const historyOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const historyState = useDrawerResource(historyTarget?.key ?? null, readPriceHistory);
 
   useEffect(() => {
     fetchData();
@@ -587,6 +604,9 @@ export default function ModelPricingPage() {
                 const comparisonRow = row.kind === 'compared' ? row.comparison : null;
                 const provider = comparisonRow ? comparisonRow.provider : row.stored?.provider ?? null;
                 const modelName = comparisonRow ? comparisonRow.modelName : row.stored?.model_name ?? '';
+                // Slice 9: stored-only rows are token prices (`ai_model_pricing`); SC9-8 gates the button.
+                const historyKind = comparisonRow ? comparisonRow.kind : 'token';
+                const hasHistory = provider !== null && isHistoryQueryable(historyKind, provider, modelName);
 
                 return (
                   <tr key={row.key} className="hover:bg-slate-700/20 transition-colors">
@@ -642,6 +662,25 @@ export default function ModelPricingPage() {
                             </button>
                           </>
                         )}
+                        {hasHistory && provider !== null && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              historyOpenerRef.current = event.currentTarget;
+                              setHistoryTarget({
+                                key: priceHistoryKey(historyKind, provider, modelName),
+                                modelName,
+                                basis: comparisonRow ? comparisonRow.currentBasis : null,
+                              });
+                            }}
+                            aria-label={`${HISTORY_WORDS.buttonLabel} ${modelName}`}
+                            aria-haspopup="dialog"
+                            data-testid={`history-${row.key}`}
+                            className={ADMIN_BUTTON}
+                          >
+                            {HISTORY_WORDS.button}
+                          </button>
+                        )}
                         {comparisonRow && (
                           <button
                             type="button"
@@ -666,6 +705,18 @@ export default function ModelPricingPage() {
         </div>
         )}
       </motion.div>
+
+      {/* Slice 9: the price history drawer, rendered once outside the table and its error branch (L-4b). Read only. */}
+      <AdminDrawer
+        open={historyTarget !== null}
+        onClose={() => setHistoryTarget(null)}
+        onReturnFocus={() => historyOpenerRef.current?.focus()}
+        title={HISTORY_WORDS.title}
+        titleSuffix={historyTarget?.modelName}
+        testId="price-history-drawer"
+      >
+        <PriceHistoryDrawerBody state={historyState} emptyBasis={historyTarget?.basis ?? null} />
+      </AdminDrawer>
 
       {/* UF-7: the help that used to be an always-open info box. */}
       <AdminDrawer

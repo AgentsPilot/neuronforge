@@ -13,6 +13,16 @@
 // This repository is read-mostly. The only writes are bootstrap/management operations
 // (seeding from the ADMIN_EMAILS env allow-list, binding a user_id once an admin signs
 // up, and soft-revoking). It never accepts client-supplied data on the hot path.
+//
+// THE ONE READ THAT INCLUDES DEACTIVATED ADMINS (AI model price review slice 9,
+// SA SC9-1): `findEmailsByUserIds` names the people in the per-model price
+// history (who applied a price, who entered it, who reviewed the margin). The
+// history is the permanent record of who changed what customers pay, so an
+// admin who has since lost access is still shown by email (user decision
+// 2026-10-18, BQ-9a). It is NOT an authorisation read: the gate uses
+// `findByUserId` / `listActive`, which keep the `is_active` filter. ADMIN ONLY:
+// its only caller is the history route (pinned by
+// `adminReadMethods.guard.test.ts`), and it never logs an email.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -44,6 +54,12 @@ export interface UpsertAdminInput {
 }
 
 const ADMIN_COLUMNS = 'id, user_id, email, granted_by, notes, is_active, created_at, updated_at';
+
+/** Slice 9: the only columns `findEmailsByUserIds` reads. */
+export const ADMIN_EMAIL_LOOKUP_COLUMNS = 'user_id, email';
+
+/** Ids per `.in()` read in `findEmailsByUserIds`. */
+export const ADMIN_EMAIL_LOOKUP_CHUNK = 50;
 
 /** Normalize an email to the stored form (trimmed + lowercased). */
 function normalizeEmail(email: string): string {
@@ -118,6 +134,35 @@ export class AdminUserRepository {
       return { data: (data as AdminUser[]) ?? [], error: null };
     } catch (error) {
       this.logger.error({ err: error }, 'Failed to list active admins');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (slice 9, SA SC9-1): the email of every `admin_users` row bound to
+   * one of `userIds`, ACTIVE OR NOT (see the header: the price history is a
+   * permanent record). De-duplicated, read in chunks of
+   * `ADMIN_EMAIL_LOOKUP_CHUNK`; an empty list answers `[]` with no query. A row
+   * whose `user_id` is null (seeded, never bound) cannot match. An id with no
+   * row is simply absent: the caller says "not on the admin list". Logs counts
+   * only, never an email.
+   */
+  async findEmailsByUserIds(userIds: readonly string[]): Promise<RepositoryResult<Array<{ user_id: string; email: string }>>> {
+    const unique = [...new Set(userIds)].filter((id) => typeof id === 'string' && id !== '');
+    try {
+      const found: Array<{ user_id: string; email: string }> = [];
+      for (let start = 0; start < unique.length; start += ADMIN_EMAIL_LOOKUP_CHUNK) {
+        const { data, error } = await this.supabase
+          .from('admin_users')
+          .select(ADMIN_EMAIL_LOOKUP_COLUMNS)
+          .in('user_id', unique.slice(start, start + ADMIN_EMAIL_LOOKUP_CHUNK));
+        if (error) throw error;
+        found.push(...((data as Array<{ user_id: string; email: string }> | null) ?? []));
+      }
+      this.logger.debug({ method: 'findEmailsByUserIds', requested: unique.length, found: found.length }, 'Admin emails looked up');
+      return { data: found, error: null };
+    } catch (error) {
+      this.logger.error({ err: error, method: 'findEmailsByUserIds', requested: unique.length }, 'Failed to look up admin emails');
       return { data: null, error: error as Error };
     }
   }

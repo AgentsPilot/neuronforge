@@ -7,7 +7,7 @@
  */
 
 export const PRICE_REVIEW_NOTE =
-  'Nothing in the provider column is charged until someone applies it. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Apply makes a provider price the live price for that model; Dismiss drops it. Each model’s price history comes in a later release.';
+  'Nothing in the provider column is charged until someone applies it. Check provider prices reads OpenAI’s official pricing page; Anthropic, Google and Kimi prices are entered by hand for now. Apply makes a provider price the live price for that model; Dismiss drops it. History shows every stored price of a model, and who changed it and why.';
 
 export const NO_PENDING_NOTICE =
   'No provider prices entered yet, so every row reads No new price. Use Enter provider price to add one.';
@@ -254,4 +254,93 @@ export const MARGIN_WORDS = {
   fallbackDiffers: 'the built-in fallback price differs: update it by PR',
   noChange: 'no earlier price',
   more: 'More margin reviews are open than shown here. Mark these done to see the rest.',
+} as const;
+
+/**
+ * Slice 9: the per-model price history drawer (MP-FR-17; SA SC9-2, SC9-4,
+ * SC9-6, SC9-7, SC9-10, SC9-11). Words only: no colour carries a status alone
+ * (MP-NFR-8). A person is an email, "not on the admin list" or "system".
+ */
+export const HISTORY_WORDS = {
+  button: 'History',
+  buttonLabel: 'Price history for',
+  title: 'Price history',
+  reading: 'the price history',
+  readOnly: 'Read only: nothing here changes a price.',
+  empty: 'No stored price for this model.',
+  emptyBuiltIn: 'Charges use the built-in price list.',
+  emptyUnpriced: 'Charges use no price: this model is not priced.',
+  truncated: 'Showing the newest 200 prices.',
+  auditTruncated: 'Older audit events may not be shown.',
+  syncTruncated: 'Older Sync runs may not be shown.',
+  deletedFootnote: 'Prices deleted before 2026-10-16 are not listed here; the audit trail page shows any recorded deletion.',
+  tokens: 'Tokens',
+  image: 'Image',
+  inEffect: 'In effect',
+  input: 'Input /1M',
+  output: 'Output /1M',
+  cached: 'Cached input /1M',
+  perImage: 'Per image',
+  status: 'Status',
+  current: 'Charged today',
+  startsLater: 'Starts',
+  notCharged: 'Stored, not charged',
+  retired: 'Retired',
+  from: 'from',
+  until: 'until',
+  storedOn: 'Stored',
+  notRecorded: 'not recorded',
+  neverCharged: 'Never charged: a newer price for the same date took precedence.',
+  notReadable: 'not readable',
+  cachedHalf: 'not set (charged at half the input price)',
+  cachedNotUsed: 'stored, not used for this provider',
+  storedAsZero: 'Stored as 0: not treated as a price.',
+  appliedBy: 'Applied by',
+  on: 'on',
+  reason: 'Reason:',
+  overrideReason: 'Override reason:',
+  source: 'Source:',
+  checked: 'checked',
+  enteredBy: 'Entered by',
+  byHand: 'by hand',
+  byCheck: 'by the provider price check',
+  howUnknown: 'how it was entered is not recorded',
+  batchOne: 'Applied on its own.',
+  batchTogether: 'Applied together with',
+  batchOthers: 'other prices.',
+  batchOther: 'other price.',
+  marginNotNeeded: 'Margin review: not needed.',
+  marginOpen: 'Margin review: open.',
+  marginDone: 'Margin review: done by',
+  provenanceMissing: 'The record of this change could not be read.',
+  runbook: 'Changed by operator (emergency SQL runbook).',
+  runbookReference: 'Reference: emergency SQL runbook, run log entry for row',
+  written: 'written',
+  auditIntro: 'Before price review. From the live audit trail:',
+  created: 'Created',
+  updated: 'Edited',
+  zeroSet: 'Set to zero',
+  by: 'by',
+  asRecorded: 'as recorded',
+  valuesNotRecorded: 'values not recorded',
+  fromValue: 'from',
+  toValue: 'to',
+  none: 'Before price review: no record in the live audit trail.',
+  cleanup: 'Retired in clean-up 2026-10-11 (duplicate or unused alias row; no charge changed).',
+  replaced: 'Replaced by the newer price above; who and why are on that row.',
+  retiredNoRecord: 'Retired; no record of why.',
+  preReview: 'Before 2026-10-16 Sync could overwrite this stored price in place without a per-model record.',
+  syncRan: 'Sync ran on',
+  syncNote: '(all models; no per-model record; it may or may not have changed this price).',
+  syncUpdated: 'updated',
+  syncAdded: 'added',
+  syncMore: 'and',
+  syncMoreTail: 'more Sync runs in this period.',
+  actorSystem: 'system',
+  actorNotListed: 'not on the admin list',
+  /** SA CR9-2: the entry recorded no actor. */
+  actorNotRecorded: 'not recorded',
+  /** The help drawer's line (replaces "History (coming later)"). */
+  helpTitle: 'History.',
+  helpBody: 'The History button on a row lists every stored price of that model, current and retired: when each took effect, when it was replaced, and who changed it and why. It changes nothing.',
 } as const;

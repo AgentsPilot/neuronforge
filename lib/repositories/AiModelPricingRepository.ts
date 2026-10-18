@@ -27,6 +27,9 @@
 //          `app/api/admin/model-pricing/manual-entries/route.ts`, through
 //          `lib/ai/pricing-research/comparisonModel.ts` (`listActiveExact()`
 //          only, read-only; AI model price review slice 3)
+//        - `app/api/admin/model-pricing/history/route.ts` (`listHistoryExact()`
+//          only, read-only; AI model price review slice 9, the per-model price
+//          history)
 //        - `scripts/**` operator scripts, run by hand with `.env.local`.
 //
 //   2. THE BILLING READER — exactly one, ungated by design:
@@ -45,8 +48,13 @@
 //   create / update / hard delete and the Sync catalogue write were removed with
 //   their routes. Do NOT add a write method here: live prices are written only by
 //   slice 8's apply RPC, and `livePriceWrites.guard.test.ts` (LW-2) fails on any
-//   `.insert(` / `.update(` / `.upsert(` / `.delete(` in this file. No method takes
-//   a caller-supplied filter; do not "add a filter parameter" either.
+//   `.insert(` / `.update(` / `.upsert(` / `.delete(` in this file.
+//
+//   Exactly one method, `listHistoryExact`, takes a key (slice 9, SA O-1): it is
+//   admin-only (class 1, the history route), the key is Zod-validated (provider
+//   enum, `MODEL_ID_REGEX`), and the billing reader never calls it (pinned by
+//   `adminReadMethods.guard.test.ts`: only `app/api/admin/**` may call it). No
+//   other method takes a caller-supplied filter; do not add one.
 //
 //   See CLAUDE.md § Security Rules and docs/REPOSITORY_STRATEGY.md. Server-side
 //   only — never import this from a `'use client'` component.
@@ -60,9 +68,19 @@ import type {
   AgentRepositoryResult as RepositoryResult,
   AiModelPricing,
   AiModelPricingExactRow,
+  AiModelPricingHistoryRow,
+  PriceHistoryRowsPage,
 } from './types';
 
 const TABLE = 'ai_model_pricing';
+
+/** The most rows one model's history returns (slice 9, SA O-5); one more is read to know there are more. */
+export const PRICE_HISTORY_ROW_LIMIT = 200;
+
+/** Every stored column the history shows, prices as exact TEXT (slice 9). */
+export const PRICE_HISTORY_COLUMNS =
+  'id, provider, model_name, input_cost_per_token::text, output_cost_per_token::text, ' +
+  'cached_input_cost_per_token::text, effective_date, retired_date, created_at, proposal_id, proposal_line_id';
 
 export class AiModelPricingRepository {
   private supabase: SupabaseClient;
@@ -195,6 +213,52 @@ export class AiModelPricingRepository {
     } catch (error) {
       const duration = Date.now() - startTime;
       methodLogger.error({ err: error, duration }, 'Failed to fetch active pricing rows as exact text');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN ONLY (class 1, slice 9): every stored row of ONE model, current and
+   * retired, newest first, prices as exact TEXT, at most
+   * `PRICE_HISTORY_ROW_LIMIT` (the newest), with `truncated` when more exist.
+   *
+   * The order is `listActive()`'s (`effective_date DESC, created_at DESC`), so
+   * the history can pick the charged row by the charging rule. No retired
+   * filter: the history is every kept row. The key comes from the route's
+   * Zod-parsed query only (provider enum, model id rule); it is refused here
+   * too when empty, before any query.
+   */
+  async listHistoryExact(
+    key: { provider: string; modelName: string },
+    opts: { signal?: AbortSignal } = {}
+  ): Promise<RepositoryResult<PriceHistoryRowsPage<AiModelPricingHistoryRow>>> {
+    const methodLogger = this.logger.child({ method: 'listHistoryExact', provider: key?.provider });
+    const startTime = Date.now();
+
+    try {
+      if (!key || typeof key.provider !== 'string' || key.provider === '' || typeof key.modelName !== 'string' || key.modelName === '') {
+        throw new Error('A provider and a model name are required');
+      }
+
+      let query = this.supabase
+        .from(TABLE)
+        .select(PRICE_HISTORY_COLUMNS)
+        .eq('provider', key.provider)
+        .eq('model_name', key.modelName)
+        .order('effective_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(PRICE_HISTORY_ROW_LIMIT + 1);
+      if (opts.signal) query = query.abortSignal(opts.signal);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const all = (data as unknown as AiModelPricingHistoryRow[]) || [];
+      const truncated = all.length > PRICE_HISTORY_ROW_LIMIT;
+      methodLogger.debug({ count: all.length, truncated, duration: Date.now() - startTime }, 'Price history rows fetched');
+      return { data: { rows: all.slice(0, PRICE_HISTORY_ROW_LIMIT), truncated }, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error, duration: Date.now() - startTime }, 'Failed to fetch price history rows');
       return { data: null, error: error as Error };
     }
   }

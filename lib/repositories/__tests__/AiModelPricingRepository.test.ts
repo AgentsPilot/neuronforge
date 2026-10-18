@@ -238,8 +238,9 @@ describe('never throws', () => {
 // AI model price review slice 6 (MP-FR-11): the repository is read-only. The
 // write methods went with Sync and the single-row edit (see the header).
 describe('read-only (slice 6)', () => {
-  it('has exactly the three read methods', () => {
+  // Slice 9: the admin history read is the fourth (LW-2 lists it too; its callers are pinned by adminReadMethods.guard).
+  it('has exactly the four read methods', () => {
     const methods = Object.getOwnPropertyNames(AiModelPricingRepository.prototype).filter((name) => name !== 'constructor');
-    expect(methods.sort()).toEqual(['listActive', 'listActiveExact', 'listAll']);
+    expect(methods.sort()).toEqual(['listActive', 'listActiveExact', 'listAll', 'listHistoryExact']);
   });
 });
