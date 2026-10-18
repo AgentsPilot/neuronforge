@@ -1351,9 +1351,16 @@ describe('current_period_end is written only by the paid apply path (SA C-1 ruli
       }
     };
     for (const dir of ['app', 'lib', 'components', 'hooks']) walk(path.join(ROOT, dir));
-    expect(offenders.sort()).toEqual(['lib/repositories/BusinessOsBillingAccountRepository.ts', 'lib/repositories/BusinessOsFinanceReadRepository.ts']);
+    // Plan payments P-8a.1: the admin Subscriptions read joins as a third, read-only reader (one mode per read, PF-15).
+    expect(offenders.sort()).toEqual([
+      'lib/repositories/BusinessOsBillingAccountRepository.ts',
+      'lib/repositories/BusinessOsBillingAdminReadRepository.ts',
+      'lib/repositories/BusinessOsFinanceReadRepository.ts',
+    ]);
     const finance = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsFinanceReadRepository.ts'), 'utf8');
     expect(finance).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);
+    const adminRead = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBillingAdminReadRepository.ts'), 'utf8');
+    expect(adminRead).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);
   });
 
   it('in SQL, only the apply function (20261027, replaced by 20261028) updates the billing table', () => {

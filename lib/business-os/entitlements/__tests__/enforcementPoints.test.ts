@@ -546,6 +546,25 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig'],
       why: 'Finance & business health slice 1a (SA-WR-4): the production wiring of the admin finance page reads the entitlement config once and hands it to the pure classifier as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Plan payments P-8a.1, 2026-10-18 — the admin Subscriptions page ─────
+    {
+      file: 'lib/admin/billing/subscriptionsView.ts',
+      symbols: [
+        'EntitlementConfig',
+        'LifecycleResult',
+        'deriveLifecycle',
+        'fromPlanRow',
+        'lifecycleInputs',
+        'planLabel',
+        'planMonthlyPriceUsd',
+      ],
+      why: "Plan payments P-8a.1 (SA-WP-P8a): builds the admin Subscriptions list for DISPLAY only. Grace and paused come from `deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)`, the same call the Finance classifier makes; plan names from `planLabel`; each tier's monthly list price from `planMonthlyPriceUsd`, for MRR. The config arrives as a parameter. It never calls check() / decide() and refuses nothing. If it ever does, it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
+    {
+      file: 'lib/admin/billing/subscriptionsDeps.ts',
+      symbols: ['EntitlementConfig', 'getEntitlementConfig'],
+      why: 'Plan payments P-8a.1: the production wiring of the admin Subscriptions page reads the entitlement config once and hands it to the pure builder as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
     // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
     {
       file: 'lib/business-os/billing/planBillingHandler.ts',

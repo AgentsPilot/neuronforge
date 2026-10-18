@@ -120,6 +120,8 @@ describe('section order', () => {
     ]);
     expect(hrefsOf('Money')).toEqual([
       '/admin/finance',
+      // Plan payments P-8a.1 (BD-23): Subscriptions, after Finance.
+      '/admin/subscriptions',
       '/admin/finance/charges',
       '/admin/analytics',
     ]);
@@ -159,10 +161,12 @@ describe('every admin page is reachable, exactly once', () => {
     // /admin/jobs-queues, and invite-only signup slice 0 added
     // /admin/business-os-invites. 28 since ADMIN_BOS_CLEANUP slice 2 added
     // /admin/agentspilot-billing. 29 since finance & business health slice 1a
-    // added /admin/finance. If this drops, the scan broke rather than the
+    // added /admin/finance. 30 since plan payments P-8a.1 added
+    // /admin/subscriptions. If this drops, the scan broke rather than the
     // sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(29);
+    expect(onDisk.length).toBeGreaterThanOrEqual(30);
     expect(onDisk).toContain('/admin/finance');
+    expect(onDisk).toContain('/admin/subscriptions');
     expect(onDisk).toContain('/admin/agentspilot-billing');
     expect(onDisk).toContain('/admin/onboarding');
     expect(onDisk).toContain('/admin/business-os-invites');
@@ -180,8 +184,9 @@ describe('every admin page is reachable, exactly once', () => {
     // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
     // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
     // Finance (finance & business health slice 1a) + Charge checks (M-5)
-    // − the redundant legacy dashboard (M-8, BD-34).
-    expect(allHrefs).toHaveLength(28);
+    // − the redundant legacy dashboard (M-8, BD-34) + Subscriptions (plan
+    // payments P-8a.1).
+    expect(allHrefs).toHaveLength(29);
   });
 
   it('every nested listed page exists on disk (M-5)', () => {
@@ -319,9 +324,10 @@ describe('Money M-5: the Money section (finance health §11H.3)', () => {
     expect(sections.find((s) => s.title === 'Money')?.hidden).toBe(false);
   });
 
-  it('Finance first, then Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
+  it('Finance first, then Subscriptions (P-8a.1), Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
     expect(money().map((i) => [i.name, i.href, i.description])).toEqual([
       ['Finance', '/admin/finance', 'Revenue, AI cost and credits, Business OS'],
+      ['Subscriptions', '/admin/subscriptions', 'Plan subscriptions and MRR, Business OS'],
       ['Charge checks', '/admin/finance/charges', 'Charged AI cost checked per account, Business OS'],
       ['AI calls & usage (detail)', '/admin/analytics', 'Every AI call and its recorded cost, both products'],
     ]);

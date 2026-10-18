@@ -210,6 +210,16 @@ const ALLOWED = new Set(
     // Their tests name it to type fixtures and to fake the wiring's read.
     'lib/business-os/finance/__tests__/planGroups.test.ts',
     'lib/business-os/finance/__tests__/financeHealth.test.ts',
+    // ── Plan payments P-8a.1, 2026-10-18 — the admin Subscriptions page (P8A-R1) ─
+    // READ ONLY. The wiring calls `pagePlans` (walked by Finance's own
+    // `walkPlans`) and nothing else; the SUBSCRIPTIONS_WIRING test below pins
+    // it. The builder names the repository only through the
+    // `BusinessOsAccountPlan` type's import path. Both are listed in
+    // NO_STATE_WRITE_REFERRERS. The route does not name it (it calls the wiring).
+    'lib/admin/billing/subscriptionsDeps.ts',
+    'lib/admin/billing/subscriptionsView.ts',
+    // Its test names it to type fixtures.
+    'lib/admin/billing/__tests__/subscriptionsView.test.ts',
   ].map((p) => p.split('/').join(sep))
 );
 
@@ -230,6 +240,10 @@ const LOW_LINE_METHOD = 'findPeriodAnchor';
 /** Finance & business health slice 1a: the finance page's wiring, and the TWO plan-repository methods it may call. */
 const FINANCE_WIRING = 'lib/business-os/finance/financeHealthDeps.ts';
 const FINANCE_METHODS = ['findEntitlementInputs', 'pagePlans'];
+
+/** Plan payments P-8a.1 (P8A-R1): the Subscriptions page's wiring, and the ONE plan-repository method it may call. */
+const SUBSCRIPTIONS_WIRING = 'lib/admin/billing/subscriptionsDeps.ts';
+const SUBSCRIPTIONS_METHOD = 'pagePlans';
 
 /** The methods that CHANGE entitlement state. Component 5's admin routes own these. */
 const WRITE_METHODS = [
@@ -291,6 +305,10 @@ const NO_STATE_WRITE_REFERRERS = [
   'lib/business-os/finance/planGroups.ts',
   // Plan payments P-6a.1: the TEST MODE ONLY test clock — READ ONLY, `findEntitlementInputs` and nothing else.
   'lib/business-os/billing/planTestClock.ts',
+  // Plan payments P-8a.1: the Subscriptions wiring — READ ONLY, `pagePlans` and nothing else.
+  'lib/admin/billing/subscriptionsDeps.ts',
+  // Plan payments P-8a.1: the Subscriptions builder — the plan row TYPE only, pure.
+  'lib/admin/billing/subscriptionsView.ts',
 ].map((p) => p.split('/').join(sep));
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -459,6 +477,18 @@ describe('RC-15 — entitlement repository referrers', () => {
     expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
       'pagePlans',
       'findEntitlementInputs',
+      'updatePlan',
+    ]);
+  });
+
+  it('Plan payments P-8a.1 (P8A-R1): the Subscriptions wiring calls pagePlans on the plan repository and NOTHING else', () => {
+    const source = readFileSync(join(ROOT, ...SUBSCRIPTIONS_WIRING.split('/')), 'utf8');
+    const calls = [...source.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1]);
+    expect(calls).toEqual([SUBSCRIPTIONS_METHOD]);
+    // The rule is not vacuous: it would see a second method.
+    const planted = 'businessOsAccountPlanRepository.pagePlans(a); businessOsAccountPlanRepository.updatePlan(b)';
+    expect([...planted.matchAll(/businessOsAccountPlanRepository\s*\.\s*(\w+)\s*\(/g)].map((m) => m[1])).toEqual([
+      'pagePlans',
       'updatePlan',
     ]);
   });
