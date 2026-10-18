@@ -31,7 +31,7 @@ P-8a.2 adds the billing panel (AM-1) to the Businesses drawer. It shows one acco
 - **Before a drawer slice is planned, check the drawer's pin tests.** They decide whether a new read may load on open or must wait for a click.
 - **Next:** P-8a.3, audit coverage (AM-7).
 
-### Status: APPROVED FOR COMMIT — feature/bos-plan-payments-p8a2 — commit pending (RM)
+### Status: COMMITTED — feature/bos-plan-payments-p8a2 — commit `56afcbe3`, main merged `811f4239`, PR #467 (auto-merge on)
 
 ---
 
