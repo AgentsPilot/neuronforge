@@ -64,6 +64,11 @@ select 'dimension check is exactly the E-86 pattern',
             from pg_catalog.pg_constraint c
             where c.conrelid = t.tbl and c.conname = 'business_os_finance_snapshots_dimension_shape'), false) from t
 union all
+select 'metric check is exactly the shape pattern',
+  coalesce((select position('^[a-z][a-z0-9_]{0,47}$' in pg_catalog.pg_get_constraintdef(c.oid)) > 0
+            from pg_catalog.pg_constraint c
+            where c.conrelid = t.tbl and c.conname = 'business_os_finance_snapshots_metric_shape'), false) from t
+union all
 select 'no trigger on the table',
   not exists (select 1 from pg_catalog.pg_trigger tg where tg.tgrelid = t.tbl and not tg.tgisinternal) from t
 union all
