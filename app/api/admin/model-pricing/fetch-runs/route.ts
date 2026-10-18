@@ -2,25 +2,26 @@
  * /api/admin/model-pricing/fetch-runs: "Check provider prices" (AI model price
  * review slice 5; MP-FR-12 as amended by UF-1, SA RR-1, RR-2, RR-8, SC-8..SC-14).
  *
- * POST runs one round: it reads OpenAI's official pricing page and LiteLLM's
- * price list (the cross-check) in parallel, parses the page deterministically,
- * and stores the result as ONE `fetch` round of PENDING lines through the
- * existing submit RPC. Nothing here writes `ai_model_pricing` or
- * `ai_model_image_pricing`, and no charge changes until an admin applies a line
- * (slice 8). Anthropic, Google and Kimi are manual entry for now.
+ * POST runs one round: it reads OpenAI's and Anthropic's official pricing
+ * pages and LiteLLM's price list (the cross-check) in parallel, parses each
+ * page deterministically, and stores the result as ONE `fetch` round of
+ * PENDING lines through the existing submit RPC. Each provider succeeds or
+ * fails on its own (slice 10, SA O-4). Nothing here writes `ai_model_pricing`
+ * or `ai_model_image_pricing`, and no charge changes until an admin applies a
+ * line (slice 8). Google and Kimi are manual entry for now (BQ-4).
  *
- * GET returns, per monitored source (OpenAI and LiteLLM), the last run, the
- * last success and the last failure (RR-1 monitoring, SC-12).
+ * GET returns, per monitored source (OpenAI, Anthropic and LiteLLM), the last
+ * run, the last success and the last failure (RR-1 monitoring, SC-12).
  *
  * ── Shape ────────────────────────────────────────────────────────────────
  *   requireAdmin FIRST → strict Zod (POST: an empty object; GET: no query) →
- *   60 s refusal (409) → snapshot + two pinned fetches in parallel → parse,
+ *   60 s refusal (409) → snapshot + three pinned fetches in parallel → parse,
  *   bounds, cross-check → submit RPC → audit AI_PRICE_FETCH_RUN (logAndFlush,
  *   counts and model ids only) → per-provider summary.
  *
  * ── Security ─────────────────────────────────────────────────────────────
  *   No URL, provider or model can be supplied (the body is an empty strict
- *   object). The two URLs are constants in `fetchSources.ts`. No page body is
+ *   object). The three URLs are constants in `fetchSources.ts`. No page body is
  *   ever logged or audited. No secrets.
  *
  * ── Answers ──────────────────────────────────────────────────────────────
@@ -41,12 +42,13 @@ import { MODEL_ID_REGEX } from '@/lib/ai/pricing-research/pendingLineSchema';
 import {
   manualProviders,
   sourceStatus,
+  type AdapterOutcome,
   type FetchRunSummary,
   type FetchStatus,
 } from '@/lib/ai/pricing-research/fetchOutcomes';
 import {
   LITELLM_PRICES_URL,
-  OPENAI_PRICING_PAGE_URL,
+  PRICE_PAGE_URLS,
   PRICE_SOURCES,
   fetchLimited,
   settledToResult,
@@ -141,38 +143,61 @@ export async function POST(request: NextRequest) {
     const checkedOn = fetchedAt.slice(0, 10);
     const [snapshot, settled] = await Promise.all([
       loadPricingSnapshot(),
-      Promise.allSettled([fetchLimited(PRICE_SOURCES.openai), fetchLimited(PRICE_SOURCES.litellm)]),
+      Promise.allSettled([
+        fetchLimited(PRICE_SOURCES.openai),
+        fetchLimited(PRICE_SOURCES.anthropic),
+        fetchLimited(PRICE_SOURCES.litellm),
+      ]),
     ]);
     const openai = settledToResult(settled[0]);
-    const litellm = settledToResult(settled[1]);
+    const anthropic = settledToResult(settled[1]);
+    const litellm = settledToResult(settled[2]);
 
-    const openaiCoverage = [...tokenCoverage(snapshot)].flatMap((key) =>
-      key.startsWith('openai:') ? [key.slice('openai:'.length)] : []
-    );
-    // SA F-1: coverage includes admin-typed settings. An id the line schema would
-    // refuse (for example upper case) can never become a pending line, and in
-    // `not_found` it would fail the strict outcomes schema and lose the round.
-    const coverage = new Set(openaiCoverage.filter((model) => MODEL_ID_REGEX.test(model)));
-    const dropped = openaiCoverage.filter((model) => !MODEL_ID_REGEX.test(model));
-    if (dropped.length > 0) {
-      requestLogger.warn({ dropped: dropped.length, models: dropped.slice(0, 20) }, 'Coverage ids that are not model ids were left out of the price check');
-    }
+    const allCoverage = [...tokenCoverage(snapshot)];
+    // SA F-1 (slice 5), now per provider: coverage includes admin-typed settings.
+    // An id the line schema would refuse (for example upper case) can never
+    // become a pending line, and in `not_found` it would fail the strict
+    // outcomes schema and lose the round.
+    const coverageFor = (provider: string): Set<string> => {
+      const ids = allCoverage.flatMap((key) => (key.startsWith(`${provider}:`) ? [key.slice(provider.length + 1)] : []));
+      const dropped = ids.filter((model) => !MODEL_ID_REGEX.test(model));
+      if (dropped.length > 0) {
+        requestLogger.warn(
+          { provider, dropped: dropped.length, models: dropped.slice(0, 20) },
+          'Coverage ids that are not model ids were left out of the price check'
+        );
+      }
+      return new Set(ids.filter((model) => MODEL_ID_REGEX.test(model)));
+    };
     const round = buildFetchRound({
-      openai,
+      providers: {
+        openai: {
+          result: openai,
+          coverage: coverageFor('openai'),
+          isInputOnly: (model) => isInputOnlyPricedModel('openai', model),
+          sourceUrl: PRICE_PAGE_URLS.openai,
+        },
+        anthropic: {
+          result: anthropic,
+          coverage: coverageFor('anthropic'),
+          isInputOnly: (model) => isInputOnlyPricedModel('anthropic', model),
+          sourceUrl: PRICE_PAGE_URLS.anthropic,
+        },
+      },
       litellm,
-      coverage,
-      isInputOnly: (model) => isInputOnlyPricedModel('openai', model),
       contextFor: (line) => lineContextFor(snapshot, line),
-      sourceUrl: OPENAI_PRICING_PAGE_URL,
       crossCheckSource: LITELLM_PRICES_URL,
       checkedOn,
       fetchedAt,
     });
 
-    logSource(requestLogger, 'openai', openai, round.submitLines.length);
+    const linesOf = (provider: string) => round.submitLines.filter((line) => line.provider === provider).length;
+    logSource(requestLogger, 'openai', openai, linesOf('openai'));
+    logSource(requestLogger, 'anthropic', anthropic, linesOf('anthropic'));
     logSource(requestLogger, 'litellm', litellm, null);
-    if (round.failedAnchor) {
-      requestLogger.warn({ provider: 'openai', anchor: round.failedAnchor }, 'OpenAI pricing page layout changed');
+    // SC10-6: one warn per provider whose page failed an anchor.
+    for (const failed of round.failedAnchors) {
+      requestLogger.warn({ provider: failed.provider, anchor: failed.anchor }, 'Pricing page layout changed');
     }
 
     const { data: stored, error } = await aiPriceProposalRepository.submitFetchRound({
@@ -198,6 +223,17 @@ export async function POST(request: NextRequest) {
     }
 
     const outcomes = round.providerOutcomes;
+    // A stored row names its 1-based position in the submitted list, which carries the provider.
+    const storedLines = (provider: string) =>
+      stored.lines.filter((line) => round.submitLines[line.lineIndex - 1]?.provider === provider).length;
+    // Counts and model ids only, never cell text (RR-1).
+    const providerDetails = (outcome: AdapterOutcome, provider: string) => ({
+      outcome: outcome.outcome,
+      lines_stored: storedLines(provider),
+      needs_manual_models: outcome.needs_manual.map((entry) => entry.model_name),
+      not_found_models: outcome.not_found,
+      refused_models: outcome.refused.map((entry) => entry.model_name),
+    });
     await logAndFlush(
       {
         action: AUDIT_EVENTS.AI_PRICE_FETCH_RUN,
@@ -211,13 +247,8 @@ export async function POST(request: NextRequest) {
           entity_kind: 'price_proposal',
           proposal_id: stored.roundId,
           correlationId,
-          openai: {
-            outcome: outcomes.openai.outcome,
-            lines_stored: stored.lines.length,
-            needs_manual_models: outcomes.openai.needs_manual.map((entry) => entry.model_name),
-            not_found_models: outcomes.openai.not_found,
-            refused_models: outcomes.openai.refused.map((entry) => entry.model_name),
-          },
+          openai: providerDetails(outcomes.openai, 'openai'),
+          anthropic: providerDetails(outcomes.anthropic, 'anthropic'),
           litellm: {
             outcome: outcomes.litellm.outcome,
             agrees: outcomes.litellm.agrees,
@@ -260,19 +291,23 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [latest, openaiOk, openaiFailed, litellmOk, litellmFailed] = await Promise.all([
+    const reads = await Promise.all([
       aiPriceProposalRepository.latestFetchRound(),
       aiPriceProposalRepository.latestFetchRoundByOutcome('openai', 'ok'),
       aiPriceProposalRepository.latestFetchRoundByOutcome('openai', 'not_ok'),
+      aiPriceProposalRepository.latestFetchRoundByOutcome('anthropic', 'ok'),
+      aiPriceProposalRepository.latestFetchRoundByOutcome('anthropic', 'not_ok'),
       aiPriceProposalRepository.latestFetchRoundByOutcome('litellm', 'ok'),
       aiPriceProposalRepository.latestFetchRoundByOutcome('litellm', 'not_ok'),
     ]);
-    const failed = [latest, openaiOk, openaiFailed, litellmOk, litellmFailed].find((result) => result.error);
+    const failed = reads.find((result) => result.error);
     if (failed) throw failed.error;
+    const [latest, openaiOk, openaiFailed, anthropicOk, anthropicFailed, litellmOk, litellmFailed] = reads;
 
     const data: FetchStatus = {
       lastRunAt: latest.data?.created_at ?? null,
       openai: sourceStatus('openai', latest.data, openaiOk.data, openaiFailed.data),
+      anthropic: sourceStatus('anthropic', latest.data, anthropicOk.data, anthropicFailed.data),
       litellm: sourceStatus('litellm', latest.data, litellmOk.data, litellmFailed.data),
       manualProviders: manualProviders(),
     };

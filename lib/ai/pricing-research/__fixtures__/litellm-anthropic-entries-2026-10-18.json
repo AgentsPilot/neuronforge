@@ -1,0 +1,53 @@
+{
+  "claude-haiku-4-5-20251001": {
+    "litellm_provider": "anthropic",
+    "input_cost_per_token": 0.000001,
+    "output_cost_per_token": 0.000005,
+    "cache_read_input_token_cost": 1e-7,
+    "cache_creation_input_token_cost": 0.00000125
+  },
+  "claude-opus-4-5-20251101": {
+    "litellm_provider": "anthropic",
+    "input_cost_per_token": 0.000005,
+    "output_cost_per_token": 0.000025,
+    "cache_read_input_token_cost": 5e-7,
+    "cache_creation_input_token_cost": 0.00000625
+  },
+  "claude-opus-4-6": {
+    "litellm_provider": "anthropic",
+    "input_cost_per_token": 0.000005,
+    "output_cost_per_token": 0.000025,
+    "cache_read_input_token_cost": 5e-7,
+    "cache_creation_input_token_cost": 0.00000625
+  },
+  "claude-sonnet-4-5": {
+    "litellm_provider": "anthropic",
+    "input_cost_per_token": 0.000003,
+    "output_cost_per_token": 0.000015,
+    "cache_read_input_token_cost": 3e-7,
+    "cache_creation_input_token_cost": 0.00000375,
+    "deprecation_date": "2026-11-30"
+  },
+  "claude-sonnet-4-5-20250929": {
+    "litellm_provider": "anthropic",
+    "input_cost_per_token": 0.000003,
+    "output_cost_per_token": 0.000015,
+    "cache_read_input_token_cost": 3e-7,
+    "cache_creation_input_token_cost": 0.00000375,
+    "deprecation_date": "2026-11-30"
+  },
+  "claude-sonnet-4-6": {
+    "litellm_provider": "anthropic",
+    "input_cost_per_token": 0.000003,
+    "output_cost_per_token": 0.000015,
+    "cache_read_input_token_cost": 3e-7,
+    "cache_creation_input_token_cost": 0.00000375
+  },
+  "bedrock/us-gov-east-1/anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "litellm_provider": "bedrock",
+    "input_cost_per_token": 0.0000012,
+    "output_cost_per_token": 0.000006,
+    "cache_read_input_token_cost": 1.2e-7,
+    "cache_creation_input_token_cost": 0.0000015
+  }
+}

@@ -17,7 +17,7 @@ import type { FetchStatus } from '@/lib/ai/pricing-research/fetchOutcomes';
 
 import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
 import type { KpiTileStatus } from '@/app/admin/components/layout/KpiStrip';
-import { KPI_WORDS } from '@/app/admin/system-config/priceReviewCopy';
+import { KPI_WORDS, PROVIDER_NAMES } from '@/app/admin/system-config/priceReviewCopy';
 
 /** A provider check older than this is stale (the user's rule: 3 months = 90 days). */
 export const STALE_CHECK_DAYS = 90;
@@ -76,27 +76,69 @@ export function modelsInUseKpi(rows: readonly ComparisonRow[]): KpiFigures {
   return { value: formatCount(used), sub: `${KPI_WORDS.of} ${formatCount(rows.length)} ${KPI_WORDS.compared}`, status: null };
 }
 
+/** One automatically checked provider's last success, as the KPI weighs it. */
+export interface ProviderCheck {
+  provider: string;
+  lastOkAt: string | null;
+}
+
 /**
- * Last provider check: the last SUCCESSFUL OpenAI check (the one source that is
- * fetched). "Now" is the server's `generatedAt` from the comparison (slice 4
+ * The B-1 policy (user decision 2026-10-18, "Oldest of the two"; SA SC10-4):
+ * which provider's last successful check the tile shows. A provider that has
+ * never succeeded decides first; otherwise the OLDEST success, and an
+ * unreadable time counts as oldest (it cannot prove the check is recent).
+ * `named` is true when the providers' checks differ, so the tile says whose
+ * check it is. If the policy ever changes, only this function and its tests
+ * change.
+ */
+export function decidingCheck(checks: readonly ProviderCheck[]): { check: ProviderCheck; named: boolean } | null {
+  if (checks.length === 0) return null;
+  const named = checks.some((check) => check.lastOkAt !== checks[0].lastOkAt);
+  const never = checks.find((check) => !check.lastOkAt);
+  if (never) return { check: never, named };
+  const age = (check: ProviderCheck) => {
+    const at = Date.parse(check.lastOkAt ?? '');
+    return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+  };
+  const oldest = checks.reduce((older, check) => (age(check) < age(older) ? check : older));
+  return { check: oldest, named };
+}
+
+/** The automatically checked providers the status reports, in display order. */
+function providerChecks(status: FetchStatus): ProviderCheck[] {
+  const checks: ProviderCheck[] = [{ provider: PROVIDER_NAMES.openai, lastOkAt: status.openai.lastOkAt }];
+  // A status from before slice 10 has no `anthropic` key: that provider is not reported, so it is left out.
+  const anthropic: FetchStatus['anthropic'] | undefined = status.anthropic;
+  if (anthropic) checks.push({ provider: PROVIDER_NAMES.anthropic, lastOkAt: anthropic.lastOkAt });
+  return checks;
+}
+
+/**
+ * Last provider check: the last SUCCESSFUL check of the provider chosen by
+ * `decidingCheck` (B-1: the older of OpenAI's and Anthropic's, named when they
+ * differ). "Now" is the server's `generatedAt` from the comparison (slice 4
  * NR-1), never the browser clock, so the rule is the same for every admin and
- * testable. Red when there is none, or when it is more than 90 days old.
+ * testable. Red when a provider never succeeded, or when the check shown is
+ * more than 90 days old.
  */
 export function lastCheckKpi(status: CheckStatusState, generatedAt: string): KpiFigures {
   if (status === undefined) return { value: KPI_WORDS.reading, sub: null, status: null };
   if (status === null) return { value: KPI_WORDS.unavailable, sub: KPI_WORDS.statusUnavailable, status: 'amber' };
 
-  const lastOkAt = status.openai.lastOkAt;
-  if (!lastOkAt) return { value: KPI_WORDS.neverChecked, sub: KPI_WORDS.runCheck, status: 'red' };
+  const deciding = decidingCheck(providerChecks(status));
+  const lastOkAt = deciding?.check.lastOkAt ?? null;
+  const who = deciding?.named ? `${deciding.check.provider} ` : '';
+  if (!lastOkAt) return { value: KPI_WORDS.neverChecked, sub: `${who}${KPI_WORDS.runCheck}`, status: 'red' };
 
+  const shown = deciding?.named ? `${deciding.check.provider}, ${formatUtc(lastOkAt)}` : formatUtc(lastOkAt);
   const ageMs = Date.parse(generatedAt) - Date.parse(lastOkAt);
   // An unreadable timestamp cannot prove the check is recent, so it is stale.
-  if (!Number.isFinite(ageMs)) return { value: formatUtc(lastOkAt), sub: KPI_WORDS.ageUnknown, status: 'red' };
+  if (!Number.isFinite(ageMs)) return { value: shown, sub: KPI_WORDS.ageUnknown, status: 'red' };
 
   const days = Math.max(0, Math.floor(ageMs / DAY_MS));
   const sub = days === 0 ? KPI_WORDS.today : `${formatCount(days)} ${days === 1 ? KPI_WORDS.dayAgo : KPI_WORDS.daysAgo}`;
   const isStale = ageMs > STALE_CHECK_DAYS * DAY_MS;
-  return { value: formatUtc(lastOkAt), sub: isStale ? `${sub}; ${KPI_WORDS.stale}` : sub, status: isStale ? 'red' : null };
+  return { value: shown, sub: isStale ? `${sub}; ${KPI_WORDS.stale}` : sub, status: isStale ? 'red' : null };
 }
 
 /** All four, from the comparison and the check status. */

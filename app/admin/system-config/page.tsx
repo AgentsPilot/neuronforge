@@ -151,7 +151,7 @@ function PricingHelp() {
       <DrawerSection title="How a price review works">
         <ol className={`list-decimal space-y-2 pl-5 ${HELP_TEXT}`}>
           <li>
-            <strong className={HELP_LABEL}>Get the provider&apos;s price.</strong> Check provider prices reads OpenAI&apos;s official pricing page. For Anthropic, Google and Kimi, use Enter provider price and type the price from the provider&apos;s page. Either way the price is saved as a pending price: nothing is charged from it.
+            <strong className={HELP_LABEL}>Get the provider&apos;s price.</strong> Check provider prices reads OpenAI&apos;s and Anthropic&apos;s official pricing pages. For Google and Kimi, use Enter provider price and type the price from the provider&apos;s page. Either way the price is saved as a pending price: nothing is charged from it. Anthropic&apos;s cache prices are not read: we do not use Anthropic prompt caching, so nothing charges them.
           </li>
           <li>
             <strong className={HELP_LABEL}>Read green and red.</strong> Each row shows what we charge today (ours) next to the provider&apos;s new price, and the gap. Green (Covered) means we charge at or above the provider&apos;s price. Red (Undercharging) means we charge less than the provider charges us, so every call on that model loses money. Red rows sort first.

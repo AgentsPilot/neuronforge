@@ -15,7 +15,7 @@ import type { ComparisonRow, PendingView } from '@/lib/ai/pricing-research/compa
 import { compareUnit, rowCoverage, type UnitComparisonInput } from '@/lib/ai/pricing-research/coverageColour';
 import type { FetchStatus, SourceStatus } from '@/lib/ai/pricing-research/fetchOutcomes';
 
-import { lastCheckKpi, modelsInUseKpi, pendingKpi, underchargingKpi } from '../priceKpis';
+import { decidingCheck, lastCheckKpi, modelsInUseKpi, pendingKpi, underchargingKpi } from '../priceKpis';
 
 const NOW = '2026-10-14T12:00:00.000Z';
 
@@ -72,12 +72,16 @@ const source = (lastOkAt: string | null): SourceStatus => ({
   lastRunCounts: null,
   lastRunVerdicts: null,
 });
-const status = (lastOkAt: string | null): FetchStatus => ({
-  lastRunAt: lastOkAt,
-  openai: source(lastOkAt),
-  litellm: source(null),
-  manualProviders: ['anthropic', 'google', 'kimi'],
-});
+// A status from before slice 10: no `anthropic` key (D-5), which the current type requires.
+const status = (lastOkAt: string | null): FetchStatus => {
+  const legacy: Omit<FetchStatus, 'anthropic'> = {
+    lastRunAt: lastOkAt,
+    openai: source(lastOkAt),
+    litellm: source(null),
+    manualProviders: ['anthropic', 'google', 'kimi'],
+  };
+  return legacy as FetchStatus;
+};
 
 describe('Undercharging', () => {
   it('K-1: no red row is a neutral 0', () => {
@@ -172,6 +176,62 @@ describe('Last provider check (now = the server generatedAt)', () => {
     } finally {
       Date.now = real;
     }
+  });
+});
+
+describe('Last provider check with two providers (slice 10, B-1: "Oldest of the two", SA SC10-4)', () => {
+  const two = (openai: string | null, anthropic: string | null): FetchStatus => ({
+    ...status(openai),
+    anthropic: source(anthropic),
+    manualProviders: ['google', 'kimi'],
+  });
+
+  it('K-13: the same check for both is shown without a name (the common case: one click reads both)', () => {
+    expect(lastCheckKpi(two('2026-10-14T09:00:00.000Z', '2026-10-14T09:00:00.000Z'), NOW)).toEqual({
+      value: '2026-10-14 09:00 UTC',
+      sub: 'today',
+      status: null,
+    });
+  });
+
+  it('K-14: the older provider wins and is named', () => {
+    expect(lastCheckKpi(two('2026-10-14T09:00:00.000Z', '2026-10-01T12:00:00.000Z'), NOW)).toEqual({
+      value: 'Anthropic, 2026-10-01 12:00 UTC',
+      sub: '13 days ago',
+      status: null,
+    });
+    expect(lastCheckKpi(two('2026-10-01T12:00:00.000Z', '2026-10-14T09:00:00.000Z'), NOW).value).toBe('OpenAI, 2026-10-01 12:00 UTC');
+  });
+
+  it('K-15: red when Anthropic has never succeeded, naming it', () => {
+    expect(lastCheckKpi(two('2026-10-14T09:00:00.000Z', null), NOW)).toEqual({
+      value: 'Never checked',
+      sub: 'Anthropic never checked; use Check provider prices',
+      status: 'red',
+    });
+    expect(lastCheckKpi(two(null, null), NOW)).toEqual({ value: 'Never checked', sub: 'never checked; use Check provider prices', status: 'red' });
+  });
+
+  it('K-16: red when either is over 90 days', () => {
+    expect(lastCheckKpi(two('2026-07-15T12:00:00.000Z', '2026-10-14T09:00:00.000Z'), NOW)).toEqual({
+      value: 'OpenAI, 2026-07-15 12:00 UTC',
+      sub: '91 days ago; older than 90 days',
+      status: 'red',
+    });
+    expect(lastCheckKpi(two('2026-10-14T09:00:00.000Z', '2026-07-15T12:00:00.000Z'), NOW).status).toBe('red');
+  });
+
+  it('K-17: the policy function alone: never first, then oldest, an unreadable time counts as oldest', () => {
+    expect(decidingCheck([])).toBeNull();
+    expect(decidingCheck([{ provider: 'A', lastOkAt: '2026-10-01T00:00:00.000Z' }, { provider: 'B', lastOkAt: null }])).toEqual({
+      check: { provider: 'B', lastOkAt: null },
+      named: true,
+    });
+    expect(decidingCheck([{ provider: 'A', lastOkAt: '2026-10-01T00:00:00.000Z' }, { provider: 'B', lastOkAt: 'garbage' }])?.check.provider).toBe('B');
+    expect(decidingCheck([{ provider: 'A', lastOkAt: '2026-10-01T00:00:00.000Z' }, { provider: 'B', lastOkAt: '2026-10-01T00:00:00.000Z' }])).toEqual({
+      check: { provider: 'A', lastOkAt: '2026-10-01T00:00:00.000Z' },
+      named: false,
+    });
   });
 });
 
