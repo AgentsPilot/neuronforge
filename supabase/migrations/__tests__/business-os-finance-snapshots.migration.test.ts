@@ -26,6 +26,7 @@ const CHECK_31 = read('scripts', 'precheck-bos-finance-snapshots.sql');
 const CHECK_32 = read('scripts', 'check-bos-finance-snapshots-migration.sql');
 const CHECK_33 = read('scripts', 'check-bos-finance-history-days.sql');
 const CHECK_34 = read('scripts', 'check-bos-finance-history-newest.sql');
+const CHECK_35 = read('scripts', 'check-bos-exchange-rates-write-access.sql');
 const SELFTEST = read('scripts', 'test-bos-finance-snapshots.sql');
 const TABLE = 'public.business_os_finance_snapshots';
 
@@ -181,7 +182,7 @@ describe('AC-275: the rollback refuses while the table holds a row', () => {
 });
 
 describe('AC-274: paste safety over the migration, the rollback and checks 31 and 32', () => {
-  const PASTED = { migration: MIGRATION, rollback: ROLLBACK, check31: CHECK_31, check32: CHECK_32, check33: CHECK_33, check34: CHECK_34 };
+  const PASTED = { migration: MIGRATION, rollback: ROLLBACK, check31: CHECK_31, check32: CHECK_32, check33: CHECK_33, check34: CHECK_34, check35: CHECK_35 };
   const nonAscii = (s: string) => /[^\x00-\x7F]/.test(s);
   const editorWord = (s: string) => /\binto\b/i.test(s);
   /** A doubled quote inside a literal, or an apostrophe inside a line comment. */
@@ -302,6 +303,42 @@ describe('FF-1c: checks 33 and 34 as script files', () => {
   it('planted: the read-only rule bites', () => {
     expect(code('select 1;\ndelete from public.x;')).toMatch(WRITE_WORDS);
     expect(code('-- never delete anything\nselect 1;')).not.toMatch(WRITE_WORDS);
+  });
+});
+
+describe('FF-1a: check 35, who can read or write the exchange rate tables (FF1-R2)', () => {
+  const WRITE_WORDS = /\b(insert|update|delete|alter|drop|create|grant|revoke|truncate)\b/i;
+  // Comments and string literals out: the privilege names are literals, not statements.
+  const code = (sql: string) => sql.replace(/--.*$/gm, '').replace(/'[^']*'/g, "''");
+
+  it('is one statement with its finance check header', () => {
+    expect(code(CHECK_35).trim().split(';').filter((s) => s.trim())).toHaveLength(1);
+    expect(CHECK_35.startsWith('-- Finance check 35:')).toBe(true);
+  });
+
+  it('is read only: no write or DDL word outside comments and literals', () => {
+    expect(code(CHECK_35)).not.toMatch(WRITE_WORDS);
+  });
+
+  it('covers both tables and both browser roles, with the FF1-R2 columns', () => {
+    for (const name of ["('exchange_rates')", "('exchange_rate_history')", "('anon')", "('authenticated')"]) {
+      expect(CHECK_35).toContain(name);
+    }
+    for (const column of ['grant_select', 'grant_insert', 'grant_update', 'grant_delete', 'select_policies', 'write_policies', 'rls_on']) {
+      expect(CHECK_35).toContain(` as ${column}`);
+    }
+    expect(CHECK_35).toContain("p.polcmd in ('r', '*')");
+    expect(CHECK_35).toContain("p.polcmd in ('a', 'w', 'd', '*')");
+  });
+
+  it('states the FF-2 rule in its header: writes only, SELECT stays', () => {
+    expect(CHECK_35).toContain('FF-2 revokes writes only');
+    expect(CHECK_35).toContain('grant_select for authenticated must stay true');
+  });
+
+  it('planted: the read-only rule still bites with literals blanked', () => {
+    expect(code("select 1;\nupdate public.exchange_rates set rate_to_usd = 1 where currency_code = 'EUR';")).toMatch(WRITE_WORDS);
+    expect(code("select has_table_privilege('anon', 'x', 'INSERT');")).not.toMatch(WRITE_WORDS);
   });
 });
 

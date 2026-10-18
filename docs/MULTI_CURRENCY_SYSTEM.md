@@ -40,7 +40,7 @@ When users visit the billing page:
 - Stripe handles the USD payment
 
 ### 5. **Admin Management**
-> **Redundant (BD-34, 2026-10-17, Money M-8):** the `/admin/exchange-rates` page is kept but redundant: no figure on the platform uses an exchange rate (BD-12), nothing links to it, and it is not to be extended. It still writes `exchange_rates` from the browser (FU-M8-1). See [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) §11J.
+> **Redundant (BD-34, 2026-10-17, Money M-8):** the `/admin/exchange-rates` page is kept but redundant: no figure on the platform uses an exchange rate (BD-12), nothing links to it, and it is not to be extended. **Read-only since FF-1a (BD-36, 2026-10-18):** it no longer edits rates or the enabled flag and calls no outside rate service, so the editing, enable/disable and audit items below describe the old page. Whether the database still accepts browser writes is check 35 (`scripts/check-bos-exchange-rates-write-access.sql`); a write-only lockdown is FF-2, and SELECT stays because the settings currency picker reads the table. See [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) §11J.
 
 - Exchange rates viewable at `/admin/exchange-rates`
 - Manual rate editing capability
@@ -418,3 +418,4 @@ The database stores critical metadata that the API doesn't provide:
 | Date | Change | Details |
 |---|---|---|
 | 2026-10-17 | Exchange rates page marked redundant (Money M-8) | Pointer notes at Features §5, Admin Management and Test Admin Panel: the `/admin/exchange-rates` page is kept but redundant and unlinked (BD-34); it still writes from the browser (FU-M8-1). Finance requirement §11J |
+| 2026-10-18 | Exchange rates page read-only (FF-1a, BD-36) | Features §5 note: the page no longer writes; check 35 reports the database side; FF-2 is the write-only lockdown. Finance requirement §0.4 |

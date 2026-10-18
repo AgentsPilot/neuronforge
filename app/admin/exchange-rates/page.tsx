@@ -2,27 +2,23 @@
 
 // REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.
 // No figure on the platform uses an exchange rate (BD-12). Finance requirement §11J.
-// FU-M8-1: this page still writes exchange_rates from the browser; left as is by M-8.
+// FU-M8-1 (FF-1a, BQ-20 answered 2026-10-18): read-only; nothing here writes a rate or calls an
+// outside service. Reads stay in the browser. Whether the database still accepts browser writes is
+// check 35; closing that is FF-2 (writes only: the settings currency picker needs SELECT).
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  DollarSign,
-  Save,
   RefreshCw,
   AlertCircle,
-  CheckCircle,
   Globe,
-  Edit,
   X,
-  Check,
   TrendingUp,
   History,
   Calendar,
   Clock
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
-import { createCurrencyService } from '@/lib/services/CurrencyService';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'AdminExchangeRates' });
@@ -52,16 +48,11 @@ interface RateHistory {
 
 export default function ExchangeRatesPage() {
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const [rates, setRates] = useState<ExchangeRate[]>([]);
   const [history, setHistory] = useState<RateHistory[]>([]);
-  const [editingRate, setEditingRate] = useState<string | null>(null);
-  const [editedValue, setEditedValue] = useState<number>(0);
   const [showHistory, setShowHistory] = useState<string | null>(null);
-  const [fetchingRates, setFetchingRates] = useState(false);
 
   useEffect(() => {
     loadExchangeRates();
@@ -97,116 +88,6 @@ export default function ExchangeRatesPage() {
       setHistory(data || []);
     } catch (err: any) {
       logger.error({ err }, 'Error loading exchange rate history');
-    }
-  };
-
-  const handleEditStart = (rate: ExchangeRate) => {
-    setEditingRate(rate.id);
-    setEditedValue(rate.rate_to_usd);
-  };
-
-  const handleEditCancel = () => {
-    setEditingRate(null);
-    setEditedValue(0);
-  };
-
-  const handleEditSave = async (rate: ExchangeRate) => {
-    try {
-      setSaving(true);
-      setError(null);
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
-      const currencyService = createCurrencyService(supabase);
-      await currencyService.updateRate(
-        rate.currency_code,
-        editedValue,
-        user.id,
-        'Manual update from admin panel'
-      );
-
-      setSuccess(`Exchange rate for ${rate.currency_code} updated successfully`);
-      setEditingRate(null);
-      await loadExchangeRates();
-      await loadHistory();
-
-      setTimeout(() => setSuccess(null), 5000);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleToggleEnabled = async (rate: ExchangeRate) => {
-    try {
-      setSaving(true);
-      setError(null);
-
-      const { error: updateError } = await supabase
-        .from('exchange_rates')
-        .update({ is_enabled: !rate.is_enabled })
-        .eq('id', rate.id);
-
-      if (updateError) throw updateError;
-
-      setSuccess(`${rate.currency_code} ${!rate.is_enabled ? 'enabled' : 'disabled'} successfully`);
-      await loadExchangeRates();
-
-      setTimeout(() => setSuccess(null), 5000);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleFetchCurrentRates = async () => {
-    try {
-      setFetchingRates(true);
-      setError(null);
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
-      // Fetch from exchangerate-api.com (free tier, no API key needed for basic access)
-      const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch exchange rates from API');
-      }
-
-      const data = await response.json();
-      const apiRates = data.rates as Record<string, number>;
-
-      let updatedCount = 0;
-
-      // Update rates for all currencies we support
-      for (const rate of rates) {
-        if (rate.currency_code === 'USD') continue; // Skip USD (always 1.0)
-
-        if (apiRates[rate.currency_code]) {
-          const currencyService = createCurrencyService(supabase);
-          await currencyService.updateRate(
-            rate.currency_code,
-            apiRates[rate.currency_code],
-            user.id,
-            'Auto-fetched from exchangerate-api.com'
-          );
-          updatedCount++;
-        }
-      }
-
-      setSuccess(`Successfully updated ${updatedCount} exchange rates from API`);
-      await loadExchangeRates();
-      await loadHistory();
-
-      setTimeout(() => setSuccess(null), 5000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch exchange rates');
-    } finally {
-      setFetchingRates(false);
     }
   };
 
@@ -268,23 +149,6 @@ export default function ExchangeRatesPage() {
           </motion.div>
         )}
 
-        {success && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-green-500/10 border border-green-500/50 rounded-lg p-4 flex items-start gap-3"
-          >
-            <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-green-400 font-medium">Success</p>
-              <p className="text-green-300 text-sm mt-1">{success}</p>
-            </div>
-            <button onClick={() => setSuccess(null)} className="text-green-400 hover:text-green-300">
-              <X className="w-4 h-4" />
-            </button>
-          </motion.div>
-        )}
-
         {/* Exchange Rates Table */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -297,7 +161,7 @@ export default function ExchangeRatesPage() {
               Currency Exchange Rates
             </h2>
             <p className="text-slate-400 text-sm mt-1">
-              All rates are relative to 1 USD. Update rates manually or connect to an API provider.
+              Read only. All rates are relative to 1 USD; no calculation uses them.
             </p>
           </div>
 
@@ -346,20 +210,9 @@ export default function ExchangeRatesPage() {
                       <span className="font-mono text-lg text-slate-300">{rate.currency_symbol}</span>
                     </td>
                     <td className="py-4 px-6 text-right">
-                      {editingRate === rate.id ? (
-                        <input
-                          type="number"
-                          step="0.000001"
-                          value={editedValue}
-                          onChange={(e) => setEditedValue(parseFloat(e.target.value))}
-                          className="w-32 px-3 py-1.5 bg-slate-900 border border-blue-500/50 rounded-lg text-right font-mono text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          autoFocus
-                        />
-                      ) : (
-                        <span className="font-mono font-semibold text-white">
-                          {rate.rate_to_usd.toFixed(6)}
-                        </span>
-                      )}
+                      <span className="font-mono font-semibold text-white">
+                        {rate.rate_to_usd.toFixed(6)}
+                      </span>
                     </td>
                     <td className="py-4 px-6 text-center">
                       <span className="px-2 py-1 bg-slate-900/50 rounded text-sm font-medium text-slate-300">
@@ -367,17 +220,15 @@ export default function ExchangeRatesPage() {
                       </span>
                     </td>
                     <td className="py-4 px-6 text-center">
-                      <button
-                        onClick={() => handleToggleEnabled(rate)}
-                        disabled={saving || rate.currency_code === 'USD'}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      <span
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
                           rate.is_enabled
-                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                            : 'bg-slate-900/50 text-slate-400 hover:bg-slate-700'
-                        } ${rate.currency_code === 'USD' || saving ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-slate-900/50 text-slate-400'
+                        }`}
                       >
                         {rate.is_enabled ? 'Enabled' : 'Disabled'}
-                      </button>
+                      </span>
                     </td>
                     <td className="py-4 px-6">
                       <div className="flex items-center gap-2 text-sm text-slate-400">
@@ -393,40 +244,12 @@ export default function ExchangeRatesPage() {
                     </td>
                     <td className="py-4 px-6">
                       <div className="flex items-center justify-end gap-2">
-                        {editingRate === rate.id ? (
-                          <>
-                            <button
-                              onClick={() => handleEditSave(rate)}
-                              disabled={saving}
-                              className="p-2 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors disabled:opacity-50"
-                            >
-                              <Check className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={handleEditCancel}
-                              disabled={saving}
-                              className="p-2 bg-slate-600 text-white rounded-lg hover:bg-slate-500 transition-colors disabled:opacity-50"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => handleEditStart(rate)}
-                              disabled={saving || rate.currency_code === 'USD'}
-                              className="p-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => setShowHistory(showHistory === rate.currency_code ? null : rate.currency_code)}
-                              className="p-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors"
-                            >
-                              <History className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
+                        <button
+                          onClick={() => setShowHistory(showHistory === rate.currency_code ? null : rate.currency_code)}
+                          className="p-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors"
+                        >
+                          <History className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
