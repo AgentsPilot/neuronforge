@@ -31,6 +31,6 @@ MK-0 is the first slice of the Money restructure. It adds an optional `indicator
 - **Any shared overlay primitive must define how it handles Escape inside a parent overlay**, and test both the open and closed cases.
 - **Next:** MK-1.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk0-kpi-indicator — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk0-kpi-indicator — commit `9583426c`, PR #474 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

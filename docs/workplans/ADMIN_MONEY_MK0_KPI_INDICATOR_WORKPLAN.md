@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §3.3 (LL-1 to LL-5), §12 MK-0 row, SA-RR-MK (SA-8, "`KpiTile` `indicator` (MK-0)", pins table: MK-0 moves none); FIN BD-46
 **Branch:** `feature/admin-money-mk0-kpi-indicator` (from main `d50ce806`)
 **Date:** 2026-10-19
-**Status:** Code Complete (uncommitted)
+**Status:** Code Approved (SA-MK0), QA passed; committed `9583426c`, PR [#474](https://github.com/AgentsPilot/neuronforge/pull/474) opened 2026-10-19, auto-merge on
 **Path:** full cycle (shared export, LAY R-7, SA-8). The user said "let's go" on 2026-10-19. No data, route, payload or migration change.
 
 ## Overview
