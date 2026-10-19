@@ -290,6 +290,10 @@ export const en = {
     'plan.category.support': 'Support',
     'plan.category.platform': 'Platform',
     'plan.category.addon': 'Add-ons',
+    // Upgrade modal UM-0: the comparison table's three section headings (C-20).
+    'plan.comparison.section.run_business': 'Run your business',
+    'plan.comparison.section.ai_assistant': 'AI assistant',
+    'plan.comparison.section.included': "What's included",
     // The plan screen's remaining words, so a Hebrew or Spanish owner reads no
     // English there (user decision, 2026-10-02). {plan}, {from}, {to} are filled
     // by the component; the values arrive already in the reader's language.

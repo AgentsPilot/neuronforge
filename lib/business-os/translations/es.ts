@@ -285,6 +285,10 @@ export const es = {
     'plan.category.support': 'Soporte',
     'plan.category.platform': 'Plataforma',
     'plan.category.addon': 'Complementos',
+    // Upgrade modal UM-0: the comparison table's three section headings (C-20).
+    'plan.comparison.section.run_business': 'Gestiona tu negocio',
+    'plan.comparison.section.ai_assistant': 'Asistente de IA',
+    'plan.comparison.section.included': 'Qué incluye',
     'plan.features_unavailable': 'No hemos podido mostrar tus funciones en este momento. No se ha quitado nada de tu cuenta.',
     'plan.next.adds_heading': 'Qué añadiría {plan}',
     'plan.next.improves_line': '{from} pasa a {to}',

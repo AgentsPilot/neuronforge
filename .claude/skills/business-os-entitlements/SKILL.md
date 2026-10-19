@@ -13,7 +13,7 @@ That suite is **not a required check**, so a red result does not block a merge. 
 **Canonical sources (read + link, do not duplicate):**
 - **Architecture and procedures:** `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` (§ Adding or changing a tier, § Removing a capability from a tier)
 - **Tier procedure, in the file itself:** the header of `lib/business-os/entitlements/config/tierMatrix.ts`
-- **The guards:** `lib/business-os/entitlements/__tests__/` — `enforcementPoints.test.ts`, `tierLiteral.forbidden.test.ts`, `tierMatrix.snapshot.test.ts`, `customerPlanView.test.ts`, `accountSeam.guard.test.ts`
+- **The guards:** `lib/business-os/entitlements/__tests__/` — `enforcementPoints.test.ts`, `tierLiteral.forbidden.test.ts`, `tierMatrix.snapshot.test.ts`, `customerPlanView.test.ts`, `planComparison.config.test.ts`, `accountSeam.guard.test.ts`
 
 ---
 
@@ -32,7 +32,7 @@ Nothing is enforced yet (production runs `shadow`), and the admin screen says, p
 | Remove the last import from a listed file | same suite › "still imports the module" | Delete its entry. The lists are equality-checked and must not go slack |
 | Write a **capability id** as a string literal (`'payments.invoices'`) in product code | `enforcementPoints.test.ts` › "finds no capability id…" | Register it in `ENFORCEMENT_POINTS` if it gates; otherwise add it to `KNOWN_NON_GATES` in the same test, with a reason |
 | Write a **tier name** (`'basic'`, `'pro'`, or any name in `TIER_ORDER`) as a literal outside `entitlements/config/**` | `tierLiteral.forbidden.test.ts` | Don't. Branch on a **capability**, never on a tier: moving a capability between plans must stay a config edit. Unrelated old uses are baselined by count |
-| Switch a capability's `lifecycle` from `not_built` to `available` in `config/catalog.ts` | `customerPlanView.test.ts` (champion parity), `tierMatrix.snapshot.test.ts` | Grant it in `BASE` in `config/tierMatrix.ts` too: every `available` capability is on in every tier at its highest value (paid tiers differ ONLY by `chat.*` and `credits.allowance`). Then run `npm run entitlements:snapshot` |
+| Switch a capability's `lifecycle` from `not_built` to `available` in `config/catalog.ts` (or grant a new capability in a tier shown to customers) | `customerPlanView.test.ts` (champion parity), `tierMatrix.snapshot.test.ts`, **`planComparison.config.test.ts`** (coverage) | Grant it in `BASE` in `config/tierMatrix.ts` too: every `available` capability is on in every tier at its highest value (paid tiers differ ONLY by `chat.*` and `credits.allowance`). Then run `npm run entitlements:snapshot`. **And place it in exactly one row of `config/planComparison.ts`** (the upgrade modal's comparison table, UM-0): add it to the row it belongs with and re-check that row's label in en / he / es, or give it its own row, keeping 12 to 15 rows. The procedure is in that file's header |
 | Lower or remove a capability from a tier | `tierMatrix.snapshot.test.ts` | Two lines plus a version bump: the value, an entry in `removals`, and `version`. **Taking something away from paying customers is a business decision**, so take it to the user through the BA, not as a code choice |
 | Take an account id for the service in new code | `accountSeam.guard.test.ts` | Go through `resolveAccountId`; never pass a raw user id to the service |
 

@@ -59,6 +59,11 @@ const KEYS = [
   'plan.next.changes_line',
   'plan.next.available',
   'plan.next.coming_soon',
+  // Upgrade modal UM-0: the comparison table's section headings (C-20). Named by
+  // `customerPlanView.SECTION_PRESENTATION`; the row labels are config data.
+  'plan.comparison.section.run_business',
+  'plan.comparison.section.ai_assistant',
+  'plan.comparison.section.included',
   // Plan payments P-4.2: buying in Settings → Plan (he/es DRAFTS, gate G-3).
   ...purchaseKeys(),
 ];

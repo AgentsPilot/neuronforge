@@ -2672,6 +2672,10 @@ export const he = {
     'plan.category.support': 'תמיכה',
     'plan.category.platform': 'פלטפורמה',
     'plan.category.addon': 'תוספות',
+    // Upgrade modal UM-0: the comparison table's three section headings (C-20).
+    'plan.comparison.section.run_business': 'ניהול העסק',
+    'plan.comparison.section.ai_assistant': 'עוזר AI',
+    'plan.comparison.section.included': 'מה כלול',
     'plan.features_unavailable': 'לא הצלחנו להציג את התכונות שלך כרגע. שום דבר לא הוסר מהחשבון שלך.',
     'plan.next.adds_heading': 'מה נוסף ב־{plan}',
     'plan.next.improves_line': '{to} במקום {from}',
