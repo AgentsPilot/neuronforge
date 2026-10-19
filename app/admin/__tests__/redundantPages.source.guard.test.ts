@@ -18,6 +18,18 @@
  *       only: no write, RPC, rate service or outside fetch, and its only
  *       Supabase calls are SELECTs on the two rate tables.
  *
+ * Amended by Admin Exchange Rates slice 1a (BD-55, SA-R3, workplan SA O-2 /
+ * O-4, 2026-10-19): the Exchange rates page is a maintained admin tool again,
+ * so it leaves G-1, G-3 and G-5, and G-6 is REPLACED by the Exchange rates
+ * guard below, which walks every non-test file under app/admin/exchange-rates/
+ * (the page and its components): no Supabase client import, no `.from(`, no
+ * `CurrencyService`, no outside host, every `fetch(` targets
+ * /api/admin/exchange-rates, no `console.`, and the module logger
+ * `AdminExchangeRates`. The Platform dashboard keeps G-1, G-3 and G-5
+ * unchanged. G-2, G-4 and the sidebar UNLISTED entry stay (D-6: URL only);
+ * G-4's page-route matcher now ignores a match preceded by `/api`, because
+ * /api/admin/exchange-rates contains /admin/exchange-rates (SA O-2).
+ *
  * Every rule is a pure function run on the real files AND on a planted control
  * that must trip it (M8-R3): a rule that cannot match looks exactly like a rule
  * that found nothing.
@@ -36,8 +48,11 @@ const EXCHANGE_PAGE = 'app/admin/exchange-rates/page.tsx';
 const DASHBOARD_ROUTE = 'app/api/admin/dashboard/route.ts';
 const SIDEBAR = 'app/admin/components/AdminSidebar.tsx';
 
-const PAGES = [DASHBOARD_PAGE, EXCHANGE_PAGE];
-const MARKED = [DASHBOARD_PAGE, EXCHANGE_PAGE, DASHBOARD_ROUTE];
+const EXCHANGE_DIR = 'app/admin/exchange-rates';
+
+// Slice 1a: only the dashboard is still a redundant page (G-1, G-3).
+const PAGES = [DASHBOARD_PAGE];
+const MARKED = [DASHBOARD_PAGE, DASHBOARD_ROUTE];
 
 const HEADER =
   '// REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.';
@@ -70,31 +85,57 @@ const noticeHits = (raw: string): string[] => {
   return hits;
 };
 
-/** G-4: guarded routes a file names in code (comments stripped). */
+/**
+ * G-4: guarded routes a file names in code (comments stripped). A page route
+ * preceded by `/api` is an API path, not a link to the page (SA O-2).
+ */
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const linkHits = (raw: string): string[] => {
   const code = stripComments(raw);
-  return [...PAGE_ROUTES, API_ROUTE].filter((route) => code.includes(route));
+  const pageHits = PAGE_ROUTES.filter((route) => new RegExp(`(?<!/api)${escapeRegExp(route)}`).test(code));
+  return [...pageHits, ...(code.includes(API_ROUTE) ? [API_ROUTE] : [])];
 };
 
 /** G-5: a console call in code. */
 const hasConsole = (raw: string): boolean => /\bconsole\./.test(stripComments(raw));
 
-/** G-6: write, RPC, rate-service and outside-fetch tokens in code (comments stripped). */
-const WRITE_TOKENS = ['.update(', '.insert(', '.upsert(', '.delete(', '.rpc(', 'updateRate', 'createCurrencyService', 'fetch('];
-const writeHits = (raw: string): string[] => {
+/**
+ * G-6 (slice 1a): what an Exchange rates file must not contain, in code
+ * (comments stripped). Each name is one rule with its own planted control.
+ */
+const EXCHANGE_BANS: ReadonlyArray<readonly [string, RegExp]> = [
+  ['supabase client', /@\/lib\/supabase(Client|Server|ServerAuth)\b|@supabase\//],
+  ['.from(', /\.from\(/],
+  ['CurrencyService', /CurrencyService/],
+  ['outside host', /https?:\/\//],
+  ['console', /\bconsole\./],
+];
+const exchangeBanHits = (raw: string): string[] => {
   const code = stripComments(raw);
-  return WRITE_TOKENS.filter((token) => code.includes(token));
+  return EXCHANGE_BANS.filter(([, pattern]) => pattern.test(code)).map(([name]) => name);
 };
 
-/** G-6: the tables a file reads with `.from('…')`, and whether every `.from(` is followed by `.select(`. */
-const READ_TABLES = ['exchange_rate_history', 'exchange_rates'];
-const fromCalls = (raw: string): { tables: string[]; allSelect: boolean } => {
+/**
+ * G-6 (slice 1a): every `fetch(` call whose first argument does not start with
+ * the admin rates route. `refetch(` / `prefetch(` are not fetch calls;
+ * `window.fetch(` is.
+ */
+const FETCH_CALL = /(?<![\w$])fetch\s*\(/g;
+const ALLOWED_FETCH = /^\s*(['"`])\/api\/admin\/exchange-rates(['"`/?]|\$\{)/;
+const strayFetches = (raw: string): string[] => {
   const code = stripComments(raw);
-  const tables = [...code.matchAll(/\.from\(\s*'([^']+)'\s*\)/g)].map((m) => m[1]);
-  const froms = (code.match(/\.from\(/g) ?? []).length;
-  const selects = (code.match(/\.from\(\s*'[^']+'\s*\)\s*\.select\(/g) ?? []).length;
-  return { tables: [...new Set(tables)].sort(), allSelect: froms === selects };
+  const stray: string[] = [];
+  for (const match of code.matchAll(FETCH_CALL)) {
+    const rest = code.slice((match.index ?? 0) + match[0].length);
+    if (!ALLOWED_FETCH.test(rest)) stray.push(rest.slice(0, 60).split('\n')[0]);
+  }
+  return stray;
 };
+
+const fetchCount = (raw: string): number => [...stripComments(raw).matchAll(FETCH_CALL)].length;
+
+/** G-6 (slice 1a): the module logger the page logs through (SA-R11). */
+const MODULE_LOGGER = /clientLogger\.child\(\{ module: 'AdminExchangeRates' \}\)/;
 
 /** Every non-test `.ts` / `.tsx` file under `dir`, recursively. */
 function walk(dir: string): string[] {
@@ -160,21 +201,43 @@ describe('G-4: nothing in the product links to the pages (RP-5, AC-234)', () => 
   });
 });
 
-describe('G-5: Exchange rates logs through Pino (RP-7, AC-240)', () => {
-  it('has no console call and uses its module logger', () => {
-    const raw = read(EXCHANGE_PAGE);
-    expect(hasConsole(raw)).toBe(false);
-    expect(stripComments(raw)).toMatch(/createLogger\(\{ module: 'AdminExchangeRates' \}\)/);
+describe('G-5: the Platform dashboard has no console call (RP-7)', () => {
+  it('has no console call', () => {
+    expect(hasConsole(read(DASHBOARD_PAGE))).toBe(false);
   });
 });
 
-describe('G-6: Exchange rates is read only (FF-1a, FU-M8-1)', () => {
-  it('has no write, RPC, rate service or outside fetch', () => {
-    expect(writeHits(read(EXCHANGE_PAGE))).toEqual([]);
+describe('G-6 (slice 1a): Exchange rates reads and writes only through its admin route (SA-R3)', () => {
+  const files = walk(EXCHANGE_DIR);
+
+  it('walks the page and its components, never a test (guards the walk itself)', () => {
+    expect(files).toContain(EXCHANGE_PAGE);
+    expect(files.some((file) => file.startsWith(`${EXCHANGE_DIR}/components/`))).toBe(true);
+    expect(files.filter((file) => file.includes('__tests__'))).toEqual([]);
+    expect(files.length).toBeGreaterThanOrEqual(5);
   });
 
-  it('only SELECTs the two rate tables', () => {
-    expect(fromCalls(read(EXCHANGE_PAGE))).toEqual({ tables: READ_TABLES, allSelect: true });
+  it('no file has a Supabase client, .from(, CurrencyService, an outside host or a console call', () => {
+    const offenders = files.map((file) => ({ file, hits: exchangeBanHits(read(file)) })).filter((e) => e.hits.length > 0);
+    expect(offenders).toEqual([]);
+  });
+
+  it('every fetch( targets /api/admin/exchange-rates', () => {
+    const offenders = files.map((file) => ({ file, stray: strayFetches(read(file)) })).filter((e) => e.stray.length > 0);
+    expect(offenders).toEqual([]);
+  });
+
+  it('the folder does fetch (the rule is not vacuous): one read and one write', () => {
+    expect(files.reduce((sum, file) => sum + fetchCount(read(file)), 0)).toBe(2);
+  });
+
+  it('logs through the module logger AdminExchangeRates', () => {
+    expect(files.some((file) => MODULE_LOGGER.test(stripComments(read(file))))).toBe(true);
+  });
+
+  it('the REDUNDANT header is gone from the page', () => {
+    expect(hasHeader(read(EXCHANGE_PAGE))).toBe(false);
+    expect(read(EXCHANGE_PAGE)).not.toContain('REDUNDANT');
   });
 });
 
@@ -205,9 +268,18 @@ describe('planted controls (no dead rule)', () => {
 
   it('G-4 trips on a link or a fetch in a planted file, and ignores comments', () => {
     expect(linkHits('<Link href="/admin/exchange-rates">Rates</Link>')).toEqual(['/admin/exchange-rates']);
+    expect(linkHits("router.push('/admin/exchange-rates?x=1');")).toEqual(['/admin/exchange-rates']);
     expect(linkHits("router.push('/admin/platform-dashboard');")).toEqual(['/admin/platform-dashboard']);
     expect(linkHits('await fetch(`/api/admin/dashboard?period=7`);')).toEqual(['/api/admin/dashboard']);
     expect(linkHits('// see /admin/exchange-rates and /api/admin/dashboard\nconst z = 1;')).toEqual([]);
+  });
+
+  it('G-4 (SA O-2) ignores the admin rates API path, read or write, and still trips on the page beside it', () => {
+    expect(linkHits("await fetch('/api/admin/exchange-rates', { cache: 'no-store' });")).toEqual([]);
+    expect(linkHits('await fetch(`/api/admin/exchange-rates/${code}`, { method: "PATCH" });')).toEqual([]);
+    expect(linkHits("await fetch('/api/admin/exchange-rates');\nconst href = '/admin/exchange-rates';")).toEqual([
+      '/admin/exchange-rates',
+    ]);
   });
 
   it('G-5 trips on a planted console call, and ignores one in a comment', () => {
@@ -215,26 +287,45 @@ describe('planted controls (no dead rule)', () => {
     expect(hasConsole('// the old console.error is gone\nlogger.error({ err }, "x");')).toBe(false);
   });
 
-  it('G-6 trips on each planted write token, and ignores one in a comment', () => {
-    const planted: Record<string, string> = {
-      '.update(': "await supabase.from('exchange_rates').update({ is_enabled: false }).eq('id', id);",
-      '.insert(': "await supabase.from('exchange_rates').insert(row);",
-      '.upsert(': "await supabase.from('exchange_rates').upsert(row);",
-      '.delete(': "await supabase.from('exchange_rates').delete().eq('id', id);",
-      '.rpc(': "await supabase.rpc('set_rate', { code });",
-      updateRate: 'await service.updateRate(code, 1.2, userId);',
-      createCurrencyService: 'const service = createCurrencyService(supabase);',
-      'fetch(': "await fetch('https://api.example.com/latest/USD');",
+  it('G-6 (slice 1a) trips on each planted ban, and ignores one in a comment', () => {
+    const planted: Record<string, string[]> = {
+      'supabase client': [
+        "import { supabase } from '@/lib/supabaseClient';",
+        "import { supabaseServer } from '@/lib/supabaseServer';",
+        "import { createClient } from '@supabase/supabase-js';",
+      ],
+      '.from(': ["const { data } = await client.from('exchange_rates').select('*');"],
+      CurrencyService: [
+        "import { createCurrencyService } from '@/lib/services/CurrencyService';",
+        'const service = createCurrencyService(client);',
+      ],
+      'outside host': ["const url = 'https://api.exchangerate-api.com/v4/latest/USD';"],
+      console: ["console.error('Error loading rates', err);"],
     };
-    for (const token of WRITE_TOKENS) {
-      expect({ token, hits: writeHits(planted[token]) }).toEqual({ token, hits: [token] });
+    for (const [name] of EXCHANGE_BANS) {
+      for (const line of planted[name]) {
+        expect({ line, hits: exchangeBanHits(line) }).toEqual({ line, hits: [name] });
+      }
     }
-    expect(writeHits('// no .update( or fetch( here any more\nconst a = 1;')).toEqual([]);
+    expect(exchangeBanHits('// no supabaseClient, .from(, CurrencyService, https:// or console. here\nconst a = 1;')).toEqual([]);
+    expect(exchangeBanHits("import { readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';")).toEqual([]);
   });
 
-  it('G-6 trips on another table and on a from() that is not a select', () => {
-    expect(fromCalls("supabase.from('profiles').select('*');").tables).toEqual(['profiles']);
-    expect(fromCalls("supabase.from('exchange_rates').select('*');")).toEqual({ tables: ['exchange_rates'], allSelect: true });
-    expect(fromCalls("supabase.from('exchange_rates').eq('id', x);").allSelect).toBe(false);
+  it('G-6 (slice 1a) passes the admin rates route and trips on any other fetch target', () => {
+    expect(strayFetches("await fetch('/api/admin/exchange-rates', { cache: 'no-store' });")).toEqual([]);
+    expect(strayFetches('await fetch(`/api/admin/exchange-rates/${encodeURIComponent(code)}`, { method: "PATCH" });')).toEqual([]);
+    expect(strayFetches("await fetch('/api/admin/exchange-ratesX');")).toHaveLength(1);
+    expect(strayFetches("await fetch('/api/admin/finance');")).toHaveLength(1);
+    expect(strayFetches("await window.fetch('/api/admin/dashboard');")).toHaveLength(1);
+    expect(strayFetches('await fetch(url);')).toHaveLength(1);
+    expect(strayFetches("await fetch ( '/api/other' );")).toHaveLength(1);
+    expect(strayFetches("refetch(); prefetch('/x');")).toEqual([]);
+    expect(strayFetches("// fetch('/api/other') was removed\nconst a = 1;")).toEqual([]);
+    expect(fetchCount("await fetch('/api/admin/exchange-rates'); refetch();")).toBe(1);
+  });
+
+  it('G-6 (slice 1a) module logger pattern matches the real form only', () => {
+    expect(MODULE_LOGGER.test("const logger = clientLogger.child({ module: 'AdminExchangeRates' });")).toBe(true);
+    expect(MODULE_LOGGER.test("const logger = clientLogger.child({ module: 'AdminOther' });")).toBe(false);
   });
 });

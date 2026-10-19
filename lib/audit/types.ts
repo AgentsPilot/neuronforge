@@ -116,6 +116,11 @@ export const AUDIT_ENTITY_TYPES = [
   // BOS_BILLING_FIRST_PAYMENT_STAMPED); the entity id is the ACCOUNT id. No
   // database CHECK constrains audit_trail.entity_type, so no migration (SA Q-3).
   'business_os_account_lineage',
+  // One currency row of the admin-maintained exchange_rates table. Written by
+  // PATCH /api/admin/exchange-rates/[currencyCode] (Admin Exchange Rates slice
+  // 1a); the entity id is the currency code (audit_trail.entity_id is TEXT).
+  // Owner-visible with the admin's own id as user_id (ownerVisibility.ts).
+  'exchange_rate',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

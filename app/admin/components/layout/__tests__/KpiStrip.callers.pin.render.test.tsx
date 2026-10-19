@@ -21,6 +21,7 @@
  * Part A2: the real caller components, with figures and while loading. Jobs'
  * tiles are module-private (SA-W5): their shapes are in A1, and its own layout
  * test stays unedited. Model pricing goes through its real `priceKpis.ts`.
+ * Amended by Exchange rates 1a (SQ-7): three ExchangeRatesKpis cases appended; every existing hash unchanged.
  */
 
 import React from 'react';
@@ -50,6 +51,8 @@ import { lastCheckKpi, modelsInUseKpi, pendingKpi, underchargingKpi } from '@/ap
 import type { CheckStatusState } from '@/app/admin/system-config/priceKpis';
 import type { ComparisonRow } from '@/lib/ai/pricing-research/comparisonModel';
 import { KPI_WORDS } from '@/app/admin/system-config/priceReviewCopy';
+import { ExchangeRatesKpis } from '@/app/admin/exchange-rates/components/ExchangeRatesKpis';
+import type { ExchangeRatesPayload, ExchangeRateWire } from '@/lib/admin/exchangeRates/exchangeRateRules';
 
 /** Generous: the merge queue runs suites in parallel (the F-4 amendment lesson). */
 const CASE_TIMEOUT_MS = 30_000;
@@ -167,6 +170,25 @@ function PriceStrip({ rows, status }: { rows: ComparisonRow[]; status: CheckStat
   );
 }
 
+// Exchange rates 1a (SQ-7): two enabled rates, one of them stale, one disabled.
+const FX_READ_AT = '2026-10-19T12:00:00.000Z';
+const fxRate = (code: string, isEnabled: boolean, lastUpdatedAt: string): ExchangeRateWire => ({
+  currencyCode: code,
+  currencyName: code,
+  currencySymbol: code,
+  rateToUsd: '1.000000',
+  isEnabled,
+  decimalPlaces: 2,
+  lastUpdatedAt,
+  updatedBy: null,
+});
+const FX_PAYLOAD: ExchangeRatesPayload = {
+  rates: [fxRate('EUR', true, '2025-11-05T10:00:00.000Z'), fxRate('ILS', true, '2026-10-18T10:00:00.000Z'), fxRate('JPY', false, '2025-11-05T10:00:00.000Z')],
+  history: [],
+  readAt: FX_READ_AT,
+};
+const FX_PAYLOAD_FRESH: ExchangeRatesPayload = { ...FX_PAYLOAD, rates: [fxRate('ILS', true, '2026-10-18T10:00:00.000Z')] };
+
 const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   // ── A1: the shared matrix ─────────────────────────────────────────────────
   ['A1 anchor neutral', () => <KpiTile testId="kpi-jobs" label="Jobs" value="5" href="#jobs" />],
@@ -242,6 +264,9 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 Model pricing reading', () => <PriceStrip rows={[PLAIN_ROW]} status={undefined} />],
   ['A2 Model pricing unavailable', () => <PriceStrip rows={[RED_ROW, PLAIN_ROW]} status={null} />],
   ['A2 Model pricing recent', () => <PriceStrip rows={[]} status={CHECK_RECENT} />],
+  ['A2 ExchangeRatesKpis loading', () => <ExchangeRatesKpis payload={null} loading />],
+  ['A2 ExchangeRatesKpis', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} />],
+  ['A2 ExchangeRatesKpis none stale', () => <ExchangeRatesKpis payload={FX_PAYLOAD_FRESH} loading={false} />],
 ];
 
 /** Recorded on the unchanged tree (447d17a2) at Step 0. */
@@ -294,6 +319,10 @@ const EXPECTED: Record<string, string> = {
   'A2 Model pricing reading': 'be9d1a213d32c6e3704796468db7d2a40fdd2f2a6c39b0308039629f6da244ad',
   'A2 Model pricing unavailable': '31241fbf7736bf1aac551289805d08ae42b9925bc701096b8fb68803da4049e0',
   'A2 Model pricing recent': '13a71e361d6edb3f07816f7218353f3c6568b232cff90a7160ea321f854d2577',
+  // Exchange rates 1a (SQ-7), recorded on first render.
+  'A2 ExchangeRatesKpis loading': 'b628c0bab0e92bf9f5949794cae2e85732530b5c709306ec98f1265c8e51bcb5',
+  'A2 ExchangeRatesKpis': '41899b6997db4acf7b68dd7babe940b77246a350d3fee262b3acde3894928a5e',
+  'A2 ExchangeRatesKpis none stale': 'ada696c76cf91d2628a0ea51138beb3f099a9c9146c49624b4bb74200130503e',
 };
 
 describe('Finance F-5 Pin A: the existing KpiTile / KpiStrip callers render byte-identically', () => {

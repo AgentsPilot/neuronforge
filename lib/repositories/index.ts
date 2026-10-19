@@ -17,6 +17,7 @@ export { AiModelImagePricingRepository, aiModelImagePricingRepository } from './
 export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
 export { AiPriceApplyRepository, aiPriceApplyRepository } from './AiPriceApplyRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
+export { ExchangeRatesRepository, exchangeRatesRepository } from './ExchangeRatesRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
@@ -422,6 +423,9 @@ export type {
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,
+  // Exchange rates (admin-maintained platform table) types
+  ExchangeRateRow,
+  ExchangeRateHistoryRow,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';
