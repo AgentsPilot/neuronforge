@@ -55,9 +55,9 @@ expected_column as (
   select v.tbl_name, v.col_name, v.col_type, v.col_notnull, v.col_default
   from (values
     ('exchange_rates', 'id', 'uuid', true, 'gen_random_uuid()'),
-    ('exchange_rates', 'currency_code', 'character varying', true, 'none'),
-    ('exchange_rates', 'currency_name', 'character varying', true, 'none'),
-    ('exchange_rates', 'currency_symbol', 'character varying', true, 'none'),
+    ('exchange_rates', 'currency_code', 'character varying(3)', true, 'none'),
+    ('exchange_rates', 'currency_name', 'character varying(100)', true, 'none'),
+    ('exchange_rates', 'currency_symbol', 'character varying(10)', true, 'none'),
     ('exchange_rates', 'rate_to_usd', 'numeric(12,6)', true, 'none'),
     ('exchange_rates', 'is_enabled', 'boolean', false, 'true'),
     ('exchange_rates', 'decimal_places', 'smallint', false, '2'),
@@ -65,7 +65,7 @@ expected_column as (
     ('exchange_rates', 'updated_by', 'uuid', false, 'none'),
     ('exchange_rates', 'created_at', 'timestamp with time zone', false, 'now()'),
     ('exchange_rate_history', 'id', 'uuid', true, 'gen_random_uuid()'),
-    ('exchange_rate_history', 'currency_code', 'character varying', true, 'none'),
+    ('exchange_rate_history', 'currency_code', 'character varying(3)', true, 'none'),
     ('exchange_rate_history', 'old_rate', 'numeric(12,6)', false, 'none'),
     ('exchange_rate_history', 'new_rate', 'numeric(12,6)', true, 'none'),
     ('exchange_rate_history', 'changed_by', 'uuid', false, 'none'),

@@ -90,9 +90,9 @@ $$;
 
 CREATE TABLE IF NOT EXISTS public.exchange_rates (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  currency_code character varying NOT NULL,
-  currency_name character varying NOT NULL,
-  currency_symbol character varying NOT NULL,
+  currency_code character varying(3) NOT NULL,
+  currency_name character varying(100) NOT NULL,
+  currency_symbol character varying(10) NOT NULL,
   rate_to_usd numeric(12,6) NOT NULL,
   is_enabled boolean DEFAULT true,
   decimal_places smallint DEFAULT 2,
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS public.exchange_rates (
 
 CREATE TABLE IF NOT EXISTS public.exchange_rate_history (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  currency_code character varying NOT NULL,
+  currency_code character varying(3) NOT NULL,
   old_rate numeric(12,6),
   new_rate numeric(12,6) NOT NULL,
   changed_by uuid,
