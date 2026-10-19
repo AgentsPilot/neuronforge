@@ -23,12 +23,23 @@
  * left click is taken over: it applies the same patch through the page's
  * `useAdminFilters`, the one write path. A tile with no target is not a link:
  * a `div role="group"` carrying the K-7 name (never a button, never a region).
+ *
+ * Money MK-0 (KPI restructure review §3.3 LL-1 to LL-5, SA-8, BD-46) adds an
+ * optional `indicator`: an uncoloured forward arrow (leading) or clock
+ * (lagging) in the tile's top corner, with an in-house accessible tooltip.
+ * Interactive content inside a link is invalid, so the icon is NEVER inside the
+ * tile's `<a>`: an indicator tile is a `relative` wrapper holding the
+ * unchanged tile and, as its sibling, `KpiIndicator` positioned in the corner.
+ * A click on the icon therefore never reaches the link. With no `indicator`
+ * the tile renders exactly as before (no wrapper, no extra hook), so Pin A
+ * holds. `KpiIndicator` is exported for block KPIs too (one copy of the icon,
+ * the words and the behaviour).
  */
 
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import Link from 'next/link';
-import { AlertOctagon, AlertTriangle, CheckCircle2, CircleDashed, HelpCircle } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, ArrowRight, CheckCircle2, CircleDashed, Clock, HelpCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { OK_GREEN } from './StatusChip';
@@ -97,6 +108,118 @@ const TILE_BASE = 'block rounded-xl border bg-slate-800 p-4';
 const LINK_EXTRAS =
   'transition-colors hover:bg-slate-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500';
 
+// ── MK-0: the leading / lagging indicator (§3.3, SA-8) ──────────────────────
+
+export type KpiIndicatorKind = 'leading' | 'lagging';
+
+export interface KpiIndicatorSpec {
+  kind: KpiIndicatorKind;
+  /** Tooltip line 1: the KPI in plain words, from the caller's one copy constant per KPI (LL-4). */
+  definition: string;
+}
+
+/** LL-2 line 2 and the LL-3 name prefix, one copy each (LL-4). */
+export const KPI_INDICATOR_WORDS: Record<KpiIndicatorKind, { name: string; line: string }> = {
+  leading: { name: 'Leading indicator', line: 'Leading indicator: it tells you early what is coming' },
+  lagging: { name: 'Lagging indicator', line: 'Lagging indicator: it tells you what already happened' },
+};
+
+const INDICATOR_ICONS: Record<KpiIndicatorKind, LucideIcon> = { leading: ArrowRight, lagging: Clock };
+
+export interface KpiIndicatorProps {
+  indicator: KpiIndicatorSpec;
+  testId?: string;
+  /** Placement: the tile passes its corner; a block KPI may pass its own. */
+  className?: string;
+}
+
+/**
+ * The icon and its tooltip (SA-8). A native button (focusable, with the LL-3
+ * name) and a `role="tooltip"` linked by `aria-describedby`, always in the
+ * DOM and hidden while closed. Opens on hover (the tooltip itself is hoverable)
+ * and on focus; closes on leave, on blur and on Escape, which is heard while
+ * open, so it dismisses without moving focus or the pointer (WCAG 1.4.13).
+ * QA-MK0-N1: an OPEN tooltip consumes that Escape, so a drawer around it does
+ * not close on the same press. The listener is on WINDOW in the CAPTURE phase,
+ * the first stop of the event path, ahead of Radix's document capture listener
+ * (`@radix-ui/react-use-escape-keydown`), and it stops propagation and prevents
+ * the default. A CLOSED tooltip has no listener, so the next Escape passes
+ * through untouched and the drawer closes. A click opens it (touch; in a browser the click also focuses
+ * the button), and never navigates; blur, leave or Escape closes it. The icon
+ * is not colour-coded, so it never competes with the status colours (LL-1).
+ */
+export function KpiIndicator({ indicator, testId, className = '' }: KpiIndicatorProps) {
+  const tooltipId = useId();
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const open = (hovered || focused || pinned) && !dismissed;
+  const words = KPI_INDICATOR_WORDS[indicator.kind];
+  const Icon = INDICATOR_ICONS[indicator.kind];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      event.preventDefault();
+      setDismissed(true);
+      setPinned(false);
+    };
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [open]);
+
+  return (
+    <span
+      className={`inline-flex ${className}`.trim()}
+      data-testid={testId}
+      data-indicator={indicator.kind}
+      onMouseEnter={() => {
+        // A new hover after an Escape opens it again.
+        setDismissed(false);
+        setHovered(true);
+      }}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button
+        type="button"
+        aria-label={`${words.name}. ${indicator.definition}`}
+        aria-describedby={tooltipId}
+        onFocus={() => {
+          setDismissed(false);
+          setFocused(true);
+        }}
+        onBlur={() => {
+          setFocused(false);
+          setPinned(false);
+        }}
+        onClick={() => {
+          // Opens only: a toggle would close it at once, because the same click focuses the button.
+          setDismissed(false);
+          setPinned(true);
+        }}
+        className="rounded p-0.5 text-slate-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+      >
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      <span
+        id={tooltipId}
+        role="tooltip"
+        hidden={!open}
+        className="absolute right-0 top-full z-20 mt-1 w-64 rounded-lg border border-slate-600 bg-slate-900 p-2 text-left text-xs text-slate-300 shadow-lg"
+      >
+        <span className="block">{indicator.definition}</span>
+        <span className="mt-1 block text-slate-400">{words.line}</span>
+      </span>
+    </span>
+  );
+}
+
+/** Room for the corner icon, added to the tile only when it has one. */
+const INDICATOR_PAD = ' pr-9';
+
 export interface KpiStripProps {
   /** K-10: the first read is in flight; render `placeholderCount` fixed-height placeholders and no tiles. */
   loading?: boolean;
@@ -137,6 +260,12 @@ interface KpiTileBase {
   detail?: string | null;
   status?: KpiTileStatus | null;
   testId?: string;
+  /**
+   * MK-0: the leading / lagging icon and its tooltip (§3.3). Optional: absent
+   * or null renders exactly as before. Rendered BESIDE the tile's link, never
+   * inside it (see the header).
+   */
+  indicator?: KpiIndicatorSpec | null;
 }
 
 /** K-6 same-page filter tile (Q-14, R-7). */
@@ -181,7 +310,7 @@ export function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean 
 }
 
 export function KpiTile(props: KpiTileProps) {
-  const { label, value, sub, detail, status, testId } = props;
+  const { label, value, sub, detail, status, testId, indicator } = props;
   const subId = useId();
   // Derived, not a second useId: an extra hook call would shift every later id on the page.
   const detailId = `${subId}-detail`;
@@ -195,6 +324,21 @@ export function KpiTile(props: KpiTileProps) {
   const describedBy =
     [sub ? subId : null, detail ? detailId : null].filter((id): id is string => id !== null).join(' ') || undefined;
   const StatusIcon = style?.icon;
+  const pad = indicator ? INDICATOR_PAD : '';
+  // MK-0: with an indicator, the tile and its icon side by side in one relative box; without, the tile itself.
+  const withIndicator = (tile: ReactNode) =>
+    indicator ? (
+      <div className="relative" data-testid={testId ? `${testId}-box` : undefined}>
+        {tile}
+        <KpiIndicator
+          indicator={indicator}
+          testId={testId ? `${testId}-indicator` : undefined}
+          className="absolute right-2 top-2"
+        />
+      </div>
+    ) : (
+      tile
+    );
 
   const content = (
     <>
@@ -229,7 +373,7 @@ export function KpiTile(props: KpiTileProps) {
     const { href, apply, current } = props.filter;
     const isCurrent = current === true;
     const card = style ? style.card : isCurrent ? CURRENT_CARD : NEUTRAL_CARD;
-    return (
+    return withIndicator(
       <a
         href={href}
         {...shared}
@@ -243,7 +387,7 @@ export function KpiTile(props: KpiTileProps) {
           event.preventDefault();
           apply();
         }}
-        className={`${TILE_BASE} ${LINK_EXTRAS} ${card}`}
+        className={`${TILE_BASE} ${LINK_EXTRAS} ${card}${pad}`}
       >
         {content}
       </a>
@@ -251,14 +395,14 @@ export function KpiTile(props: KpiTileProps) {
   }
 
   if (props.href) {
-    return (
+    return withIndicator(
       <a
         href={props.href}
         data-testid={testId}
         data-status={status ?? 'neutral'}
         aria-label={name}
         aria-describedby={describedBy}
-        className={`block rounded-xl border bg-slate-800 p-4 transition-colors hover:bg-slate-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${style ? style.card : NEUTRAL_CARD}`}
+        className={`block rounded-xl border bg-slate-800 p-4 transition-colors hover:bg-slate-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${style ? style.card : NEUTRAL_CARD}${pad}`}
       >
         {content}
       </a>
@@ -268,14 +412,14 @@ export function KpiTile(props: KpiTileProps) {
   // K-6 cross-page mode: `next/link`, so a plain click is a client navigation
   // and a modified click, a middle click and Copy link use the real address.
   if (props.link) {
-    return (
+    return withIndicator(
       <Link
         href={props.link}
         data-testid={testId}
         data-status={status ?? 'neutral'}
         aria-label={name}
         aria-describedby={describedBy}
-        className={`${TILE_BASE} ${LINK_EXTRAS} ${style ? style.card : NEUTRAL_CARD}`}
+        className={`${TILE_BASE} ${LINK_EXTRAS} ${style ? style.card : NEUTRAL_CARD}${pad}`}
       >
         {content}
       </Link>
@@ -284,8 +428,8 @@ export function KpiTile(props: KpiTileProps) {
 
   // K-6: no target, so not a link and not a button. `role="group"` carries the
   // K-7 name, which a plain div may not; a group is not a landmark (A-9).
-  return (
-    <div role="group" {...shared} aria-label={name} className={`${TILE_BASE} ${style ? style.card : NEUTRAL_CARD}`}>
+  return withIndicator(
+    <div role="group" {...shared} aria-label={name} className={`${TILE_BASE} ${style ? style.card : NEUTRAL_CARD}${pad}`}>
       {content}
     </div>
   );
