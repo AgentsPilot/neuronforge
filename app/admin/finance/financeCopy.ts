@@ -282,8 +282,13 @@ export const TRIGGER_LABELS: Record<FinanceTriggerKey, string> = {
 // ── Section 4, credits (slice 1b) ───────────────────────────────────────────
 export const CREDITS_TITLE = 'Credits';
 export const CREDITS_SOURCE = 'Credit totals and admin grants; credit period per account; grants in the window, UTC';
-export const CREDITS_OVER = 'Accounts over allowance';
 export const CREDITS_FAR_OVER = 'At or over the far line';
+/** Money MK-1 (§5, LL-4): the Credits block KPI and its one definition constant. */
+export const BLOCK_KPI_OVER_ALLOWANCE_LABEL = 'Accounts over allowance';
+export const BLOCK_KPI_OVER_ALLOWANCE_DEFINITION = 'Accounts whose credit use this period is above their allowance.';
+/** K-2's far-over rule as the block's amber chip (§3.2). */
+export const BLOCK_KPI_FAR_OVER_CHIP = (count: string, percent: number | null) =>
+  percent === null ? `${count} far over allowance` : `${count} at or over ${percent}% of allowance`;
 export const CREDITS_GIFTED = 'Gifted credits outstanding';
 export const CREDITS_GRANTED = 'Granted in the window';
 export const CREDITS_TAKEN_BACK = 'Taken back in the window';
@@ -328,7 +333,9 @@ export const CREDITS_NOT_TAKEN_BACK = 'Credits of a refunded boost are not taken
 // ── Section 2 block B, takings through the platform (slice 2a) ─────────────
 // The businesses' client payments: NOT our revenue (BD-1). No test-mode
 // wording anywhere (BD-13): test and real client payments are shown together.
-export const TAKINGS_TITLE = 'Takings through the platform';
+// Money MK-1: renamed "Client payments (the businesses' money, not ours)" and
+// moved to the bottom of the Overview; the "Not our revenue" chip stays.
+export const TAKINGS_TITLE = "Client payments (the businesses' money, not ours)";
 export const TAKINGS_CHIP = 'Not our revenue';
 export const TAKINGS_SUBTITLE = (windowLabel: string) =>
   `Client payments recorded by the businesses · ${windowLabel} · Covers businesses that still exist`;
@@ -374,7 +381,10 @@ export const PROCESSOR_LABELS: Readonly<Record<string, string>> = {
 };
 export const PROCESSOR_NOT_RECORDED = 'Not recorded';
 
-export const TAKINGS_BUSINESSES = 'Businesses with takings';
+/** Money MK-1 (§5, LL-4): the Client payments block KPI and its one definition constant. */
+export const BLOCK_KPI_CLIENT_PAYMENTS_LABEL = 'Businesses taking client payments';
+export const BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION =
+  "Businesses with at least one client payment recorded in the window. Their clients' money, not ours.";
 export const TAKINGS_BY_BUSINESS = 'Takings by business';
 export const TAKINGS_BUSINESS = 'Business';
 export const NAME_UNKNOWN_BUSINESS = 'Unknown business';

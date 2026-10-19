@@ -105,6 +105,15 @@ import {
   TAKINGS_TITLE,
   TILE_LABELS,
 } from '../financeCopy';
+// Money MK-1: a separate import, so the lists above stay unedited.
+import {
+  BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION,
+  BLOCK_KPI_CLIENT_PAYMENTS_LABEL,
+  BLOCK_KPI_FAR_OVER_CHIP,
+  BLOCK_KPI_OVER_ALLOWANCE_DEFINITION,
+  BLOCK_KPI_OVER_ALLOWANCE_LABEL,
+} from '../financeCopy';
+import { KPI_INDICATOR_WORDS } from '@/app/admin/components/layout/KpiStrip';
 // Slice 1c: a separate import, so the lists above stay unedited.
 import {
   ACCOUNTS_FOUNDING_CHIP,
@@ -851,15 +860,21 @@ describe('Section 2 block B, takings (slice 2a)', () => {
   };
   const figures = () => takingsSection().figures!;
 
-  it('sits directly under "Our revenue", before Section 1, with its title, subtitle and the "Not our revenue" chip', async () => {
+  // Money MK-1 (ruled edit): renamed "Client payments (the businesses' money, not ours)" and moved from under
+  // "Our revenue" to the very bottom of the Overview, after the payment problems; the chip stays.
+  it('sits last on the Overview, after the payment problems, with its title, subtitle and the "Not our revenue" chip', async () => {
     const section = await renderWith(takingsSection());
     expect(within(section).getByRole('heading', { name: TAKINGS_TITLE })).toBeInTheDocument();
+    expect(TAKINGS_TITLE).toBe("Client payments (the businesses' money, not ours)");
     expect(section).toHaveTextContent('Covers businesses that still exist');
     expect(section).toHaveTextContent('UTC');
-    const order = ['section-revenue', 'section-takings', 'section-accounts'].map((id) => screen.getByTestId(id));
+    const order = ['section-revenue', 'section-accounts', 'section-credits', 'section-payment-problems', 'section-takings'].map((id) =>
+      screen.getByTestId(id)
+    );
     for (let i = 1; i < order.length; i += 1) {
       expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
+    expect(section.parentElement?.lastElementChild).toBe(section);
     expect(screen.getByTestId('section-takings-badge')).toHaveTextContent(TAKINGS_CHIP);
   });
 
@@ -871,11 +886,18 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     expect(chip).toHaveAttribute('data-tone', 'neutral');
   });
 
-  it('SA-WR-17: the Accounts, AI cost and Credits sections render no chip', async () => {
+  // Money MK-1 (ruled edit): Credits now carries ONE chip, K-2's far-over count on its block KPI (§3.2), amber;
+  // still no "not ours" frame badge on Accounts, AI cost or Credits.
+  it('SA-WR-17: the Accounts, AI cost and Credits sections render no frame chip; Credits only its far-over chip', async () => {
     await renderWith(takingsSection());
     for (const id of ['accounts', 'ai-cost', 'credits']) {
       expect(screen.queryByTestId(`section-${id}-badge`)).not.toBeInTheDocument();
-      expect(screen.getByTestId(`section-${id}`).querySelector(NO_CHIP_BUT_STATUS(id))).toBeNull();
+      const chips = Array.from(screen.getByTestId(`section-${id}`).querySelectorAll(NO_CHIP_BUT_STATUS(id)));
+      if (id === 'credits') {
+        expect(chips.map((chip) => [chip.getAttribute('data-testid'), chip.getAttribute('data-tone')])).toEqual([['credits-over-chip', 'warn']]);
+      } else {
+        expect(chips).toEqual([]);
+      }
     }
   });
 
@@ -1097,7 +1119,7 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
   };
   const base = () => paymentProblemsSection();
 
-  it('L-32: the last block, after Credits; its title, chip, "As of now, UTC" subtitle and five parts, four with a status in words', async () => {
+  it('L-32: after Credits, and since MK-1 just above client payments; its title, chip, "As of now, UTC" subtitle and five parts, four with a status in words', async () => {
     const section = await renderWith(base());
     // SA-CR-4b2 CR-1: the frame is "Payment problems" with no chip; block B carries the client heading and chip.
     expect(within(section).getByRole('heading', { name: PAYMENT_PROBLEMS_TITLE })).toBeInTheDocument();
@@ -1110,7 +1132,9 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
     expect(section).toHaveTextContent('Covers businesses that still exist');
     const order = ['section-credits', 'section-payment-problems'].map((id) => screen.getByTestId(id));
     expect(order[0].compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(section.parentElement?.lastElementChild).toBe(section);
+    // Money MK-1 (ruled edit): client payments moved below it, so payment problems is the second to last block.
+    expect(section.nextElementSibling).toBe(screen.getByTestId('section-takings'));
+    expect(section.parentElement?.lastElementChild).toBe(screen.getByTestId('section-takings'));
     for (const id of ['failed', 'invoices', 'instalments', 'plans', 'reminders']) {
       expect(within(section).getByTestId(`problems-${id}`)).toBeInTheDocument();
     }
@@ -2474,5 +2498,75 @@ describe('slice 4b.2 on the page', () => {
     expect(screen.queryByTestId('credits-bought')).toBeNull();
     expect(screen.getByTestId('credits-table')).not.toHaveTextContent(CREDITS_BOUGHT_COLUMN);
     expect(screen.queryByTestId('revenue-held-now')).toBeNull();
+  });
+});
+
+// ── Money MK-1 (KPI restructure review §3.2, §3.3, §5; FC-1): the block KPI headlines ──
+describe('Money MK-1: block KPIs as headlines, with their leading icon', () => {
+  it('Client payments: "Businesses taking client payments" is the headline, leading, from its one definition constant', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-takings');
+    const kpi = within(section).getByRole('group', { name: `${BLOCK_KPI_CLIENT_PAYMENTS_LABEL}, 3` });
+    expect(within(section).getByTestId('takings-body').firstElementChild).toBe(kpi);
+    expect(within(kpi).getByTestId('takings-businesses')).toHaveTextContent('3');
+    const icon = within(kpi).getByRole('button', { name: `${KPI_INDICATOR_WORDS.leading.name}. ${BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION}` });
+    expect(screen.getByTestId('takings-businesses-indicator')).toHaveAttribute('data-indicator', 'leading');
+    act(() => icon.focus());
+    expect(within(kpi).getByRole('tooltip')).toHaveTextContent(KPI_INDICATOR_WORDS.leading.line);
+    // The old plain line is gone: one figure, one place.
+    expect(section).not.toHaveTextContent('Businesses with takings:');
+  });
+
+  it('Client payments: the headline says "at least" when the payments read was cut off', async () => {
+    const base = takingsSection();
+    serve({ success: true, data: payload({ takings: { ...base, status: 'partial', figures: { ...base.figures!, paymentsExact: false } } }) });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-takings');
+    expect(within(section).getByTestId('takings-businesses').textContent).toMatch(/at least/i);
+  });
+
+  it('Credits: "Accounts over allowance" is the headline, leading, with K-2 far-over as its amber chip', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-credits');
+    const kpi = within(section).getByRole('group', { name: `${BLOCK_KPI_OVER_ALLOWANCE_LABEL}, 1` });
+    expect(within(kpi).getByTestId('credits-over')).toHaveTextContent('1');
+    within(kpi).getByRole('button', { name: `${KPI_INDICATOR_WORDS.leading.name}. ${BLOCK_KPI_OVER_ALLOWANCE_DEFINITION}` });
+    const chip = within(kpi).getByTestId('credits-over-chip');
+    expect(chip).toHaveTextContent(BLOCK_KPI_FAR_OVER_CHIP('1', 150));
+    expect(chip).toHaveAttribute('data-tone', 'warn');
+    // The headline is not repeated in the summary list.
+    expect(within(screen.getByTestId('credits-summary')).queryByTestId('credits-over')).toBeNull();
+  });
+
+  it.each([[0], [null]] as const)('Credits: no far-over chip when the count is %s', async (farOver) => {
+    const base = creditsSection();
+    serve({ success: true, data: payload({ credits: { ...base, figures: { ...base.figures!, farOverAllowance: farOver } } }) });
+    render(<FinanceView />);
+    await screen.findByTestId('section-credits');
+    expect(screen.queryByTestId('credits-over-chip')).toBeNull();
+  });
+
+  it('BD-1: the title and the "Not our revenue" chip say it together; the block is never inside the revenue panel', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-takings');
+    expect(within(section).getByRole('heading', { name: TAKINGS_TITLE })).toHaveTextContent('not ours');
+    expect(screen.getByTestId('section-takings-badge')).toHaveTextContent(TAKINGS_CHIP);
+    expect(screen.getByTestId('section-revenue').contains(section)).toBe(false);
+  });
+
+  it('FC-1: none of the new strings says just Cost, Expenses, OPEX or Profit', () => {
+    const texts = [
+      TAKINGS_TITLE,
+      BLOCK_KPI_CLIENT_PAYMENTS_LABEL,
+      BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION,
+      BLOCK_KPI_OVER_ALLOWANCE_LABEL,
+      BLOCK_KPI_OVER_ALLOWANCE_DEFINITION,
+      BLOCK_KPI_FAR_OVER_CHIP('2', 150),
+      BLOCK_KPI_FAR_OVER_CHIP('2', null),
+    ];
+    for (const text of texts) expect(text).not.toMatch(/\b(cost|costs|expenses?|opex|profit)\b/i);
   });
 });
