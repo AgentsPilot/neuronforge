@@ -99,6 +99,11 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // operator entity type, or reclassify this one together with the
   // owner-policy migration.
   business_os_account_lineage: 'owner',
+  // Admin Exchange Rates slice 1a (SA O-6): written with the admin's own id as
+  // user_id (PATCH /api/admin/exchange-rates/[currencyCode]), never against a
+  // customer account, so 'owner' shows it to nobody but that admin, and the
+  // owner policy's NOT IN list (and so its migration) is unchanged.
+  exchange_rate: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**
