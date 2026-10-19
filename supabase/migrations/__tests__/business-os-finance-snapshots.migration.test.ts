@@ -331,9 +331,13 @@ describe('FF-1a: check 35, who can read or write the exchange rate tables (FF1-R
     expect(CHECK_35).toContain("p.polcmd in ('a', 'w', 'd', '*')");
   });
 
-  it('states the FF-2 rule in its header: writes only, SELECT stays', () => {
-    expect(CHECK_35).toContain('FF-2 revokes writes only');
-    expect(CHECK_35).toContain('grant_select for authenticated must stay true');
+  // FF-2 is superseded by exchange rates slice 1b (BD-55): check 35 is now the 1b
+  // checker, pinned in admin-exchange-rates-lockdown.migration.test.ts. The rule
+  // FF-1a stated, that authenticated keeps SELECT for the currency picker, stays.
+  it('states in its header that authenticated keeps SELECT on exchange_rates for the currency picker', () => {
+    expect(CHECK_35).toContain('Extended by slice 1b (migration 20261082');
+    expect(CHECK_35).toContain('the settings currency picker reads exchange_rates from the browser, so that SELECT');
+    expect(CHECK_35).toContain("'C3 authenticated holds SELECT only on exchange_rates'");
   });
 
   it('planted: the read-only rule still bites with literals blanked', () => {
