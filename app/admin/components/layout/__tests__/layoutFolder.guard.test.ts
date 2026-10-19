@@ -720,6 +720,20 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
   },
+  {
+    // Admin Exchange Rates slice 1a (SA-R11, BD-55): the shared header, the
+    // one-tile KPI strip, the Refresh-only bar with "Read at", shared states,
+    // table constants and chips; reads and writes on readAdminResponse. The
+    // view lives in components/ so slice 2's Finance tab can render it.
+    page: '/admin/exchange-rates (Exchange rates)',
+    files: [
+      'app/admin/exchange-rates/page.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesView.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesKpis.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesTable.tsx',
+      'app/admin/exchange-rates/components/RateHistoryTable.tsx',
+    ],
+  },
 ] as const;
 
 const PAGE_HEADER_IMPORT = /import\s*\{[^}]*\bAdminPageHeader\b[^}]*\}\s*from\s*['"]@\/app\/admin\/components\/layout\/AdminPageHeader['"]/;

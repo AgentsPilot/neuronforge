@@ -383,6 +383,22 @@ export const AUDIT_EVENTS = {
   BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
 
   // ==========================================
+  // PLATFORM EXCHANGE RATES (admin-only, server-written)
+  // ==========================================
+  // Admin Exchange Rates slice 1a (SA-R9): an admin set ONE currency's rate to
+  // USD (PATCH /api/admin/exchange-rates/[currencyCode], field 'rate'), or
+  // switched ONE currency on or off (field 'enabled'). Entity type
+  // 'exchange_rate', id = the currency code; user_id = actor = the admin.
+  // Written with logAndFlush before the response (WC-7). Details are exactly
+  // { currencyCode, field, oldValue, newValue }: rates as decimal strings, the
+  // enabled flag as stored (a null old value stays null). A same-value save
+  // ("confirmed for this month", SA-R7) records oldValue equal to newValue. No
+  // amount is converted with any rate (D-5). The rate change is also
+  // historised by the database trigger; the toggle is recorded only here.
+  EXCHANGE_RATE_UPDATED: 'EXCHANGE_RATE_UPDATED',
+  EXCHANGE_RATE_ENABLED_CHANGED: 'EXCHANGE_RATE_ENABLED_CHANGED',
+
+  // ==========================================
   // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
   // ==========================================
   // Plan payments P-3a (AM-7, SA-P3): an owner opened a Business OS plan
@@ -1184,6 +1200,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin put one failed Business OS queue item back for exactly one more send attempt',
+  },
+  // Admin Exchange Rates slice 1a (SA-R9): info; no figure on the platform is
+  // converted with a rate (D-5).
+  [AUDIT_EVENTS.EXCHANGE_RATE_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Exchange rate set by an admin (no amount converted)',
+  },
+  [AUDIT_EVENTS.EXCHANGE_RATE_ENABLED_CHANGED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Currency switched on or off by an admin',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {
