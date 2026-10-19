@@ -14,7 +14,7 @@ import * as path from 'path';
 import { DISAGREEMENT_COPY, PLAN_BILLING_COPY, PLAN_BILLING_ERROR_COPY, PlanBillingBlock } from '../components/PlanBillingBlock';
 import type { BillingPanelPayload } from '@/lib/admin/billing/billingPanelTypes';
 import { STRIPE_MODE_UNKNOWN } from '@/lib/admin/billing/subscriptionsTypes';
-import { MRR_PAST_DUE_COUNTED } from '@/app/admin/subscriptions/subscriptionsCopy';
+import { MRR_PAST_DUE_COUNTED } from '@/app/admin/finance/plansCopy';
 
 const ACCOUNT = '11111111-1111-4111-8111-000000000001';
 const URL = `/api/admin/business-os/billing/accounts/${ACCOUNT}`;

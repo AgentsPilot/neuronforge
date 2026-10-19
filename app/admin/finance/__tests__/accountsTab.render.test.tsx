@@ -213,16 +213,23 @@ describe('AC-130: the tabs, through the real view', () => {
     await screen.findByTestId('econ-table');
     const overview = screen.getByRole('tab', { name: TAB_OVERVIEW });
     const accounts = screen.getByRole('tab', { name: TAB_ACCOUNTS });
+    // Money MK-4 (ruled): a third tab, Plans & subscriptions, after Accounts; the keys wrap over three.
+    const plans = screen.getByTestId('finance-tab-plans');
     expect(accounts).toHaveAttribute('tabIndex', '0');
     expect(overview).toHaveAttribute('tabIndex', '-1');
+    expect(plans).toHaveAttribute('tabIndex', '-1');
     accounts.focus();
     fireEvent.keyDown(accounts, { key: 'ArrowRight' });
+    expect(plans).toHaveFocus();
+    fireEvent.keyDown(plans, { key: 'ArrowRight' });
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'End' });
-    expect(accounts).toHaveFocus();
-    fireEvent.keyDown(accounts, { key: 'Home' });
+    expect(plans).toHaveFocus();
+    fireEvent.keyDown(plans, { key: 'Home' });
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'ArrowLeft' });
+    expect(plans).toHaveFocus();
+    fireEvent.keyDown(plans, { key: 'ArrowLeft' });
     expect(accounts).toHaveFocus();
     expect(address()).toBe('/admin/finance?tab=accounts');
     // Enter / Space on a focused tab is the button's own click.

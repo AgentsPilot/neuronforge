@@ -35,7 +35,8 @@ import { FILTER_BUSINESS_HELP } from '../financeCopy';
 import { FINANCE_DEFAULT_WINDOW, type FinanceFilters } from '../financeFilters';
 
 const A = '11111111-1111-4111-8111-111111111111';
-const DEFAULTS: FinanceFilters = { window: FINANCE_DEFAULT_WINDOW, account: '', tab: '', sort: 'ai_cost', group: '', show: 'all' };
+// Money MK-4 (QA-MK4-1): `status` joined the filters ('' = all).
+const DEFAULTS: FinanceFilters = { window: FINANCE_DEFAULT_WINDOW, account: '', tab: '', sort: 'ai_cost', group: '', show: 'all', status: '' };
 
 function renderBar(overrides: Partial<Parameters<typeof FinanceFilterBar>[0]> = {}) {
   const props = {

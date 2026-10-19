@@ -28,8 +28,7 @@ import {
   Archive,
   Clock,
   MailPlus,
-  Wallet,
-  CreditCard
+  Wallet
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -133,14 +132,6 @@ const navigationSections: NavSection[] = [
         href: '/admin/finance',
         icon: Wallet,
         description: 'Revenue, AI cost and credits, Business OS'
-      },
-      {
-        // Plan payments P-8a.1 (BD-23, AM-2, AM-3): the subscriptions list,
-        // its totals and MRR. Read-only.
-        name: 'Subscriptions',
-        href: '/admin/subscriptions',
-        icon: CreditCard,
-        description: 'Plan subscriptions and MRR, Business OS'
       },
       {
         // M-5 (BD-24, SA-Q58): the cost report and the Leak check, moved out of

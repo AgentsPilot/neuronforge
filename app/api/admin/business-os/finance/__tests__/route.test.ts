@@ -53,6 +53,12 @@
  * 401 / 403 / 400 case proves zero calls on them (AC-157). The AC-145 baseline
  * is updated ONCE, by SA ruling E-55: one added read with its exact arguments,
  * one `recorded` assertion and a new hash; nothing else in it changes.
+ *
+ * Money MK-4 (SA-RR-MK pins table): the MRR read is `lib/admin/billing`'s, run
+ * by the route beside the builder, so it is faked here at its module with one
+ * USD line in test mode. The AC-145 baseline gets ONE ruled update: the two
+ * top-level keys `mrr` and `stripeMode` and a new hash; with those two keys
+ * stripped the payload still gives the 4b.2 hash `39b35743…56ea`.
  */
 
 import * as fs from 'fs';
@@ -74,6 +80,25 @@ jest.mock('@/lib/audit/recordRefusedAccess', () => ({
 
 // A user-writable profile that claims admin (SA-WR-6): the gate must not read it.
 const mockProfileFind = jest.fn(async () => ({ data: { id: 'x', role: 'admin' }, error: null }));
+// Money MK-4: the MRR read (lib/admin/billing), faked at its module. A plain function, so
+// clearAllMocks never removes the answer; the calls are recorded on mockReadFinanceMrr.
+const mockReadFinanceMrr = jest.fn();
+jest.mock('@/lib/admin/billing/financeMrr', () => ({
+  readFinanceMrr: (...args: unknown[]) => {
+    mockReadFinanceMrr(...args);
+    return Promise.resolve({
+      stripeMode: 'test',
+      mrr: {
+        status: 'ok',
+        lines: [{ currency: 'USD', totalHundredths: 4900, cancellingHundredths: 0, pastDueHundredths: 0, subscriptions: 1, overflow: false }],
+        unpriced: 0,
+        discountUnknown: 0,
+        pastDueCounted: true,
+      },
+    });
+  },
+}));
+
 jest.mock('@/lib/repositories/UserProfileRepository', () => ({
   UserProfileRepository: jest.fn().mockImplementation(() => ({ findById: mockProfileFind })),
   userProfileRepository: { findById: mockProfileFind },
@@ -518,7 +543,8 @@ describe('200', () => {
     expect(body.success).toBe(true);
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'paymentProblems', 'revenue', 'takings', 'tiles', 'window']);
+    // Money MK-4 (ruled): `mrr` and `stripeMode` join the payload.
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'mrr', 'paymentProblems', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
     expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
     expect(body.data.credits.status).toBe('ok');
     expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
@@ -1250,10 +1276,13 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   };
   // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
   const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
-  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems'];
+  // Money MK-4 (ruled): the two MRR keys, last.
+  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'mrr', 'stripeMode'];
   // SA-Q72 (4b.2): the new hash. E-55 (M-4): its hash, which the payload gives with the 4b.2 keys put back;
   // and the 6a hash, which that payload still gives with `aiCost.recorded` taken out.
-  const EXPECTED_SHA256 = '39b35743527b3a1948efd30c3ebc2510eb0916301baa4ea8f2e0210d7e1556ea';
+  // Money MK-4 (ruled re-freeze): the payload with `mrr` and `stripeMode`. BEFORE_MK4 is the 4b.2 hash it replaces.
+  const EXPECTED_SHA256 = '30275c298fa4cb265ffe8933dee56c71d4243c171c39eddbe1d2e55d64950631';
+  const BEFORE_MK4_SHA256 = '39b35743527b3a1948efd30c3ebc2510eb0916301baa4ea8f2e0210d7e1556ea';
   const M4_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
   const SLICE_6A_SHA256 = 'b4d10bc1256d32de808c435917c0a53d44229e3df4e9ff879a035911ae13588c';
 
@@ -1273,7 +1302,16 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     expect(sha.update(JSON.stringify(body.data)).digest('hex')).toBe(EXPECTED_SHA256);
     // SA-Q72: the only changes to the bytes are the 4b.2 keys. Put them back as they were (key order kept).
     type Json = Record<string, unknown>;
-    const data = body.data as Json;
+    // MK-4: the only change to the bytes is the two MRR keys at the end. Strip them: the 4b.2 bytes come back.
+    const withMk4 = { ...(body.data as Json) };
+    expect(withMk4.mrr).toEqual(expect.objectContaining({ status: 'ok' }));
+    expect(withMk4.stripeMode).toBe('test');
+    delete withMk4.mrr;
+    delete withMk4.stripeMode;
+    const shaBeforeMk4 = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaBeforeMk4.update(JSON.stringify(withMk4)).digest('hex')).toBe(BEFORE_MK4_SHA256);
+    expect(serialise(mockReadFinanceMrr.mock.calls)).toEqual([[null]]);
+    const data = withMk4;
     const revenue = data.revenue as Json;
     const boosts = { ...(revenue.boosts as Json) };
     delete boosts.heldNow;
@@ -1820,3 +1858,51 @@ describe('DF-6: since_start through the route', () => {
     }
   });
 });
+
+// ── Money MK-4 (SA-2): the MRR read runs in the route, beside the builder ────
+describe('Money MK-4: MRR now in the payload', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('401 and 403 never read MRR (requireAdmin first)', async () => {
+    mockGetUser.mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+    mockGetUser.mockResolvedValue(OWNER);
+    mockIsAdmin.mockResolvedValue(false);
+    expect((await call()).status).toBe(403);
+    expect(mockReadFinanceMrr).not.toHaveBeenCalled();
+  });
+
+  it('a 400 never reads MRR', async () => {
+    asAdmin();
+    expect((await call('?preset=nope')).status).toBe(400);
+    expect(mockReadFinanceMrr).not.toHaveBeenCalled();
+  });
+
+  it('all businesses: one MRR read for every business; the payload carries it and the mode value as read', async () => {
+    asAdmin();
+    const body = await (await call()).json();
+    expect(mockReadFinanceMrr.mock.calls).toEqual([[null]]);
+    expect(body.data.stripeMode).toBe('test');
+    expect(body.data.mrr.lines).toEqual([
+      { currency: 'USD', totalHundredths: 4900, cancellingHundredths: 0, pastDueHundredths: 0, subscriptions: 1, overflow: false },
+    ]);
+  });
+
+  it('a picked business: the MRR read gets exactly that id, after its plan row was found', async () => {
+    asAdmin();
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockReadFinanceMrr.mock.calls).toEqual([[ACCOUNT]]);
+  });
+
+  it('the info line carries the MRR status and its currency count, never a figure', async () => {
+    asAdmin();
+    await call();
+    const line = mockLog.info.mock.calls.find((c: unknown[]) => c[1] === 'Admin read the Business OS finance page');
+    expect(line?.[0].sections.mrr).toEqual({ status: 'ok', currencies: 1 });
+    expect(JSON.stringify(line?.[0])).not.toContain('4900');
+  });
+});
+

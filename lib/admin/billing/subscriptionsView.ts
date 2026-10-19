@@ -36,7 +36,7 @@ import { deriveLifecycle, type LifecycleResult } from '@/lib/business-os/entitle
 import { planLabel, planMonthlyPriceUsd } from '@/lib/business-os/entitlements/planPresentation';
 import { lifecycleInputs } from '@/lib/business-os/entitlements/report';
 import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
-import { computeMrr, mrrTreatment, type MrrPrice } from '@/lib/business-os/billing/planMrr';
+import { computeMrr, mrrTreatment, type MrrPrice, type MrrResult } from '@/lib/business-os/billing/planMrr';
 import { toHundredths } from '@/lib/business-os/finance/currencyGroups';
 import {
   SUBSCRIPTION_STATUSES,
@@ -119,6 +119,22 @@ function compareRows(a: SubscriptionRow, b: SubscriptionRow): number {
   );
 }
 
+/**
+ * Money MK-4 (SA-2): the MRR of one Stripe mode's billing rows, the ONE place
+ * both the Subscriptions list and the Finance payload get it from, so the two
+ * figures are equal by construction. A defensive mode check (PF-15) and only
+ * rows that have a subscription status, as the list counts them.
+ */
+export function subscriptionsMrr(
+  billingRows: readonly AdminBillingRow[],
+  config: EntitlementConfig,
+  mode: 'test' | 'live'
+): MrrResult {
+  const livemode = mode === 'live';
+  const subscribed = billingRows.filter((row) => row.livemode === livemode && row.subscription_status !== null);
+  return computeMrr(subscribed, { livemode, priceOf: catalogPriceOf(config) });
+}
+
 export interface SubscriptionsInput {
   /** Billing rows of `mode` only (the read filters it). */
   billingRows: readonly AdminBillingRow[];
@@ -198,7 +214,7 @@ export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayl
   const byStatus = Object.fromEntries(SUBSCRIPTION_STATUSES.map((s) => [s, 0])) as Record<SubscriptionStatus, number>;
   for (const row of rows) for (const s of row.statuses) byStatus[s] += 1;
 
-  const mrr = computeMrr(subscribed, { livemode, priceOf });
+  const mrr = subscriptionsMrr(billingRows, config, mode);
 
   const paid = new Map<string, number>();
   for (const billing of subscribed) {

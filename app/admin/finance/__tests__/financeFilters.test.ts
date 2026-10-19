@@ -45,17 +45,19 @@ function parseLink(link: string): FinanceFilters {
     return parsed === undefined ? field.defaultValue : parsed;
   };
   const S = FINANCE_FILTER_SPEC;
-  return { window: read(S.window), account: read(S.account), tab: read(S.tab), sort: read(S.sort), group: read(S.group), show: read(S.show) };
+  return { window: read(S.window), account: read(S.account), tab: read(S.tab), sort: read(S.sort), group: read(S.group), show: read(S.show), status: read(S.status) };
 }
 
-const DEFAULTS: FinanceFilters = { window: FINANCE_DEFAULT_WINDOW, account: '', tab: '', sort: 'ai_cost', group: '', show: 'all' };
+// Money MK-4 (QA-MK4-1): `status` joined the filters ('' = all).
+const DEFAULTS: FinanceFilters = { window: FINANCE_DEFAULT_WINDOW, account: '', tab: '', sort: 'ai_cost', group: '', show: 'all', status: '' };
 const requestOf = (filters: FinanceFilters) => `${FINANCE_REQUEST_PATH}?${serialiseFinanceUrl(toFinanceQuery(filters))}`;
 const CUSTOM = { kind: 'custom', from: '2026-09-01', to: '2026-09-30' } as const;
 
 describe('the spec (U-5, U-9, SA-W7, SA-W11)', () => {
   it('is a module-level constant (the hook relies on its identity), keys in write order', () => {
     expect(again.FINANCE_FILTER_SPEC).toBe(FINANCE_FILTER_SPEC);
-    expect(Object.keys(FINANCE_FILTER_SPEC)).toEqual(['window', 'account', 'tab', 'sort', 'group', 'show']);
+    // Money MK-4 (ruled): the Plans & subscriptions status filter, last.
+    expect(Object.keys(FINANCE_FILTER_SPEC)).toEqual(['window', 'account', 'tab', 'sort', 'group', 'show', 'status']);
     expect(FINANCE_FILTER_SPEC.window.keys).toEqual(['range', 'from', 'to']);
     expect(FINANCE_FILTER_SPEC.window.aliases).toEqual({ preset: 'range' });
     expect(FINANCE_FILTER_SPEC.account.keys).toEqual(['account']);
@@ -207,6 +209,8 @@ describe('the request bridge', () => {
       sort: 'margin',
       group: 'trial',
       show: 'active',
+      // MK-4: the Accounts tab's patch never touches the subscriptions status filter.
+      status: undefined,
     });
     expect(fromFinanceQuery({ ...DEFAULT_FINANCE_QUERY, preset: 'custom', from: '2026-09-01', to: '2026-09-30' }).window).toEqual(CUSTOM);
     expect(fromFinanceQuery({ ...DEFAULT_FINANCE_QUERY, preset: 'custom' }).window).toEqual(FINANCE_DEFAULT_WINDOW);
@@ -215,7 +219,8 @@ describe('the request bridge', () => {
 
 describe('SA-W4: Clear', () => {
   it('resets the window, the business, sort, group and show, and keeps the tab', () => {
-    expect(FINANCE_CLEAR_PATCH).toEqual({ window: FINANCE_DEFAULT_WINDOW, account: '', sort: 'ai_cost', group: '', show: 'all' });
+    // Money MK-4 (ruled): Clear also resets the subscriptions status filter; it still keeps the tab.
+    expect(FINANCE_CLEAR_PATCH).toEqual({ window: FINANCE_DEFAULT_WINDOW, account: '', sort: 'ai_cost', group: '', show: 'all', status: '' });
     expect('tab' in FINANCE_CLEAR_PATCH).toBe(false);
   });
 

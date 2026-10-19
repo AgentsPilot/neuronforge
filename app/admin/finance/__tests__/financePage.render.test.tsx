@@ -105,6 +105,11 @@ import {
   TAKINGS_TITLE,
   TILE_LABELS,
 } from '../financeCopy';
+// Money MK-4: a separate import.
+import { REVENUE_RECURRING_HEADING, REVENUE_RECURRING_NONE, REVENUE_RECURRING_TEST_KEY_LABEL, REVENUE_RECURRING_UNKNOWN } from '../financeCopy';
+import type { FinanceMrrSection } from '@/lib/business-os/finance/financeTypes';
+import type { SubscriptionsPayload } from '@/lib/admin/billing/subscriptionsTypes';
+import { MODE_BADGE, TEST_KEY_NOTE } from '../plansCopy';
 // Money MK-1: a separate import, so the lists above stay unedited.
 import {
   BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION,
@@ -1762,7 +1767,8 @@ describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
     const tablist = screen.getByRole('tablist');
-    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual([TAB_OVERVIEW, TAB_ACCOUNTS]);
+    // Money MK-4 (ruled): the third tab, Plans & subscriptions.
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual([TAB_OVERVIEW, TAB_ACCOUNTS, 'Plans & subscriptions']);
     expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
     const panel = screen.getByRole('tabpanel');
     expect(panel).toHaveAttribute('id', 'finance-panel-overview');
@@ -2570,3 +2576,198 @@ describe('Money MK-1: block KPIs as headlines, with their leading icon', () => {
     for (const text of texts) expect(text).not.toMatch(/\b(cost|costs|expenses?|opex|profit)\b/i);
   });
 });
+
+// ── Money MK-4 (KPI restructure review §3.2, SA-2, C-4): MRR and the Plans & subscriptions tab ──
+describe('Money MK-4: Recurring now and the Plans & subscriptions tab', () => {
+  const SUBS_ROUTE = '/api/admin/business-os/billing/subscriptions';
+  const MRR: FinanceMrrSection = {
+    status: 'ok',
+    lines: [{ currency: 'USD', totalHundredths: 14700, cancellingHundredths: 4900, pastDueHundredths: 4900, subscriptions: 3, overflow: false }],
+    unpriced: 0,
+    discountUnknown: 1,
+    pastDueCounted: true,
+  };
+  const SUBS: SubscriptionsPayload = {
+    generatedAt: '2026-10-19T09:00:00.000Z',
+    mode: 'test',
+    status: null,
+    totals: {
+      mrr: MRR.lines,
+      mrrUnpriced: 0,
+      mrrDiscountUnknown: 1,
+      mrrPastDueCounted: true,
+      paidByPlan: [{ id: 'tier_a', name: 'Plan A', accounts: 3 }],
+      byStatus: { ended: 0, paused: 0, grace: 0, failed: 1, cancelling: 1, active: 1, other: 0, no_stripe: 0 },
+      accounts: 3,
+    },
+    rows: [
+      {
+        accountId: A,
+        businessName: 'Acme',
+        status: 'active',
+        statuses: ['active'],
+        stripeStatus: 'active',
+        planBought: { id: 'tier_a', name: 'Plan A' },
+        planOnRecord: { id: 'tier_a', name: 'Plan A' },
+        paidThrough: '2026-11-01T00:00:00.000Z',
+        currentPeriodEnd: '2026-11-01T00:00:00.000Z',
+        cancelAtPeriodEnd: false,
+        endedAt: null,
+        lastPaidAt: '2026-10-01T00:00:00.000Z',
+        lastPaymentFailedAt: null,
+        failedAttempts: 0,
+        pendingPlan: null,
+        discounted: false,
+      },
+    ],
+    matching: 1,
+  };
+
+  /** The finance route for every finance URL, the subscriptions route for its own. */
+  function serveBoth(finance: unknown, subs: unknown = { success: true, data: SUBS }): jest.Mock {
+    const fetchMock = jest.fn(async (url: string) => {
+      const body = String(url).startsWith(SUBS_ROUTE) ? subs : finance;
+      return { ok: true, status: 200, json: async () => body };
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return fetchMock;
+  }
+  const urls = (fetchMock: jest.Mock) => fetchMock.mock.calls.map((call) => String(call[0]));
+  /** The address bar the shared filter hook writes (history.replaceState). */
+  const address = () => `${window.location.pathname}${window.location.search}`;
+
+  it('T-3: the Overview makes ONE request on load, to the finance route only', async () => {
+    const fetchMock = serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    expect(urls(fetchMock)).toHaveLength(1);
+    expect(urls(fetchMock)[0]).toMatch(/^\/api\/admin\/business-os\/finance\?/);
+    expect(urls(fetchMock).some((u) => u.startsWith(SUBS_ROUTE))).toBe(false);
+  });
+
+  it('T-3 / T-4: opening Plans & subscriptions sends exactly one more request, to the subscriptions route; the finance request is the Overview literal', async () => {
+    const fetchMock = serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    const financeRequest = urls(fetchMock)[0];
+    expect(financeRequest).toBe('/api/admin/business-os/finance?preset=this_month');
+    fireEvent.click(screen.getByTestId('finance-tab-plans'));
+    await screen.findByTestId('plans-subscriptions-count');
+    const after = urls(fetchMock);
+    expect(after.filter((u) => u.startsWith(SUBS_ROUTE))).toEqual([SUBS_ROUTE]);
+    // The finance request is never sent with tab=plans (AC-173 Part C unchanged).
+    expect(after.filter((u) => !u.startsWith(SUBS_ROUTE)).every((u) => u === financeRequest)).toBe(true);
+    expect(address()).toBe('/admin/finance?tab=plans');
+  });
+
+  it('a deep link to tab=plans: Plan mix on top, then the subscriptions; the status filter is sent on the first read', async () => {
+    mockSearch = 'tab=plans&status=failed';
+    window.history.replaceState(null, '', '/admin/finance?tab=plans&status=failed');
+    const fetchMock = serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    render(<FinanceView />);
+    const panel = await screen.findByTestId('finance-panel-plans');
+    await within(panel).findByTestId('plans-subscriptions-count');
+    const accounts = within(panel).getByTestId('section-accounts');
+    const subs = within(panel).getByTestId('plans-subscriptions');
+    expect(accounts.compareDocumentPosition(subs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(urls(fetchMock)).toContain(`${SUBS_ROUTE}?status=failed`);
+    expect(screen.getByRole('tab', { name: 'Plans & subscriptions' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  /** The page's text with the two allowed places (C-4) removed: the MRR line's chip and the subscriptions block. */
+  const textOutsideAllowed = (container: HTMLElement) => {
+    const copy = container.cloneNode(true) as HTMLElement;
+    copy.querySelector('[data-testid="revenue-recurring-key"]')?.remove();
+    copy.querySelector('[data-testid="plans-subscriptions"]')?.remove();
+    return copy.textContent ?? '';
+  };
+
+  it('T-5 (C-4, SA-CR-MK4): "Stripe test mode" is shown on the MRR line and the Plans & subscriptions block only', async () => {
+    serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    const view = render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    expect(screen.getByTestId('revenue-recurring-key')).toHaveTextContent(REVENUE_RECURRING_TEST_KEY_LABEL);
+    expect(textOutsideAllowed(view.container)).not.toMatch(/test.?mode|live.?mode/i);
+    fireEvent.click(screen.getByTestId('finance-tab-plans'));
+    const subs = await screen.findByTestId('plans-subscriptions');
+    await within(subs).findByTestId('plans-subscriptions-mode');
+    expect(within(subs).getByTestId('plans-subscriptions-mode')).toHaveTextContent(MODE_BADGE.test);
+    expect(within(subs).getByTestId('plans-subscriptions-test-key-note')).toHaveTextContent(TEST_KEY_NOTE);
+    // Outside the two allowed places, still no mode words anywhere (strip, Plan mix, header).
+    expect(textOutsideAllowed(view.container)).not.toMatch(/test.?mode|live.?mode/i);
+  });
+
+  it('CR-2: the MRR line is labelled in test only; a live key or an unknown MRR has no label; revenue received never (BD-20)', async () => {
+    serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    const first = render(<FinanceView />);
+    const revenue = await screen.findByTestId('section-revenue');
+    const chip = within(within(revenue).getByTestId('revenue-recurring')).getByTestId('revenue-recurring-key');
+    expect(chip).toHaveTextContent('Stripe test mode');
+    expect(chip).toHaveAttribute('data-tone', 'neutral');
+    for (const part of ['revenue-plans-part', 'revenue-boosts-part']) {
+      expect(within(revenue).getByTestId(part)).not.toHaveTextContent(/test.?mode|live.?mode/i);
+    }
+    first.unmount();
+    serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'live' }) });
+    const second = render(<FinanceView />);
+    await screen.findByTestId('revenue-recurring');
+    expect(screen.queryByTestId('revenue-recurring-key')).toBeNull();
+    expect(second.container).not.toHaveTextContent(/test.?mode|live.?mode/i);
+    second.unmount();
+    serveBoth({ success: true, data: payload({ mrr: { ...MRR, status: 'unknown', lines: [] }, stripeMode: 'test' }) });
+    render(<FinanceView />);
+    await screen.findByTestId('revenue-recurring-unknown');
+    expect(screen.queryByTestId('revenue-recurring-key')).toBeNull();
+  });
+
+  it('T-6: Revenue shows "Recurring now (MRR)" per currency, past due and cancelling apart; mode words only on the MRR chip', async () => {
+    serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    render(<FinanceView />);
+    const revenue = await screen.findByTestId('section-revenue');
+    const part = within(revenue).getByTestId('revenue-recurring');
+    expect(within(part).getByRole('heading', { name: REVENUE_RECURRING_HEADING })).toBeInTheDocument();
+    const line = within(part).getByTestId('revenue-recurring-USD');
+    expect(line).toHaveTextContent('USD 147.00');
+    expect(line).toHaveTextContent('3 subscriptions');
+    expect(line).toHaveTextContent('of which past due (still counted) USD 49.00');
+    expect(line).toHaveTextContent('of which cancelling USD 49.00');
+    expect(part).toHaveTextContent('1 paying with a founder discount');
+    expect(textOutsideAllowed(revenue)).not.toMatch(/test.?mode|live.?mode/i);
+  });
+
+  it('T-6: an unknown MRR says Unknown, never 0; no paying subscription says None; no mrr key renders the panel as before', async () => {
+    serveBoth({ success: true, data: payload({ mrr: { ...MRR, status: 'unknown', lines: [] }, stripeMode: null }) });
+    const first = render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-recurring-unknown')).toHaveTextContent(REVENUE_RECURRING_UNKNOWN);
+    first.unmount();
+    serveBoth({ success: true, data: payload({ mrr: { ...MRR, lines: [], discountUnknown: 0 }, stripeMode: 'test' }) });
+    const second = render(<FinanceView />);
+    expect(await screen.findByTestId('revenue-recurring-none')).toHaveTextContent(REVENUE_RECURRING_NONE);
+    second.unmount();
+    serveBoth({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    expect(screen.queryByTestId('revenue-recurring')).toBeNull();
+  });
+
+  it('a 409 from the subscriptions route shows its sentence in the block; the rest of the page stays', async () => {
+    serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: null }) }, { success: false, error: 'The Stripe key could not be read.' });
+    render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    fireEvent.click(screen.getByTestId('finance-tab-plans'));
+    expect(await screen.findByTestId('plans-subscriptions-error')).toBeInTheDocument();
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+  });
+
+  it('leaving the tab drops the status filter from the address (it belongs to the tab)', async () => {
+    mockSearch = 'tab=plans&status=failed';
+    window.history.replaceState(null, '', '/admin/finance?tab=plans&status=failed');
+    serveBoth({ success: true, data: payload({ mrr: MRR, stripeMode: 'test' }) });
+    render(<FinanceView />);
+    await screen.findByTestId('finance-panel-plans');
+    fireEvent.click(screen.getByTestId('finance-tab-overview'));
+    expect(address()).toBe('/admin/finance');
+  });
+});
+
