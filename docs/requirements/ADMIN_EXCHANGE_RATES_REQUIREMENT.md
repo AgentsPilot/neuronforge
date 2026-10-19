@@ -38,7 +38,7 @@
 
 | # | Slice | Status | PR | Notes |
 |---|---|---|---|---|
-| 1a | Safe manual page: server route + repository + page rewired + logging | 🟡 Built, PR open (SA approved, QA PASS after B-1, user click-through passed 2026-10-19) | — | Full cycle (new route, data write, security). Works against today's database policies, so it ships first |
+| 1a | Safe manual page: server route + repository + page rewired + logging | 🟡 Built, PR open (SA approved, QA PASS after B-1, user click-through passed 2026-10-19) | #477 | Full cycle (new route, data write, security). Works against today's database policies, so it ships first |
 | 1b | Database record + lockdown migration (both tables into the repo, `profiles.role` replaced, browser writes revoked) | ⬜ Not started | — | Full cycle. **User applies the prod migration by hand** — the session stops for that. Applied only after 1a is deployed, so the page never breaks. Supersedes finance follow-up FF-2 (BD-55) |
 | 2 | Exchange rates as a tab under the Finance admin page (no revenue link) | ⬜ Not started | — | Full cycle (introduces tabs on `/admin/finance`, a new page shape there) |
 | 3 | Month-end rate record, only if §5.4 shows history is not enough | Parked | — | Only if needed |

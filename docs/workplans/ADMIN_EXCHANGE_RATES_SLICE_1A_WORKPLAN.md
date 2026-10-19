@@ -714,7 +714,9 @@ QA did not run this. TL records the steps and results here.
 
 ## 12. Commit Info
 
-_RM populates this section._
+- Branch: `feature/admin-exchange-rates-1a`
+- Commit: `22d61fec` (feat), merged `origin/main` `c60e2f93` (MK-4 #476) cleanly, guards re-run 43/1,228 green
+- PR: [#477](https://github.com/AgentsPilot/neuronforge/pull/477), merge commit (no squash), auto-merge on; CI is the only gate (user approved 2026-10-19, no migration)
 
 ---
 
