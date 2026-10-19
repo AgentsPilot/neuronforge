@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-10-18
-**Status:** **APPROVED by the user, 2026-10-19.** Page 1 (Finance) and Page 2 (AI cost) are both approved, and Q-1 to Q-12 are answered at their defaults (§10). **Q-13 and Q-14 (terminology, §14) are answered: keep the current names** (user, 2026-10-19). The document is final for the **SA requirement review**. SA has not reviewed it yet. No code exists, and nothing is committed.
+**Status:** **APPROVED by the user, 2026-10-19.** Page 1 (Finance) and Page 2 (AI cost) are both approved, and Q-1 to Q-12 are answered at their defaults (§10). **Q-13 and Q-14 (terminology, §14) are answered: keep the current names** (user, 2026-10-19). **SA approved with conditions, conditions applied; ready for MK-0 workplan** (SA-RR-MK, 2026-10-19; MK-C1 to MK-C4 applied by BA, decisions recorded in FIN as BD-38 to BD-54). No code exists.
 **Related:** [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) (cited as **FIN**; decisions BD-n, KPIs K-1 to K-7), [ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md](/docs/requirements/ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md) (cited as **CR**), [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) (cited as **PAY**; P-8a, AM-2, AM-3, PF-15), [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) (cited as **LAY**).
 **Mockups (reference only, sample data, no real figure):** Page 1 [mockups/ADMIN_FINANCE_PAGE1_MOCKUP.html](/docs/requirements/mockups/ADMIN_FINANCE_PAGE1_MOCKUP.html); Page 2 [mockups/ADMIN_AI_COST_PAGE2_MOCKUP.html](/docs/requirements/mockups/ADMIN_AI_COST_PAGE2_MOCKUP.html).
 
@@ -87,7 +87,7 @@ Both pages call their figure "Charged AI cost" and both read the credit ledger, 
 - The billing-period check table stays on whole periods, because that is how a period is checked. It is labelled "Whole billing periods: can include charges from before the window", and it no longer feeds the tile.
 - Deleted accounts get their own line on the AI cost page too, so both totals cover the same accounts.
 
-The rows needed for the window total are already read for the period check, so no new database read is needed (SA to confirm, §11 SA-1).
+**How the tile is computed (SA-1 ruling, MK-C1).** The AI cost tile is **the same computation as Finance's F-K3**: the AI cost route calls the existing ledger read (R-a, `listRowsOfAllAccountsCreatedInRange` / `…ForAccount…`) and Finance's existing charged-cost builder, for the page's window. It is not a recount over the credit report's rows, because the credit report reads rows only for accounts with a totals row and so never reads deleted accounts' rows. Deleted accounts are included (FIN SA-Q6), so "same window, same number" holds by construction. No new repository method; at the ledger ceiling the tile shows "at least", as Finance does.
 
 ---
 
@@ -204,11 +204,11 @@ The small "Converted this month" figure sits inside the F-K5 tile, under the per
 | KPI | Definition in plain words | Leading / lagging | Currency | Data source today | New read? |
 |---|---|---|---|---|---|
 | **F-K1 Revenue received** | Money owners paid us in the window, for plans and credit boosts, after refunds and lost disputes. Test and live payments count together (BD-14) | Lagging | `$`; other currencies as a note (USD-3). None are possible today | Today's K-5 / Our revenue: plan `invoice_paid` events (R-m, M-2) and boost purchases with reversal events (R-k, 4b.2) | No |
-| **F-K2 MRR now** | The monthly price of every paying subscription today. Past due is counted but shown apart; plans with no list price, or a founder discount with no amount, are not counted and say so | Leading | `$` (prices are USD) | The Subscriptions page's totals (P-8a.1 reader, `planMrr.ts`, current Stripe mode only, PF-15) | No new database read; the Finance route or page must **call** the existing P-8a reader (SA-2) |
+| **F-K2 MRR now** | The monthly price of every paying subscription today. Past due is counted but shown apart; plans with no list price, or a founder discount with no amount, are not counted and say so | Leading | `$` (prices are USD) | The Subscriptions page's totals (P-8a.1 reader, `planMrr.ts`, current Stripe mode only, PF-15) | No new database read or repository method. **Home (SA-2): the finance payload**, via a `lib/admin/billing` wiring function (current-mode rows plus `computeMrr`); one ruled AC-145 update in MK-4 |
 | **F-K3 Charged AI cost** | What Business OS AI actions cost us that we charged credits for, this month, against the same days of last month | Lagging (trend gives early warning) | `$` (USD by definition, CUR-5) | Today's K-1 (R-a, credit ledger) | No |
 | **F-K4 AI margin** | Revenue after tax, net of refunds and disputes, minus charged AI cost, in the window (BD-22). "After Stripe fees (estimate)" shown beside it. It deducts AI cost only (§14) | Lagging | `$`; a business paying in another currency shows "n/a, different currency" as today | Today's platform line on the Accounts tab (M-3, 6b) | No (moves from the tab body to a tile) |
 | **F-K5 Paying accounts %** | See §5.1 | Lagging | Not money | §5.1 | No |
-| **F-K5b Converted this month** | See §5.1 | Leading | Not money | §5.1 | Yes, a small one (§5.1) |
+| **F-K5b Converted this month** | See §5.1 | Leading | Not money | §5.1 | Yes, a small one (§5.1). **Home (SA-10): a new method on `BusinessOsBillingAdminReadRepository`**, wired through `lib/admin/billing` into the finance payload |
 | **Accounts over allowance** (block KPI) | Accounts whose credit use this period is above their allowance; K-2's "far over" (150%) is the amber chip | Leading | Not money | Today's Credits section and K-2 | No |
 | **Businesses taking client payments** (block KPI) | Businesses with at least one client payment recorded in the window. Their clients' money, not ours | Leading | Not money (a count). The amounts under it follow USD-4 | Today's Takings "Businesses with takings" figure | No |
 | **A-K1 Charged AI cost** | The same as F-K3, for the window picked on this page | Lagging | `$` | The credit report's rows, filtered to charges created in the window | **Changed computation** over rows already read (SA-1) |
@@ -255,7 +255,7 @@ The small "Converted this month" figure sits inside the F-K5 tile, under the per
 | G-3 | **Once only.** A business that stopped paying and comes back is never stamped again | A returning customer is not a "conversion" | Kept as is: Converted this month means **first** payment. Returning payers can be a later "Reactivated this month" figure, if the user wants one (not proposed now) |
 | G-4 | **Before plan billing existed.** No plan payment exists before P-3b | None in practice: the first `invoice_paid` is 2026-10-12 (FIN §11D.1) | None |
 
-**New read:** a small one. For the accounts paying now, the earliest `invoice_paid` above $0 in the current mode. The billing events table is small (FIN §11D.1 found 9 rows), and the read is account-scoped and bounded. It goes in `BusinessOsFinanceReadRepository` with a ceiling, like R-m (§11 SA-10).
+**New read:** a small one. For the accounts paying now, the earliest `invoice_paid` above $0 in the current mode. The billing events table is small (FIN §11D.1 found 9 rows), and the read is account-scoped and bounded. **Home (SA-10 ruling, MK-C2):** the read is mode-aware, so it **cannot** go in `BusinessOsFinanceReadRepository` (that repository may not name `livemode`, BD-14). It is a new method on **`BusinessOsBillingAdminReadRepository`**: the earliest `invoice_paid` with `amount_minor > 0` per account in one mode, for a list of account ids, with the `.in()` list chunked at ≤ 100 ids, each chunk paged at ≤ 1,000, and reaching the ceiling an error. It is wired through `lib/admin/billing` (the R4 pattern) and lands in the **finance payload** (one ruled AC-145 update in MK-5b).
 
 ---
 
@@ -406,13 +406,13 @@ Rough estimates. Each slice is small, reuses existing reads and components, and 
 
 | Slice | Title | What | Path | Rough effort |
 |---|---|---|---|---|
-| **MK-0** | Leading or lagging icon | The optional `indicator` prop on the shared `KpiTile` and on block KPIs, with its tooltip and accessible name (§3.3); first used by Finance's existing tiles | Full cycle (shared export, LAY R-7) | about 1 to 1.5 days |
+| **MK-0** | Leading or lagging icon | The optional `indicator` prop on the shared `KpiTile` and on block KPIs, with its tooltip and accessible name (§3.3); in-house accessible tooltip, no new package (SA-8). No Finance tile uses it yet: Pin A and Pin B are unchanged, and the first Finance use waits for MK-5 | Full cycle (shared export, LAY R-7) | about 1 to 1.5 days |
 | **MK-1** | Names and block KPIs | Rename Takings to "Client payments (the businesses' money, not ours)" and move it to the bottom; put each block's KPI as its headline (Businesses taking client payments, Accounts over allowance), with its icon | UI short path | about 1 day |
 | **MK-2** | One charged AI cost figure | AI cost tile counts charges created in the window; default This month; whole-periods label on the period table; deleted-accounts line (§2) | Full cycle | about 1.5 to 2 days |
 | **MK-3** | AI cost page | Merge Charge checks and AI calls & usage into AI cost with two tabs, the Charged vs Recorded legend and one strip (A-K1 to A-K5, with icons); the Leak check's block KPI; `$` display; redirects; Health tile and Finance links; sidebar entry | Full cycle (sidebar, redirects, guard pins) | about 2.5 to 3 days |
 | **MK-4** | Plans & subscriptions tab, and MRR | Subscriptions content as a Finance tab with Plan mix on top; MRR line in Revenue; redirect `/admin/subscriptions`; narrowed mode guard (C-4). **Supersedes 5b's MRR part** | Full cycle | about 2.5 to 3 days |
 | **MK-5** | Finance strip re-cut | F-K1 to F-K5 (Paying accounts as a %), each with its icon; K-2, K-3, K-4 into their blocks with the same rules | Full cycle (tile rules) | about 1.5 to 2 days |
-| **MK-5a** | `$` on Finance | The `$` formatter, the US-dollar line only, the "plus n in other currencies" note, the copy guard (§3.4) | Full cycle (money display) | about 1.5 days |
+| **MK-5a** | `$` on Finance | **Folded into MK-5** (same slice, or landed immediately before it in the same PR; SA ruling, MK-C3), so Pin B is re-frozen once. The `$` formatter (`formatUsdSign`, reused if MK-3 built it), the US-dollar line only, the "plus n in other currencies" note, the copy guard (§3.4) | Full cycle (money display), inside MK-5 | about 1.5 days (counted in the total; not a separate PR) |
 | **MK-5b** | Converted this month | The new bounded read, the small figure in F-K5, the Converted this month list (§5.1) | Full cycle (new read) | about 1.5 to 2 days |
 | **MK-6** | Payment problems where they belong | Our boost problems into Revenue; client problems into the Client payments block | UI short path | about 1 day |
 | **MK-7** | History under its KPIs | Split the History block into the Plan mix and Credits trends; recorded AI cost detail moves from Finance to AI cost (C-7) | UI short path | about 1 day |
@@ -427,7 +427,7 @@ Rough estimates. Each slice is small, reuses existing reads and components, and 
 3. MK-2: it ends the two-numbers confusion before anything moves.
 4. MK-3 reduces four pages to three.
 5. MK-4 makes it two, and brings MRR in.
-6. MK-5 re-cuts the Finance strip once MRR exists. MK-5a and MK-5b follow it, in either order. (MK-3 already uses the `$` formatter from MK-5a if MK-5a lands first; otherwise MK-3 builds it and MK-5a reuses it. SA rules which, at the MK-3 workplan.)
+6. MK-5 re-cuts the Finance strip once MRR exists, **with MK-5a folded in** (same slice or same PR, SA ruling MK-C3), so Pin B moves once. MK-5b follows. If MK-3 lands first it builds `formatUsdSign` and MK-5 reuses it. **Pin note (MK-0 / MK-5):** MK-0 adds the optional `indicator` prop only, so Pin A and Pin B are unchanged in MK-0; the first Finance use of the icon waits for MK-5, where Pin B is re-frozen once (the strip re-cut, the `$` values and the indicator together).
 7. MK-6 and MK-7 are tidy-ups.
 8. MK-8 (drawers) comes last, because it may build a shared export.
 9. MK-9 can run any time after MK-5b.
@@ -500,6 +500,88 @@ Rough estimates. Each slice is small, reuses existing reads and components, and 
 
 ---
 
+## SA Requirement Review — 2026-10-19
+
+**Reviewed by SA against `origin/main` `2e1d49b1` (R4 #471 and P-8a merged).**
+**Status: APPROVED WITH CONDITIONS (SA-RR-MK).** The two-page shape, the KPI set and the slice order are sound. Each MK workplan must apply the rulings below. **The four corrections that change the plan are SA-1, SA-2, SA-8 and SA-10.** No business decision is reopened.
+
+### Code facts checked
+
+| Claim | Result on main |
+|---|---|
+| "No new read" for A-K1 from the credit report rows (§2, SA-1) | **Not quite.** `creditReport.ts:274-283` reads charge rows **only for the accounts that have a totals row** (`accountIds = totals.map(user_id)`), and `:323` drops `user_id` NULL. So rows of **deleted accounts are never read** there, and the "deleted accounts line" (§2) cannot come from those rows. See SA-1 |
+| MRR "no new database read" (F-K2) | ✅ It holds: `planMrr.ts` plus `BusinessOsBillingAdminReadRepository.listBillingRowsForModeAllAccounts`, with the current mode resolved in `lib/admin/billing` (R4 pattern). But the strip shows F-K2 on page load, which decides *how* it is read (SA-2) |
+| Converted this month: billing events have `livemode`, `kind`, `amount_minor`, `paid_at` | ✅ (P-8a §1.1). **But the Finance read repository may not name `livemode` at all** (`finance.source.guard.test.ts:441-444`, BD-14), so the read cannot live there (SA-10) |
+| `useDrawerResource` (SA-5) | ✅ **Already exists** on main (`app/admin/components/layout/useDrawerResource.ts`, LAY C-9). No new shared export |
+| Radix tooltip in `components/ui` (SA-8) | **Does not exist.** `package.json` has no `@radix-ui/react-tooltip` and `components/ui/` has no tooltip (SA-8) |
+| Vocabulary guard | It scans an explicit file list (`aiCostVocabulary.source.guard.test.ts:39-55`). New AI cost page files must be added to it (MK-3) |
+| Redirects | `next.config.js` `redirects()` exists (the M-5 pattern) |
+
+### Answers to SA-1 to SA-11
+
+| # | Ruling |
+|---|---|
+| **SA-1** | **Changed.** A-K1 must be **the same computation as Finance's F-K3**, not a recount over the credit report's rows. The AI cost route calls the existing ledger read (R-a, `listRowsOfAllAccountsCreatedInRange` / `…ForAccount…`) and Finance's existing charged-cost builder, for the page's window. That is no new repository method, and deleted accounts are included (FIN SA-Q6), so "same window, same number" holds **by construction**. At the ledger ceiling it shows "at least", as Finance does. The period table keeps the credit report and its whole-periods label |
+| **SA-2** | **Changed.** F-K2 sits in the strip, which renders on load. Fetching the subscriptions route from the tab would be a second request on load and would break AC-173's one-fetch pin. **MRR goes in the finance payload**, via a `lib/admin/billing` wiring function (the current-mode rows plus `computeMrr`; no new repository method). That is **one ruled AC-145 update in MK-4**. The Subscriptions **list** on the Plans & subscriptions tab may call the existing subscriptions route **only when that tab is opened**, pinned in its own test (the 8.3 history precedent) |
+| **SA-3** | **Accepted.** Reuse M-4's injected usage reads through the AI cost route; no new repository method |
+| **SA-4** | **Accepted, narrowly (C-4).** An explicit allow-list of the Plans & subscriptions tab's files and the one MRR-tile copy constant may carry mode wording, with a planted control. `lib/business-os/finance/**` still names no mode and no `livemode`. The mode **decision** stays in `lib/admin/billing`, and the payload carries only a value such as `stripeMode: 'test' \| 'live'`. Revenue received carries no label (BD-20) |
+| **SA-5** | **Reuse `useDrawerResource`** (it exists). There is no new shared export. MK-8 is still full cycle, because the plan and period drawers need reads or routes |
+| **SA-6** | **Accepted.** `/admin/ai-cost`, tabs `checks` and `calls`. **Temporary** redirects in `next.config.js`: `/admin/finance/charges` → `/admin/ai-cost?tab=checks`, `/admin/analytics` → `/admin/ai-cost?tab=calls`, `/admin/subscriptions` → `/admin/finance?tab=plans`. The query (`range`, `account`, `scope`) must survive, with a test per redirect. The Health tile and every in-app link point at the new paths (no internal link relies on a redirect) |
+| **SA-7** | **Yes.** MK-2 changes credit-deduction 4a behaviour. Its pins, Pin C's request literals (the default window moves from 30 days to This month) and the 4a tests are **ruled updates listed in the MK-2 workplan**, each with the before/after value |
+| **SA-8** | **Changed: no new dependency.** Build a small accessible tooltip in `app/admin/components/layout/`: the icon is a focusable element with an accessible name; the tooltip has `role="tooltip"`, is linked by `aria-describedby`, shows on hover and focus, and closes on Escape. It is CSS-positioned and needs no package. Adding `@radix-ui/react-tooltip` would be a new dependency for one hover; take it only if the user later wants tooltips app-wide. MK-0 stays full cycle (shared export, LAY R-7), and the contrast and C-14 guards cover it |
+| **SA-9** | **Accepted.** `formatUsdSign(line)` sits beside the existing formatter and accepts **one USD line**; it refuses (returns null) for any other code. `groupByCurrency` is untouched. The "USD " copy guard exempts the drawer's own-currency client payments (USD-4) and SQL check files |
+| **SA-10** | **Changed home.** The first-payment read is mode-aware, so it **cannot** go in `BusinessOsFinanceReadRepository` (repo-wide no-`livemode` rule). It is a new method on **`BusinessOsBillingAdminReadRepository`**: the earliest `invoice_paid` with `amount_minor > 0` per account in one mode, for a list of account ids. The `.in()` list is chunked at ≤ 100 ids, each chunk is paged at ≤ 1,000, and reaching the ceiling is an error. It is wired through `lib/admin/billing` (the R4 pattern) and lands in the finance payload (an AC-145 ruled update in MK-5b). The billing-table reader list gains nothing (same repository) |
+| **SA-11** | **Accepted.** AI-specific names only (`aiCost`, `aiMargin`, `AI_COST_*`). `costs`, `grossMargin`, `operatingMargin` and `OtherCosts*` stay unused. Each workplan's source guard adds a check that those names do not appear in the Money files |
+
+### Rulings on guards, pins and display
+
+**Guards.**
+- **routerPlacement:** any new code that reads billing data goes in `lib/admin/billing/`, never in `lib/business-os/billing/`, and the allow-list is never widened (R4 lesson).
+- **Vocabulary guard:** MK-3 adds the new AI cost page files to its scan list. If the bare page or nav title "AI cost" trips it, that is one ruled ALLOWED entry for the title only. Figures keep "Charged AI cost" and "Recorded AI cost".
+- **Layout guards:** new pages and tabs register in the C-14 registry, the nav test (Money: 4 → 2 entries) and contrast `PAGES`, in the slice that adds them.
+
+**`KpiTile` `indicator` (MK-0).** It is an optional prop, so existing callers are byte-unchanged and **Pin A is unchanged in MK-0**. **The first Finance use waits for MK-5**, so Pin B is re-frozen once rather than twice.
+
+**Pins each slice moves.** Every move is a ruled re-freeze recorded in that slice's workplan, with old and new hashes and the reason. Never a silent edit.
+
+| Slice | Pins moved | Ruling |
+|---|---|---|
+| MK-0 | None | Shared prop and its own tests only |
+| MK-1, MK-6, MK-7 | None expected (markup and copy only; the payload is unchanged) | UI short path. If Pin B or AC-145 moves, stop and raise it to SA |
+| MK-2 | **Pin C** (Charge checks request literals, default window) | One ruled re-freeze |
+| MK-3 | **Pin C** again (the page moves under `/admin/ai-cost`), and **Pin D only if** a Health tile href lives in the hashed rules or vocabulary shape | One ruled re-freeze each, in MK-3. Prefer keeping hrefs outside Pin D's shape |
+| MK-4 | **AC-173 part B** (route schema: `tab` gains `plans`), **AC-145** (payload gains `mrr` and `stripeMode`) | One ruled re-freeze each. The new tab request literal is pinned in its own test, never added to the AC-173 table |
+| MK-5 with MK-5a | **Pin B** (the strip re-cut, the `$` values and the indicator), **Pin A** (the new Finance KpiTile usage), **AC-145** (paying % fields) | **Fold MK-5a into MK-5**, or land it immediately before in one PR, so Pin B is re-frozen once. MK-3 builds `formatUsdSign` if it lands first, and MK-5 reuses it |
+| MK-5b | **AC-145** (the converted fields) | One ruled update |
+| MK-8, MK-9 | AC-145 only if a payload key is added | Ruled, if so |
+
+**`$`-only vs "never sum across currencies".** They are **compatible**. The display picks the USD line out of the per-currency grouping; it never adds lines and never converts. Conditions:
+- the formatter accepts exactly one USD line (SA-9);
+- the "plus n in other currencies" count is a count, never an amount;
+- exactness (K-5's "exact per currency") is still decided per line;
+- a tile whose USD line is unknown shows Unknown, never the other lines.
+
+**Redirects:** see SA-6. They are temporary (307), keep the query, and are tested. The old API routes stay as they are.
+
+**Estimates.** About 21 to 24 days still holds. SA-1 adds about 0.25 day to MK-2 (wiring the existing ledger read into the AI cost route). Folding MK-5a into MK-5 removes one Pin B re-freeze. SA-8 builds the tooltip in house instead of adding a package, at the same cost. MK-3 (about 2.5 to 3 days) is the tightest: its workplan must list Pin C / Pin D, the redirects, the vocabulary scan list and the nav tests before code starts.
+
+**5b (§11N on `feature/bos-finance-health-5b`).** Its **MRR part is superseded by MK-4**: MRR comes from `planMrr.ts` through the finance payload (SA-2), and its mode-wording ruling folds into C-4 / SA-4. **The rest becomes MK-9** (paying exactness, trial-to-paid), after MK-5b. §11N is not built as written. BA marks it superseded in FIN §0.1 when it splices this review.
+
+### Conditions for BA (before the MK-0 workplan)
+
+- **MK-C1:** in §2's "Approved fix", replace "rows already read for the period check" with the SA-1 ruling: the same computation as F-K3 over the ledger read, with deleted accounts included.
+- **MK-C2:** in §5, the F-K2 and F-K5b rows and §5.1's "New read" paragraph state the SA-2 and SA-10 homes (finance payload; billing admin read repository).
+- **MK-C3:** in §12, MK-5a is folded into MK-5 (or the same PR), with MK-0 / MK-5 Pin B noted.
+- **MK-C4:** BA records the C-1 to C-8 decisions as BD entries in FIN §0.2, and splices the 5b supersession into FIN §0.1.
+
+**Conditions applied by BA, 2026-10-19:**
+- ✅ **MK-C1** applied in §2 "How the tile is computed".
+- ✅ **MK-C2** applied in §5 (F-K2 and F-K5b rows) and §5.1 "New read".
+- ✅ **MK-C3** applied in §12 (MK-5a row, MK-0 row and order point 6, with the MK-0 / MK-5 Pin B note).
+- ✅ **MK-C4** applied in FIN: C-1 to C-8 are **BD-38 to BD-45**; the Page 1 rules are **BD-46** (icon), **BD-47** (`$`-only), **BD-48** (Paying accounts %), **BD-49** (Converted this month); Q-10 to Q-12 are **BD-50 to BD-52**; Q-13 and Q-14 are **BD-53 and BD-54**. FIN §0.1 marks 5b superseded (MRR by MK-4, the rest as MK-9) and gains a pointer row for MK-0..MK-9.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -509,3 +591,5 @@ Rough estimates. Each slice is small, reuses existing reads and components, and 
 | 2026-10-19 | Page 1 accepted by the user | Page 1 (Finance) accepted with the user's three feedback points applied (icons, `$`, Paying accounts % with Converted this month). Q-10, Q-11 and Q-12 answered: the user accepted each default. Q-1 to Q-9 stay open. Page 2 (AI cost) now under the user's review; mockup added: `docs/requirements/mockups/ADMIN_AI_COST_PAGE2_MOCKUP.html` |
 | 2026-10-19 | **APPROVED by the user**; final for SA review | Page 2 (AI cost) approved with no mockup review; Q-1 to Q-9 accepted at their defaults, so Q-1 to Q-12 are all answered. Page 1 rules (icons, `$`) applied to Page 2 (§4, §5). Block KPI "Businesses with uncharged calls" added to the Leak check (§4.2, §5, §6 item 26). New §13 "Future: other operating costs (not in scope)", with design rules FC-1 to FC-10 and an explicit statement that no expense entry, table or UI is in scope. New §14 terminology evaluation (cost of revenue, OPEX, gross, contribution and operating margin, fixed vs variable): recommends keeping "AI margin" and "AI cost", plus one tooltip sentence; new open questions Q-13 (margin name) and Q-14 (page name), each with a default. SA-11 added. Slice MK-0 (shared leading or lagging icon, built once for both pages) added; MK-3 and MK-5 adjusted; total about 21 to 24 days. Old §13 "Out of scope" is now §15 |
 | 2026-10-19 | Q-13 and Q-14 answered | User: keep the current names ("AI margin", "AI cost"); the tooltip sentence on AI margin is kept (§14). Committed and sent to SA for the requirement review |
+| 2026-10-19 | SA requirement review: **APPROVED WITH CONDITIONS** (SA-RR-MK) | Checked against main `2e1d49b1`. SA-1 changed (A-K1 = the F-K3 computation over the ledger read; the credit report never reads deleted accounts' rows). SA-2 changed (MRR in the finance payload, one AC-145 ruled update; the list fetches only on its tab). SA-8 changed (in-house accessible tooltip, no new dependency). SA-10 changed (the first-payment read goes in the billing admin read repository, not the finance one). SA-3 to SA-7, SA-9 and SA-11 accepted. Pin moves ruled per slice; MK-5a folds into MK-5. `$`-only is compatible with never-sum. Conditions MK-C1 to MK-C4 for BA. Estimate holds |
+| 2026-10-19 | BA: SA conditions MK-C1 to MK-C4 applied | MK-C1: §2 tile computed as F-K3 over the ledger read, deleted accounts included. MK-C2: §5 F-K2 / F-K5b rows and §5.1 name the finance payload and `BusinessOsBillingAdminReadRepository`. MK-C3: §12 folds MK-5a into MK-5, with the MK-0 / MK-5 Pin B note. MK-C4: FIN §0.2 BD-38 to BD-54 and log line; FIN §0.1 5b superseded and MK-0..MK-9 pointer row; FIN Change History row. Status: ready for the MK-0 workplan |
