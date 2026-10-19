@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-4 row; §3.2 (the Plans & subscriptions row and the Revenue "Recurring now" line); §5 F-K2; §3.4; SA-RR-MK SA-2, SA-4, SA-6 and the pins table; FIN C-4, BD-37, BQ-P8a-4; P-8a (`planMrr.ts`, `BusinessOsBillingAdminReadRepository`, `/admin/subscriptions`)
 **Branch:** `feature/admin-money-mk4-plans-subscriptions-mrr` (from main `4583d21e`; MK-0 and MK-1 merged)
 **Date:** 2026-10-19
-**Status:** Code Complete (uncommitted)
+**Status:** Code Approved (SA-CR-MK4), QA passed (QA-MK4-1 and QA-MK4-2 fixed); committed `44667683`, PR [#476](https://github.com/AgentsPilot/neuronforge/pull/476) opened 2026-10-19, auto-merge on
 **Path:** full cycle (payload change, ruled AC-145 re-freeze). It runs in parallel with MK-2, so it does not touch the Charge checks files or `chargedAiCost.ts`.
 
 ## Overview
@@ -396,7 +396,10 @@ MK4-FU-1 is done here: the copy and table moved into `app/admin/finance/` (`plan
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk4-plans-subscriptions-mrr` (from main `4583d21e`)
+- **Commit:** `44667683` feat(finance): Plans & subscriptions tab and MRR on Finance; /admin/subscriptions redirects (MK-4)
+- **PR:** [#476](https://github.com/AgentsPilot/neuronforge/pull/476), auto-merge on (merge commit, via the merge queue)
+- **Moves and deletions:** `app/admin/subscriptions/` deleted; its table moved to `app/admin/finance/components/SubscriptionsTable.tsx` and its copy to `app/admin/finance/plansCopy.ts`
 
 ---
 

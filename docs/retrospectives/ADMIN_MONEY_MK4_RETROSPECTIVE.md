@@ -31,6 +31,6 @@ MK-4 puts MRR and `stripeMode` into the finance payload through `lib/admin/billi
 - **A predicted pin move is a prediction.** Verify every pin that is predicted to move, and record the ones that did not move.
 - **Next:** MK-5 (the strip re-cut plus $).
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk4-plans-subscriptions-mrr — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk4-plans-subscriptions-mrr — commit `44667683`, PR #476 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)
