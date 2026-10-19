@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-1 row, §3.2 (the Credits and Client payments rows), §3.3 LL-1 to LL-5, §5 (the two block KPI rows), §13 FC-1, SA-RR-MK (MK-1: no pin expected); FIN BD-1, BD-46
 **Branch:** `feature/admin-money-mk1-names-block-kpis` (from main `0ca7ea6f`, MK-0 #474 merged)
 **Date:** 2026-10-19
-**Status:** Code Complete (uncommitted)
+**Status:** Code Approved (SA-CR-MK1), QA passed; committed `12b34dcc`, PR [#475](https://github.com/AgentsPilot/neuronforge/pull/475) opened 2026-10-19, auto-merge on
 **Path:** UI short path, about 1 day. The user said to run the MK slices back to back. No payload, route, read or migration change.
 
 ## Overview
@@ -212,7 +212,10 @@ These match Dev's counts.
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk1-names-block-kpis` (from main `0ca7ea6f`)
+- **Commit:** `12b34dcc` feat(finance): Client payments renamed and moved last, block KPI headlines with indicators (MK-1)
+- **PR:** [#475](https://github.com/AgentsPilot/neuronforge/pull/475), auto-merge on (merge commit, via the merge queue)
+- **Files:** `app/admin/finance/components/{BlockKpi,TakingsSection,CreditsSection,FinanceView}.tsx`, `app/admin/finance/financeCopy.ts`, `app/admin/finance/__tests__/financePage.render.test.tsx`, this workplan, the retrospective
 
 ---
 

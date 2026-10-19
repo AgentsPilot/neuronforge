@@ -23,6 +23,6 @@ The Takings block is renamed "Client payments (the businesses' money, not ours)"
 - **Delete copy constants made redundant by a rename in the same slice (LL-4).**
 - **`BlockKpi` stays Finance-local for now.** MK-3 promotes it to a shared component.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk1-names-block-kpis — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk1-names-block-kpis — commit `12b34dcc`, PR #475 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)
