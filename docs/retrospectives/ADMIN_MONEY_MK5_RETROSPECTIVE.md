@@ -34,6 +34,6 @@ The KPI strip is re-cut to five tiles: Revenue received, MRR now, Charged AI cos
 - **Every "% of accounts" figure must state its denominator in the workplan,** including whether platform accounts are excluded (C-1).
 - **Next:** MK-5b, Converted this month.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk5-strip-usd — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk5-strip-usd — commit `0dee536a`, main merged `4d25efdd`, PR #478 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

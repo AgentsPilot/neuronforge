@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-5 and MK-5a rows; §3.1 (strip F-K1 to F-K5), §3.3 (LL-1 to LL-5), §3.4 (USD-1 to USD-6), §5 and §5.1 (definitions, Q-11 denominator), §13 FC-1 to FC-3, §14 (FC-2 sentence); SA-RR-MK SA-9 and the pins table (MK-5: Pin B, Pin A, AC-145, one re-freeze each); FIN BD-11, BD-35, BD-46, BD-47, BD-48
 **Branch:** `feature/admin-money-mk5-strip-usd` (from main `c60e2f93`; MK-0, MK-1 and MK-4 merged)
 **Date:** 2026-10-19
-**Status:** Code Complete (uncommitted)
+**Status:** Code Approved (SA-CR-MK5, C-1 and C-2 done), QA passed; committed `0dee536a`, PR [#478](https://github.com/AgentsPilot/neuronforge/pull/478) opened 2026-10-19, auto-merge on
 **Path:** full cycle (tile rules, payload change, three ruled re-freezes). No migration and no new read.
 
 ## Overview
@@ -368,7 +368,10 @@ The canary in Pin B gave TS2322 at `(521,7)`. The file was restored byte-identic
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk5-strip-usd` (from main `c60e2f93`)
+- **Commit:** `0dee536a` feat(finance): KPI strip re-cut with leading/lagging icons, whole page in $, Paying accounts % (MK-5)
+- **Merge:** origin/main (`b71dc81d`, #477) merged in `4d25efdd`. Pin A conflict (both sides appended cases) resolved by keeping both; every per-case hash unchanged; Pin A file hash `6547dcf7` on the commit, `e7d8da20` after the merge
+- **PR:** [#478](https://github.com/AgentsPilot/neuronforge/pull/478), auto-merge on (merge commit, via the merge queue)
 
 ---
 
