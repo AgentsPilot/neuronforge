@@ -23,10 +23,16 @@
 
 import {
   buildCustomerPlanView,
+  buildPlanComparison,
   comparableAmount,
   groupByCategory,
   isHiddenFromCustomer,
+  SECTION_PRESENTATION,
+  type CustomerPlanComparison,
 } from '@/lib/business-os/entitlements/customerPlanView';
+import { PLAN_COMPARISON_ROWS } from '@/lib/business-os/entitlements/config/planComparison';
+import type { EntitlementConfig } from '@/lib/business-os/entitlements/source';
+import type { CapabilityValue } from '@/lib/business-os/entitlements/types';
 import { planBadgeFor } from '@/lib/business-os/entitlements/planBadge';
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
@@ -982,6 +988,9 @@ describe('what is never named', () => {
     // P-4.2 (T5): every plan shown to customers, each with exactly
     // `PLAN_CHOICE_KEYS` below, so it cannot carry an exclusion either.
     'plans',
+    // UM-0 (UM-D1): the plans side by side; its own key sets are pinned level by
+    // level in `customerPlanView.noExclusions.test.ts` (C-18).
+    'comparison',
     'problem',
   ];
 
@@ -1092,5 +1101,287 @@ describe('plans: every plan shown to customers (plan payments P-4.2, T5, M-5)', 
     for (const unavailable of [true, false]) {
       expect(buildCustomerPlanView({ resolution: null, unavailable, now: NOW, config }).plans).toEqual([]);
     }
+  });
+});
+
+/**
+ * The plan comparison (upgrade modal UM-0, C-19; UM-D2 grouped rows).
+ *
+ * The claim it makes is "these are the plans, side by side" — so the tests are
+ * about which plans are columns, that every viewer sees the same table, that a
+ * ✓ never overstates a plan, and that a highlight is only ever a true "more".
+ */
+describe('comparison: the plans side by side (upgrade modal UM-0, C-19)', () => {
+  const shownTiers = config.tierOrder.filter(
+    (planId) => (config.matrix.presentation as Record<string, { shownToCustomers: boolean }>)[planId]?.shownToCustomers
+  );
+
+  function rowsOf(comparison: CustomerPlanComparison | null) {
+    return (comparison?.sections ?? []).flatMap((section) => section.rows.map((row) => ({ ...row, section: section.section })));
+  }
+
+  function rowIn(comparison: CustomerPlanComparison | null, id: string) {
+    const row = rowsOf(comparison).find((candidate) => candidate.row === id);
+    if (!row) throw new Error(`no comparison row ${id}`);
+    return row;
+  }
+
+  function cellOf(comparison: CustomerPlanComparison | null, id: string, planId: string) {
+    const cell = rowIn(comparison, id).cells.find((candidate) => candidate.planId === planId);
+    if (!cell) throw new Error(`no ${planId} cell in ${id}`);
+    return cell;
+  }
+
+  /** A config with some tiers' values replaced, cloned so nothing leaks between tests. */
+  function withTierValues(base: EntitlementConfig, values: Record<string, Record<string, CapabilityValue>>): EntitlementConfig {
+    const tiers = base.matrix.tiers as unknown as Record<string, Record<string, CapabilityValue>>;
+    const next: Record<string, Record<string, CapabilityValue>> = { ...tiers };
+    for (const [tier, row] of Object.entries(values)) next[tier] = { ...tiers[tier], ...row };
+    return { ...base, matrix: { ...base.matrix, tiers: next } } as unknown as EntitlementConfig;
+  }
+
+  function withShown(base: EntitlementConfig, tier: string): EntitlementConfig {
+    const presentation = base.matrix.presentation as Record<string, Record<string, unknown>>;
+    return {
+      ...base,
+      matrix: { ...base.matrix, presentation: { ...presentation, [tier]: { ...presentation[tier], shownToCustomers: true } } },
+    } as unknown as EntitlementConfig;
+  }
+
+  const [lowTier, highTier] = shownTiers;
+
+  it('columns are exactly the shown plans, in tier order, and match `plans`', () => {
+    expect(shownTiers.length).toBeGreaterThan(1);
+    const view = viewFor('basic');
+    expect(view.comparison!.planIds).toEqual(view.plans.map((choice) => choice.planId));
+    expect(view.comparison!.planIds).toEqual(shownTiers);
+    for (const row of rowsOf(view.comparison)) {
+      expect(row.cells.map((cell) => cell.planId)).toEqual(shownTiers);
+    }
+  });
+
+  it('a tier with shownToCustomers off has no column and no cell', () => {
+    // The fixture's `pro` is hidden: two columns, never three.
+    const fixture = fixtureConfig();
+    const comparison = buildPlanComparison({ config: fixture, locale: 'en', now: NOW });
+    expect(comparison.planIds).toEqual(['basic', 'growth']);
+    for (const row of rowsOf(comparison)) {
+      expect(row.cells.map((cell) => cell.planId)).toEqual(['basic', 'growth']);
+    }
+  });
+
+  it('is the same table for every account: trial, Founding Partner (open and dated), and each tier', () => {
+    // One fixed `now` for every view (SA optimisation note), so no clock edge can
+    // flip a preview.
+    const expected = viewFor('basic').comparison;
+    const dated = buildCustomerPlanView({
+      resolution: resolveEntitlements({
+        config,
+        account: { ...previewAccountFor(config, 'champion', NOW), cohortExpiresAt: '2026-12-01T00:00:00.000Z' },
+        overrides: [],
+        addons: [],
+        now: NOW,
+      }),
+      unavailable: false,
+      now: NOW,
+      config,
+    });
+    expect(expected).not.toBeNull();
+    for (const view of [viewFor('trial'), viewFor('champion'), dated, viewFor('pro')]) {
+      expect(view.comparison).toEqual(expected);
+    }
+  });
+
+  it('shows the plans AS DEFINED: an override on the account does not change its column', () => {
+    // An Essentials account an admin granted chat to. Its own resolution has chat;
+    // the Essentials column must still show ✕ — the table describes the plan.
+    const resolution = resolveEntitlements({
+      config,
+      account: previewAccountFor(config, lowTier, NOW),
+      overrides: [
+        {
+          id: 'override-1',
+          capability: 'chat.access',
+          op: 'set',
+          value: true,
+          expiresAt: null,
+          endedAt: null,
+          createdAt: NOW.toISOString(),
+        },
+      ],
+      addons: [],
+      now: NOW,
+    });
+    // Non-vacuity: the override really did grant it on the account.
+    expect(resolution.values['chat.access'].value).toBe(true);
+
+    const view = buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config });
+    expect(cellOf(view.comparison, 'chat', lowTier).included).toBe(false);
+    expect(view.comparison).toEqual(viewFor('basic').comparison);
+  });
+
+  it('is null on every non-ok path: unavailable, no record, and a basis of none', () => {
+    for (const unavailable of [true, false]) {
+      expect(buildCustomerPlanView({ resolution: null, unavailable, now: NOW, config }).comparison).toBeNull();
+    }
+    const none = resolveEntitlements({ config, account: null, overrides: [], addons: [], now: NOW });
+    expect(none.basis.kind).toBe('none');
+    expect(buildCustomerPlanView({ resolution: none, unavailable: false, now: NOW, config }).comparison).toBeNull();
+  });
+
+  describe('grouped rows (UM-D2)', () => {
+    const labels = { en: 'Planted', he: 'נטוע', es: 'Plantado' };
+
+    it('a row is ✓ only where the plan grants EVERY member', () => {
+      const comparison = buildPlanComparison({
+        config,
+        locale: 'en',
+        now: NOW,
+        rows: [{ id: 'mixed', labels, capabilities: ['crm.core', 'chat.access'] }],
+      });
+      // The lower tier grants the CRM but not chat: the row is ✕ there, not ✓.
+      expect(cellOf(comparison, 'mixed', lowTier).included).toBe(false);
+      expect(cellOf(comparison, 'mixed', highTier).included).toBe(true);
+    });
+
+    it('a not_built member is dropped from the row; a row of only not_built members does not appear', () => {
+      const comparison = buildPlanComparison({
+        config,
+        locale: 'en',
+        now: NOW,
+        rows: [
+          { id: 'with_unbuilt', labels, capabilities: ['crm.core', 'marketing.mass_email'] },
+          { id: 'only_unbuilt', labels, capabilities: ['marketing.posts', 'addon.mobile'] },
+        ],
+      });
+      expect(cellOf(comparison, 'with_unbuilt', lowTier).included).toBe(true);
+      expect(rowsOf(comparison).map((row) => row.row)).not.toContain('only_unbuilt');
+    });
+
+    it('a row no shown plan grants any member of does not appear (no all-cross row)', () => {
+      // The fixture's two shown tiers both withhold multi-currency, a real
+      // (available) capability: the row must be dropped, not shown as all cross.
+      const fixture = fixtureConfig();
+      const comparison = buildPlanComparison({
+        config: fixture,
+        locale: 'en',
+        now: NOW,
+        rows: [
+          { id: 'nobody_has_it', labels, capabilities: ['payments.multi_currency'] },
+          { id: 'everybody_has_it', labels, capabilities: ['crm.core'] },
+        ],
+      });
+      const ids = rowsOf(comparison).map((row) => row.row);
+      expect(ids).toContain('everybody_has_it');
+      expect(ids).not.toContain('nobody_has_it');
+      // Nor does it come back as a fallback row: it is placed, just granted by nobody.
+      expect(ids).not.toContain('payments.multi_currency');
+    });
+
+    it('a visible, granted capability in no row becomes its own row, labelled from the catalog, at the end of its section', () => {
+      const rows = PLAN_COMPARISON_ROWS.filter((row) => row.id !== 'leads');
+      const comparison = buildPlanComparison({ config, locale: 'en', now: NOW, rows });
+      const section = comparison.sections.find((candidate) => candidate.section === 'run_business')!;
+      const last = section.rows[section.rows.length - 1];
+      expect(last.row).toBe('marketing.lead_response');
+      expect(last.label).toBe(catalog['marketing.lead_response'].labels.en);
+      // And the production config places it, so no fallback reaches a customer.
+      expect(rowsOf(viewFor('basic').comparison).map((row) => row.row)).not.toContain('marketing.lead_response');
+    });
+  });
+
+  describe('values and the highlight', () => {
+    it('production: credits highlights the larger plan only; emails (equal) and team (two members) highlight nothing', () => {
+      const comparison = viewFor('basic').comparison;
+      expect(cellOf(comparison, 'credits', highTier).highlight).toBe(true);
+      expect(cellOf(comparison, 'credits', lowTier).highlight).toBe(false);
+      for (const id of ['emails', 'team']) {
+        expect(rowIn(comparison, id).cells.every((cell) => !cell.highlight)).toBe(true);
+      }
+      // Feature rows never highlight.
+      expect(rowIn(comparison, 'chat').cells.every((cell) => !cell.highlight)).toBe(true);
+    });
+
+    it('amount cells carry the bare figure in the reader\'s grouping; feature cells carry none', () => {
+      const amount = (locale: 'en' | 'he' | 'es', planId: string) => {
+        const resolution = resolveEntitlements({ config, account: previewAccountFor(config, 'basic', NOW), overrides: [], addons: [], now: NOW });
+        return cellOf(buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config, locale }).comparison, 'credits', planId).value;
+      };
+      const perMonth = (planId: string) =>
+        (resolveEntitlements({ config, account: previewAccountFor(config, planId, NOW), overrides: [], addons: [], now: NOW })
+          .values['credits.allowance'].value as { perMonth: number }).perMonth;
+
+      for (const planId of shownTiers) {
+        expect(amount('en', planId)).toBe(new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(perMonth(planId)));
+        expect(amount('es', planId)).toBe(new Intl.NumberFormat('es', { maximumFractionDigits: 0 }).format(perMonth(planId)));
+        expect(amount('he', planId)).toBe(new Intl.NumberFormat('he', { maximumFractionDigits: 0 }).format(perMonth(planId)));
+        // A bare figure: no "per month" wording in a cell.
+        expect(amount('en', planId)).toMatch(/^[\d,]+$/);
+      }
+      // Two members: both figures, in config order.
+      expect(cellOf(viewFor('basic').comparison, 'team', lowTier).value).toBe('1 · 1');
+      // Feature rows: ✓ / ✕ only.
+      for (const row of rowsOf(viewFor('basic').comparison).filter((candidate) => candidate.section !== 'included')) {
+        expect(row.cells.every((cell) => cell.value === null)).toBe(true);
+      }
+    });
+
+    it('a one-off total keeps its full wording, and unlike units highlight nothing', () => {
+      const mixed = withTierValues(config, { [lowTier]: { 'credits.allowance': { total: 99999 } } });
+      const comparison = buildPlanComparison({ config: mixed, locale: 'en', now: NOW });
+      expect(cellOf(comparison, 'credits', lowTier).value).toMatch(/in total/);
+      expect(rowIn(comparison, 'credits').cells.every((cell) => !cell.highlight)).toBe(true);
+    });
+
+    it('a ✕ amount cell carries no value and no highlight', () => {
+      const none = withTierValues(config, { [lowTier]: { 'credits.allowance': { perMonth: 0 } } });
+      const cell = cellOf(buildPlanComparison({ config: none, locale: 'en', now: NOW }), 'credits', lowTier);
+      expect(cell).toEqual({ planId: lowTier, included: false, value: null, highlight: false });
+    });
+
+    it('three columns: the strict top is highlighted; a tie at the top highlights nothing', () => {
+      const three = withShown(fixtureConfig(), 'pro');
+      const top = buildPlanComparison({ config: three, locale: 'en', now: NOW });
+      expect(top.planIds).toEqual(['basic', 'growth', 'pro']);
+      expect(rowIn(top, 'credits').cells.map((cell) => cell.highlight)).toEqual([false, false, true]);
+
+      const tie = withTierValues(three, { growth: { 'credits.allowance': { perMonth: 2000 } } });
+      expect(rowIn(buildPlanComparison({ config: tie, locale: 'en', now: NOW }), 'credits').cells.every((cell) => !cell.highlight)).toBe(
+        true
+      );
+    });
+  });
+
+  describe('labels and sections', () => {
+    it('row labels are the config labels in each of the three languages', () => {
+      for (const locale of ['en', 'he', 'es'] as const) {
+        const resolution = resolveEntitlements({ config, account: previewAccountFor(config, 'basic', NOW), overrides: [], addons: [], now: NOW });
+        const comparison = buildCustomerPlanView({ resolution, unavailable: false, now: NOW, config, locale }).comparison;
+        const rendered = rowsOf(comparison);
+        expect(rendered.length).toBe(PLAN_COMPARISON_ROWS.length);
+        for (const row of rendered) {
+          expect(row.label).toBe(PLAN_COMPARISON_ROWS.find((candidate) => candidate.id === row.row)!.labels[locale]);
+        }
+      }
+    });
+
+    it('production: three sections in order, keyed by plan.comparison.section.*', () => {
+      const sections = viewFor('basic').comparison!.sections;
+      expect(sections.map((section) => section.section)).toEqual(SECTION_PRESENTATION.map((entry) => entry.section));
+      for (const section of sections) expect(section.labelKey).toMatch(/^plan\.comparison\.section\./);
+    });
+
+    it('amount rows sit only under "included", chat rows only under "ai_assistant" (derived from shape and category)', () => {
+      const rendered = rowsOf(viewFor('basic').comparison);
+      const membersOf = (id: string) => PLAN_COMPARISON_ROWS.find((row) => row.id === id)!.capabilities;
+      for (const row of rendered) {
+        const members = membersOf(row.row);
+        const isAmount = members.every((capability) => ['metered', 'fair_use', 'quantity'].includes(catalog[capability].shape.kind));
+        if (isAmount) expect(row.section).toBe('included');
+        else expect(row.section).not.toBe('included');
+        if (members.every((capability) => catalog[capability].category === 'ai_chat')) expect(row.section).toBe('ai_assistant');
+      }
+      expect(rendered.filter((row) => row.section === 'included').map((row) => row.row)).toEqual(['credits', 'emails', 'team']);
+    });
   });
 });

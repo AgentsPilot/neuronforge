@@ -131,3 +131,31 @@ export function describeCapabilityValue(
   // purpose, because it should be noticed and given a case above.
   return JSON.stringify(value);
 }
+
+/**
+ * The bare number of a value, for a comparison cell (upgrade modal UM-0, SA Q-3).
+ *
+ * `{ perMonth: 19750 }` → `19,750` (`19.750` in Spanish). The plan comparison's
+ * amount rows sit under one heading and beside a row label that already say what
+ * the numbers are, so a cell repeats only the figure. Same cached formatter as
+ * `describeCapabilityValue`, so the two can never group a number differently.
+ *
+ * Only for a monthly rate (`perMonth`, `ceilingPerMonth`) and an included quantity
+ * (`included`). Anything else — above all a one-off `{ total }` — is `null`, and
+ * the caller falls back to the full `describeCapabilityValue` text: "2,000 in
+ * total" printed as a bare "2,000" beside a monthly figure would read as the same
+ * kind of number, which it is not.
+ */
+export function describeCapabilityAmount(value: CapabilityValue, locale: Locale = defaultLocale): string | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const record = value as Record<string, unknown>;
+  const number = numberFormatFor(locale);
+
+  if (typeof record.total === 'number') return null;
+  if (typeof record.perMonth === 'number') return number.format(record.perMonth);
+  if (typeof record.ceilingPerMonth === 'number') return number.format(record.ceilingPerMonth);
+  if (typeof record.included === 'number') return number.format(record.included);
+
+  return null;
+}

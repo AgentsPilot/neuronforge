@@ -32,10 +32,36 @@
  * and the whole point of showing it. The rule is about a bare "you do not have
  * X" presented as a property of the customer's own plan.
  *
+ * ── UM-D1 (2026-10-19): the comparison ──────────────────────────────────────
+ * The upgrade modal shows the plans side by side, ✓ / ✕ per row, and the user
+ * chose ✕ shown (UM-BQ2 reversed). This file was AMENDED for it, not deleted
+ * (SA re-review (d), condition C-18), because each of the three reasons above
+ * was checked rather than waved through:
+ *
+ *   1. "No" for incompatible reasons — removed STRUCTURALLY: a comparison row
+ *      exists only if some shown plan includes it, and a `not_built` capability
+ *      is never in one. So a ✕ always means "this plan does not have it", never
+ *      "nobody can". Pinned below by two non-vacuity tests.
+ *   2. Shadow mode — an Essentials owner is shown ✕ on chat while nothing
+ *      enforces it. That is the trade-off the user accepted with the reversal
+ *      (requirement §4.2 / §12), recorded rather than hidden.
+ *   3. Describe by inclusions — still holds where it applies. `comparison` is a
+ *      statement about PLANS AS DEFINED, side by side, identical for every
+ *      viewer; it is not a list attached to "your plan". `included` and
+ *      `nextPlanUp` keep this rule unchanged, and the comparison carries no list
+ *      at all: a cell is `included` (boolean), `value` (string or null) and
+ *      `highlight`. Exact key-set allow-lists at every level of it, below.
+ *
+ * Unchanged by the amendment: the view-level allow-list (one key added), the
+ * row / feature / plan / upgrade allow-lists, the phrasing rule, and every
+ * inclusion-only test.
+ *
  * @see docs/requirements/BUSINESS_OS_TIER_BILLING_REUSE_PLAN.md §6.5 WS-2
+ * @see docs/requirements/BUSINESS_OS_UPGRADE_MODAL_REQUIREMENT.md C-17, C-18 (UM-D1, UM-D2)
  */
 
 import { buildCustomerPlanView, isHiddenFromCustomer } from '@/lib/business-os/entitlements/customerPlanView';
+import { PLAN_COMPARISON_ROWS } from '@/lib/business-os/entitlements/config/planComparison';
 import { previewAccountFor } from '@/lib/business-os/entitlements/planPresentation';
 import { resolveEntitlements } from '@/lib/business-os/entitlements/resolver';
 import { readCodeConfig } from '@/lib/business-os/entitlements/source';
@@ -123,8 +149,19 @@ describe('no plan is described by what it withholds', () => {
     'nextPlanUp',
     // P-4.2 (T5): the plans shown to customers, checked to their own key set below.
     'plans',
+    // UM-D1 / C-18: the plans side by side, checked to its own key sets below.
+    'comparison',
     'problem',
   ].sort();
+
+  /**
+   * The comparison (UM-D1, C-18), every level an exact allow-list. A cell is a
+   * boolean, a string-or-null and a boolean: there is nowhere to put a list.
+   */
+  const COMPARISON_KEYS = ['planIds', 'sections'].sort();
+  const SECTION_KEYS = ['section', 'labelKey', 'rows'].sort();
+  const COMPARISON_ROW_KEYS = ['row', 'label', 'cells'].sort();
+  const CELL_KEYS = ['planId', 'included', 'value', 'highlight'].sort();
 
   /** One plan in `plans` (P-4.2): a name, a price and a flag; no list to hide an exclusion in. */
   const PLAN_CHOICE_KEYS = ['planId', 'name', 'monthlyPriceUsd', 'availableToBuy'].sort();
@@ -179,6 +216,24 @@ describe('no plan is described by what it withholds', () => {
         expect(Object.keys(choice).sort()).toEqual(PLAN_CHOICE_KEYS);
       }
 
+      // UM-D1 (C-18): the comparison, at every level.
+      expect(view.comparison).not.toBeNull();
+      const comparison = view.comparison!;
+      expect(Object.keys(comparison).sort()).toEqual(COMPARISON_KEYS);
+      expect(comparison.sections.length).toBeGreaterThan(0);
+      for (const section of comparison.sections) {
+        expect(Object.keys(section).sort()).toEqual(SECTION_KEYS);
+        for (const row of section.rows) {
+          expect(Object.keys(row).sort()).toEqual(COMPARISON_ROW_KEYS);
+          for (const cell of row.cells) {
+            expect(Object.keys(cell).sort()).toEqual(CELL_KEYS);
+            expect(typeof cell.included).toBe('boolean');
+            expect(typeof cell.highlight).toBe('boolean');
+            expect(cell.value === null || typeof cell.value === 'string').toBe(true);
+          }
+        }
+      }
+
       // The other object a page renders — and the one that gained a field this
       // round, which is exactly when an allow-list earns its keep.
       if (view.nextPlanUp) {
@@ -203,6 +258,28 @@ describe('no plan is described by what it withholds', () => {
     const row = viewFor('basic').included[0];
 
     expect(Object.keys({ ...row, withheldHere: [] }).sort()).not.toEqual(ROW_KEYS);
+  });
+
+  it('the comparison allow-lists reject a nested exclusion array at every level (C-18)', () => {
+    // Negative controls for the new levels: a planted list on the comparison, a
+    // section, a row and a cell must each fail its allow-list.
+    const comparison = viewFor('basic').comparison!;
+    const section = comparison.sections[0];
+    const row = section.rows[0];
+    const cell = row.cells[0];
+
+    expect(Object.keys({ ...comparison, excludedHere: [] }).sort()).not.toEqual(COMPARISON_KEYS);
+    expect(Object.keys({ ...section, excludedHere: [] }).sort()).not.toEqual(SECTION_KEYS);
+    expect(Object.keys({ ...row, excludedHere: [] }).sort()).not.toEqual(COMPARISON_ROW_KEYS);
+    expect(Object.keys({ ...cell, excludedHere: [] }).sort()).not.toEqual(CELL_KEYS);
+  });
+
+  it('the comparison is null on the no-plan paths, which carry the same view keys', () => {
+    for (const unavailable of [true, false]) {
+      const view = buildCustomerPlanView({ resolution: null, unavailable, now: NOW, config });
+      expect(Object.keys(view).sort()).toEqual(VIEW_KEYS);
+      expect(view.comparison).toBeNull();
+    }
   });
 
   it('the allow-list rejects a field a denylist would have missed', () => {
@@ -340,6 +417,41 @@ describe('no plan is described by what it withholds', () => {
         expect(catalog[capability].lifecycle).not.toBe('not_built');
       }
     }
+  });
+
+  /**
+   * UM-D1 non-vacuity (C-18): reason 1 of the header is removed STRUCTURALLY
+   * only if these hold. A ✕ must always mean "this plan does not have it".
+   */
+  it('no comparison row is ✕ in every column', () => {
+    for (const planId of PLAN_IDS) {
+      for (const section of viewFor(planId).comparison!.sections) {
+        for (const row of section.rows) {
+          expect(row.cells.some((cell) => cell.included)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('no capability behind any comparison row is not_built', () => {
+    const members = PLAN_COMPARISON_ROWS.flatMap((row) => [...row.capabilities]);
+    expect(members.length).toBeGreaterThan(0);
+    for (const capability of members) {
+      expect(catalog[capability]).toBeDefined();
+      expect(catalog[capability].lifecycle).not.toBe('not_built');
+    }
+    // And every row the view renders is a configured row: no fallback row (which
+    // could name an unplaced capability) reaches the production payload.
+    const configured = new Set(PLAN_COMPARISON_ROWS.map((row) => row.id));
+    for (const section of viewFor('basic').comparison!.sections) {
+      for (const row of section.rows) expect(configured.has(row.row)).toBe(true);
+    }
+  });
+
+  it('at least one ✕ exists, so the amended rule is exercised rather than vacuous', () => {
+    // Essentials lacks chat: the case the user's UM-BQ2 reversal is about.
+    const cells = viewFor('basic').comparison!.sections.flatMap((section) => section.rows.flatMap((row) => row.cells));
+    expect(cells.some((cell) => !cell.included)).toBe(true);
   });
 
   it('chat IS named now — the suppression is gone, deliberately', () => {

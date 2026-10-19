@@ -690,3 +690,46 @@ describe('purchase (plan payments P-4.2; SA M-5, F-2, W-5, W-9)', () => {
     }
   });
 });
+
+describe('comparison: the plans side by side (upgrade modal UM-0, C-16)', () => {
+  // The route is not edited for this field: it already spreads the view into
+  // `data`. These pin that the field reaches the wire, in the reader's language,
+  // and is null whenever there is no plan to read.
+  it('an ok read carries the comparison, its columns matching `plans`', async () => {
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.comparison).not.toBeNull();
+    expect(body.data.comparison.planIds).toEqual(body.data.plans.map((choice: { planId: string }) => choice.planId));
+    expect(body.data.comparison.sections.length).toBeGreaterThan(0);
+  });
+
+  it('row labels are in the stored language', async () => {
+    const comparisonIn = (locale: 'en' | 'he') =>
+      JSON.parse(
+        JSON.stringify(buildCustomerPlanView({ resolution: resolutionFor('basic'), unavailable: false, locale }).comparison)
+      );
+    const HEBREW = comparisonIn('he');
+    // Non-vacuity: the Hebrew labels differ from the English ones.
+    expect(HEBREW).not.toEqual(comparisonIn('en'));
+    state.locale = { data: { preferredLanguage: 'he', timezone: null }, error: null };
+
+    const body = await (await GET(request())).json();
+
+    expect(body.data.comparison).toEqual(HEBREW);
+  });
+
+  it('is null on an unreadable plan and on a missing record', async () => {
+    state.snapshot = null;
+    state.unavailable = true;
+    const unavailable = await (await GET(request())).json();
+    expect(unavailable.data.status).toBe('unavailable');
+    expect(unavailable.data.comparison).toBeNull();
+
+    state.unavailable = false;
+    const missing = await (await GET(request())).json();
+    expect(missing.data.status).toBe('no_plan_record');
+    expect(missing.data.comparison).toBeNull();
+  });
+});
