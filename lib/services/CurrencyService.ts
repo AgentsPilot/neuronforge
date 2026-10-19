@@ -1,8 +1,24 @@
 // lib/services/CurrencyService.ts
 // Service for managing exchange rates and currency conversions
+//
+// LEGACY — do not extend (Admin Exchange Rates slice 1a, SQ-1). This file
+// calls Supabase directly, outside lib/repositories/ (CLAUDE.md rule 1), and is
+// loaded in the BROWSER by components/settings/CurrencySelector.tsx, so it logs
+// through the browser-safe `clientLogger` (SA-R12).
+//
+// `updateRate` and `updateRatesFromApi` are browser-side writers, left in place
+// and UNWIRED (no caller; D-1: rates are entered by hand). They stop working
+// once slice 1b revokes client writes on the rate tables, and they must NOT be
+// wired again: the only writer of `exchange_rates` is the admin route
+// PATCH /api/admin/exchange-rates/[currencyCode], through
+// lib/repositories/ExchangeRatesRepository.ts. Nothing on the platform converts
+// money with these rates (D-5).
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { clientLogger } from '@/lib/logger/client';
 import { SystemConfigService } from './SystemConfigService';
+
+const logger = clientLogger.child({ service: 'CurrencyService' });
 
 export interface ExchangeRate {
   id: string;
@@ -61,7 +77,7 @@ export class CurrencyService {
       .order('currency_code');
 
     if (error) {
-      console.error('Error fetching exchange rates:', error);
+      logger.error({ err: error }, 'Failed to fetch enabled exchange rates');
       throw new Error('Failed to fetch exchange rates');
     }
 
@@ -88,7 +104,7 @@ export class CurrencyService {
       .order('currency_code');
 
     if (error) {
-      console.error('Error fetching all exchange rates:', error);
+      logger.error({ err: error }, 'Failed to fetch all exchange rates');
       throw new Error('Failed to fetch exchange rates');
     }
 
@@ -115,7 +131,7 @@ export class CurrencyService {
       .single();
 
     if (error) {
-      console.error(`Error fetching rate for ${currencyCode}:`, error);
+      logger.error({ err: error, currencyCode }, 'Failed to fetch exchange rate');
       return null;
     }
 
@@ -228,7 +244,7 @@ export class CurrencyService {
       .eq('currency_code', currencyCode);
 
     if (error) {
-      console.error(`Error updating rate for ${currencyCode}:`, error);
+      logger.error({ err: error, currencyCode }, 'Failed to update exchange rate');
       throw new Error('Failed to update exchange rate');
     }
 
@@ -236,7 +252,7 @@ export class CurrencyService {
     this.invalidateCache();
 
     // Log to history (trigger will handle this automatically)
-    console.log(`📊 Exchange rate updated: ${currencyCode} → ${newRate} USD by ${updatedBy}${reason ? ` (${reason})` : ''}`);
+    logger.info({ currencyCode, newRate, updatedBy, hasReason: Boolean(reason) }, 'Exchange rate updated');
   }
 
   /**
@@ -288,7 +304,7 @@ export class CurrencyService {
       new Date().toISOString()
     );
 
-    console.log(`✅ Exchange rates updated from ${provider} API`);
+    logger.info({ provider }, 'Exchange rates updated from API');
   }
 
   /**
@@ -396,7 +412,7 @@ export class CurrencyService {
       });
 
     if (error) {
-      console.error('Error updating user currency preference:', error);
+      logger.error({ err: error, userId }, 'Failed to update user currency preference');
       throw new Error('Failed to update currency preference');
     }
 
@@ -428,12 +444,12 @@ export class CurrencyService {
           }
         });
       } catch (auditError) {
-        console.error('Failed to log to audit trail:', auditError);
+        logger.error({ err: auditError, userId }, 'Audit trail write failed (non-blocking)');
         // Don't fail the currency update if audit logging fails
       }
     }
 
-    console.log(`✅ User ${userId} currency updated to ${currencyCode}`);
+    logger.info({ userId, currencyCode }, 'User currency updated');
   }
 
   /**

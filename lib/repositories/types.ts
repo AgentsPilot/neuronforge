@@ -704,6 +704,36 @@ export interface BoostPackWriteInput {
   is_active?: boolean | null;
 }
 
+/**
+ * A row of `exchange_rates`, the admin-maintained rate table (Admin Exchange
+ * Rates slice 1a). Platform-wide, no `user_id`: see the header of
+ * `ExchangeRatesRepository`. `rate_to_usd` is read cast to text
+ * (`rate_to_usd::text`), so the exact `numeric(12,6)` value never passes
+ * through a JS number. `is_enabled` is nullable live (DEFAULT true, no NOT NULL).
+ */
+export interface ExchangeRateRow {
+  id: string;
+  currency_code: string;
+  currency_name: string;
+  currency_symbol: string;
+  rate_to_usd: string;
+  is_enabled: boolean | null;
+  decimal_places: number | null;
+  last_updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** A row of `exchange_rate_history`, written only by the live trigger on a rate change. Rates read as text. */
+export interface ExchangeRateHistoryRow {
+  id: string;
+  currency_code: string;
+  old_rate: string | null;
+  new_rate: string;
+  changed_by: string | null;
+  changed_at: string;
+  change_reason: string | null;
+}
+
 export interface SystemSettingsConfig {
   id: string;
   key: string;
