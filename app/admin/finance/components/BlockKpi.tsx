@@ -6,6 +6,8 @@
  * link: a `div role="group"` named "label, value" (never a landmark, never a
  * button, A-9), with MK-0's leading / lagging `KpiIndicator` in its top corner
  * and an optional status chip in words (K-2's far-over rule on Credits).
+ * MK-0a: the indicator is the word pill; its tooltip opens below this box
+ * (it is the box's `relative` anchor), and `pr-20` keeps the label clear of it.
  *
  * The value arrives formatted by the caller ("at least" included). Every
  * string comes from `financeCopy.ts`; the indicator's definition is that KPI's
@@ -30,7 +32,7 @@ export function BlockKpi({ label, value, indicator, chip, testId }: BlockKpiProp
       role="group"
       aria-label={`${label}, ${value}`}
       data-testid={`${testId}-kpi`}
-      className="relative rounded-lg border border-slate-700 bg-slate-800 p-3 pr-9"
+      className="relative rounded-lg border border-slate-700 bg-slate-800 p-3 pr-20"
     >
       <span className="block text-sm font-medium text-white">{label}</span>
       <span className="mt-1 flex flex-wrap items-center gap-2">

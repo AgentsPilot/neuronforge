@@ -23,6 +23,13 @@
  * MK-0's indicator. A1 and A2 and their hashes are unchanged; the file's old
  * and new SHA-256 are in docs/workplans/ADMIN_MONEY_MK5_STRIP_USD_WORKPLAN.md.
  *
+ * RE-FROZEN by MK-0a (the user's decisions of 2026-10-19: every strip tile the
+ * same size, `auto-rows-fr` on the strip; the indicator a word pill with its
+ * tooltip below the box). Every case that renders the strip, and the A3
+ * indicator cases, have new hashes; a bare KpiTile with no indicator is
+ * byte-identical. The old and new values are in
+ * docs/workplans/ADMIN_MONEY_MK0A_INDICATOR_PILL_WORKPLAN.md.
+ *
  * Part A2: the real caller components, with figures and while loading. Jobs'
  * tiles are module-private (SA-W5): their shapes are in A1, and its own layout
  * test stays unedited. Model pricing goes through its real `priceKpis.ts`.
@@ -298,48 +305,48 @@ const EXPECTED: Record<string, string> = {
   'A1 none neutral sub': 'cce149363b6e860d58a817ecf2bb0264abaa0abd3cd860f2735cb6e75c495005',
   'A1 none amber sub': '5f9c62edf9562af923ba963dab3168c4faa39c7f3e4917258606e75612da3ff2',
   'A1 none red sub': 'e73b9964462f1eee61b5f486d30035ef9b275d0338c944ea19a96f2ee0f258f6',
-  'A1 strip children': 'c508be9c930742aa077af6c929de364a8947f7a63fb717cd9008115cef9ad938',
-  'A1 strip loading 3': '33df0ad454d0e8e3107bd926290605d2106084a69e0278941466086ba55fe24c',
-  'A1 strip loading 4': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A1 strip loading 5': 'a1b6856bed75c54e6a1b0690e36a36e27af1df9e5c72d60774997433a26e4838',
-  'A1 strip loading default': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A1 strip loading with children (Jobs)': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A1 strip not loading with children (Jobs)': 'b0f973c97459ed030fb8457d88ad928bda833456809562109d2b8a4ed4cdb0a8',
-  'A2 AnalyticsKpis loading bos': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A2 AnalyticsKpis loading all': 'a1b6856bed75c54e6a1b0690e36a36e27af1df9e5c72d60774997433a26e4838',
-  'A2 AnalyticsKpis bos': '3eebeeeac0de7b1a6fde36de1ad36f5c355b5575648bc2a1297eb6c703bae4e5',
-  'A2 AnalyticsKpis all': '43cb021f0b046586f25bef53f98befac6ca3c04cd510a44136276769ca80b72b',
-  'A2 ArchivingKpis loading': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A2 ArchivingKpis': '0f77d90b359fa573b4e3bb6a17e3940d53b80418be15957d549b4cfa793559a0',
-  'A2 ArchivingKpis failed run': '9f717ec68e67c0aeba96cef2be09d0e8b9b614eb255d1f5dda2c8ea15d1fe7b3',
-  'A2 InviteKpis loading': 'a1b6856bed75c54e6a1b0690e36a36e27af1df9e5c72d60774997433a26e4838',
-  'A2 InviteKpis': '32b71808fea3fd593c86c01813311139c5922c2ba6e729534562549a7964182f',
-  'A2 ActivityKpis loading': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A2 ActivityKpis': 'a816e75980a749f68648caaa5c3e9c2dfc1e250ae44d8c3ed4ca7745926df643',
-  'A2 CostsKpis loading': 'a1b6856bed75c54e6a1b0690e36a36e27af1df9e5c72d60774997433a26e4838',
-  'A2 CostsKpis': '3f9aebb9344780cbc58e0c0d7603870936470a52262169a207699b92053f963e',
-  'A2 CostsKpis no sections': '9cb293771862000be8ed5b99db803c7656e86b8fb87e5254438f7d9091d9947b',
-  'A2 SettingsKpis loading': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A2 SettingsKpis': '1587aea98bfb0a6eacbc9aa9d7f954f0d08005ba8c9c92af3c5bdceb8d02241b',
-  'A2 SettingsKpis quiet': '04f6b49dba54b26fbbddd18c4e499c734330920576599f4abaf91556f549a9da',
-  'A2 PlansKpis loading': '00ff7c443adc30962c92208a0d8dc413b3b2bf9af1a4c0880e6c3c1dbd9534ee',
-  'A2 PlansKpis': 'db11968a0448b9099f13273749add01d44ad7452186a30a2214fb541579b0b5e',
-  'A2 PlansKpis one': '5d82771cf7fd5b6fc8d8ec49c6b4f1a8026d5002694724bbaafbe892f8d4e71c',
-  'A2 BusinessesKpis loading': '33df0ad454d0e8e3107bd926290605d2106084a69e0278941466086ba55fe24c',
-  'A2 BusinessesKpis': 'df69b7b5e517f8b1eafe44bc47cb0544fe97baf06b46852a2ad9a5e99093c549',
-  'A2 Model pricing reading': 'be9d1a213d32c6e3704796468db7d2a40fdd2f2a6c39b0308039629f6da244ad',
-  'A2 Model pricing unavailable': '31241fbf7736bf1aac551289805d08ae42b9925bc701096b8fb68803da4049e0',
-  'A2 Model pricing recent': '13a71e361d6edb3f07816f7218353f3c6568b232cff90a7160ea321f854d2577',
+  'A1 strip children': '9a83fc289de4a3f401187b2397d4e0e5302bda56ebe6d67c2f88d44f9350e0dc',
+  'A1 strip loading 3': 'aa4935d00b1352556b02c0083ab94de58a9ae2e7587678635659c6e46403ea8f',
+  'A1 strip loading 4': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A1 strip loading 5': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
+  'A1 strip loading default': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A1 strip loading with children (Jobs)': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A1 strip not loading with children (Jobs)': '25c330ce9bfa26195e48c1ab327223453f19ff4f8bdf5e489fe29b619d4e2c27',
+  'A2 AnalyticsKpis loading bos': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A2 AnalyticsKpis loading all': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
+  'A2 AnalyticsKpis bos': '5bbe567eea8c70900962b5fffa266205fcdb071a9c72cbe1dd435c3404c9a985',
+  'A2 AnalyticsKpis all': 'a9bbfb89dd2c4b036561724fe48cc06650c192629d3e2bd01540236949535bba',
+  'A2 ArchivingKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A2 ArchivingKpis': 'eb5d340a074e57e1592ed65cba0adbae8a6d26dee4cb2400e4795c4709ecfc6b',
+  'A2 ArchivingKpis failed run': 'a2ed84979c2d347650b4ef81858e132247d8784555e637819e7e8bfbaf949819',
+  'A2 InviteKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
+  'A2 InviteKpis': '150679220b4584492a66f6ba0b129e20f5b990bf21e4c90328813b9d28c5ac2b',
+  'A2 ActivityKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A2 ActivityKpis': 'a9e127f5ddf66d23d5a85f44a62841b0a294a0ffa26e874a3d2078151878ff58',
+  'A2 CostsKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
+  'A2 CostsKpis': 'e22045d420bf86b846dbb75148b11d5db550ac05cca812e1f81bc816973d1248',
+  'A2 CostsKpis no sections': 'e8d692a0abc2ce67f01800166cc086d5fff93aa01b1ce3e11c6cb08d936a2a0a',
+  'A2 SettingsKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A2 SettingsKpis': '2ba767a09c3960540b554ec09800a4523688e7a53b283281e3bf3029ea36d1e4',
+  'A2 SettingsKpis quiet': 'ad762af1dcd97b350361a77614cc443052f145bf0db8afa5921446453fe00e0e',
+  'A2 PlansKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
+  'A2 PlansKpis': '63fcccbf9f42bb335c58fa7dfe0c05c321e5b6c675b363ee88218dd9539c21b5',
+  'A2 PlansKpis one': '485dd8565e2ac8eafb23e45af3c46823324a6acfa89c5f2ef0df8f697733fe4f',
+  'A2 BusinessesKpis loading': 'aa4935d00b1352556b02c0083ab94de58a9ae2e7587678635659c6e46403ea8f',
+  'A2 BusinessesKpis': 'b519a2272971487cf19892dddd47683da96a6524224bfc6382092f8f7cb65922',
+  'A2 Model pricing reading': 'e6a7e097cca055e152d8ae41fa3124ceca4347fa0e5ca35ff7f1d56635e686be',
+  'A2 Model pricing unavailable': '5c98bf3738881c93e87843aa9583a427dcfecce55897c309613e0020ba23367d',
+  'A2 Model pricing recent': 'afe7ca77c2df6fd75c6ada7728e07c3ebab76fc9568676ab4eba0918fed331fd',
   // Exchange rates 1a (SQ-7), recorded on first render.
-  'A2 ExchangeRatesKpis loading': 'b628c0bab0e92bf9f5949794cae2e85732530b5c709306ec98f1265c8e51bcb5',
-  'A2 ExchangeRatesKpis': '41899b6997db4acf7b68dd7babe940b77246a350d3fee262b3acde3894928a5e',
-  'A2 ExchangeRatesKpis none stale': 'ada696c76cf91d2628a0ea51138beb3f099a9c9146c49624b4bb74200130503e',
+  'A2 ExchangeRatesKpis loading': 'db7f5d3e4e99c6fc9b7a47c457d5a4fe35b0e7dc04a11283b85cff4609c86268',
+  'A2 ExchangeRatesKpis': 'c7da5668e58ca351258972c13e11509b9cf469b4e64f6fc23ef33537c2ea80af',
+  'A2 ExchangeRatesKpis none stale': '8534cba87cd61c42e1e94b63b7b3169c60e2d2785c9f0e42119da637a06b2f2e',
   // A3 (Money MK-5): recorded at MK-5's handover.
-  'A3 Finance anchor lagging with status and detail': 'aa49c3366273f3172252d5d32b3d5e0c2652dcb86f57f02f17376786f6088e19',
-  'A3 Finance anchor leading with sub and detail': '9bc3350d8d954d600d96be98c15c853ee872357eaa0b61c1f68484057a4890d6',
-  'A3 Finance tab filter current lagging': '7ec83c05135830e8842b0120eac03cfa201cd42e57dd7f71e7bf1137e9e54f3f',
-  'A3 Finance tab filter lagging': '86aeb0ef2ea58960a7949a33cc3872b4c77f0a6a3818a4b55e94cafe20eec458',
-  'A3 Finance no target lagging (a business picked)': '656beb659ca8178da1243474be6a66523b7c33cb3e0c49cd84ee6a6f6cfbb62c',
+  'A3 Finance anchor lagging with status and detail': '34166a30ada773fc7c5e7ca8dd90fb66b989d022bfc3b3eefaa1dbaf6fe83358',
+  'A3 Finance anchor leading with sub and detail': '33106345987463ab9685bc4fed4a427e5e2e752a216cffdd7562707b82356a71',
+  'A3 Finance tab filter current lagging': '9d94402070f3187e444af27a7d8ef5b8abe5c793674473d204cbe79d56944922',
+  'A3 Finance tab filter lagging': '5ae604690d8a359e8e904557359e6a9943918b53fd166703309d2321194efc7c',
+  'A3 Finance no target lagging (a business picked)': '876167dd1a46e911165ffa38004875214a463aa6eaafc4a8a80c6b5b8d4c434a',
 };
 
 describe('Finance F-5 Pin A: the existing KpiTile / KpiStrip callers render byte-identically', () => {
