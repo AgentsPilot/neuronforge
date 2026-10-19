@@ -6,7 +6,7 @@
 **Requirement:** the user's three decisions of 2026-10-19 after seeing MK-5 live (relayed by the coordinator); [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §3.3 LL-1 to LL-5 (behaviour unchanged), SA-8; MK-0 and MK-0 QA-MK0-N1
 **Branch:** `fix/admin-kpi-indicator-word-pill` (from main `a9551d9c`; MK-5 #478 merged)
 **Date:** 2026-10-19
-**Status:** Code Complete (uncommitted)
+**Status:** Code Approved (SA-MK0A), QA passed; committed `85a165f2`, PR [#481](https://github.com/AgentsPilot/neuronforge/pull/481) opened 2026-10-20, auto-merge on
 **Path:** a UI fix to a shared export (full review of Pin A). No data, payload or route change.
 
 ## Overview
@@ -309,7 +309,10 @@ Accepted, not an issue: R-2. At a 390px content width, Finance rows are 394px ta
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `fix/admin-kpi-indicator-word-pill` (from main `a9551d9c`, which had not moved; no merge needed, no Pin A conflict)
+- **Commit:** `85a165f2` fix(admin): KPI indicator as a Leading/Lagging pill, tooltip below the tile, equal tile sizes (MK-0a)
+- **Pin A:** `98cadff3` (ruled); every other pin unchanged
+- **PR:** [#481](https://github.com/AgentsPilot/neuronforge/pull/481), auto-merge on (merge commit, via the merge queue)
 
 ---
 

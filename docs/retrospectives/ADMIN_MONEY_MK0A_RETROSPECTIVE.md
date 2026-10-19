@@ -25,6 +25,6 @@ The leading/lagging icon is replaced by a neutral "Leading" or "Lagging" word pi
 - **Check UI on a real browser at phone width before release,** not only in Jest.
 - **Follow-up:** the pre-existing type error in the system-config test on main still needs an owner.
 
-### Status: APPROVED FOR COMMIT — fix/admin-kpi-indicator-word-pill — commit pending (RM)
+### Status: COMMITTED — fix/admin-kpi-indicator-word-pill — commit `85a165f2`, PR #481 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)
