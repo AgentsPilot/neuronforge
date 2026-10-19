@@ -289,9 +289,9 @@ describe('the Accounts tab body (T10)', () => {
     expect(notes).not.toHaveTextContent(REVENUE_REFUND_TIMING_NOTE);
     const platform = screen.getByTestId('econ-platform');
     expect(platform).toHaveTextContent(ECON_PLATFORM_TITLE);
-    expect(screen.getByTestId('econ-platform-paid')).toHaveTextContent('USD 89.00');
-    expect(screen.getByTestId('econ-platform-cost')).toHaveTextContent('USD 3.50');
-    expect(screen.getByTestId('econ-platform-margin')).toHaveTextContent('USD 85.50');
+    expect(screen.getByTestId('econ-platform-paid')).toHaveTextContent('$89.00');
+    expect(screen.getByTestId('econ-platform-cost')).toHaveTextContent('$3.50');
+    expect(screen.getByTestId('econ-platform-margin')).toHaveTextContent('$85.50');
   });
 
   it('S4-W-3: the refund-timing sentence shows when the boost part carries it', () => {
@@ -307,17 +307,17 @@ describe('the Accounts tab body (T10)', () => {
     expect(ECON_COST).toMatch(/\(USD\)$/);
     expect(ECON_MARGIN).toMatch(/\(USD\)$/);
     const owner = screen.getByTestId(`econ-row-${OWNER}`);
-    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('USD 89.00');
-    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('plan USD 79.00 · boosts USD 10.00');
+    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('$89.00');
+    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('plan $79.00 · boosts $10.00');
     // The cost cell is Section 3's own text for the same figure (formatUsd, 2 to 4 decimals).
     expect(screen.getByTestId(`econ-cost-${OWNER}`).textContent).toBe(formatUsd(1.2345));
-    expect(screen.getByTestId(`econ-margin-${OWNER}`)).toHaveTextContent('USD 87.7655');
+    expect(screen.getByTestId(`econ-margin-${OWNER}`)).toHaveTextContent('$87.7655');
     expect(within(owner).getByTestId(`econ-founding-${OWNER}`)).toHaveTextContent(ACCOUNTS_FOUNDING_CHIP);
   });
 
   it('SA-WR-43: a negative margin keeps its minus sign, with "No revenue in this window"', () => {
     renderTab();
-    expect(screen.getByTestId(`econ-margin-${C}`)).toHaveTextContent('USD -0.1234');
+    expect(screen.getByTestId(`econ-margin-${C}`)).toHaveTextContent('-$0.1234');
     expect(screen.getByTestId(`econ-row-${C}`)).toHaveTextContent(ECON_NO_REVENUE);
   });
 
@@ -326,7 +326,7 @@ describe('the Accounts tab body (T10)', () => {
     const b = screen.getByTestId(`econ-row-${B}`);
     expect(screen.getByTestId(`econ-margin-${B}`)).toHaveTextContent(ECON_MARGIN_OTHER_CURRENCY);
     expect(within(b).getByTestId(`econ-paid-${B}-ILS`)).toHaveTextContent('ILS 10.00');
-    expect(b.textContent).not.toMatch(/USD 10\.00 ILS|USD 99/);
+    expect(b.textContent).not.toMatch(/\$10\.00 ILS|\$99/);
     expect(b).toHaveTextContent(ECON_NO_PLAN_ROW);
   });
 
@@ -377,7 +377,7 @@ describe('the Accounts tab body (T10)', () => {
         rows: [row(OWNER, { aiCost: { kind: 'figure', costUsd: 1.2345, exact: false }, margin: { kind: 'unknown' }, marginAfterFees: { kind: 'unknown' } })],
       })
     );
-    expect(screen.getByTestId(`econ-cost-${OWNER}`)).toHaveTextContent('At least USD 1.2345');
+    expect(screen.getByTestId(`econ-cost-${OWNER}`)).toHaveTextContent('At least $1.2345');
     expect(screen.getByTestId(`econ-margin-${OWNER}`)).toHaveTextContent(ECON_UNKNOWN);
   });
 
@@ -443,11 +443,11 @@ describe('slice 6b: margin after Stripe fees (estimate) on the Accounts tab', ()
     expect(ECON_AFTER_FEES).toBe('Margin after Stripe fees (estimate, USD)');
   });
 
-  it('a figure through formatUsd, with the fee line "Stripe fees, estimate: USD 3.18" under it', () => {
+  it('a figure through formatUsd, with the fee line "Stripe fees, estimate: $3.18" under it', () => {
     renderTab();
-    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(/^USD 84\.5855$/);
-    expect(screen.getByTestId(`econ-after-fees-${OWNER}-fees`)).toHaveTextContent(/^Stripe fees, estimate: USD 3\.18$/);
-    expect(econFeesLine('USD 3.18')).toBe('Stripe fees, estimate: USD 3.18');
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(/^\$84\.5855$/);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}-fees`)).toHaveTextContent(/^Stripe fees, estimate: \$3\.18$/);
+    expect(econFeesLine('$3.18')).toBe('Stripe fees, estimate: $3.18');
   });
 
   it('AC-247: another currency → "n/a, different currency" with no fee line; Unknown and Not available are words, never 0', () => {
@@ -470,17 +470,17 @@ describe('slice 6b: margin after Stripe fees (estimate) on the Accounts tab', ()
     expect(screen.getByTestId(`econ-after-fees-${OWNER}`).textContent).not.toMatch(/0\.00/);
   });
 
-  it('AC-248: no revenue → the fee line USD 0.00 and "No revenue in this window"; the sign is kept', () => {
+  it('AC-248: no revenue → the fee line $0.00 and "No revenue in this window"; the sign is kept', () => {
     renderTab();
-    expect(screen.getByTestId(`econ-after-fees-${C}`)).toHaveTextContent('USD -0.1234');
-    expect(screen.getByTestId(`econ-after-fees-${C}-fees`)).toHaveTextContent('Stripe fees, estimate: USD 0.00');
+    expect(screen.getByTestId(`econ-after-fees-${C}`)).toHaveTextContent('-$0.1234');
+    expect(screen.getByTestId(`econ-after-fees-${C}-fees`)).toHaveTextContent('Stripe fees, estimate: $0.00');
     expect(screen.getByTestId(`econ-after-fees-${C}`).parentElement).toHaveTextContent(NO_REVENUE_6B);
   });
 
   it('the Deleted accounts row gets the same cell', () => {
     renderTab();
-    expect(screen.getByTestId('econ-after-fees-deleted')).toHaveTextContent('USD -0.89');
-    expect(screen.getByTestId('econ-after-fees-deleted-fees')).toHaveTextContent('Stripe fees, estimate: USD 0.59');
+    expect(screen.getByTestId('econ-after-fees-deleted')).toHaveTextContent('-$0.89');
+    expect(screen.getByTestId('econ-after-fees-deleted-fees')).toHaveTextContent('Stripe fees, estimate: $0.59');
   });
 
   it('AC-249 / AC-251: the platform pair is labelled "Margin after Stripe fees (estimate)" and "Stripe fees, estimate"', () => {
@@ -489,20 +489,20 @@ describe('slice 6b: margin after Stripe fees (estimate) on the Accounts tab', ()
     const labels = [...platform.querySelectorAll('dt')].map((dt) => dt.textContent);
     expect(labels.slice(labels.indexOf(ECON_MARGIN_6B) + 1)).toEqual(['Margin after Stripe fees (estimate)', 'Stripe fees, estimate']);
     expect([ECON_PLATFORM_AFTER_FEES, ECON_FEES]).toEqual(['Margin after Stripe fees (estimate)', 'Stripe fees, estimate']);
-    expect(screen.getByTestId('econ-platform-after-fees')).toHaveTextContent(/^USD 82\.32$/);
-    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(/^USD 3\.18$/);
+    expect(screen.getByTestId('econ-platform-after-fees')).toHaveTextContent(/^\$82\.32$/);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(/^\$3\.18$/);
   });
 
-  it('6B-R2: the fee note reads exactly "Assumed 2.9% + USD 0.30 per card charge" at the default, and "3.5% + USD 0.25" at 350 / 25', () => {
+  it('6B-R2: the fee note reads exactly "Assumed 2.9% + $0.30 per card charge" at the default, and "3.5% + $0.25" at 350 / 25', () => {
     renderTab();
     const note = screen.getByTestId('econ-fee-note');
     expect(note).toHaveTextContent(
-      /^Stripe fees are an estimate: none are recorded for plan or boost payments\. Assumed 2\.9% \+ USD 0\.30 per card charge\. A refunded charge keeps its fee\. Dispute fees are not included\.$/
+      /^Stripe fees are an estimate: none are recorded for plan or boost payments\. Assumed 2\.9% \+ \$0\.30 per card charge\. A refunded charge keeps its fee\. Dispute fees are not included\.$/
     );
     cleanup();
     renderTab(section({ feeEstimate: { currency: 'USD', percent: 3.5, fixed: 0.25 } }));
-    expect(screen.getByTestId('econ-fee-note')).toHaveTextContent('Assumed 3.5% + USD 0.25 per card charge.');
-    expect(econFeeNote('2.9', 'USD 0.30')).toContain('Assumed 2.9% + USD 0.30 per card charge.');
+    expect(screen.getByTestId('econ-fee-note')).toHaveTextContent('Assumed 3.5% + $0.25 per card charge.');
+    expect(econFeeNote('2.9', '$0.30')).toContain('Assumed 2.9% + $0.30 per card charge.');
   });
 
   it('E-73: no fee config → the unreadable note, and every cell Unknown', () => {
@@ -521,12 +521,12 @@ describe('slice 6b: margin after Stripe fees (estimate) on the Accounts tab', ()
   it('AC-251: the reworded 6a note; no new string says "actual", "real" or "recorded" beside a fee', () => {
     renderTab();
     expect(ECON_NOTES_6B[0]).toBe('Paid us is after tax, net of refunds and disputes. The AI margin does not deduct Stripe fees.');
-    const fresh = [ECON_AFTER_FEES, ECON_PLATFORM_AFTER_FEES, ECON_FEES, econFeesLine('USD 1.00'), ECON_FEE_NOTE_UNREADABLE];
+    const fresh = [ECON_AFTER_FEES, ECON_PLATFORM_AFTER_FEES, ECON_FEES, econFeesLine('$1.00'), ECON_FEE_NOTE_UNREADABLE];
     for (const text of fresh) {
       expect(text).toMatch(/estimate/);
       expect(text).not.toMatch(/estimated|actual|\breal\b/i);
     }
     // "recorded" appears only in the sentence that says none are recorded.
-    expect(econFeeNote('2.9', 'USD 0.30')).not.toMatch(/\bactual\b|\breal\b|recorded fee/i);
+    expect(econFeeNote('2.9', '$0.30')).not.toMatch(/\bactual\b|\breal\b|recorded fee/i);
   });
 });

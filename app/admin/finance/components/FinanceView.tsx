@@ -63,7 +63,6 @@ import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import type { FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 
 import { serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
-import { k1AnalyticsHref } from '../financeLinks';
 import {
   FINANCE_CLEAR_PATCH,
   FINANCE_DEFAULT_WINDOW,
@@ -88,7 +87,13 @@ import { AiCostSection } from './AiCostSection';
 import { HistoryAllBusinessesLine, HistoryBlock } from './HistoryBlock';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
-import { FinanceKpiPlaceholders, FinanceKpiStrip, type FinanceTileSection, type FinanceTileTarget } from './FinanceKpiStrip';
+import {
+  FinanceKpiPlaceholders,
+  FinanceKpiStrip,
+  type FinanceTabTarget,
+  type FinanceTileSection,
+  type FinanceTileTarget,
+} from './FinanceKpiStrip';
 import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { PlansSubscriptions } from './PlansSubscriptions';
 import { RevenuePanel } from './RevenuePanel';
@@ -222,6 +227,21 @@ export function FinanceView() {
         : { href: `#${section}` },
     [onAccountsTab, hrefFor, onSelectTab]
   );
+  // Money MK-5: F-K4 opens the Accounts tab and F-K5 the Plans & subscriptions tab (§3.1), through the
+  // shared filter mode: a real link, and a plain click is the tab's one write. A picked business has no tabs.
+  const tabTarget = useCallback(
+    (tab: 'accounts' | 'plans'): FinanceTabTarget =>
+      query.accountId !== null
+        ? {}
+        : {
+            filter: {
+              href: `${FINANCE_PATH}${hrefFor(tab === 'accounts' ? { tab: 'accounts', status: '' } : { tab: 'plans', ...TAB_RESET })}`,
+              apply: () => onSelectTab(tab),
+              current: selectedTab === tab,
+            },
+          },
+    [query.accountId, hrefFor, onSelectTab, selectedTab]
+  );
   const accountName = query.accountId !== null ? accountNameFor(query.accountId, pickedName, data) : null;
   const chipName = accountName === null ? null : accountName.platform ? NAME_PLATFORM : accountName.name;
 
@@ -242,11 +262,11 @@ export function FinanceView() {
       {/* F-5 (BD-29): header, KPI strip, filter bar. K-10: placeholders on the first read, nothing on an error. */}
       {data && !error ? (
         <FinanceKpiStrip
-          tiles={data.tiles}
-          farOverAllowancePercent={data.credits.farOverAllowancePercent}
+          data={data}
           windowLabel={windowLabel}
-          aiCostHref={k1AnalyticsHref(data.accountId)}
           targetFor={targetFor}
+          accountsTab={tabTarget('accounts')}
+          plansTab={tabTarget('plans')}
         />
       ) : (
         loading && !error && <FinanceKpiPlaceholders />
@@ -298,7 +318,7 @@ export function FinanceView() {
               <FinanceTabPanel id="plans">
                 {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
                 <div className="space-y-4">
-                  <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
+                  <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
                   <PlansSubscriptions
                     status={filters.status === '' ? null : filters.status}
                     onStatus={(next) => setFilters({ status: next ?? '' })}
@@ -323,9 +343,9 @@ export function FinanceView() {
             ) : (
               <OverviewBody tabbed={query.accountId === null}>
                 <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} mrr={data.mrr} stripeMode={data.stripeMode ?? null} />
-                <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
+                <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
-                <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
+                <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} k2={data.tiles?.k2} />
                 {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
                 {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
                 <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} accountId={data.accountId} />

@@ -18,6 +18,18 @@
  * a neutral tile (K-4 removes it), the line order and the type sizes.
  */
 
+/*
+ * RE-FROZEN ONCE by Money MK-5 with MK-5a folded in (KPI restructure review §12,
+ * SA-RR-MK pins table: "Pin B (the strip re-cut, the $ values and the
+ * indicator)"). The five tiles are now F-K1 Revenue received, F-K2 MRR now,
+ * F-K3 Charged AI cost, F-K4 AI margin and F-K5 Paying accounts, in that order
+ * (BD-35), each with its leading / lagging icon; money is "$" on the US-dollar
+ * line only, other currencies a count. K-2, K-3 and K-4 left the strip for
+ * their blocks. The payload fixture above is unchanged; each fixture adds the
+ * MK-4 / MK-5 keys it needs. Old and new SHA-256 of this file are recorded in
+ * docs/workplans/ADMIN_MONEY_MK5_STRIP_USD_WORKPLAN.md.
+ */
+
 import '@testing-library/jest-dom';
 import { render, screen } from '@testing-library/react';
 
@@ -328,13 +340,17 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/admin/finance');
 });
 
-type Tiles = FinancePayload['tiles'];
-type TileId = Tiles[keyof Tiles]['id'];
+// MK-5: the money keys the strip reads, beside the unchanged payload fixture.
+import type { FinanceAccountMargin, FinanceBoostLine, FinanceMrrSection, FinancePaying } from '@/lib/business-os/finance/financeTypes';
+
+type TileId = 'fk1_revenue' | 'fk2_mrr' | 'fk3_ai_cost' | 'fk4_ai_margin' | 'fk5_paying';
 
 interface TileExpectation {
   id: TileId;
   status: string;
-  /** Literal fragments the tile's text contains, before and after F-5. */
+  /** The icon's kind (MK-0): F-K2 leading, the others lagging. */
+  indicator: 'leading' | 'lagging';
+  /** Literal fragments the tile's text contains. */
   has: string[];
   /** Literal fragments it must not contain. */
   hasNot?: string[];
@@ -347,110 +363,137 @@ interface Fixture {
   tiles: TileExpectation[];
 }
 
-const LABEL_K1 = 'Charged AI cost this month';
-const SUB_K1 = 'This month vs last month, UTC';
-const LABEL_K2 = 'Accounts far over allowance';
-const LABEL_K3 = 'Founding Partners with no end date';
-const LABEL_K4 = 'Gifted credits outstanding';
-const SUB_K4 = 'Credits, now';
-const LABEL_K5 = 'Our revenue';
+const L_REVENUE = 'Revenue received';
+const L_MRR = 'MRR now';
+const L_AI_COST = 'Charged AI cost this month';
+const SUB_AI_COST = 'This month vs last month, UTC';
+const L_MARGIN = 'AI margin';
+const L_PAYING = 'Paying accounts';
+const WINDOW = 'This month, 2026-10-01 to 2026-10-09 UTC';
+
+const usdMrr = (totalHundredths: number, pastDueHundredths = 0): FinanceMrrSection => ({
+  status: 'ok',
+  lines: [{ currency: 'USD', totalHundredths, cancellingHundredths: 0, pastDueHundredths, subscriptions: 1, overflow: false }],
+  unpriced: 0,
+  discountUnknown: 0,
+  pastDueCounted: true,
+});
+const figureMargin = (marginUsd: number, afterFeesUsd: number): FinanceAccountMargin => ({
+  paid: { lines: [], failed: false },
+  aiCost: { kind: 'figure', costUsd: 3.5, exact: true },
+  margin: { kind: 'figure', marginUsd, noRevenue: false },
+  marginAfterFees: { kind: 'figure', afterFeesUsd, feesUsd: 0.5, currency: 'USD', noRevenue: false },
+});
+const allPaying = (paying: number, accounts: number, status: 'ok' | 'partial' = 'ok'): FinancePaying => ({ scope: 'all', status, paying, accounts });
+const eurBoost: FinanceBoostLine = {
+  currency: 'EUR', purchases: 2, gross: 7, tax: 0, refunded: 0, lost: 0, net: 7, creditsSold: 100, unreadable: 0, unreadableEvents: 0, unreadableCredits: 0,
+};
 
 const FIXTURES: Fixture[] = [
   {
     name: 'F1 base: every tile has a value',
     search: '',
     build: () => {
-      const p = payload();
+      const p = payload({ revenue: revenueSection({ totals: [{ currency: 'USD', boostsNet: 10, plansReceived: 0, total: 10 }] }) });
       p.tiles.k1 = { id: 'k1_ai_cost', status: 'green', headline: 'All clear', value: { value: 12.5, exact: true }, previous: { value: 10, exact: true } };
-      p.tiles.k2 = { id: 'k2_far_over_allowance', status: 'amber', headline: 'Some accounts could not be read', value: { value: 1, exact: false }, previous: null };
-      p.tiles.k3 = { id: 'k3_founding_no_end_date', status: 'red', headline: 'Founding Partners with no end date', value: { value: 8, exact: true }, previous: null };
-      p.tiles.k4 = { id: 'k4_gifted_outstanding', status: 'neutral', headline: 'Admin-granted, not taken back, not expired', value: { value: 12.5, exact: true }, previous: null };
       p.tiles.k5 = { id: 'k5_our_revenue', status: 'neutral', headline: 'Net of refunds and disputes', value: null, previous: null, money: { kind: 'one', currency: 'USD', net: 10 } };
-      return p;
+      return { ...p, mrr: usdMrr(4900), stripeMode: 'live', paying: allPaying(9, 50), platformMargin: figureMargin(85.5, 82.32) };
     },
     tiles: [
-      { id: 'k1_ai_cost', status: 'green', has: [LABEL_K1, SUB_K1, 'USD 12.50', 'Same days last month: USD 10.00', 'Healthy', 'All clear'], hasNot: ['At least'] },
-      { id: 'k2_far_over_allowance', status: 'amber', has: [LABEL_K2, "At or over 150% of this period's allowance", 'At least 1', 'Needs a look', 'Some accounts could not be read'] },
-      { id: 'k3_founding_no_end_date', status: 'red', has: [LABEL_K3, '8', 'Needs action'] },
-      { id: 'k4_gifted_outstanding', status: 'neutral', has: [LABEL_K4, SUB_K4, '12.5', 'Admin-granted, not taken back, not expired'], hasNot: ['$', 'USD'] },
-      { id: 'k5_our_revenue', status: 'neutral', has: [LABEL_K5, 'Credit boosts and plans · This month, 2026-10-01 to 2026-10-09 UTC', 'USD 10.00', 'Net of refunds and disputes'] },
+      { id: 'fk1_revenue', status: 'neutral', indicator: 'lagging', has: [L_REVENUE, `Plans and credit boosts · ${WINDOW}`, '$10.00', 'Net of refunds and disputes'], hasNot: ['USD', 'other currencies'] },
+      { id: 'fk2_mrr', status: 'neutral', indicator: 'leading', has: [L_MRR, '$49.00', 'Monthly, at list price, today'], hasNot: ['USD', 'test mode'] },
+      { id: 'fk3_ai_cost', status: 'green', indicator: 'lagging', has: [L_AI_COST, SUB_AI_COST, '$12.50', 'Same days last month: $10.00', 'Healthy', 'All clear'], hasNot: ['USD', 'At least'] },
+      { id: 'fk4_ai_margin', status: 'neutral', indicator: 'lagging', has: [L_MARGIN, '$85.50', 'After Stripe fees (estimate): $82.32'], hasNot: ['USD'] },
+      { id: 'fk5_paying', status: 'neutral', indicator: 'lagging', has: [L_PAYING, '18%', '9 of 50 accounts'] },
     ],
   },
   {
-    name: 'F2 grey: not measured, could not check, no value',
+    name: 'F2 grey: not measured, unknown, no value',
     search: '',
     build: () => {
       const p = payload();
       p.tiles.k1 = { id: 'k1_ai_cost', status: 'not_measured', headline: 'Not enough history', value: null, previous: null };
-      p.tiles.k2 = { id: 'k2_far_over_allowance', status: 'unavailable', headline: 'Could not read the credits', value: null, previous: null };
-      p.tiles.k3 = { id: 'k3_founding_no_end_date', status: 'green', headline: 'All clear', value: { value: 0, exact: true }, previous: null };
-      p.tiles.k4 = { id: 'k4_gifted_outstanding', status: 'neutral', headline: 'Admin-granted, not taken back, not expired', value: { value: 0, exact: true }, previous: null };
       p.tiles.k5 = { id: 'k5_our_revenue', status: 'neutral', headline: 'No data yet', value: null, previous: null, money: { kind: 'none' } };
-      return p;
+      return {
+        ...p,
+        mrr: { status: 'unknown', lines: [], unpriced: 0, discountUnknown: 0, pastDueCounted: true },
+        stripeMode: null,
+        paying: { scope: 'all', status: 'unknown', paying: null, accounts: null },
+        platformMargin: { ...figureMargin(0, 0), margin: { kind: 'unknown' }, marginAfterFees: { kind: 'unknown' } },
+      };
     },
     tiles: [
-      { id: 'k1_ai_cost', status: 'not_measured', has: [LABEL_K1, SUB_K1, 'Not measured yet', 'Not enough history'], hasNot: ['USD', 'Same days last month'] },
-      { id: 'k2_far_over_allowance', status: 'unavailable', has: [LABEL_K2, 'Could not check', 'Could not read the credits'], hasNot: ['At least'] },
-      { id: 'k3_founding_no_end_date', status: 'green', has: [LABEL_K3, '0', 'Healthy', 'All clear'] },
-      { id: 'k4_gifted_outstanding', status: 'neutral', has: [LABEL_K4, SUB_K4, '0'], hasNot: ['$', 'USD'] },
-      { id: 'k5_our_revenue', status: 'neutral', has: [LABEL_K5, 'No data yet'], hasNot: ['USD', '0.00', 'Unknown'] },
+      { id: 'fk1_revenue', status: 'neutral', indicator: 'lagging', has: [L_REVENUE, 'No data yet'], hasNot: ['$', 'USD', '0.00', 'Unknown'] },
+      { id: 'fk2_mrr', status: 'neutral', indicator: 'leading', has: [L_MRR, 'Unknown'], hasNot: ['$', '0.00'] },
+      { id: 'fk3_ai_cost', status: 'not_measured', indicator: 'lagging', has: [L_AI_COST, SUB_AI_COST, 'Not measured yet', 'Not enough history'], hasNot: ['$', 'USD', 'Same days last month'] },
+      { id: 'fk4_ai_margin', status: 'neutral', indicator: 'lagging', has: [L_MARGIN, 'Unknown'], hasNot: ['$'] },
+      { id: 'fk5_paying', status: 'neutral', indicator: 'lagging', has: [L_PAYING, 'Unknown'], hasNot: ['0%'] },
     ],
   },
   {
-    name: 'F3 money: lower bounds and several currencies',
+    name: 'F3 money: lower bounds, other currencies as a count, a negative margin, a cut plan read',
     search: '',
     build: () => {
-      const p = payload();
+      const p = payload({
+        revenue: revenueSection(
+          { totals: [{ currency: 'EUR', boostsNet: 7, plansReceived: 0, total: 7 }, { currency: 'USD', boostsNet: 10, plansReceived: 0, total: 10 }] },
+          { lines: [eurBoost], notes: { empty: false, exact: true, otherStatusPurchases: 0, unreadablePurchases: 0, refundOrDispute: false } }
+        ),
+      });
       p.tiles.k1 = { id: 'k1_ai_cost', status: 'amber', headline: 'A lower bound', value: { value: 12.5, exact: false }, previous: { value: 3.25, exact: false } };
-      p.tiles.k2 = { id: 'k2_far_over_allowance', status: 'red', headline: 'Accounts far over allowance', value: { value: 3, exact: true }, previous: null };
       p.tiles.k5 = { id: 'k5_our_revenue', status: 'neutral', headline: 'Net of refunds and disputes', value: null, previous: null, money: { kind: 'several', currencies: 2 } };
-      return p;
+      const mrr = usdMrr(4900, 4900);
+      mrr.lines.push({ currency: 'ILS', totalHundredths: 9900, cancellingHundredths: 0, pastDueHundredths: 0, subscriptions: 1, overflow: false });
+      return { ...p, mrr, stripeMode: 'live', paying: allPaying(9, 50, 'partial'), platformMargin: figureMargin(-12.5, -13) };
     },
     tiles: [
-      { id: 'k1_ai_cost', status: 'amber', has: [LABEL_K1, 'At least USD 12.50', 'Same days last month: At least USD 3.25', 'Needs a look', 'A lower bound'] },
-      { id: 'k2_far_over_allowance', status: 'red', has: [LABEL_K2, '3', 'Needs action', 'Accounts far over allowance'], hasNot: ['At least'] },
-      { id: 'k3_founding_no_end_date', status: 'amber', has: [LABEL_K3, '8', 'Needs a look', 'Founding Partners with no end date'] },
-      { id: 'k4_gifted_outstanding', status: 'neutral', has: [LABEL_K4, '12.5'] },
-      { id: 'k5_our_revenue', status: 'neutral', has: [LABEL_K5, '2 currencies, see Our revenue'], hasNot: ['USD'] },
+      { id: 'fk1_revenue', status: 'neutral', indicator: 'lagging', has: [L_REVENUE, '$10.00', 'plus 2 payments in other currencies, not converted'], hasNot: ['EUR', '17.00', '7.00'] },
+      { id: 'fk2_mrr', status: 'neutral', indicator: 'leading', has: [L_MRR, '$49.00', 'of which past due $49.00 (still counted)', 'plus 1 subscription in other currencies, not converted'], hasNot: ['ILS', '99.00'] },
+      { id: 'fk3_ai_cost', status: 'amber', indicator: 'lagging', has: [L_AI_COST, 'At least $12.50', 'Same days last month: At least $3.25', 'Needs a look', 'A lower bound'], hasNot: ['USD'] },
+      { id: 'fk4_ai_margin', status: 'neutral', indicator: 'lagging', has: [L_MARGIN, '-$12.50', 'After Stripe fees (estimate): -$13.00'] },
+      { id: 'fk5_paying', status: 'neutral', indicator: 'lagging', has: [L_PAYING, 'At least 9', 'At least 9 of at least 50 accounts: the plan read was cut off'], hasNot: ['%'] },
     ],
   },
   {
-    name: 'F3b money unknown: the read failed',
+    name: 'F3b revenue unknown: the read failed; a test key labels MRR only',
     search: '',
     build: () => {
-      const p = payload();
+      const p = payload({ revenue: revenueSection({ totals: null }) });
       p.tiles.k5 = { id: 'k5_our_revenue', status: 'unavailable', headline: 'Could not read our revenue', value: null, previous: null, money: { kind: 'unknown', reason: 'failed' } };
-      return p;
+      return { ...p, mrr: usdMrr(4900), stripeMode: 'test', paying: allPaying(0, 4), platformMargin: figureMargin(0, 0) };
     },
     tiles: [
-      { id: 'k1_ai_cost', status: 'not_measured', has: [LABEL_K1, 'USD 12.50', 'Not measured yet', 'Not enough history'] },
-      { id: 'k5_our_revenue', status: 'unavailable', has: [LABEL_K5, 'Unknown', 'Could not check', 'Could not read our revenue'], hasNot: ['USD'] },
+      { id: 'fk1_revenue', status: 'unavailable', indicator: 'lagging', has: [L_REVENUE, 'Unknown', 'Could not check', 'Could not read our revenue'], hasNot: ['$', 'USD', 'test mode'] },
+      { id: 'fk2_mrr', status: 'neutral', indicator: 'leading', has: [L_MRR, '$49.00', 'Stripe test mode'] },
+      { id: 'fk3_ai_cost', status: 'not_measured', indicator: 'lagging', has: [L_AI_COST, '$12.50', 'Not measured yet'], hasNot: ['test mode'] },
+      { id: 'fk5_paying', status: 'neutral', indicator: 'lagging', has: [L_PAYING, '0%', '0 of 4 accounts'] },
     ],
   },
   {
-    name: 'F4 picked business',
+    name: 'F4 picked business: its margin, paying or not, no tab targets',
     search: `account=${A}`,
     build: () => {
-      const p = payload({ accountId: A });
-      p.tiles.k4 = { id: 'k4_gifted_outstanding', status: 'neutral', headline: 'Admin-granted, not taken back, not expired', value: { value: 0, exact: true }, previous: null };
+      const p = payload({ accountId: A, revenue: revenueSection({ totals: [{ currency: 'USD', boostsNet: 10, plansReceived: 79, total: 89 }] }) });
       p.tiles.k5 = { id: 'k5_our_revenue', status: 'neutral', headline: 'Net of refunds and disputes', value: null, previous: null, money: { kind: 'one', currency: 'USD', net: 89 } };
-      return p;
+      return { ...p, mrr: usdMrr(7900), stripeMode: 'live', paying: { scope: 'one', status: 'ok', paying: true }, accountMargin: figureMargin(80, 77) };
     },
     tiles: [
-      { id: 'k1_ai_cost', status: 'not_measured', has: [LABEL_K1, 'USD 12.50'] },
-      { id: 'k2_far_over_allowance', status: 'amber', has: [LABEL_K2, 'At least 1', 'Needs a look'] },
-      { id: 'k3_founding_no_end_date', status: 'amber', has: [LABEL_K3, '8', 'Needs a look'] },
-      { id: 'k4_gifted_outstanding', status: 'neutral', has: [LABEL_K4, '0'], hasNot: ['$', 'USD'] },
-      { id: 'k5_our_revenue', status: 'neutral', has: [LABEL_K5, 'USD 89.00'] },
+      { id: 'fk1_revenue', status: 'neutral', indicator: 'lagging', has: [L_REVENUE, '$89.00'] },
+      { id: 'fk2_mrr', status: 'neutral', indicator: 'leading', has: [L_MRR, '$79.00'] },
+      { id: 'fk3_ai_cost', status: 'not_measured', indicator: 'lagging', has: [L_AI_COST, '$12.50'] },
+      { id: 'fk4_ai_margin', status: 'neutral', indicator: 'lagging', has: [L_MARGIN, '$80.00'] },
+      { id: 'fk5_paying', status: 'neutral', indicator: 'lagging', has: [L_PAYING, 'Paying', 'This business, now'], hasNot: ['%', 'Not paying'] },
     ],
   },
 ];
 
-describe('Finance F-5 Pin B: every tile value and status equal the values before F-5', () => {
+const ORDER: TileId[] = ['fk1_revenue', 'fk2_mrr', 'fk3_ai_cost', 'fk4_ai_margin', 'fk5_paying'];
+
+describe('Finance Pin B (re-frozen by MK-5): every tile value, status and icon', () => {
   it('pins five fixtures and every tile at least once', () => {
     expect(FIXTURES).toHaveLength(5);
     const ids = new Set(FIXTURES.flatMap((f) => f.tiles.map((t) => t.id)));
-    expect([...ids].sort()).toEqual(['k1_ai_cost', 'k2_far_over_allowance', 'k3_founding_no_end_date', 'k4_gifted_outstanding', 'k5_our_revenue']);
+    expect([...ids].sort()).toEqual([...ORDER].sort());
   });
 
   it.each(FIXTURES.map((f) => [f.name, f] as const))('%s', async (_name, fixture) => {
@@ -464,8 +507,13 @@ describe('Finance F-5 Pin B: every tile value and status equal the values before
       const text = tile.textContent ?? '';
       for (const fragment of expected.has) expect({ id: expected.id, fragment, found: text.includes(fragment) }).toEqual({ id: expected.id, fragment, found: true });
       for (const fragment of expected.hasNot ?? []) expect({ id: expected.id, fragment, found: text.includes(fragment) }).toEqual({ id: expected.id, fragment, found: false });
+      // The icon is beside the tile, never inside it, and says leading or lagging (MK-0, LL-1 to LL-3).
+      const icon = screen.getByTestId(`tile-${expected.id}-indicator`);
+      expect({ id: expected.id, kind: icon.getAttribute('data-indicator'), inside: tile.contains(icon) }).toEqual({ id: expected.id, kind: expected.indicator, inside: false });
     }
-    // Exactly five tiles, each once.
-    expect(document.querySelectorAll('[data-testid^="tile-k"][data-status]')).toHaveLength(5);
+    // Exactly five tiles, in BD-35's order.
+    expect([...document.querySelectorAll('[data-testid^="tile-fk"][data-status]')].map((t) => t.getAttribute('data-testid'))).toEqual(
+      ORDER.map((id) => `tile-${id}`)
+    );
   }, CASE_TIMEOUT_MS);
 });

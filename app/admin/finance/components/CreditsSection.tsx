@@ -12,7 +12,8 @@
  * read leaves the gifted figures "Unknown" while the rest renders (AC-38).
  */
 
-import type { FinanceCreditRow, FinanceCreditsSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceCreditRow, FinanceCreditsSection, FinanceTile } from '@/lib/business-os/finance/financeTypes';
+import type { StatusTone } from '@/app/admin/components/layout/StatusChip';
 import {
   ADMIN_TABLE,
   ADMIN_TABLE_WRAP,
@@ -98,14 +99,27 @@ export function usedPercent(row: FinanceCreditRow): string {
 const credits = (value: number | null | undefined) => (value === null || value === undefined ? CREDITS_UNKNOWN : formatCredits(value));
 const yesNo = (value: boolean | null) => (value === null ? CREDITS_UNKNOWN : value ? CREDITS_YES : CREDITS_NO);
 
+/** The K-2 rule's status as the chip's tone: the rule decides, this only maps it (BD-11). */
+function k2ChipTone(k2: FinanceTile | undefined): StatusTone {
+  if (k2?.status === 'red') return 'danger';
+  if (k2?.status === 'amber') return 'warn';
+  return 'neutral';
+}
+
 export function CreditsSection({
   credits: section,
   windowLabel,
   onRetry,
+  k2,
 }: {
   credits: FinanceCreditsSection;
   windowLabel: string;
   onRetry: () => void;
+  /**
+   * SA-CR-MK5 C-2: K-2's tile, so the far-over chip carries the BD-11 rule's own status
+   * (red, amber, or grey) instead of a fixed amber. Absent (older fixtures): grey.
+   */
+  k2?: FinanceTile;
 }) {
   const f = section.figures;
   const gifted = section.gifted;
@@ -126,7 +140,7 @@ export function CreditsSection({
             indicator={{ kind: 'leading', definition: BLOCK_KPI_OVER_ALLOWANCE_DEFINITION }}
             chip={
               f.farOverAllowance !== null && f.farOverAllowance > 0
-                ? { tone: 'warn', label: BLOCK_KPI_FAR_OVER_CHIP(formatCount(f.farOverAllowance), section.farOverAllowancePercent) }
+                ? { tone: k2ChipTone(k2), label: BLOCK_KPI_FAR_OVER_CHIP(formatCount(f.farOverAllowance), section.farOverAllowancePercent) }
                 : null
             }
             testId="credits-over"

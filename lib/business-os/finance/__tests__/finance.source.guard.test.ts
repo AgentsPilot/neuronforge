@@ -977,13 +977,17 @@ describe('finance slice 4a source guards (our boost revenue)', () => {
       .replace(/k5SeveralCurrencies\(money\.currencies\)/g, '')
       .match(/\bmoney\.(?:net|currencies|currency)\b/g) ?? [];
 
-  it('SA-WR-34: the strip prints money.net only through formatMoney, the count only through the copy, and reads money from K-5 only', () => {
+  // Money MK-5 (ruled, SA-9 / USD-5): the strip prints every money value through `formatUsdSign` (one
+  // US-dollar line, null for any other code) and never `formatMoney`; it reads K-5's money for its KIND
+  // only (F-K1's figure is the US-dollar line of Our revenue's totals), never its net or currency.
+  it('SA-WR-34 / MK-5: the strip prints money only through formatUsdSign, never formatMoney, and reads K-5 money for its kind only', () => {
     const code = codeOf(STRIP);
-    expect(code).toMatch(/formatMoney\(money\.net, money\.currency\)/);
+    expect(code).not.toMatch(/formatMoney\(/);
+    expect(code).toMatch(/formatUsdSign\(/);
     expect(strayMoney(code)).toEqual([]);
     expect(code).not.toMatch(/\bk[1-4]\.money\b/);
     expect(code.match(/\.money\b/g)).toEqual(['.money']);
-    expect(code).toMatch(/k5Value\(k5\.money\)/);
+    expect(code).toMatch(/const money = k5\.money;/);
   });
 
   it('the SA-WR-34 rules bite (planted): a bare net or a K-1 money read is caught', () => {
@@ -1270,19 +1274,20 @@ describe('finance slice 6a source guards (account economics, the AI margin)', ()
   });
 
   // (e) Exports pinned exactly; none takes or returns a total across currencies.
-  const ECON_EXPORTS = ['AccountEconomicsInput', 'buildAccountEconomics', 'buildAccountMargin'];
+  // Money MK-5 (ruled): `buildPlatformMargin`, the Accounts tab's platform line, now also F-K4's.
+  const ECON_EXPORTS = ['AccountEconomicsInput', 'buildAccountEconomics', 'buildAccountMargin', 'buildPlatformMargin'];
   const econExportsOf = (code: string) =>
     [...code.matchAll(/export\s+(?:const|function|interface|type|class|let|var)\s+(\w+)/g)].map((m) => m[1]).sort();
-  it('accountEconomics.ts exports exactly AccountEconomicsInput, buildAccountEconomics and buildAccountMargin; no exchange rate', () => {
+  it('accountEconomics.ts exports exactly AccountEconomicsInput, buildAccountEconomics, buildAccountMargin and buildPlatformMargin; no exchange rate', () => {
     const code = codeOf(ECON);
     expect(econExportsOf(code)).toEqual(ECON_EXPORTS);
     expect(code).not.toMatch(/export\s*\{|export\s+default/);
     expect(code).not.toMatch(/exchange_rates|\bfx\b|\brate\b/i);
   });
 
-  it('the 6a export pin bites (planted): a fourth export breaks it', () => {
+  it('the 6a export pin bites (planted): a fifth export breaks it', () => {
     const planted = `${codeOf(ECON)}\nexport function sumAcrossCurrencies() { return 0; }\n`;
-    expect(econExportsOf(planted)).toHaveLength(4);
+    expect(econExportsOf(planted)).toHaveLength(5);
     expect(econExportsOf(planted)).not.toEqual(ECON_EXPORTS);
   });
 

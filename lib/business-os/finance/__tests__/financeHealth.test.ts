@@ -2577,3 +2577,98 @@ describe('slice 4b.2: refunds by event date, held now, block A, the K-5 dispute 
     for (const secret of ['pppppppp', 'qqqqqqqq', 'dddddddd', 'livemode', 'stripe_']) expect(text).not.toContain(secret);
   });
 });
+
+// ── Money MK-5 (§5.1, Q-11; F-K4): paying accounts and the platform AI margin in the payload ──
+describe('Money MK-5: paying (F-K5) and platformMargin (F-K4)', () => {
+  it('all businesses: paying is the plan rows in the paying set over EVERY plan row (Q-11), ok', async () => {
+    const { result } = await run();
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    // Two plan rows (A, B); only B has a paying billing row.
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 1, accounts: 2 });
+    expect(result.payload.accounts.figures?.total).toBe(2);
+  });
+
+  it('the paying read failed: unknown, never 0 of n', async () => {
+    const deps = makeDeps();
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'unknown', paying: null, accounts: null });
+  });
+
+  it('the plan read failed: unknown', async () => {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'unknown', paying: null, accounts: null });
+  });
+
+  it('a business picked: whether it pays, from its own billing row', async () => {
+    const notPaying = await run(makeDeps(), A);
+    if (notPaying.result.kind !== 'ok') throw new Error('expected ok');
+    expect(notPaying.result.payload.paying).toEqual({ scope: 'one', status: 'ok', paying: false });
+    const deps = makeDeps();
+    deps.findPlanForAccount.mockImplementation(() => ok({ plan: plan(B, { tier: TIER, cohort: null }) }));
+    deps.finance.findBillingStatusForAccount.mockImplementation(
+      () => ok({ user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null }) as never
+    );
+    const paying = await run(deps, B);
+    if (paying.result.kind !== 'ok') throw new Error('expected ok');
+    expect(paying.result.payload.paying).toEqual({ scope: 'one', status: 'ok', paying: true });
+  });
+
+  it('platformMargin: present for all businesses, absent with a business picked (F-K4 reads accountMargin then)', async () => {
+    const all = await run();
+    if (all.result.kind !== 'ok') throw new Error('expected ok');
+    expect(all.result.payload.platformMargin).toEqual(expect.objectContaining({ margin: expect.any(Object), marginAfterFees: expect.any(Object) }));
+    const one = await run(makeDeps(), A);
+    if (one.result.kind !== 'ok') throw new Error('expected ok');
+    expect(one.result.payload).not.toHaveProperty('platformMargin');
+    expect(one.result.payload.accountMargin).toBeDefined();
+  });
+
+  it('platformMargin equals the Accounts tab platform line for the same reads (one function)', async () => {
+    const overview = await run();
+    const tab = await run(makeDeps(), null, logger(), NOW, WINDOW, { sort: 'ai_cost', group: null, show: 'all' });
+    if (overview.result.kind !== 'ok' || tab.result.kind !== 'ok') throw new Error('expected ok');
+    const line = tab.result.payload.accountEconomics?.platform;
+    expect(line).toBeDefined();
+    const { accountsCovered: _covered, includesDeleted: _deleted, ...lineMargin } = line!;
+    expect(overview.result.payload.platformMargin).toEqual(lineMargin);
+    expect(tab.result.payload.platformMargin).toEqual(lineMargin);
+  });
+});
+
+// ── SA-CR-MK5 C-1 (§5.1): platform accounts are out of both counts ──
+describe('Money MK-5 C-1: Paying % leaves platform accounts out of the numerator and the denominator', () => {
+  it('a paying platform account with a plan row is in neither count (the existing isPlatformAccount rule)', async () => {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(A), plan(B, { tier: TIER, cohort: null }), plan(PLATFORM, { tier: TIER, cohort: null })]) as never);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(
+      () =>
+        ok<FinanceBillingStatusRow[]>([
+          { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null },
+          { user_id: PLATFORM, subscription_status: 'active', ended_at: null, bought_tier: null },
+        ]) as never
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 1, accounts: 2 });
+  });
+
+  it('control: without the rule the platform row would count (the guard is not vacuous)', async () => {
+    const deps = makeDeps({ isPlatformAccount: () => false });
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(A), plan(B, { tier: TIER, cohort: null }), plan(PLATFORM, { tier: TIER, cohort: null })]) as never);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(
+      () =>
+        ok<FinanceBillingStatusRow[]>([
+          { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null },
+          { user_id: PLATFORM, subscription_status: 'active', ended_at: null, bought_tier: null },
+        ]) as never
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 2, accounts: 3 });
+  });
+});

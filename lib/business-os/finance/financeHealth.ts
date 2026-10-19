@@ -136,7 +136,7 @@ import { buildBoostProblems } from './boostProblems';
 import { k5DisputeHeadline, K5_DISPUTE_CHECK_FAILED } from '@/app/admin/finance/financeCopy';
 import { buildPlanRevenue } from './planRevenue';
 import { combineOurRevenue } from './ourRevenue';
-import { buildAccountEconomics, buildAccountMargin } from './accountEconomics';
+import { buildAccountEconomics, buildAccountMargin, buildPlatformMargin } from './accountEconomics';
 import { buildRecordedAiCost, type RecordedReadInput, type RecordedRowInput } from './recordedCost';
 import type { AiCostUnits } from './aiCost';
 import {
@@ -165,6 +165,7 @@ import { classifyAccounts, tierLabelForGroup, type ClassifyInput } from './planG
 import type {
   FinanceAccountEconomicsSection,
   FinanceAccountMargin,
+  FinancePaying,
   FinanceAccountsSection,
   FinanceAccountsTabQuery,
   FinanceAiCostSection,
@@ -771,6 +772,23 @@ export async function buildFinanceHealth(
   const classified = plansResult.data
     ? classifyAccounts({ rows: plansResult.data.rows, payingIds, paidTierHints, window, now, config: deps.config })
     : null;
+  // Money MK-5 (§5.1, Q-11): F-K5 over the same rows and the same paying set as Section 1.
+  // SA-CR-MK5 C-1: platform accounts are not counted, in the numerator or the denominator
+  // (§5.1), by the one existing rule (`deps.isPlatformAccount`); deleted accounts have no plan row.
+  const payingRows = plansResult.data ? plansResult.data.rows.filter((row) => !deps.isPlatformAccount(row.user_id)) : null;
+  const paying: FinancePaying =
+    accountId !== null
+      ? payingIds === null
+        ? { scope: 'one', status: 'unknown', paying: null }
+        : { scope: 'one', status: 'ok', paying: payingIds.has(accountId) }
+      : !plansResult.data || !payingRows || payingIds === null
+        ? { scope: 'all', status: 'unknown', paying: null, accounts: null }
+        : {
+            scope: 'all',
+            status: plansResult.data.capped ? 'partial' : 'ok',
+            paying: payingRows.filter((row) => payingIds.has(row.user_id)).length,
+            accounts: payingRows.length,
+          };
   const accounts: FinanceAccountsSection = {
     status: !classified ? 'unknown' : plansResult.data?.capped ? 'partial' : 'ok',
     scope: accountId !== null ? 'one' : 'all',
@@ -1063,6 +1081,8 @@ export async function buildFinanceHealth(
   let accountEconomics: FinanceAccountEconomicsSection | null = null;
   let accountEconomicsCounts: FinanceHealthCounts['accountEconomics'] = { built: false };
   let accountMargin: FinanceAccountMargin | null = null;
+  // Money MK-5: F-K4 for all businesses, the Accounts tab's own platform line over the same reads.
+  const platformMargin: FinanceAccountMargin | null = accountId === null ? buildPlatformMargin(economicsReads) : null;
   if (accountId !== null) {
     // M3-FR-8: the same functions over R-a′ / R-k′ / R-m′, which already carry exactly this id.
     accountMargin = buildAccountMargin({ ...economicsReads, accountId });
@@ -1349,6 +1369,9 @@ export async function buildFinanceHealth(
     credits,
     takings,
     paymentProblems,
+    // Money MK-5: F-K5 always; F-K4's platform line with no business picked.
+    paying,
+    ...(platformMargin ? { platformMargin } : {}),
     // Slice 6a (SA-W74): optional keys, ABSENT (not null) when not built, so the Overview payload is unchanged.
     ...(accountEconomics ? { accountEconomics } : {}),
     ...(accountMargin ? { accountMargin } : {}),

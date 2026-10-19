@@ -391,8 +391,12 @@ MK4-FU-1 is done here: the copy and table moved into `app/admin/finance/` (`plan
 4. Open the old `/admin/subscriptions?status=failed`: it redirects to the Plans & subscriptions tab with the Failed filter. The Money sidebar has no "Subscriptions" item.
 
 ### Final Status
-- [ ] All acceptance criteria pass — ready for commit
-- [x] Issues found — Dev must fix **QA-MK4-1** (three `status: ''` lines; then the wide tsc reads 0 errors) and should fix **QA-MK4-2** (the workplan duplication) before RM commits. All behaviour checks pass.
+- [x] All acceptance criteria pass — ready for commit (updated 2026-10-19, after both QA issues were fixed)
+- [ ] Issues found. Both raised issues are now **fixed**:
+  - **QA-MK4-1 (Medium), fixed:** `status: ''` was added in the three places, plus the bridge expectation. The 121-file scoped tsc reads 0 errors, and its canary was caught.
+  - **QA-MK4-2 (Low), fixed:** the duplicated block was removed.
+
+  See "QA-MK4-1 and QA-MK4-2 fixes" in the Implementation Notes. All behaviour checks pass. Committed as `44667683` (PR #476).
 
 ## Commit Info
 

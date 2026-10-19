@@ -55,6 +55,64 @@ export function k1SubLine(previous: string | null): string {
 }
 export const AT_LEAST = 'At least';
 
+// ── Money MK-5: the KPI strip F-K1 to F-K5 (KPI restructure review §3.1, §5, §5.1, LL-4, FC-1, FC-2) ──
+// One copy constant per KPI: the label, the caption and the tooltip's definition
+// (line 1 of the leading / lagging icon). Money is `$` with the US-dollar line
+// only (§3.4); other currencies are a count in a note, never an amount.
+export const FINANCE_KPIS = {
+  revenue: {
+    label: 'Revenue received',
+    sub: (windowLabel: string) => `Plans and credit boosts · ${windowLabel}`,
+    definition:
+      'Money owners paid us in the window, for plans and credit boosts, after refunds and lost disputes. Test and live payments count together.',
+  },
+  mrr: {
+    label: 'MRR now',
+    sub: 'Monthly, at list price, today',
+    definition:
+      'The monthly price of every paying subscription today. Past due is counted but shown apart; plans with no list price, or a founder discount with no amount, are not counted and say so.',
+  },
+  aiCost: {
+    label: 'Charged AI cost this month',
+    definition:
+      'What Business OS AI actions cost us that we charged credits for, this month, against the same days of last month.',
+  },
+  aiMargin: {
+    label: 'AI margin',
+    sub: (windowLabel: string) => `Revenue after tax minus Charged AI cost · ${windowLabel}`,
+    /** FC-2 (§14, Q-13): it says what it deducts; the second sentence is the approved line, word for word. */
+    definition:
+      'Revenue after tax, net of refunds and disputes, minus Charged AI cost, in the window. A partial gross margin: only AI cost is deducted so far. Stripe fees are an estimate beside it.',
+  },
+  paying: {
+    label: 'Paying accounts',
+    definition:
+      'What share of our accounts pay us for a plan: accounts paying now, out of every account with a plan, trials, Founding Partners and comped accounts included.',
+  },
+} as const;
+/** USD-3 / USD-5: a count, never an amount, never part of the tile's value. */
+export const kpiOtherPayments = (count: number) =>
+  `plus ${count} ${count === 1 ? 'payment' : 'payments'} in other currencies, not converted`;
+export const kpiOtherSubscriptions = (count: number) =>
+  `plus ${count} ${count === 1 ? 'subscription' : 'subscriptions'} in other currencies, not converted`;
+export const KPI_NONE_IN_DOLLARS = 'None in US dollars';
+export const KPI_UNKNOWN = 'Unknown';
+export const KPI_MRR_NONE = 'None';
+export const kpiMrrPastDue = (amount: string) => `of which past due ${amount} (still counted)`;
+export const kpiMarginAfterFees = (amount: string) => `After Stripe fees (estimate): ${amount}`;
+export const KPI_MARGIN_WORDS = {
+  not_available: 'Not available',
+  other_currency: 'n/a, different currency',
+  unknown: 'Unknown',
+} as const;
+export const kpiPayingCount = (paying: string, accounts: string) => `${paying} of ${accounts} accounts`;
+export const kpiPayingPartial = (paying: string, accounts: string) =>
+  `At least ${paying} of at least ${accounts} accounts: the plan read was cut off`;
+export const KPI_PAYING_ONE = { yes: 'Paying', no: 'Not paying' } as const;
+export const KPI_PAYING_ONE_SUB = 'This business, now';
+/** MK-5: K-3 leaves the strip; its BD-11 rule is a chip on Plan mix, with the payload's own status and headline. */
+export const accountsK3Chip = (count: string) => `${count} Founding Partners with no end date`;
+
 export const SECTION_COULD_NOT_LOAD = 'Could not load this section';
 export const SECTION_PARTIAL = 'At least';
 export const SECTION_OK = 'Loaded';
@@ -282,8 +340,8 @@ export const RECORDED_DELETED_NOTE = 'Deleted accounts are left out: their recor
 export const RECORDED_DISTORTIONS: readonly string[] = [
   'Fallback-priced charges are above their recorded cost, so the difference can be lower than the true uncharged cost.',
   'A call and its charge can fall either side of a window edge: a charge is written when its action ends, up to 5 minutes later.',
-  'A failed provider call is recorded at USD 0 in both.',
-  'By design, Recorded above charged includes chat turns outside the call catalog, platform-account calls and cache-served turns at USD 0.',
+  'A failed provider call is recorded at $0 in both.',
+  'By design, Recorded above charged includes chat turns outside the call catalog, platform-account calls and cache-served turns at $0.',
   "Recorded above charged is not 'not charged' call by call; the Leak check matches calls.",
 ];
 /** M4-FR-2: the account summary's line, the same value as Section 3's (AC-158). */

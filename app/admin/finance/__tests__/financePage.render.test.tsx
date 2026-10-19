@@ -54,7 +54,7 @@
  * plans-line cases (S4-FR-4, SA-WR-33) are rewritten to the M-2 meaning: the
  * plans part per currency, the by-business table or the one business's list,
  * the deleted line, empty and failed states, `formatUtc` on every timestamp,
- * and K-5's "USD 89.00" with its new caption (AC-120 to AC-126, AC-129).
+ * and K-5's "$89.00" with its new caption (AC-120 to AC-126, AC-129).
  */
 
 import '@testing-library/jest-dom';
@@ -105,6 +105,8 @@ import {
   TAKINGS_TITLE,
   TILE_LABELS,
 } from '../financeCopy';
+// Money MK-5: a separate import.
+import { FINANCE_KPIS as FINANCE_KPIS_MK5 } from '../financeCopy';
 // Money MK-4: a separate import.
 import { REVENUE_RECURRING_HEADING, REVENUE_RECURRING_NONE, REVENUE_RECURRING_TEST_KEY_LABEL, REVENUE_RECURRING_UNKNOWN } from '../financeCopy';
 import type { FinanceMrrSection } from '@/lib/business-os/finance/financeTypes';
@@ -393,7 +395,7 @@ function plansPart(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue 
   };
 }
 
-/** Slice 5a: the owner's October plan payment, all businesses (USD 79.00, one business, by business). */
+/** Slice 5a: the owner's October plan payment, all businesses ($79.00, one business, by business). */
 function paidPlans(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue {
   return plansPart({
     lines: [{ currency: 'USD', payments: 1, received: 79, tax: 0, businesses: 1, zeroAmountInvoices: 0, unreadable: 0, exact: true }],
@@ -426,7 +428,7 @@ function revenueSection(extra: Partial<FinanceRevenueSection> = {}, boosts: Part
   };
 }
 
-/** One currency line, the owner's test purchase by default (USD 10.00, 5,000 credits). */
+/** One currency line, the owner's test purchase by default ($10.00, 5,000 credits). */
 function boostLine(extra: Partial<FinanceBoostLine> = {}): FinanceBoostLine {
   return {
     currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, lost: 0, net: 10, creditsSold: 5000,
@@ -536,7 +538,8 @@ beforeEach(() => {
  * F-1: every section's own status is now the shared StatusChip (so it carries
  * data-tone). "No chip in this section" means no chip OTHER than that one.
  */
-const NO_CHIP_BUT_STATUS = (id: string) => `[data-tone]:not([data-testid="section-${id}-status"])`;
+// Money MK-5 (ruled): K-3's chip on Plan mix is its rule (not a frame chip), so it is left out like the status.
+const NO_CHIP_BUT_STATUS = (id: string) => `[data-tone]:not([data-testid="section-${id}-status"]):not([data-testid="accounts-k3-chip"])`;
 
 describe('the finance page', () => {
   it('shows the title, the three tiles with their text state, and the sections in order', async () => {
@@ -545,10 +548,10 @@ describe('the finance page', () => {
     await screen.findByTestId('kpi-strip');
     // Finance F-2: the h1 equals the sidebar label.
     expect(screen.getByRole('heading', { level: 1, name: 'Finance' })).toBeInTheDocument();
-    for (const id of ['k1_ai_cost', 'k3_founding_no_end_date', 'k5_our_revenue']) expectTileState(id);
+    // Money MK-5 (ruled): the five F-K tiles; K-3's headline is on Plan mix now, beside its chip.
+    for (const id of ['fk1_revenue', 'fk2_mrr', 'fk3_ai_cost', 'fk4_ai_margin', 'fk5_paying']) expectTileState(id);
     expect(screen.getByText(TILE_LABELS.k1Sub)).toBeInTheDocument();
-    // Finance F-5: the headline is the tile's second line (the shared `detail`).
-    expect(screen.getByTestId('tile-k3_founding_no_end_date').lastElementChild).toHaveTextContent('Founding Partners with no end date');
+    expect(screen.getByTestId('accounts-k3')).toHaveTextContent('Founding Partners with no end date');
     const order = ['kpi-strip', 'section-revenue', 'section-accounts', 'section-ai-cost'].map((id) => screen.getByTestId(id));
     for (let i = 1; i < order.length; i += 1) {
       expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -561,7 +564,7 @@ describe('the finance page', () => {
   it('AC-14: the AI cost is labelled USD; SA-WR-5: a platform account is labelled', async () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
-    expect(await screen.findByTestId('ai-total')).toHaveTextContent('USD 3.50');
+    expect(await screen.findByTestId('ai-total')).toHaveTextContent('$3.50');
     expect(within(screen.getByTestId('ai-top')).getByText(NAME_PLATFORM)).toBeInTheDocument();
     expect(within(screen.getByTestId('ai-top')).getByText('Acme Dental')).toBeInTheDocument();
   });
@@ -574,7 +577,7 @@ describe('the finance page', () => {
     expect(within(panel).getByTestId('revenue-no-boosts')).toHaveTextContent(REVENUE_NO_BOOSTS);
     expect(within(panel).queryByTestId('revenue-lines')).toBeNull();
     expect(panel.textContent).not.toMatch(/\$|USD|0\.00/);
-    const k5 = screen.getByTestId('tile-k5_our_revenue');
+    const k5 = screen.getByTestId('tile-fk1_revenue');
     expect(k5.textContent).not.toMatch(/\$|USD|0\.00/);
     expect(k5.lastElementChild).toHaveTextContent('No data yet');
     expect(k5.getAttribute('data-status')).toBe('neutral');
@@ -694,10 +697,10 @@ describe('the finance page', () => {
     p.aiCost = { ...p.aiCost, status: 'partial', figures: { ...p.aiCost.figures!, exact: false } };
     serve({ success: true, data: p });
     render(<FinanceView />);
-    expect(await screen.findByTestId('ai-total')).toHaveTextContent('At least USD 3.50');
+    expect(await screen.findByTestId('ai-total')).toHaveTextContent('At least $3.50');
   });
 
-  it('AC-7: an empty window says "No AI actions charged in this window" and USD 0.00', async () => {
+  it('AC-7: an empty window says "No AI actions charged in this window" and $0.00', async () => {
     const p = payload();
     p.aiCost = {
       ...p.aiCost,
@@ -706,7 +709,7 @@ describe('the finance page', () => {
     serve({ success: true, data: p });
     render(<FinanceView />);
     expect(await screen.findByTestId('ai-no-rows')).toHaveTextContent(AI_NO_ROWS);
-    expect(screen.getByTestId('ai-total')).toHaveTextContent('USD 0.00');
+    expect(screen.getByTestId('ai-total')).toHaveTextContent('$0.00');
   });
 
   it('AC-40: a window entirely before the cut-over shows the notice instead of a $0', async () => {
@@ -730,14 +733,16 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     serve({ success: true, data: payload({ credits: creditsSection({ farOverAllowancePercent: 120 }) }) });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
-    for (const id of ['k1_ai_cost', 'k2_far_over_allowance', 'k3_founding_no_end_date', 'k4_gifted_outstanding', 'k5_our_revenue']) {
-      expectTileState(id);
-    }
-    // The line comes from the payload (120 here), never a literal in the page.
-    expect(screen.getByTestId('tile-k2_far_over_allowance')).toHaveTextContent(k2Subtitle(120));
+    // Money MK-5 (ruled): the five F-K tiles; K-2 and K-4 live in Credits now.
+    for (const id of ['fk1_revenue', 'fk2_mrr', 'fk3_ai_cost', 'fk4_ai_margin', 'fk5_paying']) expectTileState(id);
+    // K-2: the line still comes from the payload (120 here), on the Credits chip (MK-1).
+    expect(screen.getByTestId('credits-over-chip')).toHaveTextContent('at or over 120% of allowance');
     expect(k2Subtitle(120)).toContain('120%');
-    expect(screen.getByTestId('tile-k2_far_over_allowance')).toHaveTextContent('At least 1');
-    expect(within(screen.getByTestId('tile-k4_gifted_outstanding')).getByText(TILE_LABELS.k4)).toBeInTheDocument();
+    // K-4: the gifted figure on Credits.
+    expect(screen.getByTestId('credits-gifted')).toHaveTextContent('12.5');
+    for (const gone of ['k2_far_over_allowance', 'k3_founding_no_end_date', 'k4_gifted_outstanding']) {
+      expect(screen.queryByTestId(`tile-${gone}`)).toBeNull();
+    }
     const aiCost = screen.getByTestId('section-ai-cost');
     const credits = screen.getByTestId('section-credits');
     expect(aiCost.compareDocumentPosition(credits) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -768,22 +773,21 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     render(<FinanceView />);
     const section = await screen.findByTestId('section-credits');
     expect(section.textContent).not.toMatch(/\$|USD/);
-    expect(screen.getByTestId('tile-k4_gifted_outstanding').textContent).not.toMatch(/\$|USD/);
+    // MK-5: K-4 is the Credits gifted figure now.
+    expect(screen.getByTestId('credits-gifted').textContent).not.toMatch(/\$|USD/);
   });
 
-  it('AC-8: no gifted credits → K-4 shows 0, neutral (F-5: no status row, K-4)', async () => {
-    const p = payload();
-    p.tiles.k4 = { ...p.tiles.k4, value: { value: 0, exact: true } };
-    serve({ success: true, data: p });
+  it('AC-8 (MK-5: K-4 is the Credits gifted figure): no gifted credits → 0, never money', async () => {
+    const base = creditsSection();
+    serve({ success: true, data: payload({ credits: { ...base, gifted: { ...base.gifted!, outstanding: 0 } } }) });
     render(<FinanceView />);
-    const tile = await screen.findByTestId('tile-k4_gifted_outstanding');
-    expect(tile).toHaveAttribute('data-status', 'neutral');
-    expect(tile).toHaveTextContent('0');
-    expectTileState('k4_gifted_outstanding');
-    expect(tile.className).toContain('border-slate-700');
+    const gifted = await screen.findByTestId('credits-gifted');
+    expect(gifted).toHaveTextContent('0');
+    expect(gifted.textContent).not.toMatch(/\$|USD/);
+    expect(screen.queryByTestId('tile-k4_gifted_outstanding')).toBeNull();
   });
 
-  it('AC-16: Section 4 could not load → its own Try again, the other sections render, and K-4 still shows its value (SA-W12)', async () => {
+  it('AC-16: Section 4 could not load → its own Try again, the other sections and the strip render (MK-5: K-2 and K-4 left the strip)', async () => {
     const p = payload({ credits: creditsSection({ status: 'unknown', figures: null }) });
     p.tiles.k2 = { ...p.tiles.k2, status: 'unavailable', headline: 'Unknown', value: null };
     serve({ success: true, data: p });
@@ -792,8 +796,9 @@ describe('Section 4 and the credit tiles (slice 1b)', () => {
     expect(within(section).getAllByText(SECTION_COULD_NOT_LOAD).length).toBeGreaterThan(0);
     expect(within(section).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.getByTestId('ai-total')).toBeInTheDocument();
-    expect(screen.getByTestId('tile-k4_gifted_outstanding')).toHaveTextContent('12.5');
-    expect(screen.getByTestId('tile-k2_far_over_allowance')).toHaveAttribute('data-status', 'unavailable');
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+    expect(screen.queryByTestId('tile-k2_far_over_allowance')).toBeNull();
+    expect(screen.queryByTestId('tile-k4_gifted_outstanding')).toBeNull();
   });
 
   it('AC-38: the lots read failed → the gifted figures say Unknown; the table and the over-allowance counts render', async () => {
@@ -910,20 +915,20 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     const section = await renderWith(takingsSection());
     const cells = section.querySelectorAll('[data-money]');
     expect(cells.length).toBeGreaterThanOrEqual(12);
-    for (const cell of Array.from(cells)) expect(cell.textContent).toMatch(/^(At least )?(USD|ILS|EUR|Unknown currency) -?[\d,]+\.\d\d$/);
+    for (const cell of Array.from(cells)) expect(cell.textContent).toMatch(/^(At least )?(-?\$[\d,]+\.\d\d|(ILS|EUR|Unknown currency) -?[\d,]+\.\d\d)$/);
     expect(within(screen.getByTestId('takings-line-ILS')).getByText('ILS 230.30')).toBeInTheDocument();
-    expect(within(screen.getByTestId('takings-line-USD')).getByText('USD 150.50')).toBeInTheDocument();
+    expect(within(screen.getByTestId('takings-line-USD')).getByText('$150.50')).toBeInTheDocument();
     // No cross-currency total anywhere in the block (gross 380.80, net 345.80, refunded 35.00).
     expect(section.textContent).not.toMatch(/380\.80|345\.80|35\.00/);
   });
 
   it('AC-49: fees on their FEE currency line, with "recorded on N of M" and the never-deducted note', async () => {
     const section = await renderWith(takingsSection());
-    expect(within(screen.getByTestId('takings-fee-USD')).getByText('USD 5.85')).toBeInTheDocument();
+    expect(within(screen.getByTestId('takings-fee-USD')).getByText('$5.85')).toBeInTheDocument();
     expect(screen.getByTestId('takings-fees-recorded')).toHaveTextContent('Fees recorded on 3 of 6 payments in this window');
     expect(section).toHaveTextContent(TAKINGS_FEE_NOTE);
     // Net is the server's gross minus refunded, untouched by any fee.
-    expect(within(screen.getByTestId('takings-line-USD')).getByText('USD 130.50')).toBeInTheDocument();
+    expect(within(screen.getByTestId('takings-line-USD')).getByText('$130.50')).toBeInTheDocument();
   });
 
   it('SA-W21: processor labels from the copy; NULL reads "Not recorded"', async () => {
@@ -942,7 +947,7 @@ describe('Section 2 block B, takings (slice 2a)', () => {
       figures: { ...f, paymentsExact: false, lines: f.lines.map((l) => ({ ...l, net: null })), rows: f.rows.map((r) => ({ ...r, net: null })) },
     });
     const usd = screen.getByTestId('takings-line-USD');
-    expect(usd).toHaveTextContent('At least USD 150.50');
+    expect(usd).toHaveTextContent('At least $150.50');
     expect(usd).toHaveTextContent('At least 2');
     expect(within(usd).getByText(TAKINGS_NET_CUT_OFF)).toBeInTheDocument();
     expect(screen.getByTestId('takings-notice-payments-cut')).toBeInTheDocument();
@@ -953,7 +958,7 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     const f = figures();
     await renderWith({ ...takingsSection(), status: 'partial', figures: { ...f, refundsState: 'partial', lines: f.lines.map((l) => ({ ...l, net: null })) } });
     const usd = screen.getByTestId('takings-line-USD');
-    expect(usd).toHaveTextContent('At least USD 20.00');
+    expect(usd).toHaveTextContent('At least $20.00');
     expect(within(usd).getByText(TAKINGS_NET_CUT_OFF)).toBeInTheDocument();
     expect(screen.getByTestId('takings-notice-refunds-cut')).toBeInTheDocument();
   });
@@ -1054,7 +1059,7 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     });
     expect(screen.getByTestId('takings-notice-refunds-failed')).toHaveTextContent(TAKINGS_REFUNDS_FAILED);
     const usd = screen.getByTestId('takings-line-USD');
-    expect(usd).toHaveTextContent('USD 150.50');
+    expect(usd).toHaveTextContent('$150.50');
     expect(usd).not.toHaveTextContent('At least');
     // SA-1: a FAILED refunds read is not a cut-off read: refunded AND net say plain "Unknown".
     expect(within(usd).getAllByText('Unknown')).toHaveLength(2);
@@ -1075,12 +1080,12 @@ describe('Section 2 block B, takings (slice 2a)', () => {
       },
     });
     const usd = screen.getByTestId('takings-line-USD');
-    expect(within(usd).getByText('At least USD 150.50')).toBeInTheDocument();
+    expect(within(usd).getByText('At least $150.50')).toBeInTheDocument();
     expect(within(usd).getByText('Unknown')).toBeInTheDocument();
     expect(within(usd).queryByText(TAKINGS_NET_CUT_OFF)).not.toBeInTheDocument();
     expect(within(screen.getByTestId('takings-line-ILS')).getByText('ILS 230.30')).toBeInTheDocument();
     const row = screen.getByTestId(`takings-row-${A}-USD`);
-    expect(within(row).getByText('At least USD 150.00')).toBeInTheDocument();
+    expect(within(row).getByText('At least $150.00')).toBeInTheDocument();
     expect(within(row).getByText('Unknown')).toBeInTheDocument();
     expect(within(screen.getByTestId(`takings-row-${B}-ILS`)).getByText('ILS 230.00')).toBeInTheDocument();
   });
@@ -1097,8 +1102,8 @@ describe('Section 2 block B, takings (slice 2a)', () => {
       },
     });
     const usd = screen.getByTestId('takings-line-USD');
-    expect(within(usd).getByText('USD 150.50')).toBeInTheDocument();
-    expect(usd).not.toHaveTextContent('At least USD 150.50');
+    expect(within(usd).getByText('$150.50')).toBeInTheDocument();
+    expect(usd).not.toHaveTextContent('At least $150.50');
     expect(within(usd).getByText('Unknown')).toBeInTheDocument();
   });
 
@@ -1202,8 +1207,8 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
     expect(within(instalments).getByText('Past due, still pending')).toBeInTheDocument();
     const cells = section.querySelectorAll('[data-money]');
     expect(cells.length).toBe(7);
-    for (const cell of Array.from(cells)) expect(cell.textContent).toMatch(/^(At least )?(USD|ILS|EUR|Unknown currency) -?[\d,]+\.\d\d$/);
-    expect(within(screen.getByTestId('problems-invoices-line-USD')).getByText('USD 1,234.50')).toBeInTheDocument();
+    for (const cell of Array.from(cells)) expect(cell.textContent).toMatch(/^(At least )?(-?\$[\d,]+\.\d\d|(ILS|EUR|Unknown currency) -?[\d,]+\.\d\d)$/);
+    expect(within(screen.getByTestId('problems-invoices-line-USD')).getByText('$1,234.50')).toBeInTheDocument();
     expect(section.textContent).not.toMatch(/1,333\.50|1333\.5/);
   });
 
@@ -1304,7 +1309,7 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
     f.lines = f.lines.map((line) => ({ ...line, amountExact: false }));
     await renderWith(capped);
     expect(screen.getByTestId('problems-invoices-notice-ceiling')).toHaveTextContent(PROBLEMS_INVOICES.ceilingNotice);
-    expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('At least USD 1,234.50');
+    expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('At least $1,234.50');
     expect(screen.getByTestId('problems-invoices-total')).toHaveTextContent('At least 3');
     expect(screen.getByTestId('problems-invoices-showing')).toHaveTextContent('Lists the oldest among the rows read');
     expect(screen.getByTestId('problems-invoices-status')).toHaveTextContent(PART_PARTIAL);
@@ -1318,7 +1323,7 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
     f.rows[1] = { ...f.rows[1], amount: null };
     await renderWith(odd);
     expect(screen.getByTestId('problems-invoices-notice-unreadable')).toBeInTheDocument();
-    expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('At least USD 1,234.50');
+    expect(screen.getByTestId('problems-invoices-line-USD')).toHaveTextContent('At least $1,234.50');
     const row = within(screen.getByTestId('problems-invoices-rows')).getAllByRole('row')[2];
     expect(row).toHaveTextContent('Unknown');
   });
@@ -1421,8 +1426,8 @@ describe('Our revenue (slice 4a)', () => {
     expect(first).toHaveTextContent('2026-10-12 18:21 UTC');
     expect(first).toHaveTextContent('Essentials-ish');
     expect(first).toHaveTextContent(`${formatUtc('2026-10-12T18:21:07.000Z')} to ${formatUtc('2026-11-12T18:21:07.000Z')}`);
-    expect(first.querySelector('[data-money="received"]')).toHaveTextContent('USD 79.00');
-    expect(first.querySelector('[data-money="tax"]')).toHaveTextContent('USD 0.00');
+    expect(first.querySelector('[data-money="received"]')).toHaveTextContent('$79.00');
+    expect(first.querySelector('[data-money="tax"]')).toHaveTextContent('$0.00');
     const second = within(panel).getByTestId('revenue-plans-payment-e0');
     expect(second).toHaveTextContent(REVENUE_PLANS_UNKNOWN_PLAN);
     expect(second).toHaveTextContent(`${REVENUE_PLANS_PERIOD_NOT_RECORDED} to ${REVENUE_PLANS_PERIOD_NOT_RECORDED}`);
@@ -1430,25 +1435,25 @@ describe('Our revenue (slice 4a)', () => {
     // Newest first, as sent.
     expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // K-5 and the summary read the same total (SA-Q40).
-    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('USD 89.00');
-    expect(screen.getByTestId('account-summary-total-USD')).toHaveTextContent('USD 89.00');
-    expect(screen.getByTestId('account-summary-plan-USD')).toHaveTextContent('USD 79.00');
+    expect(screen.getByTestId('tile-fk1_revenue')).toHaveTextContent('$89.00');
+    expect(screen.getByTestId('account-summary-total-USD')).toHaveTextContent('$89.00');
+    expect(screen.getByTestId('account-summary-plan-USD')).toHaveTextContent('$79.00');
   });
 
-  it('AC-120 / AC-124: all businesses → the per-currency line (Received header, "USD 79.00"), the by-business table, the deleted line in words', async () => {
+  it('AC-120 / AC-124: all businesses → the per-currency line (Received header, "$79.00"), the by-business table, the deleted line in words', async () => {
     const plans = paidPlans({ deletedAccounts: [{ currency: 'USD', payments: 1, received: 49, exact: true }] });
     serve({ success: true, data: payload({ revenue: revenueSection({ state: 'recorded', plans }) }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     const line = within(panel).getByTestId('revenue-plans-line-USD');
-    expect(line.querySelector('[data-money="received"]')).toHaveTextContent('USD 79.00');
-    expect(line.querySelector('[data-money="tax"]')).toHaveTextContent('USD 0.00');
+    expect(line.querySelector('[data-money="received"]')).toHaveTextContent('$79.00');
+    expect(line.querySelector('[data-money="tax"]')).toHaveTextContent('$0.00');
     expect(within(panel).getByRole('columnheader', { name: REVENUE_PLANS_RECEIVED })).toBeInTheDocument();
     expect(within(panel).getByTestId(`revenue-plans-account-${A}`)).toHaveTextContent('Acme Dental');
-    expect(within(panel).getByTestId(`revenue-plans-account-${A}`)).toHaveTextContent('USD 79.00');
-    expect(within(panel).getByTestId('revenue-plans-deleted-USD')).toHaveTextContent(revenuePlansDeletedLine(1, 'USD 49.00'));
+    expect(within(panel).getByTestId(`revenue-plans-account-${A}`)).toHaveTextContent('$79.00');
+    expect(within(panel).getByTestId('revenue-plans-deleted-USD')).toHaveTextContent(revenuePlansDeletedLine(1, '$49.00'));
     expect(within(panel).getByTestId('revenue-plans-refunds-note')).toHaveTextContent(REVENUE_PLANS_REFUNDS_NOTE);
-    for (const cell of within(panel).getByTestId('revenue-plans').querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/USD/);
+    for (const cell of within(panel).getByTestId('revenue-plans').querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/^(At least )?\$/);
   });
 
   it('AC-124: no deleted-account payment → "No plan payments from deleted accounts"', async () => {
@@ -1476,37 +1481,39 @@ describe('Our revenue (slice 4a)', () => {
     serve({ success: true, data: k5With(payload({ revenue: revenueSection({ status: 'partial', plans }) }), { kind: 'unknown', reason: 'cut_off' }) });
     render(<FinanceView />);
     const line = await screen.findByTestId('revenue-plans-line-USD');
-    expect(line.querySelector('[data-money="received"]')).toHaveTextContent('At least USD 79.00');
+    expect(line.querySelector('[data-money="received"]')).toHaveTextContent('At least $79.00');
     expect(line).toHaveTextContent('excludes 1 unreadable');
     expect(screen.getByTestId('revenue-plans-notice-cut')).toHaveTextContent(REVENUE_PLANS_NOTICE_CUT);
     expect(screen.getByTestId('revenue-plans-notice-unreadable')).toHaveTextContent(REVENUE_PLANS_NOTICE_UNREADABLE(1));
-    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
+    expect(screen.getByTestId('tile-fk1_revenue')).toHaveTextContent('Unknown');
   });
 
-  it('AC-90 / AC-95: the owner purchase → "USD 10.00" in the line and on K-5, with the caption; K-5 grey, never green', async () => {
-    serve({ success: true, data: k5With(payload({ revenue: paidRevenue([boostLine()]) }), { kind: 'one', currency: 'USD', net: 10 }) });
+  it('AC-90 / AC-95: the owner purchase → "$10.00" in the line and on K-5, with the caption; K-5 grey, never green', async () => {
+    serve({ success: true, data: k5With(payload({ revenue: { ...paidRevenue([boostLine()]), totals: [{ currency: 'USD', boostsNet: 10, plansReceived: 0, total: 10 }] } }), { kind: 'one', currency: 'USD', net: 10 }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     const line = within(panel).getByTestId('revenue-line-USD');
-    for (const cell of ['gross', 'net']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent('USD 10.00');
-    expect(line.querySelector('[data-money="tax"]')).toHaveTextContent('USD 0.00');
+    for (const cell of ['gross', 'net']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent('$10.00');
+    expect(line.querySelector('[data-money="tax"]')).toHaveTextContent('$0.00');
     expect(line).toHaveTextContent('5,000');
     expect(within(panel).getByRole('columnheader', { name: REVENUE_NET })).toBeInTheDocument();
-    expect(within(panel).getByTestId('revenue-package-pkg-small v1')).toHaveTextContent('USD 10.00');
-    const k5 = screen.getByTestId('tile-k5_our_revenue');
-    expect(k5).toHaveTextContent('USD 10.00');
-    expect(k5).toHaveTextContent(k5Caption(WINDOW_LABEL));
-    expect(k5Caption(WINDOW_LABEL)).toContain('Credit boosts and plans');
+    expect(within(panel).getByTestId('revenue-package-pkg-small v1')).toHaveTextContent('$10.00');
+    const k5 = screen.getByTestId('tile-fk1_revenue');
+    expect(k5).toHaveTextContent('$10.00');
+    // MK-5 (ruled): F-K1's caption.
+    expect(k5).toHaveTextContent(FINANCE_KPIS_MK5.revenue.sub(WINDOW_LABEL));
+    expect(FINANCE_KPIS_MK5.revenue.sub(WINDOW_LABEL)).toContain('Plans and credit boosts');
     expect(k5.getAttribute('data-status')).toBe('neutral');
     expect(k5.className).not.toContain('emerald');
     // Every money cell names its currency.
-    for (const cell of panel.querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/USD|Unknown/);
+    // MK-5a: a US-dollar cell is "$…"; any other names its code.
+    for (const cell of panel.querySelectorAll('[data-money]')) expect(cell.textContent).toMatch(/\$|USD|Unknown/);
   });
 
-  it('AC-90: 1999 minor units arrive as 19.99 and print "USD 19.99"', async () => {
+  it('AC-90: 1999 minor units arrive as 19.99 and print "$19.99"', async () => {
     serve({ success: true, data: payload({ revenue: paidRevenue([boostLine({ gross: 19.99, net: 19.99 })]) }) });
     render(<FinanceView />);
-    expect(within(await screen.findByTestId('revenue-line-USD')).getAllByText('USD 19.99').length).toBeGreaterThan(0);
+    expect(within(await screen.findByTestId('revenue-line-USD')).getAllByText('$19.99').length).toBeGreaterThan(0);
   });
 
   it('AC-90: an unreadable purchase → "excludes 1 unreadable", gross "At least", net "Unknown", a notice', async () => {
@@ -1516,10 +1523,10 @@ describe('Our revenue (slice 4a)', () => {
     render(<FinanceView />);
     const line = await screen.findByTestId('revenue-line-USD');
     expect(line).toHaveTextContent('excludes 1 unreadable');
-    expect(line.querySelector('[data-money="gross"]')).toHaveTextContent('At least USD 10.00');
+    expect(line.querySelector('[data-money="gross"]')).toHaveTextContent('At least $10.00');
     expect(line.querySelector('[data-money="net"]')).toHaveTextContent(/^Unknown$/);
     expect(screen.getByTestId('revenue-notice-unreadable')).toHaveTextContent(REVENUE_NOTICE_UNREADABLE(1));
-    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
+    expect(screen.getByTestId('tile-fk1_revenue')).toHaveTextContent('Unknown');
   });
 
   it('AC-91: the refund-timing note shows when a refund or dispute amount is non-zero, and only then', async () => {
@@ -1535,12 +1542,21 @@ describe('Our revenue (slice 4a)', () => {
 
   it('AC-92: two currencies → two lines; K-5 "2 currencies, see Our revenue"; no total anywhere', async () => {
     const lines = [boostLine({ currency: 'EUR', gross: 7, net: 7 }), boostLine()];
-    serve({ success: true, data: k5With(payload({ revenue: paidRevenue(lines) }), { kind: 'several', currencies: 2 }) });
+    serve({
+      success: true,
+      data: k5With(
+        payload({ revenue: { ...paidRevenue(lines), totals: [{ currency: 'EUR', boostsNet: 7, plansReceived: 0, total: 7 }, { currency: 'USD', boostsNet: 10, plansReceived: 0, total: 10 }] } }),
+        { kind: 'several', currencies: 2 }
+      ),
+    });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     expect(within(panel).getByTestId('revenue-line-EUR')).toHaveTextContent('EUR 7.00');
-    expect(within(panel).getByTestId('revenue-line-USD')).toHaveTextContent('USD 10.00');
-    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent(k5SeveralCurrencies(2));
+    expect(within(panel).getByTestId('revenue-line-USD')).toHaveTextContent('$10.00');
+    // MK-5 (ruled, USD-3 / USD-5): F-K1 shows the US-dollar line only, and the other currency as a count.
+    expect(screen.getByTestId('tile-fk1_revenue')).toHaveTextContent('$10.00');
+    expect(screen.getByTestId('tile-fk1_revenue')).toHaveTextContent('plus 1 payment in other currencies, not converted');
+    expect(screen.getByTestId('tile-fk1_revenue').textContent).not.toMatch(/EUR|7\.00/);
     expect(k5SeveralCurrencies(2)).toBe('2 currencies, see Our revenue');
     // 7 + 10 printed anywhere would be a cross-currency total.
     expect(document.body.textContent).not.toMatch(/17\.00/);
@@ -1553,14 +1569,14 @@ describe('Our revenue (slice 4a)', () => {
     serve({ success: true, data: k5With(payload({ revenue }), { kind: 'unknown', reason: 'cut_off' }) });
     render(<FinanceView />);
     const line = await screen.findByTestId('revenue-line-USD');
-    for (const cell of ['gross', 'tax', 'refunded', 'lost']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(/^At least USD/);
+    for (const cell of ['gross', 'tax', 'refunded', 'lost']) expect(line.querySelector(`[data-money="${cell}"]`)).toHaveTextContent(/^At least \$/);
     expect(line.querySelector('[data-money="held"]')).toBeNull();
     expect(line.querySelector('[data-money="net"]')).toHaveTextContent(REVENUE_CUT_OFF);
     expect(line).toHaveTextContent('At least 1');
     expect(line).toHaveTextContent('At least 5,000');
     expect(screen.getByTestId('revenue-notice-cut')).toHaveTextContent(REVENUE_NOTICE_CUT);
     expect(screen.getByTestId('section-revenue').getAttribute('data-status')).toBe('partial');
-    const k5 = screen.getByTestId('tile-k5_our_revenue');
+    const k5 = screen.getByTestId('tile-fk1_revenue');
     expect(k5).toHaveTextContent('Unknown');
     expect(k5.textContent).not.toMatch(/At least/);
   });
@@ -1576,7 +1592,7 @@ describe('Our revenue (slice 4a)', () => {
     revenue.boosts.deletedAccounts = [{ currency: 'USD', purchases: 1, net: 25, unreadable: 0 }];
     serve({ success: true, data: payload({ revenue }) });
     const { unmount } = render(<FinanceView />);
-    expect(await screen.findByTestId('revenue-deleted-USD')).toHaveTextContent(revenueDeletedLine(1, 'USD 25.00'));
+    expect(await screen.findByTestId('revenue-deleted-USD')).toHaveTextContent(revenueDeletedLine(1, '$25.00'));
     unmount();
     serve({ success: true, data: payload({ revenue: paidRevenue([boostLine()]) }) });
     render(<FinanceView />);
@@ -1591,9 +1607,9 @@ describe('Our revenue (slice 4a)', () => {
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
     expect(within(panel).getByTestId('revenue-boosts-failed')).toHaveTextContent(REVENUE_BOOSTS_FAILED);
-    expect(within(panel).getByTestId('revenue-plans-line-USD')).toHaveTextContent('USD 79.00');
-    expect(screen.getByTestId('tile-k5_our_revenue').getAttribute('data-status')).toBe('unavailable');
-    expect(screen.getByTestId('tile-k5_our_revenue')).toHaveTextContent('Unknown');
+    expect(within(panel).getByTestId('revenue-plans-line-USD')).toHaveTextContent('$79.00');
+    expect(screen.getByTestId('tile-fk1_revenue').getAttribute('data-status')).toBe('unavailable');
+    expect(screen.getByTestId('tile-fk1_revenue')).toHaveTextContent('Unknown');
     expect(screen.getByTestId('section-takings')).toBeInTheDocument();
   });
 
@@ -1617,18 +1633,18 @@ describe('Our revenue (slice 4a)', () => {
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);
     const panel = await screen.findByTestId('section-revenue');
-    const text = `${panel.textContent} ${screen.getByTestId('tile-k5_our_revenue').textContent}`;
+    const text = `${panel.textContent} ${screen.getByTestId('tile-fk1_revenue').textContent}`;
     expect(text).not.toMatch(/webhook|not in place|test accounts only|live mode|test mode|livemode/i);
   });
 });
 
 describe('formatMoney (SA-WR-18): fixed two decimals, the code always shown', () => {
-  it('0.10 + 0.20 summed in hundredths and divided once renders "USD 0.30"', () => {
-    expect(formatMoney((10 + 20) / 100, 'USD')).toBe('USD 0.30');
+  it('0.10 + 0.20 summed in hundredths and divided once renders "$0.30"', () => {
+    expect(formatMoney((10 + 20) / 100, 'USD')).toBe('$0.30');
   });
 
   it('12,345,678,901.23 renders exactly', () => {
-    expect(formatMoney(1_234_567_890_123 / 100, 'USD')).toBe('USD 12,345,678,901.23');
+    expect(formatMoney(1_234_567_890_123 / 100, 'USD')).toBe('$12,345,678,901.23');
   });
 
   it('a negative net keeps its minus sign and its code; a whole amount keeps two decimals; Unknown currency named', () => {
@@ -1852,9 +1868,9 @@ describe('Money M-4 Part B: the recorded AI cost on the page', () => {
     const section = await screen.findByTestId('section-ai-cost');
     const block = within(section).getByTestId('ai-recorded');
     expect(within(block).getByText(RECORDED_LABEL)).toBeInTheDocument();
-    expect(within(block).getByTestId('ai-recorded-total')).toHaveTextContent('USD 4.25');
-    expect(within(block).getByTestId('ai-recorded-above')).toHaveTextContent('USD 0.75');
-    expect(within(section).getByTestId('ai-total')).toHaveTextContent('USD 3.50');
+    expect(within(block).getByTestId('ai-recorded-total')).toHaveTextContent('$4.25');
+    expect(within(block).getByTestId('ai-recorded-above')).toHaveTextContent('$0.75');
+    expect(within(section).getByTestId('ai-total')).toHaveTextContent('$3.50');
     expect(document.body.textContent).not.toContain('7.75');
   });
 
@@ -2079,7 +2095,7 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
     expect(follows(strip, bar())).toBe(true);
     expect(follows(bar(), screen.getByTestId('finance-content'))).toBe(true);
     expect(screen.getByTestId('finance-content').contains(strip)).toBe(false);
-    expect(strip.querySelectorAll('[data-testid^="tile-k"][data-status]')).toHaveLength(5);
+    expect(strip.querySelectorAll('[data-testid^="tile-fk"][data-status]')).toHaveLength(5);
   });
 
   it('K-10: five placeholders above the bar while the first read runs, and no kpi-strip until figures arrive', async () => {
@@ -2100,23 +2116,36 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
     expect(screen.queryAllByTestId('kpi-placeholder')).toHaveLength(0);
   });
 
-  it('AC-180: K-2 and K-4 jump to Credits, K-3 to Accounts by plan, K-5 to Our revenue; each target exists', async () => {
-    serve({ success: true, data: payload() });
+  it('AC-180 / MK-5 (ruled): F-K1 → Our revenue, F-K2 → Recurring now, F-K3 → the AI cost summary, F-K4 → Accounts, F-K5 → Plans & subscriptions; each target exists', async () => {
+    serve({ success: true, data: payload({ mrr: { status: 'ok', lines: [], unpriced: 0, discountUnknown: 0, pastDueCounted: true }, stripeMode: 'live' }) });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-    const hrefs = {
-      k2_far_over_allowance: '#credits',
-      k3_founding_no_end_date: '#accounts',
-      k4_gifted_outstanding: '#credits',
-      k5_our_revenue: '#revenue',
-    };
-    for (const [id, href] of Object.entries(hrefs)) {
+    const anchors = { fk1_revenue: '#revenue', fk2_mrr: '#revenue-mrr', fk3_ai_cost: '#ai-cost' };
+    for (const [id, href] of Object.entries(anchors)) {
       const tile = screen.getByTestId(`tile-${id}`);
       expect({ id, tag: tile.tagName, href: tile.getAttribute('href') }).toEqual({ id, tag: 'A', href });
-      expect(document.getElementById(href.slice(1))).toBe(screen.getByTestId(`section-${href.slice(1)}`));
+      expect(document.getElementById(href.slice(1))).not.toBeNull();
     }
-    // Links, never buttons: the page's button count does not grow (K-6).
-    for (const button of screen.getAllByRole('button')) expect(button.getAttribute('data-testid') ?? '').not.toMatch(/^tile-/);
+    expect(screen.getByTestId('tile-fk4_ai_margin').getAttribute('href')).toBe('/admin/finance?tab=accounts');
+    expect(screen.getByTestId('tile-fk5_paying').getAttribute('href')).toBe('/admin/finance?tab=plans');
+    // Links, never buttons: the page's button count grows only by the five icons (MK-0), never a tile (K-6).
+    for (const button of screen.getAllByRole('button')) expect(button.getAttribute('data-testid') ?? '').not.toMatch(/^tile-fk\d_[a-z_]+$/);
+  });
+
+  it('MK-5: a plain click on F-K4 or F-K5 opens its tab in one write; a business picked has no tab target', async () => {
+    window.history.replaceState(null, '', '/admin/finance');
+    serve({ success: true, data: payload() });
+    const first = render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    fireEvent.click(screen.getByTestId('tile-fk5_paying'));
+    expect(window.location.search).toBe('?tab=plans');
+    first.unmount();
+    mockSearch = `account=${A}`;
+    serve({ success: true, data: payload({ accountId: A }) });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
+    expect(screen.getByTestId('tile-fk4_ai_margin').tagName).toBe('DIV');
+    expect(screen.getByTestId('tile-fk5_paying').tagName).toBe('DIV');
   });
 
   it('F5-R3: every section anchor id occurs exactly once, on Overview and in the picked view', async () => {
@@ -2134,25 +2163,12 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
     }
   });
 
-  it('AC-180 / SA-W7 (a): K-1 opens AI cost & usage for This month, all businesses; equal to Section 3’s link on a This month window', async () => {
+  it('MK-5 (ruled; replaces K-1\u2019s cross-page link): F-K3 jumps to the AI cost summary; Section 3 keeps its own link to AI calls & usage', async () => {
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-    const k1 = screen.getByTestId('tile-k1_ai_cost');
-    expect(k1.tagName).toBe('A');
-    expect(k1.getAttribute('href')).toBe('/admin/analytics?range=this_month');
-    expect(k1.getAttribute('href')).toBe(k1AnalyticsHref(null));
-    expect(k1.getAttribute('href')).toBe(screen.getByTestId('ai-analytics-link').getAttribute('href'));
-  });
-
-  it('SA-W7 (a): with a 7-day window and a business picked, K-1 still opens This month, with the business', async () => {
-    mockSearch = `range=7d&account=${A}`;
-    serve({ success: true, data: payload({ accountId: A, window: { preset: '7d', from: '2026-10-03', to: '2026-10-09', start: '2026-10-03T00:00:00.000Z', end: '2026-10-10T00:00:00.000Z' } }) });
-    render(<FinanceView />);
-    await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-    expect(screen.getByTestId('tile-k1_ai_cost').getAttribute('href')).toBe(`/admin/analytics?range=this_month&account=${A}`);
-    // Section 3's link keeps the page window: the two differ on purpose.
-    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).not.toBe(screen.getByTestId('tile-k1_ai_cost').getAttribute('href'));
+    expect(screen.getByTestId('tile-fk3_ai_cost').getAttribute('href')).toBe('#ai-cost');
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe(k1AnalyticsHref(null));
   });
 
   describe('on the Accounts tab (SA-W3 (a), F5-R2)', () => {
@@ -2173,9 +2189,10 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
       serve({ success: true, data: payload() });
       render(<FinanceView />);
       await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-      expect(screen.getByTestId('tile-k2_far_over_allowance').getAttribute('href')).toBe('/admin/finance?range=7d#credits');
-      expect(screen.getByTestId('tile-k5_our_revenue').getAttribute('href')).toBe('/admin/finance?range=7d#revenue');
-      expect(screen.getByTestId('tile-k1_ai_cost').getAttribute('href')).toBe('/admin/analytics?range=this_month');
+      expect(screen.getByTestId('tile-fk1_revenue').getAttribute('href')).toBe('/admin/finance?range=7d#revenue');
+      expect(screen.getByTestId('tile-fk3_ai_cost').getAttribute('href')).toBe('/admin/finance?range=7d#ai-cost');
+      // F-K4 is on its own tab here: its link is the tab it is on.
+      expect(screen.getByTestId('tile-fk4_ai_margin').getAttribute('href')).toBe('/admin/finance?range=7d&tab=accounts&sort=credits');
     });
 
     it('a plain click selects Overview in one write and scrolls to the section once; no hash is written', async () => {
@@ -2186,15 +2203,15 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
       await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
       const replace = jest.spyOn(window.history, 'replaceState');
       serve({ success: true, data: payload() });
-      fireEvent.click(screen.getByTestId('tile-k4_gifted_outstanding'));
-      await waitFor(() => expect(scrolled).toEqual(['credits']), { timeout: 10_000 });
+      fireEvent.click(screen.getByTestId('tile-fk3_ai_cost'));
+      await waitFor(() => expect(scrolled).toEqual(['ai-cost']), { timeout: 10_000 });
       expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
       expect(replace).toHaveBeenCalledTimes(1);
       expect(window.location.search).toBe('');
       expect(window.location.hash).toBe('');
       // The next read answers and re-renders: no second scroll (jumpTo was cleared).
       await waitFor(() => expect(screen.getByTestId('finance-content')).toHaveAttribute('aria-busy', 'false'), { timeout: 10_000 });
-      expect(scrolled).toEqual(['credits']);
+      expect(scrolled).toEqual(['ai-cost']);
       replace.mockRestore();
     });
 
@@ -2203,7 +2220,7 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
       serve({ success: true, data: payload() });
       render(<FinanceView />);
       await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-      fireEvent.click(screen.getByTestId('tile-k2_far_over_allowance'), { ctrlKey: true });
+      fireEvent.click(screen.getByTestId('tile-fk1_revenue'), { ctrlKey: true });
       expect(screen.getByRole('tab', { name: TAB_ACCOUNTS })).toHaveAttribute('aria-selected', 'true');
       expect(scrolled).toEqual([]);
     });
@@ -2216,7 +2233,7 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
     serve({ success: true, data: payload() });
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-    fireEvent.click(screen.getByTestId('tile-k3_founding_no_end_date'));
+    fireEvent.click(screen.getByTestId('tile-fk1_revenue'));
     expect(spy).not.toHaveBeenCalled();
     Element.prototype.scrollIntoView = original;
   });
@@ -2227,13 +2244,8 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
 // business picked is refused by the route, SA-W84, so it is not a view.)
 import { REVENUE_NET as REVENUE_NET_6B, REVENUE_PLANS_RECEIVED as REVENUE_PLANS_RECEIVED_6B } from '../financeCopy';
 describe('slice 6b: the KPI tiles read K-5, K-1, K-3, K-2, K-4 (BD-35)', () => {
-  const ORDER = [
-    'tile-k5_our_revenue',
-    'tile-k1_ai_cost',
-    'tile-k3_founding_no_end_date',
-    'tile-k2_far_over_allowance',
-    'tile-k4_gifted_outstanding',
-  ];
+  // Money MK-5 (ruled, §3.1, BD-35): revenue, cost, then users.
+  const ORDER = ['tile-fk1_revenue', 'tile-fk2_mrr', 'tile-fk3_ai_cost', 'tile-fk4_ai_margin', 'tile-fk5_paying'];
   const follows = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
   it.each([
@@ -2245,7 +2257,7 @@ describe('slice 6b: the KPI tiles read K-5, K-1, K-3, K-2, K-4 (BD-35)', () => {
     serve({ success: true, data: payload(search.startsWith('account=') ? { accountId: A } : {}) });
     render(<FinanceView />);
     const strip = await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-    const ids = [...strip.querySelectorAll('[data-testid^="tile-k"][data-status]')].map((tile) => tile.getAttribute('data-testid'));
+    const ids = [...strip.querySelectorAll('[data-testid^="tile-fk"][data-status]')].map((tile) => tile.getAttribute('data-testid'));
     expect(ids).toEqual(ORDER);
     expect(follows(strip, screen.getByRole('button', { name: 'Refresh the finance page' }))).toBe(true);
   });
@@ -2411,7 +2423,7 @@ describe('slice 4b.2 on the page', () => {
     serve({ success: true, data: payload({ revenue }) });
     render(<FinanceView />);
     const line = await screen.findByTestId('revenue-line-USD');
-    expect(line.querySelector('[data-money="net"]')).toHaveTextContent('USD -10.00');
+    expect(line.querySelector('[data-money="net"]')).toHaveTextContent('-$10.00');
     expect(screen.getByTestId('revenue-refund-note')).toHaveTextContent(REVENUE_REFUND_TIMING_NOTE);
     expect(document.body.textContent).not.toMatch(/counted in the month of the purchase/);
     expect(screen.getByTestId('revenue-held-now-none')).toHaveTextContent(REVENUE_HELD_NONE);
@@ -2425,8 +2437,8 @@ describe('slice 4b.2 on the page', () => {
     render(<FinanceView />);
     const held = await screen.findByTestId('revenue-held-now');
     expect(held).toHaveTextContent(REVENUE_HELD);
-    expect(screen.getByTestId('revenue-held-now-USD').querySelector('[data-money="held"]')).toHaveTextContent('USD 8.00');
-    expect(screen.getByTestId('revenue-line-USD').querySelector('[data-money="net"]')).toHaveTextContent('USD 10.00');
+    expect(screen.getByTestId('revenue-held-now-USD').querySelector('[data-money="held"]')).toHaveTextContent('$8.00');
+    expect(screen.getByTestId('revenue-line-USD').querySelector('[data-money="net"]')).toHaveTextContent('$10.00');
   });
 
   it('AC-224 / §7: the events table not there yet → refunded, lost and net "Unknown" with one calm notice; the page renders', async () => {
@@ -2459,7 +2471,7 @@ describe('slice 4b.2 on the page', () => {
     const body = screen.getByTestId('payment-problems-body');
     expect(body.firstElementChild).toBe(block);
     const row = screen.getByTestId('problems-boosts-line-USD');
-    expect(row.querySelector('[data-money="held"]')).toHaveTextContent('USD 8.00');
+    expect(row.querySelector('[data-money="held"]')).toHaveTextContent('$8.00');
     expect(row).toHaveTextContent('2026-10-04');
   });
 
@@ -2679,6 +2691,8 @@ describe('Money MK-4: Recurring now and the Plans & subscriptions tab', () => {
   const textOutsideAllowed = (container: HTMLElement) => {
     const copy = container.cloneNode(true) as HTMLElement;
     copy.querySelector('[data-testid="revenue-recurring-key"]')?.remove();
+    // MK-5 (C-4): the MRR tile is the other allowed place.
+    copy.querySelector('[data-testid="tile-fk2_mrr"]')?.remove();
     copy.querySelector('[data-testid="plans-subscriptions"]')?.remove();
     return copy.textContent ?? '';
   };
@@ -2728,10 +2742,10 @@ describe('Money MK-4: Recurring now and the Plans & subscriptions tab', () => {
     const part = within(revenue).getByTestId('revenue-recurring');
     expect(within(part).getByRole('heading', { name: REVENUE_RECURRING_HEADING })).toBeInTheDocument();
     const line = within(part).getByTestId('revenue-recurring-USD');
-    expect(line).toHaveTextContent('USD 147.00');
+    expect(line).toHaveTextContent('$147.00');
     expect(line).toHaveTextContent('3 subscriptions');
-    expect(line).toHaveTextContent('of which past due (still counted) USD 49.00');
-    expect(line).toHaveTextContent('of which cancelling USD 49.00');
+    expect(line).toHaveTextContent('of which past due (still counted) $49.00');
+    expect(line).toHaveTextContent('of which cancelling $49.00');
     expect(part).toHaveTextContent('1 paying with a founder discount');
     expect(textOutsideAllowed(revenue)).not.toMatch(/test.?mode|live.?mode/i);
   });
@@ -2771,3 +2785,118 @@ describe('Money MK-4: Recurring now and the Plans & subscriptions tab', () => {
   });
 });
 
+// ── Money MK-5 (KPI restructure review §3.1, §3.3, §3.4, §5, §14 FC-2): the strip's icons, K-3 in its block, USD-6 ──
+describe('Money MK-5: the F-K strip, K-3 on Plan mix, and no "USD " money on the page', () => {
+  const KPIS: Array<[string, keyof typeof FINANCE_KPIS_MK5, 'leading' | 'lagging']> = [
+    ['fk1_revenue', 'revenue', 'lagging'],
+    ['fk2_mrr', 'mrr', 'leading'],
+    ['fk3_ai_cost', 'aiCost', 'lagging'],
+    ['fk4_ai_margin', 'aiMargin', 'lagging'],
+    ['fk5_paying', 'paying', 'lagging'],
+  ];
+  const WORDS = { leading: 'Leading indicator', lagging: 'Lagging indicator' } as const;
+
+  it.each(KPIS)('T-2: %s carries its %s icon (LL-1 to LL-4), named from its one definition constant', async (id, key, kind) => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    const icon = screen.getByTestId(`tile-${id}-indicator`);
+    expect(icon).toHaveAttribute('data-indicator', key === 'mrr' ? 'leading' : kind);
+    expect(within(icon).getByRole('button', { name: `${WORDS[kind]}. ${FINANCE_KPIS_MK5[key].definition}` })).toBeInTheDocument();
+    // The tile stays the link; the icon is beside it, never inside (LL-3).
+    expect(screen.getByTestId(`tile-${id}`).contains(icon)).toBe(false);
+  });
+
+  it('T-2 / FC-2: the AI margin tooltip says what it deducts, word for word (§14)', () => {
+    expect(FINANCE_KPIS_MK5.aiMargin.definition).toContain(
+      'A partial gross margin: only AI cost is deducted so far. Stripe fees are an estimate beside it.'
+    );
+    for (const kpi of Object.values(FINANCE_KPIS_MK5)) {
+      // FC-1: every label names AI where it means AI; none says just Cost, Expenses, OPEX or Profit.
+      expect(kpi.label).not.toMatch(/^(cost|costs|expenses|opex|profit)$/i);
+      expect(kpi.label).not.toMatch(/\b(expenses|opex|profit|gross margin|operating margin)\b/i);
+    }
+  });
+
+  it('T-8: K-3 is a chip on Plan mix with its rule (amber → warn, red → danger), and none when the rule is quiet', async () => {
+    const amber = payload();
+    serve({ success: true, data: amber });
+    const first = render(<FinanceView />);
+    const chip = await screen.findByTestId('accounts-k3-chip');
+    expect(chip).toHaveTextContent('8 Founding Partners with no end date');
+    expect(chip).toHaveAttribute('data-tone', 'warn');
+    expect(screen.getByTestId('accounts-k3')).toHaveTextContent(amber.tiles.k3.headline);
+    first.unmount();
+
+    const red = payload();
+    red.tiles.k3 = { ...red.tiles.k3, status: 'red' };
+    serve({ success: true, data: red });
+    const second = render(<FinanceView />);
+    expect(await screen.findByTestId('accounts-k3-chip')).toHaveAttribute('data-tone', 'danger');
+    second.unmount();
+
+    const quiet = payload();
+    quiet.tiles.k3 = { ...quiet.tiles.k3, status: 'green', headline: 'All clear' };
+    serve({ success: true, data: quiet });
+    render(<FinanceView />);
+    await screen.findByTestId('section-accounts');
+    expect(screen.queryByTestId('accounts-k3-chip')).toBeNull();
+  });
+
+  it('T-8: K-2 (the Credits chip, MK-1) and K-4 (the gifted figure) stay in Credits; neither is a tile', async () => {
+    serve({ success: true, data: payload() });
+    render(<FinanceView />);
+    const credits = await screen.findByTestId('section-credits');
+    expect(within(credits).getByTestId('credits-over-chip')).toHaveTextContent('1 at or over 150% of allowance');
+    expect(within(credits).getByTestId('credits-gifted')).toHaveTextContent('12.5');
+    expect(screen.getByTestId('kpi-strip').querySelectorAll('[data-testid^="tile-k"]')).toHaveLength(0);
+  });
+
+  it('T-7: Paying accounts reads the % with its count, the denominator being every plan row (Q-11)', async () => {
+    serve({ success: true, data: payload({ paying: { scope: 'all', status: 'ok', paying: 9, accounts: 50 } }) });
+    render(<FinanceView />);
+    const tile = await screen.findByTestId('tile-fk5_paying');
+    expect(tile).toHaveTextContent('18%');
+    expect(tile).toHaveTextContent('9 of 50 accounts');
+    expect(FINANCE_KPIS_MK5.paying.definition).toMatch(/trials, Founding Partners and comped accounts included/);
+  });
+
+  it.each([
+    ['Overview', ''],
+    ['the Accounts tab', 'tab=accounts'],
+    ['a business picked', `account=${A}`],
+  ])('USD-6 (render): on %s, no money is shown as "USD <amount>"; US dollars carry "$"', async (_view, search) => {
+    mockSearch = search;
+    serve({
+      success: true,
+      data: payload({
+        ...(search.startsWith('account=') ? { accountId: A } : {}),
+        mrr: { status: 'ok', lines: [{ currency: 'USD', totalHundredths: 4900, cancellingHundredths: 0, pastDueHundredths: 0, subscriptions: 1, overflow: false }], unpriced: 0, discountUnknown: 0, pastDueCounted: true },
+        stripeMode: 'live',
+      }),
+    });
+    const view = render(<FinanceView />);
+    await screen.findByTestId('kpi-strip');
+    expect(view.container.textContent).not.toMatch(/USD -?\d/);
+    expect(view.container.textContent).toMatch(/\$\d/);
+  });
+});
+
+// ── SA-CR-MK5 C-2 (BD-11): the K-2 chip takes K-2's own status ──
+describe('Money MK-5 C-2: the far-over chip on Credits follows the K-2 rule', () => {
+  it.each([
+    ['red', 'danger'],
+    ['amber', 'warn'],
+    ['green', 'neutral'],
+    ['neutral', 'neutral'],
+    ['unavailable', 'neutral'],
+  ] as const)('K-2 %s → a %s chip', async (status, tone) => {
+    const p = payload();
+    p.tiles.k2 = { ...p.tiles.k2, status };
+    serve({ success: true, data: p });
+    render(<FinanceView />);
+    const chip = await screen.findByTestId('credits-over-chip');
+    expect(chip).toHaveAttribute('data-tone', tone);
+    expect(chip).toHaveTextContent('1 at or over 150% of allowance');
+  });
+});

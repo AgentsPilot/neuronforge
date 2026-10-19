@@ -49,7 +49,8 @@ function lineParts(line: FinanceMrrLine): string {
 
 export function RecurringNowPart({ mrr, stripeMode }: { mrr: FinanceMrrSection; stripeMode: 'test' | 'live' | null }) {
   return (
-    <div className="space-y-2" data-testid="revenue-recurring" data-status={mrr.status}>
+    // Money MK-5: `id` so the F-K2 tile can jump here (#revenue-mrr).
+    <div id="revenue-mrr" className="space-y-2" data-testid="revenue-recurring" data-status={mrr.status}>
       <div className="flex flex-wrap items-center gap-2">
         <h3 className={SUBHEAD}>{REVENUE_RECURRING_HEADING}</h3>
         {stripeMode === 'test' && mrr.status === 'ok' && (
