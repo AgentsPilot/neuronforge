@@ -25,6 +25,9 @@
  */
 
 import type { FinanceBoostEventsNote, FinanceBoostHeldNowLine, FinanceBoostLine, FinanceBoostNotes, FinanceBoostPackageRow, FinanceBoostRevenue, FinanceRevenueSection } from '@/lib/business-os/finance/financeTypes';
+// Money MK-4: a separate import, so the line above stays unedited.
+import type { FinanceMrrSection } from '@/lib/business-os/finance/financeTypes';
+import { RecurringNowPart } from './RecurringNowPart';
 import { AdminEmpty, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatCount } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -97,10 +100,16 @@ export function RevenuePanel({
   revenue,
   windowLabel,
   onRetry,
+  mrr,
+  stripeMode = null,
 }: {
   revenue: FinanceRevenueSection;
   windowLabel: string;
   onRetry: () => void;
+  /** Money MK-4: MRR now. Absent (fixtures before MK-4): no "Recurring now" part, the panel as before. */
+  mrr?: FinanceMrrSection;
+  /** Money MK-4 (CR-2): the key the MRR was read with; labels the MRR line only. */
+  stripeMode?: 'test' | 'live' | null;
 }) {
   const scope = revenue.boosts.scope;
   return (
@@ -116,6 +125,7 @@ export function RevenuePanel({
           <h3 className={SUBHEAD}>{REVENUE_PLANS_HEADING}</h3>
           <PlanRevenuePart plans={revenue.plans} />
         </div>
+        {mrr && <RecurringNowPart mrr={mrr} stripeMode={stripeMode} />}
         <div className="space-y-2" data-testid="revenue-boosts-part">
           <h3 className={SUBHEAD}>{REVENUE_BOOSTS_HEADING}</h3>
           <BoostsPart boosts={revenue.boosts} />

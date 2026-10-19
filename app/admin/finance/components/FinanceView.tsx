@@ -90,6 +90,7 @@ import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import { FinanceKpiPlaceholders, FinanceKpiStrip, type FinanceTileSection, type FinanceTileTarget } from './FinanceKpiStrip';
 import { PaymentProblemsSection } from './PaymentProblemsSection';
+import { PlansSubscriptions } from './PlansSubscriptions';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
 
@@ -178,12 +179,19 @@ export function FinanceView() {
     [filters.window, setFilters]
   );
   // SA-Q43: selecting a tab writes `tab`; leaving Accounts resets its sort and filters.
+  // Money MK-4: Plans & subscriptions is the page URL's `tab=plans`; it never reaches the request
+  // (`toFinanceQuery` sends `tab` for Accounts only), so the finance read is the Overview's.
   const onSelectTab = useCallback(
-    (tab: FinanceTab) => setFilters(tab === 'accounts' ? { tab: 'accounts' } : { tab: '', ...TAB_RESET }),
+    (tab: FinanceTab) =>
+      setFilters(
+        tab === 'accounts' ? { tab: 'accounts', status: '' } : tab === 'plans' ? { tab: 'plans', ...TAB_RESET } : { tab: '', ...TAB_RESET, status: '' }
+      ),
     [setFilters]
   );
-  const selectedTab: FinanceTab = query.tab === 'accounts' ? 'accounts' : 'overview';
-  const onAccountsTab = selectedTab === 'accounts' && query.accountId === null;
+  const selectedTab: FinanceTab =
+    query.tab === 'accounts' ? 'accounts' : filters.tab === 'plans' && query.accountId === null ? 'plans' : 'overview';
+  // F-5: on a tab other than Overview the sections are not on screen, so a tile is a link to Overview.
+  const onAccountsTab = selectedTab !== 'overview' && query.accountId === null;
 
   // F-5 (SA-W3 (a), F5-R2): the section an Accounts-tab tile asked for. Once
   // Overview is mounted it is scrolled into view ONCE and cleared; no hash.
@@ -286,7 +294,18 @@ export function FinanceView() {
               </>
             )}
             {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
-            {selectedTab === 'accounts' && query.accountId === null ? (
+            {selectedTab === 'plans' ? (
+              <FinanceTabPanel id="plans">
+                {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
+                <div className="space-y-4">
+                  <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
+                  <PlansSubscriptions
+                    status={filters.status === '' ? null : filters.status}
+                    onStatus={(next) => setFilters({ status: next ?? '' })}
+                  />
+                </div>
+              </FinanceTabPanel>
+            ) : selectedTab === 'accounts' && query.accountId === null ? (
               <FinanceTabPanel id="accounts">
                 {data.accountEconomics ? (
                   <AccountsTab
@@ -303,7 +322,7 @@ export function FinanceView() {
               </FinanceTabPanel>
             ) : (
               <OverviewBody tabbed={query.accountId === null}>
-                <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
+                <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} mrr={data.mrr} stripeMode={data.stripeMode ?? null} />
                 <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
                 <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />

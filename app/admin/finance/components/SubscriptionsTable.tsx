@@ -25,7 +25,7 @@ import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { businessesHref } from '@/app/admin/finance/financeLinks';
 import type { SubscriptionRow } from '@/lib/admin/billing/subscriptionsTypes';
 
-import { NO_ACCOUNT, NO_NAME, NONE, STATUS_LABEL, STATUS_TONE } from '../subscriptionsCopy';
+import { NO_ACCOUNT, NO_NAME, NONE, STATUS_LABEL, STATUS_TONE } from '../plansCopy';
 
 const LINK_CLASS = 'text-blue-300 underline hover:text-blue-200';
 

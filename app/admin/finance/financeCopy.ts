@@ -170,6 +170,27 @@ export const REVENUE_NOTICE_UNREADABLE_CREDITS = (count: number) =>
  */
 export const REVENUE_REFUND_TIMING_NOTE =
   'Refunds and lost disputes count in the month we recorded them, so a finished month does not change. A refund we learn of late counts in the month we learned of it. Open disputes are shown as held now.';
+// ── Money MK-4: "Recurring now" in the Revenue section (§3.2, F-K2, BQ-P8a-4) ──
+// MRR now beside the cash received in the window; never added to it.
+export const REVENUE_RECURRING_HEADING = 'Recurring now (MRR)';
+/**
+ * C-4 / SA-CR-MK4 CR-2: the MRR line says which Stripe key it was read with, in
+ * test only. The ONE Finance copy constant on the mode-wording allow-list (the
+ * finance source guard strips exactly this declaration); MK-5's MRR tile reuses
+ * it. Revenue received is never labelled (BD-20).
+ */
+export const REVENUE_RECURRING_TEST_KEY_LABEL = 'Stripe test mode';
+export const REVENUE_RECURRING_NOTE =
+  'The monthly value of paying subscriptions today, at list price, excluding tax. Not cash received: it is never added to the figures above.';
+export const REVENUE_RECURRING_NONE = 'None: no paying subscription.';
+export const REVENUE_RECURRING_UNKNOWN = 'Unknown: MRR could not be read.';
+export const REVENUE_RECURRING_SUBSCRIPTIONS = (count: number, text: string) => `${text} ${count === 1 ? 'subscription' : 'subscriptions'}`;
+export const REVENUE_RECURRING_PAST_DUE = (amount: string) => `of which past due (still counted) ${amount}`;
+export const REVENUE_RECURRING_CANCELLING = (amount: string) => `of which cancelling ${amount}`;
+export const REVENUE_RECURRING_NOT_EXACT = 'not exact';
+export const REVENUE_RECURRING_PAST_DUE_NOT_COUNTED = 'Past-due subscriptions are not counted.';
+export const REVENUE_RECURRING_UNPRICED = (count: string) => `${count} paying with no list price: not counted.`;
+export const REVENUE_RECURRING_DISCOUNT = (count: string) => `${count} paying with a founder discount whose amount is not recorded: not counted.`;
 export const REVENUE_CANNOT_TITLE = 'Not shown here';
 /** M2-FR-13: what this section cannot produce yet. */
 export const REVENUE_CANNOT: readonly string[] = [
@@ -594,6 +615,13 @@ export const ACCOUNT_LINK_BUSINESSES = 'Businesses';
 export const TABS_LABEL = 'Finance views';
 export const TAB_OVERVIEW = 'Overview';
 export const TAB_ACCOUNTS = 'Accounts';
+/** Money MK-4: the Subscriptions page as a Finance tab, Plan mix on top (§3.2). */
+export const TAB_PLANS = 'Plans & subscriptions';
+export const PLANS_SUBSCRIPTIONS_TITLE = 'Subscriptions';
+export const PLANS_SUBSCRIPTIONS_SUBTITLE = (asOf: string | null) =>
+  `Plan subscriptions from our own billing records, for the server's current Stripe key${asOf ? ` · As of ${asOf}` : ''}`;
+export const PLANS_STATUS_LABEL = 'Status';
+export const PLANS_STATUS_ALL = 'All';
 
 export const ECON_TITLE = 'Accounts';
 export const ECON_SUBTITLE = 'Every account: what it paid us, what its AI cost us, and the AI margin';

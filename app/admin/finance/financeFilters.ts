@@ -31,6 +31,7 @@ import { customRangeProblem } from '@/app/admin/components/adminWindowPresets';
 import { windowEquals, windowFilter, type AdminWindowExtra, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import { textFilter, type AdminFilterField, type AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
 import type { FinanceAccountsShow, FinanceAccountsSort } from '@/lib/business-os/finance/financeTypes';
+import { SUBSCRIPTION_STATUSES, type SubscriptionStatus } from '@/lib/admin/billing/subscriptionsTypes';
 
 import {
   DEFAULT_FINANCE_QUERY,
@@ -45,14 +46,20 @@ export interface FinanceFilters {
   window: AdminWindowValue;
   /** '' = all businesses; otherwise a lower-case UUID (SA-W11). */
   account: string;
-  /** '' = Overview. Only with no business (SA-W84). */
-  tab: '' | 'accounts';
+  /** '' = Overview. Only with no business (SA-W84). Money MK-4 adds `plans` (Plans & subscriptions). */
+  tab: '' | 'accounts' | 'plans';
   /** The Accounts tab's sort; only with the tab (E-48). */
   sort: FinanceAccountsSort;
   /** '' = every group; a `FINANCE_GROUP_SHAPE` key. Only with the tab. */
   group: string;
   /** The Accounts tab's show filter; only with the tab. */
   show: FinanceAccountsShow;
+  /**
+   * Money MK-4: the Subscriptions list's status filter, only with `tab=plans`
+   * ('' = all). The old `/admin/subscriptions?status=…` links keep it through
+   * the redirect. Never sent to the finance route.
+   */
+  status: '' | SubscriptionStatus;
 }
 
 export const FINANCE_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
@@ -123,10 +130,11 @@ const accountField: AdminFilterField<string> = {
 export const FINANCE_FILTER_SPEC: AdminFilterSpec<FinanceFilters> = {
   window: financeWindowField(),
   account: accountField,
-  tab: choiceFilter('tab', ['accounts'] as const, ''),
+  tab: choiceFilter('tab', ['accounts', 'plans'] as const, ''),
   sort: choiceFilter('sort', FINANCE_ACCOUNTS_SORTS, DEFAULT_FINANCE_QUERY.sort),
   group: textFilter({ key: 'group', defaultValue: '', isValid: (raw) => FINANCE_GROUP_SHAPE.test(raw) }),
   show: choiceFilter('show', FINANCE_ACCOUNTS_SHOWS, DEFAULT_FINANCE_QUERY.show),
+  status: choiceFilter('status', SUBSCRIPTION_STATUSES, ''),
 };
 
 /** The window part of the request; anything the route cannot take is the default (defensive: the spec never holds it). */
@@ -200,7 +208,10 @@ export function financeFilterRepair(filters: FinanceFilters): Partial<FinanceFil
   if (filters.account !== '' && (filters.tab !== '' || !tabKeysAtDefault(filters))) {
     return { tab: '', ...TAB_KEYS_DEFAULT };
   }
-  if (filters.tab === '' && !tabKeysAtDefault(filters)) return { ...TAB_KEYS_DEFAULT };
+  if (filters.tab !== 'accounts' && !tabKeysAtDefault(filters)) return { ...TAB_KEYS_DEFAULT };
+  // Money MK-4: the status filter belongs to the Plans & subscriptions tab only.
+  // `?? ''`: a state built before MK-4 (no `status` key) is valid as it is.
+  if (filters.tab !== 'plans' && (filters.status ?? '') !== '') return { status: '' };
   return null;
 }
 
@@ -209,11 +220,14 @@ export const FINANCE_CLEAR_PATCH: Partial<FinanceFilters> = {
   window: FINANCE_DEFAULT_WINDOW,
   account: '',
   ...TAB_KEYS_DEFAULT,
+  status: '',
 };
 
 /** Clear is enabled while any field it resets is not at its default (SA-W4). */
 export function financeCanClear(filters: FinanceFilters): boolean {
-  return !windowEquals(filters.window, FINANCE_DEFAULT_WINDOW) || filters.account !== '' || !tabKeysAtDefault(filters);
+  return (
+    !windowEquals(filters.window, FINANCE_DEFAULT_WINDOW) || filters.account !== '' || !tabKeysAtDefault(filters) || (filters.status ?? '') !== ''
+  );
 }
 
 /**

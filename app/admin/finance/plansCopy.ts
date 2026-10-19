@@ -1,6 +1,10 @@
 /**
- * The admin Subscriptions page's words and its URL filter (plan payments
- * P-8a.1, AM-2 and AM-3; Admin Layout Standard §5.6).
+ * The Subscriptions words (plan payments P-8a.1, AM-2 and AM-3; Admin Layout
+ * Standard §5.6). Money MK-4 (SA-CR-MK4 MK4-FU-1): moved here from
+ * `app/admin/subscriptions/subscriptionsCopy.ts` when that page became
+ * Finance's Plans & subscriptions tab. It names the Stripe mode, so it is on
+ * the finance source guard's explicit mode-wording allow-list (SA-4, CR-1).
+ * The users drawer's billing panel imports its status words from here too.
  *
  * One key, `status` (`?status=failed`, `all` omitted, an unknown value
  * ignored). Module level, so the filter hook sees a stable spec.

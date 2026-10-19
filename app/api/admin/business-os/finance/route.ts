@@ -83,6 +83,12 @@
  *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
  *
+ * Money MK-4 (KPI restructure review SA-2, SA-4): MRR now joins the payload as
+ * `mrr` and `stripeMode`, read by `lib/admin/billing/financeMrr` (the mode is
+ * decided there, never here) BESIDE the builder, never inside it. A failed MRR
+ * read is its own `unknown` section and never fails the page. The query
+ * schema is unchanged.
+ *
  * @module app/api/admin/business-os/finance
  */
 
@@ -93,6 +99,7 @@ import { createLogger } from '@/lib/logger';
 import { bosRowFilter, isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
 import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';
 import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
+import { readFinanceMrr } from '@/lib/admin/billing/financeMrr';
 import { resolveFinanceWindow } from '@/lib/business-os/finance/financeWindow';
 import { ADMIN_WINDOW_CHOICES, customRangeProblem, isRealDate } from '@/app/admin/components/adminWindowPresets';
 import { FINANCE_ACCOUNTS_SHOWS, FINANCE_ACCOUNTS_SORTS, FINANCE_GROUP_SHAPE } from '@/app/admin/finance/financeUrl';
@@ -254,6 +261,10 @@ export async function GET(request: NextRequest) {
     const accountsTab =
       query.tab === 'accounts' ? { sort: query.sort ?? 'ai_cost', group: query.group ?? null, show: query.show ?? 'all' } : null;
 
+    // MK-4: all businesses, started beside the builder; a picked business only once the builder
+    // has found its plan row (no read for an id that is not a business). Never rejects.
+    const mrrRead = accountId === null ? readFinanceMrr(null) : null;
+
     const result = await buildFinanceHealth({ window, accountId, now, accountsTab }, requestLogger, {
       ...financeHealthDeps(),
       // Admin identity reads are called only from app/api/admin/** (repository guard, SEC-5).
@@ -286,7 +297,9 @@ export async function GET(request: NextRequest) {
       return errorResponse(500, 'Could not check this business. Try again.');
     }
 
-    const { payload, counts } = result;
+    const { payload: built, counts } = result;
+    const { mrr, stripeMode } = await (mrrRead ?? readFinanceMrr(accountId));
+    const payload = { ...built, mrr, stripeMode };
     // Ids, filters, statuses and counts only: never a business name, never a
     // figure (no credit figure either). `counts.creditAccounts` and
     // `counts.creditsPass` make the credit pass's scale trigger visible from
@@ -312,6 +325,8 @@ export async function GET(request: NextRequest) {
           aiRecorded: payload.aiCost.recorded?.status ?? 'not_built',
           credits: payload.credits.status,
           takings: payload.takings.status,
+          // MK-4: MRR now, its status and the lines count only (never a figure).
+          mrr: { status: mrr.status, currencies: mrr.lines.length },
           paymentProblems: {
             block: payload.paymentProblems.status,
             overdueInvoices: payload.paymentProblems.overdueInvoices.status,
