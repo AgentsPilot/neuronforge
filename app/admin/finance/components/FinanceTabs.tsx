@@ -19,13 +19,15 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
-import { TAB_ACCOUNTS, TAB_OVERVIEW, TABS_LABEL } from '../financeCopy';
+import { TAB_ACCOUNTS, TAB_OVERVIEW, TAB_PLANS, TABS_LABEL } from '../financeCopy';
 
-export type FinanceTab = 'overview' | 'accounts';
+export type FinanceTab = 'overview' | 'accounts' | 'plans';
 
 const TABS: readonly (readonly [FinanceTab, string])[] = [
   ['overview', TAB_OVERVIEW],
   ['accounts', TAB_ACCOUNTS],
+  // Money MK-4 (§3.2): the Subscriptions page as a tab, Plan mix on top.
+  ['plans', TAB_PLANS],
 ];
 
 export const financeTabId = (id: FinanceTab) => `finance-tab-${id}`;

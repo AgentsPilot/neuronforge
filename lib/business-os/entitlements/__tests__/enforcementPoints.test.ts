@@ -565,6 +565,12 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['EntitlementConfig', 'getEntitlementConfig'],
       why: 'Plan payments P-8a.1: the production wiring of the admin Subscriptions page reads the entitlement config once and hands it to the pure builder as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Money MK-4, 2026-10-19 — MRR now in the admin Finance payload ───────
+    {
+      file: 'lib/admin/billing/financeMrr.ts',
+      symbols: ['EntitlementConfig', 'getEntitlementConfig'],
+      why: "Money MK-4 (KPI restructure review SA-2): the admin finance route's MRR wiring reads the entitlement config once and hands it to `subscriptionsMrr` (the Subscriptions list's own MRR rule) as a parameter, for each tier's monthly list price. For DISPLAY only: it resolves no account's plan, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
     // ── Plan payments P-8a.2, 2026-10-18 — the billing panel in the Businesses drawer ─
     {
       file: 'lib/admin/billing/billingPanelView.ts',

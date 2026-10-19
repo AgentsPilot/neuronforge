@@ -27,7 +27,7 @@ import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { BillingDisagreement, BillingPanelPayload } from '@/lib/admin/billing/billingPanelTypes';
-import { MRR_PAST_DUE_COUNTED, STATUS_LABEL, STATUS_TONE } from '@/app/admin/subscriptions/subscriptionsCopy';
+import { MRR_PAST_DUE_COUNTED, STATUS_LABEL, STATUS_TONE } from '@/app/admin/finance/plansCopy';
 
 import { PART_BOX } from './DrawerBox';
 

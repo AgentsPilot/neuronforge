@@ -120,8 +120,7 @@ describe('section order', () => {
     ]);
     expect(hrefsOf('Money')).toEqual([
       '/admin/finance',
-      // Plan payments P-8a.1 (BD-23): Subscriptions, after Finance.
-      '/admin/subscriptions',
+      // Money MK-4 (ruled): Subscriptions is now Finance's Plans & subscriptions tab; its item is gone.
       '/admin/finance/charges',
       '/admin/analytics',
     ]);
@@ -164,9 +163,10 @@ describe('every admin page is reachable, exactly once', () => {
     // added /admin/finance. 30 since plan payments P-8a.1 added
     // /admin/subscriptions. If this drops, the scan broke rather than the
     // sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(30);
+    // Money MK-4 (ruled): /admin/subscriptions left the disk (it redirects to Finance's tab), so 29.
+    expect(onDisk.length).toBeGreaterThanOrEqual(29);
     expect(onDisk).toContain('/admin/finance');
-    expect(onDisk).toContain('/admin/subscriptions');
+    expect(onDisk).not.toContain('/admin/subscriptions');
     expect(onDisk).toContain('/admin/agentspilot-billing');
     expect(onDisk).toContain('/admin/onboarding');
     expect(onDisk).toContain('/admin/business-os-invites');
@@ -185,8 +185,8 @@ describe('every admin page is reachable, exactly once', () => {
     // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
     // Finance (finance & business health slice 1a) + Charge checks (M-5)
     // − the redundant legacy dashboard (M-8, BD-34) + Subscriptions (plan
-    // payments P-8a.1).
-    expect(allHrefs).toHaveLength(29);
+    // payments P-8a.1) − Subscriptions (Money MK-4: a Finance tab now).
+    expect(allHrefs).toHaveLength(28);
   });
 
   it('every nested listed page exists on disk (M-5)', () => {
@@ -324,10 +324,10 @@ describe('Money M-5: the Money section (finance health §11H.3)', () => {
     expect(sections.find((s) => s.title === 'Money')?.hidden).toBe(false);
   });
 
-  it('Finance first, then Subscriptions (P-8a.1), Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
+  // Money MK-4 (ruled): the Subscriptions item is gone; its content is Finance's Plans & subscriptions tab.
+  it('Finance first, then Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
     expect(money().map((i) => [i.name, i.href, i.description])).toEqual([
       ['Finance', '/admin/finance', 'Revenue, AI cost and credits, Business OS'],
-      ['Subscriptions', '/admin/subscriptions', 'Plan subscriptions and MRR, Business OS'],
       ['Charge checks', '/admin/finance/charges', 'Charged AI cost checked per account, Business OS'],
       ['AI calls & usage (detail)', '/admin/analytics', 'Every AI call and its recorded cost, both products'],
     ]);

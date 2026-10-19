@@ -86,6 +86,15 @@ const nextConfig = {
         destination: '/admin/finance/charges',
         permanent: false,
       },
+      {
+        // Money MK-4 (KPI restructure review SA-6): the Subscriptions page is
+        // now Finance's Plans & subscriptions tab. Temporary for the same
+        // reason as above. Next merges the incoming query with the
+        // destination's, so a status filter (?status=failed) arrives with it.
+        source: '/admin/subscriptions',
+        destination: '/admin/finance?tab=plans',
+        permanent: false,
+      },
     ];
   },
 }

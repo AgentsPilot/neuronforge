@@ -47,9 +47,10 @@ describe('R-1: the redirect in next.config.js (shape only)', () => {
     });
   });
 
-  it('keeps the payments redirect; two redirects in all', async () => {
+  // Money MK-4 (ruled): the Subscriptions redirect joins, so three in all.
+  it('keeps the payments redirect; three redirects in all', async () => {
     const all = await config.redirects();
-    expect(all).toHaveLength(2);
+    expect(all).toHaveLength(3);
     expect(all).toContainEqual({ source: '/business-os/payments', destination: '/business-os/orders', permanent: false });
   });
 });

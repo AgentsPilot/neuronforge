@@ -489,6 +489,48 @@ export interface FinancePayload {
   accountEconomics?: FinanceAccountEconomicsSection;
   /** Slice 6a: the picked business's AI margin line (M3-FR-8). Present only with a business picked. */
   accountMargin?: FinanceAccountMargin;
+  /**
+   * Money MK-4 (SA-2): MRR now, for the Revenue "Recurring now" line and, from
+   * MK-5, the F-K2 tile. Set by the route from `lib/admin/billing`, never by
+   * the builder. Optional only so fixtures written before MK-4 still type.
+   */
+  mrr?: FinanceMrrSection;
+  /**
+   * Money MK-4 (SA-4): the Stripe mode the MRR was read in, as a value only.
+   * The mode DECISION is `lib/admin/billing`'s; null when it could not be read.
+   */
+  stripeMode?: 'test' | 'live' | null;
+}
+
+// ── Money MK-4: MRR now (SA-2, BD-37, BQ-P8a-4) ─────────────────────────────
+// The one MRR rule (`planMrr.ts`) over the current-mode billing rows, the
+// same figure the Subscriptions list shows. One line per currency, never one
+// total across currencies (BD-12).
+
+/** One currency's MRR, in integer hundredths of that currency. */
+export interface FinanceMrrLine {
+  /** Null = an unreadable currency code, never assumed to be USD. */
+  currency: string | null;
+  totalHundredths: number;
+  /** Of the total: set to cancel at the period end. */
+  cancellingHundredths: number;
+  /** Of the total: past due, still counted (BQ-P8a-4). */
+  pastDueHundredths: number;
+  subscriptions: number;
+  /** A sum left the safe-integer range: not exact. */
+  overflow: boolean;
+}
+
+export interface FinanceMrrSection {
+  /** `unknown`: the key's mode or a read failed, so no figure is shown. */
+  status: 'ok' | 'unknown';
+  lines: FinanceMrrLine[];
+  /** Paying subscriptions whose plan has no monthly price: counted by number, never 0. */
+  unpriced: number;
+  /** Paying subscriptions with a founder discount whose amount is not recorded. */
+  discountUnknown: number;
+  /** Whether past-due subscriptions are counted (BQ-P8a-4). */
+  pastDueCounted: boolean;
 }
 
 // ── Slice 6a (Money M-3): account economics and AI margin (§11E) ─────────────

@@ -687,8 +687,64 @@ describe('finance slice 1c wording guards', () => {
     expect(MODE_WORDING.test('const latestMode = 1;')).toBe(true);
   });
 
-  it.each(FILES)('%s: names no mode in code (no livemode, test mode or live mode)', (file) => {
-    expect(codeOf(file)).not.toMatch(MODE_WORDING);
+  // ── Money MK-4 (KPI restructure review SA-4, C-4; SA-CR-MK4 CR-1): the EXPLICIT allow-list ──
+  // Finance may say "Stripe test mode" on the Plans & subscriptions tab and on the MRR line /
+  // tile only. The tab's words live in ONE file, `plansCopy.ts` (moved into Finance by
+  // MK4-FU-1, so no import from outside the tree can carry mode words past this guard), and
+  // the MRR label is ONE constant in `financeCopy.ts`, stripped by its exact declaration and
+  // nothing else. `lib/business-os/finance/**`, the route and the repository are never allowed.
+  const MODE_ROUTE = 'app/api/admin/business-os/finance/route.ts';
+  const MODE_ALLOWED_FILES: readonly string[] = ['app/admin/finance/plansCopy.ts'];
+  const MODE_ALLOWED_CONSTANTS: Readonly<Record<string, readonly string[]>> = {
+    'app/admin/finance/financeCopy.ts': ['REVENUE_RECURRING_TEST_KEY_LABEL'],
+  };
+  const declarationOf = (name: string) => new RegExp(`export const ${name} = '[^'\\n]*';\\n?`, 'g');
+  /** The code the mode rule scans: the allowed constants' exact declarations removed, nothing else. */
+  const modeScanned = (file: string, code: string): string =>
+    (MODE_ALLOWED_CONSTANTS[file] ?? []).reduce((text, name) => text.replace(declarationOf(name), ''), code);
+  /** An allow-list may never reach the builder tree, the route or the repository. */
+  const allowListIsUiOnly = (files: readonly string[]) =>
+    files.every((file) => file.startsWith('app/admin/finance/') && file !== MODE_ROUTE && file !== REPOSITORY);
+
+  it('MK-4: the allow-list is explicit, exists, and stays in the page tree (never lib/business-os/finance)', () => {
+    const all = [...MODE_ALLOWED_FILES, ...Object.keys(MODE_ALLOWED_CONSTANTS)];
+    expect(allowListIsUiOnly(all)).toBe(true);
+    for (const file of all) expect({ file, scanned: FILES.includes(file) }).toEqual({ file, scanned: true });
+    // Each allowed constant is declared exactly once, as a plain string, and its file needs it.
+    for (const [file, names] of Object.entries(MODE_ALLOWED_CONSTANTS)) {
+      for (const name of names) {
+        const found = codeOf(file).match(declarationOf(name)) ?? [];
+        expect({ file, name, declarations: found.length }).toEqual({ file, name, declarations: 1 });
+        expect(found[0]).toMatch(MODE_WORDING);
+      }
+    }
+    // The allowed file really names a mode (an allow-list entry is never left stale).
+    for (const file of MODE_ALLOWED_FILES) expect(codeOf(file)).toMatch(MODE_WORDING);
+  });
+
+  it('MK-4 planted controls: mode words anywhere else in Finance are still caught', () => {
+    // (a) A non-allowed page file naming a mode.
+    expect(modeScanned('app/admin/finance/components/RevenuePanel.tsx', "<span>{'Stripe test mode'}</span>")).toMatch(MODE_WORDING);
+    // (b) The copy file with the allowed constant AND a second mode constant: the second is still caught.
+    const copy = "export const REVENUE_RECURRING_TEST_KEY_LABEL = 'Stripe test mode';\nexport const OTHER = 'live mode';\n";
+    expect(modeScanned('app/admin/finance/financeCopy.ts', copy)).toMatch(MODE_WORDING);
+    expect(modeScanned('app/admin/finance/financeCopy.ts', "export const REVENUE_RECURRING_TEST_KEY_LABEL = 'Stripe test mode';\n")).not.toMatch(MODE_WORDING);
+    // (c) The allowed constant's declaration in ANOTHER file is not stripped there.
+    expect(modeScanned('app/admin/finance/financeFormat.ts', "export const REVENUE_RECURRING_TEST_KEY_LABEL = 'Stripe test mode';\n")).toMatch(MODE_WORDING);
+    // (d) The builder tree and the column stay closed: a planted lib/ entry is refused.
+    expect(allowListIsUiOnly(['lib/business-os/finance/financeHealth.ts'])).toBe(false);
+    expect(allowListIsUiOnly([REPOSITORY])).toBe(false);
+    expect(allowListIsUiOnly([MODE_ROUTE])).toBe(false);
+  });
+
+  it.each(FILES.filter((file) => !MODE_ALLOWED_FILES.includes(file)))('%s: names no mode in code (no livemode, test mode or live mode)', (file) => {
+    expect(modeScanned(file, codeOf(file))).not.toMatch(MODE_WORDING);
+  });
+
+  it('MK-4: lib/business-os/finance/** names no mode and no livemode, with no allowance at all', () => {
+    const libFiles = FILES.filter((file) => file.startsWith('lib/'));
+    expect(libFiles.length).toBeGreaterThan(10);
+    for (const file of libFiles) expect({ file, mode: MODE_WORDING.test(codeOf(file)) }).toEqual({ file, mode: false });
   });
 });
 
