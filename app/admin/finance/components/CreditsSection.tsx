@@ -48,7 +48,9 @@ import {
   CREDITS_NO_ACCOUNTS,
   CREDITS_NO_ALLOWANCE,
   CREDITS_NOT_LISTED_NOTE,
-  CREDITS_OVER,
+  BLOCK_KPI_FAR_OVER_CHIP,
+  BLOCK_KPI_OVER_ALLOWANCE_DEFINITION,
+  BLOCK_KPI_OVER_ALLOWANCE_LABEL,
   CREDITS_OVER_COLUMN,
   CREDITS_PLAN,
   CREDITS_SHOWING,
@@ -67,6 +69,7 @@ import {
 } from '../financeCopy';
 import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
+import { BlockKpi } from './BlockKpi';
 import { FinanceSection } from './FinanceSection';
 
 function nameOf(row: FinanceCreditRow): string {
@@ -116,8 +119,19 @@ export function CreditsSection({
     <FinanceSection id="credits" title={CREDITS_TITLE} subtitle={`${CREDITS_SOURCE}, ${windowLabel}`} status={section.status} onRetry={onRetry}>
       {f && (
         <div className="space-y-3">
-          <dl className={`grid gap-3 ${hasBought ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`} data-testid="credits-summary">
-            <div><dt className="text-xs text-slate-400">{CREDITS_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-over">{formatCount(f.overAllowance)}</dd></div>
+          {/* Money MK-1: the block KPI is the headline (§3.2), leading (§5); K-2's far-over count is its amber chip. */}
+          <BlockKpi
+            label={BLOCK_KPI_OVER_ALLOWANCE_LABEL}
+            value={formatCount(f.overAllowance)}
+            indicator={{ kind: 'leading', definition: BLOCK_KPI_OVER_ALLOWANCE_DEFINITION }}
+            chip={
+              f.farOverAllowance !== null && f.farOverAllowance > 0
+                ? { tone: 'warn', label: BLOCK_KPI_FAR_OVER_CHIP(formatCount(f.farOverAllowance), section.farOverAllowancePercent) }
+                : null
+            }
+            testId="credits-over"
+          />
+          <dl className={`grid gap-3 ${hasBought ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`} data-testid="credits-summary">
             <div><dt className="text-xs text-slate-400">{CREDITS_FAR_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-far-over">{count(f.farOverAllowance)}</dd></div>
             <div><dt className="text-xs text-slate-400">{CREDITS_GIFTED}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-gifted">{credits(gifted?.outstanding)}</dd></div>
             {hasBought && (

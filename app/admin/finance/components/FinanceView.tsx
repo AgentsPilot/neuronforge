@@ -16,7 +16,9 @@
  * Order (S1-FR-5, §11A.0): our revenue, takings through the platform
  * (Section 2 block B, slice 2a, directly under our revenue), Section 1,
  * Section 3, Section 4 (credits, slice 1b), then Section 6 block B, client
- * payment problems (slice 2b), last.
+ * payment problems (slice 2b). Money MK-1 (KPI restructure review §12):
+ * takings, renamed "Client payments (the businesses' money, not ours)", moves
+ * from under our revenue to the very bottom, after the payment problems.
  *
  * Finance F-5 (BD-29, standard §5.1): the KPI strip sits between the header
  * and the filter bar, on Overview, on the Accounts tab and with a business
@@ -302,13 +304,14 @@ export function FinanceView() {
             ) : (
               <OverviewBody tabbed={query.accountId === null}>
                 <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
-                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
                 <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
                 <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
                 {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
                 {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
                 <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} accountId={data.accountId} />
+                {/* Money MK-1: the businesses' client payments, not ours (BD-1), last on the Overview. */}
+                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
               </OverviewBody>
             )}
           </div>
