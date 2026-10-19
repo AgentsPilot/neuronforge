@@ -705,7 +705,13 @@ On every page: **nothing on screen changes** in UM-0 (Your plan panel, upgrade p
 
 ## Commit Info
 
-_To be completed by RM._
+| Field | Value |
+|---|---|
+| Branch | `feature/bos-upgrade-modal-um0` (base `origin/main` `c60e2f93`) |
+| Docs commit | `4f2494f8` docs(business-os): upgrade modal requirement and UM-0 / UM-1a workplans |
+| Feature commit | `67fc6fbd` feat(business-os): plan comparison data for the upgrade modal (UM-0) |
+| Main merge | `2f71db14` merged `origin/main` `b71dc81d` (no conflicts); re-run: test:bos-entitlements 300 / 300 suites, 9,074 / 9,074 tests; my-plan route + settings 27 / 541 |
+| PR | opened by RM 2026-10-19; auto-merge not enabled |
 
 ---
 
@@ -719,3 +725,4 @@ _To be completed by RM._
 | 2026-10-19 | Implemented (Dev) | Tasks 0 to 10 done on `feature/bos-upgrade-modal-um0`, uncommitted. § Implementation Notes: files, deviations (D-1 to D-4), S-1 to S-7 status, test counts, sample table. Status: Code Complete |
 | 2026-10-19 | SA code review: CODE APPROVED | S-1 to S-7 met; D-1 to D-4 accepted; test-only exports justified (not in `index.ts`); route / tierMatrix / catalog / index / snapshot unchanged; 4 SA mutations all red; 11 targeted suites 354 / 354. SA fixed one stale JSDoc reference. Two non-blocking suggestions (highlight against a ✕ column; one `now` in the route Hebrew case). Approved for QA |
 | 2026-10-19 | QA: PASS WITH NOTES | test:bos-entitlements 299/9,052; route + settings 27/541; comparison identical across 7 ok account shapes, null on 3 non-ok; table matches §7.1; tripwires probed; payload +3.3 KB; live HTTP check owed; one Low edge case (C-27 tripwire has no self-test) |
+| 2026-10-19 | Committed (RM) | Commits `4f2494f8` (docs) + `67fc6fbd` (feat) on `feature/bos-upgrade-modal-um0`; `origin/main` merged in (`2f71db14`), suites green; PR opened |
