@@ -68,9 +68,9 @@ describe('the block (M4-FR-1)', () => {
     expect(within(block).getByText(RECORDED_SOURCE)).toBeInTheDocument();
     expect(within(block).getByText(ABOVE_LABEL)).toBeInTheDocument();
     expect(block).toHaveTextContent(ABOVE_SOURCE);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('USD 1.94');
-    expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent('USD 0.33');
-    expect(screen.getByTestId('ai-total')).toHaveTextContent('USD 1.61');
+    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('$1.94');
+    expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent('$0.33');
+    expect(screen.getByTestId('ai-total')).toHaveTextContent('$1.61');
     // Directly under the charged total, before the breakdown tables.
     expect(screen.getByTestId('ai-total').compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(document.body.textContent).not.toContain('3.55');
@@ -120,7 +120,7 @@ describe('the block (M4-FR-1)', () => {
 describe('the states (M4-FR-3)', () => {
   it('AC-160 / AC-168: "At least" on the recorded figure, Unknown on the difference', () => {
     render(<RecordedCostLines recorded={recorded({ status: 'partial', recordedExact: false, aboveCharged: { state: 'unknown', usd: null } })} accountId={null} chargedShown />);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('At least USD 1.94');
+    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('At least $1.94');
     expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(RECORDED_UNKNOWN);
     expect(screen.queryByTestId('ai-recorded-notice')).toBeNull();
   });
@@ -159,8 +159,8 @@ describe('fix round 1: the failure notice names "the charged figures above" only
 
   it('R4-6: "None", and the charged-above line only when charged is strictly above', () => {
     render(<RecordedAboveValue recorded={recorded({ aboveCharged: { state: 'none', usd: null }, chargedAboveUsd: 0.25 })} testId="v" />);
-    expect(screen.getByTestId('v')).toHaveTextContent(`${ABOVE_NONE}${aboveChargedAboveLine('USD 0.25')}`);
-    expect(aboveChargedAboveLine('USD 0.25')).toBe('Charged is USD 0.25 above recorded (fallback prices or corrections)');
+    expect(screen.getByTestId('v')).toHaveTextContent(`${ABOVE_NONE}${aboveChargedAboveLine('$0.25')}`);
+    expect(aboveChargedAboveLine('$0.25')).toBe('Charged is $0.25 above recorded (fallback prices or corrections)');
     cleanup();
     render(<RecordedAboveValue recorded={recorded({ aboveCharged: { state: 'none', usd: null }, chargedAboveUsd: null })} testId="v" />);
     expect(screen.getByTestId('v').textContent).toBe(ABOVE_NONE);
@@ -177,7 +177,7 @@ describe('SA-W98: the block is outside Section 3’s figures guard', () => {
   it('a window entirely before the cut-over: no charged figure, but the recorded block shows with "Not available"', () => {
     renderSection(aiCost({ coverage: 'entirely_before_cutover', recorded: recorded({ aboveCharged: { state: 'not_available', usd: null } }) }));
     expect(screen.queryByTestId('ai-total')).toBeNull();
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('USD 1.94');
+    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('$1.94');
     expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(ABOVE_NOT_AVAILABLE);
   });
 
@@ -186,7 +186,7 @@ describe('SA-W98: the block is outside Section 3’s figures guard', () => {
     expect(screen.queryByTestId('ai-total')).toBeNull();
     expect(screen.getByTestId('section-ai-cost')).toHaveTextContent('Could not load this section');
     expect(screen.getAllByTestId('ai-recorded')).toHaveLength(1);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('USD 1.94');
+    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('$1.94');
     expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(RECORDED_UNKNOWN);
   });
 });

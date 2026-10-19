@@ -59,6 +59,10 @@
  * USD line in test mode. The AC-145 baseline gets ONE ruled update: the two
  * top-level keys `mrr` and `stripeMode` and a new hash; with those two keys
  * stripped the payload still gives the 4b.2 hash `39b35743…56ea`.
+ *
+ * Money MK-5 (SA-RR-MK pins table): ONE more ruled AC-145 update. The builder
+ * adds `paying` (F-K5) and `platformMargin` (F-K4), before the MRR keys; with
+ * those two stripped the payload gives MK-4's `30275c29…0631`.
  */
 
 import * as fs from 'fs';
@@ -543,8 +547,8 @@ describe('200', () => {
     expect(body.success).toBe(true);
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
-    // Money MK-4 (ruled): `mrr` and `stripeMode` join the payload.
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'mrr', 'paymentProblems', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
+    // Money MK-4 (ruled): `mrr` and `stripeMode` join the payload. MK-5 (ruled): `paying` and `platformMargin`.
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'mrr', 'paying', 'paymentProblems', 'platformMargin', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
     expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
     expect(body.data.credits.status).toBe('ok');
     expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
@@ -1277,11 +1281,14 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   // Section 3's top accounts, the plans by business (none here), Section 4's rows, takings and overdue rows.
   const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
   // Money MK-4 (ruled): the two MRR keys, last.
-  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'mrr', 'stripeMode'];
+  // Money MK-5 (ruled): `paying` and `platformMargin`, from the builder, before the route's MRR keys.
+  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'paying', 'platformMargin', 'mrr', 'stripeMode'];
   // SA-Q72 (4b.2): the new hash. E-55 (M-4): its hash, which the payload gives with the 4b.2 keys put back;
   // and the 6a hash, which that payload still gives with `aiCost.recorded` taken out.
   // Money MK-4 (ruled re-freeze): the payload with `mrr` and `stripeMode`. BEFORE_MK4 is the 4b.2 hash it replaces.
-  const EXPECTED_SHA256 = '30275c298fa4cb265ffe8933dee56c71d4243c171c39eddbe1d2e55d64950631';
+  // Money MK-5 (ruled re-freeze): with `paying` and `platformMargin`. AFTER_MK4 is the MK-4 hash it replaces.
+  const EXPECTED_SHA256 = 'a13f1ccd7a95db60cce67bccc0df7450290b3162506b6e06f50edac3016f0060';
+  const AFTER_MK4_SHA256 = '30275c298fa4cb265ffe8933dee56c71d4243c171c39eddbe1d2e55d64950631';
   const BEFORE_MK4_SHA256 = '39b35743527b3a1948efd30c3ebc2510eb0916301baa4ea8f2e0210d7e1556ea';
   const M4_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
   const SLICE_6A_SHA256 = 'b4d10bc1256d32de808c435917c0a53d44229e3df4e9ff879a035911ae13588c';
@@ -1303,7 +1310,15 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     // SA-Q72: the only changes to the bytes are the 4b.2 keys. Put them back as they were (key order kept).
     type Json = Record<string, unknown>;
     // MK-4: the only change to the bytes is the two MRR keys at the end. Strip them: the 4b.2 bytes come back.
-    const withMk4 = { ...(body.data as Json) };
+    // MK-5: the only change to the bytes is the two builder keys. Strip them: the MK-4 bytes come back.
+    const withMk5 = { ...(body.data as Json) };
+    expect(withMk5.paying).toEqual(expect.objectContaining({ scope: 'all' }));
+    expect(withMk5.platformMargin).toEqual(expect.objectContaining({ margin: expect.any(Object) }));
+    delete withMk5.paying;
+    delete withMk5.platformMargin;
+    const shaAfterMk4 = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaAfterMk4.update(JSON.stringify(withMk5)).digest('hex')).toBe(AFTER_MK4_SHA256);
+    const withMk4 = { ...withMk5 };
     expect(withMk4.mrr).toEqual(expect.objectContaining({ status: 'ok' }));
     expect(withMk4.stripeMode).toBe('test');
     delete withMk4.mrr;

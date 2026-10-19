@@ -500,7 +500,31 @@ export interface FinancePayload {
    * The mode DECISION is `lib/admin/billing`'s; null when it could not be read.
    */
   stripeMode?: 'test' | 'live' | null;
+  /**
+   * Money MK-5 (§5.1, Q-11): F-K5 "Paying accounts", from the plan walk and
+   * the paying set the page already reads. Optional only so fixtures written
+   * before MK-5 still type; the builder always sets it.
+   */
+  paying?: FinancePaying;
+  /**
+   * Money MK-5: F-K4 "AI margin" for all businesses, the Accounts tab's own
+   * platform line (`buildPlatformMargin`). Absent with a business picked:
+   * F-K4 then reads `accountMargin`.
+   */
+  platformMargin?: FinanceAccountMargin;
 }
+
+/**
+ * Money MK-5 (§5.1): paying accounts. All businesses: the plan rows whose
+ * account pays now (the one `isPayingBillingRow` definition, current Stripe
+ * mode, BD-37) over EVERY plan row (trial, Founding Partner and comped
+ * included, Q-11). `partial`: the plan walk was capped, so both counts are
+ * "at least" and no percentage is shown. `unknown`: the paying or plan read
+ * failed; never 0%. One business: whether it pays.
+ */
+export type FinancePaying =
+  | { scope: 'all'; status: 'ok' | 'partial' | 'unknown'; paying: number | null; accounts: number | null }
+  | { scope: 'one'; status: 'ok' | 'unknown'; paying: boolean | null };
 
 // ── Money MK-4: MRR now (SA-2, BD-37, BQ-P8a-4) ─────────────────────────────
 // The one MRR rule (`planMrr.ts`) over the current-mode billing rows, the

@@ -18,6 +18,11 @@
  * Part A1: every prop shape the ten caller pages pass (anchor, same-page
  * filter, no target; neutral, red, amber; with and without a sub-line; the
  * strip with children, with placeholders, and with both, as Jobs passes).
+ * Part A3 (added ONCE by Money MK-5, SA-RR-MK pins table "Pin A (the new
+ * Finance KpiTile usage)"): the shapes the Finance strip now passes, each with
+ * MK-0's indicator. A1 and A2 and their hashes are unchanged; the file's old
+ * and new SHA-256 are in docs/workplans/ADMIN_MONEY_MK5_STRIP_USD_WORKPLAN.md.
+ *
  * Part A2: the real caller components, with figures and while loading. Jobs'
  * tiles are module-private (SA-W5): their shapes are in A1, and its own layout
  * test stays unedited. Model pricing goes through its real `priceKpis.ts`.
@@ -242,6 +247,12 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 Model pricing reading', () => <PriceStrip rows={[PLAIN_ROW]} status={undefined} />],
   ['A2 Model pricing unavailable', () => <PriceStrip rows={[RED_ROW, PLAIN_ROW]} status={null} />],
   ['A2 Model pricing recent', () => <PriceStrip rows={[]} status={CHECK_RECENT} />],
+  // ── A3 (Money MK-5): the Finance strip's shapes, each with its leading / lagging indicator ──
+  ['A3 Finance anchor lagging with status and detail', () => <KpiTile testId="tile-fk3_ai_cost" label="Charged AI cost this month" value="At least $12.50" sub="This month vs last month, UTC · Same days last month: $10.00" status="amber" detail="A lower bound" indicator={{ kind: 'lagging', definition: 'What it costs us.' }} href="#ai-cost" />],
+  ['A3 Finance anchor leading with sub and detail', () => <KpiTile testId="tile-fk2_mrr" label="MRR now" value="$49.00" sub="Monthly, at list price, today" detail="Stripe test mode" indicator={{ kind: 'leading', definition: 'The monthly price.' }} href="#revenue-mrr" />],
+  ['A3 Finance tab filter current lagging', () => <KpiTile testId="tile-fk4_ai_margin" label="AI margin" value="$85.50" sub="Revenue after tax minus Charged AI cost" detail="After Stripe fees (estimate): $82.32" indicator={{ kind: 'lagging', definition: 'A partial gross margin.' }} filter={{ href: '/admin/finance?tab=accounts', apply: noop, current: true }} />],
+  ['A3 Finance tab filter lagging', () => <KpiTile testId="tile-fk5_paying" label="Paying accounts" value="18%" sub="9 of 50 accounts" indicator={{ kind: 'lagging', definition: 'What share pays.' }} filter={{ href: '/admin/finance?tab=plans', apply: noop }} />],
+  ['A3 Finance no target lagging (a business picked)', () => <KpiTile testId="tile-fk5_paying" label="Paying accounts" value="Paying" sub="This business, now" indicator={{ kind: 'lagging', definition: 'What share pays.' }} />],
 ];
 
 /** Recorded on the unchanged tree (447d17a2) at Step 0. */
@@ -294,6 +305,12 @@ const EXPECTED: Record<string, string> = {
   'A2 Model pricing reading': 'be9d1a213d32c6e3704796468db7d2a40fdd2f2a6c39b0308039629f6da244ad',
   'A2 Model pricing unavailable': '31241fbf7736bf1aac551289805d08ae42b9925bc701096b8fb68803da4049e0',
   'A2 Model pricing recent': '13a71e361d6edb3f07816f7218353f3c6568b232cff90a7160ea321f854d2577',
+  // A3 (Money MK-5): recorded at MK-5's handover.
+  'A3 Finance anchor lagging with status and detail': 'aa49c3366273f3172252d5d32b3d5e0c2652dcb86f57f02f17376786f6088e19',
+  'A3 Finance anchor leading with sub and detail': '9bc3350d8d954d600d96be98c15c853ee872357eaa0b61c1f68484057a4890d6',
+  'A3 Finance tab filter current lagging': '7ec83c05135830e8842b0120eac03cfa201cd42e57dd7f71e7bf1137e9e54f3f',
+  'A3 Finance tab filter lagging': '86aeb0ef2ea58960a7949a33cc3872b4c77f0a6a3818a4b55e94cafe20eec458',
+  'A3 Finance no target lagging (a business picked)': '656beb659ca8178da1243474be6a66523b7c33cb3e0c49cd84ee6a6f6cfbb62c',
 };
 
 describe('Finance F-5 Pin A: the existing KpiTile / KpiStrip callers render byte-identically', () => {

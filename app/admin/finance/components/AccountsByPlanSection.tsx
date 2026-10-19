@@ -10,9 +10,14 @@
  * Slice 1c (BD-15, SA-Q24): a tier group that holds paying Founding Partners
  * says so: a text note with all businesses, a neutral chip with words for a
  * picked business. No new column and no section badge.
+ *
+ * Money MK-5 (§5 "Not a KPI, kept as a note"): K-3 leaves the strip. When its
+ * BD-11 rule fires (the payload's amber or red), the count is a chip on this
+ * block, with the rule's colour in words (amber "warn", red "danger") and the
+ * payload's headline. The rule itself stays data in `financeRules.ts`.
  */
 
-import type { FinanceAccountsSection, FinanceGroupCount } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceAccountsSection, FinanceGroupCount, FinanceTile } from '@/lib/business-os/finance/financeTypes';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import {
   ADMIN_TABLE,
@@ -44,6 +49,7 @@ import {
   ORIGIN_NOTES,
   PLANS_PAGE,
   accountsFoundingNote,
+  accountsK3Chip,
 } from '../financeCopy';
 import { atLeast, formatCount } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
@@ -63,14 +69,18 @@ export function AccountsByPlanSection({
   accounts,
   windowLabel,
   onRetry,
+  k3,
 }: {
   accounts: FinanceAccountsSection;
   windowLabel: string;
   onRetry: () => void;
+  /** Money MK-5: K-3's tile, for its chip here. Absent (fixtures before MK-5): no chip, as before. */
+  k3?: FinanceTile;
 }) {
   const f = accounts.figures;
   const exact = accounts.status !== 'partial';
   const n = (value: number) => atLeast(formatCount(value), exact);
+  const k3Fires = k3 !== undefined && (k3.status === 'amber' || k3.status === 'red') && k3.value !== null;
   return (
     <FinanceSection
       id="accounts"
@@ -81,6 +91,14 @@ export function AccountsByPlanSection({
     >
       {f && (
         <div className="space-y-3">
+          {k3Fires && k3?.value && (
+            <div className="flex flex-wrap items-center gap-2" data-testid="accounts-k3">
+              <StatusChip tone={k3.status === 'red' ? 'danger' : 'warn'} testId="accounts-k3-chip">
+                {accountsK3Chip(atLeast(formatCount(k3.value.value), k3.value.exact))}
+              </StatusChip>
+              <span className="text-xs text-slate-400">{k3.headline}</span>
+            </div>
+          )}
           <div className={ADMIN_TABLE_WRAP}>
             <table className={ADMIN_TABLE} data-testid="accounts-groups">
               <thead className={ADMIN_THEAD}>

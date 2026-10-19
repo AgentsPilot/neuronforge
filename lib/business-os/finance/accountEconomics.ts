@@ -379,7 +379,7 @@ function readStateOf(input: MarginReads): ReadState {
 }
 
 /** Every counted money row, per account id (NULL = deleted accounts), plus the platform-wide entries. */
-function moneyByAccount(input: AccountEconomicsInput): { byAccount: Map<string | null, MoneyOf>; all: MoneyOf } {
+function moneyByAccount(input: Pick<AccountEconomicsInput, 'boosts' | 'events' | 'plans'>): { byAccount: Map<string | null, MoneyOf>; all: MoneyOf } {
   const byAccount = new Map<string | null, MoneyOf>();
   const all = emptyMoney();
   const of = (id: string | null): MoneyOf => {
@@ -530,14 +530,13 @@ export function buildAccountEconomics(input: AccountEconomicsInput): AccountEcon
   });
 
   // ── The platform line, over EVERY account and the Deleted row, before any filter (E-47) ──
+  // Money MK-5: the wire line is `buildPlatformMargin`, the SAME function the Overview's F-K4 tile
+  // reads, so the tab's platform line and the tile cannot differ.
   const platformPaid = buildPaid(all, reads);
-  const platformCost = buildCost(units?.total, reads);
   const deletedMoney = money.get(null);
   const deletedExists = (units?.deleted.rows ?? 0) > 0 || deletedMoney !== undefined;
   const platform = {
-    paid: platformPaid.wire,
-    aiCost: platformCost.wire,
-    ...buildMargins(platformPaid, platformCost, reads, all.charges, feeEntry),
+    ...buildPlatformMargin(input),
     accountsCovered: works.length,
     includesDeleted: deletedExists,
   };
@@ -605,6 +604,24 @@ export function buildAccountEconomics(input: AccountEconomicsInput): AccountEcon
       deletedRow: deleted !== null,
       noPlanRow: works.filter((work) => work.row.noPlanRow).length,
     },
+  };
+}
+
+/**
+ * Every account together, the Deleted row included (E-47): the Accounts tab's
+ * platform line and, since Money MK-5, the Overview's F-K4 "AI margin" tile.
+ * The SAME functions over the same four reads (R-a, R-k, R-n, R-m); no read
+ * of its own. USD only (BD-22); a figure in another currency is a word.
+ */
+export function buildPlatformMargin(input: MarginReads): FinanceAccountMargin {
+  const reads = readStateOf(input);
+  const { all } = moneyByAccount(input);
+  const paid = buildPaid(all, reads);
+  const cost = buildCost(input.aiCost?.units.total, reads);
+  return {
+    paid: paid.wire,
+    aiCost: cost.wire,
+    ...buildMargins(paid, cost, reads, all.charges, stripeFeeEntryOf(input.feeEstimate, MARGIN_CURRENCY)),
   };
 }
 
