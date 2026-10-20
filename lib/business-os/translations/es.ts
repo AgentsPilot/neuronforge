@@ -315,6 +315,9 @@ export const es = {
     'upgrade_modal.headline.founding_partner': 'Conserva todo lo que tienes',
     'upgrade_modal.subheading.founding_partner': 'Elige un plan y sigue sin interrupciones.',
     'upgrade_modal.badge.needed': 'Necesario para esto',
+    // Upgrade modal UM-3 (user-approved 2026-10-20): CV-5 for an upgrade offer (SA Q-2 wording), and a translated Close (footer + the X's screen-reader name).
+    'upgrade_modal.subheading.upgrade': 'Al mejorar, solo pagas la diferencia de precio por lo que queda de tu periodo de facturación actual.',
+    'upgrade_modal.close': 'Cerrar',
     'plan.features_unavailable': 'No hemos podido mostrar tus funciones en este momento. No se ha quitado nada de tu cuenta.',
     'plan.next.adds_heading': 'Qué añadiría {plan}',
     'plan.next.improves_line': '{from} pasa a {to}',

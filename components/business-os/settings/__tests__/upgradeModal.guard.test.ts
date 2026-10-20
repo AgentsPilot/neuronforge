@@ -33,6 +33,16 @@
  *   (r) C-4         UM-2: the context union is exactly the three members
  *   (s) UM-SA2      UM-2: PlanSection registers as the inline host AFTER the
  *                   `[language]` effect (alongside P-G8)
+ *   (t) C-9 / A-3   UM-3 U3-a: no `bg-[var(--v2-primary)]` with `text-white` in one class
+ *                   string (white small text on --v2-primary is 4.47:1) in the modal or
+ *                   the islands, the islands' button constants included (Y-4)
+ *   (u) A-4         UM-3 U3-b: no `--v2-text-muted` text in the modal or the islands (Y-4)
+ *   (v) §6 / UM-FR10  UM-3 U3-c: no upgrade_modal.* value, in any language, carries a
+ *                   digit, a currency sign, or an urgency / social-proof / "cancel
+ *                   anytime" phrase; whole words, `{…}` slots stripped first (Y-6)
+ *   (w) UM-D3       the Settings decision is `planSurfaceFor` (the view's `hasActions`, no
+ *                   other offer test), taken by `usePlanSurface`; the Settings pop-up
+ *                   registers as the inline host (D3-1, D3-10)
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -71,8 +81,12 @@ const STANDALONE = `${DIR}/StandaloneUpgradeModal.tsx`;
 const STATUS = `${DIR}/PlanFlowStatus.tsx`;
 const DEMO_PAGE = 'app/business-os/upgrade-modal-demo/page.tsx';
 const DEMO = 'app/business-os/upgrade-modal-demo/UpgradeModalDemo.tsx';
-// UM-2: the contract, the window, the moved status lines and the demo (C-6, rule 3, C-21).
-const NEW_FILES = [TYPES, TEXT, FLOW, VIEW, MODAL, CONTEXT, PROVIDER, STANDALONE, STATUS, DEMO_PAGE, DEMO];
+// UM-D3: the session moved out of the lazily loaded window; the Settings pop-up and its decider.
+const SESSION = `${DIR}/UpgradeSession.tsx`;
+const SETTINGS_MODAL = `${DIR}/SettingsPlanModal.tsx`;
+const SURFACE = `${DIR}/usePlanSurface.ts`;
+// UM-2: the contract, the window, the moved status lines and the demo (C-6, rule 3, C-21). UM-D3: + 3.
+const NEW_FILES = [TYPES, TEXT, FLOW, VIEW, MODAL, CONTEXT, PROVIDER, STANDALONE, STATUS, DEMO_PAGE, DEMO, SESSION, SETTINGS_MODAL, SURFACE];
 
 // ── the pins, as functions so the self-tests can feed them a planted source ──
 
@@ -225,7 +239,8 @@ function pinO(sources: Record<string, string>, dictionaries: Record<string, Reco
 }
 
 /** (p) UM-SA8 / X-7: who may call the read. */
-const READ_CALLERS = [`${DIR}/planDrawerReads.ts`, FLOW, SECTION, STANDALONE, DEMO];
+// UM-D3: STANDALONE → SESSION (the read moved with the session, unchanged).
+const READ_CALLERS = [`${DIR}/planDrawerReads.ts`, FLOW, SECTION, SESSION, DEMO];
 function pinP(sources: Record<string, string>) {
   const callers = Object.entries(sources)
     .filter(([, text]) => /\breadMyPlan\(/.test(text))
@@ -258,6 +273,60 @@ function pinS(section: string) {
   expect(languageEnd).toBeGreaterThan(-1);
   expect(host).toBeGreaterThan(languageEnd);
   expect(section.match(/useUpgradeModalInlineHost\(\);/g) ?? []).toHaveLength(1);
+}
+
+/** (t) U3-a: every quoted class string (template literals included) that sets white text. */
+const WHITE_ON_PRIMARY = /bg-\[var\(--v2-primary\)\]/;
+function pinT(sources: Record<string, string>) {
+  const offenders = Object.entries(sources).flatMap(([file, text]) =>
+    (text.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) ?? [])
+      .filter((literal) => literal.includes('text-white') && WHITE_ON_PRIMARY.test(literal))
+      .map((literal) => `${file}: ${literal}`)
+  );
+  expect(offenders).toEqual([]);
+}
+
+/** (u) U3-b. */
+function pinU(sources: Record<string, string>) {
+  for (const [file, text] of Object.entries(sources)) expect({ file, muted: text.includes('text-[var(--v2-text-muted)]') }).toEqual({ file, muted: false });
+}
+
+/**
+ * (v) U3-c. Whole words and phrases (Y-6): a letter on either side means it is
+ * part of another word. Hebrew and Spanish equivalents beside the English.
+ */
+const PRESSURE_PHRASES = [
+  'limited', 'limited time', 'only today', 'today only', 'hurry', 'last chance', 'ends soon', 'countdown',
+  'popular', 'most popular', 'businesses already', 'join thousands', 'cancel anytime', 'cancel any time',
+  'מוגבל', 'לזמן מוגבל', 'רק היום', 'מהרו', 'הזדמנות אחרונה', 'פופולרי', 'בטלו בכל עת', 'ביטול בכל עת',
+  'limitado', 'tiempo limitado', 'solo hoy', 'date prisa', 'última oportunidad', 'más popular', 'cancela cuando quieras', 'cancela en cualquier momento',
+];
+const escapeRe = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const PRESSURE = new RegExp(`(?<!\\p{L})(?:${PRESSURE_PHRASES.map(escapeRe).join('|')})(?!\\p{L})`, 'iu');
+function pinV(dictionaries: Record<string, Record<string, string>>) {
+  const offenders = Object.entries(dictionaries).flatMap(([language, dictionary]) =>
+    Object.entries(dictionary)
+      .filter(([key]) => key.startsWith('upgrade_modal.'))
+      .filter(([, value]) => {
+        const text = value.replace(/\{[^}]*\}/g, '');
+        return /\d/.test(text) || /[$€£₪¥]/.test(text) || PRESSURE.test(text);
+      })
+      .map(([key, value]) => `${language} ${key}: ${value}`)
+  );
+  expect(offenders).toEqual([]);
+}
+
+/** (w) UM-D3 D3-1 / D3-10. */
+function pinW(view: string, surface: string, settingsModal: string) {
+  const start = view.indexOf('export function planSurfaceFor(');
+  expect(start).toBeGreaterThan(-1);
+  const body = view.slice(start, view.indexOf('\n}', start));
+  // The offer predicate is the view's own; nothing else in the body judges an offer.
+  expect(body).toContain('view.available && view.hasActions');
+  expect(body).not.toMatch(/purchase|offer|tiers|planId|kind ===|endsFreeAccess/);
+  expect(surface).toMatch(/planSurfaceFor\(plan, false\)/);
+  expect(surface).not.toMatch(/hasActions|purchase\.|\.tiers/);
+  expect(settingsModal).toContain('useUpgradeModalInlineHost();');
 }
 
 // ── the guards ──
@@ -307,9 +376,24 @@ describe('upgrade modal source guards', () => {
   it('(p) UM-SA8 / X-7: readMyPlan is called only by its allowed callers, never the provider', () => {
     pinP(Object.fromEntries([...settingsProductFiles(), DEMO, DEMO_PAGE].map((file) => [file, code(read(file))])));
   });
-  it.each([PROVIDER, STANDALONE, CONTEXT])('(q) C-4: %s reads no URL and uses no window event', (file) => pinQ(code(read(file))));
+  it.each([PROVIDER, STANDALONE, CONTEXT, SESSION, SETTINGS_MODAL, SURFACE])('(q) C-4: %s reads no URL and uses no window event', (file) => pinQ(code(read(file))));
   it('(r) C-4: the context is exactly the three-member union', () => pinR(code(read(CONTEXT))));
   it('(s) UM-SA2: PlanSection registers as the inline host after the [language] effect', () => pinS(code(read(SECTION))));
+  it('(t) UM-3 U3-a: no white text on --v2-primary in the modal or the islands', () => {
+    // Non-vacuity: the islands' button constants are white text on the dark token.
+    expect(code(read(UPGRADE))).toContain("const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary-dark)]");
+    pinT(Object.fromEntries([MODAL, PURCHASE, UPGRADE].map((file) => [file, code(read(file))])));
+  });
+  it('(u) UM-3 U3-b: no muted text in the modal or the islands', () => {
+    pinU(Object.fromEntries([MODAL, PURCHASE, UPGRADE].map((file) => [file, code(read(file))])));
+  });
+  it('(v) UM-3 U3-c: no figure, currency sign or pressure phrase in any upgrade_modal.* value', () => {
+    for (const language of ['en', 'he', 'es']) expect(translations[language]['upgrade_modal.subheading.upgrade']).toBeTruthy();
+    pinV({ en: translations.en, he: translations.he, es: translations.es });
+  });
+  it('(w) UM-D3: the Settings surface is chosen by planSurfaceFor alone, and the pop-up hosts inline', () => {
+    pinW(code(read(VIEW)), code(read(SURFACE)), code(read(SETTINGS_MODAL)));
+  });
 });
 
 describe('negative controls: each pin fails on the violation it exists for', () => {
@@ -398,6 +482,36 @@ describe('negative controls: each pin fails on the violation it exists for', () 
     const moved = section.replace('useUpgradeModalInlineHost();', '').replace('const firstStarted = useRef(false);', 'useUpgradeModalInlineHost();\n  const firstStarted = useRef(false);');
     expect(() => pinS(moved)).toThrow();
     expect(() => pinS(`${section}\nuseUpgradeModalInlineHost();`)).toThrow();
+  });
+
+  it('(t) the old island button back, as a constant or in JSX', () => {
+    const upgrade = code(read(UPGRADE));
+    expect(() => pinT({ [UPGRADE]: upgrade.replace('bg-[var(--v2-primary-dark)] px-3', 'bg-[var(--v2-primary)] px-3') })).toThrow();
+    expect(() => pinT({ [MODAL]: `${modal}\n<button className={'px-2 text-white bg-[var(--v2-primary)]'} />` })).toThrow();
+    // The dark token is not a violation.
+    expect(() => pinT({ [MODAL]: "const ok = 'text-white bg-[var(--v2-primary-dark)]';" })).not.toThrow();
+  });
+  it('(u) a muted line back', () => {
+    expect(() => pinU({ [MODAL]: `${modal}\nconst c = 'text-xs text-[var(--v2-text-muted)]';` })).toThrow();
+  });
+  it('(v) "Limited time", a dollar value, a digit, or a Hebrew pressure word; a slot and a longer word pass', () => {
+    expect(() => pinV({ en: { 'upgrade_modal.x': 'Limited time offer' } })).toThrow();
+    expect(() => pinV({ en: { 'upgrade_modal.x': 'Only $79' } })).toThrow();
+    expect(() => pinV({ en: { 'upgrade_modal.x': 'Save 20 percent' } })).toThrow();
+    expect(() => pinV({ he: { 'upgrade_modal.x': 'מבצע לזמן מוגבל' } })).toThrow();
+    expect(() => pinV({ es: { 'upgrade_modal.x': 'Cancela cuando quieras' } })).toThrow();
+    expect(() => pinV({ en: { 'upgrade_modal.x': 'See what {plan} includes' } })).not.toThrow();
+    expect(() => pinV({ en: { 'upgrade_modal.x': 'Unlimited contacts' } })).not.toThrow();
+    // Outside upgrade_modal.* it does not apply.
+    expect(() => pinV({ en: { 'plan.x': 'Only $79' } })).not.toThrow();
+  });
+  it('(w) a second offer test in the decision, or the host gone', () => {
+    const viewSource = code(read(VIEW));
+    const surface = code(read(SURFACE));
+    const settingsModal = code(read(SETTINGS_MODAL));
+    expect(() => pinW(viewSource.replace('view.available && view.hasActions', "view.available && answer.purchase?.offer.kind === 'choose'"), surface, settingsModal)).toThrow();
+    expect(() => pinW(viewSource, surface.replace('planSurfaceFor(plan, false)', 'plan?.purchase ? "modal" : "drawer"'), settingsModal)).toThrow();
+    expect(() => pinW(viewSource, surface, settingsModal.replace('useUpgradeModalInlineHost();', ''))).toThrow();
   });
 
   it('(k) a second hard-coded two-column class, or the tripwire pointer gone', () => {

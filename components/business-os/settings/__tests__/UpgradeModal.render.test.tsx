@@ -103,7 +103,8 @@ function expectNoDeadButton(modal: HTMLElement, payload: PlanPayload, language: 
       columnButtons.push(match[1]);
       continue;
     }
-    expect(['Close', translations[language]['upgrade_modal.back_to_plan']]).toContain(button.textContent?.trim());
+    // UM-3 SA Q-1: the X is named in the reader's language (was the English 'Close').
+    expect([translations[language]['upgrade_modal.close'], translations[language]['upgrade_modal.back_to_plan']]).toContain(button.textContent?.trim());
   }
   const shownOffered = payload.comparison!.planIds.filter((planId) => offered.has(planId));
   expect(columnButtons.sort()).toEqual([...shownOffered, ...shownOffered].sort());
@@ -430,7 +431,8 @@ describe('through PlanSection (C-3, W-2, AC-UM1 view-only part)', () => {
 
       await userEvent.click(opener);
       const dialog = await screen.findByRole('dialog', { name: COPY['upgrade_modal.headline.choose'] });
-      expect(dialog).toHaveAccessibleDescription(COPY['upgrade_modal.subheading']);
+      // UM-3 CV-5: an upgrade offer reads the price-difference line (was the default subheading).
+      expect(dialog).toHaveAccessibleDescription(COPY['upgrade_modal.subheading.upgrade']);
       if (close === 'escape') await userEvent.keyboard('{Escape}');
       if (close === 'x') await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
       if (close === 'back') await userEvent.click(within(dialog).getByRole('button', { name: COPY['upgrade_modal.back_to_plan'] }));

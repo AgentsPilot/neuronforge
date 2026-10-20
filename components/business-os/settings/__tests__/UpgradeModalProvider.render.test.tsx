@@ -183,7 +183,8 @@ describe('the open contract (UM-SA5, UM-SA8)', () => {
     await userEvent.click(screen.getByTestId('caller'));
     const window = await modal();
     await tableShown();
-    await userEvent.click(within(window).getByRole('button', { name: COPY['upgrade_modal.back_to_plan'] }));
+    // UM-3 §5.5: the window opened from anywhere reads "Close" in its footer (was "Back to your plan").
+    await userEvent.click(within(within(window).getByTestId('plan-compare-footer')).getByRole('button', { name: COPY['upgrade_modal.close'] }));
     await modalGone();
     await waitFor(() => expect(screen.getByTestId('caller')).toHaveFocus());
   }, SLOW);

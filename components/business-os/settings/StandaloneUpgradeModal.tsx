@@ -22,21 +22,17 @@
  * An upgrade stays in the window (`afterUpgrade="stay"`): "Upgrading…", then
  * "You're on {plan}" once the bounded re-read says so. A checkout always hands
  * off: `PlanPurchase` closes the window and returns to Settings → Plan with the
- * marker (UM-SA10), where the drawer reads fresh. No URL marker is read here
+ * marker (UM-SA10), where the Settings pop-up reads fresh (UM-D3). No URL marker is read here
  * (`checkoutMarker: null`, C-4).
+ *
+ * UM-D3: the session moved to `UpgradeSession.tsx`, unchanged in behaviour for
+ * this window, so the Settings pop-up can mount it statically (this file is
+ * loaded lazily and may not be imported statically: `lazyDialogs.guard`). The
+ * footer now reads "Close" (UM-3 §5.5): there is no plan view behind it.
  */
 
-import { useEffect, useRef, useState } from 'react';
-
-import { createLogger } from '@/lib/logger';
-
-import { readMyPlan } from './planDrawerReads';
-import type { PlanPayload } from './planPayloadTypes';
-import { UpgradeModal, type UpgradeModalRead } from './UpgradeModal';
+import { UpgradeSession } from './UpgradeSession';
 import type { UpgradeModalContext } from './upgradeModalContext';
-import { planFrom, usePlanFlow } from './usePlanFlow';
-
-const logger = createLogger({ module: 'BusinessOsUpgradeModal' });
 
 export interface StandaloneUpgradeModalProps {
   isOpen: boolean;
@@ -47,61 +43,4 @@ export interface StandaloneUpgradeModalProps {
 export function StandaloneUpgradeModal({ isOpen, onClose, context }: StandaloneUpgradeModalProps) {
   if (!isOpen) return null;
   return <UpgradeSession onClose={onClose} context={context} />;
-}
-
-function UpgradeSession({ onClose, context }: { onClose: () => void; context: UpgradeModalContext }) {
-  const [plan, setPlan] = useState<PlanPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
-  const flow = usePlanFlow({ plan, setPlan, setFailed, loading, checkoutMarker: null });
-
-  // Declared before the read, so it is true again by the time StrictMode's re-run settles.
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  /*
-   * ONE read per open (UM-SA8). Ref-guarded rather than cancelled: StrictMode
-   * runs this effect twice on one fiber, and a cancel flag would throw away the
-   * only read. The `mounted` ref drops an answer that arrives after a close.
-   */
-  const started = useRef(false);
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    void (async () => {
-      const answer = await readMyPlan();
-      if (!mounted.current) return;
-      if (answer.kind === 'threw') {
-        logger.warn({ err: answer.err }, 'Could not load the plan for the upgrade modal');
-        setFailed(true);
-      } else {
-        const data = planFrom(answer.body);
-        if (data) setPlan(data);
-        else setFailed(true);
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  // X-3: `ready` only with a plan. A plan is set only from a server answer, so a failure has none to show.
-  const read: UpgradeModalRead = loading ? { readState: 'loading' } : plan !== null && !failed ? { readState: 'ready', plan } : { readState: 'failed' };
-
-  return (
-    <UpgradeModal
-      open
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
-      flow={flow}
-      flowStatus={flow}
-      context={context}
-      afterUpgrade="stay"
-      {...read}
-    />
-  );
 }

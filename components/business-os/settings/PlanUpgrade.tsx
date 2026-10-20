@@ -70,7 +70,7 @@ import {
 
 const logger = createLogger({ module: 'BusinessOsPlanUpgrade' });
 
-const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
+const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary-dark)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
 const SECONDARY_BUTTON = 'rounded border border-[var(--v2-border)] px-3 py-1.5 text-xs text-[var(--v2-text-primary)] disabled:opacity-60';
 
 /** The preview's 200 body, as the route sends it. */
@@ -371,7 +371,7 @@ export function PlanUpgrade({
 
     if (phase.kind === 'previewing') {
       return (
-        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-previewing">
+        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-previewing">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>{t('plan.upgrade.previewing')}</span>
         </p>
@@ -380,7 +380,7 @@ export function PlanUpgrade({
 
     if (phase.kind === 'authenticating') {
       return (
-        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-authenticating">
+        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-authenticating">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>{t('plan.upgrade.upgrading')}</span>
         </p>
@@ -405,13 +405,13 @@ export function PlanUpgrade({
             </p>
           ) : null}
           {view.kind === 'quoted' && renewsOn ? (
-            <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-then">
+            <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-then">
               {fillTemplate(t('plan.upgrade.then'), { date: renewsOn, price: formatMonthlyUsdMinor(view.quote.monthlyPriceMinor) })}
             </p>
           ) : null}
-          <p className="text-xs text-[var(--v2-text-muted)]">{fillTemplate(t('plan.upgrade.immediate'), { plan: planName })}</p>
+          <p className="text-xs text-[var(--v2-text-secondary)]">{fillTemplate(t('plan.upgrade.immediate'), { plan: planName })}</p>
           {!stripeReady ? (
-            <p role="alert" className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-not-configured">
+            <p role="alert" className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-not-configured">
               {t('plan.choose.not_configured')}
             </p>
           ) : null}
@@ -449,7 +449,7 @@ export function PlanUpgrade({
       return (
         <div role="alert" className="space-y-1" data-testid="plan-upgrade-declined">
           <p className="text-sm text-[var(--v2-error-text)]">{fillTemplate(t('plan.upgrade.declined'), { plan: stillOn })}</p>
-          {time ? <p className="text-xs text-[var(--v2-text-muted)]">{fillTemplate(t('plan.upgrade.retry_after'), { time })}</p> : null}
+          {time ? <p className="text-xs text-[var(--v2-text-secondary)]">{fillTemplate(t('plan.upgrade.retry_after'), { time })}</p> : null}
         </div>
       );
     }
@@ -518,7 +518,7 @@ export function PlanUpgrade({
           return (
             <li key={plan.planId} className="space-y-2" data-testid={`plan-upgrade-${plan.planId}`}>
               {ownPlan && showButton ? (
-                <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-own-plan-note">
+                <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-own-plan-note">
                   {fillTemplate(t('plan.upgrade.own_plan_note'), { plan: plan.name })}
                 </p>
               ) : null}

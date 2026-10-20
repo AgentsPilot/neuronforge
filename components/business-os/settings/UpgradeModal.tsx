@@ -46,9 +46,25 @@
  *     returns to Settings → Plan (UM-SA10);
  *   - `readState`: the standalone window's own read, loading or failed, shown in
  *     the body so the window is never blank (X-3: `ready` always has a plan).
+ *
+ * ── THE SETTINGS POP-UP (UM-D3, SA R-2 / R-5 / R-7; UM-3 §5.5) ──────────────
+ * Since UM-D3 "Your plan" opens this window directly when the server offers
+ * something. That instance (`SettingsPlanModal`) passes four more optional
+ * props, whose defaults are again the behaviour above:
+ *   - `strip: 'your_plan'`: the strip starts with the "Your plan" badge and the
+ *     plan's name for EVERY account (R-6), carries the drawer's failed-renewal
+ *     lines (B3 / B4) and a collapsed "What your plan includes" (B8), so nothing
+ *     the drawer said is lost;
+ *   - `afterCheckout: 'stay'`: a completed checkout keeps the window open with
+ *     "Payment processing" / "You're on {plan}" in its body, as does a checkout
+ *     return marker (R-7);
+ *   - `footerClose: 'close'`: no drawer behind it, so the footer reads "Close";
+ *   - `returnFocusRef`: focus goes back to the "Your plan" row, which may not
+ *     be the active element when a link opened the window.
+ * The X's screen-reader name is translated in every instance (UM-3 SA Q-1).
  */
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { Check, ChevronLeft, Loader2, Lock, Sparkles, Star, X } from 'lucide-react';
 
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -58,7 +74,7 @@ import { PlanFlowStatus, type PlanFlowStatusValues } from './PlanFlowStatus';
 import { PlanPurchase } from './PlanPurchase';
 import type { PlanComparisonCell, PlanComparisonSection, PlanPayload, PlanSentence } from './planPayloadTypes';
 import { ENDS_FREE_ACCESS_KEYS } from './planPurchaseCopy';
-import { fill, priceLine, renderSentence } from './planText';
+import { PlanBillingNotices, PlanIncludedList, fill, priceLine, renderSentence } from './planText';
 import { PlanUpgrade, type PlanUpgradeLock } from './PlanUpgrade';
 import { SETTINGS_CONTEXT, type UpgradeModalContext } from './upgradeModalContext';
 import { upgradeModalView, type PlanColumnView, type UpgradeModalView } from './upgradeModalView';
@@ -114,6 +130,9 @@ function columnTint(column: PlanColumnView): string {
   return '';
 }
 
+/** The strip's separator: a no-break space then "·", so it stays at the end of the item before it. */
+const STRIP_SEPARATOR = ' ·';
+
 const actionKey = (planId: string, where: Where) => `${planId}:${where}`;
 const actionTestId = (planId: string, where: Where) => `plan-compare-action-${planId}-${where}`;
 
@@ -134,6 +153,10 @@ export function UpgradeModal({
   context = SETTINGS_CONTEXT,
   afterUpgrade = 'close',
   flowStatus,
+  afterCheckout = 'close',
+  footerClose = 'back_to_plan',
+  strip = 'status',
+  returnFocusRef,
   ...read
 }: {
   open: boolean;
@@ -146,6 +169,14 @@ export function UpgradeModal({
   afterUpgrade?: 'close' | 'stay';
   /** UM-2: the flow's own status values, rendered in the body after an upgrade in `stay` (values, never predicates: C-2). */
   flowStatus?: PlanFlowStatusValues;
+  /** UM-D3 (R-7): `stay` keeps the window open after a checkout, and shows a return marker's status. Default: close. */
+  afterCheckout?: 'close' | 'stay';
+  /** UM-3 §5.5 / Q-8: the footer button's label. Default: "Back to your plan" (the drawer is behind it). */
+  footerClose?: 'back_to_plan' | 'close';
+  /** UM-D3 (R-5 / R-6): `your_plan` is the Settings pop-up's strip. Default: the one-line status. */
+  strip?: 'status' | 'your_plan';
+  /** UM-D3: where focus goes on close, before the element that was active at open. */
+  returnFocusRef?: RefObject<HTMLElement>;
 } & UpgradeModalRead) {
   const { t, isRTL, language, timezone } = useLanguage();
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
@@ -164,6 +195,7 @@ export function UpgradeModal({
    */
   const opener = useRef<HTMLElement | null>(null);
   const titleRef = useRef<HTMLDivElement | null>(null);
+  const statusRef = useRef<HTMLDivElement | null>(null);
   const flowHeadingRef = useRef<HTMLHeadingElement | null>(null);
   /** The button "Back to plans" returns focus to (header or footer, whichever was pressed). */
   const returnFocus = useRef<string | null>(null);
@@ -233,6 +265,7 @@ export function UpgradeModal({
    * hand-off: nothing would be left to say "Upgrading…" outside Settings.
    */
   const stayAfterUpgrade = () => {
+    returnFocus.current = null;
     resetFlow();
     setShowStatus(true);
   };
@@ -263,11 +296,18 @@ export function UpgradeModal({
   const flowColumn = openFlow && view ? view.columns.find((column) => column.planId === openFlow.planId) ?? null : null;
   /** UM-2: the window's own read is done and the server sent a table to show (Settings never opens it otherwise). */
   const tableReady = plan !== null && plan.status === 'ok' && view !== null && view.available;
-  const statusBody = showStatus && flowStatus !== undefined;
+  /** UM-D3 (R-7): a checkout completed here, or a return marker, in `stay`: the body shows its status. */
+  const checkoutStatus = afterCheckout === 'stay' && flowStatus !== undefined && flowStatus.marker !== null;
+  const statusBody = (showStatus && flowStatus !== undefined) || checkoutStatus;
   /** UM-2 §6.2 / X-8: the client's statement of the server's offer, never a reason. */
   const lockedNotOffered = view?.lockedPlan && !view.lockedPlan.offered ? view.lockedPlan : null;
   // §4.5 / C-25: no way back during Confirm, 3-D Secure or "Could not confirm".
   const canGoBack = lock === 'none';
+
+  // UM-D3: once the status replaces the island, focus moves to the status, never to <body>.
+  useEffect(() => {
+    if (statusBody && open) statusRef.current?.focus();
+  }, [statusBody, open]);
 
   const actionFor = (column: PlanColumnView, where: Where) => (
     <ActionSlot column={column} where={where} flow={planFlow} onStart={startFlow} register={registerAction} />
@@ -277,6 +317,8 @@ export function UpgradeModal({
     <Dialog open={open} onOpenChange={requestOpenChange}>
       <DialogContent
         dir={isRTL ? 'rtl' : 'ltr'}
+        // UM-3 SA Q-1 / Y-1: the built-in X, named in the reader's language (one X, C-8).
+        closeLabel={t('upgrade_modal.close')}
         data-testid="plan-compare-modal"
         onOpenAutoFocus={(event) => {
           opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -285,9 +327,10 @@ export function UpgradeModal({
           titleRef.current?.focus();
         }}
         onCloseAutoFocus={(event) => {
-          if (opener.current?.isConnected) {
+          const target = returnFocusRef?.current?.isConnected ? returnFocusRef.current : opener.current?.isConnected ? opener.current : null;
+          if (target) {
             event.preventDefault();
-            opener.current.focus();
+            target.focus();
           }
           opener.current = null;
         }}
@@ -310,13 +353,20 @@ export function UpgradeModal({
 
         {/* C-9 / SA Q-5: all band text on SOLID --v2-primary-dark; the gradient
             is a decorative layer at the end edge, kept clear of the text. */}
-        <div data-testid="plan-compare-band" className="relative flex-shrink-0 overflow-hidden bg-[var(--v2-primary-dark)] px-5 py-5 pe-12 sm:px-7 sm:py-6">
+        {/* UM-3 §8.1 / Y-5, below 640 px: the gradient is a 48 px strip (`w-12`) inside
+            the band's own 48 px end padding (`pe-12`), so the text needs no further
+            reservation and the headline gets the width back. From `sm` up, unchanged.
+            §8.3: tighter while a flow is open on a phone, to give the card form room. */}
+        <div
+          data-testid="plan-compare-band"
+          className={`relative flex-shrink-0 overflow-hidden bg-[var(--v2-primary-dark)] px-5 py-5 pe-12 sm:px-7 sm:py-6${openFlow !== null ? ' max-sm:py-3' : ''}`}
+        >
           <div
             aria-hidden="true"
             data-testid="plan-compare-band-gradient"
-            className={`pointer-events-none absolute inset-y-0 end-0 w-1/4 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
+            className={`pointer-events-none absolute inset-y-0 end-0 w-12 sm:w-1/4 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
           />
-          <div className="relative flex items-start gap-3 pe-[25%] sm:pe-[22%]">
+          <div className="relative flex items-start gap-3 sm:pe-[22%]">
             <BandIcon
               aria-hidden="true"
               data-testid={view?.variant === 'locked_feature' ? 'plan-compare-lock-icon' : undefined}
@@ -329,7 +379,8 @@ export function UpgradeModal({
                 <span className="block text-xl sm:text-2xl font-semibold leading-tight text-white">{headline}</span>
               </DialogTitle>
               <DialogDescription>
-                <span className="block mt-1.5 text-sm text-white">{subheading}</span>
+                {/* §8.3: hidden on a phone during a flow, but still the dialog's description. */}
+                <span className={`block mt-1.5 text-sm text-white${openFlow !== null ? ' max-sm:sr-only' : ''}`}>{subheading}</span>
               </DialogDescription>
             </div>
           </div>
@@ -339,7 +390,7 @@ export function UpgradeModal({
             the scrollport top, so a padding gap there let rows show through above it.
             The top spacing is the status strip's own margin, which scrolls away. */}
         <div className="flex-1 overflow-y-auto bg-[var(--v2-surface)] px-3 pb-3 sm:px-6 sm:pb-6">
-          {tableReady && (
+          {tableReady && strip === 'status' && (
             <p
               data-testid="plan-compare-status"
               className="mt-3 mb-4 sm:mt-6 sm:mb-5 px-3 py-2 text-sm text-[var(--v2-text-secondary)] border border-[var(--v2-border)] rounded-[var(--v2-radius-card)]"
@@ -353,11 +404,61 @@ export function UpgradeModal({
             </p>
           )}
 
+          {tableReady && strip === 'your_plan' && (
+            // UM-D3 R-5 / R-6: the current plan is marked for every account, trial and
+            // Founding Partner included; the drawer's B3 / B4 and B8 live here too.
+            <div
+              role="group"
+              aria-label={t('upgrade_modal.your_plan')}
+              data-testid="plan-compare-status"
+              className="mt-3 mb-4 sm:mt-6 sm:mb-5 px-3 py-2 space-y-1 text-sm text-[var(--v2-text-secondary)] border border-[var(--v2-border)] rounded-[var(--v2-radius-card)]"
+            >
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {/* The column badge's look (C-22), so the two marks read as one. */}
+                <span
+                  data-testid="plan-compare-status-badge"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold text-[var(--v2-text-primary)] bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-full"
+                >
+                  <Check aria-hidden="true" className="w-3 h-3" />
+                  {t('upgrade_modal.your_plan')}
+                </span>
+                {/* SA Low (360 px): each "·" ends the item before it, joined by a no-break
+                    space, so a wrapped line never starts with a separator. */}
+                <span>
+                  <span data-testid="plan-compare-status-name" className="font-semibold text-[var(--v2-text-primary)]">
+                    {plan.name ?? ''}
+                  </span>
+                  {(statusPrice || statusEnds) && STRIP_SEPARATOR}
+                </span>
+                {statusPrice && (
+                  <span>
+                    {statusPrice}
+                    {statusEnds && STRIP_SEPARATOR}
+                  </span>
+                )}
+                {statusEnds && <span>{statusEnds}</span>}
+              </p>
+              {/* B3 / B4: payment-critical, so shown in a flow too (R-12). */}
+              <PlanBillingNotices plan={plan} t={t} />
+              {/* B8, collapsed by default; hidden while a flow is open (R-12). */}
+              {openFlow === null && (
+                <details data-testid="plan-compare-includes" className="pt-1">
+                  <summary className="cursor-pointer text-sm font-medium text-[var(--v2-text-primary)] underline underline-offset-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]">
+                    {t('plan.includes')}
+                  </summary>
+                  <div className="mt-2">
+                    <PlanIncludedList plan={plan} t={t} noteTestIdPrefix="plan-compare-category-note-" />
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+
           {/* The one element the checkout / upgrade flows replace (C-25). */}
           <div data-testid="plan-compare-table-area">
             {read.readState === 'loading' ? (
               // UM-2: the standalone window's own read; never a blank modal.
-              <div role="status" aria-busy="true" data-testid="plan-compare-loading" className="mt-6 flex items-center gap-2 text-sm text-[var(--v2-text-muted)]">
+              <div role="status" aria-busy="true" data-testid="plan-compare-loading" className="mt-6 flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
                 <Loader2 aria-hidden="true" className="w-4 h-4 animate-spin" />
                 <span>{t('plan.loading')}</span>
               </div>
@@ -367,17 +468,18 @@ export function UpgradeModal({
               </p>
             ) : statusBody ? (
               // UM-2 `stay`: the flow's own lines (B5 / B6), the one rendering shared with the drawer.
-              <div data-testid="plan-compare-flow-status" className="mx-auto w-full sm:w-[36rem] space-y-3">
+              <div ref={statusRef} tabIndex={-1} data-testid="plan-compare-flow-status" className="mx-auto w-full sm:w-[36rem] space-y-3 outline-none">
                 <PlanFlowStatus flow={flowStatus} planName={plan.name} />
               </div>
             ) : openFlow === null || flowColumn === null ? (
               <>
-                <ComparisonTable columns={view.columns} sections={view.sections} action={actionFor} />
+                {/* UM-2 N-1 (SA comment 2): above the table, so it is seen without scrolling. */}
                 {lockedNotOffered && (
-                  <p data-testid="plan-compare-locked-not-offered" className="mt-3 text-sm text-[var(--v2-text-muted)]">
+                  <p data-testid="plan-compare-locked-not-offered" className="mt-3 mb-3 text-sm text-[var(--v2-text-secondary)]">
                     {fill(t('upgrade_modal.locked.not_offered'), { plan: lockedNotOffered.name })}
                   </p>
                 )}
+                <ComparisonTable columns={view.columns} sections={view.sections} action={actionFor} />
               </>
             ) : (
               <section
@@ -391,7 +493,9 @@ export function UpgradeModal({
                     type="button"
                     data-testid="plan-compare-back"
                     onClick={backToPlans}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-[var(--v2-primary)] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] rounded"
+                    // UM-3 A-5: --v2-primary is 4.47:1 light and about 3.2:1 dark; the link takes the
+                    // primary text colour and reads as a link by its underline and chevron.
+                    className="inline-flex items-center gap-1 text-sm font-medium text-[var(--v2-text-primary)] underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] rounded"
                   >
                     <ChevronLeft aria-hidden="true" className={`w-4 h-4 ${isRTL ? 'scale-x-[-1]' : ''}`} />
                     {t('upgrade_modal.back_to_plans')}
@@ -399,7 +503,7 @@ export function UpgradeModal({
                 )}
                 <h3 id={flowHeadingId} ref={flowHeadingRef} tabIndex={-1} className="outline-none" data-testid="plan-compare-flow-heading">
                   <span className="block text-lg font-semibold text-[var(--v2-text-primary)]">{flowColumn.name}</span>
-                  <span className="block text-sm text-[var(--v2-text-muted)]">
+                  <span className="block text-sm text-[var(--v2-text-secondary)]">
                     {fill(t('plan.choose.price_ex_tax'), { amount: `$${flowColumn.monthlyPriceUsd}` })}
                   </span>
                 </h3>
@@ -413,7 +517,11 @@ export function UpgradeModal({
                     onFrameOpenChange={setFrameOpen}
                     onComplete={(sessionId) => {
                       planFlow.onCheckoutComplete(sessionId);
-                      handOff();
+                      // UM-D3 R-7: the Settings pop-up stays and shows "Payment processing".
+                      if (afterCheckout === 'stay') {
+                        returnFocus.current = null;
+                        resetFlow();
+                      } else handOff();
                     }}
                   />
                 ) : (
@@ -441,7 +549,7 @@ export function UpgradeModal({
           data-testid="plan-compare-footer"
           className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-surface)] px-4 py-3 sm:px-6 sm:py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
         >
-          <div className="min-w-0 space-y-1 text-xs text-[var(--v2-text-muted)]">
+          <div className="min-w-0 space-y-1 text-xs text-[var(--v2-text-secondary)]">
             <p>{t('upgrade_modal.footer_prices')}</p>
             {/* In a flow the island says these itself, beside its own button. */}
             {openFlow === null && !statusBody && freeAccessKey && <p data-testid="plan-compare-ends-free-access">{t(freeAccessKey)}</p>}
@@ -452,7 +560,9 @@ export function UpgradeModal({
                 })}
               </p>
             )}
-            {whenThisChanges && <p>{whenThisChanges}</p>}
+            {/* UM-3 §8.2 (D-4, D-6): B7 says nothing is charged; under an open card form the island says otherwise,
+                and under "Payment processing" / "Upgrading…" it is no longer true (SA code review). */}
+            {openFlow === null && !statusBody && whenThisChanges &&<p data-testid="plan-compare-when-this-changes">{whenThisChanges}</p>}
             {openFlow === null && !statusBody && checkoutsWithoutKey && (
               <p role="alert" data-testid="plan-compare-not-configured">
                 {t('plan.choose.not_configured')}
@@ -465,7 +575,7 @@ export function UpgradeModal({
                 type="button"
                 className="shrink-0 px-4 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-[var(--v2-radius-button)] hover:bg-[var(--v2-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]"
               >
-                {t('upgrade_modal.back_to_plan')}
+                {t(footerClose === 'close' ? 'upgrade_modal.close' : 'upgrade_modal.back_to_plan')}
               </button>
             </DialogClose>
           )}
@@ -547,11 +657,11 @@ function ComparisonTable({
                 <div className="mt-1 text-2xl font-semibold leading-none text-[var(--v2-text-primary)]">
                   <span dir="ltr">${column.monthlyPriceUsd}</span>
                 </div>
-                <div className="mt-1 text-xs text-[var(--v2-text-muted)]">{t('upgrade_modal.price_suffix')}</div>
+                <div className="mt-1 text-xs text-[var(--v2-text-secondary)]">{t('upgrade_modal.price_suffix')}</div>
                 <div className="mt-2.5">
                   {action(column, 'header')}
                   {column.unavailableBecause && (
-                    <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
+                    <p className="mt-1 text-xs text-[var(--v2-text-secondary)]">
                       {renderSentence(column.unavailableBecause, t, language, timezone)}
                     </p>
                   )}
@@ -570,7 +680,7 @@ function ComparisonTable({
               role="rowheader"
               scope="rowgroup"
               data-testid="plan-compare-section"
-              className="max-sm:col-span-2 px-2 sm:px-3 pt-5 pb-2 text-start text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-muted)]"
+              className="max-sm:col-span-2 px-2 sm:px-3 pt-5 pb-2 text-start text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]"
             >
               {t(section.labelKey)}
             </th>
@@ -653,7 +763,7 @@ function ActionSlot({
     return (
       <span
         data-testid="plan-compare-current-label"
-        className="inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-[var(--v2-text-muted)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-[var(--v2-radius-button)]"
+        className="inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-[var(--v2-radius-button)]"
       >
         {t('upgrade_modal.current_plan')}
       </span>
@@ -682,7 +792,7 @@ function ActionSlot({
 
   if (column.comingSoon) {
     return (
-      <span className="inline-block px-2 py-1 text-xs text-[var(--v2-text-muted)] bg-[var(--v2-bg)] rounded">
+      <span className="inline-block px-2 py-1 text-xs text-[var(--v2-text-primary)] bg-[var(--v2-bg)] rounded">
         {t('plan.next.coming_soon')}
       </span>
     );

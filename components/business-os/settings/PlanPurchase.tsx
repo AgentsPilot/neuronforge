@@ -46,7 +46,7 @@ export interface PlanChoice {
 }
 
 const CHOOSE_BUTTON =
-  'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
+  'rounded bg-[var(--v2-primary-dark)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
 
 export function PlanPurchase({
   plans,
@@ -99,16 +99,16 @@ export function PlanPurchase({
 
   return (
     <div className="pt-4 border-t border-[var(--v2-border)] space-y-3" data-testid="plan-purchase">
-      {startTier === undefined ? <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">{heading}</h4> : null}
+      {startTier === undefined ? <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-secondary)]">{heading}</h4> : null}
 
       {endsFreeAccess ? (
-        <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-purchase-ends-free-access">
+        <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-purchase-ends-free-access">
           {t(ENDS_FREE_ACCESS_KEYS[endsFreeAccess])}
         </p>
       ) : null}
 
       {!stripeReady ? (
-        <p role="alert" className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-purchase-not-configured">
+        <p role="alert" className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-purchase-not-configured">
           {t('plan.choose.not_configured')}
         </p>
       ) : null}
@@ -127,19 +127,19 @@ export function PlanPurchase({
                 <span className="text-sm text-[var(--v2-text-primary)]">{plan.name}</span>
                 {plan.monthlyPriceUsd > 0 ? (
                   // Prices stay in digits and USD (SR-15); "excluding tax" travels with them (M-8).
-                  <span className="text-xs text-[var(--v2-text-muted)]">
+                  <span className="text-xs text-[var(--v2-text-secondary)]">
                     {fillTemplate(t('plan.choose.price_ex_tax'), { amount: `$${plan.monthlyPriceUsd}` })}
                   </span>
                 ) : null}
                 {!offered ? (
-                  <span className="inline-block px-1.5 py-0.5 bg-[var(--v2-bg)] text-xs text-[var(--v2-text-muted)] rounded">
+                  <span className="inline-block px-1.5 py-0.5 bg-[var(--v2-bg)] text-xs text-[var(--v2-text-primary)] rounded">
                     {t('plan.next.coming_soon')}
                   </span>
                 ) : null}
               </div>
 
               {ownPlan ? (
-                <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-choice-own-plan-note">
+                <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-choice-own-plan-note">
                   {fillTemplate(t('plan.choose.own_plan_note'), { plan: plan.name })}
                 </p>
               ) : null}

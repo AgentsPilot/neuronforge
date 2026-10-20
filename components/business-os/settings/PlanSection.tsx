@@ -86,7 +86,7 @@ import { createLogger } from '@/lib/logger';
 
 import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
 import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
-import { CategoryRowText, Notice, fill, priceLine, renderSentence } from './planText';
+import { CategoryRowText, Notice, PlanBillingNotices, PlanIncludedList, fill, priceLine, renderSentence } from './planText';
 import { PlanFlowStatus } from './PlanFlowStatus';
 import { UpgradeModal } from './UpgradeModal';
 import { useUpgradeModalInlineHost } from './UpgradeModalProvider';
@@ -293,24 +293,8 @@ export function PlanSection({
         {sentence(plan.endsWhen) && (
           <p className="text-xs text-[var(--v2-text-muted)] mt-1">{sentence(plan.endsWhen)}</p>
         )}
-        {/* P-6a.2 (workplan §5.7): what the owner can do about a failed renewal.
-            No "Update card" button until P-7a (SA Q-6): Stripe's email has the link. */}
-        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'payment_failed' && (
-          <p className="text-xs text-[var(--v2-text-muted)] mt-1" data-testid="plan-update-card-email">
-            {t('plan.update_card_email')}
-          </p>
-        )}
-        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'action_required' && (
-          <a
-            href={plan.purchase.billing.confirmUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block mt-1 text-sm text-[var(--v2-primary)] underline"
-            data-testid="plan-confirm-payment"
-          >
-            {t('billing.notice.confirm_payment')}
-          </a>
-        )}
+        {/* P-6a.2 (workplan §5.7): B3 / B4, shared with the Settings pop-up (UM-D3). */}
+        <PlanBillingNotices plan={plan} t={t} />
       </div>
 
       {/* B5 / B6, one rendering shared with the standalone window (UM-2 §5.3). */}
@@ -328,21 +312,7 @@ export function PlanSection({
         <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)] mb-2">
           {t('plan.includes')}
         </h4>
-        {plan.included.length === 0 ? (
-          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.features_unavailable')}</p>
-        ) : (
-          // Named so a screen reader says which list this is, and so a test can
-          // scope to it: an unnamed second list two elements down carries similar
-          // numbers, and a positional query silently followed it.
-          <ul className="space-y-2" aria-label={t('plan.includes')}>
-            {plan.included.map((row) => (
-              <li key={row.category} className="flex items-start gap-2">
-                <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-primary)]" />
-                <CategoryRowText row={row} t={t} noteTestId={`plan-category-note-${row.category}`} />
-              </li>
-            ))}
-          </ul>
-        )}
+        <PlanIncludedList plan={plan} t={t} noteTestIdPrefix="plan-category-note-" />
       </div>
 
       {/* The plan above, as information. Its own footer no longer says

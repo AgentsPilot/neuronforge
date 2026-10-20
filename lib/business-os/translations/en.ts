@@ -320,6 +320,9 @@ export const en = {
     'upgrade_modal.headline.founding_partner': 'Keep everything you have',
     'upgrade_modal.subheading.founding_partner': 'Choose a plan to carry on without a break.',
     'upgrade_modal.badge.needed': 'Needed for this',
+    // Upgrade modal UM-3 (user-approved 2026-10-20): CV-5 for an upgrade offer (SA Q-2 wording), and a translated Close (footer + the X's screen-reader name).
+    'upgrade_modal.subheading.upgrade': 'When you upgrade, you pay only the price difference for the rest of your current billing period.',
+    'upgrade_modal.close': 'Close',
     // The plan screen's remaining words, so a Hebrew or Spanish owner reads no
     // English there (user decision, 2026-10-02). {plan}, {from}, {to} are filled
     // by the component; the values arrive already in the reader's language.

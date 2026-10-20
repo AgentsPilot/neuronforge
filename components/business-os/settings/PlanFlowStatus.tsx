@@ -43,20 +43,20 @@ export function PlanFlowStatus({ flow, planName }: { flow: PlanFlowStatusValues;
         </p>
       )}
       {upgradeProcessing && !checkoutProcessing && !exhausted && (
-        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-upgrade-upgrading">
+        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-upgrading">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span>{t('plan.upgrade.upgrading')}</span>
         </p>
       )}
       {checkoutProcessing && !exhausted && (
-        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-purchase-processing">
+        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]" data-testid="plan-purchase-processing">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span>{t('plan.purchase.processing')}</span>
         </p>
       )}
       {processing && exhausted && (
         <div className="space-y-1" data-testid="plan-purchase-slow">
-          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.purchase.slow')}</p>
+          <p className="text-sm text-[var(--v2-text-secondary)]">{t('plan.purchase.slow')}</p>
           {/* Without the marker: Choose shows again if nothing is live, so a stale
               or bookmarked marker cannot trap the owner here. */}
           <a href={SETTINGS_PLAN_PATH} className="text-sm text-[var(--v2-primary)] underline" data-testid="plan-purchase-check-again">

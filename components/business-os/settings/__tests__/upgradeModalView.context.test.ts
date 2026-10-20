@@ -19,6 +19,8 @@ import { FOUNDING_PARTNER, LOWER, TOP, TRIAL, inSixtyDays, payingRow, payloadFor
 const LOCKED = (planId: string): UpgradeModalContext => ({ kind: 'locked_feature', planId });
 const FP: UpgradeModalContext = { kind: 'founding_partner' };
 const SETTINGS: UpgradeModalContext = { kind: 'settings' };
+/** UM-3 CV-5: the `settings` subheading is `upgrade` exactly when a column's action is the server's upgrade offer. */
+const settingsSubheading = (view: ReturnType<typeof upgradeModalView>) => (view.columns.some((entry) => entry.action === 'upgrade') ? 'upgrade' : 'default');
 
 const highlighted = (payload: PlanPayload, context: UpgradeModalContext) =>
   upgradeModalView(payload, context).columns.filter((entry) => entry.highlightReason !== null);
@@ -51,7 +53,7 @@ describe('UM-2: settings is UM-1b, and the context never changes the offer', () 
       const none = upgradeModalView(payload);
       const settings = upgradeModalView(payload, SETTINGS);
       expect({ name, view: um1bShape(settings) }).toEqual({ name, view: um1bShape(none) });
-      expect(settings).toMatchObject({ variant: 'settings', subheading: 'default', lockedPlan: null });
+      expect(settings).toMatchObject({ variant: 'settings', subheading: settingsSubheading(settings), lockedPlan: null });
       // Outside locked_feature, highlightReason is the Recommended rule.
       for (const entry of settings.columns) expect(entry.highlightReason).toBe(entry.isRecommended ? 'recommended' : null);
     }
@@ -106,7 +108,7 @@ describe('UM-2 §6.2: locked_feature', () => {
     const { payload, planId } = await make();
     const view = upgradeModalView(payload, LOCKED(planId));
     const settings = upgradeModalView(payload);
-    expect(view).toMatchObject({ variant: 'settings', subheading: 'default', lockedPlan: null, headline: settings.headline });
+    expect(view).toMatchObject({ variant: 'settings', subheading: settingsSubheading(settings), lockedPlan: null, headline: settings.headline });
     expect(view.columns.map((entry) => entry.highlightReason)).toEqual(settings.columns.map((entry) => entry.highlightReason));
   });
 });
@@ -126,7 +128,7 @@ describe('UM-2 §6.3: founding_partner (UM-FR9)', () => {
     ['an Essentials owner', { billingRow: payingRow(LOWER) }],
   ] as const)('%s → the settings copy', async (_name, options) => {
     const payload = await payloadFor(options);
-    expect(upgradeModalView(payload, FP)).toMatchObject({ variant: 'settings', subheading: 'default', headline: upgradeModalView(payload).headline });
+    expect(upgradeModalView(payload, FP)).toMatchObject({ variant: 'settings', subheading: settingsSubheading(upgradeModalView(payload)), headline: upgradeModalView(payload).headline });
   });
 
   it('AC-UM5: an open-ended Founding Partner reads "compare" with no button anywhere', async () => {

@@ -2702,6 +2702,9 @@ export const he = {
     'upgrade_modal.headline.founding_partner': 'שומרים על כל מה שיש לך',
     'upgrade_modal.subheading.founding_partner': 'בוחרים תוכנית וממשיכים בלי הפסקה.',
     'upgrade_modal.badge.needed': 'נדרשת לשם כך',
+    // Upgrade modal UM-3 (user-approved 2026-10-20): CV-5 for an upgrade offer (SA Q-2 wording), and a translated Close (footer + the X's screen-reader name).
+    'upgrade_modal.subheading.upgrade': 'בשדרוג משלמים רק את הפרש המחיר על יתרת תקופת החיוב הנוכחית.',
+    'upgrade_modal.close': 'סגירה',
     'plan.features_unavailable': 'לא הצלחנו להציג את התכונות שלך כרגע. שום דבר לא הוסר מהחשבון שלך.',
     'plan.next.adds_heading': 'מה נוסף ב־{plan}',
     'plan.next.improves_line': '{to} במקום {from}',

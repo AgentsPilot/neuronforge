@@ -96,6 +96,8 @@ export type UpgradeModalVariant = UpgradeModalContext['kind'];
 
 export type PlanHighlightReason = 'recommended' | 'locked_feature';
 
+export type UpgradeModalSubheading = 'default' | 'upgrade' | 'locked_feature' | 'founding_partner';
+
 export interface UpgradeModalView {
   /** `comparison` present, `planIds` non-empty, every id found in `plans` (§5.2a). */
   available: boolean;
@@ -113,8 +115,11 @@ export interface UpgradeModalView {
   hasActions: boolean;
   /** UM-2: the variant shown; `settings` whenever a context's condition is not met. */
   variant: UpgradeModalVariant;
-  /** UM-2: `default` is the UM-1a subheading. */
-  subheading: 'default' | 'locked_feature' | 'founding_partner';
+  /**
+   * UM-2: `default` is the UM-1a subheading. UM-3 (CV-5, SA Q-2): `upgrade` in the
+   * `settings` variant when some column's action is the server's `upgrade` offer.
+   */
+  subheading: UpgradeModalSubheading;
   /** UM-2: the plan a locked action needs, joined from the payload; set only in the `locked_feature` variant. */
   lockedPlan: { planId: string; name: string; offered: boolean } | null;
 }
@@ -174,12 +179,12 @@ export function upgradeModalView(plan: PlanPayload, context: UpgradeModalContext
   const foundingPartner = context.kind === 'founding_partner' && plan.purchase?.endsFreeAccessOnPurchase === 'free_access' && somethingOffered;
   const variant: UpgradeModalVariant = lockedId !== null ? 'locked_feature' : foundingPartner ? 'founding_partner' : 'settings';
   const headline: UpgradeModalHeadline = variant === 'settings' ? settingsHeadline : variant;
-  const subheading = variant === 'settings' ? 'default' : variant;
   const lockedPlan = lockedId !== null ? { planId: lockedId, name: byId.get(lockedId)!.name, offered: offered.has(lockedId) } : null;
-  const contextual = { variant, subheading, lockedPlan } as const;
+  const contextual = { variant, lockedPlan } as const;
 
   if (!available || comparison === null) {
-    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered, hasActions: false, ...contextual };
+    const subheading: UpgradeModalSubheading = variant === 'settings' ? 'default' : variant;
+    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered, hasActions: false, subheading, ...contextual };
   }
 
   const columns = planIds.map((planId): PlanColumnView => {
@@ -218,5 +223,29 @@ export function upgradeModalView(plan: PlanPayload, context: UpgradeModalContext
   });
 
   const hasActions = columns.some((column) => BUTTON_ACTIONS.includes(column.action));
-  return { available: true, columns, sections: comparison.sections, headline, somethingOffered, hasActions, ...contextual };
+  // UM-3 CV-5: from the columns' actions (the server's offer), after they are fixed; never a plan id (C-7).
+  const subheading: UpgradeModalSubheading =
+    variant !== 'settings' ? variant : columns.some((column) => column.action === 'upgrade') ? 'upgrade' : 'default';
+  return { available: true, columns, sections: comparison.sections, headline, somethingOffered, hasActions, subheading, ...contextual };
+}
+
+/** Which "Your plan" surface Settings opens (UM-D3, SA R-1). */
+export type PlanSurface = 'modal' | 'drawer';
+
+/**
+ * UM-D3 (SA R-1, D3-1): the pop-up when the server offers this account something
+ * to buy or upgrade to, the drawer otherwise. The offer predicate is the view's
+ * own `hasActions` (the one that already picks "See plans" over "Compare plans"),
+ * so this adds no client rule (UM-FR7, C-21). A checkout return always opens the
+ * pop-up, which shows "Payment processing" (R-7).
+ *
+ * `answer` is the first read's plan, or `null` when the read failed, threw, was
+ * not a plan or did not answer within the budget: all of those are the drawer
+ * (R-4). Pure, and it names no plan, tier or cohort (C-7).
+ */
+export function planSurfaceFor(answer: PlanPayload | null, checkoutReturn: boolean): PlanSurface {
+  if (checkoutReturn) return 'modal';
+  if (answer === null || answer.status !== 'ok') return 'drawer';
+  const view = upgradeModalView(answer);
+  return view.available && view.hasActions ? 'modal' : 'drawer';
 }
