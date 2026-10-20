@@ -2672,3 +2672,188 @@ describe('Money MK-5 C-1: Paying % leaves platform accounts out of the numerator
     expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 2, accounts: 3 });
   });
 });
+
+// ── Money MK-5b (§5.1 F-K5b, SA-10): Converted this month through the builder ──
+describe('Money MK-5b: converted (F-K5b) through the builder', () => {
+  // NOW is 2026-11-09: "this month" is November 2026 in UTC, whatever the window.
+  const NOV = { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' };
+  const C = '33333333-3333-4333-8333-333333333333';
+
+  /** Plan rows A (not paying), B (paying), C (paying); first payments as given. */
+  function convertedDeps(first: Array<{ accountId: string; paidAt: string }>, sources = [{ account_id: B, source: 'account_invite' as const, stamped_at: '2026-11-03T00:00:00.000Z' }]) {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(
+      () => ok([plan(A), plan(B, { tier: TIER, cohort: null }), plan(C, { tier: TIER, cohort: null }), plan(PLATFORM, { tier: TIER, cohort: null })]) as never
+    );
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(
+      () =>
+        ok<FinanceBillingStatusRow[]>([
+          { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null },
+          { user_id: C, subscription_status: 'active', ended_at: null, bought_tier: null },
+        ]) as never
+    );
+    const converted = {
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() => ok(first)),
+      signupSources: jest.fn<Result<Array<{ account_id: string; source: 'admin_invite' | 'account_invite' | 'organic'; stamped_at: string | null }>>, [string[]]>(
+        () => ok(sources)
+      ),
+    };
+    return { ...deps, converted };
+  }
+
+  it('without the dep: no converted key and no counts entry (every earlier fixture unchanged)', async () => {
+    const { result } = await run();
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload).not.toHaveProperty('converted');
+    expect(result.counts).not.toHaveProperty('converted');
+  });
+
+  it('all businesses: asks for exactly the non-platform plan-row ids; counts the paying accounts that first paid this month', async () => {
+    const deps = convertedDeps([
+      { accountId: B, paidAt: '2026-11-03T10:00:00.000Z' },
+      // C first paid last month: not converted this month (G-3: once only).
+      { accountId: C, paidAt: '2026-10-20T10:00:00.000Z' },
+    ]);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.converted.firstPlanPayments).toHaveBeenCalledTimes(1);
+    expect([...(deps.converted.firstPlanPayments.mock.calls[0][0] as string[])].sort()).toEqual([A, B, C].sort());
+    expect(result.payload.converted).toEqual({
+      scope: 'all',
+      status: 'ok',
+      month: NOV,
+      converted: 1,
+      paying: 2,
+      stopped: 0,
+      rows: [
+        {
+          accountId: B,
+          name: null,
+          nameStatus: 'missing',
+          group: `tier:${TIER}`,
+          tierLabel: tierLabelForGroup(config, `tier:${TIER}`),
+          firstPaymentAt: '2026-11-03T10:00:00.000Z',
+          source: 'account_invite',
+          sourceStatus: 'found',
+          payingNow: true,
+        },
+      ],
+      shownLimit: 100,
+    });
+    // Names and sources for the shown rows only.
+    expect(deps.converted.signupSources).toHaveBeenCalledWith([B]);
+    expect(result.counts.converted).toEqual({
+      scope: 'all', status: 'ok', asked: 3, found: 2, converted: 1, stopped: 0, shown: 1, namesFound: 0, sourcesFound: 1, stampDiffers: 0,
+    });
+  });
+
+  it('converted this month but no longer paying: listed as stopped, never counted', async () => {
+    const deps = convertedDeps([{ accountId: A, paidAt: '2026-11-02T00:00:00.000Z' }], []);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const c = result.payload.converted;
+    if (c?.scope !== 'all') throw new Error('expected all');
+    expect(c.converted).toBe(0);
+    expect(c.stopped).toBe(1);
+    expect(c.rows).toEqual([
+      expect.objectContaining({ accountId: A, payingNow: false, name: 'Acme Dental', nameStatus: 'found', source: null, sourceStatus: 'missing' }),
+    ]);
+    // G-1 cross-check: A has no lineage stamp, so it differs (logged only).
+    expect(result.counts.converted?.stampDiffers).toBe(1);
+  });
+
+  it('the first-payment read failed (the ceiling, the mode, the database): unknown, never 0', async () => {
+    const deps = convertedDeps([]);
+    deps.converted.firstPlanPayments.mockImplementation(() => ({ data: null, error: new Error('ceiling') }) as never);
+    const { result, log } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.converted).toEqual({
+      scope: 'all', status: 'unknown', month: NOV, converted: null, paying: null, stopped: null, rows: null, shownLimit: 100,
+    });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'first_plan_payments' }), 'Finance read failed');
+    expect(deps.converted.signupSources).not.toHaveBeenCalled();
+  });
+
+  it('the paying read or the plan read failed: unknown, and no first-payment read', async () => {
+    const paying = convertedDeps([]);
+    paying.finance.listBillingStatusesAllAccounts.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const a = await run(paying as never);
+    if (a.result.kind !== 'ok') throw new Error('expected ok');
+    expect(a.result.payload.converted).toEqual(expect.objectContaining({ status: 'unknown', converted: null }));
+    expect(paying.converted.firstPlanPayments).not.toHaveBeenCalled();
+
+    const plans = convertedDeps([]);
+    plans.plans.pagePlans.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const b = await run(plans as never);
+    if (b.result.kind !== 'ok') throw new Error('expected ok');
+    expect(b.result.payload.converted).toEqual(expect.objectContaining({ status: 'unknown', converted: null }));
+    expect(plans.converted.firstPlanPayments).not.toHaveBeenCalled();
+  });
+
+  it('the source read failed: the rows stay, each source "unavailable" (shown as Unknown)', async () => {
+    const deps = convertedDeps([{ accountId: B, paidAt: '2026-11-03T10:00:00.000Z' }]);
+    deps.converted.signupSources.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const c = result.payload.converted;
+    if (c?.scope !== 'all') throw new Error('expected all');
+    expect(c.status).toBe('ok');
+    expect(c.rows?.[0]).toEqual(expect.objectContaining({ source: null, sourceStatus: 'unavailable' }));
+  });
+
+  it('a capped plan walk: partial ("at least"), never a plain figure', async () => {
+    let page = 0;
+    const pagePlans = jest.fn(() => {
+      page += 1;
+      return ok(Array.from({ length: 500 }, (_, i) => plan(`${String(page).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`)));
+    });
+    const deps = { ...convertedDeps([]), plans: { pagePlans } };
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.converted).toEqual(expect.objectContaining({ scope: 'all', status: 'partial', converted: 0 }));
+  });
+
+  it('a business picked: exactly its id; converted, stopped, not converted, unknown', async () => {
+    const picked = (first: Array<{ accountId: string; paidAt: string }>, paying: boolean) => {
+      const deps = convertedDeps(first);
+      deps.findPlanForAccount.mockImplementation(() => ok({ plan: plan(B, { tier: TIER, cohort: null }) }));
+      deps.finance.findBillingStatusForAccount.mockImplementation(
+        () => ok(paying ? { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null } : null) as never
+      );
+      return deps;
+    };
+    const yes = picked([{ accountId: B, paidAt: '2026-11-03T00:00:00.000Z' }], true);
+    const r1 = await run(yes as never, B);
+    if (r1.result.kind !== 'ok') throw new Error('expected ok');
+    expect(yes.converted.firstPlanPayments).toHaveBeenCalledWith([B]);
+    expect(yes.converted.signupSources).not.toHaveBeenCalled();
+    expect(r1.result.payload.converted).toEqual({ scope: 'one', status: 'ok', month: NOV, state: 'converted', firstPaymentAt: '2026-11-03T00:00:00.000Z' });
+
+    const stopped = await run(picked([{ accountId: B, paidAt: '2026-11-03T00:00:00.000Z' }], false) as never, B);
+    if (stopped.result.kind !== 'ok') throw new Error('expected ok');
+    expect(stopped.result.payload.converted).toEqual(expect.objectContaining({ state: 'stopped' }));
+
+    const earlier = await run(picked([{ accountId: B, paidAt: '2026-10-03T00:00:00.000Z' }], true) as never, B);
+    if (earlier.result.kind !== 'ok') throw new Error('expected ok');
+    expect(earlier.result.payload.converted).toEqual(expect.objectContaining({ state: 'not_converted', firstPaymentAt: null }));
+
+    const failing = picked([], true);
+    failing.converted.firstPlanPayments.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const unknown = await run(failing as never, B);
+    if (unknown.result.kind !== 'ok') throw new Error('expected ok');
+    expect(unknown.result.payload.converted).toEqual({ scope: 'one', status: 'unknown', month: NOV, state: null, firstPaymentAt: null });
+  });
+
+  it('"this month" is the month of now in UTC, whatever window is picked', async () => {
+    const deps = convertedDeps([{ accountId: B, paidAt: '2026-11-01T00:00:00.000Z' }]);
+    const lastWeek = resolveFinanceWindow({ preset: '7d' }, NOW);
+    const { result } = await run(deps as never, null, logger(), NOW, lastWeek);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.converted).toEqual(expect.objectContaining({ month: NOV, converted: 1 }));
+  });
+
+  it('the production wiring supplies the converted reads by name', () => {
+    const wired = financeHealthDeps();
+    expect(Object.keys(wired.converted ?? {}).sort()).toEqual(['firstPlanPayments', 'signupSources']);
+  });
+});

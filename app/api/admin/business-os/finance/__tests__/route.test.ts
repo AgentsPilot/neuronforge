@@ -63,6 +63,13 @@
  * Money MK-5 (SA-RR-MK pins table): ONE more ruled AC-145 update. The builder
  * adds `paying` (F-K5) and `platformMargin` (F-K4), before the MRR keys; with
  * those two stripped the payload gives MK-4's `30275c29…0631`.
+ *
+ * Money MK-5b (SA-RR-MK pins table, "AC-145 (the converted fields), one ruled
+ * update"): the wiring's `converted` reads join `mockDeps` (so `allReads()`
+ * covers them in every 401 / 403 / 400 case), and the builder adds
+ * `converted` after `paying`. The Overview's expected calls gain the one
+ * first-payment read with exactly the plan-row ids; with `converted`
+ * stripped the payload gives MK-5's `a13f1ccd…0060`.
  */
 
 import * as fs from 'fs';
@@ -165,6 +172,11 @@ const mockDeps = {
   lots: {
     allAccounts: jest.fn(),
     forAccount: jest.fn(),
+  },
+  // Money MK-5b: the first plan payments (current billing mode, decided in lib/admin/billing) and the sources.
+  converted: {
+    firstPlanPayments: jest.fn(),
+    signupSources: jest.fn(),
   },
 };
 jest.mock('@/lib/business-os/finance/financeHealthDeps', () => {
@@ -375,6 +387,9 @@ function seed() {
   // Money M-4: one recorded row each, against the one 1.2345 charge.
   mockRecordedAllAccounts.mockResolvedValue({ data: { rows: [costPoint()], reachedCeiling: false, completed: true, pages: 1 }, error: null });
   mockRecordedForAccount.mockResolvedValue({ data: { rows: [ledgerCall()], reachedCeiling: false }, error: null });
+  // Money MK-5b: no first payment by default (no converted row, so no extra names call); the MK-5b describe seeds its own.
+  mockDeps.converted.firstPlanPayments.mockResolvedValue({ data: [], error: null });
+  mockDeps.converted.signupSources.mockResolvedValue({ data: [], error: null });
 }
 
 /** Money M-4: a recorded cost, a feature value and a session id that must never reach a log line or the payload (AC-164). */
@@ -398,6 +413,8 @@ const allReads = () => [
   ...Object.values(mockDeps.finance),
   ...Object.values(mockDeps.credits),
   ...Object.values(mockDeps.lots),
+  // Money MK-5b: the converted reads.
+  ...Object.values(mockDeps.converted),
   mockFindNames,
   // Slice 2b: R-j. Every 401 / 403 / 400 case proves zero calls on it too (AC-45, AC-46).
   mockReadQueueFigures,
@@ -548,7 +565,8 @@ describe('200', () => {
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
     // Money MK-4 (ruled): `mrr` and `stripeMode` join the payload. MK-5 (ruled): `paying` and `platformMargin`.
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'credits', 'generatedAt', 'mrr', 'paying', 'paymentProblems', 'platformMargin', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
+    // MK-5b (ruled): `converted`.
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'converted', 'credits', 'generatedAt', 'mrr', 'paying', 'paymentProblems', 'platformMargin', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
     expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
     expect(body.data.credits.status).toBe('ok');
     expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
@@ -1218,6 +1236,8 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     ...Object.fromEntries(Object.entries(mockDeps.finance).map(([k, v]) => [`finance.${k}`, v])),
     ...Object.fromEntries(Object.entries(mockDeps.credits).map(([k, v]) => [`credits.${k}`, v])),
     ...Object.fromEntries(Object.entries(mockDeps.lots).map(([k, v]) => [`lots.${k}`, v])),
+    // MK-5b (ruled).
+    ...Object.fromEntries(Object.entries(mockDeps.converted).map(([k, v]) => [`converted.${k}`, v])),
     readQueueFigures: mockReadQueueFigures,
     // E-55 (M-4).
     'recorded.allAccounts': mockRecordedAllAccounts,
@@ -1264,6 +1284,9 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     ],
     'lots.allAccounts': [[]],
     'lots.forAccount': [],
+    // MK-5b (ruled): one first-payment read with exactly the plan-row ids; no converted row, so no source read.
+    'converted.firstPlanPayments': [[[ACCOUNT]]],
+    'converted.signupSources': [],
     readQueueFigures: [
       [{ correlationId: '<correlationId>', adminId: ADMIN.id }, 'payment_reminders', '2026-10-14T12:00:00.000Z', { signal: '<signal>' }],
     ],
@@ -1282,12 +1305,15 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   const EXPECTED_NAME_CALLS = [[[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]], [[ACCOUNT]]];
   // Money MK-4 (ruled): the two MRR keys, last.
   // Money MK-5 (ruled): `paying` and `platformMargin`, from the builder, before the route's MRR keys.
-  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'paying', 'platformMargin', 'mrr', 'stripeMode'];
+  // Money MK-5b (ruled): `converted`, from the builder, after `paying`.
+  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'paying', 'converted', 'platformMargin', 'mrr', 'stripeMode'];
   // SA-Q72 (4b.2): the new hash. E-55 (M-4): its hash, which the payload gives with the 4b.2 keys put back;
   // and the 6a hash, which that payload still gives with `aiCost.recorded` taken out.
   // Money MK-4 (ruled re-freeze): the payload with `mrr` and `stripeMode`. BEFORE_MK4 is the 4b.2 hash it replaces.
   // Money MK-5 (ruled re-freeze): with `paying` and `platformMargin`. AFTER_MK4 is the MK-4 hash it replaces.
-  const EXPECTED_SHA256 = 'a13f1ccd7a95db60cce67bccc0df7450290b3162506b6e06f50edac3016f0060';
+  // Money MK-5b (ruled re-freeze): with `converted`. AFTER_MK5 is the MK-5 hash it replaces.
+  const EXPECTED_SHA256 = '23a12c7ebd13e5549b1ed8926e108289f504de1a57dc841413bcd68c4b862069';
+  const AFTER_MK5_SHA256 = 'a13f1ccd7a95db60cce67bccc0df7450290b3162506b6e06f50edac3016f0060';
   const AFTER_MK4_SHA256 = '30275c298fa4cb265ffe8933dee56c71d4243c171c39eddbe1d2e55d64950631';
   const BEFORE_MK4_SHA256 = '39b35743527b3a1948efd30c3ebc2510eb0916301baa4ea8f2e0210d7e1556ea';
   const M4_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
@@ -1311,7 +1337,16 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     type Json = Record<string, unknown>;
     // MK-4: the only change to the bytes is the two MRR keys at the end. Strip them: the 4b.2 bytes come back.
     // MK-5: the only change to the bytes is the two builder keys. Strip them: the MK-4 bytes come back.
-    const withMk5 = { ...(body.data as Json) };
+    // MK-5b: the only change to the bytes is `converted`. Strip it: the MK-5 bytes come back.
+    const withMk5b = { ...(body.data as Json) };
+    expect(withMk5b.converted).toEqual({
+      scope: 'all', status: 'ok', month: { from: '2026-10-01T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' },
+      converted: 0, paying: 0, stopped: 0, rows: [], shownLimit: 100,
+    });
+    delete withMk5b.converted;
+    const shaAfterMk5 = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaAfterMk5.update(JSON.stringify(withMk5b)).digest('hex')).toBe(AFTER_MK5_SHA256);
+    const withMk5 = { ...withMk5b };
     expect(withMk5.paying).toEqual(expect.objectContaining({ scope: 'all' }));
     expect(withMk5.platformMargin).toEqual(expect.objectContaining({ margin: expect.any(Object) }));
     delete withMk5.paying;
@@ -1921,3 +1956,60 @@ describe('Money MK-4: MRR now in the payload', () => {
   });
 });
 
+// ── Money MK-5b (§5.1 F-K5b, SA-10): Converted this month through the route ──
+// The AC-145 baseline above holds the one ruled MK-5b update; every MK-5b case lives here.
+describe('Money MK-5b: converted through the route', () => {
+  beforeEach(asAdmin);
+  const FIRST_PAID = `${todayUtc().slice(0, 8)}01T09:00:00.000Z`;
+
+  it('a converted row: in the payload with its name and source; the line has its status and counts only', async () => {
+    mockDeps.finance.listBillingStatusesAllAccounts.mockResolvedValue({
+      data: [{ user_id: ACCOUNT, subscription_status: 'active', ended_at: null, bought_tier: null }],
+      error: null,
+    });
+    mockDeps.converted.firstPlanPayments.mockResolvedValue({ data: [{ accountId: ACCOUNT, paidAt: FIRST_PAID }], error: null });
+    mockDeps.converted.signupSources.mockResolvedValue({ data: [{ account_id: ACCOUNT, source: 'admin_invite', stamped_at: FIRST_PAID }], error: null });
+    const body = await (await call()).json();
+    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledWith([ACCOUNT]);
+    expect(mockDeps.converted.signupSources).toHaveBeenCalledWith([ACCOUNT]);
+    expect(body.data.converted).toEqual(expect.objectContaining({ scope: 'all', status: 'ok', converted: 1, paying: 1, stopped: 0 }));
+    expect(body.data.converted.rows).toEqual([
+      expect.objectContaining({ accountId: ACCOUNT, name: NAME, nameStatus: 'found', source: 'admin_invite', sourceStatus: 'found', firstPaymentAt: FIRST_PAID, payingNow: true }),
+    ]);
+    // No mode word or Stripe id in the converted payload.
+    expect(JSON.stringify(body.data.converted)).not.toMatch(/livemode|stripe|test.?mode|live.?mode/i);
+    const line = mockLog.info.mock.calls.find((c) => c[1] === 'Admin read the Business OS finance page')?.[0];
+    expect(line.sections.converted).toBe('ok');
+    expect(line.counts.converted).toEqual({
+      scope: 'all', status: 'ok', asked: 1, found: 1, converted: 1, stopped: 0, shown: 1, namesFound: 1, sourcesFound: 1, stampDiffers: 0,
+    });
+    const text = JSON.stringify(mockLog.info.mock.calls);
+    expect(text).not.toContain(NAME);
+    expect(text).not.toContain(FIRST_PAID);
+  });
+
+  it('a failed first-payment read: converted unknown, the page still 200', async () => {
+    mockDeps.converted.firstPlanPayments.mockResolvedValue({ data: null, error: new Error('Billing rows reached the read ceiling of 20000') });
+    const res = await call();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.converted).toEqual(expect.objectContaining({ status: 'unknown', converted: null, rows: null }));
+    expect(body.data.paying.status).toBe('ok');
+  });
+
+  it('a business picked: the first-payment read gets exactly that id, no source read', async () => {
+    const res = await call(`?accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledTimes(1);
+    expect(mockDeps.converted.firstPlanPayments).toHaveBeenCalledWith([ACCOUNT]);
+    expect(mockDeps.converted.signupSources).not.toHaveBeenCalled();
+    expect(body.data.converted).toEqual(expect.objectContaining({ scope: 'one', status: 'ok', state: 'not_converted' }));
+  });
+
+  it('401: no converted read', async () => {
+    mockGetUser.mockResolvedValue(null);
+    await call();
+    for (const fn of Object.values(mockDeps.converted)) expect(fn).not.toHaveBeenCalled();
+  });
+});
