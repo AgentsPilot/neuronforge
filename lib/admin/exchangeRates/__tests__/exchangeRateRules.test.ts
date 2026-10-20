@@ -23,7 +23,45 @@ import {
   historyEditorIds,
   labelHistory,
   type ExchangeRateHistoryRecord,
+  KPI_RATE_DECIMALS,
+  roundRateForDisplay,
 } from '../exchangeRateRules';
+
+describe('roundRateForDisplay (Last rate change tile, 3 decimals)', () => {
+  it('defaults to 3 decimals', () => {
+    expect(KPI_RATE_DECIMALS).toBe(3);
+  });
+
+  it.each([
+    ['3.650000', '3.650'],
+    ['3.700000', '3.700'],
+    ['1.000000', '1.000'],
+    ['0.920000', '0.920'],
+    ['150.000000', '150.000'],
+    ['3.6549', '3.655'],
+    ['3.6544', '3.654'],
+    ['3.6545', '3.655'],
+    ['0.0005', '0.001'],
+    ['0.0004', '0.000'],
+    ['0.999500', '1.000'],
+    ['9.9995', '10.000'],
+    ['999999.999999', '1000000.000'],
+    ['3.7', '3.700'],
+    ['42', '42.000'],
+    [' 3.65 ', '3.650'],
+  ])('%s → %s', (input, expected) => {
+    expect(roundRateForDisplay(input)).toBe(expected);
+  });
+
+  it('honours an explicit place count', () => {
+    expect(roundRateForDisplay('3.656789', 2)).toBe('3.66');
+    expect(roundRateForDisplay('3.6', 6)).toBe('3.600000');
+  });
+
+  it.each(['', 'abc', '-1.5', '1e3', '1.2.3'])('returns %p unchanged when it is not a plain decimal', (input) => {
+    expect(roundRateForDisplay(input)).toBe(input);
+  });
+});
 
 describe('rate strings (SA O-1)', () => {
   it.each(['1', '3.71', '0.000001', '999999.999999', '000150', '150', '0.79', '1.000000'])('accepts %s', (rate) => {
