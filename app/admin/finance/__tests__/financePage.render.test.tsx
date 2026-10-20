@@ -1783,8 +1783,8 @@ describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
     render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
     const tablist = screen.getByRole('tablist');
-    // Money MK-4 (ruled): the third tab, Plans & subscriptions.
-    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual([TAB_OVERVIEW, TAB_ACCOUNTS, 'Plans & subscriptions']);
+    // Money MK-4 (ruled): the third tab, Plans & subscriptions; slice 2a: the fourth, Exchange rates.
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent)).toEqual([TAB_OVERVIEW, TAB_ACCOUNTS, 'Plans & subscriptions', 'Exchange rates']);
     expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
     const panel = screen.getByRole('tabpanel');
     expect(panel).toHaveAttribute('id', 'finance-panel-overview');

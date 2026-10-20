@@ -25,6 +25,13 @@
  * window extra. The field always parses it; `toFinanceQuery` sends it only with
  * a business (else the default window, so the route's 400 is never asked for,
  * SA-W-DF6-4); the cross-key repair drops it without a business (U-4).
+ *
+ * Admin Exchange Rates slice 2a (SQ-20, SQ-24, SA-2-5): `tab=exchange-rates`
+ * is the fourth tab, and the spec also owns that tab's Show key, `currencies`,
+ * through the rates view's own field object. Finance's hook keeps every key it
+ * does not own, so without the key it could never drop a stray `currencies`.
+ * Neither the tab nor the key reaches the request: `toFinanceQuery` is
+ * unchanged, so on this tab the finance read is the Overview's.
  */
 
 import { customRangeProblem } from '@/app/admin/components/adminWindowPresets';
@@ -40,14 +47,19 @@ import {
   FINANCE_GROUP_SHAPE,
   type FinanceQuery,
 } from './financeUrl';
+// Relative on purpose: the alias path would spell the page route the G-4 guard (redundantPages) refuses (DV-1, SQ-18).
+import { DEFAULT_CURRENCY_SHOW, EXCHANGE_RATES_FILTER_SPEC } from '../exchange-rates/exchangeRatesFilters';
 
 export interface FinanceFilters {
   /** Default This month. Only a preset or a custom window with two whole dates the route accepts. */
   window: AdminWindowValue;
   /** '' = all businesses; otherwise a lower-case UUID (SA-W11). */
   account: string;
-  /** '' = Overview. Only with no business (SA-W84). Money MK-4 adds `plans` (Plans & subscriptions). */
-  tab: '' | 'accounts' | 'plans';
+  /**
+   * '' = Overview. Only with no business (SA-W84). Money MK-4 adds `plans` (Plans & subscriptions);
+   * Admin Exchange Rates slice 2a adds `exchange-rates`.
+   */
+  tab: '' | 'accounts' | 'plans' | 'exchange-rates';
   /** The Accounts tab's sort; only with the tab (E-48). */
   sort: FinanceAccountsSort;
   /** '' = every group; a `FINANCE_GROUP_SHAPE` key. Only with the tab. */
@@ -60,6 +72,11 @@ export interface FinanceFilters {
    * the redirect. Never sent to the finance route.
    */
   status: '' | SubscriptionStatus;
+  /**
+   * Admin Exchange Rates slice 2a (SQ-20): the Exchange rates tab's Show, only
+   * with that tab (default `enabled`, never written). Never sent to the finance route.
+   */
+  currencies: string;
 }
 
 export const FINANCE_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
@@ -130,11 +147,16 @@ const accountField: AdminFilterField<string> = {
 export const FINANCE_FILTER_SPEC: AdminFilterSpec<FinanceFilters> = {
   window: financeWindowField(),
   account: accountField,
-  tab: choiceFilter('tab', ['accounts', 'plans'] as const, ''),
+  tab: choiceFilter('tab', ['accounts', 'plans', 'exchange-rates'] as const, ''),
   sort: choiceFilter('sort', FINANCE_ACCOUNTS_SORTS, DEFAULT_FINANCE_QUERY.sort),
   group: textFilter({ key: 'group', defaultValue: '', isValid: (raw) => FINANCE_GROUP_SHAPE.test(raw) }),
   show: choiceFilter('show', FINANCE_ACCOUNTS_SHOWS, DEFAULT_FINANCE_QUERY.show),
   status: choiceFilter('status', SUBSCRIPTION_STATUSES, ''),
+  // Admin Exchange Rates slice 2a (SQ-20, SA-2-5): two specs own `currencies` safely because they
+  // share this ONE field object (never a copy), so both hooks parse and serialise it identically,
+  // and the rates view's hook exists only while its tab is shown (Finance unmounts hidden panels).
+  // Last, so both projections write it in the same place.
+  currencies: EXCHANGE_RATES_FILTER_SPEC.currencies,
 };
 
 /** The window part of the request; anything the route cannot take is the default (defensive: the spec never holds it). */
@@ -212,6 +234,13 @@ export function financeFilterRepair(filters: FinanceFilters): Partial<FinanceFil
   // Money MK-4: the status filter belongs to the Plans & subscriptions tab only.
   // `?? ''`: a state built before MK-4 (no `status` key) is valid as it is.
   if (filters.tab !== 'plans' && (filters.status ?? '') !== '') return { status: '' };
+  // Admin Exchange Rates slice 2a (SQ-20 (3), SQ-24): `currencies` belongs to the Exchange rates tab
+  // only. A business link has already lost the tab to the rule above, so a stray `currencies` goes on
+  // the next pass. `?? DEFAULT_CURRENCY_SHOW`: a state built before slice 2a (no `currencies` key) is
+  // valid as it is.
+  if (filters.tab !== 'exchange-rates' && (filters.currencies ?? DEFAULT_CURRENCY_SHOW) !== DEFAULT_CURRENCY_SHOW) {
+    return { currencies: DEFAULT_CURRENCY_SHOW };
+  }
   return null;
 }
 

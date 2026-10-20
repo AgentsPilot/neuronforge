@@ -3,13 +3,24 @@
 // Exchange rates admin page (Admin Exchange Rates slice 1a). A maintained,
 // manual admin tool again: BD-55 (2026-10-19) amends BD-34 / BD-36 for this page
 // only. No figure on the platform is converted with these rates (D-5, BD-12).
-// Reached by typing its URL only, never linked (D-6; G-2, G-4 and the sidebar
-// UNLISTED entry pin that). The admin layout gates it (`requireAdminPage`);
-// every read and write goes through /api/admin/exchange-rates. A client
-// component, like every render entry point under app/admin (authz guard R8).
+// Reached by its URL and, rendered without this page, from the Finance tab;
+// never linked (D-6; G-2, G-4 and the sidebar UNLISTED entry pin that). The
+// admin layout gates it (`requireAdminPage`); every read and write goes through
+// /api/admin/exchange-rates. A client component, like every render entry point
+// under app/admin (authz guard R8).
+//
+// Slice 2a (SQ-21): renders the header the view dropped, so this URL keeps its
+// own h1 ("Exchange rates"); slice 2b deletes this page.
 
-import { ExchangeRatesView } from './components/ExchangeRatesView';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+
+import { EXCHANGE_RATES_PURPOSE, ExchangeRatesView } from './components/ExchangeRatesView';
 
 export default function ExchangeRatesPage() {
-  return <ExchangeRatesView />;
+  return (
+    <div className="space-y-6">
+      <AdminPageHeader title="Exchange rates" purpose={EXCHANGE_RATES_PURPOSE} />
+      <ExchangeRatesView />
+    </div>
+  );
 }

@@ -1,9 +1,11 @@
 'use client';
 
 /**
- * The finance page's two views, Overview and Accounts (finance health slice
- * 6a, M3-FR-1, SA-Q43). PAGE-LOCAL: nothing outside `app/admin/finance`
- * imports it, and nothing is added to the shared layout folder (SA-R-3).
+ * The finance page's four views: Overview and Accounts (finance health slice
+ * 6a, M3-FR-1, SA-Q43), Plans & subscriptions (Money MK-4) and Exchange rates
+ * (Admin Exchange Rates slice 2a, SQ-4), last. PAGE-LOCAL: nothing outside
+ * `app/admin/finance` imports it, and nothing is added to the shared layout
+ * folder (SA-R-3).
  *
  * The L-8a pattern of Business OS AI: an APG tablist with MANUAL activation.
  * Left / Right (wrapping), Home and End move focus only; Enter or Space on the
@@ -11,7 +13,8 @@
  * tab is in the tab order (roving `tabIndex`); each tab names its panel with
  * `aria-controls`, and the panel names its tab with `aria-labelledby`.
  *
- * The selected tab is the URL's (`tab=accounts`; absent = Overview): selecting
+ * The selected tab is the URL's (`tab=accounts`, `tab=plans` or
+ * `tab=exchange-rates`; absent = Overview): selecting
  * one calls `onSelect`, which the view writes through its URL filter state
  * (`useAdminFilters`, Finance F-4).
  */
@@ -19,15 +22,17 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
-import { TAB_ACCOUNTS, TAB_OVERVIEW, TAB_PLANS, TABS_LABEL } from '../financeCopy';
+import { TAB_ACCOUNTS, TAB_EXCHANGE_RATES, TAB_OVERVIEW, TAB_PLANS, TABS_LABEL } from '../financeCopy';
 
-export type FinanceTab = 'overview' | 'accounts' | 'plans';
+export type FinanceTab = 'overview' | 'accounts' | 'plans' | 'exchange-rates';
 
 const TABS: readonly (readonly [FinanceTab, string])[] = [
   ['overview', TAB_OVERVIEW],
   ['accounts', TAB_ACCOUNTS],
   // Money MK-4 (§3.2): the Subscriptions page as a tab, Plan mix on top.
   ['plans', TAB_PLANS],
+  // Admin Exchange Rates slice 2a (SQ-4): the rates view, rendered from its own folder (SA-R13). Last.
+  ['exchange-rates', TAB_EXCHANGE_RATES],
 ];
 
 export const financeTabId = (id: FinanceTab) => `finance-tab-${id}`;

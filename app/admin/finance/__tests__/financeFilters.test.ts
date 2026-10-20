@@ -45,11 +45,11 @@ function parseLink(link: string): FinanceFilters {
     return parsed === undefined ? field.defaultValue : parsed;
   };
   const S = FINANCE_FILTER_SPEC;
-  return { window: read(S.window), account: read(S.account), tab: read(S.tab), sort: read(S.sort), group: read(S.group), show: read(S.show), status: read(S.status) };
+  return { window: read(S.window), account: read(S.account), tab: read(S.tab), sort: read(S.sort), group: read(S.group), show: read(S.show), status: read(S.status), currencies: read(S.currencies) };
 }
 
 // Money MK-4 (QA-MK4-1): `status` joined the filters ('' = all).
-const DEFAULTS: FinanceFilters = { window: FINANCE_DEFAULT_WINDOW, account: '', tab: '', sort: 'ai_cost', group: '', show: 'all', status: '' };
+const DEFAULTS: FinanceFilters = { window: FINANCE_DEFAULT_WINDOW, account: '', tab: '', sort: 'ai_cost', group: '', show: 'all', status: '', currencies: 'enabled' };
 const requestOf = (filters: FinanceFilters) => `${FINANCE_REQUEST_PATH}?${serialiseFinanceUrl(toFinanceQuery(filters))}`;
 const CUSTOM = { kind: 'custom', from: '2026-09-01', to: '2026-09-30' } as const;
 
@@ -57,7 +57,7 @@ describe('the spec (U-5, U-9, SA-W7, SA-W11)', () => {
   it('is a module-level constant (the hook relies on its identity), keys in write order', () => {
     expect(again.FINANCE_FILTER_SPEC).toBe(FINANCE_FILTER_SPEC);
     // Money MK-4 (ruled): the Plans & subscriptions status filter, last.
-    expect(Object.keys(FINANCE_FILTER_SPEC)).toEqual(['window', 'account', 'tab', 'sort', 'group', 'show', 'status']);
+    expect(Object.keys(FINANCE_FILTER_SPEC)).toEqual(['window', 'account', 'tab', 'sort', 'group', 'show', 'status', 'currencies']);
     expect(FINANCE_FILTER_SPEC.window.keys).toEqual(['range', 'from', 'to']);
     expect(FINANCE_FILTER_SPEC.window.aliases).toEqual({ preset: 'range' });
     expect(FINANCE_FILTER_SPEC.account.keys).toEqual(['account']);
@@ -211,6 +211,8 @@ describe('the request bridge', () => {
       show: 'active',
       // MK-4: the Accounts tab's patch never touches the subscriptions status filter.
       status: undefined,
+      // Slice 2a (SQ-20): nor the Exchange rates tab's Show.
+      currencies: undefined,
     });
     expect(fromFinanceQuery({ ...DEFAULT_FINANCE_QUERY, preset: 'custom', from: '2026-09-01', to: '2026-09-30' }).window).toEqual(CUSTOM);
     expect(fromFinanceQuery({ ...DEFAULT_FINANCE_QUERY, preset: 'custom' }).window).toEqual(FINANCE_DEFAULT_WINDOW);
@@ -313,5 +315,72 @@ describe('DF-6: since it started in the URL state and the request', () => {
     expect(financeCanClear({ ...DEFAULTS, window: SINCE, account: A })).toBe(true);
     expect(FINANCE_CLEAR_PATCH.window).toEqual(FINANCE_DEFAULT_WINDOW);
     expect(financeWindowProblem(SINCE, new Date())).toBeNull();
+  });
+});
+
+// ── Admin Exchange Rates slice 2a (SQ-20, SQ-24, SA-2-6 (6)) ──────────────────
+// A separate import, so the lines above stay unedited. Relative, as the finance files import it (SQ-18).
+import { EXCHANGE_RATES_FILTER_SPEC } from '../../exchange-rates/exchangeRatesFilters';
+
+describe('slice 2a: currencies (SQ-20, SQ-24)', () => {
+  // Row 1: the empty link, the Overview's request.
+  const OVERVIEW_REQUEST = PINNED_REQUESTS.find((pin) => pin.row === 1)?.request;
+
+  it('is the rates view’s own field object (never a copy), the spec’s last key', () => {
+    expect(FINANCE_FILTER_SPEC.currencies).toBe(EXCHANGE_RATES_FILTER_SPEC.currencies);
+    expect(Object.keys(FINANCE_FILTER_SPEC).at(-1)).toBe('currencies');
+  });
+
+  it('parses the fourth tab and its Show value; an unknown Show reads as the default', () => {
+    expect(parseLink('tab=exchange-rates')).toEqual({ ...DEFAULTS, tab: 'exchange-rates' });
+    expect(parseLink('tab=exchange-rates&currencies=all')).toEqual({ ...DEFAULTS, tab: 'exchange-rates', currencies: 'all' });
+    expect(parseLink('tab=exchange-rates&currencies=junk').currencies).toBe('enabled');
+  });
+
+  it('the new rule: a non-default currencies off the tab is reset; on the tab nothing is', () => {
+    expect(financeFilterRepair({ ...DEFAULTS, currencies: 'all' })).toEqual({ currencies: 'enabled' });
+    expect(financeFilterRepair({ ...DEFAULTS, tab: 'plans', currencies: 'disabled' })).toEqual({ currencies: 'enabled' });
+    expect(financeFilterRepair({ ...DEFAULTS, tab: 'accounts', currencies: 'all' })).toEqual({ currencies: 'enabled' });
+    expect(financeFilterRepair({ ...DEFAULTS, tab: 'exchange-rates', currencies: 'all' })).toBeNull();
+    expect(financeFilterRepair({ ...DEFAULTS, tab: 'exchange-rates' })).toBeNull();
+  });
+
+  it('on Accounts with a non-default sort, the earlier rules do not swallow it: currencies is still reset', () => {
+    const filters: FinanceFilters = { ...DEFAULTS, tab: 'accounts', sort: 'margin', currencies: 'all' };
+    expect(financeFilterRepair(filters)).toEqual({ currencies: 'enabled' });
+    expect(financeFilterRepair({ ...filters, currencies: 'enabled' })).toBeNull();
+  });
+
+  it('the business wins: tab dropped by rule 2, then currencies by the new rule, then settled', () => {
+    let filters = parseLink(`account=${A}&tab=exchange-rates&currencies=all`);
+    const first = financeFilterRepair(filters);
+    expect(first).toEqual({ tab: '', sort: 'ai_cost', group: '', show: 'all' });
+    filters = { ...filters, ...first };
+    const second = financeFilterRepair(filters);
+    expect(second).toEqual({ currencies: 'enabled' });
+    filters = { ...filters, ...second };
+    expect(financeFilterRepair(filters)).toBeNull();
+    expect(filters).toEqual({ ...DEFAULTS, account: A });
+  });
+
+  it('a state without the key (built before slice 2a) is valid as it is', () => {
+    const before: Partial<FinanceFilters> = { ...DEFAULTS };
+    delete before.currencies;
+    expect(financeFilterRepair(before as FinanceFilters)).toBeNull();
+    expect(financeFilterRepair({ ...before, tab: 'plans' } as FinanceFilters)).toBeNull();
+  });
+
+  it('the request on the tab is the Overview’s, whatever Show holds (SQ-19 (ii))', () => {
+    expect(OVERVIEW_REQUEST).toBe(`${FINANCE_REQUEST_PATH}?preset=this_month`);
+    for (const currencies of ['enabled', 'disabled', 'all']) {
+      const filters: FinanceFilters = { ...DEFAULTS, tab: 'exchange-rates', currencies };
+      expect(toFinanceQuery(filters)).toEqual(toFinanceQuery(DEFAULTS));
+      expect(requestOf(filters)).toBe(OVERVIEW_REQUEST);
+    }
+  });
+
+  it('Clear neither resets nor counts currencies (SQ-20 (3))', () => {
+    expect(FINANCE_CLEAR_PATCH).not.toHaveProperty('currencies');
+    expect(financeCanClear({ ...DEFAULTS, tab: 'exchange-rates', currencies: 'all' })).toBe(false);
   });
 });

@@ -27,7 +27,8 @@
  * request is dropped and can neither reopen a closed panel nor set state after
  * unmount (SA W-3).
  *
- * Layout standard: shared header, the KPI strip, the shared filter bar with
+ * Layout standard: no header of its own (slice 2a, SQ-21: the page that owns
+ * the one h1 renders it, with `EXCHANGE_RATES_PURPOSE`), the KPI strip, the shared filter bar with
  * "Read at", shared loading / error / empty states, shared table constants and
  * chips, UTC dates. Responses are read through `readAdminResponse` (never an
  * own `.json(`); a network failure shows the shared sentence and the browser's
@@ -41,7 +42,8 @@
  * filter change reads nothing. A currency switched on or off here stays
  * visible ("held") until Refresh, the next successful read, or any filter or
  * search change, so its row and the keyboard focus do not vanish (SQ-9).
- * `active` is false only while a Finance tab hides this view (slice 2, L-9a).
+ * `active` would be false only while a page keeps this view mounted but hidden
+ * (L-9a). Finance unmounts hidden panels, so no caller passes false today.
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
@@ -51,7 +53,6 @@ import {
   ADMIN_FIELD_LABEL,
   AdminFilterBar,
 } from '@/app/admin/components/layout/AdminFilterBar';
-import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
@@ -86,7 +87,11 @@ const WHAT = 'the exchange rates';
 /** Shown when a rate was saved but the re-read that refreshes the history failed (review item 4). */
 export const REFRESH_AFTER_SAVE_FAILED = 'Saved; could not refresh history';
 
-const PURPOSE =
+/**
+ * The page header's sentence (slice 2a, SQ-21), rendered by whoever owns the
+ * h1: the Finance tab, and the standalone page until slice 2b deletes it.
+ */
+export const EXCHANGE_RATES_PURPOSE =
   'Rates an admin keeps by hand, in units of each currency per 1 USD. Nothing on the platform converts money with them.';
 
 /** The selected currency's own history read (SQ-12). */
@@ -348,8 +353,6 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="Exchange rates" purpose={PURPOSE} />
-
       {/* K-10: hidden while the page shows an error. */}
       <ExchangeRatesKpis payload={error ? null : payload} loading={loading} />
 
