@@ -49,6 +49,12 @@
 //     `findHoldFactsForAccount` for the shadow report and the launch dry run
 //     (P5-C10). Only caller: `lib/business-os/invites/paymentHoldBatch.ts`.
 //
+// Money MK-5b (KPI restructure review §5.1, G-2) adds one more select-only
+// read, `findSignupSourcesForAccountsForAdmin`: where each newly paying
+// account came from (`source`), and `first_paid_at` as a cross-check only.
+// Only caller: the finance wiring (`lib/business-os/finance/financeHealthDeps.ts`),
+// reached from the admin finance route after `requireAdmin`.
+//
 // Methods never throw: they return `{ data, error }`, with a database error
 // reduced to `{ code, message }` before it is logged or returned (M-1).
 
@@ -61,6 +67,7 @@ import type {
   BusinessOsAccountHoldFacts,
   BusinessOsAccountHoldFactsRow,
   BusinessOsAccountLineageLevel,
+  BusinessOsAccountSignupSourceRow,
 } from './types';
 
 /** The most invite ids one read accepts (the admin list shows at most 200 rows). */
@@ -218,6 +225,43 @@ export class BusinessOsAccountLineageRepository {
     } catch (error) {
       const safe = safeDbError(error);
       methodLogger.error({ dbError: safe }, 'Failed to read the lineage hold facts in batch');
+      const out = new Error(safe.message) as Error & { code?: string };
+      if (safe.code) out.code = safe.code;
+      return { data: null, error: out };
+    }
+  }
+
+  /**
+   * ADMIN (Money MK-5b, §5.1 G-2): where each of up to `LINEAGE_LOOKUP_LIMIT`
+   * accounts came from (`source`: admin invite, friend invite or organic),
+   * and `first_paid_at` as a cross-check only (the count of the first payment
+   * is the billing events' own, Q-12). Accounts with no lineage row are simply
+   * absent: the caller shows "Not recorded". INTENTIONAL SERVICE-ROLE READ
+   * across accounts, by design: the admin Finance page's Converted this month
+   * list, behind `requireAdmin` (the route's first statement).
+   *
+   * Only caller: the finance wiring, `lib/business-os/finance/financeHealthDeps.ts`.
+   * Refuses more than the limit, and any id that is not a UUID, before a query.
+   */
+  async findSignupSourcesForAccountsForAdmin(accountIds: string[]): Promise<RepositoryResult<BusinessOsAccountSignupSourceRow[]>> {
+    const methodLogger = this.logger.child({ method: 'findSignupSourcesForAccountsForAdmin', accounts: accountIds.length });
+    if (accountIds.length === 0) return { data: [], error: null };
+    if (accountIds.length > LINEAGE_LOOKUP_LIMIT || !accountIds.every(isUuid)) {
+      return { data: null, error: new Error(`findSignupSourcesForAccountsForAdmin accepts at most ${LINEAGE_LOOKUP_LIMIT} UUIDs`) };
+    }
+    try {
+      const { data, error } = await this.supabase
+        .from('business_os_account_lineage')
+        .select('account_id, source, first_paid_at')
+        .in('account_id', accountIds);
+
+      if (error) throw error;
+      // Field by field; the stamp travels as `stamped_at` (a cross-check only, P5-C4 keeps its name here).
+      const rows = (data ?? []) as unknown as Array<{ account_id: string; source: BusinessOsAccountSignupSourceRow['source']; first_paid_at: string | null }>;
+      return { data: rows.map((row) => ({ account_id: row.account_id, source: row.source, stamped_at: row.first_paid_at })), error: null };
+    } catch (error) {
+      const safe = safeDbError(error);
+      methodLogger.error({ dbError: safe }, 'Failed to read the lineage signup sources in batch');
       const out = new Error(safe.message) as Error & { code?: string };
       if (safe.code) out.code = safe.code;
       return { data: null, error: out };

@@ -39,6 +39,13 @@
  *     the response or a log, and a column added to the repository later cannot
  *     travel by accident.
  *
+ *   - Money MK-5b (§5.1, SA-10), Converted this month: the first plan payment
+ *     of the given accounts, read for the CURRENT billing mode by
+ *     `listCurrentModeFirstPlanPayments` (the mode is decided in
+ *     `lib/admin/billing`, never here), and the lineage repository's one
+ *     select-only `findSignupSourcesForAccountsForAdmin` (where each shown
+ *     account came from).
+ *
  * The admin-pinned name read (`findAdminIdentitiesByUserIds`) is NOT wired
  * here: it may be called only from `app/api/admin/**`, so the route injects it.
  * Nor is the reminder queue read (slice 2b, R-j): the jobs & queues admin read
@@ -63,6 +70,8 @@ import {
   findCurrentModeBillingStatusForAccount,
   listCurrentModeBillingStatusesAllAccounts,
 } from '@/lib/admin/billing/currentModeBillingStatus';
+import { listCurrentModeFirstPlanPayments } from '@/lib/admin/billing/firstPlanPayments';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import {
   businessOsCreditLotRepository,
   type BusinessOsCreditLotRepository,
@@ -179,6 +188,11 @@ export function financeHealthDeps(): Omit<
     lots: {
       allAccounts: () => narrowLots(lotReads.listLotsWithDrawsAllAccounts()),
       forAccount: (accountId) => narrowLots(lotReads.listLotsWithDraws(accountId)),
+    },
+    // Money MK-5b: the first plan payments (current billing mode, decided in lib/admin/billing) and the sources.
+    converted: {
+      firstPlanPayments: (accountIds) => listCurrentModeFirstPlanPayments(accountIds),
+      signupSources: (accountIds) => businessOsAccountLineageRepository.findSignupSourcesForAccountsForAdmin(accountIds),
     },
   };
 }

@@ -110,6 +110,7 @@ import {
 } from './FinanceKpiStrip';
 import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { PlansSubscriptions } from './PlansSubscriptions';
+import { ConvertedThisMonthSection } from './ConvertedThisMonthSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
 // Relative on purpose: the alias path would spell the page route the G-4 guard (redundantPages) refuses (DV-1, SQ-18).
@@ -371,6 +372,8 @@ export function FinanceView() {
                 {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
                 <div className="space-y-4">
                   <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
+                  {/* Money MK-5b (§5.1): from the same finance payload, so the tab makes no new request (AC-173). */}
+                  {data.converted && <ConvertedThisMonthSection converted={data.converted} onRetry={reload} />}
                   <PlansSubscriptions
                     status={filters.status === '' ? null : filters.status}
                     onStatus={(next) => setFilters({ status: next ?? '' })}
