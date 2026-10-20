@@ -5,9 +5,9 @@
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_UPGRADE_MODAL_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_UPGRADE_MODAL_REQUIREMENT.md) (SA APPROVED WITH CONDITIONS C-1 to C-14; user accepted UM-BQ1 to UM-BQ4 defaults; **SA Re-review (UM-D1) C-15 to C-28; user decisions UM-D1 (comparison table) and UM-D2 (short grouped rows)**)
 **Date:** 2026-10-19
-**Status:** Revised for UM-D1 (awaiting SA re-review). Original version SA APPROVED WITH CONDITIONS W-1 to W-7; Tasks 0–2a unchanged by the revision
+**Status:** Code Complete (uncommitted). SA code review: FIX REQUIRED F-1 to F-3 (2026-10-19; UM-SA4 amended per UM-BQ4). Workplan SA APPROVED WITH CONDITIONS W-1 to W-11
 **Depends on:** [UM-0 workplan](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM0_WORKPLAN.md) — the `comparison` field in the plan read. **UM-1a's PR opens only after UM-0 is merged** (C-15). Tasks 0–2a touch only client files and may start in parallel
-**Branch:** to be created by RM off `origin/main` (proposed `feature/bos-upgrade-modal-um1a`). Not created by Dev.
+**Branch:** `feature/bos-upgrade-modal-um1a` (created by RM from the tip of `feature/bos-upgrade-modal-um0`, `5243d900`; rebase on `origin/main` owed once PR #480 merges, C-15)
 **Code base read:** `origin/main` at `4583d21e` (the local checkout is about 300 commits behind and was not used for code)
 **Path:** UI short path (SA code review + QA in parallel → user sees the diff → RM), per UM-SA11
 
@@ -411,15 +411,15 @@ All paths are relative to the worktree root (`C:/…/neuronforge` equivalent).
 
 | # | Task | Est. |
 |---|---|---|
-| ⬜ 0–2a | As above, unchanged (types, `planText`, `usePlanFlow` extraction, recorded checkpoint W-6) | 0.8 d |
-| ⬜ 2b | **Wait for UM-0 to merge**, then rebase the branch on `origin/main`; re-run the §4.4 checkpoint list (still zero test diff) | 0.05 d |
-| ⬜ 3 | Mirrored `comparison` types in `planPayloadTypes.ts`; `upgradeModalView.ts` (§5.2a) + `upgradeModalView.test.ts` | 0.35 d |
-| ⬜ 4 | 17 copy keys in en / he / es; `dictionariesStayInStep` green | 0.15 d |
-| ⬜ 5 | `UpgradeModal.tsx`: band, status strip, the table (§5.3a), sticky header row, phone re-flow with explicit ARIA roles, footer, RTL, tokens | 0.9 d |
-| ⬜ 6 | "Compare plans" button in `PlanSection` (with `available`) and modal wiring | 0.15 d |
-| ⬜ 7 | `UpgradeModal.render`, `UpgradeModal.layers`, `upgradeModal.guard` for the table (§9); §10 mapping in `PlanPurchase.render`; guard list additions | 0.6 d |
-| ⬜ 8 | Full runs (as old Task 8) | 0.15 d |
-| ⬜ 9 | Screenshots for the user diff (light, dark, Hebrew, 360 px, an Essentials and a trial account); update the requirement MD | 0.1 d |
+| ✅ 0–2a | As above, unchanged (types, `planText`, `usePlanFlow` extraction, recorded checkpoint W-6). Checkpoint: see Implementation Notes | 0.8 d |
+| 🟡 2b | **Wait for UM-0 to merge**, then rebase the branch on `origin/main`; re-run the §4.4 checkpoint list (still zero test diff). Met locally (branch cut from UM-0's tip); the rebase after #480 merges is still owed | 0.05 d |
+| ✅ 3 | Mirrored `comparison` types in `planPayloadTypes.ts`; `upgradeModalView.ts` (§5.2a) + `upgradeModalView.test.ts` | 0.35 d |
+| ✅ 4 | 17 copy keys in en / he / es; `dictionariesStayInStep` green | 0.15 d |
+| ✅ 5 | `UpgradeModal.tsx`: band, status strip, the table (§5.3a), sticky header row, phone re-flow with explicit ARIA roles, footer, RTL, tokens | 0.9 d |
+| ✅ 6 | "Compare plans" button in `PlanSection` (with `available`) and modal wiring | 0.15 d |
+| ✅ 7 | `UpgradeModal.render`, `UpgradeModal.layers`, `upgradeModal.guard` for the table (§9); §10 mapping in `PlanPurchase.render`; guard list additions | 0.6 d |
+| ✅ 8 | Full runs (as old Task 8) | 0.15 d |
+| 🟡 9 | Screenshots for the user diff (light, dark, Hebrew, 360 px, an Essentials and a trial account) ✅ (static render, see Implementation Notes); update the requirement MD ⬜ (W-7 / W-11, BA / TL) | 0.1 d |
 | | **Revised total** | **≈ 3.25 d** (SA re-review: ≈ 3 d; the extra is the phone re-flow with explicit roles) |
 
 ---
@@ -590,6 +590,79 @@ Only `components/business-os/settings/__tests__/PlanPurchase.render.test.tsx` ch
 
 ---
 
+## Implementation Notes
+
+**Worktree:** `neuronforge-upgrade-modal-um1a`, branch `feature/bos-upgrade-modal-um1a`, created by RM from the tip of `feature/bos-upgrade-modal-um0` (`5243d900`, PR #480, not yet merged). So UM-0's `comparison` is present locally and Task 2b's dependency is met **locally**. The rebase on `origin/main` after #480 merges is still owed before the PR opens (C-15). Changes are left uncommitted for the user's review. The worktree had no `node_modules`; a junction to the main checkout's `node_modules` was created (ignored by git; never delete it, never `git worktree remove` without unlinking it first).
+
+### Checkpoint 2a (W-6), recorded before Task 3
+
+| Check | Result |
+|---|---|
+| Baseline before any edit (Task 0) | §4.4 list + `components/business-os/settings/__tests__` + `app/business-os/settings/__tests__` + `dictionariesStayInStep`: **38 / 38 suites, 836 / 836 tests**; `components/business-os/__tests__`: **17 / 17, 391 / 391** |
+| `git status -- components/business-os/settings/__tests__ app/business-os/settings/__tests__ lib/business-os` after Tasks 1–2 | **Empty**: no test file and no `lib/business-os` file changed |
+| Same suites after Tasks 1–2 | **55 / 55 suites, 1,227 / 1,227 tests** (= 38 + 17, 836 + 391), no test edited |
+| `npx tsc --noEmit -p .` | No error in `components/business-os/settings/` |
+| `npx eslint` on the four touched / new files | Clean |
+
+**Result: pure move confirmed.** No suite needed a test edit.
+
+**§4.3 hook-order sentence, corrected (SA note):** today `firstStarted` / `firstRead` were declared *before* the `mounted` effect; after the move they are declared *after* the `usePlanFlow(...)` call (which holds the flow state, the `mounted` ref, its effect, the callbacks and the bounded re-read). Hook order only has to be stable from one build to the next, so this is harmless. **Effect order is unchanged**: `mounted` → bounded re-read → first read → `[language]`. P-G8 still holds on `PlanSection.tsx`.
+
+**Move details:** `setPlan` / `setFailed` are now hook arguments, so `exhaustive-deps` cannot see that they are state setters. The two flow hooks carry an `eslint-disable-next-line react-hooks/exhaustive-deps` comment that says why. The dependency lists are the same as before.
+
+
+### Tasks 3–9: what was built
+
+| Item | Where |
+|---|---|
+| Mirrored `PlanComparison*` types, `comparison?:` optional (SA Q-13), no entitlements import (C-6) | `components/business-os/settings/planPayloadTypes.ts` |
+| Pure view (§5.2a): columns by `planIds`, `sections` by identity, `action` per C-22, W-1 `somethingOffered`, UM-SA4 recommended, `unavailableBecause` on the `nextPlanUp` column (SA Q-1) | `components/business-os/settings/upgradeModalView.ts` |
+| The modal (§5.3a): band (solid primary-dark + `aria-hidden` end-edge gradient, mirrored in RTL), status strip, table with explicit ARIA roles, sticky `thead` below `sm` / sticky header cells from `sm` (W-8), phone two-column grid rows via one `PHONE_ROW` constant naming the C-27 tripwire, footer row, "Current plan" `<span>` label, footer notes and "Back to your plan" | `components/business-os/settings/UpgradeModal.tsx` |
+| "Compare plans" (last in the section; hidden while `processing` or without a `comparison`; label on solid primary-dark, W-5) | `components/business-os/settings/PlanSection.tsx` |
+| 17 `upgrade_modal.*` keys, en + he / es drafts | `lib/business-os/translations/{en,he,es}.ts` |
+| Tests | `upgradeModalView.test.ts`, `UpgradeModal.render.test.tsx`, `UpgradeModal.layers.test.tsx`, `upgradeModal.guard.test.ts` (guards (a)–(k), each with a planted-violation control), shared real-payload fixture `upgradeModalPayloads.ts` (it carries its own self-check `describe`, following the `financeRequestPins.ts` precedent, because Jest collects every file under `__tests__`) |
+| §10 mapping | `PlanPurchase.render`: lines 228, 236, 246, 300, 310, 318 and 409 mapped exactly as §10 says (exact-id `moneyButtons()`, W-3); W-4 last-button pin added; `CLIENT_FILES` and the `'use client'` checks gain the five new files. **`PlanSection.render` lines 233 and 254 are also mapped**: this is §10's pre-authorised case, because since UM-0 the builder's own output carries `plans` and `comparison`, so the button is on screen. No assertion deleted |
+| `creditFigures.fromConfig.guard` `SOURCES` | Adds `UpgradeModal.tsx` and `planText.tsx` |
+
+### Final runs (2026-10-19, in the worktree)
+
+| Run | Result |
+|---|---|
+| `components/business-os/settings/__tests__` + `components/business-os/__tests__` + `app/business-os/settings/__tests__` (incl. `planPrefetch.guard`, `accountCard.guard`, `settingsDeepLinks.guard`) + `tierLiteral.forbidden` + `creditFigures.fromConfig.guard` + `enforcementPoints` + `dictionariesStayInStep` | **60 / 60 suites, 1,317 / 1,317 tests** |
+| `npm run test:bos-entitlements` | **300 / 300 suites, 9,076 / 9,076 tests** |
+| `npm run lint:hooks` | Clean (exit 0) |
+| `npx eslint` on every new or touched component and test file | Clean |
+| `npx tsc --noEmit -p .` | No error in `components/business-os/settings/`, the dictionaries or the guard |
+| `console.*` in touched files | 0 in every file (nothing to flag) |
+
+Under a full parallel run, three pre-existing suites each failed once on timing: `PlanUpgrade.render`, the plan section's "cannot be loaded" case and `BoostPurchasesList.render` (Hebrew). All three passed on re-run and alone. For the same reason, the new `PlanSection`-driven modal tests carry a 20 s timeout and open / close only once per test.
+
+### Deviations and findings for SA
+
+| # | What | Why |
+|---|---|---|
+| D-1 | **Focus return is done by `UpgradeModal`**: `onOpenAutoFocus` remembers the opener and `onCloseAutoFocus` focuses it. §5.5 assumed the Radix default | Radix returns focus only to a `Dialog.Trigger`, and it prevents its focus scope's own return. So a controlled dialog with no trigger left focus on `<body>`; the render test caught it. The fix is generic, so UM-2's "open from anywhere" inherits it. `dialog.tsx` is unchanged (C-8) |
+| D-2 | **Section headings use `scope="rowgroup"` / `role="rowheader"`**, not `scope="colgroup"` (§5.3a, §9.4) | In HTML, a heading over a `<tbody>` of rows is a row-group header; `colgroup` would announce it as a column heading. Each heading row also has `aria-hidden` empty cells carrying the column tint, so the recommended and current tints run unbroken, as in the mockup (hidden on a phone) |
+| D-3 | **Trial owners see Essentials "Recommended", not Autopilot** | UM-SA4 is binding: `nextPlanUp`, else the last plan. For a trial, the server's `nextPlanUp` is the lowest tier, so the rule picks it. §9.4's table, the requirement's table text (about line 330) and the mockup all expect Autopilot. Not changed in the UI (C-21 / UM-FR7: no client rule). **Needs a BA / SA ruling**: keep it, or add a server-side recommendation field. The tests assert the rule, not a plan name |
+| D-4 | `ENDS_FREE_ACCESS_KEYS` (2 entries) repeated in `UpgradeModal.tsx` | The footer's free-access sentence needs `PlanPurchase`'s key map, but guard (a) forbids importing `PlanPurchase` (it pulls in the islands' module graph). A render test pins the modal's sentence against the dictionary value. UM-1b can move the map into `planPurchaseCopy.ts` when it touches the islands |
+| D-5 | The `noExclusions` regex is now a third local copy, after `customerPlanView.noExclusions` and `planCopy.i18n` | Same precedent as `planCopy.i18n`; extracting it would mean editing two lib test files. Candidate for a shared test helper |
+| D-6 | The ✓ circle uses `--v2-success` at 15 % with a `--v2-success-icon` tick (the mockup's green); the ✕ circle uses `--v2-border` with `--v2-text-secondary` | This follows the mockup's look, per the user brief. `--v2-success-bg` has no dark override, so it is not used. §5.3a said ✓ in `--v2-primary`. QA to confirm contrast on the computed tokens |
+| D-7 | The band's text column reserves `pe-[25%]` (phone) / `pe-[22%]` (sm and up), so the title never sits on the gradient (Q-5) | On a 360 px phone the headline wraps to two lines (three in Hebrew). Acceptable; flagged for UM-3 copy / polish |
+
+### Screenshots (static render, not the running app)
+
+These were rendered from the real component in Jest (real payloads) and styled by the project's own `app/globals.css` + `app/v2/globals-v2.css`, compiled with the project's Tailwind. They were captured with headless Chrome; the phone shots sit in a 360 px iframe, so media queries see 360 px. Scratch folder: `um1a-shots/` in the session scratchpad. Set: desktop light (Essentials, trial), desktop dark, desktop Hebrew RTL, phone 360 px (Essentials, trial, Hebrew dark). QA still owes the running-app checks: computed tokens under the theme provider, the sticky header on iOS Safari and Android, VoiceOver / TalkBack, and W-10.
+
+### QA Low items, fixed by Dev (2026-10-20)
+
+| Item | Fixed by Dev |
+|---|---|
+| Rows showed through the gap above the sticky plan header when scrolled (12 px phone / 24 px desktop) | The scroll container's top padding is gone (`px-3 pb-3 sm:px-6 sm:pb-6`); the status strip carries the top spacing as `mt-3 sm:mt-6`, which scrolls away. So the sticky header sticks flush at the scroll top. Pinned by a render test (no `p-` / `pt-` / `py-` on the scroll container that holds the `thead`). Scrolled re-renders: `um1a-shots/8-desktop-1280-scrolled-dark.png`, `9-phone-360-scrolled-light.png` |
+| `UpgradeModal.render` "Payment failed / 3-D Secure" never reached that state | Replaced by an `it.each` through the real `PlanSection`, using a `PlanPaymentState`-shaped failed billing row. It asserts the payload really is `payment_failed` / `action_required`, the drawer shows `plan-update-card-email` / `plan-confirm-payment`, and the open modal shows neither control and no link, with the state's own sentence in the status strip and no dead button |
+
+Requirement Status line updated (UM-0 merged #480; UM-1a code-approved, QA passed). Runs: settings + components + settings page + guards **61 / 61 suites, 1,333 tests** (one more suite than before, from `origin/main`); eslint clean.
+---
+
 ## SA Review Notes
 
 **Reviewed by SA — 2026-10-19** (against `origin/main` `4583d21e`)
@@ -671,9 +744,186 @@ Only `components/business-os/settings/__tests__/PlanPurchase.render.test.tsx` ch
 
 ---
 
+**Code Review by SA — 2026-10-19** (worktree `neuronforge-upgrade-modal-um1a`, uncommitted diff on UM-0 tip `5243d900`)
+**Status:** 🔄 Fix Required (F-1 to F-3). The rest of the slice is approved; no re-review of untouched parts needed, only of F-1 to F-3.
+
+### What was verified
+
+| Check | Result |
+|---|---|
+| C-2 `usePlanFlow` pure move | Every line removed from `PlanSection.tsx` reappears verbatim in `usePlanFlow.ts` / `planText.tsx` / `planPayloadTypes.ts`; the only differences are `export` keywords, the `PlanUpgrade` → `PlanUpgradeView` rename and the `PlanChoice` import moving to the types file. Checkpoint 2a (zero test diff) is recorded. Guard (c) pins the predicates to `usePlanFlow.ts` |
+| C-3 | `UpgradeModal` is rendered by `PlanSection` (inside `SheetContent`), takes `plan` as a prop, no read (guard (b)) |
+| C-6 | No import from `lib/business-os/entitlements/` in any of the five new files or `PlanSection.tsx`; `enforcementPoints` green |
+| C-7 | No tier literal in product code; `tierLiteral.forbidden` green unchanged |
+| C-8 | `components/ui/dialog.tsx` (and `page.tsx`) identical to `origin/main`; flex variant, single `sm:max-w-4xl`, X restyled by child selector |
+| C-9 (band) | All band / ribbon / drawer-button text on solid `--v2-primary-dark`; gradients `aria-hidden`, mirrored in RTL (W-5 met). **But see F-2 for text on the body in dark mode** |
+| C-21 | `sections` by identity (`toBe` test); no sort / filter / reverse (guard (h)); W-9 quoted-literal guard (g) present |
+| C-22 | "Current plan" is a `<span>`, no role / tabIndex / aria-disabled; admin-assigned tier gets `'offered'` first |
+| C-24 / W-8 | `table` / `thead` / `tbody` / `tfoot` `max-sm:block`, rows `max-sm:grid max-sm:grid-cols-2`, sticky `thead` below `sm`, sticky header cells from `sm`; `PHONE_ROW` names the C-27 tripwire. 360 px screenshots show no horizontal scroll |
+| W-3 / W-4 | `moneyButtons()` excludes by exact test id only; every mapped absence test also asserts `plan-compare-open` present; last-button pin added with non-vacuity |
+| §10 mapping | `PlanPurchase.render` 228, 236, 246, 300, 310, 318, 409 and `PlanSection.render` 233, 254: each `queryByRole('button')` absence became "no button other than the exact id" plus "that button is present". This is a narrowing, not a weakening. No assertion deleted |
+| Copy | 17 `upgrade_modal.*` keys in en, he and es; no figure; `dictionariesStayInStep` green |
+| Logging | 0 `console.*` in every touched / new file; `usePlanFlow` keeps `module: 'BusinessOsPlanSection'` |
+| Runs (SA, in the worktree) | `components/business-os/settings/__tests__` + `app/business-os/settings/__tests__` + `tierLiteral.forbidden` + `creditFigures.fromConfig.guard` + `enforcementPoints` + `dictionariesStayInStep`: **43 / 43 suites, 926 / 926 tests** |
+| Merge with `origin/main` | `5243d900` is an ancestor of `origin/main` (`a9551d9c`), and `git diff 5243d900 origin/main` on every touched path (settings components, translations, the credit-figures guard, `dialog.tsx`) is **empty**. A merge of `origin/main` should be clean. Re-run the suites after it (W-6) |
+
+### Ruling on D-3: UM-SA4 / C-10 amended (user decision UM-BQ4)
+
+The user decided UM-BQ4 on 2026-10-18: **Recommended = Autopilot** for trial and Essentials owners. The approved mockup shows the same. UM-SA4's `nextPlanUp` first rule contradicts that for a trial owner, because a trial's `nextPlanUp` is the lowest tier. The SA rule was wrong, not the business decision. Dev was right not to patch it on their own.
+
+**Amended UM-SA4 (replaces "nextPlanUp, else the last plan", and the C-10 ribbon half):**
+
+> **Recommended** = the **last** entry of `plans` (server order, ascending) whose `planId` is in the offered set (`offer.tiers` when `offer.kind === 'choose'`, ∪ `upgrade.tiers`) **and** is not the current tier's `planId`. If there is no such entry, there is no ribbon. `nextPlanUp` no longer takes part in the ribbon. It still drives the drawer's B9 and the `unavailableBecause` sentence (SA Q-1). No tier literal (C-7).
+
+What this gives:
+
+| Account | Ribbon |
+|---|---|
+| Trial | Autopilot (both offered) |
+| Essentials | Autopilot (upgrade offered). Same as before |
+| Autopilot | None (nothing offered) |
+| Founding Partner, end date set | Autopilot |
+| Founding Partner, no end date / switches off / `purchase: null` | None |
+| Admin-assigned tier, own plan offered | The highest offered plan other than its own |
+| Top plan not offered, lower one offered | The lower one (the highest one that is offered) |
+
+The locked-action case ("the plan that unlocks it") is UM-2's context-driven rule (C-4). It is not this rule, and this rule does not pre-empt it.
+
+### Code Review Comments
+
+1. **F-1** `components/business-os/settings/upgradeModalView.ts:91-93` — replace `candidate = nextPlanUp?.planId ?? lastPlanId` with the amended UM-SA4 above: walk `plans` from the end and take the first one that is offered and not current. Update the header comment (lines 15-17) and the `isRecommended` doc on `PlanColumnView`. **Tests:** in `upgradeModalView.test.ts`, delete `ruleRecommended`. It restates the implementation, so the test can never fail. Assert by the fixture constants instead: Trial → `column(payload, TOP).isRecommended === true` and `LOWER` false; Founding Partner with an end date → `TOP`. Add two cases: (a) a copied trial payload with `TOP` removed from `offer.tiers` → `LOWER` recommended; (b) a payload where `nextPlanUp` names `LOWER` but `TOP` is offered → `TOP` (this pins that `nextPlanUp` no longer decides). In `UpgradeModal.render.test.tsx` Trial and Founding Partner end-date cases, assert the ribbon sits inside `columnHeader(TOP)`, not only "one ribbon somewhere". Re-render screenshot 4 / 6 (trial). — Priority: **High** (contradicts a user decision)
+2. **F-2** `UpgradeModal.tsx:141` (status-strip plan name) and `:353` (highlighted cell value) — `text-[var(--v2-primary-dark)]` on `--v2-surface` in dark mode is #4F46E5 on #1E293B ≈ **2.3:1**, below AA 4.5:1 for `text-sm`. `--v2-primary-dark` has no `.dark` override, and screenshot 2 shows the faint "Essentials". Fix: use `--v2-text-primary` + `font-semibold` for both, so the highlight is carried by weight, which works in both modes, or use a token with a dark override. Do not add a `dark:` class (guard). Light mode (6.3:1) is fine. Add a guard or render assertion that `--v2-primary-dark` text appears only inside the band / ribbon. — Priority: **Medium** (C-9 / AC-UM12)
+3. **F-3** W-11 / W-7 not met. The requirement's ACs are still card-era. AC-UM11 says "cards stack with the recommended one first". AC-UMD1 says "a **disabled** 'Current plan'", which contradicts C-22. The status line still reads "UM-1a workplan to be revised". BA must update the ACs to the table, record UM-BQ4 → amended UM-SA4 (line ~130 "the existing rule picks") and record Q-11 to Q-14 and D-1 to D-7 **before the PR opens**. This is a docs gate (TL to route to BA), not a Dev code item. — Priority: **Medium**
+
+### Deviations D-1 to D-7
+
+| # | Ruling |
+|---|---|
+| D-1 | **Accepted.** The opener captured in `onOpenAutoFocus` and focused in `onCloseAutoFocus` is generic, and `dialog.tsx` is untouched |
+| D-2 | **Accepted.** `scope="rowgroup"` is the correct header for a `<tbody>`; §5.3a / §9.4 "colgroup" are corrected by this ruling |
+| D-3 | **Ruled above** (F-1) |
+| D-4 | **Accepted** for UM-1a. UM-1b moves `ENDS_FREE_ACCESS_KEYS` into `planPurchaseCopy.ts`. Record it in the UM-1b row |
+| D-5 | **Accepted.** Shared `noExclusions` test helper is a backlog item, not this slice |
+| D-6 | **Accepted** (mockup look). The tick (#059669) on the 15 % success tint stays above 3:1 graphics contrast on both surfaces |
+| D-7 | **Accepted**; the headline wraps on a phone. A UM-3 polish item |
+
+### Optimisation Suggestions
+- `UpgradeModal.tsx:279`: cells are matched to columns by index. That is correct under UM-0's contract, but a `columns.find(c => c.planId === cell.planId)` lookup would make a future order drift show as a missing tint, not as a wrong plan name in the screen-reader text. Low.
+- `UpgradeModal.tsx:187`: `captionId` is a fixed string. Use `useId()` in case UM-2 ever mounts two instances. Low.
+- `--v2-text-muted` (#9CA3AF) small text (price suffix, footer, section headings) is about 2.5:1 on white. This is the platform-wide token used across the drawer, so it is not a UM-1a blocker. Raise it in UM-3's a11y pass.
+- Phone, trial: the sticky footer holds four sentences (about 190 px of a 800 px viewport, screenshot 6). Acceptable for view-only. UM-1b replaces `view_only_note`; consider folding the B7 sentence into the status strip in UM-3.
+
+### Notes for QA
+- After F-1: a trial owner sees **Autopilot** "Recommended"; Essentials owner unchanged; Autopilot owner none.
+- After F-2: dark mode, the status-strip plan name and highlighted values read clearly.
+- Still owed (W-10): sticky header at 360 px on iOS Safari + Android; no horizontal scroll; VoiceOver / TalkBack read rowheaders and "{plan}: Included / Not included"; computed `--v2-primary-dark` under the theme provider (light + dark); focus returns to "Compare plans" on Escape / X / "Back to your plan"; Escape closes the modal only, not the drawer; Choose / Upgrade in the drawer behave exactly as before (sandbox).
+
+### Code Approved for QA: Yes, conditionally. QA may run in parallel, but the user diff and RM wait for F-1 and F-2 (SA re-check of those two only) and F-3 (BA).
+
+### Dev response to F-1 to F-3 (2026-10-20)
+
+| # | Status | Fixed by Dev |
+|---|---|---|
+| F-1 | ✅ Fixed | `upgradeModalView.ts`: Recommended = walk `plans` from the end, the first id that is offered (`offer.tiers` when `choose`, plus `upgrade.tiers`) and not the current tier; none otherwise. `nextPlanUp` no longer picks it (it still feeds B9 and `unavailableBecause`). Header comment and `isRecommended` doc updated. Tests: `ruleRecommended` deleted; Trial and Founding Partner (end date) assert `TOP` true / `LOWER` false; new "TOP not offered → LOWER" and "nextPlanUp = LOWER while TOP offered → TOP"; the render tests check the ribbon inside `columnHeader(TOP)`. Screenshots 4 / 6 re-rendered: trial shows Autopilot recommended |
+| F-2 | ✅ Fixed | Status-strip plan name and highlighted values now use `--v2-text-primary` + `font-semibold` (non-highlighted values are `font-normal` in `--v2-text-secondary`), with no `dark:` class. New render assertion: `--v2-primary-dark` text only inside the band. Dark screenshots 2 / 7 re-rendered |
+| F-3 | ✅ Done (Dev, at TL's request) | Requirement: AC-UM11 superseded by the 360 px table wording, AC-UMD1 "disabled Current plan" replaced by the C-22 non-button label, §4.0 "Recommended" / "Current plan" / "Quantity rows" rows aligned, C-10 marked amended per UM-BQ4, status line updated, two Change History rows |
+
+**he / es wording: APPROVED by the user 2026-10-20.** `plans_label` השוואה בין התוכניות / Comparación de planes; `current_plan` התוכנית הנוכחית / Plan actual; `included` כלול / Incluido; `not_included` לא כלול / No incluido (the other 13 keys as drafted in §6).
+
+**Task 2b:** `origin/main` (with UM-0 #480 merged) taken in by **fast-forward** to `f87eccda`. No merge commit, no overlap with the uncommitted files; checkpoint suites re-run green (see the Change History row).
+
+**SA re-check of F-1 to F-3 — 2026-10-20** (worktree at `f87eccda` + uncommitted diff)
+**Status:** ✅ Code Approved
+
+| # | Verified |
+|---|---|
+| F-1 | `upgradeModalView.ts` implements the amended UM-SA4. It walks `plans` from the end and takes the first plan that is offered and not current. No literal; `nextPlanUp` is not consulted. `ruleRecommended` is gone. The tests assert `TOP` / `LOWER` by fixture constant, and the two new cases are present ("TOP not offered → LOWER"; "nextPlanUp = LOWER, TOP offered → TOP"). The render tests (Trial, Founding Partner with an end date, Essentials) check the ribbon inside `columnHeader(TOP)` |
+| F-2 | The status-strip name and highlighted values use `--v2-text-primary` + `font-semibold`, and no `dark:` class was added. The only remaining `--v2-primary-dark` uses are the band and the ribbon background. The new render assertion pins that. Re-rendered dark screenshot 2 reads clearly |
+| F-3 | Requirement: AC-UM11 superseded by the 360 px table wording; AC-UMD1 now says a non-interactive "Current plan" (C-22); §4.0 "Recommended" and C-10 (item 10) record the UM-BQ4 amendment; status line updated. Nit, not blocking: the status line still ends "UM-1a workplan to be revised by Dev" in the older UM-D1 clause. BA / TL may trim it with the merge record |
+| Runs (SA) | Settings + settings-page suites + `tierLiteral.forbidden` + `creditFigures.fromConfig.guard` + `enforcementPoints` + `dictionariesStayInStep`: **43 / 43 suites, 929 / 929 tests** |
+
+### Code Approved for QA: Yes. The user diff and RM may proceed after QA (the W-10 manual checks remain QA's).
+
+---
+
 ## QA Testing Report
 
-_To be completed by QA (in parallel with SA code review, per the short path). Manual checks owed: modal open / close and focus return from the drawer; light and dark; Hebrew RTL; 360 px phone (stacked, recommended first, no horizontal scroll); computed-token contrast on the band (C-9); Choose and Upgrade in the drawer still work exactly as before (sandbox)._
+**QA — 2026-10-20** (worktree `neuronforge-upgrade-modal-um1a`, `origin/main` `f87eccda` + the uncommitted UM-1a diff, after F-1 / F-2)
+**Test mode:** full
+**Strategy used:** A + B (Jest render / unit / source guards on real `buildCustomerPlanView` + `readPlanPurchaseView` payloads), plus a headless Chrome render check of the static harness (Option D, partial). No sign-in, no running app
+**Focus:** ui, schema (payload pass-through), security (no money control in the modal)
+**Skipped:** signed-in click-through, real devices, screen readers (owed, below)
+**Input source:** prompt keywords (TL brief) + §9.4 / W-10
+
+### Runs
+
+| Run | Result |
+|---|---|
+| `components/business-os/settings/__tests__` + `components/business-os/__tests__` + `app/business-os/settings/__tests__` (incl. `planPrefetch.guard`, `accountCard.guard`, `settingsDeepLinks.guard`) + `tierLiteral.forbidden` + `creditFigures.fromConfig.guard` + `enforcementPoints` + `dictionariesStayInStep` | **60 / 60 suites, 1,320 / 1,320 tests** before QA's file; **61 / 61, 1,331 / 1,331** with it. No timeouts, no re-run needed |
+| `npm run test:bos-entitlements` | **301 / 301 suites, 9,127 / 9,127 tests** |
+| `npm run lint:hooks` | Clean (exit 0) |
+| `npx eslint` on QA's new test file | Clean |
+
+**Added by QA (test only, no product change):** `components/business-os/settings/__tests__/UpgradeModal.qa.render.test.tsx`, 11 tests (incl. the fixture self-check): Essentials cancelling, paused subscription, payment failed (B3 stays in the drawer, never in the modal), unreadable plan and `status !== 'ok'` (no "Compare plans"), keyboard (Enter opens, Tab cycles only "Back to your plan" and X, Escape returns focus), money unchanged after open / close (the drawer's "Upgrade to …" still POSTs the preview; trial "Choose …" still POSTs `{ tier, returnTo: 'settings_plan' }`), he / es cell sr text "{plan}: {state}".
+
+### Per state (§2.2)
+
+| State | Your plan column | Recommended | Status strip | "Current plan" | Buttons in modal | Evidence |
+|---|---|---|---|---|---|---|
+| Essentials, renewing | Essentials | Autopilot | "You're on Essentials · $79 … · Renews on …" | Label ×2 (span) | X + Back only | `UpgradeModal.render`; screenshot 1 |
+| Essentials, cancelling | Essentials | Autopilot only if the server offers the upgrade | Ending sentence from the record | Label ×2 | X + Back only | QA test |
+| Autopilot | Autopilot | **None** | As sent | Label ×2 | X + Back only; headline "You're on our top plan" | `UpgradeModal.render` |
+| Trial | None | **Autopilot** (F-1, UM-BQ4) | Test Flight · Free · trial end | None | X + Back only; footer trial sentence + view-only note | `UpgradeModal.render`, `upgradeModalView.test`; screenshot 4 |
+| Founding Partner, no end date | None | None | As sent | None | X + Back only; headline "Compare our plans" | `UpgradeModal.render` |
+| Founding Partner, end date | None | Autopilot | As sent | None | X + Back only; free-access sentence | `UpgradeModal.render` |
+| Held invitee | n/a: never reaches Settings (page gate; `planPurchaseView` header) | — | — | — | — | Code read |
+| Payment failed (`past_due` with notice) | Essentials | — | "Your payment on … didn't go through" | — | No B3 / no confirm link in the modal; B3 still in the drawer | QA test |
+| Paused | Renders the server table | — | — | — | X + Back only | QA test |
+| Unreadable plan / `status !== 'ok'` / no `comparison` | No "Compare plans" button | — | — | — | — | QA test; `UpgradeModal.render` |
+
+**C-1 (view only):** in every state the only buttons inside `plan-compare-modal` are the X and "Back to your plan". After the modal is opened and closed, the drawer's Choose / Upgrade still POST exactly as before.
+
+### Interaction
+
+| Check | Result |
+|---|---|
+| Open / close (Escape, X, Back); focus back on "Compare plans" | ✅ (`UpgradeModal.render` ×3, QA keyboard test) |
+| Escape / backdrop close only the modal, not the drawer; a press inside closes neither | ✅ (`UpgradeModal.layers`) |
+| Keyboard order | ✅ in jsdom: initial focus inside the modal; Tab cycles Back → X only (trapped). "Current plan" labels are not tabbable |
+| Screen-reader names | ✅ table named "Plan comparison"; one `columnheader` per plan; a `rowheader` per row; section headers `scope="rowgroup"` (D-2); every cell's sr text is "{plan}: Included / Not included / {value}" in en, he and es |
+| he RTL | ✅ `dir="rtl"`, gradient `to-l`, Hebrew copy, `$79` digits; headless Chrome confirms the scope column on the right and Essentials to the right of Autopilot |
+| es | ✅ no English `upgrade_modal.*` value left; Spanish cell sr text |
+
+### Render check (headless Chrome, static harness; QA copy in `scratchpad/qa-um1a/`)
+
+| Width | Result |
+|---|---|
+| 360 px (iframe, so media queries see 360): en light, trial light, he dark | ✅ `scrollWidth === clientWidth` (360 / 360; scroll body 350 / 350), **no element outside the viewport**, rows `display: grid`, two columns at 13 px / 176 px. The sticky `thead` holds after a 400 px scroll |
+| 1280 px: en light / dark, he dark | ✅ modal 896 px, no overflow; header cells `position: sticky` and hold after a scroll; band `rgb(79, 70, 229)` (`--v2-primary-dark`, static tokens) |
+
+### Issues Found
+
+#### Bugs (must fix before commit)
+None.
+
+#### Performance Issues (should fix)
+None.
+
+#### Edge Cases (nice to fix)
+1. **Rows show through above the sticky header.** Severity: Low. File: `components/business-os/settings/UpgradeModal.tsx` (scroll body `p-3 sm:p-6` + `top-0`). `top-0` sticks at the scroll body's content edge, so the padding strip above the sticky header (12 px on a phone, 24 px on desktop) shows rows scrolling under it. Headless Chrome: header top 149 px vs body top 137 px at 360 px, 163 vs 139 at 1280 px (`scratchpad/qa-um1a/qa-1280-scrolled-dark.png`: "AI-built website" and its ticks are visible above the header). Expected: nothing visible above the sticky header. Polish for UM-1b / UM-3.
+2. **Dev's "Payment failed / 3-D Secure" render test is vacuous.** Severity: Low (test). File: `__tests__/UpgradeModal.render.test.tsx` line 155. `payingRow(LOWER, { subscriptionStatus: 'past_due' })` gives `billing: null` (no notice fields), so the absence assertions can never fail. QA's test covers `payment_failed` with the `PlanPaymentState` fixture. `action_required` (3-D Secure) is still not driven through the modal.
+3. Already recorded, not raised again: English sr-only "Close" in he / es (Q-4, UM-3); `--v2-text-muted` small text ≈ 2.5:1 (UM-3).
+
+### Manual checks owed (not attempted, no sign-in)
+- [ ] Signed-in click-through in the running app: Settings → Your plan → "Compare plans", with an Essentials and a trial account; the drawer's Choose / Upgrade unchanged (sandbox)
+- [ ] Computed `--v2-primary-dark` under the theme provider (custom tokens), light and dark (C-9, R-5)
+- [ ] Real iOS Safari + Android Chrome at 360 px: sticky header (R-13), no horizontal scroll
+- [ ] VoiceOver + TalkBack: rowheaders and "{plan}: Included / Not included" read correctly in the grid re-flow (R-12)
+- [ ] Real Chrome keyboard: whether the scroll body becomes a tab stop (keyboard-focusable scrollers) and how it is announced
+
+### Final Status
+- [x] Every UM-1a acceptance criterion that can be automated passes; no Bug. **PASS WITH NOTES**: two Low edge cases and the manual checks above are still owed
+- [ ] Issues found — Dev must address before commit
 
 ---
 
@@ -691,3 +941,8 @@ _To be completed by RM._
 | 2026-10-19 | SA workplan review: APPROVED WITH CONDITIONS | Verified pg8 scope, C-2/C-3/C-5/C-6/C-7/C-8 on `origin/main` `4583d21e`; Q-1 to Q-10 ruled (all Dev proposals accepted; Q-8 and Q-6 become UM-1b items, Q-4 sr label a UM-3 item, C-13 deferred to UM-1b); conditions W-1 to W-7 (offered set excludes current plan, reachable C-3 test, exact-id `moneyButtons`, last-button pin, solid label on the drawer button, recorded checkpoint, requirement update) |
 | 2026-10-19 | Revised for UM-D1 / UM-D2 (SA re-review "workplan impact") | Cards replaced by a comparison table rendering UM-0's `comparison` (new §5.2a view model with per-column action slot, §5.3a table + phone M-A with sticky header and explicit ARIA roles, C-24); §6 drops `everything_in_plus`, `plans_label` becomes the caption, adds `current_plan` / `included` / `not_included` / `cell_label` (17 keys, he / es drafts); §7 mirrored `comparison` types in `planPayloadTypes.ts` (C-6); §9.4 table tests and guards (C-21, C-22, C-23, admin-assigned tier, no current column for trial / Founding Partner); §10 and W-3 / W-4 re-checked against the non-button "Current plan" label; dependency on UM-0 merging first (C-15, Task 2b); R-6 / Q-8 moot, R-12–R-14, Q-11–Q-14 added; estimate ≈ 3.25 d. Tasks 0–2a unchanged. Superseded text kept and marked. Status: awaiting SA re-review |
 | 2026-10-19 | SA re-review (UM-D1 / UM-D2): APPROVED WITH CONDITIONS | Q-11 (empty slot), Q-12, Q-13 (optional `comparison`) accepted; Q-14 accepted with W-8. W-1 to W-6 stand; W-7 extended (Q-11 to Q-14, UM-0 dependency). New W-8 (phone: table sections block, sticky on `thead` below 640 px), W-9 (guard (g) matches quoted literals), W-10 (QA owed list for the table), W-11 (C-26 ACs before code review). Tasks 3–9 after UM-0 merges |
+| 2026-10-19 | Implemented (Dev), uncommitted | Tasks 0–8 done, 9 screenshots done; checkpoint 2a recorded (pure move, no test edit). 60 / 60 suites (1,317 tests) + `test:bos-entitlements` 300 / 300 (9,076) green, `lint:hooks` clean. Deviations D-1 to D-7 for SA (D-3 needs a BA / SA ruling). Requirement MD update (W-7 / W-11) still owed. Status: Code Complete |
+| 2026-10-19 | SA code review: FIX REQUIRED (F-1 to F-3) | Verified C-2 pure move (line-level), C-3, C-6, C-7, C-8, C-21, C-22, C-24 / W-8, W-3 / W-4, §10 narrowing (no weakening), 17 keys, 0 `console.*`; SA run 43 / 43 suites, 926 tests; no drift on touched paths since `5243d900`, so the `origin/main` merge should be clean. **D-3: UM-SA4 / C-10 amended per user decision UM-BQ4**: Recommended = the last `plans` entry that is offered and not current (`nextPlanUp` no longer decides the ribbon). F-1: implement it, and replace the tautological `ruleRecommended` test with fixture-constant assertions plus two new cases. F-2: dark-mode contrast of `--v2-primary-dark` body text (≈ 2.3:1). F-3: requirement ACs / UM-BQ4 amendment by BA before the PR. D-1, D-2, D-4 to D-7 accepted |
+| 2026-10-20 | F-1 / F-2 fixed, F-3 docs done, he / es approved | Recommended per amended UM-SA4 (UM-BQ4); dark-mode text off `--v2-primary-dark`; requirement ACs updated; fast-forwarded to `origin/main` `f87eccda` (UM-0 merged). Runs: settings + components + guards 60 / 60 suites, 1,320 tests; `test:bos-entitlements` 301 / 301, 9,127; `lint:hooks` and tsc clean. Awaiting SA re-check of F-1 / F-2 |
+| 2026-10-20 | SA re-check: CODE APPROVED | F-1 (amended UM-SA4 rule + fixture-constant tests + ribbon in `columnHeader(TOP)`), F-2 (no `--v2-primary-dark` body text; render pin) and F-3 (AC-UM11, AC-UMD1, §4.0, C-10 amended) verified; SA run 43 / 43 suites, 929 tests. Non-blocking nit: stale "to be revised by Dev" clause in the requirement status line |
+| 2026-10-20 | QA: PASS WITH NOTES | 61 / 61 suites, 1,331 tests (incl. QA's new `UpgradeModal.qa.render.test.tsx`, 11 tests); `test:bos-entitlements` 301 / 301, 9,127; `lint:hooks` clean. Headless Chrome: no horizontal scroll at 360 px, sticky header holds. No Bug. Low edge cases: rows visible in the padding strip above the sticky header; vacuous payment-failed render test. Manual checks owed: signed-in click-through, theme-provider tokens, iOS / Android, VoiceOver / TalkBack |
