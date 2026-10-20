@@ -31,7 +31,6 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
-import ExchangeRatesPage from '../page';
 import { ExchangeRatesView } from '../components/ExchangeRatesView';
 
 const PATH = '/admin/exchange-rates';
@@ -144,7 +143,7 @@ const countLine = () => screen.getByTestId('rates-count').textContent;
 const plainGets = () => calls.filter((c) => c.method === 'GET' && c.url === '/api/admin/exchange-rates');
 
 async function renderPage() {
-  render(<ExchangeRatesPage />);
+  render(<ExchangeRatesView />);
   await screen.findByTestId('exchange-rates-content');
 }
 
@@ -184,7 +183,7 @@ describe('R-2: Disabled only and All are written to the URL', () => {
 describe('R-3: an inbound link reproduces its view', () => {
   it('currencies=all and currencies=disabled open their views at once', async () => {
     arrive('currencies=all');
-    const first = render(<ExchangeRatesPage />);
+    const first = render(<ExchangeRatesView />);
     await screen.findByTestId('exchange-rates-content');
     expect(showSelect().value).toBe('all');
     expect(shownCodes()).toEqual(['EUR', 'ILS', 'JPY', 'USD']);
