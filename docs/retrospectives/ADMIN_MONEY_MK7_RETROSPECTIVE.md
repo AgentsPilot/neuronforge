@@ -23,6 +23,6 @@ The History block is removed. The plan-mix trend now sits under Plan mix, and th
 
 - **When splitting one block into several, share its read** so the page's request count stays pinned.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk7-history-under-kpis — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk7-history-under-kpis — commit `af030efb`, main merged `340b4764`, PR #491 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

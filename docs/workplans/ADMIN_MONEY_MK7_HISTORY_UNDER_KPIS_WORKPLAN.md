@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-7; §6 item 13; C-7; SA-RR-MK pins table ("MK-1, MK-6, MK-7: none expected"); FIN slice 8.3 (E-85, E-99, E-100, E-101, AC-173, C-1)
 **Branch:** `feature/admin-money-mk7-history-under-kpis` (from main `5e6e489c`; MK-6 #489 merged)
 **Date:** 2026-10-20
-**Status:** Code Complete
+**Status:** Code Approved (SA-CR-MK7), QA passed; committed `af030efb`, PR [#491](https://github.com/AgentsPilot/neuronforge/pull/491) opened 2026-10-21, auto-merge on
 **Path:** UI short path. Markup and copy only. The payload, the finance request and the history route are unchanged.
 
 ## Overview
@@ -195,7 +195,10 @@ All counts match Dev's.
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk7-history-under-kpis` (from main `5e6e489c`)
+- **Commit:** `af030efb` feat(finance): history trends sit under their KPIs (plan mix, credits) (MK-7)
+- **Merge:** origin/main (`930a6cee`) merged in `340b4764`, no conflicts; pins equal main
+- **PR:** [#491](https://github.com/AgentsPilot/neuronforge/pull/491), auto-merge on (merge commit, via the merge queue)
 
 ---
 
