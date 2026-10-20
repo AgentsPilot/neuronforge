@@ -929,7 +929,14 @@ None.
 
 ## Commit Info
 
-_To be completed by RM._
+| Field | Value |
+|---|---|
+| Branch | `feature/bos-upgrade-modal-um1a` |
+| Commits | `5d4e2ffa` feat(business-os): plan comparison modal, view only (UM-1a); `a1d46c5a` docs(business-os): UM-1a workplan, SA / QA records and requirement update; `05b50656` merge of `origin/main` (`0c27b576`, clean, no overlap); this Commit Info follow-up |
+| Refactor commit | Not split out: `PlanSection.tsx` and `planPayloadTypes.ts` carry both the `usePlanFlow` move and the modal wiring / comparison types |
+| Runs after the merge | Settings + components + settings page + guards 61 / 61 suites, 1,333 tests; `test:bos-entitlements` 301 / 301, 9,131 |
+| PR | [#483](https://github.com/AgentsPilot/neuronforge/pull/483) to `main` (merge commit) |
+| Committed by | RM, 2026-10-20 |
 
 ---
 
@@ -946,3 +953,4 @@ _To be completed by RM._
 | 2026-10-20 | F-1 / F-2 fixed, F-3 docs done, he / es approved | Recommended per amended UM-SA4 (UM-BQ4); dark-mode text off `--v2-primary-dark`; requirement ACs updated; fast-forwarded to `origin/main` `f87eccda` (UM-0 merged). Runs: settings + components + guards 60 / 60 suites, 1,320 tests; `test:bos-entitlements` 301 / 301, 9,127; `lint:hooks` and tsc clean. Awaiting SA re-check of F-1 / F-2 |
 | 2026-10-20 | SA re-check: CODE APPROVED | F-1 (amended UM-SA4 rule + fixture-constant tests + ribbon in `columnHeader(TOP)`), F-2 (no `--v2-primary-dark` body text; render pin) and F-3 (AC-UM11, AC-UMD1, §4.0, C-10 amended) verified; SA run 43 / 43 suites, 929 tests. Non-blocking nit: stale "to be revised by Dev" clause in the requirement status line |
 | 2026-10-20 | QA: PASS WITH NOTES | 61 / 61 suites, 1,331 tests (incl. QA's new `UpgradeModal.qa.render.test.tsx`, 11 tests); `test:bos-entitlements` 301 / 301, 9,127; `lint:hooks` clean. Headless Chrome: no horizontal scroll at 360 px, sticky header holds. No Bug. Low edge cases: rows visible in the padding strip above the sticky header; vacuous payment-failed render test. Manual checks owed: signed-in click-through, theme-provider tokens, iOS / Android, VoiceOver / TalkBack |
+| 2026-10-20 | Committed (RM), PR #483 opened | Commits `5d4e2ffa` (feat) + `a1d46c5a` (docs), `origin/main` merged clean (`05b50656`); 61 / 61 suites (1,333) + `test:bos-entitlements` 301 / 301 (9,131) green after the merge |
