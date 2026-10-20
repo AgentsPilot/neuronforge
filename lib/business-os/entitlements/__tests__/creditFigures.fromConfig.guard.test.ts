@@ -117,6 +117,9 @@ const read = (file: string) => readFileSync(join(process.cwd(), file), 'utf8');
 const SOURCES = [
   // Pages and components
   'components/business-os/settings/PlanSection.tsx',
+  // Upgrade modal UM-1a: the plan comparison window, and the plan text helpers moved out of PlanSection.
+  'components/business-os/settings/UpgradeModal.tsx',
+  'components/business-os/settings/planText.tsx',
   'components/business-os/UsageCard.tsx',
   'app/invite/page.tsx',
   // Copy modules (whole file)

@@ -294,6 +294,24 @@ export const en = {
     'plan.comparison.section.run_business': 'Run your business',
     'plan.comparison.section.ai_assistant': 'AI assistant',
     'plan.comparison.section.included': "What's included",
+    // Upgrade modal UM-1a: the plan comparison window (view only).
+    'upgrade_modal.open_compare': 'Compare plans',
+    'upgrade_modal.headline.choose': 'Choose the plan that fits your business',
+    'upgrade_modal.headline.top_plan': "You're on our top plan",
+    'upgrade_modal.headline.compare': 'Compare our plans',
+    'upgrade_modal.subheading': 'See what each plan includes, side by side.',
+    'upgrade_modal.status_on': "You're on {plan}",
+    'upgrade_modal.your_plan': 'Your plan',
+    'upgrade_modal.recommended': 'Recommended',
+    'upgrade_modal.price_suffix': 'a month, excluding tax',
+    'upgrade_modal.plans_label': 'Plan comparison',
+    'upgrade_modal.footer_prices': 'Prices in USD, excluding tax.',
+    'upgrade_modal.view_only_note': 'To choose or upgrade, go back to Your plan.',
+    'upgrade_modal.back_to_plan': 'Back to your plan',
+    'upgrade_modal.current_plan': 'Current plan',
+    'upgrade_modal.included': 'Included',
+    'upgrade_modal.not_included': 'Not included',
+    'upgrade_modal.cell_label': '{plan}: {state}',
     // The plan screen's remaining words, so a Hebrew or Spanish owner reads no
     // English there (user decision, 2026-10-02). {plan}, {from}, {to} are filled
     // by the component; the values arrive already in the reader's language.
