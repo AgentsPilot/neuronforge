@@ -671,7 +671,14 @@ lint:hooks                               exit 0 (--max-warnings 0)
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-upgrade-modal-um2` (from UM-1b tip `2bde7a81`), pushed to `origin` |
+| Code commit | `357c1105` feat(business-os): open the plan comparison modal from anywhere (UM-2) |
+| Docs commit | `e85d8c91` docs(business-os): UM-2 workplan, SA/QA records; requirement incl. UM-D3 decision; test page scope + feature flags docs |
+| PR | Not opened. Chained branches; PRs are opened in order, based on `main`, after the user's end-of-stream live session (SA Q-9). Go-live row 20 (c) is the merge gate |
+| Pre-commit runs | settings + Business OS + app/business-os + test-business-os: 71 / 71 suites, 1,372 tests; the 8 named guards 8 / 8, 298 tests; `test:bos-entitlements` 301 / 301, 9,131 tests; `lint:hooks` clean. No secrets; no blanked file |
+| Excluded | `docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM3_WORKPLAN.md` (next slice, left untracked) |
 
 ---
 
@@ -684,3 +691,4 @@ lint:hooks                               exit 0 (--max-warnings 0)
 | 2026-10-20 | Implemented (Dev), uncommitted | User decisions UD-UM2-1 to UD-UM2-3 recorded (he / es approved as drafted; distinct "Needed for this" badge; live checks batched, rows U2-1 to U2-9). Built: `upgradeModalContext.ts`, `UpgradeModalProvider.tsx` (open / refuse / closing grace / inline host in a ref), lazy `StandaloneUpgradeModal.tsx` (third `createLazyDialog`), `PlanFlowStatus.tsx` moved verbatim from `PlanSection`, `UpgradeModal` optional `context` / `afterUpgrade` / `flowStatus` / discriminated read state, `upgradeModalView(plan, context)` variants and O-1, layout placement, switch-gated demo page + flag + harness tab, +6 copy keys. Guards: `upgradeModal.guard` (p)–(s), `lazyDialogs.guard` 2 → 3, new placement and demo guards. X-1 to X-9 met; deviations D-1 to D-7; findings N-1 to N-3. Runs: 90 / 90 suites, 1,760 tests; `test:bos-entitlements` 9,130 / 9,131 (one ENOENT race, re-run green); `lint:hooks`, eslint, scoped tsc clean. Screenshots `scratchpad/um2-shots/` 1–8. Status: Code Complete |
 | 2026-10-20 | SA code review | Code Approved for QA. X-1 to X-9 verified. D-1 to D-7 accepted. SA fixed the `FEATURE_FLAGS.md` header version (1.12.0). Carried to UM-3: N-1, the not-offered line below the fold (Medium, required there), and the "Back to your plan" footer label off Settings (Low). Runs: settings + guards green (4 load timeouts when run in parallel, green with `--runInBand`), `lint:hooks` clean |
 | 2026-10-20 | QA (automated) | No bugs. 78 / 78 suites, 1,672 tests (first parallel run: 16 load timeouts, all green when re-run). `test:bos-entitlements` 301 / 9,131, `lint:hooks` clean. QA added `upgradeModal.um2.qa.render.test.tsx` (15 tests): the demo page 404 behaviour, the demo inside the real provider (one read per mount and per open), keyboard, Escape and focus, failed and slow reads then reopen, `locked_feature` fallbacks, Hebrew `founding_partner`. Run sheet: UM-1b §14 is the master, then U2-1 to U2-9, with QA revisions (U2-1p, Trial D). Row 20 (c) is deferred to the end-of-stream run |
+| 2026-10-20 | Committed (RM) | Code `357c1105`, docs `e85d8c91` on `feature/bos-upgrade-modal-um2`, pushed; no PR (opened after the end-of-stream run) |
