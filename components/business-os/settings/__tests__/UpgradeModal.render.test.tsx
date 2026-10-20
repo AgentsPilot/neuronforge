@@ -19,7 +19,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 type Lang = 'en' | 'he' | 'es';
@@ -116,11 +116,17 @@ function expectColumnButtons(planId: string, name: string) {
 }
 
 describe('per account state (§9.4)', () => {
-  it('Trial: no "Your plan", no label, a ribbon, headline choose, Choose ×2 per column and the trial sentence', async () => {
+  it('Trial: "Your plan" on its OWN first column (LF-2), no label, a ribbon, headline choose, Choose ×2 per column and the trial sentence', async () => {
     const payload = await payloadFor({ planId: TRIAL });
     const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.choose'] })).toBe(modal);
-    expect(within(modal).queryByText(COPY['upgrade_modal.your_plan'])).not.toBeInTheDocument();
+    // LF-2 (was: no "Your plan" at all): the trial's own column, first, marked once, priced "Free".
+    expect(within(modal).getAllByText(COPY['upgrade_modal.your_plan'])).toHaveLength(1);
+    const own = columnHeader(TRIAL);
+    expect(within(own).getByText(COPY['upgrade_modal.your_plan'])).toBeInTheDocument();
+    expect(within(own).getByText(payload.name!)).toBeInTheDocument();
+    expect(within(own).getByText(COPY['plan.price.free'])).toBeInTheDocument();
+    expect(within(own).queryByRole('button')).not.toBeInTheDocument();
     expect(within(modal).queryAllByTestId('plan-compare-current-label')).toHaveLength(0);
     expect(within(modal).getAllByText(COPY['upgrade_modal.recommended'])).toHaveLength(1);
     // UM-BQ4: the ribbon is on the top plan's column.
@@ -128,17 +134,25 @@ describe('per account state (§9.4)', () => {
     // UM-1b: both columns offered, so each carries "Choose {plan}" in header and footer
     // (was: empty slots + the view-only note, removed per UM-1a Q-6).
     for (const plan of payload.plans!) expectColumnButtons(plan.planId, fill(COPY['plan.choose.button'], { plan: plan.name }));
-    expect(within(modal).queryAllByTestId('plan-compare-slot-empty')).toHaveLength(0);
+    // LF-2: the only empty slots are the own column's two (header and footer: it is not for sale).
+    expect(within(modal).queryAllByTestId('plan-compare-slot-empty')).toHaveLength(2);
+    expect(within(own).getAllByTestId('plan-compare-slot-empty')).toHaveLength(1);
     expect(screen.queryByTestId('plan-compare-view-only-note')).not.toBeInTheDocument();
     expect(screen.getByTestId('plan-compare-ends-free-access')).toHaveTextContent(COPY['plan.choose.trial_ends_today']);
     expectNoDeadButton(modal, payload);
   });
 
-  it('Founding Partner, no end date: no marker of any kind, headline compare, no note, no ends-today', async () => {
+  it('Founding Partner, no end date: "Your plan" only on its own first column (LF-2), headline compare, no note, no ends-today', async () => {
     const payload = await payloadFor({ planId: FOUNDING_PARTNER });
     const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.compare'] })).toBe(modal);
-    expect(within(modal).queryByText(COPY['upgrade_modal.your_plan'])).not.toBeInTheDocument();
+    // LF-2 (was: no marker at all): its own plan leads the table, then the tiers in server order.
+    expect(within(modal).getAllByText(COPY['upgrade_modal.your_plan'])).toHaveLength(1);
+    expect(within(columnHeader(FOUNDING_PARTNER)).getByText(COPY['upgrade_modal.your_plan'])).toBeInTheDocument();
+    const headers = within(screen.getByTestId('plan-compare-table')).getAllByRole('columnheader');
+    expect(headers.map((header) => header.getAttribute('data-testid'))).toEqual(
+      [FOUNDING_PARTNER, ...payload.comparison!.planIds].map((id) => `plan-compare-col-${id}`)
+    );
     expect(within(modal).queryByText(COPY['upgrade_modal.recommended'])).not.toBeInTheDocument();
     expect(within(modal).queryAllByTestId('plan-compare-current-label')).toHaveLength(0);
     expect(screen.queryByTestId('plan-compare-ends-free-access')).not.toBeInTheDocument();
@@ -307,29 +321,38 @@ describe('layout classes (C-8, C-9, C-24, W-8)', () => {
   it('C-8: the flex variant, one sm: width, no base max-w, the X recoloured by a child selector', async () => {
     const { modal } = showModal(await payloadFor());
     const classes = modal.className.split(/\s+/);
-    for (const token of ['flex', 'flex-col', 'p-0', 'h-[100dvh]', 'sm:h-auto', 'sm:max-w-4xl', '[&>button]:text-white']) {
+    // LF-1: the band is a light tint, so the X takes the primary text colour (was `[&>button]:text-white`).
+    for (const token of ['flex', 'flex-col', 'p-0', 'h-[100dvh]', 'sm:h-auto', 'sm:max-w-4xl', '[&>button]:text-[var(--v2-text-primary)]']) {
       expect(classes).toContain(token);
     }
     // dialog.tsx's own base `max-w-lg` is the only un-prefixed max-w (C-8: no second base max-w).
     expect(classes.filter((token) => /^max-w-/.test(token))).toEqual(['max-w-lg']);
   });
 
-  it('C-9: every white text sits on solid --v2-primary-dark; the gradient is aria-hidden and holds no text', async () => {
+  it('LF-1 (was C-9): white only on the solid --v2-primary of the app convention (buttons, the icon tile); the band words are text tokens on a tint', async () => {
     const { modal } = showModal(await payloadFor({ billingRow: payingRow(LOWER) }));
-    for (const element of Array.from(modal.querySelectorAll('.text-white'))) {
-      expect(element.closest('.bg-\\[var\\(--v2-primary-dark\\)\\]')).not.toBeNull();
+    const whites = Array.from(modal.querySelectorAll('.text-white'));
+    expect(whites.length).toBeGreaterThan(0);
+    for (const element of whites) {
+      expect(element.closest('.bg-\\[var\\(--v2-primary\\)\\]')).not.toBeNull();
     }
-    const gradient = screen.getByTestId('plan-compare-band-gradient');
-    expect(gradient).toHaveAttribute('aria-hidden', 'true');
-    expect(gradient.textContent).toBe('');
-    expect(gradient.className).toContain('bg-gradient-to-r');
+    const band = screen.getByTestId('plan-compare-band');
+    const tint = screen.getByTestId('plan-compare-band-tint');
+    expect(tint).toHaveAttribute('aria-hidden', 'true');
+    expect(tint.textContent).toBe('');
+    expect(tint.className).toContain('bg-[var(--v2-primary)]/10');
+    expect(band.className).toContain('bg-[var(--v2-surface)]');
+    const title = screen.getByTestId('plan-compare-title');
+    expect(title.querySelector('.text-\\[var\\(--v2-text-primary\\)\\]')).not.toBeNull();
+    expect(title.querySelector('.text-white')).toBeNull();
   });
 
-  it('F-2: --v2-primary-dark text only inside the band or a ribbon (it has no dark-mode override)', async () => {
-    const { modal } = showModal(await payloadFor({ billingRow: payingRow(LOWER) }));
-    const band = screen.getByTestId('plan-compare-band');
-    for (const element of Array.from(modal.querySelectorAll('[class*="text-[var(--v2-primary-dark)]"]'))) {
-      expect(band.contains(element)).toBe(true);
+  it('LF-1 (was F-2): no --v2-primary-dark and no gradient anywhere in the window (the admin theme never sets that shade)', async () => {
+    for (const payload of [await payloadFor({ billingRow: payingRow(LOWER) }), await payloadFor({ planId: TRIAL })]) {
+      const { modal } = showModal(payload);
+      expect(modal.querySelectorAll('[class*="primary-dark"]')).toHaveLength(0);
+      expect(modal.querySelectorAll('[class*="gradient"]')).toHaveLength(0);
+      cleanup();
     }
   });
 
@@ -342,7 +365,7 @@ describe('layout classes (C-8, C-9, C-24, W-8)', () => {
     expect(tokens.filter((token) => /^(sm:)?(p|pt|py)-/.test(token))).toEqual([]);
   });
 
-  it('C-24 / W-8: phone rows are two-column grids, labels span above, thead sticky on a phone, header cells sticky from sm', async () => {
+  it('C-24 / W-8: phone rows are two-column grids (a tier account), labels span above, thead sticky on a phone, header cells sticky from sm', async () => {
     showModal(await payloadFor({ billingRow: payingRow(LOWER) }));
     const table = screen.getByTestId('plan-compare-table');
     expect(table.className).toContain('max-sm:block');
@@ -352,7 +375,9 @@ describe('layout classes (C-8, C-9, C-24, W-8)', () => {
       expect(row.className).toContain('max-sm:grid-cols-2');
       expect(row).toHaveAttribute('role', 'row');
     }
-    for (const header of within(table).getAllByRole('rowheader')) expect(header.className).toContain('max-sm:col-span-2');
+    // LF-2: the label spans the whole row, whatever the column count (was `max-sm:col-span-2`).
+    for (const header of within(table).getAllByRole('rowheader')) expect(header.className).toContain('max-sm:col-span-full');
+    expect(table).toHaveAttribute('data-columns', '2');
     const thead = screen.getByTestId('plan-compare-thead');
     for (const token of ['max-sm:sticky', 'max-sm:top-0']) expect(thead.className).toContain(token);
     for (const header of within(table).getAllByRole('columnheader')) {
@@ -369,8 +394,51 @@ describe('layout classes (C-8, C-9, C-24, W-8)', () => {
   });
 });
 
+describe('LF-2: three columns on a phone (a trial or Founding Partner)', () => {
+  it.each([TRIAL, FOUNDING_PARTNER])('%s: every row is a three-column grid, the label spans, nothing scrolls sideways, compact header', async (planId) => {
+    const payload = await payloadFor({ planId });
+    showModal(payload);
+    const table = screen.getByTestId('plan-compare-table');
+    expect(table).toHaveAttribute('data-columns', '3');
+    for (const row of Array.from(table.querySelectorAll('tr'))) {
+      expect(row.className).toContain('max-sm:grid-cols-3');
+      expect(row.className).not.toContain('max-sm:grid-cols-2');
+    }
+    for (const header of within(table).getAllByRole('rowheader')) expect(header.className).toContain('max-sm:col-span-full');
+    // Compact badges on a phone (about 110 px per column at 360 px).
+    for (const badge of within(table).getAllByText(COPY['upgrade_modal.your_plan'])) expect(badge.className).toContain('max-sm:text-[11px]');
+    const everything = [table, ...Array.from(table.querySelectorAll('*'))].map((element) => element.getAttribute('class') ?? '').join(' ');
+    expect(everything).not.toMatch(/min-w-|overflow-x-auto|\bw-\[\d+px\]/);
+  });
+
+  it("the own column's cells are the server's `row.current`, in every row, named for a screen reader", async () => {
+    const payload = await payloadFor({ planId: FOUNDING_PARTNER });
+    showModal(payload);
+    const own = screen.getAllByTestId('plan-compare-cell').filter((cell) => cell.getAttribute('data-own-plan') === 'true');
+    const rows = allRows(payload);
+    expect(own).toHaveLength(rows.length);
+    rows.forEach((row, index) => {
+      const cell = row.current!;
+      const state = cell.value ?? COPY[cell.included ? 'upgrade_modal.included' : 'upgrade_modal.not_included'];
+      expect(own[index]).toHaveTextContent(fill(COPY['upgrade_modal.cell_label'], { plan: payload.name!, state }));
+    });
+    // Non-vacuity: the own column differs from a tier somewhere (the lower tier has no chat).
+    expect(rows.some((row) => row.current!.included !== row.cells[0].included)).toBe(true);
+  });
+
+  it('an older payload with no `current` renders the tier columns only (two)', async () => {
+    const payload = await payloadFor({ planId: TRIAL });
+    const old: PlanPayload = JSON.parse(JSON.stringify(payload));
+    delete old.comparison!.current;
+    for (const section of old.comparison!.sections) for (const row of section.rows) delete row.current;
+    showModal(old);
+    expect(screen.getByTestId('plan-compare-table')).toHaveAttribute('data-columns', '2');
+    expect(screen.queryByTestId(`plan-compare-col-${TRIAL}`)).not.toBeInTheDocument();
+  });
+});
+
 describe('languages', () => {
-  it('Hebrew: right to left, Hebrew words, the gradient mirrored, prices in digits, columns in payload order', async () => {
+  it('Hebrew: right to left, Hebrew words, prices in digits, columns in payload order', async () => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER), language: 'he' });
     const { modal } = showModal(payload, 'he');
     const HE = translations.he;
@@ -378,7 +446,8 @@ describe('languages', () => {
     expect(screen.getByRole('dialog', { name: HE['upgrade_modal.headline.choose'] })).toBe(modal);
     expect(within(modal).getByText(HE['upgrade_modal.your_plan'])).toBeInTheDocument();
     expect(within(modal).getByText(HE['upgrade_modal.recommended'])).toBeInTheDocument();
-    expect(screen.getByTestId('plan-compare-band-gradient').className).toContain('bg-gradient-to-l');
+    // LF-1: no gradient to mirror any more; the band's tint has no direction.
+    expect(screen.queryByTestId('plan-compare-band-gradient')).not.toBeInTheDocument();
     for (const plan of payload.plans!) expect(within(modal).getByText(`$${plan.monthlyPriceUsd}`)).toBeInTheDocument();
     const headers = within(screen.getByTestId('plan-compare-table')).getAllByRole('columnheader');
     expect(headers.map((header) => header.getAttribute('data-testid'))).toEqual(payload.comparison!.planIds.map((id) => `plan-compare-col-${id}`));

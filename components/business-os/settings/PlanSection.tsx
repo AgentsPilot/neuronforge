@@ -337,16 +337,13 @@ export function PlanSection({
             onClick={() => setCompareOpen(true)}
             aria-haspopup="dialog"
             data-testid="plan-compare-open"
-            // W-5: the label sits on SOLID --v2-primary-dark; the gradient is a
-            // decorative layer at the end edge, kept clear of the text by `pe-10`.
-            className="relative inline-flex items-center gap-2 overflow-hidden ps-4 pe-10 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary-dark)] rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
+            // LF-1 (live test 2026-10-20): the app's own primary button, on the admin
+            // theme's --v2-primary like every other one; no gradient, no darker shade
+            // (the theme provider does not set it, so it fell back to the default indigo).
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[var(--v2-primary)] hover:opacity-90 rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
           >
-            <span
-              aria-hidden="true"
-              className={`pointer-events-none absolute inset-y-0 end-0 w-8 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
-            />
-            <Sparkles aria-hidden="true" className="relative w-4 h-4 shrink-0" />
-            <span className="relative">{t(compare.hasActions ? 'upgrade_modal.open_see_plans' : 'upgrade_modal.open_compare')}</span>
+            <Sparkles aria-hidden="true" className="w-4 h-4 shrink-0" />
+            <span>{t(compare.hasActions ? 'upgrade_modal.open_see_plans' : 'upgrade_modal.open_compare')}</span>
           </button>
           <UpgradeModal
             open={compareOpen}

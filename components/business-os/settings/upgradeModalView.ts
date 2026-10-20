@@ -12,6 +12,8 @@
  * input is server data compared by id — never a plan name or tier id written
  * here (C-7):
  *   - current column: the payload's own plan, and only when it is a tier (C-22);
+ *     a trial or Founding Partner gets the server's own-plan column instead
+ *     (`ownColumn`, live-test fix LF-2), joined to the payload's name and "Free";
  *   - which plans the server offers this account (`offer.tiers` ∪ `upgrade.tiers`);
  *   - the recommended column (UM-SA4 as amended by user decision UM-BQ4): the
  *     LAST shown plan (server order) that the server offers and that is not the
@@ -84,6 +86,19 @@ export interface PlanColumnView {
   ownPlanNote: 'choose' | 'upgrade' | null;
 }
 
+/**
+ * Live-test fix LF-2 (2026-10-20): the account's own plan when it is not a tier
+ * (a trial, a Founding Partner), as the table's FIRST column, marked "Your plan".
+ * Sent by the server (`comparison.current`, each row's `current` cell); joined
+ * here to the payload's own name and "Free". It has no action: it is not for sale.
+ */
+export interface OwnPlanColumnView {
+  planId: string;
+  name: string;
+  /** The payload's own `free`: the price line reads "Free". */
+  free: boolean;
+}
+
 export type PlanColumnAction = 'upgrade' | 'pay_for' | 'choose' | 'current_label' | 'none';
 
 /** The actions that are a button: the server offers this plan to this account. */
@@ -103,6 +118,11 @@ export interface UpgradeModalView {
   available: boolean;
   /** `comparison.planIds` order, untouched. Empty when not `available`. */
   columns: PlanColumnView[];
+  /**
+   * LF-2: the server's own-plan column, shown before `columns`; `null` for a tier
+   * account (its column is in `columns`, `isCurrent`) or when not `available`.
+   */
+  ownColumn: OwnPlanColumnView | null;
   /** `=== plan.comparison.sections` (identity, C-21). Empty when not `available`. */
   sections: PlanComparisonSection[];
   headline: UpgradeModalHeadline;
@@ -184,7 +204,7 @@ export function upgradeModalView(plan: PlanPayload, context: UpgradeModalContext
 
   if (!available || comparison === null) {
     const subheading: UpgradeModalSubheading = variant === 'settings' ? 'default' : variant;
-    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered, hasActions: false, subheading, ...contextual };
+    return { available: false, columns: [], ownColumn: null, sections: NOTHING, headline, somethingOffered, hasActions: false, subheading, ...contextual };
   }
 
   const columns = planIds.map((planId): PlanColumnView => {
@@ -226,7 +246,11 @@ export function upgradeModalView(plan: PlanPayload, context: UpgradeModalContext
   // UM-3 CV-5: from the columns' actions (the server's offer), after they are fixed; never a plan id (C-7).
   const subheading: UpgradeModalSubheading =
     variant !== 'settings' ? variant : columns.some((column) => column.action === 'upgrade') ? 'upgrade' : 'default';
-  return { available: true, columns, sections: comparison.sections, headline, somethingOffered, hasActions, subheading, ...contextual };
+  // LF-2: only what the server sent, and only for an account that is not on a tier
+  // (a tier account's own column is already in `columns`). Never derived here.
+  const ownColumn: OwnPlanColumnView | null =
+    comparison.current && plan.kind !== 'tier' ? { planId: comparison.current.planId, name: plan.name ?? '', free: plan.free } : null;
+  return { available: true, columns, ownColumn, sections: comparison.sections, headline, somethingOffered, hasActions, subheading, ...contextual };
 }
 
 /** Which "Your plan" surface Settings opens (UM-D3, SA R-1). */

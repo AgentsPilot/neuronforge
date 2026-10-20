@@ -45,8 +45,9 @@ export interface PlanChoice {
   availableToBuy: boolean;
 }
 
+// LF-1 (live test 2026-10-20): the app's own primary button, on the admin theme's --v2-primary.
 const CHOOSE_BUTTON =
-  'rounded bg-[var(--v2-primary-dark)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
+  'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60';
 
 export function PlanPurchase({
   plans,

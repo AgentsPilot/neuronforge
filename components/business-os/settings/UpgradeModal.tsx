@@ -4,9 +4,21 @@
  * The plan comparison window, where an owner buys or upgrades (upgrade modal
  * UM-1a view, UM-1b money; workplans §5 / §4–§8).
  *
- * Opened by "See plans" / "Compare plans" in Settings → "Your plan". A gradient
- * band, a status strip, and the server's comparison table: one column per shown
- * plan (name, price, the server's action), short grouped rows, ✓ / ✕ / value.
+ * Opened by "See plans" / "Compare plans" in Settings → "Your plan". A band, a
+ * status strip, and the server's comparison table: one column per shown plan
+ * (name, price, the server's action), short grouped rows, ✓ / ✕ / value. A
+ * trial or Founding Partner also gets its own plan as the first column, marked
+ * "Your plan" (live-test fix LF-2), when the server sends it.
+ *
+ * ── PALETTE (live-test fix LF-1, 2026-10-20) ────────────────────────────────
+ * The app's real theme is admin-configurable (ui-config custom tokens): the
+ * theme provider rewrites --v2-primary and --v2-secondary, not the darker
+ * shade. So nothing here uses that shade or a gradient, and no words sit on a
+ * colour the admin may change except the app's own primary button
+ * (`bg-[var(--v2-primary)] text-white`, the Business OS convention). The band is
+ * a soft primary tint over the surface with --v2-text-primary words; badges and
+ * the recommended column are on the --v2-primary family. Contrast is pinned on
+ * the default AND the live custom tokens (`upgradeModal.contrast`).
  *
  * ── IT RENDERS; IT DOES NOT DECIDE ──────────────────────────────────────────
  * Every row, label, ✓ / ✕, value, highlight and order is `plan.comparison`, as
@@ -77,17 +89,23 @@ import { ENDS_FREE_ACCESS_KEYS } from './planPurchaseCopy';
 import { PlanBillingNotices, PlanIncludedList, fill, priceLine, renderSentence } from './planText';
 import { PlanUpgrade, type PlanUpgradeLock } from './PlanUpgrade';
 import { SETTINGS_CONTEXT, type UpgradeModalContext } from './upgradeModalContext';
-import { upgradeModalView, type PlanColumnView, type UpgradeModalView } from './upgradeModalView';
+import { upgradeModalView, type OwnPlanColumnView, type PlanColumnView, type UpgradeModalView } from './upgradeModalView';
 import type { PlanFlow } from './usePlanFlow';
 
 /**
- * Two plan columns on a phone (UM-D1-M, option M-A, C-24): every row becomes a
- * two-column grid, the feature label spanning the row above its two cells.
- * ASSUMES AT MOST TWO SHOWN PLANS — the assumption
+ * The plan columns on a phone (UM-D1-M, option M-A, C-24): every row becomes a
+ * grid with one column per plan, the feature label spanning the row above its
+ * cells. LF-2: two columns, or THREE when the account's own plan (trial,
+ * Founding Partner) leads; the phone header is compact then (smaller badges and
+ * buttons), and nothing scrolls sideways at 360 px. ASSUMES AT MOST THREE TABLE
+ * COLUMNS (two shown plans + one own plan) — the assumption
  * `components/business-os/settings/__tests__/planComparison.twoPlans.tripwire.test.ts`
  * (C-27) protects. Raise both together, after re-deciding UM-D1-M with the user.
  */
-const PHONE_ROW = 'max-sm:grid max-sm:grid-cols-2';
+const PHONE_ROW: Record<2 | 3, string> = {
+  2: 'max-sm:grid max-sm:grid-cols-2',
+  3: 'max-sm:grid max-sm:grid-cols-3',
+};
 
 /**
  * SA Q-7 (iii), the contained exception: Radix sets `pointer-events: none` on
@@ -123,12 +141,27 @@ export type UpgradeModalRead = { readState?: 'ready'; plan: PlanPayload } | { re
 /** A marked column: the Recommended one, or the plan a locked action needs (UM-2 O-1). Never both. */
 const isHighlighted = (column: PlanColumnView) => column.highlightReason !== null;
 
+/** LF-1: the recommended column, on the theme's primary (whatever the admin set it to). */
+// /5, not /10: --v2-text-secondary small text in that column must stay ≥ 4.5:1 (light, default and live tokens).
+const RECOMMENDED_TINT = 'bg-[var(--v2-primary)]/5';
+/** The account's own column ("Your plan"): a tier's, or the LF-2 own-plan column. */
+const OWN_TINT = 'bg-[var(--v2-surface-hover)]';
+
 /** The tint a marked column carries on every cell of the table, so it reads as one column. */
 function columnTint(column: PlanColumnView): string {
-  if (isHighlighted(column)) return 'bg-[var(--v2-primary)]/5';
-  if (column.isCurrent) return 'bg-[var(--v2-surface-hover)]';
+  if (isHighlighted(column)) return RECOMMENDED_TINT;
+  if (column.isCurrent) return OWN_TINT;
   return '';
 }
+
+/** LF-1: "Recommended" / "Needed for this": primary tint and border, primary-text words (any theme). */
+const MARK_BADGE =
+  'inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold text-[var(--v2-text-primary)] bg-[var(--v2-primary)]/15 border border-[var(--v2-primary)] rounded-full';
+/** "Your plan": the quiet badge, on the strip and on the own column alike (C-22). */
+const OWN_BADGE =
+  'inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold text-[var(--v2-text-primary)] bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-full';
+/** LF-2: with three columns a phone header cell is about 110 px wide, so badges and buttons shrink there. */
+const COMPACT_BADGE = ' max-sm:px-1.5 max-sm:text-[11px] max-sm:gap-0.5';
 
 /** The strip's separator: a no-break space then "·", so it stays at the end of the item before it. */
 const STRIP_SEPARATOR = ' ·';
@@ -345,42 +378,42 @@ export function UpgradeModal({
         // C-8: the flex variant (no grid, no gutter, no scroll from dialog.tsx), one
         // `sm:` width, and the built-in X recoloured for the band by a child
         // selector (SA Q-4) rather than a second X; dimmed and unpressable while busy.
-        className={`flex flex-col p-0 overflow-hidden w-full h-[100dvh] max-sm:rounded-none sm:h-auto sm:max-h-[90dvh] sm:max-w-4xl sm:rounded-[var(--v2-radius-panel)] border-[var(--v2-border)] [&>button]:text-white [&>button]:opacity-90 [&>button:focus]:ring-white${
+        // LF-1: the band is a light tint now, so the X takes the primary text colour.
+        className={`flex flex-col p-0 overflow-hidden w-full h-[100dvh] max-sm:rounded-none sm:h-auto sm:max-h-[90dvh] sm:max-w-4xl sm:rounded-[var(--v2-radius-panel)] border-[var(--v2-border)] [&>button]:text-[var(--v2-text-primary)] [&>button]:opacity-90 [&>button:focus]:ring-[var(--v2-primary)]${
           busy ? ' [&>button]:pointer-events-none [&>button]:opacity-40' : ''
         }`}
       >
         {(busy || frameOpen) && <style data-testid="plan-compare-stripe-reachable">{STRIPE_CHALLENGE_REACHABLE_CSS}</style>}
 
-        {/* C-9 / SA Q-5: all band text on SOLID --v2-primary-dark; the gradient
-            is a decorative layer at the end edge, kept clear of the text. */}
-        {/* UM-3 §8.1 / Y-5, below 640 px: the gradient is a 48 px strip (`w-12`) inside
-            the band's own 48 px end padding (`pe-12`), so the text needs no further
-            reservation and the headline gets the width back. From `sm` up, unchanged.
-            §8.3: tighter while a flow is open on a phone, to give the card form room. */}
+        {/* LF-1 (live test 2026-10-20): the band is the theme's primary as a SOFT
+            tint over the surface (an aria-hidden layer), with a solid primary top
+            rule and icon tile as the accent. Both lines are --v2-text-primary (the
+            secondary grey is under 4.5:1 on the tint), which reads on any primary the admin picks, light
+            and dark: no words on a solid admin colour, no gradient. `pe-12` keeps
+            them clear of the X (UM-3 §8.1). §8.3: tighter while a flow is open on
+            a phone, to give the card form room. */}
         <div
           data-testid="plan-compare-band"
-          className={`relative flex-shrink-0 overflow-hidden bg-[var(--v2-primary-dark)] px-5 py-5 pe-12 sm:px-7 sm:py-6${openFlow !== null ? ' max-sm:py-3' : ''}`}
+          className={`relative flex-shrink-0 overflow-hidden bg-[var(--v2-surface)] border-t-4 border-t-[var(--v2-primary)] border-b border-b-[var(--v2-border)] px-5 py-5 pe-12 sm:px-7 sm:py-6${openFlow !== null ? ' max-sm:py-3' : ''}`}
         >
-          <div
-            aria-hidden="true"
-            data-testid="plan-compare-band-gradient"
-            className={`pointer-events-none absolute inset-y-0 end-0 w-12 sm:w-1/4 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
-          />
-          <div className="relative flex items-start gap-3 sm:pe-[22%]">
-            <BandIcon
+          <div aria-hidden="true" data-testid="plan-compare-band-tint" className="pointer-events-none absolute inset-0 bg-[var(--v2-primary)]/10" />
+          <div className="relative flex items-start gap-3">
+            <span
               aria-hidden="true"
-              data-testid={view?.variant === 'locked_feature' ? 'plan-compare-lock-icon' : undefined}
-              className="w-6 h-6 shrink-0 mt-0.5 text-white"
-            />
+              data-testid="plan-compare-band-icon"
+              className="inline-flex w-9 h-9 shrink-0 items-center justify-center rounded-full bg-[var(--v2-primary)] text-white"
+            >
+              <BandIcon data-testid={view?.variant === 'locked_feature' ? 'plan-compare-lock-icon' : undefined} className="w-5 h-5" />
+            </span>
             <div ref={titleRef} tabIndex={-1} data-testid="plan-compare-title" className="min-w-0 outline-none">
               {/* Typography on an inner span: `cn` concatenates, so a class on the
                   title itself would race dialog.tsx's own colour and size. */}
               <DialogTitle>
-                <span className="block text-xl sm:text-2xl font-semibold leading-tight text-white">{headline}</span>
+                <span className="block text-xl sm:text-2xl font-semibold leading-tight text-[var(--v2-text-primary)]">{headline}</span>
               </DialogTitle>
               <DialogDescription>
                 {/* §8.3: hidden on a phone during a flow, but still the dialog's description. */}
-                <span className={`block mt-1.5 text-sm text-white${openFlow !== null ? ' max-sm:sr-only' : ''}`}>{subheading}</span>
+                <span className={`block mt-1.5 text-sm text-[var(--v2-text-primary)]${openFlow !== null ? ' max-sm:sr-only' : ''}`}>{subheading}</span>
               </DialogDescription>
             </div>
           </div>
@@ -396,7 +429,7 @@ export function UpgradeModal({
               className="mt-3 mb-4 sm:mt-6 sm:mb-5 px-3 py-2 text-sm text-[var(--v2-text-secondary)] border border-[var(--v2-border)] rounded-[var(--v2-radius-card)]"
             >
               {statusBefore}
-              {/* F-2: not --v2-primary-dark, which has no dark override (≈ 2.3:1 on the dark surface). */}
+              {/* F-2: the primary text colour, which every theme sets, light and dark. */}
               <span className="font-semibold text-[var(--v2-text-primary)]">{plan.name ?? ''}</span>
               {statusAfter}
               {statusPrice && <> · {statusPrice}</>}
@@ -415,10 +448,7 @@ export function UpgradeModal({
             >
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {/* The column badge's look (C-22), so the two marks read as one. */}
-                <span
-                  data-testid="plan-compare-status-badge"
-                  className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold text-[var(--v2-text-primary)] bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-full"
-                >
+                <span data-testid="plan-compare-status-badge" className={OWN_BADGE}>
                   <Check aria-hidden="true" className="w-3 h-3" />
                   {t('upgrade_modal.your_plan')}
                 </span>
@@ -479,7 +509,7 @@ export function UpgradeModal({
                     {fill(t('upgrade_modal.locked.not_offered'), { plan: lockedNotOffered.name })}
                   </p>
                 )}
-                <ComparisonTable columns={view.columns} sections={view.sections} action={actionFor} />
+                <ComparisonTable columns={view.columns} ownColumn={view.ownColumn} sections={view.sections} action={actionFor} />
               </>
             ) : (
               <section
@@ -587,29 +617,45 @@ export function UpgradeModal({
 
 /**
  * One semantic table at every width (C-24). Below 640 px the table parts become
- * blocks and each row a two-column grid (W-8: a grid row inside table-display
- * parents gets wrapped in anonymous table boxes), so every element carries its
- * explicit ARIA role — `display` changes drop native table semantics in some
- * browsers (SA (f), R-12). Sticky: the whole `thead` on a phone (a sticky cell
- * cannot leave a grid row), the header cells from `sm` up (W-8, Q-14).
+ * blocks and each row a grid, one column per plan (W-8: a grid row inside
+ * table-display parents gets wrapped in anonymous table boxes), so every element
+ * carries its explicit ARIA role — `display` changes drop native table semantics
+ * in some browsers (SA (f), R-12). Sticky: the whole `thead` on a phone (a sticky
+ * cell cannot leave a grid row), the header cells from `sm` up (W-8, Q-14).
+ *
+ * LF-2: `ownColumn` (the server's own-plan column for a trial or Founding
+ * Partner) is rendered FIRST, marked "Your plan", priced "Free", with no action;
+ * its cells are each row's `current`, as the server sent them.
  */
 function ComparisonTable({
   columns,
+  ownColumn,
   sections,
   action,
 }: {
   columns: PlanColumnView[];
+  ownColumn: OwnPlanColumnView | null;
   sections: PlanComparisonSection[];
   action: (column: PlanColumnView, where: Where) => JSX.Element;
 }) {
   const { t, language, timezone } = useLanguage();
   const captionId = useId();
+  // C-27: at most three table columns (two shown plans + the own plan); the tripwire pins it.
+  const count = (columns.length + (ownColumn ? 1 : 0) >= 3 ? 3 : 2) as 2 | 3;
+  const phoneRow = PHONE_ROW[count];
+  const compact = count === 3;
+  const badgeClass = (base: string) => (compact ? `${base}${COMPACT_BADGE}` : base);
+  // LF-2: about 100 px per button with three columns on a phone; the label may wrap, the padding shrinks.
+  // `sm:h-px` on the header cells: a table cell with a definite height lets its tinted inner box use
+  // `h-full`, so a marked column's tint reaches the bottom of the header row (no white seam, LF-2).
+  const actionWrap = compact ? 'mt-2.5 max-sm:[&_button]:px-1.5 max-sm:[&_button]:text-xs max-sm:[&>span]:px-1.5 max-sm:[&>span]:text-xs' : 'mt-2.5';
 
   return (
     <table
       role="table"
       aria-labelledby={captionId}
       data-testid="plan-compare-table"
+      data-columns={count}
       className="w-full table-fixed border-separate border-spacing-0 text-sm max-sm:block"
     >
       <caption id={captionId} className="sr-only">
@@ -620,45 +666,72 @@ function ComparisonTable({
         data-testid="plan-compare-thead"
         className="max-sm:block max-sm:sticky max-sm:top-0 max-sm:z-10 max-sm:bg-[var(--v2-surface)]"
       >
-        <tr role="row" className={PHONE_ROW}>
-          <td aria-hidden="true" className="max-sm:hidden sm:w-2/5 sm:sticky sm:top-0 sm:z-10 bg-[var(--v2-surface)]" />
+        <tr role="row" className={phoneRow}>
+          <td aria-hidden="true" className={`max-sm:hidden ${compact ? 'sm:w-1/3' : 'sm:w-2/5'} sm:sticky sm:top-0 sm:z-10 bg-[var(--v2-surface)]`} />
+          {ownColumn && (
+            <th
+              role="columnheader"
+              scope="col"
+              data-testid={`plan-compare-col-${ownColumn.planId}`}
+              data-own-plan="true"
+              className="p-0 sm:h-px align-top font-normal sm:sticky sm:top-0 sm:z-10 bg-[var(--v2-surface)]"
+            >
+              <div className={`h-full px-1.5 pt-3 pb-3 sm:px-3 text-center rounded-t-[var(--v2-radius-card)] border-t-2 border-[var(--v2-border)] ${OWN_TINT}`}>
+                <div className="flex h-6 items-center justify-center">
+                  <span data-testid="plan-compare-own-badge" className={badgeClass(OWN_BADGE)}>
+                    <Check aria-hidden="true" className="w-3 h-3" />
+                    {t('upgrade_modal.your_plan')}
+                  </span>
+                </div>
+                <div className="mt-1.5 text-sm sm:text-lg font-semibold text-[var(--v2-text-primary)] break-words">{ownColumn.name}</div>
+                <div className="mt-1 text-xl sm:text-2xl font-semibold leading-none text-[var(--v2-text-primary)]">
+                  {ownColumn.free ? t('plan.price.free') : ''}
+                </div>
+                <div className="mt-2.5">
+                  {/* Not for sale: no button, the slot keeps the row heights even. */}
+                  <span aria-hidden="true" className="block h-9" data-testid="plan-compare-slot-empty" />
+                </div>
+              </div>
+            </th>
+          )}
           {columns.map((column) => (
             <th
               key={column.planId}
               role="columnheader"
               scope="col"
               data-testid={`plan-compare-col-${column.planId}`}
-              className="p-0 align-top font-normal sm:sticky sm:top-0 sm:z-10 bg-[var(--v2-surface)]"
+              className="p-0 sm:h-px align-top font-normal sm:sticky sm:top-0 sm:z-10 bg-[var(--v2-surface)]"
             >
               <div
-                className={`h-full px-2 pt-3 pb-3 sm:px-3 text-center rounded-t-[var(--v2-radius-card)] border-t-2 ${
+                className={`h-full ${compact ? 'px-1.5' : 'px-2'} pt-3 pb-3 sm:px-3 text-center rounded-t-[var(--v2-radius-card)] border-t-2 ${
                   isHighlighted(column) ? 'border-[var(--v2-primary)]' : column.isCurrent ? 'border-[var(--v2-border)]' : 'border-transparent'
                 } ${columnTint(column)}`}
               >
                 <div className="flex h-6 items-center justify-center">
                   {isHighlighted(column) && (
                     // UM-2 SA Q-2: "Needed for this" on the locked plan, never "Recommended" on a plan the owner may not be able to buy.
-                    <span
-                      data-testid={`plan-compare-badge-${column.highlightReason}`}
-                      className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold text-white bg-[var(--v2-primary-dark)] rounded-full"
-                    >
-                      {column.highlightReason === 'locked_feature' ? <Lock aria-hidden="true" className="w-3 h-3" /> : <Star aria-hidden="true" className="w-3 h-3" />}
+                    <span data-testid={`plan-compare-badge-${column.highlightReason}`} className={badgeClass(MARK_BADGE)}>
+                      {column.highlightReason === 'locked_feature' ? (
+                        <Lock aria-hidden="true" className={`w-3 h-3${compact ? ' max-sm:hidden' : ''}`} />
+                      ) : (
+                        <Star aria-hidden="true" className={`w-3 h-3${compact ? ' max-sm:hidden' : ''}`} />
+                      )}
                       {t(column.highlightReason === 'locked_feature' ? 'upgrade_modal.badge.needed' : 'upgrade_modal.recommended')}
                     </span>
                   )}
                   {column.isCurrent && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold text-[var(--v2-text-primary)] bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-full">
+                    <span className={badgeClass(OWN_BADGE)}>
                       <Check aria-hidden="true" className="w-3 h-3" />
                       {t('upgrade_modal.your_plan')}
                     </span>
                   )}
                 </div>
-                <div className="mt-1.5 text-base sm:text-lg font-semibold text-[var(--v2-text-primary)] break-words">{column.name}</div>
-                <div className="mt-1 text-2xl font-semibold leading-none text-[var(--v2-text-primary)]">
+                <div className={`mt-1.5 ${compact ? 'text-sm' : 'text-base'} sm:text-lg font-semibold text-[var(--v2-text-primary)] break-words`}>{column.name}</div>
+                <div className={`mt-1 ${compact ? 'text-xl' : 'text-2xl'} sm:text-2xl font-semibold leading-none text-[var(--v2-text-primary)]`}>
                   <span dir="ltr">${column.monthlyPriceUsd}</span>
                 </div>
                 <div className="mt-1 text-xs text-[var(--v2-text-secondary)]">{t('upgrade_modal.price_suffix')}</div>
-                <div className="mt-2.5">
+                <div className={actionWrap}>
                   {action(column, 'header')}
                   {column.unavailableBecause && (
                     <p className="mt-1 text-xs text-[var(--v2-text-secondary)]">
@@ -674,29 +747,41 @@ function ComparisonTable({
 
       {sections.map((section) => (
         <tbody key={section.section} role="rowgroup" className="max-sm:block">
-          <tr role="row" className={PHONE_ROW}>
+          <tr role="row" className={phoneRow}>
             {/* A heading for the rows of this group: scope "rowgroup". */}
             <th
               role="rowheader"
               scope="rowgroup"
               data-testid="plan-compare-section"
-              className="max-sm:col-span-2 px-2 sm:px-3 pt-5 pb-2 text-start text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]"
+              className="max-sm:col-span-full px-2 sm:px-3 pt-5 pb-2 text-start text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-secondary)]"
             >
               {t(section.labelKey)}
             </th>
+            {ownColumn && <td aria-hidden="true" className={`max-sm:hidden ${OWN_TINT}`} />}
             {columns.map((column) => (
               <td key={column.planId} aria-hidden="true" className={`max-sm:hidden ${columnTint(column)}`} />
             ))}
           </tr>
           {section.rows.map((row) => (
-            <tr key={row.row} role="row" className={PHONE_ROW}>
+            <tr key={row.row} role="row" className={phoneRow}>
               <th
                 role="rowheader"
                 scope="row"
-                className="max-sm:col-span-2 px-2 sm:px-3 pt-2.5 pb-1 sm:py-2.5 text-start font-normal text-[var(--v2-text-primary)] break-words sm:border-b sm:border-[var(--v2-border)]"
+                className="max-sm:col-span-full px-2 sm:px-3 pt-2.5 pb-1 sm:py-2.5 text-start font-normal text-[var(--v2-text-primary)] break-words sm:border-b sm:border-[var(--v2-border)]"
               >
                 {row.label}
               </th>
+              {ownColumn && (
+                <td
+                  role="cell"
+                  data-testid="plan-compare-cell"
+                  data-own-plan="true"
+                  className={`px-1.5 sm:px-2 pt-1 pb-2.5 sm:py-2.5 text-center align-middle break-words border-b border-[var(--v2-border)] ${OWN_TINT}`}
+                >
+                  {/* The server's own-plan cell; absent only on an older payload. */}
+                  {row.current ? <CellContent cell={row.current} planName={ownColumn.name} /> : null}
+                </td>
+              )}
               {row.cells.map((cell, index) => {
                 // Cells are in `planIds` order (UM-0), so position i is column i.
                 const column = columns[index];
@@ -705,7 +790,7 @@ function ComparisonTable({
                     key={cell.planId}
                     role="cell"
                     data-testid="plan-compare-cell"
-                    className={`px-2 pt-1 pb-2.5 sm:py-2.5 text-center align-middle break-words border-b border-[var(--v2-border)] ${column ? columnTint(column) : ''}`}
+                    className={`${compact ? 'px-1.5' : 'px-2'} pt-1 pb-2.5 sm:py-2.5 text-center align-middle break-words border-b border-[var(--v2-border)] ${column ? columnTint(column) : ''}`}
                   >
                     <CellContent cell={cell} planName={column?.name ?? ''} />
                   </td>
@@ -717,11 +802,20 @@ function ComparisonTable({
       ))}
 
       <tfoot role="rowgroup" className="max-sm:block">
-        <tr role="row" className={PHONE_ROW}>
+        <tr role="row" className={phoneRow}>
           <td aria-hidden="true" className="max-sm:hidden" />
+          {ownColumn && (
+            <td role="cell" className="p-0 align-top">
+              <div className={`px-2 pt-3 pb-3 text-center rounded-b-[var(--v2-radius-card)] ${OWN_TINT}`}>
+                <span aria-hidden="true" className="block h-9" data-testid="plan-compare-slot-empty" />
+              </div>
+            </td>
+          )}
           {columns.map((column) => (
             <td key={column.planId} role="cell" className="p-0 align-top">
-              <div className={`px-2 pt-3 pb-3 text-center rounded-b-[var(--v2-radius-card)] ${columnTint(column)}`}>{action(column, 'footer')}</div>
+              <div className={`${compact ? 'px-1.5 max-sm:[&_button]:px-1.5 max-sm:[&_button]:text-xs max-sm:[&>span]:px-1.5 max-sm:[&>span]:text-xs' : 'px-2'} pt-3 pb-3 text-center rounded-b-[var(--v2-radius-card)] ${columnTint(column)}`}>
+                {action(column, 'footer')}
+              </div>
             </td>
           ))}
         </tr>
@@ -730,9 +824,13 @@ function ComparisonTable({
   );
 }
 
-/** The recommended column carries the one primary button (white text on SOLID --v2-primary-dark, C-9). */
+/**
+ * The recommended column carries the one primary button. LF-1: the Business OS
+ * primary button as the rest of the app draws it (`bg-[var(--v2-primary)]
+ * text-white`), so it follows the admin's theme like every other one.
+ */
 const PRIMARY_ACTION =
-  'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-white bg-[var(--v2-primary-dark)] rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]';
+  'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-semibold text-white bg-[var(--v2-primary)] hover:opacity-90 rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]';
 const SECONDARY_ACTION =
   'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-primary)] rounded-[var(--v2-radius-button)] hover:bg-[var(--v2-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]';
 

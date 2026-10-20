@@ -10,7 +10,7 @@
  *   - focus order: title → header buttons in column order → footer row →
  *     footer close → X, in English and Hebrew; in a flow, "Back to plans" first;
  *   - the "Back to plans" link: primary text, underlined (not colour alone);
- *   - phone: the band's gradient strip fits the band's end padding (Y-5), and
+ *   - phone: the band keeps its end padding for the X (Y-5; the gradient strip went in LF-1), and
  *     while a flow is open the band tightens and the subheading leaves the screen
  *     but stays the description; B7 is hidden under an open flow;
  *   - N-1: the "can't be bought" line comes before the table.
@@ -190,16 +190,15 @@ describe('A-7: focus order', () => {
 });
 
 describe('§8: the phone band and the flow', () => {
-  it('Y-5: below 640 px the gradient is a 48 px strip inside the band\'s 48 px end padding; the text needs no reservation', async () => {
+  it('Y-5, as amended by LF-1: the band keeps its end padding for the X, and has no gradient strip any more', async () => {
     show(await trial());
     const band = screen.getByTestId('plan-compare-band');
-    const gradient = screen.getByTestId('plan-compare-band-gradient');
     expect(band.className).toMatch(/(^|\s)pe-12(\s|$)/);
-    expect(gradient.className).toMatch(/(^|\s)w-12(\s|$)/);
-    expect(gradient.className).toContain('sm:w-1/4');
-    const textColumn = gradient.nextElementSibling as HTMLElement;
+    // LF-1 (live test 2026-10-20): the gradient strip is gone, so the text needs no reservation at any width.
+    expect(screen.queryByTestId('plan-compare-band-gradient')).not.toBeInTheDocument();
+    const textColumn = screen.getByTestId('plan-compare-band-tint').nextElementSibling as HTMLElement;
     expect(textColumn.className).not.toContain('pe-[25%]');
-    expect(textColumn.className).toContain('sm:pe-[22%]');
+    expect(textColumn.className).not.toContain('sm:pe-[22%]');
   }, SLOW);
 
   it('§8.2 / §8.3: in a checkout flow B7 is hidden, the band tightens, the subheading leaves the screen but stays the description', async () => {

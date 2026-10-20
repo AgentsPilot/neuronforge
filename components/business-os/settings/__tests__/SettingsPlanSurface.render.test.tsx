@@ -361,7 +361,7 @@ describe('the strip marks the current plan for every account (R-5, R-6; AC-UMD3 
     ['Founding Partner with an end date', () => payloadFor({ planId: FOUNDING_PARTNER, cohortExpiresAt: inSixtyDays() }), false],
     ['Essentials', () => payloadFor({ billingRow: payingRow(LOWER) }), true],
     ['admin-assigned tier', () => payloadFor({ planId: LOWER, buyable: [LOWER] }), true],
-  ] as const)('%s: "Your plan" badge + the name first; a column marked only for a tier', async (_name, make, tier) => {
+  ] as const)('%s: "Your plan" badge + the name first; exactly one column marked (LF-2: the own column for a non-tier)', async (_name, make, tier) => {
     const payload = await make();
     showPopUp(payload);
     const strip = await screen.findByRole('group', { name: COPY['upgrade_modal.your_plan'] });
@@ -370,7 +370,11 @@ describe('the strip marks the current plan for every account (R-5, R-6; AC-UMD3 
     // The badge comes before the name.
     expect(strip.textContent!.indexOf(COPY['upgrade_modal.your_plan'])).toBeLessThan(strip.textContent!.indexOf(payload.name!));
     const table = screen.getByTestId('plan-compare-table');
-    expect(within(table).queryAllByText(COPY['upgrade_modal.your_plan'])).toHaveLength(tier ? 1 : 0);
+    // LF-2 (live test 2026-10-20; was `tier ? 1 : 0`): a trial or Founding Partner now sees its own plan
+    // as its own first column, so every account has exactly one marked column.
+    const marked = within(table).getAllByText(COPY['upgrade_modal.your_plan']);
+    expect(marked).toHaveLength(1);
+    expect(marked[0].closest('[data-own-plan="true"]') !== null).toBe(!tier);
   }, SLOW);
 
   it('"What your plan includes" is collapsed by default and lists the drawer\'s own list', async () => {
