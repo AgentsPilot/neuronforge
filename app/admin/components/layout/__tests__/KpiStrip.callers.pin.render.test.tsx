@@ -36,6 +36,7 @@
  * Amended by Exchange rates 1a (SQ-7): three ExchangeRatesKpis cases appended; every existing hash unchanged.
  * Amended by Exchange rates 1c.1 (SQ-15): the strip's own tiles changed, so "loading" is re-hashed, the two stale cases are removed, four cases are appended; no other case or hash touched.
  * Amended 2026-10-20 (user request): the Last rate change tile rounds each rate to 3 decimals, so the three Exchange rates cases that show a rate are re-hashed; no other case or hash touched.
+ * Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed.
  */
 
 import React from 'react';
@@ -209,12 +210,13 @@ const FX_CHANGE: ExchangeRateHistoryWire = {
 const FX_PAYLOAD: ExchangeRatesPayload = {
   rates: [fxRate('EUR', true, '2025-11-05T10:00:00.000Z'), fxRate('ILS', true, '2026-10-18T10:00:00.000Z'), fxRate('JPY', false, '2025-11-05T10:00:00.000Z')],
   history: [FX_CHANGE],
+  lastChange: FX_CHANGE,
   nameLookup: 'ok',
   readAt: FX_READ_AT,
 };
-const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [] };
-const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], nameLookup: 'failed' };
-const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }] };
+const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [], lastChange: null };
+const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], lastChange: { ...FX_CHANGE, changedByLabel: null }, nameLookup: 'failed' };
+const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }], lastChange: { ...FX_CHANGE, oldRate: null } };
 
 const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   // ── A1: the shared matrix ─────────────────────────────────────────────────

@@ -5,14 +5,27 @@
  * FR-18 / FR-19), written only by the database trigger on a rate change:
  * enable / disable changes are not here (the audit trail is their record).
  *
- * Two views, both at most HISTORY_LIMIT (10) rows, newest first:
+ * Two views, both at most HISTORY_LIMIT (10) rows inside the history window,
+ * newest first, selected by the server (slice 1d, FR-29 / FR-30):
  *   - every currency: `payload.history` from the plain GET;
  *   - one currency: that currency's own read (`GET ?currency=XXX`, SQ-12),
  *     loaded by the view, which passes its rows, loading and error here.
+ * The page shows exactly the rows it receives: nothing is trimmed here.
  *
- * Caption (SA Q-2, amends SA-1c-4): "The newest {HISTORY_LIMIT} changes" only
- * when the list reached the cap, else "{n} change(s), newest first"; the
- * one-currency view prefixes "{CODE}: ". The cap comes from HISTORY_LIMIT.
+ * The Window control (slice 1d, D-8, FR-28, SA-1d-5): the shared `DatePresets`
+ * (Today, 7 days, 30 days, This month, Custom; both dates required), between
+ * the heading row and the body, in every state (loading, error, empty, rows),
+ * so an admin can always widen an empty window. Both views render it in the
+ * same slot, so it is one control across opening and closing a panel. The
+ * view owns its value; nothing here reads or writes the URL.
+ *
+ * Caption (SA Q-2, amends SA-1c-4; slice 1d, FR-32): "The newest
+ * {HISTORY_LIMIT} changes {period}" only when the list reached the cap, else
+ * "{n} change(s) {period}, newest first"; the one-currency view prefixes
+ * "{CODE}: ". The cap comes from HISTORY_LIMIT. The period names the window
+ * the rows were READ under (`rowsWindow`, SA-1d-2), never the control's
+ * current value. Empty: "No rate changes in this period." / "No rate changes
+ * for {CODE} in this period." (FR-33).
  *
  * Rates as stored strings, dates in UTC, the editor as the server's label
  * (name, else email, else "Unknown user"; the short id when the name lookup
@@ -23,6 +36,8 @@
 
 import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import type { AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
+import { DatePresets } from '@/app/admin/components/layout/DatePresets';
 import {
   ADMIN_BUTTON,
   ADMIN_COUNT_LINE,
@@ -38,14 +53,17 @@ import {
 } from '@/app/admin/components/layout/adminTable';
 import { HISTORY_LIMIT, type ExchangeRateHistoryWire } from '@/lib/admin/exchangeRates/exchangeRateRules';
 
+// Relative on purpose, like the view's imports: the alias path would spell the
+// page route, which the G-4 guard (redundantPages.source.guard) refuses.
+import { historyPeriodText } from '../historyWindow';
 import { changedByText } from './changedByText';
 
-/** The count line (SA Q-2). Exported for the render test. */
-export function historyCaption(count: number, currencyCode: string | null): string {
+/** The count line (SA Q-2; slice 1d, FR-32: `period` from `historyPeriodText`). Exported for the render test. */
+export function historyCaption(count: number, currencyCode: string | null, period: string): string {
   const text =
     count === HISTORY_LIMIT
-      ? `The newest ${HISTORY_LIMIT} changes`
-      : `${count} ${count === 1 ? 'change' : 'changes'}, newest first`;
+      ? `The newest ${HISTORY_LIMIT} changes ${period}`
+      : `${count} ${count === 1 ? 'change' : 'changes'} ${period}, newest first`;
   return currencyCode ? `${currencyCode}: ${text}` : text;
 }
 
@@ -62,6 +80,13 @@ export interface RateHistoryTableProps {
   error?: string | null;
   onRetry?: () => void;
   onShowAll: () => void;
+  /** The applied history window: the control's value (slice 1d). */
+  window: AdminWindowValue;
+  /** Where a second click on the pressed preset goes back to: This month. */
+  defaultWindow: AdminWindowValue;
+  onWindowChange: (next: AdminWindowValue) => void;
+  /** The window `rows` were read under: the caption's period (SA-1d-2). */
+  rowsWindow: AdminWindowValue;
 }
 
 export function RateHistoryTable({
@@ -72,9 +97,14 @@ export function RateHistoryTable({
   error = null,
   onRetry,
   onShowAll,
+  window: windowValue,
+  defaultWindow,
+  onWindowChange,
+  rowsWindow,
 }: RateHistoryTableProps) {
   // No count line while loading, on an error, or over the empty state (which says it all).
   const showCount = !loading && !error && rows.length > 0;
+  const period = historyPeriodText(rowsWindow);
 
   return (
     <div className="space-y-3" data-testid="rate-history" aria-busy={loading || busy}>
@@ -83,7 +113,7 @@ export function RateHistoryTable({
         <div className="flex items-center gap-3">
           {showCount && (
             <span className={ADMIN_COUNT_LINE} data-testid="rate-history-count">
-              {historyCaption(rows.length, currencyCode)}
+              {historyCaption(rows.length, currencyCode, period)}
             </span>
           )}
           {currencyCode && (
@@ -94,6 +124,9 @@ export function RateHistoryTable({
         </div>
       </div>
 
+      {/* SA-1d-5: the Window control, in every state, above the body. */}
+      <DatePresets value={windowValue} defaultValue={defaultWindow} onChange={onWindowChange} requireBothDates />
+
       {error ? (
         <AdminError message={error} testId="rate-history-error" onRetry={onRetry} />
       ) : loading ? (
@@ -101,7 +134,9 @@ export function RateHistoryTable({
       ) : rows.length === 0 ? (
         <AdminEmpty
           testId="rate-history-empty"
-          message={currencyCode ? `No recent rate changes for ${currencyCode}.` : 'No rate changes recorded yet.'}
+          message={
+            currencyCode ? `No rate changes for ${currencyCode} in this period.` : 'No rate changes in this period.'
+          }
         />
       ) : (
         <div className={ADMIN_TABLE_WRAP}>

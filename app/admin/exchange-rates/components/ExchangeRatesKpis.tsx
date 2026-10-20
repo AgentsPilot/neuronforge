@@ -9,7 +9,9 @@
  *                       the database already reads as false, SA §10 ruling 1),
  *                       X = every row. USD is counted: it is a real, enabled
  *                       currency. No status colour.
- *   Last rate change    The newest history row: "ILS 3.650 → 3.700" (or "ILS set
+ *   Last rate change    The newest history row OF ALL TIME (`payload.lastChange`,
+ *                       slice 1d, D-8, FR-31; SA-1c-2 as amended by SQ-31),
+ *                       whatever the history window: "ILS 3.650 → 3.700" (or "ILS set
  *                       to 3.700" when there is no old rate), by whom and when
  *                       (UTC). Each rate is its stored string rounded to 3
  *                       decimals: no arithmetic, no percentage (D-5). On / off
@@ -17,7 +19,8 @@
  *                       (SQ-14). "No changes yet" when there is no history.
  *
  * Both tiles count the WHOLE plain-GET payload, never a filtered view and
- * never the one-currency history read (SA-1c-2). There is no Stale tile; each
+ * never the one-currency history read (SA-1c-2). The tile never reads the
+ * windowed `payload.history`. There is no Stale tile; each
  * row still carries its Stale chip (FR-8). No link target, no fetch here.
  */
 
@@ -54,7 +57,7 @@ export function ExchangeRatesKpis({ payload, loading }: ExchangeRatesKpisProps) 
   if (!payload) return loading ? <KpiStrip loading placeholderCount={2} /> : null;
 
   const enabled = payload.rates.filter((rate) => rate.isEnabled === true).length;
-  const last = payload.history[0] ?? null;
+  const last = payload.lastChange;
 
   return (
     <KpiStrip>

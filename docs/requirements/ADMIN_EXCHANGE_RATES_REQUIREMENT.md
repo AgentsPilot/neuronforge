@@ -43,6 +43,7 @@
 | 2a | Exchange rates as a fourth tab under the Finance admin page (no revenue link). **Finance tab only** (user, D-7), no Settings link. FR-23 to FR-25, FR-27 | ✅ Merged #486 (2026-10-20). SA code approved, QA PASS-WITH-NOTES, user click-through passed. Workplan [ADMIN_EXCHANGE_RATES_SLICE_2A_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_2A_WORKPLAN.md) | #486 | User go-ahead 2026-10-20: "start slice 2 (the Finance tab)". SA split slice 2 into 2a / 2b (SA-2-4). Branch from `origin/main` once 1c.2 (PR #484) has merged. TL picks full cycle or short path (a money page's layout changes, no figure, request or data path) |
 | 2b | Old URL retired: `next.config.js` temporary redirect `/admin/exchange-rates` → `/admin/finance?tab=exchange-rates`, `app/admin/exchange-rates/page.tsx` deleted (SQ-17 (a)). FR-26 | ✅ Merged #487 (2026-10-20). Workplan [ADMIN_EXCHANGE_RATES_SLICE_2B_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_2B_WORKPLAN.md); SA code approved, QA PASS-WITH-NOTES, live redirect checks passed | #487 | Branches from `origin/main` **after 2a merges, not stacked** (SA-2-4). Config + tests only; separately revertible |
 | 1c | Page refinements from the user's 2026-10-19 page review (D-7): filter bar (Enabled only by default), newest 10 changes, admin name instead of the id, new KPIs (Enabled currencies, Last rate change; Stale tile removed). ~~Country flag column~~ dropped by the user (§3.3 comment 3) | 🟡 1c.1 ✅ merged #482 (2026-10-20). 1c.2 PR #484, in the merge queue (workplan [ADMIN_EXCHANGE_RATES_SLICE_1C2_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_1C2_WORKPLAN.md); SA code approved, QA PASS-WITH-NOTES, user click-through passed 2026-10-20) | — | **Build before slice 2.** Two small slices (§5.5.7): **1c.1** history cap + names + KPIs (route and page; full cycle, the route starts reading people's names), then **1c.2** filter bar only (page only; short path). No migration, no prod step. Comment 1 of the review is resolved by slice 2 (no Settings link) |
+| 1d | History window (D-8): a Window control above the history table (Today / 7 days / 30 days / This month / Custom, default **This month**); the history table and the per-currency History view show the newest 10 rate changes **inside the window**, filtered on the server; the "Last rate change" tile stays **all-time** (new `lastChange` field on the plain `GET`). FR-28 to FR-34 | 🟡 Built, PR open (SA §13.6 cleared; SA code review approved; QA PASS-WITH-NOTES, 2026-10-21). Workplan [ADMIN_EXCHANGE_RATES_SLICE_1D_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_1D_WORKPLAN.md) | — | User request 2026-10-20 (D-8). Reuses `DatePresets` and `adminWindow.ts` / `adminWindowPresets.ts`. Route `GET` + repository + view; **no migration** (`idx_exchange_rate_history_changed_at` exists, `20261082`). Branches from `origin/main` (2a #486 and 2b #487 merged). Cycle: TL picks; BA suggests full cycle (the route's query and payload change) |
 | 3 | Month-end rate record, only if §5.4 shows history is not enough | Parked | — | Only if needed |
 | 4 | Conversion / USD view | Parked (D-5) | — | Needs a written exception to BD-12 and to CLAUDE.md "never sum money across currencies" first |
 
@@ -102,6 +103,7 @@ User message, 2026-10-19, verbatim:
 | D-5 | Conversions | **Out of scope.** No conversion, no USD totals, no link to customer revenue | "let's skip on any conversions in 5 yet" / "with no linkage yet to any customer revenue" | BD-12 and CLAUDE.md "never sum money across currencies" stay unchanged. `finance.source.guard` stays unchanged. One CLAUDE.md wording fix is proposed (§3.1) |
 | D-6 | Access | Page reachable by **typing the URL** `/admin/exchange-rates`. Later, a **tab under the Finance page** | "allow me to write the url and open the page. then we may add it as a tab under the finance page" | Slice 1: no sidebar link (already true). Slice 2: the tab |
 | D-7 | Page review | Six comments on the live page (verbatim in §3.3). **Placement: Finance tab only**, so comment 1 (Settings sidebar) is resolved by slice 2 and there is **no Settings sidebar link**. **Stale: keep the row mark**, drop the Stale KPI tile. **Comment 3 (flag / country column) dropped by the user** (BQ-1 answer). Comments 2, 4, 5 and 6 become slice 1c | "Finance tab only" / "Keep the row mark" (follow-up answers, 2026-10-19); "skip this requirement, not needed" (BQ-1 answer, 2026-10-19) | New slice 1c (§5.5), built before slice 2. No Country column, no flag code, no new dependency. D-6 stands: no sidebar entry, so G-2, G-4 and the sidebar `UNLISTED` entry stay. SQ-7's Stale tile is replaced (FR-22); the per-row Stale chip stays (FR-8) |
+| D-8 | History window | The history table shows the **newest 10 rate changes within a chosen period**. A **Window** control like the Finance page's (Today / 7 days / 30 days / This month / Custom) sits **above the history table**, default **This month**. The window filters **the history table and the per-currency History view only**; the **"Last rate change" tile stays all-time** | Request: "add another small change, the history table, needs to show the last 10 changes within a define period. in the main finance page we have a filter like the picture attached, let's have a similar filter above the history exchange rate, where default is "This Month". meaning, last 10 new changes this month." Follow-up: "Go ahead. The window filters the history table and the per-currency History view only. The Last rate change tile stays all-time." (both 2026-10-20) | New slice 1d (§5.6). Amends FR-18 (newest 10 **in the window**) and SA-1c-2's KPI source (`history[0]` → a separate all-time `lastChange`). The picture's note "Only accounts with a business profile can be found by name" belongs to Finance's business picker and does not apply: the history control has no business picker. The rates table, the Show / Search filter and the "Enabled currencies" tile are unchanged |
 
 ### 3.1 Proposed CLAUDE.md wording fix (SA / user decide)
 
@@ -358,6 +360,75 @@ The KPIs stay in `app/admin/exchange-rates/components/ExchangeRatesKpis.tsx`, on
 
 **Order: 1c.1 → 1c.2 → slice 2.** Why this split: the Last change tile shows *who*, so names and KPIs belong together, while the filter is page-only. Each part is a few days at most. If SA prefers one 1c slice, nothing in the requirement changes except the §1 row (SQ-16).
 
+### 5.6 Slice 1d — History window (D-8)
+
+The user's 2026-10-20 request (D-8, verbatim in §3): the history shows the newest 10 rate changes **within a chosen period**, picked with a Window control like the Finance page's, default **This month**. The window applies to the history table and the per-currency History view only; the "Last rate change" tile stays all-time. Code facts below were read from `origin/main` `930a6cee` (2a #486 and 2b #487 merged, so the view renders inside Finance's Exchange rates tab). No table, column, migration or write path is added; the `PATCH` route, the audit entries and the 1b lockdown are untouched. D-5 holds: nothing converts or totals money.
+
+#### 5.6.1 What exists to reuse
+
+| Piece | Today |
+|---|---|
+| `app/admin/components/layout/DatePresets.tsx` | The Admin Layout Standard Window control (C-8, §5.5 parts 1 and 2): labelled group "Window" with Today, 7 days, 30 days, This month, Custom; the Custom row has From (UTC) / To (UTC) whole-date inputs and Apply. A preset applies at once; clicking the pressed preset goes back to `defaultValue`; Apply with both empty goes back to the default; only "From after To" is refused here. Props: `value`, `defaultValue`, `onChange`, optional `extras`, optional `requireBothDates`. Exports `ADMIN_FIELD_LABEL`, `ADMIN_FIELD_CONTROL`, `AdminFieldSpacer` |
+| `app/admin/components/layout/adminWindow.ts` | Pure. `AdminWindowValue` (`none` / `preset` / `custom` / `linked` / `extra`), `windowFilter()` owning the URL keys `range` / `from` / `to`, `parseWindow`, `serialiseWindow`, `windowEquals`, `resolveWindow(value, now)` → whole UTC dates, `ADMIN_WINDOW_LABELS` ("Today", "7 days", "30 days", "This month", "Custom") |
+| `app/admin/components/adminWindowPresets.ts` | Pure and isomorphic (page and route both import it). `ADMIN_WINDOW_PRESETS` = `today`, `7d`, `30d`, `this_month`; `resolveAdminWindow(preset, now)` → inclusive UTC dates (`this_month` = the 1st of the current UTC month to today; `7d` / `30d` include today); `isRealDate`, `todayUtc`, `inclusiveDays`, `customRangeProblem` (from ≤ to, to not after today UTC, at most `ADMIN_WINDOW_MAX_DAYS` = 92 inclusive days). Its header: "the route re-resolves the preset with its own clock, so the URL is input, never authority" |
+| `app/admin/exchange-rates/components/ExchangeRatesView.tsx` | Three literal `fetch(` sites: plain `GET` (rates, newest 10 changes, `readAt`), `GET ?currency=<CODE>` (the open panel), `PATCH /<CODE>`. KPIs and the overall history come from the plain `GET`; the per-currency read feeds the history panel only (SA-1c-2) and is re-run after a rate save and on Refresh. The history (`RateHistoryTable`) renders below the rates table, inside `exchange-rates-content` |
+| `app/admin/exchange-rates/components/RateHistoryTable.tsx` | Caption "The newest {HISTORY_LIMIT} changes" when the list reached the cap, else "{n} change(s), newest first"; per-currency prefix "{CODE}: ". Empty: "No rate changes recorded yet." / "No recent rate changes for {CODE}." |
+| `app/admin/exchange-rates/components/ExchangeRatesKpis.tsx` | "Last rate change" = `payload.history[0]` (line 57). **Once the history is windowed, `history[0]` is the newest change in the window, not of all time** (see §5.6.3) |
+| `app/api/admin/exchange-rates/route.ts` | `requireAdmin` first; repeated query key → 400; `exchangeRatesQuerySchema` = `z.object({ currency: currencyCodeSchema.optional() }).strict()`, so any other key → 400; unknown code → 404; `resolveLabels` names editors, all-or-nothing |
+| `lib/repositories/ExchangeRatesRepository.ts` | `listRecentHistory()` and `listRecentHistoryForCurrency(code)`: `.order('changed_at', { ascending: false }).limit(EXCHANGE_RATE_HISTORY_LIMIT)` |
+| `lib/admin/exchangeRates/exchangeRateRules.ts` | `HISTORY_LIMIT = 10`, the one source (fixed, never caller-supplied) |
+| Index | `idx_exchange_rate_history_changed_at` (btree on `changed_at`), recorded in `20261082`. No migration needed |
+
+#### 5.6.2 The Window control
+
+| Part | Spec |
+|---|---|
+| Place | **Directly above the history table**, not in the top filter bar (the user: "above the history exchange rate"). One control for both history views: the overall list and the per-currency panel (they are never shown together) |
+| Control | The shared `DatePresets`, unchanged: Today, 7 days, 30 days, This month, Custom (From (UTC) / To (UTC), Apply). No `extras`. No business picker (Finance's "Only accounts with a business profile…" note does not apply). `DatePresets.tsx`, `adminWindow.ts` and `adminWindowPresets.ts` are **not edited** |
+| Default | **This month** (`{ kind: 'preset', preset: 'this_month' }`). Clicking the pressed preset goes back to This month (the control's own rule) |
+| Time zone | UTC, like every admin window (SQ-29) |
+| State | Page state of the view, not the address bar (BA default, SQ-25) |
+| What it filters | The overall history list and the per-currency History view. **Not** the rates table, **not** the Show / Search filter, **not** either KPI tile |
+| Read at / Refresh | Unchanged (the top bar). Refresh re-reads with the window that is applied |
+
+#### 5.6.3 Server-side filtering and the all-time "Last rate change"
+
+- **The window is applied on the server.** The plain `GET` and the per-currency `GET` take the window and return the **newest `HISTORY_LIMIT` (10) changes with `changed_at` inside it**, newest first. They never return the newest 10 overall for the page to trim: a window holding 3 changes shows those 3, and a window holding 40 shows its newest 10.
+- **Window bounds:** the inclusive UTC dates `from`..`to` mean `changed_at >= from 00:00:00Z` and `changed_at < (to + 1 day) 00:00:00Z` (SQ-28). The repository applies `.gte` / `.lt` on `changed_at`, the existing order and the fixed limit; the existing index serves it.
+- **"Last rate change" stays all-time (D-8).** Today the tile reads `history[0]`; after this slice `history` is windowed, so the plain `GET` returns the all-time newest change **separately**, as a new field `lastChange: ExchangeRateHistoryWire | null` (null when there is no history at all). The tile reads `lastChange`, never `history[0]`. **Flagged for SA (SQ-31):** this amends SA-1c-2 ("Last rate change" = `history[0]`). BA suggestion: a repository read of the newest one row (`limit(1)`, no window), and the label lookup covers its editor too (at most 11 distinct ids, still one `.in()` per source, the same all-or-nothing rule).
+- `lastChange` is on the **plain** `GET` only. The per-currency payload (`ExchangeRateHistoryPayload`) does not carry it, so the tile can still never be fed from it (SA-1c-2).
+- The rates and the "Enabled currencies" tile are unchanged.
+
+#### 5.6.4 Captions and empty states
+
+Captions **name the period**, so an admin never reads a windowed list as "all history".
+
+| View | Caption (BA wording; Dev may adjust words, not meaning) |
+|---|---|
+| Overall, list at the cap | "The newest 10 changes this month" / "… today" / "… in the last 7 days" / "… in the last 30 days" / "… from 2026-10-01 to 2026-10-15 (UTC)" |
+| Overall, below the cap | "3 changes this month, newest first" (same period wording) |
+| Per currency | Prefixed "ILS: ", e.g. "ILS: 2 changes this month, newest first" |
+| Empty, overall | "No rate changes in this period." |
+| Empty, per currency | "No rate changes for ILS in this period." |
+
+The cap in the caption comes from `HISTORY_LIMIT`, never a literal (SA-1c-4). The period wording comes from one pure helper keyed by the window value, so the two views cannot disagree.
+
+#### 5.6.5 Behaviour details
+
+- A window change re-reads the history for the visible view: the per-currency read when a panel is open, else the plain read (SQ-34).
+- After a rate save, the re-reads that already happen (SA Q-3) carry the applied window.
+- Leaving the Exchange rates tab and coming back starts again at This month (Finance unmounts hidden panels; SQ-30).
+- A refused custom range (From after To) is shown by the control itself and sends nothing.
+
+#### 5.6.6 Unchanged by 1d
+
+- No migration, table, column or index. `PATCH`, audit events, the 1b lockdown, `HISTORY_LIMIT` (still 10), the name-lookup rules (SQ-13) and `UNKNOWN_USER_LABEL`.
+- The rates table, the Show / Search filter (`currencies`), held rows (SQ-9), the "Enabled currencies" tile.
+- `DatePresets.tsx`, `adminWindow.ts`, `adminWindowPresets.ts`, `useAdminFilters.ts`: reused, not edited.
+- Finance: no file under `app/admin/finance/` changes; `FINANCE_FILTER_SPEC`, `financeFilterRepair`, the finance request string and `financeRequest.pin` are untouched (if SQ-25 is ruled as BA suggests). `finance.source.guard` and CUR-3 unchanged.
+- `redundantPages` G-6: the folder's literal `fetch(` count stays **3** (the two `GET` sites gain query parameters; no new call site; SQ-33).
+- D-5, D-6: nothing converts money; no sidebar change.
+
 ---
 
 ## 6. Functional requirements
@@ -391,6 +462,13 @@ The KPIs stay in `app/admin/exchange-rates/components/ExchangeRatesKpis.tsx`, on
 | FR-25 | The rates on the tab show whether or not the finance read has finished or failed, with no finance error or loading state on the tab (SQ-19) | 2a |
 | FR-26 | `/admin/exchange-rates` sends the admin to `/admin/finance?tab=exchange-rates` by a temporary `next.config.js` redirect that keeps the query; the page file is deleted (SQ-4, SQ-17 (a)) | 2b |
 | FR-27 | No sidebar change: no Settings link and no new item (D-7) | 2a |
+| FR-28 | A Window control (the shared `DatePresets`: Today, 7 days, 30 days, This month, Custom with From (UTC) / To (UTC) and Apply) sits directly above the history table; default **This month**; UTC (D-8, §5.6.2) | 1d |
+| FR-29 | The history table shows the newest **10** rate changes whose `changed_at` lies **inside the window**, newest first, selected **on the server** (never the newest 10 overall trimmed in the page). Amends FR-18 | 1d |
+| FR-30 | The per-currency History view follows the same window, with the same server-side rule | 1d |
+| FR-31 | The "Last rate change" tile stays **all-time**: it reads a separate all-time `lastChange` from the plain `GET`, never the windowed list. Amends SA-1c-2 (SQ-31) | 1d |
+| FR-32 | Captions name the period ("this month", "today", "in the last 7 days", "in the last 30 days", "from A to B (UTC)"), overall and per currency; the cap comes from `HISTORY_LIMIT` | 1d |
+| FR-33 | An empty window shows "No rate changes in this period." (per currency: "No rate changes for {CODE} in this period.") | 1d |
+| FR-34 | The window does not affect the rates table, the Show / Search filter or the "Enabled currencies" tile | 1d |
 
 ---
 
@@ -460,6 +538,22 @@ The KPIs stay in `app/admin/exchange-rates/components/ExchangeRatesKpis.tsx`, on
 - [ ] Switching a currency off under "Enabled only" behaves per the SQ-9 ruling: the row stays visible with its chip "Disabled" (focus stays on its switch) until **Refresh**, or a filter or search change; after Refresh it is gone. One render test.
 - [ ] ~~Country column~~ — dropped by the user 2026-10-19 ("skip this requirement, not needed").
 - [ ] The bar follows the layout standard (`role="search"` named "Filters", labelled native controls); the existing layout and Exchange rates guards stay green.
+
+### Slice 1d — History window (FR-28 to FR-34)
+
+- [ ] On `/admin/finance?tab=exchange-rates` a Window control (Today, 7 days, 30 days, This month, Custom) sits directly above the history table, with **This month** pressed on first open.
+- [ ] Under This month the history shows only changes dated this UTC month, at most 10, newest first. A route test with more than 10 rows in the window and more outside it proves the 10 returned are the **newest 10 inside the window** (the selection is on the server, not trimmed in the page).
+- [ ] Today, 7 days and 30 days each narrow the list as `resolveAdminWindow` defines them (UTC, including today); Custom with From / To applies whole UTC dates with an inclusive end (a change at `to` 23:59:59Z is in, one at `to + 1` 00:00:00Z is out).
+- [ ] Opening a currency's History shows that currency's newest 10 changes **in the same window**; changing the window while the panel is open re-reads that currency's history.
+- [ ] The "Last rate change" tile shows the **all-time** newest change whatever the window: with no change this month it still shows the last change (e.g. from a previous month), never "No changes yet" while history exists. It reads `lastChange`, never `history[0]` (render test with a window that excludes the newest change).
+- [ ] `lastChange` is on the plain `GET` only; the per-currency payload has no `lastChange`. Its editor gets a label under the same all-or-nothing name lookup (SQ-13).
+- [ ] An empty window shows "No rate changes in this period." (per currency: "No rate changes for {CODE} in this period."); the caption names the period in every state.
+- [ ] Query validation per the SQ-26 ruling: a bad, one-sided or reversed window, an unknown key or a repeated key → **400**, nothing read; the history limit is still the constant 10 and never comes from the request.
+- [ ] The rates table, Show / Search, held rows and "Enabled currencies" behave exactly as before under every window (render test).
+- [ ] Per the SQ-25 ruling: switching the history window writes nothing to the address bar (BA default), and the Finance request string on the tab is unchanged (`financeRequest.pin` green unedited).
+- [ ] Leaving the tab and coming back shows This month again (SQ-30).
+- [ ] `redundantPages` G-6 `fetch(` count still **3**; `KpiStrip.callers.pin` per the SQ-31 / SQ-32 ruling (BA expects no hash to move); no file under `app/admin/finance/` or `lib/business-os/finance/` changes; no migration.
+- [ ] Nothing does arithmetic on a rate (D-5).
 
 ### Slice 2
 
@@ -548,6 +642,21 @@ Technical forks for SA to rule on; none need the user.
 | SQ-23 | Approve the named forced edits to existing tests (§5.3.4): finance tab names list, keyboard wrap over four, the spec's tab values, the two rates render suites rendering the view instead of `../page`, the G-6 page-only checks, `AdminSidebar.nav` on-disk / `UNLISTED`, `chargeChecksRedirect` "three" → four | Approve as listed; Dev shows each diff in the handover and nothing else in those files changes |
 | SQ-24 | A link that combines a business with `tab=exchange-rates` | Keep the existing rule: the business wins and the tab is dropped (rule 2 of `financeFilterRepair`, unchanged). No special case for rates, which have no business |
 
+**Slice 1d (D-8, §5.6).** Technical forks only; the business choices are settled by the user's two 2026-10-20 messages.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| SQ-25 | **URL collision.** The Admin Layout Standard window owns the URL keys `range` / `from` / `to` (`windowFilter`). On the Finance Exchange rates tab, Finance's own Window already owns those keys (`FINANCE_FILTER_SPEC.window`, alias `preset`); it is hidden on this tab but its hook is mounted, so a history window written as `range=7d` would be parsed by Finance as **its** window (and change the finance request string). Keep the history window in page state only, or give it distinct keys? | **Page state only** (a `useState` in `ExchangeRatesView` holding an `AdminWindowValue`, default This month). No URL key, no edit to `FINANCE_FILTER_SPEC` or `financeFilterRepair`, `financeRequest.pin` untouched. Cost: the history window is not in a shared link and a reload returns to This month, which matches the user's "default is This month". Distinct keys (e.g. `historyRange` / `historyFrom` / `historyTo`) would need a second `windowFilter` with renamed keys, a Finance repair rule for the other tabs and new pins, for no current need |
+| SQ-26 | **Query shape on the `GET`, and its validation.** Today the query schema is `.strict()` and allows only `currency`. Dates or instants? Which keys? | Extend `exchangeRatesQuerySchema` (still `.strict()`, repeated key still refused first) with **`from` and `to` as whole UTC dates** `YYYY-MM-DD`, validated with `isRealDate` and `from ≤ to`; **both required together** (one without the other → 400); both absent → the server's default window, This month (so an old client or a test without params still gets a bounded, defined answer). Not instants: the control only produces whole dates, and dates keep the query free of time-zone text. Applies to both the plain and the per-currency read (`currency` + `from` + `to`). No 92-day cap (`ADMIN_WINDOW_MAX_DAYS` protects Finance's aggregates; here the limit is a fixed 10 rows on an indexed column); SA may add it |
+| SQ-27 | **Where the window is resolved** (client vs server) | **The page resolves** the value to dates with `resolveWindow(value, new Date())` and sends `from` / `to`; the server validates and converts to instants (SQ-28). Simplest: one query shape for presets and Custom, and the caption and the request come from the same dates. Alternative (Finance's precedent, "the URL is input, never authority"): send `range=this_month` and let the server re-resolve with its own clock. That matters for Finance's money aggregates; for a list of 10 rows a clock skew at midnight UTC is harmless. SA's call |
+| SQ-28 | **Custom bounds** | Whole UTC dates, **inclusive end**: `changed_at >= from T00:00:00Z` and `changed_at < (to + 1 day) T00:00:00Z` (half-open on the next midnight, so a change at 23:59:59.999Z on `to` is included and no `23:59:59` literal is needed). `DatePresets` with **`requireBothDates`** (Finance also requires both dates for Custom), so a one-sided custom window never reaches the route. `to` after today: allowed by the route (harmless), though the control's dates normally end today |
+| SQ-29 | **UTC** for Today / 7 days / 30 days / This month | **Yes, UTC**, as the rest of admin (`resolveAdminWindow`, the "From (UTC) / To (UTC)" labels, `formatUtc` in the table). No local-time variant |
+| SQ-30 | **Does the window reset when the admin leaves the tab?** | **Yes**, by construction: Finance unmounts a hidden panel (SQ-20 (4)), so the view's page state starts at This month each time the tab opens, and on reload. No extra code. Within the tab, the window survives Refresh, a rate save, a Show / Search change and opening / closing a currency's History |
+| SQ-31 | **"Last rate change" stays all-time (flagged).** Today the tile reads `payload.history[0]` (SA-1c-2); once `history` is windowed that would be the newest change in the window. Shape of the separate all-time value? | Add **`lastChange: ExchangeRateHistoryWire \| null`** to `ExchangeRatesPayload` (plain `GET` only; not on `ExchangeRateHistoryPayload`). Repository: a new `findLatestChange()` (newest one row, no window, same columns and order), or `listRecentHistory` returning it alongside; SA picks. The label lookup runs once over the distinct editors of the windowed rows **plus** `lastChange` (≤ 11 ids, one `.in()` per source), same all-or-nothing rule. `ExchangeRatesKpis` reads `payload.lastChange`. SA-1c-2's "Last rate change = `history[0]`" is amended to "= `lastChange`" |
+| SQ-32 | **`KpiStrip.callers.pin`**, since the tile's data source changes | The tile's rendered output does not change, only where it reads from. Fixtures gain `lastChange` equal to today's `history[0]` (and `null` in the no-history fixture), so **every hash stays unchanged**; one additive case may be appended ("last change outside the window": `history` empty, `lastChange` set). If SA prefers no new case, the render test in §8 1d covers it |
+| SQ-33 | **`redundantPages` G-6 fetch count** | **Stays 3.** The plain `GET` and the per-currency `GET` gain query parameters at their existing literal call sites; no new `fetch(` site, and no folding of sites into a variable to dodge the count (SQ-12 ruling). Dev confirms `ALLOWED_FETCH` accepts the added `?from=…&to=…` on the plain read (today that site has no query string) |
+| SQ-34 | **What a window change re-reads** | The plain `GET` (rates + windowed history + `lastChange`) when no panel is open; only the per-currency `GET` when a panel is open (the overall list is not visible then). BA accepts that a plain re-read also releases held rows (SQ-9: emptied on every successful read). If SA wants the rates untouched by a window change, the alternative is a history-only read, which would be a fourth `fetch(` site and a new payload shape: BA does not suggest it |
+
 ---
 
 ## 11. Open questions (business)
@@ -591,6 +700,14 @@ None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wor
 | `lib/repositories/UserProfileRepository.ts`, `AdminUserRepository.ts` (1c.1) | No code change; "only caller" header comments updated |
 | `app/admin/components/layout/__tests__/KpiStrip.callers.pin.render.test.tsx` (1c.1) | Exchange rates cases re-pinned per SQ-15; new cases appended |
 | ~~`components/ui/CountrySelect.tsx`~~, ~~`package.json` / lockfile~~ | Not touched: comment 3 dropped by the user, so SQ-10 / SQ-11 are moot |
+| `app/admin/exchange-rates/components/ExchangeRatesView.tsx` (1d) | Holds the history window in page state (default This month, SQ-25); renders `DatePresets` above the history table; both `GET` call sites carry `from` / `to`; a window change re-reads per SQ-34 |
+| `app/admin/exchange-rates/components/RateHistoryTable.tsx` (1d) | Captions name the period; new empty messages (FR-32, FR-33) |
+| `app/admin/exchange-rates/components/ExchangeRatesKpis.tsx` (1d) | "Last rate change" reads `payload.lastChange`, not `history[0]` (SQ-31); output unchanged |
+| `app/api/admin/exchange-rates/route.ts` (1d) | Query gains `from` / `to` (SQ-26); history reads windowed; plain `GET` adds `lastChange`; label lookup covers its editor; route header rewritten |
+| `lib/repositories/ExchangeRatesRepository.ts` (1d) | `listRecentHistory` / `listRecentHistoryForCurrency` take a window (`.gte` / `.lt` on `changed_at`, same order and fixed limit); an all-time newest-change read (SQ-31); unit tests |
+| `lib/admin/exchangeRates/exchangeRateRules.ts` (1d) | Query schema gains `from` / `to`; `ExchangeRatesPayload` gains `lastChange`; a pure period-wording helper may live here or beside the view. `HISTORY_LIMIT` unchanged (10) |
+| `app/admin/components/layout/DatePresets.tsx`, `adminWindow.ts`, `app/admin/components/adminWindowPresets.ts` (1d) | Reused, **not edited** |
+| `app/admin/finance/**`, `KpiStrip.callers.pin`, `redundantPages` G-6 (1d) | Unchanged (SQ-25, SQ-32, SQ-33): no finance key, the fetch count stays 3, no hash expected to move. No migration (`idx_exchange_rate_history_changed_at` exists) |
 
 ---
 
@@ -794,6 +911,164 @@ None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wor
 2. New `exchangeRatesRedirect.config.test.ts` per SQ-17; the 2b forced edits per SQ-23 and SQ-22.
 3. Confirm `git diff --stat` shows no file under `app/api/admin/exchange-rates/`, `lib/admin/exchangeRates/`, `lib/repositories/` or `lib/business-os/finance/`.
 
+### 13.6 SA review — slice 1d
+
+**Reviewed by SA — 2026-10-20.** This is a requirement review of the §1 1d row, D-8, §5.6, FR-28 to FR-34, the §8 slice 1d criteria, the §12 1d rows, and SQ-25 to SQ-34. Code was read from `feature/admin-exchange-rates-1d-history-window` at `origin/main` `930a6cee`.
+
+**Verdict: CLEARED-WITH-CHANGES. Dev builds from the step list below; there is no separate workplan review.** The slice is proportionate. It adds no table, migration, write path, dependency or new fetch site. It reuses the shared Window control and the admin window helpers unedited, and it keeps every Finance file untouched.
+
+Two BA proposals change:
+- **SQ-34.** A window change re-reads what Refresh re-reads, not the panel only. Otherwise the overall list behind an open panel goes stale.
+- **SQ-32.** No new pin case.
+
+Four gaps the BA did not list are added: SA-1d-1 to SA-1d-4. They cover a request race on the plain read, the caption naming the window the rows were read under, a date range that would otherwise reach Postgres as a 500, and the ordering of a null `changed_at`.
+
+**Not split.** A server-only half would either ship a windowed list with no control and no period caption, or need a temporary all-time default that is then reversed. The slice is one feature over six source files.
+
+**Cycle:** full cycle. The route's query and payload change.
+
+**User decisions, not reopened (D-8):**
+- The control has the same five presets, defaults to This month, and shows the newest 10 in the window.
+- It filters the history table and the per-currency History view only.
+- "Last rate change" stays all-time.
+
+**Verified against the code:**
+
+| Claim | Result |
+|---|---|
+| `DatePresets` props and rules (§5.6.1) | ✅ `app/admin/components/layout/DatePresets.tsx`: `value`, `defaultValue`, `onChange`, `extras`, `requireBothDates`. A preset applies at once. A second click on the pressed preset calls `onChange(defaultValue)`, so with the default This month pressed it calls `onChange` with an **equal** value (SA-1d-6). "Custom" only opens the row. With `requireBothDates`, Apply stays disabled until both dates are set. Only "From after To" is refused. The type still allows `{ kind: 'custom', from: null }`, so the page's helper must narrow (step 4). **No page imports `DatePresets` directly today.** Every caller goes through `AdminFilterBar`'s `windowControl`. No guard forbids a direct import (`layoutFolder.guard` lists the file and has no import rule for it). See SA-1d-5 |
+| `resolveWindow` / `resolveAdminWindow` / `isRealDate`, UTC | ✅ `adminWindow.ts` `resolveWindow(value, now)` maps `preset` through `resolveAdminWindow` and returns `custom` as given. `adminWindowPresets.ts` is UTC throughout (`Date.UTC`, `getUTC*`). `this_month` runs from the 1st to today; `7d` / `30d` include today. `isRealDate` checks the pattern and the round-trip, so it refuses `2026-02-30` and `''`. It **accepts** `0000-01-01` and `9999-12-31` (SA-1d-3). `customRangeProblem` is **not** reusable here: it refuses a `to` after today and anything over 92 days, neither of which this slice wants (SQ-26) |
+| Finance owns `range` / `from` / `to` on the tab (SQ-25) | ✅ `FinanceView.tsx:151` `useAdminFilters(FINANCE_FILTER_SPEC)` is unconditional, with no `active` option, so it is mounted on the Exchange rates tab. `financeFilters.ts:116-119`: `window: windowFilter(...)` with alias `preset` → `range`, so it owns `range`, `from`, `to` and reads `preset`. A history window in the URL would be parsed as Finance's window and would change the finance request string. Finance's filter bar is not rendered on the tab (SQ-19 (i)), so the history control is the only group named "Window" on screen |
+| Panels unmount (SQ-30) | ✅ As ruled in §13.5 (SQ-20 / SQ-19). `ExchangeRatesView` exists only while its tab is selected, so its page state starts at the default on every visit and on reload |
+| Strict query schema | ✅ `exchangeRateRules.ts` `exchangeRatesQuerySchema = z.object({ currency: currencyCodeSchema.optional() }).strict()`. The route refuses a repeated key **before** the parse (`params.getAll(key).length > 1`), then parses `Object.fromEntries(params)`. Adding `.superRefine` turns it into a `ZodEffects`; `safeParse` and `query.data.currency` still work |
+| Repository history reads | ✅ `listRecentHistory()` and `listRecentHistoryForCurrency(code)` select `HISTORY_COLUMNS`, `.order('changed_at', { ascending: false }).limit(EXCHANGE_RATE_HISTORY_LIMIT)`. Neither takes a window today. The header promises "No method accepts a caller-supplied filter … or limit" and must be reworded (step 3). `changed_at` is `timestamp with time zone DEFAULT now()` and **nullable** (`20261082` line 116). The trigger always sets `NOW()`, but `ExchangeRateHistoryRow.changed_at` is typed `string` (SA-1d-4). Index `idx_exchange_rate_history_changed_at` exists (line 126) |
+| `nameLookup` | ✅ `route.ts` `resolveLabels(records)` takes the ids from `historyEditorIds(records)` (distinct, non-null). It runs both sources in parallel through `settle` (returned and thrown errors are the same failure), and any failure gives `labelHistory(records, { status: 'failed' })`. It returns already-labelled rows, so as written a second list (`lastChange`) would need a second lookup and could disagree with the first. Step 5 splits it into "resolve once" and "label each list" |
+| `KpiStrip.callers.pin` (SQ-32) | ✅ Five `ExchangeRatesKpis` cases (lines 294-298, hashes 359-363). The fixtures (`FX_PAYLOAD` and the three spreads, lines 209-217) are typed `ExchangeRatesPayload`, and Jest runs `ts-jest`, so a required `lastChange` **must** be added to them. The tile reads only `lastChange`, so with `lastChange` equal to today's `history[0]` (`null` for no history) the HTML, and so **every hash, is unchanged**. `KpiStrip.tsx` is not touched. With a payload present, `loading` does not swap the tiles for placeholders (line 54), so a window re-read does not flicker the strip |
+| `redundantPages` G-6 (SQ-33) | ✅ `` ALLOWED_FETCH = /^\s*(['"`])\/api\/admin\/exchange-rates(['"`/?]\|\$\{)/ `` (guard line 128; the table cell escapes the `\|`). A template literal `` `/api/admin/exchange-rates?${…}` `` passes on the `?` branch. The per-currency site already does. `fetchCount` counts literal `fetch(` sites, so the count stays **3** when both GET sites gain parameters in place. The `\$\{` branch would also pass `` `/api/admin/exchange-rates${suffix}` ``; that form is still forbidden by the SQ-12 ruling (step 6) |
+| Held rows vs re-reads (SQ-9, SQ-34) | ✅ `ExchangeRatesView.tsx`: `refresh()` empties the held set **before** its reads, and `load()` empties it on every successful plain read. `load` is `useCallback([])` with **no request counter**, so only the one-currency read has one (`historyRequest`, SA W-3). Two quick window changes could therefore let an older plain answer land last (SA-1d-1) |
+| SQ-27 precedent | ✅ The layout-standard pages resolve on the client and send dates: `costsFilters.ts` `costsRouteSearch` and `activityFilters.ts` `activityRouteSearch` send `from` / `to` as whole dates. The AI activity route (`app/api/admin/business-os/ai-activity/route.ts`) takes `from` / `to` `YYYY-MM-DD`, strict. Audit trail and Analytics also send resolved bounds. Finance is the exception: its route takes `preset` and re-resolves with its own clock, because its money aggregates must not trust a client clock. A `lib/` module importing the pure `adminWindowPresets.ts` has precedent too (`lib/business-os/finance/dueDates.ts:20`) |
+| Forced test edits (not listed by BA) | ⚠️ Exact-URL matchers break once the GETs carry parameters: `exchangeRates.render.test.tsx` lines 171, 347, 565, 580, and `exchangeRatesFilters.render.test.tsx:143`. Caption assertions using `toHaveTextContent` (a substring match) break on the new period wording: `exchangeRates.render.test.tsx` lines 444, 451, 459, 462, 475, 511, 589. The route-test repository mock drops arguments (`listRecentHistory: () => listRecentHistory()`, line 54). `app/admin/finance/__tests__/exchangeRatesTab.render.test.tsx` matches with `startsWith(RATES_PATH)`, types its payload `unknown` and asserts only that `kpi-last-rate-change` exists, so it stays green **unedited** |
+
+#### Rulings
+
+| # | Ruling |
+|---|---|
+| SQ-25 | **Accepted: page state only.** `useState<AdminWindowValue>` in `ExchangeRatesView`, default `HISTORY_DEFAULT_WINDOW` (step 4). No URL key. No edit to `FINANCE_FILTER_SPEC`, `financeFilterRepair`, `useAdminFilters` or `EXCHANGE_RATES_FILTER_SPEC`. `financeRequest.pin` is green and unedited |
+| SQ-26 | **Accepted, with one addition (SA-1d-3).** `exchangeRatesQuerySchema` stays `.strict()`, and the repeated-key refusal stays first. It gains `from` and `to`, each `z.string().refine(isRealDate)` and inside the SA-1d-3 range. A `superRefine` requires **both or neither**, and `from ≤ to` (a string compare, after both are real dates). Both absent → the server default, `resolveAdminWindow(HISTORY_DEFAULT_PRESET, new Date())`, so every existing no-query route test keeps its meaning. `to` after today is allowed. **No 92-day cap**: the read is 10 rows on an indexed column, not an aggregate. The same keys apply to the plain read and to `currency` + `from` + `to`. The limit never comes from the request |
+| SQ-27 | **Accepted: the page resolves and sends whole dates.** This is consistent with Costs, AI activity, Audit trail and Analytics (verified above). Finance's re-resolution is the money-aggregate exception, not the repo's rule for a list. Presets are resolved **at each read**, with `new Date()` at call time: Refresh and the save re-reads re-resolve, so "today" moves with the clock. The server converts the dates to instants (SQ-28). It does not trust them for anything else and has no preset key |
+| SQ-28 | **Accepted.** Half-open bounds on UTC midnights: `changed_at >= {from}T00:00:00.000Z` and `changed_at < {to + 1 day}T00:00:00.000Z`. They are built by one pure helper in `exchangeRateRules.ts` (step 2) using `Date.UTC` arithmetic, never local time and never a `23:59:59` literal. `DatePresets` gets `requireBothDates` |
+| SQ-29 | **Accepted: UTC**, with the shared labels "From (UTC)" / "To (UTC)" |
+| SQ-30 | **Accepted, no code.** Covered by an unmount / remount render test in the rates suite. No Finance test is edited |
+| SQ-31 | **Accepted, with a separate method.** `ExchangeRatesPayload` gains `lastChange: ExchangeRateHistoryWire \| null`, on the plain read only. `ExchangeRateHistoryPayload` does not gain it. The repository gets a new `findLatestChange()`: same columns, no window, newest first, `limit(1)`. It is called only on the plain read, in parallel with the other two reads. A failure gives the existing 500, logged `failed: 'lastChange'`. **SA-1c-2 is amended:** "Last rate change" = `payload.lastChange`, never `history[0]`. The label lookup runs **once** over the editors of the windowed rows plus `lastChange` (≤ 11 ids), with the same all-or-nothing rule across both lists (step 5) |
+| SQ-32 | **Hashes unchanged, accepted. The additive case is rejected.** The "last change outside the window" case would render byte-identical HTML to `A2 ExchangeRatesKpis two tiles`, because the tile no longer reads `history`, so it adds no coverage of the shared component. The fixtures gain `lastChange` (step 7). `EXPECTED` is untouched. The header gains one line: "Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed." The "outside the window" behaviour is proven by the view render test (step 8, test 5) |
+| SQ-33 | **Accepted: the count stays 3.** Both GET sites stay literal `fetch(` calls whose first argument is a template literal starting `` `/api/admin/exchange-rates? ``. No variable URL, no folded site, no `${suffix}` directly after the path. No guard edit |
+| SQ-34 | **Rejected as proposed: a window change runs Refresh's reads.** That means the plain read, plus the open panel's read when a panel is open. With only the panel re-read, the overall `payload.history` stays on the old window, and "Show all currencies" (which reads nothing) would show it under the new window. Running Refresh's reads also empties the held set first. That is the existing SQ-9 rule ("Refresh, every successful read"), and the rates are re-read in the same step, so the table is current. This is recorded for the user's diff review, not a blocker. A history-only read stays rejected (a fourth `fetch(` and a new payload shape) |
+
+#### Additional rulings
+
+| # | Topic | Ruling |
+|---|---|---|
+| SA-1d-1 | Plain-read race | `load` gets a request counter like `historyRequest` (SA W-3). Every plain read takes a number, and only the newest may write `payload`, the shown window, `error`, `refreshNotice`, the held set or `loading`. Unmount retires it too. A window change while a read is in flight then cannot be overwritten by the older answer |
+| SA-1d-2 | Captions name the rows' window | Each answer records the window it was **read under**. The plain read stores it beside `payload`, and `CurrencyHistory` gains `window`. Captions and empty messages use that recorded window, never the control's current value. After a failed window re-read, the rows on screen keep their own period's wording. While a re-read runs, the existing `aria-busy` marks the list |
+| SA-1d-3 | Date range | `from` and `to` must also lie in `2000-01-01`..`2999-12-31` (a string compare after `isRealDate`), else 400. Without this, `0000-01-01` (no year 0 in Postgres) or `9999-12-31` (+1 day gives the extended-year ISO `+010000-…`) passes Zod and fails in the database as a 500. Constants `HISTORY_WINDOW_MIN_DATE` / `HISTORY_WINDOW_MAX_DATE` go in `exchangeRateRules.ts` |
+| SA-1d-4 | Null `changed_at` | `findLatestChange` orders `{ ascending: false, nullsFirst: false }`, so a row with no time can never be the tile's "last change". The windowed reads exclude nulls by the comparison itself. `listRecentHistory*` keep their existing order call |
+| SA-1d-5 | Using `DatePresets` outside `AdminFilterBar` | **Approved as reuse, not a new pattern** (this is the CLAUDE.md rule 7 review). A second `AdminFilterBar` would add a second `role="search"` landmark named "Filters" to the page. The control is rendered **inside `RateHistoryTable`**, between its heading row ("Recent rate changes" and the caption) and its body. It is shown in every state (loading, error, empty, rows), so an admin can always widen an empty window. The two `RateHistoryTable` instances sit in the same slot of the view's ternary, so React keeps one control across opening and closing a panel. No `extras`. No edit to any file in `app/admin/components/layout/` |
+| SA-1d-6 | No-op change | A window change whose value `windowEquals` the applied one reads nothing (this covers the second click on the pressed This month) |
+| SA-1d-7 | §8 criterion 2 ("a route test proves the newest 10 inside the window") | With a mocked repository, a route test cannot prove a database selection. The proof is in three parts: (a) the repository unit test pins `.gte`, `.lt`, `.order(desc)` and `.limit(10)` on **one** builder chain; (b) the route test pins that the request's dates reach the repository as the SQ-28 instants; (c) a view test shows the page renders exactly the rows it receives, with no trimming. BA rewords the criterion to this; it is a record edit and does not gate Dev |
+| SA-1d-8 | Skills and domains | `new-api-route` checklist for the changed handler: `requireAdmin` first, Zod before any read, correlationId, error format. `new-repository` checklist for `findLatestChange` and the windowed reads: `RepositoryResult`, never throws, method logger, counts only. The documented no-`user_id` exemption stays and covers the new method. No entitlements import (type-only included), no LLM call, no cron, no caller-supplied tenant id: `business-os-entitlements`, `bos-llm-call-standards`, `durable-queue-drain` and `tenant-isolation-guard` are not triggered. Schema: `changed_at` is verified from the `20261082` record. No `console.*` in any touched file (0 today in all six), and the new files stay at 0 |
+| SA-1d-9 | Logs and privacy | The route may log the window dates at `debug` (not personal data). It never logs a label, name or email (SA-1c-7). The existing logger-spy test is extended to the `lastChange` label |
+
+#### Required changes
+
+**BA (record edits; they do not gate Dev):**
+1. §5.6.5 first bullet and SQ-34 consequence: a window change runs Refresh's reads.
+2. §8 slice 1d criterion 2 per SA-1d-7; criterion 8 adds the SA-1d-3 range.
+3. §8 KPI pin criterion: "no hash moves, no new case".
+4. §12: add `app/admin/exchange-rates/historyWindow.ts` (new) and the forced test edits from the table above. The `RateHistoryTable` row adds "renders the Window control (SA-1d-5)".
+
+**Dev, build (the step list is the workplan; record deviations as DV-n in a short workplan MD the TL opens for QA):**
+
+0. **Branch and baseline.** Work in this worktree, from `origin/main` `930a6cee` or newer. Run the narrow Jest set (step 10) once before editing and record the counts.
+1. **Rules: the query** (`lib/admin/exchangeRates/exchangeRateRules.ts`).
+   - Import `isRealDate`, `resolveAdminWindow` and `type AdminWindowPreset` from `@/app/admin/components/adminWindowPresets`.
+   - Add `HISTORY_DEFAULT_PRESET = 'this_month' satisfies AdminWindowPreset`, and the two SA-1d-3 constants.
+   - Rewrite `exchangeRatesQuerySchema` per SQ-26: `currency`, `from`, `to`, all optional, `.strict()`, plus the `superRefine` for both-or-neither and `from ≤ to`.
+   - Export `type HistoryWindowDates = { from: string; to: string }`.
+   - Update the schema's doc comment. `HISTORY_LIMIT` stays 10.
+2. **Rules: the bounds and the payload.**
+   - Add `historyWindowBounds(dates: HistoryWindowDates): { fromInclusive: string; toExclusive: string }` per SQ-28, pure, using `Date.UTC`.
+   - Add `defaultHistoryWindowDates(now: Date): HistoryWindowDates` = `resolveAdminWindow(HISTORY_DEFAULT_PRESET, now)`.
+   - `ExchangeRatesPayload` gains `lastChange: ExchangeRateHistoryWire | null`, with a doc comment: all-time, plain read only, SA-1c-2 as amended.
+3. **Repository** (`lib/repositories/ExchangeRatesRepository.ts`).
+   - `listRecentHistory(window: { fromInclusive: string; toExclusive: string })` and `listRecentHistoryForCurrency(code, window)` add `.gte('changed_at', window.fromInclusive).lt('changed_at', window.toExclusive)` before the existing order and limit.
+   - New `findLatestChange(): Promise<RepositoryResult<ExchangeRateHistoryRow | null>>` per SQ-31 and SA-1d-4: `.limit(1)`, then `data[0] ?? null`.
+   - Rewrite the header line "No method accepts a caller-supplied filter…" to name the window: two instants the route built from Zod-validated dates.
+4. **Page helper, new pure file** `app/admin/exchange-rates/historyWindow.ts` (no React, no fetch; not added to the `layoutFolder` registry, like `changedByText.ts`).
+   - `HISTORY_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: HISTORY_DEFAULT_PRESET }`.
+   - `historyWindowDates(value, now): HistoryWindowDates`: `resolveWindow`, and anything that is not two non-null dates falls back to the default. This is the `costsFilters.datesOf` shape.
+   - `historyWindowParams(value, now): URLSearchParams` holding `from` and `to`.
+   - `historyPeriodText(value)`: `today` → "today", `7d` → "in the last 7 days", `30d` → "in the last 30 days", `this_month` → "this month", custom → "from A to B (UTC)", anything else → the default's text.
+5. **Route** (`app/api/admin/exchange-rates/route.ts`).
+   - Dates come from the query, or `defaultHistoryWindowDates(new Date())` when absent, then `historyWindowBounds`.
+   - Plain read: `Promise.all([listAll(), listRecentHistory(bounds), findLatestChange()])`, each failure named (`rates` / `history` / `lastChange`).
+   - Per-currency read: `listRecentHistoryForCurrency(code, bounds)`, no `findLatestChange`.
+   - Split `resolveLabels` into `resolveLookup(records): Promise<{ lookup: EditorLookup; nameLookup: NameLookupStatus }>`, run once over the window rows plus `lastChange`. Then call `labelHistory(rows, lookup)`, and `labelHistory([latest], lookup)[0]` for `lastChange`. Its contract is unchanged (never throws, logs counts only).
+   - Rewrite the route header: the query keys, the default window, `lastChange`, and the label lookup over both lists.
+6. **View** (`ExchangeRatesView.tsx`).
+   - `historyWindow` state and a `historyWindowRef`, both set **in the change handler**, never during render and never in an effect. Do not name a variable `window`.
+   - `load` and `loadCurrencyHistory` read the ref at call time and send `` fetch(`/api/admin/exchange-rates?${historyWindowParams(…)}`, …) `` and `` fetch(`/api/admin/exchange-rates?currency=${encodeURIComponent(code)}&${historyWindowParams(…)}`, …) ``.
+   - Plain-read counter per SA-1d-1; shown windows per SA-1d-2.
+   - `changeHistoryWindow(next)`: SA-1d-6 no-op, else set state and ref, then `refresh()` (SQ-34).
+   - Pass `window`, `defaultWindow` and `onWindowChange` plus the rows' window to `RateHistoryTable`.
+   - Update header comment lines 17-24: the GETs carry `from` / `to`; a window change runs Refresh's reads.
+7. **Presentational.**
+   - `RateHistoryTable.tsx` renders `<DatePresets … requireBothDates />` per SA-1d-5.
+   - `historyCaption(count, currencyCode, period)`: at the cap, "The newest {HISTORY_LIMIT} changes {period}"; otherwise "{n} change(s) {period}, newest first"; the "{CODE}: " prefix kept.
+   - Empty messages: "No rate changes in this period." / "No rate changes for {CODE} in this period." (FR-32, FR-33). Update its header comment.
+   - `ExchangeRatesKpis.tsx`: `const last = payload.lastChange;`, and its header comment says all-time, from `lastChange`.
+   - `KpiStrip.callers.pin`: fixtures gain `lastChange`. `FX_PAYLOAD` → `FX_CHANGE`; no history → `null`; lookup failed → the same `changedByLabel: null` row; old rate null → the `oldRate: null` row. Add one header line. Show the `git diff` of that file in the handover: no hash or case line moves.
+8. **Tests, new and amended.**
+   - `exchangeRateRules.test.ts`:
+     - Schema: none, `currency` only, `from` + `to`, all three, `from = to` → ok. Only `from`, only `to`, reversed, `2026-02-30`, `''`, `2026-1-01`, `1999-12-31`, `3000-01-01`, an unknown `limit` → refused. A future `to` → ok.
+     - `historyWindowBounds`: 10-01..10-20 → `2026-10-01T00:00:00.000Z` / `2026-10-21T00:00:00.000Z`, plus month end, year end, `2028-02-28` → 02-29, `2028-02-29` → 03-01, `2027-02-28` → 03-01.
+   - New `app/admin/exchange-rates/__tests__/historyWindow.test.ts`: every preset at a fixed `now`, including `2026-10-01T00:00:00.000Z` and `2026-10-31T23:59:59.999Z`; custom; the fallback; every `historyPeriodText`.
+   - `ExchangeRatesRepository.test.ts`:
+     - Both windowed reads pin `gte` / `lt` / `eq` (per currency) / `order` desc / `limit(10)` on one chain.
+     - `findLatestChange`: no `gte` / `lt`, `nullsFirst: false`, `limit(1)`, a row or `null`, a returned error, a thrown error.
+   - `route.test.ts`:
+     - Forward mock arguments; mock `findLatestChange` in `beforeEach`.
+     - The window reaches the repository as instants. No query gives This month at a pinned clock (`jest.useFakeTimers({ now })` in that test only, then `useRealTimers`).
+     - `lastChange` is labelled, including an editor who appears only in `lastChange`: each source is called once with the union of ids.
+     - A lookup failure nulls the `lastChange` label too.
+     - A `findLatestChange` error gives a 500 with `failed: 'lastChange'`.
+     - The per-currency body has no `lastChange` key and `findLatestChange` is not called.
+     - 400 with no repository call: one-sided, reversed, bad date, out of range, repeated `from`, `limit=50`.
+     - Not admin → refused before any read.
+     - The logger spy finds no label value.
+   - Rates render suites:
+     - Fix the forced URL matchers by comparing `pathname` plus `searchParams`.
+     - Rewrite the forced caption assertions to the period wording.
+     - Fixtures gain `lastChange`.
+   - New `describe('slice 1d')` in `exchangeRates.render.test.tsx`:
+     1. One group named "Window", with This month pressed; the first GET carries this month's `from` / `to` (computed in the test with the helper); caption names "this month".
+     2. 7 days → one plain GET with those dates; no `replaceState` call and `location.search` unchanged; caption "in the last 7 days".
+     3. Custom: Apply is disabled with one date; both dates → exact `from` / `to`; caption "from A to B (UTC)".
+     4. Panel open + window change → one plain GET and one `currency` GET with the window; then "Show all currencies" shows the overall list under the new period.
+     5. `history: []` with `lastChange` set → the tile shows the change, and the list shows "No rate changes in this period."
+     6. Per-currency empty message.
+     7. Race: the first window's answer resolves after the second's → the second's rows and caption stay (SA-1d-1).
+     8. A failed window re-read → the page error, and the old rows keep their own period caption (SA-1d-2).
+     9. "Enabled currencies" is identical under every window, Show / Search are unchanged, and a held row is released by a window change (SQ-34).
+     10. A second click on the pressed This month → no read (SA-1d-6).
+     11. A rate save → the re-reads carry the applied window.
+     12. Unmount and remount → This month (SQ-30).
+     13. 3 rows received → 3 shown, and 10 → 10 with "The newest 10 changes this month" (SA-1d-7 (c)).
+9. **Must stay unedited and green:** every file under `app/admin/finance/` (including `exchangeRatesTab.render.test.tsx` and `financeRequest.pin`) and `lib/business-os/finance/`; `app/admin/components/layout/**` sources; `redundantPages.source.guard` (count 3); `adminReadMethods.guard`; `layoutFolder.guard`. No migration, `package.json` or lockfile change. The `[currencyCode]/route.ts` PATCH is untouched.
+10. **Checks.**
+    - Narrow Jest over `app/admin/exchange-rates`, `app/api/admin/exchange-rates`, `lib/admin/exchangeRates`, `lib/repositories/__tests__/ExchangeRatesRepository.test.ts`, `lib/repositories/__tests__/adminReadMethods.guard.test.ts`, `app/admin/finance`, `app/admin/components`, `app/admin/__tests__`, `lib/admin/__tests__`.
+    - `tsc` (narrow), `eslint`, `lint:hooks`.
+    - Before the handover, run `git diff --stat` and confirm no file outside steps 1 to 8 appears, then run `git diff --numstat` and confirm there is no deletion-only file.
+
 ---
 
 ## Change History
@@ -815,3 +1090,6 @@ None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wor
 | 2026-10-20 | Slice 2a workplan approved; built | Workplan [ADMIN_EXCHANGE_RATES_SLICE_2A_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_2A_WORKPLAN.md): SA APPROVED-WITH-CHANGES (Q-1 accepted: the tab's gate is `onRatesTab \|\| (data && !error)`, hidden blocks as holes in place so the tablist keeps keyboard focus, SA-2a-1; SA-2a-2 to SA-2a-4). Dev built it uncommitted on `adb1c6e8`: fourth tab "Exchange rates" at `?tab=exchange-rates`, Finance chrome hidden on it, one h1 "Finance" with the rates sentence, `currencies` owned through the shared field object plus one repair rule, request unchanged; the standalone page renders its own header until 2b. Deviations DV-1 to DV-5 (a fifth forced test edit, the `fromFinanceQuery` expectation; `origin/main` moved to `0c0ca640` (#485) during the build). Narrow Jest 93 suites / 4,637 tests passed; narrow `tsc` 0 errors; `eslint`, `lint:hooks` clean. Awaiting SA code review and QA |
 | 2026-10-20 | Slice 2b workplan approved; built | Workplan [ADMIN_EXCHANGE_RATES_SLICE_2B_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_2B_WORKPLAN.md): SA APPROVED-WITH-CHANGES (Q-1 to Q-5 accepted; SA-2b-1 to SA-2b-4). Dev built it uncommitted on `feature/admin-exchange-rates-2b-redirect` (from the 2a tip `251472bb`). `next.config.js` gains the temporary redirect `/admin/exchange-rates` → `/admin/finance?tab=exchange-rates` (no `has`), `app/admin/exchange-rates/page.tsx` is deleted, and there is a new `exchangeRatesRedirect.config.test.ts`. The 2b forced edits per §5.3.4, plus comment-only fixes (Q-1). The DV-3 row was added to the §5.3.4 2a table (SA-2b-3), and the `ExchangeRatesRepository.ts` comment is recorded as a §9 follow-up (Q-1 (d)). API routes, `lib/admin/exchangeRates/`, `lib/repositories/` and `lib/business-os/finance/` are untouched. Awaiting SA code review and QA; the PR opens after #486 merges |
 | 2026-10-20 | Slices 2a and 2b merged; 2b follow-up closed | 2a merged via #486 and 2b via #487. The SA Q-1 (d) follow-up is done: the `ExchangeRatesRepository.ts` header comment now names the Finance Exchange rates tab instead of the deleted `/admin/exchange-rates` page. Comment only, no code change. |
+| 2026-10-20 | BA: slice 1d "History window" | From the user's 2026-10-20 request and follow-up (D-8, both verbatim in §3). New §1 row 1d; new §5.6 (reuse map read from `origin/main` `930a6cee`; Window control above the history table, shared `DatePresets`, default This month, UTC; newest 10 inside the window filtered on the server; per-currency view follows the window; "Last rate change" stays all-time through a new `lastChange` field, amending SA-1c-2; captions name the period; "No rate changes in this period."). FR-28 to FR-34 (FR-29 amends FR-18); §8 slice 1d criteria; SQ-25 to SQ-34 (URL collision with Finance's `range` / `from` / `to`, query shape, where resolved, Custom bounds, UTC, reset on leave, `lastChange`, `KpiStrip` pin, G-6 count 3, re-read scope); §12 rows. No migration. Out of scope: rates table, KPIs except the tile's data source. Awaiting SA |
+| 2026-10-20 | SA requirement review — slice 1d | **CLEARED-WITH-CHANGES** (§13.6), read from `930a6cee`; Dev builds from the §13.6 step list with no separate workplan review. SQ-25 page state accepted (Finance's always-mounted hook owns `range` / `from` / `to`, verified). SQ-26 accepted, plus a date range `2000-01-01`..`2999-12-31` (SA-1d-3); no 92-day cap. SQ-27: the page resolves and sends whole dates (the Costs / AI activity / Audit / Analytics precedent; Finance's server re-resolution is the money exception). SQ-28 to SQ-30 accepted. SQ-31: a separate `findLatestChange()` (`nullsFirst: false`, SA-1d-4), one label lookup across the window rows and `lastChange`; SA-1c-2 amended. SQ-32: no hash moves, additive case rejected (byte-identical). SQ-33: count 3, verified against `ALLOWED_FETCH`. **SQ-34 rejected as proposed**: a window change runs Refresh's reads (plain + open panel), else the overall list goes stale behind the panel. Added SA-1d-1 plain-read request counter, SA-1d-2 captions from the rows' own window, SA-1d-5 `DatePresets` inside `RateHistoryTable` (reuse, not a new pattern), SA-1d-6 no-op change, SA-1d-7 where the "newest 10 in the window" proof lives. Not split. Forced test edits listed. User decisions D-8 not reopened |
+| 2026-10-21 | Slice 1d built, PR open | SA code review approved (3 Low findings; Q-1 ruled: "every state" means every caption and empty message). QA PASS-WITH-NOTES, 12 probes added including the plain-read unmount test (mutation-checked). Open note for BA/SA: a Custom range before 2000 returns 400 and shows the page error (the shared DatePresets has no min/max); no history exists before 2026. |
