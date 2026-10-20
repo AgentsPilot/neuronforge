@@ -715,6 +715,8 @@ export const TAB_OVERVIEW = 'Overview';
 export const TAB_ACCOUNTS = 'Accounts';
 /** Money MK-4: the Subscriptions page as a Finance tab, Plan mix on top (§3.2). */
 export const TAB_PLANS = 'Plans & subscriptions';
+/** Admin Exchange Rates slice 2a (D-7, "Finance tab only"): the rates view as the fourth and last tab. */
+export const TAB_EXCHANGE_RATES = 'Exchange rates';
 export const PLANS_SUBSCRIPTIONS_TITLE = 'Subscriptions';
 export const PLANS_SUBSCRIPTIONS_SUBTITLE = (asOf: string | null) =>
   `Plan subscriptions from our own billing records, for the server's current Stripe key${asOf ? ` · As of ${asOf}` : ''}`;
