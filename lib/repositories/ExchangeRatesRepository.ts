@@ -1,7 +1,8 @@
 // lib/repositories/ExchangeRatesRepository.ts
 // Data-access layer for `exchange_rates` and `exchange_rate_history`: the
-// admin-maintained table of rates behind `/admin/exchange-rates` (Admin
-// Exchange Rates slice 1a, requirement ADMIN_EXCHANGE_RATES_REQUIREMENT.md).
+// admin-maintained table of rates behind the Exchange rates tab of
+// `/admin/finance` (Admin Exchange Rates slices 1a and 2, requirement
+// ADMIN_EXCHANGE_RATES_REQUIREMENT.md).
 // Nothing reads these rates to convert money (D-5).
 //
 // WHY THERE IS NO `.eq('user_id', userId)` HERE (CLAUDE.md rule 4 exemption,
