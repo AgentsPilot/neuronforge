@@ -685,7 +685,14 @@ SettingsPlanSurface.qa.render.test.tsx: Tests: 10 passed, 10 total
 
 ## Commit Info
 
-[RM will populate this section. Per UM-2 SA X-6: chained branch from UM-2's tip, PR based on `main`, opened only after the UM-2 PR merges and after the end-of-stream run, merge commit (`--merge`), never squash]
+| Field | Value |
+|---|---|
+| Branch | `feature/bos-upgrade-modal-um3` (chained from UM-2 tip `73a6628d`) |
+| Product commit | `44df7ca8` feat(business-os): Your plan opens the comparison pop-up, copy and polish (UM-3, UM-D3) |
+| Docs commit | `d4fcb1a4` docs(business-os): UM-3 workplan + SA/QA records; master end-of-stream run sheet; requirement ACs |
+| Pushed | 2026-10-20, `origin/feature/bos-upgrade-modal-um3` |
+| PR | Not opened (user: chained branches, PRs only after the end-of-stream live session). Per UM-2 SA X-6: PR based on `main`, opened after the UM-2 PR merges, merge commit (`--merge`), never squash |
+| Pre-commit runs (RM) | UI suites 90 / 90 (1,597 tests); `test:bos-entitlements` 301 / 301 (9,131); `lint:hooks` clean; secret scan clean; numstat: no blanked file |
 
 ---
 
@@ -699,3 +706,4 @@ SettingsPlanSurface.qa.render.test.tsx: Tests: 10 passed, 10 total
 | 2026-10-20 | Implemented (Dev), uncommitted | UM-3 Tasks 0–5, 7, 8 and UM-D3 D3-a to D3-e built (Task 6 dropped by D3-13). See Implementation Notes: deviations DV-1 to DV-6, findings F-1 to F-3, test re-map. 94 / 94 suites, 1,809 tests; `test:bos-entitlements` 9,129 / 9,131 (2 load timeouts, green alone); lint:hooks clean. Status: Code Complete |
 | 2026-10-20 | SA code review | Code Approved for QA with conditions CR-1 (pin B7 hidden under the status body) and CR-2 (`PlanFlowStatus` muted → secondary). Money path unchanged (classes only in the islands; decision via `hasActions`; 2 s / failed → drawer; checkout return and in-pop-up completion stay; one checkout per page; 3-D Secure style unchanged). SA trivial fix: B7 hidden under "Payment processing" (`UpgradeModal.tsx`). F-1 reconciled: code right, AC-UM7 and R-7 corrected in the requirement (`section` removed, `checkout` kept, C-11). DV-1..DV-6 accepted. 82 / 82 + 5 / 5 suites green |
 | 2026-10-20 | QA automated pass | 102 / 102 suites, 2,039 tests, including the new `SettingsPlanSurface.qa.render.test.tsx` (10 tests: Escape on both surfaces with focus back on the row and a fresh decision on reopen, the as-built stale marker, B1..B11 placement, ended → pop-up, cancelling → drawer, es strip and X, double press → one request). `test:bos-entitlements` 9,131 / 9,131; `lint:hooks` clean. Fresh 360 px render: no horizontal scroll, headline 2 lines in en/he, ≈ 340 px of card area. No bugs; 2 Low edge cases. UM-1b §14 made the single MASTER run sheet (34 rows, D3-13) |
+| 2026-10-20 | Committed (RM) | Product `44df7ca8` + docs `d4fcb1a4` on `feature/bos-upgrade-modal-um3`, pushed; no PR until the end-of-stream live session |
