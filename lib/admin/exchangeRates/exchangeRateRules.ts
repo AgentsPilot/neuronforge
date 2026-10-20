@@ -24,10 +24,14 @@ export const STALE_LABEL = 'Stale';
 export const STALE_DESCRIPTION = `not updated in ${STALE_AFTER_DAYS} days`;
 
 /**
- * How many history rows the GET returns (SA-R4). Fixed: never caller-supplied.
- * The one source: `ExchangeRatesRepository` imports it.
+ * How many history rows the GET returns, overall and per currency (SA-R4;
+ * 10 since slice 1c.1, FR-18). Fixed: never caller-supplied. The one source:
+ * `ExchangeRatesRepository` imports it, and the page's captions read it.
  */
-export const HISTORY_LIMIT = 50;
+export const HISTORY_LIMIT = 10;
+
+/** The "Changed by" label when nobody can be named (FR-19, SQ-13). */
+export const UNKNOWN_USER_LABEL = 'Unknown user';
 
 /**
  * SA O-1 (amends SQ-5): the live column is `numeric(12,6)`, so at most 6
@@ -43,6 +47,13 @@ export const RATE_MAX = '999999.999999';
 export const CURRENCY_CODE_PATTERN = /^[A-Z]{3}$/;
 
 export const currencyCodeSchema = z.string().regex(CURRENCY_CODE_PATTERN);
+
+/**
+ * The GET's query string (slice 1c.1, SQ-12): nothing, or one `currency` code.
+ * Strict, so any other key (a `limit`, say) is refused rather than ignored.
+ * The route refuses a repeated key before this runs.
+ */
+export const exchangeRatesQuerySchema = z.object({ currency: currencyCodeSchema.optional() }).strict();
 
 /** `> 0` decided on the string: a rate that passed RATE_PATTERN is positive iff it has a non-zero digit. */
 export function isPositiveRate(rate: string): boolean {
@@ -131,17 +142,82 @@ export interface ExchangeRateHistoryWire {
   currencyCode: string;
   oldRate: string | null;
   newRate: string;
+  /** The editor's user id: kept for tracing (the cell's hover text), never shown as the label. */
   changedBy: string | null;
+  /**
+   * Who made the change, resolved on the server (slice 1c.1, SQ-13): name, else
+   * admin email, else "Unknown user". Null only when the name lookup failed and
+   * this row's editor was looked up; the page then shows the short id.
+   */
+  changedByLabel: string | null;
   changedAt: string;
   /** Present on the table but never written by the trigger; the page shows no Reason column. */
   changeReason: string | null;
 }
 
+/**
+ * A history row as the repository maps it, before the route has resolved its
+ * label. Only `labelHistory` turns it into the wire type, so no path can send
+ * history without having resolved (or explicitly failed) the labels.
+ */
+export type ExchangeRateHistoryRecord = Omit<ExchangeRateHistoryWire, 'changedByLabel'>;
+
+/** `failed`: the name lookup failed, so looked-up editors carry no label (SQ-13). */
+export type NameLookupStatus = 'ok' | 'failed';
+
 export interface ExchangeRatesPayload {
   rates: ExchangeRateWire[];
   history: ExchangeRateHistoryWire[];
+  nameLookup: NameLookupStatus;
   /** Server clock at the read; the page's stale rule measures against it. */
   readAt: string;
+}
+
+/**
+ * `GET ?currency=XXX` (slice 1c.1, SQ-12): one currency's newest changes. A
+ * separate type, so the page can never take rates or the Last rate change tile
+ * from it.
+ */
+export interface ExchangeRateHistoryPayload {
+  currencyCode: string;
+  history: ExchangeRateHistoryWire[];
+  nameLookup: NameLookupStatus;
+  readAt: string;
+}
+
+// ── "Changed by" labels (slice 1c.1, SQ-13 with SA Q-1) ─────────────────────
+
+/** The editors to look up: distinct, non-null ids, taken only from the rows read. */
+export function historyEditorIds(records: readonly ExchangeRateHistoryRecord[]): string[] {
+  const ids = new Set<string>();
+  for (const record of records) {
+    if (record.changedBy) ids.add(record.changedBy);
+  }
+  return [...ids];
+}
+
+export type EditorLookup =
+  | { status: 'ok'; names: ReadonlyMap<string, string>; emails: ReadonlyMap<string, string> }
+  | { status: 'failed' };
+
+/**
+ * The one label rule. On `ok`: a trimmed non-empty name, else the admin email,
+ * else "Unknown user"; every label is set. On `failed`: every row whose editor
+ * was looked up gets `null` (all or nothing: resolved names are never mixed
+ * with raw ids), while a row with no editor id is "Unknown user" either way:
+ * nothing was looked up for it, so nothing failed (SA Q-1).
+ */
+export function labelHistory(
+  records: readonly ExchangeRateHistoryRecord[],
+  lookup: EditorLookup
+): ExchangeRateHistoryWire[] {
+  return records.map((record) => {
+    if (!record.changedBy) return { ...record, changedByLabel: UNKNOWN_USER_LABEL };
+    if (lookup.status === 'failed') return { ...record, changedByLabel: null };
+    const name = lookup.names.get(record.changedBy)?.trim();
+    const email = lookup.emails.get(record.changedBy)?.trim();
+    return { ...record, changedByLabel: name || email || UNKNOWN_USER_LABEL };
+  });
 }
 
 export interface ExchangeRatePatchResult {

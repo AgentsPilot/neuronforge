@@ -55,14 +55,17 @@ import type {
 } from './types';
 import {
   HISTORY_LIMIT,
-  type ExchangeRateHistoryWire,
+  type ExchangeRateHistoryRecord,
   type ExchangeRateWire,
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
 
 const RATES_TABLE = 'exchange_rates';
 const HISTORY_TABLE = 'exchange_rate_history';
 
-/** The newest history rows the admin page shows (SA-R4); the one source is the rules module. */
+/**
+ * How many history rows the admin page shows, overall and per currency (SA-R4;
+ * 10 since slice 1c.1); the one source is the rules module.
+ */
 export const EXCHANGE_RATE_HISTORY_LIMIT = HISTORY_LIMIT;
 
 const RATE_COLUMNS =
@@ -151,6 +154,33 @@ export class ExchangeRatesRepository {
   }
 
   /**
+   * One currency's newest history rows, newest first (slice 1c.1, SQ-12): the
+   * per-row History view. The code has already passed `currencyCodeSchema` in
+   * the route; the limit is the same fixed constant, never caller-supplied.
+   */
+  async listRecentHistoryForCurrency(currencyCode: string): Promise<RepositoryResult<ExchangeRateHistoryRow[]>> {
+    const methodLogger = this.logger.child({ method: 'listRecentHistoryForCurrency', currencyCode });
+    const startTime = Date.now();
+
+    try {
+      const { data, error } = await this.supabase
+        .from(HISTORY_TABLE)
+        .select(HISTORY_COLUMNS)
+        .eq('currency_code', currencyCode)
+        .order('changed_at', { ascending: false })
+        .limit(EXCHANGE_RATE_HISTORY_LIMIT);
+
+      if (error) throw error;
+
+      methodLogger.debug({ count: data?.length || 0, duration: Date.now() - startTime }, 'Exchange rate history fetched');
+      return { data: (data as unknown as ExchangeRateHistoryRow[]) || [], error: null };
+    } catch (error) {
+      methodLogger.error({ err: error, duration: Date.now() - startTime }, 'Failed to fetch exchange rate history');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Set one currency's rate. One UPDATE carries the rate, `last_updated_at` and
    * `updated_by`, so the trigger attributes the history row to this admin
    * (SA-R7). A same-value save still runs: it refreshes the date and the
@@ -219,7 +249,12 @@ export function toExchangeRateWire(row: ExchangeRateRow): ExchangeRateWire {
   };
 }
 
-export function toExchangeRateHistoryWire(row: ExchangeRateHistoryRow): ExchangeRateHistoryWire {
+/**
+ * A stored history row as a record WITHOUT its "Changed by" label (slice 1c.1,
+ * SA W-1): the route resolves the label through `labelHistory`, which is the
+ * only thing that produces the wire type.
+ */
+export function toExchangeRateHistoryRecord(row: ExchangeRateHistoryRow): ExchangeRateHistoryRecord {
   return {
     id: row.id,
     currencyCode: row.currency_code,

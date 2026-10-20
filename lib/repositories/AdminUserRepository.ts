@@ -21,8 +21,11 @@
 // admin who has since lost access is still shown by email (user decision
 // 2026-10-18, BQ-9a). It is NOT an authorisation read: the gate uses
 // `findByUserId` / `listActive`, which keep the `is_active` filter. ADMIN ONLY:
-// its only caller is the history route (pinned by
-// `adminReadMethods.guard.test.ts`), and it never logs an email.
+// its callers are the model price history route and, for the same reason (a
+// permanent record of who changed a rate), the exchange rates route
+// `app/api/admin/exchange-rates/route.ts` (Admin Exchange Rates slice 1c.1,
+// SQ-13). Both sit under `app/api/admin/**`, as
+// `adminReadMethods.guard.test.ts` pins; it never logs an email.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -145,7 +148,8 @@ export class AdminUserRepository {
    * `ADMIN_EMAIL_LOOKUP_CHUNK`; an empty list answers `[]` with no query. A row
    * whose `user_id` is null (seeded, never bound) cannot match. An id with no
    * row is simply absent: the caller says "not on the admin list". Logs counts
-   * only, never an email.
+   * only, never an email. Callers: the model price history route and the
+   * exchange rates route (slice 1c.1, SQ-13), both under `app/api/admin/**`.
    */
   async findEmailsByUserIds(userIds: readonly string[]): Promise<RepositoryResult<Array<{ user_id: string; email: string }>>> {
     const unique = [...new Set(userIds)].filter((id) => typeof id === 'string' && id !== '');

@@ -39,8 +39,9 @@
 | # | Slice | Status | PR | Notes |
 |---|---|---|---|---|
 | 1a | Safe manual page: server route + repository + page rewired + logging | ✅ Merged #477 (2026-10-19) | #477 | Full cycle (new route, data write, security). Works against today's database policies, so it ships first |
-| 1b | Database record + lockdown migration (both tables into the repo, `profiles.role` replaced, browser writes revoked) | 🟡 Built, PR open — migration 20261082 NOT yet applied to prod (user applies by hand after #477 is deployed) | (this PR) | Full cycle. **User applies the prod migration by hand** — the session stops for that. Applied only after 1a is deployed, so the page never breaks. Supersedes finance follow-up FF-2 (BD-55) |
-| 2 | Exchange rates as a tab under the Finance admin page (no revenue link) | ⬜ Not started | — | Full cycle (introduces tabs on `/admin/finance`, a new page shape there) |
+| 1b | Database record + lockdown migration (both tables into the repo, `profiles.role` replaced, browser writes revoked) | ✅ Applied to prod 2026-10-19 by user (check 35 VERDICT PASS 24/0, anon REST read+write refused 42501) · Merged #479 | #479 | Full cycle. **User applies the prod migration by hand** — the session stops for that. Applied only after 1a is deployed, so the page never breaks. Supersedes finance follow-up FF-2 (BD-55) |
+| 2 | Exchange rates as a tab under the Finance admin page (no revenue link). **Finance tab only** (user, D-7), no Settings link | ⬜ Not started | — | Full cycle (adds a fourth tab to the existing Finance tablist, §5.3) |
+| 1c | Page refinements from the user's 2026-10-19 page review (D-7): filter bar (Enabled only by default), newest 10 changes, admin name instead of the id, new KPIs (Enabled currencies, Last rate change; Stale tile removed). ~~Country flag column~~ dropped by the user (§3.3 comment 3) | 🟡 1c.1 built, PR open (SA approved after C-1/C-2, QA PASS-WITH-NOTES, user click-through passed 2026-10-20); 1c.2 next | — | **Build before slice 2.** Two small slices (§5.5.7): **1c.1** history cap + names + KPIs (route and page; full cycle, the route starts reading people's names), then **1c.2** filter bar only (page only; short path). No migration, no prod step. Comment 1 of the review is resolved by slice 2 (no Settings link) |
 | 3 | Month-end rate record, only if §5.4 shows history is not enough | Parked | — | Only if needed |
 | 4 | Conversion / USD view | Parked (D-5) | — | Needs a written exception to BD-12 and to CLAUDE.md "never sum money across currencies" first |
 
@@ -99,6 +100,7 @@ User message, 2026-10-19, verbatim:
 | D-4 | Missing rate | **Never assume 1** | "i agree with all recommendations in 1-4" | Standing rule. It has no effect until a conversion exists (D-5); recorded so the conversion slice inherits it |
 | D-5 | Conversions | **Out of scope.** No conversion, no USD totals, no link to customer revenue | "let's skip on any conversions in 5 yet" / "with no linkage yet to any customer revenue" | BD-12 and CLAUDE.md "never sum money across currencies" stay unchanged. `finance.source.guard` stays unchanged. One CLAUDE.md wording fix is proposed (§3.1) |
 | D-6 | Access | Page reachable by **typing the URL** `/admin/exchange-rates`. Later, a **tab under the Finance page** | "allow me to write the url and open the page. then we may add it as a tab under the finance page" | Slice 1: no sidebar link (already true). Slice 2: the tab |
+| D-7 | Page review | Six comments on the live page (verbatim in §3.3). **Placement: Finance tab only**, so comment 1 (Settings sidebar) is resolved by slice 2 and there is **no Settings sidebar link**. **Stale: keep the row mark**, drop the Stale KPI tile. **Comment 3 (flag / country column) dropped by the user** (BQ-1 answer). Comments 2, 4, 5 and 6 become slice 1c | "Finance tab only" / "Keep the row mark" (follow-up answers, 2026-10-19); "skip this requirement, not needed" (BQ-1 answer, 2026-10-19) | New slice 1c (§5.5), built before slice 2. No Country column, no flag code, no new dependency. D-6 stands: no sidebar entry, so G-2, G-4 and the sidebar `UNLISTED` entry stay. SQ-7's Stale tile is replaced (FR-22); the per-row Stale chip stays (FR-8) |
 
 ### 3.1 Proposed CLAUDE.md wording fix (SA / user decide)
 
@@ -116,6 +118,19 @@ The rule itself does not change. The edit is a one-line docs change and can ride
 | R-2 | USD row | Shown, **not editable** (rate fixed at 1, it is the base) | Editing the base would silently re-scale every other row |
 | R-3 | Stale threshold | **35 days** since `last_updated_at` | Matches the monthly rule (D-2) with a few days' grace after month-end |
 | R-4 | Rate bounds | `rate_to_usd` > 0 and ≤ 10,000,000, at most 6 decimal places | Covers every real currency per USD (the largest are in the tens of thousands, some unofficial rates higher) while refusing typos like a missing decimal point that adds many zeros. SA may tighten |
+
+### 3.3 User page review, 2026-10-19 (D-7)
+
+The user reviewed the slice 1a page on 2026-10-19 and left six comments, then answered two follow-up questions. All quoted verbatim. After the SA review the user answered BQ-1 (flags on Windows) on 2026-10-19 with "skip this requirement, not needed", which **drops comment 3** entirely.
+
+| # | User comment (verbatim) | Follow-up answer (verbatim) | Decision | Built in |
+|---|---|---|---|---|
+| 1 | "add it to the settings section of the admin side bar." | Placement: "Finance tab only" | **Replaced by the follow-up answer.** No Settings sidebar link. The page is reached from the Finance tab (slice 2) and by typing its URL (D-6) | **Slice 2** (resolves comment 1) |
+| 2 | "add a filter on the top, in the same standard as the rest of the admin pages filters, default should be to present only enabled prices." | — | The shared admin filter bar. **Show: Enabled only** by default, plus Disabled only and All, and a search on code or name | 1c.2 (FR-14 to FR-16) |
+| 3 | "can you add a country icon or flag icon near each currency? as another column near SYMBOL" | BQ-1: "skip this requirement, not needed" | **Dropped by the user** (2026-10-19). No Country column | — (FR-17 withdrawn) |
+| 4 | "the latest changes, can we narrow it down to last 10 changes" | — | The **newest 10** changes (was 50) | 1c.1 (FR-18) |
+| 5 | "can we change the GUID to user name" | — | The admin's **name**, else their email, else "Unknown user", worked out on the server | 1c.1 (FR-19) |
+| 6 | "top KPIs should be: active/enabled currencies out of X, don't think we need stale KPI, and another box stating last action - for example: currency X changed from A to B" | Stale: "Keep the row mark" | Two tiles: **Enabled currencies** (N of X) and **Last rate change** (currency, A → B, who, when). **Stale tile removed**; the per-row Stale chip stays (35 days, USD never stale) | 1c.1 (FR-20 to FR-22) |
 
 ---
 
@@ -165,6 +180,12 @@ Whether an admin-read policy on `is_platform_admin()` is still wanted once all a
 
 ### 5.3 Slice 2 — Finance tab
 
+> **Note (2026-10-19, D-7).** The user's page comment 1 ("add it to the settings section of the admin side bar") is **resolved by this slice**: the follow-up answer was "Finance tab only". There is **no Settings sidebar link** and no other sidebar change; D-6, G-2, G-4 and the sidebar `UNLISTED` entry stay. Slice 2 is built **after slice 1c**, so the tab renders the refined view.
+>
+> **Baseline drift, for the slice 2 workplan.** The paragraph below says the Finance page has no tabs. On `origin/main` `0581637a` it already has three (`app/admin/finance/components/FinanceTabs.tsx`: Overview, Accounts, Plans, selected by `?tab=` through `useAdminFilters`). Slice 2 therefore adds a **fourth tab to an existing tablist**, not tabs from scratch. The Plans tab already owns the URL key `status`, **and the Accounts tab owns `show`** (`FINANCE_FILTER_SPEC.show`: `all` / `active` / `negative`; `financeFilterRepair` resets a non-default `show` whenever the tab is not Accounts), which is why slice 1c's filter uses the key **`currencies`** (SQ-8 ruling, SA-1c-1). BA refreshes this section from `origin/main` before the slice 2 workplan.
+>
+> **For slice 2 (SA-1c-1).** `FINANCE_FILTER_SPEC.tab` (today `['accounts', 'plans']`) and `financeFilterRepair` must learn the new `exchange-rates` tab, and the exchange-rates view's filter hook runs with `{ active: tab === 'exchange-rates' }`. Slice 2 concern only; nothing in 1c touches `app/admin/finance/`.
+
 Add Exchange rates as a tab on the Finance admin page (`app/admin/finance/`). Today that page has **no tabs**: `FinanceView.tsx` renders one stacked view whose filters live in the URL. The admin precedent for tabs is Business OS AI (`app/admin/business-os-llm/page.tsx`): `?tab=` in the URL written with `replaceState`, arrow / Home / End keyboard focus, manual activation. Slice 2 follows that precedent:
 
 - Tab 1 is today's finance view, unchanged, and stays the default (no `?tab=` = today's page, so existing links keep working).
@@ -183,6 +204,83 @@ A month-end rate is "the rate in force at the end of the month". It can be recov
 - The audit entry from slice 1a (old → new) is a second record either way.
 - History before today is whatever exists; the 2025-11-05 values are the only known starting point.
 
+### 5.5 Slice 1c — Page refinements (D-7)
+
+The user's comments 2, 4, 5 and 6 on the live page (§3.3). Comment 1 goes to slice 2; comment 3 was dropped by the user (§5.5.2). Code facts below were read from `origin/main` `0581637a`. Nothing here adds a table, a column, a migration or a write path. The `PATCH` route and the audit entries are unchanged. D-5 holds: the "A → B" in the Last change tile is two stored strings side by side, with no arithmetic and no percentage.
+
+#### 5.5.1 Filter bar (comment 2)
+
+**Pattern:** the shared admin filter bar `AdminFilterBar` (`app/admin/components/layout/AdminFilterBar.tsx`, Admin Layout Standard C-8, §5.5) with the URL state hook `useAdminFilters` + `textFilter` (`app/admin/components/layout/useAdminFilters.ts`, C-7, §5.6). The closest page is **Businesses** (`app/admin/users/usersFilters.ts`, L-4a): one status select kept in the URL, its default (`active`) never written (U-3), an unknown value ignored (U-4), and the search text held by the page and **never** written to the URL (layout standard U-1 exception (1), its D-6 (a)). Field markup follows `app/admin/business-os-invites/components/InviteFilters.tsx`: labelled native `<select>` and `type="search"` input on `ADMIN_FIELD_LABEL` / `ADMIN_FIELD_CONTROL`.
+
+| Control | Spec |
+|---|---|
+| Show | Native select, label "Show": **Enabled only** (default), Disabled only, All. **In the URL**, like every other admin page filter: key **`currencies`** with values `disabled` and `all`; the default `enabled` is never written, so the plain URL opens Enabled only; any other value is ignored (SQ-8 ruling: `show` is taken by Finance's Accounts tab, SA-1c-1) |
+| Search | `type="search"`, label "Search", placeholder "Code or name". Case-insensitive match on the currency code or name. **Held by the page, never written to the URL** (the layout standard's rule for all free text) |
+| Clear | Resets Show and Search to their defaults; disabled at the defaults |
+| Read at + Refresh | Unchanged from 1a |
+
+- **Where the filter runs:** in the page, over the `GET` payload. The route keeps returning every currency (43 rows); it takes no filter parameter.
+- **KPIs count every currency, never the filtered view. BA recommends this.** Under the default filter, "Enabled currencies" counted over the filtered rows would always read "N of N", which says nothing. Businesses hit the same trap (its tile had to say "shown" rather than "total", SA C-15 (a) in L-4a). The history list and the Last change tile ignore the filter too.
+- A count line above the table: "Showing N of X currencies". When nothing matches: the shared empty state, "No currencies match these filters.", with Clear available.
+- USD is enabled, so it shows under Enabled only and All.
+- **A row switched off while "Enabled only" is shown:** BA suggests it stays in place, its chip now "Disabled", until the next Refresh or filter change, so the row and the keyboard focus do not vanish under the admin (SQ-9).
+- **Slice 2 compatibility:** the same `ExchangeRatesView` will render inside a Finance tab, where several tabs share one address bar. The Plans tab already uses `status` and the Accounts tab uses `show`, so 1c uses `currencies` (SQ-8). In slice 2 the view's hook takes the `{ active }` option (layout L-9a, F-113), as Business OS AI does.
+
+#### 5.5.2 ~~Country flag column (comment 3)~~ — dropped by the user
+
+> **Dropped 2026-10-19.** The user answered BQ-1 with "skip this requirement, not needed". No Country column, no currency-to-region map, no flag component, no `CountrySelect` / `flagOf` change, no new dependency. FR-17 withdrawn; SQ-10 and SQ-11 moot (§13.4).
+
+#### 5.5.3 History capped at 10 (comment 4)
+
+- Today `HISTORY_LIMIT = 50` in `lib/admin/exchangeRates/exchangeRateRules.ts`. It is the one source: `ExchangeRatesRepository` re-exports it as `EXCHANGE_RATE_HISTORY_LIMIT` and uses it in `.limit(...)`. Change it to **10**. It stays fixed and never comes from the caller. The comments that say "50" are updated: route header, view header, `RateHistoryTable` header, repository.
+- **Effect on the per-row History button.** Today it filters the loaded rows in the browser ("ILS: 2 of the newest 50"). With 10 rows, most currencies would show nothing. The options for SA (SQ-12):
+  - (a) Keep filtering in the browser over the 10. Simplest, but the view is nearly always empty. BA is against it.
+  - (b) **BA suggestion:** the `GET` takes an optional `?currency=XXX` (validated with the existing `currencyCodeSchema`) and returns that currency's newest 10. The overall list (and the Last change tile) still come from the plain read.
+  - (c) Remove the per-row History button.
+
+#### 5.5.4 Admin name instead of the id (comment 5)
+
+- **Today** `RateHistoryTable` shows `formatShortId(row.changedBy)`, with the full uuid as the hover text.
+- **Change:** the `GET` route turns each distinct `changed_by` in the history rows it returns into a display label, **on the server**, in this order:
+  1. **The person's name**, from `profiles.full_name` (trimmed, non-empty), through `userProfileRepository.findAdminNamesByIds(ids)`. This is the Audit trail route's pattern (`app/api/admin/audit-trail/route.ts`, the user-names block; ADMIN_BOS_CLEANUP slice 4).
+  2. **Otherwise the admin's email**, through `adminUserRepository.findEmailsByUserIds(ids)`. This is the AI model price history pattern (`app/api/admin/model-pricing/history/route.ts`, slice 9, SA SC9-1). It deliberately includes deactivated admins, because history is a permanent record and a former admin should still be named. The archiving route's `adminLabels` uses `listActive()`, which drops former admins, so it is not the pattern here.
+  3. **Otherwise "Unknown user"**, which also covers a null `changed_by` (older rows may have one).
+- **Lookup failure ≠ no name.** The Audit trail posture: log the failure, still answer 200 with rates and history, leave the labels out, and say so in the body (for example `nameLookup: 'failed'`). The page then shows the short id as today, never "Unknown user" (SQ-13).
+- **Wire:** add `changedByLabel: string | null` to `ExchangeRateHistoryWire` (null only when the lookup failed). Whether `changedBy` (the uuid) stays as hover text is part of SQ-13; BA suggests it stays, for tracing.
+- **Cost:** at most 10 distinct ids, so one `.in()` read per table, run after the history read.
+- **Guards:** `lib/repositories/__tests__/adminReadMethods.guard.test.ts` already lets anything under `app/api/admin/**` call both methods, so the guard needs no edit. But both methods' header comments name their "only caller", so they must be updated to add this route.
+- **Privacy.** This is fine because the page is admin-only (`requireAdminPage`) and so is the route (`requireAdmin`). The ids come from the history rows the route itself read, never from the request. The response adds only a display label for the admins who made the changes: no other profile field and no other user's data. Logs carry counts only, never a name or an email (both repository methods already behave that way). D-3 is unchanged: no business ever sees this.
+
+#### 5.5.5 KPIs (comment 6)
+
+The KPIs stay in `app/admin/exchange-rates/components/ExchangeRatesKpis.tsx`, on the existing `KpiStrip` / `KpiTile`. Two tiles, in this order:
+
+| Tile | Spec |
+|---|---|
+| **Enabled currencies** | "N of X": N = rows with `isEnabled === true` (a database null reads as false), X = all rows. Counts the **whole payload**, not the filtered view (§5.5.1). **USD is counted** (it is a real, enabled currency; the old Stale tile excluded it only because its age could never clear). No status colour |
+| **Last rate change** | From the newest history row (the route's order, newest `changed_at` first). Value: "ILS 3.65 → 3.70" (stored strings, shown as stored); old rate null → "ILS set to 3.70". Sub line: "by {label}, {formatUtc(changedAt)}"; the short id when the name lookup failed. No history → "No changes yet" |
+
+- **Do on / off switches count as the "last action"?** No, not from this source. The history table records **rate changes only**: the trigger fires on `rate_to_usd` (§2.1 (b)), and switches are recorded only in the audit trail (`EXCHANGE_RATE_ENABLED_CHANGED`). **BA recommends rate changes only, from history**, with the tile named "Last rate change" so it does not claim more than it shows. Adding switches would need an audit-trail read in the `GET` (SQ-14).
+- **The Stale tile is removed.** The per-row "Stale" `StatusChip` stays, unchanged (FR-8: 35 days, measured against `readAt`; USD is never stale, through `isRateStale`). The FR-8 clause about showing a count of stale rates is withdrawn by D-7.
+- **Pin test:** `app/admin/components/layout/__tests__/KpiStrip.callers.pin.render.test.tsx` gets **additive cases only** for the new states: two tiles, no history, name lookup failed, old rate null. But it already pins three `ExchangeRatesKpis` cases (`A2 ExchangeRatesKpis loading`, `A2 ExchangeRatesKpis`, `A2 ExchangeRatesKpis none stale`), and replacing the tiles **necessarily changes those three hashes**. That is a named, forced change limited to the Exchange rates cases; every other caller's hash stays unchanged (SQ-15).
+
+#### 5.5.6 Unchanged by 1c
+
+- No migration, no new table or column. The `PATCH` route, the audit events and the 1b lockdown are untouched.
+- D-5: nothing converts or totals money. D-6: no sidebar entry. G-2, G-4 and the sidebar `UNLISTED` entry stay.
+- The SA-R3 Exchange rates page guard still allows only `fetch(` targets under `/api/admin/exchange-rates`. A `?currency=` read (SQ-12 (b)) stays on that path; Dev confirms the guard's matcher accepts a query string.
+- `finance.source.guard` and CUR-3 are untouched. No 1c file lives under `app/admin/finance/`.
+- No new dependency: `package.json` and the lockfile are untouched (the flag option (c) went with comment 3).
+
+#### 5.5.7 Proposed split (small numbered slices)
+
+| Slice | Covers | Touches | Path |
+|---|---|---|---|
+| **1c.1** | History capped at 10 (+ the per-currency read, SQ-12), names in the route, the two new KPI tiles with the Stale tile removed, the pin update | Route `GET`, rules constant, repository (per-currency read), wire type, `RateHistoryTable`, `ExchangeRatesKpis`, route / repository / render / pin tests | **Full cycle**: the admin route starts reading people's names (privacy) |
+| **1c.2** | Filter bar only (the Country column was dropped by the user, §5.5.2) | `ExchangeRatesView`, a new filter spec, render and unit tests | **Short path** (UI-only, user's standing preference) |
+
+**Order: 1c.1 → 1c.2 → slice 2.** Why this split: the Last change tile shows *who*, so names and KPIs belong together, while the filter is page-only. Each part is a few days at most. If SA prefers one 1c slice, nothing in the requirement changes except the §1 row (SQ-16).
+
 ---
 
 ## 6. Functional requirements
@@ -196,12 +294,21 @@ A month-end rate is "the rate in force at the end of the month". It can be recov
 | FR-5 | No currency can be added or deleted in this scope (R-1) | 1a |
 | FR-6 | The route refuses: a rate ≤ 0, a rate above the upper bound, more than 6 decimal places, a non-numeric rate, a currency code that is not three upper-case letters or that does not exist | 1a |
 | FR-7 | Each saved change writes `last_updated_at` = now and `updated_by` = the admin's user id, and writes one non-blocking audit entry with old and new values | 1a |
-| FR-8 | Each row shows its age. A rate older than 35 days shows a clear "Stale" status (text, not colour alone). The header or KPI area shows how many enabled rates are stale | 1a |
+| FR-8 | Each row shows its age. A rate older than 35 days shows a clear "Stale" status (text, not colour alone). The header or KPI area shows how many enabled rates are stale (**count withdrawn by D-7 in 1c; the row status stays**, FR-22) | 1a |
 | FR-9 | A save failure shows a short message on the page and leaves the previous value showing; it never shows raw internal errors | 1a |
 | FR-10 | Only platform admins can read or change rates through the route (`requireAdmin`); everyone else gets the standard refusal | 1a |
 | FR-11 | After 1b, the browser roles cannot insert, update or delete either table; signed-in users can still read enabled rows | 1b |
 | FR-12 | Exchange rates is a tab on `/admin/finance`; the existing finance view is the default tab and is unchanged | 2 |
 | FR-13 | No screen, route or calculation converts money or totals across currencies with these rates (D-5) | All |
+| FR-14 | The page has the shared admin filter bar: Show (Enabled only by default, Disabled only, All), Search (code or name), Clear, Read at, Refresh (§5.5.1) | 1c.2 |
+| FR-15 | Show is kept in the URL under the key `currencies` (values `disabled` / `all`; the default `enabled` is never written; an unknown value is ignored); the search text is never written to the URL | 1c.2 |
+| FR-16 | The filter narrows the rates table only. The KPIs, the history list and the Last change tile always count every currency. A count line says how many currencies are shown; an empty result shows the shared empty state | 1c.2 |
+| FR-17 | ~~Country column with flags~~ — **withdrawn: dropped by the user** 2026-10-19 ("skip this requirement, not needed", §5.5.2) | — |
+| FR-18 | The history list shows the newest **10** rate changes (fixed, never caller-supplied); the per-currency view follows SQ-12 | 1c.1 |
+| FR-19 | "Changed by" shows the admin's name, else their admin email, else "Unknown user", resolved on the server; a failed lookup shows the short id, not "Unknown user" (§5.5.4) | 1c.1 |
+| FR-20 | KPI "Enabled currencies": N of X, over all currencies, USD included | 1c.1 |
+| FR-21 | KPI "Last rate change": the newest history row as "CODE A → B", with who and when; "No changes yet" when there is none. On / off switches are not counted (SQ-14) | 1c.1 |
+| FR-22 | No Stale KPI tile. The per-row Stale status of FR-8 stays unchanged | 1c.1 |
 
 ---
 
@@ -243,6 +350,35 @@ A month-end rate is "the rate in force at the end of the month". It can be recov
 - [ ] The history trigger is confirmed (or added), and one test update on prod writes a history row with old rate, new rate and time.
 - [ ] The slice 1a page still saves after the migration.
 
+### Slice 1c
+
+**1c.1 — history, names, KPIs**
+
+- [ ] The history list shows at most 10 rows, newest first; a route test pins the limit (a constant, never read from the request).
+- [ ] The per-currency History view behaves per the SQ-12 ruling: `GET ?currency=XXX` returns that currency's newest 10 in its own payload type.
+- [ ] SQ-12 query checks (route tests): an unknown query key, a repeated `currency` or a badly shaped code → **400**, nothing read; a valid code with no row → **404**.
+- [ ] "Changed by" shows the name; with no name, the admin email (a deactivated admin included); with neither, "Unknown user". One route test per case.
+- [ ] A history row with a null `changedBy` shows "Unknown user", whether the lookup succeeded or failed (nothing was looked up for it).
+- [ ] If the name lookup fails, the `GET` still answers 200 with rates and history, the page shows the short id, and the failure is logged. No log line holds a name or an email.
+- [ ] The name lookup is all-or-nothing: **any** failure (returned or thrown, either source) gives 200 with `nameLookup: 'failed'` and the `changedByLabel` of **every looked-up editor** null; never a half-resolved list. A row with no `changedBy` still reads "Unknown user" (SA workplan ruling Q-1, 2026-10-19).
+- [ ] The response adds only the display label: no other profile field, and no id taken from the request.
+- [ ] The KPI strip has exactly two tiles: "Enabled currencies" (N of X, all currencies, USD counted) and "Last rate change" (CODE A → B, who, when), or "No changes yet".
+- [ ] There is no Stale tile; every rate older than 35 days still shows the Stale chip on its row; USD never does.
+- [ ] `KpiStrip.callers.pin`: every non-Exchange-rates hash unchanged; the Exchange rates cases follow the SQ-15 ruling; the new cases are appended.
+- [ ] Nothing does arithmetic on a rate (no difference, no percentage, no total): D-5.
+
+**1c.2 — filter bar** (the Country column was dropped by the user, §5.5.2)
+
+- [ ] Opening `/admin/exchange-rates` shows only enabled currencies; Show reads "Enabled only"; the URL has no `currencies` key (`enabled` is never written).
+- [ ] Disabled only and All work and are written to the URL as `currencies=disabled` / `currencies=all`; opening that URL reproduces the view; an unknown value falls back to Enabled only.
+- [ ] Search matches code or name, case-insensitive, and never appears in the URL.
+- [ ] Clear returns to the defaults and is disabled at the defaults; Read at and Refresh behave as in 1a.
+- [ ] The KPI figures are identical under Enabled only, Disabled only and All (render test).
+- [ ] The count line is right; a filter that matches nothing shows the empty state.
+- [ ] Switching a currency off under "Enabled only" behaves per the SQ-9 ruling: the row stays visible with its chip "Disabled" (focus stays on its switch) until **Refresh**, or a filter or search change; after Refresh it is gone. One render test.
+- [ ] ~~Country column~~ — dropped by the user 2026-10-19 ("skip this requirement, not needed").
+- [ ] The bar follows the layout standard (`role="search"` named "Filters", labelled native controls); the existing layout and Exchange rates guards stay green.
+
 ### Slice 2
 
 - [ ] `/admin/finance` with no `?tab=` looks and behaves exactly as before (existing finance tests unchanged and green).
@@ -280,11 +416,33 @@ Technical forks for SA to rule on; none need the user.
 | SQ-6 | Should the CLAUDE.md wording fix (§3.1) ride with 1a? | Yes, as a separate commit; user signs off on the wording |
 | SQ-7 | Does the page component need a KPI strip (stale count) or only a header badge? | One KPI tile "Stale rates" (enabled rates older than 35 days), per the admin money-page KPI-first preference |
 
+**Slice 1c (D-7).** SQ-7's tile is replaced by the user's choice (FR-20 to FR-22); the questions below are the technical forks only.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| SQ-8 | URL key and values for Show | Key `show`, values `disabled` / `all`, default `enabled` never written (Businesses' `status` pattern). Not `status`: the Finance Plans tab already owns it, and slice 2 puts this view in the same address bar. **→ SA ruling applied: key `currencies`** (values `disabled` / `all`, default `enabled` never written), because `show` is Finance's Accounts key (§13.4, SA-1c-1) |
+| SQ-9 | A row switched off while "Enabled only" is shown | It stays in place, chip "Disabled", until the next Refresh or filter change; focus stays on its switch |
+| SQ-10 | `flagOf` is private to `components/ui/CountrySelect.tsx` | Move it to one shared pure helper (for example under `lib/geo/`) used by both; `CountrySelect` behaviour unchanged. Or copy it, if SA prefers no cross-area edit. **Moot:** comment 3 dropped by the user |
+| SQ-11 | How flags are drawn (§5.5.2 (a) emoji, (b) code text badge, (c) `country-flag-icons` SVG as a declared direct dependency) | (a) with `aria-label` and the country name as `title`. (c) only if the user wants real pictures on Windows (BQ-1) and SA accepts the dependency. **Moot:** comment 3 dropped by the user |
+| SQ-12 | The per-currency History view once the list is 10 rows | (b): optional `?currency=XXX` on the same `GET`, validated with `currencyCodeSchema`, returning that currency's newest 10. Unknown code → 404, like `PATCH` |
+| SQ-13 | Name lookup: sources, order, failure, wire shape | `profiles.full_name` (`findAdminNamesByIds`) → `admin_users.email` incl. deactivated (`findEmailsByUserIds`) → "Unknown user". On failure: 200, labels left out, `nameLookup: 'failed'`, page shows the short id. Add `changedByLabel`; keep `changedBy` as hover text. Update both methods' "only caller" header comments |
+| SQ-14 | Does "Last rate change" include on / off switches? | No: rate changes only, from history. Switches would need an audit-trail read in the `GET` |
+| SQ-15 | `KpiStrip.callers.pin`: the three existing `ExchangeRatesKpis` hashes must change | Re-pin those three as a named, forced change (every other hash unchanged) and append the new cases |
+| SQ-16 | Split 1c into 1c.1 (history, names, KPIs) and 1c.2 (filter, flags), or build one slice? | Split, as §5.5.7 |
+
 ---
 
 ## 11. Open questions (business)
 
 None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wording (§3.1) needs the user's sign-off because it edits the user's root document.
+
+**Slice 1c (D-7).** One question for the user — **closed**:
+
+| # | Question | Default if unanswered |
+|---|---|---|
+| BQ-1 | On Windows (your machine), flag emoji show as two letters (for example "IL") rather than a picture. Are the letters acceptable, or do you want real flag pictures? Pictures need one small flag package added, which SA must approve | Letters on Windows (emoji, §5.5.2 (a)); real pictures on Mac and phones. **✅ Closed 2026-10-19.** User: "skip this requirement, not needed". Comment 3 dropped; no Country column (D-7, §5.5.2) |
+
+**Assumed by BA for 1c (recorded so nobody re-asks):** the KPIs count every currency, whatever the filter shows; USD counts as an enabled currency; "Last action" means the last **rate** change (the tile is named so); the search box is never kept in the page link (the admin standard); a currency's own History button shows that currency's newest 10.
 
 ---
 
@@ -304,6 +462,13 @@ None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wor
 | `lib/business-os/finance/**` and its source guard | Unchanged; must not import rates |
 | `AuditTrailService` | One entry per change |
 | CLAUDE.md | Proposed one-line wording fix (§3.1) |
+| `app/admin/exchange-rates/components/*` (1c) | View gains the filter bar (`AdminFilterBar` + `useAdminFilters`, URL key `currencies`); KPIs become Enabled currencies + Last rate change; history shows labels. ~~Table gains the Country column~~ (dropped by the user) |
+| `lib/admin/exchangeRates/` (1c) | `HISTORY_LIMIT` 50 → 10; wire type gains `changedByLabel`; payloads gain `nameLookup`; separate per-currency payload type (SQ-12). ~~Currency-to-region map~~ (dropped by the user) |
+| `app/admin/__tests__/redundantPages.source.guard.test.ts` (1c.1) | The Exchange rates folder's literal `fetch(` count goes **2 → 3** (the per-currency read, SQ-12); test name updated |
+| `app/api/admin/exchange-rates/route.ts` (1c.1) | Resolves history editors' names (`findAdminNamesByIds`, `findEmailsByUserIds`); optional `?currency=` per SQ-12 |
+| `lib/repositories/UserProfileRepository.ts`, `AdminUserRepository.ts` (1c.1) | No code change; "only caller" header comments updated |
+| `app/admin/components/layout/__tests__/KpiStrip.callers.pin.render.test.tsx` (1c.1) | Exchange rates cases re-pinned per SQ-15; new cases appended |
+| ~~`components/ui/CountrySelect.tsx`~~, ~~`package.json` / lockfile~~ | Not touched: comment 3 dropped by the user, so SQ-10 / SQ-11 are moot |
 
 ---
 
@@ -357,6 +522,79 @@ None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wor
 7. `CurrencyService.ts` 9 `console.*` → browser-safe logger (SA-R12); SQ-1 header note.
 8. Route integration tests: happy path (read, rate, toggle, same-value confirm), not admin (nothing written), invalid input (each SQ-5 / SA-R8 case, bad code, unknown code 404).
 
+### 13.4 SA review — slice 1c
+
+**Reviewed by SA — 2026-10-19** (requirement review of §3.3, §5.5, FR-14 to FR-22, §8 slice 1c, the §12 1c rows, SQ-8 to SQ-16, BQ-1). Code read from `origin/main` `0581637a` (this worktree's base); `node_modules` facts read from the main checkout.
+**Verdict: CLEARED-WITH-CHANGES.** The slice is proportionate, adds no table, migration or write path, and reuses the shared filter bar, the URL hook, `KpiStrip` and two existing admin read methods. One BA proposal must change before the workplan: **SQ-8's key `show` is already owned by the Finance page** (the Accounts tab), not only `status` (SA-1c-1). User decisions D-7 (Finance tab only, no Settings link; per-row Stale chip kept, Stale KPI dropped; Enabled only by default; Country column next to Symbol; history capped at 10; names instead of ids; KPIs = Enabled N of X + Last change) are **not reopened**.
+
+**Verified as stated:**
+
+| Claim | Result |
+|---|---|
+| `userProfileRepository.findAdminNamesByIds(userIds: readonly string[])` | ✅ `lib/repositories/UserProfileRepository.ts:446`. Returns `RepositoryResult<AdminProfileName[]>` = `{ id, full_name }[]` (columns `id, full_name` only); de-duplicated, chunked `.in('id', …)`, empty list makes no query, never throws, logs counts only. Header names its only caller as `app/api/admin/audit-trail/route.ts` |
+| `adminUserRepository.findEmailsByUserIds(userIds: readonly string[])` | ✅ `lib/repositories/AdminUserRepository.ts:150`. Returns `RepositoryResult<Array<{ user_id; email }>>`, **active and deactivated** admins (SC9-1), chunked, logs counts only. The file header (line 24) names "the history route" as its only caller |
+| Audit trail failure posture | ✅ `app/api/admin/audit-trail/route.ts` ~185-220: returned **or thrown** failure → logged, request survives, labels dropped, body says `userLookup: 'failed'`; only a trimmed non-empty `full_name` counts as a name |
+| `adminReadMethods.guard` | ✅ with one precision: `lib/repositories/__tests__/adminReadMethods.guard.test.ts` lists both methods in `ADMIN_METHODS` and asserts every **calling file** starts with `app/api/admin/`. So no guard edit is needed **only if the calls sit in a file under `app/api/admin/`** (SA-1c-6) |
+| `AdminFilterBar` / `useAdminFilters` / `textFilter` | ✅ `app/admin/components/layout/AdminFilterBar.tsx` (already used by `ExchangeRatesView` as the Refresh-only bar), `useAdminFilters(spec, { active })` (L-9a option present), `textFilter({ key, defaultValue, isValid, pageOnly })`; unrelated keys such as `tab` are kept on write. `app/admin/users/usersFilters.ts` is the pattern as described |
+| Finance already has tabs | ✅ `app/admin/finance/components/FinanceTabs.tsx`: Overview, Accounts, Plans; `FINANCE_FILTER_SPEC.tab = choiceFilter('tab', ['accounts', 'plans'], '')`. **But** the spec also owns `show` (Accounts tab: `all` / `active` / `negative`), `status`, `sort`, `group`, `window` (alias `preset`), `account` (alias `accountId`), and `financeFilterRepair` resets a non-default `show` whenever the tab is not Accounts. See SA-1c-1 |
+| `HISTORY_LIMIT = 50` single source | ✅ `lib/admin/exchangeRates/exchangeRateRules.ts`; repository re-exports it as `EXCHANGE_RATE_HISTORY_LIMIT` and uses it in `.limit(...)` |
+| `flagOf` private to `CountrySelect`; `countryName()` has no EU | ✅ `components/ui/CountrySelect.tsx:43`; `lib/geo/countries.ts` `countryName` returns the code for an unknown code |
+| 43 codes | ✅ `lib/utils/currencyHelpers.ts` lists exactly the 43 codes in the §5.5.2 map |
+| `KpiStrip.callers.pin` | ✅ three cases at lines 272-274, hashes at 334-336, header line 29 "Amended by Exchange rates 1a" |
+
+**Baseline drift (not a blocker, BA records it).** §1 is stale: slice 1a is **merged** (PR #477, in this base), and slice 1b is **merged** on `origin/main` (PR #479, `a9551d9c`, after `0581637a`). Dev branches 1c.1 from the **current** `origin/main`, not from `0581637a`.
+
+#### Rulings
+
+| # | Ruling |
+|---|---|
+| SQ-8 | **Rejected as proposed; key `currencies`.** `show` is already a Finance URL key (`FINANCE_FILTER_SPEC.show`, Accounts tab, values `all` / `active` / `negative`), and `financeFilterRepair` rewrites any non-default `show` when the tab is not Accounts. In slice 2 the two would fight over one address bar (`?tab=exchange-rates&show=all` would be "repaired" away). Use **`currencies`**, values `disabled` / `all`, default `enabled` never written (U-3), any other value ignored (U-4), via `textFilter({ key: 'currencies', defaultValue: 'enabled', isValid })` in a module-level spec (e.g. `app/admin/exchange-rates/exchangeRatesFilters.ts`). Search is a `pageOnly` field or plain page state, never written (U-1 exception). The view's hook takes `{ active }` from a prop defaulting to `true`, so slice 2 needs no edit to the spec. Dev greps every `FINANCE_FILTER_SPEC` key and alias at Step 0 and confirms `currencies` is still free |
+| SQ-9 | **Accepted, with the mechanism fixed.** Today `setEnabled` replaces the row in `payload`, so a filter derived from `payload` would drop the row at once. The view keeps a `heldCodes` set: a code switched in this view stays visible (`matchesFilter(row) \|\| heldCodes.has(code)`) with its new chip. The set is emptied on Refresh, on every successful read, and on any filter or search change. The count line counts what is shown (held rows included). Focus stays on the switch because the row does not unmount. One render test: switch off under Enabled only → row stays, chip "Disabled"; Refresh → row gone |
+| SQ-10 | **⚪ Moot (BA note, 2026-10-19): comment 3 was dropped by the user ("skip this requirement, not needed"); nothing below is built. SA text kept for the record.** **Depends on SQ-11.** Only under (a): move `flagOf` to one pure helper (`lib/geo/flagEmoji.ts`, unit-tested: `IL` → regional indicators, lower case accepted), imported by `CountrySelect` with behaviour unchanged (its existing tests stay green unedited). Under (b) or (c) **do not touch `CountrySelect`** (no cross-area edit for nothing) |
+| SQ-11 | **⚪ Moot (BA note, 2026-10-19): comment 3 was dropped by the user ("skip this requirement, not needed"); no flag option is built and no dependency is added. SA text kept for the record.** **All three options are buildable; ruled so whichever BQ-1 answer comes back can be built without another review.** Common shape for all three: the currency → region map (`lib/admin/exchangeRates/currencyCountry.ts`, pure, client-safe) returns `{ region: string \| null, label: string }` and knows nothing about drawing; **one** presentational component (`app/admin/exchange-rates/components/CurrencyFlag.tsx`) draws it; the cell is a wrapper `<span role="img" aria-label={label} title={label}>` with the drawing inside `aria-hidden`. The neutral mark for `region: null` (unknown code, XAF/XOF/XCD/XPF/XDR, metals, crypto) is **lucide-react `Globe`** (already a dependency, used across `app/admin`) in every option, so it looks the same on Windows. EU label "European Union" lives in the map. **(a) Emoji:** approved, no new dependency; the user sees letters on Windows (BQ-1). **(b) ISO code badge:** approved, no new dependency; a small mono text badge on the existing chip styling (not `StatusChip`, which means status); the label still comes from `countryName()` / the map. **(c) `country-flag-icons` SVG: approved as a declared direct dependency, conditions below.** Facts checked: MIT (`LICENSE`, © 2020 catamphetamine); version 1.6.20 already locked and hoisted (`package-lock.json`, pulled by `react-phone-number-input ^1.6.14`); 12 MB on disk across all formats, but `react/3x2` is ESM with `"sideEffects": false` and each flag is a `/*#__PURE__*/` function component taking SVG props (incl. `title`), so only imported flags are bundled; the 43 needed flags' SVGs total ≈ 26 KB raw (measured), the whole barrel `modules/react/3x2/index.js` is ≈ 331 KB if tree-shaking is defeated; `exports.require` → `index.cjs`, so Jest resolves it without a transform change. Nothing in the app imports its React flags today. **Is it a new pattern?** Declaring an already-installed package as a direct dependency for a leaf presentational component is not a new architectural pattern; this ruling is the CLAUDE.md rule 7 review, so no further SA step is needed. **Conditions for (c):** (1) `package.json` `dependencies` gains `"country-flag-icons": "^1.6.20"`; the lockfile diff is limited to the root entry; `npm ls country-flag-icons` shows one deduped copy. (2) Named imports only, from `country-flag-icons/react/3x2`, in `CurrencyFlag.tsx` alone, into a static `Record<string, FlagComponent>` for the 43 mapped regions (EU included). **Forbidden:** `import *`, indexing the module namespace by a runtime code, the CSS sprite (`3x2/flags.css`: global CSS + asset URLs), `string/*` (needs `dangerouslySetInnerHTML`), `unicode` / any network flag URL. (3) Dev records the `/admin/exchange-rates` First Load JS from `next build` before and after in the workplan; expected growth well under 30 KB; anything near the barrel size means tree-shaking failed: stop. (4) Fixed size via Tailwind (e.g. `h-3.5 w-5`), `aria-hidden` on the SVG, the label on the wrapper only (no duplicate `<title>`). (5) The diff shown to the user includes `package.json` and the lockfile; 1c.2 under (c) does not use any auto-merge fast-track |
+| SQ-12 | **(b) accepted, shaped.** `GET /api/admin/exchange-rates?currency=XXX`. Query parsed with Zod **before** any read: `z.object({ currency: currencyCodeSchema.optional() }).strict()` over the search params; an unknown key, a repeated `currency` (`getAll().length > 1`) or a bad code → 400. Valid shape but no such row (`findByCode` → null) → 404. New repository method `listRecentHistoryForCurrency(code)`: `.eq('currency_code', code)`, same order, `.limit(EXCHANGE_RATE_HISTORY_LIMIT)`; repository unit test pins the `.eq` and the limit. The per-currency response is a **separate wire type** (`ExchangeRateHistoryPayload { currencyCode; history; nameLookup; readAt }`), not a filtered `ExchangeRatesPayload`, so the page can never take rates or the Last change tile from it. The plain `GET` (no query) is unchanged in shape apart from SQ-13. Route header ("No query string is read") is rewritten. **Guard edit approved:** `redundantPages.source.guard` "the folder does fetch … one read and one write" is pinned at `toBe(2)`; the per-currency read is a third literal call site (`` fetch(`/api/admin/exchange-rates?currency=${encodeURIComponent(code)}`, …) ``, which `ALLOWED_FETCH` already accepts via `?`) and the count becomes **3**, with the test name updated. Do **not** fold it into the existing read with a variable or a bare `${query}` suffix to dodge the count |
+| SQ-13 | **Accepted, precised.** Order: trimmed non-empty `profiles.full_name` → `admin_users.email` (deactivated included) → `UNKNOWN_USER_LABEL = 'Unknown user'` (constant in `exchangeRateRules.ts`). Ids come only from the history rows the route read (distinct, non-null), never from the request. Both lookups run in parallel, each wrapped for **returned and thrown** errors. **Any** lookup failure → `nameLookup: 'failed'`, every `changedByLabel` null (no half-resolved list), one `error` log with counts and the failed source only, still 200. Success → `nameLookup: 'ok'` and every label non-null. A row with `changedBy` null is labelled "Unknown user" in both cases (nothing was looked up, so nothing failed). Wire: `ExchangeRateHistoryWire.changedByLabel: string \| null`; payloads gain `nameLookup: 'ok' \| 'failed'`. `changedBy` stays on the wire and as the cell's `title` (tracing; admin-only). Page: label when present, else `formatShortId(changedBy)`. The precedence rule is one pure function in `lib/admin/exchangeRates/` (unit-tested), but **the two repository calls stay in a file under `app/api/admin/exchange-rates/`** (SA-1c-6). Both repositories' header comments are updated to name this route as a second caller |
+| SQ-14 | **Accepted: rate changes only, from history.** The tile is labelled "Last rate change". No audit-trail read in the `GET` (that would be a second data source and a privacy surface for a label). An on/off switch never changes this tile |
+| SQ-15 | **Re-pinning accepted, as a named, scoped change.** Pin A's purpose is that the shared `KpiTile` / `KpiStrip` renders byte-identically for every caller across shared-component changes; a caller that deliberately changes its own tiles is outside that promise, and the A1 shape cases still guard the shared component. Conditions: `KpiStrip.tsx` is **not** edited in 1c; `A2 ExchangeRatesKpis loading` keeps its name and gets its new hash (two placeholders); `A2 ExchangeRatesKpis` and `A2 ExchangeRatesKpis none stale` are **removed** (the second's name no longer means anything) and the new cases are appended under clear names (two tiles; no history; name lookup failed; old rate null); the header gains one "Amended by Exchange rates 1c.1" line; the `git diff` of the file touches no other case or hash (Dev shows it in the handover); the file's old and new SHA-256 go in the 1c.1 workplan, as MK-5 did |
+| SQ-16 | **Split accepted: 1c.1 then 1c.2, sequential, not stacked.** 1c.2 branches from `origin/main` after 1c.1 merges (both edit `ExchangeRatesView.tsx`; avoid stacked PRs). 1c.1 full cycle (the route starts returning people's names/emails). 1c.2 short path (UI-only) for (a) or (b); under (c) it stays short path for review but the dependency diff goes to the user, never auto-merged (SQ-11 condition 5) |
+
+#### Additional rulings
+
+| # | Topic | Ruling |
+|---|---|---|
+| SA-1c-1 | §5.3 / §5.5.1 slice 2 note | The "different key" rationale names `status` only. BA adds that `show` is also Finance's (Accounts), and records for slice 2 that `FINANCE_FILTER_SPEC.tab` (`['accounts', 'plans']`) and `financeFilterRepair` must learn the new tab, while the exchange-rates hook runs with `{ active: tab === 'exchange-rates' }`. Slice 2 concern only; nothing in 1c touches `app/admin/finance/` |
+| SA-1c-2 | KPI source | Both tiles take `payload.rates` / `payload.history` from the **plain** `GET` only, never from the filtered rows or the per-currency payload. "Enabled currencies" counts `isEnabled === true` over all rows, USD included, no status colour. "Last rate change" = `history[0]`; value shows the two stored strings ("ILS 3.65 → 3.70", or "ILS set to 3.70" when `oldRate` is null), no arithmetic (D-5); sub line by label or short id, `formatUtc(changedAt)` |
+| SA-1c-3 | Stale constants | The Stale tile goes; `STALE_*` constants, `isRateStale` and the row chip stay. Remove only the imports that become unused in `ExchangeRatesKpis.tsx` (no dead code); the tile's `testId="kpi-stale-rates"` disappears with it, so any test asserting it is updated in 1c.1 |
+| SA-1c-4 | History labels | `RateHistoryTable` caption changes with the cap ("The newest 10"; per-currency: "ILS: newest N"), from `HISTORY_LIMIT`, never a literal. Comments that say 50 are updated (route, view, table, repository) |
+| SA-1c-5 | Filter bar | `role="search"` named "Filters", labelled native `<select>` ("Show") and `type="search"` ("Search", placeholder "Code or name") on `ADMIN_FIELD_LABEL` / `ADMIN_FIELD_CONTROL`; Clear disabled at defaults; Read at and Refresh unchanged. Search: trimmed, case-insensitive substring on `currencyCode` or `currencyName`; no regex built from input. Empty result: `AdminEmpty` "No currencies match these filters." with Clear |
+| SA-1c-6 | Where the name lookups live | The guard allows only files under `app/api/admin/**` to call `findAdminNamesByIds` / `findEmailsByUserIds`. The calls therefore go in `app/api/admin/exchange-rates/route.ts` (or a sibling helper in that folder), never in `lib/admin/exchangeRates/` or the repository. The guard needs no edit |
+| SA-1c-7 | Privacy and logs | The response adds `changedByLabel` and `nameLookup` only. Logs carry counts, the currency code and `nameLookup`, never a name or an email. A route test spies on the logger and asserts no label value appears in any log argument (the N-6 precedent in `adminReadMethods.guard`) |
+| SA-1c-8 | Skills / domains | No entitlements import, no LLM call, no cron, no schema claim beyond columns already verified in 1a, no tenant id: `business-os-entitlements`, `bos-llm-call-standards`, `durable-queue-drain`, `tenant-isolation-guard` not triggered. The `GET` keeps `requireAdmin` as the first statement; the new query parse comes after it. The route edit follows the `new-api-route` checklist for the changed handler (Zod first, correlationId, error format) |
+
+#### Required changes
+
+**BA, before the 1c.1 workplan:** ✅ all four applied 2026-10-19 (item 3's `package.json` / lockfile row not added: flag option (c) is gone with comment 3).
+
+1. SQ-8: replace key `show` with `currencies` in §5.5.1, FR-15, §8 1c.2 and the §10 SQ-8 row's consequence; add the SA-1c-1 note to §5.3.
+2. §1: mark slice 1a merged (PR #477) and slice 1b merged (PR #479); 1c row → "SA cleared with changes (§13.4)".
+3. §12: add the `redundantPages.source.guard` fetch count 2 → 3 (SQ-12) and, under SQ-11 (c) only, `package.json` / `package-lock.json`.
+4. §8 1c.1: add the SQ-12 400 / 404 cases, the "any lookup failure → all labels null" case, and the null-`changedBy` → "Unknown user" case; §8 1c.2: add the SQ-9 Refresh step.
+
+**Dev, 1c.1 workplan and build:**
+
+1. Branch from the current `origin/main` (1a and 1b both merged).
+2. `HISTORY_LIMIT` 50 → 10; captions and comments per SA-1c-4.
+3. `GET` query parse and per-currency branch per SQ-12; repository `listRecentHistoryForCurrency` + unit test; separate wire type.
+4. Name resolution per SQ-13 and SA-1c-6 / SA-1c-7; pure precedence function unit-tested; both repositories' caller comments updated.
+5. KPIs per SA-1c-2 / SA-1c-3; pin per SQ-15 (SHA-256 old/new recorded).
+6. Route tests: limit is 10 and not from the request; name; email incl. deactivated; neither → "Unknown user"; null `changedBy`; lookup returned-error and thrown → 200, `nameLookup: 'failed'`, labels null, logged without names; `?currency=` valid / bad / unknown key / repeated / unknown code 404; not admin → 401/403 before any read.
+
+**Dev, 1c.2 workplan and build:**
+
+1. Filter spec and bar per SQ-8, SA-1c-5; held rows per SQ-9.
+2. ~~Country column per SQ-11~~ — dropped by the user 2026-10-19; not built.
+3. Render tests per §8 1c.2, incl. KPIs identical under all three Show values.
+
 ---
 
 ## Change History
@@ -368,3 +606,6 @@ None blocking. All business choices are settled by D-1 to D-6. The CLAUDE.md wor
 | 2026-10-19 | BA applied SA-R1 and SA-R2 | **SA-R1:** §2.2 rewritten from `origin/main` `4583d21e` (page REDUNDANT per BD-34 and read-only per BD-36 / FF-1a PR #465, Pino with 0 `console.*`, still reads `exchange_rates` and 50 `exchange_rate_history` rows from the browser; guard rows for `redundantPages.source.guard` G-1 to G-6 and `AdminSidebar.nav.test` `UNLISTED`; check 35; `CurrencyService.ts` has 9 `console.*`). Overview, §2.3, D-1 consequence, §5.1 Page / Dead code / Logging rows (plus a new Guards row per SA-R3), the §8 slice 1a `console.*` criterion and §12 corrected to match. **SA-R2:** the user's decision is recorded as **BD-55** in [BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REQUIREMENT.md) (amends BD-34 / BD-36 for Exchange rates only; Platform dashboard stays redundant; BD-12 and CUR-3 unchanged), FF-2 marked superseded by slice 1b, cross-linked both ways. Ready for the slice 1a workplan |
 | 2026-10-19 | SA slice 1a workplan review | Workplan [ADMIN_EXCHANGE_RATES_SLICE_1A_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_1A_WORKPLAN.md) **APPROVED-WITH-CHANGES** (its §10). Step 0 live results recorded there (`rate_to_usd numeric(12,6)`, `is_enabled` nullable, `updated_by` FK `auth.users`). SQ-5 amended (O-1): rate pattern `^\d{1,6}(\.\d{1,6})?$`, `> 0`, below 1,000,000 |
 | 2026-10-19 | Slice 1a merged, slice 1b PR opened | 1a merged via PR #477. 1b built (migration `20261082`, rollback, check 35 extended to 24 checks), SA approved (CR-1/CR-2 applied), QA PASS-WITH-NOTES, user reviewed the diff; RM committed and opened the PR **without auto-merge**. Manual gate: the user applies `20261082` to prod by hand after #477 is deployed. Workplan: [ADMIN_EXCHANGE_RATES_SLICE_1B_WORKPLAN.md](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_1B_WORKPLAN.md) |
+| 2026-10-19 | BA: slice 1c "Page refinements" | From the user's six page comments and two follow-up answers (D-7, verbatim in §3.3). Comment 1 resolved by slice 2 ("Finance tab only"; no Settings link; §5.3 note, which also records that Finance already has three tabs on `origin/main` `0581637a`). Stale tile dropped, row chip kept ("Keep the row mark"). New §5.5 (filter bar, Country column, history 10, names, KPIs; split 1c.1 / 1c.2, built before slice 2), FR-14 to FR-22, §8 slice 1c criteria, SQ-8 to SQ-16, BQ-1 (flags on Windows), §12 rows; FR-8's stale count withdrawn. Awaiting SA |
+| 2026-10-19 | SA requirement review — slice 1c | **CLEARED-WITH-CHANGES** (§13.4). SQ-8 rejected as proposed: `show` is already a Finance URL key (Accounts tab) and `financeFilterRepair` rewrites it, so the key is `currencies`. SQ-9 accepted with a held-rows mechanism; SQ-10 only under flag option (a); SQ-11 all three options buildable, (c) `country-flag-icons` approved as a declared direct dependency under five conditions (MIT, 1.6.20 already locked, named imports from `react/3x2` only, build-size check, dependency diff shown to the user); SQ-12 (b) with Zod query parse, 404, a separate wire type and the page guard's fetch count 2 → 3; SQ-13 with all-or-nothing failure and the lookups kept under `app/api/admin/**`; SQ-14 rate changes only; SQ-15 re-pin of the Exchange rates cases only; SQ-16 split, sequential. SA-1c-1 to SA-1c-8 added. Verified: both name-lookup methods, the admin read guard, `AdminFilterBar` / `useAdminFilters`, Finance's three tabs. Noted §1 stale (1a #477 and 1b #479 merged) |
+| 2026-10-19 | BA: BQ-1 answered, SA 1c changes applied | **User, verbatim:** "skip this requirement, not needed" — comment 3 (flag / Country column) **dropped**: recorded in D-7 and §3.3; §5.5.2 reduced to a one-line dropped note; FR-17 withdrawn; §8 Country criterion struck; §12 map / `CountrySelect` rows struck; BQ-1 closed; SQ-10 / SQ-11 marked moot (SA text kept). 1c.2 is now the filter bar only. **SA required BA changes (§13.4):** (1) URL key `currencies` (`disabled` / `all`, `enabled` never written) in §5.5.1, FR-15, §8, SQ-8; SA-1c-1 note in §5.3. (2) §1: 1b applied to prod 2026-10-19 by user (check 35 PASS 24/0, anon REST refused 42501), merged #479; 1c SA cleared, 1c.1 next; slice 2 Finance tab only. (3) §12: page guard fetch count 2 → 3; no `package.json` / lockfile row. (4) §8 1c.1: SQ-12 400 / 404 cases, all-or-nothing name lookup, null `changedBy` → "Unknown user"; §8 1c.2: SQ-9 Refresh step. Ready for the 1c.1 workplan |
