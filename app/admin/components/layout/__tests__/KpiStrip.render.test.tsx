@@ -76,7 +76,8 @@ describe('KpiStrip', () => {
       </KpiStrip>
     );
     const strip = container.firstElementChild as HTMLElement;
-    expect(strip.className).toBe('grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5');
+    // MK-0a (the user's decision, 2026-10-19): equal rows too, so every tile is the same size.
+    expect(strip.className).toBe('grid auto-rows-fr grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5');
     expect(screen.getAllByRole('link')).toHaveLength(2);
     expect(strip.hasAttribute('role')).toBe(false);
   });

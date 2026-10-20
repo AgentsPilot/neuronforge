@@ -15,7 +15,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 
-import { KPI_INDICATOR_WORDS, KpiIndicator, KpiTile } from '@/app/admin/components/layout/KpiStrip';
+import { KPI_INDICATOR_PILL, KPI_INDICATOR_WORDS, KpiIndicator, KpiStrip, KpiTile, tooltipClampFor, tooltipPlacementFor } from '@/app/admin/components/layout/KpiStrip';
 import type { KpiIndicatorSpec, KpiTileProps } from '@/app/admin/components/layout/KpiStrip';
 
 const LAGGING: KpiIndicatorSpec = { kind: 'lagging', definition: 'Cash owners paid us in the window.' };
@@ -25,11 +25,13 @@ const tooltip = () => screen.getByRole('tooltip', { hidden: true });
 const isOpen = () => !tooltip().hidden;
 
 describe('the accessible name (LL-3) and the words (LL-2, LL-4)', () => {
-  it('lagging: "Lagging indicator. {definition}", a clock icon, hidden from the tree', () => {
+  // MK-0a (ruled edit): the word pill replaced the clock / arrow icon; the accessible name is unchanged.
+  it('lagging: "Lagging indicator. {definition}", the pill reads "Lagging", no icon', () => {
     render(<KpiTile label="Revenue" value="$10" href="#revenue" indicator={LAGGING} testId="tile-revenue" />);
     const icon = screen.getByRole('button', { name: 'Lagging indicator. Cash owners paid us in the window.' });
     expect(icon.getAttribute('type')).toBe('button');
-    expect(icon.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(icon.textContent).toBe('Lagging');
+    expect(icon.querySelector('svg')).toBeNull();
     expect(screen.getByTestId('tile-revenue-indicator').getAttribute('data-indicator')).toBe('lagging');
   });
 
@@ -48,11 +50,12 @@ describe('the accessible name (LL-3) and the words (LL-2, LL-4)', () => {
     });
   });
 
-  it('the icon is not colour-coded (LL-1): no status colour on it, whatever the tile status', () => {
+  it('the pill is not colour-coded (LL-1, BD-11): a neutral border and secondary text, whatever the tile status', () => {
     render(<KpiTile label="Problems" value="2" status="red" href="#problems" indicator={LEADING} />);
     const icon = screen.getByRole('button');
-    expect(icon.className).toContain('text-slate-400');
-    expect(icon.className).not.toMatch(/red|amber|green/);
+    expect(icon.className).toContain('border-slate-600');
+    expect(icon.className).toContain('text-slate-300');
+    expect(icon.className).not.toMatch(/red|amber|green|emerald/);
   });
 });
 
@@ -96,16 +99,26 @@ describe('the tooltip (SA-8): role, aria-describedby, focus, hover, Escape', () 
     expect(isOpen()).toBe(false);
   });
 
-  it('hover opens it, it stays open over the tooltip itself, and leaving closes it', () => {
+  // MK-0a (ruled edit): the tooltip is the pill's sibling now (below the box), so a short close delay
+  // lets the pointer cross from the pill to it (WCAG 1.4.13 hoverable).
+  it('hover opens it, it stays open while the pointer moves onto the tooltip, and leaving both closes it after the delay', () => {
+    jest.useFakeTimers();
     render(<KpiTile label="Revenue" href="#revenue" indicator={LAGGING} testId="t" />);
-    const box = screen.getByTestId('t-indicator');
-    fireEvent.mouseEnter(box);
+    const pill = screen.getByTestId('t-indicator');
+    fireEvent.mouseEnter(pill);
     expect(isOpen()).toBe(true);
-    // The tooltip is inside the hover box, so pointing at it is not a leave.
-    fireEvent.mouseOver(tooltip());
+    fireEvent.mouseLeave(pill);
+    fireEvent.mouseEnter(tooltip());
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
     expect(isOpen()).toBe(true);
-    fireEvent.mouseLeave(box);
+    fireEvent.mouseLeave(tooltip());
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
     expect(isOpen()).toBe(false);
+    jest.useRealTimers();
   });
 
   it('a click opens it (touch) and a second click keeps it open; blur closes it and removes the Escape listener', () => {
@@ -233,7 +246,9 @@ describe('a click on the icon never follows the tile (LL-3)', () => {
     render(<KpiTile label="Revenue" value="$10" sub="this month" href="#revenue" indicator={LAGGING} />);
     const link = screen.getByRole('link', { name: 'Revenue, $10' });
     expect(link.getAttribute('aria-describedby')).not.toContain(tooltip().id);
-    expect(link.className).toContain('pr-9');
+    // MK-0a (ruled edit): room for the pill, and the full cell height.
+    expect(link.className).toContain('pr-20');
+    expect(link.className).toContain('h-full');
   });
 });
 
@@ -254,7 +269,7 @@ describe('no indicator, no change (T-6)', () => {
     expect(nullHtml).toBe(absentHtml);
     expect(withNull.container.querySelector('button, [role="tooltip"]')).toBeNull();
     expect(withNull.container.firstElementChild?.getAttribute('data-testid')).toBe('k');
-    expect(absentHtml).not.toContain('pr-9');
+    expect(absentHtml).not.toContain('pr-20');
     withNull.unmount();
   });
 });
@@ -275,3 +290,152 @@ describe('block KPIs: KpiIndicator on its own (T-8)', () => {
     expect(isOpen()).toBe(false);
   });
 });
+
+// ── MK-0a (the user's decisions, 2026-10-19): the pill, the tooltip below the box, equal tiles ──
+describe('MK-0a: the word pill, the tooltip placed against the box, equal tiles', () => {
+  it('the pill reads "Leading" or "Lagging" (one copy each); the name keeps the full words', () => {
+    expect(KPI_INDICATOR_PILL).toEqual({ leading: 'Leading', lagging: 'Lagging' });
+    render(<KpiTile label="MRR" value="$49" href="#mrr" indicator={LEADING} />);
+    const pill = screen.getByRole('button', { name: `Leading indicator. ${LEADING.definition}` });
+    expect(pill.textContent).toBe('Leading');
+  });
+
+  it('the tooltip is a SIBLING of the tile link inside the box, never inside the link or its value', () => {
+    render(<KpiTile label="Revenue" value="$10" href="#revenue" indicator={LAGGING} testId="k" />);
+    const box = screen.getByTestId('k-box');
+    const link = screen.getByRole('link');
+    const tip = screen.getByTestId('k-indicator-tooltip');
+    expect(tip.parentElement).toBe(box);
+    expect(link.contains(tip)).toBe(false);
+    expect(screen.getByTestId('k-indicator').contains(tip)).toBe(false);
+    // After the link in the box: it opens below it, not over the value.
+    expect(link.compareDocumentPosition(tip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(box.className).toContain('relative');
+  });
+
+  it('opens BELOW the box by default, the box width (left-0 right-0), with data-placement="below"', () => {
+    render(<KpiTile label="Revenue" href="#revenue" indicator={LAGGING} testId="k" />);
+    act(() => screen.getByRole('button').focus());
+    const tip = screen.getByTestId('k-indicator-tooltip');
+    expect(tip.getAttribute('data-placement')).toBe('below');
+    expect(tip.className).toContain('top-full');
+    expect(tip.className).toContain('left-0');
+    expect(tip.className).toContain('right-0');
+    expect(tip.className).not.toContain('bottom-full');
+  });
+
+  it('flips ABOVE the box when the viewport has too little room under it', () => {
+    render(<KpiTile label="Revenue" href="#revenue" indicator={LAGGING} testId="k" />);
+    const box = screen.getByTestId('k-box');
+    const height = window.innerHeight;
+    box.getBoundingClientRect = () => ({ top: height - 140, bottom: height - 40, left: 0, right: 200, width: 200, height: 100, x: 0, y: height - 140, toJSON: () => ({}) }) as DOMRect;
+    act(() => screen.getByRole('button').focus());
+    const tip = screen.getByTestId('k-indicator-tooltip');
+    expect(tip.getAttribute('data-placement')).toBe('above');
+    expect(tip.className).toContain('bottom-full');
+    expect(tip.className).not.toContain('top-full');
+  });
+
+  it('the placement rule: below unless the room under is short AND there is more above', () => {
+    expect(tooltipPlacementFor({ top: 100, bottom: 200 }, 800)).toBe('below');
+    expect(tooltipPlacementFor({ top: 600, bottom: 700 }, 800)).toBe('above');
+    expect(tooltipPlacementFor({ top: 20, bottom: 120 }, 200)).toBe('below');
+  });
+
+  it('a block KPI uses the same placement: the tooltip is the sibling of the pill inside its own box', () => {
+    render(
+      <div className="relative" data-testid="block-box">
+        <span>Accounts over allowance</span>
+        <KpiIndicator indicator={LEADING} testId="block" className="absolute right-2 top-2" />
+      </div>
+    );
+    const tip = screen.getByTestId('block-tooltip');
+    expect(tip.parentElement).toBe(screen.getByTestId('block-box'));
+    expect(tip.getAttribute('data-placement')).toBe('below');
+  });
+
+  it('equal tiles: the strip has equal rows (auto-rows-fr) and equal columns; an indicator tile and its box fill the cell', () => {
+    const { container } = render(
+      <KpiStrip>
+        <KpiTile label="A" value="1" href="#a" />
+        <KpiTile label="A very long label that wraps over several lines in a narrow column" value="2" href="#b" indicator={LAGGING} testId="long" />
+      </KpiStrip>
+    );
+    const strip = container.firstElementChild as HTMLElement;
+    expect(strip.className).toMatch(/\bgrid\b/);
+    expect(strip.className).toContain('auto-rows-fr');
+    expect(strip.className).toMatch(/\bgrid-cols-2\b/);
+    expect(strip.className).not.toMatch(/items-(start|center|end)/);
+    expect(screen.getByTestId('long-box').className).toContain('h-full');
+    expect(screen.getByTestId('long').className).toContain('h-full');
+  });
+
+  it('no click-through and Escape still consumed only while open (the MK-0 behaviour, unchanged)', () => {
+    const apply = jest.fn();
+    const outer = jest.fn();
+    render(
+      <div onKeyDown={(event) => event.key === 'Escape' && outer()}>
+        <KpiTile label="P" value="1" filter={{ href: '/x', apply }} indicator={LEADING} />
+      </div>
+    );
+    const pill = screen.getByRole('button');
+    fireEvent.click(pill);
+    expect(apply).not.toHaveBeenCalled();
+    expect(isOpen()).toBe(true);
+    fireEvent.keyDown(pill, { key: 'Escape' });
+    expect(isOpen()).toBe(false);
+    expect(outer).not.toHaveBeenCalled();
+    fireEvent.keyDown(pill, { key: 'Escape' });
+    expect(outer).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── MK-0a QA findings (optional, fixed): the viewport clamp and the flip margin ──
+describe('MK-0a QA: the tooltip stays inside the viewport; the flip keeps a margin', () => {
+  const rectAt = (left: number, width: number, top = 100, height = 100) =>
+    ({ left, right: left + width, width, top, bottom: top + height, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+
+  it('clamp rule: fits → null (markup unchanged); a right-column tile on a 375px phone → right-aligned, the width capped by a 16px gutter', () => {
+    expect(tooltipClampFor({ left: 16, right: 336, width: 320 }, 1024)).toBeNull();
+    // Right column of a 2-column strip on a phone: the box is 160px wide, starting at 199px; 199 + 224 > 375 - 16.
+    const clamp = tooltipClampFor({ left: 199, right: 359, width: 160 }, 375);
+    expect(clamp).toEqual({ right: 0, left: 'auto', minWidth: 0, width: 224 });
+    // Its left edge then sits at 359 - 224 = 135px: inside the gutter.
+    expect(359 - clamp!.width).toBeGreaterThanOrEqual(16);
+    // A box too near the left for 224px right-aligned: the width is capped to keep the left gutter.
+    expect(tooltipClampFor({ left: 150, right: 200, width: 50 }, 210)).toEqual({ right: 0, left: 'auto', minWidth: 0, width: 184 });
+  });
+
+  it('a tile near the right edge renders its open tooltip right-aligned (data-align="end", inline right:0), inside the viewport', () => {
+    const width = window.innerWidth;
+    render(<KpiTile label="Paying" value="18%" href="#p" indicator={LAGGING} testId="k" />);
+    screen.getByTestId('k-box').getBoundingClientRect = () => rectAt(width - 120, 104);
+    act(() => screen.getByRole('button').focus());
+    const tip = screen.getByTestId('k-indicator-tooltip');
+    expect(tip.getAttribute('data-align')).toBe('end');
+    expect(tip.style.right).toBe('0px');
+    // jsdom's style parser drops left:auto; the browser keeps it, and right:0 pins the edge either way.
+    expect(parseFloat(tip.style.width)).toBeLessThanOrEqual(width - 16);
+  });
+
+  it('a closed or fitting tooltip adds no style or align attribute (Pin A markup unchanged)', () => {
+    render(<KpiTile label="Revenue" value="$10" href="#r" indicator={LEADING} testId="k" />);
+    const tip = screen.getByTestId('k-indicator-tooltip');
+    expect(tip.hasAttribute('style')).toBe(false);
+    expect(tip.hasAttribute('data-align')).toBe(false);
+    act(() => screen.getByRole('button').focus());
+    expect(tip.hasAttribute('style')).toBe(false);
+  });
+
+  it('flip margin: it needs the measured height plus the gap and an 8px margin, not 2px of slack', () => {
+    // 120px tall tooltip: needs 120 + 16 = 136px under the box (the old rule flipped only under 160, and ignored the height).
+    expect(tooltipPlacementFor({ top: 500, bottom: 600 }, 600 + 140, 120)).toBe('below');
+    // Exactly the needed room stays below; one pixel less flips.
+    expect(tooltipPlacementFor({ top: 500, bottom: 600 }, 600 + 136, 120)).toBe('below');
+    expect(tooltipPlacementFor({ top: 500, bottom: 600 }, 600 + 135, 120)).toBe('above');
+    // Unmeasured (jsdom, first paint): the assumed 160px plus the margins.
+    expect(tooltipPlacementFor({ top: 500, bottom: 600 }, 600 + 175, 0)).toBe('above');
+    expect(tooltipPlacementFor({ top: 500, bottom: 600 }, 600 + 176, 0)).toBe('below');
+  });
+});
+
