@@ -797,7 +797,15 @@ upgradeModal.flow.qa.render.test.tsx  Tests: 10 passed, 10 total
 
 ## Commit Info
 
-[RM will populate this section]
+| Item | Value |
+|---|---|
+| Branch | `feature/bos-upgrade-modal-um1b` (based on origin/main `c9e1dfba`, #483), pushed; chained-branch stream, **no PR yet** |
+| Product commit | `8646bda5` feat(business-os): buy and upgrade inside the plan comparison modal (UM-1b): 22 files (product, tests, en / he / es) |
+| Docs commit | `3a7bc7e7` docs(business-os): UM-1b workplan, SA/QA records, requirement + go-live row 20 (plan payments §9.5 row 20 replaced with the §15 text + Change History row) |
+| Commit Info commit | this follow-up docs commit |
+| Pre-commit runs (RM) | settings + settings page + `components/business-os/__tests__` + billing (components, lib, route) + `components/test-business-os` + `app/invite` + the four guards: 116 / 116 suites, 5,383 tests; `test:bos-entitlements` 301 / 301, 9,131; `test:authz-guard` 203; `lint:hooks` clean. Secrets scan clean; no blanked file |
+| Excluded | `docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM2_WORKPLAN.md` (next slice, left untracked) |
+| PR | Not opened. Opens after the user's end-of-stream live session; merge gate = go-live row 20 (b), the live 3-D Secure check in the modal stacked on the drawer |
 
 ---
 
