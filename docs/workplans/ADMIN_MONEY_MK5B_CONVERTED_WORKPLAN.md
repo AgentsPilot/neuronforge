@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-5b; §5 F-K5b row; §5.1 (F-K5b definition, G-1 to G-4, "New read"); Q-12 (accepted); SA-RR-MK SA-10 and the pins table (MK-5b: AC-145, one ruled update); FIN BD-9, BD-37, BD-49, BD-52; PAY SR-6
 **Branch:** `feature/admin-money-mk5b-converted-this-month` (from main `f87eccda`; MK-5 and MK-0a merged)
 **Date:** 2026-10-20
-**Status:** Code Complete
+**Status:** Code Approved (SA-CR-MK5B), QA passed; committed `4747c281`, PR [#485](https://github.com/AgentsPilot/neuronforge/pull/485) opened 2026-10-20, auto-merge on
 **Path:** full cycle (one new bounded read, payload change, one ruled AC-145 update). No migration.
 
 ## Overview
@@ -390,7 +390,11 @@ All counts match Dev's.
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk5b-converted-this-month` (from main `f87eccda`)
+- **Commit:** `4747c281` feat(finance): Converted this month in the Paying accounts tile, plus the converted list (MK-5b)
+- **Merge:** origin/main (`adb1c6e8`) merged in `48796149`, no conflicts
+- **Pins:** AC-145 `23a12c7e` (ruled); Pins A to D and AC-173 equal main
+- **PR:** [#485](https://github.com/AgentsPilot/neuronforge/pull/485), auto-merge on (merge commit, via the merge queue)
 
 ---
 

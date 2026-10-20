@@ -25,6 +25,6 @@ MK-5b adds "Converted this month: n of m paying" inside the Paying accounts tile
 - **Follow-up MK5B-FU-1 (performance):** rework the read well before about 1,700 paying accounts. It is tracked in FIN §0.4.
 - **Re-hash any recorded file at handover,** after the last edit.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk5b-converted-this-month — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk5b-converted-this-month — commit `4747c281`, main merged `48796149`, PR #485 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)
