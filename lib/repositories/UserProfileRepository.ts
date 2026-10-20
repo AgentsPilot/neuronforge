@@ -433,11 +433,13 @@ export class UserProfileRepository {
    *
    * Runs on the default service-role client (`supabaseServer`), so it
    * intentionally bypasses RLS on `profiles` — admin-only context: it reads
-   * every account's name, by design. The boundary is `requireAdmin` on the only
-   * caller, `app/api/admin/audit-trail/route.ts`, plus the caller guard in
-   * lib/repositories/__tests__/adminReadMethods.guard.test.ts, which allows
-   * calls from `app/api/admin/**` only. Read-only; the ids come from the
-   * `audit_trail` rows the route already loaded, not from the request.
+   * every account's name, by design. The boundary is `requireAdmin` on the two
+   * callers, `app/api/admin/audit-trail/route.ts` and (Admin Exchange Rates
+   * slice 1c.1, SQ-13) `app/api/admin/exchange-rates/route.ts`, plus the caller
+   * guard in lib/repositories/__tests__/adminReadMethods.guard.test.ts, which
+   * allows calls from `app/api/admin/**` only. Read-only; the ids come from the
+   * rows each route already loaded (`audit_trail`, `exchange_rate_history`),
+   * never from the request.
    *
    * One `.in('id', …)` per chunk of ADMIN_IDENTITY_CHUNK ids, never one read per
    * row; an empty list makes no query. Accounts without a profile row are simply

@@ -27,6 +27,7 @@
  * tiles are module-private (SA-W5): their shapes are in A1, and its own layout
  * test stays unedited. Model pricing goes through its real `priceKpis.ts`.
  * Amended by Exchange rates 1a (SQ-7): three ExchangeRatesKpis cases appended; every existing hash unchanged.
+ * Amended by Exchange rates 1c.1 (SQ-15): the strip's own tiles changed, so "loading" is re-hashed, the two stale cases are removed, four cases are appended; no other case or hash touched.
  */
 
 import React from 'react';
@@ -57,7 +58,7 @@ import type { CheckStatusState } from '@/app/admin/system-config/priceKpis';
 import type { ComparisonRow } from '@/lib/ai/pricing-research/comparisonModel';
 import { KPI_WORDS } from '@/app/admin/system-config/priceReviewCopy';
 import { ExchangeRatesKpis } from '@/app/admin/exchange-rates/components/ExchangeRatesKpis';
-import type { ExchangeRatesPayload, ExchangeRateWire } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import type { ExchangeRateHistoryWire, ExchangeRatesPayload, ExchangeRateWire } from '@/lib/admin/exchangeRates/exchangeRateRules';
 
 /** Generous: the merge queue runs suites in parallel (the F-4 amendment lesson). */
 const CASE_TIMEOUT_MS = 30_000;
@@ -175,7 +176,7 @@ function PriceStrip({ rows, status }: { rows: ComparisonRow[]; status: CheckStat
   );
 }
 
-// Exchange rates 1a (SQ-7): two enabled rates, one of them stale, one disabled.
+// Exchange rates (1a SQ-7, 1c.1 SQ-15): two enabled rates, one disabled; the newest rate change.
 const FX_READ_AT = '2026-10-19T12:00:00.000Z';
 const fxRate = (code: string, isEnabled: boolean, lastUpdatedAt: string): ExchangeRateWire => ({
   currencyCode: code,
@@ -187,12 +188,25 @@ const fxRate = (code: string, isEnabled: boolean, lastUpdatedAt: string): Exchan
   lastUpdatedAt,
   updatedBy: null,
 });
+const FX_CHANGE: ExchangeRateHistoryWire = {
+  id: 'h1',
+  currencyCode: 'ILS',
+  oldRate: '3.650000',
+  newRate: '3.700000',
+  changedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
+  changedByLabel: 'Anna Admin',
+  changedAt: '2026-10-18T10:00:00.000Z',
+  changeReason: null,
+};
 const FX_PAYLOAD: ExchangeRatesPayload = {
   rates: [fxRate('EUR', true, '2025-11-05T10:00:00.000Z'), fxRate('ILS', true, '2026-10-18T10:00:00.000Z'), fxRate('JPY', false, '2025-11-05T10:00:00.000Z')],
-  history: [],
+  history: [FX_CHANGE],
+  nameLookup: 'ok',
   readAt: FX_READ_AT,
 };
-const FX_PAYLOAD_FRESH: ExchangeRatesPayload = { ...FX_PAYLOAD, rates: [fxRate('ILS', true, '2026-10-18T10:00:00.000Z')] };
+const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [] };
+const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], nameLookup: 'failed' };
+const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }] };
 
 const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   // ── A1: the shared matrix ─────────────────────────────────────────────────
@@ -270,8 +284,10 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 Model pricing unavailable', () => <PriceStrip rows={[RED_ROW, PLAIN_ROW]} status={null} />],
   ['A2 Model pricing recent', () => <PriceStrip rows={[]} status={CHECK_RECENT} />],
   ['A2 ExchangeRatesKpis loading', () => <ExchangeRatesKpis payload={null} loading />],
-  ['A2 ExchangeRatesKpis', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} />],
-  ['A2 ExchangeRatesKpis none stale', () => <ExchangeRatesKpis payload={FX_PAYLOAD_FRESH} loading={false} />],
+  ['A2 ExchangeRatesKpis two tiles', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} />],
+  ['A2 ExchangeRatesKpis no history', () => <ExchangeRatesKpis payload={FX_PAYLOAD_NO_HISTORY} loading={false} />],
+  ['A2 ExchangeRatesKpis name lookup failed', () => <ExchangeRatesKpis payload={FX_PAYLOAD_LOOKUP_FAILED} loading={false} />],
+  ['A2 ExchangeRatesKpis old rate null', () => <ExchangeRatesKpis payload={FX_PAYLOAD_OLD_RATE_NULL} loading={false} />],
   // ── A3 (Money MK-5): the Finance strip's shapes, each with its leading / lagging indicator ──
   ['A3 Finance anchor lagging with status and detail', () => <KpiTile testId="tile-fk3_ai_cost" label="Charged AI cost this month" value="At least $12.50" sub="This month vs last month, UTC · Same days last month: $10.00" status="amber" detail="A lower bound" indicator={{ kind: 'lagging', definition: 'What it costs us.' }} href="#ai-cost" />],
   ['A3 Finance anchor leading with sub and detail', () => <KpiTile testId="tile-fk2_mrr" label="MRR now" value="$49.00" sub="Monthly, at list price, today" detail="Stripe test mode" indicator={{ kind: 'leading', definition: 'The monthly price.' }} href="#revenue-mrr" />],
@@ -331,9 +347,12 @@ const EXPECTED: Record<string, string> = {
   'A2 Model pricing unavailable': '31241fbf7736bf1aac551289805d08ae42b9925bc701096b8fb68803da4049e0',
   'A2 Model pricing recent': '13a71e361d6edb3f07816f7218353f3c6568b232cff90a7160ea321f854d2577',
   // Exchange rates 1a (SQ-7), recorded on first render.
-  'A2 ExchangeRatesKpis loading': 'b628c0bab0e92bf9f5949794cae2e85732530b5c709306ec98f1265c8e51bcb5',
-  'A2 ExchangeRatesKpis': '41899b6997db4acf7b68dd7babe940b77246a350d3fee262b3acde3894928a5e',
-  'A2 ExchangeRatesKpis none stale': 'ada696c76cf91d2628a0ea51138beb3f099a9c9146c49624b4bb74200130503e',
+  // Exchange rates 1c.1 (SQ-15): re-pinned and appended, recorded on first render.
+  'A2 ExchangeRatesKpis loading': '000fe11e98245a04580a6526ceda35d0b3c3d9c053a2961b261bc04d39599596',
+  'A2 ExchangeRatesKpis two tiles': '98dad5c953e6dc6567d6fbe50840034cf0b552cde7ed3f6659fe48a86ccc9b69',
+  'A2 ExchangeRatesKpis no history': '73f1684b8386057241a3393494d07bd522a86c0590ff22b90c3fb88138909706',
+  'A2 ExchangeRatesKpis name lookup failed': '8c723a0e309aa399788cfa35df8489bc121df65f48dd823c0a344dd98251eb55',
+  'A2 ExchangeRatesKpis old rate null': '59839d2b472876e96aed831c3e8f38cbf5c769a8037f8c4ba7416620d1c3c4ee',
   // A3 (Money MK-5): recorded at MK-5's handover.
   'A3 Finance anchor lagging with status and detail': 'aa49c3366273f3172252d5d32b3d5e0c2652dcb86f57f02f17376786f6088e19',
   'A3 Finance anchor leading with sub and detail': '9bc3350d8d954d600d96be98c15c853ee872357eaa0b61c1f68484057a4890d6',
