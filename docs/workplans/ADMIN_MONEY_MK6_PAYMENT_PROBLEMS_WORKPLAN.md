@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-6; §6 items 14 and 15; C-1 (BD-38); SA-RR-MK pins table ("MK-1, MK-6, MK-7: none expected")
 **Branch:** `feature/admin-money-mk6-payment-problems` (from main `4f1514f4`; MK-5b #485 and Exchange rates 2a #486 merged)
 **Date:** 2026-10-20
-**Status:** Code Complete
+**Status:** Code Approved (SA-CR-MK6), QA passed; committed `4ee3b61d`, PR [#489](https://github.com/AgentsPilot/neuronforge/pull/489) opened 2026-10-20, auto-merge on
 **Path:** UI short path. Markup and copy only. The payload, the request and the reads are unchanged.
 
 ## Overview
@@ -192,7 +192,10 @@ Plan payment problems (slice 7) are not built, so no plans block is added.
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk6-payment-problems` (from main `4f1514f4`)
+- **Commit:** `4ee3b61d` feat(finance): payment problems sit beside their KPI (boost problems in Revenue, client problems in Client payments) (MK-6)
+- **Merge:** origin/main (`65c26642`) merged in `559a6745`, no conflicts; pins equal main
+- **PR:** [#489](https://github.com/AgentsPilot/neuronforge/pull/489), auto-merge on (merge commit, via the merge queue)
 
 ---
 

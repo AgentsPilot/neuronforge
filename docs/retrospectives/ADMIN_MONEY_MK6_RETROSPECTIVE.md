@@ -22,6 +22,6 @@ The separate Payment problems section is removed. Boost problems now sit in Reve
 
 - **When moving a block, prove it is byte-identical and re-point every link to it in the same slice.**
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk6-payment-problems — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk6-payment-problems — commit `4ee3b61d`, main merged `559a6745`, PR #489 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)
