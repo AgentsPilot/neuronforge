@@ -1,13 +1,13 @@
 # Workplan: Business OS Upgrade Modal, UM-3 "Conversion copy and polish"
 
-> **Last Updated**: 2026-10-20
+> **Last Updated**: 2026-10-21
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_UPGRADE_MODAL_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_UPGRADE_MODAL_REQUIREMENT.md) §6 (CV-1 to CV-11), §9 (Accessibility, Responsive), §11 (UM-3 row)
 **Earlier workplans:** [UM-0](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM0_WORKPLAN.md) · [UM-1a](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM1A_WORKPLAN.md) · [UM-1b](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM1B_WORKPLAN.md) · [UM-2](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM2_WORKPLAN.md)
 **Branch:** `feature/bos-upgrade-modal-um3`, created by RM from UM-2's committed tip `73a6628d` in its own worktree (UM-2 SA X-6). Built there, uncommitted.
 **Date:** 2026-10-20
-**Status:** Code Complete (UM-3 + UM-D3), uncommitted, awaiting SA code review and QA
+**Status:** Committed (UM-3 + UM-D3, `44df7ca8` / `d4fcb1a4`); live-test fixes LF-1 / LF-2 Code Complete, uncommitted, awaiting SA code review and QA (§ Live-test fixes)
 **Path:** UI short path (UM-SA11: confirmed for UM-3). Dev → SA code review + QA in parallel → the user sees the diff → RM. Live checks go into the single end-of-stream session (UM-1b UD-1), not mid-way.
 
 ## Overview
@@ -609,6 +609,28 @@ Read: the full diff (19 modified, 8 new files) and the 12 screenshots. Ran: sett
 
 ### Code Approved for QA: Yes (CR-1 and CR-2 before the user diff; not fast-tracked, D3-14)
 
+### Code Review by SA: live-test fixes LF-1 / LF-2 (2026-10-21)
+
+**Status:** ✅ Code Approved for QA. No required fixes; no SA edits to code.
+
+| # | Check | Finding |
+|---|---|---|
+| LR-1 | No `--v2-primary-dark` / gradient left | `grep` over `UpgradeModal.tsx`, `PlanSection.tsx`, `PlanPurchase.tsx`, `PlanUpgrade.tsx`: only comments mention them. Guard (t) inverted, controls planted. ✅ |
+| LR-2 | Contrast test uses default AND live tokens, light + dark | Reads `:root` / `html.dark` from `globals-v2.css`, overlays the pinned live `#fb923c` / `#f97316`; tints composed over the real surface (`over()`); WCAG 2.x luminance; four themes per pair. ✅ |
+| LR-3 | C-9 | **Amended, not satisfied as written.** Band words, X, badges and "Your plan" ≥ 4.5:1 in all four themes. Primary buttons (white on `--v2-primary`) are ≈ 4.47:1 default, ≈ 2.26:1 live. SA ruling, **C-9 amended**: "words in the window ≥ 4.5:1 in all four themes, except primary buttons, which follow the Business OS button convention; their contrast is the platform theme's property (LF-F1)". A modal-only button colour would bring back the off-palette look the user rejected; the fix belongs in the theme. The failure stays pinned as "measured, not passed" |
+| LR-4 | Entitlements (registration / snapshot / invariants) | No new importer; change inside `customerPlanView.ts`; read-only, no resolver / catalog / tier-matrix change. SA re-ran `test:bos-entitlements`: 301 / 301 suites, 9,136 / 9,136. ✅ |
+| LR-5 | C-17 / C-18 for a cohort column | Tier columns still from `previewAccountFor`; the own column is a separate object feeding neither tier cells nor the highlight; own cell held to the cell allow-list; hidden / `not_built` filtered by the same `isVisible`. Accepted widening: a row may survive because only the own plan grants it (tiers ✕ ✕), cohort viewers only. ✅ |
+| LR-6 | C-21 | `ownColumn` only when the server sent `comparison.current`; the client `kind !== 'tier'` check is a defensive mirror. Actions, `hasActions`, headline, `sections` identity unchanged, so the open-ended Founding Partner still gets the drawer. ✅ |
+| LR-7 | C-22 / C-10 | Own column shows only "Your plan", no action; Recommended / Needed computed over `columns` only. One marked column per account (render test). C-22 wording owed (LF-F2). ✅ |
+| LR-8 | C-27 tripwire | ≤ 2 shown plans kept; own + shown ≤ 3 over every tier and configured cohort, non-vacuous; guard (k) bans `grid-cols-4+`. ✅ |
+| LR-9 | Phone 360 px | Shots 11–14: no sideways scroll, three columns, buttons wrap to two lines. ✅ |
+| LR-10 | Money | No route, offer, checkout or price change; open-ended Founding Partner keeps drawer + "Compare plans", no buttons (shot 08), per the user decision of 2026-10-20. ✅ |
+| LR-11 | Logging / dead code | 0 `console.*` in touched files; `own.resolution` is used by the amount cells. ✅ |
+
+**SA runs:** `components/business-os/settings` + `customerPlanView*`: 46 / 46 suites, 961 / 961. `test:bos-entitlements`: 9,136 / 9,136.
+
+**Recommendation to the user on LF-F1 (business terms):** with the current orange, the white words on every main button in Business OS (not only this window) are hard to read for some customers and fail the usual accessibility standard. One theme choice fixes all of them at once: a deeper orange for buttons (for example `#c2410c`, readable with white) or dark words on the current orange. SA recommends deciding it as a theme change soon, rather than patching single screens.
+
 ---
 
 ## QA Testing Report
@@ -696,6 +718,114 @@ SettingsPlanSurface.qa.render.test.tsx: Tests: 10 passed, 10 total
 
 ---
 
+## Live-test fixes (2026-10-20)
+
+**Trigger:** the user's live test of the committed UM-3 branch on a Founding Partner account in dark mode (screenshots). The user's words: "why does your plan shows the 'compare plans' button? the look and feel looks very bad... doesn't seem to have the color pallet of the app, see pictures, you can barley see the text color. in addition, that it does not match our flow, in this user's case clicking on the plan should have shown him his plan (champion) then basic then pro with options to upgrade".
+
+**User decision (same session):** a Founding Partner with **no end date keeps the drawer** (BQ-P10 stands: nothing to buy), and the drawer keeps its "Compare plans" button. So "Compare plans" in the drawer is correct for that account; what was wrong was the look and the missing "Your plan" column.
+
+**Branch / state:** `feature/bos-upgrade-modal-um3`, on top of the committed `cd80238f`. Built uncommitted; no route, input, payload field removed, migration or new dependency. Path: UI short path (SA code review + QA, then the user's diff, then RM).
+
+### LF-1: palette (root cause and fix)
+
+| | |
+|---|---|
+| **Root cause** | The app's real theme comes from the admin ui-config custom tokens: `GET /api/design-system/v2-custom-tokens` returns `{"colors":{"primary":"#fb923c","secondary":"#f97316"}}`, and `lib/design-system-v2/theme-provider.tsx` writes them over `--v2-primary` / `--v2-secondary`. It does **not** set `--v2-primary-dark`, which falls back to the default indigo `#4F46E5`. UM-1a to UM-3 built the band, the badges, the primary buttons and the drawer's "Compare plans" button on `--v2-primary-dark` plus a `--v2-secondary` gradient, with white words; every contrast check and screenshot used the default indigo tokens. Live, that became an indigo-to-orange mix with white text on it (about 2.3:1 to 2.8:1) and an accent colour that is not the app's |
+| **Fix** | No `--v2-primary-dark` and no gradient anywhere in the modal, the islands or the drawer button. **Band:** `--v2-surface` under an aria-hidden `bg-[var(--v2-primary)]/10` tint layer (`plan-compare-band-tint`), a solid primary top rule (`border-t-4`) and a solid primary icon tile as the accent; headline and subheading in `--v2-text-primary` (the secondary grey measured under 4.5:1 on the tint, so it is not used there); the X takes `--v2-text-primary`. **Badges** "Recommended" / "Needed for this": `bg-[var(--v2-primary)]/15`, `border-[var(--v2-primary)]`, `--v2-text-primary` words. **Recommended column:** `bg-[var(--v2-primary)]/5` tint (not /10: the small grey price line in it would fall under AA) and a primary top border. **Buttons** (column primary, islands' Choose / Confirm, drawer "Compare plans" / "See plans"): the Business OS convention `bg-[var(--v2-primary)] text-white` (as in `InviteFriendsSection`, `ChangePasswordDrawer`, the settings page), `font-semibold`, `hover:opacity-90` |
+| **Contrast tests** | `upgradeModal.contrast.test.ts` rewritten: every pair is checked in **four themes**: default light, default dark, live custom light, live custom dark (`#fb923c` / `#f97316` pinned in the file, as the provider writes them). Band words, X, badges, "Your plan", secondary text on the surface and both column tints, the chip, the link, ✓ / ✕: all ≥ 4.5:1 (text) or ≥ 3:1 (non-text) in all four. Three "why not" controls pin the measured failures that set the choices (white on the live orange; secondary text on the /10 band tint; secondary on `--v2-bg`) |
+| **Finding for the user (not fixed here)** | The app's own primary button, white on `--v2-primary`, measures about **4.47:1 on the default indigo and about 2.26:1 on the live orange** (pinned in the contrast file as "measured, not passed"). The modal now draws its buttons exactly as the rest of Business OS does, so it shares that platform-wide property rather than introducing its own colour. Fixing it is a theme decision (a darker primary in ui-config, or an "on-primary" text token), not a modal change. Recorded as follow-up **LF-F1** |
+
+Old → new pins (no assertion deleted; each one re-pointed):
+
+| Was | Now |
+|---|---|
+| Guard (f) W-5: drawer button on `bg-[var(--v2-primary-dark)]` with an aria-hidden gradient layer | Drawer button is `bg-[var(--v2-primary)]` + `text-white`, no `primary-dark`, no gradient; the modal source has neither. Controls: plant the dark shade, a gradient on the button, a gradient band |
+| Guard (t) U3-a: no `bg-[var(--v2-primary)]` with `text-white` | Inverted: no `--v2-primary-dark` in the modal, islands or `PlanSection`, and every white-text class string is on `bg-[var(--v2-primary)]`. Controls: the dark shade back, white on `--v2-secondary`, white on nothing |
+| Render C-9: white text inside `.bg-[var(--v2-primary-dark)]`; gradient `bg-gradient-to-r` | White only inside `.bg-[var(--v2-primary)]` (buttons, icon tile); the band tint is aria-hidden and empty; the title holds no white text |
+| Render F-2: `--v2-primary-dark` text only in the band | No `primary-dark` and no `gradient` class anywhere in the window (Essentials and trial payloads) |
+| Render C-8: `[&>button]:text-white` | `[&>button]:text-[var(--v2-text-primary)]` |
+| Render Hebrew: gradient `bg-gradient-to-l` | No gradient element |
+| UM-3 Y-5: gradient `w-12` strip inside `pe-12`, `sm:pe-[22%]` | `pe-12` kept for the X; no gradient; no `%` reservation at any width |
+| Contrast A-1 / A-2 / A-3 on `--v2-primary-dark` (defaults only) | Band / X / badge pairs on the tint, four themes (above) |
+
+### LF-2: the current-plan column
+
+| | |
+|---|---|
+| **Problem** | For an account whose plan is not a paid tier (trial "Test Flight", Founding Partner) the table showed only Essentials and Autopilot, so the owner never saw their own plan beside them. The user expects: their plan first, marked "Your plan", then Essentials, then Autopilot, with the server's actions |
+| **Server (C-21: the UI decides no row)** | `buildPlanComparison` (`lib/business-os/entitlements/customerPlanView.ts`) takes an optional `current: { planId, resolution }`. `buildCustomerPlanView` passes it **only for a cohort basis** (`isTier === false`). It adds `comparison.current = { planId }` and, on every row, `row.current`: the own plan's cell, read from the **account's resolved entitlements** (the same `describePlanCapabilities` / `describeCapabilityAmount` path as the tier cells, so the trial shows "2,000 in total" credits and the Founding Partner shows chat ✓). Tier columns are untouched and never read the account (C-17); the highlight still compares only the tiers; the own cell is never highlighted. A row also survives when only the own plan grants it, so "Your plan" cannot hide something the account has. A tier account gets `current: null` and `row.current: null`. Read-only; no route, input or migration; no new importer of the module (`npm run test:bos-entitlements` green) |
+| **Client** | `planPayloadTypes.ts` mirrors the two optional fields (an older payload without them renders as before). `upgradeModalView` returns `ownColumn: { planId, name, free } | null`, set only when the server sent `current` and the payload is not a tier; columns, actions, `hasActions`, headline and `sections` (identity) are unchanged, so `planSurfaceFor` still sends the open-ended Founding Partner to the drawer. `ComparisonTable` renders the own column FIRST: "Your plan" badge, the name, "Free" (`plan.price.free`), no button (empty slots keep the row heights), its cells from `row.current` with the sr text "{plan}: {state}" |
+| **Actions** | From the server, as before: Founding Partner with no end date: none (this is the drawer's "Compare plans" view); Founding Partner with an end date and trial: "Choose …" on both tiers; tier accounts: unchanged two columns, their own column marked "Your plan" |
+| **Phone, 360 px (C-27)** | `PHONE_ROW` is now `{ 2: 'max-sm:grid-cols-2', 3: 'max-sm:grid-cols-3' }`; labels span with `max-sm:col-span-full`; with three columns the header is compact on a phone (badges `text-[11px]`, the badge icon hidden, button padding and `text-xs`), and the label column is `sm:w-1/3` on desktop. Measured on the shots: no sideways scroll, three columns side by side, buttons wrap to two lines. Header cells carry `sm:h-px` so a marked column's tint reaches the bottom of the header row (the white seam seen in the first render) |
+| **Tripwire (C-27, new rule)** | `planComparison.twoPlans.tripwire.test.ts`: still at most **two shown plans**, and now for every account shape the server can answer (each shown tier, each cohort in config) **own column + shown plans ≤ three**; non-vacuity: some shape really has the own column. Guard (k) pins both grid classes once each and no `grid-cols-4+` |
+
+Tests added / changed for LF-2: `customerPlanView.test.ts` (the "same table for every account" test now compares the tier part and pins `pro` exactly; new block: tier accounts have no own column, cohorts get `current` + a cell on every row with `highlight: false`, own cells come from the account (trial credits differ from Essentials; Founding Partner chat ✓ where Essentials is ✕), dated and open-ended Founding Partner get the same own column, `buildPlanComparison` without `current` is unchanged); `customerPlanView.noExclusions.test.ts` (allow-lists gain `current` on the comparison and the row; the own cell is held to the cell allow-list); `upgradeModalView.test.ts` (+4: `ownColumn` for trial / FP / dated FP, none for a tier, changes no action or headline, only when the server sent it); `UpgradeModal.render.test.tsx` (trial and FP-no-end-date now expect "Your plan" once, on the own first column, FP header order own → tiers; +4: three-column phone grid for trial and FP, own cells = `row.current` with sr text, an older payload renders two columns); `SettingsPlanSurface.render.test.tsx` (every account has exactly one marked column; for a cohort it is the own column; was `tier ? 1 : 0`).
+
+### Runs (final diff)
+
+| Run | Result |
+|---|---|
+| `components/business-os/settings` | **44 / 44 suites, 866 / 866 tests** |
+| `app/business-os` | **9 / 9 suites, 158 / 158 tests** |
+| `components/business-os/__tests__` | **17 / 17 suites, 392 / 392 tests** |
+| Guards: `ownerLanguageFirstFrame`, `dictionariesStayInStep`, `tierLiteral.forbidden`, `creditFigures.fromConfig`, `enforcementPoints` | **5 / 5 suites, 225 / 225 tests** |
+| Combined (the above + `components/ui/__tests__`, `components/test-business-os`, `app/invite`) | **102 / 102 suites, 2,072 / 2,072 tests** |
+| `npm run test:bos-entitlements` | **301 / 301 suites, 9,136 / 9,136 tests**, exit 0 (was 9,131: +5 LF-2 server tests) |
+| `npm run lint:hooks` | exit 0 (`--max-warnings 0`) |
+| `eslint` on the touched product files; `tsc` scoped to the touched folders | clean; no error in a touched file (pre-existing errors elsewhere only) |
+| `console.*` in touched product files | 0 |
+
+### Screenshots (live custom tokens injected on `<html>`, as the theme provider does)
+
+Rendered from the real components on real `my-plan` payloads, project CSS compiled with the project's Tailwind, `--v2-primary:#fb923c; --v2-secondary:#f97316` written on the root element; headless Chrome (phones through a 360 × 780 frame). Folder: `C:/Users/Barak/AppData/Local/Temp/claude/C--Users-Barak-My-Projects-AgentsPilot-neuronforge/87f44241-ddc6-4e58-a75a-a1db084fa69e/scratchpad/um-fix-shots/`
+
+| # | Shot |
+|---|---|
+| 01 / 02 | Desktop, Essentials pop-up, light / dark (two columns, own column marked) |
+| 03 / 04 | Desktop, trial pop-up with its own first column, light / dark |
+| 05 / 06 | Desktop, Founding Partner (no end date) drawer with "Compare plans", light / dark |
+| 07 / 08 | Desktop, that drawer's Compare plans pop-up (own column, no actions), light / dark |
+| 09 | Desktop, Hebrew trial pop-up, light |
+| 10 | Desktop, Hebrew Founding Partner Compare plans pop-up, dark |
+| 11 / 12 | 360 px, trial pop-up (three columns), light / dark |
+| 13 | 360 px, Founding Partner Compare plans pop-up (three columns), light |
+| 14 | 360 px, Hebrew trial pop-up, dark |
+| 15 | 360 px, Essentials pop-up (two columns), light |
+| 16 | 360 px, Founding Partner drawer, light |
+
+### Follow-ups
+
+| # | Item | Owner |
+|---|---|---|
+| LF-F1 | Platform theme: white on the live `--v2-primary` (#fb923c) is about 2.3:1 for every Business OS primary button, the modal's included. A darker primary in ui-config, or an "on-primary" text token, fixes it everywhere at once | User decision (theme), then BA |
+| LF-F2 | The requirement's C-22 ("current column only for a tier") and C-27 ("two columns") wording should be amended to the LF-2 rules above | BA / SA, with the requirement update |
+| LF-F3 | The master run sheet (UM-1b §14): U3-8 now expects a "Your plan" column for the trial (was "no plan column is marked"); U3-10 stays (open-ended Founding Partner → drawer with "Compare plans"); add a row: open that "Compare plans" and see Founding Partner → Essentials → Autopilot, no buttons | QA (done, see the QA addendum) |
+
+### QA addendum: live-test fixes LF-1 / LF-2 (2026-10-21)
+
+**Mode:** full, UI short path. **Strategy:** A + B (Jest on real `my-plan` payloads) + D headless (Chrome, fresh render of the final diff, live tokens). Live tokens confirmed on the running dev server: `GET /api/design-system/v2-custom-tokens` → `{"primary":"#fb923c","secondary":"#f97316"}`.
+
+| Run | Result |
+|---|---|
+| Settings + `app/business-os` + `components/business-os/__tests__` + `components/ui/__tests__` + `components/test-business-os` + `app/invite` + 5 guards | **102 / 102 suites, 2,072 / 2,072 tests**, exit 0 (before the QA files) |
+| `npm run test:bos-entitlements` | **301 / 301 suites, 9,136 / 9,136 tests**, exit 0 |
+| `npm run lint:hooks` | exit 0 |
+| New QA files + all of `lib/business-os/entitlements/__tests__` | **49 / 49 suites, 1,376 / 1,376 tests**; eslint clean on both new files |
+
+**New QA tests (gaps, no product code changed):**
+- `components/business-os/settings/__tests__/upgradeModal.lf.qa.render.test.tsx` (12): account matrix. Trial → pop-up, `[trial, Essentials, Autopilot]`, buttons on both tiers. FP no end date → drawer; its "Compare plans" opens `[FP, Essentials, Autopilot]`, no button header or footer, no Recommended. FP with end date → pop-up, three columns, Choose on both tiers. Essentials → pop-up, two columns, button on Autopilot only. Autopilot and Essentials cancelling → drawer, two columns, no button. Every case: exactly one "Your plan" marker, on the own column; "Recommended" never on it and only on a column with a button; `data-columns` 3 / 2. Own cells: one per row, in order, values = `row.current`. Hebrew: own column first (on the right), "התוכנית שלך" + "חינם", no English left in it.
+- `lib/business-os/entitlements/__tests__/customerPlanView.ownColumn.qa.test.ts` (7): the own cell's ✓ is recomputed independently from the account resolution (`isGrantingValue` over the row's visible members) for trial and FP; never highlighted; dated = open-ended; tiers have no own column; an admin `revoke` override on the account turns its own cell ✕ and leaves every tier cell unchanged (C-17).
+
+**Headless 360 px, fresh render after the last product edit (live tokens on `<html>`, en / he × light / dark, 24 pages):** doc 360 / 360 and dialog 358 / 358 on every page, with no clipped element and no clipped button. Three columns side by side for trial, FP Compare and dated FP (≈ 109 px each, x 13–339, mirrored in he). Two columns for Essentials and Autopilot. Cells line up across each row. Headline at most 2 lines. Visual check, light and dark: soft orange band with readable words, orange badges and buttons, no indigo anywhere. Shots and pages: session scratchpad `qa-lf-360/`.
+
+**Issues.** Bugs: none. Edge case (Low, known): white text on the live orange primary button, already LF-F1. Note: plan names (Founding Partner, Essentials, Autopilot) stay in English in Hebrew; they come from config, so this is a brand choice, not a regression.
+
+**Master run sheet (LF-F3 done):** UM-1b §14 has a new "What changed after the first live test" paragraph. Rows 1, 8, 25, 26, 27 and 30 now expect the own-plan column and the orange colours. Row 25 now covers opening "Compare plans" (FP → Essentials → Autopilot, no buttons). Still 34 rows.
+
+**Status:** every automated criterion passes and no bugs were found. Ready for the user's diff.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -707,3 +837,6 @@ SettingsPlanSurface.qa.render.test.tsx: Tests: 10 passed, 10 total
 | 2026-10-20 | SA code review | Code Approved for QA with conditions CR-1 (pin B7 hidden under the status body) and CR-2 (`PlanFlowStatus` muted → secondary). Money path unchanged (classes only in the islands; decision via `hasActions`; 2 s / failed → drawer; checkout return and in-pop-up completion stay; one checkout per page; 3-D Secure style unchanged). SA trivial fix: B7 hidden under "Payment processing" (`UpgradeModal.tsx`). F-1 reconciled: code right, AC-UM7 and R-7 corrected in the requirement (`section` removed, `checkout` kept, C-11). DV-1..DV-6 accepted. 82 / 82 + 5 / 5 suites green |
 | 2026-10-20 | QA automated pass | 102 / 102 suites, 2,039 tests, including the new `SettingsPlanSurface.qa.render.test.tsx` (10 tests: Escape on both surfaces with focus back on the row and a fresh decision on reopen, the as-built stale marker, B1..B11 placement, ended → pop-up, cancelling → drawer, es strip and X, double press → one request). `test:bos-entitlements` 9,131 / 9,131; `lint:hooks` clean. Fresh 360 px render: no horizontal scroll, headline 2 lines in en/he, ≈ 340 px of card area. No bugs; 2 Low edge cases. UM-1b §14 made the single MASTER run sheet (34 rows, D3-13) |
 | 2026-10-20 | Committed (RM) | Product `44df7ca8` + docs `d4fcb1a4` on `feature/bos-upgrade-modal-um3`, pushed; no PR until the end-of-stream live session |
+| 2026-10-21 | Live-test fixes LF-1 / LF-2 (Dev), uncommitted | User live test (Founding Partner, dark): unreadable band, not the app's colours, own plan missing from the table. User decision: Founding Partner with no end date keeps the drawer and its "Compare plans". LF-1: root cause = admin custom tokens rewrite `--v2-primary` / `--v2-secondary` only; modal, islands and drawer button moved off `--v2-primary-dark` and the gradient onto the `--v2-primary` family (tinted band, primary-tinted badges, app-convention buttons); contrast test now four themes (default + live custom, light + dark). LF-2: server sends the cohort account's own plan (`comparison.current`, `row.current`, from its resolution); first column "Your plan", "Free"; three-column phone grid; tripwire raised to two plans / three columns. 102 / 102 suites, 2,072 tests; `test:bos-entitlements` 9,136 / 9,136; `lint:hooks` clean; 16 screenshots with the live tokens. Follow-ups LF-F1 (theme contrast of the app primary button), LF-F2, LF-F3 |
+| 2026-10-21 | SA code review, live-test fixes | Code Approved for QA, no required fixes. C-9 amended (window text ≥ 4.5:1 in four themes; primary buttons follow the platform convention, contrast owned by LF-F1). C-17/C-18, C-21, C-22/C-10, C-27 hold; no money change. SA runs: 46 / 46 suites (961 tests); `test:bos-entitlements` 9,136 / 9,136. LF-F1 recommendation to the user recorded |
+| 2026-10-21 | QA: live-test fixes LF-1 / LF-2 | 102 / 102 suites, 2,072 tests; `test:bos-entitlements` 9,136 / 9,136; `lint:hooks` clean. +2 QA files (19 tests: account matrix, own cells from the resolution, override moves only the own cell, Hebrew). Fresh 360 px render on live tokens: no sideways scroll, three columns side by side. No bugs. UM-1b §14 rows 1, 8, 25–27, 30 updated (LF-F3) |
