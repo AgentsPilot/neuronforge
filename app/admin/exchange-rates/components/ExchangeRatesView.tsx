@@ -27,19 +27,34 @@
  * request is dropped and can neither reopen a closed panel nor set state after
  * unmount (SA W-3).
  *
- * Layout standard: shared header, the KPI strip, a Refresh-only bar with
+ * Layout standard: shared header, the KPI strip, the shared filter bar with
  * "Read at", shared loading / error / empty states, shared table constants and
  * chips, UTC dates. Responses are read through `readAdminResponse` (never an
  * own `.json(`); a network failure shows the shared sentence and the browser's
  * own message is never shown.
+ *
+ * Slice 1c.2 (§5.5.1, FR-14 to FR-16, SQ-8, SQ-9, SA-1c-5): the bar holds Show
+ * (Enabled only by default, Disabled only, All; in the URL as `currencies`,
+ * see `exchangeRatesFilters.ts`) and a code-or-name Search held by this view
+ * only, never written to the URL. The filter narrows the rates table only: the
+ * KPIs and the history list keep the whole plain-GET payload (SA-1c-2). A
+ * filter change reads nothing. A currency switched on or off here stays
+ * visible ("held") until Refresh, the next successful read, or any filter or
+ * search change, so its row and the keyboard focus do not vanish (SQ-9).
+ * `active` is false only while a Finance tab hides this view (slice 2, L-9a).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
-import { AdminFilterBar } from '@/app/admin/components/layout/AdminFilterBar';
+import {
+  ADMIN_FIELD_CONTROL,
+  ADMIN_FIELD_LABEL,
+  AdminFilterBar,
+} from '@/app/admin/components/layout/AdminFilterBar';
 import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
 import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import type {
   ExchangeRateHistoryPayload,
   ExchangeRatePatchResult,
@@ -48,6 +63,17 @@ import type {
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
 import { clientLogger } from '@/lib/logger/client';
 
+// Relative on purpose: the alias path would spell the page route, which the
+// G-4 guard (redundantPages.source.guard) refuses anywhere in product code.
+import {
+  CURRENCY_SHOW_OPTIONS,
+  EXCHANGE_RATES_FILTER_SPEC,
+  NO_MATCHING_CURRENCIES,
+  currencyCountLine,
+  toCurrencyShow,
+  visibleRates,
+  type ExchangeRatesFilters,
+} from '../exchangeRatesFilters';
 import { ExchangeRatesKpis } from './ExchangeRatesKpis';
 import { ExchangeRatesTable } from './ExchangeRatesTable';
 import { RateHistoryTable } from './RateHistoryTable';
@@ -72,7 +98,31 @@ interface CurrencyHistory {
   error: string | null;
 }
 
-export function ExchangeRatesView() {
+/**
+ * The codes switched in this view, and the view they were switched under
+ * (SQ-9). They count only while `filters` is the same object and the search
+ * has not been edited since: the hook gives a new `filters` object on every
+ * value change (outside changes included), so any Show or Search change, even
+ * a change and back, retires the set in that same render, with no effect.
+ */
+interface HeldRows {
+  filters: ExchangeRatesFilters | null;
+  searchVersion: number;
+  codes: ReadonlySet<string>;
+}
+
+const NO_CODES: ReadonlySet<string> = new Set<string>();
+const NO_HELD: HeldRows = { filters: null, searchVersion: -1, codes: NO_CODES };
+
+/** Search input cap: currency codes and names are short. */
+const SEARCH_MAX_LENGTH = 64;
+
+export interface ExchangeRatesViewProps {
+  /** L-9a: false while a Finance tab hides this view (slice 2). Default true. */
+  active?: boolean;
+}
+
+export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}) {
   const [payload, setPayload] = useState<ExchangeRatesPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +138,25 @@ export function ExchangeRatesView() {
   useEffect(() => {
     openCodeRef.current = openCode;
   }, [openCode]);
+
+  // Slice 1c.2: Show in the URL (SQ-8); Search held here only, never in the URL.
+  const { filters, setFilters, clear, isDefault } = useAdminFilters(EXCHANGE_RATES_FILTER_SPEC, { active });
+  const show = toCurrencyShow(filters.currencies);
+  const [searchTerm, setSearchTerm] = useState('');
+  // Bumped by every search edit and by Clear: part of the held set's view (SQ-9).
+  const [searchVersion, setSearchVersion] = useState(0);
+  const [held, setHeld] = useState<HeldRows>(NO_HELD);
+  // `patch` has empty deps, so it cannot read `filters` / `searchVersion` from
+  // its closure (they would be the first render's). These refs give it the
+  // view as it is when the PATCH settles (SA Q-3, C-1).
+  const filtersRef = useRef<ExchangeRatesFilters>(filters);
+  const searchVersionRef = useRef(searchVersion);
+  useEffect(() => {
+    filtersRef.current = filters;
+    searchVersionRef.current = searchVersion;
+  }, [filters, searchVersion]);
+  const showId = useId();
+  const searchId = useId();
 
   /**
    * One read. After a save (`afterSave`), a failed re-read keeps the data on
@@ -116,6 +185,8 @@ export function ExchangeRatesView() {
         failed(result.message);
         return;
       }
+      // Every successful plain read releases the held rows (SQ-9).
+      setHeld(NO_HELD);
       setPayload(result.data);
     } finally {
       setLoading(false);
@@ -185,6 +256,8 @@ export function ExchangeRatesView() {
 
   /** Refresh: the plain read, and the open panel's own read (SA Q-3). */
   const refresh = useCallback(() => {
+    // Before the read, so a failed Refresh still releases the held rows (SQ-9).
+    setHeld(NO_HELD);
     void load();
     if (openCode) void loadCurrencyHistory(openCode);
   }, [load, loadCurrencyHistory, openCode]);
@@ -211,6 +284,18 @@ export function ExchangeRatesView() {
         return result.message;
       }
       const saved = result.data.rate;
+      // SQ-9 / SA C-1: an on/off switch holds its row, in the SAME synchronous
+      // step that replaces it, so the row never renders once as "switched, not
+      // held" (it would unmount under the filter and lose focus). A rate save
+      // is never held.
+      if (body.field === 'enabled') {
+        const view = { filters: filtersRef.current, searchVersion: searchVersionRef.current };
+        setHeld((current) =>
+          current.filters === view.filters && current.searchVersion === view.searchVersion
+            ? { ...current, codes: new Set(current.codes).add(saved.currencyCode) }
+            : { ...view, codes: new Set([saved.currencyCode]) }
+        );
+      }
       setPayload((current) =>
         current
           ? { ...current, rates: current.rates.map((rate) => (rate.currencyCode === saved.currencyCode ? saved : rate)) }
@@ -243,6 +328,24 @@ export function ExchangeRatesView() {
     [patch]
   );
 
+  const changeSearch = (value: string) => {
+    setSearchTerm(value);
+    setSearchVersion((n) => n + 1);
+  };
+
+  /** §5.5 part 5: back to the defaults (Enabled only, empty search). Reads nothing. */
+  const clearAll = () => {
+    clear();
+    setSearchTerm('');
+    setSearchVersion((n) => n + 1);
+  };
+
+  // One expression for the bar's Clear and the empty state's Clear (SA minor item).
+  const canClear = !isDefault || searchTerm !== '';
+  // The held set counts only under the view it was taken in (SQ-9, SA Q-3).
+  const heldNow = held.filters === filters && held.searchVersion === searchVersion ? held.codes : NO_CODES;
+  const rows = payload ? visibleRates(payload.rates, show, searchTerm, heldNow) : [];
+
   return (
     <div className="space-y-6">
       <AdminPageHeader title="Exchange rates" purpose={PURPOSE} />
@@ -250,7 +353,50 @@ export function ExchangeRatesView() {
       {/* K-10: hidden while the page shows an error. */}
       <ExchangeRatesKpis payload={error ? null : payload} loading={loading} />
 
-      <AdminFilterBar what={WHAT} busy={loading} onRefresh={refresh} readAt={payload?.readAt ?? null} />
+      {/* Controls from the first render (SA Q-1): Show is URL state, meaningful before any data. */}
+      <AdminFilterBar
+        what={WHAT}
+        busy={loading}
+        onRefresh={refresh}
+        readAt={payload?.readAt ?? null}
+        onClear={clearAll}
+        canClear={canClear}
+      >
+        <div>
+          <label htmlFor={showId} className={ADMIN_FIELD_LABEL}>
+            Show
+          </label>
+          <select
+            id={showId}
+            data-testid="currencies-show"
+            value={show}
+            onChange={(event) => setFilters({ currencies: toCurrencyShow(event.target.value) })}
+            className={ADMIN_FIELD_CONTROL}
+          >
+            {CURRENCY_SHOW_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor={searchId} className={ADMIN_FIELD_LABEL}>
+            Search
+          </label>
+          <input
+            id={searchId}
+            type="search"
+            data-testid="currencies-search"
+            value={searchTerm}
+            onChange={(event) => changeSearch(event.target.value)}
+            placeholder="Code or name"
+            maxLength={SEARCH_MAX_LENGTH}
+            autoComplete="off"
+            className={`${ADMIN_FIELD_CONTROL} w-48`}
+          />
+        </div>
+      </AdminFilterBar>
 
       {error && <AdminError message={error} testId="page-error" onRetry={() => void load()} />}
 
@@ -267,14 +413,28 @@ export function ExchangeRatesView() {
           {payload.rates.length === 0 ? (
             <AdminEmpty testId="rates-empty" message="No currencies are recorded." />
           ) : (
-            <ExchangeRatesTable
-              rates={payload.rates}
-              readAt={payload.readAt}
-              onSaveRate={saveRate}
-              onSetEnabled={setEnabled}
-              onShowHistory={showHistory}
-              historyFor={openCode}
-            />
+            <div className="space-y-2">
+              {/* Plain text, not a live region: it would be announced on every keystroke (SA Q-2). */}
+              <p data-testid="rates-count" className="text-xs text-slate-400">
+                {currencyCountLine(rows.length, payload.rates.length)}
+              </p>
+              {rows.length === 0 ? (
+                <AdminEmpty
+                  testId="rates-filtered-empty"
+                  message={NO_MATCHING_CURRENCIES}
+                  onClear={canClear ? clearAll : undefined}
+                />
+              ) : (
+                <ExchangeRatesTable
+                  rates={rows}
+                  readAt={payload.readAt}
+                  onSaveRate={saveRate}
+                  onSetEnabled={setEnabled}
+                  onShowHistory={showHistory}
+                  historyFor={openCode}
+                />
+              )}
+            </div>
           )}
           {currencyHistory ? (
             <RateHistoryTable

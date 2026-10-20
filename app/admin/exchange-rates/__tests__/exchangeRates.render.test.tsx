@@ -9,6 +9,10 @@
  * Slice 1c.1 (FR-18 to FR-22, SQ-12 to SQ-15, SA Q-1 to Q-3, W-3, W-6): the two
  * KPI tiles (Enabled currencies, Last rate change) with no Stale tile, the
  * "Changed by" label, the caption forms, and one currency's own history read.
+ *
+ * Slice 1c.2: the page opens on "Enabled only", so the tests that read the
+ * disabled JPY row choose Show "All" first (`showAll`). The filter bar itself
+ * is tested in `exchangeRatesFilters.render.test.tsx`.
  */
 
 import '@testing-library/jest-dom';
@@ -157,11 +161,17 @@ async function renderPage(
   return Object.assign(calls, { unmount: view.unmount });
 }
 
+/** Slice 1c.2: the default view hides disabled rows; these tests read JPY. */
+function showAll() {
+  fireEvent.change(screen.getByLabelText('Show'), { target: { value: 'all' } });
+}
+
 describe('reading', () => {
   it('reads only the admin route, and shows every currency with its stored rate', async () => {
     const calls = await renderPage();
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /api/admin/exchange-rates']);
     expect(screen.getByRole('heading', { level: 1, name: 'Exchange rates' })).toBeInTheDocument();
+    showAll();
     expect(screen.getByTestId('rate-value-EUR')).toHaveTextContent('0.920000');
     expect(screen.getByTestId('rate-value-JPY')).toHaveTextContent('150.000000');
     expect(screen.getByTestId('enabled-JPY')).toHaveTextContent('Disabled');
@@ -170,6 +180,7 @@ describe('reading', () => {
 
   it('marks stale rows in words; there is no Stale tile (FR-22)', async () => {
     await renderPage();
+    showAll();
     expect(screen.getByTestId('stale-EUR')).toHaveTextContent('Stale');
     expect(screen.getByTestId('stale-JPY')).toHaveTextContent('Stale');
     expect(screen.queryByTestId('stale-USD')).toBeNull();
@@ -216,6 +227,9 @@ describe('the base currency is never stale (review B-1)', () => {
       r.currencyCode === 'USD' ? { ...r, lastUpdatedAt: OLD } : { ...r, lastUpdatedAt: FRESH }
     );
     await renderPage(() => ok(allFresh));
+    showAll();
+    // SA C-2: the JPY row is on screen, so its null Stale check below is not vacuous.
+    expect(screen.getByTestId('rate-row-JPY')).toBeInTheDocument();
     for (const code of ['EUR', 'ILS', 'JPY', 'USD']) expect(screen.queryByTestId(`stale-${code}`)).toBeNull();
   });
 });
