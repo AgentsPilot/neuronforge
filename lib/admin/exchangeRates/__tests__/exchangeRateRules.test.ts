@@ -18,6 +18,11 @@ import {
   patchBodySchema,
   rateStringSchema,
   sameRate,
+  UNKNOWN_USER_LABEL,
+  exchangeRatesQuerySchema,
+  historyEditorIds,
+  labelHistory,
+  type ExchangeRateHistoryRecord,
 } from '../exchangeRateRules';
 
 describe('rate strings (SA O-1)', () => {
@@ -160,11 +165,97 @@ describe('isStale / ageInDays (FR-8, 35 days)', () => {
     expect(isRateStale({ currencyCode: 'EUR', lastUpdatedAt: daysBefore(1) }, readAt)).toBe(false);
   });
 
-  it('the history limit has one value, 50', () => {
-    expect(HISTORY_LIMIT).toBe(50);
+  it('the history limit has one value, 10 (slice 1c.1, FR-18)', () => {
+    expect(HISTORY_LIMIT).toBe(10);
   });
 
   it('the description says "not updated", never "not confirmed" (SA O-5)', () => {
     expect(STALE_DESCRIPTION).toBe('not updated in 35 days');
+  });
+});
+
+// ── Slice 1c.1 ──────────────────────────────────────────────────────────────
+
+describe('the GET query (slice 1c.1, SQ-12)', () => {
+  it.each([[{}], [{ currency: 'ILS' }], [{ currency: 'USD' }]])('accepts %j', (query) => {
+    expect(exchangeRatesQuerySchema.safeParse(query).success).toBe(true);
+  });
+
+  it.each([
+    [{ currency: 'ils' }],
+    [{ currency: '' }],
+    [{ currency: 'ILSX' }],
+    [{ currency: 'IL' }],
+    [{ limit: '50' }],
+    [{ currency: 'ILS', limit: '50' }],
+  ])('refuses %j', (query) => {
+    expect(exchangeRatesQuerySchema.safeParse(query).success).toBe(false);
+  });
+});
+
+describe('"Changed by" labels (slice 1c.1, SQ-13 with SA Q-1)', () => {
+  const ANNA = 'aaaaaaaa-1111-4111-8111-111111111111';
+  const BEN = 'bbbbbbbb-2222-4222-8222-222222222222';
+  const CARL = 'cccccccc-3333-4333-8333-333333333333';
+
+  const record = (id: string, changedBy: string | null): ExchangeRateHistoryRecord => ({
+    id,
+    currencyCode: 'ILS',
+    oldRate: '3.600000',
+    newRate: '3.650000',
+    changedBy,
+    changedAt: '2026-10-19T11:00:00+00:00',
+    changeReason: null,
+  });
+
+  it('the editors to look up are distinct and never null', () => {
+    expect(historyEditorIds([record('h1', ANNA), record('h2', null), record('h3', ANNA), record('h4', BEN)])).toEqual([
+      ANNA,
+      BEN,
+    ]);
+    expect(historyEditorIds([record('h1', null)])).toEqual([]);
+  });
+
+  it('ok: name, else email, else "Unknown user"; every label set', () => {
+    const labelled = labelHistory(
+      [record('h1', ANNA), record('h2', BEN), record('h3', CARL), record('h4', null)],
+      {
+        status: 'ok',
+        names: new Map([
+          [ANNA, '  Anna Admin  '],
+          [BEN, '   '],
+        ]),
+        emails: new Map([
+          [ANNA, 'anna@example.com'],
+          [BEN, 'ben@example.com'],
+        ]),
+      }
+    );
+    expect(labelled.map((row) => row.changedByLabel)).toEqual([
+      'Anna Admin',
+      'ben@example.com',
+      UNKNOWN_USER_LABEL,
+      UNKNOWN_USER_LABEL,
+    ]);
+    expect(UNKNOWN_USER_LABEL).toBe('Unknown user');
+  });
+
+  it('ok: an empty name falls through to the email', () => {
+    const [row] = labelHistory([record('h1', ANNA)], {
+      status: 'ok',
+      names: new Map([[ANNA, '']]),
+      emails: new Map([[ANNA, 'anna@example.com']]),
+    });
+    expect(row.changedByLabel).toBe('anna@example.com');
+  });
+
+  it('failed: every looked-up editor is null; a row with no editor is still "Unknown user" (SA Q-1)', () => {
+    const labelled = labelHistory([record('h1', ANNA), record('h2', null), record('h3', BEN)], { status: 'failed' });
+    expect(labelled.map((row) => row.changedByLabel)).toEqual([null, UNKNOWN_USER_LABEL, null]);
+  });
+
+  it('keeps every other field as it was, and the editor id for tracing', () => {
+    const [row] = labelHistory([record('h1', ANNA)], { status: 'failed' });
+    expect(row).toEqual({ ...record('h1', ANNA), changedByLabel: null });
   });
 });

@@ -227,8 +227,11 @@ describe('G-6 (slice 1a): Exchange rates reads and writes only through its admin
     expect(offenders).toEqual([]);
   });
 
-  it('the folder does fetch (the rule is not vacuous): one read and one write', () => {
-    expect(files.reduce((sum, file) => sum + fetchCount(read(file)), 0)).toBe(2);
+  // Slice 1c.1 (SQ-12): three LITERAL call sites. The one-currency read is its
+  // own call, never folded into the plain read with a variable or a `${query}`
+  // suffix (the matcher would accept that; this count and review do not).
+  it('the folder does fetch (the rule is not vacuous): one read, one per-currency read and one write', () => {
+    expect(files.reduce((sum, file) => sum + fetchCount(read(file)), 0)).toBe(3);
   });
 
   it('logs through the module logger AdminExchangeRates', () => {
@@ -322,6 +325,13 @@ describe('planted controls (no dead rule)', () => {
     expect(strayFetches("refetch(); prefetch('/x');")).toEqual([]);
     expect(strayFetches("// fetch('/api/other') was removed\nconst a = 1;")).toEqual([]);
     expect(fetchCount("await fetch('/api/admin/exchange-rates'); refetch();")).toBe(1);
+  });
+
+  it('G-6 (slice 1c.1, SQ-12, SA W-4) passes the per-currency read and trips on the same query to another path', () => {
+    expect(
+      strayFetches('await fetch(`/api/admin/exchange-rates?currency=${encodeURIComponent(code)}`, { cache: "no-store" });')
+    ).toEqual([]);
+    expect(strayFetches('await fetch(`/api/other?currency=${c}`);')).toHaveLength(1);
   });
 
   it('G-6 (slice 1a) module logger pattern matches the real form only', () => {

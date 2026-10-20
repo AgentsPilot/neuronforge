@@ -26,7 +26,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   EXCHANGE_RATE_HISTORY_LIMIT,
   ExchangeRatesRepository,
-  toExchangeRateHistoryWire,
+  toExchangeRateHistoryRecord,
   toExchangeRateWire,
 } from '../ExchangeRatesRepository';
 import type { ExchangeRateRow } from '../types';
@@ -151,7 +151,7 @@ describe('listRecentHistory', () => {
     change_reason: null,
   };
 
-  it('reads the newest 50, newest first, rates as text', async () => {
+  it('reads the newest 10, newest first, rates as text (slice 1c.1, FR-18)', async () => {
     const { repo, recorder } = setup([{ data: [HISTORY], error: null }]);
     expect(await repo.listRecentHistory()).toEqual({ data: [HISTORY], error: null });
     expect(recorder.queries[0].table).toBe('exchange_rate_history');
@@ -160,8 +160,8 @@ describe('listRecentHistory', () => {
     expect(columns).toContain('old_rate::text');
     expect(columns).toContain('new_rate::text');
     expect(argsOf(recorder, 'order')[0]).toEqual(['changed_at', { ascending: false }]);
-    expect(argsOf(recorder, 'limit')[0]).toEqual([50]);
-    expect(EXCHANGE_RATE_HISTORY_LIMIT).toBe(50);
+    expect(argsOf(recorder, 'limit')[0]).toEqual([10]);
+    expect(EXCHANGE_RATE_HISTORY_LIMIT).toBe(10);
   });
 
   it('returns the error, never throws', async () => {
@@ -169,6 +169,52 @@ describe('listRecentHistory', () => {
     const result = await repo.listRecentHistory();
     expect(result.data).toBeNull();
     expect(result.error?.message).toBe('history failed');
+  });
+});
+
+describe('listRecentHistoryForCurrency (slice 1c.1, SQ-12)', () => {
+  const HISTORY = {
+    id: 'h1',
+    currency_code: 'ILS',
+    old_rate: '3.600000',
+    new_rate: '3.650000',
+    changed_by: ADMIN_ID,
+    changed_at: '2026-10-19T11:00:00+00:00',
+    change_reason: null,
+  };
+
+  it("reads one currency's newest 10, newest first, rates as text", async () => {
+    const { repo, recorder } = setup([{ data: [HISTORY], error: null }]);
+    expect(await repo.listRecentHistoryForCurrency('ILS')).toEqual({ data: [HISTORY], error: null });
+    expect(recorder.queries).toHaveLength(1);
+    expect(recorder.queries[0].table).toBe('exchange_rate_history');
+    expect(methodsOf(recorder)).toEqual(['select', 'eq', 'order', 'limit']);
+    const [columns] = argsOf(recorder, 'select')[0] as [string];
+    expect(columns).toContain('old_rate::text');
+    expect(columns).toContain('new_rate::text');
+    expect(argsOf(recorder, 'eq')).toEqual([['currency_code', 'ILS']]);
+    expect(argsOf(recorder, 'order')[0]).toEqual(['changed_at', { ascending: false }]);
+    expect(argsOf(recorder, 'limit')).toEqual([[EXCHANGE_RATE_HISTORY_LIMIT]]);
+    expect(EXCHANGE_RATE_HISTORY_LIMIT).toBe(10);
+  });
+
+  it('no rows is an empty list, not an error', async () => {
+    const { repo } = setup([{ data: [], error: null }]);
+    expect(await repo.listRecentHistoryForCurrency('EUR')).toEqual({ data: [], error: null });
+  });
+
+  it('returns the error, never throws', async () => {
+    const { repo } = setup([{ data: null, error: new Error('history failed') }]);
+    const result = await repo.listRecentHistoryForCurrency('ILS');
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('history failed');
+  });
+
+  it('a thrown client error comes back as an error too', async () => {
+    const { repo } = setup([], new Error('client exploded'));
+    const result = await repo.listRecentHistoryForCurrency('ILS');
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('client exploded');
   });
 });
 
@@ -264,9 +310,9 @@ describe('wire mapping (SA §10 additional ruling 1)', () => {
     expect(toExchangeRateWire({ ...ROW, is_enabled: false }).isEnabled).toBe(false);
   });
 
-  it('maps a history row, keeping changeReason', () => {
+  it('maps a history row to a record (no label yet), keeping changeReason', () => {
     expect(
-      toExchangeRateHistoryWire({
+      toExchangeRateHistoryRecord({
         id: 'h1',
         currency_code: 'ILS',
         old_rate: null,
