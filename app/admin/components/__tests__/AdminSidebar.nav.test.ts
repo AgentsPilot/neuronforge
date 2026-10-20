@@ -3,7 +3,7 @@
  *
  * Pins three things the slice promises:
  *   1. the section order (Monitor, Businesses, Settings, AgentsPilot (parked));
- *   2. every admin page on disk (except Exchange Rates) is reachable from
+ *   2. every admin page on disk (except the unlisted ones) is reachable from
  *      exactly one sidebar entry, and no entry points at a page that is not
  *      there. The page list is read from the filesystem, so a new admin page
  *      fails this test until it is given a place in the sidebar;
@@ -25,7 +25,10 @@
  *      explicitly (`NESTED_LISTED`) and checked to exist on disk;
  *  10. (Money M-8, finance health §11J, BD-34) the old dashboard is redundant:
  *      its hidden parked item is removed and it joins Exchange Rates in
- *      `UNLISTED`. Both pages stay on disk (the on-disk scan still finds them).
+ *      `UNLISTED`. The dashboard stays on disk (the on-disk scan still finds
+ *      it); Exchange Rates left the disk in Admin Exchange Rates slice 2b (it
+ *      is Finance's tab, and its old URL redirects there), so it left
+ *      `UNLISTED` too.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -87,10 +90,10 @@ const adminPageRoutes = (): string[] => {
   return routes.sort();
 };
 
-// Unlisted on purpose (requirement §4.3): it writes from the browser straight
-// to the database, so surfacing it would widen exposure. Money M-8 (BD-34): the
-// redundant old dashboard is unlisted too; both routes are kept.
-const UNLISTED = ['/admin/exchange-rates', '/admin/platform-dashboard'];
+// Unlisted on purpose: the redundant old dashboard (Money M-8, BD-34), kept by
+// URL only. Exchange Rates was here too until Admin Exchange Rates slice 2b: it
+// is no longer a page (Finance's tab; the old URL redirects there).
+const UNLISTED = ['/admin/platform-dashboard'];
 
 // Listed pages below the one-level scan (M-5): each must exist on disk.
 const NESTED_LISTED = ['/admin/finance/charges'];
@@ -164,7 +167,8 @@ describe('every admin page is reachable, exactly once', () => {
     // /admin/subscriptions. If this drops, the scan broke rather than the
     // sidebar.
     // Money MK-4 (ruled): /admin/subscriptions left the disk (it redirects to Finance's tab), so 29.
-    expect(onDisk.length).toBeGreaterThanOrEqual(29);
+    // Admin Exchange Rates 2b: /admin/exchange-rates left the disk (it redirects to Finance's tab), so 28.
+    expect(onDisk.length).toBeGreaterThanOrEqual(28);
     expect(onDisk).toContain('/admin/finance');
     expect(onDisk).not.toContain('/admin/subscriptions');
     expect(onDisk).toContain('/admin/agentspilot-billing');
@@ -174,7 +178,7 @@ describe('every admin page is reachable, exactly once', () => {
     expect(onDisk).toContain('/admin/jobs-queues');
     expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
-    expect(onDisk).toContain('/admin/exchange-rates');
+    expect(onDisk).not.toContain('/admin/exchange-rates');
   });
 
   it('lists every page except the deliberately unlisted ones', () => {

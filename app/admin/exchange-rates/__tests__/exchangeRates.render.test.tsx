@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  *
- * What an admin sees and does on /admin/exchange-rates (Admin Exchange Rates
+ * What an admin sees and does in the Exchange rates view (Admin Exchange Rates
  * slice 1a, FR-1 to FR-4, FR-8, FR-9, SQ-7, SA-R8, SA O-5): the stale chip and
  * the KPI tiles (1c.1: enabled currencies, last rate change), saving a rate, a refused save that keeps the old value, the
  * on/off switch, and the USD row that offers neither.
@@ -41,8 +41,7 @@ jest.mock('@/lib/logger/client', () => {
   return { clientLogger: logger };
 });
 
-import ExchangeRatesPage from '../page';
-import { REFRESH_AFTER_SAVE_FAILED } from '../components/ExchangeRatesView';
+import { ExchangeRatesView, REFRESH_AFTER_SAVE_FAILED } from '../components/ExchangeRatesView';
 
 const READ_AT = '2026-10-19T12:00:00.000Z';
 const FRESH = '2026-10-18T09:00:00.000Z';
@@ -156,7 +155,7 @@ async function renderPage(
   currency: CurrencyAnswer = defaultCurrency
 ) {
   const calls = stubFetch(get, patch, currency);
-  const view = render(<ExchangeRatesPage />);
+  const view = render(<ExchangeRatesView />);
   await screen.findByTestId('exchange-rates-content');
   return Object.assign(calls, { unmount: view.unmount });
 }
@@ -170,7 +169,7 @@ describe('reading', () => {
   it('reads only the admin route, and shows every currency with its stored rate', async () => {
     const calls = await renderPage();
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /api/admin/exchange-rates']);
-    expect(screen.getByRole('heading', { level: 1, name: 'Exchange rates' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
     showAll();
     expect(screen.getByTestId('rate-value-EUR')).toHaveTextContent('0.920000');
     expect(screen.getByTestId('rate-value-JPY')).toHaveTextContent('150.000000');
@@ -197,7 +196,7 @@ describe('reading', () => {
 
   it('a failed read shows the route error', async () => {
     stubFetch(() => ({ status: 500, body: { success: false, error: 'Failed to read exchange rates' } }), () => ok(null));
-    render(<ExchangeRatesPage />);
+    render(<ExchangeRatesView />);
     expect(await screen.findByTestId('page-error')).toHaveTextContent('Failed to read exchange rates');
   });
 
@@ -205,7 +204,7 @@ describe('reading', () => {
     global.fetch = jest.fn(async () => {
       throw new TypeError('Failed to fetch');
     }) as unknown as typeof fetch;
-    render(<ExchangeRatesPage />);
+    render(<ExchangeRatesView />);
     expect(await screen.findByTestId('page-error')).toHaveTextContent(ADMIN_NETWORK_ERROR);
     expect(document.body.textContent).not.toContain('Failed to fetch');
   });

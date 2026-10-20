@@ -6,9 +6,9 @@
  * §5.5.3 to §5.5.5, SQ-12 to SQ-15).
  *
  * A manual, admin-only table of rates (units of each currency per 1 USD).
- * Nothing on the platform converts money with them (D-5). Reached by its URL
- * only (D-6); slice 2 renders this same view from a Finance tab, which is why
- * it lives outside `app/admin/finance/` (SA-R13).
+ * Nothing on the platform converts money with them (D-5). Rendered only by
+ * Finance's Exchange rates tab (slice 2); the old URL `/admin/exchange-rates`
+ * redirects there since slice 2b. It lives outside `app/admin/finance/` (SA-R13).
  *
  * Every read and write goes through the admin route (no Supabase client, no
  * `CurrencyService`, no outside host — pinned by the Exchange rates guard in
@@ -89,7 +89,7 @@ export const REFRESH_AFTER_SAVE_FAILED = 'Saved; could not refresh history';
 
 /**
  * The page header's sentence (slice 2a, SQ-21), rendered by whoever owns the
- * h1: the Finance tab, and the standalone page until slice 2b deletes it.
+ * h1: the Finance tab (the standalone page was deleted in slice 2b).
  */
 export const EXCHANGE_RATES_PURPOSE =
   'Rates an admin keeps by hand, in units of each currency per 1 USD. Nothing on the platform converts money with them.';
