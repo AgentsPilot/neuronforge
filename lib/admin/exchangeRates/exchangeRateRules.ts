@@ -87,6 +87,40 @@ export function sameRate(a: string | null, b: string | null): boolean {
   return normaliseRate(a) === normaliseRate(b);
 }
 
+/** Decimal places the Last rate change tile shows (user request, 2026-10-20). */
+export const KPI_RATE_DECIMALS = 3;
+
+/** Adds one to a string of digits ("0999" → "1000"), carrying as on paper. */
+function incrementDigits(digits: string): string {
+  const out = digits.split('');
+  for (let i = out.length - 1; i >= 0; i -= 1) {
+    if (out[i] !== '9') {
+      out[i] = String.fromCharCode(out[i].charCodeAt(0) + 1);
+      return out.join('');
+    }
+    out[i] = '0';
+  }
+  return `1${out.join('')}`;
+}
+
+/**
+ * A stored rate rounded half-up to `places` decimals for display, always with
+ * exactly `places` digits ("3.650000" → "3.650", "0.0005" → "0.001").
+ * Done on the digits, never through Number, so no float error creeps in and
+ * nothing here is arithmetic on money (D-5). A string that is not a plain
+ * decimal is returned unchanged.
+ */
+export function roundRateForDisplay(rate: string, places: number = KPI_RATE_DECIMALS): string {
+  const trimmed = rate.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return rate;
+  const [intPart, fracPart = ''] = trimmed.split('.');
+  if (fracPart.length <= places) return `${intPart}.${fracPart.padEnd(places, '0')}`;
+  const kept = `${intPart}${fracPart.slice(0, places)}`;
+  const roundedUp = fracPart.charCodeAt(places) >= '5'.charCodeAt(0);
+  const digits = (roundedUp ? incrementDigits(kept) : kept).padStart(places + 1, '0');
+  return `${digits.slice(0, digits.length - places)}.${digits.slice(digits.length - places)}`;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**

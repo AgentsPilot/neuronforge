@@ -379,8 +379,8 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
     expect(enabled).toHaveTextContent('3 of 4');
     const last = screen.getByTestId('kpi-last-rate-change');
     expect(last).toHaveTextContent('Last rate change');
-    // The stored strings exactly as sent: no rounding, no difference, no percentage (D-5).
-    expect(last).toHaveTextContent('ILS 3.600000 → 3.650000');
+    // Each stored string rounded to 3 decimals for display; no difference, no percentage (D-5).
+    expect(last).toHaveTextContent('ILS 3.600 → 3.650');
     expect(last).toHaveTextContent('by Anna Admin, 2025-11-05');
     expect(last.textContent).not.toMatch(/%/);
   });
@@ -389,7 +389,7 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
     const first = payload();
     first.history = [change('h9', 'EUR', { oldRate: null, newRate: '0.930000' })];
     await renderPage(() => ok(first));
-    expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('EUR set to 0.930000');
+    expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('EUR set to 0.930');
   });
 
   it('no history: "No changes yet"', async () => {
@@ -433,7 +433,7 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
     );
     fireEvent.click(historyButton('EUR'));
     await screen.findByText('9.500000');
-    expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('ILS 3.600000 → 3.650000');
+    expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('ILS 3.600 → 3.650');
     expect(screen.getByTestId('kpi-enabled-currencies')).toHaveTextContent('3 of 4');
   });
 });
