@@ -108,7 +108,6 @@ import {
   type FinanceTileSection,
   type FinanceTileTarget,
 } from './FinanceKpiStrip';
-import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { PlansSubscriptions } from './PlansSubscriptions';
 import { ConvertedThisMonthSection } from './ConvertedThisMonthSection';
 import { RevenuePanel } from './RevenuePanel';
@@ -397,15 +396,23 @@ export function FinanceView() {
               </FinanceTabPanel>
             ) : (
               <OverviewBody tabbed={query.accountId === null}>
-                <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} mrr={data.mrr} stripeMode={data.stripeMode ?? null} />
+                {/* Money MK-6 (BD-38): our boost problems sit in Revenue; the clients' problems in Client payments. */}
+                <RevenuePanel
+                  revenue={data.revenue}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  mrr={data.mrr}
+                  stripeMode={data.stripeMode ?? null}
+                  boostProblems={data.paymentProblems?.boosts}
+                  accountId={data.accountId}
+                />
                 <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
                 <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} k2={data.tiles?.k2} />
                 {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
                 {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
-                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} accountId={data.accountId} />
                 {/* Money MK-1: the businesses' client payments, not ours (BD-1), last on the Overview. */}
-                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
+                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} problems={data.paymentProblems} />
               </OverviewBody>
             )}
           </div>
