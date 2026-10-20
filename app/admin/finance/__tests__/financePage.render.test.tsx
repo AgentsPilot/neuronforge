@@ -883,13 +883,14 @@ describe('Section 2 block B, takings (slice 2a)', () => {
 
   // Money MK-1 (ruled edit): renamed "Client payments (the businesses' money, not ours)" and moved from under
   // "Our revenue" to the very bottom of the Overview, after the payment problems; the chip stays.
-  it('sits last on the Overview, after the payment problems, with its title, subtitle and the "Not our revenue" chip', async () => {
+  // Money MK-6 (UI short path): the Payment problems section is gone; the client problems are inside this block.
+  it('sits last on the Overview, after Credits, with its title, subtitle and the "Not our revenue" chip', async () => {
     const section = await renderWith(takingsSection());
     expect(within(section).getByRole('heading', { name: TAKINGS_TITLE })).toBeInTheDocument();
     expect(TAKINGS_TITLE).toBe("Client payments (the businesses' money, not ours)");
     expect(section).toHaveTextContent('Covers businesses that still exist');
     expect(section).toHaveTextContent('UTC');
-    const order = ['section-revenue', 'section-accounts', 'section-credits', 'section-payment-problems', 'section-takings'].map((id) =>
+    const order = ['section-revenue', 'section-accounts', 'section-credits', 'section-takings'].map((id) =>
       screen.getByTestId(id)
     );
     for (let i = 1; i < order.length; i += 1) {
@@ -995,7 +996,10 @@ describe('Section 2 block B, takings (slice 2a)', () => {
     expect(screen.getByTestId('takings-no-payments')).toHaveTextContent(TAKINGS_NO_PAYMENTS);
     expect(screen.getByTestId('takings-no-refunds')).toHaveTextContent(TAKINGS_NO_REFUNDS);
     expect(screen.queryByTestId('takings-lines')).not.toBeInTheDocument();
-    expect(section.textContent).not.toMatch(/0\.00|USD|ILS/);
+    // Money MK-6: the client problems block (its own figures, in their currencies) now sits in this section; leave it out.
+    const takingsOnly = section.cloneNode(true) as HTMLElement;
+    takingsOnly.querySelector('[data-testid="problems-clients"]')?.remove();
+    expect(takingsOnly.textContent).not.toMatch(/0\.00|USD|ILS/);
   });
 
   it('AC-53: unreadable amounts, unreadable fees and other statuses are counted in words; net Unknown on that line', async () => {
@@ -1136,26 +1140,29 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
   const renderWith = async (problems: FinancePaymentProblemsSection, extra: Partial<FinancePayload> = {}) => {
     serve({ success: true, data: payload({ paymentProblems: problems, ...extra }) });
     render(<FinanceView />);
-    return screen.findByTestId('section-payment-problems');
+    // Money MK-6: the client problems block, now inside Client payments (no section of its own).
+    return screen.findByTestId('problems-clients');
   };
   const base = () => paymentProblemsSection();
 
-  it('L-32: after Credits, and since MK-1 just above client payments; its title, chip, "As of now, UTC" subtitle and five parts, four with a status in words', async () => {
+  // Money MK-6 (§6 item 15, BD-38; UI short path): the block moved into Client payments, its last part.
+  it('L-32 / MK-6: inside Client payments, after its takings; its title, chip, "As of now, UTC" subtitle and five parts, four with a status in words', async () => {
     const section = await renderWith(base());
-    // SA-CR-4b2 CR-1: the frame is "Payment problems" with no chip; block B carries the client heading and chip.
-    expect(within(section).getByRole('heading', { name: PAYMENT_PROBLEMS_TITLE })).toBeInTheDocument();
-    expect(screen.queryByTestId('section-payment-problems-badge')).toBeNull();
-    const clients = within(section).getByTestId('problems-clients');
+    // MK-6: no "Payment problems" frame any more; block B keeps its own heading and neutral chip (SA-CR-4b2 CR-1).
+    expect(screen.queryByTestId('section-payment-problems')).toBeNull();
+    expect(screen.queryByRole('heading', { name: PAYMENT_PROBLEMS_TITLE })).toBeNull();
+    const clients = section;
     expect(within(clients).getByRole('heading', { name: PROBLEMS_TITLE })).toBeInTheDocument();
     expect(within(clients).getByTestId('problems-clients-chip')).toHaveTextContent(PROBLEMS_CHIP);
     expect(within(clients).getByTestId('problems-clients-chip')).toHaveAttribute('data-tone', 'neutral');
     expect(section).toHaveTextContent('As of now, UTC (2026-10-09)');
     expect(section).toHaveTextContent('Covers businesses that still exist');
-    const order = ['section-credits', 'section-payment-problems'].map((id) => screen.getByTestId(id));
-    expect(order[0].compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Money MK-1 (ruled edit): client payments moved below it, so payment problems is the second to last block.
-    expect(section.nextElementSibling).toBe(screen.getByTestId('section-takings'));
-    expect(section.parentElement?.lastElementChild).toBe(screen.getByTestId('section-takings'));
+    const takings = screen.getByTestId('section-takings');
+    expect(takings.contains(section)).toBe(true);
+    expect(screen.getByTestId('takings-body').compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The "Not our revenue" badge (BD-1) stays on the block that hosts it.
+    expect(screen.getByTestId('section-takings-badge')).toHaveTextContent(TAKINGS_CHIP);
+    expect(takings.parentElement?.lastElementChild).toBe(takings);
     for (const id of ['failed', 'invoices', 'instalments', 'plans', 'reminders']) {
       expect(within(section).getByTestId(`problems-${id}`)).toBeInTheDocument();
     }
@@ -1294,7 +1301,9 @@ describe('Section 6 block B, client payment problems (slice 2b)', () => {
     expect(screen.getByTestId('problems-reminders-failed')).toHaveTextContent(REMINDERS_FAILED);
     expect(screen.getByTestId('problems-reminders-link')).toHaveAttribute('href', '/admin/jobs-queues#queues');
     expect(screen.getByTestId('problems-reminders-status')).toHaveTextContent(PART_COULD_NOT_LOAD);
-    expect(screen.getByTestId('section-payment-problems')).toHaveAttribute('data-status', 'partial');
+    // MK-6: no frame to carry "partial"; each part keeps its own chip, and the block still renders.
+    expect(screen.queryByTestId('section-payment-problems')).toBeNull();
+    expect(screen.getByTestId('problems-clients')).toBeInTheDocument();
     expect(screen.getByTestId('problems-invoices-rows')).toBeInTheDocument();
     expect(screen.getByTestId('problems-plans-body')).toBeInTheDocument();
   });
@@ -1675,7 +1684,7 @@ describe('Money M-1 on the page', () => {
     expect(screen.queryByTestId('account-header')).toBeNull();
     expect(screen.queryByTestId('account-summary')).toBeNull();
     expect(screen.queryByTestId('business-filter-chip')).toBeNull();
-    for (const id of ['section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
+    for (const id of ['section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits']) {
       expect(screen.getByTestId(id)).toBeInTheDocument();
     }
   });
@@ -1799,7 +1808,7 @@ describe('slice 6a: the Overview and Accounts tabs (AC-130)', () => {
     expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'true');
     const panel = screen.getByRole('tabpanel');
     expect(panel).toHaveAttribute('id', 'finance-panel-overview');
-    for (const id of ['section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits', 'section-payment-problems']) {
+    for (const id of ['section-revenue', 'section-takings', 'section-accounts', 'section-ai-cost', 'section-credits']) {
       expect(within(panel).getByTestId(id)).toBeInTheDocument();
     }
     // Finance F-5 (BD-29): the strip sits above the bar, outside the tab panel.
@@ -2165,7 +2174,7 @@ describe('Finance F-5: KPI tiles above the filter bar, clickable to their sectio
       serve({ success: true, data: payload(search ? { accountId: A } : {}) });
       const { unmount } = render(<FinanceView />);
       await screen.findByTestId('kpi-strip', {}, { timeout: 10_000 });
-      for (const id of ['revenue', 'takings', 'accounts', 'ai-cost', 'credits', 'payment-problems']) {
+      for (const id of ['revenue', 'takings', 'accounts', 'ai-cost', 'credits']) {
         expect({ search, id, count: document.querySelectorAll(`[id="${id}"]`).length }).toEqual({ search, id, count: 1 });
       }
       const ids = Array.from(document.querySelectorAll('[id]')).map((el) => el.id);
@@ -2479,8 +2488,11 @@ describe('slice 4b.2 on the page', () => {
     render(<FinanceView />);
     const block = await screen.findByTestId('problems-boosts');
     expect(block).toHaveTextContent(BOOST_PROBLEMS_TITLE);
-    const body = screen.getByTestId('payment-problems-body');
-    expect(body.firstElementChild).toBe(block);
+    // Money MK-6 (§6 item 14): our boost problems sit in Revenue, after its boosts part.
+    const revenue = screen.getByTestId('section-revenue');
+    expect(revenue.contains(block)).toBe(true);
+    expect(screen.getByTestId('revenue-boosts-part').compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId('problems-clients').contains(block)).toBe(false);
     const row = screen.getByTestId('problems-boosts-line-USD');
     expect(row.querySelector('[data-money="held"]')).toHaveTextContent('$8.00');
     expect(row).toHaveTextContent('2026-10-04');
@@ -2500,7 +2512,7 @@ describe('slice 4b.2 on the page', () => {
     unmount();
     serve({ success: true, data: payload() });
     render(<FinanceView />);
-    await screen.findByTestId('payment-problems-body');
+    await screen.findByTestId('revenue-body');
     expect(screen.queryByTestId('problems-boosts')).toBeNull();
   });
 
@@ -3053,5 +3065,58 @@ describe('Money MK-5b: Converted this month', () => {
     const section = await screen.findByTestId('section-converted-this-month');
     expect(section).toHaveAttribute('data-status', 'unknown');
     expect(within(section).queryByTestId('converted-empty')).toBeNull();
+  });
+});
+
+// ── Money MK-6 (§6 items 14 and 15, BD-38; UI short path): payment problems where they belong ──
+describe('Money MK-6: payment problems in Revenue and Client payments', () => {
+  const boosts = (): NonNullable<FinancePaymentProblemsSection['boosts']> => ({
+    status: 'ok',
+    figures: {
+      empty: false, exact: true, openDisputes: 1, notCredited: 0, openedDates: 'read', eventsOnUnpaidPurchases: 0, overTotal: 0,
+      lines: [{ currency: 'USD', openDisputes: 1, held: 8, oldestDisputeOpenedAt: '2026-10-04T09:00:00.000Z', notCredited: 0, notCreditedAmount: null, oldestNotCreditedAt: null }],
+    },
+  });
+
+  it('no Payment problems section; our boosts in Revenue, the clients\u2019 problems in Client payments; one request', async () => {
+    const fetchMock = serve({ success: true, data: payload({ paymentProblems: paymentProblemsSection({ boosts: boosts() }) }) });
+    render(<FinanceView />);
+    const revenue = await screen.findByTestId('section-revenue');
+    expect(screen.queryByTestId('section-payment-problems')).toBeNull();
+    expect(document.getElementById('payment-problems')).toBeNull();
+    expect(within(revenue).getByTestId('problems-boosts')).toHaveTextContent(BOOST_PROBLEMS_TITLE);
+    expect(within(revenue).queryByTestId('problems-clients')).toBeNull();
+    const takings = screen.getByTestId('section-takings');
+    expect(within(takings).getByTestId('problems-clients')).toBeInTheDocument();
+    expect(within(takings).queryByTestId('problems-boosts')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('each block still shows when its host section could not load (its own reads)', async () => {
+    serve({
+      success: true,
+      data: payload({
+        revenue: { ...revenueSection(), status: 'unknown' },
+        takings: { ...takingsSection(), status: 'unknown', figures: null },
+        paymentProblems: paymentProblemsSection({ boosts: boosts() }),
+      }),
+    });
+    render(<FinanceView />);
+    const revenue = await screen.findByTestId('section-revenue');
+    expect(revenue).toHaveAttribute('data-status', 'unknown');
+    expect(within(revenue).getByTestId('problems-boosts')).toBeInTheDocument();
+    const takings = screen.getByTestId('section-takings');
+    expect(takings).toHaveAttribute('data-status', 'unknown');
+    expect(within(takings).getByTestId('problems-clients')).toBeInTheDocument();
+    expect(screen.getByTestId('section-takings-badge')).toHaveTextContent(TAKINGS_CHIP);
+  });
+
+  it('a business picked: the boost problems keep their Businesses link, inside Revenue', async () => {
+    mockSearch = `accountId=${A}`;
+    window.history.replaceState(null, '', `/admin/finance?accountId=${A}`);
+    serve({ success: true, data: payload({ accountId: A, paymentProblems: paymentProblemsSection({ boosts: boosts() }) }) });
+    render(<FinanceView />);
+    const revenue = await screen.findByTestId('section-revenue');
+    expect(within(revenue).getByTestId('problems-boosts-link')).toBeInTheDocument();
   });
 });

@@ -530,6 +530,7 @@ export const TAKINGS_NOTICE_UNREADABLE_FEES = (count: number) =>
 // ours (BD-2). No test-mode wording (BD-13). Every amount is the FULL invoice
 // or instalment amount, never what is still owed (S2-F7).
 /** SA-CR-4b2 CR-1: the Section 6 frame title. It names neither ours nor the clients'; each block says whose. */
+/** Money MK-6: no longer rendered (the section was split between Revenue and Client payments). Kept for the words' history. */
 export const PAYMENT_PROBLEMS_TITLE = 'Payment problems';
 /** Block B's own heading (with PROBLEMS_CHIP), never the frame's. */
 export const PROBLEMS_TITLE = 'Client payment problems';
