@@ -41,7 +41,7 @@ interface Recorder {
 }
 
 function makeClient(recorder: Recorder): SupabaseClient {
-  const CHAIN = ['select', 'update', 'eq', 'order', 'limit', 'maybeSingle'];
+  const CHAIN = ['select', 'update', 'eq', 'gte', 'lt', 'order', 'limit', 'maybeSingle'];
   return {
     from(table: string) {
       if (recorder.throwOnFrom) throw recorder.throwOnFrom;
@@ -63,6 +63,9 @@ function makeClient(recorder: Recorder): SupabaseClient {
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const ADMIN_ID = '22222222-2222-4222-8222-222222222222';
+
+/** A history window as the route builds it (slice 1d, SQ-28). */
+const WINDOW = { fromInclusive: '2026-10-01T00:00:00.000Z', toExclusive: '2026-10-21T00:00:00.000Z' };
 
 const ROW: ExchangeRateRow = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -151,11 +154,15 @@ describe('listRecentHistory', () => {
     change_reason: null,
   };
 
-  it('reads the newest 10, newest first, rates as text (slice 1c.1, FR-18)', async () => {
+  it('reads the newest 10 inside the window, newest first, rates as text (slice 1c.1, FR-18; slice 1d, FR-29)', async () => {
     const { repo, recorder } = setup([{ data: [HISTORY], error: null }]);
-    expect(await repo.listRecentHistory()).toEqual({ data: [HISTORY], error: null });
+    expect(await repo.listRecentHistory(WINDOW)).toEqual({ data: [HISTORY], error: null });
+    // One builder chain carries the window, the order and the limit (SA-1d-7 (a)).
+    expect(recorder.queries).toHaveLength(1);
     expect(recorder.queries[0].table).toBe('exchange_rate_history');
-    expect(methodsOf(recorder)).toEqual(['select', 'order', 'limit']);
+    expect(methodsOf(recorder)).toEqual(['select', 'gte', 'lt', 'order', 'limit']);
+    expect(argsOf(recorder, 'gte')).toEqual([['changed_at', WINDOW.fromInclusive]]);
+    expect(argsOf(recorder, 'lt')).toEqual([['changed_at', WINDOW.toExclusive]]);
     const [columns] = argsOf(recorder, 'select')[0] as [string];
     expect(columns).toContain('old_rate::text');
     expect(columns).toContain('new_rate::text');
@@ -166,7 +173,7 @@ describe('listRecentHistory', () => {
 
   it('returns the error, never throws', async () => {
     const { repo } = setup([{ data: null, error: new Error('history failed') }]);
-    const result = await repo.listRecentHistory();
+    const result = await repo.listRecentHistory(WINDOW);
     expect(result.data).toBeNull();
     expect(result.error?.message).toBe('history failed');
   });
@@ -183,12 +190,15 @@ describe('listRecentHistoryForCurrency (slice 1c.1, SQ-12)', () => {
     change_reason: null,
   };
 
-  it("reads one currency's newest 10, newest first, rates as text", async () => {
+  it("reads one currency's newest 10 inside the window, newest first, rates as text (slice 1d, FR-30)", async () => {
     const { repo, recorder } = setup([{ data: [HISTORY], error: null }]);
-    expect(await repo.listRecentHistoryForCurrency('ILS')).toEqual({ data: [HISTORY], error: null });
+    expect(await repo.listRecentHistoryForCurrency('ILS', WINDOW)).toEqual({ data: [HISTORY], error: null });
+    // One builder chain (SA-1d-7 (a)).
     expect(recorder.queries).toHaveLength(1);
     expect(recorder.queries[0].table).toBe('exchange_rate_history');
-    expect(methodsOf(recorder)).toEqual(['select', 'eq', 'order', 'limit']);
+    expect(methodsOf(recorder)).toEqual(['select', 'eq', 'gte', 'lt', 'order', 'limit']);
+    expect(argsOf(recorder, 'gte')).toEqual([['changed_at', WINDOW.fromInclusive]]);
+    expect(argsOf(recorder, 'lt')).toEqual([['changed_at', WINDOW.toExclusive]]);
     const [columns] = argsOf(recorder, 'select')[0] as [string];
     expect(columns).toContain('old_rate::text');
     expect(columns).toContain('new_rate::text');
@@ -200,19 +210,65 @@ describe('listRecentHistoryForCurrency (slice 1c.1, SQ-12)', () => {
 
   it('no rows is an empty list, not an error', async () => {
     const { repo } = setup([{ data: [], error: null }]);
-    expect(await repo.listRecentHistoryForCurrency('EUR')).toEqual({ data: [], error: null });
+    expect(await repo.listRecentHistoryForCurrency('EUR', WINDOW)).toEqual({ data: [], error: null });
   });
 
   it('returns the error, never throws', async () => {
     const { repo } = setup([{ data: null, error: new Error('history failed') }]);
-    const result = await repo.listRecentHistoryForCurrency('ILS');
+    const result = await repo.listRecentHistoryForCurrency('ILS', WINDOW);
     expect(result.data).toBeNull();
     expect(result.error?.message).toBe('history failed');
   });
 
   it('a thrown client error comes back as an error too', async () => {
     const { repo } = setup([], new Error('client exploded'));
-    const result = await repo.listRecentHistoryForCurrency('ILS');
+    const result = await repo.listRecentHistoryForCurrency('ILS', WINDOW);
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('client exploded');
+  });
+});
+
+describe('findLatestChange (slice 1d, SQ-31, SA-1d-4)', () => {
+  const HISTORY = {
+    id: 'h9',
+    currency_code: 'EUR',
+    old_rate: '0.910000',
+    new_rate: '0.920000',
+    changed_by: ADMIN_ID,
+    changed_at: '2026-08-02T09:00:00+00:00',
+    change_reason: null,
+  };
+
+  it('reads the newest row of all time: no window, nulls last, one row', async () => {
+    const { repo, recorder } = setup([{ data: [HISTORY], error: null }]);
+    expect(await repo.findLatestChange()).toEqual({ data: HISTORY, error: null });
+    expect(recorder.queries).toHaveLength(1);
+    expect(recorder.queries[0].table).toBe('exchange_rate_history');
+    expect(methodsOf(recorder)).toEqual(['select', 'order', 'limit']);
+    expect(methodsOf(recorder)).not.toContain('gte');
+    expect(methodsOf(recorder)).not.toContain('lt');
+    const [columns] = argsOf(recorder, 'select')[0] as [string];
+    expect(columns).toContain('old_rate::text');
+    expect(columns).toContain('new_rate::text');
+    expect(argsOf(recorder, 'order')).toEqual([['changed_at', { ascending: false, nullsFirst: false }]]);
+    expect(argsOf(recorder, 'limit')).toEqual([[1]]);
+  });
+
+  it('no history at all is data null with no error', async () => {
+    const { repo } = setup([{ data: [], error: null }]);
+    expect(await repo.findLatestChange()).toEqual({ data: null, error: null });
+  });
+
+  it('returns the error, never throws', async () => {
+    const { repo } = setup([{ data: null, error: new Error('latest failed') }]);
+    const result = await repo.findLatestChange();
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('latest failed');
+  });
+
+  it('a thrown client error comes back as an error too', async () => {
+    const { repo } = setup([], new Error('client exploded'));
+    const result = await repo.findLatestChange();
     expect(result.data).toBeNull();
     expect(result.error?.message).toBe('client exploded');
   });

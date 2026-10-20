@@ -25,6 +25,11 @@ import {
   type ExchangeRateHistoryRecord,
   KPI_RATE_DECIMALS,
   roundRateForDisplay,
+  HISTORY_DEFAULT_PRESET,
+  HISTORY_WINDOW_MAX_DATE,
+  HISTORY_WINDOW_MIN_DATE,
+  defaultHistoryWindowDates,
+  historyWindowBounds,
 } from '../exchangeRateRules';
 
 describe('roundRateForDisplay (Last rate change tile, 3 decimals)', () => {
@@ -295,5 +300,67 @@ describe('"Changed by" labels (slice 1c.1, SQ-13 with SA Q-1)', () => {
   it('keeps every other field as it was, and the editor id for tracing', () => {
     const [row] = labelHistory([record('h1', ANNA)], { status: 'failed' });
     expect(row).toEqual({ ...record('h1', ANNA), changedByLabel: null });
+  });
+});
+
+// ── Slice 1d: the history window (SQ-26, SQ-28, SA-1d-3) ────────────────────
+
+describe('the GET query with a history window (slice 1d, SQ-26, SA-1d-3)', () => {
+  it.each([
+    [{}],
+    [{ currency: 'ILS' }],
+    [{ from: '2026-10-01', to: '2026-10-20' }],
+    [{ currency: 'ILS', from: '2026-10-01', to: '2026-10-20' }],
+    [{ from: '2026-10-20', to: '2026-10-20' }],
+    // A `to` after today is allowed, and there is no day cap (SQ-26).
+    [{ from: '2026-10-01', to: '2099-12-31' }],
+    [{ from: HISTORY_WINDOW_MIN_DATE, to: HISTORY_WINDOW_MAX_DATE }],
+  ])('accepts %j', (query) => {
+    expect(exchangeRatesQuerySchema.safeParse(query).success).toBe(true);
+  });
+
+  it.each([
+    ['only from', { from: '2026-10-01' }],
+    ['only to', { to: '2026-10-20' }],
+    ['reversed', { from: '2026-10-20', to: '2026-10-01' }],
+    ['not a real date', { from: '2026-02-30', to: '2026-03-01' }],
+    ['an empty date', { from: '', to: '2026-10-20' }],
+    ['an unpadded month', { from: '2026-1-01', to: '2026-10-20' }],
+    ['before the range', { from: '1999-12-31', to: '2026-10-20' }],
+    ['after the range', { from: '2026-10-01', to: '3000-01-01' }],
+    ['year 0', { from: '0000-01-01', to: '2026-10-20' }],
+    ['year 9999', { from: '2026-10-01', to: '9999-12-31' }],
+    ['an unknown limit', { from: '2026-10-01', to: '2026-10-20', limit: '50' }],
+  ])('refuses %s', (_name, query) => {
+    expect(exchangeRatesQuerySchema.safeParse(query).success).toBe(false);
+  });
+
+  it('the range constants are the SA-1d-3 values', () => {
+    expect(HISTORY_WINDOW_MIN_DATE).toBe('2000-01-01');
+    expect(HISTORY_WINDOW_MAX_DATE).toBe('2999-12-31');
+  });
+});
+
+describe('historyWindowBounds (slice 1d, SQ-28): half-open UTC midnights', () => {
+  it.each([
+    ['a month to date', '2026-10-01', '2026-10-20', '2026-10-01T00:00:00.000Z', '2026-10-21T00:00:00.000Z'],
+    ['one day', '2026-10-20', '2026-10-20', '2026-10-20T00:00:00.000Z', '2026-10-21T00:00:00.000Z'],
+    ['month end', '2026-10-01', '2026-10-31', '2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'],
+    ['year end', '2026-12-01', '2026-12-31', '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
+    ['leap year, Feb 28', '2028-02-01', '2028-02-28', '2028-02-01T00:00:00.000Z', '2028-02-29T00:00:00.000Z'],
+    ['leap year, Feb 29', '2028-02-01', '2028-02-29', '2028-02-01T00:00:00.000Z', '2028-03-01T00:00:00.000Z'],
+    ['common year, Feb 28', '2027-02-01', '2027-02-28', '2027-02-01T00:00:00.000Z', '2027-03-01T00:00:00.000Z'],
+    ['the range limits', '2000-01-01', '2999-12-31', '2000-01-01T00:00:00.000Z', '3000-01-01T00:00:00.000Z'],
+  ])('%s', (_name, from, to, fromInclusive, toExclusive) => {
+    expect(historyWindowBounds({ from, to })).toEqual({ fromInclusive, toExclusive });
+  });
+});
+
+describe('defaultHistoryWindowDates (slice 1d, SQ-26)', () => {
+  it('is This month at the given clock', () => {
+    expect(HISTORY_DEFAULT_PRESET).toBe('this_month');
+    expect(defaultHistoryWindowDates(new Date('2026-10-20T15:30:00.000Z'))).toEqual({ from: '2026-10-01', to: '2026-10-20' });
+    expect(defaultHistoryWindowDates(new Date('2026-10-01T00:00:00.000Z'))).toEqual({ from: '2026-10-01', to: '2026-10-01' });
+    expect(defaultHistoryWindowDates(new Date('2026-10-31T23:59:59.999Z'))).toEqual({ from: '2026-10-01', to: '2026-10-31' });
   });
 });

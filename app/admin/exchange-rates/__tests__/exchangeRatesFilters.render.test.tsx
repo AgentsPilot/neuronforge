@@ -64,20 +64,21 @@ function startingRates(): ExchangeRateWire[] {
 let serverRates: ExchangeRateWire[] = [];
 
 function plainPayload(): ExchangeRatesPayload {
+  const change = {
+    id: 'h1',
+    currencyCode: 'ILS',
+    oldRate: '3.600000',
+    newRate: '3.650000',
+    changedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
+    changedByLabel: 'Anna Admin',
+    changedAt: OLD,
+    changeReason: null,
+  };
   return {
     rates: serverRates.map((r) => ({ ...r })),
-    history: [
-      {
-        id: 'h1',
-        currencyCode: 'ILS',
-        oldRate: '3.600000',
-        newRate: '3.650000',
-        changedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
-        changedByLabel: 'Anna Admin',
-        changedAt: OLD,
-        changeReason: null,
-      },
-    ],
+    history: [change],
+    // Slice 1d: the all-time change behind the Last rate change tile.
+    lastChange: { ...change },
     nameLookup: 'ok',
     readAt: READ_AT,
   };
@@ -140,7 +141,13 @@ const refreshButton = () => screen.getByRole('button', { name: 'Refresh the exch
 const shownCodes = () =>
   screen.queryAllByTestId(/^rate-row-/).map((row) => row.getAttribute('data-testid')?.replace('rate-row-', ''));
 const countLine = () => screen.getByTestId('rates-count').textContent;
-const plainGets = () => calls.filter((c) => c.method === 'GET' && c.url === '/api/admin/exchange-rates');
+// Slice 1d: the plain GET carries the history window (`from` / `to`), so match the path and the keys, not the whole URL.
+const plainGets = () =>
+  calls.filter((c) => {
+    if (c.method !== 'GET') return false;
+    const parsed = new URL(c.url, 'http://localhost');
+    return parsed.pathname === '/api/admin/exchange-rates' && !parsed.searchParams.has('currency');
+  });
 
 async function renderPage() {
   render(<ExchangeRatesView />);

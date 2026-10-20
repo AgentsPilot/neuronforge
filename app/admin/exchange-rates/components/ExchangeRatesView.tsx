@@ -14,9 +14,13 @@
  * `CurrencyService`, no outside host — pinned by the Exchange rates guard in
  * `app/admin/__tests__/redundantPages.source.guard.test.ts`, which also counts
  * exactly three `fetch(` call sites in this folder):
- *   GET   /api/admin/exchange-rates                 rates, newest 10 changes, readAt
- *   GET   /api/admin/exchange-rates?currency=<CODE> that currency's newest 10 changes
- *   PATCH /api/admin/exchange-rates/<CODE>          one rate, or one on/off switch
+ *   GET   /api/admin/exchange-rates?from=&to=                 rates, the newest 10
+ *                                                             changes in the window,
+ *                                                             the all-time lastChange,
+ *                                                             readAt
+ *   GET   /api/admin/exchange-rates?currency=<CODE>&from=&to= that currency's newest
+ *                                                             10 changes in the window
+ *   PATCH /api/admin/exchange-rates/<CODE>                    one rate, or one on/off switch
  *
  * The KPIs and the overall history always come from the plain GET; the
  * one-currency read only feeds the history panel (SA-1c-2). That read is
@@ -25,7 +29,19 @@
  * takes a number from `historyRequest`; selecting another currency, "Show all
  * currencies" and unmounting also take one, so a late answer for an earlier
  * request is dropped and can neither reopen a closed panel nor set state after
- * unmount (SA W-3).
+ * unmount (SA W-3). Every plain read takes a number from `loadRequest` the
+ * same way (slice 1d, SA-1d-1): only the newest may write state.
+ *
+ * Slice 1d (D-8, §5.6, SQ-25 to SQ-34): the Window control above the history
+ * table (rendered by `RateHistoryTable`, SA-1d-5) is page state only, never
+ * the URL (Finance owns `range` / `from` / `to` on the tab, SQ-25), default
+ * This month. Both GETs carry `from` / `to`, resolved from the applied window
+ * with the clock of each read (SQ-27), so Refresh and the save re-reads carry
+ * it too. A window change runs Refresh's reads (SQ-34): the plain read, plus
+ * the open panel's read; choosing the window already applied reads nothing
+ * (SA-1d-6). Each answer records the window it was read under, and captions
+ * use that, never the control's current value (SA-1d-2). The "Last rate
+ * change" tile reads the all-time `lastChange`, so no window moves it.
  *
  * Layout standard: no header of its own (slice 2a, SQ-21: the page that owns
  * the one h1 renders it, with `EXCHANGE_RATES_PURPOSE`), the KPI strip, the shared filter bar with
@@ -56,6 +72,7 @@ import {
 import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
+import { windowEquals, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
 import type {
   ExchangeRateHistoryPayload,
   ExchangeRatePatchResult,
@@ -75,6 +92,7 @@ import {
   visibleRates,
   type ExchangeRatesFilters,
 } from '../exchangeRatesFilters';
+import { HISTORY_DEFAULT_WINDOW, historyWindowParams } from '../historyWindow';
 import { ExchangeRatesKpis } from './ExchangeRatesKpis';
 import { ExchangeRatesTable } from './ExchangeRatesTable';
 import { RateHistoryTable } from './RateHistoryTable';
@@ -99,6 +117,8 @@ interface CurrencyHistory {
   code: string;
   /** The last answer for this code; kept on screen while a re-read runs. */
   payload: ExchangeRateHistoryPayload | null;
+  /** The window `payload` was read under (SA-1d-2): its caption's period. */
+  window: AdminWindowValue;
   loading: boolean;
   error: string | null;
 }
@@ -129,6 +149,15 @@ export interface ExchangeRatesViewProps {
 
 export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}) {
   const [payload, setPayload] = useState<ExchangeRatesPayload | null>(null);
+  // The window `payload.history` was read under (SA-1d-2): its caption's period.
+  const [payloadWindow, setPayloadWindow] = useState<AdminWindowValue>(HISTORY_DEFAULT_WINDOW);
+  // The applied history window (slice 1d, SQ-25): page state only. The ref is
+  // the same value for the reads, which run after awaits and from callbacks
+  // with empty deps; both are set only in `changeHistoryWindow`.
+  const [historyWindow, setHistoryWindow] = useState<AdminWindowValue>(HISTORY_DEFAULT_WINDOW);
+  const historyWindowRef = useRef<AdminWindowValue>(HISTORY_DEFAULT_WINDOW);
+  // The newest plain read; an answer carrying an older number is dropped (SA-1d-1).
+  const loadRequest = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
@@ -169,6 +198,12 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
    * of a page-level error: the save itself succeeded.
    */
   const load = useCallback(async (options: { afterSave?: boolean } = {}) => {
+    // SA-1d-1: only the newest plain read may write state; a newer read or
+    // unmount retires this one.
+    const request = ++loadRequest.current;
+    const isCurrent = () => request === loadRequest.current;
+    // The window as applied NOW, resolved with the clock of this read (SQ-27).
+    const readWindow = historyWindowRef.current;
     setLoading(true);
     if (!options.afterSave) setError(null);
     setRefreshNotice(null);
@@ -179,12 +214,15 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
     try {
       let response: Response;
       try {
-        response = await fetch('/api/admin/exchange-rates', { cache: 'no-store' });
+        response = await fetch(`/api/admin/exchange-rates?${historyWindowParams(readWindow, new Date())}`, {
+          cache: 'no-store',
+        });
       } catch {
-        failed(ADMIN_NETWORK_ERROR);
+        if (isCurrent()) failed(ADMIN_NETWORK_ERROR);
         return;
       }
       const result = await readAdminResponse<ExchangeRatesPayload>(response, { what: WHAT, sessionEndedCopy: true });
+      if (!isCurrent()) return;
       if (!result.ok) {
         logger.warn({ status: result.status, afterSave: Boolean(options.afterSave) }, 'Exchange rates read failed');
         failed(result.message);
@@ -193,20 +231,28 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
       // Every successful plain read releases the held rows (SQ-9).
       setHeld(NO_HELD);
       setPayload(result.data);
+      setPayloadWindow(readWindow);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, []);
 
   /** One currency's newest changes (SQ-12). Only the newest request may write state. */
   const loadCurrencyHistory = useCallback(async (code: string) => {
     const request = ++historyRequest.current;
-    setCurrencyHistory((current) => ({
-      code,
-      payload: current?.code === code ? current.payload : null,
-      loading: true,
-      error: null,
-    }));
+    // The window as applied NOW, resolved with the clock of this read (SQ-27).
+    const readWindow = historyWindowRef.current;
+    setCurrencyHistory((current) => {
+      const kept = current?.code === code ? current : null;
+      return {
+        code,
+        // Shown rows keep the window they were read under until a new answer lands (SA-1d-2).
+        payload: kept ? kept.payload : null,
+        window: kept ? kept.window : readWindow,
+        loading: true,
+        error: null,
+      };
+    });
     // Callers check the counter first: only the newest request may write state.
     const settle = (next: Partial<CurrencyHistory>) => {
       setCurrencyHistory((current) => (current && current.code === code ? { ...current, loading: false, ...next } : current));
@@ -214,7 +260,10 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
 
     let response: Response;
     try {
-      response = await fetch(`/api/admin/exchange-rates?currency=${encodeURIComponent(code)}`, { cache: 'no-store' });
+      response = await fetch(
+        `/api/admin/exchange-rates?currency=${encodeURIComponent(code)}&${historyWindowParams(readWindow, new Date())}`,
+        { cache: 'no-store' }
+      );
     } catch {
       if (request !== historyRequest.current) return;
       settle({ error: ADMIN_NETWORK_ERROR });
@@ -231,7 +280,7 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
       settle({ error: result.message });
       return;
     }
-    settle({ payload: result.data, error: null });
+    settle({ payload: result.data, window: readWindow, error: null });
   }, []);
 
   /** Open one currency's history, or close the panel (null): both retire any request in flight. */
@@ -251,10 +300,11 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
     void load();
   }, [load]);
 
-  // Unmount retires any one-currency request still in flight (SA W-3).
+  // Unmount retires any request still in flight (SA W-3, SA-1d-1).
   useEffect(
     () => () => {
       historyRequest.current += 1;
+      loadRequest.current += 1;
     },
     []
   );
@@ -266,6 +316,18 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
     void load();
     if (openCode) void loadCurrencyHistory(openCode);
   }, [load, loadCurrencyHistory, openCode]);
+
+  /**
+   * A new history window (slice 1d). The same window reads nothing (SA-1d-6:
+   * this covers a second click on the pressed This month). Otherwise apply it,
+   * then run Refresh's reads (SQ-34), which read the ref at call time.
+   */
+  const changeHistoryWindow = (next: AdminWindowValue) => {
+    if (windowEquals(next, historyWindowRef.current)) return;
+    historyWindowRef.current = next;
+    setHistoryWindow(next);
+    refresh();
+  };
 
   /** One PATCH; resolves to an error message for the row, or null after the row was replaced. */
   const patch = useCallback(
@@ -448,9 +510,21 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
               error={currencyHistory.error}
               onRetry={() => void loadCurrencyHistory(currencyHistory.code)}
               onShowAll={() => showHistory(null)}
+              window={historyWindow}
+              defaultWindow={HISTORY_DEFAULT_WINDOW}
+              onWindowChange={changeHistoryWindow}
+              rowsWindow={currencyHistory.window}
             />
           ) : (
-            <RateHistoryTable rows={payload.history} currencyCode={null} onShowAll={() => showHistory(null)} />
+            <RateHistoryTable
+              rows={payload.history}
+              currencyCode={null}
+              onShowAll={() => showHistory(null)}
+              window={historyWindow}
+              defaultWindow={HISTORY_DEFAULT_WINDOW}
+              onWindowChange={changeHistoryWindow}
+              rowsWindow={payloadWindow}
+            />
           )}
         </div>
       )}

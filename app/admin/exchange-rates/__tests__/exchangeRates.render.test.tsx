@@ -13,12 +13,18 @@
  * Slice 1c.2: the page opens on "Enabled only", so the tests that read the
  * disabled JPY row choose Show "All" first (`showAll`). The filter bar itself
  * is tested in `exchangeRatesFilters.render.test.tsx`.
+ *
+ * Slice 1d (D-8, FR-28 to FR-34, SQ-25 to SQ-34, SA-1d-1 to SA-1d-7): both GETs
+ * carry the history window as `from` / `to`, so URLs are matched by path and
+ * query keys; captions name the period; the fixtures carry `lastChange`; and
+ * `describe('slice 1d')` covers the Window control.
  */
 
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
+import type { AdminWindowPreset } from '@/app/admin/components/adminWindowPresets';
 import {
   HISTORY_LIMIT,
   UNKNOWN_USER_LABEL,
@@ -42,6 +48,7 @@ jest.mock('@/lib/logger/client', () => {
 });
 
 import { ExchangeRatesView, REFRESH_AFTER_SAVE_FAILED } from '../components/ExchangeRatesView';
+import { historyWindowDates } from '../historyWindow';
 
 const READ_AT = '2026-10-19T12:00:00.000Z';
 const FRESH = '2026-10-18T09:00:00.000Z';
@@ -62,6 +69,16 @@ function rate(code: string, overrides: Partial<ExchangeRateWire> = {}): Exchange
 }
 
 function payload(): ExchangeRatesPayload {
+  const newest: ExchangeRateHistoryWire = {
+    id: 'h1',
+    currencyCode: 'ILS',
+    oldRate: '3.600000',
+    newRate: '3.650000',
+    changedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
+    changedByLabel: 'Anna Admin',
+    changedAt: OLD,
+    changeReason: null,
+  };
   return {
     rates: [
       rate('EUR', { rateToUsd: '0.920000' }),
@@ -69,18 +86,9 @@ function payload(): ExchangeRatesPayload {
       rate('JPY', { isEnabled: false, rateToUsd: '150.000000' }),
       rate('USD', { rateToUsd: '1.000000', lastUpdatedAt: FRESH }),
     ],
-    history: [
-      {
-        id: 'h1',
-        currencyCode: 'ILS',
-        oldRate: '3.600000',
-        newRate: '3.650000',
-        changedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
-        changedByLabel: 'Anna Admin',
-        changedAt: OLD,
-        changeReason: null,
-      },
-    ],
+    history: [newest],
+    // Slice 1d: the all-time newest change (the tile's source), here the same row.
+    lastChange: { ...newest },
     nameLookup: 'ok',
     readAt: READ_AT,
   };
@@ -130,7 +138,9 @@ const defaultCurrency: CurrencyAnswer = (code) => ok(currencyPayload(code));
  */
 type PatchAnswer = (call: Call) => Answer | Error | Promise<Answer>;
 
-function stubFetch(get: () => Answer, patch: PatchAnswer, currency: CurrencyAnswer = defaultCurrency) {
+type GetAnswer = () => Answer | Promise<Answer>;
+
+function stubFetch(get: GetAnswer, patch: PatchAnswer, currency: CurrencyAnswer = defaultCurrency) {
   const calls: Call[] = [];
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
     const call: Call = {
@@ -140,7 +150,7 @@ function stubFetch(get: () => Answer, patch: PatchAnswer, currency: CurrencyAnsw
     };
     calls.push(call);
     const code = call.method === 'GET' ? new URL(url, 'http://localhost').searchParams.get('currency') : null;
-    const answer = call.method === 'PATCH' ? await patch(call) : code ? await currency(code, call) : get();
+    const answer = call.method === 'PATCH' ? await patch(call) : code ? await currency(code, call) : await get();
     if (answer instanceof Error) throw answer;
     return { ok: answer.status >= 200 && answer.status < 300, status: answer.status, json: async () => answer.body };
   }) as unknown as typeof fetch;
@@ -149,8 +159,20 @@ function stubFetch(get: () => Answer, patch: PatchAnswer, currency: CurrencyAnsw
 
 const ok = (data: unknown): Answer => ({ status: 200, body: { success: true, data } });
 
+// Slice 1d: both GETs carry `from` / `to`, so match the path and the query keys (forced edit).
+const RATES_PATH = '/api/admin/exchange-rates';
+const urlOf = (call: Call) => new URL(call.url, 'http://localhost');
+const queryKeys = (call: Call) => [...urlOf(call).searchParams.keys()].sort();
+const isPlainGet = (call: Call) =>
+  call.method === 'GET' && urlOf(call).pathname === RATES_PATH && !urlOf(call).searchParams.has('currency');
+const plainGets = (calls: Call[]) => calls.filter(isPlainGet);
+/** The window a GET carried. */
+const windowOf = (call: Call) => ({ from: urlOf(call).searchParams.get('from'), to: urlOf(call).searchParams.get('to') });
+/** A preset's dates now, from the page's own helper (slice 1d test 1). */
+const presetDates = (preset: AdminWindowPreset) => historyWindowDates({ kind: 'preset', preset }, new Date());
+
 async function renderPage(
-  get: () => Answer = () => ok(payload()),
+  get: GetAnswer = () => ok(payload()),
   patch: PatchAnswer = () => ok(null),
   currency: CurrencyAnswer = defaultCurrency
 ) {
@@ -168,7 +190,9 @@ function showAll() {
 describe('reading', () => {
   it('reads only the admin route, and shows every currency with its stored rate', async () => {
     const calls = await renderPage();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /api/admin/exchange-rates']);
+    expect(calls).toHaveLength(1);
+    expect(isPlainGet(calls[0])).toBe(true);
+    expect(queryKeys(calls[0])).toEqual(['from', 'to']);
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
     showAll();
     expect(screen.getByTestId('rate-value-EUR')).toHaveTextContent('0.920000');
@@ -344,7 +368,13 @@ describe('switching a currency on or off (FR-3)', () => {
 
 const historyButton = (code: string) => screen.getByRole('button', { name: `History for ${code}` });
 const currencyGets = (calls: Call[], code: string) =>
-  calls.filter((c) => c.method === 'GET' && c.url === `/api/admin/exchange-rates?currency=${code}`);
+  calls.filter(
+    (c) =>
+      c.method === 'GET' &&
+      urlOf(c).pathname === RATES_PATH &&
+      urlOf(c).searchParams.get('currency') === code &&
+      queryKeys(c).join() === 'currency,from,to'
+  );
 
 /**
  * Deliver a late answer and let React commit whatever it causes. Inside `act`,
@@ -388,6 +418,7 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
   it('an old rate of null reads "set to"', async () => {
     const first = payload();
     first.history = [change('h9', 'EUR', { oldRate: null, newRate: '0.930000' })];
+    first.lastChange = first.history[0];
     await renderPage(() => ok(first));
     expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('EUR set to 0.930');
   });
@@ -395,6 +426,7 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
   it('no history: "No changes yet"', async () => {
     const none = payload();
     none.history = [];
+    none.lastChange = null;
     await renderPage(() => ok(none));
     expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('No changes yet');
     expect(screen.getByTestId('rate-history-empty')).toBeInTheDocument();
@@ -404,6 +436,7 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
     const failed = payload();
     failed.nameLookup = 'failed';
     failed.history = [change('h1', 'ILS', { changedByLabel: null })];
+    failed.lastChange = failed.history[0];
     await renderPage(() => ok(failed));
     expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent('by aaaaaaaa…');
     const cell = screen.getByTestId('rate-history-changed-by');
@@ -415,6 +448,7 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
   it('a row with no editor id shows "Unknown user" (SA Q-1)', async () => {
     const nobody = payload();
     nobody.history = [change('h1', 'ILS', { changedBy: null, changedByLabel: UNKNOWN_USER_LABEL })];
+    nobody.lastChange = nobody.history[0];
     await renderPage(() => ok(nobody));
     expect(screen.getByTestId('rate-history-changed-by')).toHaveTextContent(UNKNOWN_USER_LABEL);
     expect(screen.getByTestId('kpi-last-rate-change')).toHaveTextContent(`by ${UNKNOWN_USER_LABEL}`);
@@ -439,16 +473,16 @@ describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
 });
 
 describe('the history caption (SA Q-2)', () => {
-  it('below the cap: "{n} change(s), newest first"', async () => {
+  it('below the cap: "{n} change(s) {period}, newest first"', async () => {
     await renderPage();
-    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change, newest first');
+    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change this month, newest first');
   });
 
-  it(`at the cap: "The newest ${HISTORY_LIMIT} changes"`, async () => {
+  it(`at the cap: "The newest ${HISTORY_LIMIT} changes {period}"`, async () => {
     const full = payload();
     full.history = Array.from({ length: HISTORY_LIMIT }, (_, i) => change(`h${i}`, 'ILS'));
     await renderPage(() => ok(full));
-    expect(screen.getByTestId('rate-history-count')).toHaveTextContent(`The newest ${HISTORY_LIMIT} changes`);
+    expect(screen.getByTestId('rate-history-count')).toHaveTextContent(`The newest ${HISTORY_LIMIT} changes this month`);
   });
 
   it('one currency: the same forms, prefixed with the code', async () => {
@@ -456,10 +490,12 @@ describe('the history caption (SA Q-2)', () => {
       ok(code === 'EUR' ? currencyPayload(code, HISTORY_LIMIT) : currencyPayload(code, 2))
     );
     fireEvent.click(historyButton('ILS'));
-    await waitFor(() => expect(screen.getByTestId('rate-history-count')).toHaveTextContent('ILS: 2 changes, newest first'));
+    await waitFor(() =>
+      expect(screen.getByTestId('rate-history-count')).toHaveTextContent('ILS: 2 changes this month, newest first')
+    );
     fireEvent.click(historyButton('EUR'));
     await waitFor(() =>
-      expect(screen.getByTestId('rate-history-count')).toHaveTextContent(`EUR: The newest ${HISTORY_LIMIT} changes`)
+      expect(screen.getByTestId('rate-history-count')).toHaveTextContent(`EUR: The newest ${HISTORY_LIMIT} changes this month`)
     );
   });
 });
@@ -472,7 +508,7 @@ describe("one currency's history (SQ-12)", () => {
     expect(currencyGets(calls, 'ILS')).toHaveLength(1);
     expect(screen.getByText('3.000000')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all currencies' }));
-    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change, newest first');
+    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change this month, newest first');
     expect(screen.queryByRole('button', { name: 'Show all currencies' })).toBeNull();
   });
 
@@ -508,7 +544,7 @@ describe("one currency's history (SQ-12)", () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show all currencies' }));
     await late(() => ils.resolve(ok(currencyPayload('ILS', 1))));
     expect(screen.queryByRole('button', { name: 'Show all currencies' })).toBeNull();
-    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change, newest first');
+    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change this month, newest first');
   });
 
   it('ILS, Show all, ILS again: the first answer arriving last is dropped, the second stays (SA C-2)', async () => {
@@ -562,7 +598,7 @@ describe('re-reading the open panel (SA Q-3)', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Rate to USD for ILS' }), { target: { value: '3.71' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(currencyGets(calls, 'ILS')).toHaveLength(2));
-    expect(calls.filter((c) => c.method === 'GET' && c.url === '/api/admin/exchange-rates')).toHaveLength(2);
+    expect(plainGets(calls)).toHaveLength(2);
   });
 
   // SA C-1: the panel to re-read is the one open when the save FINISHES, not when Save was clicked.
@@ -577,7 +613,7 @@ describe('re-reading the open panel (SA Q-3)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     during();
     patchAnswer.resolve(ok({ rate: saved, unchanged: false }));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.url === '/api/admin/exchange-rates')).toHaveLength(2));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
     await new Promise((r) => setTimeout(r, 0));
     return calls;
   }
@@ -586,7 +622,7 @@ describe('re-reading the open panel (SA Q-3)', () => {
     const calls = await saveIlsWhile(() => fireEvent.click(screen.getByRole('button', { name: 'Show all currencies' })));
     expect(currencyGets(calls, 'ILS')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Show all currencies' })).toBeNull();
-    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change, newest first');
+    expect(screen.getByTestId('rate-history-count')).toHaveTextContent('1 change this month, newest first');
   });
 
   it('switching to EUR during the save: EUR stays open and is re-read, ILS is not (SA C-1)', async () => {
@@ -661,5 +697,308 @@ describe('re-reading the open panel (SA Q-3)', () => {
     expect(screen.queryByTestId('row-error-ILS')).toBeNull();
     expect(screen.queryByTestId('refresh-after-save-notice')).toBeNull();
     expect(screen.queryByTestId('page-error')).toBeNull();
+  });
+});
+
+// ── Slice 1d: the history window (D-8, FR-28 to FR-34) ──────────────────────
+
+describe('slice 1d', () => {
+  const windowGroup = () => screen.getByRole('group', { name: 'Window' });
+  const windowButton = (name: string) => within(windowGroup()).getByRole('button', { name });
+  const caption = () => screen.getByTestId('rate-history-count');
+  /** A plain payload whose overall history holds `count` changes (the server's selection). */
+  const withHistory = (count: number): ExchangeRatesPayload => {
+    const next = payload();
+    next.history = Array.from({ length: count }, (_, i) => change(`w${i}`, 'ILS'));
+    return next;
+  };
+
+  it('1. one group named "Window" with This month pressed; the first GET carries this month; the caption names it', async () => {
+    const calls = await renderPage();
+    expect(screen.getAllByRole('group', { name: 'Window' })).toHaveLength(1);
+    expect(windowButton('This month')).toHaveAttribute('aria-pressed', 'true');
+    for (const name of ['Today', '7 days', '30 days', 'Custom']) {
+      expect(windowButton(name)).toHaveAttribute('aria-pressed', 'false');
+    }
+    // The control sits inside the history block, above its body (SA-1d-5).
+    expect(within(screen.getByTestId('rate-history')).getByRole('group', { name: 'Window' })).toBeInTheDocument();
+    expect(windowOf(plainGets(calls)[0])).toEqual(presetDates('this_month'));
+    expect(caption()).toHaveTextContent('1 change this month, newest first');
+  });
+
+  it('2. 7 days: one plain GET with those dates, nothing written to the URL, the caption names it', async () => {
+    const calls = await renderPage();
+    const replaceSpy = jest.spyOn(window.history, 'replaceState');
+    const pushSpy = jest.spyOn(window.history, 'pushState');
+    const searchBefore = window.location.search;
+    fireEvent.click(windowButton('7 days'));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    await waitFor(() => expect(caption()).toHaveTextContent('1 change in the last 7 days, newest first'));
+    expect(windowOf(plainGets(calls)[1])).toEqual(presetDates('7d'));
+    expect(queryKeys(plainGets(calls)[1])).toEqual(['from', 'to']);
+    expect(windowButton('7 days')).toHaveAttribute('aria-pressed', 'true');
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(pushSpy).not.toHaveBeenCalled();
+    expect(window.location.search).toBe(searchBefore);
+    replaceSpy.mockRestore();
+    pushSpy.mockRestore();
+  });
+
+  it('3. Custom: Apply is disabled with one date; both dates send exactly them; the caption names them', async () => {
+    const calls = await renderPage();
+    fireEvent.click(windowButton('Custom'));
+    const from = screen.getByLabelText('From (UTC)');
+    const to = screen.getByLabelText('To (UTC)');
+    fireEvent.change(to, { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    fireEvent.change(from, { target: { value: '2026-09-01' } });
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    fireEvent.change(to, { target: { value: '2026-09-15' } });
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
+    expect(plainGets(calls)).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    expect(windowOf(plainGets(calls)[1])).toEqual({ from: '2026-09-01', to: '2026-09-15' });
+    await waitFor(() => expect(caption()).toHaveTextContent('1 change from 2026-09-01 to 2026-09-15 (UTC), newest first'));
+  });
+
+  it('4. panel open + a window change: one plain GET and one currency GET with the window; Show all shows the new overall list', async () => {
+    let reads = 0;
+    const calls = await renderPage(() => {
+      reads += 1;
+      return ok(withHistory(reads === 1 ? 1 : 2));
+    });
+    fireEvent.click(historyButton('ILS'));
+    await waitFor(() => expect(caption()).toHaveTextContent('ILS: 2 changes this month, newest first'));
+    fireEvent.click(windowButton('30 days'));
+    await waitFor(() => expect(currencyGets(calls, 'ILS')).toHaveLength(2));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    expect(windowOf(currencyGets(calls, 'ILS')[1])).toEqual(presetDates('30d'));
+    expect(windowOf(plainGets(calls)[1])).toEqual(presetDates('30d'));
+    await waitFor(() => expect(caption()).toHaveTextContent('ILS: 2 changes in the last 30 days, newest first'));
+    fireEvent.click(screen.getByRole('button', { name: 'Show all currencies' }));
+    expect(caption()).toHaveTextContent('2 changes in the last 30 days, newest first');
+    // Still exactly one control, and it kept the window across closing the panel.
+    expect(screen.getAllByRole('group', { name: 'Window' })).toHaveLength(1);
+    expect(windowButton('30 days')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('5. an empty window with an older lastChange: the tile shows the change, the list says "No rate changes in this period."', async () => {
+    const empty = payload();
+    empty.history = [];
+    empty.lastChange = change('old', 'EUR', { oldRate: '0.910000', newRate: '0.920000', changedAt: '2026-08-02T09:00:00.000Z' });
+    await renderPage(() => ok(empty));
+    const tile = screen.getByTestId('kpi-last-rate-change');
+    expect(tile).toHaveTextContent('EUR 0.910 → 0.920');
+    expect(tile).not.toHaveTextContent('No changes yet');
+    expect(screen.getByTestId('rate-history-empty')).toHaveTextContent('No rate changes in this period.');
+    expect(screen.queryByTestId('rate-history-count')).toBeNull();
+  });
+
+  it('6. one currency with nothing in the window: "No rate changes for {CODE} in this period."', async () => {
+    await renderPage(undefined, undefined, (code) => ok({ ...currencyPayload(code), history: [] }));
+    fireEvent.click(historyButton('ILS'));
+    expect(await screen.findByTestId('rate-history-empty')).toHaveTextContent('No rate changes for ILS in this period.');
+    // The control is still there, so the admin can widen the window (SA-1d-5).
+    expect(windowButton('This month')).toBeInTheDocument();
+  });
+
+  it('7. race: the first window answer arriving after the second is dropped (SA-1d-1)', async () => {
+    const sevenDays = deferred<Answer>();
+    const thirtyDays = deferred<Answer>();
+    let reads = 0;
+    await renderPage(() => {
+      reads += 1;
+      if (reads === 1) return ok(payload());
+      return reads === 2 ? sevenDays.promise : thirtyDays.promise;
+    });
+    fireEvent.click(windowButton('7 days'));
+    fireEvent.click(windowButton('30 days'));
+    await late(() => thirtyDays.resolve(ok(withHistory(3))));
+    await waitFor(() => expect(caption()).toHaveTextContent('3 changes in the last 30 days, newest first'));
+    await late(() => sevenDays.resolve(ok(withHistory(1))));
+    expect(caption()).toHaveTextContent('3 changes in the last 30 days, newest first');
+    expect(screen.getAllByTestId('rate-history-changed-by')).toHaveLength(3);
+    expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false');
+  });
+
+  it('8. a failed window re-read: the page error, and the old rows keep their own period (SA-1d-2)', async () => {
+    let reads = 0;
+    await renderPage(() => {
+      reads += 1;
+      return reads === 1 ? ok(payload()) : { status: 500, body: { success: false, error: 'Failed to read exchange rates' } };
+    });
+    fireEvent.click(windowButton('7 days'));
+    expect(await screen.findByTestId('page-error')).toHaveTextContent('Failed to read exchange rates');
+    expect(caption()).toHaveTextContent('1 change this month, newest first');
+    expect(caption()).not.toHaveTextContent('7 days');
+  });
+
+  it('9a. "Enabled currencies", the rates, Show and Search are the same under every window (FR-34)', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'e' } });
+    const before = {
+      tile: screen.getByTestId('kpi-enabled-currencies').textContent,
+      count: screen.getByTestId('rates-count').textContent,
+      rows: screen.queryAllByTestId(/^rate-row-/).length,
+    };
+    for (const name of ['Today', '7 days', '30 days', 'This month']) {
+      fireEvent.click(windowButton(name));
+      await waitFor(() => expect(windowButton(name)).toHaveAttribute('aria-pressed', 'true'));
+      await waitFor(() => expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false'));
+      expect(screen.getByTestId('kpi-enabled-currencies').textContent).toBe(before.tile);
+      expect(screen.getByTestId('rates-count').textContent).toBe(before.count);
+      expect(screen.queryAllByTestId(/^rate-row-/)).toHaveLength(before.rows);
+      expect(screen.getByLabelText('Show')).toHaveValue('enabled');
+      expect(screen.getByLabelText('Search')).toHaveValue('e');
+    }
+  });
+
+  it('9b. a window change releases a held row, as Refresh does (SQ-34, SQ-9)', async () => {
+    let current = payload();
+    await renderPage(
+      () => ok(current),
+      () => {
+        current = {
+          ...current,
+          rates: current.rates.map((r) => (r.currencyCode === 'EUR' ? { ...r, isEnabled: false, lastUpdatedAt: READ_AT } : r)),
+        };
+        return ok({ rate: current.rates.find((r) => r.currencyCode === 'EUR'), unchanged: false });
+      }
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Switch off EUR' }));
+    await waitFor(() => expect(screen.getByTestId('enabled-EUR')).toHaveTextContent('Disabled'));
+    // Held under Enabled only (SQ-9) until a read.
+    expect(screen.getByTestId('rate-row-EUR')).toBeInTheDocument();
+    fireEvent.click(windowButton('7 days'));
+    await waitFor(() => expect(screen.queryByTestId('rate-row-EUR')).toBeNull());
+  });
+
+  it('10. a second click on the pressed This month reads nothing (SA-1d-6)', async () => {
+    const calls = await renderPage();
+    fireEvent.click(windowButton('This month'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toHaveLength(1);
+    expect(windowButton('This month')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('11. a rate save: the re-reads carry the applied window', async () => {
+    const saved = rate('ILS', { rateToUsd: '3.710000', lastUpdatedAt: READ_AT });
+    const calls = await renderPage(undefined, () => ok({ rate: saved, unchanged: false }));
+    fireEvent.click(windowButton('7 days'));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    fireEvent.click(historyButton('ILS'));
+    await waitFor(() => expect(currencyGets(calls, 'ILS')).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit rate for ILS' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rate to USD for ILS' }), { target: { value: '3.71' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(3));
+    await waitFor(() => expect(currencyGets(calls, 'ILS')).toHaveLength(2));
+    expect(windowOf(plainGets(calls)[2])).toEqual(presetDates('7d'));
+    expect(windowOf(currencyGets(calls, 'ILS')[1])).toEqual(presetDates('7d'));
+  });
+
+  it('12. unmount and remount: back to This month (SQ-30)', async () => {
+    const calls = await renderPage();
+    fireEvent.click(windowButton('7 days'));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    calls.unmount();
+    render(<ExchangeRatesView />);
+    await screen.findByTestId('exchange-rates-content');
+    expect(windowButton('This month')).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(3));
+    expect(windowOf(plainGets(calls)[2])).toEqual(presetDates('this_month'));
+    expect(caption()).toHaveTextContent('this month');
+  });
+
+  it('13. the page shows exactly the rows it receives: 3 → 3, 10 → 10 at the cap (SA-1d-7 (c))', async () => {
+    let count = 3;
+    await renderPage(() => ok(withHistory(count)));
+    expect(screen.getAllByTestId('rate-history-changed-by')).toHaveLength(3);
+    expect(caption()).toHaveTextContent('3 changes this month, newest first');
+    count = HISTORY_LIMIT;
+    fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
+    await waitFor(() => expect(screen.getAllByTestId('rate-history-changed-by')).toHaveLength(HISTORY_LIMIT));
+    expect(caption()).toHaveTextContent(`The newest ${HISTORY_LIMIT} changes this month`);
+  });
+});
+
+// QA probes (slice 1d QA, 2026-10-21).
+describe('QA probes (slice 1d)', () => {
+  const windowButton = (name: string) =>
+    within(screen.getByRole('group', { name: 'Window' })).getByRole('button', { name });
+
+  it('the tile reads lastChange even when the windowed history has a different first row (never history[0])', async () => {
+    const data = payload();
+    data.history = [change('inWindow', 'ILS', { oldRate: '3.600000', newRate: '3.610000' })];
+    data.lastChange = change('newest', 'EUR', { oldRate: '0.910000', newRate: '0.920000' });
+    await renderPage(() => ok(data));
+    const tile = screen.getByTestId('kpi-last-rate-change');
+    expect(tile).toHaveTextContent('EUR 0.910 → 0.920');
+    expect(tile).not.toHaveTextContent('ILS');
+  });
+
+  it('the tile stays the same across window changes', async () => {
+    await renderPage();
+    const before = screen.getByTestId('kpi-last-rate-change').textContent;
+    for (const name of ['Today', '7 days', '30 days']) {
+      fireEvent.click(windowButton(name));
+      await waitFor(() => expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false'));
+      expect(screen.getByTestId('kpi-last-rate-change').textContent).toBe(before);
+    }
+  });
+
+  it('the same Custom range applied twice reads once (SA-1d-6)', async () => {
+    const calls = await renderPage();
+    const applyRange = () => {
+      fireEvent.click(windowButton('Custom'));
+      fireEvent.change(screen.getByLabelText('From (UTC)'), { target: { value: '2026-09-01' } });
+      fireEvent.change(screen.getByLabelText('To (UTC)'), { target: { value: '2026-09-15' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    };
+    applyRange();
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false'));
+    // Under a custom value the row stays open with the applied dates: Apply again sends the equal value.
+    expect(screen.getByLabelText('From (UTC)')).toHaveValue('2026-09-01');
+    expect(screen.getByLabelText('To (UTC)')).toHaveValue('2026-09-15');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(plainGets(calls)).toHaveLength(2);
+  });
+
+  it('a second click on a pressed 7 days goes back to This month and reads it (the control rule)', async () => {
+    const calls = await renderPage();
+    fireEvent.click(windowButton('7 days'));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    fireEvent.click(windowButton('7 days'));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(3));
+    expect(windowOf(plainGets(calls)[2])).toEqual(presetDates('this_month'));
+    expect(windowButton('This month')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  // SA code review finding 1 (Low): unmount retires the plain-read counter (SA-1d-1).
+  it('a plain GET held open, then unmount, then a 500: no warning and no console.error (SA-1d-1)', async () => {
+    const first = deferred<Answer>();
+    const errors = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const calls = stubFetch(() => first.promise, () => ok(null));
+    const view = render(<ExchangeRatesView />);
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(1));
+    view.unmount();
+    mockClientWarn.mockClear();
+    await late(() => first.resolve({ status: 500, body: { success: false, error: 'Failed to read exchange rates' } }));
+    expect(mockClientWarn).not.toHaveBeenCalledWith(expect.anything(), 'Exchange rates read failed');
+    expect(mockClientWarn).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('the control: the same held 500 while mounted is logged (the unmount probe is not vacuous)', async () => {
+    const first = deferred<Answer>();
+    mockClientWarn.mockClear();
+    stubFetch(() => first.promise, () => ok(null));
+    render(<ExchangeRatesView />);
+    await late(() => first.resolve({ status: 500, body: { success: false, error: 'Failed to read exchange rates' } }));
+    expect(mockClientWarn).toHaveBeenCalledWith(expect.objectContaining({ status: 500 }), 'Exchange rates read failed');
   });
 });
