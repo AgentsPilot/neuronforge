@@ -2367,45 +2367,53 @@ describe('slice 8.3: one request on load; the History request only on "Show hist
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(screen.queryByTestId('section-history')).toBeNull();
+    expect(screen.queryByTestId('history-plan-mix-trend')).toBeNull();
+    expect(screen.queryByTestId('history-credits-trend')).toBeNull();
     expect(urls(fetchMock)).toEqual([FINANCE_REQ]);
   });
 
-  it('8.3-R3 (Pin B’s path): a loaded page shows the block CLOSED and still sends exactly 1 fetch', async () => {
+  // Money MK-7 (§6 item 13): the block is split; each trend sits under its KPI, both closed on load.
+  it('8.3-R3 (Pin B’s path) / MK-7: a loaded page shows both trends CLOSED, under Plan mix and Credits, and still sends exactly 1 fetch', async () => {
     const fetchMock = serveBoth();
     render(<FinanceView />);
-    const block = await screen.findByTestId('section-history');
+    const planTrend = await screen.findByTestId('history-plan-mix-trend');
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(urls(fetchMock)).toEqual([FINANCE_REQ]);
-    expect(within(block).getByTestId('history-toggle')).toHaveAttribute('aria-expanded', 'false');
-    expect(within(block).queryByTestId('section-history-status')).toBeNull();
-    // After Section 4 (HS-FR-11).
-    const credits = screen.getByTestId('section-credits');
-    expect(credits.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId('section-history')).toBeNull();
+    expect(screen.getByTestId('section-accounts').contains(planTrend)).toBe(true);
+    const creditsTrend = screen.getByTestId('history-credits-trend');
+    expect(screen.getByTestId('section-credits').contains(creditsTrend)).toBe(true);
+    for (const id of ['history-plan-mix-toggle', 'history-credits-toggle']) {
+      expect(screen.getByTestId(id)).toHaveAttribute('aria-expanded', 'false');
+    }
   });
 
-  it('AC-290: "Show history" sends exactly one more request, the pinned literal, never with a business', async () => {
+  it('AC-290 / MK-7: "Show history" sends exactly one more request, the pinned literal, never with a business; the second trend shares it', async () => {
     const fetchMock = serveBoth();
     render(<FinanceView />);
-    fireEvent.click(await screen.findByTestId('history-toggle'));
-    await screen.findByTestId('history-start-line');
+    fireEvent.click(await screen.findByTestId('history-plan-mix-toggle'));
+    await screen.findByTestId('history-plan-mix-start-line');
     expect(urls(fetchMock)).toEqual([FINANCE_REQ, HISTORY_REQ]);
     expect(fetchMock.mock.calls[1]).toEqual([HISTORY_REQ, expect.objectContaining({ cache: 'no-store' })]);
     for (const url of urls(fetchMock)) expect(url).not.toContain('accountId');
-    expect(screen.getByTestId('history-start-line')).toHaveTextContent('History starts on 2026-10-05 (UTC).');
+    expect(screen.getByTestId('history-plan-mix-start-line')).toHaveTextContent('History starts on 2026-10-05 (UTC).');
+    // MK-7: one shared lazy read, so opening the credits trend sends nothing more.
+    fireEvent.click(screen.getByTestId('history-credits-toggle'));
+    await screen.findByTestId('history-credits-start-line');
+    expect(urls(fetchMock)).toEqual([FINANCE_REQ, HISTORY_REQ]);
   });
 
   it('a window change while closed sends no history request; while open, one more', async () => {
     const fetchMock = serveBoth();
     render(<FinanceView />);
-    await screen.findByTestId('section-history');
+    await screen.findByTestId('history-credits-trend');
     fireEvent.click(screen.getByRole('button', { name: '7 days' }));
     await waitFor(() => expect(urls(fetchMock)).toHaveLength(2));
     expect(urls(fetchMock).filter((u) => u.includes('/history'))).toEqual([]);
-    fireEvent.click(await screen.findByTestId('history-toggle'));
-    await screen.findByTestId('history-start-line');
+    fireEvent.click(await screen.findByTestId('history-credits-toggle'));
+    await screen.findByTestId('history-credits-start-line');
     expect(urls(fetchMock).filter((u) => u.includes('/history'))).toEqual(['/api/admin/business-os/finance/history?preset=7d']);
   });
 
@@ -2414,8 +2422,11 @@ describe('slice 8.3: one request on load; the History request only on "Show hist
     window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
     const fetchMock = serveBoth();
     render(<FinanceView />);
-    await screen.findByTestId('history-all-businesses-only');
-    expect(screen.queryByTestId('history-toggle')).toBeNull();
+    // MK-7: the one line under each KPI block (Plan mix and Credits), no toggle anywhere.
+    await screen.findAllByTestId('history-all-businesses-only');
+    expect(screen.getAllByTestId('history-all-businesses-only')).toHaveLength(2);
+    expect(screen.queryByTestId('history-plan-mix-toggle')).toBeNull();
+    expect(screen.queryByTestId('history-credits-toggle')).toBeNull();
     expect(urls(fetchMock).filter((u) => u.includes('/history'))).toEqual([]);
   });
 });
