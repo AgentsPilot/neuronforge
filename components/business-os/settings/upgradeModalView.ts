@@ -18,10 +18,24 @@
  *     current tier; none when nothing qualifies (C-10). `nextPlanUp` does not
  *     pick it (it still drives the drawer's B9 and the coming-soon reason);
  *   - the headline, and the per-column action (UM-1b: which button, if any).
+ *
+ * ── THE CONTEXT (UM-2, workplan §6) ─────────────────────────────────────────
+ * Why the window was opened changes the headline, the subheading and which
+ * column is highlighted, and NOTHING ELSE (UM-FR8): every column's action,
+ * chip and note, `somethingOffered`, `hasActions` and `sections` are computed
+ * before the context is looked at.
+ *   - `locked_feature`: the caller's plan is highlighted, offered or not (UM-BQ4's
+ *     locked-action clause, "the plan that unlocks it"); amended UM-SA4 / C-10
+ *     still governs `settings` and `founding_partner`. An id that is the current
+ *     tier or not in the table falls back to the `settings` copy.
+ *   - `founding_partner`: only when the server says buying ends free access and
+ *     offers a plan (UM-FR9); otherwise the `settings` copy. Never a cohort id or
+ *     name compared here (UM-FR7).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import type { PlanComparisonSection, PlanPayload, PlanSentence } from './planPayloadTypes';
+import { SETTINGS_CONTEXT, type UpgradeModalContext } from './upgradeModalContext';
 
 export interface PlanColumnView {
   /** From `comparison.planIds`, never compared to a literal. */
@@ -31,8 +45,16 @@ export interface PlanColumnView {
   monthlyPriceUsd: number;
   /** `plan.kind === 'tier' && planId === plan.planId` (C-22). */
   isCurrent: boolean;
-  /** Amended UM-SA4 (UM-BQ4) + C-10: the last shown plan that is offered and not current. */
+  /**
+   * Amended UM-SA4 (UM-BQ4) + C-10: the last shown plan that is offered and not
+   * current. False on every column while a `locked_feature` highlight applies.
+   */
   isRecommended: boolean;
+  /**
+   * UM-2: why this column is marked (tint, top border, badge, primary button):
+   * the Recommended rule, or the plan a locked action needs. At most one column.
+   */
+  highlightReason: PlanHighlightReason | null;
   /**
    * "Coming soon" (UM-1a Q-1, widened by UM-1b SA Q-1): `!availableToBuy`, or —
    * while CHOOSING (`offer.kind === 'choose'`) — a shown plan the server offers
@@ -67,7 +89,12 @@ export type PlanColumnAction = 'upgrade' | 'pay_for' | 'choose' | 'current_label
 /** The actions that are a button: the server offers this plan to this account. */
 export const BUTTON_ACTIONS: readonly PlanColumnAction[] = ['upgrade', 'pay_for', 'choose'];
 
-export type UpgradeModalHeadline = 'choose' | 'top_plan' | 'compare';
+export type UpgradeModalHeadline = 'choose' | 'top_plan' | 'compare' | 'locked_feature' | 'founding_partner';
+
+/** UM-2: the copy actually used, after the fallbacks (workplan §6.1). */
+export type UpgradeModalVariant = UpgradeModalContext['kind'];
+
+export type PlanHighlightReason = 'recommended' | 'locked_feature';
 
 export interface UpgradeModalView {
   /** `comparison` present, `planIds` non-empty, every id found in `plans` (§5.2a). */
@@ -84,6 +111,12 @@ export interface UpgradeModalView {
    * so the drawer's button reads "See plans" rather than "Compare plans".
    */
   hasActions: boolean;
+  /** UM-2: the variant shown; `settings` whenever a context's condition is not met. */
+  variant: UpgradeModalVariant;
+  /** UM-2: `default` is the UM-1a subheading. */
+  subheading: 'default' | 'locked_feature' | 'founding_partner';
+  /** UM-2: the plan a locked action needs, joined from the payload; set only in the `locked_feature` variant. */
+  lockedPlan: { planId: string; name: string; offered: boolean } | null;
 }
 
 const NOTHING: PlanComparisonSection[] = [];
@@ -101,7 +134,7 @@ function offers(plan: PlanPayload): { choose: Set<string>; upgrade: Set<string>;
   return { choose, upgrade, all: new Set([...Array.from(choose), ...Array.from(upgrade)]), choosing };
 }
 
-export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
+export function upgradeModalView(plan: PlanPayload, context: UpgradeModalContext = SETTINGS_CONTEXT): UpgradeModalView {
   const plans = plan.plans ?? [];
   const comparison = plan.comparison ?? null;
   const currentId = plan.kind === 'tier' ? plan.planId : null;
@@ -124,7 +157,7 @@ export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
   }
 
   // SA Q-2: positional, the same server-order reliance UM-SA4 accepted.
-  const headline: UpgradeModalHeadline = somethingOffered
+  const settingsHeadline: UpgradeModalHeadline = somethingOffered
     ? 'choose'
     : currentId !== null && currentId === lastPlanId
       ? 'top_plan'
@@ -134,8 +167,19 @@ export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
   const planIds = comparison?.planIds ?? [];
   const available = comparison !== null && planIds.length > 0 && planIds.every((id) => byId.has(id));
 
+  // UM-2 §6.2: the locked plan, from the payload only; the current tier or an id outside the table falls back.
+  const lockedId =
+    context.kind === 'locked_feature' && available && planIds.includes(context.planId) && context.planId !== currentId ? context.planId : null;
+  // UM-2 §6.3 / UM-FR9: the server's own signal, never the cohort.
+  const foundingPartner = context.kind === 'founding_partner' && plan.purchase?.endsFreeAccessOnPurchase === 'free_access' && somethingOffered;
+  const variant: UpgradeModalVariant = lockedId !== null ? 'locked_feature' : foundingPartner ? 'founding_partner' : 'settings';
+  const headline: UpgradeModalHeadline = variant === 'settings' ? settingsHeadline : variant;
+  const subheading = variant === 'settings' ? 'default' : variant;
+  const lockedPlan = lockedId !== null ? { planId: lockedId, name: byId.get(lockedId)!.name, offered: offered.has(lockedId) } : null;
+  const contextual = { variant, subheading, lockedPlan } as const;
+
   if (!available || comparison === null) {
-    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered, hasActions: false };
+    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered, hasActions: false, ...contextual };
   }
 
   const columns = planIds.map((planId): PlanColumnView => {
@@ -154,12 +198,16 @@ export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
           ? 'current_label'
           : 'none';
     const notOfferedWhileChoosing = choosing && !offered.has(planId);
+    // O-1 (UM-BQ4's locked-action clause): the locked plan replaces the Recommended rule, in that variant only.
+    const highlightReason: PlanHighlightReason | null =
+      lockedId !== null ? (planId === lockedId ? 'locked_feature' : null) : planId === recommendedId ? 'recommended' : null;
     return {
       planId,
       name: choice.name,
       monthlyPriceUsd: choice.monthlyPriceUsd,
       isCurrent,
-      isRecommended: planId === recommendedId,
+      isRecommended: highlightReason === 'recommended',
+      highlightReason,
       comingSoon: action === 'none' && (!choice.availableToBuy || notOfferedWhileChoosing),
       unavailableBecause: isNext && !choice.availableToBuy ? plan.nextPlanUp?.actionUnavailableBecause ?? null : null,
       // C-22: the server's action first, so an admin-assigned tier offered its
@@ -170,5 +218,5 @@ export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
   });
 
   const hasActions = columns.some((column) => BUTTON_ACTIONS.includes(column.action));
-  return { available: true, columns, sections: comparison.sections, headline, somethingOffered, hasActions };
+  return { available: true, columns, sections: comparison.sections, headline, somethingOffered, hasActions, ...contextual };
 }

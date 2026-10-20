@@ -308,6 +308,13 @@ export const es = {
     'upgrade_modal.included': 'Incluido',
     'upgrade_modal.not_included': 'No incluido',
     'upgrade_modal.cell_label': '{plan}: {state}',
+    // Upgrade modal UM-2: the locked_feature and founding_partner variants (he / es approved by the user 2026-10-20).
+    'upgrade_modal.headline.locked_feature': 'Esto requiere {plan}',
+    'upgrade_modal.subheading.locked_feature': 'Mira lo que incluye {plan}, junto a los demás planes.',
+    'upgrade_modal.locked.not_offered': 'Ahora mismo no puedes comprar {plan} desde tu cuenta.',
+    'upgrade_modal.headline.founding_partner': 'Conserva todo lo que tienes',
+    'upgrade_modal.subheading.founding_partner': 'Elige un plan y sigue sin interrupciones.',
+    'upgrade_modal.badge.needed': 'Necesario para esto',
     'plan.features_unavailable': 'No hemos podido mostrar tus funciones en este momento. No se ha quitado nada de tu cuenta.',
     'plan.next.adds_heading': 'Qué añadiría {plan}',
     'plan.next.improves_line': '{from} pasa a {to}',

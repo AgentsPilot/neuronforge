@@ -26,6 +26,13 @@
  *                   outside presses are prevented behind the same flag; the hand-off
  *                   close (SA W-2) does not consult it
  *   (o) UM-1a Q-6   the interim view-only note is gone from every dictionary and file
+ *   (p) UM-SA8 / X-7  UM-2: `readMyPlan` is called only by the reads module, the flow,
+ *                   PlanSection, the standalone window and the demo; never the provider
+ *   (q) C-4         UM-2: the provider, the window and the context use no URL, no
+ *                   window event, no message channel
+ *   (r) C-4         UM-2: the context union is exactly the three members
+ *   (s) UM-SA2      UM-2: PlanSection registers as the inline host AFTER the
+ *                   `[language]` effect (alongside P-G8)
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -58,7 +65,14 @@ const UPGRADE = `${DIR}/PlanUpgrade.tsx`;
 const EMBEDDED = 'components/business-os/billing/PlanEmbeddedCheckout.tsx';
 const HOLDING = 'app/invite/awaiting-payment/HeldPaymentCheckout.tsx';
 const HARNESS = 'components/test-business-os/PlanCheckoutPanel.tsx';
-const NEW_FILES = [TYPES, TEXT, FLOW, VIEW, MODAL];
+const CONTEXT = `${DIR}/upgradeModalContext.ts`;
+const PROVIDER = `${DIR}/UpgradeModalProvider.tsx`;
+const STANDALONE = `${DIR}/StandaloneUpgradeModal.tsx`;
+const STATUS = `${DIR}/PlanFlowStatus.tsx`;
+const DEMO_PAGE = 'app/business-os/upgrade-modal-demo/page.tsx';
+const DEMO = 'app/business-os/upgrade-modal-demo/UpgradeModalDemo.tsx';
+// UM-2: the contract, the window, the moved status lines and the demo (C-6, rule 3, C-21).
+const NEW_FILES = [TYPES, TEXT, FLOW, VIEW, MODAL, CONTEXT, PROVIDER, STANDALONE, STATUS, DEMO_PAGE, DEMO];
 
 // ── the pins, as functions so the self-tests can feed them a planted source ──
 
@@ -210,6 +224,42 @@ function pinO(sources: Record<string, string>, dictionaries: Record<string, Reco
   }
 }
 
+/** (p) UM-SA8 / X-7: who may call the read. */
+const READ_CALLERS = [`${DIR}/planDrawerReads.ts`, FLOW, SECTION, STANDALONE, DEMO];
+function pinP(sources: Record<string, string>) {
+  const callers = Object.entries(sources)
+    .filter(([, text]) => /\breadMyPlan\(/.test(text))
+    .map(([file]) => file)
+    .sort();
+  expect(callers).toEqual([...READ_CALLERS].sort());
+  expect(sources[PROVIDER] ?? '').not.toMatch(/readMyPlan|planDrawerReads|\bfetch\(/);
+}
+
+/** (q) C-4: no URL parameter, no window event, no message channel. */
+function pinQ(source: string) {
+  expect(source).not.toMatch(/useSearchParams|window\.location|addEventListener|CustomEvent|dispatchEvent|postMessage/);
+}
+
+/** (r) C-4: exactly the three members, no other field. */
+function pinR(context: string) {
+  const union = context.slice(context.indexOf('export type UpgradeModalContext ='), context.indexOf('export const SETTINGS_CONTEXT'));
+  const members = union.match(/\{[^}]*\}/g) ?? [];
+  expect(members.map((member) => member.replace(/\s+/g, ' ').trim())).toEqual([
+    "{ kind: 'settings' }",
+    "{ kind: 'locked_feature'; planId: string }",
+    "{ kind: 'founding_partner' }",
+  ]);
+}
+
+/** (s) UM-SA2: the inline host is registered after the `[language]` effect. */
+function pinS(section: string) {
+  const languageEnd = section.indexOf('}, [language]);');
+  const host = section.indexOf('useUpgradeModalInlineHost();');
+  expect(languageEnd).toBeGreaterThan(-1);
+  expect(host).toBeGreaterThan(languageEnd);
+  expect(section.match(/useUpgradeModalInlineHost\(\);/g) ?? []).toHaveLength(1);
+}
+
 // ── the guards ──
 
 const settingsProductFiles = () =>
@@ -254,6 +304,12 @@ describe('upgrade modal source guards', () => {
   it('(o) UM-1a Q-6: the view-only note is gone', () => {
     pinO(Object.fromEntries(settingsProductFiles().map((file) => [file, code(read(file))])), { en: translations.en, he: translations.he, es: translations.es });
   });
+  it('(p) UM-SA8 / X-7: readMyPlan is called only by its allowed callers, never the provider', () => {
+    pinP(Object.fromEntries([...settingsProductFiles(), DEMO, DEMO_PAGE].map((file) => [file, code(read(file))])));
+  });
+  it.each([PROVIDER, STANDALONE, CONTEXT])('(q) C-4: %s reads no URL and uses no window event', (file) => pinQ(code(read(file))));
+  it('(r) C-4: the context is exactly the three-member union', () => pinR(code(read(CONTEXT))));
+  it('(s) UM-SA2: PlanSection registers as the inline host after the [language] effect', () => pinS(code(read(SECTION))));
 });
 
 describe('negative controls: each pin fails on the violation it exists for', () => {
@@ -322,6 +378,28 @@ describe('negative controls: each pin fails on the violation it exists for', () 
     expect(() => pinO({ [MODAL]: "t('upgrade_modal.view_only_note')" }, {})).toThrow();
     expect(() => pinO({}, { en: { 'upgrade_modal.view_only_note': 'x' } })).toThrow();
   });
+  it('(p) a read in the provider, or a new caller', () => {
+    const sources = Object.fromEntries([...settingsProductFiles(), DEMO, DEMO_PAGE].map((file) => [file, code(read(file))]));
+    expect(() => pinP({ ...sources, [PROVIDER]: `${sources[PROVIDER]}\nvoid readMyPlan();` })).toThrow();
+    expect(() => pinP({ ...sources, [MODAL]: `${sources[MODAL]}\nvoid readMyPlan();` })).toThrow();
+  });
+  it('(q) a URL read or a window event', () => {
+    expect(() => pinQ("const p = useSearchParams();")).toThrow();
+    expect(() => pinQ("window.dispatchEvent(new CustomEvent('open-upgrade'));")).toThrow();
+    expect(() => pinQ("window.addEventListener('message', f);")).toThrow();
+  });
+  it('(r) a fourth member, or a field a caller could fill', () => {
+    const context = code(read(CONTEXT));
+    expect(() => pinR(context.replace("| { kind: 'founding_partner' }", "| { kind: 'founding_partner' }\n  | { kind: 'other' }"))).toThrow();
+    expect(() => pinR(context.replace("{ kind: 'locked_feature'; planId: string }", "{ kind: 'locked_feature'; planId: string; name: string }"))).toThrow();
+  });
+  it('(s) the host registered before the [language] effect, or twice', () => {
+    const section = code(read(SECTION));
+    const moved = section.replace('useUpgradeModalInlineHost();', '').replace('const firstStarted = useRef(false);', 'useUpgradeModalInlineHost();\n  const firstStarted = useRef(false);');
+    expect(() => pinS(moved)).toThrow();
+    expect(() => pinS(`${section}\nuseUpgradeModalInlineHost();`)).toThrow();
+  });
+
   it('(k) a second hard-coded two-column class, or the tripwire pointer gone', () => {
     const raw = read(MODAL);
     expect(() => pinK(`${raw}\nconst other = 'max-sm:grid-cols-2';`)).toThrow();

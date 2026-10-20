@@ -9,6 +9,7 @@ import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { BusinessOSTabs } from '@/components/business-os/BusinessOSTabs';
 import { ConfigurationDialogProvider } from '@/components/business-os/ConfigurationDialogProvider';
 import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvider';
+import { UpgradeModalProvider } from '@/components/business-os/settings/UpgradeModalProvider';
 import { Space_Grotesk, Inter } from 'next/font/google';
 
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
@@ -114,6 +115,13 @@ export default async function BusinessOSLayout({
           */}
           <CapabilitiesProvider>
             <ConfigurationDialogProvider>
+              {/*
+                Upgrade modal UM-2: the plan comparison window, opened from any
+                page with `useUpgradeModal()`. Here for the same two reasons as
+                the configuration dialog (translated; outside the sticky chrome),
+                and inside it so a caller in that dialog can reach both.
+              */}
+              <UpgradeModalProvider>
               <div className={`w-full h-full ${spaceGrotesk.variable} ${inter.variable}`}>
                 {/*
                   The chrome lives here, not in each page.
@@ -135,6 +143,7 @@ export default async function BusinessOSLayout({
                 </div>
                 {children}
               </div>
+              </UpgradeModalProvider>
             </ConfigurationDialogProvider>
           </CapabilitiesProvider>
         </LanguageProvider>
