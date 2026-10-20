@@ -98,7 +98,8 @@ import { AccountsTab } from './AccountsTab';
 import { FinanceTabPanel, FinanceTabs, type FinanceTab } from './FinanceTabs';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
-import { HistoryAllBusinessesLine, HistoryBlock } from './HistoryBlock';
+import { HistoryAllBusinessesLine } from './HistoryBlock';
+import { FinanceHistoryProvider, HistoryTrend } from './HistoryTrends';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import {
@@ -340,6 +341,8 @@ export function FinanceView() {
 
         {/* Slice 2a (SQ-19 (i), SA-2a-1): the rates do not depend on the finance read, so their tab is not gated by it. */}
         {(onRatesTab || (data && !error)) && (
+          // Money MK-7: the one shared, lazy history read for the trends under Plan mix and Credits (E-85).
+          <FinanceHistoryProvider query={query}>
           <div className="space-y-4">
             {!onRatesTab && data && data.accountId !== null && (
               <>
@@ -370,7 +373,13 @@ export function FinanceView() {
               <FinanceTabPanel id="plans">
                 {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
                 <div className="space-y-4">
-                  <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
+                  <AccountsByPlanSection
+                    accounts={data.accounts}
+                    windowLabel={windowLabel}
+                    onRetry={reload}
+                    k3={data.tiles?.k3}
+                    trend={<HistoryTrend trend="planMix" />}
+                  />
                   {/* Money MK-5b (§5.1): from the same finance payload, so the tab makes no new request (AC-173). */}
                   {data.converted && <ConvertedThisMonthSection converted={data.converted} onRetry={reload} />}
                   <PlansSubscriptions
@@ -406,16 +415,28 @@ export function FinanceView() {
                   boostProblems={data.paymentProblems?.boosts}
                   accountId={data.accountId}
                 />
-                <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
+                {/* Money MK-7 (§6 item 13): each trend under its KPI; closed on load, so no request (E-85). */}
+                <AccountsByPlanSection
+                  accounts={data.accounts}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  k3={data.tiles?.k3}
+                  trend={query.accountId === null ? <HistoryTrend trend="planMix" /> : <HistoryAllBusinessesLine />}
+                />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
-                <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} k2={data.tiles?.k2} />
-                {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
-                {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
+                <CreditsSection
+                  credits={data.credits}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  k2={data.tiles?.k2}
+                  trend={query.accountId === null ? <HistoryTrend trend="credits" /> : <HistoryAllBusinessesLine />}
+                />
                 {/* Money MK-1: the businesses' client payments, not ours (BD-1), last on the Overview. */}
                 <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} problems={data.paymentProblems} />
               </OverviewBody>
             )}
           </div>
+          </FinanceHistoryProvider>
         )}
       </div>
     </div>

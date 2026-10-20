@@ -447,16 +447,18 @@ describe('slice 6b source guards (the margin after Stripe fees)', () => {
 describe('slice 8.3 source guards (the History block)', () => {
   const BLOCK = path.join(DIR, 'components', 'HistoryBlock.tsx');
   const HOOK = path.join(DIR, 'useFinanceHistory.ts');
+  // Money MK-7: the trends (the split History block) are held to the same rules.
+  const TRENDS = path.join(DIR, 'components', 'HistoryTrends.tsx');
   const URL_FILE = path.join(DIR, 'historyUrl.ts');
   const FOLD = /\.(sort|reduce|filter)\(/;
   const DATE_MATH = /new Date\(|Date\.parse\(|Date\.UTC\(|getUTC|setUTC/;
 
   it('scans the new files (non-vacuity)', () => {
-    expect(files.map(rel)).toEqual(expect.arrayContaining([BLOCK, HOOK, URL_FILE].map(rel)));
+    expect(files.map(rel)).toEqual(expect.arrayContaining([BLOCK, HOOK, URL_FILE, TRENDS].map(rel)));
   });
 
   it('E-99: the block and the hook fold nothing and do no date arithmetic (planted controls)', () => {
-    for (const file of [BLOCK, HOOK]) {
+    for (const file of [BLOCK, HOOK, TRENDS]) {
       expect({ file: rel(file), fold: FOLD.test(codeOf(file)), dates: DATE_MATH.test(codeOf(file)) }).toEqual({ file: rel(file), fold: false, dates: false });
     }
     expect(FOLD.test('points.filter((p) => p.kind)')).toBe(true);
@@ -464,7 +466,7 @@ describe('slice 8.3 source guards (the History block)', () => {
   });
 
   it('only types cross from lib/business-os/finance into the block and the hook', () => {
-    for (const file of [BLOCK, HOOK]) {
+    for (const file of [BLOCK, HOOK, TRENDS]) {
       const valueImports = [...codeOf(file).matchAll(/^import\s+(?!type\b)[^;]*from\s+['"]@\/lib\/business-os\/finance\/[^'"]+['"]/gm)];
       expect({ file: rel(file), valueImports: valueImports.length }).toEqual({ file: rel(file), valueImports: 0 });
     }
