@@ -22,13 +22,18 @@
  * O-4, 2026-10-19): the Exchange rates page is a maintained admin tool again,
  * so it leaves G-1, G-3 and G-5, and G-6 is REPLACED by the Exchange rates
  * guard below, which walks every non-test file under app/admin/exchange-rates/
- * (the page and its components): no Supabase client import, no `.from(`, no
+ * (then the page and its components): no Supabase client import, no `.from(`, no
  * `CurrencyService`, no outside host, every `fetch(` targets
  * /api/admin/exchange-rates, no `console.`, and the module logger
  * `AdminExchangeRates`. The Platform dashboard keeps G-1, G-3 and G-5
  * unchanged. G-2, G-4 and the sidebar UNLISTED entry stay (D-6: URL only);
  * G-4's page-route matcher now ignores a match preceded by `/api`, because
  * /api/admin/exchange-rates contains /admin/exchange-rates (SA O-2).
+ *
+ * Amended by Admin Exchange Rates slice 2 (2b, SQ-17, SQ-23, 2026-10-20): the
+ * page file is deleted (the old URL redirects to Finance's tab), so G-6 walks
+ * the view folder only, and its two page-only checks are dropped. G-4 and
+ * `PAGE_ROUTES` are unchanged.
  *
  * Every rule is a pure function run on the real files AND on a planted control
  * that must trip it (M8-R3): a rule that cannot match looks exactly like a rule
@@ -44,7 +49,6 @@ const ROOT = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 const DASHBOARD_PAGE = 'app/admin/platform-dashboard/page.tsx';
-const EXCHANGE_PAGE = 'app/admin/exchange-rates/page.tsx';
 const DASHBOARD_ROUTE = 'app/api/admin/dashboard/route.ts';
 const SIDEBAR = 'app/admin/components/AdminSidebar.tsx';
 
@@ -210,8 +214,7 @@ describe('G-5: the Platform dashboard has no console call (RP-7)', () => {
 describe('G-6 (slice 1a): Exchange rates reads and writes only through its admin route (SA-R3)', () => {
   const files = walk(EXCHANGE_DIR);
 
-  it('walks the page and its components, never a test (guards the walk itself)', () => {
-    expect(files).toContain(EXCHANGE_PAGE);
+  it('walks the folder and its components, never a test (guards the walk itself)', () => {
     expect(files.some((file) => file.startsWith(`${EXCHANGE_DIR}/components/`))).toBe(true);
     expect(files.filter((file) => file.includes('__tests__'))).toEqual([]);
     expect(files.length).toBeGreaterThanOrEqual(5);
@@ -236,11 +239,6 @@ describe('G-6 (slice 1a): Exchange rates reads and writes only through its admin
 
   it('logs through the module logger AdminExchangeRates', () => {
     expect(files.some((file) => MODULE_LOGGER.test(stripComments(read(file))))).toBe(true);
-  });
-
-  it('the REDUNDANT header is gone from the page', () => {
-    expect(hasHeader(read(EXCHANGE_PAGE))).toBe(false);
-    expect(read(EXCHANGE_PAGE)).not.toContain('REDUNDANT');
   });
 });
 
