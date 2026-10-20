@@ -12,12 +12,13 @@
  * `PlanSection.tsx` (BUYING, UPGRADING).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PROCESSING_REFRESH_INTERVAL_MS, PROCESSING_REFRESH_LIMIT } from '@/components/business-os/billing/checkoutProcessing';
 // Display only, and a pure file with no import (P-5a.2): a well-formed
 // checkout session id on the URL means "show Payment processing".
 import { isCheckoutReturnMarker } from '@/lib/business-os/billing/checkoutReturnMarker';
+import { getStripePromise } from '@/lib/client/stripeJs';
 import { createLogger } from '@/lib/logger';
 
 import { readMyPlan } from './planDrawerReads';
@@ -57,6 +58,15 @@ export interface PlanFlow {
   upgradeProcessing: boolean;
   processing: boolean;
   exhausted: boolean;
+  /**
+   * Upgrade modal UM-1b (§8.3): may a checkout / an upgrade START now. Moved from
+   * `PlanSection`'s island mount conditions (C-2: they exist only here). The
+   * payload half (what the server offers) is `upgradeModalView`'s.
+   */
+  checkoutAllowed: boolean;
+  upgradeAllowed: boolean;
+  /** UM-1b (SA W-3): a usable publishable key exists (M-2). Read only when a checkout is offered (SA CR-1). */
+  paymentsConfigured: boolean;
   onCheckoutComplete: (sessionId: string) => void;
   onUpgrading: (tier: string) => void;
   onUpgradeCheckAgain: (tier: string) => Promise<void>;
@@ -104,6 +114,16 @@ export function usePlanFlow({
   const upgradeProcessing = upgradeWatching && !upgradeSucceeded;
   const processing = checkoutProcessing || upgradeProcessing;
   const exhausted = refreshes >= PROCESSING_REFRESH_LIMIT;
+  // Not while a payment is landing (P-4.2), nor an upgrade (P-7b.1b).
+  const checkoutAllowed = marker === null;
+  const upgradeAllowed = marker === null && !upgradeWatching && !upgradeSucceeded;
+  /*
+   * SA CR-1: `getStripePromise()` LOADS Stripe.js, so it is asked only when the
+   * server offers a checkout (as before UM-1b, when only a mounted island asked).
+   * An account with nothing to buy never loads Stripe.js from this section.
+   */
+  const checkoutOffered = plan?.purchase?.offer.kind === 'choose';
+  const paymentsConfigured = useMemo(() => checkoutOffered && getStripePromise() !== null, [checkoutOffered]);
 
   const onCheckoutComplete = useCallback((sessionId: string) => {
     setRefreshes(0);
@@ -168,6 +188,9 @@ export function usePlanFlow({
     upgradeProcessing,
     processing,
     exhausted,
+    checkoutAllowed,
+    upgradeAllowed,
+    paymentsConfigured,
     onCheckoutComplete,
     onUpgrading,
     onUpgradeCheckAgain,
