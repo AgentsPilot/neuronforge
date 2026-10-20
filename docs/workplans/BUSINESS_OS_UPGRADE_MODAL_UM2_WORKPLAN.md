@@ -399,6 +399,8 @@ Each new pin has a planted-violation control, as UM-1a's and UM-1b's do. `npm ru
 
 ## 13. End-of-stream run sheet additions
 
+> **QA, 2026-10-20 (UM-3 D3-13):** these rows now live in the single MASTER sheet, [UM-1b workplan §14](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM1B_WORKPLAN.md#14-the-users-end-of-stream-run-sheet-w-6--master), re-worded for UM-D3 and in one running order. Run that sheet, not this table.
+
 Rows QA adds to UM-1b's §14 sheet for the user's single end-of-stream session (UD-1). The user sets `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=true` in `.env.local`. Agents never sign in or handle keys.
 
 | # | Account | Click steps | Expected |
