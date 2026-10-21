@@ -2,7 +2,10 @@
  * GET /api/admin/exchange-rates (Admin Exchange Rates slice 1a, SA-R4, SA R-3;
  * slice 1c.1, SQ-12 / SQ-13 / SA Q-1 / SA-1c-7 / SA W-5): happy path, signed
  * out, not an admin, each read failing, the requireAdmin-first source pin, the
- * query parse, the per-currency read and the "Changed by" labels.
+ * query parse, the per-currency read and the "Changed by" labels. Slice 1d
+ * (SQ-26 to SQ-31, SA-1d-3, SA-1d-7 (b), SA-1d-9): the history window reaching
+ * the repository as half-open instants, the This month default, the all-time
+ * `lastChange` and its label, and the window's 400s.
  */
 
 import * as fs from 'fs';
@@ -44,16 +47,19 @@ const listAll = jest.fn();
 const listRecentHistory = jest.fn();
 const findByCode = jest.fn();
 const listRecentHistoryForCurrency = jest.fn();
+const findLatestChange = jest.fn();
 jest.mock('@/lib/repositories/ExchangeRatesRepository', () => {
   const actual = jest.requireActual('@/lib/repositories/ExchangeRatesRepository');
   return {
     toExchangeRateWire: actual.toExchangeRateWire,
     toExchangeRateHistoryRecord: actual.toExchangeRateHistoryRecord,
     exchangeRatesRepository: {
-      listAll: () => listAll(),
-      listRecentHistory: () => listRecentHistory(),
-      findByCode: (code: string) => findByCode(code),
-      listRecentHistoryForCurrency: (code: string) => listRecentHistoryForCurrency(code),
+      // Arguments are forwarded, so a test can pin what the route passes (slice 1d).
+      listAll: (...args: unknown[]) => listAll(...args),
+      listRecentHistory: (...args: unknown[]) => listRecentHistory(...args),
+      findByCode: (...args: unknown[]) => findByCode(...args),
+      listRecentHistoryForCurrency: (...args: unknown[]) => listRecentHistoryForCurrency(...args),
+      findLatestChange: (...args: unknown[]) => findLatestChange(...args),
     },
   };
 });
@@ -112,6 +118,20 @@ const HISTORY = {
 };
 const historyRow = (id: string, changedBy: string | null) => ({ ...HISTORY, id, changed_by: changedBy });
 
+/** This month at NOW (2026-10-19), as half-open instants (SQ-26, SQ-28). */
+const THIS_MONTH_BOUNDS = { fromInclusive: '2026-10-01T00:00:00.000Z', toExclusive: '2026-10-20T00:00:00.000Z' };
+
+const LAST_CHANGE_WIRE = {
+  id: 'h1',
+  currencyCode: 'ILS',
+  oldRate: '3.600000',
+  newRate: '3.650000',
+  changedBy: ADMIN.id,
+  changedByLabel: ANNA_NAME,
+  changedAt: '2025-11-05T10:00:00+00:00',
+  changeReason: null,
+};
+
 const url = (query = '') => `http://localhost/api/admin/exchange-rates${query}`;
 const get = (query = '') => new NextRequest(url(query));
 
@@ -126,6 +146,7 @@ beforeEach(() => {
   listRecentHistory.mockResolvedValue({ data: [HISTORY], error: null });
   findByCode.mockResolvedValue({ data: RATE, error: null });
   listRecentHistoryForCurrency.mockResolvedValue({ data: [HISTORY], error: null });
+  findLatestChange.mockResolvedValue({ data: HISTORY, error: null });
   findAdminNamesByIds.mockResolvedValue({ data: [{ id: ADMIN.id, full_name: ANNA_NAME }], error: null });
   findEmailsByUserIds.mockResolvedValue({ data: [{ user_id: ADMIN.id, email: ANNA_EMAIL }], error: null });
 });
@@ -139,12 +160,13 @@ const noRead = () => {
   expect(listRecentHistory).not.toHaveBeenCalled();
   expect(findByCode).not.toHaveBeenCalled();
   expect(listRecentHistoryForCurrency).not.toHaveBeenCalled();
+  expect(findLatestChange).not.toHaveBeenCalled();
   expect(findAdminNamesByIds).not.toHaveBeenCalled();
   expect(findEmailsByUserIds).not.toHaveBeenCalled();
 };
 
 describe('GET /api/admin/exchange-rates', () => {
-  it('returns rates, labelled history, nameLookup and the server read time', async () => {
+  it('returns rates, labelled history, the labelled lastChange, nameLookup and the server read time', async () => {
     const res = await GET(get());
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -175,6 +197,7 @@ describe('GET /api/admin/exchange-rates', () => {
             changeReason: null,
           },
         ],
+        lastChange: LAST_CHANGE_WIRE,
         nameLookup: 'ok',
         readAt: NOW.toISOString(),
       },
@@ -208,6 +231,7 @@ describe('GET /api/admin/exchange-rates', () => {
   it.each([
     ['rates', () => listAll.mockResolvedValue({ data: null, error: new Error('rates down') })],
     ['history', () => listRecentHistory.mockResolvedValue({ data: null, error: new Error('history down') })],
+    ['lastChange', () => findLatestChange.mockResolvedValue({ data: null, error: new Error('latest down') })],
   ])('the %s read failing is one 500, named in the log, no details outside development', async (failed, arrange) => {
     arrange();
     const res = await GET(get());
@@ -287,9 +311,12 @@ describe('GET ?currency=XXX (SQ-12)', () => {
         readAt: NOW.toISOString(),
       },
     });
-    expect(listRecentHistoryForCurrency).toHaveBeenCalledWith('ILS');
+    expect(listRecentHistoryForCurrency).toHaveBeenCalledWith('ILS', THIS_MONTH_BOUNDS);
     expect(listAll).not.toHaveBeenCalled();
     expect(listRecentHistory).not.toHaveBeenCalled();
+    // SQ-31: the per-currency read never reads or sends lastChange.
+    expect(findLatestChange).not.toHaveBeenCalled();
+    expect(body.data).not.toHaveProperty('lastChange');
   });
 
   it('a valid code with no history: 200, an empty list, nameLookup ok, no lookup at all (W-5)', async () => {
@@ -371,6 +398,8 @@ describe('"Changed by" labels (SQ-13, SA Q-1)', () => {
 
   it('only null editors: no lookup at all, nameLookup ok', async () => {
     listRecentHistory.mockResolvedValue({ data: [historyRow('h1', null)], error: null });
+    // Slice 1d: lastChange's editor is looked up too, so it has none here either (DV-1).
+    findLatestChange.mockResolvedValue({ data: historyRow('h1', null), error: null });
     expect(await labelsOf()).toEqual({ nameLookup: 'ok', labels: [UNKNOWN_USER_LABEL] });
     expect(findAdminNamesByIds).not.toHaveBeenCalled();
     expect(findEmailsByUserIds).not.toHaveBeenCalled();
@@ -453,7 +482,7 @@ describe('"Changed by" labels (SQ-13, SA Q-1)', () => {
 
   it('only changedByLabel and nameLookup are added: the exact keys of a row and of each payload', async () => {
     const plain = await (await GET(get())).json();
-    expect(Object.keys(plain.data).sort()).toEqual(['history', 'nameLookup', 'rates', 'readAt']);
+    expect(Object.keys(plain.data).sort()).toEqual(['history', 'lastChange', 'nameLookup', 'rates', 'readAt']);
     expect(Object.keys(plain.data.history[0]).sort()).toEqual([
       'changeReason',
       'changedAt',
@@ -488,6 +517,151 @@ describe('source pin', () => {
   });
 });
 
+describe('the history window (slice 1d, SQ-26 to SQ-31)', () => {
+  it('the request dates reach both windowed reads as half-open UTC instants (SQ-28, SA-1d-7 (b))', async () => {
+    const res = await GET(get('?from=2026-09-01&to=2026-09-30'));
+    expect(res.status).toBe(200);
+    expect(listRecentHistory).toHaveBeenCalledTimes(1);
+    expect(listRecentHistory).toHaveBeenCalledWith({
+      fromInclusive: '2026-09-01T00:00:00.000Z',
+      toExclusive: '2026-10-01T00:00:00.000Z',
+    });
+    // lastChange is all-time: no window argument at all.
+    expect(findLatestChange).toHaveBeenCalledTimes(1);
+    expect(findLatestChange).toHaveBeenCalledWith();
+
+    const one = await GET(get('?currency=ILS&from=2028-02-01&to=2028-02-29'));
+    expect(one.status).toBe(200);
+    expect(listRecentHistoryForCurrency).toHaveBeenCalledWith('ILS', {
+      fromInclusive: '2028-02-01T00:00:00.000Z',
+      toExclusive: '2028-03-01T00:00:00.000Z',
+    });
+    expect(findLatestChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('no window in the query: This month at the server clock', async () => {
+    // A clock of its own for this test (the file-wide one is NOW).
+    jest.useFakeTimers({ now: new Date('2026-12-31T23:59:59.999Z'), doNotFake: ['nextTick', 'setImmediate'] });
+    try {
+      const res = await GET(get());
+      expect(res.status).toBe(200);
+      expect(listRecentHistory).toHaveBeenCalledWith({
+        fromInclusive: '2026-12-01T00:00:00.000Z',
+        toExclusive: '2027-01-01T00:00:00.000Z',
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a to after today is accepted (no cap, SQ-26)', async () => {
+    const res = await GET(get('?from=2026-10-01&to=2027-06-30'));
+    expect(res.status).toBe(200);
+  });
+
+  it('lastChange is labelled through the same single lookup: an editor only in lastChange is named', async () => {
+    listRecentHistory.mockResolvedValue({ data: [historyRow('h2', ADMIN.id)], error: null });
+    findLatestChange.mockResolvedValue({ data: historyRow('h9', FORMER), error: null });
+    findAdminNamesByIds.mockResolvedValue({ data: [{ id: ADMIN.id, full_name: ANNA_NAME }], error: null });
+    findEmailsByUserIds.mockResolvedValue({ data: [{ user_id: FORMER, email: FORMER_EMAIL }], error: null });
+    const res = await GET(get());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.history.map((row: { changedByLabel: unknown }) => row.changedByLabel)).toEqual([ANNA_NAME]);
+    expect(body.data.lastChange).toMatchObject({ id: 'h9', changedBy: FORMER, changedByLabel: FORMER_EMAIL });
+    // Each source once, with the union of the ids.
+    expect(findAdminNamesByIds).toHaveBeenCalledTimes(1);
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, FORMER]);
+    expect(findEmailsByUserIds).toHaveBeenCalledTimes(1);
+    expect(findEmailsByUserIds).toHaveBeenCalledWith([ADMIN.id, FORMER]);
+  });
+
+  it('an editor in both lists is looked up once', async () => {
+    await GET(get());
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id]);
+  });
+
+  it('an empty window still sends the all-time lastChange', async () => {
+    listRecentHistory.mockResolvedValue({ data: [], error: null });
+    const body = await (await GET(get())).json();
+    expect(body.data.history).toEqual([]);
+    expect(body.data.lastChange).toEqual(LAST_CHANGE_WIRE);
+  });
+
+  it('no history at all: lastChange is null and nothing is looked up', async () => {
+    listRecentHistory.mockResolvedValue({ data: [], error: null });
+    findLatestChange.mockResolvedValue({ data: null, error: null });
+    const body = await (await GET(get())).json();
+    expect(body.data.lastChange).toBeNull();
+    expect(body.data.nameLookup).toBe('ok');
+    expect(findAdminNamesByIds).not.toHaveBeenCalled();
+  });
+
+  it('a failed lookup nulls the lastChange label too (all or nothing across both lists)', async () => {
+    findLatestChange.mockResolvedValue({ data: historyRow('h9', FORMER), error: null });
+    findEmailsByUserIds.mockRejectedValue(new Error('admins exploded'));
+    const body = await (await GET(get())).json();
+    expect(body.data.nameLookup).toBe('failed');
+    expect(body.data.history.map((row: { changedByLabel: unknown }) => row.changedByLabel)).toEqual([null]);
+    expect(body.data.lastChange.changedByLabel).toBeNull();
+  });
+
+  it('a findLatestChange thrown error is a 500 too', async () => {
+    findLatestChange.mockRejectedValue(new Error('latest exploded'));
+    const res = await GET(get());
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ success: false, error: 'Failed to read exchange rates' });
+  });
+
+  it.each([
+    ['only from', '?from=2026-10-01'],
+    ['only to', '?to=2026-10-20'],
+    ['reversed', '?from=2026-10-20&to=2026-10-01'],
+    ['not a real date', '?from=2026-02-30&to=2026-03-01'],
+    ['an unpadded date', '?from=2026-1-01&to=2026-10-20'],
+    ['an empty date', '?from=&to=2026-10-20'],
+    ['before 2000-01-01', '?from=1999-12-31&to=2026-10-20'],
+    ['after 2999-12-31', '?from=2026-10-01&to=3000-01-01'],
+    ['year 0', '?from=0000-01-01&to=2026-10-20'],
+    ['year 9999', '?from=2026-10-01&to=9999-12-31'],
+    ['a repeated from', '?from=2026-10-01&from=2026-10-02&to=2026-10-20'],
+    ['a window plus a limit', '?from=2026-10-01&to=2026-10-20&limit=50'],
+    ['a limit alone', '?limit=50'],
+    ['a currency with a one-sided window', '?currency=ILS&from=2026-10-01'],
+  ])('%s → 400, nothing read', async (_label, query) => {
+    const res = await GET(get(query));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ success: false, error: 'Invalid query' });
+    noRead();
+  });
+
+  it('not an admin with a window: 403 before any read', async () => {
+    isAdmin.mockResolvedValue(false);
+    const res = await GET(get('?from=2026-10-01&to=2026-10-20'));
+    expect(res.status).toBe(403);
+    noRead();
+  });
+
+  it('SA-1d-9: the window dates may be logged, a label never (the lastChange editor included)', async () => {
+    findLatestChange.mockResolvedValue({ data: historyRow('h9', FORMER), error: null });
+    findEmailsByUserIds.mockResolvedValue({
+      data: [
+        { user_id: ADMIN.id, email: ANNA_EMAIL },
+        { user_id: FORMER, email: FORMER_EMAIL },
+      ],
+      error: null,
+    });
+    await GET(get('?from=2026-10-01&to=2026-10-20'));
+    findAdminNamesByIds.mockRejectedValue(new Error('profiles exploded'));
+    await GET(get());
+    const logged = JSON.stringify(logCalls, (_key, value) => (value instanceof Error ? value.message : value));
+    expect(logged).toContain('2026-10-01');
+    for (const secret of [ANNA_NAME, ANNA_EMAIL, FORMER_EMAIL]) {
+      expect(logged).not.toContain(secret);
+    }
+  });
+});
+
 // QA probes (slice 1a QA, 2026-10-19).
 describe('QA probes', () => {
   it('the history read rejecting (thrown) is a 500 without details', async () => {
@@ -502,5 +676,53 @@ describe('QA probes', () => {
     listRecentHistory.mockResolvedValue({ data: null, error: null });
     const res = await GET(get());
     expect(res.status).toBe(500);
+  });
+});
+
+// QA probes (slice 1d QA, 2026-10-21): window edges the Dev suite pins only at the rules level.
+describe('QA probes (slice 1d)', () => {
+  it.each([
+    ['the 1st of the month at 00:00:00Z', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z', '2026-10-02T00:00:00.000Z'],
+    ['the last day at 23:59:59Z', '2026-10-31T23:59:59.000Z', '2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'],
+  ])('no window on %s: This month', async (_label, now, fromInclusive, toExclusive) => {
+    jest.useFakeTimers({ now: new Date(now), doNotFake: ['nextTick', 'setImmediate'] });
+    try {
+      const res = await GET(get());
+      expect(res.status).toBe(200);
+      expect(listRecentHistory).toHaveBeenCalledWith({ fromInclusive, toExclusive });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['from = to: one whole UTC day', '?from=2026-10-20&to=2026-10-20', '2026-10-20T00:00:00.000Z', '2026-10-21T00:00:00.000Z'],
+    ['a leap day', '?from=2028-02-29&to=2028-02-29', '2028-02-29T00:00:00.000Z', '2028-03-01T00:00:00.000Z'],
+  ])('%s', async (_label, query, fromInclusive, toExclusive) => {
+    const res = await GET(get(query));
+    expect(res.status).toBe(200);
+    expect(listRecentHistory).toHaveBeenCalledWith({ fromInclusive, toExclusive });
+  });
+
+  it('?currency=EUR&from&to: the windowed per-currency list, its own keys only, no lastChange read or sent', async () => {
+    listRecentHistoryForCurrency.mockResolvedValue({ data: [{ ...HISTORY, currency_code: 'EUR' }], error: null });
+    const res = await GET(get('?currency=EUR&from=2026-09-01&to=2026-09-30'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Object.keys(body.data).sort()).toEqual(['currencyCode', 'history', 'nameLookup', 'readAt']);
+    expect(body.data.currencyCode).toBe('EUR');
+    expect(body.data.history).toHaveLength(1);
+    expect(listRecentHistoryForCurrency).toHaveBeenCalledWith('EUR', {
+      fromInclusive: '2026-09-01T00:00:00.000Z',
+      toExclusive: '2026-10-01T00:00:00.000Z',
+    });
+    expect(findLatestChange).not.toHaveBeenCalled();
+    expect(listRecentHistory).not.toHaveBeenCalled();
+  });
+
+  it('?currency=EUR with a reversed window: 400, nothing read', async () => {
+    const res = await GET(get('?currency=EUR&from=2026-09-30&to=2026-09-01'));
+    expect(res.status).toBe(400);
+    noRead();
   });
 });

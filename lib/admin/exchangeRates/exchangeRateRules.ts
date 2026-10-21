@@ -13,6 +13,15 @@
 
 import { z } from 'zod';
 
+// Pure and isomorphic (its header): the page and this route-side module share
+// one UTC preset arithmetic. A `lib/` import of it has precedent
+// (`lib/business-os/finance/dueDates.ts`, SA §13.6 SQ-27).
+import {
+  isRealDate,
+  resolveAdminWindow,
+  type AdminWindowPreset,
+} from '@/app/admin/components/adminWindowPresets';
+
 /** The base currency. Its rate is fixed at 1; it cannot be edited or disabled (FR-4, SA-R8). */
 export const BASE_CURRENCY = 'USD';
 
@@ -48,12 +57,80 @@ export const CURRENCY_CODE_PATTERN = /^[A-Z]{3}$/;
 
 export const currencyCodeSchema = z.string().regex(CURRENCY_CODE_PATTERN);
 
+/** The history window when the request names none (slice 1d, D-8, SQ-26): This month. */
+export const HISTORY_DEFAULT_PRESET = 'this_month' satisfies AdminWindowPreset;
+
 /**
- * The GET's query string (slice 1c.1, SQ-12): nothing, or one `currency` code.
- * Strict, so any other key (a `limit`, say) is refused rather than ignored.
- * The route refuses a repeated key before this runs.
+ * The earliest and latest window dates the GET accepts (slice 1d, SA-1d-3).
+ * `isRealDate` alone accepts `0000-01-01` (Postgres has no year 0) and
+ * `9999-12-31` (its next day is the extended-year ISO `+010000-…`); both would
+ * pass Zod and fail in the database as a 500. Compared as strings, after
+ * `isRealDate`.
  */
-export const exchangeRatesQuerySchema = z.object({ currency: currencyCodeSchema.optional() }).strict();
+export const HISTORY_WINDOW_MIN_DATE = '2000-01-01';
+export const HISTORY_WINDOW_MAX_DATE = '2999-12-31';
+
+/** A real `YYYY-MM-DD` inside the SA-1d-3 range. */
+const historyWindowDateSchema = z
+  .string()
+  .refine(isRealDate, 'Use a real date, YYYY-MM-DD')
+  .refine(
+    (value) => value >= HISTORY_WINDOW_MIN_DATE && value <= HISTORY_WINDOW_MAX_DATE,
+    `Use a date from ${HISTORY_WINDOW_MIN_DATE} to ${HISTORY_WINDOW_MAX_DATE}`
+  );
+
+/**
+ * The GET's query string (slice 1c.1, SQ-12; slice 1d, SQ-26): optionally one
+ * `currency` code, and optionally the history window as two whole UTC dates
+ * `from` and `to` (inclusive; the page resolved its preset, SQ-27). Both dates
+ * or neither, and `from` not after `to`; with neither the route uses
+ * `HISTORY_DEFAULT_PRESET`. A `to` after today is allowed and there is no day
+ * cap: the read is HISTORY_LIMIT rows on an indexed column. Strict, so any
+ * other key (a `limit`, say) is refused rather than ignored: the limit never
+ * comes from the request. The route refuses a repeated key before this runs.
+ */
+export const exchangeRatesQuerySchema = z
+  .object({
+    currency: currencyCodeSchema.optional(),
+    from: historyWindowDateSchema.optional(),
+    to: historyWindowDateSchema.optional(),
+  })
+  .strict()
+  .superRefine((query, ctx) => {
+    if ((query.from === undefined) !== (query.to === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Send both from and to, or neither', path: ['from'] });
+      return;
+    }
+    // Both are real dates here, so the string order is the date order.
+    if (query.from !== undefined && query.to !== undefined && query.from > query.to) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'from must not be after to', path: ['from'] });
+    }
+  });
+
+/** The history window as whole, inclusive UTC dates `YYYY-MM-DD` (slice 1d). */
+export type HistoryWindowDates = { from: string; to: string };
+
+const WINDOW_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The two instants the repository filters `changed_at` on (SQ-28): half-open
+ * on UTC midnights, `>= from 00:00Z` and `< (to + 1 day) 00:00Z`, so a change
+ * at `to` 23:59:59.999Z is in and one at the next midnight is out. `Date.UTC`
+ * arithmetic only: never local time, never a `23:59:59` literal. Pure.
+ */
+export function historyWindowBounds(dates: HistoryWindowDates): { fromInclusive: string; toExclusive: string } {
+  const [fromYear, fromMonth, fromDay] = dates.from.split('-').map(Number);
+  const [toYear, toMonth, toDay] = dates.to.split('-').map(Number);
+  return {
+    fromInclusive: new Date(Date.UTC(fromYear, fromMonth - 1, fromDay)).toISOString(),
+    toExclusive: new Date(Date.UTC(toYear, toMonth - 1, toDay) + WINDOW_DAY_MS).toISOString(),
+  };
+}
+
+/** The server's window when the request names none: This month at `now` (SQ-26). */
+export function defaultHistoryWindowDates(now: Date): HistoryWindowDates {
+  return resolveAdminWindow(HISTORY_DEFAULT_PRESET, now);
+}
 
 /** `> 0` decided on the string: a rate that passed RATE_PATTERN is positive iff it has a non-zero digit. */
 export function isPositiveRate(rate: string): boolean {
@@ -85,6 +162,40 @@ export function normaliseRate(rate: string): string {
 export function sameRate(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
   return normaliseRate(a) === normaliseRate(b);
+}
+
+/** Decimal places the Last rate change tile shows (user request, 2026-10-20). */
+export const KPI_RATE_DECIMALS = 3;
+
+/** Adds one to a string of digits ("0999" → "1000"), carrying as on paper. */
+function incrementDigits(digits: string): string {
+  const out = digits.split('');
+  for (let i = out.length - 1; i >= 0; i -= 1) {
+    if (out[i] !== '9') {
+      out[i] = String.fromCharCode(out[i].charCodeAt(0) + 1);
+      return out.join('');
+    }
+    out[i] = '0';
+  }
+  return `1${out.join('')}`;
+}
+
+/**
+ * A stored rate rounded half-up to `places` decimals for display, always with
+ * exactly `places` digits ("3.650000" → "3.650", "0.0005" → "0.001").
+ * Done on the digits, never through Number, so no float error creeps in and
+ * nothing here is arithmetic on money (D-5). A string that is not a plain
+ * decimal is returned unchanged.
+ */
+export function roundRateForDisplay(rate: string, places: number = KPI_RATE_DECIMALS): string {
+  const trimmed = rate.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return rate;
+  const [intPart, fracPart = ''] = trimmed.split('.');
+  if (fracPart.length <= places) return `${intPart}.${fracPart.padEnd(places, '0')}`;
+  const kept = `${intPart}${fracPart.slice(0, places)}`;
+  const roundedUp = fracPart.charCodeAt(places) >= '5'.charCodeAt(0);
+  const digits = (roundedUp ? incrementDigits(kept) : kept).padStart(places + 1, '0');
+  return `${digits.slice(0, digits.length - places)}.${digits.slice(digits.length - places)}`;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -167,7 +278,15 @@ export type NameLookupStatus = 'ok' | 'failed';
 
 export interface ExchangeRatesPayload {
   rates: ExchangeRateWire[];
+  /** The newest HISTORY_LIMIT changes INSIDE the requested window (slice 1d, FR-29). */
   history: ExchangeRateHistoryWire[];
+  /**
+   * The newest change of ALL TIME, whatever the window; null only when there is
+   * no history at all (slice 1d, D-8, FR-31, SQ-31). On the plain read only:
+   * `ExchangeRateHistoryPayload` never carries it. SA-1c-2 as amended: the
+   * "Last rate change" tile reads this, never `history[0]`.
+   */
+  lastChange: ExchangeRateHistoryWire | null;
   nameLookup: NameLookupStatus;
   /** Server clock at the read; the page's stale rule measures against it. */
   readAt: string;

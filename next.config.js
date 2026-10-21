@@ -95,6 +95,16 @@ const nextConfig = {
         destination: '/admin/finance?tab=plans',
         permanent: false,
       },
+      {
+        // Admin Exchange Rates slice 2 (SQ-4, SQ-17): the Exchange rates page
+        // is now Finance's Exchange rates tab. Temporary for the same reason
+        // as above. Next merges the incoming query with the destination's, so
+        // a Show filter (?currencies=all) arrives with it, and the
+        // destination's tab wins over an incoming one.
+        source: '/admin/exchange-rates',
+        destination: '/admin/finance?tab=exchange-rates',
+        permanent: false,
+      },
     ];
   },
 }

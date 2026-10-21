@@ -86,6 +86,16 @@
  * targets). No rule change: `StatusChip.tsx` still holds the one green
  * constant (now the object `OK_GREEN`, SA Q-3), and `KpiStrip.tsx` adds only
  * `next/link` and `./StatusChip`, both on the S-3 allow-list.
+ *
+ * Amended by Exchange rates 1c.2: the Exchange rates entry gains its filter
+ * spec `exchangeRatesFilters.ts` (as `usersFilters.ts` and `costsFilters.ts`
+ * sit in theirs). Registration only: no rule change and no shared source change.
+ *
+ * Amended by Admin Exchange Rates slice 2b (SQ-22): the Exchange rates page is
+ * deleted (its old URL redirects to Finance's Exchange rates tab), so its entry
+ * is removed and its five non-page files move to the Finance entry, listed
+ * there and only there. Registration only: no rule change and no shared source
+ * change.
  */
 
 import * as fs from 'fs';
@@ -702,6 +712,13 @@ const MIGRATED_PAGES = [
       // Finance F-5: the shared KPI tiles, and the sections they jump to.
       'app/admin/finance/components/FinanceKpiStrip.tsx',
       'app/admin/finance/components/FinanceSection.tsx',
+      // Admin Exchange Rates slice 2b (SQ-22): the Exchange rates tab. The view
+      // stays in app/admin/exchange-rates/ (SA-R13) and is listed here, and only here.
+      'app/admin/exchange-rates/exchangeRatesFilters.ts',
+      'app/admin/exchange-rates/components/ExchangeRatesView.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesKpis.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesTable.tsx',
+      'app/admin/exchange-rates/components/RateHistoryTable.tsx',
     ],
   },
   {
@@ -718,20 +735,6 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
       'app/admin/business-os-llm/components/costs/CostsSections.tsx',
       'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
-    ],
-  },
-  {
-    // Admin Exchange Rates slice 1a (SA-R11, BD-55): the shared header, the
-    // one-tile KPI strip, the Refresh-only bar with "Read at", shared states,
-    // table constants and chips; reads and writes on readAdminResponse. The
-    // view lives in components/ so slice 2's Finance tab can render it.
-    page: '/admin/exchange-rates (Exchange rates)',
-    files: [
-      'app/admin/exchange-rates/page.tsx',
-      'app/admin/exchange-rates/components/ExchangeRatesView.tsx',
-      'app/admin/exchange-rates/components/ExchangeRatesKpis.tsx',
-      'app/admin/exchange-rates/components/ExchangeRatesTable.tsx',
-      'app/admin/exchange-rates/components/RateHistoryTable.tsx',
     ],
   },
 ] as const;

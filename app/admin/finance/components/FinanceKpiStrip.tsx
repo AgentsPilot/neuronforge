@@ -26,12 +26,21 @@
  * server's (`platformMargin`, or `accountMargin` with a business picked).
  *
  * The test-key label shows on F-K2 only, from the one allowed copy constant
- * (C-4, MK-4). F-K5 keeps a slot for MK-5b's "Converted this month"; nothing
- * is rendered for it yet.
+ * (C-4, MK-4).
+ *
+ * Money MK-5b (§5.1 F-K5b): F-K5's second figure, "Converted this month: 2 of
+ * 9 paying", is the tile's detail line, with its OWN "Leading" pill. The tile
+ * is a link and a pill is a button, so the pill is never inside it: the tile
+ * sits in one more `relative` box, and the pill is that box's child at the
+ * bottom corner, beside the figure (the MK-0 rule). The shared `KpiTile` is
+ * not edited. With no `converted` in the payload, F-K5 renders exactly as
+ * before (Pin B).
  */
 
-import { KpiStrip, KpiTile, type KpiTileFilter, type KpiTileStatus } from '@/app/admin/components/layout/KpiStrip';
+// MK-5b: KpiIndicator is the converted figure's own pill (one copy of the pill, the shared one).
+import { KpiStrip, KpiTile, KpiIndicator, type KpiTileFilter, type KpiTileStatus } from '@/app/admin/components/layout/KpiStrip';
 import type { FinanceAccountMargin, FinanceMrrSection, FinancePayload, FinancePaying, FinanceRevenueSection, FinanceTile } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceConverted } from '@/lib/business-os/finance/financeTypes';
 import {
   FINANCE_KPIS,
   k1SubLine,
@@ -40,7 +49,11 @@ import {
   KPI_NONE_IN_DOLLARS,
   KPI_PAYING_ONE,
   KPI_PAYING_ONE_SUB,
+  KPI_CONVERTED_ONE,
+  KPI_CONVERTED_UNKNOWN,
   KPI_UNKNOWN,
+  kpiConverted,
+  kpiConvertedPartial,
   kpiMarginAfterFees,
   kpiMrrPastDue,
   kpiOtherPayments,
@@ -129,6 +142,17 @@ function payingTile(paying: FinancePaying | undefined): { value: string | null; 
   };
 }
 
+/** MK-5b: F-K5's second line. "at least" when cut off; Unknown on a failed read, never 0; a picked business yes or no. */
+export function convertedLine(converted: FinanceConverted): string {
+  if (converted.scope === 'one') {
+    return converted.status === 'unknown' || converted.state === null ? KPI_CONVERTED_UNKNOWN : KPI_CONVERTED_ONE[converted.state];
+  }
+  if (converted.status === 'unknown' || converted.converted === null || converted.paying === null) return KPI_CONVERTED_UNKNOWN;
+  const count = formatCount(converted.converted);
+  const paying = formatCount(converted.paying);
+  return converted.status === 'partial' ? kpiConvertedPartial(count, paying) : kpiConverted(count, paying);
+}
+
 /** K-10: the first read is in flight. Outside the `kpi-strip` wrapper, so a wait for the strip means figures. */
 export function FinanceKpiPlaceholders() {
   return <KpiStrip loading placeholderCount={5} />;
@@ -141,7 +165,7 @@ export function FinanceKpiStrip({
   accountsTab,
   plansTab,
 }: {
-  data: Pick<FinancePayload, 'tiles' | 'revenue' | 'mrr' | 'stripeMode' | 'paying' | 'platformMargin' | 'accountMargin' | 'accountId'>;
+  data: Pick<FinancePayload, 'tiles' | 'revenue' | 'mrr' | 'stripeMode' | 'paying' | 'converted' | 'platformMargin' | 'accountMargin' | 'accountId'>;
   /** The filter window, for the captions. */
   windowLabel: string;
   /** Where a section tile goes on the current view. */
@@ -156,6 +180,18 @@ export function FinanceKpiStrip({
   const mrr = mrrTile(data.mrr);
   const margin = marginTile(data.accountId === null ? data.platformMargin : data.accountMargin);
   const paying = payingTile(data.paying);
+  // One F-K5 tile; MK-5b adds the converted line as its detail (absent: exactly as before).
+  const payingTileElement = (
+    <KpiTile
+      testId="tile-fk5_paying"
+      label={FINANCE_KPIS.paying.label}
+      value={paying.value}
+      sub={paying.sub}
+      detail={data.converted ? convertedLine(data.converted) : null}
+      indicator={{ kind: 'lagging', definition: FINANCE_KPIS.paying.definition }}
+      {...plansTab}
+    />
+  );
   const testKey = data.stripeMode === 'test' && data.mrr?.status === 'ok' ? REVENUE_RECURRING_TEST_KEY_LABEL : null;
   const aiCostNow = k1.value ? formatUsdSign({ currency: USD, amount: k1.value.value }, { maxDecimals: 4 }) : null;
   const aiCostBefore = k1.previous ? formatUsdSign({ currency: USD, amount: k1.previous.value }, { maxDecimals: 4 }) : null;
@@ -201,15 +237,19 @@ export function FinanceKpiStrip({
           indicator={{ kind: 'lagging', definition: FINANCE_KPIS.aiMargin.definition }}
           {...accountsTab}
         />
-        {/* MK-5b's "Converted this month" joins this tile (a second, leading figure); not built here. */}
-        <KpiTile
-          testId="tile-fk5_paying"
-          label={FINANCE_KPIS.paying.label}
-          value={paying.value}
-          sub={paying.sub}
-          indicator={{ kind: 'lagging', definition: FINANCE_KPIS.paying.definition }}
-          {...plansTab}
-        />
+        {data.converted ? (
+          // MK-5b: the tile and the converted figure's own pill, in one relative box (the pill outside the link).
+          <div className="relative h-full" data-testid="tile-fk5_converted-box">
+            {payingTileElement}
+            <KpiIndicator
+              indicator={{ kind: 'leading', definition: FINANCE_KPIS.converted.definition }}
+              testId="tile-fk5_converted-indicator"
+              className="absolute bottom-2 right-2"
+            />
+          </div>
+        ) : (
+          payingTileElement
+        )}
       </KpiStrip>
     </div>
   );

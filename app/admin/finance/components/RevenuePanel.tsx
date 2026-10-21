@@ -25,6 +25,7 @@
  */
 
 import type { FinanceBoostEventsNote, FinanceBoostHeldNowLine, FinanceBoostLine, FinanceBoostNotes, FinanceBoostPackageRow, FinanceBoostRevenue, FinanceRevenueSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceBoostProblemsPart } from '@/lib/business-os/finance/financeTypes';
 // Money MK-4: a separate import, so the line above stays unedited.
 import type { FinanceMrrSection } from '@/lib/business-os/finance/financeTypes';
 import { RecurringNowPart } from './RecurringNowPart';
@@ -86,6 +87,7 @@ import {
 } from '../financeCopy';
 import { atLeast, formatCredits, formatMoney } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
+import { OurBoostProblems } from './PaymentProblemsSection';
 import { PlanRevenuePart } from './PlanRevenuePart';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
@@ -102,6 +104,8 @@ export function RevenuePanel({
   onRetry,
   mrr,
   stripeMode = null,
+  boostProblems,
+  accountId = null,
 }: {
   revenue: FinanceRevenueSection;
   windowLabel: string;
@@ -110,8 +114,17 @@ export function RevenuePanel({
   mrr?: FinanceMrrSection;
   /** Money MK-4 (CR-2): the key the MRR was read with; labels the MRR line only. */
   stripeMode?: 'test' | 'live' | null;
+  /**
+   * Money MK-6 (§6 item 14): "Our payment problems (boosts)", moved here from the
+   * old Payment problems section. Its own read, so it also shows when Revenue
+   * could not load. Absent (fixtures before 4b.2): not rendered.
+   */
+  boostProblems?: FinanceBoostProblemsPart;
+  /** The picked business, for the boost problems' Businesses link; null for all businesses. */
+  accountId?: string | null;
 }) {
   const scope = revenue.boosts.scope;
+  const ourProblems = boostProblems ? <OurBoostProblems part={boostProblems} accountId={accountId} /> : null;
   return (
     <FinanceSection
       id="revenue"
@@ -119,6 +132,7 @@ export function RevenuePanel({
       subtitle={scope === 'one' ? REVENUE_SUBTITLE_ONE(windowLabel) : REVENUE_SUBTITLE_ALL(windowLabel)}
       status={revenue.status}
       onRetry={onRetry}
+      alsoWhenUnknown={ourProblems}
     >
       <div className="space-y-4" data-testid="revenue-body" data-state={revenue.state}>
         <div className="space-y-2" data-testid="revenue-plans-part">
@@ -130,6 +144,8 @@ export function RevenuePanel({
           <h3 className={SUBHEAD}>{REVENUE_BOOSTS_HEADING}</h3>
           <BoostsPart boosts={revenue.boosts} />
         </div>
+        {/* MK-6: our boost problems, with our money (BD-38). */}
+        {ourProblems}
         <div data-testid="revenue-cannot">
           <p className={NOTE}>{REVENUE_CANNOT_TITLE}</p>
           <ul className={`list-disc pl-5 ${NOTE}`}>

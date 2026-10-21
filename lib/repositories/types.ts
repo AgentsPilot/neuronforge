@@ -1207,6 +1207,17 @@ export interface BusinessOsAccountHoldFactsRow extends BusinessOsAccountHoldFact
 }
 
 /**
+ * Money MK-5b (§5.1, G-2): where an account came from, for the admin Finance
+ * Converted this month list. `first_paid_at` is a cross-check only.
+ */
+export interface BusinessOsAccountSignupSourceRow {
+  account_id: string;
+  source: BusinessOsAccountHoldFacts['source'];
+  /** The lineage `first_paid_at` stamp, renamed here so the stamp's own name stays with its known readers (P5-C4). */
+  stamped_at: string | null;
+}
+
+/**
  * Plan payments P-5b.2 (S5-8, SA C-11): one (account, invoice) pair the admin
  * paid line asks the money history about. Both come from the SAME lineage row
  * (`account_id`, `first_payment_ref`), and a money row is kept only when it

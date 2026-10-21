@@ -17,6 +17,7 @@
  * payload's headline. The rule itself stays data in `financeRules.ts`.
  */
 
+import type { ReactNode } from 'react';
 import type { FinanceAccountsSection, FinanceGroupCount, FinanceTile } from '@/lib/business-os/finance/financeTypes';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import {
@@ -70,12 +71,19 @@ export function AccountsByPlanSection({
   windowLabel,
   onRetry,
   k3,
+  trend,
 }: {
   accounts: FinanceAccountsSection;
   windowLabel: string;
   onRetry: () => void;
   /** Money MK-5: K-3's tile, for its chip here. Absent (fixtures before MK-5): no chip, as before. */
   k3?: FinanceTile;
+  /**
+   * Money MK-7 (§6 item 13): this KPI's history trend (`HistoryTrend`, or the
+   * all-businesses line with a business picked). Its own lazy read, so it also
+   * shows when the section could not load. Absent: as before.
+   */
+  trend?: ReactNode;
 }) {
   const f = accounts.figures;
   const exact = accounts.status !== 'partial';
@@ -88,6 +96,7 @@ export function AccountsByPlanSection({
       subtitle={accounts.scope === 'one' ? ACCOUNTS_SUBTITLE_ONE : ACCOUNTS_SUBTITLE_ALL}
       status={accounts.status}
       onRetry={onRetry}
+      alsoWhenUnknown={trend}
     >
       {f && (
         <div className="space-y-3">
@@ -168,6 +177,7 @@ export function AccountsByPlanSection({
           </a>
         </div>
       )}
+      {trend}
     </FinanceSection>
   );
 }

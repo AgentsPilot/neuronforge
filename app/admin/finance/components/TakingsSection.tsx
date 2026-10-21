@@ -20,6 +20,7 @@
  */
 
 import type { FinanceTakingsFigures, FinanceTakingsLine, FinanceTakingsRow, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinancePaymentProblemsSection } from '@/lib/business-os/finance/financeTypes';
 import { AdminEmpty, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatCount } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -87,6 +88,7 @@ import {
 import { atLeast, formatMoney } from '../financeFormat';
 import { BlockKpi } from './BlockKpi';
 import { FinanceSection } from './FinanceSection';
+import { ClientPaymentProblems } from './PaymentProblemsSection';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
 const NOTE = 'text-[11px] text-slate-400';
@@ -115,11 +117,20 @@ export function TakingsSection({
   takings,
   windowLabel,
   onRetry,
+  problems,
 }: {
   takings: FinanceTakingsSection;
   windowLabel: string;
   onRetry: () => void;
+  /**
+   * Money MK-6 (§6 item 15): "Client payment problems", moved here from the old
+   * Payment problems section: the same owner as the client payments, the
+   * businesses. Its own reads, so it also shows when the takings could not load.
+   * Absent: not rendered.
+   */
+  problems?: FinancePaymentProblemsSection;
 }) {
+  const clientProblems = problems ? <ClientPaymentProblems problems={problems} windowLabel={windowLabel} /> : null;
   return (
     <FinanceSection
       id="takings"
@@ -128,8 +139,10 @@ export function TakingsSection({
       status={takings.status}
       onRetry={onRetry}
       badge={{ tone: 'neutral', label: TAKINGS_CHIP }}
+      alsoWhenUnknown={clientProblems}
     >
       {takings.figures && <TakingsBody f={takings.figures} />}
+      {clientProblems}
     </FinanceSection>
   );
 }

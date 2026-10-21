@@ -12,6 +12,7 @@
  * read leaves the gifted figures "Unknown" while the rest renders (AC-38).
  */
 
+import type { ReactNode } from 'react';
 import type { FinanceCreditRow, FinanceCreditsSection, FinanceTile } from '@/lib/business-os/finance/financeTypes';
 import type { StatusTone } from '@/app/admin/components/layout/StatusChip';
 import {
@@ -111,6 +112,7 @@ export function CreditsSection({
   windowLabel,
   onRetry,
   k2,
+  trend,
 }: {
   credits: FinanceCreditsSection;
   windowLabel: string;
@@ -120,6 +122,12 @@ export function CreditsSection({
    * (red, amber, or grey) instead of a fixed amber. Absent (older fixtures): grey.
    */
   k2?: FinanceTile;
+  /**
+   * Money MK-7 (§6 item 13): this KPI's history trend (`HistoryTrend`, or the
+   * all-businesses line with a business picked). Its own lazy read, so it also
+   * shows when the section could not load. Absent: as before.
+   */
+  trend?: ReactNode;
 }) {
   const f = section.figures;
   const gifted = section.gifted;
@@ -130,7 +138,14 @@ export function CreditsSection({
   const count = (value: number | null) => (value === null ? CREDITS_UNKNOWN : formatCount(value));
 
   return (
-    <FinanceSection id="credits" title={CREDITS_TITLE} subtitle={`${CREDITS_SOURCE}, ${windowLabel}`} status={section.status} onRetry={onRetry}>
+    <FinanceSection
+      id="credits"
+      title={CREDITS_TITLE}
+      subtitle={`${CREDITS_SOURCE}, ${windowLabel}`}
+      status={section.status}
+      onRetry={onRetry}
+      alsoWhenUnknown={trend}
+    >
       {f && (
         <div className="space-y-3">
           {/* Money MK-1: the block KPI is the headline (§3.2), leading (§5); K-2's far-over count is its amber chip. */}
@@ -227,6 +242,7 @@ export function CreditsSection({
           </ul>
         </div>
       )}
+      {trend}
     </FinanceSection>
   );
 }

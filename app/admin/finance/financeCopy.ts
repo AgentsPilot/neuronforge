@@ -89,6 +89,12 @@ export const FINANCE_KPIS = {
     definition:
       'What share of our accounts pay us for a plan: accounts paying now, out of every account with a plan, trials, Founding Partners and comped accounts included.',
   },
+  /** Money MK-5b (§5.1 F-K5b): F-K5's second figure, with its own leading pill (LL-4: one constant). */
+  converted: {
+    label: 'Converted this month',
+    definition:
+      'Of the accounts paying now, how many paid us for a plan for the first time this month. Always the current calendar month in UTC, whatever window the page shows.',
+  },
 } as const;
 /** USD-3 / USD-5: a count, never an amount, never part of the tile's value. */
 export const kpiOtherPayments = (count: number) =>
@@ -110,6 +116,40 @@ export const kpiPayingPartial = (paying: string, accounts: string) =>
   `At least ${paying} of at least ${accounts} accounts: the plan read was cut off`;
 export const KPI_PAYING_ONE = { yes: 'Paying', no: 'Not paying' } as const;
 export const KPI_PAYING_ONE_SUB = 'This business, now';
+/** Money MK-5b (§5.1): "Converted this month: 2 of 9 paying"; "at least" when cut off; Unknown, never 0. */
+export const kpiConverted = (converted: string, paying: string) => `${FINANCE_KPIS.converted.label}: ${converted} of ${paying} paying`;
+export const kpiConvertedPartial = (converted: string, paying: string) =>
+  `${FINANCE_KPIS.converted.label}: at least ${converted}, of at least ${paying} paying`;
+export const KPI_CONVERTED_UNKNOWN = `${FINANCE_KPIS.converted.label}: Unknown`;
+/** With a business picked (§5.1 is silent there; the recorded decision): that business, yes or no. */
+export const KPI_CONVERTED_ONE = {
+  converted: `${FINANCE_KPIS.converted.label}: Yes`,
+  stopped: `${FINANCE_KPIS.converted.label}: Yes, no longer paying`,
+  not_converted: `${FINANCE_KPIS.converted.label}: No`,
+} as const;
+
+// ── Money MK-5b: the Converted this month list (Plans & subscriptions, §5.1 breakdown) ──
+export const CONVERTED_TITLE = FINANCE_KPIS.converted.label;
+export const convertedSubtitle = (month: string) =>
+  `Accounts whose first plan payment was in ${month} (UTC). Always this month, whatever window is picked.`;
+export const CONVERTED_COLUMNS = {
+  business: 'Business',
+  plan: 'Plan',
+  firstPaid: 'First payment',
+  source: 'Came from',
+  status: 'Status',
+} as const;
+/** The lineage `source` in words (G-2: no lineage row is "Not recorded"; a failed read is "Unknown"). */
+export const CONVERTED_SOURCE = { admin_invite: 'Admin invite', account_invite: 'Friend invite', organic: 'Organic' } as const;
+export const CONVERTED_SOURCE_MISSING = 'Not recorded';
+export const CONVERTED_SOURCE_UNKNOWN = 'Unknown';
+export const CONVERTED_PLAN_UNKNOWN = 'Unknown plan';
+export const CONVERTED_STATUS = { paying: 'Paying', stopped: 'Converted, no longer paying' } as const;
+export const CONVERTED_EMPTY = 'No account paid us for a plan for the first time this month.';
+export const CONVERTED_PARTIAL = 'Not every account could be read, so these counts are "at least".';
+export const convertedCountLine = (converted: string, stopped: string) =>
+  `${converted} converted and paying · ${stopped} converted, no longer paying`;
+export const convertedShowing = (shown: string, total: string) => `Showing the newest ${shown} of ${total}`;
 /** MK-5: K-3 leaves the strip; its BD-11 rule is a chip on Plan mix, with the payload's own status and headline. */
 export const accountsK3Chip = (count: string) => `${count} Founding Partners with no end date`;
 
@@ -490,6 +530,7 @@ export const TAKINGS_NOTICE_UNREADABLE_FEES = (count: number) =>
 // ours (BD-2). No test-mode wording (BD-13). Every amount is the FULL invoice
 // or instalment amount, never what is still owed (S2-F7).
 /** SA-CR-4b2 CR-1: the Section 6 frame title. It names neither ours nor the clients'; each block says whose. */
+/** Money MK-6: no longer rendered (the section was split between Revenue and Client payments). Kept for the words' history. */
 export const PAYMENT_PROBLEMS_TITLE = 'Payment problems';
 /** Block B's own heading (with PROBLEMS_CHIP), never the frame's. */
 export const PROBLEMS_TITLE = 'Client payment problems';
@@ -675,6 +716,8 @@ export const TAB_OVERVIEW = 'Overview';
 export const TAB_ACCOUNTS = 'Accounts';
 /** Money MK-4: the Subscriptions page as a Finance tab, Plan mix on top (§3.2). */
 export const TAB_PLANS = 'Plans & subscriptions';
+/** Admin Exchange Rates slice 2a (D-7, "Finance tab only"): the rates view as the fourth and last tab. */
+export const TAB_EXCHANGE_RATES = 'Exchange rates';
 export const PLANS_SUBSCRIPTIONS_TITLE = 'Subscriptions';
 export const PLANS_SUBSCRIPTIONS_SUBTITLE = (asOf: string | null) =>
   `Plan subscriptions from our own billing records, for the server's current Stripe key${asOf ? ` · As of ${asOf}` : ''}`;
