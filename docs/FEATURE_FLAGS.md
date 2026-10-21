@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-18
-> **Version**: 1.11.0
+> **Last Updated**: 2026-10-21
+> **Version**: 1.12.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,7 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-21 | 1.12.0 | Dev | Added `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (data export DE-10b.2): the customer self-delete's off switch. Server-only, **default off**, on only for the exact string `true`. While off the Danger Zone is unchanged (`GET /api/business-os/account/deletion-check` answers `{ enabled: false }`) and `POST /api/business-os/account/delete` answers 404. Reader `isAccountSelfDeleteEnabled()`. |
 | 2026-10-18 | 1.11.0 | Dev | Listed `DELETION_RECEIPT_FINGERPRINT_KEY` (data export DE-10b.1). **An env secret, not a flag**, listed here because operators look here. Server-only. Missing or under 32 characters: every admin delete answers 503 `not_configured`. Set in Vercel Production and Preview before the deploy, and keep a copy: losing it makes old receipts unsearchable. |
 | 2026-10-11 | 1.10.0 | Dev | Added `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` (test harness slice TC-1, TEST ONLY): server-only, default off. While off `POST /api/admin/business-os/test/take-credits` answers 404 `not_enabled`. Developer `.env.local` only, never Vercel. |
 | 2026-10-07 | 1.9.0 | Dev | Added `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` (plan payments P-3a): server-only, default off. While off `POST /api/business-os/billing/plan/checkout` answers 404 and reads nothing. Turn on only where `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (otherwise the route refuses every checkout, 503 with an alert), and never in production before P-3b. |
@@ -367,6 +368,25 @@ database.
 ```bash
 # .env.local — on only while testing low / zero / over-plan credit states
 BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED=false
+```
+
+---
+
+### Business OS: customer self-delete — `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED`
+
+Data export DE-10b.2 ([workplan](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10B2_WORKPLAN.md)). **Default: off. Server-only.** Reader:
+`isAccountSelfDeleteEnabled()` in `lib/utils/featureFlags.ts`, read on every request. On **only** for the exact string `true` (`1`, `TRUE`, blank and anything else are off), because it gates an irreversible erasure.
+
+| State | What happens |
+|---|---|
+| Off (default) | `GET /api/business-os/account/deletion-check` answers `200 { enabled: false }` before reading the session, so Settings → Danger Zone keeps today's body (Download my data + Contact us). `POST /api/business-os/account/delete` answers **404** before reading anything |
+| On | The Danger Zone shows the self-delete steps (warning, plain-word blockers, the typed statement). A matching statement closes and anonymises the signed-in user's own account with the DE-10b.1 `anonymise` mode |
+
+Self-delete also needs `TEST_CLEANUP_SECRET` and `DELETION_RECEIPT_FINGERPRINT_KEY` on the same deployment; without either, the drawer says "not available right now" and the delete answers 503. The cleanup secret is Production-only, so on Preview the feature always reads "not available". Rollback: unset it and redeploy.
+
+```bash
+# Vercel Production only, for the QA window and after the user decides to keep it on
+BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED=true
 ```
 
 ---

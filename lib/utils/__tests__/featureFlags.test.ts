@@ -7,7 +7,9 @@
  */
 
 // AD-2a: a static import; this reader reads process.env at call time, so no module reset is needed.
-import { isAdminBusinessDeleteEnabled } from '../featureFlags';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { isAdminBusinessDeleteEnabled, isAccountSelfDeleteEnabled } from '../featureFlags';
 
 describe('Feature Flags', () => {
   const originalEnv = process.env;
@@ -404,5 +406,32 @@ describe('isBusinessOsCreditHistoryEnabled (credit deduction slice 7a — parked
       expect(src).toContain('process.env.ADMIN_BUSINESS_DELETE_ENABLED');
       expect(src).not.toContain('NEXT_PUBLIC_ADMIN_BUSINESS_DELETE');
     });
+  });
+});
+
+describe('isAccountSelfDeleteEnabled (data export DE-10b.2, server-only off switch, default off)', () => {
+  const NAME = 'BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED';
+  const prev = process.env[NAME];
+  afterEach(() => {
+    if (prev === undefined) delete process.env[NAME];
+    else process.env[NAME] = prev;
+  });
+
+  it.each([undefined, '', 'false', '1', 'TRUE ', 'True', ' true', 'yes'])('is off for %p', (value) => {
+    if (value === undefined) delete process.env[NAME];
+    else process.env[NAME] = value;
+    expect(isAccountSelfDeleteEnabled()).toBe(false);
+  });
+
+  it('is on only for the exact string true', () => {
+    process.env[NAME] = 'true';
+    expect(isAccountSelfDeleteEnabled()).toBe(true);
+  });
+
+  it('is server-only and not named use… (npm run lint:hooks)', () => {
+    const source = readFileSync(join(__dirname, '..', 'featureFlags.ts'), 'utf-8');
+    expect(source).toContain(`process.env.${NAME}`);
+    expect(source).not.toContain(`NEXT_PUBLIC_${NAME}`);
+    expect(source).not.toMatch(/function useAccountSelfDelete/);
   });
 });

@@ -183,6 +183,11 @@ export async function middleware(request: NextRequest) {
     // must keep its auth and onboarding checks.
     pathname === '/payments/success' ||
     pathname === '/payments/cancelled' ||
+    // Where a customer lands after deleting their own account (data export
+    // DE-10b.2). They have just been signed out and the account is gone, so
+    // the onboarding check has nothing to look at. Matched exactly; also on
+    // PlatformChrome's public list.
+    pathname === '/account-deleted' ||
     /*
      * Anything a browser or a tool fetches on its own.
      *

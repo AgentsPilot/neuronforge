@@ -199,7 +199,13 @@ export interface SendEmailResult {
 export function isInvalidDomainRecipient(address: string): boolean {
   const at = address.lastIndexOf('@');
   if (at < 0) return false;
-  const domain = address.slice(at + 1).trim().toLowerCase().replace(/\.$/, '');
+  // DE-10b.1 QA E-2: a display-name address (`Dana <x@deleted.invalid>`) ends in `>`; read the domain without it.
+  const domain = address
+    .slice(at + 1)
+    .trim()
+    .replace(/[\s>]+$/, '')
+    .toLowerCase()
+    .replace(/\.$/, '');
   return domain === 'invalid' || domain.endsWith('.invalid');
 }
 

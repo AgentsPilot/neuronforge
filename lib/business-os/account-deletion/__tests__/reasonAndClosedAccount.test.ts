@@ -3,7 +3,7 @@
  * (TQ-21). DE-10b.1, workplan §7.1.
  */
 
-import { closedAccountRef, isClosedAccountEmail } from '../closedAccount';
+import { adminAccountLabel, closedAccountRef, isClosedAccountEmail } from '../closedAccount';
 import { adminDeleteReasonSchema, hardDeleteReasonSchema, isReasonComplete, reasonNoteOf } from '../reason';
 
 describe('adminDeleteReasonSchema', () => {
@@ -66,5 +66,19 @@ describe('closed account email', () => {
   it('null and undefined are not closed accounts', () => {
     expect(isClosedAccountEmail(null)).toBe(false);
     expect(closedAccountRef(undefined)).toBeNull();
+  });
+});
+
+describe('adminAccountLabel (DE-10b.2, TQ-21)', () => {
+  it('names a closed account by its reference', () => {
+    expect(adminAccountLabel('deleted-0123456789ab@deleted.invalid')).toBe('Deleted account 0123456789ab');
+  });
+
+  it('passes any other email through, and nothing for nothing', () => {
+    expect(adminAccountLabel('jane@example.com')).toBe('jane@example.com');
+    expect(adminAccountLabel('deleted-xyz@deleted.invalid')).toBe('deleted-xyz@deleted.invalid');
+    expect(adminAccountLabel('')).toBeNull();
+    expect(adminAccountLabel(null)).toBeNull();
+    expect(adminAccountLabel(undefined)).toBeNull();
   });
 });

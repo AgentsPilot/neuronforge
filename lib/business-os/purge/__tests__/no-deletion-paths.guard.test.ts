@@ -201,8 +201,13 @@ const SQL_AUTH_WRITE_ALLOW_LIST: ReadonlyArray<{ file: string; why: string }> = 
  * Assertion family 5 (DE-10b.1, SA TQ-10): who may import the repository that
  * calls the cleanup function. It is the one way into a delete or a close of a
  * real account, so a new caller must be argued for here, in a diff. Tests of an
- * allowed file may import it too. The DE-10b.2 self-delete route is added in
- * that PR.
+ * allowed file may import it too.
+ *
+ * DE-10b.2 (SA workplan review V-2): the self-delete routes do NOT import it.
+ * They reach the engine through `selfServiceDeletion.ts`, the one self-service
+ * runner next to `runAccountAnonymise`, so the list grew by that runner and its
+ * test, and by no route file. A customer route that imports the repository
+ * directly fails here.
  */
 const CLEANUP_REPOSITORY_IMPORT = /from\s+['"](?:@\/lib\/repositories\/|\.{1,2}\/(?:[\w.-]+\/)*)TestAccountCleanupRepository['"]/;
 const CLEANUP_REPOSITORY_FILE = 'lib/repositories/TestAccountCleanupRepository.ts';
@@ -215,6 +220,11 @@ const CLEANUP_REPOSITORY_IMPORTERS: ReadonlyArray<{ file: string; why: string }>
   { file: 'lib/repositories/__tests__/TestAccountCleanupRepository.test.ts', why: 'Test of the repository.' },
   { file: 'lib/business-os/test-account-cleanup/__tests__/cleanupApiTypes.wireTypes.test.ts', why: 'Type-level pin of the wire types.' },
   { file: 'lib/business-os/account-deletion/__tests__/runAccountAnonymise.test.ts', why: 'Test of runAccountAnonymise.' },
+  {
+    file: 'lib/business-os/account-deletion/selfServiceDeletion.ts',
+    why: 'DE-10b.2 self-delete runners (pre-check and anonymise) on the SESSION user; the customer routes call these, never the repository.',
+  },
+  { file: 'lib/business-os/account-deletion/__tests__/selfServiceDeletion.test.ts', why: 'Test of the self-service runners.' },
 ];
 
 /** Every file that imports the cleanup repository and is not on the allow-list. */
@@ -526,6 +536,24 @@ describe('repo-wide guard: no deletion paths outside the purge engine (C-34)', (
       ["import { TestAccountCleanupRepository } from '../../lib/repositories/TestAccountCleanupRepository';"],
     ])('negative fixture: %s in a synthetic app/api/foo/route.ts is detected', (line) => {
       expect(cleanupRepositoryImportOffenders([{ file: 'app/api/foo/route.ts', code: stripComments(line) }])).toEqual(['app/api/foo/route.ts']);
+    });
+
+    // DE-10b.2, SA V-2: the customer routes reach the engine through the self-service runner only.
+    it.each(['app/api/business-os/account/delete/route.ts', 'app/api/business-os/account/deletion-check/route.ts'])(
+      '%s exists, imports the self-service runner and not the repository',
+      (file) => {
+        const hit = SCANNED.find((s) => s.file === file);
+        expect(hit).toBeDefined();
+        expect(CLEANUP_REPOSITORY_IMPORT.test(hit!.code)).toBe(false);
+        expect(hit!.code).toMatch(/from '@\/lib\/business-os\/account-deletion\/selfServiceDeletion'/);
+        expect(CLEANUP_REPOSITORY_IMPORTERS.map((entry) => entry.file)).not.toContain(file);
+      }
+    );
+
+    it('negative fixture: the self-delete route importing the repository directly is detected', () => {
+      const file = 'app/api/business-os/account/delete/route.ts';
+      const code = stripComments("import { TestAccountCleanupRepository } from '@/lib/repositories/TestAccountCleanupRepository';");
+      expect(cleanupRepositoryImportOffenders([{ file, code }])).toEqual([file]);
     });
   });
 
