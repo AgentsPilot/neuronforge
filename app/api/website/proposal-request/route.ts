@@ -321,7 +321,15 @@ export async function POST(request: NextRequest) {
      */
     const booksAConsultation = service.is_scheduled !== false && Boolean(data.start_time);
 
-    if (booksAConsultation) {
+    /*
+     * `data.start_time` repeated, although `booksAConsultation` already proves
+     * it: narrowing does not travel through an intermediate boolean, so the
+     * compiler still sees `string | undefined` here and `new Date(undefined)`
+     * is an Invalid Date rather than an error anyone would notice. Asserted
+     * with `!` it would compile and stay a silent trap; checked, the type is
+     * honest and the runtime behaviour is identical.
+     */
+    if (booksAConsultation && data.start_time) {
       const start = new Date(data.start_time);
       const end = data.end_time
         ? new Date(data.end_time)

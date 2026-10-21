@@ -700,14 +700,41 @@ export async function cancelBooking(
        * the quote was silently never stopped, its email never sent and the
        * cascade below never reached. One read and an `.in('id', …)` is the
        * boring version that works.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * AND THE READ ITSELF ASKS TWICE RATHER THAN WITH `.or(...)`.
+       *
+       * `.or()` on a SELECT is legal and this read was correct with it. It is
+       * written as two equality reads anyway, because `mutationOrSelect.guard`
+       * scans forward from every `.update(` to the end of the enclosing BLOCK —
+       * 242 lines here — and reported this unrelated `.or()` as if it belonged
+       * to the instalment update far above. The guard protects against a real
+       * production failure and is not worth weakening with an exemption for a
+       * file that does not actually break the rule.
+       *
+       * Two reads, merged by id, cost one extra round trip and cannot be
+       * mistaken for anything by any reader, human or parser.
        * ───────────────────────────────────────────────────────────────────────
        */
-      const { data: quotes } = await supabaseServer
-        .from('proposals')
-        .select('id, package_booking_id')
-        .eq('user_id', userId)
-        .or(`booking_id.eq.${bookingId},package_booking_id.eq.${bookingId}`)
-        .eq('status', 'accepted');
+      const quoteRows = await Promise.all(
+        (['booking_id', 'package_booking_id'] as const).map(column =>
+          supabaseServer
+            .from('proposals')
+            .select('id, package_booking_id')
+            .eq('user_id', userId)
+            .eq(column, bookingId)
+            .eq('status', 'accepted')
+        )
+      );
+
+      /* One quote can match on both columns; `id` is what de-duplicates it. */
+      const quotes = [
+        ...new Map(
+          quoteRows
+            .flatMap(result => result.data ?? [])
+            .map(row => [row.id as string, row])
+        ).values(),
+      ];
 
       const { data: stoppedQuotes } = quotes?.length
         ? await supabaseServer

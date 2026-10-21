@@ -261,47 +261,32 @@ const SCHEDULING_BOOKINGS_EXPORT: TableExportClassification = {
 /*
  * DE-7 replaced `planned()`: every table is classified on the spot, and the CI
  * forbids the old placeholder. These two arrived on a branch written before
- * that rule and are classified here by analogy with `SCHEDULING_BOOKINGS_EXPORT`
- * above — the same domain, already reviewed — so the owner's export contains
- * their appointments and the enquiries that nearly became bookings.
+ * that rule.
  *
- * Every live column appears in `columns` or `excludedColumns`; a column in
- * neither is reported by `npm run schema:reconcile`.
+ * EXCLUDED, NOT INCLUDED, AND THAT IS A DEFERRAL RATHER THAN A DECISION.
+ *
+ * `include` needs a SECTION, and the exporter allows exactly one include
+ * descriptor per section — `BusinessDataExportRepository` raises
+ * "expected one include descriptor for the section, found 3" when three tables
+ * share `bookings`. Giving each its own section means adding ids to
+ * `ExportSectionId` and naming them in `SECTION_NAMES_EN` and
+ * `SECTION_NAMES_HE`, which changes what an owner sees in their downloaded
+ * data and its README in two languages. That is a product change, not a merge
+ * resolution.
+ *
+ * Purge is unaffected: both stay `level: 'reset'`, so deleting an account
+ * still clears them. Only the export omits them, exactly as it does today on
+ * main, where neither table is classified at all.
  */
-const SCHEDULING_MEETINGS_EXPORT: TableExportClassification = {
-  kind: 'include',
-  section: 'bookings',
-  columns: [
-    'id', 'booking_id', 'start_time', 'end_time', 'timezone', 'meeting_status',
-    'occurrence_number', 'session_number', 'outcome_by', 'outcome_at', 'moved_by',
-    'created_at', 'updated_at',
-  ],
-  excludedColumns: {
-    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
-    reminder_24hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
-    reminder_2hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
-    external_calendar_event_id: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
-    calendar_synced_at: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
-    calendar_sync_provider: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
-    calendar_sync_error: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
-  },
-};
+const SCHEDULING_MEETINGS_EXPORT: TableExportClassification = exclude(
+  'the appointments are represented by their bookings in the bookings section',
+  'a section of its own is a product decision (DE-4 follow-up)'
+);
 
-const ABANDONED_BOOKINGS_EXPORT: TableExportClassification = {
-  kind: 'include',
-  section: 'bookings',
-  columns: [
-    'id', 'service_id', 'booking_id', 'first_name', 'last_name', 'email', 'phone',
-    'start_time', 'end_time', 'timezone', 'source', 'status', 'page_url', 'locale',
-    'created_at', 'updated_at',
-  ],
-  excludedColumns: {
-    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
-    session_id: 'the browser session that was being tracked, not data anyone entered',
-    checkout_session_id: 'a Stripe checkout reference, machinery rather than business data',
-    recovery_email_sent_at: EXPORT_COLUMN_REASON.REMINDER_SENT,
-  },
-};
+const ABANDONED_BOOKINGS_EXPORT: TableExportClassification = exclude(
+  'enquiries that were never completed into a booking',
+  'a section of its own is a product decision (DE-4 follow-up)'
+);
 
 
 /** `scheduling_availability_exceptions` -> `time_off`. */

@@ -79,16 +79,26 @@ function mockSupabase(current: Current | null, claimed = true) {
     return b;
   };
 
-  const writeBuilder = () => {
+  /*
+   * `table` so only the BOOKING's own writes are recorded. `cancel()` also
+   * sweeps `scheduling_meetings`, narrowing it in SQL with
+   * `.is('meeting_status', null)` so an hour somebody already answered for is
+   * never touched. This double does not evaluate filters, so recording that
+   * sweep too would fail "a held meeting is not rewritten to cancelled" on a
+   * statement that, in the database, never matches the held row.
+   */
+  const writeBuilder = (table?: string) => {
     const entry = { payload: {} as Record<string, unknown>, conditional: false };
     const row = { id: BOOKING, contact_id: 'contact-1', payment_amount: 400, service_id: 'svc-1' };
     const b: Record<string, unknown> = {};
     b.update = jest.fn((payload: Record<string, unknown>) => {
       entry.payload = payload;
-      writes.push(entry);
+      if (table === undefined || table === 'scheduling_bookings') writes.push(entry);
       return b;
     });
     b.eq = jest.fn(() => b);
+    /* The meetings sweep's own filter; the chain breaks without it. */
+    b.is = jest.fn(() => b);
     b.neq = jest.fn(() => {
       entry.conditional = true;
       return b;
@@ -104,9 +114,9 @@ function mockSupabase(current: Current | null, claimed = true) {
 
   let call = 0;
   const client = {
-    from: jest.fn(() => {
+    from: jest.fn((table: string) => {
       call += 1;
-      return call === 1 ? readBuilder() : writeBuilder();
+      return call === 1 ? readBuilder() : writeBuilder(table);
     }),
   } as unknown as SupabaseClient;
 

@@ -61,15 +61,35 @@ function mockSupabase(preRead: Current | null | undefined) {
     return b;
   };
 
-  const writeBuilder = () => {
+  /*
+   * ── ONLY THE BOOKING'S OWN WRITES ARE RECORDED ───────────────────────────
+   *
+   * `cancel()` writes to two tables now: the booking, and a sweep over
+   * `scheduling_meetings` that calls off the hours nobody has answered for.
+   * That sweep's payload legitimately carries `meeting_status: 'cancelled'`,
+   * and it is narrowed in SQL by `.is('meeting_status', null)` — a filter this
+   * double does not evaluate.
+   *
+   * Recording both tables therefore made "no payload mentions meeting_status"
+   * fail on the sweep while the booking, which is what these tests are about,
+   * was correct. The table is checked here so each assertion keeps meaning
+   * what it says.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const writeBuilder = (table?: string) => {
     const row = { id: BOOKING, contact_id: 'contact-1', service_id: 'svc-1', payment_amount: 0 };
     const b: Record<string, unknown> = {};
     b.update = jest.fn((payload: Record<string, unknown>) => {
-      writes.push(payload);
+      if (table === undefined || table === 'scheduling_bookings') writes.push(payload);
       return b;
     });
     b.eq = jest.fn(() => b);
     b.neq = jest.fn(() => b);
+    /* `cancel()` narrows the meeting sweep with `.is('meeting_status', null)`
+       so it never overwrites an hour somebody already answered for. The double
+       has to offer every link the real chain uses, or the call throws here and
+       nowhere else. */
+    b.is = jest.fn(() => b);
     b.select = jest.fn(() => b);
     b.maybeSingle = jest.fn(() => Promise.resolve({ data: row, error: null }));
     b.single = jest.fn(() => Promise.resolve({ data: row, error: null }));
@@ -78,9 +98,9 @@ function mockSupabase(preRead: Current | null | undefined) {
 
   let call = 0;
   const client = {
-    from: jest.fn(() => {
+    from: jest.fn((table: string) => {
       call += 1;
-      return preRead !== undefined && call === 1 ? readBuilder() : writeBuilder();
+      return preRead !== undefined && call === 1 ? readBuilder() : writeBuilder(table);
     }),
   } as unknown as SupabaseClient;
 
