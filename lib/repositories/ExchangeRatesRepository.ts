@@ -1,7 +1,8 @@
 // lib/repositories/ExchangeRatesRepository.ts
 // Data-access layer for `exchange_rates` and `exchange_rate_history`: the
-// admin-maintained table of rates behind `/admin/exchange-rates` (Admin
-// Exchange Rates slice 1a, requirement ADMIN_EXCHANGE_RATES_REQUIREMENT.md).
+// admin-maintained table of rates behind the Exchange rates tab of
+// `/admin/finance` (Admin Exchange Rates slices 1a and 2, requirement
+// ADMIN_EXCHANGE_RATES_REQUIREMENT.md).
 // Nothing reads these rates to convert money (D-5).
 //
 // WHY THERE IS NO `.eq('user_id', userId)` HERE (CLAUDE.md rule 4 exemption,
@@ -24,9 +25,11 @@
 //   AdminAccessService → the `admin_users` table; never `profiles.role`). Do
 //   not add an ungated caller.
 //
-//   No method accepts a caller-supplied filter, table name, column list or
-//   limit — only a currency code the route has already narrowed through Zod,
-//   a validated decimal string, a boolean and the admin id.
+//   No method accepts a caller-supplied table name, column list or limit —
+//   only a currency code the route has already narrowed through Zod, a
+//   validated decimal string, a boolean, the admin id, and the history window:
+//   two ISO instants (`fromInclusive` / `toExclusive`) the route built with
+//   `historyWindowBounds` from Zod-validated whole dates (slice 1d, SQ-28).
 //
 //   `updated_by` MUST be the acting admin on every update, in the SAME UPDATE
 //   as the change: the live trigger `exchange_rate_change_trigger` copies
@@ -73,6 +76,16 @@ const RATE_COLUMNS =
 
 const HISTORY_COLUMNS =
   'id, currency_code, old_rate::text, new_rate::text, changed_by, changed_at, change_reason';
+
+/**
+ * The history window as two instants on UTC midnights, half-open (slice 1d,
+ * SQ-28): `changed_at >= fromInclusive` and `changed_at < toExclusive`. Built
+ * only by `historyWindowBounds` in the rules module.
+ */
+export interface ExchangeRateHistoryWindow {
+  fromInclusive: string;
+  toExclusive: string;
+}
 
 export interface ExchangeRatesRepositoryOptions {
   /** Test seam for `last_updated_at`. */
@@ -131,8 +144,12 @@ export class ExchangeRatesRepository {
     }
   }
 
-  /** The newest history rows, newest first (SA-R4). */
-  async listRecentHistory(): Promise<RepositoryResult<ExchangeRateHistoryRow[]>> {
+  /**
+   * The newest history rows inside the window, newest first (SA-R4; slice 1d,
+   * FR-29): the selection is made here, never trimmed by the page. A row with
+   * a null `changed_at` fails both comparisons, so it is never in a window.
+   */
+  async listRecentHistory(window: ExchangeRateHistoryWindow): Promise<RepositoryResult<ExchangeRateHistoryRow[]>> {
     const methodLogger = this.logger.child({ method: 'listRecentHistory' });
     const startTime = Date.now();
 
@@ -140,6 +157,8 @@ export class ExchangeRatesRepository {
       const { data, error } = await this.supabase
         .from(HISTORY_TABLE)
         .select(HISTORY_COLUMNS)
+        .gte('changed_at', window.fromInclusive)
+        .lt('changed_at', window.toExclusive)
         .order('changed_at', { ascending: false })
         .limit(EXCHANGE_RATE_HISTORY_LIMIT);
 
@@ -154,11 +173,15 @@ export class ExchangeRatesRepository {
   }
 
   /**
-   * One currency's newest history rows, newest first (slice 1c.1, SQ-12): the
-   * per-row History view. The code has already passed `currencyCodeSchema` in
-   * the route; the limit is the same fixed constant, never caller-supplied.
+   * One currency's newest history rows inside the window, newest first (slice
+   * 1c.1, SQ-12; slice 1d, FR-30): the per-row History view. The code has
+   * already passed `currencyCodeSchema` in the route; the limit is the same
+   * fixed constant, never caller-supplied.
    */
-  async listRecentHistoryForCurrency(currencyCode: string): Promise<RepositoryResult<ExchangeRateHistoryRow[]>> {
+  async listRecentHistoryForCurrency(
+    currencyCode: string,
+    window: ExchangeRateHistoryWindow
+  ): Promise<RepositoryResult<ExchangeRateHistoryRow[]>> {
     const methodLogger = this.logger.child({ method: 'listRecentHistoryForCurrency', currencyCode });
     const startTime = Date.now();
 
@@ -167,6 +190,8 @@ export class ExchangeRatesRepository {
         .from(HISTORY_TABLE)
         .select(HISTORY_COLUMNS)
         .eq('currency_code', currencyCode)
+        .gte('changed_at', window.fromInclusive)
+        .lt('changed_at', window.toExclusive)
         .order('changed_at', { ascending: false })
         .limit(EXCHANGE_RATE_HISTORY_LIMIT);
 
@@ -176,6 +201,34 @@ export class ExchangeRatesRepository {
       return { data: (data as unknown as ExchangeRateHistoryRow[]) || [], error: null };
     } catch (error) {
       methodLogger.error({ err: error, duration: Date.now() - startTime }, 'Failed to fetch exchange rate history');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The newest history row of all time, or `data: null` when there is none
+   * (slice 1d, SQ-31): the "Last rate change" tile, whatever the history
+   * window. No window. Nulls last (SA-1d-4): `changed_at` is nullable, and a
+   * row with no time must never be the tile's last change.
+   */
+  async findLatestChange(): Promise<RepositoryResult<ExchangeRateHistoryRow | null>> {
+    const methodLogger = this.logger.child({ method: 'findLatestChange' });
+    const startTime = Date.now();
+
+    try {
+      const { data, error } = await this.supabase
+        .from(HISTORY_TABLE)
+        .select(HISTORY_COLUMNS)
+        .order('changed_at', { ascending: false, nullsFirst: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      const rows = (data as unknown as ExchangeRateHistoryRow[] | null) ?? [];
+      methodLogger.debug({ found: rows.length > 0, duration: Date.now() - startTime }, 'Latest exchange rate change fetched');
+      return { data: rows[0] ?? null, error: null };
+    } catch (error) {
+      methodLogger.error({ err: error, duration: Date.now() - startTime }, 'Failed to fetch the latest exchange rate change');
       return { data: null, error: error as Error };
     }
   }

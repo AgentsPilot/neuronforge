@@ -89,6 +89,12 @@
  * read is its own `unknown` section and never fails the page. The query
  * schema is unchanged.
  *
+ * Money MK-5b (§5.1 F-K5b, SA-10): the builder adds `converted` (Converted
+ * this month), through the wiring's `converted` reads; the billing mode is
+ * decided in `lib/admin/billing`, never here. The line gains
+ * `sections.converted` (a status) and `counts.converted` (counts only, never
+ * an id, a date or a name). The query schema is unchanged.
+ *
  * @module app/api/admin/business-os/finance
  */
 
@@ -327,6 +333,8 @@ export async function GET(request: NextRequest) {
           takings: payload.takings.status,
           // MK-4: MRR now, its status and the lines count only (never a figure).
           mrr: { status: mrr.status, currencies: mrr.lines.length },
+          // MK-5b: Converted this month, its status only (the counts are in `counts.converted`).
+          converted: payload.converted?.status ?? 'not_built',
           paymentProblems: {
             block: payload.paymentProblems.status,
             overdueInvoices: payload.paymentProblems.overdueInvoices.status,

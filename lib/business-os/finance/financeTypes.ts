@@ -507,6 +507,12 @@ export interface FinancePayload {
    */
   paying?: FinancePaying;
   /**
+   * Money MK-5b (§5.1 F-K5b): Converted this month, F-K5's second figure and
+   * the Plans & subscriptions list. Set by the builder only when its wiring
+   * supplies the first-payment read; absent otherwise.
+   */
+  converted?: FinanceConverted;
+  /**
    * Money MK-5: F-K4 "AI margin" for all businesses, the Accounts tab's own
    * platform line (`buildPlatformMargin`). Absent with a business picked:
    * F-K4 then reads `accountMargin`.
@@ -525,6 +531,61 @@ export interface FinancePayload {
 export type FinancePaying =
   | { scope: 'all'; status: 'ok' | 'partial' | 'unknown'; paying: number | null; accounts: number | null }
   | { scope: 'one'; status: 'ok' | 'unknown'; paying: boolean | null };
+
+// ── Money MK-5b: Converted this month (§5.1 F-K5b, Q-12, G-1 to G-3) ─────────
+
+/** Where an account came from: the lineage `source`, or null when it has no lineage row (G-2). */
+export type FinanceSignupSource = 'admin_invite' | 'account_invite' | 'organic';
+
+/** The current calendar month in UTC (BD-9): `[from, to)`, ISO. Always this month, whatever the window. */
+export interface FinanceMonthSpan {
+  from: string;
+  to: string;
+}
+
+/** One account whose first plan payment above $0 was this month. */
+export interface FinanceConvertedRow {
+  accountId: string;
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable';
+  /** The account's plan group today (Plan mix's group), or null when the plan walk could not place it. */
+  group: FinanceGroupKey | null;
+  tierLabel: string | null;
+  /** ISO timestamptz of the first plan payment. */
+  firstPaymentAt: string;
+  source: FinanceSignupSource | null;
+  /** `missing`: no lineage row ("Not recorded", G-2); `unavailable`: the lineage read failed. */
+  sourceStatus: 'found' | 'missing' | 'unavailable';
+  /** False: converted this month and no longer paying (listed, not counted). */
+  payingNow: boolean;
+}
+
+/**
+ * All businesses: `converted` of `paying` (F-K5's numerator) paid us for the
+ * first time this month; `stopped` converted this month and no longer pay.
+ * `partial`: the plan walk was capped, so the counts are "at least".
+ * `unknown`: a read failed (or reached its ceiling); never 0. `rows` is at
+ * most `shownLimit`, newest first payment first.
+ * One business: whether it converted this month.
+ */
+export type FinanceConverted =
+  | {
+      scope: 'all';
+      status: 'ok' | 'partial' | 'unknown';
+      month: FinanceMonthSpan;
+      converted: number | null;
+      paying: number | null;
+      stopped: number | null;
+      rows: FinanceConvertedRow[] | null;
+      shownLimit: number;
+    }
+  | {
+      scope: 'one';
+      status: 'ok' | 'unknown';
+      month: FinanceMonthSpan;
+      state: 'converted' | 'stopped' | 'not_converted' | null;
+      firstPaymentAt: string | null;
+    };
 
 // ── Money MK-4: MRR now (SA-2, BD-37, BQ-P8a-4) ─────────────────────────────
 // The one MRR rule (`planMrr.ts`) over the current-mode billing rows, the

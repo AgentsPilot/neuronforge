@@ -104,6 +104,18 @@
  * The pure `buildRecordedAiCost` decides exactness and the difference; this
  * file hands it Section 3's integer units and never adds the two measures.
  *
+ * CONVERTED THIS MONTH (Money MK-5b, §5.1 F-K5b, SA-10). ONE more read, made
+ * only when the wiring supplies `converted`, AFTER the one `Promise.all`
+ * (it needs the plan walk's ids): the first plan payment of each non-platform
+ * plan-row account (or exactly the picked id), through the injected
+ * `converted.firstPlanPayments`, which decides the billing mode outside this
+ * tree. The pure `convertedThisMonth` counts the accounts paying now whose
+ * first payment is in the current UTC month (BD-9); the ones no longer paying
+ * are listed, never counted. Then one names call and one source call, for the
+ * shown rows only. A failed read is `unknown`, never 0; a capped plan walk is
+ * `partial` ("at least"). Without the dep, no `converted` key (AC-145 holds
+ * for every fixture written before MK-5b).
+ *
  * READ-ONLY: no write, no LLM call, no audit entry. Logs read failures only,
  * with the read's name: never a figure, a name or an account id.
  *
@@ -162,10 +174,14 @@ import {
 } from './financeRules';
 import { isEmptySpan, k1Spans, type FinanceSpan, type ResolvedFinanceWindow } from './financeWindow';
 import { classifyAccounts, tierLabelForGroup, type ClassifyInput } from './planGroups';
+import { CONVERTED_SHOWN_LIMIT, convertedThisMonth, currentUtcMonth } from './convertedThisMonth';
 import type {
   FinanceAccountEconomicsSection,
   FinanceAccountMargin,
+  FinanceConverted,
+  FinanceConvertedRow,
   FinancePaying,
+  FinanceSignupSource,
   FinanceAccountsSection,
   FinanceAccountsTabQuery,
   FinanceAiCostSection,
@@ -328,6 +344,18 @@ export interface FinanceHealthDeps {
   };
   /** Injected in tests (SA-W10); production uses `FINANCE_METRIC_PARAMS`. */
   metricParams?: unknown;
+  /**
+   * Money MK-5b (§5.1, SA-10): Converted this month. Optional: absent, the
+   * payload has no `converted` key. `firstPlanPayments` reads exactly the given
+   * ids, in the current billing mode (decided by the wiring, never here);
+   * `signupSources` reads where each shown account came from (at most 200 ids).
+   */
+  converted?: {
+    firstPlanPayments: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ accountId: string; paidAt: string }>>>;
+    signupSources: (
+      accountIds: string[]
+    ) => Promise<RepoResult<Array<{ account_id: string; source: FinanceSignupSource; stamped_at: string | null }>>>;
+  };
   /** Slice 6b (FE-4, SA-Q81): injected in tests; production uses `STRIPE_FEE_ESTIMATE`. */
   feeEstimate?: unknown;
 }
@@ -443,6 +471,26 @@ export interface FinanceHealthCounts {
   };
   /** R-d (SA-Q35): read with all businesses, `not_called` with a business picked, `failed` when it failed. */
   revenueExistence: 'read' | 'failed' | 'not_called';
+  /**
+   * Money MK-5b: Converted this month. Counts, a status and a scope only, never
+   * an id, a date or a name. Absent when the wiring supplies no `converted`.
+   * `stampDiffers`: shown rows whose lineage first-payment stamp is missing or
+   * not in this month (the G-1 cross-check, logged only).
+   */
+  converted?: {
+    scope: 'all' | 'one';
+    status: FinanceConverted['status'];
+    /** Accounts asked about; null when no read was made. */
+    asked: number | null;
+    /** First payments found (any month); null when the read failed or was not made. */
+    found: number | null;
+    converted: number | null;
+    stopped: number | null;
+    shown: number;
+    namesFound: number;
+    sourcesFound: number;
+    stampDiffers: number;
+  };
   /**
    * The Accounts tab (slice 6a, M3-FR-14): counts, booleans and enum words
    * only, never an amount, a name, a currency or a tier id (`group` is its kind).
@@ -775,25 +823,127 @@ export async function buildFinanceHealth(
   // Money MK-5 (§5.1, Q-11): F-K5 over the same rows and the same paying set as Section 1.
   // SA-CR-MK5 C-1: platform accounts are not counted, in the numerator or the denominator
   // (§5.1), by the one existing rule (`deps.isPlatformAccount`); deleted accounts have no plan row.
-  const payingRows = plansResult.data ? plansResult.data.rows.filter((row) => !deps.isPlatformAccount(row.user_id)) : null;
+  // SA-CR-MK5B (Low): the non-platform PLAN rows (F-K5's denominator), named for what they hold.
+  const planRows = plansResult.data ? plansResult.data.rows.filter((row) => !deps.isPlatformAccount(row.user_id)) : null;
   const paying: FinancePaying =
     accountId !== null
       ? payingIds === null
         ? { scope: 'one', status: 'unknown', paying: null }
         : { scope: 'one', status: 'ok', paying: payingIds.has(accountId) }
-      : !plansResult.data || !payingRows || payingIds === null
+      : !plansResult.data || !planRows || payingIds === null
         ? { scope: 'all', status: 'unknown', paying: null, accounts: null }
         : {
             scope: 'all',
             status: plansResult.data.capped ? 'partial' : 'ok',
-            paying: payingRows.filter((row) => payingIds.has(row.user_id)).length,
-            accounts: payingRows.length,
+            paying: planRows.filter((row) => payingIds.has(row.user_id)).length,
+            accounts: planRows.length,
           };
   const accounts: FinanceAccountsSection = {
     status: !classified ? 'unknown' : plansResult.data?.capped ? 'partial' : 'ok',
     scope: accountId !== null ? 'one' : 'all',
     figures: classified?.figures ?? null,
   };
+
+  // ── Money MK-5b: Converted this month (§5.1 F-K5b) ────────────────────────
+  // Over F-K5's own accounts and paying set; the first payments are read for
+  // exactly those ids (or the picked one), after the walk that names them.
+  let converted: FinanceConverted | undefined;
+  let convertedCounts: FinanceHealthCounts['converted'];
+  if (deps.converted) {
+    const month = currentUtcMonth(now);
+    // MK5B-FU-1: every plan-row account is asked about, so the requests grow with the accounts (rework past 1,000).
+    const askIds = accountId !== null ? [accountId] : planRows ? planRows.map((row) => row.user_id) : null;
+    const canRead = askIds !== null && payingIds !== null;
+    const firstRead = canRead
+      ? await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).firstPlanPayments(askIds))
+      : null;
+    if (firstRead?.error) failed('first_plan_payments', firstRead.error);
+    const base = { asked: canRead ? askIds.length : null, found: firstRead?.data ? firstRead.data.length : null };
+    const result =
+      canRead && firstRead?.data
+        ? convertedThisMonth({ firstPayments: firstRead.data, accountIds: new Set(askIds), payingIds, month })
+        : null;
+
+    if (accountId !== null) {
+      const one = result?.accounts[0] ?? null;
+      converted = result
+        ? {
+            scope: 'one',
+            status: 'ok',
+            month,
+            state: one === null ? 'not_converted' : one.payingNow ? 'converted' : 'stopped',
+            firstPaymentAt: one?.firstPaymentAt ?? null,
+          }
+        : { scope: 'one', status: 'unknown', month, state: null, firstPaymentAt: null };
+      convertedCounts = {
+        scope: 'one', status: converted.status, ...base,
+        converted: result ? result.converted : null, stopped: result ? result.stopped : null,
+        shown: 0, namesFound: 0, sourcesFound: 0, stampDiffers: 0,
+      };
+    } else if (!result) {
+      converted = { scope: 'all', status: 'unknown', month, converted: null, paying: null, stopped: null, rows: null, shownLimit: CONVERTED_SHOWN_LIMIT };
+      convertedCounts = {
+        scope: 'all', status: 'unknown', ...base, converted: null, stopped: null,
+        shown: 0, namesFound: 0, sourcesFound: 0, stampDiffers: 0,
+      };
+    } else {
+      const shown = result.accounts.slice(0, CONVERTED_SHOWN_LIMIT);
+      const shownIds = shown.map((row) => row.accountId);
+      const convertedNames = shownIds.length > 0 ? await settle(() => deps.findNames(shownIds)) : { data: [], error: null };
+      if (convertedNames.error) failed('converted_names', convertedNames.error);
+      const sources = shownIds.length > 0
+        ? await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).signupSources(shownIds))
+        : { data: [], error: null };
+      if (sources.error) failed('converted_sources', sources.error);
+      const nameOf = new Map((convertedNames.data ?? []).map((n) => [n.user_id, n.company_name]));
+      const sourceOf = new Map((sources.data ?? []).map((s) => [s.account_id, s]));
+      const monthFrom = Date.parse(month.from);
+      const monthTo = Date.parse(month.to);
+      let stampDiffers = 0;
+      const rows: FinanceConvertedRow[] = shown.map((row) => {
+        const lineage = sourceOf.get(row.accountId);
+        const stamp = lineage?.stamped_at ? Date.parse(lineage.stamped_at) : Number.NaN;
+        if (sources.data && !(Number.isFinite(stamp) && stamp >= monthFrom && stamp < monthTo)) stampDiffers += 1;
+        const group = classified?.groupByAccount.get(row.accountId) ?? null;
+        const name = nameOf.get(row.accountId);
+        return {
+          accountId: row.accountId,
+          ...(!convertedNames.data
+            ? { name: null, nameStatus: 'unavailable' as const }
+            : name
+              ? { name, nameStatus: 'found' as const }
+              : { name: null, nameStatus: 'missing' as const }),
+          group,
+          tierLabel: group === null ? null : tierLabelForGroup(deps.config, group),
+          firstPaymentAt: row.firstPaymentAt,
+          ...(!sources.data
+            ? { source: null, sourceStatus: 'unavailable' as const }
+            : lineage
+              ? { source: lineage.source, sourceStatus: 'found' as const }
+              : { source: null, sourceStatus: 'missing' as const }),
+          payingNow: row.payingNow,
+        };
+      });
+      const payingCount = paying.scope === 'all' ? paying.paying : null;
+      converted = {
+        scope: 'all',
+        status: plansResult.data?.capped ? 'partial' : 'ok',
+        month,
+        converted: result.converted,
+        paying: payingCount,
+        stopped: result.stopped,
+        rows,
+        shownLimit: CONVERTED_SHOWN_LIMIT,
+      };
+      convertedCounts = {
+        scope: 'all', status: converted.status, ...base, converted: result.converted, stopped: result.stopped,
+        shown: rows.length,
+        namesFound: rows.filter((row) => row.nameStatus === 'found').length,
+        sourcesFound: rows.filter((row) => row.sourceStatus === 'found').length,
+        stampDiffers,
+      };
+    }
+  }
 
   // ── 4. Section 3 ──────────────────────────────────────────────────────────
   let aiCost: FinanceAiCostSection;
@@ -1371,6 +1521,8 @@ export async function buildFinanceHealth(
     paymentProblems,
     // Money MK-5: F-K5 always; F-K4's platform line with no business picked.
     paying,
+    // Money MK-5b: present only when the wiring supplies the first-payment read.
+    ...(converted ? { converted } : {}),
     ...(platformMargin ? { platformMargin } : {}),
     // Slice 6a (SA-W74): optional keys, ABSENT (not null) when not built, so the Overview payload is unchanged.
     ...(accountEconomics ? { accountEconomics } : {}),
@@ -1398,6 +1550,7 @@ export async function buildFinanceHealth(
       unresolvedAdjustments: figures?.unresolvedAdjustments ?? 0,
       topAccounts: topAccounts.length,
       namesFound,
+      ...(convertedCounts ? { converted: convertedCounts } : {}),
       creditAccounts: positionsPass ? positionsPass.byUserId.size : null,
       creditsPass: positionsPass ? positionsPass.outcome : 'skipped',
       creditPositions,

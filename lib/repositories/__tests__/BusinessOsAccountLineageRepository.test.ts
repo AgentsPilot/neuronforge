@@ -115,15 +115,61 @@ describe('findHoldFactsForAccount (Slice 5b, the payment hold)', () => {
 });
 
 describe('no writer', () => {
-  it('has exactly four reads (two from P-5b.2), and no insert/update/upsert/delete call', () => {
+  it('has exactly five reads (two from P-5b.2, one from MK-5b), and no insert/update/upsert/delete call', () => {
     const methods = Object.getOwnPropertyNames(BusinessOsAccountLineageRepository.prototype).filter((name) => name !== 'constructor');
     expect(methods.sort()).toEqual([
       'findByInviteIdsForAdmin',
       'findHoldFactsForAccount',
       'findHoldFactsForAccountsForAdmin',
+      'findSignupSourcesForAccountsForAdmin',
       'findSubscribedInviteIdsForIssuer',
     ]);
     const source = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsAccountLineageRepository.ts'), 'utf8');
     expect(source).not.toMatch(/\.(insert|update|upsert|delete)\(/);
+  });
+});
+
+describe('findSignupSourcesForAccountsForAdmin (Money MK-5b, §5.1 G-2)', () => {
+  const ACCOUNT = '33333333-3333-4333-8333-333333333333';
+
+  it('reads the source and the first-payment stamp of exactly the given accounts', async () => {
+    const rows = [{ account_id: ACCOUNT, source: 'account_invite', first_paid_at: '2026-10-05T00:00:00.000Z' }];
+    const { client: c, calls } = client({ data: rows, error: null });
+    // The stamp travels as stamped_at (P5-C4: its own name stays with the known readers).
+    expect(await new BusinessOsAccountLineageRepository(c).findSignupSourcesForAccountsForAdmin([ACCOUNT])).toEqual({
+      data: [{ account_id: ACCOUNT, source: 'account_invite', stamped_at: '2026-10-05T00:00:00.000Z' }],
+      error: null,
+    });
+    expect(calls).toEqual([
+      { method: 'from', args: ['business_os_account_lineage'] },
+      { method: 'select', args: ['account_id, source, first_paid_at'] },
+      { method: 'in', args: ['account_id', [ACCOUNT]] },
+    ]);
+  });
+
+  it('an empty list reads nothing; over the limit or a non-UUID is refused before a query', async () => {
+    const { client: c, calls } = client({ data: [], error: null });
+    const repo = new BusinessOsAccountLineageRepository(c);
+    expect(await repo.findSignupSourcesForAccountsForAdmin([])).toEqual({ data: [], error: null });
+    const many = Array.from({ length: LINEAGE_LOOKUP_LIMIT + 1 }, (_v, i) => `33333333-3333-4333-8333-${String(i).padStart(12, '0')}`);
+    expect((await repo.findSignupSourcesForAccountsForAdmin(many)).data).toBeNull();
+    expect((await repo.findSignupSourcesForAccountsForAdmin(['a1'])).data).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('a database error is returned as its code and message only, never thrown', async () => {
+    const { client: c } = client({ data: null, error: new PostgrestError({ message: 'bad column', details: 'x@example.com', hint: '', code: '42703' }) });
+    const result = await new BusinessOsAccountLineageRepository(c).findSignupSourcesForAccountsForAdmin([ACCOUNT]);
+    expect(result.data).toBeNull();
+    expect((result.error as Error & { code?: string }).code).toBe('42703');
+    expect(JSON.stringify(logged)).not.toContain('x@example.com');
+  });
+
+  it('documents its service-role use and names its caller', () => {
+    const text = readFileSync(join(process.cwd(), 'lib', 'repositories', 'BusinessOsAccountLineageRepository.ts'), 'utf8');
+    const at = text.indexOf('async findSignupSourcesForAccountsForAdmin(');
+    const doc = text.slice(text.lastIndexOf('/**', at), at);
+    expect(doc).toContain('INTENTIONAL SERVICE-ROLE');
+    expect(doc).toContain('lib/business-os/finance/financeHealthDeps.ts');
   });
 });

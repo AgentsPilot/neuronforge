@@ -21,6 +21,14 @@
  *
  * Every string from `financeCopy.ts`; shared layout parts through the alias;
  * no test-mode wording anywhere (BD-13).
+ *
+ * Money MK-6 (KPI restructure review §6 items 14 and 15, C-1 / BD-38): the
+ * separate "Payment problems" section is gone. Its two blocks are exported on
+ * their own and hosted by their owners: `OurBoostProblems` inside Revenue
+ * (our money's problems sit with our money) and `ClientPaymentProblems`
+ * inside the Client payments block (the businesses' problem, not ours). Both
+ * stay separate and labelled; every part, label and status rule is unchanged.
+ * The file keeps its name (other tests mock this path).
  */
 
 import type { ReactNode } from 'react';
@@ -91,7 +99,6 @@ import {
   PROBLEMS_REMINDERS_TITLE,
   PROBLEMS_SUBTITLE,
   PROBLEMS_TITLE,
-  PAYMENT_PROBLEMS_TITLE,
   REMINDERS_FAILED,
   REMINDERS_LABELS,
   REMINDERS_LINK,
@@ -101,7 +108,6 @@ import {
 } from '../financeCopy';
 import { atLeast, formatMoney } from '../financeFormat';
 import { businessesHref } from '../financeLinks';
-import { FinanceSection } from './FinanceSection';
 import { OverdueTable } from './OverdueTable';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
@@ -154,45 +160,53 @@ function Part({
   );
 }
 
-export function PaymentProblemsSection({
-  problems,
-  windowLabel,
-  onRetry,
+/**
+ * MK-6 (§6 item 14): block A, "Our payment problems (boosts)", as of now
+ * (slice 4b.2), hosted by Revenue. Unchanged from the old section's block A.
+ */
+export function OurBoostProblems({
+  part,
   accountId = null,
 }: {
-  problems: FinancePaymentProblemsSection;
-  windowLabel: string;
-  onRetry: () => void;
+  part: FinanceBoostProblemsPart;
   /** The picked business (S4-FR-16's link); null for all businesses. */
   accountId?: string | null;
 }) {
+  return (
+    <Part id="boosts" title={`${BOOST_PROBLEMS_TITLE} · ${BOOST_PROBLEMS_SUBTITLE}`} status={part.status}>
+      <BoostProblems part={part} accountId={accountId} />
+    </Part>
+  );
+}
+
+/**
+ * MK-6 (§6 item 15): block B, "Client payment problems", hosted by the Client
+ * payments block. The businesses' problem, not ours (BD-2): its own heading
+ * and neutral chip (SA-CR-4b2 CR-1), and the old frame's subtitle, which
+ * describes these parts, under it. Five parts, each with its own status.
+ */
+export function ClientPaymentProblems({
+  problems,
+  windowLabel,
+}: {
+  problems: FinancePaymentProblemsSection;
+  windowLabel: string;
+}) {
   const plans = problems.clientPlans.figures;
   return (
-    <FinanceSection
-      id="payment-problems"
-      title={PAYMENT_PROBLEMS_TITLE}
-      subtitle={PROBLEMS_SUBTITLE(problems.today, windowLabel)}
-      status={problems.status}
-      onRetry={onRetry}
-    >
-      <div className="space-y-5" data-testid="payment-problems-body">
-        {/* A. Our boost problems, as of now (slice 4b.2). */}
-        {problems.boosts && (
-          <Part id="boosts" title={`${BOOST_PROBLEMS_TITLE} · ${BOOST_PROBLEMS_SUBTITLE}`} status={problems.boosts.status}>
-            <BoostProblems part={problems.boosts} accountId={accountId} />
-          </Part>
-        )}
-
-        {/* B. The clients' payment problems: the businesses' problem, not ours (BD-2). SA-CR-4b2 CR-1:
-            the "Client payment problems" heading and its neutral chip sit on this block only, never on the frame. */}
         <div className="space-y-5" role="group" aria-labelledby="problems-clients-heading" data-testid="problems-clients">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 id="problems-clients-heading" className="text-base font-semibold text-white">
-              {PROBLEMS_TITLE}
-            </h3>
-            <StatusChip tone="neutral" testId="problems-clients-chip">
-              {PROBLEMS_CHIP}
-            </StatusChip>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 id="problems-clients-heading" className="text-base font-semibold text-white">
+                {PROBLEMS_TITLE}
+              </h3>
+              <StatusChip tone="neutral" testId="problems-clients-chip">
+                {PROBLEMS_CHIP}
+              </StatusChip>
+            </div>
+            <p className="text-xs text-slate-400" data-testid="problems-clients-subtitle">
+              {PROBLEMS_SUBTITLE(problems.today, windowLabel)}
+            </p>
           </div>
 
         {/* 1. Failed client payments: fixed, never a number in place of "not available" (S2-FR-16). */}
@@ -233,8 +247,6 @@ export function PaymentProblemsSection({
           <Reminders reminders={problems.reminders} />
         </Part>
         </div>
-      </div>
-    </FinanceSection>
   );
 }
 

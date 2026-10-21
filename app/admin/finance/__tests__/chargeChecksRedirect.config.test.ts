@@ -48,9 +48,10 @@ describe('R-1: the redirect in next.config.js (shape only)', () => {
   });
 
   // Money MK-4 (ruled): the Subscriptions redirect joins, so three in all.
-  it('keeps the payments redirect; three redirects in all', async () => {
+  // Admin Exchange Rates slice 2b (SQ-17): the Exchange rates redirect joins, so four.
+  it('keeps the payments redirect; four redirects in all', async () => {
     const all = await config.redirects();
-    expect(all).toHaveLength(3);
+    expect(all).toHaveLength(4);
     expect(all).toContainEqual({ source: '/business-os/payments', destination: '/business-os/orders', permanent: false });
   });
 });

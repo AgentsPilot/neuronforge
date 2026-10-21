@@ -50,6 +50,20 @@
  * failure, so a failed read never shows old figures. F-4 ended DV-1: Refresh
  * and "Read at" are in the shared filter bar, and the URL notice is gone
  * (BD-30, SA-W1).
+ *
+ * Admin Exchange Rates slice 2a (SQ-19 to SQ-21, SQ-24): a fourth tab,
+ * Exchange rates (`tab=exchange-rates`, no business only), renders the rates
+ * view from its own folder. The rates have no window and no business, and the
+ * finance tiles describe money, so on that tab the KPI strip (and its
+ * placeholders), the filter bar, the finance error and loading states, the
+ * busy flag and the window "as of" line are not rendered; the view brings its
+ * own. The header stays the one h1, "Finance", with the rates sentence. The
+ * tablist and the rates panel do not wait on the finance read: their gate is
+ * `onRatesTab || (data && !error)`, and every hidden block is a hole in place,
+ * so the tablist keeps its place in the tree and a tab switch keeps keyboard
+ * focus. The finance read keeps running (the Plans precedent): the request is
+ * unchanged. The spec also owns the tab's Show key, `currencies`, and every
+ * other tab's selection resets it in the same single write.
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -84,7 +98,8 @@ import { AccountsTab } from './AccountsTab';
 import { FinanceTabPanel, FinanceTabs, type FinanceTab } from './FinanceTabs';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
-import { HistoryAllBusinessesLine, HistoryBlock } from './HistoryBlock';
+import { HistoryAllBusinessesLine } from './HistoryBlock';
+import { FinanceHistoryProvider, HistoryTrend } from './HistoryTrends';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import {
@@ -94,13 +109,18 @@ import {
   type FinanceTileSection,
   type FinanceTileTarget,
 } from './FinanceKpiStrip';
-import { PaymentProblemsSection } from './PaymentProblemsSection';
 import { PlansSubscriptions } from './PlansSubscriptions';
+import { ConvertedThisMonthSection } from './ConvertedThisMonthSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
+// Relative on purpose: the alias path would spell the page route the G-4 guard (redundantPages) refuses (DV-1, SQ-18).
+import { EXCHANGE_RATES_PURPOSE, ExchangeRatesView } from '../../exchange-rates/components/ExchangeRatesView';
 
 /** M3-FR-1: the Accounts tab's keys at their defaults (a pick, or leaving the tab). */
 const TAB_RESET: Partial<FinanceFilters> = { sort: 'ai_cost', group: '', show: 'all' };
+
+/** Slice 2a (SQ-20 (2), Q-2 (a)): the Exchange rates tab's Show at its default, for leaving that tab. */
+const CURRENCIES_RESET: Partial<FinanceFilters> = { currencies: FINANCE_FILTER_SPEC.currencies.defaultValue };
 
 /** This page's path, for the Accounts-tab tiles' real links (F-5, SA-W3 (a)). */
 const FINANCE_PATH = '/admin/finance';
@@ -186,15 +206,33 @@ export function FinanceView() {
   // SA-Q43: selecting a tab writes `tab`; leaving Accounts resets its sort and filters.
   // Money MK-4: Plans & subscriptions is the page URL's `tab=plans`; it never reaches the request
   // (`toFinanceQuery` sends `tab` for Accounts only), so the finance read is the Overview's.
+  // Slice 2a (SQ-20 (2)): Exchange rates resets the Accounts keys and `status`; every other tab
+  // resets `currencies`. Still one write each way.
   const onSelectTab = useCallback(
     (tab: FinanceTab) =>
       setFilters(
-        tab === 'accounts' ? { tab: 'accounts', status: '' } : tab === 'plans' ? { tab: 'plans', ...TAB_RESET } : { tab: '', ...TAB_RESET, status: '' }
+        tab === 'accounts'
+          ? { tab: 'accounts', status: '', ...CURRENCIES_RESET }
+          : tab === 'plans'
+            ? { tab: 'plans', ...TAB_RESET, ...CURRENCIES_RESET }
+            : tab === 'exchange-rates'
+              ? { tab: 'exchange-rates', ...TAB_RESET, status: '' }
+              : { tab: '', ...TAB_RESET, status: '', ...CURRENCIES_RESET }
       ),
     [setFilters]
   );
+  // Slice 2a (SQ-24): as Plans, Exchange rates is selected only with no business, so the rates view never mounts on a business link.
   const selectedTab: FinanceTab =
-    query.tab === 'accounts' ? 'accounts' : filters.tab === 'plans' && query.accountId === null ? 'plans' : 'overview';
+    query.tab === 'accounts'
+      ? 'accounts'
+      : query.accountId !== null
+        ? 'overview'
+        : filters.tab === 'plans'
+          ? 'plans'
+          : filters.tab === 'exchange-rates'
+            ? 'exchange-rates'
+            : 'overview';
+  const onRatesTab = selectedTab === 'exchange-rates';
   // F-5: on a tab other than Overview the sections are not on screen, so a tile is a link to Overview.
   const onAccountsTab = selectedTab !== 'overview' && query.accountId === null;
 
@@ -257,10 +295,16 @@ export function FinanceView() {
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title={PAGE_TITLE} purpose={PAGE_PURPOSE} asOf={data ? windowLabel : null} />
+      {/* Slice 2a (SQ-21): one h1, "Finance"; on the rates tab its sentence is the rates one and no window applies. */}
+      <AdminPageHeader
+        title={PAGE_TITLE}
+        purpose={onRatesTab ? EXCHANGE_RATES_PURPOSE : PAGE_PURPOSE}
+        asOf={onRatesTab ? null : data ? windowLabel : null}
+      />
 
       {/* F-5 (BD-29): header, KPI strip, filter bar. K-10: placeholders on the first read, nothing on an error. */}
-      {data && !error ? (
+      {/* Slice 2a (SQ-19 (i), SA-2a-1): on the rates tab this and the bar below are holes in place. */}
+      {onRatesTab ? null : data && !error ? (
         <FinanceKpiStrip
           data={data}
           windowLabel={windowLabel}
@@ -272,29 +316,35 @@ export function FinanceView() {
         loading && !error && <FinanceKpiPlaceholders />
       )}
 
-      <FinanceFilterBar
-        filters={filters}
-        onWindowChange={onWindowChange}
-        onPick={onPick}
-        onRemoveBusiness={onRemoveBusiness}
-        chipName={chipName}
-        onClear={onClear}
-        canClear={financeCanClear(filters)}
-        busy={loading}
-        readAt={data?.generatedAt ?? null}
-        onRefresh={reload}
-        windowProblem={windowProblem !== null && windowProblem.on === filters.window ? windowProblem.text : null}
-      />
+      {!onRatesTab && (
+        <FinanceFilterBar
+          filters={filters}
+          onWindowChange={onWindowChange}
+          onPick={onPick}
+          onRemoveBusiness={onRemoveBusiness}
+          chipName={chipName}
+          onClear={onClear}
+          canClear={financeCanClear(filters)}
+          busy={loading}
+          readAt={data?.generatedAt ?? null}
+          onRefresh={reload}
+          windowProblem={windowProblem !== null && windowProblem.on === filters.window ? windowProblem.text : null}
+        />
+      )}
 
       {/* Always mounted, so a refresh keeps the current figures and says it is busy (§5.10). */}
-      <div data-testid="finance-content" aria-busy={loading} className="space-y-4">
-        {error && <AdminError message={error} testId="finance-error" onRetry={reload} />}
+      {/* Slice 2a (SQ-19 (i)): on the rates tab no finance busy flag, error or loading line; the view has its own. */}
+      <div data-testid="finance-content" aria-busy={onRatesTab ? undefined : loading} className="space-y-4">
+        {!onRatesTab && error && <AdminError message={error} testId="finance-error" onRetry={reload} />}
 
-        {loading && !data && !error && <AdminLoading what={FINANCE_WHAT} />}
+        {!onRatesTab && loading && !data && !error && <AdminLoading what={FINANCE_WHAT} />}
 
-        {data && !error && (
+        {/* Slice 2a (SQ-19 (i), SA-2a-1): the rates do not depend on the finance read, so their tab is not gated by it. */}
+        {(onRatesTab || (data && !error)) && (
+          // Money MK-7: the one shared, lazy history read for the trends under Plan mix and Credits (E-85).
+          <FinanceHistoryProvider query={query}>
           <div className="space-y-4">
-            {data.accountId !== null && (
+            {!onRatesTab && data && data.accountId !== null && (
               <>
                 <AccountHeader
                   accountId={data.accountId}
@@ -314,11 +364,24 @@ export function FinanceView() {
               </>
             )}
             {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
-            {selectedTab === 'plans' ? (
+            {onRatesTab ? (
+              <FinanceTabPanel id="exchange-rates">
+                {/* No `active` prop (SQ-20 (4)): Finance unmounts hidden panels. */}
+                <ExchangeRatesView />
+              </FinanceTabPanel>
+            ) : !data ? null : selectedTab === 'plans' ? (
               <FinanceTabPanel id="plans">
                 {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
                 <div className="space-y-4">
-                  <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
+                  <AccountsByPlanSection
+                    accounts={data.accounts}
+                    windowLabel={windowLabel}
+                    onRetry={reload}
+                    k3={data.tiles?.k3}
+                    trend={<HistoryTrend trend="planMix" />}
+                  />
+                  {/* Money MK-5b (§5.1): from the same finance payload, so the tab makes no new request (AC-173). */}
+                  {data.converted && <ConvertedThisMonthSection converted={data.converted} onRetry={reload} />}
                   <PlansSubscriptions
                     status={filters.status === '' ? null : filters.status}
                     onStatus={(next) => setFilters({ status: next ?? '' })}
@@ -342,18 +405,38 @@ export function FinanceView() {
               </FinanceTabPanel>
             ) : (
               <OverviewBody tabbed={query.accountId === null}>
-                <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} mrr={data.mrr} stripeMode={data.stripeMode ?? null} />
-                <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} k3={data.tiles?.k3} />
+                {/* Money MK-6 (BD-38): our boost problems sit in Revenue; the clients' problems in Client payments. */}
+                <RevenuePanel
+                  revenue={data.revenue}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  mrr={data.mrr}
+                  stripeMode={data.stripeMode ?? null}
+                  boostProblems={data.paymentProblems?.boosts}
+                  accountId={data.accountId}
+                />
+                {/* Money MK-7 (§6 item 13): each trend under its KPI; closed on load, so no request (E-85). */}
+                <AccountsByPlanSection
+                  accounts={data.accounts}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  k3={data.tiles?.k3}
+                  trend={query.accountId === null ? <HistoryTrend trend="planMix" /> : <HistoryAllBusinessesLine />}
+                />
                 <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
-                <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} k2={data.tiles?.k2} />
-                {/* Slice 8.3 (HS-FR-11, E-85): closed on load, so no request until "Show history". */}
-                {query.accountId === null ? <HistoryBlock query={query} /> : <HistoryAllBusinessesLine />}
-                <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} accountId={data.accountId} />
+                <CreditsSection
+                  credits={data.credits}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  k2={data.tiles?.k2}
+                  trend={query.accountId === null ? <HistoryTrend trend="credits" /> : <HistoryAllBusinessesLine />}
+                />
                 {/* Money MK-1: the businesses' client payments, not ours (BD-1), last on the Overview. */}
-                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
+                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} problems={data.paymentProblems} />
               </OverviewBody>
             )}
           </div>
+          </FinanceHistoryProvider>
         )}
       </div>
     </div>

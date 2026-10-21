@@ -9,21 +9,28 @@
  *                       the database already reads as false, SA §10 ruling 1),
  *                       X = every row. USD is counted: it is a real, enabled
  *                       currency. No status colour.
- *   Last rate change    The newest history row: "ILS 3.65 → 3.70" (or "ILS set
- *                       to 3.70" when there is no old rate), by whom and when
- *                       (UTC). The two rates are the stored strings side by
- *                       side: no arithmetic, no percentage (D-5). On / off
+ *   Last rate change    The newest history row OF ALL TIME (`payload.lastChange`,
+ *                       slice 1d, D-8, FR-31; SA-1c-2 as amended by SQ-31),
+ *                       whatever the history window: "ILS 3.650 → 3.700" (or "ILS set
+ *                       to 3.700" when there is no old rate), by whom and when
+ *                       (UTC). Each rate is its stored string rounded to 3
+ *                       decimals: no arithmetic, no percentage (D-5). On / off
  *                       switches are not rate changes and never show here
  *                       (SQ-14). "No changes yet" when there is no history.
  *
  * Both tiles count the WHOLE plain-GET payload, never a filtered view and
- * never the one-currency history read (SA-1c-2). There is no Stale tile; each
+ * never the one-currency history read (SA-1c-2). The tile never reads the
+ * windowed `payload.history`. There is no Stale tile; each
  * row still carries its Stale chip (FR-8). No link target, no fetch here.
  */
 
 import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
 import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
-import type { ExchangeRateHistoryWire, ExchangeRatesPayload } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import {
+  roundRateForDisplay,
+  type ExchangeRateHistoryWire,
+  type ExchangeRatesPayload,
+} from '@/lib/admin/exchangeRates/exchangeRateRules';
 
 import { changedByText } from './changedByText';
 
@@ -34,18 +41,23 @@ export interface ExchangeRatesKpisProps {
   loading: boolean;
 }
 
-/** "ILS 3.65 → 3.70", or "ILS set to 3.70": the stored strings, as stored. */
+/**
+ * "ILS 3.650 → 3.700", or "ILS set to 3.700": each stored string rounded for
+ * display to KPI_RATE_DECIMALS places (user request, 2026-10-20). Rounding is
+ * on the digits, never arithmetic between the two rates (D-5).
+ */
 function rateChangeText(row: ExchangeRateHistoryWire): string {
+  const newRate = roundRateForDisplay(row.newRate);
   return row.oldRate === null
-    ? `${row.currencyCode} set to ${row.newRate}`
-    : `${row.currencyCode} ${row.oldRate} → ${row.newRate}`;
+    ? `${row.currencyCode} set to ${newRate}`
+    : `${row.currencyCode} ${roundRateForDisplay(row.oldRate)} → ${newRate}`;
 }
 
 export function ExchangeRatesKpis({ payload, loading }: ExchangeRatesKpisProps) {
   if (!payload) return loading ? <KpiStrip loading placeholderCount={2} /> : null;
 
   const enabled = payload.rates.filter((rate) => rate.isEnabled === true).length;
-  const last = payload.history[0] ?? null;
+  const last = payload.lastChange;
 
   return (
     <KpiStrip>

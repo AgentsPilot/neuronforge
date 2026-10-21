@@ -35,6 +35,8 @@
  * test stays unedited. Model pricing goes through its real `priceKpis.ts`.
  * Amended by Exchange rates 1a (SQ-7): three ExchangeRatesKpis cases appended; every existing hash unchanged.
  * Amended by Exchange rates 1c.1 (SQ-15): the strip's own tiles changed, so "loading" is re-hashed, the two stale cases are removed, four cases are appended; no other case or hash touched.
+ * Amended 2026-10-20 (user request): the Last rate change tile rounds each rate to 3 decimals, so the three Exchange rates cases that show a rate are re-hashed; no other case or hash touched.
+ * Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed.
  */
 
 import React from 'react';
@@ -208,12 +210,13 @@ const FX_CHANGE: ExchangeRateHistoryWire = {
 const FX_PAYLOAD: ExchangeRatesPayload = {
   rates: [fxRate('EUR', true, '2025-11-05T10:00:00.000Z'), fxRate('ILS', true, '2026-10-18T10:00:00.000Z'), fxRate('JPY', false, '2025-11-05T10:00:00.000Z')],
   history: [FX_CHANGE],
+  lastChange: FX_CHANGE,
   nameLookup: 'ok',
   readAt: FX_READ_AT,
 };
-const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [] };
-const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], nameLookup: 'failed' };
-const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }] };
+const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [], lastChange: null };
+const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], lastChange: { ...FX_CHANGE, changedByLabel: null }, nameLookup: 'failed' };
+const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }], lastChange: { ...FX_CHANGE, oldRate: null } };
 
 const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   // ── A1: the shared matrix ─────────────────────────────────────────────────
@@ -356,10 +359,10 @@ const EXPECTED: Record<string, string> = {
   // Exchange rates 1a (SQ-7), recorded on first render.
   // Exchange rates 1c.1 (SQ-15): re-pinned and appended, recorded on first render.
   'A2 ExchangeRatesKpis loading': '44f2c4c7e279333661f67ce75a2323827f1a5efee1a3f0036cb67c33f15af37a',
-  'A2 ExchangeRatesKpis two tiles': '0a00f7fac4ba6d6f3f2867eabca70b9e96225e4dae05468a2a57999a04da830b',
+  'A2 ExchangeRatesKpis two tiles': 'c8c91a66a03ef480f8d7f2da2e38ea8f968ced1ecf78db6f7ea4dcb6828e1003',
   'A2 ExchangeRatesKpis no history': '5dd32e13b5638e7b8120ae4f02f0a3643065e7956527cc6a64aececfce23e20b',
-  'A2 ExchangeRatesKpis name lookup failed': 'b811cf66e3bac128a8a32b9c4e932a4901f026a614f0f1ee74e3960e66524827',
-  'A2 ExchangeRatesKpis old rate null': '2b3dd8aeb93733693b2a571248bfe7b6a9c3797789b5614eec096472360dab92',
+  'A2 ExchangeRatesKpis name lookup failed': '08fb74e3076ed710ff6c70f751056dcf31618aaefe8179b02e29e9a7e697f152',
+  'A2 ExchangeRatesKpis old rate null': '347c6fdbb9303d5aedb97fae58151a487a91ed35acd254b7f26ebcdac5274666',
   // A3 (Money MK-5): recorded at MK-5's handover.
   'A3 Finance anchor lagging with status and detail': '34166a30ada773fc7c5e7ca8dd90fb66b989d022bfc3b3eefaa1dbaf6fe83358',
   'A3 Finance anchor leading with sub and detail': '33106345987463ab9685bc4fed4a427e5e2e752a216cffdd7562707b82356a71',
