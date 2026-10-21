@@ -81,6 +81,14 @@
     {
       "path": "/api/cron/booking-money-reconcile",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/data-export",
+      "schedule": "25 5 * * *"
+    },
+    {
+      "path": "/api/cron/finance-snapshot",
+      "schedule": "7 0 * * *"
     }
   ],
   "rewrites": [

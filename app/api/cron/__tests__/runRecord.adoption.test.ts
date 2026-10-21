@@ -37,6 +37,11 @@ jest.mock('@/lib/logger', () => {
 });
 
 // ── "Nothing to do" for every job ──────────────────────────────────────────
+// finance-snapshot (slice 8.2, E-97): its late gate reads the one clock seam; fixed at 00:07 UTC so
+// "nothing to do" is an on-time run whatever hour this suite runs.
+jest.mock('@/lib/business-os/finance/financeSnapshotClock', () => ({
+  financeSnapshotClock: { now: () => new Date('2026-10-18T00:07:00.000Z') },
+}));
 jest.mock('@/lib/supabaseServer', () => {
   const chain = (): unknown =>
     new Proxy(function () {} as unknown as object, {
@@ -124,6 +129,23 @@ jest.mock('@/lib/repositories/PaymentRepository', () => ({
 // not a run whose every listing was refused.
 jest.mock('@/lib/stripe/StripeService', () => ({
   getStripeService: () => ({ listPaidInvoices: async () => ({ invoices: [], hasMore: false }) }),
+}));
+
+// data-export (DE-8b): the bucket holds nothing and no account has files.
+// Storage is mocked because the database proxy above has no storage client.
+jest.mock('@/lib/repositories/BusinessOsDataExportStorageRepository', () => ({
+  businessOsDataExportStorageRepository: {
+    remove: async () => ({ data: true, error: null }),
+    listForSweep: async () => ({ data: { objects: [], unexpected: 0, truncated: false }, error: null }),
+  },
+}));
+jest.mock('@/lib/business-os/data-export/fileManifest', () => ({
+  createExportFileSource: () => ({
+    includedBuckets: () => [],
+    inventory: async () => ({ ok: false, reason: 'error' }),
+    download: async () => null,
+    listOwnerFolders: async () => ({ owners: [], skipped: 0, truncated: false }),
+  }),
 }));
 
 import { BOS_CRON_JOBS } from '@/lib/cron/bosCronJobs';

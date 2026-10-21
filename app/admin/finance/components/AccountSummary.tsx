@@ -32,6 +32,10 @@
  * AI cost", rendered by Section 3's own `RecordedAboveValue` from the SAME
  * `aiCost.recorded` (one payload field, rendered twice: AC-158). The recorded
  * figure itself is not repeated here. Absent when the payload has none.
+ *
+ * Slice 6b (FE-14): "Margin after Stripe fees (estimate, USD)" directly under
+ * the AI margin, from the same `accountMargin` and printed by the tab's own
+ * `MarginAfterFeesValue`, so the row and the summary cannot differ (AC-250).
  */
 
 import type { ReactNode } from 'react';
@@ -39,6 +43,7 @@ import type { ReactNode } from 'react';
 import type { FinanceAccountMargin, FinanceAccountsSection, FinanceAiCostSection, FinanceBoostRevenue, FinanceCreditsSection, FinancePlanRevenue, FinanceRevenueSection, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 import { activityHref, analyticsHref, businessesHref, costsHref } from '../financeLinks';
 import {
+  ACCOUNT_AFTER_FEES,
   ACCOUNT_AI_COST,
   ACCOUNT_CREDITS,
   ACCOUNT_CUTOVER_ENTIRELY,
@@ -66,7 +71,7 @@ import {
 import { atLeast, formatCredits, formatMoney, formatUsd } from '../financeFormat';
 import { AccountPlanGroup } from './AccountHeader';
 import { usedPercent } from './CreditsSection';
-import { MarginValue } from './AccountEconomicsTable';
+import { MarginAfterFeesValue, MarginValue } from './AccountEconomicsTable';
 import { RecordedAboveValue } from './RecordedCostLines';
 
 const NOTE = 'text-[11px] text-slate-400';
@@ -170,6 +175,7 @@ export function AccountSummary({
   credits,
   accounts,
   accountMargin = null,
+  windowLine = null,
 }: {
   accountId: string;
   window: FinanceWindowInfo;
@@ -180,6 +186,11 @@ export function AccountSummary({
   accounts: FinanceAccountsSection;
   /** Slice 6a (M3-FR-8): the server's margin for this business; null or absent shows "Unknown". */
   accountMargin?: FinanceAccountMargin | null;
+  /**
+   * DF-6 (E-82, DF6-R2): the "Since it started" window line, built once by the view; null or
+   * absent for every other window, so their summary is unchanged. Shown as given, never formatted here.
+   */
+  windowLine?: string | null;
 }) {
   const headingId = 'account-summary-heading';
   const links: Array<{ label: string; href: string; testId: string }> = [
@@ -197,6 +208,11 @@ export function AccountSummary({
       <h2 id={headingId} className="text-base font-semibold text-white">
         {ACCOUNT_SUMMARY_TITLE}
       </h2>
+      {windowLine !== null && (
+        <p className={NOTE} data-testid="account-summary-window">
+          {windowLine}
+        </p>
+      )}
       <dl className="space-y-2">
         <Line label={ACCOUNT_AI_COST} testId="account-summary-ai-cost">
           <AiCostValue aiCost={aiCost} />
@@ -217,6 +233,13 @@ export function AccountSummary({
         </Line>
         <Line label={ACCOUNT_MARGIN} testId="account-summary-margin">
           {accountMargin === null ? ACCOUNT_UNKNOWN : <MarginValue margin={accountMargin.margin} testId="account-summary-margin-value" />}
+        </Line>
+        <Line label={ACCOUNT_AFTER_FEES} testId="account-summary-after-fees">
+          {accountMargin === null ? (
+            ACCOUNT_UNKNOWN
+          ) : (
+            <MarginAfterFeesValue value={accountMargin.marginAfterFees} testId="account-summary-after-fees-value" />
+          )}
         </Line>
         <Line label={ACCOUNT_CREDITS} testId="account-summary-credits">
           <CreditsValue credits={credits} accountId={accountId} />

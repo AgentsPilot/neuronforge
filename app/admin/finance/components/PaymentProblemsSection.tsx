@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Section 6 block B, "Client payment problems" (finance & business health
+ * Section 6, "Payment problems" (SA-CR-4b2 CR-1: the frame is neutral), block
+ * B, "Client payment problems" (finance & business health
  * slice 2b, S2-FR-15 to S2-FR-26). Where the businesses' clients are not
  * paying: the businesses' problem, not ours (BD-2), so it carries a neutral
  * chip and never feeds a tile.
@@ -13,13 +14,26 @@
  * Reminder health shows the Jobs & queues figures PLAIN: no tone, no colour,
  * no rule of this page's own (S2-FR-20); the link opens Jobs & queues.
  *
+ * Slice 4b.2 adds block A FIRST, "Our payment problems (boosts)" (FR-4B-12,
+ * S4-FR-15): OUR boost purchases in an open dispute (held now) or paid but not
+ * credited, as of now, each with the date it started. Rendered only when the
+ * payload carries it (E-103). Per currency; never a total across currencies.
+ *
  * Every string from `financeCopy.ts`; shared layout parts through the alias;
  * no test-mode wording anywhere (BD-13).
+ *
+ * Money MK-6 (KPI restructure review §6 items 14 and 15, C-1 / BD-38): the
+ * separate "Payment problems" section is gone. Its two blocks are exported on
+ * their own and hosted by their owners: `OurBoostProblems` inside Revenue
+ * (our money's problems sit with our money) and `ClientPaymentProblems`
+ * inside the Client payments block (the businesses' problem, not ours). Both
+ * stay separate and labelled; every part, label and status rule is unchanged.
+ * The file keeps its name (other tests mock this path).
  */
 
 import type { ReactNode } from 'react';
 
-import type { FinanceClientPlansFigures, FinancePaymentProblemsSection, FinanceReminderFigures, FinanceSectionStatus } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceBoostProblemsFigures, FinanceBoostProblemsPart, FinanceClientPlansFigures, FinancePaymentProblemsSection, FinanceReminderFigures, FinanceSectionStatus } from '@/lib/business-os/finance/financeTypes';
 import { AdminEmpty, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -34,7 +48,26 @@ import {
 } from '@/app/admin/components/layout/adminTable';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import {
+  BOOST_PROBLEMS_CUT,
+  BOOST_PROBLEMS_DATES_FAILED,
+  BOOST_PROBLEMS_HELD,
+  BOOST_PROBLEMS_LINK,
+  BOOST_PROBLEMS_NONE,
+  BOOST_PROBLEMS_NOT_CREDITED,
+  BOOST_PROBLEMS_NOT_CREDITED_AMOUNT,
+  BOOST_PROBLEMS_NOT_CREDITED_HELP,
+  BOOST_PROBLEMS_NOT_RECORDED,
+  BOOST_PROBLEMS_OPEN,
+  BOOST_PROBLEMS_OPENED,
+  BOOST_PROBLEMS_SINCE,
+  BOOST_PROBLEMS_SUBTITLE,
+  BOOST_PROBLEMS_TITLE,
+  boostProblemsOnUnpaid,
   JOBS_QUEUES_HREF,
+  PROBLEMS_UNKNOWN,
+  PROBLEMS_UNKNOWN_CURRENCY,
+  REVENUE_CURRENCY,
+  REVENUE_EVENTS_OVER_TOTAL,
   PART_COULD_NOT_LOAD,
   PART_OK,
   PART_PARTIAL,
@@ -73,8 +106,8 @@ import {
   REMINDERS_NOT_NARROWED,
   REMINDERS_SOURCE,
 } from '../financeCopy';
-import { atLeast } from '../financeFormat';
-import { FinanceSection } from './FinanceSection';
+import { atLeast, formatMoney } from '../financeFormat';
+import { businessesHref } from '../financeLinks';
 import { OverdueTable } from './OverdueTable';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
@@ -127,26 +160,55 @@ function Part({
   );
 }
 
-export function PaymentProblemsSection({
+/**
+ * MK-6 (§6 item 14): block A, "Our payment problems (boosts)", as of now
+ * (slice 4b.2), hosted by Revenue. Unchanged from the old section's block A.
+ */
+export function OurBoostProblems({
+  part,
+  accountId = null,
+}: {
+  part: FinanceBoostProblemsPart;
+  /** The picked business (S4-FR-16's link); null for all businesses. */
+  accountId?: string | null;
+}) {
+  return (
+    <Part id="boosts" title={`${BOOST_PROBLEMS_TITLE} · ${BOOST_PROBLEMS_SUBTITLE}`} status={part.status}>
+      <BoostProblems part={part} accountId={accountId} />
+    </Part>
+  );
+}
+
+/**
+ * MK-6 (§6 item 15): block B, "Client payment problems", hosted by the Client
+ * payments block. The businesses' problem, not ours (BD-2): its own heading
+ * and neutral chip (SA-CR-4b2 CR-1), and the old frame's subtitle, which
+ * describes these parts, under it. Five parts, each with its own status.
+ */
+export function ClientPaymentProblems({
   problems,
   windowLabel,
-  onRetry,
 }: {
   problems: FinancePaymentProblemsSection;
   windowLabel: string;
-  onRetry: () => void;
 }) {
   const plans = problems.clientPlans.figures;
   return (
-    <FinanceSection
-      id="payment-problems"
-      title={PROBLEMS_TITLE}
-      subtitle={PROBLEMS_SUBTITLE(problems.today, windowLabel)}
-      status={problems.status}
-      onRetry={onRetry}
-      badge={{ tone: 'neutral', label: PROBLEMS_CHIP }}
-    >
-      <div className="space-y-5" data-testid="payment-problems-body">
+        <div className="space-y-5" role="group" aria-labelledby="problems-clients-heading" data-testid="problems-clients">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 id="problems-clients-heading" className="text-base font-semibold text-white">
+                {PROBLEMS_TITLE}
+              </h3>
+              <StatusChip tone="neutral" testId="problems-clients-chip">
+                {PROBLEMS_CHIP}
+              </StatusChip>
+            </div>
+            <p className="text-xs text-slate-400" data-testid="problems-clients-subtitle">
+              {PROBLEMS_SUBTITLE(problems.today, windowLabel)}
+            </p>
+          </div>
+
         {/* 1. Failed client payments: fixed, never a number in place of "not available" (S2-FR-16). */}
         <Part id="failed" title={PROBLEMS_FAILED_TITLE} status={null}>
           <p className="text-sm text-slate-300" data-testid="problems-failed-not-stored">{PROBLEMS_FAILED_NOT_STORED}</p>
@@ -184,8 +246,84 @@ export function PaymentProblemsSection({
         >
           <Reminders reminders={problems.reminders} />
         </Part>
-      </div>
-    </FinanceSection>
+        </div>
+  );
+}
+
+const dateOf = (iso: string | null): string => (iso === null ? BOOST_PROBLEMS_NOT_RECORDED : formatUtc(iso));
+
+/** Block A's body (FR-4B-12): per currency, open disputes and purchases not credited, with their start dates. */
+function BoostProblems({ part, accountId }: { part: FinanceBoostProblemsPart; accountId: string | null }) {
+  const f: FinanceBoostProblemsFigures | null = part.figures;
+  if (f === null) return null;
+  const link = accountId !== null && (
+    <p className="text-sm">
+      <a
+        href={businessesHref(accountId)}
+        data-testid="problems-boosts-link"
+        className="text-xs text-purple-300 underline hover:text-purple-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400"
+      >
+        {BOOST_PROBLEMS_LINK}
+      </a>
+    </p>
+  );
+  return (
+    <div className="space-y-2" data-testid="problems-boosts-body">
+      {!f.exact && <AdminNotice testId="problems-boosts-cut">{BOOST_PROBLEMS_CUT}</AdminNotice>}
+      {f.openDisputes > 0 && f.openedDates === 'failed' && (
+        <AdminNotice testId="problems-boosts-dates-failed">{BOOST_PROBLEMS_DATES_FAILED}</AdminNotice>
+      )}
+      {f.empty ? (
+        <AdminEmpty testId="problems-boosts-none" message={BOOST_PROBLEMS_NONE} />
+      ) : (
+        <div className={ADMIN_TABLE_WRAP}>
+          <table className={ADMIN_TABLE} aria-label={BOOST_PROBLEMS_TITLE} data-testid="problems-boosts-lines">
+            <thead className={ADMIN_THEAD}>
+              <tr>
+                <th scope="col" className={ADMIN_TH}>{REVENUE_CURRENCY}</th>
+                <th scope="col" className={ADMIN_TH_NUM}>{BOOST_PROBLEMS_OPEN}</th>
+                <th scope="col" className={ADMIN_TH_NUM}>{BOOST_PROBLEMS_HELD}</th>
+                <th scope="col" className={ADMIN_TH}>{BOOST_PROBLEMS_OPENED}</th>
+                <th scope="col" className={ADMIN_TH_NUM}>{BOOST_PROBLEMS_NOT_CREDITED}</th>
+                <th scope="col" className={ADMIN_TH_NUM}>{BOOST_PROBLEMS_NOT_CREDITED_AMOUNT}</th>
+                <th scope="col" className={ADMIN_TH}>{BOOST_PROBLEMS_SINCE}</th>
+              </tr>
+            </thead>
+            <tbody className={ADMIN_TBODY}>
+              {f.lines.map((line) => (
+                <tr key={line.currency ?? 'unknown'} data-testid={`problems-boosts-line-${line.currency ?? 'unknown'}`}>
+                  <th scope="row" className={`${ADMIN_TD} font-normal`}>{line.currency ?? PROBLEMS_UNKNOWN_CURRENCY}</th>
+                  <td className={ADMIN_TD_NUM}>{atLeast(formatCount(line.openDisputes), f.exact)}</td>
+                  <td className={ADMIN_TD_NUM} data-money="held">
+                    {line.held === null ? PROBLEMS_UNKNOWN : atLeast(formatMoney(line.held, line.currency), f.exact)}
+                  </td>
+                  <td className={ADMIN_TD}>{line.openDisputes > 0 ? dateOf(line.oldestDisputeOpenedAt) : ''}</td>
+                  <td className={ADMIN_TD_NUM}>{atLeast(formatCount(line.notCredited), f.exact)}</td>
+                  <td className={ADMIN_TD_NUM} data-money="not-credited">
+                    {line.notCredited === 0
+                      ? ''
+                      : line.notCreditedAmount === null
+                        ? PROBLEMS_UNKNOWN
+                        : atLeast(formatMoney(line.notCreditedAmount, line.currency), f.exact)}
+                  </td>
+                  <td className={ADMIN_TD}>{line.notCredited > 0 ? dateOf(line.oldestNotCreditedAt) : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {f.notCredited > 0 && <p className="text-[11px] text-slate-400">{BOOST_PROBLEMS_NOT_CREDITED_HELP}</p>}
+      {f.eventsOnUnpaidPurchases !== null && f.eventsOnUnpaidPurchases > 0 && (
+        <p className="text-[11px] text-slate-400" data-testid="problems-boosts-unpaid-events">
+          {boostProblemsOnUnpaid(f.eventsOnUnpaidPurchases)}
+        </p>
+      )}
+      {f.overTotal !== null && f.overTotal > 0 && (
+        <p className="text-[11px] text-slate-400" data-testid="problems-boosts-over-total">{REVENUE_EVENTS_OVER_TOTAL(f.overTotal)}</p>
+      )}
+      {link}
+    </div>
   );
 }
 

@@ -14,38 +14,59 @@
  * clears the table and says so (C2-4): the table shows only what the last
  * read returned, never an empty or stale list posing as current.
  *
- * Sync is parked (UC-5) and its handler and button are frozen byte for byte
- * (C2-1). AI_MODEL_PRICE_REVIEW slice 1 (SA 2026-10-08 R-5) rewrote the false
- * info-box and helper text around it; slice 8 retires Sync.
+ * AI_MODEL_PRICE_REVIEW slice 6 (MP-FR-11, user decision Q9): Sync and the
+ * per-row Edit are gone. Since slice 8 the one way a live price changes in the
+ * app is Apply on a pending provider price (`PriceDecisionPanel`, through
+ * `priceApply.ts`, the only file here that sends a write; `page.tsx` sends none,
+ * NW-1). The emergency SQL runbook stays the operator path.
  *
  * AI_MODEL_PRICE_REVIEW slice 4 (user decision UF-5): this table IS the price
  * comparison. Every displayed price, gap, status, area and flag comes from
  * `GET /api/admin/model-pricing/comparison` (read in `priceComparisonRead.ts`),
  * printed from the server's decimal strings. The pricing list read here only
- * supplies the row id behind Edit, the dates and the retired rows (SA N-1,
- * NR-1). Either read failing fails the table (SA N-4, C2-4). There is no Apply,
- * no provider check and no history yet (slices 5, 8, 9).
+ * supplies the row ids, the dates and the retired rows (SA N-1, NR-1). Either
+ * read failing fails the table (SA N-4, C2-4).
+ *
+ * AI_MODEL_PRICE_REVIEW slice 9 (MP-FR-17, UF-4): a History button on every
+ * row with a provider and a valid model id (SA SC9-8) opens the price history
+ * drawer: every stored price of that model and who changed it and why. The
+ * drawer owns its read (`useDrawerResource` with `priceHistoryRead.ts`, so the
+ * page still has one `fetch(`, NW-1); it is read only and touches nothing else.
+ *
+ * AI_MODEL_PRICE_REVIEW slice 8 (MP-FR-8, MP-FR-10, MP-FR-14; UF-3): per-row
+ * Apply and Dismiss, bulk Apply of the selected rows, and the margin-check
+ * prompt (`MarginReviewNotice`) for each Apply that touched a model Business OS
+ * uses. After Apply the page says "in effect on all servers within 1 hour".
+ *
+ * Page layout slice (user feedback UF-7, 2026-10-16): a KPI strip from the
+ * data already read (`priceKpis.ts`; the last check comes from the status
+ * `ProviderPriceCheck` reads, through `onStatus`), a "Show retired" toggle
+ * (off by default; superseded rows follow it), and the old always-open info
+ * box moved behind a ? button into the shared drawer. The help paragraph on
+ * the removed buttons and the "within 1 hour" sentence are pinned verbatim in
+ * this file (source guard S-4, MT-2).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   RefreshCw,
   AlertCircle,
-  CheckCircle,
   DollarSign,
-  Edit,
-  X,
   Check,
-  Download,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  HelpCircle
 } from 'lucide-react';
 
 import { clientLogger } from '@/lib/logger/client';
 import type { ComparisonModel } from '@/lib/ai/pricing-research/comparisonModel';
+import { isHistoryQueryable } from '@/lib/ai/pricing-research/priceHistorySchema';
+import { AdminDrawer, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
+import { useDrawerResource } from '@/app/admin/components/layout/useDrawerResource';
 import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
-import { formatUtcDate } from '@/app/admin/components/layout/adminFormat';
+import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
+import { formatCount, formatUtcDate, formatUtcTime } from '@/app/admin/components/layout/adminFormat';
 import {
   ADMIN_BUTTON,
   ADMIN_TABLE,
@@ -56,6 +77,9 @@ import {
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 import { ManualPriceEntryForm, type ManualEntryPrefill } from '@/app/admin/system-config/components/ManualPriceEntryForm';
+import { MarginReviewNotice } from '@/app/admin/system-config/components/MarginReviewNotice';
+import { PriceDecisionPanel, type DecisionMode, type DecisionOutcome } from '@/app/admin/system-config/components/PriceDecisionPanel';
+import { PriceHistoryDrawerBody } from '@/app/admin/system-config/components/PriceHistoryDrawerBody';
 import {
   EmptyPriceCells,
   PriceCells,
@@ -65,18 +89,24 @@ import {
 } from '@/app/admin/system-config/components/PriceRowCells';
 import ProviderPriceCheck from '@/app/admin/system-config/components/ProviderPriceCheck';
 import { readPriceComparison } from '@/app/admin/system-config/priceComparisonRead';
+import { priceHistoryKey, readPriceHistory } from '@/app/admin/system-config/priceHistoryRead';
+import { priceKpis, type CheckStatusState } from '@/app/admin/system-config/priceKpis';
 import {
-  EDIT_UNIT_WORDS,
+  APPLY_WORDS,
   ENTER_PROVIDER_PRICE,
+  HELP_WORDS,
+  HISTORY_WORDS,
   IN_EFFECT_SINCE,
+  KPI_WORDS,
   NO_MODELS_LINE,
   NO_PENDING_NOTICE,
   PRICE_REVIEW_NOTE,
+  RETIRED_FILTER_WORDS,
   SORT_LABEL,
   SORT_OPTIONS,
   type PriceSortMode,
 } from '@/app/admin/system-config/priceReviewCopy';
-import { buildPriceTableRows, sortPriceTableRows } from '@/app/admin/system-config/priceTableRows';
+import { buildPriceTableRows, sortPriceTableRows, type PriceTableRow } from '@/app/admin/system-config/priceTableRows';
 
 const logger = clientLogger.child({ module: 'AdminModelPricingPage' });
 
@@ -91,23 +121,83 @@ interface ModelPricing {
   retired_date?: string | null;
 }
 
+/** Slice 8: the most lines one Apply may carry (the route and the function enforce the same, SA O-17). */
+const MAX_APPLY_LINES = 50;
+
 /** The two sub-header rows of the unit groups (slice 4, SA NR-5). */
 const UNIT_SUB_HEADERS = ['ours', 'provider', 'gap'] as const;
 
+/** Rows hidden while "Show retired" is off (UF-7): neither is charged, today or later. */
+const HIDDEN_UNLESS_RETIRED_SHOWN: ReadonlySet<PriceTableRow<ModelPricing>['kind']> = new Set(['retired', 'superseded'] as const);
+
+const HELP_TEXT = 'text-sm leading-relaxed text-slate-300';
+const HELP_LABEL = 'text-green-300';
+
+/**
+ * The help drawer body (UF-7): the flow, the units and the buttons in plain
+ * words. Kept in this file because the source guard reads the removed-buttons
+ * paragraph (S-4) and the "within 1 hour" sentence (MT-2) from `page.tsx`.
+ * MT-1, S-2, S-3 and G-2 also scan this file, so some words are avoided on
+ * purpose.
+ */
+function PricingHelp() {
+  return (
+    <>
+      <DrawerSection title="What this page is">
+        <p className={HELP_TEXT}>
+          This table defines the cost per token for each AI model&apos;s input (prompts) and output (responses). Business OS credit charges for the models listed here are computed from these prices, so a wrong price here is a wrong charge for every customer who uses that model.
+        </p>
+      </DrawerSection>
+      <DrawerSection title="How a price review works">
+        <ol className={`list-decimal space-y-2 pl-5 ${HELP_TEXT}`}>
+          <li>
+            <strong className={HELP_LABEL}>Get the provider&apos;s price.</strong> Check provider prices reads OpenAI&apos;s and Anthropic&apos;s official pricing pages. For Google and Kimi, use Enter provider price and type the price from the provider&apos;s page. Either way the price is saved as a pending price: nothing is charged from it. Anthropic&apos;s cache prices are not read: we do not use Anthropic prompt caching, so nothing charges them.
+          </li>
+          <li>
+            <strong className={HELP_LABEL}>Read green and red.</strong> Each row shows what we charge today (ours) next to the provider&apos;s new price, and the gap. Green (Covered) means we charge at or above the provider&apos;s price. Red (Undercharging) means we charge less than the provider charges us, so every call on that model loses money. Red rows sort first.
+          </li>
+          <li>
+            <strong className={HELP_LABEL}>Apply or Dismiss.</strong> Apply makes a pending price the live price for that model, with a short reason that is filled in from the provider page for you to confirm. A flagged price also needs your own override reason. Select several rows to apply them together. Dismiss drops a pending price, with a reason; no charge changes.
+          </li>
+          <li>
+            <strong className={HELP_LABEL}>{HISTORY_WORDS.helpTitle}</strong> {HISTORY_WORDS.helpBody}
+          </li>
+        </ol>
+      </DrawerSection>
+      <DrawerSection title="The units">
+        <div className="space-y-2">
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Input /1M:</strong> Price per 1M input tokens (prompts, context, memory), in USD, the figure providers publish. The table stores the price per token. Example: $0.15 per 1M tokens = $0.00000015 per token.
+          </p>
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Output /1M:</strong> Price per 1M output tokens (AI responses, generated content), in USD. Usually higher than input. Example: $0.60 per 1M tokens = $0.0000006 per token.
+          </p>
+        </div>
+      </DrawerSection>
+      <DrawerSection title="The buttons">
+        <div className="space-y-2">
+          <p className={HELP_TEXT}>
+            <strong className={HELP_LABEL}>Check provider prices and Enter provider price:</strong> only create pending prices. No charge changes.
+          </p>
+          <p className={HELP_TEXT}>
+            The Sync button and the per-row Edit have been removed. Every price change goes through a pending price and Apply, which keeps the old price as history and records who applied it and why. After an Apply that touches a model Business OS uses, a Check plan margins prompt appears until someone marks it done; plans, allowances and credits never change on their own.
+          </p>
+          <p className={HELP_TEXT}>
+            Each server keeps its own copy of these prices for up to 1 hour, so a change is in effect on all servers within 1 hour. Changes don&apos;t alter provider billing.
+          </p>
+        </div>
+      </DrawerSection>
+    </>
+  );
+}
+
 export default function ModelPricingPage() {
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const [pricingModels, setPricingModels] = useState<ModelPricing[]>([]);
   // C2-4: true when the last price read failed. The table is not drawn.
   const [pricingReadFailed, setPricingReadFailed] = useState(false);
-
-  // Pricing editing state
-  const [editingPricing, setEditingPricing] = useState<string | null>(null);
-  const [editedInputCost, setEditedInputCost] = useState<number>(0);
-  const [editedOutputCost, setEditedOutputCost] = useState<number>(0);
 
   // Open by default (SA W2-8): on a page that is the table, a closed card is
   // an extra click and would hide the C2-4 failure line.
@@ -122,6 +212,28 @@ export default function ModelPricingPage() {
   const [entryKey, setEntryKey] = useState(0);
   const [rereading, setRereading] = useState(false);
 
+  // UF-7: retired and superseded rows hidden by default; the help drawer; the
+  // provider check status reported by ProviderPriceCheck (undefined = not yet).
+  const [showRetired, setShowRetired] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
+  const [checkStatus, setCheckStatus] = useState<CheckStatusState>(undefined);
+
+  // Slice 8: the Apply / Dismiss panel (which rows, which mode), the rows picked
+  // for bulk Apply (by table row key), and the line shown after a decision.
+  const [decision, setDecision] = useState<{ mode: DecisionMode; keys: string[] } | null>(null);
+  const [decisionKey, setDecisionKey] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
+  // CR8-2: the button that opened the panel gets focus back on Cancel.
+  const decisionOpenerRef = useRef<HTMLElement | null>(null);
+
+  // Slice 9: the price history drawer (which model, and the basis for its empty
+  // state), the button that opened it (focus returns there, D-6), and its read.
+  const [historyTarget, setHistoryTarget] = useState<{ key: string; modelName: string; basis: string | null } | null>(null);
+  const historyOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const historyState = useDrawerResource(historyTarget?.key ?? null, readPriceHistory);
+
   useEffect(() => {
     fetchData();
     // Mount-only load, as on the page before the split; refreshes are explicit.
@@ -129,12 +241,11 @@ export default function ModelPricingPage() {
   }, []);
 
   // C2-4 / O-5: the table shows only what the last read returned. A failed
-  // read (including a refresh after Sync) clears it and any open editor.
+  // read (including the silent re-read after a check or a manual entry) clears it.
   const markPricingReadFailed = () => {
     setPricingReadFailed(true);
     setPricingModels([]);
     setComparison(null);
-    setEditingPricing(null);
     setError('Could not load model prices.');
   };
 
@@ -193,19 +304,31 @@ export default function ModelPricingPage() {
     }
   };
 
-  // After a saved edit "ours" must show the stored price exactly, so the
-  // comparison is read once more (SA N-5). If that read fails, the save still
-  // succeeded: its message stays and the table is cleared (SA NR-2, C2-4).
-  const rereadComparison = async () => {
-    setRereading(true);
-    const comparisonRead = await readPriceComparison();
-    setRereading(false);
-    if (comparisonRead.ok) {
-      setComparison(comparisonRead.data);
-      return;
-    }
-    logger.error({ status: comparisonRead.status, read: 'comparison' }, 'Price comparison re-read after save failed');
-    markPricingReadFailed();
+  const openDecision = (mode: DecisionMode, keys: string[], opener: HTMLElement | null) => {
+    decisionOpenerRef.current = opener;
+    setDecisionNotice(null);
+    setDecision({ mode, keys });
+    setDecisionKey((key) => key + 1);
+  };
+
+  const finishDecision = (outcome: DecisionOutcome) => {
+    setDecision(null);
+    setSelected(new Set());
+    setDecisionNotice(
+      outcome.kind === 'applied'
+        ? `${APPLY_WORDS.appliedAt} ${formatUtcTime(outcome.appliedAt)}. ${outcome.effective}${outcome.marginNeeded ? ` ${APPLY_WORDS.marginFollows}` : ''}`
+        : APPLY_WORDS.dismissed
+    );
+    void fetchData(true);
+  };
+
+  const toggleSelected = (key: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   const openEntry = (prefill: ManualEntryPrefill | null) => {
@@ -214,112 +337,20 @@ export default function ModelPricingPage() {
     setEntryOpen(true);
   };
 
-  const handleEditPricing = (model: ModelPricing) => {
-    setEditingPricing(model.id);
-    setEditedInputCost(model.input_cost_per_token);
-    setEditedOutputCost(model.output_cost_per_token);
-  };
-
-  const handleCancelEditPricing = () => {
-    setEditingPricing(null);
-    setEditedInputCost(0);
-    setEditedOutputCost(0);
-  };
-
-  const handleSavePricing = async (modelId: string) => {
-    try {
-      setSaving(true);
-      setError(null);
-      setSuccess(null);
-
-      const response = await fetch('/api/admin/system-config/pricing', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id: modelId,
-          input_cost_per_token: editedInputCost,
-          output_cost_per_token: editedOutputCost
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update pricing');
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to update pricing');
-      }
-
-      // SA W2-1: show the saved price. The PUT returns the saved row in the
-      // same shape as the GET rows, so it replaces the old row in place.
-      const saved = result.data as ModelPricing | undefined;
-      if (saved?.id) {
-        setPricingModels((rows) => rows.map((row) => (row.id === saved.id ? saved : row)));
-      } else {
-        // Defensive: if the PUT ever stops returning the row, re-read rather
-        // than show a stale price or throw after a save that succeeded.
-        await fetchData(true);
-      }
-
-      setSuccess('Pricing updated successfully!');
-      setEditingPricing(null);
-
-      setTimeout(() => setSuccess(null), 3000);
-
-      if (saved?.id) {
-        await rereadComparison();
-      }
-
-    } catch (error) {
-      logger.error({ err: error, pricingId: modelId }, 'Model price save failed');
-      setError(error instanceof Error ? error.message : 'Unknown error occurred');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSyncPricing = async () => {
-    try {
-      setSaving(true);
-      setError(null);
-      setSuccess(null);
-
-      const response = await fetch('/api/admin/system-config/pricing/sync', {
-        method: 'POST'
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to sync pricing');
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to sync pricing');
-      }
-
-      setSuccess(result.message || 'Pricing synced successfully!');
-
-      // Refresh pricing data after sync since it fetches from external API
-      await fetchData(true);
-
-      setTimeout(() => setSuccess(null), 5000);
-
-    } catch (error) {
-      logger.error({ err: error }, 'Pricing sync failed');
-      setError(error instanceof Error ? error.message : 'Unknown error occurred');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   // Slice 4: the rows of the one table, sorted as the admin chose. Every
   // displayed price comes from the comparison (SA N-1); none is formatted here.
-  const tableRows = comparison ? sortPriceTableRows(buildPriceTableRows(pricingModels, comparison), sortMode) : [];
+  const allRows = comparison ? sortPriceTableRows(buildPriceTableRows(pricingModels, comparison), sortMode) : [];
+  const tableRows = showRetired ? allRows : allRows.filter((row) => !HIDDEN_UNLESS_RETIRED_SHOWN.has(row.kind));
+  const hiddenCount = allRows.length - tableRows.length;
+  const kpis = comparison ? priceKpis(comparison, checkStatus) : null;
+  const decisionRows = decision
+    ? allRows.flatMap((row) => (row.kind === 'compared' && decision.keys.includes(row.key) && row.comparison.pending.length > 0 ? [row.comparison] : []))
+    : [];
+  const selectedRows = allRows.filter((row) => selected.has(row.key) && row.kind === 'compared' && row.comparison.pending.length > 0);
+  const selectedKeys = selectedRows.map((row) => row.key);
+  // QA edge case: the server takes at most 50 lines per Apply; say so before sending.
+  const selectedLineCount = selectedRows.reduce((total, row) => total + (row.kind === 'compared' ? row.comparison.pending.length : 0), 0);
+  const tooManySelected = selectedLineCount > MAX_APPLY_LINES;
 
   if (loading) {
     return (
@@ -342,7 +373,8 @@ export default function ModelPricingPage() {
               <p className="text-sm text-slate-400">AI cost per token for each model. Every Business OS credit charge is computed from these prices.</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            {/* Refresh first, then ? (the order the page layout slice set; D-7). */}
             <button
               onClick={() => fetchData()}
               disabled={loading}
@@ -351,22 +383,32 @@ export default function ModelPricingPage() {
             >
               <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
             </button>
+            <button
+              ref={helpButtonRef}
+              type="button"
+              onClick={() => setHelpOpen(true)}
+              aria-label={HELP_WORDS.button}
+              aria-haspopup="dialog"
+              data-testid="pricing-help-button"
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+            >
+              <HelpCircle className="w-5 h-5 text-slate-400" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Success/Error Messages */}
-      {success && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-green-500/10 border border-green-500/50 rounded-lg p-4 flex items-center gap-3"
-        >
-          <CheckCircle className="w-5 h-5 text-green-400" />
-          <p className="text-green-400">{success}</p>
-        </motion.div>
+      {/* UF-7: the KPI strip, from the reads the page already made. Not drawn when the table read failed (C2-4). */}
+      {kpis && (
+        <KpiStrip>
+          <KpiTile testId="kpi-undercharging" label={KPI_WORDS.undercharging} {...kpis.undercharging} />
+          <KpiTile testId="kpi-pending" label={KPI_WORDS.pending} {...kpis.pending} />
+          <KpiTile testId="kpi-last-check" label={KPI_WORDS.lastCheck} {...kpis.lastCheck} />
+          <KpiTile testId="kpi-models-in-use" label={KPI_WORDS.modelsInUse} {...kpis.modelsInUse} />
+        </KpiStrip>
       )}
 
+      {/* Error message */}
       {error && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -393,27 +435,10 @@ export default function ModelPricingPage() {
                 AI Model Pricing
               </h2>
               <p className="text-sm text-slate-400 mt-1">
-                Cost per token for each AI model. Sync copies a built-in price list; it does not fetch prices from providers.
+                Cost per token for each AI model, as charged today. A live price changes only when an admin applies a provider price.
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={handleSyncPricing}
-                disabled={saving}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-              >
-                {saving ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    Sync Latest Pricing
-                  </>
-                )}
-              </button>
               <button
                 data-testid="pricing-toggle"
                 onClick={() => setPricingExpanded(!pricingExpanded)}
@@ -434,46 +459,49 @@ export default function ModelPricingPage() {
 
         {pricingExpanded && (
           <div id="model-pricing-body" className="p-6 space-y-4">
-            {/* Info Box */}
-            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <DollarSign className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-                <div className="space-y-3">
-                  <p className="text-green-400 font-medium text-sm">About Model Pricing</p>
-                  <p className="text-slate-300 text-sm leading-relaxed">
-                    This table defines the cost per token for each AI model's input (prompts) and output (responses). Business OS credit charges for the models listed here are computed from these prices, so a wrong price here is a wrong charge for every customer who uses that model.
-                  </p>
-                  <div className="space-y-2 text-xs leading-relaxed">
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Input /1M:</strong> Price per 1M input tokens (prompts, context, memory), in USD, the figure providers publish. The table stores the price per token, and the Edit field still takes the per-token value. Example: $0.15 per 1M tokens = $0.00000015 per token.
-                    </p>
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Output /1M:</strong> Price per 1M output tokens (AI responses, generated content), in USD. Usually higher than input. Example: $0.60 per 1M tokens = $0.0000006 per token.
-                    </p>
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Sync Latest Pricing:</strong> Copies a built-in price list, kept in the code, into this table: it overwrites the price of every model on that list, including manual edits, and adds any listed model that is missing. It does not contact OpenAI, Anthropic or any other provider.
-                    </p>
-                    <p className="text-slate-300">
-                      <strong className="text-green-300">Manual Edits:</strong> Override prices for custom contracts, volume discounts, or testing. Each server keeps its own copy of these prices for up to 1 hour, so a change (an edit or a Sync) is in effect on all servers within 1 hour. Changes don't alter provider billing.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
           {/* Slice 5: "Check provider prices"; a stored check re-reads the table (silent, as after a manual entry). */}
           <ProviderPriceCheck
             onFinished={() => {
               void fetchData(true);
             }}
+            onStatus={setCheckStatus}
           />
 
           {/* Slice 4: the bar, note, notice and form sit above the table, so a failed read never hides them. */}
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <button type="button" onClick={() => openEntry(null)} className={ADMIN_BUTTON}>
-              {ENTER_PROVIDER_PRICE}
-            </button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => openEntry(null)} className={ADMIN_BUTTON}>
+                {ENTER_PROVIDER_PRICE}
+              </button>
+              {selectedKeys.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(event) => openDecision('apply', selectedKeys, event.currentTarget)}
+                  disabled={tooManySelected}
+                  aria-describedby={tooManySelected ? 'apply-selected-too-many' : undefined}
+                  data-testid="apply-selected"
+                  className={ADMIN_BUTTON}
+                >
+                  {`${APPLY_WORDS.applySelected} (${formatCount(selectedKeys.length)})`}
+                </button>
+              )}
+              {tooManySelected && (
+                <span id="apply-selected-too-many" role="alert" data-testid="apply-selected-too-many" className="text-xs text-amber-200">
+                  {`${APPLY_WORDS.tooManyLines} (${formatCount(selectedLineCount)} ${APPLY_WORDS.selectedLines})`}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                aria-pressed={showRetired}
+                onClick={() => setShowRetired((shown) => !shown)}
+                data-testid="show-retired-toggle"
+                className={`${ADMIN_BUTTON} inline-flex items-center gap-1 ${showRetired ? 'ring-1 ring-purple-500' : ''}`}
+              >
+                {showRetired && <Check className="w-4 h-4" aria-hidden="true" />}
+                {RETIRED_FILTER_WORDS.toggle}
+              </button>
               <label htmlFor="price-sort" className="text-xs text-slate-300">
                 {SORT_LABEL}
               </label>
@@ -494,8 +522,38 @@ export default function ModelPricingPage() {
           <p data-testid="price-review-note" className="text-xs text-slate-400">
             {PRICE_REVIEW_NOTE}
           </p>
+          {hiddenCount > 0 && (
+            <p data-testid="retired-hidden-line" className="text-xs text-slate-400">
+              {`${formatCount(hiddenCount)} ${hiddenCount === 1 ? RETIRED_FILTER_WORDS.hiddenOne : RETIRED_FILTER_WORDS.hidden}`}
+            </p>
+          )}
           {comparison && comparison.rows.length > 0 && comparison.rows.every((row) => row.pending.length === 0) && (
             <AdminNotice testId="no-pending-notice">{NO_PENDING_NOTICE}</AdminNotice>
+          )}
+          {/* Slice 8: what the last Apply or Dismiss did; always mounted so a screen reader announces it. */}
+          <div role="status" data-testid="decision-notice" className={decisionNotice ? 'rounded-lg border border-slate-600 bg-slate-800 p-3 text-sm text-slate-200' : undefined}>
+            {decisionNotice}
+          </div>
+          {comparison && (
+            <MarginReviewNotice
+              reviews={comparison.openMarginReviews ?? []}
+              more={comparison.moreMarginReviews === true}
+              onDone={() => {
+                void fetchData(true);
+              }}
+            />
+          )}
+          {decision && decisionRows.length > 0 && (
+            <PriceDecisionPanel
+              key={decisionKey}
+              mode={decision.mode}
+              rows={decisionRows}
+              onFinished={finishDecision}
+              onClose={() => {
+                setDecision(null);
+                decisionOpenerRef.current?.focus();
+              }}
+            />
           )}
           {entryOpen && (
             <ManualPriceEntryForm
@@ -544,13 +602,11 @@ export default function ModelPricingPage() {
                 </tr>
               ) : tableRows.map((row) => {
                 const comparisonRow = row.kind === 'compared' ? row.comparison : null;
-                // Edit only on a stored row that is, or will be, charged
-                // (SA RC-4, NR-1): not on retired or superseded rows, and not
-                // on a model with no stored row.
-                const model = row.kind === 'compared' || row.kind === 'starts_later' ? row.stored : null;
-                const isEditing = model !== null && editingPricing === model.id;
                 const provider = comparisonRow ? comparisonRow.provider : row.stored?.provider ?? null;
                 const modelName = comparisonRow ? comparisonRow.modelName : row.stored?.model_name ?? '';
+                // Slice 9: stored-only rows are token prices (`ai_model_pricing`); SC9-8 gates the button.
+                const historyKind = comparisonRow ? comparisonRow.kind : 'token';
+                const hasHistory = provider !== null && isHistoryQueryable(historyKind, provider, modelName);
 
                 return (
                   <tr key={row.key} className="hover:bg-slate-700/20 transition-colors">
@@ -567,76 +623,7 @@ export default function ModelPricingPage() {
                       )}
                     </td>
                     <UsedByCell row={comparisonRow} />
-                    {isEditing && model ? (
-                      <td className={ADMIN_TD} colSpan={6}>
-                        <div className="flex flex-wrap items-center gap-4">
-                        <div className="flex items-center justify-end gap-1">
-                          <label htmlFor={`edit-input-${model.id}`} className="text-xs text-slate-300">
-                            Input, {EDIT_UNIT_WORDS}
-                          </label>
-                          <input
-                            id={`edit-input-${model.id}`}
-                            type="text"
-                            value={editedInputCost.toFixed(10)}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value);
-                              if (!isNaN(val)) setEditedInputCost(val);
-                            }}
-                            className="w-40 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-white text-sm font-mono text-right"
-                            placeholder="0.00000000"
-                          />
-                          <div className="flex flex-col">
-                            <button
-                              onClick={() => setEditedInputCost(editedInputCost + 0.00000001)}
-                              className="p-0.5 bg-slate-600 hover:bg-slate-500 text-white rounded-t transition-colors"
-                              title="Increase"
-                            >
-                              <ChevronUp className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={() => setEditedInputCost(Math.max(0, editedInputCost - 0.00000001))}
-                              className="p-0.5 bg-slate-600 hover:bg-slate-500 text-white rounded-b transition-colors"
-                              title="Decrease"
-                            >
-                              <ChevronDown className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-end gap-1">
-                          <label htmlFor={`edit-output-${model.id}`} className="text-xs text-slate-300">
-                            Output, {EDIT_UNIT_WORDS}
-                          </label>
-                          <input
-                            id={`edit-output-${model.id}`}
-                            type="text"
-                            value={editedOutputCost.toFixed(10)}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value);
-                              if (!isNaN(val)) setEditedOutputCost(val);
-                            }}
-                            className="w-40 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-white text-sm font-mono text-right"
-                            placeholder="0.00000000"
-                          />
-                          <div className="flex flex-col">
-                            <button
-                              onClick={() => setEditedOutputCost(editedOutputCost + 0.00000001)}
-                              className="p-0.5 bg-slate-600 hover:bg-slate-500 text-white rounded-t transition-colors"
-                              title="Increase"
-                            >
-                              <ChevronUp className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={() => setEditedOutputCost(Math.max(0, editedOutputCost - 0.00000001))}
-                              className="p-0.5 bg-slate-600 hover:bg-slate-500 text-white rounded-b transition-colors"
-                              title="Decrease"
-                            >
-                              <ChevronDown className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                        </div>
-                      </td>
-                    ) : comparisonRow ? (
+                    {comparisonRow ? (
                       <PriceCells row={comparisonRow} />
                     ) : (
                       <EmptyPriceCells />
@@ -644,51 +631,69 @@ export default function ModelPricingPage() {
                     <StatusCell row={row} />
                     <SourceCell row={comparisonRow} />
                     <td className={`${ADMIN_TD} whitespace-nowrap text-right`}>
-                      {isEditing && model ? (
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleSavePricing(model.id)}
-                            disabled={saving}
-                            className="p-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded transition-colors"
-                            title="Save"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={handleCancelEditPricing}
-                            disabled={saving}
-                            className="p-1.5 bg-slate-600 hover:bg-slate-700 disabled:bg-slate-700 text-white rounded transition-colors"
-                            title="Cancel"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-end gap-2">
-                          {comparisonRow && (
+                      {/* Slice 6 (MP-FR-11): no Edit. Slice 8: a row with a pending price gets Apply, Dismiss and a bulk checkbox. */}
+                      <div className="flex items-center justify-end gap-2">
+                        {comparisonRow && comparisonRow.pending.length > 0 && (
+                          <>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(row.key)}
+                              onChange={() => toggleSelected(row.key)}
+                              aria-label={`${APPLY_WORDS.select}: ${comparisonRow.modelName}`}
+                              data-testid={`select-${row.key}`}
+                            />
                             <button
                               type="button"
-                              onClick={() =>
-                                openEntry({ kind: comparisonRow.kind, provider: comparisonRow.provider, modelName: comparisonRow.modelName })
-                              }
-                              aria-label={`${ENTER_PROVIDER_PRICE} for ${comparisonRow.modelName}`}
+                              onClick={(event) => openDecision('apply', [row.key], event.currentTarget)}
+                              aria-label={`${APPLY_WORDS.apply} ${comparisonRow.modelName}`}
+                              data-testid={`apply-${row.key}`}
                               className={ADMIN_BUTTON}
                             >
-                              {ENTER_PROVIDER_PRICE}
+                              {APPLY_WORDS.apply}
                             </button>
-                          )}
-                          {model && (
                             <button
-                              onClick={() => handleEditPricing(model)}
-                              className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-                              title="Edit pricing"
-                              aria-label={`Edit the stored price of ${modelName}`}
+                              type="button"
+                              onClick={(event) => openDecision('dismiss', [row.key], event.currentTarget)}
+                              aria-label={`${APPLY_WORDS.dismiss} ${comparisonRow.modelName}`}
+                              data-testid={`dismiss-${row.key}`}
+                              className={ADMIN_BUTTON}
                             >
-                              <Edit className="w-4 h-4" />
+                              {APPLY_WORDS.dismiss}
                             </button>
-                          )}
-                        </div>
-                      )}
+                          </>
+                        )}
+                        {hasHistory && provider !== null && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              historyOpenerRef.current = event.currentTarget;
+                              setHistoryTarget({
+                                key: priceHistoryKey(historyKind, provider, modelName),
+                                modelName,
+                                basis: comparisonRow ? comparisonRow.currentBasis : null,
+                              });
+                            }}
+                            aria-label={`${HISTORY_WORDS.buttonLabel} ${modelName}`}
+                            aria-haspopup="dialog"
+                            data-testid={`history-${row.key}`}
+                            className={ADMIN_BUTTON}
+                          >
+                            {HISTORY_WORDS.button}
+                          </button>
+                        )}
+                        {comparisonRow && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openEntry({ kind: comparisonRow.kind, provider: comparisonRow.provider, modelName: comparisonRow.modelName })
+                            }
+                            aria-label={`${ENTER_PROVIDER_PRICE} for ${comparisonRow.modelName}`}
+                            className={ADMIN_BUTTON}
+                          >
+                            {ENTER_PROVIDER_PRICE}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -700,6 +705,29 @@ export default function ModelPricingPage() {
         </div>
         )}
       </motion.div>
+
+      {/* Slice 9: the price history drawer, rendered once outside the table and its error branch (L-4b). Read only. */}
+      <AdminDrawer
+        open={historyTarget !== null}
+        onClose={() => setHistoryTarget(null)}
+        onReturnFocus={() => historyOpenerRef.current?.focus()}
+        title={HISTORY_WORDS.title}
+        titleSuffix={historyTarget?.modelName}
+        testId="price-history-drawer"
+      >
+        <PriceHistoryDrawerBody state={historyState} emptyBasis={historyTarget?.basis ?? null} />
+      </AdminDrawer>
+
+      {/* UF-7: the help that used to be an always-open info box. */}
+      <AdminDrawer
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onReturnFocus={() => helpButtonRef.current?.focus()}
+        title={HELP_WORDS.title}
+        testId="pricing-help-drawer"
+      >
+        <PricingHelp />
+      </AdminDrawer>
     </div>
   );
 }

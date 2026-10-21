@@ -3,7 +3,7 @@
  * S1-FR-11, SEC-1 to SEC-10). Workplan
  * docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1A_WORKPLAN.md § The route.
  *
- *   GET /api/admin/business-os/finance?preset=today|7d|30d|this_month|custom
+ *   GET /api/admin/business-os/finance?preset=today|7d|30d|this_month|custom|since_start
  *       [&from=YYYY-MM-DD&to=YYYY-MM-DD][&accountId=<uuid>]
  *
  * ADMIN ONLY, a deliberate CROSS-ACCOUNT READ. Order, and nothing before it:
@@ -72,7 +72,28 @@
  * feature value, a session id or a name (M4-FR-9). Still no new query
  * parameter.
  *
+ * DF-6 (§11L, E-75, SA-Q92) adds one window choice, `since_start`, Finance's
+ * own (the shared `ADMIN_WINDOW_CHOICES` is not edited, so Activity and the
+ * credit report are unchanged). It is accepted ONLY with `accountId` (a 400
+ * otherwise, BD-26) and resolved here, purely, from the cut-over constant and
+ * this request's clock: no plan row, no read, no timezone. It is the only
+ * window longer than 92 days; `custom` keeps the 92-day cap with or without a
+ * business. The pinned schema is untouched: `parseFinanceQuery` admits the
+ * choice around it. The builder, its order and every read are unchanged.
+ *
  * Every response, success or error, is `Cache-Control: no-store` (SEC-9).
+ *
+ * Money MK-4 (KPI restructure review SA-2, SA-4): MRR now joins the payload as
+ * `mrr` and `stripeMode`, read by `lib/admin/billing/financeMrr` (the mode is
+ * decided there, never here) BESIDE the builder, never inside it. A failed MRR
+ * read is its own `unknown` section and never fails the page. The query
+ * schema is unchanged.
+ *
+ * Money MK-5b (§5.1 F-K5b, SA-10): the builder adds `converted` (Converted
+ * this month), through the wiring's `converted` reads; the billing mode is
+ * decided in `lib/admin/billing`, never here. The line gains
+ * `sections.converted` (a status) and `counts.converted` (counts only, never
+ * an id, a date or a name). The query schema is unchanged.
  *
  * @module app/api/admin/business-os/finance
  */
@@ -84,6 +105,7 @@ import { createLogger } from '@/lib/logger';
 import { bosRowFilter, isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
 import { buildFinanceHealth } from '@/lib/business-os/finance/financeHealth';
 import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
+import { readFinanceMrr } from '@/lib/admin/billing/financeMrr';
 import { resolveFinanceWindow } from '@/lib/business-os/finance/financeWindow';
 import { ADMIN_WINDOW_CHOICES, customRangeProblem, isRealDate } from '@/app/admin/components/adminWindowPresets';
 import { FINANCE_ACCOUNTS_SHOWS, FINANCE_ACCOUNTS_SORTS, FINANCE_GROUP_SHAPE } from '@/app/admin/finance/financeUrl';
@@ -160,6 +182,41 @@ function buildQuerySchema(now: Date) {
     });
 }
 
+/** The validated query; `preset` also takes Finance's own `since_start` (DF-6, E-80). */
+type FinanceRouteQuery = Omit<z.infer<ReturnType<typeof buildQuerySchema>>, 'preset'> & {
+  preset: z.infer<ReturnType<typeof buildQuerySchema>>['preset'] | 'since_start';
+};
+
+/** DF-6 (DF6-FR-2, BD-26): the only window longer than 92 days is for one business. */
+const SINCE_START_NEEDS_A_BUSINESS = 'since_start needs a business picked';
+
+/**
+ * DF-6 (DF6-FR-1, DF6-FR-2). The schema above is pinned byte for byte (AC-173
+ * part B), so Finance's own `since_start` is admitted here, AROUND it, and the
+ * shared `ADMIN_WINDOW_CHOICES` is not edited: every other key of a since-start
+ * request goes through the same strict schema (unknown keys, the date format of
+ * an ignored `from` / `to`, E-48, SA-W84 all unchanged), and the choice is then
+ * accepted only with `accountId`. Any other `preset` value, `since-start`
+ * included, is the schema's own 400.
+ */
+function parseFinanceQuery(
+  raw: Record<string, string>,
+  now: Date
+): { success: true; data: FinanceRouteQuery } | { success: false; error: z.ZodError } {
+  if (raw.preset !== 'since_start') return buildQuerySchema(now).safeParse(raw);
+  // Every key but the choice goes through the pinned schema (its default window is then replaced).
+  const rest = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'preset'));
+  const parsed = buildQuerySchema(now).safeParse(rest);
+  if (!parsed.success) return parsed;
+  if (parsed.data.accountId === undefined) {
+    return {
+      success: false,
+      error: new z.ZodError([{ code: z.ZodIssueCode.custom, message: SINCE_START_NEEDS_A_BUSINESS, path: ['preset'] }]),
+    };
+  }
+  return { success: true, data: { ...parsed.data, preset: 'since_start' } };
+}
+
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const baseLogger = logger.child({ correlationId });
@@ -185,7 +242,7 @@ export async function GET(request: NextRequest) {
 
     // The request's one clock: the window, K-1's spans, the cut-over and generatedAt.
     const now = new Date();
-    const parsed = buildQuerySchema(now).safeParse(Object.fromEntries(params.entries()));
+    const parsed = parseFinanceQuery(Object.fromEntries(params.entries()), now);
     if (!parsed.success) {
       // Zod's own detail only in development (QA-3).
       return errorResponse(400, INVALID_QUERY, {
@@ -209,6 +266,10 @@ export async function GET(request: NextRequest) {
     // Slice 6a: the defaults are applied here, so the builder always has a full query.
     const accountsTab =
       query.tab === 'accounts' ? { sort: query.sort ?? 'ai_cost', group: query.group ?? null, show: query.show ?? 'all' } : null;
+
+    // MK-4: all businesses, started beside the builder; a picked business only once the builder
+    // has found its plan row (no read for an id that is not a business). Never rejects.
+    const mrrRead = accountId === null ? readFinanceMrr(null) : null;
 
     const result = await buildFinanceHealth({ window, accountId, now, accountsTab }, requestLogger, {
       ...financeHealthDeps(),
@@ -242,7 +303,9 @@ export async function GET(request: NextRequest) {
       return errorResponse(500, 'Could not check this business. Try again.');
     }
 
-    const { payload, counts } = result;
+    const { payload: built, counts } = result;
+    const { mrr, stripeMode } = await (mrrRead ?? readFinanceMrr(accountId));
+    const payload = { ...built, mrr, stripeMode };
     // Ids, filters, statuses and counts only: never a business name, never a
     // figure (no credit figure either). `counts.creditAccounts` and
     // `counts.creditsPass` make the credit pass's scale trigger visible from
@@ -268,6 +331,10 @@ export async function GET(request: NextRequest) {
           aiRecorded: payload.aiCost.recorded?.status ?? 'not_built',
           credits: payload.credits.status,
           takings: payload.takings.status,
+          // MK-4: MRR now, its status and the lines count only (never a figure).
+          mrr: { status: mrr.status, currencies: mrr.lines.length },
+          // MK-5b: Converted this month, its status only (the counts are in `counts.converted`).
+          converted: payload.converted?.status ?? 'not_built',
           paymentProblems: {
             block: payload.paymentProblems.status,
             overdueInvoices: payload.paymentProblems.overdueInvoices.status,

@@ -238,6 +238,12 @@ export type AdminOpOutcome =
        * audit rows are unchanged (S11-C-7).
        */
       audit?: CreditLotAudit | BoostCapAudit;
+      /**
+       * Plan payments P-8a.3 (AM-7, SA Q-7): fields added to the audit entry's
+       * `details` only, never to the response body. Set by assign_tier and
+       * add_override: `subscribed`, whether Stripe may still bill the account.
+       */
+      auditDetails?: Record<string, unknown>;
       /** S11-CR-2: an idempotent replay. The route writes no audit entry and logs at info. */
       replayed?: true;
       /** Boost slice 6b (SA C-2): the same value was already set. Nothing written, no audit entry. */
@@ -266,7 +272,10 @@ export interface AdminOpContext {
   onboardingRepository: Pick<OnboardingConversationRepository, 'getFirstMessageAt' | 'getLatestMessageAt'>;
   /** Slice 11b: the lot repository and the payment-hold readers the credit ops use. */
   credit: CreditAdminDependencies;
-  /** P-3b.1 (PF-13): read only by assign_tier and set_cohort, just before their write. */
+  /**
+   * P-3b.1 (PF-13): read by assign_tier and set_cohort, just before their write.
+   * P-8a.3 (SA Q-7): also by add_override, for its audit entry only.
+   */
   billing: PlanSubscriptionReader;
   /** Boost slice 6b: the cap override functions (2a), read and written only by the two boost ops. */
   boostCap: { repository: BoostCapAdminOpContext['repository'] };
@@ -284,18 +293,19 @@ export interface PlanSubscriptionReader {
 
 /**
  * PF-13: add the anchor reset to `patch` only when no plan subscription is
- * live. Returns the refusal when that cannot be told; `null` when the patch is
- * ready to write. Called after every other check, just before the write, so
- * the refusals that existed before PF-13 keep their order and their status.
+ * live. Returns the refusal when that cannot be told; otherwise `refused: null`
+ * and what was read (P-8a.3: assign_tier records it in its audit entry). Called
+ * after every other check, just before the write, so the refusals that existed
+ * before PF-13 keep their order and their status.
  */
 async function applyAnchorRule(
   ctx: AdminOpContext,
   patch: BusinessOsAccountPlanPatch
-): Promise<Extract<AdminOpOutcome, { ok: false }> | null> {
+): Promise<{ refused: Extract<AdminOpOutcome, { ok: false }> } | { refused: null; subscribed: boolean }> {
   const subscribed = await ctx.billing.hasLivePlanSubscription(ctx.accountId);
-  if (subscribed === null) return { ok: false, status: 500, error: 'billing_read_failed' };
+  if (subscribed === null) return { refused: { ok: false, status: 500, error: 'billing_read_failed' } };
   if (!subscribed) patch.period_anchor = ctx.now.toISOString();
-  return null;
+  return { refused: null, subscribed };
 }
 
 // `tierInForce` (A-1) and `wouldLeaveNoBasis` (R2-3) live in `planWriteChecks.ts`
@@ -490,8 +500,8 @@ async function setCohort(
   }
 
   // PF-13 (SA Q-6 b): the same anchor rule as assign_tier.
-  const refused = await applyAnchorRule(ctx, patch);
-  if (refused) return refused;
+  const anchor = await applyAnchorRule(ctx, patch);
+  if (anchor.refused) return anchor.refused;
 
   return writePatch(ctx, plan, patch, 'BOS_ENTITLEMENT_COHORT_SET');
 }
@@ -544,10 +554,12 @@ async function assignTier(
   }
 
   // PF-13 (SA-P2, Q-6 a): a subscribed account keeps its billing anchor.
-  const refused = await applyAnchorRule(ctx, patch);
-  if (refused) return refused;
+  const anchor = await applyAnchorRule(ctx, patch);
+  if (anchor.refused) return anchor.refused;
 
-  return writePatch(ctx, plan, patch, 'BOS_ENTITLEMENT_TIER_ASSIGNED');
+  const written = await writePatch(ctx, plan, patch, 'BOS_ENTITLEMENT_TIER_ASSIGNED');
+  // P-8a.3 (AM-7 "admin override on a subscribed account", SA Q-7): the same read, in the audit entry only.
+  return written.ok ? { ...written, auditDetails: { subscribed: anchor.subscribed } } : written;
 }
 
 async function addOverride(
@@ -591,6 +603,10 @@ async function addOverride(
     return { ok: false, status: 400, error: 'add_requires_a_number' };
   }
 
+  // P-8a.3 (AM-7, SA Q-7): whether Stripe may still bill this account, for the
+  // audit entry only. Never a refusal: an unreadable answer is recorded as null.
+  const subscribed = await ctx.billing.hasLivePlanSubscription(ctx.accountId);
+
   const created = await ctx.planRepository.createOverride({
     userId: ctx.accountId,
     capability: op.capability,
@@ -610,6 +626,7 @@ async function addOverride(
     after: plan,
     // The override id, so an admin can end exactly this one later.
     data: { overrideId: created.data.id, capability: op.capability },
+    auditDetails: { subscribed },
   };
 }
 

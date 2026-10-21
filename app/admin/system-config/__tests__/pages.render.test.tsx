@@ -10,6 +10,11 @@
  * The stub answers it by default from the same rows; each edited case keeps
  * its original intent, stated in a one-line comment. R-12 and R-13 are new.
  *
+ * AI_MODEL_PRICE_REVIEW slice 6 (MP-FR-11): Sync and Edit are gone. R-5, R-9
+ * and R-13 tested them and are deleted; R-10 keeps its intent on the surviving
+ * silent re-read (the price check's `onFinished`, SA O-9); R-14 is new. R-15
+ * (SA CR-2) keeps the recovery half of the deleted `pages.edge.qa` E-3.
+ *
  * P = the Model pricing page (`/admin/system-config`).
  * B = the parked AgentsPilot billing page (`/admin/agentspilot-billing`).
  *
@@ -22,11 +27,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 
 const mockError = jest.fn();
 // Slice 5: "Check provider prices" is tested on its own in providerPriceCheck.render.test.tsx.
-// Here it is a static stand-in (no status read), so these page cases keep slice 4's call
-// lists and timings.
+// Here it is a stand-in (no status read), so these page cases keep slice 4's call lists and
+// timings. Slice 6: clicking it calls `onFinished`, the page's surviving silent re-read.
 jest.mock('@/app/admin/system-config/components/ProviderPriceCheck', () => ({
   __esModule: true,
-  default: () => jest.requireActual('react').createElement('button', { type: 'button' }, 'Check provider prices'),
+  default: ({ onFinished }: { onFinished?: () => void }) =>
+    jest
+      .requireActual('react')
+      .createElement('button', { type: 'button', 'data-testid': 'price-check-stand-in', onClick: () => onFinished?.() }, 'Check provider prices'),
 }));
 
 jest.mock('@/lib/logger/client', () => {
@@ -45,7 +53,6 @@ import AgentsPilotBillingPage from '../../agentspilot-billing/page';
 import { COMPARISON_URL, okComparison } from '../__fixtures__/priceComparison';
 
 const PRICING_URL = '/api/admin/system-config/pricing';
-const SYNC_URL = '/api/admin/system-config/pricing/sync';
 const READ_FAILED_BANNER = 'Could not load model prices.';
 
 const ROWS = [
@@ -103,6 +110,18 @@ function stubFetch(routes: Record<string, Route>) {
 }
 
 const okRows = (rows: unknown[] = ROWS): Reply => ({ status: 200, body: { success: true, data: rows } });
+
+/**
+ * Names of every button whose accessible name starts with "Edit" (QA E-2: any Edit
+ * button, not only one titled "Edit pricing"). A DOM walk, not a role query, to
+ * stay fast under load.
+ */
+function editButtonNames(): string[] {
+  return Array.from(document.querySelectorAll('button'))
+    .map((button) => button.getAttribute('aria-label') ?? button.getAttribute('title') ?? button.textContent ?? '')
+    .map((name) => name.trim())
+    .filter((name) => /^edit/i.test(name));
+}
 
 beforeEach(() => {
   mockError.mockReset();
@@ -185,89 +204,20 @@ describe('P: Model pricing', () => {
     );
   });
 
-  it('R-5: Sync posts to the sync route, re-reads prices once, and shows the message', async () => {
-    const calls = stubFetch({
-      [PRICING_URL]: () => okRows(),
-      [SYNC_URL]: () => ({ status: 200, body: { success: true, message: 'ok' } }),
-    });
-
-    render(<ModelPricingPage />);
-    await screen.findByText('gpt-4o-mini');
-
-    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
-    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
-
-    expect(await screen.findByText('ok')).toBeInTheDocument();
-    // Intent kept: Sync re-reads once per list (slice 4: the comparison too).
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      `GET ${PRICING_URL}`,
-      `GET ${COMPARISON_URL}`,
-      `POST ${SYNC_URL}`,
-      `GET ${PRICING_URL}`,
-      `GET ${COMPARISON_URL}`,
-    ]);
-  });
-
-  it('R-9 (W2-1, N-5): a saved price shows as saved, and the PUT body is unchanged and per token', async () => {
-    // Intent kept: the saved value shows and the PUT is the same per-token request.
-    // Slice 4 (N-5): "ours" comes from the comparison, which is read once after the save.
-    const saved = { ...ROWS[0], input_cost_per_token: 0.0000025 };
-    let comparisonReads = 0;
-    const calls = stubFetch({
-      [PRICING_URL]: (method) =>
-        method === 'PUT'
-          ? { status: 200, body: { success: true, data: saved, message: 'Pricing updated successfully' } }
-          : okRows(),
-      [COMPARISON_URL]: () => {
-        comparisonReads += 1;
-        return okComparison(comparisonReads === 1 ? ROWS : [saved, ROWS[1]]);
-      },
-    });
-
-    render(<ModelPricingPage />);
-    const row = (await screen.findByText('gpt-4o-mini')).closest('tr') as HTMLElement;
-    expect(within(row).getByText('$0.15')).toBeInTheDocument();
-
-    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
-    fireEvent.click(within(row).getByTitle('Edit pricing'));
-    fireEvent.click(within(row).getByTitle('Save'));
-
-    expect(await screen.findByText('Pricing updated successfully!')).toBeInTheDocument();
-    const after = screen.getByText('gpt-4o-mini').closest('tr') as HTMLElement;
-    expect(await within(after).findByText('$2.5')).toBeInTheDocument();
-    expect(within(after).queryByText('$0.15')).not.toBeInTheDocument();
-    // The other row is untouched.
-    const other = screen.getByText('claude-haiku').closest('tr') as HTMLElement;
-    expect(within(other).getByText('$0.8')).toBeInTheDocument();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      `GET ${PRICING_URL}`,
-      `GET ${COMPARISON_URL}`,
-      `PUT ${PRICING_URL}`,
-      `GET ${COMPARISON_URL}`,
-    ]);
-    // The PUT body is the per-token editor values, as before.
-    expect(JSON.parse(calls[2].body ?? '{}')).toEqual({
-      id: ROWS[0].id,
-      input_cost_per_token: 0.00000015,
-      output_cost_per_token: 0.0000006,
-    });
-  });
-
-  it('R-10 (O-5): a failed re-read after Sync clears the old table instead of leaving it as current', async () => {
+  it('R-10 (O-5): a failed silent re-read clears the old table instead of leaving it as current', async () => {
     let reads = 0;
     stubFetch({
       [PRICING_URL]: () => {
         reads += 1;
         return reads === 1 ? okRows() : { status: 500, body: { success: false } };
       },
-      [SYNC_URL]: () => ({ status: 200, body: { success: true, message: 'ok' } }),
     });
 
     render(<ModelPricingPage />);
     await screen.findByText('gpt-4o-mini');
 
-    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
-    fireEvent.click(screen.getByRole('button', { name: /Sync Latest Pricing/ }));
+    // Intent kept; slice 6 (SA O-9): Sync is gone, so the silent re-read is the one a stored price check triggers.
+    fireEvent.click(screen.getByTestId('price-check-stand-in'));
 
     await screen.findByText(READ_FAILED_BANNER);
     expectReadFailed();
@@ -293,8 +243,51 @@ describe('P: Model pricing', () => {
     expect(within(tr).queryByText('$0.08')).not.toBeInTheDocument();
   });
 
-  // Slice 4 (R-9 row 4, SA RC-4): a retired row is labelled and offers no Edit.
-  it('R-12: a retired row reads "Retired <date>" and has no Edit; an active row keeps Edit', async () => {
+  // Slice 6 (MP-FR-11, SA SC6-6 c): nothing on the page changes a live price.
+  it('R-14: no Sync, no Edit, the new helper line, and only GETs are sent', async () => {
+    const calls = stubFetch({ [PRICING_URL]: () => okRows() });
+
+    render(<ModelPricingPage />);
+    await screen.findByText('gpt-4o-mini');
+
+    expect(screen.queryByText('Sync Latest Pricing')).not.toBeInTheDocument();
+    expect(screen.queryAllByTitle('Edit pricing')).toHaveLength(0);
+    expect(editButtonNames()).toEqual([]);
+    expect(screen.queryAllByTitle('Save')).toHaveLength(0);
+    expect(screen.queryByText(/Sync copies a built-in price list/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Cost per token for each AI model, as charged today. A live price changes only when an admin applies a provider price.')
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('price-check-stand-in'));
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect(calls.every((call) => call.method === 'GET')).toBe(true);
+  });
+
+  // SA CR-2: the recovery half of the deleted pages.edge.qa E-3. After a failed read, Refresh
+  // reads again; a good read brings the table back and clears the banner and the failure line.
+  it('R-15: Refresh after a failed read brings the table back and clears the failure', async () => {
+    let reads = 0;
+    stubFetch({
+      [PRICING_URL]: () => {
+        reads += 1;
+        return reads === 1 ? { status: 500, body: { success: false, error: 'boom' } } : okRows();
+      },
+    });
+
+    render(<ModelPricingPage />);
+    await screen.findByText(READ_FAILED_BANNER);
+    expectReadFailed();
+
+    fireEvent.click(screen.getByLabelText('Refresh'));
+
+    expect(await screen.findByText('gpt-4o-mini')).toBeInTheDocument();
+    expect(screen.queryByText(READ_FAILED_BANNER)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pricing-read-failed')).not.toBeInTheDocument();
+    expect(reads).toBe(2);
+  });
+
+  // Slice 4 (R-9 row 4, SA RC-4): a retired row is labelled. Slice 6: no row offers Edit.
+  it('R-12: a retired row reads "Retired <date>"; no row has Edit', async () => {
     const retired = {
       ...ROWS[1],
       id: '33333333-3333-4333-8333-333333333333',
@@ -305,37 +298,14 @@ describe('P: Model pricing', () => {
     stubFetch({ [PRICING_URL]: () => okRows([...ROWS, retired]), [COMPARISON_URL]: () => okComparison([...ROWS, retired]) });
 
     render(<ModelPricingPage />);
+    // Intent kept; page layout slice (UF-7): retired rows are hidden until "Show retired" is on.
+    fireEvent.click(await screen.findByTestId('show-retired-toggle'));
     const tr = (await screen.findByText('claude-3-haiku')).closest('tr') as HTMLElement;
 
     expect(within(tr).getByText('Retired 2026-10-11')).toBeInTheDocument();
-    expect(within(tr).queryByTitle('Edit pricing')).not.toBeInTheDocument();
-    const active = screen.getByText('gpt-4o-mini').closest('tr') as HTMLElement;
-    expect(within(active).getByTitle('Edit pricing')).toBeInTheDocument();
+    expect(screen.queryAllByTitle('Edit pricing')).toHaveLength(0);
   });
 
-  // Slice 4 (SA NR-2): the save twin of R-10.
-  it('R-13: a save whose comparison re-read fails keeps the success message and clears the table', async () => {
-    const saved = { ...ROWS[0], input_cost_per_token: 0.0000025 };
-    let comparisonReads = 0;
-    stubFetch({
-      [PRICING_URL]: (method) =>
-        method === 'PUT' ? { status: 200, body: { success: true, data: saved } } : okRows(),
-      [COMPARISON_URL]: () => {
-        comparisonReads += 1;
-        return comparisonReads === 1 ? okComparison(ROWS) : { status: 500, body: { success: false, error: 'boom' } };
-      },
-    });
-
-    render(<ModelPricingPage />);
-    const row = (await screen.findByText('gpt-4o-mini')).closest('tr') as HTMLElement;
-    // Intent and assertions unchanged; fireEvent skips userEvent's per-ancestor pointer checks, so the case stays under 2 s in the parallel gate.
-    fireEvent.click(within(row).getByTitle('Edit pricing'));
-    fireEvent.click(within(row).getByTitle('Save'));
-
-    await screen.findByText(READ_FAILED_BANNER);
-    expect(screen.getByText('Pricing updated successfully!')).toBeInTheDocument();
-    expectReadFailed();
-  });
 });
 
 describe('B: AgentsPilot billing', () => {

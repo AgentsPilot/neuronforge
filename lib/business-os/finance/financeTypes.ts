@@ -53,7 +53,8 @@ import type { TileStatus } from '@/lib/admin/health/healthTypes';
 /** Per-section honesty (L-5): loaded, loaded but "at least", or could not load. */
 export type FinanceSectionStatus = 'ok' | 'partial' | 'unknown';
 
-export type FinanceWindowChoice = 'today' | '7d' | '30d' | 'this_month' | 'custom';
+/** DF-6 (§11L, E-80): `since_start` runs from the charging cut-over instant to now, one business only. */
+export type FinanceWindowChoice = 'today' | '7d' | '30d' | 'this_month' | 'custom' | 'since_start';
 
 /** The resolved window: inclusive UTC dates plus the half-open instants read. */
 export interface FinanceWindowInfo {
@@ -64,7 +65,7 @@ export interface FinanceWindowInfo {
   to: string;
   /** ISO instant, inclusive. */
   start: string;
-  /** ISO instant, exclusive. */
+  /** ISO instant, exclusive. For `since_start` it is the request's `now` (DF6-W-2). */
   end: string;
 }
 
@@ -211,19 +212,52 @@ export interface FinanceBoostLine {
   gross: number;
   /** Of which tax (shown, not deducted). */
   tax: number;
-  refunded: number;
-  /** Held in open disputes; null when it cannot be exact ("Unknown"). */
-  held: number | null;
-  /** Lost in disputes; null when it cannot be exact. */
+  /**
+   * Slice 4b.2 (BD-17, FR-4B-2): refunds RECORDED in the window, whatever month
+   * the purchase was paid. Null: the event read failed (FR-4B-16, "Unknown").
+   * "At least" when the events are not exact or `unreadableEvents` > 0.
+   */
+  refunded: number | null;
+  /** Lost disputes recorded in the window (FR-4B-3); null when the event read failed. */
   lost: number | null;
-  /** gross − refunded − held − lost, only when exact; otherwise null (never a lower bound minus a figure). */
+  /**
+   * gross − refunded − lost (FR-4B-5), only when exact; otherwise null (never a
+   * lower bound minus a figure). May be negative. Held now is never in it (FR-4B-4).
+   */
   net: number | null;
   /** Credits sold (credits, not money). "At least" when not exact or `unreadableCredits` > 0. */
   creditsSold: number;
   /** Purchases with an unreadable amount (excluded from every sum, never 0). */
   unreadable: number;
+  /** Events of the window with an unreadable amount, kind or purchase (slice 4b.2, FR-4B-9). */
+  unreadableEvents: number;
   /** Purchases whose credits could not be read (excluded from credits sold). */
   unreadableCredits: number;
+}
+
+/** One currency's open disputes, as of NOW (slice 4b.2, FR-4B-4, E-104): never part of a window's net. */
+export interface FinanceBoostHeldNowLine {
+  currency: string | null;
+  /** Purchases in status `disputed` now. */
+  disputes: number;
+  /** Held in those disputes (total minus refunded); null when an amount could not be read. */
+  amount: number | null;
+}
+
+/** How the reversal event read went (slice 4b.2, FR-4B-8, FR-4B-9, FR-4B-16, SA-Q74). */
+export interface FinanceBoostEventsNote {
+  /** `not_available`: the events table does not exist yet (migration not applied, §7). */
+  state: 'read' | 'failed' | 'not_available';
+  /** False when the event read reached its ceiling, or failed. */
+  exact: boolean;
+  /** Events with an unreadable amount, kind or purchase. */
+  unreadable: number;
+  /** Events on purchases that were never paid: not revenue, counted for the problems note. */
+  onUnpaidPurchases: number;
+  /** Purchases whose refunds plus lost disputes in this window exceed their total (SA-Q74). */
+  overTotal: number;
+  /** Refund events with an amount above 0 in the window (the "not taken back" sentence, FR-4B-13). */
+  refundEvents: number;
 }
 
 /** One (currency, package, version) row, as stored on the purchase (SA-Q30). */
@@ -234,8 +268,10 @@ export interface FinanceBoostPackageRow {
   packageVersion: number | null;
   purchases: number;
   gross: number;
-  refunded: number;
+  /** Null: the event read failed. */
+  refunded: number | null;
   net: number | null;
+  /** Unreadable purchases and events. */
   unreadable: number;
 }
 
@@ -256,7 +292,10 @@ export interface FinanceBoostNotes {
   otherStatusPurchases: number;
   /** Counted purchases with an unreadable amount. */
   unreadablePurchases: number;
-  /** A refund or dispute amount is non-zero (or unknown on a refund or dispute row): the S4-W-3 note shows. */
+  /**
+   * A refund, lost or held-now figure is non-zero, or a refund or lost amount is
+   * unknown: the refund-timing note (FR-4B-6) shows. Kept by name: Pin B names it.
+   */
   refundOrDispute: boolean;
 }
 
@@ -269,6 +308,14 @@ export interface FinanceBoostRevenue {
   /** Null with a business picked (S4-FR-8) or when the read failed. */
   deletedAccounts: FinanceBoostDeletedLine[] | null;
   notes: FinanceBoostNotes | null;
+  /**
+   * Slice 4b.2 (E-104): held in open disputes NOW, per currency, beside the
+   * lines. Null when the attention read failed. Optional only so the frozen
+   * Pin B literals compile (E-103); the builder always sets it.
+   */
+  heldNow?: FinanceBoostHeldNowLine[] | null;
+  /** Slice 4b.2: the event read's note. Optional for Pin B (E-103); always set by the builder. */
+  events?: FinanceBoostEventsNote | null;
 }
 
 // ── Our revenue, plans (slice 5a, §11D.4 M2-FR-1 to M2-FR-11) ───────────────
@@ -442,6 +489,133 @@ export interface FinancePayload {
   accountEconomics?: FinanceAccountEconomicsSection;
   /** Slice 6a: the picked business's AI margin line (M3-FR-8). Present only with a business picked. */
   accountMargin?: FinanceAccountMargin;
+  /**
+   * Money MK-4 (SA-2): MRR now, for the Revenue "Recurring now" line and, from
+   * MK-5, the F-K2 tile. Set by the route from `lib/admin/billing`, never by
+   * the builder. Optional only so fixtures written before MK-4 still type.
+   */
+  mrr?: FinanceMrrSection;
+  /**
+   * Money MK-4 (SA-4): the Stripe mode the MRR was read in, as a value only.
+   * The mode DECISION is `lib/admin/billing`'s; null when it could not be read.
+   */
+  stripeMode?: 'test' | 'live' | null;
+  /**
+   * Money MK-5 (§5.1, Q-11): F-K5 "Paying accounts", from the plan walk and
+   * the paying set the page already reads. Optional only so fixtures written
+   * before MK-5 still type; the builder always sets it.
+   */
+  paying?: FinancePaying;
+  /**
+   * Money MK-5b (§5.1 F-K5b): Converted this month, F-K5's second figure and
+   * the Plans & subscriptions list. Set by the builder only when its wiring
+   * supplies the first-payment read; absent otherwise.
+   */
+  converted?: FinanceConverted;
+  /**
+   * Money MK-5: F-K4 "AI margin" for all businesses, the Accounts tab's own
+   * platform line (`buildPlatformMargin`). Absent with a business picked:
+   * F-K4 then reads `accountMargin`.
+   */
+  platformMargin?: FinanceAccountMargin;
+}
+
+/**
+ * Money MK-5 (§5.1): paying accounts. All businesses: the plan rows whose
+ * account pays now (the one `isPayingBillingRow` definition, current Stripe
+ * mode, BD-37) over EVERY plan row (trial, Founding Partner and comped
+ * included, Q-11). `partial`: the plan walk was capped, so both counts are
+ * "at least" and no percentage is shown. `unknown`: the paying or plan read
+ * failed; never 0%. One business: whether it pays.
+ */
+export type FinancePaying =
+  | { scope: 'all'; status: 'ok' | 'partial' | 'unknown'; paying: number | null; accounts: number | null }
+  | { scope: 'one'; status: 'ok' | 'unknown'; paying: boolean | null };
+
+// ── Money MK-5b: Converted this month (§5.1 F-K5b, Q-12, G-1 to G-3) ─────────
+
+/** Where an account came from: the lineage `source`, or null when it has no lineage row (G-2). */
+export type FinanceSignupSource = 'admin_invite' | 'account_invite' | 'organic';
+
+/** The current calendar month in UTC (BD-9): `[from, to)`, ISO. Always this month, whatever the window. */
+export interface FinanceMonthSpan {
+  from: string;
+  to: string;
+}
+
+/** One account whose first plan payment above $0 was this month. */
+export interface FinanceConvertedRow {
+  accountId: string;
+  name: string | null;
+  nameStatus: 'found' | 'missing' | 'unavailable';
+  /** The account's plan group today (Plan mix's group), or null when the plan walk could not place it. */
+  group: FinanceGroupKey | null;
+  tierLabel: string | null;
+  /** ISO timestamptz of the first plan payment. */
+  firstPaymentAt: string;
+  source: FinanceSignupSource | null;
+  /** `missing`: no lineage row ("Not recorded", G-2); `unavailable`: the lineage read failed. */
+  sourceStatus: 'found' | 'missing' | 'unavailable';
+  /** False: converted this month and no longer paying (listed, not counted). */
+  payingNow: boolean;
+}
+
+/**
+ * All businesses: `converted` of `paying` (F-K5's numerator) paid us for the
+ * first time this month; `stopped` converted this month and no longer pay.
+ * `partial`: the plan walk was capped, so the counts are "at least".
+ * `unknown`: a read failed (or reached its ceiling); never 0. `rows` is at
+ * most `shownLimit`, newest first payment first.
+ * One business: whether it converted this month.
+ */
+export type FinanceConverted =
+  | {
+      scope: 'all';
+      status: 'ok' | 'partial' | 'unknown';
+      month: FinanceMonthSpan;
+      converted: number | null;
+      paying: number | null;
+      stopped: number | null;
+      rows: FinanceConvertedRow[] | null;
+      shownLimit: number;
+    }
+  | {
+      scope: 'one';
+      status: 'ok' | 'unknown';
+      month: FinanceMonthSpan;
+      state: 'converted' | 'stopped' | 'not_converted' | null;
+      firstPaymentAt: string | null;
+    };
+
+// ── Money MK-4: MRR now (SA-2, BD-37, BQ-P8a-4) ─────────────────────────────
+// The one MRR rule (`planMrr.ts`) over the current-mode billing rows, the
+// same figure the Subscriptions list shows. One line per currency, never one
+// total across currencies (BD-12).
+
+/** One currency's MRR, in integer hundredths of that currency. */
+export interface FinanceMrrLine {
+  /** Null = an unreadable currency code, never assumed to be USD. */
+  currency: string | null;
+  totalHundredths: number;
+  /** Of the total: set to cancel at the period end. */
+  cancellingHundredths: number;
+  /** Of the total: past due, still counted (BQ-P8a-4). */
+  pastDueHundredths: number;
+  subscriptions: number;
+  /** A sum left the safe-integer range: not exact. */
+  overflow: boolean;
+}
+
+export interface FinanceMrrSection {
+  /** `unknown`: the key's mode or a read failed, so no figure is shown. */
+  status: 'ok' | 'unknown';
+  lines: FinanceMrrLine[];
+  /** Paying subscriptions whose plan has no monthly price: counted by number, never 0. */
+  unpriced: number;
+  /** Paying subscriptions with a founder discount whose amount is not recorded. */
+  discountUnknown: number;
+  /** Whether past-due subscriptions are counted (BQ-P8a-4). */
+  pastDueCounted: boolean;
 }
 
 // ── Slice 6a (Money M-3): account economics and AI margin (§11E) ─────────────
@@ -494,6 +668,27 @@ export type FinanceMarginValue =
   | { kind: 'other_currency' }
   | { kind: 'unknown' };
 
+/**
+ * Slice 6b (§11K.4, FE-8 to FE-11): the AI margin minus the ESTIMATED Stripe
+ * fees, beside the AI margin and never in its place. A figure only when the AI
+ * margin is one; otherwise the AI margin's own word (SA-W82), and Unknown for an
+ * invalid fee config (E-73). `currency` is the fee's currency (always USD today).
+ */
+export type FinanceMarginAfterFeesValue =
+  | { kind: 'figure'; afterFeesUsd: number; feesUsd: number; currency: string; noRevenue: boolean }
+  | { kind: 'not_available' }
+  | { kind: 'other_currency' }
+  | { kind: 'unknown' };
+
+/** Slice 6b: the assumed fee, as display values divided on the server (FE-16). */
+export interface FinanceFeeEstimate {
+  currency: string;
+  /** Percent of the gross charge, e.g. 2.9. */
+  percent: number;
+  /** Fixed amount per charge in major units, e.g. 0.3. */
+  fixed: number;
+}
+
 /** The credits cell (Section 4's row for the account). */
 export type FinanceEconomicsCredits =
   | { kind: 'position'; used: number; allowance: number; usedTenths: number }
@@ -517,6 +712,7 @@ export interface FinanceEconomicsRow {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
   credits: FinanceEconomicsCredits;
 }
 
@@ -525,6 +721,7 @@ export interface FinanceEconomicsDeletedRow {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
 }
 
 /** Every account together, before any filter or cap (E-47). */
@@ -532,6 +729,7 @@ export interface FinanceEconomicsPlatformLine {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
   /** Account rows covered (the Deleted row is extra). */
   accountsCovered: number;
   includesDeleted: boolean;
@@ -549,6 +747,8 @@ export interface FinanceAccountEconomicsSection {
   counts: { accounts: number; matching: number; shown: number; notListed: number };
   /** The plan-group options for the filter, labelled by the server (no tier in the page). */
   groupOptions: Array<{ key: FinanceGroupKey; tierLabel: string | null }>;
+  /** Slice 6b: the assumed Stripe fee for the note; null when the config is invalid (E-73). */
+  feeEstimate: FinanceFeeEstimate | null;
   notes: {
     /** The plan walk failed or was capped: only accounts with money or AI use are listed (M3-FR-2). */
     walkIncomplete: boolean;
@@ -567,6 +767,7 @@ export interface FinanceAccountMargin {
   paid: FinanceEconomicsPaid;
   aiCost: FinanceEconomicsCost;
   margin: FinanceMarginValue;
+  marginAfterFees: FinanceMarginAfterFeesValue;
 }
 
 // ── Section 2 block B, takings through the platform (slice 2a, S2-FR-1 to S2-FR-14) ──
@@ -689,6 +890,12 @@ export interface FinanceCreditRow {
   farOverAllowance: boolean | null;
   /** Admin-granted credits still available now. Null when the lots could not be read. */
   giftedOutstanding: number | null;
+  /**
+   * Slice 4b.2 (S4-FR-20): bought (boost) credits still available now, beside
+   * gifted, never added to it. 0 with no boost lot; null when the lots could
+   * not be read. Optional for Pin B (E-103); always set by the builder.
+   */
+  boughtOutstanding?: number | null;
 }
 
 /** The figures that need the credits pass. Null when the section is `unknown`. */
@@ -729,6 +936,20 @@ export interface FinanceCreditsSection {
   figures: FinanceCreditsFigures | null;
   /** Null when the lots read failed or reached its ceiling (AC-38). */
   gifted: FinanceGiftedFigures | null;
+  /** Slice 4b.2 (S4-FR-18): bought credits. Optional for Pin B (E-103); always set by the builder. */
+  bought?: FinanceBoughtFigures | null;
+}
+
+/** Bought (boost) credits (slice 4b.2, S4-FR-18 to S4-FR-20). Never combined with gifted. */
+export interface FinanceBoughtFigures {
+  /** Σ outstanding over the boost lots of existing accounts. Null when any account's lots are unreadable. */
+  outstanding: number | null;
+  /** Outstanding on boost lots of deleted accounts: its own figure. Null when unreadable. */
+  deletedAccountsOutstanding: number | null;
+  /** Boost lots created in the window (deleted accounts included). Null when unreadable. */
+  window: { credits: number; lots: number } | null;
+  /** BQ-13: a refund was recorded in the window, so the "not taken back" sentence shows. */
+  refundNotTakenBack: boolean;
 }
 
 // ── Section 6 block B, client payment problems (slice 2b, S2-FR-15 to S2-FR-26) ──
@@ -841,4 +1062,46 @@ export interface FinancePaymentProblemsSection {
   clientPlans: { status: FinanceSectionStatus; figures: FinanceClientPlansFigures | null };
   /** `not_narrowed`: a business is picked, so the platform-wide queue was not read. */
   reminders: { status: FinanceSectionStatus; state: 'read' | 'failed' | 'not_narrowed'; figures: FinanceReminderFigures | null };
+  /**
+   * Slice 4b.2, block A (FR-4B-12, S4-FR-15): our boost problems, as of now.
+   * Optional for Pin B (E-103); always set by the builder.
+   */
+  boosts?: FinanceBoostProblemsPart;
+}
+
+/** One currency's boost problems, as of now (S4-FR-15). */
+export interface FinanceBoostProblemsLine {
+  currency: string | null;
+  openDisputes: number;
+  /** Held in those disputes now; null when an amount could not be read. */
+  held: number | null;
+  /** The earliest opened date of an open dispute (ISO); null when none is known. */
+  oldestDisputeOpenedAt: string | null;
+  notCredited: number;
+  /** Σ the totals recorded on purchases not credited; null when one could not be read. */
+  notCreditedAmount: number | null;
+  /** The oldest `status_changed_at` of a purchase not credited (ISO); null when none is known. */
+  oldestNotCreditedAt: string | null;
+}
+
+export interface FinanceBoostProblemsFigures {
+  /** No open dispute and no purchase not credited. */
+  empty: boolean;
+  /** False when the read reached its ceiling: every count and amount is "At least". */
+  exact: boolean;
+  lines: FinanceBoostProblemsLine[];
+  openDisputes: number;
+  notCredited: number;
+  /** `failed`: the opened dates could not be read (for example, the events table is not there yet). */
+  openedDates: 'read' | 'failed';
+  /** FR-4B-8: refunds or disputes recorded in the window on purchases that were never paid. Null when not known. */
+  eventsOnUnpaidPurchases: number | null;
+  /** SA-Q74: purchases whose refunds plus lost disputes in the window exceed their total. Null when not known. */
+  overTotal: number | null;
+}
+
+export interface FinanceBoostProblemsPart {
+  status: FinanceSectionStatus;
+  /** Null when the read failed. */
+  figures: FinanceBoostProblemsFigures | null;
 }

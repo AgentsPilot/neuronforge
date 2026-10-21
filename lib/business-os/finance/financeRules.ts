@@ -13,6 +13,9 @@
  * Health's own rule set, vocabulary and green set stay closed: this file has
  * its own of each.
  *
+ * Slice 6b (§11K.3, SA-Q81): the Stripe fee estimate's price is data here too,
+ * with its range check and the one per-charge formula (see below).
+ *
  * @module lib/business-os/finance/financeRules
  */
 
@@ -21,8 +24,15 @@ import type { TileStatus } from '@/lib/admin/health/healthTypes';
 import type { Measured } from '@/lib/admin/health/windows';
 import { firstMatchingRule, GREEN_HEADLINE, validateRuleListAgainst } from '@/lib/admin/health/evaluateHealth';
 import type { FinanceTileId } from './financeTypes';
+import { CURRENCY_SCALE } from './currencyGroups';
 
-export type FinanceMetric = 'aiCostMonth' | 'aiCostPrevSpan' | 'foundingNoEndDate' | 'accountsFarOverAllowance';
+export type FinanceMetric =
+  | 'aiCostMonth'
+  | 'aiCostPrevSpan'
+  | 'foundingNoEndDate'
+  | 'accountsFarOverAllowance'
+  // Slice 4b.2 (S4-FR-17): boost purchases in dispute now.
+  | 'boostOpenDisputes';
 
 export interface FinanceRule {
   /** Stable id, e.g. 'aiCost.doubled'. */
@@ -45,7 +55,7 @@ export const FINANCE_TILE_VOCABULARY: Readonly<
   k2_far_over_allowance: { metrics: ['accountsFarOverAllowance'], flags: [] },
   k3_founding_no_end_date: { metrics: ['foundingNoEndDate'], flags: [] },
   k4_gifted_outstanding: { metrics: [], flags: [] },
-  k5_our_revenue: { metrics: [], flags: [] },
+  k5_our_revenue: { metrics: ['boostOpenDisputes'], flags: [] },
 };
 
 /**
@@ -93,7 +103,17 @@ export const FINANCE_RULES: FinanceRuleSet = {
   ],
   // Information only (§7.1): never coloured by a rule.
   k4_gifted_outstanding: [],
-  k5_our_revenue: [],
+  // Slice 4b.2 (BD-11, S4-FR-17, SA-Q29): any boost payment in dispute now is red.
+  // Its value stays the revenue; the tile's headline gives the count (financeCopy.ts).
+  k5_our_revenue: [
+    {
+      id: 'boosts.openDispute',
+      priority: 1,
+      colour: 'red',
+      description: 'Boost payments in dispute',
+      condition: { kind: 'atLeast', metric: 'boostOpenDisputes', value: 1 },
+    },
+  ],
 };
 
 /**
@@ -112,6 +132,78 @@ export function farOverAllowancePercentOf(params: unknown): number | null {
   const value = (params as { farOverAllowancePercent?: unknown } | null | undefined)?.farOverAllowancePercent;
   if (typeof value !== 'number' || !Number.isInteger(value)) return null;
   return value >= FAR_OVER_ALLOWANCE_PERCENT_RANGE.min && value <= FAR_OVER_ALLOWANCE_PERCENT_RANGE.max ? value : null;
+}
+
+// ── Slice 6b (§11K.3, FE-1 to FE-7, BQ-15, SA-Q81, SA-W-6b-1): the Stripe fee estimate ──
+// No Stripe fee is recorded for plan or boost payments (LF-2, LF-3), so the
+// "Margin after Stripe fees (estimate)" uses an ASSUMED price per card charge.
+// The price is DATA, like the thresholds above (BD-11): changing it is a
+// one-line edit here, with no logic change. The account economics builder
+// receives it as an input (SA-WR-4) and holds no fee number of its own.
+
+/** One currency's assumed card price: basis points of the gross, plus a fixed amount in minor units. */
+export interface FeeEstimateEntry {
+  percentBps: number;
+  fixedMinor: number;
+}
+
+/** The one currency the estimate exists in today (BD-12: the margin is USD only). */
+export const FEE_ESTIMATE_CURRENCY = 'USD';
+
+/**
+ * BQ-15's default: Stripe's standard published card price, 2.9% + USD 0.30 per
+ * successful charge. An assumption, not a recorded fee; our real price is unchecked.
+ */
+export const STRIPE_FEE_ESTIMATE: Readonly<Record<string, FeeEstimateEntry>> = {
+  [FEE_ESTIMATE_CURRENCY]: { percentBps: 290, fixedMinor: 30 },
+};
+
+/** FE-4: each field an integer in this range; anything else makes every fee Unknown, never a guess. */
+export const STRIPE_FEE_ESTIMATE_RANGE = {
+  percentBps: { min: 0, max: 1000 },
+  fixedMinor: { min: 0, max: 1000 },
+} as const;
+
+const BPS_PER_WHOLE = 10_000;
+const HALF_BPS = BPS_PER_WHOLE / 2;
+const BPS_PER_PERCENT = 100;
+
+const inRange = (value: unknown, range: { min: number; max: number }): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= range.min && value <= range.max;
+
+/** The valid entry for `currency` in a config, or null (missing, not an integer, out of range). */
+export function stripeFeeEntryOf(config: unknown, currency: string): FeeEstimateEntry | null {
+  if (typeof config !== 'object' || config === null) return null;
+  const entry = (config as Record<string, unknown>)[currency];
+  if (typeof entry !== 'object' || entry === null) return null;
+  const { percentBps, fixedMinor } = entry as { percentBps?: unknown; fixedMinor?: unknown };
+  if (!inRange(percentBps, STRIPE_FEE_ESTIMATE_RANGE.percentBps) || !inRange(fixedMinor, STRIPE_FEE_ESTIMATE_RANGE.fixedMinor)) return null;
+  return { percentBps, fixedMinor };
+}
+
+/**
+ * FE-2: one charge's fee in integer minor units,
+ * round_half_up(gross × percentBps / 10000) + fixedMinor, or null when any
+ * step leaves the safe-integer range. The division is exact (the remainder is
+ * subtracted first): a float quotient near the safe limit could round up.
+ */
+export function estimateChargeFeeMinor(grossMinor: number, entry: FeeEstimateEntry): number | null {
+  if (!Number.isSafeInteger(grossMinor) || grossMinor < 0) return null;
+  const scaled = grossMinor * entry.percentBps + HALF_BPS;
+  if (!Number.isSafeInteger(scaled)) return null;
+  const fee = (scaled - (scaled % BPS_PER_WHOLE)) / BPS_PER_WHOLE + entry.fixedMinor;
+  return Number.isSafeInteger(fee) ? fee : null;
+}
+
+/**
+ * The fee note's display values (FE-16: the page does no arithmetic), divided
+ * once here: 290 bps gives 2.9 (percent), 30 minor units give 0.3. Null when
+ * the entry is invalid (E-73).
+ */
+export function feeEstimateNoteOf(config: unknown, currency: string): { currency: string; percent: number; fixed: number } | null {
+  const entry = stripeFeeEntryOf(config, currency);
+  if (entry === null) return null;
+  return { currency, percent: entry.percentBps / BPS_PER_PERCENT, fixed: entry.fixedMinor / CURRENCY_SCALE };
 }
 
 /**

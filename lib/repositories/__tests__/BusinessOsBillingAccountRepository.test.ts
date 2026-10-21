@@ -39,7 +39,12 @@ import {
   BusinessOsBillingAccountRepository,
   businessOsBillingAccountRepository,
   checkoutLockFreeFilter,
+  decideRenewalCure,
+  decideRenewalFailure,
+  isHostedInvoiceUrl,
   type BusinessOsBillingCustomerInput,
+  type RenewalFailureFacts,
+  type RenewalFailureRowFacts,
 } from '@/lib/repositories/BusinessOsBillingAccountRepository';
 
 const ROOT = process.cwd();
@@ -777,15 +782,25 @@ describe('source guards', () => {
     expect(BILLING_ACCOUNT_COLUMNS.split(', ')).toEqual(migrationColumns());
   });
 
-  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5, P-6a.1 C-6): one insert, six compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
+  it('scope (P-2a SA Q-9, P-3a §3.5, P-3b.2 §3.5, P-6a.1 C-6, P-6a.2 C-2): one insert, eight compare-and-set updates, no delete, no upsert, no rpc, no spread into a payload', () => {
     expect(code.match(/\.insert\(/g)).toHaveLength(1);
-    expect(code.match(/\.update\(/g)).toHaveLength(6);
+    expect(code.match(/\.update\(/g)).toHaveLength(8);
     expect(code).not.toMatch(/\.(delete|upsert|rpc)\(/);
     expect(code).not.toMatch(/\.update\(\{\s*\.\.\./);
     // UPDATE + .or() + .select() fails 42703 in production (2026-09-29): the
     // two compare-and-set methods must never select.
     const lf = code.replace(/\r\n/g, '\n');
-    for (const method of ['acquireCheckoutLock', 'replaceCustomer', 'attachTestClockCustomer', 'linkCheckoutSession', 'releaseCheckoutLock', 'mirrorSubscriptionState']) {
+    for (const method of [
+      'acquireCheckoutLock',
+      'replaceCustomer',
+      'attachTestClockCustomer',
+      'linkCheckoutSession',
+      'releaseCheckoutLock',
+      'mirrorSubscriptionState',
+      // P-6a.2 (SA C-2): read (through findByUser), decide, compare-and-set.
+      'writeRenewalFailure',
+      'clearRenewalFailure',
+    ]) {
       const start = lf.indexOf(`async ${method}(`);
       const end = lf.indexOf('\n  }\n', start);
       expect(start).toBeGreaterThan(0);
@@ -801,13 +816,13 @@ describe('source guards', () => {
   });
 
   it('the read and every update scope by user_id and livemode; the two Stripe-id lookups by livemode; the other from() is the three-field insert', () => {
-    expect(code.match(/\.from\(/g)).toHaveLength(10);
+    expect(code.match(/\.from\(/g)).toHaveLength(12);
     expect(code.match(/\.maybeSingle\(\)/g)).toHaveLength(3);
-    // findByUser and the six updates.
-    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(7);
-    // The same seven, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
-    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(9);
-    expect(code.match(/\.eq\('stripe_subscription_id', stripeSubscriptionId\)/g)).toHaveLength(2);
+    // findByUser and the eight updates.
+    expect(code.match(/\.eq\('user_id', userId\)/g)).toHaveLength(9);
+    // The same nine, plus the two documented lookups by a UNIQUE Stripe id (§3.3).
+    expect(code.match(/\.eq\('livemode', livemode\)/g)).toHaveLength(11);
+    expect(code.match(/\.eq\('stripe_subscription_id', stripeSubscriptionId\)/g)).toHaveLength(4);
     expect(code.match(/\.eq\('stripe_customer_id', stripeCustomerId\)/g)).toHaveLength(2);
     expect(code).toContain('.insert({ user_id: userId, livemode, stripe_customer_id: stripeCustomerId })');
   });
@@ -858,11 +873,18 @@ describe('source guards', () => {
       // P-5b.1: the N-2 apply test imports the same TYPE for its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      // P-6a.2: pins the notice's confirm prefix to this repository's HOSTED_INVOICE_URL_PREFIX.
+      'lib/business-os/billing/__tests__/planPaymentNotice.test.ts',
+      // P-6a.2 (T10): the renewal captured-payload test runs the repository's
+      // REAL pure decisions in its fake, and imports the row TYPE.
+      'lib/business-os/billing/__tests__/planRenewal.captured.test.ts',
       'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       // P-7b.1b (U-7): the captured-payload test imports the billing row TYPE to build its fakes.
       'lib/business-os/billing/__tests__/planUpgrade.captured.test.ts',
       // P-7b.1a: the upgrade orchestration test imports the billing row TYPE to build fakes.
       'lib/business-os/billing/__tests__/planUpgrade.test.ts',
+      // P-6a.2: the banner read's test fakes the repository module by name.
+      'lib/business-os/billing/__tests__/readPaymentNotice.test.ts',
       'lib/business-os/billing/businessOsStripeCustomer.ts',
       // Plan payments P-5a.2 (workplan §3.3): the holding screen's model reads
       // the SESSION user's billing row for the current mode (findByUser only).
@@ -889,6 +911,10 @@ describe('source guards', () => {
       // Plan payments P-7b.1a (workplan §3.4, §3.8): the upgrade orchestration
       // reads the SESSION user's billing row for the current mode (findByUser only).
       'lib/business-os/billing/planUpgrade.ts',
+      // Plan payments P-6a.2 (workplan §5.6, SA C-13): the owner banner reads
+      // the SESSION account's billing row for the current mode (findByUser only),
+      // and its test fakes the repository module by name.
+      'lib/business-os/billing/readPaymentNotice.ts',
       // Admin delete AD-1b (SC-5): R-3 reads BOTH livemode rows of the target's
       // plan billing account (findByUser only); the evaluator imports the status
       // type. Their tests name it to fake it. No entitlements import.
@@ -928,5 +954,429 @@ describe('source guards', () => {
       if (fs.existsSync(path.join(ROOT, dir))) walk(path.join(ROOT, dir));
     }
     expect(found.sort()).toEqual(ALLOWED);
+  });
+});
+
+// ── P-6a.2: renewal failures and their cure (§5.3, §5.4; SA C-1 ruling, C-2) ──
+
+const SUB = 'sub_renewal1';
+const INVOICE = 'in_renewal1';
+/** Stripe's (test clock) time: the period dates. */
+const T1 = '2026-12-15T07:05:22.000Z';
+const P2 = '2027-01-15T07:05:22.000Z';
+const P3 = '2027-02-15T07:05:22.000Z';
+/** Real time: `event.created` under a test clock is EARLIER than every period date. */
+const CREATED_1 = '2026-10-15T07:05:55.000Z';
+const CREATED_2 = '2026-10-15T07:06:15.000Z';
+const HOSTED = 'https://invoice.stripe.com/i/acct_test/test_hosted_one?s=ap';
+const HOSTED_OTHER = 'https://invoice.stripe.com/i/acct_test/test_hosted_two?s=ap';
+
+function failureRow(overrides: Partial<RenewalFailureRowFacts> = {}): RenewalFailureRowFacts {
+  return {
+    stripeSubscriptionId: SUB,
+    currentPeriodEnd: T1,
+    lastInvoiceId: 'in_paid_before',
+    failedAttempts: 0,
+    actionRequiredInvoiceUrl: null,
+    lastPaymentFailedAt: null,
+    ...overrides,
+  };
+}
+
+function failureFacts(overrides: Partial<RenewalFailureFacts> = {}): RenewalFailureFacts {
+  return {
+    stripeSubscriptionId: SUB,
+    invoiceId: INVOICE,
+    periodEndIso: P2,
+    attemptCount: 1,
+    failedAtIso: CREATED_1,
+    hostedInvoiceUrl: null,
+    actionRequired: false,
+    ...overrides,
+  };
+}
+
+describe('isHostedInvoiceUrl (§5.4): Stripe-hosted pages only', () => {
+  it.each([
+    [HOSTED, true],
+    ['https://invoice.stripe.com/', false],
+    ['https://example.invalid/scrubbed', false],
+    ['http://invoice.stripe.com/i/x', false],
+    ['https://invoice.stripe.com.evil.example/i/x', false],
+    ['https://invoice.stripe.com/i/x y', false],
+    [null, false],
+    [42, false],
+  ])('%s → %s', (value, expected) => {
+    expect(isHostedInvoiceUrl(value)).toBe(expected);
+  });
+
+  it('longer than 2048 characters → false', () => {
+    expect(isHostedInvoiceUrl(`https://invoice.stripe.com/${'a'.repeat(2030)}`)).toBe(false);
+  });
+});
+
+describe('decideRenewalFailure (SA C-1 ruling): cured by periods, never by event.created', () => {
+  it('no row, or a row holding another subscription → moot', () => {
+    expect(decideRenewalFailure(null, failureFacts())).toEqual({ kind: 'moot', reason: 'no_row' });
+    expect(decideRenewalFailure(failureRow({ stripeSubscriptionId: 'sub_other' }), failureFacts())).toEqual({ kind: 'moot', reason: 'other_subscription' });
+    expect(decideRenewalFailure(failureRow({ stripeSubscriptionId: null }), failureFacts())).toEqual({ kind: 'moot', reason: 'other_subscription' });
+  });
+
+  it('the row is already paid through P (equal or later) → moot: a failure delivered after its cure writes nothing', () => {
+    expect(decideRenewalFailure(failureRow({ currentPeriodEnd: P2 }), failureFacts())).toEqual({ kind: 'moot', reason: 'period_already_paid' });
+    expect(decideRenewalFailure(failureRow({ currentPeriodEnd: P3 }), failureFacts())).toEqual({ kind: 'moot', reason: 'period_already_paid' });
+    // PostgREST's own timestamp text compares by instant.
+    expect(decideRenewalFailure(failureRow({ currentPeriodEnd: '2027-01-15T07:05:22+00:00' }), failureFacts())).toEqual({ kind: 'moot', reason: 'period_already_paid' });
+  });
+
+  it('this very invoice is the last one paid → moot', () => {
+    expect(decideRenewalFailure(failureRow({ lastInvoiceId: INVOICE }), failureFacts())).toEqual({ kind: 'moot', reason: 'invoice_already_paid' });
+  });
+
+  it('a first failure records max(attempt_count, 1) and the event date', () => {
+    expect(decideRenewalFailure(failureRow(), failureFacts())).toEqual({
+      kind: 'write',
+      failedAttempts: 1,
+      lastPaymentFailedAt: CREATED_1,
+      actionRequiredInvoiceUrl: null,
+    });
+  });
+
+  it('X-5: an off-session 3-D Secure failure arrives with attempt_count 0 and still records one attempt', () => {
+    expect(decideRenewalFailure(failureRow(), failureFacts({ attemptCount: 0 }))).toMatchObject({ kind: 'write', failedAttempts: 1 });
+  });
+
+  it('the larger count wins: a replay is unchanged, a late older delivery never lowers it, a newer one raises it', () => {
+    const recorded = failureRow({ failedAttempts: 3, lastPaymentFailedAt: CREATED_2 });
+    expect(decideRenewalFailure(recorded, failureFacts({ attemptCount: 3, failedAtIso: CREATED_2 }))).toEqual({ kind: 'unchanged' });
+    expect(decideRenewalFailure(recorded, failureFacts({ attemptCount: 1, failedAtIso: CREATED_1 }))).toEqual({ kind: 'unchanged' });
+    expect(decideRenewalFailure(failureRow({ failedAttempts: 1, lastPaymentFailedAt: CREATED_1 }), failureFacts({ attemptCount: 2, failedAtIso: CREATED_2 }))).toEqual({
+      kind: 'write',
+      failedAttempts: 2,
+      lastPaymentFailedAt: CREATED_2,
+      actionRequiredInvoiceUrl: null,
+    });
+  });
+
+  it('event.created is never compared with a Stripe date: a real-time created far BEFORE the clock-time period still records, and one far AFTER a paid period is still moot', () => {
+    expect(decideRenewalFailure(failureRow(), failureFacts({ failedAtIso: '2020-01-01T00:00:00.000Z' }))).toMatchObject({ kind: 'write', failedAttempts: 1 });
+    expect(decideRenewalFailure(failureRow({ currentPeriodEnd: P2 }), failureFacts({ failedAtIso: '2099-01-01T00:00:00.000Z' }))).toEqual({ kind: 'moot', reason: 'period_already_paid' });
+  });
+
+  it('action required stores a Stripe-hosted URL; a non-Stripe URL is never stored', () => {
+    expect(decideRenewalFailure(failureRow(), failureFacts({ actionRequired: true, attemptCount: 0, hostedInvoiceUrl: HOSTED }))).toMatchObject({ kind: 'write', actionRequiredInvoiceUrl: HOSTED });
+    expect(decideRenewalFailure(failureRow(), failureFacts({ actionRequired: true, hostedInvoiceUrl: 'https://example.invalid/scrubbed' }))).toMatchObject({ kind: 'write', actionRequiredInvoiceUrl: null });
+  });
+
+  it('X-5 order either way: a plain failure on the SAME invoice keeps the URL; on another invoice it clears it', () => {
+    const asked = failureRow({ failedAttempts: 1, lastPaymentFailedAt: CREATED_1, actionRequiredInvoiceUrl: HOSTED });
+    expect(decideRenewalFailure(asked, failureFacts({ attemptCount: 0, hostedInvoiceUrl: HOSTED }))).toEqual({ kind: 'unchanged' });
+    expect(decideRenewalFailure(asked, failureFacts({ attemptCount: 1, periodEndIso: P3, invoiceId: 'in_next', hostedInvoiceUrl: HOSTED_OTHER, failedAtIso: CREATED_2 }))).toMatchObject({
+      kind: 'write',
+      actionRequiredInvoiceUrl: null,
+    });
+    // The other order: the failure first, then the action-required on the same invoice.
+    const failedFirst = failureRow({ failedAttempts: 1, lastPaymentFailedAt: CREATED_1 });
+    expect(decideRenewalFailure(failedFirst, failureFacts({ actionRequired: true, attemptCount: 0, hostedInvoiceUrl: HOSTED }))).toEqual({
+      kind: 'write',
+      failedAttempts: 1,
+      lastPaymentFailedAt: CREATED_1,
+      actionRequiredInvoiceUrl: HOSTED,
+    });
+  });
+});
+
+describe('decideRenewalCure (SA C-1 ruling, rule 5): only the newest paid invoice clears', () => {
+  const cureRow = (overrides: Record<string, unknown> = {}) => ({
+    stripeSubscriptionId: SUB,
+    currentPeriodEnd: P2,
+    failedAttempts: 2,
+    actionRequiredInvoiceUrl: null,
+    ...overrides,
+  });
+
+  it.each([
+    ['no row', null, P2, { kind: 'nothing', reason: 'no_row' }],
+    ['another subscription', cureRow({ stripeSubscriptionId: 'sub_other' }), P2, { kind: 'nothing', reason: 'other_subscription' }],
+    ['nothing to clear', cureRow({ failedAttempts: 0 }), P2, { kind: 'nothing', reason: 'no_failure' }],
+    ['no period on the row', cureRow({ currentPeriodEnd: null }), P2, { kind: 'nothing', reason: 'no_period' }],
+    ['a late replay of an OLDER paid invoice', cureRow(), T1, { kind: 'nothing', reason: 'older_invoice' }],
+    ['the paid invoice is the newest (P = current_period_end)', cureRow(), P2, { kind: 'clear' }],
+    ['only the URL is left', cureRow({ failedAttempts: 0, actionRequiredInvoiceUrl: HOSTED }), P2, { kind: 'clear' }],
+  ])('%s', (_name, row, paid, expected) => {
+    expect(decideRenewalCure(row as Parameters<typeof decideRenewalCure>[0], { stripeSubscriptionId: SUB, paidPeriodEndIso: paid as string })).toEqual(expected);
+  });
+});
+
+/** A client whose reads answer `rows` in order and whose updates answer `counts` in order. */
+function renewalClient(rows: Array<Record<string, unknown> | null>, counts: Array<number | { error: unknown }>) {
+  let reads = 0;
+  let writes = 0;
+  return recordingClient((calls) => {
+    if (calls.some((c) => c.method === 'update')) {
+      const answer = counts[writes];
+      writes += 1;
+      return typeof answer === 'number' ? { data: null, error: null, count: answer } : { data: null, error: answer.error, count: null };
+    }
+    const row = rows[Math.min(reads, rows.length - 1)];
+    reads += 1;
+    return { data: row, error: null };
+  });
+}
+
+const NOW = '2026-10-15T08:00:00.000Z';
+const renewalInput = (overrides: Record<string, unknown> = {}) => ({
+  userId: USER,
+  livemode: false,
+  stripeSubscriptionId: SUB,
+  invoiceId: INVOICE,
+  periodEndIso: P2,
+  attemptCount: 1,
+  failedAtIso: CREATED_1,
+  hostedInvoiceUrl: null as string | null,
+  nowIso: NOW,
+  ...overrides,
+});
+
+/** PostgREST's own timestamp text, with microseconds, exactly as a select returns it. */
+const RAW_PERIOD = '2026-12-15T07:05:22+00:00';
+const RAW_FAILED = '2026-10-15T07:05:55.123456+00:00';
+
+describe('recordRenewalFailure / recordActionRequired (SA C-2: read, decide, compare-and-set)', () => {
+  it('refuses invalid input with no query', async () => {
+    const { client, queries } = renewalClient([], []);
+    const repo = new BusinessOsBillingAccountRepository(client);
+    for (const bad of [
+      { userId: 'nope' },
+      { stripeSubscriptionId: 'cus_x' },
+      { invoiceId: 'inv_x' },
+      { periodEndIso: '2027-01-15' },
+      { failedAtIso: 'yesterday' },
+      { attemptCount: -1 },
+      { attemptCount: 1.5 },
+      { hostedInvoiceUrl: 7 },
+      { livemode: 'false' },
+    ]) {
+      const result = await repo.recordRenewalFailure(renewalInput(bad) as never);
+      expect(result.error?.message).toBe('invalid_input');
+    }
+    expect(queries).toEqual([]);
+  });
+
+  it('reads the row by user and mode, then writes exactly four columns with a compare-and-set on every value it read', async () => {
+    const { client, queries } = renewalClient(
+      [rowRaw({ stripe_subscription_id: SUB, subscription_status: 'past_due', current_period_end: RAW_PERIOD, last_invoice_id: 'in_paid_before', failed_attempts: 1, last_payment_failed_at: RAW_FAILED })],
+      [1]
+    );
+    const repo = new BusinessOsBillingAccountRepository(client);
+    const result = await repo.recordRenewalFailure(renewalInput({ attemptCount: 2, failedAtIso: CREATED_2 }));
+    expect(result).toEqual({ data: { outcome: 'recorded', failedAttempts: 2, actionRequiredUrlStored: false }, error: null });
+
+    expect(queries).toHaveLength(2);
+    const [read, write] = queries;
+    expect(argsOf(read, 'eq')).toEqual([['user_id', USER], ['livemode', false]]);
+    expect(argsOf(write, 'update')).toEqual([
+      [{ failed_attempts: 2, last_payment_failed_at: CREATED_2, action_required_invoice_url: null, updated_at: NOW }, { count: 'exact' }],
+    ]);
+    expect(argsOf(write, 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['stripe_subscription_id', SUB],
+      ['failed_attempts', 1],
+      ['current_period_end', RAW_PERIOD],
+      ['last_invoice_id', 'in_paid_before'],
+      ['last_payment_failed_at', RAW_FAILED],
+    ]);
+    expect(argsOf(write, 'is')).toEqual([['action_required_invoice_url', null]]);
+    expect(write.map((c) => c.method)).not.toEqual(expect.arrayContaining(['select']));
+    expect(write.map((c) => c.method)).not.toEqual(expect.arrayContaining(['or']));
+    expect(write[write.length - 1].method).toBe('await');
+  });
+
+  it('NULL read values are compared with IS NULL', async () => {
+    const { client, queries } = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: null, last_invoice_id: null })], [1]);
+    await new BusinessOsBillingAccountRepository(client).recordRenewalFailure(renewalInput());
+    expect(argsOf(queries[1], 'is')).toEqual([
+      ['current_period_end', null],
+      ['last_invoice_id', null],
+      ['action_required_invoice_url', null],
+      ['last_payment_failed_at', null],
+    ]);
+  });
+
+  it('moot and unchanged decisions write nothing', async () => {
+    const paid = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: P2 })], []);
+    expect((await new BusinessOsBillingAccountRepository(paid.client).recordRenewalFailure(renewalInput())).data).toEqual({ outcome: 'moot', reason: 'period_already_paid' });
+    expect(paid.queries).toHaveLength(1);
+
+    const other = renewalClient([rowRaw({ stripe_subscription_id: 'sub_other' })], []);
+    expect((await new BusinessOsBillingAccountRepository(other.client).recordRenewalFailure(renewalInput())).data).toEqual({ outcome: 'moot', reason: 'other_subscription' });
+
+    const none = renewalClient([null], []);
+    expect((await new BusinessOsBillingAccountRepository(none.client).recordRenewalFailure(renewalInput())).data).toEqual({ outcome: 'moot', reason: 'no_row' });
+
+    const replay = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: T1, failed_attempts: 1, last_payment_failed_at: CREATED_1 })], []);
+    expect((await new BusinessOsBillingAccountRepository(replay.client).recordRenewalFailure(renewalInput())).data).toEqual({ outcome: 'unchanged' });
+    expect(replay.queries).toHaveLength(1);
+  });
+
+  it('a lost compare-and-set re-reads and re-decides once; two lost rounds are concurrent_change', async () => {
+    const before = rowRaw({ stripe_subscription_id: SUB, current_period_end: T1 });
+    const won = renewalClient([before, rowRaw({ stripe_subscription_id: SUB, current_period_end: T1, failed_attempts: 1, last_payment_failed_at: CREATED_1 })], [0, 1]);
+    const second = await new BusinessOsBillingAccountRepository(won.client).recordRenewalFailure(renewalInput({ attemptCount: 2, failedAtIso: CREATED_2 }));
+    expect(second.data).toEqual({ outcome: 'recorded', failedAttempts: 2, actionRequiredUrlStored: false });
+    expect(won.queries).toHaveLength(4);
+
+    // The re-read shows the cure landed meanwhile: moot, nothing more.
+    const cured = renewalClient([before, rowRaw({ stripe_subscription_id: SUB, current_period_end: P2 })], [0]);
+    expect((await new BusinessOsBillingAccountRepository(cured.client).recordRenewalFailure(renewalInput())).data).toEqual({ outcome: 'moot', reason: 'period_already_paid' });
+
+    const lost = renewalClient([before, before], [0, 0]);
+    const result = await new BusinessOsBillingAccountRepository(lost.client).recordRenewalFailure(renewalInput());
+    expect(result.data).toBeNull();
+    expect(result.error?.message).toBe('concurrent_change');
+  });
+
+  it('a database error is returned, never thrown', async () => {
+    const failing = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: T1 })], [{ error: { code: 'XX000', message: 'boom' } }]);
+    const result = await new BusinessOsBillingAccountRepository(failing.client).recordRenewalFailure(renewalInput());
+    expect(result.error?.message).toBe('boom');
+  });
+
+  it('recordActionRequired stores the hosted URL; the URL appears in no log line', async () => {
+    const { client, queries } = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: T1 })], [0, 1]);
+    const result = await new BusinessOsBillingAccountRepository(client).recordActionRequired(renewalInput({ attemptCount: 0, hostedInvoiceUrl: HOSTED }));
+    expect(result.data).toEqual({ outcome: 'recorded', failedAttempts: 1, actionRequiredUrlStored: true });
+    expect(argsOf(queries[3], 'update')[0][0]).toMatchObject({ action_required_invoice_url: HOSTED });
+    expect(mockWarn).toHaveBeenCalled();
+    expect(JSON.stringify([mockWarn.mock.calls, mockError.mock.calls])).not.toContain('invoice.stripe.com');
+  });
+
+  it('a plain failure never stores a URL, even a Stripe-hosted one', async () => {
+    const { client, queries } = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: T1 })], [1]);
+    await new BusinessOsBillingAccountRepository(client).recordRenewalFailure(renewalInput({ hostedInvoiceUrl: HOSTED }));
+    expect(argsOf(queries[1], 'update')[0][0]).toMatchObject({ action_required_invoice_url: null });
+  });
+});
+
+describe('clearRenewalFailure (SA C-1 ruling, rule 5)', () => {
+  const clearInput = (overrides: Record<string, unknown> = {}) => ({
+    userId: USER,
+    livemode: false,
+    stripeSubscriptionId: SUB,
+    paidPeriodEndIso: P2,
+    nowIso: NOW,
+    ...overrides,
+  });
+
+  it('refuses invalid input with no query', async () => {
+    const { client, queries } = renewalClient([], []);
+    const repo = new BusinessOsBillingAccountRepository(client);
+    for (const bad of [{ userId: 'x' }, { stripeSubscriptionId: 'x' }, { paidPeriodEndIso: 'x' }, { nowIso: 'x' }]) {
+      expect((await repo.clearRenewalFailure(clearInput(bad) as never)).error?.message).toBe('invalid_input');
+    }
+    expect(queries).toEqual([]);
+  });
+
+  it('the newest paid invoice clears the marker and the URL, keeps the date, by compare-and-set', async () => {
+    const { client, queries } = renewalClient(
+      [rowRaw({ stripe_subscription_id: SUB, current_period_end: '2027-01-15T07:05:22+00:00', failed_attempts: 2, action_required_invoice_url: HOSTED, last_payment_failed_at: RAW_FAILED })],
+      [1]
+    );
+    const result = await new BusinessOsBillingAccountRepository(client).clearRenewalFailure(clearInput());
+    expect(result).toEqual({ data: { outcome: 'cleared' }, error: null });
+    const write = queries[1];
+    expect(argsOf(write, 'update')).toEqual([[{ failed_attempts: 0, action_required_invoice_url: null, updated_at: NOW }, { count: 'exact' }]]);
+    expect(argsOf(write, 'eq')).toEqual([
+      ['user_id', USER],
+      ['livemode', false],
+      ['stripe_subscription_id', SUB],
+      ['failed_attempts', 2],
+      ['current_period_end', '2027-01-15T07:05:22+00:00'],
+      ['action_required_invoice_url', HOSTED],
+    ]);
+    expect(write.map((c) => c.method)).not.toEqual(expect.arrayContaining(['select']));
+    expect(write.map((c) => c.method)).not.toEqual(expect.arrayContaining(['or']));
+  });
+
+  it('an older paid invoice, or nothing to clear, writes nothing', async () => {
+    const older = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: P2, failed_attempts: 2 })], []);
+    expect((await new BusinessOsBillingAccountRepository(older.client).clearRenewalFailure(clearInput({ paidPeriodEndIso: T1 }))).data).toEqual({ outcome: 'nothing', reason: 'older_invoice' });
+    expect(older.queries).toHaveLength(1);
+
+    const clean = renewalClient([rowRaw({ stripe_subscription_id: SUB, current_period_end: P2 })], []);
+    expect((await new BusinessOsBillingAccountRepository(clean.client).clearRenewalFailure(clearInput())).data).toEqual({ outcome: 'nothing', reason: 'no_failure' });
+  });
+
+  it('two lost rounds are concurrent_change; one is retried', async () => {
+    const row = rowRaw({ stripe_subscription_id: SUB, current_period_end: P2, failed_attempts: 2 });
+    const retried = renewalClient([row, row], [0, 1]);
+    expect((await new BusinessOsBillingAccountRepository(retried.client).clearRenewalFailure(clearInput())).data).toEqual({ outcome: 'cleared' });
+    const lost = renewalClient([row, row], [0, 0]);
+    expect((await new BusinessOsBillingAccountRepository(lost.client).clearRenewalFailure(clearInput())).error?.message).toBe('concurrent_change');
+  });
+});
+
+describe('current_period_end is written only by the paid apply path (SA C-1 ruling, rule 3)', () => {
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+
+  it('in this repository, the only UPDATE payload naming current_period_end is the TEST MODE attach, which clears it', () => {
+    const code = lf(fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBillingAccountRepository.ts'), 'utf8'));
+    const writers: string[] = [];
+    const starts = [...code.matchAll(/\n {2}(?:private )?async (\w+)\(/g)].map((m) => ({ name: m[1], at: m.index ?? 0 }));
+    expect(starts.length).toBeGreaterThanOrEqual(12);
+    starts.forEach((start, i) => {
+      const body = code.slice(start.at, i + 1 < starts.length ? starts[i + 1].at : code.length);
+      for (const update of body.matchAll(/\.update\(([\s\S]*?)\{ count: 'exact' \}/g)) {
+        if (/current_period_end\s*:/.test(update[1])) writers.push(start.name);
+      }
+    });
+    expect(writers).toEqual(['attachTestClockCustomer']);
+    expect(code).toMatch(/current_period_end: null,/);
+  });
+
+  it('no other application file opens a query on the billing table, and the finance read repository only reads it', () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (['node_modules', '.next', '.claude', 'coverage', '__tests__'].includes(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name)) {
+          const text = fs.readFileSync(full, 'utf8');
+          if (/\.from\(\s*(BOS_BILLING_ACCOUNTS_TABLE|['"]business_os_billing_accounts['"])/.test(text)) {
+            offenders.push(path.relative(ROOT, full).split(path.sep).join('/'));
+          }
+        }
+      }
+    };
+    for (const dir of ['app', 'lib', 'components', 'hooks']) walk(path.join(ROOT, dir));
+    // Plan payments P-8a.1: the admin Subscriptions read joins as a third, read-only reader (one mode per read, PF-15).
+    expect(offenders.sort()).toEqual([
+      'lib/repositories/BusinessOsBillingAccountRepository.ts',
+      'lib/repositories/BusinessOsBillingAdminReadRepository.ts',
+      'lib/repositories/BusinessOsFinanceReadRepository.ts',
+    ]);
+    const finance = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsFinanceReadRepository.ts'), 'utf8');
+    expect(finance).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);
+    const adminRead = fs.readFileSync(path.join(ROOT, 'lib', 'repositories', 'BusinessOsBillingAdminReadRepository.ts'), 'utf8');
+    expect(adminRead).not.toMatch(/\.(update|insert|upsert|delete|rpc)\(/);
+  });
+
+  it('in SQL, only the apply function (20261027, replaced by 20261028) updates the billing table', () => {
+    const dir = path.join(ROOT, 'supabase', 'migrations');
+    const updaters = fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith('.sql'))
+      .filter((name) => /UPDATE\s+public\.business_os_billing_accounts/i.test(fs.readFileSync(path.join(dir, name), 'utf8')))
+      .sort();
+    expect(updaters).toEqual(['20261027_business_os_billing_events.sql', '20261028_business_os_first_payment_stamp.sql']);
+    for (const name of updaters) {
+      const sql = lf(fs.readFileSync(path.join(dir, name), 'utf8'));
+      const at = sql.search(/UPDATE\s+public\.business_os_billing_accounts/i);
+      const fnStart = sql.lastIndexOf('FUNCTION', at);
+      expect(fnStart).toBeGreaterThan(0);
+      expect(sql.slice(fnStart, fnStart + 80)).toContain('business_os_apply_plan_payment');
+    }
   });
 });

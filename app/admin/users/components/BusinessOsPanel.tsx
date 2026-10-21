@@ -44,6 +44,7 @@ import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import type { AccountSummaryPayload, AdminUserRow } from '../types';
 import { CreditsBlock, type TakeBackRequest } from './CreditsBlock';
 import { BoostBlock } from './BoostBlock';
+import { PlanBillingBlock } from './PlanBillingBlock';
 import {
   BusinessSummaryStrip,
   STRIP_COPY,
@@ -304,6 +305,10 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
             {/* Credit top-ups (credits boost slice 6a): its own read, after Credits.
                 6b (SA C-5): its Take back opens the Credits block's dialog on the purchase's lot. */}
             <BoostBlock accountId={accountId} businessLabel={businessLabel} takeBack={takeBack} />
+
+            {/* Plan payments P-8a.2 (BD-23, AM-1): Stripe beside the plan row. Closed, and sends
+                nothing, until the admin opens it (D-7: the drawer's pin suites know no other read). */}
+            <PlanBillingBlock accountId={accountId} />
           </div>
         )}
       </DrawerBox>
@@ -394,7 +399,7 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
                 href={`/admin/analytics?scope=bos&user=${encodeURIComponent(accountId)}`}
                 className={`inline-block ${LINK_CLASS}`}
               >
-                Open in AI cost & usage
+                Open in AI calls & usage
               </Link>
             </div>
 

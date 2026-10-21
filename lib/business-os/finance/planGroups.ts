@@ -114,7 +114,7 @@ function tierLabelOf(config: EntitlementConfig, tier: string): string {
 }
 
 /** Every group, seeded at 0 in display order. `tier_set` only when the paying read failed. */
-function seedGroups(config: EntitlementConfig, payingKnown: boolean): FinanceGroupCount[] {
+export function seedGroups(config: EntitlementConfig, payingKnown: boolean): FinanceGroupCount[] {
   const zero = (key: FinanceGroupKey, tierLabel: string | null = null): FinanceGroupCount => ({
     key,
     tierLabel,

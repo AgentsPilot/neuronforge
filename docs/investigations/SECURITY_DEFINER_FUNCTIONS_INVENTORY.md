@@ -1,6 +1,6 @@
 # SECURITY DEFINER Functions Inventory
 
-> **Last Updated**: 2026-10-11
+> **Last Updated**: 2026-10-19
 
 ## Overview
 
@@ -291,7 +291,7 @@ The migration must name the **prod identity signatures** taken from the TSV. Exa
 
 **Counts per slice:** 13 + 13 + 18 + 6 + 18 = **68**, which equals the 68 anon-executable functions in prod. Slice 4b changes code but no new functions, and slice 7 covers 47 functions that are already counted in earlier slices or among the 7 already closed.
 
-Slice 7's 47 functions:
+Slice 7's 47 functions (46 once `20261082` is applied: `log_exchange_rate_change` is pinned to `public, pg_temp` by the exchange rates slice 1b migration, [workplan](/docs/workplans/ADMIN_EXCHANGE_RATES_SLICE_1B_WORKPLAN.md), and leaves the list):
 - advance_contact_on_completed_booking, advance_contact_stage, auto_disable_ineffective_behavior_rules, auto_set_agent_org_id
 - check_execution_anomaly, check_subdomain_available, create_user_settings, dismiss_setup_step
 - find_similar_intent_examples, generate_subdomain, get_active_failures, get_last_perfect_calibration
@@ -400,3 +400,4 @@ Grantees are `postgres service_role`, and anon, authenticated and PUBLIC all mea
 | 2026-10-11 | Slice 5 code complete (Dev, SA S5-4) | §6 row 5 is now `20261051`: workplan SA-approved (S5-1 to S5-6), code complete, awaiting SA code review. §4.5 correction: the 8 `tg_*_events` functions and `record_business_event` have been in git since `5aae2c9c`, so of the slice 5 set only `log_exchange_rate_change` is still prod-only. Last Updated bumped |
 | 2026-10-11 | Slice 5 applied (TL) | §6 row 5: `20261051` applied on prod 2026-10-11 (PR #297), checker 108/0, N1 42501, D1 5/5. Anon-executable SECURITY DEFINER functions now 0 |
 | 2026-10-11 | Sunset (TL) | §6 rows 4b and 7 parked by the user (Business OS focus). §4.5: the 10 prod-only definitions captured in [SECDEF_PROD_ONLY_FUNCTION_DEFINITIONS.md](/docs/investigations/SECDEF_PROD_ONLY_FUNCTION_DEFINITIONS.md). Final state: anon-executable SECURITY DEFINER functions 0 |
+| 2026-10-19 | Exchange rates slice 1b (Dev, SA-R14) | §6 slice 7 list: `log_exchange_rate_change` leaves it once migration `20261082` is applied (search_path pinned there, function not re-created), 47 to 46. S7 stays parked |

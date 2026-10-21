@@ -76,7 +76,8 @@ describe('KpiStrip', () => {
       </KpiStrip>
     );
     const strip = container.firstElementChild as HTMLElement;
-    expect(strip.className).toBe('grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5');
+    // MK-0a (the user's decision, 2026-10-19): equal rows too, so every tile is the same size.
+    expect(strip.className).toBe('grid auto-rows-fr grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5');
     expect(screen.getAllByRole('link')).toHaveLength(2);
     expect(strip.hasAttribute('role')).toBe(false);
   });
@@ -190,5 +191,101 @@ describe('the amber status (K-4, L-2a)', () => {
     expect(link.className).not.toContain('border-slate-700');
     expect(link.getAttribute('data-status')).toBe('amber');
     expect(link.querySelector('.text-amber-300')).not.toBeNull();
+  });
+});
+
+// ── Finance F-5: the other statuses, no value, a second line, the cross-page mode ──
+// A separate import block, so the lines above stay unedited.
+import { STATUS_STYLES } from '@/app/admin/components/health/HealthTile';
+import { OK_GREEN } from '@/app/admin/components/layout/StatusChip';
+
+describe('the green, not measured and could-not-check statuses (K-4, Finance F-5)', () => {
+  it.each([
+    ['green', 'Healthy', OK_GREEN.card, OK_GREEN.accent],
+    ['not_measured', 'Not measured yet', 'border-dashed border-slate-600', 'text-slate-400'],
+    ['unavailable', 'Could not check', 'border-slate-600', 'text-slate-400'],
+  ] as const)('%s says "%s" with a hidden icon, its card border and accent, and the status in its name', (status, word, card, accent) => {
+    render(<KpiTile label="Charged AI cost" value="USD 1.00" status={status} href="#ai-cost" />);
+    const link = screen.getByRole('link', { name: `Charged AI cost, USD 1.00, ${word.toLowerCase()}` });
+    expect(link.textContent).toContain(word);
+    expect(link.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+    expect(link.className).toContain(card);
+    expect(link.className).not.toContain('border-slate-700');
+    expect(link.className).toContain('bg-slate-800');
+    expect(link.getAttribute('data-status')).toBe(status);
+    expect(link.querySelector(`.${accent}`)).not.toBeNull();
+  });
+
+  it('green comes from the one StatusChip constant (S-7): the tile classes are its card and accent', () => {
+    expect(OK_GREEN.card).toBe('border-emerald-500/40');
+    expect(OK_GREEN.accent).toBe('text-emerald-300');
+    expect(OK_GREEN.chip).toBe('border-emerald-500/40 bg-emerald-500/15 text-emerald-300');
+  });
+
+  it("every status word equals Health's (K-4 copies Health's labels; Health's neutral is no status here)", () => {
+    for (const [status, word] of [
+      ['red', STATUS_STYLES.red.label],
+      ['amber', STATUS_STYLES.amber.label],
+      ['green', STATUS_STYLES.green.label],
+      ['not_measured', STATUS_STYLES.not_measured.label],
+      ['unavailable', STATUS_STYLES.unavailable.label],
+    ] as const) {
+      const { unmount } = render(<KpiTile label="X" value="1" status={status} />);
+      expect({ status, text: screen.getByRole('group').textContent }).toEqual({ status, text: `X1${word}` });
+      unmount();
+    }
+  });
+});
+
+describe('a tile with no value, and the second line (Finance F-5)', () => {
+  it('no value: no value line, and the name is the label and the status', () => {
+    render(<KpiTile label="Our revenue" value={null} status="unavailable" href="#revenue" />);
+    const link = screen.getByRole('link', { name: 'Our revenue, could not check' });
+    expect(link.querySelector('.text-2xl')).toBeNull();
+  });
+
+  it('no value and no status: the name is the label alone', () => {
+    render(<KpiTile label="Our revenue" href="#revenue" />);
+    expect(screen.getByRole('link', { name: 'Our revenue' }).querySelector('.text-2xl')).toBeNull();
+  });
+
+  it('the detail line sits after the status row and is described after the sub-line, never in the name', () => {
+    render(<KpiTile label="Founding" value="8" sub="no end date" status="red" detail="Founding Partners with no end date" href="#accounts" />);
+    const link = screen.getByRole('link', { name: 'Founding, 8, needs action' });
+    const spans = Array.from(link.children).map((child) => child.textContent);
+    expect(spans).toEqual(['Founding', '8', 'no end date', 'Needs action', 'Founding Partners with no end date']);
+    const ids = (link.getAttribute('aria-describedby') ?? '').split(' ');
+    expect(ids).toHaveLength(2);
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual(['no end date', 'Founding Partners with no end date']);
+    expect(link.lastElementChild?.className).toBe('mt-1 block text-xs text-slate-300');
+  });
+
+  it('a detail with no sub-line is the whole description', () => {
+    render(<KpiTile label="Gifted" value="0" detail="Admin-granted" />);
+    const group = screen.getByRole('group', { name: 'Gifted, 0' });
+    expect(document.getElementById(group.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Admin-granted');
+  });
+});
+
+describe('the cross-page mode (K-6, Finance F-5)', () => {
+  it('is one real link to the other page, named per K-7, with the anchor tile classes; never a button or a region', () => {
+    render(<KpiTile label="Charged AI cost" value="USD 3.50" status="green" link="/admin/analytics?range=this_month" testId="tile-k1" />);
+    const link = screen.getByRole('link', { name: 'Charged AI cost, USD 3.50, healthy' });
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe('/admin/analytics?range=this_month');
+    expect(link.getAttribute('data-testid')).toBe('tile-k1');
+    expect(link.getAttribute('data-status')).toBe('green');
+    expect(link.className).toBe(
+      'block rounded-xl border bg-slate-800 p-4 transition-colors hover:bg-slate-700/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 border-emerald-500/40'
+    );
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(screen.queryAllByRole('region')).toHaveLength(0);
+  });
+
+  it('a neutral cross-page tile has the neutral border and no status row', () => {
+    render(<KpiTile label="Charged AI cost" value="USD 3.50" link="/admin/analytics" />);
+    const link = screen.getByRole('link', { name: 'Charged AI cost, USD 3.50' });
+    expect(link.className).toContain('border-slate-700');
+    expect(link.querySelector('svg')).toBeNull();
   });
 });

@@ -95,7 +95,7 @@ const BOS_CRONS: CronEntry[] = [
    */
   { path: '/api/cron/bos-billing-reconcile', schedule: '41 5 * * *' },
   /*
-   * CLIENTS' money, as opposed to the platform's own above.
+   * The 18th: CLIENTS' money, as opposed to the platform's own above.
    *
    * Every quarter hour, not nightly: this repairs a client who has paid and
    * whose booking shows nothing collected, and an owner should not spend a day
@@ -103,6 +103,15 @@ const BOS_CRONS: CronEntry[] = [
    * cheap and two overlapping ones cannot corrupt each other.
    */
   { path: '/api/cron/booking-money-reconcile', schedule: '*/15 * * * *' },
+  /*
+   * The 19th: the data export daily sweep (DE-8b, 2026-10-17), shipped in the
+   * same PR as the zip writer (SA DE-8a Q-6). 05:25 is between the settlement
+   * gap check (05:17) and the billing reconcile (05:41); no hourly or daily
+   * job runs at :25.
+   */
+  { path: '/api/cron/data-export', schedule: '25 5 * * *' },
+  // The 20th: finance slice 8.2 (§11M.7): 00:07 UTC, a free minute (CF-6), appended last.
+  { path: '/api/cron/finance-snapshot', schedule: '7 0 * * *' },
 ];
 
 const RETIRED_AGENTSPILOT = [

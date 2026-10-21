@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { Logo } from '@/components/brand/Logo';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard,
   MessageSquare,
   Server,
   X,
@@ -65,16 +64,25 @@ interface NavSection {
  * page that only configures or shows AgentsPilot says so.
  *
  * Slice 4 made `/admin` the Health landing and moved the old AgentsPilot
- * dashboard to `/admin/platform-dashboard`, listed only in the hidden parked
- * section (URL-only, user decision U-6).
+ * dashboard to its own URL-only page (user decision U-6). Money M-8 (BD-34)
+ * marked that page redundant and removed its hidden parked item.
  *
  * ADMIN_BOS_CLEANUP slice 2 split Model pricing from the AgentsPilot billing
  * settings, which moved to a new URL-only parked page, and moved Free tier &
  * onboarding to the parked section: the Business OS free plan is the trial
  * shown on Plans & entitlements.
  *
+ * Money M-5 (finance health §11H.3, BD-21, BD-24): a Money section follows
+ * Monitor, holding Finance (first), Charge checks (the cost report and Leak
+ * check, moved out of the Business OS AI page) and AI calls & usage (detail).
+ * Nothing with action buttons is in it. This is the user's recorded exception
+ * to the fixed sidebar of the Admin Layout Standard (§11H.0, BQ-1 and BQ-6).
+ * Plan payments P-8a.1 (BD-23) adds Subscriptions, read-only, after Finance.
+ *
  * Exchange Rates is deliberately NOT listed (requirement §4.3): it writes to
  * the database straight from the browser, so surfacing it would widen exposure.
+ * Money M-8 (BD-34) marked it and the old dashboard redundant: neither is
+ * listed, and this file names neither route.
  *
  * Pinned by `app/admin/components/__tests__/AdminSidebar.nav.test.ts` (section
  * order, one entry per admin page) and by the per-page nav tests next to the
@@ -91,19 +99,6 @@ const navigationSections: NavSection[] = [
         // Slice 4: the landing answers "is anything wrong?" in red / amber /
         // grey tiles. The description must never claim that all is well.
         description: 'Is anything wrong? Business OS'
-      },
-      {
-        // Finance & business health slice 1a: read-only, directly after Health.
-        name: 'Finance',
-        href: '/admin/finance',
-        icon: Wallet,
-        description: 'Revenue, AI cost and credits, Business OS'
-      },
-      {
-        name: 'AI cost & usage',
-        href: '/admin/analytics',
-        icon: TrendingUp,
-        description: 'Token spend, both products'
       },
       {
         // Slice 5: the Business OS crons and the five send queues, read-only.
@@ -123,6 +118,36 @@ const navigationSections: NavSection[] = [
         href: '/admin/archiving',
         icon: Archive,
         description: 'Move old audit records out'
+      },
+    ]
+  },
+  {
+    // Money M-5 (BD-21): read-only money pages, Finance first. Pages with
+    // actions (Businesses, Model pricing, Jobs) stay where they are.
+    title: 'Money',
+    items: [
+      {
+        // Finance & business health slice 1a; first in Money since M-5.
+        name: 'Finance',
+        href: '/admin/finance',
+        icon: Wallet,
+        description: 'Revenue, AI cost and credits, Business OS'
+      },
+      {
+        // M-5 (BD-24, SA-Q58): the cost report and the Leak check, moved out of
+        // the Business OS AI page. Its own entry because the sidebar highlights
+        // by exact path.
+        name: 'Charge checks',
+        href: '/admin/finance/charges',
+        icon: UserCheck,
+        description: 'Charged AI cost checked per account, Business OS'
+      },
+      {
+        // M-5 (S-1, S-2): the detailed page of every recorded AI call.
+        name: 'AI calls & usage (detail)',
+        href: '/admin/analytics',
+        icon: TrendingUp,
+        description: 'Every AI call and its recorded cost, both products'
       },
     ]
   },
@@ -175,8 +200,10 @@ const navigationSections: NavSection[] = [
         // the switch's door), so the previous description named a surface that
         // is not there. Pinned by `business-os-llm/__tests__/nav.test.ts`,
         // scoped to THIS entry, so it cannot drift back unnoticed.
-        // Credit deduction slice 4a: the page gained a "Costs & credits" tab.
-        description: 'Models, temperatures & costs'
+        // Credit deduction slice 4a added a "Costs & credits" tab; Money M-5
+        // moved it to Charge checks, so the page now holds settings and the
+        // AI activity list (S-4).
+        description: 'Models, temperatures & AI activity'
       },
       {
         // ADMIN_BOS_CLEANUP slice 2: only the AI model price table every
@@ -201,20 +228,11 @@ const navigationSections: NavSection[] = [
     // URL. Hidden from the sidebar (user decision after slice 1 review,
     // 2026-09-25): twelve always-open items forced a scrollbar for pages
     // nobody operates day to day. Fifteen items after ADMIN_BOS_CLEANUP
-    // slice 2 (2026-10-03).
+    // slice 2 (2026-10-03); fourteen since Money M-8 (BD-34) removed the old
+    // AgentsPilot dashboard's item (the page is kept, redundant, URL-only).
     title: 'AgentsPilot (parked)',
     hidden: true,
     items: [
-      {
-        // The old `/admin` landing, moved in slice 4 when Health replaced it.
-        // URL-only by user decision (U-6): this entry exists so every admin
-        // page keeps exactly one sidebar entry, and it is hidden with its
-        // section. Nothing else links to it.
-        name: 'Platform dashboard (legacy)',
-        href: '/admin/platform-dashboard',
-        icon: LayoutDashboard,
-        description: 'AgentsPilot totals (old landing)'
-      },
       {
         name: 'Agent execution queue',
         href: '/admin/queues',

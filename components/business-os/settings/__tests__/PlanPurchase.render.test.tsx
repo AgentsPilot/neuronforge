@@ -175,6 +175,14 @@ async function show(payload: PlanPayload, props: { checkoutMarker?: string | nul
 const fill = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (slot, name: string) => values[name] ?? slot);
 
 /**
+ * Every button except the view-only "Compare plans" (upgrade modal UM-1a, §10):
+ * excluded by its EXACT test id only, never by name or pattern (SA W-3), so a
+ * money control can never hide behind it. Each absence test that uses this also
+ * asserts the excluded button is present, so the narrowing is visible.
+ */
+const moneyButtons = () => screen.queryAllByRole('button').filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open');
+
+/**
  * The Choose button's label for a plan row (P-7b.1b, SA Q-7): the plan in force,
  * when it is a tier with no billing record (admin-assigned), reads "Pay for".
  */
@@ -225,7 +233,7 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     const future = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
     await show(await payloadFor({ planId: 'champion', cohortExpiresAt: future }));
     expect(screen.getByTestId('plan-purchase-ends-free-access')).toHaveTextContent(COPY['plan.choose.free_access_ends_today']);
-    expect(screen.getAllByRole('button').length).toBeGreaterThan(0);
+    expect(moneyButtons().length).toBeGreaterThan(0);
   });
 
   it('BQ-P10: an open-ended Founding Partner sees no Choose at all', async () => {
@@ -233,7 +241,8 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(payload.purchase?.offer).toEqual({ kind: 'none', reason: 'free_access_no_end_date' });
     await show(payload);
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     // The existing sentence already says what will happen.
     expect(screen.getByText(COPY['plan.changes.no_end_date'])).toBeInTheDocument();
   });
@@ -243,7 +252,8 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(payload.purchase?.offer).toEqual({ kind: 'none', reason: 'paying' });
     await show(payload);
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     expect(screen.getByText(/^Renews on \w+ \d+, \d{4}\.$/)).toBeInTheDocument();
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
@@ -286,6 +296,10 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     const keys = [
       billingEndsWhen({ state: 'renewing', date: JUST_AFTER_JERUSALEM_MIDNIGHT })!.key,
       billingEndsWhen({ state: 'ending', date: JUST_AFTER_JERUSALEM_MIDNIGHT })!.key,
+      // P-6a.2: the three failed-payment states are billing instants too.
+      billingEndsWhen({ state: 'payment_failed', date: JUST_AFTER_JERUSALEM_MIDNIGHT, attempts: 1 })!.key,
+      billingEndsWhen({ state: 'action_required', date: JUST_AFTER_JERUSALEM_MIDNIGHT, confirmUrl: 'https://invoice.stripe.com/i/x' })!.key,
+      billingEndsWhen({ state: 'ended', date: JUST_AFTER_JERUSALEM_MIDNIGHT })!.key,
     ];
     expect([...ACCOUNT_CLOCK_SENTENCE_KEYS].sort()).toEqual(keys.sort());
   });
@@ -293,7 +307,8 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
   it('the switches off (production today): no Choose, and no "Available to choose." promise', async () => {
     await show(await payloadFor({ switchesOn: false }));
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
 
@@ -303,7 +318,8 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(payload.nextPlanUp?.availableToBuy).toBe(true);
     await show(payload);
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
 
@@ -311,8 +327,19 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     stripe.promise = null;
     await show(await payloadFor());
     expect(screen.getAllByText(COPY['plan.choose.not_configured'])).toHaveLength(1);
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     expect(server.posts).toEqual([]);
+  });
+
+  it('W-4 (upgrade modal UM-1a): "Compare plans" is the LAST button, so the index-based Choose clicks below still hit Choose', async () => {
+    const payload = await payloadFor();
+    await show(payload);
+    const buttons = screen.getAllByRole('button');
+    // Non-vacuity: Choose buttons are on screen too.
+    expect(buttons.length).toBeGreaterThan(1);
+    expect(buttons[buttons.length - 1]).toBe(screen.getByTestId('plan-compare-open'));
+    expect(buttons[0]).toHaveAccessibleName(chooseLabel(payload, payload.plans![0]));
   });
 });
 
@@ -402,7 +429,7 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
     expect(await screen.findByTestId('plan-purchase-refused')).toHaveTextContent(COPY[key]);
     expect(document.body.textContent).not.toContain('SERVER ENGLISH MUST NOT SHOW');
     // The buttons come back, so the owner can try again.
-    expect(screen.getAllByRole('button').length).toBeGreaterThan(0);
+    expect(moneyButtons().length).toBeGreaterThan(0);
   });
 
   it('a 401 with no code reads "signed out"; an unknown code reads the generic line', async () => {
@@ -521,6 +548,12 @@ describe('source guards (CLAUDE.md rule 1, W-6, Pino)', () => {
     'components/business-os/settings/PlanPurchase.tsx',
     'components/business-os/settings/planPurchaseCopy.ts',
     'components/business-os/billing/checkoutProcessing.ts',
+    // Upgrade modal UM-1a: the moved types / helpers / flow, and the modal.
+    'components/business-os/settings/planPayloadTypes.ts',
+    'components/business-os/settings/planText.tsx',
+    'components/business-os/settings/usePlanFlow.ts',
+    'components/business-os/settings/upgradeModalView.ts',
+    'components/business-os/settings/UpgradeModal.tsx',
   ];
 
   it.each(CLIENT_FILES)('%s imports nothing from the entitlements module, no server code, and writes no console call', (file) => {
@@ -543,5 +576,8 @@ describe('source guards (CLAUDE.md rule 1, W-6, Pino)', () => {
   it('the islands are client components', () => {
     expect(read('components/business-os/settings/PlanPurchase.tsx').trimStart().startsWith("'use client';")).toBe(true);
     expect(read('components/business-os/settings/PlanSection.tsx').trimStart().startsWith("'use client';")).toBe(true);
+    for (const file of ['planText.tsx', 'usePlanFlow.ts', 'UpgradeModal.tsx']) {
+      expect(read(`components/business-os/settings/${file}`).trimStart().startsWith("'use client';")).toBe(true);
+    }
   });
 });

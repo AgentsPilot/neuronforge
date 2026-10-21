@@ -52,7 +52,15 @@ import {
   ADMIN_DIALOG_DESCRIPTION_CLASS,
   ADMIN_DIALOG_TITLE_CLASS,
 } from '@/app/admin/components/layout/adminDialog';
-import { CREDIT_COPY, creditErrorSentence, formatCredits, formatUtc } from '../creditCopy';
+import { AdminNotice } from '@/app/admin/components/layout/AdminStates';
+import {
+  CREDIT_COPY,
+  creditErrorSentence,
+  formatCredits,
+  formatUtc,
+  mostRecentAdminGrant,
+  recentGrantWarning,
+} from '../creditCopy';
 import type { AccountCreditPositionPayload, CreditLotView } from '../types';
 
 const DARK_INPUT = '!border-slate-600 !bg-slate-800 !text-white';
@@ -126,9 +134,25 @@ interface Props {
   onSuccess: (lines: string[]) => void;
   /** F-108 (LF-4b, BD-15): where focus goes on close; the block returns it to the opener. */
   onCloseAutoFocus?: (event: Event) => void;
+  /**
+   * The lots the block already read (no request of its own). On the Give
+   * confirm step an admin grant from the last 15 minutes shows one amber line,
+   * against an accidental double grant (2026-10-15). Shown only, never blocking.
+   */
+  lots?: readonly CreditLotView[];
 }
 
-export function CreditFormDialog({ open, onOpenChange, mode, accountId, businessLabel, limits, onSuccess, onCloseAutoFocus }: Props) {
+export function CreditFormDialog({
+  open,
+  onOpenChange,
+  mode,
+  accountId,
+  businessLabel,
+  limits,
+  onSuccess,
+  onCloseAutoFocus,
+  lots = [],
+}: Props) {
   const ids = useId();
   const [requestId, setRequestId] = useState<string>('');
   const [step, setStep] = useState<'form' | 'confirm'>('form');
@@ -247,6 +271,9 @@ export function CreditFormDialog({ open, onOpenChange, mode, accountId, business
     ? `Take back everything left on this gift from ${businessLabel}`
     : `Take back ${amountLabel} credits from ${businessLabel}`;
   const lotLeftSentence = lot === null ? '' : `${formatCredits(lot.remaining)} left on this gift.`;
+  // Computed at render, so "N minutes ago" is as of this step being shown.
+  const nowMs = Date.now();
+  const recentGrant = isGive && step === 'confirm' ? mostRecentAdminGrant(lots, nowMs) : null;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -398,6 +425,7 @@ export function CreditFormDialog({ open, onOpenChange, mode, accountId, business
             <p data-testid="credit-confirm-summary" className="text-base font-semibold text-white">
               {isGive ? `Give ${amountLabel} credits to ${businessLabel}` : takeBackSummary}
             </p>
+            {recentGrant && <AdminNotice testId="credit-confirm-recent-grant">{recentGrantWarning(recentGrant, nowMs)}</AdminNotice>}
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
               {isGive && (
                 <>

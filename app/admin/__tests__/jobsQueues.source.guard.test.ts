@@ -58,6 +58,13 @@
  * or Drain, never renders server text, opens through one `DialogTrigger` and
  * carries the dialog-class checks it had on Businesses. Its words live in
  * `reconcileCopy.ts`, which imports nothing and keeps the same word bans.
+ *
+ * Amended by Admin Layout follow-ups LF-9 (SA C-4), narrowly: only the two
+ * G-7 tests change. The reconcile dialog's confirm step is the shared
+ * `AdminConfirmDialog`, so its import list is the shared dialog, the client
+ * logger, `./reconcileCopy` and react, and the trigger and dialog-class checks
+ * become "exactly one shared dialog, exactly one opener, no UI primitive".
+ * G-4, G-5, G-6, G-8, G-9, G-11 and every other rule are unchanged.
  */
 
 import * as fs from 'fs';
@@ -383,30 +390,27 @@ describe('Admin Layout follow-ups LF-4c: Reconcile top-ups now, and nothing more
     expect(code).not.toMatch(/['"](error|details|message)['"]/);
   });
 
-  it('G-7 (SA-W7, SA-W8): the dialog imports only its UI parts, the client logger, the shared dialog classes and ./reconcileCopy', () => {
+  // Rewritten by LF-9 (SA C-4): the confirm step is the shared AdminConfirmDialog,
+  // so the file no longer imports ui/dialog, ui/button or the dialog classes.
+  it('G-7 (SA-W7, SA-W8; LF-9): the dialog imports only the shared confirmation dialog, the client logger and ./reconcileCopy', () => {
     const code = codeOf(read(RECONCILE_DIALOG));
     expect(allImports(code).sort()).toEqual(
-      [
-        '@/app/admin/components/layout/adminDialog',
-        '@/components/ui/button',
-        '@/components/ui/dialog',
-        '@/lib/logger/client',
-        './reconcileCopy',
-        'react',
-      ].sort()
+      ['@/app/admin/components/layout/AdminConfirmDialog', '@/lib/logger/client', './reconcileCopy', 'react'].sort()
     );
   });
 
-  it('G-7 (SA-W7): the dialog-class checks it carried on Businesses, plus one DialogTrigger', () => {
+  // Rewritten by LF-9 (SA C-4, SQ-5): the dialog classes now live in the shared
+  // file (its AC-1); focus back to the opener is pinned by JREC-F1.
+  it('G-7 (SA-W7; LF-9): exactly one shared dialog and one opener; no UI primitive, trigger, content or palette of its own', () => {
     const code = codeOf(read(RECONCILE_DIALOG));
-    expect(code).toMatch(/import\s*\{[^}]*\bADMIN_DIALOG_CLASS\b[^}]*\}\s*from\s*'@\/app\/admin\/components\/layout\/adminDialog'/);
-    const contents = code.match(/<DialogContent\b[^>]*>/g) ?? [];
-    expect(contents).toHaveLength(1);
-    expect(contents[0]).toMatch(/className=\{ADMIN_DIALOG_CLASS\}/);
-    expect(code.match(/<DialogTitle className=\{ADMIN_DIALOG_TITLE_CLASS\}>/g)).toHaveLength(1);
+    expect(code.match(/<AdminConfirmDialog\b/g)).toHaveLength(1);
+    const element = code.slice(code.indexOf('<AdminConfirmDialog'), code.indexOf('</AdminConfirmDialog>'));
+    expect(element.match(/\btestId="boost-reconcile-dialog"/g)).toHaveLength(1);
+    expect(code.match(/data-testid="boost-reconcile"/g)).toHaveLength(1);
+    expect(code).not.toMatch(/@\/components\/ui\//);
+    expect(code).not.toMatch(/<Dialog(Trigger|Content)\b/);
     expect(code).not.toMatch(/\bDARK_DIALOG\b/);
     expect(code).not.toMatch(/!bg-/);
-    expect(code.match(/<DialogTrigger asChild>/g)).toHaveLength(1);
   });
 
   it('G-8: reconcileCopy.ts has no imports at all', () => {

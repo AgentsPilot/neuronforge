@@ -104,6 +104,14 @@ async function renderFor(planId: string, language: Lang = 'en') {
   await waitFor(() => expect(screen.queryByText(translations[language]['plan.loading'])).not.toBeInTheDocument());
 }
 
+/**
+ * Every button except the view-only "Compare plans" (upgrade modal UM-1a, §10).
+ * Since UM-0 the plan builder's own output carries `plans` and `comparison`,
+ * so that button is on screen here too. Excluded by its EXACT test id only
+ * (SA W-3), and each absence test asserts it is present.
+ */
+const moneyButtons = () => screen.queryAllByRole('button').filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open');
+
 /** A row's text without the explanation sentence under it — the heading and the line. */
 function headingAndLine(row: HTMLElement): string {
   const note = row.querySelector('[data-testid^="plan-category-note-"]');
@@ -230,7 +238,8 @@ describe('a paying customer on Essentials', () => {
     // PlanPurchase.render.test.tsx covers the payload WITH a purchase view.
     await renderFor('basic');
 
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByText(COPY['plan.next.available'])).toBeInTheDocument();
     expect(screen.queryByText(/Coming soon/i)).not.toBeInTheDocument();
@@ -251,7 +260,8 @@ describe('a paying customer on Essentials', () => {
 
     // A price with silence beside it reads as a broken page; a button that
     // cannot honour itself is worse than none.
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByText(/Coming soon/i)).toBeInTheDocument();
     expect(screen.getByText(/get in touch if you would like to move plan/i)).toBeInTheDocument();

@@ -16,6 +16,12 @@ import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
 import { redirectIfAwaitingPayment } from '@/lib/business-os/invites/paymentHoldGate';
 import { readInitialLanguage } from '@/lib/business-os/readInitialLanguage';
 import { OwnerDirScript } from '@/components/business-os/OwnerDirScript';
+import '@/lib/design-system-v2/v2-theme-tokens.css';
+import { V2ThemeScript } from '@/lib/design-system-v2/V2ThemeScript';
+import { V2CustomTokensStyle } from '@/lib/design-system-v2/V2CustomTokensStyle';
+import { readV2CustomTokens } from '@/lib/design-system-v2/server/readV2CustomTokens';
+import { readPaymentNotice } from '@/lib/business-os/billing/readPaymentNotice';
+import { PlanPaymentBanner } from '@/components/business-os/billing/PlanPaymentBanner';
 
 // SA N-2: the payment hold reads the session on every request, so this segment
 // is never prerendered (a static render would skip the gate, or swallow the
@@ -65,6 +71,11 @@ export default async function BusinessOSLayout({
   // the gate redirects, because readInitialLanguage never rejects (its
   // contract, readInitialLanguage.test.ts). The plan read stays after the gate (F5b-4).
   const initialLanguagePending = readInitialLanguage();
+  // TH-1: the platform's custom design tokens, started here for the same
+  // reason (overlap the hold). Global, not per-user, so starting it before the
+  // hold decides leaks nothing; never rejects, and never waits more than its
+  // deadline (readV2CustomTokens.ts), so it is safe to leave dangling.
+  const customTokensPending = readV2CustomTokens();
 
   // Slice 5b (T-13 layer 2, F5b-4): the payment hold is the first AWAITED
   // statement. No plan read and no render happens before it decides. A friend
@@ -72,15 +83,29 @@ export default async function BusinessOSLayout({
   // entitlements mode, so `shadow` cannot open it.
   await redirectIfAwaitingPayment();
 
-  const [planBadge, initialLanguage] = await Promise.all([readPlanBadge(), initialLanguagePending]);
+  // Plan payments P-6a.2 (SA C-13): the owner's payment banner, read with the
+  // pill and AFTER the hold (F5b-4). `readPaymentNotice` never rejects and makes
+  // no query while the price switch is off.
+  const [planBadge, initialLanguage, paymentNotice] = await Promise.all([
+    readPlanBadge(),
+    initialLanguagePending,
+    readPaymentNotice(),
+  ]);
+  // Already in flight since before the hold: no extra round trip. `known` is
+  // false only when a cold read missed its deadline; the provider then
+  // corrects the page from the browser (TH-1, SA RC-16).
+  const { tokens: customTokens, known: customTokensKnown } = await customTokensPending;
 
   return (
     <>
-    {/* First, outside every provider: V2ThemeProvider renders nothing on the
-        server, so a script inside it would never reach the HTML (SA RC-2). */}
+    {/* First, outside every provider, so they apply before any content is
+        parsed: language and direction, the dark class, and the custom tokens
+        (SA RC-2, TH-1). */}
     <OwnerDirScript language={initialLanguage.language} />
+    <V2ThemeScript />
+    <V2CustomTokensStyle tokens={customTokens} />
     <UserProvider>
-      <V2ThemeProvider>
+      <V2ThemeProvider customTokens={customTokens} customTokensKnown={customTokensKnown}>
         <LanguageProvider initial={initialLanguage}>
           {/*
             Inside LanguageProvider, because the configuration dialog it holds is
@@ -132,6 +157,7 @@ export default async function BusinessOSLayout({
                 <div className="relative z-50 shrink-0">
                   <BusinessOSHeader planBadge={planBadge} />
                   <BusinessOSTabs />
+                  <PlanPaymentBanner notice={paymentNotice} />
                 </div>
 
                 <div id={BUSINESS_OS_SCROLL_ID} className="flex-1 overflow-y-auto">

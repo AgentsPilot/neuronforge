@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mockup: Admin Finance, Page 1 (sample data)</title>
+<!--
+  Static mockup for docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md §3.
+  No scripts, no external files. Every number is SAMPLE DATA.
+  Hover or Tab onto a tile's small icon to see the leading / lagging tooltip.
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; font-size: 14px; }
+  .sample { background: #7c2d12; color: #fed7aa; text-align: center; padding: 6px; font-size: 12px; letter-spacing: .04em; }
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 210px; background: #020617; border-right: 1px solid #1e293b; padding: 16px 12px; flex-shrink: 0; }
+  .sidebar h4 { margin: 16px 8px 6px; font-size: 11px; text-transform: uppercase; color: #64748b; letter-spacing: .08em; }
+  .nav { display: block; padding: 7px 10px; border-radius: 8px; color: #cbd5e1; text-decoration: none; }
+  .nav.on { background: #312e81; color: #fff; }
+  .main { flex: 1; padding: 24px 28px; margin-right: 380px; }
+  h1 { margin: 0; font-size: 22px; }
+  .purpose { color: #94a3b8; margin: 4px 0 0; }
+  .asof { color: #64748b; font-size: 12px; margin-top: 4px; }
+  /* KPI strip */
+  .strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 20px 0 16px; }
+  .tile { position: relative; display: block; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
+  .tile:hover { border-color: #6366f1; }
+  .tile .label { font-size: 12px; color: #94a3b8; padding-right: 26px; }
+  .tile .value { font-size: 22px; font-weight: 600; margin: 4px 0 2px; color: #fff; }
+  .tile .sub { font-size: 11px; color: #94a3b8; }
+  .tile.amber { border-color: #b45309; }
+  .chip { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+  .chip.amber { color: #fcd34d; border-color: #b45309; background: #451a03; }
+  .chip.neutral { color: #cbd5e1; border-color: #475569; background: #0f172a; }
+  .chip.info { color: #93c5fd; border-color: #1d4ed8; background: #172554; }
+  .mini { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #475569; font-size: 12px; color: #cbd5e1; position: relative; padding-right: 26px; }
+  .mini b { color: #fff; }
+  /* Leading / lagging icon with a CSS tooltip */
+  .ind { position: absolute; top: 10px; right: 10px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #64748b; color: #cbd5e1; font-size: 12px; line-height: 18px; text-align: center; cursor: help; background: #0f172a; }
+  .mini .ind { top: 6px; right: 0; }
+  .ind:focus { outline: 2px solid #818cf8; outline-offset: 2px; }
+  .tip { display: none; position: absolute; z-index: 20; top: 26px; right: -6px; width: 250px; background: #020617; border: 1px solid #6366f1; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.4; color: #e2e8f0; text-align: left; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .tip strong { display: block; margin-top: 6px; color: #a5b4fc; }
+  .ind:hover .tip, .ind:focus .tip { display: block; }
+  .legend { font-size: 12px; color: #94a3b8; margin: -6px 0 14px; }
+  /* Filter bar */
+  .bar { display: flex; gap: 12px; align-items: flex-end; background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 12px 14px; flex-wrap: wrap; }
+  .field label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+  .presets span { display: inline-block; padding: 5px 10px; border: 1px solid #334155; border-radius: 8px; margin-right: 4px; font-size: 12px; color: #cbd5e1; }
+  .presets span.on { background: #4338ca; border-color: #4338ca; color: #fff; }
+  .input { padding: 6px 10px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #94a3b8; min-width: 220px; }
+  .btn { padding: 6px 12px; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; background: #1e293b; }
+  .readat { margin-left: auto; font-size: 11px; color: #64748b; }
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #334155; margin: 20px 0 16px; }
+  .tab { padding: 8px 14px; color: #94a3b8; border-bottom: 2px solid transparent; }
+  .tab.on { color: #fff; border-bottom-color: #818cf8; }
+  /* Sections */
+  .section { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .shead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .section h2 { margin: 0; font-size: 16px; }
+  .ssub { color: #94a3b8; font-size: 12px; margin-top: 2px; }
+  .bkpi { position: relative; background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 8px 36px 8px 12px; min-width: 210px; }
+  .bkpi .label { font-size: 11px; color: #94a3b8; }
+  .bkpi .value { font-size: 18px; font-weight: 600; color: #fff; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+  .panel { background: #0f172a; border: 1px solid #1f2937; border-radius: 10px; padding: 10px 12px; }
+  .panel h3 { margin: 0 0 6px; font-size: 13px; color: #cbd5e1; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #94a3b8; font-weight: 500; padding: 5px 6px; border-bottom: 1px solid #334155; }
+  td { padding: 5px 6px; border-bottom: 1px solid #1e293b; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .note { font-size: 11px; color: #94a3b8; margin-top: 8px; }
+  .notecur { font-size: 11px; color: #fcd34d; margin-top: 6px; }
+  .link { color: #a5b4fc; text-decoration: none; font-size: 12px; }
+  .open { font-size: 11px; color: #a5b4fc; border: 1px solid #4338ca; border-radius: 6px; padding: 1px 6px; }
+  /* Drawer */
+  .drawer { position: fixed; top: 0; right: 0; width: 380px; height: 100vh; background: #0b1222; border-left: 1px solid #334155; box-shadow: -12px 0 30px rgba(0,0,0,.5); padding: 18px; overflow-y: auto; }
+  .drawer h2 { margin: 4px 0 2px; font-size: 18px; }
+  .drawer .close { float: right; color: #94a3b8; border: 1px solid #334155; border-radius: 6px; padding: 0 8px; }
+  .dsec { border-top: 1px solid #1f2937; margin-top: 14px; padding-top: 10px; }
+  .dsec h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+  dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 0; font-size: 13px; }
+  dt { color: #94a3b8; }
+  dd { margin: 0; text-align: right; color: #fff; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="sample">MOCKUP — SAMPLE DATA ONLY. No figure on this page is real.</div>
+<div class="shell">
+
+<nav class="sidebar" aria-label="Admin">
+  <h4>Monitor</h4>
+  <a class="nav" href="#">Health</a>
+  <a class="nav" href="#">Scheduled jobs &amp; queues</a>
+  <a class="nav" href="#">Audit trail</a>
+  <h4>Money</h4>
+  <a class="nav on" href="#">Finance</a>
+  <a class="nav" href="#">AI cost</a>
+  <h4>Businesses</h4>
+  <a class="nav" href="#">Businesses</a>
+  <a class="nav" href="#">Plans &amp; entitlements</a>
+</nav>
+
+<main class="main">
+  <h1>Finance</h1>
+  <p class="purpose">Are we making money from Business OS, and from whom? All amounts in US dollars.</p>
+  <div class="asof">This month, 2026-10-01 to 2026-10-18 UTC &middot; <span class="chip neutral">Read-only</span></div>
+
+  <!-- KPI strip: revenue, cost, users (BD-35) -->
+  <div class="strip">
+    <a class="tile" href="#revenue">
+      <div class="label">Revenue received</div>
+      <div class="value">$971.00</div>
+      <div class="sub">Plans $811.00 &middot; boosts $160.00 &middot; this month</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Lagging indicator. Cash owners paid us in the window, plans plus credit boosts, after refunds and lost disputes." title="Lagging indicator: cash owners paid us in the window">&#9719;
+        <span class="tip">Cash owners paid us in the window, for plans and credit boosts, after refunds and lost disputes.<strong>Lagging indicator: it tells you what already happened.</strong></span></span>
+    </a>
+    <a class="tile" href="#revenue">
+      <div class="label">MRR now</div>
+      <div class="value">$811.00</div>
+      <div class="sub">9 subscriptions &middot; past due $79.00 (counted) &middot; <span class="chip info">Stripe test mode</span></div>
+      <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. The monthly price of every paying subscription today." title="Leading indicator: monthly recurring revenue today">&#10148;
+        <span class="tip">The monthly price of every paying subscription today. Past due is counted but shown apart.<strong>Leading indicator: it tells you early what is coming (next month's plan cash).</strong></span></span>
+    </a>
+    <a class="tile amber" href="#ai-cost">
+      <div class="label">Charged AI cost</div>
+      <div class="value">$42.18</div>
+      <div class="sub"><span class="chip amber">Watch</span> 1.6&times; the same days last month ($26.30)</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Lagging indicator. What AI actions cost us that we charged credits for, this month against the same days last month." title="Lagging indicator: charged AI cost this month">&#9719;
+        <span class="tip">What Business OS AI actions cost us that we charged credits for, this month, against the same days of last month.<strong>Lagging indicator: it tells you what already happened. The trend gives an early warning.</strong></span></span>
+    </a>
+    <a class="tile" href="#accounts-tab">
+      <div class="label">AI margin</div>
+      <div class="value">$887.12</div>
+      <div class="sub">After Stripe fees (estimate): $851.95</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Lagging indicator. Revenue after tax, net of refunds and disputes, minus charged AI cost." title="Lagging indicator: AI margin in the window">&#9719;
+        <span class="tip">Revenue after tax, net of refunds and disputes, minus charged AI cost, in the window. Stripe fees are not deducted (the estimate is beside it).<strong>Lagging indicator: it tells you what already happened.</strong></span></span>
+    </a>
+    <a class="tile" href="#plans-tab">
+      <div class="label">Paying accounts</div>
+      <div class="value">18%</div>
+      <div class="sub">9 of 50 accounts</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Lagging indicator. The share of all accounts with a paying plan subscription." title="Lagging indicator: share of accounts that pay">&#9719;
+        <span class="tip">The share of all our accounts (trial, Founding Partner, comped and paid) that have a paying plan subscription today.<strong>Lagging indicator: it tells you what already happened.</strong></span></span>
+      <div class="mini">Converted this month: <b>2</b> of 9 paying
+        <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Of the paying accounts, how many paid us for a plan for the first time this month." title="Leading indicator: new paying accounts this month">&#10148;
+          <span class="tip">Of the accounts paying now, how many paid us for a plan for the first time this month (UTC).<strong>Leading indicator: it tells you early what is coming (each one adds to next month's MRR).</strong></span></span>
+      </div>
+    </a>
+  </div>
+  <p class="legend">&#10148; leading indicator &nbsp;&middot;&nbsp; &#9719; lagging indicator &nbsp;&middot;&nbsp; hover over or Tab onto the icon for the explanation</p>
+
+  <!-- Filter bar -->
+  <div class="bar">
+    <div class="field"><label>Window</label>
+      <div class="presets"><span>Today</span><span>7 days</span><span>30 days</span><span class="on">This month</span><span>Custom</span></div></div>
+    <div class="field"><label>Business</label><div class="input">All businesses</div></div>
+    <span class="btn">Clear</span>
+    <span class="readat">Read at 2026-10-18 09:41 UTC &middot; <span class="btn">Refresh</span></span>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" role="tablist">
+    <span class="tab on" role="tab" aria-selected="true">Overview</span>
+    <span class="tab" role="tab" id="accounts-tab">Accounts</span>
+    <span class="tab" role="tab" id="plans-tab">Plans &amp; subscriptions</span>
+  </div>
+
+  <!-- 1. Revenue: received + recurring now -->
+  <section class="section" id="revenue">
+    <div class="shead"><div><h2>Revenue</h2><div class="ssub">Our own money: owners paying us for plans and credit boosts &middot; this month</div></div></div>
+    <div class="two">
+      <div class="panel"><h3>Received in the window</h3>
+        <table>
+          <tr><th></th><th class="num">Payments</th><th class="num">Received</th><th class="num">Refunded / lost</th><th class="num">Net</th></tr>
+          <tr><td>Plans</td><td class="num">9</td><td class="num">$811.00</td><td class="num">$0.00</td><td class="num">$811.00</td></tr>
+          <tr><td>Credit boosts</td><td class="num">17</td><td class="num">$170.00</td><td class="num">$10.00</td><td class="num">$160.00</td></tr>
+        </table>
+        <div class="note">Tax included; Stripe fees not deducted. Refunds count in the month we recorded them.</div>
+      </div>
+      <div class="panel"><h3>Recurring now (MRR) <span class="chip info">Stripe test mode</span></h3>
+        <table>
+          <tr><th>Plan</th><th class="num">Subscriptions</th><th class="num">MRR</th></tr>
+          <tr><td>Essentials</td><td class="num">7</td><td class="num">$553.00</td></tr>
+          <tr><td>Autopilot</td><td class="num">2</td><td class="num">$258.00</td></tr>
+          <tr><td><b>Total</b></td><td class="num"><b>9</b></td><td class="num"><b>$811.00</b></td></tr>
+        </table>
+        <div class="note">Of which past due (still counted) $79.00 &middot; of which cancelling $0.00</div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:12px"><h3>Our payment problems</h3>
+      <div class="note" style="margin-top:0">Open boost disputes now: 0 &middot; paid but not credited: 0 &middot; failed plan renewals: 1 (in grace)</div>
+    </div>
+  </section>
+
+  <!-- 2. AI cost summary -->
+  <section class="section" id="ai-cost">
+    <div class="shead"><div><h2>AI cost summary</h2><div class="ssub">Charged AI cost: what we billed in credits &middot; this month</div></div>
+      <a class="link" href="#">Open AI cost for detail &rarr;</a></div>
+    <div class="two">
+      <div class="panel"><h3>By trigger</h3>
+        <table>
+          <tr><th>Trigger</th><th class="num">Cost</th><th class="num">Credits</th></tr>
+          <tr><td>Owner</td><td class="num">$29.40</td><td class="num">2,940</td></tr>
+          <tr><td>Scheduled</td><td class="num">$10.12</td><td class="num">1,012</td></tr>
+          <tr><td>External</td><td class="num">$2.66</td><td class="num">266</td></tr>
+        </table>
+      </div>
+      <div class="panel"><h3>Top businesses by charged AI cost</h3>
+        <table>
+          <tr><th>Business</th><th class="num">Cost</th><th></th></tr>
+          <tr><td>Sunrise Yoga Studio</td><td class="num">$8.94</td><td><span class="open">Open</span></td></tr>
+          <tr><td>Cohen Dental</td><td class="num">$6.10</td><td><span class="open">Open</span></td></tr>
+          <tr><td>Blue Door Bakery</td><td class="num">$4.75</td><td><span class="open">Open</span></td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="note">Recorded above charged: $3.06 &middot; <a class="link" href="#">why the two differ</a></div>
+  </section>
+
+  <!-- 3. Credits, with its block KPI -->
+  <section class="section" id="credits">
+    <div class="shead"><div><h2>Credits</h2><div class="ssub">Credits are units, not money &middot; each account's own credit period</div></div>
+      <div class="bkpi"><div class="label">Accounts over allowance</div><div class="value">3 <span class="chip amber">1 far over</span></div>
+        <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Accounts using more credits this period than their plan includes." title="Leading indicator: accounts over allowance">&#10148;
+          <span class="tip">Accounts whose credit use this period is above their plan's allowance. Amber when one is at or over 150%.<strong>Leading indicator: it tells you early what is coming (an upsell, or a cost leak).</strong></span></span></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <table>
+        <tr><th>Business</th><th>Plan group</th><th class="num">Allowance</th><th class="num">Used</th><th class="num">% used</th><th></th></tr>
+        <tr><td>Sunrise Yoga Studio</td><td>Essentials</td><td class="num">5,000</td><td class="num">8,120</td><td class="num">162.4%</td><td><span class="open">Open</span></td></tr>
+        <tr><td>Cohen Dental</td><td>Founding Partner</td><td class="num">5,000</td><td class="num">6,010</td><td class="num">120.2%</td><td><span class="open">Open</span></td></tr>
+        <tr><td>Blue Door Bakery</td><td>Trial</td><td class="num">1,000</td><td class="num">1,090</td><td class="num">109.0%</td><td><span class="open">Open</span></td></tr>
+      </table>
+      <div class="note">Gifted credits outstanding: 12,500 &middot; bought credits outstanding: 9,200 (shown apart, never added) &middot; trend: <a class="link" href="#">credits history</a></div>
+    </div>
+  </section>
+
+  <!-- 4. Client payments, with its block KPI -->
+  <section class="section" id="client-payments">
+    <div class="shead"><div><h2>Client payments <span class="chip neutral">The businesses' money, not ours</span></h2>
+      <div class="ssub">What the businesses' clients paid them through the platform &middot; this month &middot; never added to our revenue</div></div>
+      <div class="bkpi"><div class="label">Businesses taking client payments</div><div class="value">6 <span style="font-size:12px;color:#94a3b8;font-weight:400">of 50</span></div>
+        <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Businesses with at least one client payment through the platform in the window." title="Leading indicator: businesses taking client payments">&#10148;
+          <span class="tip">Businesses with at least one client payment recorded through the platform in the window. A business that gets paid through us is using the product for real.<strong>Leading indicator: it tells you early what is coming (who will stay with us).</strong></span></span></div>
+    </div>
+    <div class="two">
+      <div class="panel"><h3>Payments in US dollars</h3>
+        <table>
+          <tr><th class="num">Payments</th><th class="num">Gross</th><th class="num">Refunded</th><th class="num">Net of refunds</th></tr>
+          <tr><td class="num">41</td><td class="num">$3,580.00</td><td class="num">$160.00</td><td class="num">$3,420.00</td></tr>
+        </table>
+        <div class="notecur">Plus 14 payments in other currencies, not converted (no exchange rate is used).</div>
+      </div>
+      <div class="panel"><h3>Client payment problems</h3>
+        <table>
+          <tr><td>Overdue invoices</td><td class="num">4 at 3 businesses</td></tr>
+          <tr><td>Overdue instalments</td><td class="num">1</td></tr>
+          <tr><td>Reminders stuck or failed (7 d)</td><td class="num">0</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Example side drawer: one business, quick look (read-only) -->
+<aside class="drawer" role="dialog" aria-label="Business quick look">
+  <span class="close" aria-label="Close">&times;</span>
+  <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Business, quick look</div>
+  <h2>Sunrise Yoga Studio</h2>
+  <div><span class="chip neutral">Essentials</span> <span class="chip neutral">Paying</span> <span class="chip neutral">Read-only</span></div>
+  <div class="note">This month, 2026-10-01 to 2026-10-18 UTC</div>
+
+  <div class="dsec"><h3>Paid us</h3>
+    <dl><dt>Plan</dt><dd>$79.00</dd><dt>Credit boosts</dt><dd>$20.00</dd><dt>Total, after tax</dt><dd>$99.00</dd></dl></div>
+
+  <div class="dsec"><h3>AI cost and margin</h3>
+    <dl><dt>Charged AI cost</dt><dd>$8.94</dd><dt>Recorded above charged</dt><dd>$0.41</dd>
+      <dt>AI margin</dt><dd>$90.06</dd><dt>After Stripe fees (estimate)</dt><dd>$86.89</dd></dl></div>
+
+  <div class="dsec"><h3>Credits</h3>
+    <dl><dt>Allowance this period</dt><dd>5,000</dd><dt>Used</dt><dd>8,120 (162.4%)</dd><dt>Gifted outstanding</dt><dd>0</dd><dt>Bought outstanding</dt><dd>2,000</dd></dl></div>
+
+  <div class="dsec"><h3>Plan billing</h3>
+    <dl><dt>Subscription</dt><dd>Active</dd><dt>Paying since</dt><dd>2026-10-12</dd><dt>Converted this month</dt><dd>Yes (friend invite)</dd><dt>Next renewal</dt><dd>2026-11-12</dd></dl></div>
+
+  <div class="dsec"><h3>Their client payments (not ours)</h3>
+    <dl><dt>Payments</dt><dd>12</dd><dt>Net of refunds</dt><dd>$1,140.00</dd><dt>Overdue invoices</dt><dd>1</dd></dl>
+    <div class="note">Shown in this business's own currency.</div></div>
+
+  <div class="dsec">
+    <a class="link" href="#">Open full view (this business, same window) &rarr;</a><br>
+    <a class="link" href="#">Open in Businesses (credits and billing actions) &rarr;</a>
+  </div>
+</aside>
+
+</div>
+</body>
+</html>

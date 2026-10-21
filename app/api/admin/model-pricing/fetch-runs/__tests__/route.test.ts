@@ -11,6 +11,9 @@
  *   E  23505 → 409, 42501 → 403, anything else → 500
  *   A  one AI_PRICE_FETCH_RUN entry, counts and model ids only, flushed before the response
  *   M  GET: last run, last success, last failure per source
+ *   10 slice 10: Anthropic read in the same round (SA O-4); each provider
+ *      fails on its own; audit `anthropic` block; GET for three sources and
+ *      "not checked yet" after a round stored before slice 10 (SC10-3)
  *
  * The real parser and cross-check run on the dated fixtures; the network is
  * forbidden and `fetchLimited` answers from them.
@@ -96,12 +99,23 @@ forbidRealNetwork();
 const FIXTURES = join(process.cwd(), 'lib', 'ai', 'pricing-research', '__fixtures__');
 const PAGE = readFileSync(join(FIXTURES, 'openai-pricing-2026-10-14.md'), 'utf8');
 const LIST = readFileSync(join(FIXTURES, 'litellm-prices-2026-10-14.json'), 'utf8');
+const ANTHROPIC_PAGE = readFileSync(join(FIXTURES, 'anthropic-pricing-2026-10-18.md'), 'utf8');
+const FRAGMENT = readFileSync(join(FIXTURES, 'litellm-anthropic-entries-2026-10-18.json'), 'utf8');
+/** SA O-9: the slice 5 list with the Anthropic fragment merged in. */
+const MERGED = JSON.stringify({ ...JSON.parse(LIST), ...JSON.parse(FRAGMENT) });
 
 const ok = (text: string) => ({ outcome: 'ok', status: 200, bytes: text.length, durationMs: 50, attempts: 1, text });
 const failed = (outcome: string) => ({ outcome, status: outcome === 'blocked' ? 403 : null, bytes: 0, durationMs: 50, attempts: 1 });
 
-function answer(openai: unknown, litellm: unknown) {
-  mockFetchLimited.mockImplementation(async (source: { id: string }) => (source.id === 'openai' ? openai : litellm));
+/**
+ * Slice 10: Anthropic answers too, by default with its 2026-10-18 page. The
+ * default coverage holds only `claude-x`, which that page does not list, so
+ * the slice 5 cases see zero Anthropic lines.
+ */
+function answer(openai: unknown, litellm: unknown, anthropic: unknown = ok(ANTHROPIC_PAGE)) {
+  mockFetchLimited.mockImplementation(async (source: { id: string }) =>
+    source.id === 'openai' ? openai : source.id === 'anthropic' ? anthropic : litellm
+  );
 }
 
 function post(raw?: string): NextRequest {
@@ -230,10 +244,11 @@ describe('W: the 60 s refusal', () => {
 });
 
 describe('S: the happy path', () => {
-  it('fetches the two pinned sources, stores one fetch round, audits, then answers', async () => {
+  it('fetches the pinned sources, stores one fetch round, audits, then answers', async () => {
     const response = await POST(post('{}'));
     expect(response.status).toBe(200);
-    expect(mockFetchLimited.mock.calls.map(([source]) => source)).toEqual([PRICE_SOURCES.openai, PRICE_SOURCES.litellm]);
+    // Slice 10 deliberate edit (SA O-4, O-7): three pinned sources, Anthropic's added.
+    expect(mockFetchLimited.mock.calls.map(([source]) => source)).toEqual([PRICE_SOURCES.openai, PRICE_SOURCES.anthropic, PRICE_SOURCES.litellm]);
 
     expect(mockSubmitFetchRound).toHaveBeenCalledTimes(1);
     const submitted = mockSubmitFetchRound.mock.calls[0][0];
@@ -250,7 +265,8 @@ describe('S: the happy path', () => {
       cross_check_source: PRICE_SOURCES.litellm.url,
     });
     expect(submitted.providerOutcomes.openai).toMatchObject({ outcome: 'ok', lines_stored: 2, not_found: ['gpt-4-turbo'] });
-    expect(submitted.providerOutcomes.anthropic).toEqual({ outcome: 'manual_only' });
+    // Slice 10 deliberate edit (SC10-2): Anthropic is read by its adapter.
+    expect(submitted.providerOutcomes.anthropic).toMatchObject({ outcome: 'ok', lines_stored: 0, not_found: ['claude-x'] });
 
     expect(order).toEqual(['submit', 'audit']);
     const [entry] = mockLogAndFlush.mock.calls[0];
@@ -266,8 +282,10 @@ describe('S: the happy path', () => {
       proposal_id: 'round-1',
       correlationId: 'corr-1',
       openai: { outcome: 'ok', lines_stored: 2, needs_manual_models: [], not_found_models: ['gpt-4-turbo'], refused_models: [] },
+      // Slice 10 deliberate edits: the `anthropic` block, and Anthropic is no longer manual.
+      anthropic: { outcome: 'ok', lines_stored: 0, needs_manual_models: [], not_found_models: ['claude-x'], refused_models: [] },
       litellm: { outcome: 'ok', agrees: 2, differs: 0, not_listed: 0, unavailable: 0 },
-      manual_providers: ['anthropic', 'google', 'kimi'],
+      manual_providers: ['google', 'kimi'],
     });
     // Counts and model ids only: no page or list text reaches the audit or a log line.
     expect(JSON.stringify(entry)).not.toContain('Standard pricing data');
@@ -281,7 +299,8 @@ describe('S: the happy path', () => {
     expect(body.data.problems).toEqual([]);
 
     const sourceLines = logged.filter((line) => line.args[1] === 'Price source read');
-    expect(sourceLines.map((line) => (line.args[0] as { provider: string }).provider)).toEqual(['openai', 'litellm']);
+    // Slice 10 deliberate edit: one log line per source, Anthropic's included.
+    expect(sourceLines.map((line) => (line.args[0] as { provider: string }).provider)).toEqual(['openai', 'anthropic', 'litellm']);
   });
 });
 
@@ -295,7 +314,8 @@ describe('F-1: a coverage id that is not a model id', () => {
     expect(submitted.providerOutcomes.openai.not_found).toEqual(['gpt-4-turbo']);
     expect(JSON.stringify(submitted)).not.toContain('GPT-4o');
     expect(logged.filter((line) => line.args[1] === 'Coverage ids that are not model ids were left out of the price check')).toEqual([
-      { level: 'warn', args: [{ dropped: 2, models: ['GPT-4o', 'ft:gpt-4o:org'] }, 'Coverage ids that are not model ids were left out of the price check'] },
+      // Slice 10 deliberate edit: coverage is split per provider, so the warning names it.
+      { level: 'warn', args: [{ provider: 'openai', dropped: 2, models: ['GPT-4o', 'ft:gpt-4o:org'] }, 'Coverage ids that are not model ids were left out of the price check'] },
     ]);
   });
 
@@ -340,7 +360,8 @@ describe('P: partial failure', () => {
   it('a changed layout logs the failed anchor, never the page', async () => {
     answer(ok(PAGE.replace('### Standard pricing data', '### Standard')), ok(LIST));
     expect((await POST(post('{}'))).status).toBe(200);
-    expect(logged).toContainEqual({ level: 'warn', args: [{ provider: 'openai', anchor: 'A1' }, 'OpenAI pricing page layout changed'] });
+    // Slice 10 deliberate edit (SC10-6): one provider-neutral message, the provider in the context.
+    expect(logged).toContainEqual({ level: 'warn', args: [{ provider: 'openai', anchor: 'A1' }, 'Pricing page layout changed'] });
   });
 });
 
@@ -372,17 +393,28 @@ describe('E: errors', () => {
 
 describe('M: GET status (SC-12)', () => {
   it('returns the last run, last success and last failure per source', async () => {
+    // Slice 10 deliberate edit: the round input is per provider.
     const outcomesOf = (openai: 'ok' | 'blocked') =>
       buildFetchRound({
-        openai: openai === 'ok' ? (ok(PAGE) as never) : (failed('blocked') as never),
+        providers: {
+          openai: {
+            result: openai === 'ok' ? (ok(PAGE) as never) : (failed('blocked') as never),
+            coverage: new Set(['gpt-4o-mini']),
+            isInputOnly: () => false,
+            sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+          },
+          anthropic: {
+            result: ok(ANTHROPIC_PAGE) as never,
+            coverage: new Set(['claude-sonnet-4-6']),
+            isInputOnly: () => false,
+            sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+          },
+        },
         litellm: ok(LIST) as never,
-        coverage: new Set(['gpt-4o-mini']),
-        isInputOnly: () => false,
         contextFor: () => ({
           context: { current: {}, fallback: {}, conservative: {}, inCoverage: true, inputOnly: false },
           snapshotFields: { current_basis: 'unpriced' },
         }),
-        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
         crossCheckSource: PRICE_SOURCES.litellm.url,
         checkedOn: '2026-10-15',
         fetchedAt: '2026-10-15T09:00:00.000Z',
@@ -405,10 +437,13 @@ describe('M: GET status (SC-12)', () => {
       lastFailure: { outcome: 'blocked', at: '2026-10-15T09:00:00.000Z' },
     });
     expect(data.litellm).toMatchObject({ lastRun: { outcome: 'ok' }, lastFailure: null });
-    expect(data.manualProviders).toEqual(['anthropic', 'google', 'kimi']);
+    // Slice 10 deliberate edits: Anthropic is monitored, no longer manual.
+    expect(data.manualProviders).toEqual(['google', 'kimi']);
     expect(mockLatestBy.mock.calls).toEqual([
       ['openai', 'ok'],
       ['openai', 'not_ok'],
+      ['anthropic', 'ok'],
+      ['anthropic', 'not_ok'],
       ['litellm', 'ok'],
       ['litellm', 'not_ok'],
     ]);
@@ -417,5 +452,145 @@ describe('M: GET status (SC-12)', () => {
   it('a failed read is 500', async () => {
     mockLatestBy.mockResolvedValue({ data: null, error: new Error('x') });
     expect((await GET(get())).status).toBe(500);
+  });
+});
+
+describe('10: Anthropic in the same round (slice 10; SA O-4, SC10-6)', () => {
+  const ANTHROPIC_COVERAGE = ['anthropic:claude-sonnet-4-6', 'anthropic:claude-haiku-4-5-20251001', 'anthropic:claude-3-haiku-20240307'];
+
+  beforeEach(() => {
+    mockCoverage = [...COVERAGE.filter((key) => !key.startsWith('anthropic:')), ...ANTHROPIC_COVERAGE];
+    answer(ok(PAGE), ok(MERGED));
+  });
+
+  it('both providers ok: one round, lines from both, the audit names each provider', async () => {
+    const response = await POST(post('{}'));
+    expect(response.status).toBe(200);
+    expect(mockSubmitFetchRound).toHaveBeenCalledTimes(1);
+    const submitted = mockSubmitFetchRound.mock.calls[0][0];
+    expect(submitted.lines.map((line: { provider: string; model_name: string }) => `${line.provider}:${line.model_name}`)).toEqual([
+      'openai:gpt-4o',
+      'openai:gpt-4o-mini',
+      'anthropic:claude-haiku-4-5-20251001',
+      'anthropic:claude-sonnet-4-6',
+    ]);
+    const sonnet = submitted.lines.find((line: { model_name: string }) => line.model_name === 'claude-sonnet-4-6');
+    expect(sonnet).toMatchObject({ input_per_1m: '3', output_per_1m: '15', source_url: 'https://platform.claude.com/docs/en/about-claude/pricing' });
+    expect(sonnet).not.toHaveProperty('cached_input_per_1m');
+    expect(sonnet.flags).toContain('cached_input_listed');
+
+    const [entry] = mockLogAndFlush.mock.calls[0];
+    expect(entry.details.openai).toEqual({ outcome: 'ok', lines_stored: 2, needs_manual_models: [], not_found_models: ['gpt-4-turbo'], refused_models: [] });
+    expect(entry.details.anthropic).toEqual({
+      outcome: 'ok',
+      lines_stored: 2,
+      needs_manual_models: [],
+      not_found_models: ['claude-3-haiku-20240307'],
+      refused_models: [],
+    });
+    expect(entry.details.manual_providers).toEqual(['google', 'kimi']);
+    expect(JSON.stringify(entry)).not.toContain('MTok');
+    expect(JSON.stringify(logged)).not.toContain('MTok');
+  });
+
+  it.each([['blocked'], ['timeout'], ['http_503']])('Anthropic %s: the OpenAI lines still load, 200, one warn for Anthropic', async (outcome) => {
+    answer(ok(PAGE), ok(MERGED), failed(outcome));
+    const response = await POST(post('{}'));
+    expect(response.status).toBe(200);
+    const submitted = mockSubmitFetchRound.mock.calls[0][0];
+    expect(submitted.lines.every((line: { provider: string }) => line.provider === 'openai')).toBe(true);
+    expect(submitted.lines).toHaveLength(2);
+    expect(submitted.providerOutcomes.anthropic).toMatchObject({ outcome, lines_stored: 0 });
+    const failures = logged.filter((line) => line.level === 'warn' && line.args[1] === 'Price source failed');
+    expect(failures.map((line) => (line.args[0] as { provider: string }).provider)).toEqual(['anthropic']);
+  });
+
+  it('OpenAI blocked, Anthropic ok: the Anthropic lines still load', async () => {
+    answer(failed('blocked'), ok(MERGED));
+    expect((await POST(post('{}'))).status).toBe(200);
+    const submitted = mockSubmitFetchRound.mock.calls[0][0];
+    expect(submitted.lines.map((line: { provider: string }) => line.provider)).toEqual(['anthropic', 'anthropic']);
+    const [entry] = mockLogAndFlush.mock.calls[0];
+    expect(entry.details.openai).toMatchObject({ outcome: 'blocked', lines_stored: 0 });
+    expect(entry.details.anthropic).toMatchObject({ outcome: 'ok', lines_stored: 2 });
+  });
+
+  it('both fail: a zero-line round, 200', async () => {
+    answer(failed('blocked'), ok(MERGED), failed('network_error'));
+    expect((await POST(post('{}'))).status).toBe(200);
+    const submitted = mockSubmitFetchRound.mock.calls[0][0];
+    expect(submitted.lines).toEqual([]);
+    expect(submitted.providerOutcomes.openai.outcome).toBe('blocked');
+    expect(submitted.providerOutcomes.anthropic.outcome).toBe('network_error');
+  });
+
+  it('an Anthropic layout change logs its anchor; OpenAI still loads', async () => {
+    answer(ok(PAGE), ok(MERGED), ok(ANTHROPIC_PAGE.replace('## Model pricing', '## Pricing')));
+    expect((await POST(post('{}'))).status).toBe(200);
+    expect(logged).toContainEqual({ level: 'warn', args: [{ provider: 'anthropic', anchor: 'B1' }, 'Pricing page layout changed'] });
+    expect(mockSubmitFetchRound.mock.calls[0][0].lines).toHaveLength(2);
+  });
+
+  it('a refused Anthropic line is a problem that names its provider (SC10-8)', async () => {
+    const page = ANTHROPIC_PAGE.replace(/\r\n/g, '\n');
+    const row = page.split('\n').find((line) => line.startsWith('| Claude Sonnet 4.6 ') && line.includes('$3.75')) ?? '';
+    answer(ok(PAGE), ok(MERGED), ok(page.replace(row, row.replace('$3 / MTok ', '$2000 / MTok'))));
+    const response = await POST(post('{}'));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.problems).toEqual([
+      { provider: 'anthropic', model_name: 'claude-sonnet-4-6', messages: ['The input price is above the sanity ceiling of $1000 per 1M tokens'] },
+    ]);
+    expect(mockLogAndFlush.mock.calls[0][0].details.anthropic.refused_models).toEqual(['claude-sonnet-4-6']);
+  });
+
+  it('an upper-case coverage id under Anthropic is left out with a warning naming the provider', async () => {
+    mockCoverage = [...mockCoverage, 'anthropic:Claude-X'];
+    expect((await POST(post('{}'))).status).toBe(200);
+    expect(logged).toContainEqual({
+      level: 'warn',
+      args: [{ provider: 'anthropic', dropped: 1, models: ['Claude-X'] }, 'Coverage ids that are not model ids were left out of the price check'],
+    });
+  });
+});
+
+describe('10: GET for Anthropic (SC10-3)', () => {
+  const OLD_OUTCOMES = {
+    openai: { outcome: 'ok', fetched_at: '2026-10-14T09:00:00.000Z', duration_ms: 1, bytes: 1, lines_stored: 3, needs_manual: [], not_found: [], refused: [], name_notes: [] },
+    anthropic: { outcome: 'manual_only' },
+    google: { outcome: 'manual_only' },
+    kimi: { outcome: 'manual_only' },
+    litellm: { outcome: 'ok', fetched_at: '2026-10-14T09:00:00.000Z', duration_ms: 1, bytes: 1, agrees: 3, differs: 0, not_listed: 0, unavailable: 0 },
+  };
+
+  it('after a round stored before slice 10, Anthropic reads "not checked yet", never a failure', async () => {
+    const old = { id: 'r1', created_at: '2026-10-14T09:00:00.000Z', created_by: 'a', provider_outcomes: OLD_OUTCOMES };
+    mockLatest.mockResolvedValue({ data: old, error: null });
+    // The repository excludes manual_only from Anthropic failures, so only the OpenAI and LiteLLM ok reads find it.
+    mockLatestBy.mockImplementation(async (source: string, match: string) => ({ data: match === 'ok' && source !== 'anthropic' ? old : null, error: null }));
+    const { data } = await (await GET(get())).json();
+    expect(data.anthropic).toEqual({ lastRun: null, lastOkAt: null, lastFailure: null, lastRunCounts: null, lastRunVerdicts: null });
+    expect(data.openai).toMatchObject({ lastRun: { outcome: 'ok' }, lastRunCounts: { linesStored: 3 } });
+  });
+
+  it('after a slice 10 round, Anthropic has its run, success and counts', async () => {
+    const current = {
+      id: 'r2',
+      created_at: '2026-10-18T11:31:00.000Z',
+      created_by: 'a',
+      provider_outcomes: {
+        ...OLD_OUTCOMES,
+        anthropic: { ...OLD_OUTCOMES.openai, fetched_at: '2026-10-18T11:31:00.000Z', lines_stored: 8, not_found: ['claude-3-haiku-20240307'] },
+      },
+    };
+    mockLatest.mockResolvedValue({ data: current, error: null });
+    mockLatestBy.mockImplementation(async (_source: string, match: string) => ({ data: match === 'ok' ? current : null, error: null }));
+    const { data } = await (await GET(get())).json();
+    expect(data.anthropic).toEqual({
+      lastRun: { outcome: 'ok', at: '2026-10-18T11:31:00.000Z' },
+      lastOkAt: '2026-10-18T11:31:00.000Z',
+      lastFailure: null,
+      lastRunCounts: { linesStored: 8, needsManual: 0, notFound: 1, refused: 0 },
+      lastRunVerdicts: null,
+    });
   });
 });

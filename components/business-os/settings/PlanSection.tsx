@@ -43,6 +43,19 @@
  * record no longer offers that tier as an upgrade (it now pays for it). A
  * failed re-read never claims success (U-5).
  *
+ * OPENING FAST (settings drawer review C-2, slice C-b)
+ *
+ * The settings page may start the first `my-plan` read before the click
+ * (`planDrawerReads`, `useDrawerPrefetch`) and hand it over through
+ * `takePrefetched`. It is taken ONCE per mount, in a ref-guarded effect
+ * outside the cancellable one, so StrictMode cannot spend it (B-1). It serves
+ * the FIRST read only, and only with no valid checkout marker on the URL and
+ * in the same language (B-2, B-3); a warm answer that is not an `ok` plan is
+ * read again, fresh. Every other read fetches, as before: the bounded
+ * re-reads, "Check again" and the language re-read. Success never comes from
+ * a warmed read: "You're on" needs a marker or an upgrade made in this mount,
+ * and neither exists when the first read is taken.
+ *
  * Also not here: **anything about chat.** The chat capabilities are withheld from
  * Essentials in config and nothing enforces them yet, so a line saying "your plan
  * does not include chat" would be false while chat works. The server drops them;
@@ -55,362 +68,172 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, Info, Loader2, Sparkles } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowRight, Check, Loader2, Sparkles } from 'lucide-react';
 
-import { PROCESSING_REFRESH_INTERVAL_MS, PROCESSING_REFRESH_LIMIT } from '@/components/business-os/billing/checkoutProcessing';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 // Display only, and a pure file with no import (P-5a.2): a well-formed
 // checkout session id on the URL means "show Payment processing".
 import { isCheckoutReturnMarker } from '@/lib/business-os/billing/checkoutReturnMarker';
-import type { PlanPurchaseWire } from '@/lib/business-os/billing/planPurchaseTypes';
-import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 import { createLogger } from '@/lib/logger';
 
-import { PlanPurchase, type PlanChoice } from './PlanPurchase';
+import { PlanPurchase } from './PlanPurchase';
+import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
+import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
+import { CategoryRowText, Notice, fill, priceLine, renderSentence } from './planText';
 import { PlanUpgrade } from './PlanUpgrade';
 import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
+import { UpgradeModal } from './UpgradeModal';
+import { upgradeModalView } from './upgradeModalView';
+import { planFrom, usePlanFlow } from './usePlanFlow';
+
+/*
+ * Moved, not changed (upgrade modal UM-1a, C-2): the payload types live in
+ * `planPayloadTypes.ts`, the sentence / price / row helpers in `planText.tsx`
+ * (shared with the plan comparison modal), and the checkout / upgrade flow in
+ * `usePlanFlow.ts`. Re-exported so every existing importer resolves unchanged.
+ */
+export type { PlanPayload } from './planPayloadTypes';
+export { ACCOUNT_CLOCK_SENTENCE_KEYS } from './planText';
 
 const logger = createLogger({ module: 'BusinessOsPlanSection' });
 
 /**
- * The payload, as the route sends it.
- *
- * Mirrored rather than imported: `customerPlanView` is `server-only`. The shape
- * is held honest by `payload.contract.test.tsx`, which renders this component
- * against a recorded body and fails when the two drift.
+ * A warm read is used only when it answered with a plan that is `ok` (SA Q-3).
+ * Anything else (`unavailable`, `no_plan_record`, `success: false`, a throw)
+ * is read once more, fresh.
  */
-interface PlanFeature {
-  capability: string;
-  label: string;
-  value: string;
+function isUsableWarm(answer: PlanRead): boolean {
+  return answer.kind === 'answered' && planFrom(answer.body)?.status === 'ok';
 }
 
-/**
- * One row: a category and the features in it, already joined server-side.
- *
- * The component prints `summary`; it does not build it. Twenty-eight flat lines
- * became nine rows (2026-09-27), and AI chat's ten entries are deliberately one
- * long line rather than a "+N more" expander — an expander is a new interaction
- * on a read-only screen, and hiding most of what a plan includes is the opposite
- * of what this section is for.
- */
-/**
- * A sentence the server named but did not write: a dictionary key, and an ISO
- * date where the sentence mentions a day.
- *
- * Declared here rather than imported from `customerPlanView`, for the reason
- * every other payload shape in this file is: the component describes what it
- * receives over HTTP, and importing the server's type would make a UI file
- * reach into the entitlements module — which `enforcementPoints.test.ts`
- * refuses, and was right to refuse when this first tried it.
- */
-interface PlanSentence {
-  key: string;
-  date?: string | null;
+/** Why a warm read was not used, for a `debug` line: never the body, never a plan name (SA-CB-4). */
+function discardContext(answer: PlanRead): { reason: string; status?: number; err?: unknown } {
+  if (answer.kind === 'threw') return { reason: 'threw', err: answer.err };
+  const data = planFrom(answer.body);
+  return { reason: data ? `plan_${data.status}` : 'no_plan', status: answer.status };
 }
 
-interface PlanCategory {
-  category: string;
-  /** A dictionary key, so the heading is read in the viewer's language. */
-  labelKey: string;
-  /**
-   * A dictionary key for the sentence under the row, or `null` (credit deduction
-   * slice 6, D-h). The server chooses it — monthly or one-off by the allowance's
-   * shape — and this component only renders it.
-   */
-  noteKey: string | null;
-  features: PlanFeature[];
-  summary: string;
+interface FirstRead {
+  /** The language the read was started for. */
+  language: string;
+  read: Promise<PlanRead>;
+  /** Started by the page before the click, rather than by this mount. */
+  preloaded: boolean;
 }
 
-interface PlanChange {
-  capability: string;
-  label: string;
-  from: string;
-  to: string;
-}
-
-interface PlanUpgrade {
-  planId: string;
-  name: string;
-  monthlyPriceUsd: number;
-  availableToBuy: boolean;
-  actionUnavailableBecause: PlanSentence | null;
-  adds: PlanCategory[];
-  improves: PlanChange[];
-  /** Different there, but not rankable — shown as a change, never as a gain. */
-  changes: PlanChange[];
-}
-
-export interface PlanPayload {
-  status: 'ok' | 'no_plan_record' | 'unavailable';
-  planId: string | null;
-  name: string | null;
-  kind: 'tier' | 'cohort' | null;
-  monthlyPriceUsd: number | null;
-  free: boolean;
-  state: string | null;
-  accessEndsAt: string | null;
-  endsWhen: PlanSentence | null;
-  whenThisChanges: PlanSentence | null;
-  included: PlanCategory[];
-  nextPlanUp: PlanUpgrade | null;
-  /**
-   * Every plan shown to customers (P-4.2). Optional, like `purchase`: an older
-   * payload, or the builder's own output in a test, has neither and renders as
-   * the read-only section did.
-   */
-  plans?: PlanChoice[];
-  /** What may be bought, and what our billing record says (P-4.2). `null` when unknown. */
-  purchase?: PlanPurchaseWire | null;
-  problem: PlanSentence | null;
-}
-
-/** The plan read. Resolves `null` when the server did not answer with a plan. */
-async function fetchPlan(): Promise<PlanPayload | null> {
-  const response = await fetch('/api/business-os/entitlements/my-plan');
-  const body = await response.json();
-  return body?.success && body?.data ? (body.data as PlanPayload) : null;
-}
-
-/**
- * A sentence the server named but did not write.
- *
- * The server sends a dictionary key and, where the sentence names a day, an ISO
- * date — so the wording comes from the platform's own translations and the DATE
- * is formatted in the reader's locale rather than in English.
- *
- * Module-level because two components render these: the section and the
- * plan-above card below it. `t` and the language are passed in, since the
- * dictionary lives on the hook.
- */
-/**
- * The sentences whose date is a billing INSTANT, read on the account's clock.
- *
- * "Renews on" / "Ends on … It will not renew." carry Stripe's period end: the
- * purchase instant one month on, not a midnight. Formatted in UTC, an owner in
- * Israel who bought between local midnight and 02:00/03:00 read the day before
- * (QA P-4.2 note 3). These two keys come from `billingEndsWhen` only; a test
- * pins that the two agree. Every other dated sentence names a cohort or admin
- * end date stored as midnight UTC, and stays in UTC (see below).
- */
-export const ACCOUNT_CLOCK_SENTENCE_KEYS: ReadonlySet<string> = new Set(['plan.renews_on', 'plan.ends_on_paid']);
-
-function renderSentence(
-  value: PlanSentence | null | undefined,
-  t: (key: string) => string,
-  language: string,
-  /** `user_preferences.timezone` via `useLanguage()`; the provider holds 'UTC' while unknown or unset. */
-  accountTimezone: string | undefined
-): string | null {
-  if (!value?.key) return null;
-
-  const text = t(value.key);
-  if (!value.date) return text;
-
-  const day = new Date(value.date);
-  // An unusable date is not a sentence — the same rule the server applies before
-  // it names one at all.
-  if (Number.isNaN(day.getTime())) return null;
-
-  /*
-   * The same map the dashboard and the scheduling dialog use — a bare `en` is a
-   * language, not a locale, and the three the platform speaks each want their
-   * own region for the month name and the day order.
-   */
-  const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
-
-  return text.replace(
-    '{date}',
-    day.toLocaleDateString(locale, {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      /*
-       * In UTC, because the instant is one.
-       *
-       * A cohort expiry is stored as midnight UTC, and the sentence this fills
-       * used to be built server-side from `getUTCDate()`. Formatting it in the
-       * browser's zone instead moves it a day for every reader west of UTC — an
-       * end date a day early, on the one line of this page that is a promise.
-       *
-       * EXCEPT a billing instant (`ACCOUNT_CLOCK_SENTENCE_KEYS`), read on the
-       * account's own clock, the one every other Business OS date uses
-       * (`useLanguage().timezone`, from `user_preferences.timezone`; UTC when
-       * not set, the provider's own fallback).
-       */
-      timeZone: ACCOUNT_CLOCK_SENTENCE_KEYS.has(value.key) ? accountTimezone || 'UTC' : 'UTC',
-    })
-  );
-}
-
-/**
- * A dictionary template with its `{name}` slots filled.
- *
- * A function replacer, not a replacement string: the values are plan names,
- * prices and formatted amounts, and a `$` in one ("$79") must be printed, never
- * read as a `$&`-style pattern.
- */
-function fill(template: string, values: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (slot, name: string) => (Object.prototype.hasOwnProperty.call(values, name) ? values[name] : slot));
-}
-
-/**
- * One category row: its heading, its line, and its note.
- *
- * The line goes through `planCategoryLine`, so a category whose only feature is
- * named like its heading prints the value alone — "Credits" over "19,750 per
- * month", not over "Credits (19,750 per month)" (user decision, 2026-10-02).
- * Shared by what the plan includes and what the next plan would add, so the two
- * lists cannot word the same row differently.
- */
-function CategoryRowText({
-  row,
-  t,
-  noteTestId,
+export function PlanSection({
+  checkoutMarker = null,
+  takePrefetched,
 }: {
-  row: PlanCategory;
-  t: (key: string) => string;
-  noteTestId?: string;
-}) {
-  const heading = t(row.labelKey);
-  const line = planCategoryLine(heading, row);
-
-  return (
-    <span className="text-sm min-w-0">
-      <span className="text-[var(--v2-text-primary)]">{heading}</span>
-      {line !== null && <span className="block text-[var(--v2-text-muted)]">{line}</span>}
-      {row.noteKey && (
-        <span className="block mt-0.5 text-xs text-[var(--v2-text-muted)]" data-testid={noteTestId}>
-          {t(row.noteKey)}
-        </span>
-      )}
-    </span>
-  );
-}
-
-export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string | null } = {}) {
+  checkoutMarker?: string | null;
+  /**
+   * C-b: hands over the read the settings page started before the click, or
+   * `null`. Called once per mount, for the first read only.
+   */
+  takePrefetched?: () => PlanDrawerRead | null;
+} = {}) {
   const { t, isRTL, language, timezone } = useLanguage();
 
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
   const [plan, setPlan] = useState<PlanPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  /** Stripe completed in THIS page, before the URL caught up (P-4.2). */
-  const [completedSession, setCompletedSession] = useState<string | null>(null);
-  const [refreshes, setRefreshes] = useState(0);
-  /** P-7b.1b: the tier an upgrade was made to in THIS page, and whether the section is re-reading for it. */
-  const [upgradeTarget, setUpgradeTarget] = useState<string | null>(null);
-  const [upgradeWatching, setUpgradeWatching] = useState(false);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  // The return marker, pattern-checked; display only. Never a release, never a claim.
-  const marker = isCheckoutReturnMarker(checkoutMarker) ? checkoutMarker : completedSession;
-  // M-6: success comes ONLY from the server's own answer.
-  const succeeded = plan?.status === 'ok' && plan.kind === 'tier' && plan.purchase?.billing?.state === 'renewing';
-  const checkoutProcessing = marker !== null && !succeeded;
-  // U-5: the upgrade's success, from the server only: the plan in force is the
-  // target, renewing, and our record no longer offers it (it pays for it now).
-  // The last term keeps an admin-assigned plan equal to the target (Q-5) from
-  // reading as done before the webhook lands.
-  const upgradeSucceeded =
-    upgradeTarget !== null && succeeded && plan?.planId === upgradeTarget && !(plan?.purchase?.upgrade?.tiers ?? []).includes(upgradeTarget);
-  const upgradeProcessing = upgradeWatching && !upgradeSucceeded;
-  const processing = checkoutProcessing || upgradeProcessing;
-  const exhausted = refreshes >= PROCESSING_REFRESH_LIMIT;
-
-  const onCheckoutComplete = useCallback((sessionId: string) => {
-    setRefreshes(0);
-    setCompletedSession(sessionId);
-  }, []);
-
-  /** P-7b.1b: the upgrade went through or is landing. "Upgrading…" and the bounded re-read. */
-  const onUpgrading = useCallback((tier: string) => {
-    setRefreshes(0);
-    setUpgradeTarget(tier);
-    setUpgradeWatching(true);
-  }, []);
-
-  /** P-7b.1b (SA V-3 "Check again"): ONE server re-read; success still only from its answer. */
-  const onUpgradeCheckAgain = useCallback(async (tier: string) => {
-    setUpgradeTarget(tier);
-    try {
-      const data = await fetchPlan();
-      if (mounted.current && data) {
-        setPlan(data);
-        setFailed(false);
-      }
-    } catch (error) {
-      logger.warn({ err: error }, 'Plan re-read after an unconfirmed upgrade failed');
-    }
-  }, []);
+  /** The checkout / upgrade flow (state, predicates, callbacks, bounded re-read): `usePlanFlow` (C-2). */
+  const {
+    marker,
+    succeeded,
+    checkoutProcessing,
+    upgradeSucceeded,
+    upgradeWatching,
+    upgradeProcessing,
+    processing,
+    exhausted,
+    onCheckoutComplete,
+    onUpgrading,
+    onUpgradeCheckAgain,
+  } = usePlanFlow({ plan, setPlan, setFailed, loading, checkoutMarker });
+  /** C-b (B-1): the first read is fixed once per mount, StrictMode included. */
+  const firstStarted = useRef(false);
+  const firstRead = useRef<FirstRead | null>(null);
+  /** Upgrade modal UM-1a: the view-only plan comparison, opened from the end of this section. */
+  const [compareOpen, setCompareOpen] = useState(false);
 
   /*
-   * The bounded re-read after checkout (M-6): every 4 s, at most 15 times.
-   * A failed re-read keeps the plan already on screen and keeps saying
-   * "processing": it never claims success.
+   * The FIRST read, fixed once per mount (C-b, B-1). Declared immediately
+   * before the `[language]` effect, which applies it: React runs one
+   * component's effects in declaration order, so this always runs first
+   * (SA-CB-3).
+   *
+   * In an effect guarded by a ref, not in render and not in a `useState`
+   * initializer: under StrictMode the mount render runs twice and the first
+   * one's hooks are thrown away, so a `take()` there would be spent by the
+   * discarded render. Effects re-run on the same fiber, so the ref survives and
+   * StrictMode's re-run starts and takes nothing. The cold read starts here
+   * too, so the cancelled run and the kept run share ONE request (SA Q-2).
    */
   useEffect(() => {
-    if (!processing || exhausted || loading) return undefined;
-    const timer = setTimeout(() => {
-      fetchPlan()
-        .then((data) => {
-          if (mounted.current && data) {
-            setPlan(data);
-            // A first read that failed must not hide a later good answer (SA P-4.2 review).
-            setFailed(false);
-          }
-        })
-        .catch((error) => {
-          logger.warn({ err: error }, 'Plan re-read after checkout or upgrade failed');
-        })
-        .finally(() => {
-          if (mounted.current) setRefreshes((count) => count + 1);
-        });
-    }, PROCESSING_REFRESH_INTERVAL_MS);
-    return () => clearTimeout(timer);
-  }, [processing, exhausted, loading, refreshes]);
+    if (firstStarted.current) return;
+    firstStarted.current = true;
+    // Always taken, even when it will not be used: a set never outlives the
+    // mount it was offered to (rule 1, SA Q-4).
+    const offered = takePrefetched?.() ?? null;
+    const usable =
+      offered !== null &&
+      // B-2: a checkout return always reads fresh.
+      !isCheckoutReturnMarker(checkoutMarker) &&
+      // B-3: a set started in another language is not this one.
+      offered.language === language;
+    firstRead.current = usable
+      ? { language, read: offered.plan, preloaded: true }
+      : { language, read: readMyPlan(), preloaded: false };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only: the set is taken once (B-1)
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     /*
-     * No language on the request, deliberately.
-     *
-     * Plan and feature NAMES are config data and are resolved server-side — from
-     * the reader's own stored preference, not from anything sent here. That
-     * route's guard protects the property that there is nothing to read in a
-     * request, so no `?accountId=` can ever be honoured; a `?lang=` would have
-     * been the first crack in it.
-     *
-     * Re-fetched when the language changes so those names catch up once the
-     * preference is saved. The SENTENCES do not wait for that — they are keys,
+     * No language on the request: see `planDrawerReads`. Re-read when the
+     * language changes so the plan and feature NAMES catch up once the
+     * preference is saved. The SENTENCES do not wait for that: they are keys,
      * rendered below, and switch immediately.
+     *
+     * The first run applies the first read (above), when it was started in this
+     * language. Any other run reads fresh (B-2), and the first read is spent
+     * once it is applied, so a later switch back reads fresh too.
      */
-    fetchPlan()
-      .then((data) => {
+    const pending = firstRead.current;
+    const first = pending !== null && pending.language === language ? pending : null;
+    if (first === null) firstRead.current = null;
+
+    void (async () => {
+      // StrictMode: the cancelled run and the kept run await the same promise.
+      let answer = first !== null ? await first.read : await readMyPlan();
+      if (cancelled) return;
+      // An unusable warm answer is never shown: read once more, fresh, and judge
+      // only that answer (SA Q-3). A cold first read is applied as it is.
+      if (first !== null && first.preloaded && !isUsableWarm(answer)) {
+        logger.debug(discardContext(answer), 'Prefetched plan read unusable; reading again');
+        answer = await readMyPlan();
         if (cancelled) return;
-        if (!data) {
-          setFailed(true);
-          return;
-        }
-        setPlan(data);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        logger.error({ err: error }, 'Could not load the plan section');
+      }
+      if (first !== null) firstRead.current = null;
+
+      if (answer.kind === 'threw') {
+        logger.error({ err: answer.err }, 'Could not load the plan section');
         setFailed(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        return;
+      }
+      const data = planFrom(answer.body);
+      if (!data) {
+        setFailed(true);
+        return;
+      }
+      setPlan(data);
+    })().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
 
     return () => {
       cancelled = true;
@@ -451,6 +274,24 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
         </div>
         {sentence(plan.endsWhen) && (
           <p className="text-xs text-[var(--v2-text-muted)] mt-1">{sentence(plan.endsWhen)}</p>
+        )}
+        {/* P-6a.2 (workplan §5.7): what the owner can do about a failed renewal.
+            No "Update card" button until P-7a (SA Q-6): Stripe's email has the link. */}
+        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'payment_failed' && (
+          <p className="text-xs text-[var(--v2-text-muted)] mt-1" data-testid="plan-update-card-email">
+            {t('plan.update_card_email')}
+          </p>
+        )}
+        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'action_required' && (
+          <a
+            href={plan.purchase.billing.confirmUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block mt-1 text-sm text-[var(--v2-primary)] underline"
+            data-testid="plan-confirm-payment"
+          >
+            {t('billing.notice.confirm_payment')}
+          </a>
         )}
       </div>
 
@@ -545,11 +386,39 @@ export function PlanSection({ checkoutMarker = null }: { checkoutMarker?: string
           currentTierId={plan.kind === 'tier' ? plan.planId : null}
         />
       )}
+
+      {/* Upgrade modal UM-1a: "Compare plans", VIEW ONLY (C-1). Last in the
+          section on purpose: the purchase tests click `getAllByRole('button')[0]`
+          for Choose (SA W-4), and under B9 is where it lands once UM-1b moves the
+          islands into the modal. Not while a payment or upgrade is landing (SA
+          Q-3: the flow's own `processing`, no new predicate), and only when the
+          server sent a comparison (C-21): the UI never builds a table itself. */}
+      {(plan.plans?.length ?? 0) > 0 && !processing && upgradeModalView(plan).available && (
+        <>
+          <button
+            type="button"
+            onClick={() => setCompareOpen(true)}
+            aria-haspopup="dialog"
+            data-testid="plan-compare-open"
+            // W-5: the label sits on SOLID --v2-primary-dark; the gradient is a
+            // decorative layer at the end edge, kept clear of the text by `pe-10`.
+            className="relative inline-flex items-center gap-2 overflow-hidden ps-4 pe-10 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary-dark)] rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
+          >
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-y-0 end-0 w-8 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
+            />
+            <Sparkles aria-hidden="true" className="relative w-4 h-4 shrink-0" />
+            <span className="relative">{t('upgrade_modal.open_compare')}</span>
+          </button>
+          <UpgradeModal open={compareOpen} onOpenChange={setCompareOpen} plan={plan} />
+        </>
+      )}
     </div>
   );
 }
 
-function NextPlanUp({ upgrade, purchaseKnown = false }: { upgrade: PlanUpgrade; purchaseKnown?: boolean }) {
+function NextPlanUp({ upgrade, purchaseKnown = false }: { upgrade: PlanUpgradeView; purchaseKnown?: boolean }) {
   const { t, language, timezone } = useLanguage();
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
   // Every word on this card comes from the dictionary (user decision,
@@ -652,33 +521,3 @@ function NextPlanUp({ upgrade, purchaseKnown = false }: { upgrade: PlanUpgrade; 
     </div>
   );
 }
-
-function Notice({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-2 p-3 bg-[var(--v2-bg)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-      <Info className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-text-muted)]" />
-      <p className="text-xs text-[var(--v2-text-muted)] min-w-0">{children}</p>
-    </div>
-  );
-}
-
-/** "Free, no end date" or "$79 a month". Reads the flag, never the number alone. */
-/**
- * `t` is passed in rather than reached for: this is a module-level helper, and
- * the dictionary lives on the hook inside the component.
- */
-function priceLine(plan: PlanPayload, t: (key: string) => string): string {
-  if (plan.free) {
-    return plan.accessEndsAt === null ? t('plan.price.free_no_end') : t('plan.price.free');
-  }
-  /*
-   * The price stays in dollars and in digits, which every language reads. What
-   * needed translating was "a month", so the whole line is one key with the
-   * figure substituted — a translator cannot reorder `$79` and `a month` if the
-   * words are glued to the number here.
-   */
-  return plan.monthlyPriceUsd
-    ? t('plan.price.per_month').replace('{amount}', `$${plan.monthlyPriceUsd}`)
-    : '';
-}
-

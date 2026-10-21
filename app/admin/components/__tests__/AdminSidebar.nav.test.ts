@@ -3,7 +3,7 @@
  *
  * Pins three things the slice promises:
  *   1. the section order (Monitor, Businesses, Settings, AgentsPilot (parked));
- *   2. every admin page on disk (except Exchange Rates) is reachable from
+ *   2. every admin page on disk (except the unlisted ones) is reachable from
  *      exactly one sidebar entry, and no entry points at a page that is not
  *      there. The page list is read from the filesystem, so a new admin page
  *      fails this test until it is given a place in the sidebar;
@@ -16,7 +16,19 @@
  *   6. (slice 5) Scheduled jobs & queues is third under Monitor;
  *   7. (ADMIN_BOS_CLEANUP slice 2) Model pricing is split from the AgentsPilot
  *      billing settings, which moved to a parked page, and Free tier &
- *      onboarding moved to the parked section.
+ *      onboarding moved to the parked section;
+ *   8. (Money M-5, finance health §11H.3) a Money section follows Monitor,
+ *      holding Finance (first), Charge checks and AI calls & usage (detail),
+ *      and nothing with action buttons;
+ *   9. (M-5) Charge checks lives at a NESTED route, `/admin/finance/charges`,
+ *      which the one-level page scan cannot see, so it is allowed for
+ *      explicitly (`NESTED_LISTED`) and checked to exist on disk;
+ *  10. (Money M-8, finance health §11J, BD-34) the old dashboard is redundant:
+ *      its hidden parked item is removed and it joins Exchange Rates in
+ *      `UNLISTED`. The dashboard stays on disk (the on-disk scan still finds
+ *      it); Exchange Rates left the disk in Admin Exchange Rates slice 2b (it
+ *      is Finance's tab, and its old URL redirects there), so it left
+ *      `UNLISTED` too.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -78,14 +90,19 @@ const adminPageRoutes = (): string[] => {
   return routes.sort();
 };
 
-// Unlisted on purpose (requirement §4.3): it writes from the browser straight
-// to the database, so surfacing it would widen exposure.
-const UNLISTED = ['/admin/exchange-rates'];
+// Unlisted on purpose: the redundant old dashboard (Money M-8, BD-34), kept by
+// URL only. Exchange Rates was here too until Admin Exchange Rates slice 2b: it
+// is no longer a page (Finance's tab; the old URL redirects there).
+const UNLISTED = ['/admin/platform-dashboard'];
+
+// Listed pages below the one-level scan (M-5): each must exist on disk.
+const NESTED_LISTED = ['/admin/finance/charges'];
 
 describe('section order', () => {
-  it('is Monitor, Businesses, Settings, AgentsPilot (parked)', () => {
+  it('is Monitor, Money, Businesses, Settings, AgentsPilot (parked)', () => {
     expect(sections.map((s) => s.title)).toEqual([
       'Monitor',
+      'Money',
       'Businesses',
       'Settings',
       'AgentsPilot (parked)',
@@ -96,14 +113,19 @@ describe('section order', () => {
     // Scheduled jobs & queues follows AI cost & usage (slice 5, requirement
     // §4.2); Archiving sits directly under Audit trail (Admin Archiving,
     // condition C-2); Finance sits directly after Health (finance & business
-    // health slice 1a, requirement §5).
+    // health slice 1a, requirement §5). Money M-5 moved Finance and AI calls &
+    // usage (detail) into the new Money section, Finance first (BD-21).
     expect(hrefsOf('Monitor')).toEqual([
       '/admin',
-      '/admin/finance',
-      '/admin/analytics',
       '/admin/jobs-queues',
       '/admin/audit-trail',
       '/admin/archiving',
+    ]);
+    expect(hrefsOf('Money')).toEqual([
+      '/admin/finance',
+      // Money MK-4 (ruled): Subscriptions is now Finance's Plans & subscriptions tab; its item is gone.
+      '/admin/finance/charges',
+      '/admin/analytics',
     ]);
     expect(hrefsOf('Businesses')).toEqual([
       '/admin/users',
@@ -118,9 +140,9 @@ describe('section order', () => {
     ]);
   });
 
-  it('parks the fifteen AgentsPilot pages, the legacy dashboard included (slice 4)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(15);
-    expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/platform-dashboard');
+  it('parks the fourteen AgentsPilot pages; the redundant legacy dashboard is no longer listed (M-8, BD-34)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(14);
+    expect(hrefsOf('AgentsPilot (parked)')).not.toContain('/admin/platform-dashboard');
     // ADMIN_BOS_CLEANUP slice 2: the free tier and the AgentsPilot billing page.
     expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/onboarding');
     expect(hrefsOf('AgentsPilot (parked)')).toContain('/admin/agentspilot-billing');
@@ -141,10 +163,14 @@ describe('every admin page is reachable, exactly once', () => {
     // /admin/jobs-queues, and invite-only signup slice 0 added
     // /admin/business-os-invites. 28 since ADMIN_BOS_CLEANUP slice 2 added
     // /admin/agentspilot-billing. 29 since finance & business health slice 1a
-    // added /admin/finance. If this drops, the scan broke rather than the
+    // added /admin/finance. 30 since plan payments P-8a.1 added
+    // /admin/subscriptions. If this drops, the scan broke rather than the
     // sidebar.
-    expect(onDisk.length).toBeGreaterThanOrEqual(29);
+    // Money MK-4 (ruled): /admin/subscriptions left the disk (it redirects to Finance's tab), so 29.
+    // Admin Exchange Rates 2b: /admin/exchange-rates left the disk (it redirects to Finance's tab), so 28.
+    expect(onDisk.length).toBeGreaterThanOrEqual(28);
     expect(onDisk).toContain('/admin/finance');
+    expect(onDisk).not.toContain('/admin/subscriptions');
     expect(onDisk).toContain('/admin/agentspilot-billing');
     expect(onDisk).toContain('/admin/onboarding');
     expect(onDisk).toContain('/admin/business-os-invites');
@@ -152,17 +178,25 @@ describe('every admin page is reachable, exactly once', () => {
     expect(onDisk).toContain('/admin/jobs-queues');
     expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
-    expect(onDisk).toContain('/admin/exchange-rates');
+    expect(onDisk).not.toContain('/admin/exchange-rates');
   });
 
   it('lists every page except the deliberately unlisted ones', () => {
-    const expected = onDisk.filter((r) => !UNLISTED.includes(r));
+    const expected = [...onDisk.filter((r) => !UNLISTED.includes(r)), ...NESTED_LISTED].sort();
     expect([...allHrefs].sort()).toEqual(expected);
     // 22 before, + the legacy dashboard (slice 4) + Archiving (Admin Archiving
     // slice 1) + Scheduled jobs & queues (slice 5) + Invites (invite-only
     // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
-    // Finance (finance & business health slice 1a).
+    // Finance (finance & business health slice 1a) + Charge checks (M-5)
+    // − the redundant legacy dashboard (M-8, BD-34) + Subscriptions (plan
+    // payments P-8a.1) − Subscriptions (Money MK-4: a Finance tab now).
     expect(allHrefs).toHaveLength(28);
+  });
+
+  it('every nested listed page exists on disk (M-5)', () => {
+    for (const route of NESTED_LISTED) {
+      expect({ route, exists: fs.existsSync(path.join(process.cwd(), 'app', `${route.slice(1)}/page.tsx`)) }).toEqual({ route, exists: true });
+    }
   });
 
   it('never lists the same page twice', () => {
@@ -171,6 +205,10 @@ describe('every admin page is reachable, exactly once', () => {
 
   it('keeps Exchange Rates unlisted', () => {
     expect(sidebar).not.toContain('exchange-rates');
+  });
+
+  it('keeps the redundant Platform dashboard unlisted (M-8, BD-34)', () => {
+    expect(sidebar).not.toContain('platform-dashboard');
   });
 
   it('parsed every item (guards the parser: one href literal per parsed item)', () => {
@@ -246,8 +284,8 @@ describe('the parked AgentsPilot section is hidden, not removed', () => {
     expect(navBlock.match(/hidden: true/g)).toHaveLength(1);
   });
 
-  it('keeps all fifteen parked items in the data (routes are untouched)', () => {
-    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(15);
+  it('keeps all fourteen parked items in the data (routes are untouched; M-8 removed only the redundant dashboard item)', () => {
+    expect(hrefsOf('AgentsPilot (parked)')).toHaveLength(14);
   });
 
   it('renders only the visible sections, and draws separators between those alone', () => {
@@ -278,5 +316,41 @@ describe('the logo matches the Business OS app (admin header identity)', () => {
 
   it('keeps the Admin badge beside the logo', () => {
     expect(sidebar).toMatch(/<Logo\b[^>]*\/>\s*<span[^>]*>\s*Admin\s*<\/span>/);
+  });
+});
+
+describe('Money M-5: the Money section (finance health §11H.3)', () => {
+  const money = () => sections.find((s) => s.title === 'Money')?.items ?? [];
+
+  it('sits directly after Monitor and is visible', () => {
+    const titles = sections.map((s) => s.title);
+    expect(titles.indexOf('Money')).toBe(titles.indexOf('Monitor') + 1);
+    expect(sections.find((s) => s.title === 'Money')?.hidden).toBe(false);
+  });
+
+  // Money MK-4 (ruled): the Subscriptions item is gone; its content is Finance's Plans & subscriptions tab.
+  it('Finance first, then Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
+    expect(money().map((i) => [i.name, i.href, i.description])).toEqual([
+      ['Finance', '/admin/finance', 'Revenue, AI cost and credits, Business OS'],
+      ['Charge checks', '/admin/finance/charges', 'Charged AI cost checked per account, Business OS'],
+      ['AI calls & usage (detail)', '/admin/analytics', 'Every AI call and its recorded cost, both products'],
+    ]);
+  });
+
+  it('holds no page whose main job is an action (AC-185, BD-21)', () => {
+    const hrefs = money().map((i) => i.href);
+    for (const action of ['/admin/users', '/admin/system-config', '/admin/jobs-queues', '/admin/business-os-invites']) {
+      expect(hrefs).not.toContain(action);
+    }
+  });
+
+  it('Business OS AI no longer claims costs (S-4, AC-186)', () => {
+    const item = sections.flatMap((s) => s.items).find((i) => i.name === 'Business OS AI');
+    expect(item?.description).toBe('Models, temperatures & AI activity');
+    expect(item?.description.toLowerCase()).not.toContain('cost');
+  });
+
+  it('the old name "AI cost & usage" is gone from the sidebar', () => {
+    expect(sections.flatMap((s) => s.items).map((i) => i.name)).not.toContain('AI cost & usage');
   });
 });

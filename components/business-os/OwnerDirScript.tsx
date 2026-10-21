@@ -13,10 +13,10 @@ import { isOwnerLanguage, ownerDir, type OwnerLanguage } from '@/lib/business-os
  *
  * WHERE IT MUST BE RENDERED
  *
- * First in the layout, OUTSIDE `V2ThemeProvider` and `UserProvider`.
- * `V2ThemeProvider` renders `null` until it mounts, so anything inside it never
- * reaches the server HTML — this script would simply not exist there. The guard
- * test pins the position (SA RC-2).
+ * First in the layout, OUTSIDE `V2ThemeProvider` and `UserProvider`, so it runs
+ * before any content is parsed. (It was first written when `V2ThemeProvider`
+ * rendered `null` on the server; since TH-1 it renders its children, but the
+ * position still decides the first frame.) The guard test pins it (SA RC-2).
  *
  * It runs while the HTML is parsed. On a client-side navigation React inserts it
  * without executing it; the provider's own `dir`/`lang` effect covers that case,

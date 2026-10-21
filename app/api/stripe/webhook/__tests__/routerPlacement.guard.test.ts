@@ -63,7 +63,8 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   'planBillingHandler.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE, INVITES],
   'planPaymentApply.ts': [BILLING_ACCOUNTS, BILLING_EVENTS, ACCOUNT_LINEAGE],
   'planCheckoutSessionEvents.ts': [BILLING_ACCOUNTS],
-  'planSubscriptionMirror.ts': [BILLING_ACCOUNTS],
+  // P-6a.2 (workplan §5.5): the ended money history row (recordEvent, a port TYPE).
+  'planSubscriptionMirror.ts': [BILLING_ACCOUNTS, BILLING_EVENTS],
   // P-5a.2 (workplan BUSINESS_OS_PLAN_PAYMENTS_P5A_WORKPLAN.md §3.3): the
   // holding screen's model reads the session user's billing row (findByUser).
   'heldPaymentView.ts': [BILLING_ACCOUNTS],
@@ -74,6 +75,9 @@ const BILLING_REPOSITORY_IMPORTS: Record<string, string[]> = {
   // upgrade orchestration reads the session user's billing row (findByUser).
   'planUpgrade.ts': [BILLING_ACCOUNTS],
   'planTestClock.ts': [BILLING_ACCOUNTS, ACCOUNT_PLANS],
+  // P-6a.2 (workplan §5.6, SA C-13): the owner banner reads the SESSION
+  // account's billing row for the current mode (findByUser only).
+  'readPaymentNotice.ts': [BILLING_ACCOUNTS],
 };
 const BILLING_REPOSITORY_CALLERS = Object.keys(BILLING_REPOSITORY_IMPORTS);
 

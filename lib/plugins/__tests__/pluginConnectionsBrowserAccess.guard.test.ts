@@ -41,7 +41,12 @@ const ALLOWED_FILES: Record<string, string> = {
   'lib/plugins/v2/core/UniversalOAuthHandler.ts': 'C11: dead code (plugins/v2/registry imported nowhere); fails closed after DE-0b',
 };
 
-/** The three export screens DE-0a moved to the server export (C1–C3). */
+/**
+ * The three export screens DE-0a moved to the server export (C1–C3). Since
+ * data export DE-9 none has an export handler of its own: each renders the one
+ * shared `DownloadMyDataButton`, which reaches the server only through
+ * lib/client/businessOsDataExport.ts.
+ */
 const EXPORT_SCREENS = [
   'app/business-os/settings/page.tsx',
   'components/settings/SecurityTab.tsx',
@@ -77,23 +82,6 @@ export function isBrowserSource(source: string): boolean {
 
 export function readsPluginConnections(source: string): boolean {
   return PLUGIN_CONNECTIONS_FROM.test(withoutComments(source));
-}
-
-/** The body of `const handleExportData = async () => { … }`, brace-matched. */
-function exportHandlerBody(source: string): string | null {
-  const start = source.search(/const handleExportData\s*=\s*async\s*\(\s*\)\s*=>\s*\{/);
-  if (start < 0) return null;
-  let i = source.indexOf('{', source.indexOf('=>', start));
-  const open = i;
-  let depth = 0;
-  for (; i < source.length; i += 1) {
-    if (source[i] === '{') depth += 1;
-    else if (source[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return source.slice(open, i + 1);
-    }
-  }
-  return null;
 }
 
 const rel = (full: string) => relative(ROOT, full).split(sep).join('/');
@@ -169,19 +157,29 @@ describe('plugin_connections browser access guard (DE-0a A-5)', () => {
       expect(code).not.toMatch(/plugin_connections/);
     });
 
-    it('exports through the server export, with no DB read in the handler', () => {
-      const body = exportHandlerBody(code);
-      expect(body).not.toBeNull();
-      expect(body).toMatch(/downloadUserDataExport\(\)/);
-      expect(body).not.toMatch(/\.from\(/);
-      expect(body).not.toMatch(/\bsupabase\b/);
-      expect(body).not.toMatch(/select\(\s*['"`]\*['"`]\s*\)/);
+    it('exports through the one shared control, with no export handler of its own (DE-9)', () => {
+      expect(code).toMatch(/import \{ DownloadMyDataButton \} from '@\/components\/business-os\/data-export\/DownloadMyDataButton'/);
+      expect(code).toMatch(/<DownloadMyDataButton\b/);
+      expect(code).not.toMatch(/handleExportData/);
+      expect(code).not.toMatch(/downloadUserDataExport/);
     });
 
-    it('sends no x-user-id header, and the export makes no client audit call', () => {
-      // The server export writes DATA_EXPORTED itself (§0.1.2 C3).
+    it('sends no x-user-id header', () => {
       expect(code).not.toMatch(/['"`]x-user-id['"`]\s*:/);
-      expect(exportHandlerBody(code)).not.toMatch(/\/api\/audit\/log/);
     });
+  });
+
+  it('the shared export control makes no client audit call and reads no table (DE-9)', () => {
+    // The server export writes its DATA_EXPORT_* entries itself (§0.1.2 C3).
+    for (const file of [
+      'components/business-os/data-export/DownloadMyDataButton.tsx',
+      'components/business-os/data-export/useDownloadMyData.ts',
+      'lib/client/businessOsDataExport.ts',
+    ]) {
+      const code = withoutComments(read(file));
+      expect({ file, audit: /\/api\/audit\/log/.test(code) }).toEqual({ file, audit: false });
+      expect({ file, table: /\.from\(|\bsupabase\b|plugin_connections/.test(code) }).toEqual({ file, table: false });
+      expect({ file, xUserId: /['"`]x-user-id['"`]\s*:/.test(code) }).toEqual({ file, xUserId: false });
+    }
   });
 });

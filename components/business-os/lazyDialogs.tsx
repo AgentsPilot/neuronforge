@@ -1,50 +1,67 @@
 'use client';
 
 /**
- * The configuration and scheduling dialogs. Loaded with the page, on purpose.
+ * The configuration and scheduling dialogs, loaded after the page instead of with it.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * THIS FILE USED TO LOAD BOTH DIALOGS ON DEMAND. IT NO LONGER DOES.
+ * WHY (PERF-1, docs/requirements/PERFORMANCE_IMPROVEMENT_SCOPING.md §11.2 PC-1)
  *
- * `177ad8f9` ("perf(business-os): load configuration and scheduling dialogs on
- * demand", PERF-1) moved both behind `next/dynamic` with `ssr: false` to keep
- * them out of every owner page's first download, and answered a failed chunk
- * load with a component that rendered `null`.
+ * The Business OS layout mounts `ConfigurationDialog` (through
+ * `ConfigurationDialogProvider`) and `SchedulingDialog` (through
+ * `BusinessOSHeader`) on every owner page, closed. Imported statically, both
+ * were part of every page's first download even though neither is visible
+ * until somebody clicks.
  *
- * WHAT THAT COST, reported as "הגדרות העסק is not clickable":
+ * HOW THE FIRST OPEN STAYS IDENTICAL
  *
- * The Configuration tab stopped opening anything. Every part of the click path
- * was correct and stayed correct under inspection — an ungated `<button>`,
- * hydrated by React, its `onClick` running, the provider flipping its state,
- * the chunk built and served with a 200. The dialog simply never reached the
- * DOM, and the only evidence was one console line:
+ * Every site keeps rendering its dialog exactly where it did, closed. The
+ * closed instance renders nothing on the server (it rendered nothing there
+ * before either: both dialogs draw nothing while closed), and on the client it
+ * asks for its chunk as soon as it mounts — after the page has painted, with no
+ * click needed (AC-1.1). By the time an owner clicks, the component is already
+ * resolved, so the dialog opens in the same frame, with the same animation and
+ * tab, as before (AC-1.2).
  *
- *     ChunkLoadError: Loading chunk …ConfigurationDialog_tsx failed.
- *     (timeout: /_next/static/chunks/…ConfigurationDialog_tsx.js)
+ * ONE LOADER PER DIALOG, SHARED BY EVERY SITE. Each `createLazyDialog` call
+ * below owns one module-level loader, so the layout's closed instance warms it
+ * for every other site on the page (My Day, the website builder, the setup
+ * wizard).
  *
- * The chunk is several megabytes unminified and the dev server compiles it on
- * demand, so one cold compile outran the loader's timeout. `next/dynamic`
- * caches whatever its loader resolves to for the life of the page, so that
- * single slow compile turned the tab into a control that was present, correct
- * and permanently inert until a full reload.
+ * Props, `isOpen` and `onClose` pass straight through, so close behaviour —
+ * capability refresh, `onClose` once, the closing grace — is unchanged (AC-1.5).
  *
- * A retry and a visible failure panel would have made the fault reportable.
- * They would not have made the dialog open. The deferral itself is what put a
- * network round trip between a click and a modal that is part of the product's
- * core navigation, so the deferral is what has been removed: both dialogs are
- * imported directly again and are resolved before anybody can click.
- *
- * The file and its export names are kept so that the six sites rendering these
- * dialogs did not have to change. The `Lazy` prefix is now historical; renaming
- * it is a mechanical follow-up, not part of unblocking the tab.
- *
- * IF THE FIRST-LOAD WEIGHT MATTERS AGAIN, the way back is not `next/dynamic`
- * around the whole dialog. It is to split what makes the chunk heavy — the
- * Stripe wizard, the services editor, the phone library — behind the tab that
- * actually needs each, so a failure can only ever cost one tab rather than the
- * entire settings surface.
+ * IF THE CHUNK FAILS TO LOAD, it is retried, an open dialog shows a visible
+ * "Couldn't load this — Try again" surface, and the failure is not remembered:
+ * the next open starts a fresh load. See `lazyDialogLoader.tsx` and
+ * docs/workplans/PERF_1_LAZY_DIALOG_FAILURE_FIX.md. (The first version resolved
+ * a failure to a component rendering `null`, which `next/dynamic` then cached
+ * for the life of the page: the Business Setup tab went permanently dead.)
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-export { ConfigurationDialog as LazyConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
-export { SchedulingDialog as LazySchedulingDialog } from '@/components/business-os/SchedulingDialog';
+import type { ComponentProps, ComponentType } from 'react';
+// Type-only: these erase at build time and keep the heavy modules out of the
+// page's first download. A value import here would undo the whole slice
+// (guarded by `components/business-os/__tests__/lazyDialogs.guard.test.ts`).
+import type { ConfigurationDialog as ConfigurationDialogComponent } from '@/components/business-os/ConfigurationDialog';
+import type { SchedulingDialog as SchedulingDialogComponent } from '@/components/business-os/SchedulingDialog';
+import { createLazyDialog } from '@/components/business-os/lazyDialogLoader';
+
+type ConfigurationDialogProps = ComponentProps<typeof ConfigurationDialogComponent>;
+type SchedulingDialogProps = ComponentProps<typeof SchedulingDialogComponent>;
+
+export const LazyConfigurationDialog = createLazyDialog<ConfigurationDialogProps>(
+  'ConfigurationDialog',
+  () =>
+    import('@/components/business-os/ConfigurationDialog').then(
+      (mod): ComponentType<ConfigurationDialogProps> => mod.ConfigurationDialog
+    )
+);
+
+export const LazySchedulingDialog = createLazyDialog<SchedulingDialogProps>(
+  'SchedulingDialog',
+  () =>
+    import('@/components/business-os/SchedulingDialog').then(
+      (mod): ComponentType<SchedulingDialogProps> => mod.SchedulingDialog
+    )
+);

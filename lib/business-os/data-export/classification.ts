@@ -21,21 +21,43 @@
 import { PURGE_DESCRIPTORS } from '@/lib/business-os/purge/descriptors';
 import type { PurgeDescriptor } from '@/lib/business-os/purge/types';
 import type {
+  ExportRowFilter,
   ExportSectionId,
   TableExportClassification,
 } from '@/lib/business-os/data-export/classificationTypes';
 
 // ── Secret columns ──────────────────────────────────────────────────────────
 
-/** Column names that are never exported, whatever table they are on (§3.2). */
+/**
+ * Column names that are never exported, whatever table they are on (§3.2):
+ * secrets and visitor tracking.
+ *
+ * DE-5 (SA-Q11): + `card_number`, `cvc`, `cvv`. No such column exists today
+ * ("no card number is ever stored in this system", 20260828e); the entries
+ * stop one added later from being exported by a review mistake. A Stripe
+ * `client_secret` is not listed: `/_secret$/` below already denies it.
+ *
+ * DE-6 (SA-Q5): + the visitor-tracking names `ip_hash_salt`, `user_agent`,
+ * `session_id`, `ip_address`, `fingerprint`. Until DE-6 they were kept out
+ * by review only (marketing_consent_events lists them in `excludedColumns`,
+ * which this check does not read); now an include that lists one fails CI
+ * and fails its section at request time. No DE-1…DE-5 include names any of
+ * them. Exact names, so `checkout_session_id` is not matched.
+ */
 export const SECRET_COLUMN_DENY_EXACT: readonly string[] = [
   'access_token', 'refresh_token', 'token', 'credentials', 'secret', 'api_key',
   'password', 'password_hash', 'account_token', 'cost_usd', 'provider_cost_usd',
+  'card_number', 'cvc', 'cvv',
+  'ip_hash_salt', 'user_agent', 'session_id', 'ip_address', 'fingerprint',
 ];
 
-/** Name shapes that are never exported (secrets, hashes, our provider cost). */
+/**
+ * Name shapes that are never exported (secrets, hashes, salts, our provider
+ * cost). DE-6 (SA-Q5): + `/_salt$/`: a salt stored next to a hash is what
+ * lets the hash be checked against a known value.
+ */
 export const SECRET_COLUMN_DENY_PATTERNS: readonly RegExp[] = [
-  /_token$/, /_secret$/, /_key$/, /_credentials$/, /_hash$/, /cost_usd$/,
+  /_token$/, /_secret$/, /_key$/, /_credentials$/, /_hash$/, /cost_usd$/, /_salt$/,
 ];
 
 /**
@@ -44,7 +66,10 @@ export const SECRET_COLUMN_DENY_PATTERNS: readonly RegExp[] = [
  * stale entry (one that no longer names an included column that is denied).
  */
 export const DENY_EXCEPTIONS: Readonly<Record<string, string>> = {
-  'plugin_connections.plugin_key': "the plugin's name (e.g. google-mail), not a credential",
+  // DE-4 (user 2026-10-15): 'plugin_connections.plugin_key' removed with the
+  // connected-apps section; the stale-entry check would flag it otherwise.
+  // DE-4 SA-Q5 (approved 2026-10-15).
+  'crm_pipeline_stages.stage_key': "the stage's short name (e.g. lead), which crm_contacts.stage refers to; not a credential",
 };
 
 /** True when `column` matches the deny list (before any exception). */
@@ -66,7 +91,17 @@ const COLUMN_NAME = /^[a-z_][a-z0-9_]*$/;
 
 // ── Lookup ──────────────────────────────────────────────────────────────────
 
-export type ExportClassificationErrorCode = 'unknown_table' | 'not_included' | 'invalid_column' | 'denied_column';
+export type ExportClassificationErrorCode =
+  | 'unknown_table'
+  | 'not_included'
+  | 'invalid_column'
+  | 'denied_column'
+  // DE-4: resolving a section to its one descriptor, and the reader's bounds.
+  | 'unknown_section'
+  | 'not_user_scoped'
+  | 'invalid_row_filter'
+  // DE-7: a `viaParent` opt-in that breaks V-1…V-3 (SA-Q1, C-5).
+  | 'invalid_via_parent';
 
 /** Thrown by `exportColumnsOf`. The repositories catch it and return `{ error }`. */
 export class ExportClassificationError extends Error {
@@ -117,6 +152,41 @@ export function exportColumnsOf(
   return classification.columns;
 }
 
+/**
+ * The one `include` descriptor behind a section (DE-4 SA C-4): the reader is
+ * handed a section id, never a table name, so no table literal lives in
+ * `sections.ts`. DE-8b takes a CSV header from the same lookup
+ * (`exportColumnsOf(exportDescriptorOfSection(id).table)`), so an empty
+ * section still gets its header row. Throws `ExportClassificationError`
+ * (`unknown_section`) for zero or several matches: fail closed.
+ */
+export function exportDescriptorOfSection(
+  section: ExportSectionId,
+  descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS
+): PurgeDescriptor {
+  const matches = descriptors.filter((d) => d.export?.kind === 'include' && d.export.section === section);
+  if (matches.length !== 1) {
+    throw new ExportClassificationError('unknown_section', section, `expected one include descriptor for the section, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+/** A row-filter value: plain word characters only, so the quoted PostgREST list needs no escaping. */
+const ROW_FILTER_VALUE = /^[A-Za-z0-9_]+$/;
+
+/**
+ * The PostgREST value list for `.not(column, 'in', list)`, each value quoted:
+ * `("deleted")` (DE-4 SA C-6). Throws for a value outside `ROW_FILTER_VALUE`.
+ */
+export function rowFilterInList(filter: ExportRowFilter): string {
+  for (const value of filter.notIn) {
+    if (!ROW_FILTER_VALUE.test(value)) {
+      throw new ExportClassificationError('invalid_row_filter', filter.column, `row filter value ${JSON.stringify(value)} is not a plain word`);
+    }
+  }
+  return `(${filter.notIn.map((value) => `"${value}"`).join(',')})`;
+}
+
 // ── CI rules (pure; exportClassification.test.ts runs them) ─────────────────
 
 export const PLANNED_TABLE_SLICES: readonly string[] = ['DE-3', 'DE-4', 'DE-5', 'DE-6', 'DE-7'];
@@ -131,9 +201,20 @@ const nonEmpty = (value: unknown): boolean => typeof value === 'string' && value
  * Problems with one table descriptor's `export` value (T-1…T-5, T-7).
  * Typed `unknown` on purpose: the CI check must see an object that the type
  * would have rejected (Jest does not type-check, SA DE-2 review SA-Q1).
+ *
+ * DE-6 (SA-Q1 (2)): the reader's key is checked here too, not only at request
+ * time. An include WITHOUT `rowKey` must list `id` (the keyset reader pages on
+ * it; until DE-6 that rule lived only in the repository). An include WITH
+ * `rowKey` must have `rowKey: 'user_id'`, a `user_id` scope, no `user_id` in
+ * `columns` (it is the owner id) and no `rowFilter`. `scope` is read off the
+ * descriptor for that reason.
+ *
+ * DE-7 (SA-Q2, V-1 / V-3): the `viaParent` opt-in is checked against the same
+ * `scope` (`viaShapeProblems`); its parent half needs the whole set
+ * (`viaParentProblems`).
  */
 export function tableExportProblems(
-  descriptor: { table: string; export?: unknown },
+  descriptor: { table: string; export?: unknown; scope?: unknown },
   options: { plannedAllowed: boolean; exceptions?: Readonly<Record<string, string>> }
 ): string[] {
   const { table } = descriptor;
@@ -171,6 +252,9 @@ export function tableExportProblems(
           }
         }
       }
+      if (value.rowFilter !== undefined) problems.push(...rowFilterProblems(table, value.rowFilter, seen));
+      problems.push(...rowKeyProblems(descriptor, value, seen));
+      problems.push(...viaShapeProblems(descriptor, value, seen));
       break;
     }
     case 'exclude':
@@ -187,6 +271,146 @@ export function tableExportProblems(
       problems.push(`${table}: unknown export kind ${JSON.stringify(value.kind)}`);
   }
   return problems;
+}
+
+/**
+ * DE-4 U-4 (SA-Q2): a `rowFilter` names one of the table's declared columns,
+ * a non-empty list of plain-word values, and a reason. NOT NULL is checked
+ * against the live columns by `rowFilterNullabilityProblems` (SA C-6).
+ */
+function rowFilterProblems(table: string, filter: unknown, declared: ReadonlySet<string>): string[] {
+  if (!isObject(filter)) return [`${table}: rowFilter must be { column, notIn, reason }`];
+  const problems: string[] = [];
+  if (typeof filter.column !== 'string' || !declared.has(filter.column)) {
+    problems.push(`${table}: rowFilter column ${JSON.stringify(filter.column)} is not a declared column`);
+  }
+  const notIn = filter.notIn;
+  if (!Array.isArray(notIn) || notIn.length === 0) {
+    problems.push(`${table}: rowFilter needs a non-empty notIn list`);
+  } else {
+    for (const value of notIn as unknown[]) {
+      if (typeof value !== 'string' || !ROW_FILTER_VALUE.test(value)) {
+        problems.push(`${table}: rowFilter value ${JSON.stringify(value)} is not a plain word`);
+      }
+    }
+  }
+  if (!nonEmpty(filter.reason)) problems.push(`${table}: rowFilter has no reason`);
+  return problems;
+}
+
+/**
+ * DE-6 SA-Q1 (2): how the reader keys the table. Without `rowKey` the keyset
+ * reader pages on `id`, so `id` must be declared. With it, the single-row
+ * read's preconditions hold: `'user_id'` only, a `user_id` scope, the key not
+ * selected, no row filter.
+ */
+function rowKeyProblems(
+  descriptor: { table: string; scope?: unknown },
+  value: Record<string, unknown>,
+  declared: ReadonlySet<string>
+): string[] {
+  const { table } = descriptor;
+  if (!('rowKey' in value) || value.rowKey === undefined) {
+    return declared.has('id') ? [] : [`${table}: include without rowKey must list id (the keyset reader pages on it)`];
+  }
+  const problems: string[] = [];
+  if (value.rowKey !== 'user_id') problems.push(`${table}: rowKey must be 'user_id', got ${JSON.stringify(value.rowKey)}`);
+  const scope = descriptor.scope;
+  if (!isObject(scope) || scope.kind !== 'user_id') problems.push(`${table}: rowKey needs a user_id scope`);
+  if (declared.has('user_id')) problems.push(`${table}: rowKey user_id must not be in columns (it is the owner id)`);
+  if (value.rowFilter !== undefined) problems.push(`${table}: rowKey and rowFilter together are not allowed`);
+  return problems;
+}
+
+/**
+ * DE-7 V-1 / V-3 (SA-Q2, the two-key opt-in), on ONE descriptor. A `via`
+ * scope on an include needs `viaParent`; `viaParent` needs a `via` scope and
+ * must equal it (`{ parent, fk }`, nothing else, non-empty strings); the
+ * child lists its `fk` (and `id`, by `rowKeyProblems`, so it keyset pages)
+ * and has no `rowKey` and no `rowFilter`. The parent half (V-2) needs the
+ * whole descriptor set: `viaParentProblems`.
+ */
+function viaShapeProblems(
+  descriptor: { table: string; scope?: unknown },
+  value: Record<string, unknown>,
+  declared: ReadonlySet<string>
+): string[] {
+  const { table } = descriptor;
+  const scope = isObject(descriptor.scope) ? descriptor.scope : undefined;
+  const isVia = scope?.kind === 'via';
+  if (!('viaParent' in value) || value.viaParent === undefined) {
+    return isVia ? [`${table}: a via-scoped include needs viaParent (the parent-scoped read's opt-in)`] : [];
+  }
+  const via = value.viaParent;
+  if (!isObject(via) || !nonEmpty(via.parent) || !nonEmpty(via.fk) || Object.keys(via).length !== 2) {
+    return [`${table}: viaParent must be exactly { parent, fk }, both non-empty strings`];
+  }
+  const problems: string[] = [];
+  if (!isVia) problems.push(`${table}: viaParent needs a via scope`);
+  else if (via.parent !== scope?.parent || via.fk !== scope?.fk) problems.push(`${table}: viaParent must equal the via scope { parent, fk }`);
+  if (!declared.has(String(via.fk))) problems.push(`${table}: viaParent fk ${String(via.fk)} must be in columns`);
+  if (value.rowKey !== undefined) problems.push(`${table}: viaParent and rowKey together are not allowed`);
+  if (value.rowFilter !== undefined) problems.push(`${table}: viaParent and rowFilter together are not allowed`);
+  return problems;
+}
+
+/**
+ * DE-7 V-2: the parent a `viaParent` names is ONE descriptor of the same set,
+ * `user_id`-scoped (one hop: no via-of-via), an `include` with `id` in its
+ * columns, no `rowKey` and no `rowFilter` (a filtered parent would need its
+ * children filtered the same way: an SA item).
+ */
+function viaParentLinkProblems(child: { table: string; export?: unknown }, descriptors: readonly PurgeDescriptor[]): string[] {
+  const value = child.export;
+  if (!isObject(value) || !isObject(value.viaParent) || !nonEmpty(value.viaParent.parent)) return [];
+  const parentTable = String(value.viaParent.parent);
+  const parents = descriptors.filter((d) => d.table === parentTable);
+  if (parents.length !== 1) return [`${child.table}: viaParent parent ${parentTable} must be exactly one descriptor, found ${parents.length}`];
+  const parent = parents[0];
+  const problems: string[] = [];
+  if (parent.scope.kind !== 'user_id') problems.push(`${child.table}: viaParent parent ${parentTable} must be user_id-scoped (one hop only)`);
+  const pe = parent.export as unknown;
+  if (!isObject(pe) || pe.kind !== 'include') {
+    problems.push(`${child.table}: viaParent parent ${parentTable} must be include`);
+    return problems;
+  }
+  if (!Array.isArray(pe.columns) || !(pe.columns as unknown[]).includes('id')) problems.push(`${child.table}: viaParent parent ${parentTable} must list id`);
+  if (pe.rowKey !== undefined) problems.push(`${child.table}: viaParent parent ${parentTable} must have no rowKey`);
+  if (pe.rowFilter !== undefined) problems.push(`${child.table}: viaParent parent ${parentTable} must have no rowFilter`);
+  return problems;
+}
+
+/**
+ * DE-7 V-8: the parent half of the `viaParent` rules (V-2) over the whole
+ * descriptor set, so a bad descriptor fails CI before it fails a section at
+ * request time. Pure: the parent is looked up in the same array.
+ */
+export function viaParentProblems(descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS): string[] {
+  return descriptors
+    .filter((d) => d.export?.kind === 'include' && d.export.viaParent !== undefined)
+    .flatMap((d) => viaParentLinkProblems(d, descriptors));
+}
+
+/**
+ * DE-7 C-5: the request-time half. Runs V-1…V-3 on a `via` include that
+ * carries `viaParent` and returns its parent descriptor, resolved by the table
+ * name ON THE CHILD DESCRIPTOR (a code constant), never from any input.
+ * Throws `ExportClassificationError` (`invalid_via_parent`) on any problem:
+ * fail closed, no query. Jest does not type-check, so the shape is
+ * re-checked here, not trusted.
+ */
+export function viaParentOf(child: PurgeDescriptor, descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS): PurgeDescriptor {
+  const value = child.export as unknown;
+  if (!isObject(value) || value.kind !== 'include' || !Array.isArray(value.columns)) {
+    throw new ExportClassificationError('invalid_via_parent', child.table, 'a parent-scoped read needs an include');
+  }
+  const declared = new Set((value.columns as unknown[]).filter((c): c is string => typeof c === 'string'));
+  const problems = [...viaShapeProblems(child, value, declared), ...viaParentLinkProblems(child, descriptors)];
+  if (!declared.has('id')) problems.push(`${child.table}: a parent-scoped read needs the id column`);
+  if (!isObject(value.viaParent)) problems.push(`${child.table}: no viaParent`);
+  if (problems.length > 0) throw new ExportClassificationError('invalid_via_parent', child.table, problems.join('; '));
+  const parentTable = String((value.viaParent as Record<string, unknown>).parent);
+  return descriptors.filter((d) => d.table === parentTable)[0];
 }
 
 /** Problems with one bucket descriptor's `export` value (T-1, T-2, T-7). */
@@ -266,6 +490,32 @@ export function sectionRegistryProblems(
 }
 
 // ── Column drift (FR-E19, report-only) ──────────────────────────────────────
+
+/**
+ * DE-4 SA C-6: every `rowFilter` column is NOT NULL live. SQL `NOT IN` drops a
+ * NULL row silently, so a nullable filter column would hide rows the owner
+ * holds. A filter column missing from `liveColumns`, or without
+ * `is_nullable = 'NO'`, is a problem (fail closed: unknown is not NOT NULL).
+ * Tables absent from `liveColumns` entirely are skipped, as in
+ * `exportColumnsMissing`.
+ */
+export function rowFilterNullabilityProblems(
+  liveColumns: ReadonlyArray<{ table_name: string; column_name: string; is_nullable?: string }>,
+  descriptors: readonly PurgeDescriptor[] = PURGE_DESCRIPTORS
+): string[] {
+  const problems: string[] = [];
+  for (const d of descriptors) {
+    if (d.export?.kind !== 'include' || !d.export.rowFilter) continue;
+    const tableColumns = liveColumns.filter((c) => c.table_name === d.table);
+    if (tableColumns.length === 0) continue;
+    const { column } = d.export.rowFilter;
+    const live = tableColumns.find((c) => c.column_name === column);
+    if (live?.is_nullable !== 'NO') {
+      problems.push(`${d.table}: rowFilter column ${column} is not NOT NULL live (is_nullable ${JSON.stringify(live?.is_nullable ?? null)})`);
+    }
+  }
+  return problems;
+}
 
 export interface ExportColumnRef {
   table: string;

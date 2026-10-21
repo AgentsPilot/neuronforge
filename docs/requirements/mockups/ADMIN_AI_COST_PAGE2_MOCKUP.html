@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mockup: Admin AI cost, Page 2 (sample data)</title>
+<!--
+  Static mockup for docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md §4.
+  Same style and rules as the Page 1 mockup: leading / lagging icon with a hover
+  explanation on every KPI, all amounts in $. No scripts, no external files.
+  Every number is SAMPLE DATA. Charged AI cost matches the Page 1 mockup ($42.18).
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; font-size: 14px; }
+  .sample { background: #7c2d12; color: #fed7aa; text-align: center; padding: 6px; font-size: 12px; letter-spacing: .04em; }
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 210px; background: #020617; border-right: 1px solid #1e293b; padding: 16px 12px; flex-shrink: 0; }
+  .sidebar h4 { margin: 16px 8px 6px; font-size: 11px; text-transform: uppercase; color: #64748b; letter-spacing: .08em; }
+  .nav { display: block; padding: 7px 10px; border-radius: 8px; color: #cbd5e1; text-decoration: none; }
+  .nav.on { background: #312e81; color: #fff; }
+  .main { flex: 1; padding: 24px 28px; margin-right: 380px; }
+  h1 { margin: 0; font-size: 22px; }
+  .purpose { color: #94a3b8; margin: 4px 0 0; }
+  .vocab { margin-top: 10px; background: #111827; border: 1px solid #1f2937; border-left: 3px solid #6366f1; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #cbd5e1; line-height: 1.6; }
+  .vocab b { color: #fff; }
+  .strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 20px 0 16px; }
+  .tile { position: relative; display: block; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
+  .tile:hover { border-color: #6366f1; }
+  .tile .label { font-size: 12px; color: #94a3b8; padding-right: 26px; }
+  .tile .value { font-size: 22px; font-weight: 600; margin: 4px 0 2px; color: #fff; }
+  .tile .sub { font-size: 11px; color: #94a3b8; }
+  .chip { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+  .chip.amber { color: #fcd34d; border-color: #b45309; background: #451a03; }
+  .chip.red { color: #fca5a5; border-color: #b91c1c; background: #450a0a; }
+  .chip.ok { color: #86efac; border-color: #15803d; background: #052e16; }
+  .chip.neutral { color: #cbd5e1; border-color: #475569; background: #0f172a; }
+  .ind { position: absolute; top: 10px; right: 10px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid #64748b; color: #cbd5e1; font-size: 12px; line-height: 18px; text-align: center; cursor: help; background: #0f172a; }
+  .ind:focus { outline: 2px solid #818cf8; outline-offset: 2px; }
+  .tip { display: none; position: absolute; z-index: 20; top: 26px; right: -6px; width: 250px; background: #020617; border: 1px solid #6366f1; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.4; color: #e2e8f0; text-align: left; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .tip strong { display: block; margin-top: 6px; color: #a5b4fc; }
+  .ind:hover .tip, .ind:focus .tip { display: block; }
+  .legend { font-size: 12px; color: #94a3b8; margin: -6px 0 14px; }
+  .bar { display: flex; gap: 12px; align-items: flex-end; background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 12px 14px; flex-wrap: wrap; }
+  .field label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+  .presets span { display: inline-block; padding: 5px 10px; border: 1px solid #334155; border-radius: 8px; margin-right: 4px; font-size: 12px; color: #cbd5e1; }
+  .presets span.on { background: #4338ca; border-color: #4338ca; color: #fff; }
+  .input { padding: 6px 10px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #94a3b8; min-width: 220px; }
+  .btn { padding: 6px 12px; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; background: #1e293b; }
+  .readat { margin-left: auto; font-size: 11px; color: #64748b; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #334155; margin: 20px 0 16px; }
+  .tab { padding: 8px 14px; color: #94a3b8; border-bottom: 2px solid transparent; }
+  .tab.on { color: #fff; border-bottom-color: #818cf8; }
+  .section { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .shead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .section h2 { margin: 0; font-size: 16px; }
+  .ssub { color: #94a3b8; font-size: 12px; margin-top: 2px; }
+  .bkpi { position: relative; background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 8px 36px 8px 12px; min-width: 200px; }
+  .bkpi .label { font-size: 11px; color: #94a3b8; }
+  .bkpi .value { font-size: 18px; font-weight: 600; color: #fff; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+  .panel { background: #0f172a; border: 1px solid #1f2937; border-radius: 10px; padding: 10px 12px; }
+  .panel h3 { margin: 0 0 6px; font-size: 13px; color: #cbd5e1; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #94a3b8; font-weight: 500; padding: 5px 6px; border-bottom: 1px solid #334155; }
+  td { padding: 5px 6px; border-bottom: 1px solid #1e293b; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .note { font-size: 11px; color: #94a3b8; margin-top: 8px; }
+  .label-whole { font-size: 11px; color: #fcd34d; margin-top: 2px; }
+  .link { color: #a5b4fc; text-decoration: none; font-size: 12px; }
+  .open { font-size: 11px; color: #a5b4fc; border: 1px solid #4338ca; border-radius: 6px; padding: 1px 6px; }
+  tr.sel td { background: #1e1b4b; }
+  .drawer { position: fixed; top: 0; right: 0; width: 380px; height: 100vh; background: #0b1222; border-left: 1px solid #334155; box-shadow: -12px 0 30px rgba(0,0,0,.5); padding: 18px; overflow-y: auto; }
+  .drawer h2 { margin: 4px 0 2px; font-size: 18px; }
+  .drawer .close { float: right; color: #94a3b8; border: 1px solid #334155; border-radius: 6px; padding: 0 8px; }
+  .dsec { border-top: 1px solid #1f2937; margin-top: 14px; padding-top: 10px; }
+  .dsec h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+  dl { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; margin: 0; font-size: 13px; }
+  dt { color: #94a3b8; }
+  dd { margin: 0; text-align: right; color: #fff; font-variant-numeric: tabular-nums; }
+  .dh { color: #64748b; font-size: 11px; text-align: right; }
+</style>
+</head>
+<body>
+<div class="sample">MOCKUP — SAMPLE DATA ONLY. No figure on this page is real.</div>
+<div class="shell">
+
+<nav class="sidebar" aria-label="Admin">
+  <h4>Monitor</h4>
+  <a class="nav" href="#">Health</a>
+  <a class="nav" href="#">Scheduled jobs &amp; queues</a>
+  <h4>Money</h4>
+  <a class="nav" href="#">Finance</a>
+  <a class="nav on" href="#">AI cost</a>
+  <h4>Businesses</h4>
+  <a class="nav" href="#">Businesses</a>
+  <a class="nav" href="#">Model pricing</a>
+</nav>
+
+<main class="main">
+  <h1>AI cost</h1>
+  <p class="purpose">What does AI cost us, did we charge for all of it, and is the charging correct? All amounts in US dollars. <span class="chip neutral">Read-only</span></p>
+  <div class="vocab">
+    <b>Charged AI cost:</b> what Business OS AI actions cost us that we billed to a customer in credits (the credit ledger, from 29 Sep 2026). The business figure.<br>
+    <b>Recorded AI cost:</b> every AI call the system logged, charged or not (the usage log). The operations figure. The two are never added together.
+  </div>
+
+  <!-- KPI strip A-K1 to A-K5 -->
+  <div class="strip">
+    <a class="tile" href="#charged">
+      <div class="label">Charged AI cost</div>
+      <div class="value">$42.18</div>
+      <div class="sub">4,218 credits &middot; 1,306 charges &middot; same figure as Finance</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Lagging indicator. What AI actions cost us that we charged credits for, in the window." title="Lagging indicator: charged AI cost">&#9719;
+        <span class="tip">What Business OS AI actions cost us that we billed in credits, for charges made in the window.<strong>Lagging indicator: it tells you what already happened.</strong></span></span>
+    </a>
+    <a class="tile" href="#calls">
+      <div class="label">Recorded AI cost</div>
+      <div class="value">$45.24</div>
+      <div class="sub">1,388 calls &middot; Business OS only</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Lagging indicator. Every Business OS AI call logged in the window, charged or not." title="Lagging indicator: recorded AI cost">&#9719;
+        <span class="tip">Every Business OS AI call the system logged in the window, charged or not, priced from the model price table.<strong>Lagging indicator: it tells you what already happened.</strong></span></span>
+    </a>
+    <a class="tile" href="#leak">
+      <div class="label">Recorded above charged</div>
+      <div class="value">$3.06</div>
+      <div class="sub"><span class="chip amber">Watch</span> 6.8% of recorded</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Recorded AI cost minus charged AI cost for the same window." title="Leading indicator: spend we did not charge">&#10148;
+        <span class="tip">Recorded AI cost minus charged AI cost, for the same window: AI spend we may not have billed for.<strong>Leading indicator: it tells you early what is coming (a leak, before it becomes a loss).</strong></span></span>
+    </a>
+    <a class="tile" href="#periods">
+      <div class="label">Billing periods not matching</div>
+      <div class="value">0</div>
+      <div class="sub"><span class="chip ok">All match</span> of 14 checked</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Billing periods whose stored total disagrees with the sum of their charges." title="Leading indicator: ledger check">&#10148;
+        <span class="tip">Billing periods whose stored total disagrees with the sum of their charges. Red when above 0.<strong>Leading indicator: it tells you early what is coming (a ledger error, before a customer sees a wrong balance).</strong></span></span>
+    </a>
+    <a class="tile" href="#fallback">
+      <div class="label">Fallback-priced charges</div>
+      <div class="value">3</div>
+      <div class="sub">2 reconciled</div>
+      <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Charges priced from a fallback because the model had no price." title="Leading indicator: models with no price">&#10148;
+        <span class="tip">Charges priced from a fallback price because the model had no price in the price table: a deliberate over-estimate.<strong>Leading indicator: it tells you early what is coming (a model that needs a price).</strong></span></span>
+    </a>
+  </div>
+  <p class="legend">&#10148; leading indicator &nbsp;&middot;&nbsp; &#9719; lagging indicator &nbsp;&middot;&nbsp; hover over or Tab onto the icon for the explanation</p>
+
+  <!-- Filter bar, This month by default -->
+  <div class="bar">
+    <div class="field"><label>Window</label>
+      <div class="presets"><span>Today</span><span>7 days</span><span>30 days</span><span class="on">This month</span><span>Custom</span></div></div>
+    <div class="field"><label>Business</label><div class="input">All businesses</div></div>
+    <span class="btn">Clear</span>
+    <span class="readat">Read at 2026-10-19 09:12 UTC &middot; <span class="btn">Refresh</span></span>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <span class="tab on" role="tab" aria-selected="true">Summary &amp; checks</span>
+    <span class="tab" role="tab" id="calls">Calls</span>
+  </div>
+
+  <!-- Charged breakdown -->
+  <section class="section" id="charged">
+    <div class="shead"><div><h2>Charged breakdown</h2><div class="ssub">Charges made 2026-10-01 to 2026-10-19 UTC &middot; net, including corrections &middot; deleted accounts: $0.22 on their own line</div></div></div>
+    <div class="two">
+      <div class="panel"><h3>By action type</h3>
+        <table>
+          <tr><th>Action</th><th class="num">Charges</th><th class="num">Cost</th><th class="num">p50</th><th class="num">p90</th></tr>
+          <tr><td>Chat answer</td><td class="num">812</td><td class="num">$21.40</td><td class="num">$0.021</td><td class="num">$0.061</td></tr>
+          <tr><td>Insight summary</td><td class="num">214</td><td class="num">$11.02</td><td class="num">$0.048</td><td class="num">$0.090</td></tr>
+          <tr><td>Message draft</td><td class="num">280</td><td class="num">$9.76</td><td class="num">$0.031</td><td class="num">$0.072</td></tr>
+        </table>
+      </div>
+      <div class="panel"><h3>By trigger</h3>
+        <table>
+          <tr><th>Trigger</th><th class="num">Cost</th><th class="num">Credits</th></tr>
+          <tr><td>Owner</td><td class="num">$29.40</td><td class="num">2,940</td></tr>
+          <tr><td>Scheduled</td><td class="num">$10.12</td><td class="num">1,012</td></tr>
+          <tr><td>External</td><td class="num">$2.66</td><td class="num">266</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Leak check, with its block KPI -->
+  <section class="section" id="leak">
+    <div class="shead"><div><h2>Leak check</h2><div class="ssub">Calls recorded but not charged, per business &middot; on demand, up to 7 days</div></div>
+      <div class="bkpi"><div class="label">Businesses with uncharged calls</div><div class="value">2</div>
+        <span class="ind" tabindex="0" role="img" aria-label="Leading indicator. Businesses with AI calls recorded but not charged in the checked days." title="Leading indicator: businesses with uncharged calls">&#10148;
+          <span class="tip">Businesses with AI calls the system recorded but never charged, in the days checked.<strong>Leading indicator: it tells you early what is coming (which charging gap to fix).</strong></span></span></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <table>
+        <tr><th>Business</th><th class="num">Calls not charged</th><th class="num">Recorded, not charged</th><th></th></tr>
+        <tr><td>Cohen Dental</td><td class="num">31</td><td class="num">$1.12</td><td><span class="open">Open</span></td></tr>
+        <tr><td>Platform account (not a business)</td><td class="num">54</td><td class="num">$1.48</td><td></td></tr>
+      </table>
+      <div class="note">Checked 2026-10-13 to 2026-10-19 UTC &middot; <span class="btn">Run leak check again</span></div>
+    </div>
+  </section>
+
+  <!-- Period check, whole billing periods -->
+  <section class="section" id="periods">
+    <div class="shead"><div><h2>Period check</h2><div class="ssub">Stored period total against the sum of its charges</div>
+      <div class="label-whole">Whole billing periods: can include charges from before the window, so these totals can differ from the tiles above.</div></div></div>
+    <div class="panel" style="margin-top:12px">
+      <table>
+        <tr><th>Business</th><th>Period starts</th><th class="num">Stored</th><th class="num">From charges</th><th>Match</th><th></th></tr>
+        <tr class="sel"><td>Sunrise Yoga Studio</td><td>2026-10-12</td><td class="num">$6.81</td><td class="num">$6.81</td><td><span class="chip ok">Matches</span></td><td><span class="open">Open</span></td></tr>
+        <tr><td>Cohen Dental</td><td>2026-10-03</td><td class="num">$7.40</td><td class="num">$7.40</td><td><span class="chip ok">Matches</span></td><td><span class="open">Open</span></td></tr>
+        <tr><td>Blue Door Bakery</td><td>2026-09-29</td><td class="num">$5.02</td><td class="num">$5.02</td><td><span class="chip ok">Matches</span></td><td><span class="open">Open</span></td></tr>
+      </table>
+      <div class="note">Showing 3 of 14 periods.</div>
+    </div>
+  </section>
+
+  <!-- Fallback list -->
+  <section class="section" id="fallback">
+    <div class="shead"><div><h2>Fallback-priced charges</h2><div class="ssub">Charged from a fallback price because the model had no price: a deliberate over-estimate</div></div>
+      <a class="link" href="#">Open Model pricing &rarr;</a></div>
+    <div class="panel" style="margin-top:12px">
+      <table>
+        <tr><th>When (UTC)</th><th>Business</th><th>Action</th><th class="num">Cost</th><th>Reconciled</th></tr>
+        <tr><td>2026-10-17 14:02</td><td>Cohen Dental</td><td>Insight summary</td><td class="num">$0.120</td><td><span class="chip ok">Yes</span></td></tr>
+        <tr><td>2026-10-17 14:05</td><td>Cohen Dental</td><td>Insight summary</td><td class="num">$0.120</td><td><span class="chip ok">Yes</span></td></tr>
+        <tr><td>2026-10-18 08:41</td><td>Blue Door Bakery</td><td>Chat answer</td><td class="num">$0.090</td><td><span class="chip amber">Not yet</span></td></tr>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- Example drawer: one billing period (read-only) -->
+<aside class="drawer" role="dialog" aria-label="Billing period">
+  <span class="close" aria-label="Close">&times;</span>
+  <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Billing period</div>
+  <h2>Sunrise Yoga Studio</h2>
+  <div><span class="chip neutral">Essentials</span> <span class="chip ok">Matches</span> <span class="chip neutral">Read-only</span></div>
+  <div class="note">Period 2026-10-12 to 2026-11-12 UTC (whole period, not the window)</div>
+
+  <div class="dsec"><h3>Stored vs rebuilt from charges</h3>
+    <dl>
+      <dt></dt><dd class="dh">Stored</dd><dd class="dh">From charges</dd>
+      <dt>Cost</dt><dd>$6.81</dd><dd>$6.81</dd>
+      <dt>Credits</dt><dd>681</dd><dd>681</dd>
+      <dt>Owner</dt><dd>520</dd><dd>520</dd>
+      <dt>Scheduled</dt><dd>131</dd><dd>131</dd>
+      <dt>External</dt><dd>30</dd><dd>30</dd>
+      <dt>Corrections</dt><dd>0</dd><dd>0</dd>
+      <dt>Charges</dt><dd>214</dd><dd>214</dd>
+    </dl></div>
+
+  <div class="dsec"><h3>This business in the window</h3>
+    <dl>
+      <dt>Charged AI cost</dt><dd></dd><dd>$8.94</dd>
+      <dt>Recorded AI cost</dt><dd></dd><dd>$9.35</dd>
+      <dt>Recorded above charged</dt><dd></dd><dd>$0.41</dd>
+      <dt>Fallback-priced charges</dt><dd></dd><dd>0</dd>
+    </dl>
+    <div class="note">The window covers part of two periods, so these figures differ from the period above.</div></div>
+
+  <div class="dsec">
+    <span class="btn">Run leak check for this business</span><br><br>
+    <a class="link" href="#">Open this business's calls &rarr;</a><br>
+    <a class="link" href="#">Open in Finance (same window) &rarr;</a>
+  </div>
+</aside>
+
+</div>
+</body>
+</html>

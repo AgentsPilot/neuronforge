@@ -14,20 +14,28 @@
  * could-not-load line ONLY when the section is `unknown`: Section 3's recorded
  * AI cost is its own read and must still show when the charged read failed.
  * A section that passes none renders exactly the DOM it rendered before.
+ *
+ * Finance F-5 (SA-W8): the section carries its `id` as a DOM id, so a KPI
+ * tile can jump to it with a plain `#<id>` anchor, as on Jobs and Archiving.
+ * The landmark is unchanged: still named by its heading (A-9).
  */
 
 import type { ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
 import type { FinanceSectionStatus } from '@/lib/business-os/finance/financeTypes';
 import { RETRY, SECTION_COULD_NOT_LOAD, SECTION_OK, SECTION_PARTIAL } from '../financeCopy';
 
-const BADGE: Record<FinanceSectionStatus, { text: string; className: string }> = {
-  ok: { text: SECTION_OK, className: 'border-slate-600 text-slate-300' },
-  partial: { text: SECTION_PARTIAL, className: 'border-amber-500/40 text-amber-300' },
-  unknown: { text: SECTION_COULD_NOT_LOAD, className: 'border-slate-600 text-slate-400' },
+/**
+ * The section's own status as the shared chip (F-1, §5.9). "OK" is neutral:
+ * no green on a section that merely loaded. "Partial" is warn and "Could not
+ * load" is unknown, so both carry an icon beside the words (A-7).
+ */
+const BADGE: Record<FinanceSectionStatus, { text: string; tone: StatusTone }> = {
+  ok: { text: SECTION_OK, tone: 'neutral' },
+  partial: { text: SECTION_PARTIAL, tone: 'warn' },
+  unknown: { text: SECTION_COULD_NOT_LOAD, tone: 'unknown' },
 };
 
 interface Props {
@@ -41,9 +49,15 @@ interface Props {
   badge?: { tone: StatusTone; label: string };
   /** M-4 (SA-W98): content of its own read, shown under the could-not-load line when the section is unknown. */
   alsoWhenUnknown?: ReactNode;
+  /**
+   * Slice 8.3 (SA-W-8.3-2, E-100): false hides the right-hand status chip, for a
+   * block with nothing read yet (the closed History block). Default true: every
+   * other caller's DOM is unchanged.
+   */
+  statusChip?: boolean;
 }
 
-export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge, alsoWhenUnknown }: Props) {
+export function FinanceSection({ id, title, subtitle, status, onRetry, children, badge, alsoWhenUnknown, statusChip = true }: Props) {
   const headingId = `${id}-heading`;
   const heading = (
     <h2 id={headingId} className="text-base font-semibold text-white">
@@ -52,6 +66,7 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
   );
   return (
     <section
+      id={id}
       aria-labelledby={headingId}
       data-testid={`section-${id}`}
       data-status={status}
@@ -71,9 +86,11 @@ export function FinanceSection({ id, title, subtitle, status, onRetry, children,
           )}
           <p className="text-xs text-slate-400">{subtitle}</p>
         </div>
-        <span className={cn('rounded border px-2 py-0.5 text-[11px]', BADGE[status].className)} data-testid={`section-${id}-status`}>
-          {BADGE[status].text}
-        </span>
+        {statusChip && (
+          <StatusChip tone={BADGE[status].tone} testId={`section-${id}-status`}>
+            {BADGE[status].text}
+          </StatusChip>
+        )}
       </header>
       {status === 'unknown' ? (
         <div className="flex items-center gap-3 text-sm text-slate-300" role="status">

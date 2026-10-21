@@ -363,28 +363,16 @@ export interface AiModelPricing {
    */
   input_cost_per_token: number | string;
   output_cost_per_token: number | string;
+  /**
+   * Per token, for input served from the provider's prompt cache. NULL means
+   * "not set": the charge then uses the provider's derived rule (OpenAI: half
+   * the input rate). A 0 is treated as not set too (AI model price review
+   * slice 7, O-5). Optional because some readers select a column subset.
+   */
+  cached_input_cost_per_token?: number | string | null;
   effective_date: string;
   retired_date: string | null;
   created_at: string;
-}
-
-/** Everything needed to insert one pricing row. The caller owns the clock. */
-export interface CreateAiModelPricingInput {
-  provider: string;
-  model_name: string;
-  input_cost_per_token: number;
-  output_cost_per_token: number;
-  effective_date: string;
-}
-
-/** One catalogue entry handed to `syncMany`. Same shape as an insert. */
-export type AiModelPricingSyncEntry = CreateAiModelPricingInput;
-
-/** Per-model outcome of a sync run; the values are model names. */
-export interface AiModelPricingSyncResult {
-  updated: string[];
-  created: string[];
-  failed: string[];
 }
 
 /**
@@ -399,6 +387,37 @@ export interface AiModelPricingExactRow {
   input_cost_per_token: string;
   output_cost_per_token: string;
   cached_input_cost_per_token: string | null;
+  effective_date: string;
+  created_at: string;
+}
+
+/**
+ * One active row of `ai_model_image_pricing` (AI model price review slice 7):
+ * the price of ONE generated image for a provider, model, size and quality.
+ * `cost_per_image` is `numeric`; PostgREST returns it as a number or a string
+ * depending on the path, so the union is the honest type (as on
+ * `AiModelPricing`). Read by the billing reader through
+ * `AiModelImagePricingRepository.listActive()`.
+ */
+export interface AiModelImagePricing {
+  id: string;
+  provider: string;
+  model_name: string;
+  size: string;
+  quality: string;
+  cost_per_image: number | string;
+  effective_date: string;
+  created_at: string;
+}
+
+/** The same row with `cost_per_image` cast to TEXT, so the exact decimal survives (admin comparison only). */
+export interface AiModelImagePricingExactRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  size: string;
+  quality: string;
+  cost_per_image: string;
   effective_date: string;
   created_at: string;
 }
@@ -496,6 +515,153 @@ export interface AiPricePendingLine {
 }
 
 /**
+ * A price line as Apply and Dismiss read it (AI model price review slice 8):
+ * the proposed prices as submitted (per 1M or per image), the snapshot of what
+ * was charged when it was recorded, and its state. Every number is exact TEXT
+ * (`::text` in the select, SA RC-6): it is compared by value with
+ * `lib/ai/pricing-research/decimal.ts`, never through a JS number.
+ */
+export interface AiPriceDecisionLine {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  provider: string;
+  model_name: string;
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  current_basis: 'table' | 'in_code_fallback' | 'image_setting' | 'unpriced';
+  current_row_id: string | null;
+  current_input_cost_per_token: string | null;
+  current_output_cost_per_token: string | null;
+  current_cached_input_cost_per_token: string | null;
+  current_cost_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  flags: string[];
+  state: 'pending' | 'superseded' | 'applied' | 'dismissed';
+  created_by: string;
+}
+
+/** One line handed to `ai_price_apply_lines`: an id and the admin's own words, nothing else (slice 8, SA 2.5). */
+export interface AiPriceApplyLineInput {
+  line_id: string;
+  reason: string;
+  override_reason?: string;
+}
+
+/** The margin record stored on the apply batch; computed by the server, never by the client (MP-FR-14). */
+export interface AiPriceApplyMargin {
+  needed: boolean;
+  items: Array<Record<string, unknown>>;
+}
+
+/** One row of the apply function's result: one per applied line. */
+export interface AiPriceApplyResultRow {
+  batchId: string;
+  lineId: string;
+  /** Which live table took the new row: token prices or image prices. */
+  liveKind: 'token' | 'image';
+  newRowId: string;
+  retiredRowIds: string[];
+  appliedAt: string;
+}
+
+/** An apply whose margin review is still open (MP-FR-14), as the page shows it. */
+export interface AiPriceOpenMarginReview {
+  id: string;
+  applied_by: string;
+  applied_at: string;
+  line_count: number;
+  margin_items: Array<Record<string, unknown>>;
+}
+
+/**
+ * One stored `ai_model_pricing` row of any state (current, later, superseded,
+ * retired) for the admin price history (AI model price review slice 9). Prices
+ * are exact TEXT (`::text`), never a JS float. `created_at` is nullable in the
+ * captured table definition, so a legacy row may have none.
+ */
+export interface AiModelPricingHistoryRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  input_cost_per_token: string;
+  output_cost_per_token: string;
+  cached_input_cost_per_token: string | null;
+  effective_date: string;
+  retired_date: string | null;
+  created_at: string | null;
+  proposal_id: string | null;
+  proposal_line_id: string | null;
+}
+
+/** The image twin of `AiModelPricingHistoryRow` (slice 9); `cost_per_image` as exact TEXT. */
+export interface AiModelImagePricingHistoryRow {
+  id: string;
+  provider: string;
+  model_name: string;
+  size: string;
+  quality: string;
+  cost_per_image: string;
+  effective_date: string;
+  retired_date: string | null;
+  created_at: string | null;
+  proposal_id: string | null;
+  proposal_line_id: string | null;
+}
+
+/** A bounded history read (slice 9): the newest rows, and whether more exist. */
+export interface PriceHistoryRowsPage<R> {
+  rows: R[];
+  truncated: boolean;
+}
+
+/**
+ * A pending-price line as the price history reads it (slice 9): what Apply
+ * wrote on it (who, when, why), where the price came from, and how it was
+ * entered (the round's `source_kind`, embedded through the line's FK).
+ */
+export interface AiPriceAppliedLineRecord {
+  id: string;
+  proposal_id: string;
+  kind: 'token' | 'image';
+  image_size: string | null;
+  image_quality: string | null;
+  input_per_1m: string | null;
+  output_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  price_per_image: string | null;
+  source_url: string;
+  checked_on: string;
+  state: 'pending' | 'superseded' | 'applied' | 'dismissed';
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_reason: string | null;
+  override_reason: string | null;
+  apply_batch_id: string | null;
+  created_by: string;
+  created_at: string;
+  ai_price_proposals: { source_kind: string } | null;
+}
+
+/** One apply batch as the price history reads it (slice 9): no margin items. */
+export interface AiPriceApplyBatchRecord {
+  id: string;
+  applied_by: string;
+  applied_at: string;
+  line_count: number;
+  margin_review_needed: boolean;
+  margin_review_done: boolean;
+  margin_review_by: string | null;
+  margin_review_at: string | null;
+  margin_review_note: string | null;
+}
+
+/**
  * A row of `boost_packs` — the agent-platform Pilot-Credit boost catalog, a
  * platform-wide table with no `user_id`. See the header of `BoostPackRepository`
  * for why the mandatory user scoping does not apply. PostgREST returns the
@@ -536,6 +702,36 @@ export interface BoostPackWriteInput {
   bonus_credits?: number;
   badge_text?: string | null;
   is_active?: boolean | null;
+}
+
+/**
+ * A row of `exchange_rates`, the admin-maintained rate table (Admin Exchange
+ * Rates slice 1a). Platform-wide, no `user_id`: see the header of
+ * `ExchangeRatesRepository`. `rate_to_usd` is read cast to text
+ * (`rate_to_usd::text`), so the exact `numeric(12,6)` value never passes
+ * through a JS number. `is_enabled` is nullable live (DEFAULT true, no NOT NULL).
+ */
+export interface ExchangeRateRow {
+  id: string;
+  currency_code: string;
+  currency_name: string;
+  currency_symbol: string;
+  rate_to_usd: string;
+  is_enabled: boolean | null;
+  decimal_places: number | null;
+  last_updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** A row of `exchange_rate_history`, written only by the live trigger on a rate change. Rates read as text. */
+export interface ExchangeRateHistoryRow {
+  id: string;
+  currency_code: string;
+  old_rate: string | null;
+  new_rate: string;
+  changed_by: string | null;
+  changed_at: string;
+  change_reason: string | null;
 }
 
 export interface SystemSettingsConfig {
@@ -1011,6 +1207,17 @@ export interface BusinessOsAccountHoldFactsRow extends BusinessOsAccountHoldFact
 }
 
 /**
+ * Money MK-5b (§5.1, G-2): where an account came from, for the admin Finance
+ * Converted this month list. `first_paid_at` is a cross-check only.
+ */
+export interface BusinessOsAccountSignupSourceRow {
+  account_id: string;
+  source: BusinessOsAccountHoldFacts['source'];
+  /** The lineage `first_paid_at` stamp, renamed here so the stamp's own name stays with its known readers (P5-C4). */
+  stamped_at: string | null;
+}
+
+/**
  * Plan payments P-5b.2 (S5-8, SA C-11): one (account, invoice) pair the admin
  * paid line asks the money history about. Both come from the SAME lineage row
  * (`account_id`, `first_payment_ref`), and a money row is kept only when it
@@ -1083,3 +1290,133 @@ export type FriendFinaliseOutcome =
 export type AdminPaidFinaliseOutcome =
   | { outcome: 'finalised' | 'already_finalised'; inviteId: string }
   | { outcome: 'not_matched' };
+
+// ============================================================================
+// Data export jobs (DE-8a, table business_os_data_exports, migration 20261074)
+// ============================================================================
+
+/** `queued` is reserved for Phase 2 and never written in Phase 1. */
+export type DataExportJobStatus = 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+export type DataExportFailureReason = 'over_ceiling' | 'timeout' | 'error';
+export type DataExportRequesterKind = 'owner' | 'admin';
+
+/** One export job. Dates, counts and bytes only, never exported content (§0.4.1 E). */
+export interface DataExportJob {
+  id: string;
+  user_id: string;
+  /** The auth user id of whoever started it: the owner, or the admin from the session (SA Q-2). */
+  requested_by: string;
+  requested_by_kind: DataExportRequesterKind;
+  status: DataExportJobStatus;
+  failure_reason: DataExportFailureReason | null;
+  bytes: number | null;
+  file_count: number | null;
+  row_count: number | null;
+  created_at: string;
+  finished_at: string | null;
+  ready_at: string | null;
+  expires_at: string | null;
+  expired_at: string | null;
+  owner_downloaded_at: string | null;
+  updated_at: string;
+}
+
+/** What the start function answered. `retryAt` is when the refusal stops applying. */
+export type DataExportStartOutcome =
+  | { outcome: 'started'; jobId: string }
+  | { outcome: 'in_progress'; retryAt: string }
+  | { outcome: 'daily_limit'; retryAt: string };
+
+/** Sizes recorded when a job finishes. */
+export interface DataExportJobCounts {
+  bytes: number;
+  fileCount: number;
+  rowCount: number;
+}
+
+/** The cross-account sweep reads (cron only): just enough to scope each effect by the row's own owner. */
+export interface DataExportJobRef {
+  id: string;
+  user_id: string;
+}
+
+/**
+ * DE-10a (SA-2, W10-6): a sweep row with its requester kind, so the cron puts
+ * the audit row of an admin-prepared job off the owner's account. Typed as the
+ * stored kind, but the sweep treats any other value as admin (fails toward hidden).
+ */
+export interface DataExportSweepRef extends DataExportJobRef {
+  requested_by_kind: DataExportRequesterKind;
+}
+
+export interface DataExportJobState extends DataExportJobRef {
+  status: DataExportJobStatus;
+}
+
+// ============================================================================
+// Data export files and the export bucket (DE-8b)
+// ============================================================================
+
+/**
+ * A listing budget shared (mutated) across calls: a wall-clock deadline and a
+ * number of storage calls left. Hitting it gives `truncated: true`.
+ */
+export interface ExportFileBudget {
+  deadlineAt: number;
+  callsLeft: number;
+}
+
+/** One stored object of the owner, as the listing reported it. */
+export interface ExportOwnerObject {
+  /** The full storage key, always `${userId}/...`. Internal: never written to the zip. */
+  key: string;
+  /** `metadata.size`; 0 when the listing did not say (the real bytes are counted on download). */
+  size: number;
+  contentType: string | null;
+}
+
+export interface ExportOwnerObjects {
+  objects: ExportOwnerObject[];
+  /** Names dropped as unsafe (F-3); should always be 0. */
+  rejected: number;
+  truncated: boolean;
+}
+
+/** The uuid folders at a bucket's root (the size watch). */
+export interface ExportOwnerFolders {
+  owners: string[];
+  /** Root entries that are not a uuid folder (never descended). */
+  skipped: number;
+  truncated: boolean;
+}
+
+/** A live `contact_documents` row, for matching files (never exported as such). */
+export interface ExportLiveDocumentFile {
+  id: string;
+  contact_id: string | null;
+  storage_path: string | null;
+  storage_bucket: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+}
+
+/** A `user_media` row's id and key, for linking pictures to records. */
+export interface ExportMediaPath {
+  id: string;
+  storage_path: string | null;
+}
+
+/** One `{user_id}/{job_id}/1.zip` found by the export bucket sweep. */
+export interface ExportBucketObject {
+  userId: string;
+  jobId: string;
+  /** ISO timestamp, or null when Storage did not say (kept, never guessed). */
+  createdAt: string | null;
+}
+
+export interface ExportBucketListing {
+  objects: ExportBucketObject[];
+  /** Anything not shaped `{uuid}/{uuid}/1.zip`: counted, never removed (SA C-10). */
+  unexpected: number;
+  truncated: boolean;
+}

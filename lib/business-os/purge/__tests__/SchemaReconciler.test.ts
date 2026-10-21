@@ -252,7 +252,13 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
     }
   });
 
-  it('the real set: drift is computed for the two included tables', () => {
+  // DE-4: ten included tables, was two (profiles, plugin_connections).
+  // DE-4 (user 2026-10-15): nine, plugin_connections is excluded (connected apps out).
+  // DE-3: thirteen, + business_addresses, business_profiles, notification_settings, user_preferences.
+  // DE-5: twenty-three, + the ten money tables (payment_*, proposals, saved_payment_methods, stripe_connect_accounts).
+  // DE-6: thirty-three, + the ten intake, email marketing and consent tables.
+  // DE-7: thirty-eight, + smart_links, user_media, website_blocks, website_content, website_pages.
+  it('the real set: drift is computed for every included table', () => {
     // Every real include column live, plus one unclassified live column each.
     const columns = PURGE_DESCRIPTORS.flatMap((x) =>
       x.export.kind === 'include'
@@ -260,10 +266,39 @@ describe('export column drift (data export DE-2, FR-E19): report-only', () => {
         : [{ table_name: x.table, column_name: 'id' }]
     );
     const r = reconcileSchema({ columns, foreign_keys: [] }, PURGE_DESCRIPTORS);
-    expect(r.exportColumnDrift).toEqual([
-      { table: 'plugin_connections', column: 'zz_unclassified' },
-      { table: 'profiles', column: 'zz_unclassified' },
+    const included = PURGE_DESCRIPTORS.filter((x) => x.export.kind === 'include').map((x) => x.table).sort();
+    expect(included).toEqual([
+      'business_addresses',
+      // DE-6.
+      'business_intake_forms',
+      'business_profiles',
+      // DE-6.
+      'business_subscribers',
+      'contact_documents', 'crm_activities', 'crm_contacts', 'crm_pipeline_stages', 'crm_tasks',
+      // DE-6.
+      'email_campaigns', 'email_sequence_enrollments', 'email_sequence_steps', 'email_sequences', 'email_unsubscribes',
+      'marketing_consent_events', 'marketing_consent_settings',
+      'notification_settings',
+      // DE-5: the ten money tables.
+      'payment_invoices', 'payment_plan_installments', 'payment_plan_subscriptions', 'payment_plans', 'payment_processors',
+      'payment_refunds', 'payment_transactions',
+      'profiles',
+      // DE-5.
+      'proposals', 'saved_payment_methods',
+      'scheduling_availability_exceptions', 'scheduling_bookings', 'scheduling_services',
+      // DE-7.
+      'smart_links',
+      // DE-5.
+      'stripe_connect_accounts',
+      // DE-6.
+      'user_intake_settings',
+      // DE-7.
+      'user_media',
+      'user_preferences',
+      // DE-7.
+      'website_blocks', 'website_content', 'website_pages',
     ]);
+    expect(r.exportColumnDrift).toEqual(included.map((table) => ({ table, column: 'zz_unclassified' })));
     expect(r.exportColumnsMissing).toEqual([]);
   });
 

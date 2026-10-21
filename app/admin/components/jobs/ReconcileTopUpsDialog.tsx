@@ -15,53 +15,38 @@
  * flight, and the dialog cannot be dismissed until it answers. The counts are
  * shown in words under the button.
  *
- * Opened by its own `DialogTrigger`, like Drain now, so focus returns to the
- * button on close. Pinned by `app/admin/__tests__/jobsQueues.source.guard.test.ts`
- * (one POST, the literal URL, the literal body) and
- * `jobsQueues.reconcile.render.test.tsx` (REC-1 to REC-3, moved from the
- * drawer pins). A money file: the body is read with `.json(` as before, not
- * through `readJsonBody` (L-4b SA Q-5 precedent).
+ * The confirm step is the shared `AdminConfirmDialog` (follow-ups LF-9): it
+ * carries the send-once ref, the in-flight lock and the busy words, and this
+ * file keeps the request. The opener is a plain button, so focus goes back to
+ * it by hand through `onReturnFocus` (it never unmounts while the dialog is
+ * open: the page does not re-read after a run). Pinned by
+ * `app/admin/__tests__/jobsQueues.source.guard.test.ts` (one POST, the literal
+ * URL, the literal body) and `jobsQueues.reconcile.render.test.tsx` (REC-1 to
+ * REC-3, moved from the drawer pins). A money file: the body is read with
+ * `.json(` as before, not through `readJsonBody` (L-4b SA Q-5 precedent).
  */
 
 import { useRef, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import { clientLogger } from '@/lib/logger/client';
-import { ADMIN_DIALOG_CLASS, ADMIN_DIALOG_TITLE_CLASS } from '@/app/admin/components/layout/adminDialog';
+import { AdminConfirmDialog } from '@/app/admin/components/layout/AdminConfirmDialog';
 import { RECONCILE_COPY, reconcileOutcome } from './reconcileCopy';
 
 const logger = clientLogger.child({ module: 'AdminReconcileTopUpsDialog' });
 
 export function ReconcileTopUpsDialog() {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The last run's sentences, shown under the button once the dialog closes.
   const [notice, setNotice] = useState<string[] | null>(null);
-  const inFlight = useRef(false);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
 
-  function handleOpenChange(next: boolean) {
-    if (!next && inFlight.current) return;
-    if (next) {
-      setError(null);
-      setNotice(null);
-    }
-    setOpen(next);
-  }
-
-  async function run() {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
+  /**
+   * Resolves `false` on a failure, so the dialog stays open with the error
+   * line; void after a success, so the shared dialog closes it. Never rejects:
+   * everything that can throw is inside the try.
+   */
+  async function run(): Promise<boolean | void> {
     setError(null);
     let lines: string[] | null = null;
     try {
@@ -83,50 +68,49 @@ export function ReconcileTopUpsDialog() {
       logger.error({ err }, 'Reconcile top-ups request failed');
       lines = null;
     }
-    inFlight.current = false;
-    setBusy(false);
     if (lines === null) {
       setError(RECONCILE_COPY.failed);
-      return;
+      return false;
     }
     setNotice(lines);
-    setOpen(false);
   }
 
   return (
     <>
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogTrigger asChild>
-          <button
-            type="button"
-            data-testid="boost-reconcile"
-            className="whitespace-nowrap rounded border border-slate-600 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-700/50"
-          >
-            {RECONCILE_COPY.button}
-          </button>
-        </DialogTrigger>
-        <DialogContent data-testid="boost-reconcile-dialog" className={ADMIN_DIALOG_CLASS}>
-          <DialogHeader>
-            <DialogTitle className={ADMIN_DIALOG_TITLE_CLASS}>{RECONCILE_COPY.title}</DialogTitle>
-            <DialogDescription data-testid="boost-reconcile-description" className="!text-slate-300">
-              {RECONCILE_COPY.description}
-            </DialogDescription>
-          </DialogHeader>
-          {error && (
-            <p data-testid="boost-reconcile-error" role="alert" className="text-sm text-rose-300">
-              {error}
-            </p>
-          )}
-          <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" data-testid="boost-reconcile-close" disabled={busy} onClick={() => handleOpenChange(false)}>
-              Close
-            </Button>
-            <Button type="button" data-testid="boost-reconcile-run" disabled={busy} onClick={() => void run()}>
-              {busy ? RECONCILE_COPY.running : RECONCILE_COPY.run}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <button
+        ref={openerRef}
+        type="button"
+        data-testid="boost-reconcile"
+        onClick={() => {
+          setError(null);
+          setNotice(null);
+          setOpen(true);
+        }}
+        className="whitespace-nowrap rounded border border-slate-600 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-700/50"
+      >
+        {RECONCILE_COPY.button}
+      </button>
+      <AdminConfirmDialog
+        open={open}
+        title={RECONCILE_COPY.title}
+        description={<span data-testid="boost-reconcile-description">{RECONCILE_COPY.description}</span>}
+        cancelLabel="Close"
+        confirmLabel={RECONCILE_COPY.run}
+        busyLabel={RECONCILE_COPY.running}
+        tone="primary"
+        testId="boost-reconcile-dialog"
+        confirmTestId="boost-reconcile-run"
+        cancelTestId="boost-reconcile-close"
+        onConfirm={run}
+        onClose={() => setOpen(false)}
+        onReturnFocus={() => openerRef.current?.focus()}
+      >
+        {error && (
+          <p data-testid="boost-reconcile-error" role="alert" className="text-sm text-rose-300">
+            {error}
+          </p>
+        )}
+      </AdminConfirmDialog>
       {notice && (
         <div data-testid="reconcile-notice" role="status" className="mt-1 space-y-0.5 text-xs text-slate-200">
           {notice.map((line) => (

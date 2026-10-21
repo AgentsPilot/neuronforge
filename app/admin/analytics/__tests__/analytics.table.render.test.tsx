@@ -234,7 +234,7 @@ function arrive(search: string) {
   mockSearch = search;
 }
 
-const refreshButton = () => screen.getByRole('button', { name: 'Refresh AI cost and usage' }) as HTMLButtonElement;
+const refreshButton = () => screen.getByRole('button', { name: 'Refresh AI calls and usage' }) as HTMLButtonElement;
 
 async function settled() {
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -407,11 +407,12 @@ describe('aggregate rows drill through a real link (§5.8 D-3)', () => {
 describe('call rows, status chips and the call drawer (§5.8 D-1 to D-6, §5.9)', () => {
   const RUN = `scope=all&execution=${EXEC}`;
 
-  it('T-4: eight headers, an Open button first in each row, status in words', async () => {
+  // LF-8 (user request 2026-10-15): the Open button moved from the first cell
+  // to a narrow last column whose "Details" header is screen-reader-only.
+  it('T-4: eight headers, an Open button last in each row, status in words', async () => {
     await renderAt(RUN);
     expect(screen.getByRole('table', { name: 'AI calls in this run' })).toBeTruthy();
     expect(headerTexts()).toEqual([
-      'Details',
       'Call',
       'Cost (USD)',
       'Input tokens',
@@ -419,11 +420,13 @@ describe('call rows, status chips and the call drawer (§5.8 D-1 to D-6, §5.9)'
       'Total tokens',
       'Latency',
       'Status',
+      'Details',
     ]);
     const rows = within(screen.getByRole('table')).getAllByRole('row').slice(1, 4);
     rows.forEach((row, index) => {
-      const first = within(row).getAllByRole('cell')[0];
-      expect(within(first).getByRole('button').getAttribute('aria-label')).toBe(
+      const cells = within(row).getAllByRole('cell');
+      const last = cells[cells.length - 1];
+      expect(within(last).getByRole('button').getAttribute('aria-label')).toBe(
         `Open details for call ${index + 1}, Step ${index + 1}`,
       );
     });
@@ -435,8 +438,21 @@ describe('call rows, status chips and the call drawer (§5.8 D-1 to D-6, §5.9)'
     ]);
     expect(document.body.textContent).not.toMatch(/[✓✗]/);
     // Latency 0 is a dash in the cell, as before (SA S-3).
-    expect(within(rows[1]).getAllByRole('cell')[6].textContent).toBe('—');
-    expect(within(rows[0]).getAllByRole('cell')[6].textContent).toBe('1234ms');
+    expect(within(rows[1]).getAllByRole('cell')[5].textContent).toBe('—');
+    expect(within(rows[0]).getAllByRole('cell')[5].textContent).toBe('1234ms');
+  });
+
+  // LF-8 SA F-2: the footer spans exactly the eight headers, so every total sits
+  // under its own column, and its last cell is the narrow Open column.
+  it('T-4b: the call footer spans the eight headers and ends on the narrow Open cell', async () => {
+    await renderAt(RUN);
+    const footerCells = Array.from(
+      screen.getByTestId('analytics-footer').querySelectorAll('td'),
+    ) as HTMLTableCellElement[];
+    const width = footerCells.reduce((sum, cell) => sum + cell.colSpan, 0);
+    expect(headerTexts()).toHaveLength(8);
+    expect(width).toBe(8);
+    expect(footerCells[footerCells.length - 1].classList.contains('w-10')).toBe(true);
   });
 
   it('T-5: Open shows the call from the loaded row, in UTC, without colour, and sends no request', async () => {
@@ -560,7 +576,7 @@ describe('QA B-1: the open call leaves the data', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.queryByTestId('analytics-error')).toBeNull());
     expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5);
-    expect(screen.getByRole('status').textContent).toBe('Reading AI cost and usage…');
+    expect(screen.getByRole('status').textContent).toBe('Reading AI calls and usage…');
     expect(document.body.textContent).not.toContain('$0.00');
     expect(screen.queryByTestId('analytics-empty')).toBeNull();
     expect(screen.getByTestId('drawer-mounted')).toBeTruthy();

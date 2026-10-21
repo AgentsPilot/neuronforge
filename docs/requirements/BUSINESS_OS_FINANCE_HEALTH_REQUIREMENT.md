@@ -1,13 +1,13 @@
 # Requirement: Business OS Finance & Business Health (admin page)
 
-> **Last Updated**: 2026-10-15
+> **Last Updated**: 2026-10-19
 
 **Created by:** BA
 **Date:** 2026-10-09
-**Status:** **Draft. SA review: APPROVED WITH CONDITIONS (2026-10-09); BA has applied SA-F1 to SA-F14 and the SA-Q1 to SA-Q12 rulings; SA re-check passed 2026-10-09 (SA-RC): cleared for the slice 1a workplan.** The user accepted every proposed default for BQ-1 to BQ-12 on 2026-10-09 (§0.2, BD-1 to BD-12). No business question is open. Slice 1 is split into **1a** and **1b** (SA-F3). Slice 1a implemented, SA code review approved, QA passed, user approved the diff 2026-10-10; RM commit + PR next. **Slice 2 (§11A):** SA requirement review APPROVED WITH CONDITIONS 2026-10-11 (SA-RR-2); BA applied findings S2-F1 to S2-F9 and the SA-Q13 to SA-Q19 rulings; the 2a workplan is next.
+**Status:** **Draft. SA review: APPROVED WITH CONDITIONS (2026-10-09); BA has applied SA-F1 to SA-F14 and the SA-Q1 to SA-Q12 rulings; SA re-check passed 2026-10-09 (SA-RC): cleared for the slice 1a workplan.** The user accepted every proposed default for BQ-1 to BQ-12 on 2026-10-09 (§0.2, BD-1 to BD-12). No business question is open except **BQ-13** (2026-10-16, refunded boost credits, attached to 4b; §0.4). Slice 1 is split into **1a** and **1b** (SA-F3). Slice 1a implemented, SA code review approved, QA passed, user approved the diff 2026-10-10; RM commit + PR next. **Slice 2 (§11A):** SA requirement review APPROVED WITH CONDITIONS 2026-10-11 (SA-RR-2); BA applied findings S2-F1 to S2-F9 and the SA-Q13 to SA-Q19 rulings; the 2a workplan is next.
 **Based on:** [BUSINESS_OS_FINANCE_HEALTH_DISCOVERY.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_DISCOVERY.md) (cited as **D**, with section or line) and [BUSINESS_OS_FINANCE_HEALTH_LIVE_SCHEMA.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_LIVE_SCHEMA.md) (cited as **LS**; authoritative over migrations wherever they differ).
-**Related:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) (P-3b.2, P-5, P-6a/b, P-8a/b; AM-10 "revenue by month" is this page), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md), [BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md), [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md), [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md).
-**Money area source (2026-10-14):** [ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md](/docs/requirements/ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md) (cited as **CR**) is the source of scope for steps M-1 and M-2, specified in §11D, step M-3, specified in §11E, and step M-4, specified in §11F. It is committed on its own docs PR; this document does not copy it.
+**Related:** [BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLAN_PAYMENTS_REQUIREMENT.md) (P-3b.2, P-5, P-6a/b, P-8a/b; AM-10 "revenue by month" is this page), [BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_CREDITS_BOOST_REQUIREMENT.md), [BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_ADMIN_AI_ACTIVITY_VIEW_REQUIREMENT.md), [ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md](/docs/requirements/ADMIN_MODULE_BOS_REORGANISATION_REQUIREMENT.md), [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md), [BUSINESS_OS_ENTITLEMENTS.md](/docs/architecture/BUSINESS_OS_ENTITLEMENTS.md), [ADMIN_EXCHANGE_RATES_REQUIREMENT.md](/docs/requirements/ADMIN_EXCHANGE_RATES_REQUIREMENT.md) (owns the Exchange rates page from 2026-10-19, BD-55; supersedes FF-2).
+**Money area source (2026-10-14):** [ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md](/docs/requirements/ADMIN_COST_REVENUE_CONSOLIDATION_REVIEW.md) (cited as **CR**) is the source of scope for steps M-1 and M-2, specified in §11D, step M-3, specified in §11E, step M-4, specified in §11F, and step M-5, specified in §11H. It is committed on its own docs PR; this document does not copy it.
 
 ## Overview
 
@@ -37,6 +37,13 @@ This document is the feature's **single source of truth**: every slice decision,
     - [11D. Slice 5a, Money M-1 and M-2: one account, one screen; plan payments received](#11d-slice-5a-money-m-1-and-m-2-one-account-one-screen-plan-payments-received)
     - [11E. Slice 6a, Money M-3: account economics and AI margin](#11e-slice-6a-money-m-3-account-economics-and-ai-margin)
     - [11F. Money M-4: two measures, one vocabulary (OV-1 copy, OV-5 recorded above charged)](#11f-money-m-4-two-measures-one-vocabulary-ov-1-copy-ov-5-recorded-above-charged)
+    - [11G. Finance shell on the Admin Layout Standard (F-2, F-4, F-5)](#11g-finance-shell-on-the-admin-layout-standard-f-2-f-4-f-5)
+    - [11H. Money M-5: the Money section](#11h-money-m-5-the-money-section)
+    - [11I. Slice 4b: boost refund dates, boost problems, bought credits](#11i-slice-4b-boost-refund-dates-boost-problems-bought-credits)
+    - [11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant](#11j-money-m-8-mark-the-platform-dashboard-and-exchange-rates-pages-redundant)
+    - [11K. Slice 6b: margin after estimated Stripe fees, and KPI order](#11k-slice-6b-margin-after-estimated-stripe-fees-and-kpi-order)
+    - [11L. Slice DF-6: since it started (one account)](#11l-slice-df-6-since-it-started-one-account)
+    - [11M. Slice 8: history snapshots](#11m-slice-8-history-snapshots)
 12. [Testing and CI guards](#12-testing-and-ci-guards)
 13. [Read-only SQL cross-checks for slice 1](#13-read-only-sql-cross-checks-for-slice-1)
 14. [Open questions for SA](#14-open-questions-for-sa)
@@ -57,14 +64,22 @@ This document is the feature's **single source of truth**: every slice decision,
 | 2 | Business takings and client payment problems (layer B); currency-grouping helper (CUR-1, CUR-2, AC-13) | None (real rows today); **no migration**; new reads R-e to R-i (§11A.7) plus the reused reminder read R-j; SA-Q9 resolved by BD-13; split **2a** (takings) and **2b** (client payment problems) | ⬜ **2a implemented (uncommitted); SA code review APPROVED (SA-CR-2a), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `502e5d5d` on `feature/bos-finance-health-2`, PR [#312](https://github.com/AgentsPilot/neuronforge/pull/312) opened 2026-10-12, merge pending; user manual QA L-23..L-31 owed. 2a MERGED PR #312 (2026-10-12, merge `045a4d06`). 2b: workplan written 2026-10-12 on branch `feature/bos-finance-health-2b`, 2b implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-2b; condition SA-CR-1 backspace fix done), QA PASS WITH ISSUES (no bugs), fix round 1 applied; user approved diff 2026-10-12; TL retrospective done; committed `b4e0fa2b` on `feature/bos-finance-health-2b` (origin/main merged in `a6caf75e`), PR [#318](https://github.com/AgentsPilot/neuronforge/pull/318) opened 2026-10-12, merge pending; user manual QA L-32..L-41 owed** (§11A; SA rulings SA-Q13 to SA-Q19 and SA-W18 to SA-W27 in §0.3; findings S2-F1 to S2-F9 applied 2026-10-11; workplan-review edits E-8 to E-10 applied 2026-10-11) | 2a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2A_WORKPLAN.md); 2b: [BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_2B_WORKPLAN.md) | 2a: [#312](https://github.com/AgentsPilot/neuronforge/pull/312); 2b: [#318](https://github.com/AgentsPilot/neuronforge/pull/318) |
 | 1c | Fix slice: test-mode platform money counts (BD-14); a paying Founding Partner is grouped under its paid tier (BD-15); revenue panel copy no longer says the webhook is missing | Slices 1a, 1b; **no migration**; changes R-c, R-c′, R-d (§11B) | ⬜ **1c implemented (uncommitted); SA code review APPROVED WITH CONDITIONS (SA-CR-1c; SA-CR-2 rename and SA-CR-3 test title done), QA PASS WITH ISSUES (no bugs), fix round 1 applied (FP note only while the FP period is current); user approved diff 2026-10-13; TL retrospective done; committed `fa7a4aad` on `feature/bos-finance-health-1c` (origin/main merged in `10e3c5f0`), PR [#335](https://github.com/AgentsPilot/neuronforge/pull/335) opened 2026-10-13, merge pending; user manual QA L-42..L-48 owed** | [BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_1C_WORKPLAN.md) | [#335](https://github.com/AgentsPilot/neuronforge/pull/335) |
 | 3 | Growth funnel (invites) | More invite volume to be meaningful; "paid" stage waits on P-5 | ⬜ Not started | — | — |
-| 4 | Boost revenue: **4a** boost revenue per currency and package, K-5 value; **4b** boost problems, K-5 dispute rule, bought credits in Section 4 (test and live together, BD-14; no switch) | **Met:** boost purchases are recorded (1 paid Starter, test mode, counted under BD-14; §11C.1); **no migration**; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`, not on the boost repository (§11C.6) | ⬜ **4a implemented (uncommitted); SA code review APPROVED with no conditions (SA-CR-4a), QA PASS WITH ISSUES (no bugs, no fix round); user approved diff 2026-10-14; TL retrospective done; 4a committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open, awaiting user merge; manual QA L-49 to L-58 owed; 4b next; DF-5 refund timing on default (a) pending user. 2026-10-14: DF-5 decided by the user (BD-17, refund month); **4b paused until Money M-3 merges** (CR §8; it edits `RevenuePanel`, `CreditsSection` and the K-5 tile, as M-1 and M-2 do)** (§11C; SA-Q25 to SA-Q31; about 2.5 + 1.5 days) | 4a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md) | 4a: [#358](https://github.com/AgentsPilot/neuronforge/pull/358) |
+| 4 | Boost revenue: **4a** boost revenue per currency and package, K-5 value; **4b** boost problems, K-5 dispute rule, bought credits in Section 4 (test and live together, BD-14; no switch) | **Met:** boost purchases are recorded (1 paid Starter, test mode, counted under BD-14; §11C.1); **no migration**; new reads R-k, R-k′, R-l, R-l′ in `BusinessOsFinanceReadRepository`, not on the boost repository (§11C.6) | ⬜ **4a implemented (uncommitted); SA code review APPROVED with no conditions (SA-CR-4a), QA PASS WITH ISSUES (no bugs, no fix round); user approved diff 2026-10-14; TL retrospective done; 4a committed `0acb460b`, PR [#358](https://github.com/AgentsPilot/neuronforge/pull/358) open, awaiting user merge; manual QA L-49 to L-58 owed; 4b next; DF-5 refund timing on default (a) pending user. 2026-10-14: DF-5 decided by the user (BD-17, refund month); **4b paused until Money M-3 merges** (CR §8; it edits `RevenuePanel`, `CreditsSection` and the K-5 tile, as M-1 and M-2 do)**. **2026-10-16 (BD-32): 4b runs next after M-5, about 4 days. Open business question BQ-13 (does a refunded boost take its credits back?) is attached to it (§0.4); until the user answers, 4b keeps today's behaviour, where the customer keeps the credits** (§11C; SA-Q25 to SA-Q31; about 2.5 + 1.5 days). **2026-10-17: 4b SPECIFIED in §11I, awaiting SA requirement review** (SA-Q65 to SA-Q74; AC-204 to AC-232). Split **4b.1** reversal events writer (migration `20261072` plus the regenerated cleanup `20261073`, no UI; PR off auto-merge until the user applies the migration; about 2 days) and **4b.2** finance reads and UI (refunds and lost disputes by event date, held now, boost problems, bought credits; about 2.5 days). BQ-13 open: 4b keeps no take-back | 4a: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4A_WORKPLAN.md) **4b.1 PR [#447](https://github.com/AgentsPilot/neuronforge/pull/447) open; awaiting user migration apply** (**20261076, 20261077**, renumbered from 20261072/20261073 on 2026-10-17 after DE-8a took 20261074/20261075; cleanup stamp b78b4579fc6631f8; rebase merge staged, awaiting SA re-review; auto-merge OFF). User runbook: check 23 → apply 20261076 → apply 20261077 → check 24. **4b.2 committed `81d688e3`; origin/main (with #447) merged in `ba6772c8`; PR [#459](https://github.com/AgentsPilot/neuronforge/pull/459) opened 2026-10-17, auto-merge on** (stacked on #447; SA-CR-4b2 approved with CR-1 to CR-3 cleared, QA passed, TL approved; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_4B2_RETROSPECTIVE.md)). | 4a: [#358](https://github.com/AgentsPilot/neuronforge/pull/358); 4b.1: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4B1_REVERSAL_EVENTS_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4B1_REVERSAL_EVENTS_WORKPLAN.md) |; 4b.1: [#447](https://github.com/AgentsPilot/neuronforge/pull/447) (open); 4b.2: [BUSINESS_OS_FINANCE_HEALTH_SLICE_4B2_REVERSAL_DISPLAY_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_4B2_REVERSAL_DISPLAY_WORKPLAN.md) (committed `81d688e3`); 4b.2: [#459](https://github.com/AgentsPilot/neuronforge/pull/459) 
 | 5a | **Money M-1 / M-2** (CR §8): **M-1** "One account, one screen": the shared business picker (the original audit-trail picker is deleted), an account header and account summary with a business picked, links that carry the window and the account, both ways with the Businesses drawer; **M-2** "Plan payments received": cash received from plan payments per currency, per window, per account, in Our revenue and K-5 (no MRR) | M-1: none (**no new read**); M-2: P-3b `invoice_paid` rows (live: 1, §11D.1); **no migration**; new reads R-m, R-m′ in `BusinessOsFinanceReadRepository` (§11D.6). **FIN 4b is paused during M-1 to M-3** (it edits the same files, CR §8) | ⬜ **Implemented (M-1 checkpoint green, then M-2); SA code review APPROVED (SA-CR-5a; E-43 applied); QA PASS WITH ISSUES, no bugs; user pre-authorised commit + PR without diff review (2026-10-14); committed `e8ffc5da` and PR [#383](https://github.com/AgentsPilot/neuronforge/pull/383) opened (2026-10-14, not merged); user sync next** (specified 2026-10-14, §11D; SA-Q32 to SA-Q41; requirement SA-RR-5a). M-1 about 2 days (short path if SA agrees, SA-Q32), M-2 about 2.5 days (full cycle). **Amended 2026-10-14 (user, SA-W55):** M-1 and M-2 ship in **one workplan and one PR**. M-1 is finished first and proven at the M-1 checkpoint (no `lib/` or `app/api/` change; AC-111); M-2 starts only after it | [BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_5A_MONEY_M1_M2_WORKPLAN.md) | [#383](https://github.com/AgentsPilot/neuronforge/pull/383) |
-| 5 | Plan revenue, MRR, paying vs comped, trial-to-paid | P-3b.2 (webhook writer), P-8a (MRR definition), P-5 (`first_paid_at` writer) | ⬜ **Split 2026-10-14 (BD-19):** cash received is **5a / M-2** (row above, needs no P-8a); **5b** = MRR, after PAY P-8a, plus paying vs comped exactness, trial-to-paid and the funnel "paid" stage | — | — |
+| 5 | Plan revenue, MRR, paying vs comped, trial-to-paid | P-3b.2 (webhook writer), P-8a (MRR definition), P-5 (`first_paid_at` writer) | ⬜ **Split 2026-10-14 (BD-19):** cash received is **5a / M-2** (row above, needs no P-8a); **5b** = MRR, after PAY P-8a, plus paying vs comped exactness, trial-to-paid and the funnel "paid" stage. **2026-10-19: 5b SUPERSEDED by the KPI restructure (row MK-0..MK-9 below).** Its **MRR part is superseded by MK-4** (MRR in the finance payload from `planMrr.ts`, SA-2; its mode-wording ruling folds into BD-41 / SA-4); **the rest becomes MK-9** (paying vs comped exactness, trial-to-paid), after MK-5b. §11N (on `feature/bos-finance-health-5b`) is not built as written | — | — |
+| MK-0..MK-9 | **Money area KPI restructure** ([ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md), review §12): two pages, **Finance** (Overview, Accounts, Plans & subscriptions) and **AI cost** (Summary & checks, Calls); MK-0 leading or lagging icon, MK-1 names and block KPIs, MK-2 one charged AI cost figure, MK-3 AI cost page, MK-4 Plans & subscriptions tab and MRR, MK-5 strip re-cut (with MK-5a `$` folded in), MK-5b Converted this month, MK-6 / MK-7 tidy-ups, MK-8 read-only drawers, MK-9 remaining 5b. About 21 to 24 days | Decisions BD-38 to BD-54. No migration planned; new read only in MK-5b (billing admin read repository, SA-10) | ⬜ **User approved 2026-10-19; SA requirement review APPROVED WITH CONDITIONS (SA-RR-MK), conditions MK-C1 to MK-C4 applied 2026-10-19. MK-0 workplan next** | — | — |
 | 6a | **Money M-3** (CR §8) "Account economics and AI margin": a Finance **Accounts** tab, one row per account for the window (what it paid us, plan + boosts, after tax and refunds, per currency; charged AI cost; **AI margin, USD only**; credits; plan group), sorted and filtered on the server, capped at 200 rows, each row opening the M-1 one-account view; the AI margin line in the M-1 account summary; a platform AI margin line above the table | Slice 5a merged (#383); **no migration, no new read**: the all-accounts reads R-a, R-k, R-m, the plan walk and the credit-positions pass already carry `user_id` per row (§11E.1) | ✅ **MERGED PR [#392](https://github.com/AgentsPilot/neuronforge/pull/392) (2026-10-15), branch `feature/bos-money-m3`, commit `b8f59db1`; SA code review APPROVED (SA-CR-6a; E-52 applied); QA PASS WITH ISSUES, B-1 fixed in fix round 1; user pre-authorised commit + PR without diff review; awaiting user merge, manual QA L-75..L-88 owed, then user sync** (requirement SA-RR-6a, edits E-44..E-51 applied; specified 2026-10-14, §11E; SA-Q42 to SA-Q50). About 3 days, full cycle. FIN 4b stays paused until M-3 merges | [6a workplan](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_6A_MONEY_M3_WORKPLAN.md) | [#392](https://github.com/AgentsPilot/neuronforge/pull/392) |
 | M-4 | **Money M-4** (CR §8) "Two measures, one vocabulary": **OV-1** every admin AI cost figure is named "Charged AI cost" (credit ledger) or "Recorded AI cost" (usage log), on Finance, AI cost & usage, Business OS AI (Costs & credits, Leak check, Activity), the Health tile (renamed "Recorded AI cost", BD-27) and the Businesses drawer; **OV-5** Finance shows "Recorded AI cost" and "Recorded above charged" (recorded minus charged) beside the charged figure, for the window and for one account, never added (BD-18) | M-1 to M-3 merged (#383, #392); **no migration, no new SQL function, no new repository method**: OV-5 reuses the Health tile's all-accounts usage read and the Businesses drawer's account-scoped usage read, injected by the route (§11F.7) | 🟡 **Part A #398 merged; Part B PR [#407](https://github.com/AgentsPilot/neuronforge/pull/407) open** (Part A, OV-1: branch `feature/bos-money-m4`, commit `a215561d`; SA-CR-M4A APPROVED, QA PASS; manual QA L-89..L-97 owed. Part B, OV-5: branch `feature/bos-money-m4b`, commit `cde25b99`, merge of `origin/main` `ee1471e9`; SA-CR-M4B APPROVED, QA PASS WITH ISSUES, no bugs; manual QA L-98..L-105 owed, including the 92-day timing L-104; no migration). User pre-authorised commit + PR without diff review for both parts. Requirement SA-approved with conditions (SA-RR-M4), workplan SA-approved (SA-WP-M4) | [M-4 workplan](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M4_TWO_MEASURES_WORKPLAN.md) | Part A: [#398](https://github.com/AgentsPilot/neuronforge/pull/398) (merged); Part B: [#407](https://github.com/AgentsPilot/neuronforge/pull/407) (open) |
-| 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b | — | — |
+| F-2 | **M-6 / DF-4, Finance shell part 1: header and states** (UI short path, about 1 day): `AdminPageHeader` (h1 "Finance", BD-28), `AdminLoading`, `AdminError` with Try again, `AdminNotice`, `aria-busy` during a refresh; removes `useFinanceData`'s unreachable `fallbackError` (§11G) | Owned by the finance stream 2026-10-15; F-0 #414, F-1 #418 merged; F-3 #420 merged. **No data, money or API change** | ✅ **Merged** (PR #424; SA-CR-F2 approved, QA PASS; fast track). User browser look L-106 to L-111 owed | — | [#424](https://github.com/AgentsPilot/neuronforge/pull/424) |
+| F-4 | **M-6 / DF-4, Finance shell part 2: filter bar and URL state** (full cycle, about 2 days): `AdminFilterBar` + `useAdminFilters`, canonical `range` / `from` / `to` / `account` with aliases `preset` / `accountId`; bad link drops only the bad filter (BD-30) (§11G) | Owned by the finance stream 2026-10-15; F-0 #414, F-1 #418 merged; F-3 #420 merged. Starts after F-2 merges | ✅ **Merged** (PR #434, main `447d17a2`; SA-CR-F4 approved, QA PASS; fast track). User browser look L-112 to L-119 owed | — | [#434](https://github.com/AgentsPilot/neuronforge/pull/434) |
+| F-5 | **M-6 / DF-4, Finance shell part 3: KPI tiles** (full cycle, about 2 days): shared `KpiTile` / `KpiStrip` extended; tiles above the filter bar (BD-29), clickable to their sections (BD-31); C-14 registry entry (§11G) | Owned by the finance stream 2026-10-15; F-0 #414, F-1 #418 merged; F-3 #420 merged. Starts after F-4 merges | ✅ **Merged** (PR #437, in main `98735db9`; committed `24cf0c3d` on `feature/finance-f5-kpi-tiles`, origin/main merged in `e8fee379`; SA-CR-F5 approved, QA PASS; fast track). With F-5 merged, M-6 / DF-4 is complete. User browser look L-120 to L-127 owed | [FINANCE_F5_KPI_TILES_WORKPLAN.md](/docs/workplans/FINANCE_F5_KPI_TILES_WORKPLAN.md) | [#437](https://github.com/AgentsPilot/neuronforge/pull/437) |
+| M-5 | **Money M-5** (CR §8) "The Money section": a **Money** sidebar section after Monitor holding Finance (first), **Charge checks** (today's Business OS AI "Costs & credits" tab, Leak check included, mounted at `/admin/finance/charges`) and **AI calls & usage (detail)** (`/admin/analytics`, relabelled); the Costs & credits tab leaves Business OS AI and its old links redirect; the Business OS AI description drops "costs"; the FU-M4-1 wording (Health rule descriptions and metric labels, the leak-check cron description) moves to the Recorded vocabulary; the Health "Recorded AI cost" tile gains its page link to Finance (SA-Q55) (§11H) | M-1 to M-4 and M-6 merged; **no data, money, API route or migration change**. Sidebar sign-off: given 2026-10-14 by BQ-1 and BQ-6 (BD-21, BD-24) | 🔵 **PR open, auto-merge on** (PR #444; committed `1c7b7554` on `feature/bos-money-m5`, origin/main merged in `4e96e719`; SA-CR-M5 approved, QA PASS, TL approved; BD-33 fast track). User browser look L-128 to L-136 owed after merge | [BUSINESS_OS_FINANCE_HEALTH_M5_MONEY_SECTION_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M5_MONEY_SECTION_WORKPLAN.md) | [#444](https://github.com/AgentsPilot/neuronforge/pull/444) |
+| M-8 | **Money M-8** (CR §8) "Mark the Platform dashboard and Exchange rates pages redundant" (BD-34): both pages and the dashboard's API route get a REDUNDANT header comment; the dashboard's hidden parked sidebar item is removed; both routes stay reachable by URL with a one-line redundant notice (BQ-14 default); a source guard keeps the product from linking to them; Exchange rates' one `console.error` goes to Pino (§11J) | M-5 merged; **nothing deleted; no data, money, API logic or migration change**. Sign-off: BD-34 (§11J.0) | 🟡 **PR open (2026-10-17): [#448](https://github.com/AgentsPilot/neuronforge/pull/448), auto-merge on; commit `92ef1454`. SA code approved, QA passed, TL approved (BD-33).** Specified 2026-10-17 (§11J, AC-233 to AC-242, SA-Q75 to SA-Q80; BQ-14 resolved by BD-34). UI short path, about 1 day; BD-33 fast track; no user browser look (parked pages) | [BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_M8_REDUNDANT_PAGES_WORKPLAN.md) | [#448](https://github.com/AgentsPilot/neuronforge/pull/448) |
+| 6 | AI margin (overall and per current plan) | Slices 4 and 5 | ⬜ Blocked on slices 4, 5. **Split 2026-10-14:** margin overall and per account (USD only) is **6a / M-3** (row above); **6b** keeps the margin per current plan (BD-8), K-7 and the BD-7 Stripe fee estimate (DF-8), after 5b. **2026-10-16:** 6b also re-orders the KPI tiles, revenue first, then cost, then user and account data (BD-35); in the BD-32 order it runs after M-8, about 1.5 to 2 days. **2026-10-17:** 6b specified as the row below (fee estimate and tile order); the margin per current plan (BD-8) and K-7 stay in this row for a later decision | — | — |
+| 6b | **Margin after estimated Stripe fees, and KPI order** (§11K): "Margin after Stripe fees (estimate)" beside the AI margin on the Accounts rows, the platform line and the one-account summary, from a per-charge estimate held as config data (default 2.9% + USD 0.30, USD only; BQ-15); tiles re-ordered K-5, K-1, K-3, K-2, K-4 (BD-35), order only | M-8 merged (#448); **no migration, no new read or repository method**; nothing from 4b.1 (#447) | 🟡 **PR #449 opened 2026-10-17, auto-merge on** (commit `8d2f5ff6` on `feature/bos-finance-health-6b`; SA-CR-6b approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_6B_RETROSPECTIVE.md)). BQ-15 still open (does not block); user owes L-142 to L-147 and checks 27 and 28 | [BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_6B_STRIPE_FEE_MARGIN_WORKPLAN.md) | [#449](https://github.com/AgentsPilot/neuronforge/pull/449) |
+| DF-6 | **Since it started (one account)** (§11L, BD-26): a "Since it started" window, offered only with one business picked, from the charging cut-over (2026-09-29 16:50:53.914 UTC) to now, beyond the 92-day cap (E-75); refused for all businesses (400); the 92-day cap otherwise unchanged; URL `range=since_start` with `account`, a bad link drops only the window (U-4) | 6b (#449); **no migration, no new read or repository method**; the start is the cut-over constant, resolved in the route | 🟡 **PR #450 opened 2026-10-17, auto-merge on** (commit `fd7b7f02` on `feature/bos-finance-health-df6`, origin/main merged in `e73ec431`; SA-CR-DF6 approved, QA passed, TL approved under BD-33; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_DF6_RETROSPECTIVE.md)) (§11L; AC-257 to AC-272). BQ-16 open with a default, not blocking; user owes L-148 to L-154 and checks 29 and 30 | [BUSINESS_OS_FINANCE_HEALTH_DF6_SINCE_START_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_DF6_SINCE_START_WORKPLAN.md) | [#450](https://github.com/AgentsPilot/neuronforge/pull/450) |
 | 7 | Platform payment problems and churn | P-6a, P-6b, P-8b | ⬜ Blocked on dependencies | — | — |
-| 8 | History snapshots (plan mix, credits) for trend lines | A migration and a cron (SA) | ⬜ Not started | — | — |
+| 8 | History snapshots (plan mix, credits) for trend lines (§11M): a nightly 00:07 UTC snapshot of the states that cannot be rebuilt (plan mix, credit positions, gifted, bought and outstanding credits; no money, no account), a **History** block on Finance for all businesses with "History starts on {date}"; split **8.1** migration, **8.2** job, **8.3** History block | **One migration** (`20261078`, one new table, applied by the user on production, BD-33) and **one new cron** (`finance-snapshot`, on Jobs & queues); one new admin read route; BQ-17 to BQ-19 on defaults | 🟡 **8.1: PR #452 opened 2026-10-17, auto-merge OFF, merge held until the user applies `20261078` on production** (commit `0439f94f` on `feature/bos-finance-health-8`; SA-CR-8.1 approved, QA passed, TL approved; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_8_1_RETROSPECTIVE.md)). User owes L-155: check 31 (6 ok) → apply → check 32 (16 ok) → "applied". MR-1 against #447 (recount to 158 / 120). **8.2 committed `9bb0395c`; main (with #452) merged in `2043dffb`; `addedOn` 2026-10-19 (`6225e6e5`); PR [#460](https://github.com/AgentsPilot/neuronforge/pull/460) opened 2026-10-18, auto-merge on** (stacked on 8.1; SA-CR-8.2 approved, QA passed, TL approved; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_8_2_RETROSPECTIVE.md)). **8.3 committed `3209bda9`; main (with #459, #460) merged in `bf5d93ee`; PR [#461](https://github.com/AgentsPilot/neuronforge/pull/461) opened 2026-10-18, auto-merge on** (stacked on 8.2; SA-CR-8.3 approved after the C-1 fix, QA passed, TL approved; [retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_8_3_RETROSPECTIVE.md)). Specified 2026-10-17 (§11M); SA-RR-8 approved with conditions (E-85 to E-88) | [BUSINESS_OS_FINANCE_HEALTH_SLICE_8_1_SNAPSHOTS_MIGRATION_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_8_1_SNAPSHOTS_MIGRATION_WORKPLAN.md) (8.1); [BUSINESS_OS_FINANCE_HEALTH_SLICE_8_2_SNAPSHOT_JOB_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_8_2_SNAPSHOT_JOB_WORKPLAN.md) (8.2); [BUSINESS_OS_FINANCE_HEALTH_SLICE_8_3_HISTORY_BLOCK_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_SLICE_8_3_HISTORY_BLOCK_WORKPLAN.md) (8.3) | [#452](https://github.com/AgentsPilot/neuronforge/pull/452) (8.1); [#460](https://github.com/AgentsPilot/neuronforge/pull/460) (8.2); [#461](https://github.com/AgentsPilot/neuronforge/pull/461) (8.3) |
 
 ### 0.2 Decisions log
 
@@ -99,6 +114,34 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **BD-25** | CR BQ-7 | **Retire the hidden Platform dashboard and the unlisted Exchange rates page**; keep the "All products" view of AI calls & usage (CR step M-8). | 2026-10-14 | User accepted CR default |
 | **BD-26** | CR BQ-9 | **Yes to a "since it started" view for one account** (beyond the 92-day cap), only when one account is picked, starting from the charging cut-over (29 Sep 2026). Deferred as DF-6; not in M-3. | 2026-10-14 | User accepted CR default |
 | **BD-27** | CR BQ-10 | **Keep the Health tile**, which counts every recorded AI call, but **rename it "Recorded AI cost"** and link it to the Money area (CR step M-4, OV-1 wording). | 2026-10-14 | User accepted CR default |
+| **BD-28** | Finance shell review (layout standard §5) | **The page h1 becomes "Finance"**, matching the sidebar. Built in F-2 (§11G). | 2026-10-15 | User decision |
+| **BD-29** | Finance shell review (layout standard §5) | **The KPI tiles move above the filter bar**, in the standard order: header, KPI strip, filter bar. They show on both the Overview and the Accounts tab. Built in F-5 (§11G). | 2026-10-15 | User decision |
+| **BD-30** | Finance shell review (layout standard U-4) | **A bad link drops only the bad filter** (standard U-4). No reset of every filter and no notice. Built in F-4 (§11G). | 2026-10-15 | User decision |
+| **BD-31** | Finance shell review (layout standard §5) | **The tiles are clickable**: each tile jumps to its own section below; "Charged AI cost" opens AI cost & usage. Built in F-5 (§11G). | 2026-10-15 | User decision |
+| **BD-32** | Money / Finance roadmap (coordinator relay of the user) | **Order of the remaining Money and Finance work:** M-5 (about 2 days) → 4b (about 4 days) → M-8 (about 1 day) → 6b (about 1.5 to 2 days) → DF-6 (about 1.5 days) → 5b (about 2 to 3 days, after PAY P-8a) → 7 (about 2 to 3 days, after PAY P-6 and P-8b) → 3 (about 2 to 3 days, once there is enough invite volume) → 8 (about 3 to 4 days). | 2026-10-16 | User decision |
+| **BD-33** | Money / Finance roadmap | **No per-slice user approval** for the BD-32 slices. Each slice proceeds when SA, QA and TL approve; RM then commits, opens the PR and turns on auto-merge. Two things still stop and go to the user: **a genuine business question**, and **a production migration**, which the user applies by hand. | 2026-10-16 | User decision |
+| **BD-34** | CR BQ-7 / step M-8 (amends BD-25) | **M-8 does not delete** the Platform dashboard (legacy) and Exchange rates pages. They are marked redundant with code comments, and nothing uses or links to them any more. The routes stay. | 2026-10-16 | User decision |
+| **BD-35** | Slice 6b | **6b grows:** it also re-orders the KPI tiles, revenue first, then cost, then user and account data. (BD-29's position of the strip, above the filter bar, is unchanged.) | 2026-10-16 | User decision |
+| **BD-36** | BQ-20 / FU-M8-1 (follow-ups FF-1a) | **Make the redundant Exchange rates page read-only.** The page stops editing rates and the enabled flag, and calls no outside rate service. The reads, the history panel and the page copy stay; there is still no visible notice (BD-34). The database is not changed here; a later write-only lockdown is FF-2 (§0.4) | 2026-10-18 | User decision (answers BQ-20 with its default) |
+| **BD-37** | Finance R4 / P8A-R4 | **Billing status is read for the current Stripe mode only; revenue keeps counting both modes (BD-14).** Status means the paying set, plan groups and K-3 (R-c, R-c′); the current mode is P-8a's key resolution (PF-15). Narrows BD-14 for status only; revenue reads are unchanged | 2026-10-18 | User decision (approved the R4 fix) |
+| **BD-38** | KPI restructure C-1 (amends BD-2) | **Payment problems sit beside the KPI they hurt.** Our problems move into Revenue (boosts) and Plans & subscriptions (plans, slice 7); the clients' problems join the Client payments block. Both stay separate and labelled; the single "Payment problems" frame goes | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-1) |
+| **BD-39** | KPI restructure C-2 (amends BD-24, M-5) | **Charge checks is no longer its own Money page.** It becomes the **Summary & checks** tab of a new **AI cost** page, merged with AI calls & usage (the **Calls** tab) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-1) |
+| **BD-40** | KPI restructure C-3 (amends the M-5 sidebar, BD-21, BD-24) | **The Money sidebar has two entries: Finance and AI cost** (was four). Q-1 is the sidebar sign-off (LAY §2.3 X-1); old links redirect | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-1) |
+| **BD-41** | KPI restructure C-4 (narrows BD-14 / BD-20 as built) | **Finance may show "Stripe test mode" on the MRR tile and the Plans & subscriptions tab only.** Revenue received keeps no mode label (BD-20 unchanged). The mode decision stays in `lib/admin/billing`; `lib/business-os/finance/**` still names no mode (SA-4) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-3) |
+| **BD-42** | KPI restructure C-5 (replaces the K-tile set and the 6b order) | **The Finance strip is F-K1 Revenue received, F-K2 MRR now, F-K3 Charged AI cost, F-K4 AI margin, F-K5 Paying accounts %.** K-2, K-3 and K-4 move into their blocks with their BD-11 rules unchanged; BD-35's order (revenue, cost, users) is kept | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-4) |
+| **BD-43** | KPI restructure C-6 (changes credit deduction slice 4a) | **The AI cost page defaults to This month, and its Charged AI cost tile counts charges created in the window**, the same computation as F-K3 (SA-1), deleted accounts included. The billing-period table stays on whole periods, labelled so | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-5) |
+| **BD-44** | KPI restructure C-7 (amends M-4 OV-5) | **Finance keeps one line, "Recorded above charged", linking to AI cost**; the recorded figure and its notes move to the AI cost page. BD-18 is kept: charged is the business figure, recorded is shown beside it, never added | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-8) |
+| **BD-45** | KPI restructure C-8 (amends CUR-1, CUR-2 display) | **Finance and AI cost show `$` and the US-dollar line only**; any other currency becomes a note "plus n in other currencies, not converted". The rule against summing across currencies is kept: the code still groups by currency, nothing is converted (display rule in BD-47) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (user Page 1 point 2) |
+| **BD-46** | KPI restructure, Page 1 rule (review §3.3, LL-1 to LL-5) | **Every KPI tile and block KPI carries a leading or lagging icon** (forward arrow / clock, not colour-coded) with a hover and keyboard-focus tooltip: what the KPI means, and "Leading indicator: it tells you early what is coming" or "Lagging indicator: it tells you what already happened". Built once in MK-0 as an optional `KpiTile` prop, with an in-house accessible tooltip (SA-8) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (user Page 1 point 1) |
+| **BD-47** | KPI restructure, Page 1 rule (review §3.4, USD-1 to USD-6) | **`$`-only display:** every money figure on Finance and AI cost is shown as `$1,234.56`, never a currency code; only the US-dollar line is shown; other currencies are a count note, never an amount and never part of a tile's value; a copy guard fails on "USD ". The drawer's client payments show that business's own currency (BD-50) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (user Page 1 point 2) |
+| **BD-48** | KPI restructure, Page 1 rule (review §5.1) | **F-K5 is "Paying accounts" as a %** of all accounts, with the sub-line "n of N accounts"; the numerator is the existing paying definition (BD-15, BD-37), never redefined; "at least" or Unknown when inexact, never 0% | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (user Page 1 point 3) |
+| **BD-49** | KPI restructure, Page 1 rule (review §5.1) | **"Converted this month"** is a small leading figure inside the F-K5 tile: accounts paying now whose first plan payment above $0 was this UTC month. Boosts and $0 invoices never count. A breakdown list shows each one with its plan and source | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (user Page 1 point 3) |
+| **BD-50** | KPI restructure Q-10 | **Client payments on a `$` page:** the block KPI is a count of businesses taking client payments; amounts show in `$` for US-dollar payments only, with "plus n payments in other currencies, not converted"; a business's own drawer shows its own currency (for example `₪`) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-10) |
+| **BD-51** | KPI restructure Q-11 | **Paying accounts % divides by every account with a Business OS plan row**: Trial, Founding Partner, Comped, Essentials, Autopilot and Unknown/held (the six Plan mix groups). Deleted and platform accounts are not counted | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-11) |
+| **BD-52** | KPI restructure Q-12 | **Converted this month counts the first plan payment in the current Stripe mode**, from `business_os_billing_events` (first `invoice_paid` above $0), not from `first_paid_at`, so test-mode payments do not hide real conversions. The read is a new method on `BusinessOsBillingAdminReadRepository` (SA-10) | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-12) |
+| **BD-53** | KPI restructure Q-13 | **Keep the name "AI margin".** Its tooltip gains: "A partial gross margin: only AI cost is deducted so far. Stripe fees are an estimate beside it." "Gross margin" and "Operating margin" stay unused | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-13) |
+| **BD-54** | KPI restructure Q-14 | **Keep the page name "AI cost".** Future operating costs (hosting, tools) get their own view on Finance, with AI cost as one line linking to this page; nothing for them is in scope now | 2026-10-19 | User approved 2026-10-19, via [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) (Q-14) |
+| **BD-55** | User message 2026-10-19 (amends BD-34 and BD-36, **Exchange rates page only**) | **The Exchange rates page becomes a maintained admin tool for manual rate entry.** User, verbatim: "let's first get the exchange rate page up to date, so it can be used. i agree with all recommendations in 1-4, let's skip on any conversions in 5 yet, and just have the page ready for manual updates by admin and allow me to write the url and open the page. then we may add it as a tab under the finance page, with no linkage yet to any customer revenue". For Exchange rates, BD-34 (redundant, do not extend) and BD-36 (read-only) no longer apply: an admin edits rates and the enabled flag through a server admin route, and the page is reached by typing its URL (later a tab under Finance). The **Platform dashboard stays redundant** (BD-34 unchanged for it). **BD-12 and CUR-3 are unchanged:** no conversion, no USD total, no cross-currency sum, and nothing in Finance reads a rate. **FF-2 is superseded** by slice 1b of [ADMIN_EXCHANGE_RATES_REQUIREMENT.md](/docs/requirements/ADMIN_EXCHANGE_RATES_REQUIREMENT.md), which owns this work from here | 2026-10-19 | User decision (recorded per SA-R2 of that requirement) |
 
 **Log:**
 - 2026-10-09 — BA applied SA findings F1–F14; slice 1 split into 1a/1b (SA F3).
@@ -124,6 +167,18 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 - 2026-10-14 — BA applied SA 6a workplan-review edits E-49..E-51 (SA-WP-6a): M3-FR-11 optional payload keys `accountEconomics` (tab, no business picked) and `accountMargin` (business picked), both absent otherwise (E-49, SA-W74); M3-FR-3 "Paid us" through `formatMoney`, AI cost and AI margin through `formatUsd` (E-50, SA-W76); §13 slice 6a checks intro records the two by-design differences from check 19 (E-51, SA-W81). §0.1 slice 6a: workplan SA-approved with conditions, Dev implementing.
 - 2026-10-15 — With M-1 to M-3 merged (#383, #392), BA specified **Money M-4** in §11F from CR §6, G-7 and the M-4 row, OV-1 and OV-5, BD-18 and BD-27, the merged code (main `b20da2cc`) and a read-only live check (§11F.1: the daily and monthly usage views have no feature column and `business_os_usage_summary` returns no cost, so neither can give a Business OS figure; October 2026 recorded USD 1.94 against charged USD 1.61 over the same 6 accounts). **OV-1**: 25 strings (W-1 to W-25) on Finance, AI cost & usage, Business OS AI, the Health tile and the Businesses drawer, copy only; sidebar descriptions stay for M-5. **OV-5**: "Recorded AI cost" and "Recorded, not charged" (recorded minus charged, deleted accounts left out, "Not available" before the cut-over, "None" when charged is higher, never added) in Section 3 and the account summary; reads reused, not new (the Health tile's all-accounts read; the drawer's account-scoped read for a picked business), injected by the route; the finance source guard is narrowed by SA ruling. AC-150 to AC-166; §13 checks 21 and 22; SA-Q51 to SA-Q57. Recommended two PRs, OV-1 first. No business question is open. Awaiting SA review.
 - 2026-10-15 — BA applied SA M-4 review edit E-54 (Finance label 'Recorded above charged'): the Finance net difference is renamed from "Recorded, not charged" to "Recorded above charged" in the §11F title, intro and TOC entry, R4-2, R4-5, R4-6, R4-9, R4-10 (closing sentence as SA worded it), M4-FR-1 to M4-FR-3, AC-154, AC-155, AC-159 and the §0.1 M-4 row. The Leak check (W-16) keeps "Recorded, not charged"; SQL column names unchanged. §0.1 M-4: SA-approved with conditions, edits applied, Dev workplan next.
+- 2026-10-15 — The admin-layout session reviewed /admin/finance against the layout standard §5 and the user approved a six-slice plan (F-0 #414 and F-1 #418 merged; F-3 #420 merged). **F-2, F-4 and F-5 move to the finance stream** as DF-4 / Money M-6. User decisions **BD-28 to BD-31** (h1 "Finance"; tiles above the filter bar on both tabs; a bad link drops only the bad filter; tiles clickable to their sections). BA added §11G (AC-169 to AC-183) and §0.1 rows F-2, F-4, F-5. F-2 starts once #420 merges. No code changed.
+- 2026-10-16 — With F-5 (#437) merged, M-6 / DF-4 is complete and M-1 to M-4 are merged. BA specified **Money M-5** "The Money section" in §11H from CR §1, §5.1, the M-5 row, SA-Q-4, BQ-1, BQ-6 and BQ-10, BD-21, BD-24, BD-27, FU-M4-1, SA-Q55 and the code at main `98735db9`. **Sidebar sign-off already given:** the Admin Layout Standard treats the sidebar as fixed (LAY §2.3 X-1, X-2 and §3 rule 9), so moving pages between sections needs the user; the user gave that sign-off on **2026-10-14 by accepting CR BQ-1 (BD-21) and BQ-6 (BD-24)**. No new question goes to the user for M-5. Scope: a Money section (Finance, Charge checks, AI calls & usage (detail)); the Costs & credits tab, Leak check included, moves to `/admin/finance/charges` and old links redirect; Business OS AI keeps Settings and Activity; FU-M4-1 reworded (wording only); the Health tile gains a page link to Finance. AC-184 to AC-203; SA-Q58 to SA-Q64; manual QA L-128 to L-136. About 2 days, UI short path. Awaiting SA review.
+- 2026-10-16 — The user's roadmap decisions, relayed by the coordinator, are recorded as **BD-32** (order M-5 → 4b → M-8 → 6b → DF-6 → 5b → 7 → 3 → 8, with estimates), **BD-33** (no per-slice user approval: SA, QA and TL approve, then RM commits, opens the PR and turns on auto-merge; a genuine business question or a production migration still stops for the user), **BD-34** (M-8 marks the Platform dashboard and Exchange rates pages redundant in code comments and stops using or linking them; it does not delete them; amends BD-25) and **BD-35** (6b also re-orders the KPI tiles: revenue, then cost, then user and account data). **BQ-13 stays open** and is attached to 4b: does a refunded boost take its credits back? Until the user answers, 4b keeps today's behaviour (the customer keeps the credits) (§0.4). CR's M-8 row updated to match BD-34.
+- 2026-10-17 — With M-5 merged (#444), BA specified **slice 4b** in §11I from §11C, BD-17 and its dispute defaults, DF-5, the refund-timing scoping (option (ii)) and a pre-work check against main `16cb2a1f` and the live database (1 boost purchase, 0 refunds, 0 disputes; the events table absent; next migration `20261072`). Split **4b.1** (writer: table `business_os_boost_reversal_events`, written inside the unchanged-signature transition function, server-write-only, service_role SELECT plus a column-level INSERT grant because the function is SECURITY INVOKER; regenerated test-account cleanup because guard G-18 blocks the new FK; about 2 days) and **4b.2** (refunds and lost disputes by event date, held now, boost problems, bought credits, the Accounts tab on the same rule; about 2.5 days). One hand-applied production migration (two with the cleanup); the 4b.1 PR stays off auto-merge until the user applies it. AC-204 to AC-232; checks 23 to 26; SA-Q65 to SA-Q74; L-137 to L-141. BQ-13 stays open: 4b keeps no take-back. No new business question. Awaiting SA review.
+- 2026-10-17 — BA specified **Money M-8** in §11J from BD-34 (amends BD-25), the CR M-8 row and inventory I-15, I-19, and the code at main `5c214310` (CF-1 to CF-12): REDUNDANT header comments in both pages and in `/api/admin/dashboard` (its only caller is the dashboard); the dashboard's hidden parked sidebar item removed (parked 15 → 14, hrefs 29 → 28; visible sidebar unchanged; BD-34 is the sign-off, §11J.0); both routes kept with a one-line notice; a new source guard against in-app links; Exchange rates' `console.error` to Pino. AC-233 to AC-242 and SA-Q75 to SA-Q80 (numbered after PR #447's AC-232 and SA-Q74). New **BQ-14** (visible notice or comments only; default: notice) and **FU-M8-1** (Exchange rates still writes from the browser; not changed by M-8). CR M-8 row marked in progress. No code changed.
+- 2026-10-17 — With M-8 merged (#448, main `e43dcb60`), BA specified **slice 6b** in §11K from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8 and the 6a builder, with a read-only live check (no Stripe fee is stored for plan or boost payments; client payments carry `processor_fee`). Fee estimate per successful charge on the gross amount, rounded half up per charge, as config data (default 2.9% + USD 0.30, USD only); a refunded charge keeps its fee; dispute fees not estimated. "Margin after Stripe fees (estimate)" shown beside the AI margin, never replacing it, on the Accounts rows, the platform line and the one-account summary. Tiles re-ordered K-5, K-1, K-3, K-2, K-4, order only. Wording says "estimate", because the vocabulary guard forbids "estimated" in `financeCopy.ts`. AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91; new **BQ-15** (the fee rate) with its default, not blocking. No code changed.
+- 2026-10-17 — With 6b open as PR #449, BA specified **slice DF-6** "Since it started (one account)" in §11L from BD-26, CR G-9, CR SA-Q-6, BD-30, BD-32 and BD-33 and the code at `ea56ad04` (6b tip). A `since_start` window, valid only with a business picked (400 for all businesses), from the later of the cut-over instant and the account's first activity (the earliest of the plan row's `onboarding_started_at` and `profile_created_at`; never `created_at`, a backfill time) to now; resolved on the server after the plan check from the row already read; the 92-day cap unchanged for every other window; read ceilings unchanged ("At least" / Unknown); no timezone read (both ends are instants; `user_preferences.timezone` remains the authority if local dates are ever shown); URL `range=since_start` as a window extra, a bad link drops only the window (U-4); links out carry the dates only up to 92 days. **No migration, no new read or repository method.** AC-257 to AC-272, checks 29 and 30, L-148 to L-154, SA-Q92 to SA-Q99; new **BQ-16** (client takings before the cut-over) with its default, not blocking. About 1.5 days. Awaiting SA review. No code changed.
+- 2026-10-17 — With DF-6 open as PR #450, BA specified **slice 8** "History snapshots" in §11M from the §0.1 and §9 slice 8 rows, §8.1, CF-7 of §11L, BD-32 and BD-33, the §8.1 cron pattern of the event-driven plan, the `durable-queue-drain` and `tenant-isolation-guard` skills, `bosCronJobs.ts`, `20261011` and the `20261072` house style (PR #447), on `feature/bos-finance-health-8` (DF-6 tip `f6182697`). A nightly job at 00:07 UTC records, for the UTC day just ended, the states that cannot be rebuilt: plan mix (groups, states, K-3, dormant, ending soon), credit positions (counts, K-2, included credits and use) and the gifted, bought and outstanding credits (K-4); flows (AI cost, revenue, takings, gifts and purchases in a window) are rebuilt from their dated rows and never copied. One row per day, metric and dimension, `ON CONFLICT DO NOTHING`; only exact figures written, gaps stay gaps; no money, no currency, no account id. New table `business_os_finance_snapshots` in **migration `20261074`** (RLS on, no policy, service-role SELECT and a five-column INSERT only), job `finance-snapshot` on Jobs & queues, a separate admin history route, and a History block (all businesses only) with "History starts on {date}". Split **8.1** migration (stops for the user), **8.2** job, **8.3** History block; about 3.5 days. AC-273 to AC-294, checks 31 to 34, L-155 to L-162, SA-Q100 to SA-Q107; new **BQ-17** (daily), **BQ-18** (keep forever) and **BQ-19** (no backfill) with defaults, none blocking; **DF-9** (overdue history) deferred. Awaiting SA review. No code changed.
+- 2026-10-18 — The user answered **BQ-20** (raised in the FF-1 workplan, [BUSINESS_OS_FINANCE_HEALTH_FOLLOWUPS_FF1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_FOLLOWUPS_FF1_WORKPLAN.md)): **yes, make the Exchange rates page read-only**, recorded as **BD-36**. FF-1a carries it out under SA-WR-FF1: the page's three browser write paths go (the enable toggle, the rate edit and the unused outside-rate fetch), and the new read-only **check 35** shows whether the database still accepts browser writes on `exchange_rates` and `exchange_rate_history`. FU-M8-1 is closed by FF-1a. **FF-2** (a write-only lockdown, after check 35 is run) is recorded in §0.4; `authenticated` keeps SELECT on `exchange_rates`, because the settings currency picker reads it from the browser (SA-WR-FF1).
+- 2026-10-18 — The user approved **Finance R4** (SA condition P8A-R4 of plan payments P-8a), recorded as **BD-37**: billing status is read for the current Stripe mode only, revenue keeps counting both modes (BD-14). Without it, an account with both a test and a live billing row (the owner, the day live keys arrive) fails R-c and R-c′. The finance wiring now reads status through `lib/admin/billing/currentModeBillingStatus.ts`, which reuses P-8a's one-mode reader and key resolution; no guard, pin, route or migration change. Workplan [BUSINESS_OS_FINANCE_HEALTH_R4_BILLING_MODE_WORKPLAN.md](/docs/workplans/BUSINESS_OS_FINANCE_HEALTH_R4_BILLING_MODE_WORKPLAN.md). Follow-up **R4-FU-1** in §0.4.
+- 2026-10-19 — The user approved the Money area KPI restructure ([ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md); two pages, Finance and AI cost; Q-1 to Q-14 at their defaults), and SA approved it with conditions (SA-RR-MK). BA applied conditions MK-C1 to MK-C4: the review's C-1 to C-8 are recorded as **BD-38 to BD-45**, the Page 1 rules (leading or lagging icon, `$`-only, Paying accounts %, Converted this month) as **BD-46 to BD-49**, Q-10 to Q-12 as **BD-50 to BD-52**, and Q-13 / Q-14 (keep "AI margin" and "AI cost") as **BD-53 and BD-54**. In §0.1, 5b's MRR part is superseded by MK-4 and the rest becomes MK-9 (§11N is not built as written), and a pointer row for MK-0 to MK-9 is added. Next: the MK-0 workplan. No code changed.
+- 2026-10-19 — The user decided to make the Exchange rates page a usable, admin-maintained tool for manual rate entry, reached by URL and later as a tab under Finance, with no conversion and no link to customer revenue. Recorded as **BD-55**, which amends BD-34 and BD-36 for Exchange rates only (the Platform dashboard stays redundant; BD-12 and CUR-3 unchanged). **FF-2 is superseded** by slice 1b of [ADMIN_EXCHANGE_RATES_REQUIREMENT.md](/docs/requirements/ADMIN_EXCHANGE_RATES_REQUIREMENT.md), the requirement that now owns the page (SA-R2 there). No code changed.
 
 ### 0.3 SA rulings
 
@@ -201,20 +256,65 @@ Every business question from discovery §11 was answered on 2026-10-09: **the us
 | **SA-WP-M4** | **2026-10-15 SA workplan review (M-4, two PRs): APPROVED WITH CONDITIONS.** Part B starts only after PR 1 merges; each part stops for the user's diff view (no go-ahead given).<br>• SA-WR-46: Section 3 subtitle pin.<br>• SA-WR-47: guard controls on `aria-label` and `title`.<br>• SA-WR-48: `bosRowFilter()` pinned on both reads.<br>• SA-WR-49: the 2 s deadline changes only by SA ruling after QA's 92-day timing.<br>• SA-WR-50: the picked view's charged units equal Section 3's.<br>SA applied E-58 (W-18 `:245`, W-27, W-28, AC-150) and E-59 (V-3 and V-5 exceptions); FU-M4-1 added to §0.4. | 2026-10-15 | §11F |
 | **SA-CR-M4A** | **2026-10-15 SA code review (M-4 Part A, OV-1): Code Approved.**<br>• All 37 strings match W-1 to W-28 and CR §6: ledger figures say Charged, usage-log figures say Recorded, with no swap.<br>• No testid, rule id or metric changed; Health changes labels only.<br>• E-59 subtitle pinned (SA-WR-46).<br>• SA re-ran the guard scanner on the HEAD copies: 21 offences at HEAD, 0 now.<br>• D1 and D2 approved; D3 (a test comment and title) is left.<br>• Low follow-up: the Jobs page cron description still says "AI spend" (with FU-M4-1).<br>• SA re-run all green; two untouched load flakes (`jobsQueues.layout`, `creditsBlock`) pass when run alone. | 2026-10-15 | §11F |
 | **SA-CR-M4B** | **2026-10-15 SA code review (M-4 Part B, OV-5): Code Approved.**<br>• Exactness from `completed` / `reachedCeiling` only, decided in `recordedCost.ts` (E-53).<br>• End − 1 ms on both reads; race-only 2 s deadline.<br>• Optional `aiCost.recorded` with no sum anywhere (planted control).<br>• Recorded − (total − deleted); "None" when charged is higher; Not available outside Section 3's figure guard (W98).<br>• Picked view: the account read only; SA-WR-48 and SA-WR-50 pinned.<br>• AC-145: E-55 hunks only; with `recorded` deleted, the 6a hash comes back.<br>• `/tokenusage/i` over code, exactly two methods; repository headers comments only; the Leak check link carries `account`.<br>• W104 OK; no money in logs; `requireAdmin` first.<br>• D1 to D5 approved; D5 wording confirmed, no E-edit.<br>• SA re-run all exit 0 (finance 2239, guard 137, readers 28, Health 296, entitlements 7984, authz 203). | 2026-10-15 | §11F |
+| **SA-WP-F2** | **2026-10-15 SA workplan ruling (F-2, Finance header and states): APPROVED WITH CONDITIONS.**<br>• SA-W1: (a) export `adminReadFallback` from the shared reader, export only, pinned equal to the helper's fallback (F2-R1).<br>• SA-W2: Finance joins `MIGRATED_PAGES` now.<br>• SA-W3: `RETRY` becomes "Try again" now, so the page has one word (F2-R2).<br>• SA-W4: the notice loses `role="status"`, accepted (`AdminNotice` static-caveat rule).<br>• DV-1 (Refresh in the header until F-4) accepted.<br>• F2-R3: the slice that implements U-4 (BD-30) rewords "so the default view is shown".<br>• Texts match the `AdminLoading`, `AdminError` and `AdminNotice` wording; the F-0, F-1 and F-3 work stays intact; data is still cleared on failure; no data or API change. | 2026-10-15 | §11G |
+| **SA-CR-F2** | **2026-10-15 SA code review (F-2): Code Approved.**<br>• F2-R1, SA-W2, F2-R2 and SA-W4 met.<br>• Header is `AdminPageHeader` "Finance"; DV-1 pinned; content area always mounted with `aria-busy`; data cleared on all three failure paths.<br>• `fallbackError`, `PAGE_LOAD_FAILED`, `LOADING` and `NOTICE_LABEL` removed.<br>• `git diff -w` shows no hidden logic change in `FinanceView`.<br>• F-0, F-1 and F-3 intact; no data, API or money change.<br>• Deviations approved: test block in `financePage.render`, renamed titles, substituted mutation.<br>• SA re-run all exit 0 (finance 366, layout/contrast/reader 470, vocabulary 137, authz 203). | 2026-10-15 | §11G |
+| **SA-WP-F4** | **2026-10-16 SA requirement and workplan review (F-4, filter bar and URL state): APPROVED WITH CONDITIONS.** The F-4 part of §11G is sound and BD-28 to BD-31 are unchanged.<br>• SA-W10: AC-173 covers valid page states (15 literals, schema and serialiser hashes). Four bad or non-canonical link kinds change their request by decision (BD-30 bad value, BD-30 dependent keys, U-7 implied custom, repeated key), each pinned with its new literal (F4-R1, E-60).<br>• SA-W6: the U-7 narrowing is a recorded deviation (E-61).<br>• SA-W1: delete the notice.<br>• SA-W5 (a): refuse on Apply with a sentence (F4-R3).<br>• SA-W11: the request is unchanged.<br>• SA-W2 (a), SA-W3 (no second fetch, F4-R2), SA-W4 (a), SA-W7 (a), SA-W8 (a), SA-W9 (a).<br>• F4-R4: deviations recorded in the standard (TL/BA); F4-R5: the pin file is unedited after Step 0 (hash). | 2026-10-16 | §11G |
+| **SA-CR-F4** | **2026-10-16 SA code review (F-4): Code Approved.**<br>• F4-R1 to F4-R3, W1, W3, W5 (a), aliases, old links, omitted defaults, DV-1 ended, standard labels: all verified.<br>• No `lib/` or `app/api/` diff; F-0 to F-3 and F-2 intact.<br>• **F4-R5 amended once by SA ruling:** only the pin file's `findByTestId` timeout (10 s) and a 30 s per-test timeout may change; no literal, hash input or assertion. The new file hash is recorded as the frozen value; the helper hash `b84e0c96…` is unchanged.<br>• Deviations approved: the pins self-check, `financeCanClear`, lower-cased picked-name key, `accountsTab` stubs, `financeUrlState` 30 s.<br>• Stale `router.replace` comments in `AccountsTab`/`FinanceTabs` fixed in this PR (comment only).<br>• SA re-run all exit 0 (finance 458, users 615, components 734, authz 203; the pin 21/21 three times in parallel). | 2026-10-16 | §11G |
+| **SA-WP-F5** | **2026-10-16 SA workplan review (F-5, KPI tiles): APPROVED WITH CONDITIONS.**<br>• The ten `KpiTile`/`KpiStrip` callers are confirmed by grep and all covered by Pin A.<br>• S-7: one `OK_GREEN` object literal passes the C-14 check.<br>• Display only, by Pin B; the AC-173 pair is unchanged (`3a1a2dd4…`, `b84e0c96…`).<br>• SA-W1 no status row on neutral tiles.<br>• SA-W2 solid grey background, no existing caller affected.<br>• SA-W3 (a) Overview plus scroll (F5-R2).<br>• SA-W4, SA-W5, SA-W6 approved.<br>• **SA-W7 (a):** the K-1 link carries This month (UTC) plus the business, not the page window (F5-R1, E-62); no user question.<br>• SA-W8 section ids, unique (F5-R3).<br>• F5-R4: both new pins frozen, with explicit timeouts from the start.<br>• F5-R5: fix the stale line references. | 2026-10-16 | §11G |
+| **SA-CR-F5** | **2026-10-16 SA code review (F-5): Code Approved.**<br>• F5-R1 to F5-R5 met: K-1 opens This month plus the business; the jump is scroll-only with no hash; ids are unique; the line references are fixed.<br>• Hashes recomputed: Pin A `30f5fc24…`, Pin B `24ff0da7…`, AC-173 `3a1a2dd4…`, helper `b84e0c96…`, all frozen and untouched.<br>• S-7: one green via `OK_GREEN` (chip string byte-equal); the C-14 Finance entry passes.<br>• Existing callers are byte-identical (name and `describedBy` formulas reduce exactly, no new `useId`).<br>• No `lib/` or `app/api/` diff.<br>• Deviations approved: the financeLinks files, the `accountsTab` reversal (a stronger assertion), the amber-check exclusion, the narrower link return type (same URLs), the mutation swap.<br>• SA re-run green: finance 527, components 804, analytics 191, business-os-llm 854, authz 203. The `bosLens` P-8 5 s timeout flaked once under load, outside the diff, and passes alone; flake follow-up recorded. | 2026-10-16 | §11G |
+| **SA-RR-M5** | **2026-10-16 SA requirement review (Money M-5, §11H): APPROVED, edits applied.**<br>• SA-Q58 own entry; SA-Q59 stay; SA-Q60 `next.config.js` temporary redirect; SA-Q61 keep L-9a minus `costs`; SA-Q62 "(detail)" in both h1 and sidebar; SA-Q63 contrast key now; SA-Q64 no window; CR SA-Q-4 confirmed.<br>• Code facts re-checked: admin layout `requireAdminPage` gates the new page; the Health rules are code constants (wording only, never persisted).<br>• E-63: S-18 `ANALYTICS_WHAT` → "AI calls and usage"; AC-195 now covers S-1 to S-18.<br>• E-64: `tabCoexistence` X-8, X-8b and X-10 kept and re-scoped. | 2026-10-16 | §11H |
+| **SA-WP-M5** | **2026-10-16 SA workplan review (M-5): APPROVED WITH CONDITIONS.**<br>• W1: the stray `tab=costs` is harmless (no reader; the sidebar matches by pathname).<br>• W2 dual-mount Pin C approved.<br>• W3 Next internals accepted, with M5-R3 (shape block separate, version in the title, curl recorded).<br>• W4 rename; W5 stay; W6 not as listed (M5-R1: re-scope X-8, X-8b, X-10); W7 rename (S-18, M5-R2); W8 to W11 approved.<br>• M5-R4: pins C and D frozen with 10 s waits; the four existing hashes unchanged.<br>• Nav 28 → 29 is correct; C-14 entry and uniqueness case; `test:bos-entitlements` runs. | 2026-10-16 | §11H |
+| **SA-CR-M5** | **2026-10-17 SA code review (Money M-5): Code Approved.**<br>• M5-R1 (X-8, X-8b, X-10 re-scoped; only X-1, X-2, X-3, X-12 and one `costsTab` case deleted), M5-R2 (S-18), M5-R3 (shape and internals blocks, curl recorded) all met.<br>• M5-R4: all seven hashes recomputed and equal (C `98ea0507…`, C helper `02813360…`, D `1f7cf07a…`, A, B, the AC-173 pair).<br>• `evaluateHealth.ts`: link and wording only; Health results change only in the spend tile's `pageLink`.<br>• Deviations approved: the 18-file vocabulary guard; X-6 kept to `keep=1` (no coverage lost).<br>• The costs files are not moved; no API, data or money change.<br>• Follow-up chip: harden `qa-slice5-pr2.route.test.ts` (wall-clock `< 1000` ms) together with `bosLens` P-8.<br>• SA re-run all exit 0 (finance 564, business-os-llm 850, components 816, Health 319, entitlements 8472, authz 203). | 2026-10-17 | §11H |
+| **SA-Q65 to SA-Q74** | **4b rulings.**<br>• Q65: no `occurred_at`.<br>• Q66: CASCADE plus `20261073` regenerated in the same PR, applied right after; no DELETE grant needed.<br>• Q67: `ON CONFLICT DO NOTHING`.<br>• Q68: two reads, 100-id chunks (E-69).<br>• Q69: keep INVOKER.<br>• Q70: the rollback refuses; order `20261073` then `20261072`; fix forward once rows exist (E-67).<br>• Q71: add the table to the payment write-lockdown scan.<br>• Q72: one ruled update per pin (the AC-145 baseline as E-55; 6a pins only where FR-4B-11 changes a figure).<br>• Q73: Pin B not re-frozen; it serves fixed payloads (E-68).<br>• Q74: count each event as recorded, with a note. | 2026-10-17 | §11I |
+| **SA-RR-4b** | **2026-10-17 SA requirement review (§11I, slice 4b): APPROVED WITH CONDITIONS.**<br>• The function rewrite is safe: same transaction and row lock, retries and the reconcile pass hit `already`/`stale` before any write, the signature and grants are kept, and no DEFINER guard trips.<br>• RLS and grants fit the lockdown conventions.<br>• F-2: the RV-9 race is narrowed by `LOCK TABLE` and proven by a new check 24 row (E-65).<br>• F-4: AC-207 to AC-211 are proven by a local-only self-checking SQL script in `BEGIN … ROLLBACK` (E-66).<br>• The deploy order is honest; checks 23 to 26 are editor-safe; the split is sensible.<br>• **No user business decision.** The only possible user touchpoint is a Stripe test-mode refund if Dev has no local database (F-5). | 2026-10-17 | §11I |
+| **SA-W105 to SA-W115** | **4b.1 workplan rulings.**<br>• W105: TS-only `CASCADE_CHILDREN` accepted by the coverage test, with a planted control.<br>• W106: separate `LATER_SERVER_ONLY_TABLES`.<br>• W107: md5 fail-closed in the migration plus check 23.<br>• W108: no separate user confirmation; check 23's 20261047 row is the gate (if false, stop and re-plan).<br>• W109: `INSERT … SELECT`, proven byte-identical by subtraction.<br>• W110: PGlite 0.5.8 (PG 18.3) satisfies E-66; nothing used differs from prod PG 17; no test-mode refund needed.<br>• W111: both rollbacks or neither.<br>• W112: record only (FU-4B-1).<br>• W113: strengthened checks supersede §13 (E-70).<br>• W114: register in `USER_OWNED_TABLES`.<br>• W115: `NOTIFY pgrst` in the migration and its rollback. | 2026-10-17 | §11I |
+| **SA-WP-4b1** | **2026-10-17 SA workplan review (4b.1, reversal events): APPROVED WITH CONDITIONS.**<br>• E-65 to E-68 honoured.<br>• Grants and RLS follow the lockdown conventions; idempotency arbiters are explicit; INVOKER and the signature are unchanged.<br>• The guard list and AC mapping are complete; the checks are editor-safe; estimate about 2.1 days.<br>• B1-R1: the Danger Zone wording covers from step 2 to the deploy. B1-R2: the self-check header says local only. B1-R3: the md5 and stamp placeholders are filled and pinned.<br>• **No user action beyond the planned apply steps.** | 2026-10-17 | §11I |
+| **SA-CR-4b1** | **2026-10-17 SA code review (4b.1, reversal events): Code Approved.**<br>• `20261072` was verified by SA's own script: the body minus the six inserts is byte-equal to `20261031`, the header is byte-equal, and the arbiters are exact. Old and new md5 are `b9a5fe31…` and `018c4447…`; the rollback restores `b9a5fe31…`.<br>• Lock, RV-9 and md5 refusals come first; RLS is on with no policy; the nine-column INSERT excludes `id` and `recorded_at`; `NOTIFY` is present.<br>• `20261073` is the generator output (stamp `f854486b31baf784`).<br>• Checks 23 (8 rows) and 24 (23 rows) are editor-safe; the self-check is local only with three guards.<br>• The forced re-pins (155 → 156; allow-lists for `20261046` and `20261047`) are legitimate: those files are applied history pinned by sha256.<br>• `test:gate`'s 9 failing suites are Windows path and env failures outside every 4b.1 input; not blocking.<br>• All seven frozen pins unchanged.<br>• SA re-run all exit 0. The PR stays off auto-merge until the user's apply steps. | 2026-10-17 | §11I |
+| **SA-CR-4B1-R** | **2026-10-17 SA code review (4b.1 rebase onto DE-8a): APPROVED WITH CONDITIONS.**<br>• `20261076` is the old 72 unchanged (rename, 0 lines). `20261077` vs `20261075`: 8 lines (header, the reversal-events edge, stamp `b78b4579fc6631f8`). Its rollback restores `20261075`.<br>• Only `20261031` and `20261076` define the transition function. 76 and 77 are free on every remote. Counts 157 = 38 + 0 + 119. Check 23 has 9 rows. Runbook and rollback order are right; stale references are history only; scripts are paste-safe.<br>• (a) The DE-8a test's literal `20261075` stamp is acceptable (an applied, immutable stamp, cross-checked against that file).<br>• (b) **R-1 (High), fix in this PR:** DE-8a's rollback guard must refuse while any live cleanup body names `business_os_data_exports`, not match one stamp; pin and PGlite proof.<br>• R-2: note the DE-8a checker's stamp row reads false after 77. R-3: §11I.6 step 3 wording. | 2026-10-17 | §11I |
+| **SA-WR-4b2** | **2026-10-17 SA workplan review (4b.2, refund and dispute display): APPROVED WITH CONDITIONS.**<br>• E-103: new wire fields on Pin B's types are optional (E-68's intent kept), and a builder test proves they are always set.<br>• E-102: held leaves the window net by BD-17 and FR-4B-5, so K-5 also moves on an open dispute. A factual fix, **not a BQ**.<br>• E-104: `heldNow` is a per-currency list beside the lines.<br>• R-l / R-l′ are built in 4b.2. A sixth export, `readReversalMoney`. One ruled AC-145 update under SA-Q72, with the old hash kept as a second assertion.<br>• 4B2-R1: every request, chunks included, pages at 1,000. 4B2-R2: isolation tests. 4B2-R3: `tsc` over the seven pins. 4B2-R4: no lot write (BQ-13).<br>• One fetch, `requireAdmin`, per-currency only, about 2.1 days. | 2026-10-17 | §11I |
+| **SA-CR-4b2** | **2026-10-17 SA code review (4b.2): Code Approved with conditions CR-1 to CR-3 before the RM commit.**<br>• R1 to R4 met:<br>  ◦ a keyset at ≤ 1,000 on every request, with 100-id chunks each paged;<br>  ◦ R-n′ reads the parent purchases first and fails closed on a foreign event;<br>  ◦ the scoped `tsc` includes the seven pins (clean 0);<br>  ◦ no lot write.<br>• Optional fields are set every time. AC-145: new hash `39b35743…56ea`, and the E-55 hash re-asserted with the 4b.2 keys stripped.<br>• `route.ts` untouched, so one fetch. Per currency. Table-absent reads `warn` and Unknown. Seven pins recomputed and equal.<br>• **CR-1:** Section 6 frame becomes "Payment problems"; the "Client payment problems" / "not ours" heading moves to block B only (FU-4B2-1 fixed now).<br>• **CR-2:** re-issue SQL check 19 on the event rule (FU-4B2-2 fixed now).<br>• **CR-3:** Pin C row 1 failed once under parallel load (passed 11/11 alone); QA re-runs quietly.<br>• DV-3 and DV-5 resolved by CR-1 / CR-2; the other DVs approved. | 2026-10-17 | §11I |
+| **SA-RR-M8** | **2026-10-17 SA requirement review (Money M-8, §11J): APPROVED, E-71 applied.**<br>• **BD-34 reading:** "just add comments it is redundant for now and not use them" means code comments only and **no visible notice**. BQ-14 is resolved by BD-34 and not sent to the user. RP-4, AC-236, the §11J.2 scope row, §11J.4 and the BQ-14 paragraph are amended.<br>• `docs/MULTI_CURRENCY_SYSTEM.md` is added to the pointer notes.<br>• Estimate about 0.75 day.<br>• Q75 remove the hidden item; Q76 and Q77 moot; Q78 comment only; Q79 a new guard; Q80 FU-M8-1. | 2026-10-17 | §11J |
+| **SA-WP-M8** | **2026-10-17 SA workplan review (M-8): APPROVED WITH CONDITIONS.**<br>• References re-found by `git grep` (sidebar, the dashboard's fetch, the route comment); the visible nav is unchanged; Pino matches the dashboard; no Health, C-14, contrast or authz edit; the seven pins are unchanged (LF-normalised, clean against HEAD).<br>• M8-R1: drop the notice, Step 2 and the render test. M8-R2: the MULTI_CURRENCY doc pointer. M8-R3: planted controls for every guard rule. M8-R4: LF-normalised hashes. | 2026-10-17 | §11J |
+| **SA-CR-M8** | **2026-10-17 SA code review (M-8): Code Approved.**<br>• Comment-only page and route diffs, plus Exchange rates' Pino lines; no notice (G-3); `'use client'` stays first.<br>• Hidden item and icon removed; visible nav unedited; parked 15 → 14 (both pins) and hrefs 29 → 28.<br>• G-1 to G-5 each have a planted control.<br>• MULTI_CURRENCY, ADMIN_IDENTIFICATION and reorganisation doc edits were needed (stale references to the removed item and the route).<br>• Seven pins unchanged (LF-normalised).<br>• SA re-run exit 0 (components 818, guards 401, authz 203). | 2026-10-17 | §11J |
+| **SA-RR-6b** | **2026-10-17 SA requirement review (slice 6b, §11K): APPROVED, edits applied.**<br>• SA-Q81 to SA-Q91 as the BA suggests: `financeRules.ts` data constant; gross fee; per-charge rounding; sort and filter on the AI margin; the AC-145 baseline unchanged; "estimate" wording; Pins A and B unedited; the order test in the page test; one PR under BD-33; fee stays on the charge.<br>• E-72: a zero-total boost is not a charge (FE-1, AC-245, checks 27 and 28).<br>• E-73: a missing or invalid USD config gives Unknown (FE-9).<br>• E-74: fee subtracted in minor units before the single scale step (FE-8).<br>• Checks 27 and 28 are editor-safe. | 2026-10-17 | §11K |
+| **SA-WP-6b** | **2026-10-17 SA workplan review (6b): APPROVED WITH CONDITIONS.**<br>• Fee maths re-derived (7900 → 259, 4414 → 158, 1000 → 59, 500 → 45, 499 → 44).<br>• 6b-2 exact with no double scaling.<br>• Pin B sorts ids, so it is order-free; all seven pins unchanged.<br>• `route.test.ts:1357`/`:1385` and `financeHealth.test.ts:1981` are not frozen.<br>• 6b-1 to 6b-11 approved.<br>• 6B-R1: the FE-8 text. 6B-R2: note percent and fixed render test. 6B-R3: zero-total boost builder test. | 2026-10-17 | §11K |
+| **SA-CR-6b** | **2026-10-17 SA code review (6b): Code Approved.**<br>• E-72, E-73 and E-74 met; the AI margin is the unchanged `marginUnitsOf(revenue, cost)`, and after-fees is `marginUnitsOf(revenue − fees, cost)`.<br>• 6B-R2 and 6B-R3 tests present.<br>• Fees: 7900 → 259, 1000 → 59, total 318.<br>• The fee stays on the charge.<br>• Tile blocks moved whole into K-5, K-1, K-3, K-2, K-4, with an order test.<br>• Seven pins unchanged.<br>• D-1 to D-6 approved.<br>• SA re-run exit 0 (finance UI 613, finance lib 1652, route and vocabulary 272, authz 203). | 2026-10-17 | §11K |
+| **SA-RR-DF6** | **2026-10-17 SA requirement review (DF-6, §11L): APPROVED WITH CONDITIONS.**<br>• DF6-F1 (Medium): the start is the cut-over instant only. The first-activity rule could drop an early charge and adds nothing (E-75).<br>• DF6-F2: shared `resolveWindow` gives `none` for `since_start`; one ruled update to the extras list pin (E-76).<br>• DF6-F3: the link helpers never send `range=since_start` (E-77).<br>• DF6-F4 to DF6-F6: AC-262 end, Section 1 "new in window", type widening (E-78 to E-80).<br>• SA-Q92: resolved in the route, pure. SA-Q93: shared extras. SA-Q94: the cut-over. SA-Q95 to SA-Q99 as the BA suggests.<br>• Cap, `requireAdmin` first, ceilings, columns, no timezone read, isolation and pins all verified. BQ-16 default accepted. About 1.25 to 1.5 days. | 2026-10-17 | §11L |
+| **SA-WR-DF6** | **2026-10-17 SA workplan review (DF-6): APPROVED WITH CONDITIONS.**<br>• W-DF6-1: `formatUtc` with " UTC" stripped, "Since it started: 2026-09-29 16:50 to now (UTC)" (E-81).<br>• W-DF6-2: summary window line for `since_start` only, text computed once in `FinanceView` and passed in (E-82).<br>• W-DF6-3: one ruled update of the links import pin, adding `adminWindowPresets` (E-83).<br>• W-DF6-4: `toFinanceQuery` sends the default without a business; the route 400 stays the backstop.<br>• W-DF6-5 to W-DF6-8 as Dev suggests; line ref `planGroups.ts:224` (E-84).<br>• DF6-R1: the folder-wide `user_preferences` / `timezone` ban skips `__tests__`. DF6-R2: one label source. DF6-R3: the ruled pin edits are listed exactly in the handover. | 2026-10-17 | §11L |
+| **SA-CR-DF6** | **2026-10-17 SA code review (DF-6): Code Approved.**<br>• **D-1 approved; SA-Q96 corrected:** AC-173 part B hashes the route's `DATE` + `buildQuerySchema` text, so the schema stays unedited and `parseFinanceQuery` admits `since_start` around it (only with `accountId`, else 400).<br>• **D-2 approved, DF6-R3 amended:** a third ruled test edit, the `financeLinks.test.ts:34`/`:39` type narrowing, applied by SA. Scoped `tsc`: canary 1, clean 0.<br>• Isolation, the single first request, links, U-4, the timezone ban and the label verified. Seven pins recomputed and equal; AC-145 untouched; vocabulary guard untouched.<br>• SA re-run: 37 suites, 2605 passed. | 2026-10-17 | §11L |
+| **SA-RR-8** | **2026-10-17 SA requirement review (slice 8, §11M): APPROVED WITH CONDITIONS.**<br>• S8-F1 (High): AC-173 asserts exactly one fetch, so the History block opens on demand and sends no request on load (E-85).<br>• S8-F2 (High): the dimension CHECK must admit `tier:` keys with a hyphen, and the builder checks every row first, so a bad key skips only `plan` (E-86).<br>• S8-F3: the job passes a 30 s credit budget (E-87).<br>• S8-F4: an upsert that ignores duplicates, plus `.select('id')` (E-88).<br>• SA-Q100 to SA-Q107 as the BA suggests; SA-Q104: keep the `day_ended` CHECK.<br>• `20261074` is free (main 20261071; #447 holds 72 and 73). House style, columns, cron and descriptors verified. 3.5 days. | 2026-10-17 | §11M |
+| **SA-WR-8.1** | **2026-10-17 SA workplan review (slice 8.1): APPROVED WITH CONDITIONS.**<br>• E-91: the migration is now **`20261078`**, superseding SA-RR-8's `20261074` (#451 took 74 and 75; #447 is taking 76 and 77).<br>• Cleanup function: no new version, confirmed on main (a global `never` is filtered out; no FK, no `user_id`).<br>• E-89: `NOTIFY pgrst` in the migration and the rollback. E-90: the pure shape module ships in 8.1.<br>• E-92: count pins recomputed from merged main at code time (main is 156 / 118); the second of #447 and 8.1 to land re-counts.<br>• E-93: check 32's tier row is an exact-pattern match; the uuid row is dropped, so check 32 has 16 rows.<br>• 8.1-R1: merge `origin/main` first. 8.1-R2: UTC dates in the self-test. About 1 day. | 2026-10-17 | §11M |
+| **SA-CR-8.1** | **2026-10-17 SA code review (slice 8.1): Code Approved.**<br>• `20261078` meets §11M.6 and E-86 / E-89 / E-93: append-only, RLS on with no policy, `service_role`-only grants, the unique key, the exact dimension pattern, `day_ended`, `NOTIFY`.<br>• The rollback refuses with rows. Checks 31 and 32 have 6 and 16 rows. Self-test and runner pass S-01 to S-21; all 17 mutations are caught.<br>• Shape module pinned to both CHECKs and to `FINANCE_GROUP_SHAPE`. Descriptor and counts 157 / 119. Cleanup untouched; seven pins equal; SA re-run 1715 passed.<br>• D-1, D-2 and D-3 approved.<br>• The one scoped-`tsc` error (TS2353, `exportClassification.test.ts`) **exists on `origin/main` itself** (line 1962, DE-7 `adf9e37f`): a main defect for the DE stream, not fixed here.<br>• **MR-1:** whichever of #447 and 8.1 merges second recounts to **158 / 120**. | 2026-10-17 | §11M |
+| **SA-WR-8.2** | **2026-10-17 SA workplan review (slice 8.2): APPROVED WITH CONDITIONS.**<br>• E-94 amends SA-Q105: the wiring picks from `financeHealthDeps()`, so no caller list changes. `walkPlans` and `payingSetOf` are exported with no behaviour change (the AC-145 hash).<br>• E-95: `bought_outstanding` comes from a shared `outstandingBySource` (K-4's loop), with K-4's "existing accounts" rule.<br>• E-96: missing table means a probe, then 503 with zero reads. E-97: an injectable clock. No Run now.<br>• 8.2-R1: the E-86 pre-check runs on the emitted rows. 8.2-R2: a guard pins the writer to the job and the wiring only. 8.2-R3: `payingSetOf` keeps null as unknown. 8.2-R4: one clock.<br>• Cron pattern, isolation, 30 s budget, idempotency, pins and CI time verified. 1.5 days. | 2026-10-17 | §11M |
+| **SA-CR-8.2** | **2026-10-17 SA code review (slice 8.2): Code Approved.**<br>• R1 to R4 met: shapes checked on the emitted rows, family skip only; the writer is reachable from the job and its wiring alone (whole-tree guard); null paying skips `plan`; one clock.<br>• Missing table: probe, then 503 with no reads. `CRON_SECRET` fails closed. Run is recorded. Registry and `vercel.json` at `7 0 * * *`. The one idempotent upsert. 30 s budget.<br>• The refactors are behaviour-neutral (AC-145 and `creditsSection` tests unedited and green). Seven pins recomputed and equal; SA re-run 1720 passed.<br>• **`addedOn`:** RM sets the UTC date of the first 00:07 run after the production deploy; later is harmless, earlier is not.<br>• `qa-slice5-pr2` flake is unrelated (`task_d3dcf2de`). | 2026-10-17 | §11M |
+| **SA-WR-8.3** | **2026-10-17 SA workplan review (slice 8.3): APPROVED WITH CONDITIONS.**<br>• E-98: the reads go in a **separate read-only `BusinessOsFinanceSnapshotReadRepository`**. The writer file and 8.2's writer guard stay unedited.<br>• E-99: the route returns a server-built view (points, gaps, cells, change), not raw rows.<br>• E-100: `not_installed` answers 200 with a calm notice (tests only, no browser step); an optional `statusChip` (default true) on `FinanceSection`.<br>• E-101: the empty-history copy reads "a snapshot is taken every night at 00:07 UTC".<br>• `seedGroups` exported. The page's window, never `accountId`.<br>• 8.3-R1 split, 8.3-R2 route order and `no-store`, 8.3-R3 one-fetch proofs. About 1 day. | 2026-10-17 | §11M |
+| **SA-CR-8.3** | **2026-10-17 SA code review (slice 8.3): Code Approved** (first Fix Required on C-1; the fix was re-checked by SA: 1,000-row pages in key order, stop on a short page, error past 5,000; tests 3,700 / 5,000 / 5,001 under a 1,000-row mock; 29 passed).<br>• **C-1 (High, fixed):** `listSnapshotsInRange` uses one `.range(0, 5000)`, which PostgREST's `max-rows` (1,000) cuts silently. A 92-day window (about 3,700 rows) would show about 25 days and false "No snapshot" gaps. **Fix:** page in 1,000-row pages up to the 5,000 ceiling, with a test of a 1,000-row cut.<br>• Everything else approved: the split (the writer and the 8.2 guard unchanged), the server-built view, `requireAdmin` first and `no-store`, the calm `not_installed`, one fetch on load on both paths, `statusChip` default true, isolation, no currency, the guards. Seven pins recomputed and equal; SA re-run 2137 passed.<br>• D-1: `financePage.render.test.tsx` is not a pin file. D-2: the error shows in-block with Try again. | 2026-10-17 | §11M |
 
 ### 0.4 Deferrals and parked items
 
 | # | Item | Why | Date |
 |---|---|---|---|
-| FU-M4-1 | The Health tile's rule descriptions and metric labels (`lib/admin/health/rules.ts`) still say "spend" under the "Recorded AI cost" title | They are pinned by the Health rule tests, which AC-151 keeps unedited; reword them in M-5 (SA-W94). Same follow-up: the Jobs page cron description at `lib/cron/bosCronJobs.ts:452` ("Business OS AI spend", SA-CR-M4A) | 2026-10-15 |
+| FU-M4-1 | The Health tile's rule descriptions and metric labels (`lib/admin/health/rules.ts`) still say "spend" under the "Recorded AI cost" title | They are pinned by the Health rule tests, which AC-151 keeps unedited; reword them in M-5 (SA-W94). Same follow-up: the Jobs page cron description at `lib/cron/bosCronJobs.ts:452` ("Business OS AI spend", SA-CR-M4A). **2026-10-16: taken into M-5 (§11H.5 S-14 to S-17)** | 2026-10-15 |
+| BQ-13 | **Open business question, attached to 4b:** when a boost is refunded, does it take back the credits it bought? | Still open (user, 2026-10-16). Until the user decides, 4b keeps today's behaviour: the customer keeps the credits. If the user decides credits are taken back, that is a credit-ledger write in the boost module, not a Finance display change, and it is scoped with 4b. **2026-10-17: still open; §11I specifies 4b with no take-back (RV-10, AC-213); a later decision is scoped on its own** | 2026-10-16 |
+| BQ-15 | **Open business question, attached to 6b (does not block it):** what Stripe fee rate should the "Margin after Stripe fees (estimate)" use for plan and boost payments? | **Default, used to build 6b:** (a) Stripe's standard card price, **2.9% + USD 0.30 per successful charge**, on the gross amount charged, USD only; (b) a refunded charge keeps its fee; (c) the separate dispute fee, and any Stripe Billing, Stripe Tax, international-card or currency-conversion surcharge, are **not** included. The rate is an assumption, not a recorded fee: our real Stripe rate has not been checked. It is config data (§11K.3 FE-4), so the user can change it later with no logic change | 2026-10-17 |
 | DF-1 | Currency-grouping helper (CUR-1, CUR-2) and AC-13 moved from slice 1 to **slice 2** | Slice 1 shows only USD AI cost; a helper with no production caller is dead code (SA-F10) | 2026-10-09 |
 | DF-2 | "Businesses without a plan row" is **not** shown in slice 1 | A shadow-report fact (`findTenantsMissingPlanRow`); the page links to Plans & entitlements instead (SA-F7) | 2026-10-09 |
 | DF-3 | **Filter out test businesses or users (future)** | BD-13: test and real client payments are shown together and all layer-B data is treated as real for now; no test-mode label and no livemode migration. A later slice may let the admin exclude chosen test businesses or users from the layer-B figures. Needs its own business decision on how a business or user is marked as test | 2026-10-11 |
-| DF-4 | The finance page **shell** adopts the shared admin layout standard ([ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md)): `AdminPageHeader`, `AdminFilterBar` through `useAdminFilters` (canonical `range` / `account`, with `preset` / `accountId` read as legacy aliases), the shared `KpiStrip` with its cross-page tile mode, and the C-14 registry entry | Not in slice 2: a layout migration is UI-only and must not ride in a data slice (layout standard §3 rules 1, 4 and 5). Slice 2's **new** blocks use the shared components from the start (S2-FR-13). Its own slice, after 2b (SA-Q18) | 2026-10-11 |
-| DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** **Decided 2026-10-14 (BD-17): refund month; lost dispute in the month lost; held means held now.** The writer-side date and the page change stay deferred with FIN 4b (paused during Money M-1 to M-3). | 2026-10-13 |
-| DF-6 | **"Since it started" view for one account** (CR BQ-9: a window beyond the 92-day cap, from the charging cut-over, for a picked account only) | Not needed for M-1: the account summary answers the picked window. It raises the cap for account-scoped reads only, a route and validation change (CR SA-Q-6), so it is not UI-only. A later Money item, after M-3 | 2026-10-14 |
+| DF-4 | The finance page **shell** adopts the shared admin layout standard ([ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md)): `AdminPageHeader`, `AdminFilterBar` through `useAdminFilters` (canonical `range` / `account`, with `preset` / `accountId` read as legacy aliases), the shared `KpiStrip` with its cross-page tile mode, and the C-14 registry entry | Not in slice 2: a layout migration is UI-only and must not ride in a data slice (layout standard §3 rules 1, 4 and 5). Slice 2's **new** blocks use the shared components from the start (S2-FR-13). Its own slice, after 2b (SA-Q18). **2026-10-15: being delivered as Money M-6 by slices F-2, F-4 and F-5 (§11G), owned by the finance stream** | 2026-10-11 |
+| DF-5 | **Boost refund and dispute dates** | No date is stored for a boost refund or dispute, so slice 4 counts them in the purchase month (S4-W-3). Showing them in the month they happen needs a writer-side change in the boost module (for example a refund event record). User choice pending; default: purchase month. **Pending user question (refund timing).** **Decided 2026-10-14 (BD-17): refund month; lost dispute in the month lost; held means held now.** The writer-side date and the page change stay deferred with FIN 4b (paused during Money M-1 to M-3). **2026-10-17: specified in §11I** (4b.1 writes dated reversal events; 4b.2 reads them; closed when 4b.2 merges) | 2026-10-13 |
+| DF-6 | **"Since it started" view for one account** (CR BQ-9: a window beyond the 92-day cap, from the charging cut-over, for a picked account only) | Not needed for M-1: the account summary answers the picked window. It raises the cap for account-scoped reads only, a route and validation change (CR SA-Q-6), so it is not UI-only. A later Money item, after M-3. **2026-10-17: scheduled as slice DF-6, specified in §11L** (after 6b in the BD-32 order; the cap is lifted only for `since_start` with a business picked; no migration) | 2026-10-14 |
+| BQ-16 | **Open business question, attached to DF-6 (does not block it):** with "Since it started" picked, should the business's **client takings** (layer B, clients paying the business) also start at the charging cut-over, or show the business's whole history? | **Default, used to build DF-6:** the same window for every section, starting at the cut-over (DF6-W-7), so the page has one span and one label. Client payments before 29 Sep 2026 are not shown in this view (check 30 counts them). Showing all-time takings would need a second window on one page | 2026-10-17 |
 | DF-7 | **Refused plan payments with an amount** (`mismatch_refused` rows) | Live: 8 test-mode rows, no account (`unknown_customer`), amounts recorded (§11D.1). They are not revenue of any account and M-2 never counts them (M2-W-2). Showing them belongs to platform payment problems (slice 7) | 2026-10-14 |
 | DF-8 | **Stripe fee estimate in the AI margin** (BD-7) | M-3 shows AI margin with the label "Stripe fees not deducted" and no estimate. The labelled estimate (the boost requirement's assumed 2.9% + USD 0.30) needs a per-payment rule for plans and boosts and its own exactness rule; it moves to slice 6b with K-7 and the per-plan margin (BD-8). DF-6 also stays deferred after M-3 (it changes the 92-day cap, a route and validation change; §11E.2) | 2026-10-14 |
+| BQ-17 | **Open business question, attached to slice 8 (does not block it):** should the history be recorded **daily or monthly**? | **Default, used to build slice 8:** daily, at the end of each UTC day (HS-W-1). A monthly view is the last day of each month, so daily loses nothing and shows a change within the month. Monthly would mean about 30 times fewer rows, which does not matter at this size | 2026-10-17 |
+| BQ-18 | **Open business question, attached to slice 8 (does not block it):** how long should the snapshots be kept? | **Default:** forever. They are a few dozen rows a day (about 13,000 a year), hold no personal data, and cannot be rebuilt once deleted. Keeping them for a fixed time (for example two years) would need a later prune job and a migration that grants delete | 2026-10-17 |
+| BQ-19 | **Open business question, attached to slice 8 (does not block it):** should past days be filled in? | **Default:** no backfill. Plan mix and credit positions cannot be rebuilt for the past (§11M.2), so history starts on the first night after slice 8.2 ships, and the page says so ("History starts on {date}"). Gifted and bought credits could be estimated for past days, but a series that is exact from one date and estimated before it would mislead | 2026-10-17 |
+| BQ-20 | **Answered 2026-10-18 (BD-36):** should the redundant Exchange rates page stop allowing edits? | The user said yes, the default. Raised in the FF-1 workplan because BD-34 said comments only. Carried out by FF-1a | 2026-10-18 |
+| FU-M8-1 | Exchange rates wrote `exchange_rates` from the browser (§11J SA-Q80) | **Closed by FF-1a (BD-36), PR [#465](https://github.com/AgentsPilot/neuronforge/pull/465):** the page is read-only; the database side is FF-2 | 2026-10-17 |
+| FF-2 | **Close browser writes on the rate tables in the database** (follow-up, not scheduled). **Superseded 2026-10-19 (BD-55)** by slice 1b of [ADMIN_EXCHANGE_RATES_REQUIREMENT.md](/docs/requirements/ADMIN_EXCHANGE_RATES_REQUIREMENT.md); original text kept for history | FF-1a removes the page's writes, but a signed-in browser session could still write if the database allows it. The user runs **check 35** (`scripts/check-bos-exchange-rates-write-access.sql`) once on production. If a write grant is held and RLS is off or a write policy applies, BA specifies FF-2: one migration revoking INSERT, UPDATE and DELETE only, user-applied, with pre and post checks. **SELECT stays for `authenticated`** on `exchange_rates`, because the settings currency picker reads it from the browser (SA-WR-FF1) | 2026-10-18 |
+| R4-FU-1 | **Next Finance follow-up: remove the unwired R-c and R-c′** (`listBillingStatusesAllAccounts`, `findBillingStatusForAccount`) from `BusinessOsFinanceReadRepository`, with their tests | Since R4 (BD-37) nothing calls them; they stay only because `FinanceHealthDeps['finance']` is a `Pick` of the repository. Removal moves that type, and touches the finance table pin, the billing-table reader list and possibly the AC-145 named reads (pins), so it needs its own SA-reviewed slice | 2026-10-18 |
+| MK5B-FU-1 | **Rework the Converted this month first-payment read before the account count passes 1,000** (Money MK-5b, SA-CR-MK5B) | It asks about every plan-row account: one request for each 100 ids (more with paging), so its cost grows with the account count. Fine at today's scale. QA estimate (2026-10-20): because it reads every past payment, the figure turns permanently "Unknown" at about 1,700 paying accounts after a year, so the rework must land well before that. Options include reading only the paying accounts plus this month's payers, a this-month `paid_at` filter with an earlier-payment check, or a server-side first-payment-per-account view. Needs its own SA-reviewed slice, and AC-145's expected calls move | 2026-10-20 |
+| DF-9 | **History of overdue client invoices and instalments** (Section 6 block B, as of now) | Not rebuildable, but it is money in the clients' currencies; slice 8 stores no money (HS-W-9). It needs its own metric family with a `currency` column and one row per currency (CUR-1), in a later slice if wanted | 2026-10-17 |
 
 ---
 
@@ -511,7 +611,7 @@ Small numbered slices of a few days each, reusing existing infrastructure. Each 
 | **5** | Plan revenue and MRR (P-8a definition); paying vs comped made exact in Section 1; trial-to-paid; funnel "paid" stage. | **P-3b.2** (webhook writer), **P-8a**, **P-5** | No (expected) |
 | **6** | AI margin overall and per current plan (BD-7, BD-8), Stripe fee as labelled estimate; K-7 (needs a new condition kind, SA). | Slices 4, 5 | No (expected) |
 | **7** | Platform payment problems and paid churn (BD-5): failures, grace, paused, `ended_at`; webhook health; K-6 for plan disputes. | **P-6a**, **P-6b**, **P-8b** | No (expected) |
-| **8** | History snapshots (plan mix, credit position) for trend lines and churn of free accounts; scale path for any aggregate. | A migration and a cron on the `bos_cron_runs` pattern (SA) | **Yes** |
+| **8** | History snapshots (plan mix, credit position) for trend lines and churn of free accounts; scale path for any aggregate. **Specified in §11M (2026-10-17)** as 8.1 / 8.2 / 8.3; churn of free accounts is out of slice 8 (§11M.3). | A migration and a cron on the `bos_cron_runs` pattern (SA) | **Yes** (`20261078`) |
 
 ---
 
@@ -1699,6 +1799,1613 @@ Technical only. **No business question needs the user**: BD-18 (charged is the b
 
 ---
 
+## 11G. Finance shell on the Admin Layout Standard (F-2, F-4, F-5)
+
+This is **DF-4 / Money M-6**. On 2026-10-15 the admin-layout session reviewed /admin/finance against [ADMIN_LAYOUT_STANDARD_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_STANDARD_REQUIREMENT.md) §5, and the user approved six slices. F-0 (#414) and F-1 (#418) are merged, and F-3 (#420) is open; those three are tracked in [ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md](/docs/requirements/ADMIN_LAYOUT_FOLLOWUPS_REQUIREMENT.md). **F-2, F-4 and F-5 are owned by the finance stream** and are specified here. User decisions: BD-28 to BD-31.
+
+### 11G.1 Rules for all three slices
+
+- No data, money or API change. The figures, payload and route stay as they are.
+- Keep the merged F-1 and F-3 work intact: the contrast guard entry for `app/admin/finance`, the `ADMIN_*` table constants, `StatusChip` on `FinanceSection`, `useFinanceData`'s `readAdminResponse` and `clientLogger`, and the `aiCostVocabulary` floor of 28 for `AiCostSection`.
+- Small numbered PRs, each merged before the next starts: F-2, then F-4, then F-5.
+- After each PR the user owes a read-only browser look at /admin/finance.
+
+### 11G.2 Scope
+
+| Slice | Path and size | Scope |
+|---|---|---|
+| **F-2** Header and states | UI short path, about 1 day | `AdminPageHeader` with the title "Finance" (BD-28), the purpose line and asOf. `AdminLoading`, `AdminError` with Try again, and `AdminNotice`. `aria-busy` while a refresh runs. The data is still cleared on failure. SA cleanup carried over from F-3: remove `useFinanceData`'s unreachable second parameter `fallbackError` and the `PAGE_LOAD_FAILED` argument in `FinanceView` (needs #420 merged). Refresh may stay as a header action until F-4; this is a recorded deviation. |
+| **F-4** Filter bar and URL state | Full cycle, about 2 days | `AdminFilterBar` with `windowControl` (`DatePresets` / `adminWindow`, `requireBothDates`), business = `AdminBusinessPicker`, `onClear`, chips and help. Refresh and Read-at move into the bar. `FinanceActiveChip` and the local presets are deleted; the preset labels become the standard ones and Custom becomes a real button. `useAdminFilters` with canonical keys `range` / `from` / `to` / `account` and aliases `preset` / `accountId` (U-9); old links from `BusinessOsPanel.tsx` and `financeLinks.ts` keep working. `tab`, `sort`, `group` and `show` stay page keys (SA-Q44). A bad link drops only the bad filter (U-4, BD-30). `serialiseFinanceUrl` is kept as the **API serialiser only**: the page's request to the finance route and the route's Zod schema stay byte-identical, pinned by a test written first. Recorded page deviations (SA-WP-F4, E-61): the window keeps only two whole dates the route accepts (`to` not after today UTC, at most 92 days); a minute or instant bound, a one-sided window or a refused window falls back to This month, as on Analytics and Activity (SA-W6). A custom window the route would refuse is not applied on Apply; its sentence shows under the bar (SA-W5). `tab`, `sort`, `group` and `show` are fields of the page's one filter spec, so each change is one write (SA-W2). |
+| **F-5** KPI tiles | Full cycle, about 2 days | Extend the shared `KpiTile` / `KpiStrip` in `app/admin/components/layout/`: statuses green (reusing `StatusChip`'s single green constant, S-7), `not_measured` and `unavailable`; a tile with no value; an optional second line (or "headline" folded into sub). Finance then uses `KpiStrip`; `FinanceKpiStrip` is deleted or slimmed and stops importing Health's `STATUS_STYLES`. Tiles sit above the filter bar on both tabs (BD-29) and each jumps to its own section; "Charged AI cost" opens AI cost & usage (BD-31). Finance's C-14 entry is added to the `layoutFolder` guard registry. Display only: no money, calculation or request change. K-1's link carries the tile's own period, This month (UTC), and the business when one is picked, not the page window (SA-W7). AI cost & usage shows the recorded AI cost, so its figure is at or above the tile's charged figure; Section 3's "Recorded above charged" explains the gap. On the Accounts tab a tile opens Overview at its section (SA-W3). Neutral tiles show no status row (K-4, SA-W1) (E-62). |
+
+**What the user will see change:** the h1 reads "Finance"; the preset labels read "7 days" and "30 days" (the standard labels) and Custom is a real button; the KPI tiles sit above the filter bar and are clickable.
+
+### 11G.3 Acceptance criteria
+
+- [ ] **AC-169** *(F-2)* The page renders `AdminPageHeader` with h1 "Finance", the purpose line and asOf; no other h1 is on the page.
+- [ ] **AC-170** *(F-2)* First load shows `AdminLoading`; a failed load shows `AdminError` with Try again, the previous data is cleared, and Try again reloads.
+- [ ] **AC-171** *(F-2)* While a refresh runs the content region has `aria-busy="true"`, and `false` after it ends.
+- [ ] **AC-172** *(F-2)* `useFinanceData` takes no `fallbackError` parameter and `FinanceView` passes no `PAGE_LOAD_FAILED` argument; the F-1 and F-3 guards (contrast entry, table constants, `StatusChip`, `readAdminResponse`, `clientLogger`, the `aiCostVocabulary` floor of 28) pass unchanged.
+- [ ] **AC-173** *(F-4, written first)* **Byte-identical request:** for a fixed set of page states (each preset, Custom from/to, a picked business, `tab=accounts` with `sort` / `group` / `show`), the request URL the page sends to the finance route is byte-identical before and after F-4, and the route's Zod schema is unchanged. The test is committed before the migration and passes on both sides. "Page states" are the states a valid link or an in-page choice reaches; for those the request is byte-identical. Four kinds of link now read differently, by decision, and so change their request on purpose: one bad value next to good ones (BD-30); a business together with `tab`, or `sort` / `group` / `show` without the tab (BD-30 per key); `from` / `to` with no range (U-7 implied custom); a repeated key (first value wins). Each is pinned with its new request literal (SA-WP-F4, F4-R1). The pin test is written and run green on the unchanged tree first; it may land in the same PR (E-60).
+- [ ] **AC-174** *(F-4)* Canonical keys `range`, `from`, `to` and `account` are written to the page URL; links using `preset` and `accountId` (from `BusinessOsPanel.tsx` and `financeLinks.ts`) open the same view.
+- [ ] **AC-175** *(F-4)* A link with one bad value (unknown range, bad date, bad account id) drops only that filter; the others are kept; no notice is shown and nothing else is reset (BD-30).
+- [ ] **AC-176** *(F-4)* `tab`, `sort`, `group` and `show` behave as before (SA-Q44).
+- [ ] **AC-177** *(F-4)* `FinanceActiveChip` and the local presets are deleted; the bar shows the standard labels ("7 days", "30 days"), Custom is a button, chips and Clear work, and Refresh and Read-at sit in the bar.
+- [ ] **AC-178** *(F-5)* The shared `KpiTile` supports green (the `StatusChip` green constant, S-7), `not_measured`, `unavailable`, a tile with no value and an optional second line; existing users of `KpiStrip` render unchanged.
+- [ ] **AC-179** *(F-5)* Finance renders the shared `KpiStrip` above the filter bar on Overview and on the Accounts tab; nothing in `app/admin/finance` imports Health's `STATUS_STYLES`.
+- [ ] **AC-180** *(F-5)* Each tile jumps to its own section; "Charged AI cost" opens AI cost & usage.
+- [ ] **AC-181** *(F-5)* Every tile value and status equals the value before F-5 for the same fixture (display only); the Finance C-14 entry is in the `layoutFolder` guard registry and the guard passes.
+- [ ] **AC-182** *(all)* No file under `lib/` or `app/api/` changes, and no migration.
+- [ ] **AC-183** *(all, manual)* After each PR the user takes a read-only browser look at /admin/finance.
+
+---
+
+## 11H. Money M-5: the Money section
+
+Specified 2026-10-16 from CR §1, §5.1, the M-5 row of §8, SA-Q-4, BQ-1, BQ-6 and BQ-10; from BD-21, BD-24 and BD-27; from FU-M4-1 (§0.4) and SA-Q55; and from the code at main `98735db9` (every item below was re-checked there; citations are `path:line` at that commit). Nothing was checked in a browser or against the database. **UI short path, about 2 days. No data, money, API route, read or migration change.**
+
+### 11H.0 Sign-off for the sidebar change
+
+The Admin Layout Standard treats the sidebar as fixed: its sections, their order, the pages inside them and their labels (LAY §2.3 X-1, X-2; §3 rule 9). Moving pages between sections therefore needs the user. **That sign-off was given on 2026-10-14**, when the user accepted CR BQ-1 (one Money section holding Finance and the detailed AI calls page, Finance first, nothing with buttons; BD-21) and CR BQ-6 (Costs & credits moves into Money as "Charge checks"; BD-24). M-5 is the recorded exception to LAY X-1, X-2 and rule 9 for exactly the moves in §11H.2; any other sidebar change still needs the user. Under BD-33, M-5 proceeds on SA, QA and TL approval with no further user step.
+
+### 11H.1 Code facts (re-verified at `98735db9`)
+
+| # | Fact | Evidence |
+|---|---|---|
+| CF-1 | Monitor holds Health, Finance, AI cost & usage, Scheduled jobs & queues, Audit trail, Archiving; Settings holds Business OS AI ("Models, temperatures & costs"), Model pricing, Admin users | `app/admin/components/AdminSidebar.tsx:83-128`, `:167-198` |
+| CF-2 | The active entry is an **exact** pathname match, so a nested route highlights no entry unless it is listed itself | `AdminSidebar.tsx:379` |
+| CF-3 | The nav test pins section order and the Monitor list, and its "every page reachable" scan reads only `app/admin/<dir>/page.tsx` (one level), so a nested route listed in the sidebar must be allowed for explicitly; it pins 28 hrefs | `app/admin/components/__tests__/AdminSidebar.nav.test.ts:85-119`, `:71-79`, `:158-166` |
+| CF-4 | The Business OS AI nav test pins exactly one sidebar match for `/admin/business-os-llm` and the description "Models, temperatures & costs" | `app/admin/business-os-llm/__tests__/nav.test.ts:21-24`, `:37-47` |
+| CF-5 | Business OS AI has three tabs, Settings, Costs & credits, Activity; `?tab=` is read once on load; Costs and Activity are coordinated in one address bar (L-9a) | `app/admin/business-os-llm/page.tsx:121-139`, `:155-162`, `:82-93`, `:313-319` |
+| CF-6 | The **Leak check lives inside the Costs & credits tab**, so it moves with it | `components/costs/CostsTab.tsx:245` (`LeakCheckPanel`) |
+| CF-7 | `CostsTab` takes `active` with default `true` and owns `range`, `from`, `to`, `account` through `useAdminFilters`; `tab` is not one of its keys | `CostsTab.tsx:70-71`; `costsFilters.ts:5-7`, `:41-44` |
+| CF-8 | **Every in-app link to the Costs tab** is in `financeLinks.ts`: `costsHref` (account summary, `AccountSummary.tsx:187`) and `leakCheckHref` (Section 3 "Leak check", `RecordedCostLines.tsx:90`). No other app, lib or component file links to `?tab=costs`. Text-only mentions: `activityCopy.ts:99-101` (platform-account error) and the `/test-business-os` harness (`components/test-business-os/llm-usage/CheckPanels.tsx:286`) | `financeLinks.ts:50-64`, `:113-118` |
+| CF-9 | AI cost & usage's h1 is "AI cost & usage" and must equal the sidebar label (LAY D-3 (a)); outside that page the name appears as visible copy in 8 strings | `app/admin/analytics/page.tsx:289`; §11H.5 |
+| CF-10 | The Health "Recorded AI cost (USD)" tile's figures already link to AI cost & usage; its footnote names Finance in text only; it has **no page link**, although `HealthTile` already renders one (`tilePageLink` gives one only to entitlements and jobs tiles). SA-Q55's "layout change" concern does not arise: the slot exists | `lib/admin/health/evaluateHealth.ts:410-413`, `:655-662`, `:679-683`, `:734-738`; `app/admin/components/health/HealthTile.tsx:138-147` |
+| CF-11 | FU-M4-1 strings: metric labels and two rule descriptions say "spend"; the leak-check cron description and one count label say "AI spend". **No test asserts these strings**: the rule tests assert rule ids (`route.qa-edge.test.ts:221-255`) or read `rule.description` back (`evaluateHealth.test.ts:263-267`), and `rules.config.test.ts:4` says a description edit needs no test edit. Only three **test titles** in `route.qa-edge.test.ts:234-246` say "24 h spend" | `lib/admin/health/rules.ts:73-76`, `:225`, `:232`; `lib/cron/bosCronJobs.ts:452`, `:459` |
+| CF-12 | The vocabulary guard deliberately skips `rules.ts` until M-5 (its header) and does not scan `bosCronJobs.ts`; its forbidden list includes "AI spend" | `app/admin/__tests__/aiCostVocabulary.source.guard.test.ts:22-23`, `:35-50`, `:54-63` |
+| CF-13 | Redirect precedent: `next.config.js` `redirects()`, temporary (not cached forever) | `next.config.js:66-79` |
+
+### 11H.2 Scope
+
+| In | Out |
+|---|---|
+| A **Money** sidebar section, placed after Monitor, holding Finance (first), Charge checks, AI calls & usage (detail) (§11H.3) | Activity stays in Business OS AI (CR §1: link only) |
+| A new page **Charge checks** at `/admin/finance/charges` that mounts today's `CostsTab` (Leak check included) as it is, under the standard header (§11H.4) | Anything with action buttons moving into Money (BD-21, NG-1): Businesses, Model pricing, Jobs stay where they are |
+| The Costs & credits tab removed from Business OS AI; its old links land on Charge checks with their window and business (§11H.4) | Any change to the cost report, the Leak check, their routes or their reads |
+| Business OS AI's description drops "costs"; the AI calls page relabelled (sidebar and h1) and its name updated where other admin pages show it (§11H.5) | Any data, money, API route, payload shape or migration change |
+| FU-M4-1 wording: Health rule descriptions and metric labels, the leak-check cron description and count label (wording only; no rule id, threshold, metric id or cron key changes) | Moving the `components/costs/*` files out of `app/admin/business-os-llm/` (default; SA-Q59) |
+| The Health "Recorded AI cost" tile gains a page link to Finance (SA-Q55) | The `/test-business-os` harness text (CF-8); historical workplans that cite `?tab=costs` |
+
+**Estimate:** about 2 days (sidebar, nav tests and redirect 0.5 day; Charge checks page and Business OS AI tab removal 0.75 day; strings, Health link, guards 0.5 day; QA 0.25 day).
+
+### 11H.3 Sidebar, before and after
+
+| Section | Before (`98735db9`) | After (M-5) |
+|---|---|---|
+| **Monitor** | Health · Finance · AI cost & usage · Scheduled jobs & queues · Audit trail · Archiving | Health · Scheduled jobs & queues · Audit trail · Archiving |
+| **Money** (new, after Monitor) | — | **Finance** (`/admin/finance`, description unchanged "Revenue, AI cost and credits, Business OS") · **Charge checks** (`/admin/finance/charges`, new) · **AI calls & usage (detail)** (`/admin/analytics`, href unchanged) |
+| **Businesses** | Businesses · Plans & entitlements · Signup Invites · Messages | Unchanged |
+| **Settings** | Business OS AI ("Models, temperatures & costs") · Model pricing · Admin users | Business OS AI ("Models, temperatures & AI activity") · Model pricing · Admin users |
+| **AgentsPilot (parked)** (hidden) | 15 items | Unchanged (M-8 handles two of them, BD-34) |
+
+Section order after: Monitor, **Money**, Businesses, Settings, AgentsPilot (parked). Icons are ones the sidebar already imports (Dev's choice). Charge checks is a sidebar entry of its own (BA default) because it is its own route and the sidebar highlights by exact path (CF-2); the alternative is a link from Finance only (SA-Q58).
+
+### 11H.4 Routes and links, old and new
+
+| # | Old | New | How old links land |
+|---|---|---|---|
+| R-1 | `/admin/business-os-llm?tab=costs` (with any of `range`, `from`, `to`, `account`) | `/admin/finance/charges` with the same `range`, `from`, `to`, `account` | A **temporary** redirect in `next.config.js` `redirects()` matching the path with the query `tab=costs` (precedent CF-13). Query values pass through, so the window and business arrive; the stray `tab=costs` is not a Charge checks key and is ignored (SA-Q60 on dropping it) |
+| R-2 | `/admin/business-os-llm` with no `tab`, `tab=settings` or `tab=activity` | Unchanged | Not redirected. An unknown `tab` (now including `costs` if R-1 were bypassed) opens Settings, as today (`page.tsx:141-144`) |
+| R-3 | `costsHref` → `/admin/business-os-llm?tab=costs&range…&account=…` (account summary link) | `/admin/finance/charges?range…&account=…` (same window keys, no `tab`) | Changed at the source; R-1 covers bookmarks |
+| R-4 | `leakCheckHref` → `/admin/business-os-llm?tab=costs[&account=…]` (Section 3 "Leak check") | `/admin/finance/charges[?account=…]` (still no window, as SA-W99 ruled) | Changed at the source |
+| R-5 | — | Health "Recorded AI cost" tile **page link** → `/admin/finance` (Finance's default window, This month; SA-Q55). The tile's two figure links keep going to AI calls & usage with their own windows | New |
+| R-6 | Sidebar AI cost & usage → `/admin/analytics` | Same href, under Money | Unchanged URL |
+
+Charge checks page rules:
+
+- **CC-1** `app/admin/finance/charges/page.tsx`, a client page inside a Suspense boundary (the finance source guard), gated by the admin layout like every admin page; no `route.ts` under `app/admin`.
+- **CC-2** `AdminPageHeader` with h1 **"Charge checks"** (= sidebar label, LAY D-3 (a)), the "Read-only" badge, and the purpose line `COSTS_INTRO` (unchanged words).
+- **CC-3** It renders `<CostsTab />` with no `active` prop (default `true`, CF-7): there is no other tab to coordinate, so no L-9a code is copied (CR SA-Q-4).
+- **CC-4** The report request, the Leak check request, the default window (30 days) and every figure are unchanged: a pin test compares the report URL the tab sends for a fixed set of URL states before and after (same idea as AC-173).
+- **CC-5** Business OS AI keeps Settings and Activity. `TABS`, `PURPOSE`, `TAB_KEYS` and the costs panel lose their `costs` entries; the L-9a coordination stays as it is, now with one filter tab (BA default; simplifying it is SA-Q61).
+
+### 11H.5 Strings, old and new
+
+Copy only. Every row keeps its testid, key and href unless the row says otherwise.
+
+| # | Where | Old | New |
+|---|---|---|---|
+| S-1 | Sidebar name, `/admin/analytics` (`AdminSidebar.tsx:103`) | `AI cost & usage` | `AI calls & usage (detail)` (CR §1, §5.1) |
+| S-2 | Sidebar description, same entry (`:106`) | `Token spend, both products` | `Every AI call and its recorded cost, both products` |
+| S-3 | Sidebar, new entry | — | name `Charge checks`; description `Charged AI cost checked per account, Business OS` |
+| S-4 | Sidebar description, Business OS AI (`:179`) | `Models, temperatures & costs` | `Models, temperatures & AI activity` |
+| S-5 | AI calls page h1 (`analytics/page.tsx:289`) | `AI cost & usage` | `AI calls & usage (detail)` (= S-1, LAY D-3 (a); SA-Q62) |
+| S-6 | Charge checks h1 (new page) | (tab label `Costs & credits`, `costCopy.ts:6`) | `Charge checks`; the now-unused `COSTS_TAB_LABEL` is removed or renamed |
+| S-7 | Finance links to the AI calls page: `AI_LINK` (`financeCopy.ts:217`), `ACCOUNT_LINK_ANALYTICS` (`:527`) | `AI cost & usage` | `AI calls & usage` |
+| S-8 | Finance account summary link `ACCOUNT_LINK_COSTS` (`financeCopy.ts:526`) | `Business OS AI Costs & credits` | `Charge checks` |
+| S-9 | Activity cut-over notice (`activityCopy.ts:75`, `:81`) | `… or the recorded AI cost in AI cost & usage.`; link `AI cost & usage (Business OS, recorded)` | `… or the recorded AI cost in AI calls & usage.`; link `AI calls & usage (Business OS, recorded)` |
+| S-10 | Activity platform-account error (`activityCopy.ts:101`) | `… counted by the leak check on the Costs & credits tab.` | `… counted by the Leak check on Charge checks.` |
+| S-11 | Businesses drawer link (`BusinessOsPanel.tsx:397`) | `Open in AI cost & usage` | `Open in AI calls & usage` |
+| S-12 | Health tile note, figure link label, footnote (`evaluateHealth.ts:66`, `:662`, `:681`) | `AI cost & usage …` (3 places) | `AI calls & usage …` (same sentences otherwise) |
+| S-13 | Health tile page link (new, R-5) | — | `Charged AI cost: open Finance` |
+| S-14 | Health metric labels (`rules.ts:73-76`) | `24 h spend` · `previous 24 h spend` · `7-day spend` · `previous 7-day spend` | `24 h recorded AI cost` · `previous 24 h recorded AI cost` · `7-day recorded AI cost` · `previous 7-day recorded AI cost` |
+| S-15 | Health rule descriptions (`rules.ts:225`, `:232`, `:239`) | `Spend tripled vs yesterday` · `Spend doubled vs yesterday` · `Week up 50% or more` | `Recorded AI cost tripled vs yesterday` · `Recorded AI cost doubled vs yesterday` · `Recorded AI cost up 50% or more on the week`. `Over $20 in the last 24 hours` and `Total is a minimum; not all calls counted` stay |
+| S-16 | Jobs page cron description (`bosCronJobs.ts:452`) | `Checks that yesterday's Business OS AI spend was all charged` | `Checks that yesterday's recorded Business OS AI cost was all charged` |
+| S-17 | Jobs page cron count label (`bosCronJobs.ts:459`) | `businesses with uncharged AI spend` | `businesses with recorded AI cost not charged` |
+| S-18 | AI calls page bar and state noun `ANALYTICS_WHAT` (`AnalyticsFilterBar.tsx:49`; "Reading …", the error fallback) | `AI cost and usage` | `AI calls and usage` (SA-W7, E-63) |
+
+S-14 to S-17 close FU-M4-1. Rule ids (`spend.*`), thresholds, factors, floors, metric ids (`spend24h` and the rest), the tile id `bos_ai_spend` and the cron key `accountsWithLeak` do not change.
+
+### 11H.6 Guards and tests affected
+
+| Guard or test | Change |
+|---|---|
+| `AdminSidebar.nav.test.ts` | Section order gains Money after Monitor; Monitor list loses Finance and analytics; new Money list `/admin/finance`, `/admin/finance/charges`, `/admin/analytics` in that order; the "every page reachable" check allows the one nested listed route explicitly (CF-3); href count 28 → 29; a pin that Finance is first in Money and that no Money entry is an action page |
+| `business-os-llm/__tests__/nav.test.ts` | Description pin → `Models, temperatures & AI activity`; "exactly one match" stays green |
+| `business-os-llm` page tests (`page.render`, `tabCoexistence.render`, `costsLayout.render`, `costsTab.render`, `leakPanel.render`, `settingsLayout.render`, `activityLayout.render`, `source.guard`) | Two tabs, not three; the costs and leak render tests mount `CostsTab` standalone or move to the Charge checks page's tests; coexistence is re-scoped to Settings and Activity. `tabCoexistence`: X-4 to X-11 kept, with X-8, X-8b and X-10 re-scoped to Activity ↔ Settings (the L-9a lag-window behaviour still exists); only X-1, X-2, X-3 and X-12 and `costsTab.render` "switching tabs keeps the chosen window" are deleted, because they need two filter tabs (SA-WP-M5, M5-R1, E-64) |
+| Charge checks page tests (new, `app/admin/finance/__tests__/`) | h1, badge, purpose; `CostsTab` mounted active; the CC-4 request pin, written and run green on the old tree first; Leak check present |
+| Redirect test (new) | `next.config.js` `redirects()` holds the R-1 entry, temporary, matching `tab=costs` only |
+| `financeLinks.test.ts`, `financeAccount.render.test.tsx`, `recordedCost.render.test.tsx`, `financePage.render.test.tsx` | `costsHref` and `leakCheckHref` parse back against `COSTS_FILTER_SPEC` at the new path with no `tab`; S-7, S-8 link texts |
+| `layoutFolder.guard.test.ts` C-14 `MIGRATED_PAGES` | **New entry** `/admin/finance/charges (Charge checks)` with `app/admin/finance/charges/page.tsx` and the five `components/costs/*` files plus `costsFilters.ts`; those six leave the Business OS AI entry (`:681-685`, `:661`), so each file is listed once |
+| `contrast.lf1.source.guard.test.ts` | Finance's `walk('app/admin/finance')` picks up the new page by itself; the `components/costs/*` files are not contrast-guarded today (only Activity is, `:60`); adding them under a "Charge checks" key is SA-Q63 |
+| `aiCostVocabulary.source.guard.test.ts` | Header note "skipped until M-5" removed; `lib/admin/health/rules.ts`, `lib/cron/bosCronJobs.ts` (S-16, S-17 entries only, or the whole file if it passes) and the Charge checks page added to `FILES` with their `MIN_TEXTS` floors; S-5 to S-12 pinned rows updated; forbidden list unchanged, `ALLOWED` stays empty |
+| Health rule tests (`lib/admin/health/__tests__/*`, `app/api/admin/health-summary/__tests__/route.qa-edge.test.ts`, `app/admin/__tests__/health.render.test.tsx`) | **No assertion changes** (CF-11). Optional: the three `route.qa-edge` test titles that say "24 h spend". New assertions: the `bos_ai_spend` tile's `pageLink` is R-5, and every other tile's page link is unchanged |
+| `analytics` tests (`analytics.layout.render` and the others that read the h1) | h1 `AI calls & usage (detail)` |
+| `evaluateHealth.test.ts`, `health.render.test.tsx` | S-12 texts where pinned |
+| Jobs tests (`jobsQueues.*`, `lib/admin/jobs/__tests__/*`) | **No change expected**: none pins S-16 or S-17 (verified by search); the Jobs view renders the new words |
+| `npm run test:authz-guard`, `test:bos-entitlements` | Run, expected unchanged (no route, no entitlements import) |
+
+### 11H.7 Acceptance criteria
+
+- [ ] **AC-184** The sidebar shows, in order, Monitor, Money, Businesses, Settings; Money holds exactly Finance, Charge checks, AI calls & usage (detail), Finance first; Monitor holds Health, Scheduled jobs & queues, Audit trail, Archiving.
+- [ ] **AC-185** No page whose main job is an action (Businesses, Model pricing, Scheduled jobs & queues, Signup Invites) is in Money.
+- [ ] **AC-186** Business OS AI's sidebar description is `Models, temperatures & AI activity` and contains no "cost".
+- [ ] **AC-187** `/admin/finance/charges` renders the h1 "Charge checks", the Read-only badge and the `COSTS_INTRO` purpose line, then today's cost report and the Leak check; the sidebar highlights Charge checks there.
+- [ ] **AC-188** For the same URL state, the report request Charge checks sends is byte-identical to the one the Costs & credits tab sent before M-5 (CC-4 pin, written first); the Leak check request is unchanged.
+- [ ] **AC-189** Charge checks reads on first load without any other tab being chosen (`CostsTab` active), and a change of window or business writes `range`, `from`, `to`, `account` to its own URL.
+- [ ] **AC-190** Business OS AI shows two tabs, Settings and Activity; no Costs & credits tab, panel or purpose line remains; Activity's filters and URL behave as before.
+- [ ] **AC-191** Opening `/admin/business-os-llm?tab=costs&range=7d&account=<id>` lands on `/admin/finance/charges` showing 7 days and that business; `?tab=costs` alone lands on Charge checks with its default window. The redirect is temporary.
+- [ ] **AC-192** `/admin/business-os-llm`, `?tab=settings` and `?tab=activity` are not redirected and open as before.
+- [ ] **AC-193** Finance's account summary link (S-8) and Section 3's Leak check link go straight to `/admin/finance/charges` with the window and business as before (R-3, R-4), and no in-app link to `?tab=costs` remains under `app/`, `lib/` or `components/`.
+- [ ] **AC-194** The AI calls page h1 and its sidebar label both read `AI calls & usage (detail)`; its URL and content are unchanged.
+- [ ] **AC-195** Every string in §11H.5 S-1 to S-18 reads as its "New" column; no other visible string changes.
+- [ ] **AC-196** The Health "Recorded AI cost (USD)" tile shows a page link `Charged AI cost: open Finance` to `/admin/finance`; its two figure links still open AI calls & usage with their own windows; no other tile's page link changes.
+- [ ] **AC-197** Health rule ids, colours, priorities, thresholds, factors, floors and metric ids are unchanged; for the same inputs every tile's status and matched rule id equal those before M-5.
+- [ ] **AC-198** The leak-check cron's key, path, schedule and count keys are unchanged; only S-16 and S-17 change.
+- [ ] **AC-199** The vocabulary guard scans `rules.ts`, the S-16 and S-17 strings and the Charge checks page, and passes with `ALLOWED` empty.
+- [ ] **AC-200** The C-14 registry lists `/admin/finance/charges (Charge checks)` and the costs files once each, and the guard passes; the contrast and finance source guards pass.
+- [ ] **AC-201** No API route, repository, read, payload shape (other than the Health tile's `pageLink` value), migration or money calculation changes; `test:authz-guard` and `test:bos-entitlements` pass unchanged.
+- [ ] **AC-202** `/admin/finance/charges` is admin-only through the admin layout, like every admin page (a non-admin is refused as on `/admin/finance`).
+- [ ] **AC-203** *(manual)* The user's read-only browser look L-128 to L-136 (BD-33: after merge, no approval step).
+
+Manual QA (read-only, after merge): **L-128** sidebar sections and order; **L-129** Money order and labels; **L-130** Charge checks loads, report and Leak check visible; **L-131** an old `?tab=costs&range=7d&account=…` bookmark lands on Charge checks with that window and business; **L-132** Business OS AI shows Settings and Activity only; **L-133** Finance's "Charge checks" and "Leak check" links; **L-134** AI calls & usage (detail) h1; **L-135** Health tile page link to Finance and the reworded rule list; **L-136** Jobs page leak-check row wording.
+
+### 11H.8 Open questions for SA (M-5)
+
+Technical only. **No business question needs the user**: BD-21, BD-24 and BD-27 decide the scope, and the sidebar sign-off is recorded in §11H.0.
+
+| # | Question | BA's suggested answer |
+|---|---|---|
+| **SA-Q58** | Is Charge checks its own Money sidebar entry, or reached only from Finance (a tab-like link beside Overview and Accounts)? | Its own entry: it is its own route, and the sidebar highlights by exact path (CF-2). CR §5.1 calls it a Finance entry; the sidebar entry sits directly under Finance |
+| **SA-Q59** | Do the `components/costs/*` files, `costsFilters.ts`, `costCopy.ts`, `costFormat.ts`, `costTypes.ts`, `leakCopy.ts` and `leakTypes.ts` stay in `app/admin/business-os-llm/` and get imported by the new page, or move under `app/admin/finance/charges/`? | Stay (CR: "mounted on a new route as they are"); a move is a later clean-up. If they stay, the Business OS AI source guard (no `@/lib/`) keeps covering them, and the finance source guard covers the page |
+| **SA-Q60** | Old links: `next.config.js` redirect (the stray `tab=costs` passes through, harmless), middleware, or a client `router.replace` in the Business OS AI page? | `next.config.js`, temporary (CF-13); the stray key is ignored. A client redirect would load Business OS AI first |
+| **SA-Q61** | With one filter tab left, keep the L-9a coordination in `business-os-llm/page.tsx` as it is, or simplify it? | Keep it, minus the `costs` entries (CR SA-Q-4: not a new pattern; smallest diff) |
+| **SA-Q62** | The h1 must equal the sidebar label (LAY D-3 (a)). Is "AI calls & usage (detail)" acceptable as an h1, or should the label drop "(detail)" in both places? | Keep CR's label in both; links elsewhere say "AI calls & usage" (S-7, S-9, S-11, S-12) |
+| **SA-Q63** | Add the `components/costs/*` files to the contrast guard under a "Charge checks" key now? | Yes, if they pass unchanged; otherwise record the failures as follow-ups and do not fix them in M-5 (a layout fix is not this slice) |
+| **SA-Q64** | The Health tile page link (R-5): Finance with no window (This month), or carry the tile's last-7-days window? | No window: Finance's default is This month, and the tile's own figures keep their windows through their links to AI calls & usage |
+
+**SA-Q-4 (CR) answered by this spec:** mounting `CostsTab` on its own route is not a new pattern; it needs no tab coordination, and its default `active` is `true` (CF-7). SA to confirm.
+
+---
+
+## 11I. Slice 4b: boost refund dates, boost problems, bought credits
+
+Specified 2026-10-17 by BA from §11C (4b outline, S4-FR-15 to S4-FR-22), **BD-17** and its dispute defaults, DF-5, BD-9, BD-12, BD-14, BD-32, BD-33, BQ-13, the refund-timing scoping ([BUSINESS_OS_FINANCE_HEALTH_REFUND_TIMING_SCOPING.md](/docs/requirements/BUSINESS_OS_FINANCE_HEALTH_REFUND_TIMING_SCOPING.md), option (ii), cited as **RT**) and a fresh pre-work check against main `16cb2a1f` and the live database (2026-10-17, read-only; §11I.1). The code facts below were re-read at main `f0b5e9d4` (M-5 merged, #444).
+
+**This section governs 4b.** Where it differs from §11C (S4-W-3, S4-W-6, S4-FR-5, S4-FR-13, S4-FR-16, §11C.6 "no migration", §11C.7 "no new table"), §11I wins: 4b now carries BD-17, which needs **one hand-applied production migration**. S4-FR-15, S4-FR-17 to S4-FR-22 and AC-102 to AC-107 are kept and built in 4b.2, amended where §11I.5 says so.
+
+**BQ-13 stays open. 4b keeps no take-back:** a refunded or lost boost never takes its credits back automatically, exactly as today (T-9, FR-37). Nothing in 4b writes to `business_os_credit_lots` or `business_os_credit_lot_draws`. If the user later decides credits are taken back, that is a credit-ledger write in the boost module, scoped on its own.
+
+### 11I.1 Facts (pre-work, verified 2026-10-17)
+
+| # | Fact | Source |
+|---|---|---|
+| PF-1 | The next migration number is **`20261072`**. The latest on main is `20261071_website_images_bucket_lockdown.sql`; no open PR adds a migration. **2026-10-17: DE-8a (PR #451) took `20261074` and `20261075` first, so 4b.1 is renumbered `20261076` (table and function) and `20261077` (cleanup, regenerated over `20261075`)** | `supabase/migrations/` |
+| PF-2 | `business_os_transition_boost_purchase(uuid, text, text, integer, text, text)` is defined only in `20261031_business_os_boost_crediting.sql:174-376`. It is **SECURITY INVOKER**, `SET search_path = ''`, EXECUTE for service_role only (`:460-468`). Refund branch `:269-311`, dispute branches `:313-373` | Migration |
+| PF-3 | Because the function is INVOKER, it runs as service_role. **service_role needs an explicit INSERT grant on the new table**, or every refund or dispute RPC fails with 42501, which fails the webhook claim | PF-2 |
+| PF-4 | A refund on a `disputed`, `dispute_lost` or `flagged_mismatch` row only updates `amount_refunded_minor` (`:278-286`, outcome `recorded`). It must **also** write an event row | Migration |
+| PF-5 | A won dispute is not a status: the function moves the row back to `paid`, `partially_refunded` or `refunded` (`:351-373`). The event table needs its own kind to record "won" | Migration; CHECK `20261030…:51` |
+| PF-6 | A dispute on a `flagged_mismatch` row only stores the dispute id (`recorded`, `:316-326`); its close returns `already` (`:341-342`) and changes nothing, so no close event can be written for it | Migration |
+| PF-7 | Inside the function `now()` is **processing time**, not Stripe's event time. The nightly reconcile pass (`boostReconcilePass.ts`) applies a missed refund through the same function, so **a refund caught late is dated on the day we catch it** | RT §3; `boostReconcilePass.ts:585-598` |
+| PF-8 | The finance revenue read R-k / R-k′ fetches only purchases **paid in the window** (`rangeFilter('paid_at', …)`, `BusinessOsFinanceReadRepository.ts:669-700`). A refund in month M on a purchase paid before M is invisible to it, so 4b needs a **separate dated read** of reversal events | Repository |
+| PF-9 | `readMoney` (`boostRevenue.ts:164`, exported in 6a) is also used by `accountEconomics.ts:42,116,126` (the Accounts tab). **Changing the refund rule changes the Accounts tab too** | Code |
+| PF-10 | Live: `business_os_boost_purchases` has **1 row** (paid, test mode, 2026-10-12), **0 refunds, 0 disputes**. No refund or dispute date column exists. `business_os_boost_reversal_events` does not exist (42P01). **No backfill is needed** | Live DB |
+| PF-11 | The operator test-account cleanup (`20261047`) empties `business_os_boost_purchases` and its guard **G-18 blocks on any foreign key into an emptied table that the generator has not reviewed** (`generate-test-account-cleanup-sql.ts:332-346, 907-916`), whatever the FK's delete action. So the new FK to purchases needs the generator to classify it and a regenerated cleanup, even with `ON DELETE CASCADE` (this corrects the pre-work note that CASCADE avoids regeneration; SA-Q66) | Generator |
+
+### 11I.2 Scope and split
+
+About 4.5 days, so it is split. Both parts run the **full cycle** (a migration, money rules). Under BD-33 neither needs the user's per-slice approval, but **4b.1 stops for the user to apply the production migration**.
+
+| Part | In scope | Not in scope | Estimate |
+|---|---|---|---|
+| **4b.1: Reversal events (writer)** | Migration `20261076`: the table `business_os_boost_reversal_events`, its RLS, grants and indexes, and `CREATE OR REPLACE` of the transition function (same signature) writing one event row per recorded refund step or dispute stage; the guarded "no undated history" assertion. Rollback, pre-check and post-apply check scripts, migration test. Registration in purge descriptors, classification baseline, business-owned inventory, export classification. The regenerated test-account cleanup (`20261077`, if SA-Q66 rules so) | **Any UI or finance read.** Any webhook, handler, reconcile-pass or repository change. Any credit take-back (BQ-13) | About 2 days |
+| **4b.2: Finance reads and UI** | Two dated event reads (R-n, R-n′) and the attention reads (R-l, R-l′); the boost line dates refunds and lost disputes by event date; open disputes shown as **held now**; Section 6 block A "boost problems" (open disputes, payments never credited); the K-5 dispute rule; **bought credits beside gifted credits** in Section 4 (K-4 unchanged); the Accounts tab follows the same refund rule | Plan refunds and disputes (P-6b, slice 7); stuck checkouts (reconcile pass, FR-43); a sixth tile; a credit take-back | About 2.5 days |
+
+**Order:** 4b.1 merges and its migration is applied on production **before 4b.2 merges**. 4b.2 may be built in parallel against a local database with the migration applied.
+
+### 11I.3 Functional rules
+
+**Writer (4b.1)**
+
+| # | Rule |
+|---|---|
+| RV-1 | **One dated row per recorded step.** The transition function inserts exactly one event row, in the same transaction as the purchase update, whenever it returns `transitioned` or `recorded` for a refund or dispute target. It inserts nothing on `already`, `stale`, `not_allowed` or `not_found`, and nothing for `awaiting_payment`, `failed`, `expired` or `flagged_mismatch` targets |
+| RV-2 | **The six insert points** (line numbers of `20261031`): refund `recorded` on a disputed, lost or flagged row (`:282-285`, PF-4); refund `transitioned` to `partially_refunded` or `refunded` (`:303-306`); dispute `recorded` on a flagged row (`:322-325`); dispute `transitioned` to `disputed` (`:330-333`); `dispute_lost` `transitioned` (`:349-352`); dispute won `transitioned` back to a paid status (`:368-371`) |
+| RV-3 | **Kinds:** `refund`, `dispute_opened`, `dispute_won`, `dispute_lost` (PF-5) |
+| RV-4 | **Refund amount = the delta:** new cumulative minus the cumulative stored before, computed under the existing `FOR UPDATE` lock. The row also stores the new cumulative. A late, older event is already `stale` and writes nothing; its share is in the newer row |
+| RV-5 | **Dispute amount = the amount at stake at that moment:** `amount_total_minor - amount_refunded_minor` as stored when the stage is recorded (the same remainder 4a shows as held or lost). On a flagged row, whose total may be NULL, the amount is 0 when the total is NULL |
+| RV-6 | **The Finance date is `recorded_at = now()`**, the time we recorded it (PF-7). It is never supplied by a caller and never backdated: `recorded_at` is not in service_role's INSERT grant. A refund we learn of late, for example through the nightly reconcile pass, counts in the month we learned of it. Under BD-17 that is the price of "finished months never change", and the page says so (FR-4B-6) |
+| RV-7 | **Append-only.** No UPDATE or DELETE grant to any role. Rows leave only with their purchase (FK, SA-Q66) |
+| RV-8 | **No change outside the migration:** the RPC name, its six arguments, its return type and every outcome are unchanged, so the webhook, `boostChargeHandler.ts`, `boostReconcilePass.ts`, `BusinessOsBoostPurchaseRepository.ts` and their tests are unchanged. The reconcile pass is covered because it calls the same function |
+| RV-9 | **No undated history.** The migration refuses to apply (raises) if any purchase has `amount_refunded_minor > 0` or a `stripe_dispute_id` (PF-10: none today). If the pre-check finds one, the user stops and the session goes to SA; no backfill is invented |
+| RV-10 | **BQ-13: no take-back.** The function body gains only the inserts; the credit lot is never touched (T-9, FR-37 unchanged) |
+
+**Finance (4b.2)**
+
+| # | Rule |
+|---|---|
+| FR-4B-1 | **Gross stays by `paid_at`** (S4-W-1): purchases, gross charged, of which tax and credits sold count the purchases paid in the window, as in 4a |
+| FR-4B-2 | **Refunds by event date (BD-17):** "refunded" for a window = the sum of `refund` event amounts with `recorded_at` in the window, **whatever month the purchase was paid in**. A purchase paid in October and refunded in November lowers November, never October |
+| FR-4B-3 | **Lost disputes by event date (BD-17 default):** "lost in disputes" for a window = the sum of `dispute_lost` event amounts recorded in the window |
+| FR-4B-4 | **Held means held now (BD-17 default):** "held in open disputes" is the remainder of purchases whose status is `disputed` **right now** (R-l / R-l′), shown as its own figure, labelled "Held in open disputes now (not taken off any month)". It is **not** subtracted from any window's net. `dispute_opened` and `dispute_won` events are history and the problems block's source of dates; they move no money on the page |
+| FR-4B-5 | **Net for a window** = gross charged (paid in the window) − refunded (recorded in the window) − lost in disputes (recorded in the window). Labelled "Net of refunds and lost disputes (Stripe fees not deducted; includes any tax)". Net can be negative in a window with refunds and no sales, shown with a minus sign, never clamped |
+| FR-4B-6 | **The S4-W-3 note is replaced** by: "Refunds and lost disputes count in the month we recorded them, so a finished month does not change. A refund we learn of late counts in the month we learned of it. Open disputes are shown as held now." It shows whenever a refund, lost or held figure is non-zero |
+| FR-4B-7 | **Grouping:** an event is grouped by its own `currency` (copied from the purchase, per currency only, BD-12) and, in the by-package table, by its purchase's `package_id` and `package_version`. An event whose purchase's account was deleted goes to the "Deleted accounts" line (S4-W-7) |
+| FR-4B-8 | **Events on purchases never paid:** an event whose purchase has no `paid_at` (a `flagged_mismatch` purchase, PF-4, PF-6) is **not** revenue and never changes a figure of "Our revenue". It is counted in a note on the problems block ("N refunds or disputes recorded on purchases not credited") |
+| FR-4B-9 | **Exactness:** event amounts are integer minor units read like 4a's (S4-W-4: `minorUnitsPerMajor` must be 100, never `toUnits`, `toHundredths` or `× 100`); an unreadable event is counted and makes net Unknown on its line and the block `partial`. At the event read's ceiling, refunded and lost show "At least" and net shows "Unknown (a read was cut off)" (S4-W-8) |
+| FR-4B-10 | **K-5** shows the FR-4B-5 net (plus plan cash received, as M-2) for the filter window. Its colour comes from the dispute rule (FR-4B-12). K-5's value changes where a refund or a lost dispute exists, **and where a dispute is open** (E-102, SA-WR-4b2): today's 4a net still subtracts the window's held amount, and FR-4B-5 with BD-17 ("held means held now") takes it out of every window. That follows from the decided rule; it is not a new business choice. None is live, so no live figure moves |
+| FR-4B-11 | **Accounts tab and account summary (PF-9):** they follow the **same** rule, so the two tabs agree. An account's boost "paid us" for the window = its boosts paid in the window after tax − its refunds recorded in the window − its lost disputes recorded in the window; held now is not deducted. A refund or loss on a taxed purchase gives Unknown (the SA-Q47 rule, unchanged). An account whose only boost money in the window is a refund is listed (SA-Q49) with a negative figure |
+| FR-4B-12 | **Section 6 block A, "Our payment problems (boosts)"**, as of now: S4-FR-15 (open disputes with the amount held now, payments never credited) and S4-FR-17 (K-5 red when open disputes ≥ 1, rule in `FINANCE_RULES`), each with **the date it started**: an open dispute shows the `recorded_at` of its `dispute_opened` event, a payment never credited shows its oldest `status_changed_at`. Lost disputes are not repeated in this block; they are in revenue in the month lost (amends S4-FR-16) |
+| FR-4B-13 | **Bought credits:** S4-FR-18 to S4-FR-20 unchanged: bought outstanding and bought in the window beside gifted, never combined; K-4 and the gifted figures still count `admin_grant` lots only. With BQ-13 open, bought outstanding of a refunded purchase still counts (the customer kept the credits); the section says "Credits of a refunded boost are not taken back" while any refund event exists |
+| FR-4B-14 | **Picked business:** R-n′, R-l′ and `listLotsWithDraws(accountId)` with exactly that id; R-n and R-l have zero calls (S4-FR-21) |
+| FR-4B-15 | **Payload and logs:** `revenue.boosts` lines lose the window `held`, and **held now is its own per-currency list, `revenue.boosts.heldNow`, beside the lines** (E-104): a currency can be held now with no line in the window. Every new wire field on a type Pin B names is **optional** (`?:`), and the builder always sets it (E-103); `paymentProblems.boosts` and the `credits` bought figures as S4-FR-22. Logs carry statuses, counts and timing only; never an amount, a Stripe id or a name |
+| FR-4B-16 | **Table absent:** if the event read fails (for example 42P01 before the migration), the boost part shows refunded, lost and net as "Unknown", the section is `partial`, and every other section renders. The page never falls back to DF-5's purchase-month rule |
+
+### 11I.4 Data model and migration outline (4b.1)
+
+**File:** `supabase/migrations/20261076_business_os_boost_reversal_events.sql` (name to SA). One file, one transaction.
+
+| Column | Type | Rule |
+|---|---|---|
+| `id` | `uuid` PK, default `gen_random_uuid()` | |
+| `purchase_id` | `uuid NOT NULL` FK → `business_os_boost_purchases(id)`, **`ON DELETE CASCADE`** (SA-Q66) | The account comes through the purchase. **No `user_id` column** (RT §3) |
+| `kind` | `text NOT NULL` | CHECK in `refund`, `dispute_opened`, `dispute_won`, `dispute_lost` |
+| `amount_minor` | `integer NOT NULL` | CHECK `>= 0` (RV-4, RV-5) |
+| `cumulative_refunded_minor` | `integer NOT NULL` | CHECK `>= 0`; the purchase's cumulative refunded after the step |
+| `currency` | `text NOT NULL` | Copied from the purchase |
+| `stripe_dispute_id` | `text NULL` | CHECK: NULL when `kind = 'refund'`, NOT NULL otherwise |
+| `status_before`, `status_after` | `text NOT NULL` | The purchase status around the step (a flagged purchase stays `flagged_mismatch`); history only |
+| `livemode` | `boolean NOT NULL` | Copied. Kept for DF-3; **the finance read never selects it** (BD-14) |
+| `recorded_at` | `timestamptz NOT NULL DEFAULT now()` | **The Finance date** (RV-6) |
+
+**Indexes:** unique `(purchase_id, cumulative_refunded_minor) WHERE kind = 'refund'`; unique `(purchase_id, kind, stripe_dispute_id) WHERE kind <> 'refund'`; `(recorded_at)` for the dated read; `(purchase_id)` for the FK and the cascade.
+
+**Migration order inside the file:**
+0. `LOCK TABLE public.business_os_boost_purchases IN EXCLUSIVE MODE;`, inside the file's one transaction (`LOCK TABLE` needs a transaction block; the SQL editor runs a pasted file as one implicit transaction). The migration test pins that it comes before the assertion. It means no new refund or dispute can start while the migration runs. A call already inside the old body can still finish with it; check 24's "no refund or dispute recorded without an event" row proves none did (E-65, SA F-2).
+1. Assertion (RV-9): raise if any purchase has a refund or a dispute id.
+2. `CREATE TABLE`, CHECKs, indexes, `COMMENT ON TABLE` (a retained financial record, append-only, written only by the transition function).
+3. RLS and grants (§11I.5).
+4. `CREATE OR REPLACE FUNCTION public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)`: the `20261031` body unchanged except the six inserts (RV-2), still `SECURITY INVOKER`, `SET search_path = ''`, every name schema-qualified. Each insert uses `ON CONFLICT DO NOTHING` on the two unique indexes (SA-Q67).
+5. Re-state the function's `REVOKE ALL` (PUBLIC, anon, authenticated, service_role) and `GRANT EXECUTE … TO service_role`, as `20261031:460-468`.
+
+**Rollback:** `supabase/SQL Scripts/20261076_business_os_boost_reversal_events_rollback.sql` restores the `20261031` function body byte for byte and drops the table. It **refuses** when the table holds any row (dropping dated money history must be a deliberate, separate act; SA-Q70).
+
+**Cleanup (PF-11):** `scripts/generate-test-account-cleanup-sql.ts` classifies the new edge as parent-owned (`INBOUND_FOREIGN_KEYS` with owner column `null`, a `PARENT_OWNED_REASONS` entry), bumps its version and emits `20261077_operator_test_account_cleanup_boost_reversal_events.sql` (name to SA) with its rollback; `scripts/__tests__/testAccountCleanupSql.test.ts` pins the new pair and keeps the prior hash pins. With CASCADE, no delete step is added (SA-Q66).
+
+### 11I.5 RLS, grants and idempotency
+
+| Item | Rule |
+|---|---|
+| RLS | `ENABLE ROW LEVEL SECURITY`. **No policy for any role** (server-write-only, the payment tables lockdown and `20261030…:133-167` precedent). No owner read: the owner never sees this table |
+| Grants | `REVOKE ALL ON TABLE` from `PUBLIC`, `anon`, `authenticated` **and `service_role`**; then `GRANT SELECT` to `service_role` and `GRANT INSERT (purchase_id, kind, amount_minor, cumulative_refunded_minor, currency, stripe_dispute_id, status_before, status_after, livemode)` to `service_role`. **No UPDATE, no DELETE, and `id` and `recorded_at` are not in the INSERT grant** (they take their defaults). The cascade from the purchase runs as the referential action and needs no DELETE grant (SA to confirm, SA-Q66) |
+| Why the INSERT grant is essential | PF-3: without it every refund or dispute fails at the RPC with 42501 and the webhook claim is marked failed. The migration test and check 24 both pin it |
+| Function | Stays `SECURITY INVOKER` (the SECURITY DEFINER surface guard is not tripped; SA-Q69) |
+| Idempotency | **Refunds:** keyed by `(purchase_id, cumulative_refunded_minor)`: each step raises the running total, so the total after the step names it, across webhook resends, out-of-order events and the reconcile pass, with no Stripe refund id. **Disputes:** keyed by `(purchase_id, kind, stripe_dispute_id)`. The state machine writes no row on `already` or `stale`; the unique indexes are the backstop, and check 25 reconciles events against the purchase rows |
+
+### 11I.6 Deploy order and the user's hand-apply steps
+
+**4b.1 PR stays off auto-merge until the user confirms the migration is applied** (the migration-gated rule; BD-33 still stops for a production migration). The DB change is entirely inside the migration, so 4b.1's TypeScript (tests, descriptors, generator, scripts) reads nothing new and is safe on either side of it; the off-auto-merge rule keeps the order honest.
+
+1. **Pre-check (production, read-only):** run check 23. Every row must show `ok = true`. Since the rebase onto DE-8a (2026-10-17) two of its 9 rows prove DE-8a is live: the `business_os_data_exports` table exists and the cleanup function is the `20261075` version (stamp `a824848e0a538477`), which `20261077` replaces. If not, stop and tell the session.
+2. **Apply `20261076`** in the Supabase SQL editor, the whole file at once. It raises and changes nothing if RV-9 fails. (Editor hazard: no quoted string in the file, the `COMMENT ON TABLE` text and exception messages included, may contain the word the editor misreads as a table target; the migration test pins this.)
+3. **Apply `20261077`** (the regenerated cleanup). It is needed (SA-Q66: G-18 must see the new edge reviewed).
+4. **Post-apply check:** run check 24. Every row must show `ok = true`.
+5. Tell the session "applied". RM then merges 4b.1 (manually, not auto-merge).
+6. **4b.2** is built, reviewed and opened after that; with the table live it may auto-merge under BD-33 (its code also tolerates the table being absent, FR-4B-16).
+7. **After the first real refund or dispute** (test mode counts, BD-14): run check 25 (events reconcile with the purchase) and check 26 (the month's figures).
+
+**Rollback (only if needed):** the rollback file of step 2 (and of step 3), applied by hand, **`20261077`'s first, then `20261076`'s**. It refuses while the events table holds rows: once any event exists, a defect is fixed forward by a new migration, never by dropping dated money history (E-67, SA F-6).
+
+### 11I.7 Reads (4b.2)
+
+All in `BusinessOsFinanceReadRepository`, with its rules (service role documented, exported column lists, no write method, one caller, never throws, **no `livemode`**, the boost repository named in words only).
+
+| # | Method (example name) | Scope | Table and filter | Columns |
+|---|---|---|---|---|
+| **R-n** | `listBoostReversalEventsAllAccountsRecordedInRange(range)` | Named all-accounts | `business_os_boost_reversal_events`, `recorded_at >= start` and `< end` (half-open, as `paid_at`) | `id, purchase_id, kind, amount_minor, currency, recorded_at`, plus the purchase's `user_id, package_id, package_version, amount_tax_minor, paid_at` (embed or second read: SA-Q68). No Stripe id, no `livemode` |
+| **R-n′** | `listBoostReversalEventsForAccountRecordedInRange(accountId, range)` | Account-scoped | Same, restricted to purchases of that account (through the purchase; SA-Q68); refuses a malformed UUID before querying | Same |
+| **R-l, R-l′** | As §11C.6 | As §11C.6 | As §11C.6 | As §11C.6, plus the opened date of an open dispute from its `dispute_opened` event (SA-Q68) |
+
+Paging: the layer-B pager (keyset on `id`, page 1,000, ceiling 5,000, `reachedCeiling`). Bought credits reuse R-b and `listLotsWithDraws` (S4-FR-18).
+
+**Read shape (SA-Q68, E-69):** two reads, with no PostgREST embed. R-n reads the events in range (keyset, capped), then their purchases by id. R-n′ reads the account's purchase ids first (account-scoped, refusing a malformed UUID), then the events whose `purchase_id` is in that set and whose `recorded_at` is in range. Every id list is sent in chunks of at most 100. R-l / R-l′'s opened date reads `dispute_opened` events by purchase id in the same way. A cut-off read makes the figures it feeds "At least" or Unknown (FR-4B-9).
+
+### 11I.8 Guards and tests affected
+
+| Guard or test | Effect | Part |
+|---|---|---|
+| Purge descriptors `lib/business-os/purge/descriptors.ts:1343` | Add `never('business_os_boost_reversal_events', {kind:'via', parent:'business_os_boost_purchases', fk:'purchase_id'}, exclude(EXPORT_REASON.BILLING), …)` next to the purchases (the `via` form exists at `:1045`) | 4b.1 |
+| `lib/business-os/purge/__tests__/classification-baseline.json` | Count **155 → 156**, add `"never"` | 4b.1 |
+| `descriptors.invariant.test.ts` | Runs on the two rows above | 4b.1 |
+| `lib/business-os/businessOwnedTables.ts:218` | Register beside `business_os_boost_purchases` with a reason | 4b.1 |
+| `lib/business-os/data-export/__tests__/exportClassification.test.ts:1593-1603` | **Add to `BILLING_TABLES` by hand** (the `business_os_boost_*` prefix is not matched automatically) | 4b.1 |
+| Test-account cleanup: `scripts/generate-test-account-cleanup-sql.ts`, `scripts/__tests__/testAccountCleanupSql.test.ts` | G-18 blocks an unreviewed inbound FK (PF-11): classify the edge, regenerate as `20261077`, pin the new pair | 4b.1 |
+| `lib/business-os/account/accountDeletionPolicy.ts:186`, `scripts/audit-deletion-coverage.ts` | Deprecated, "do not extend". Touch only if the audit script demands it | 4b.1 |
+| **New** `supabase/migrations/__tests__/business-os-boost-reversal-events.migration.test.ts` | Pins: RLS on, no policy; REVOKE from all four roles; SELECT and the column-level INSERT grant to service_role (no `recorded_at`, no `id`); no UPDATE or DELETE grant; the six-argument signature; `SECURITY INVOKER` and `search_path = ''`; the six insert points; the RV-9 assertion; the function re-grants. Precedent `business-os-boost-crediting.migration.test.ts` | 4b.1 |
+| `business-os-boost-crediting.migration.test.ts` | Unaffected (the `20261031` file is unchanged); run unchanged | 4b.1 |
+| `BusinessOsBoostPurchaseRepository.test.ts:519-574`, `boostRouting.integration.test.ts`, webhook placement guards | Not tripped (signature unchanged); run unchanged | 4b.1 |
+| Payment write-lockdown scan `lib/repositories/__tests__/paymentTablesWriteLockdownMigration.test.ts:35-48, :347` | Not tripped automatically; **SA-Q71** decides whether to add the table | 4b.1 |
+| SECURITY DEFINER surface `supabase/__tests__/security-definer-surface.guard.test.ts` | Not tripped while the function stays INVOKER (**SA-Q69**) | 4b.1 |
+| Rollback and check conventions | `supabase/SQL Scripts/20261076_…_rollback.sql`; `scripts/precheck-bos-boost-reversal-events.sql` (check 23); `scripts/check-bos-boost-reversal-events-migration.sql` (check 24) | 4b.1 |
+| `finance.source.guard.test.ts` DF-5 pin (`:724-751`) | **Re-pinned:** the event kinds and `amount_minor` are read in one function only (the BD-17 rule), the held-now remainder in one function only; `amount_refunded_minor` is no longer read by the revenue builder. With a planted control | 4b.2 |
+| Same guard, table pin `REPOSITORY_TABLES` (`:332`) | **Grows by one table** (`business_os_boost_reversal_events`), with its control | 4b.2 |
+| `BusinessOsFinanceReadRepository.ts:175` boost column list and its test | New exported column constant for R-n; one test per new method (column list, half-open `recorded_at`, account scoping, malformed id, paging, ceiling, never throws, no `livemode`) | 4b.2 |
+| Accounts tab tests (`accountEconomics`), the 6a export pins and AC-145 baseline | Change with FR-4B-11; SA rules on any baseline edit (SA-Q72) | 4b.2 |
+| `financeRules` data tests, `creditsSection` tests, G3 `creditLots.test.ts` | As §11C.7 (K-5 rule; bought credits in `creditsSection.ts`, G3 not tripped) | 4b.2 |
+| **Frozen pins** | AC-173 `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`, Pin A `30f5fc24…2e01`, Pin C `98ea0507…1e4b` and helper `02813360…5bd8`, Pin D `1f7cf07a…f144` stay **byte-identical**. **Pin B `24ff0da7…df9f`** also stays byte-identical. It serves fixed payloads to the page, so a server-side K-5 rule change cannot move its **values**. **E-103:** it also type-checks its typed payload literals, so every new wire field on `FinanceCreditRow`, `FinanceCreditsSection`, `FinancePaymentProblemsSection`, `FinanceBoostNotes` and `FinanceBoostRevenue` is optional, and no field Pin B names is removed or renamed. That keeps E-68's intent. If 4b.2 needs a tile wire change, stop and raise it to SA. The K-5 rule is proven by builder and rule tests (SA-Q73, E-68) | 4b.2 |
+| `npm run test:authz-guard`, `test:bos-entitlements` | Run, expected unchanged | 4b.1, 4b.2 |
+
+### 11I.9 Acceptance criteria
+
+**4b.1 (writer)**
+- [ ] **AC-204** *(4b.1)* The migration creates `business_os_boost_reversal_events` with the §11I.4 columns, CHECKs, the two unique partial indexes and the `recorded_at` and `purchase_id` indexes (migration test; check 24).
+- [ ] **AC-205** *(4b.1)* RLS is on with no policy; `anon` and `authenticated` hold no privilege; `service_role` holds SELECT and INSERT on exactly the nine §11I.5 columns, not on `id` or `recorded_at`, and no UPDATE or DELETE (migration test; check 24).
+- [ ] **AC-206** *(4b.1)* The function keeps the six-argument signature, return type, `SECURITY INVOKER`, `search_path = ''` and EXECUTE for service_role only; the boost repository and webhook tests pass unchanged.
+*How AC-207 to AC-211 are proven (E-66, SA F-4).* CI has no database, so the migration test pins the migration text only (AC-204 to AC-206). The behaviour in AC-207 to AC-211 is proven by `scripts/test-bos-boost-reversal-events.sql`. It is a self-checking script: it raises on any failed expectation. Dev runs it inside `BEGIN … ROLLBACK` against a **local** database only, never production, and records the output in the workplan.
+
+- [ ] **AC-207** *(4b.1)* A partial refund then a full refund of one purchase write two `refund` rows whose amounts are the deltas and whose cumulatives are the two totals; re-sending either, or an older cumulative (`stale`), writes nothing (integration test against a local database, or SQL test).
+- [ ] **AC-208** *(4b.1)* A refund on a `disputed`, a `dispute_lost` and a `flagged_mismatch` purchase (outcome `recorded`) each writes one `refund` row (PF-4).
+- [ ] **AC-209** *(4b.1)* Dispute opened, won and lost each write one row of their kind with the amount at stake (RV-5); a repeated stage writes nothing; a dispute recorded on a flagged purchase writes one `dispute_opened` row.
+- [ ] **AC-210** *(4b.1)* No row is written for `awaiting_payment`, `failed`, `expired` or `flagged_mismatch` targets, or for any `already`, `stale`, `not_allowed` or `not_found` outcome.
+- [ ] **AC-211** *(4b.1)* `recorded_at` is the transaction time; an insert by service_role that names `recorded_at` is refused (privilege).
+- [ ] **AC-212** *(4b.1)* The migration raises and changes nothing when any purchase has a refund or a dispute id (RV-9).
+- [ ] **AC-213** *(4b.1)* No credit lot or lot draw is written by any refund or dispute path (BQ-13: no take-back).
+- [ ] **AC-214** *(4b.1)* Purge descriptor, classification baseline (156), business-owned inventory and export `BILLING_TABLES` list the table; the descriptor invariants and export classification tests pass; the regenerated cleanup passes G-18 for a test account with boost purchases and events (cleanup test).
+- [ ] **AC-215** *(4b.1)* The rollback restores the `20261031` body byte for byte, drops the table, and refuses while the table holds a row.
+- [ ] **AC-216** *(4b.1, manual)* The user ran check 23 (all ok), applied the migration(s), and check 24 shows all ok; recorded in the workplan before the PR merges.
+
+**4b.2 (finance)**
+- [ ] **AC-217** *(4b.2)* A purchase paid in October and refunded in November: October's refunded and net are unchanged by the refund; November shows the refund and a net lowered by it (FR-4B-2), with injected events at `23:59:59.999999` and `00:00:00.000000` UTC on a month boundary each in exactly one month; the half-open bounds are asserted on R-n's query.
+- [ ] **AC-218** *(4b.2)* A dispute opened in October and lost in November: nothing in October; "lost" in November equals the event amount (FR-4B-3).
+- [ ] **AC-219** *(4b.2)* An open dispute appears as "held in open disputes now", equal to check 15's `held_minor`, the same whatever the window, and is not subtracted from any window's net (FR-4B-4).
+- [ ] **AC-220** *(4b.2)* For This month, per currency: purchases, gross, tax and credits sold match check 14; refunded and lost match check 26 (paid purchases only); net = gross − refunded − lost, negative shown with a minus sign.
+- [ ] **AC-221** *(4b.2)* An event on a purchase never paid changes no revenue figure and is counted in the problems note (FR-4B-8).
+- [ ] **AC-222** *(4b.2)* An event whose purchase belongs to a deleted account counts on the "Deleted accounts" line; by-package rows group events by their purchase's package.
+- [ ] **AC-223** *(4b.2)* Unreadable event amounts and an injected small ceiling give the FR-4B-9 states; no event amount passes through `toUnits`, `toHundredths` or `× 100` (source test).
+- [ ] **AC-224** *(4b.2)* R-n failing (including 42P01, mocked) gives refunded, lost and net "Unknown", the section `partial`, every other section rendering, and no purchase-month fallback (FR-4B-16).
+- [ ] **AC-225** *(4b.2)* The FR-4B-6 note replaces the S4-W-3 note; no copy says "counted in the month of the purchase".
+- [ ] **AC-226** *(4b.2)* The Accounts tab and the account summary give, for the same window and account, the boost figures of FR-4B-11, equal to the revenue section restricted to that account; a refund on a taxed purchase gives Unknown.
+- [ ] **AC-227** *(4b.2)* The problems block shows each open dispute's opened date from its event and each payment never credited with its oldest change date (FR-4B-12); AC-102 and AC-103 pass.
+- [ ] **AC-228** *(4b.2)* Bought credits: AC-104 and AC-105 pass; K-4 and gifted are unchanged (check 5); the "not taken back" sentence shows only while a refund event exists.
+- [ ] **AC-229** *(4b.2)* Picked business: R-n′, R-l′ and `listLotsWithDraws` receive exactly that id; R-n and R-l have zero calls (AC-106 extended).
+- [ ] **AC-230** *(4b.2)* No Stripe id, `livemode`, receipt, flag reason or lot id in R-n's columns, the payload or the logs; auth and input as AC-99, with zero event reads on 401, 403 and 400.
+- [ ] **AC-231** *(4b.2)* The finance source guard's re-pinned DF-5 rule, the grown table pin and their planted controls pass; the AC-173 pair and Pins A, B, C and D are byte-identical (SA-Q73, E-68).
+- [ ] **AC-232** *(4b.2, manual)* Admin opens Finance (This month and 30d, all businesses and the owner business): the owner test purchase shows as in 4a with no refund; no open dispute, no payment never credited; the owner account's 5,000 bought credits beside its gifted credits; cross-checked with checks 14, 15, 16 and 26. Manual QA steps **L-137 to L-141** (BD-33: after merge, no approval step).
+
+Manual QA (read-only, after 4b.2 merges): **L-137** Our revenue for This month and 30d, with the FR-4B-6 note absent while nothing is refunded; **L-138** "Held in open disputes now" reads none; **L-139** Section 6 block A "Our payment problems (boosts)" shows no open dispute and no payment never credited; **L-140** Section 4 shows bought credits beside gifted, K-4 unchanged; **L-141** the Accounts tab and the owner account summary show the same boost figure as Our revenue for that account.
+
+### 11I.10 Open questions for SA (4b)
+
+Technical only. **No new business question:** BD-17 and its dispute defaults decide the money rules; BQ-13 stays open and 4b keeps no take-back.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q65** | Store Stripe's `event.created` as `occurred_at` beside `recorded_at` (RT Q-1)? It changes the RPC signature, the handler and the repository argument pins | No. `recorded_at` only; the signature stays |
+| **SA-Q66** | FK delete action, and the cleanup: `ON DELETE CASCADE` plus a regenerated cleanup (`20261073`, the edge classified parent-owned for G-18, PF-11), or `NO ACTION` plus a delete step? Confirm the cascade needs no DELETE grant. Same PR as `20261072`, or a follow-up? | CASCADE; regenerate in the same 4b.1 PR as its own migration, applied right after `20261072` |
+| **SA-Q67** | Inserts: `ON CONFLICT DO NOTHING` (the purchase update still lands; check 25 catches a gap) or let a unique violation raise (the webhook then fails and retries)? | `ON CONFLICT DO NOTHING`; the state machine already writes no row on `already` and `stale` |
+| **SA-Q68** | R-n and R-n′ need purchase fields and account scoping through the purchase: a PostgREST embed (`business_os_boost_purchases!inner(...)`, new in this repository) or two reads (events in range, then purchases by id; for one account, its purchase ids first)? Same for the open dispute's opened date in R-l | Two reads: no new pattern, both keyset-paged and capped |
+| **SA-Q69** | Keep the function `SECURITY INVOKER` with a column-level INSERT grant, rather than DEFINER (which trips the SECURITY DEFINER surface guard R-a to R-d)? | Keep INVOKER |
+| **SA-Q70** | Rollback refuses while the events table holds rows? | Yes |
+| **SA-Q71** | Add the new table to the payment write-lockdown scan (`paymentTablesWriteLockdownMigration.test.ts`, the fixed list and the no-browser-writer check)? | Yes: cheap, and it is a payment table written only by the server |
+| **SA-Q72** | The Accounts tab follows the refund-month rule (FR-4B-11), which changes its figures and may touch the 6a export pins and the AC-145 baseline: approve and rule how the pins change | Approve; one ruled pin update, recorded |
+| **SA-Q73** | Pin B pins tile values. If its fixtures hold a refund or a dispute, K-5's value changes under FR-4B-5: re-freeze Pin B once, or change the fixture? | Check the fixture first; if it changes, re-freeze once by SA ruling with the new hash recorded |
+| **SA-Q74** | A refund recorded after a lost dispute, or on a flagged purchase, could make refunded + lost exceed a purchase's total across months. Count each in its month as recorded, with a note when it happens? | Yes; count as recorded, with the note; check 25 shows the purchase |
+
+### 11I.11 Estimates
+
+| Part | Work | Estimate |
+|---|---|---|
+| 4b.1 | Migration (table, RLS, grants, function body with six inserts, assertion), rollback, checks 23 and 24, migration test, purge, baseline, inventory, export list, cleanup regeneration and its pins | About 2 days |
+| 4b.2 | R-n, R-n′, attention reads, builder rule change and DF-5 re-pin, Accounts tab, problems block, K-5 rule, bought credits, render and route tests, checks 25 and 26 at QA | About 2.5 days |
+| **Total** | Close to BD-32's "about 4 days"; the half day is the cleanup regeneration (PF-11) | **About 4.5 days** |
+
+### SA Requirement Review — 4b (§11I) — 2026-10-17
+
+**Verdict: ✅ APPROVED WITH CONDITIONS.** 4b.1 may start after E-65 to E-69, which SA applied below. The design is sound: an append-only dated event table, written inside the existing transition function under its existing row lock, with RLS on, no policy, and a column-level INSERT grant. It fits the payment-tables and DB-exposure lockdown conventions. **No genuine user decision is needed for the design.** BD-17 and its defaults decide the money rules, and BQ-13 stays open, untouched. The user's only steps are the planned hand-apply (checks 23 and 24 around `20261072` and `20261073`), and possibly one operational choice in F-5.
+
+**How it was checked.**
+- **The function.** SA read `20261031:174-376` line by line.
+  - Every target takes `SELECT … FOR UPDATE` on the purchase row first. Every write is one `UPDATE` in the same function call, so the same transaction.
+  - Retries and the reconcile pass return `already` (equal cumulative, same dispute id) or `stale` (lower cumulative) **before** any write path.
+  - Each of the six RV-2 write branches is reached only on a real state change.
+- **The schema.** `20261030`: `currency` and `livemode` are `NOT NULL` (and `currency = 'USD'`), so the copied event columns cannot fail their NOT NULL. `amount_total_minor` is nullable on flagged rows (RV-5 covers it). `user_id` is `ON DELETE SET NULL`, so purchases outlive their account and events stay with them.
+- **The checks.** Checks 23 to 26 were scanned: ASCII only, no apostrophe in any comment, no "into", one final result set each. Their SQL was read for type and union consistency.
+
+**Findings**
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| F-1 | — | **Rewriting the function is safe.** The signature, return type, outcomes, `SECURITY INVOKER` and `search_path = ''` are kept. `CREATE OR REPLACE` keeps the ACL, and re-stating the grants is harmless. The inserts sit inside the same call, so an insert failure (for example a missing grant) rolls back the purchase update too, and the webhook claim retries. There is no half-applied state. No caller changes (RV-8). The SECURITY DEFINER surface guard is not tripped (INVOKER). The payment write-lockdown scan is not tripped automatically and gains the table (SA-Q71). | — |
+| F-2 | Medium | **The RV-9 guard is right, but it is not race-proof on its own.** A webhook call already running the **old** body when the migration starts can commit a refund with no event after the assertion. Locking narrows the window, but a call that has already entered the old body finishes with it. The window is tiny today (one test purchase, 0 refunds), but "no undated history" should be proven after the apply, not assumed. | **E-65 (applied):** the migration takes `LOCK TABLE public.business_os_boost_purchases IN EXCLUSIVE MODE` before the assertion, and check 24 gains the row "no refund or dispute recorded without an event". |
+| F-3 | — | **Grants and RLS match the lockdown conventions:** RLS on, no policy, `REVOKE ALL` from all four roles, then SELECT plus the nine-column INSERT to service_role, with no UPDATE or DELETE. Column-level INSERT is right: unnamed columns take their defaults and need no privilege, so `id` and `recorded_at` cannot be supplied. **The cascade needs no DELETE grant** (SA-Q66): referential actions run with the referencing table owner's rights, not the caller's. | — |
+| F-4 | Medium | **AC-207 to AC-211 cannot run in CI.** CI has no database, and the migration test pins text only. | **E-66 (applied):** these ACs are proven by a self-checking SQL script that Dev runs inside `BEGIN … ROLLBACK` against a **local** database, never production, with its output recorded; CI keeps the text pins. |
+| F-5 | Low (operational) | **If Dev has no local database,** the six insert paths are first exercised by a real event. The only real-event path is a Stripe **test-mode** refund (BD-14 counts it), checked with check 25. | **The one possible user touchpoint:** a test-mode refund of the owner test purchase after the apply. That is operational, not a business rule; TL asks only if F-4's local run is impossible. |
+| F-6 | Low | **The rollback order and the once-rows-exist rule were not stated.** | **E-67 (applied):** roll back `20261073` first, then `20261072`. Once the events table holds a row the rollback refuses, and from then on any defect is fixed forward by a new migration. |
+| F-7 | — | **The deploy order is honest.** 4b.1's TypeScript reads nothing new, so it is safe on either side of the apply, and the PR stays off auto-merge until the user says "applied". 4b.2 merges only after the apply and still tolerates a missing table (FR-4B-16, AC-224). There is no window in which merged code needs a table that is not there. | — |
+| F-8 | Medium | **SA-Q73 has a cleaner answer than a re-freeze.** Pin B serves **fixed payloads** to the page, so a server-side K-5 rule change (FR-4B-5, FR-4B-10) cannot move it. Pin B stays byte-identical. If 4b.2 must change the tile wire shape, that is a display change: stop and raise it to SA. The K-5 rule is proven by builder and rule tests. | **E-68 (applied)** on §11I.8 and AC-231. |
+| F-9 | — | **SA-Q68: two reads, with explicit chunking.** R-n reads events in range (keyset, capped), then their purchases by id. R-n′ reads the account's purchase ids first (account-scoped), then events by `purchase_id` in that set and range. Id lists are chunked at 100 per request. | **E-69 (applied)** on §11I.7. |
+| F-10 | — | **The split and estimates are sensible.** 4b.1 is writer-only, has no UI, and is migration-gated; 4b.2 is reads and UI. | — |
+
+**Rulings SA-Q65 to SA-Q74**
+
+| # | Ruling |
+|---|---|
+| SA-Q65 | **No `occurred_at`.** `recorded_at` only; the signature stays (BD-17 accepts "the month we learned of it"). |
+| SA-Q66 | **`ON DELETE CASCADE`, with the cleanup regenerated as `20261073` in the same 4b.1 PR** and applied right after `20261072`. G-18 needs the edge classified (PF-11). No DELETE grant is needed (F-3). |
+| SA-Q67 | **`ON CONFLICT DO NOTHING`.** A conflict can only mean the state machine already wrote the step. Raising would turn a duplicate into a webhook that fails and retries forever. Check 25 reconciles any gap. |
+| SA-Q68 | **Two reads**, as F-9 and E-69. No embed pattern in this repository. |
+| SA-Q69 | **Keep INVOKER** with the column-level INSERT grant. |
+| SA-Q70 | **Yes**, plus E-67 (order, fix forward). |
+| SA-Q71 | **Yes:** add the table to the payment write-lockdown scan (the fixed list and the no-browser-writer check). |
+| SA-Q72 | **Approved: one ruled update per pin, as E-55.** The AC-145 Overview baseline gains R-n and R-l with their exact arguments, plus the `heldNow` payload change and a refreshed hash, and nothing else. The 6a export pins and `accountEconomics` tests change only where FR-4B-11 changes a figure. Paste the hunk lists. |
+| SA-Q73 | **Pin B is not re-frozen** (F-8, E-68). |
+| SA-Q74 | **Yes.** Count each event in its month as recorded. The problems note shows when refunded plus lost exceeds a purchase's total; check 25's `over_total` shows the purchase. |
+
+**E-edits (all applied by SA)**
+- **E-65.** §11I.4 migration order gains step 0: `LOCK TABLE public.business_os_boost_purchases IN EXCLUSIVE MODE`. Check 24 gains the row "no refund or dispute recorded without an event".
+- **E-66.** §11I.9 gains a note before AC-207: AC-207 to AC-211 are proven by `scripts/test-bos-boost-reversal-events.sql`, a self-checking script (it raises on any failed expectation) run inside `BEGIN … ROLLBACK` against a local database only, with its output recorded in the workplan.
+- **E-67.** §11I.6 rollback paragraph: the order is `20261073` then `20261072`, and the fix-forward rule applies once rows exist.
+- **E-68.** §11I.8 frozen-pins row and AC-231: Pin B stays byte-identical; a needed tile wire change stops for SA.
+- **E-69.** §11I.7: the two-read shape and the 100-id chunking.
+
+---
+
+## 11J. Money M-8: mark the Platform dashboard and Exchange rates pages redundant
+
+Specified 2026-10-17 from **BD-34** (which amends BD-25 and CR BQ-7), the CR M-8 row and inventory rows I-15 and I-19, LAY §2.3 X-1, X-2 and §3 rule 9, and the code at main `5c214310` (citations are `path:line` there). Nothing was checked in a browser or against the database. **UI short path, about 1 day. Nothing is deleted. No data, money, API logic, read, request or migration change.**
+
+**Numbering note.** PR #447 (4b.1, §11I) claims AC-204 to AC-232 and SA-Q65 to SA-Q74 in this file, so M-8 starts at **AC-233** and **SA-Q75** to keep both PRs mergeable.
+
+### 11J.0 Sign-off
+
+BD-34 is the user's decision that nothing in the product uses or links to the two pages any more, and that both routes stay. The one sidebar change is the removal of the Platform dashboard item from the **hidden** "AgentsPilot (parked)" section; the visible sidebar (Monitor, Money, Businesses, Settings) does not change. BD-34 is recorded as the sign-off for exactly that removal, as §11H.0 did for M-5 (LAY X-1, X-2, rule 9). Under BD-33, M-8 proceeds on SA, QA and TL approval with no user step.
+
+### 11J.1 Code facts (at `5c214310`)
+
+| # | Fact | Evidence |
+|---|---|---|
+| CF-1 | Platform dashboard is `/admin/platform-dashboard`, one client file (578 lines). Its header already says URL-only (U-6) and "the user decides later whether it stays at all (FU-4)" | `app/admin/platform-dashboard/page.tsx:1`, `:23-33` |
+| CF-2 | Its only data call is `/api/admin/dashboard?period=` | `platform-dashboard/page.tsx:106` |
+| CF-3 | `/api/admin/dashboard` (GET and HEAD, `requireAdmin` first in each) has **no other caller** in `app/`, `lib/` or `components/`. Its only other references are the admin gate test and the route register | `app/api/admin/dashboard/route.ts:15-23`, `:274-283`; `app/api/admin/__tests__/adminGate.writes.test.ts:237`, `:341-342`; ADMIN_IDENTIFICATION register rows 22, 23 |
+| CF-4 | The **only thing in the product that points at the dashboard** is its sidebar item in the hidden parked section, kept "so every admin page keeps exactly one sidebar entry". The sidebar header comment names its path. `LayoutDashboard` is imported only for that item | `app/admin/components/AdminSidebar.tsx:225-241`, `:66-69`, `:8` |
+| CF-5 | The dashboard's own links to Businesses, AI calls & usage, learning system, AIS config and the agent queue lead **out** of it; they stay | `platform-dashboard/page.tsx:242-356`, `:520-573` |
+| CF-6 | Exchange rates is `/admin/exchange-rates`, one client file (531 lines). It reads and writes `exchange_rates` from the browser (`supabaseClient`, `CurrencyService.updateRate`) and fetches `api.exchangerate-api.com` | `app/admin/exchange-rates/page.tsx:20-21`, `:64-72`, `:106-150`, `:167` |
+| CF-7 | Exchange rates has no sidebar item and no link. The nav test lists it as unlisted and asserts the sidebar file never contains `exchange-rates` | `app/admin/components/__tests__/AdminSidebar.nav.test.ts:87-89`, `:192-194`; sidebar comment `:82-83` |
+| CF-8 | Exchange rates has **no API route of its own**. `CurrencyService` is shared with the user settings currency picker and the currency helpers, so it is not "used only by" the page and is out of scope | `components/settings/CurrencySelector.tsx:9`; `lib/utils/currencyHelpers.ts:4` |
+| CF-9 | Exchange rates has one `console.error` (CLAUDE.md rule 3: flagged; converted here because the file is touched). The dashboard and its route have none | `exchange-rates/page.tsx:92` |
+| CF-10 | Tests that pin the two pages: the nav test (parked section has 15 items and contains the dashboard `:135-141`; the on-disk scan finds both routes `:160-170`; 29 hrefs `:179`; no `exchange-rates` in the sidebar `:192-194`) and the Health guards (no Health file links to the dashboard `health.source.guard.test.ts:67-69`, `health.render.test.tsx:241-246`; the dashboard is still a `'use client'` page with its fetch and Pino logger `health.source.guard.test.ts:146-153`) | as cited |
+| CF-11 | Neither page is in the C-14 `MIGRATED_PAGES` registry or in the contrast guard's `PAGES` | `app/admin/components/layout/__tests__/layoutFolder.guard.test.ts:511`; `app/admin/__tests__/contrast.lf1.source.guard.test.ts:56-64` |
+| CF-12 | No `next.config.js` redirect and no `middleware.ts` rule names either route | search at `5c214310` |
+
+### 11J.2 Scope
+
+| In | Out |
+|---|---|
+| Remove the Platform dashboard item from the hidden parked section (and its now-unused icon import); reword the sidebar comments so the sidebar file names neither path | Deleting any page, route, file, table or service (BD-34) |
+| The redundant header comment (RP-1) in both page files and in `app/api/admin/dashboard/route.ts` | Any change to a read, write, request, figure, period option or the external rates fetch |
+| **No visible notice** (BD-34 reading, RP-4, E-71): the pages render exactly as today | Making Exchange rates read-only (FU-M8-1, a later step) |
+| A source guard that nothing in `app/`, `lib/`, `components/` or `hooks/` links to either page, and that only the dashboard calls its route (RP-5) | `CurrencyService`, `CurrencySelector`, `currencyHelpers` (CF-8) |
+| Exchange rates' one `console.error` converted to Pino (CF-9) | Moving either page onto the Admin Layout Standard; the other 14 parked pages |
+| Pointer notes in the admin reorganisation requirement (U-6, S4-b), ADMIN_IDENTIFICATION (register rows 22, 23) and `docs/MULTI_CURRENCY_SYSTEM.md` (`:43`, `:233`, `:286` tell admins to visit `/admin/exchange-rates`; E-71) | Any browser look by the user at these parked AgentsPilot pages (they are parked) |
+
+**Estimate:** about 0.75 day (sidebar and nav test 0.25 day; comments and logger 0.15 day; guard 0.15 day; verification and doc pointers 0.2 day). With no notice there is no page restructuring and no render test (E-71).
+
+### 11J.3 Rules
+
+- **RP-1 Header comment.** Exactly `REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.`, followed by one line saying why: the dashboard's AI cost is in AI calls & usage (all products); no figure uses an exchange rate (BD-12); the route's only caller is the redundant dashboard. In both pages it sits directly after `'use client'`, which stays the first line (CF-10). In the route it sits at the top of the file.
+- **RP-2 Sidebar.** The parked section stays hidden and holds 14 items; the visible sections are unchanged. The sidebar file names neither `platform-dashboard` nor `exchange-rates`, comments included (the rule CF-7 already applies to Exchange rates).
+- **RP-3 Routes stay.** Both pages still load by direct URL for an admin with today's content and behaviour, admin-only through the admin layout.
+- **RP-4 No visible notice (BD-34 reading, E-71).** The user's instruction for M-8 was "no need to remove, we can just add comments it is redundant for now and not use them". The treatment is therefore **code comments only**. Neither page shows a notice, and neither page's markup or component structure changes. BQ-14 is resolved by BD-34 and is not sent to the user.
+- **RP-5 No in-app use.** No non-test file under `app/`, `lib/`, `components/` or `hooks/` contains `/admin/platform-dashboard` or `/admin/exchange-rates` in its code (comments stripped), and only `app/admin/platform-dashboard/page.tsx` contains `/api/admin/dashboard`.
+- **RP-6 Route unchanged.** `/api/admin/dashboard` gains only the comment: `requireAdmin` stays the first statement of GET and HEAD; the gate test and register rows 22 and 23 are unchanged.
+- **RP-7 Logging.** Exchange rates logs through `createLogger({ module: 'AdminExchangeRates' })`, error as `{ err }`. No other change to that file's behaviour.
+
+### 11J.4 Guards and tests affected
+
+| Guard or test | Change |
+|---|---|
+| `AdminSidebar.nav.test.ts` | The unlisted list gains `/admin/platform-dashboard` (BD-34); parked count 15 → 14 and "contains the dashboard" becomes "does not contain it"; href count 29 → 28; new case: the sidebar file never contains `platform-dashboard` (beside the `exchange-rates` case). The on-disk scan's `toContain` lines for both routes (`:167`, `:169`) stay, which proves the routes are kept |
+| `health.source.guard.test.ts`, `health.render.test.tsx` | **No edit.** "No link to the legacy dashboard" and "the legacy dashboard still exists as a client page" must stay green |
+| `redundantPages.source.guard.test.ts` (new, `app/admin/__tests__/`) | RP-1 exact header in the three files; RP-2 sidebar; RP-4: no `redundant-page-notice` and no `AdminNotice` import in either page; RP-5 walk; no-dead-regex self-tests and a planted control for each rule (E-71). No render test: neither page's markup changes, and `git diff` proves it |
+| `layoutFolder.guard.test.ts` (C-14) | **No edit.** Neither page joins `MIGRATED_PAGES`: they are not migrated and are not to be extended. Importing `AdminNotice` from outside the folder is allowed (S-3 governs files inside the folder) |
+| `contrast.lf1.source.guard.test.ts` | **No edit.** Neither page joins `PAGES`; the notice uses `AdminNotice`'s amber text, never `text-slate-500` or `-600` |
+| `adminGate.writes.test.ts`, `npm run test:authz-guard` | No edit; run (comment-only route change) |
+| `aiCostVocabulary.source.guard.test.ts` | No edit; neither file is scanned, and the notice copy uses none of its forbidden words |
+| Frozen pins (AC-173 pin and helper, Pins A, B, C with helper, D) | Not opened; hashes checked at the start and at handover |
+| `npm run lint:hooks` | Run |
+
+### 11J.5 Acceptance criteria
+
+- [ ] **AC-233** The sidebar data holds no item for `/admin/platform-dashboard` or `/admin/exchange-rates`; the parked section is still hidden and holds 14 items; the visible sections and their items are unchanged; the sidebar file names neither path.
+- [ ] **AC-234** No non-test file under `app/`, `lib/`, `components/` or `hooks/` links to either page, and only the Platform dashboard calls `/api/admin/dashboard` (RP-5).
+- [ ] **AC-235** Both routes still load by direct URL for an admin, with today's content, requests and actions unchanged.
+- [ ] **AC-236** *(amended by E-71, BD-34 reading)* Neither page shows a redundant notice. Each page file's diff is the RP-1 comment lines only, plus, for Exchange rates, the RP-7 logger lines.
+- [ ] **AC-237** Both page files and `app/api/admin/dashboard/route.ts` carry the exact RP-1 header comment; both pages still start with `'use client'`.
+- [ ] **AC-238** `/api/admin/dashboard` is unchanged apart from the comment: `requireAdmin` first, the same GET and HEAD responses; the gate test and `test:authz-guard` pass with no edit.
+- [ ] **AC-239** A non-admin is refused on both routes, as today (admin layout).
+- [ ] **AC-240** Exchange rates has no `console.*`; its history-load error logs through Pino with `{ err }`; nothing else in it changes.
+- [ ] **AC-241** No data, money, read, request, migration or API logic change; `git diff --stat -- supabase lib/repositories lib/services` is empty.
+- [ ] **AC-242** The frozen pins (AC-173 pin and helper, Pins A to D, C's helper) are byte-identical; the nav, Health, C-14, contrast and new redundant-page guards pass; the C-14 registry and the contrast `PAGES` are unchanged.
+
+No manual step for the user: both pages are parked AgentsPilot pages. AC-235 and AC-236 are proven by the comment-only diffs, the nav test's on-disk scan and the Health guard's "still a client page" check (E-71).
+
+### 11J.6 Open questions
+
+| # | Question | BA's suggested answer |
+|---|---|---|
+| **SA-Q75** | Remove the dashboard's hidden sidebar item (it then joins the nav test's unlisted list), or keep the hidden item and only add comments? | Remove: BD-34 says nothing links to it, and the item exists only for the "one entry per page" rule, which the unlisted list already handles for Exchange rates |
+| **SA-Q76** | How does the notice show in every state without editing the early returns? | Rename each page's component to an inner `…Content` function; the default export renders the notice, then the content. Hooks stay inside the inner component |
+| **SA-Q77** | Notice: text only, or a link to Finance? | Text only. "Do not link" is about links **to** these pages; a link out is harmless but not needed |
+| **SA-Q78** | The route: comment only, or also a log line or response header marking it redundant? | Comment only: any runtime marker is an API logic change |
+| **SA-Q79** | One new source guard file, or extend the nav test? | A new `redundantPages.source.guard.test.ts`: RP-5 walks folders the nav test does not read |
+| **SA-Q80** | Exchange rates still writes from the browser (CF-6). Record it only? | Record it as **FU-M8-1** (make it read-only or close the write); M-8 changes no behaviour |
+
+**BQ-14: resolved by BD-34, not sent to the user (SA-RR-M8, E-71).** BD-34 says "just add comments it is redundant for now and not use them", so the answer is code comments only and no visible notice. Whether Exchange rates should stop accepting edits is a separate later choice (FU-M8-1); M-8 leaves it as it is.
+
+---
+
+## 11K. Slice 6b: margin after estimated Stripe fees, and KPI order
+
+Specified 2026-10-17 from **BD-7** (BQ-7's default: "AI only, Stripe fee as an estimate"), **BD-22** (margin on revenue after tax), **BD-12** (no FX), **BD-35** (6b re-orders the tiles: revenue, then cost, then user and account data), BD-29 and BD-31 (tiles above the bar, clickable), DF-8, CR G-10 and the CR M-3 row, the 6a rules (§11E.3), the F-5 tile mapping (§11G) and the code at main `e43dcb60` (M-8 merged, #448). A read-only live check was run from the main checkout (§11K.1). **No migration, no new SQL function, no new table, no write, no new read and no new repository method.** It adds one pure fee-estimate step inside the 6a builder, one config entry as data, new payload fields beside the existing margin, and a new tile order.
+
+**Numbering note.** PR #447 (4b.1, §11I, not on main) reserves AC-204 to AC-232, SA-Q65 to SA-Q74 and checks 23 to 26; M-8 used AC-233 to AC-242 and SA-Q75 to SA-Q80. 6b therefore starts at **AC-243**, **SA-Q81** and **check 27**. Its checks sit in this section, not in §13, so the two PRs do not touch the same lines.
+
+**The question it answers.** "After the card processor takes its cut, is this account still worth it?" For the owner test account in October 2026: paid us USD 89.00 after tax (plan 79.00 + boost 10.00); estimated Stripe fees USD 3.18 (2.59 on the plan charge + 0.59 on the boost charge, at the default rate); margin after Stripe fees (estimate) = AI margin minus 3.18.
+
+### 11K.1 Live facts and code facts (read-only, 2026-10-17)
+
+Live: a SELECT-only probe from the main checkout (`e49a4719`; zero-row column probes, counts and amount columns only; no row written, no DDL). Code: read at `e43dcb60` in the 6b worktree. Checks 27 and 28 (§11K.9) were written against these facts and not executed by BA.
+
+| # | Fact | Value |
+|---|---|---|
+| LF-1 | Client payments (layer B) record a Stripe fee | `payment_transactions.processor_fee`, `net_amount`, `fee_currency` exist; 70 of 128 rows carry a `processor_fee` (Section 2 block B already shows them, slice 2) |
+| LF-2 | **Plan payments record no fee** | `business_os_billing_events` (10 rows): no fee-like column; `processor_fee` and `fee_minor` both refused (42703). Two `invoice_paid` rows, both `usd`: `amount_minor` 7900 and 4414 (account and month of the second not checked) |
+| LF-3 | **Boost purchases record no fee** | `business_os_boost_purchases` (1 row): no fee-like column; `processor_fee`, `fee_minor`, `stripe_fee_minor` refused (42703). The row: `paid`, `USD`, total 1000, refunded 0 |
+| CF-1 | One builder already owns the margin | `lib/business-os/finance/accountEconomics.ts`: `buildPaid`, `buildCost`, `buildMargin` (SA-W82 precedence, SA-W75 integer subtraction at the ledger scale), used by `buildAccountEconomics` (tab and platform line) and `buildAccountMargin` (one-account summary) |
+| CF-2 | A charge is already defined | Boost rows in `BOOST_PAID_FAMILY` read by `readMoney`; plan rows of `PLAN_PAYMENT_KIND` read by `readPlanMoney`; a readable zero invoice is not a payment (M2-W-5) |
+| CF-3 | Thresholds are already data | `lib/business-os/finance/financeRules.ts` holds `FINANCE_RULES`, `FINANCE_METRIC_PARAMS` (`farOverAllowancePercent: 150`) and a range check (`FAR_OVER_ALLOWANCE_PERCENT_RANGE`) |
+| CF-4 | The tile order lives in one component | `app/admin/finance/components/FinanceKpiStrip.tsx` renders K-1, K-2, K-3, K-4, K-5 in that order as children of the shared `KpiStrip`; the shared `KpiStrip.tsx` holds no Finance order |
+| CF-5 | Pin B does not read order | `financeTiles.pin.render.test.tsx` (`24ff0da7…df9f`) finds each tile by `data-testid`, checks status and text, and counts five; its header says the line order is not pinned, by design. Pin A (`KpiStrip.callers.pin.render.test.tsx`, `30f5fc24…2e01`) covers the other ten callers, not Finance |
+| CF-6 | **Vocabulary guard** | `app/admin/__tests__/aiCostVocabulary.source.guard.test.ts` scans `financeCopy.ts` and forbids the word **"estimated"** (SA-Q51 list, case-insensitive, substring). The label "Margin after estimated Stripe fees" would trip it; see FE-12 and SA-Q86 |
+| CF-7 | Existing copy that stays true | `financeCopy.ts`: "Stripe fees are not deducted" (6a note, about the AI margin) and "Real Stripe fees (none are recorded for our payments yet)" (cannot-show list) |
+
+### 11K.2 Scope
+
+| In scope | Not in scope |
+|---|---|
+| The fee-estimate rule and its config (§11K.3); "Margin after Stripe fees (estimate)" **beside** the AI margin on the Accounts tab rows, the platform margin line and the one-account summary (§11K.5); the BD-35 tile order (§11K.6); BQ-15 recorded with its default | Replacing or changing the AI margin, its value, rules, sort or filter; real Stripe fees (none recorded, LF-2, LF-3; a webhook writer change); dispute fees; Stripe Billing, Stripe Tax, international-card or currency-conversion surcharges (BQ-15); any FX (BD-12); **anything that needs 4b.1's table** (`business_os_boost_reversal_events`, PR #447: refund-month dating of refunds stays with 4b.2); the margin per current plan (BD-8) and K-7 (a sixth tile is over the layout standard's five-tile maximum; both stay in the slice 6 row for a later decision); any tile value, status, label, link or test id change |
+
+### 11K.3 The estimate rule and config
+
+| # | Rule |
+|---|---|
+| FE-1 | **What a charge is.** One successful card charge per counted platform payment, from the rows the 6a builder already reads: each **plan payment** counted by M2-W-2 to M2-W-5 with an amount above 0, and each **boost purchase** in the paid family (`paid`, `partially_refunded`, `refunded`, `disputed`, `dispute_lost`, through the exported `BOOST_PAID_FAMILY`, no status literal) **with a total above 0**. A readable zero invoice is not a charge (M2-W-5), and a boost whose total is 0 is not a charge either: no money moved, so there is no card fee (E-72, SA-W-6b-4; checks 27 and 28 carry `and b.amount_total_minor > 0`). |
+| FE-2 | **Formula, per charge, in integer minor units of the charge's currency:** `fee_minor = round_half_up(gross_minor × percent_bps / 10000) + fixed_minor`, where `gross_minor` is the amount **charged, tax included** (plans `amount_minor`; boosts `amount_total_minor`), because Stripe takes its fee on the amount charged. Integer form: `(gross_minor × percent_bps + 5000) div 10000 + fixed_minor`, checked with `Number.isSafeInteger`. Fees are rounded **per charge**, then summed. |
+| FE-3 | **Default values (BQ-15, an estimate, not a recorded fee):** USD only: `percent_bps` = **290** (2.9%), `fixed_minor` = **30** (USD 0.30). This is Stripe's standard published price for a domestic card charge, the same assumption as the boost requirement's markup table (2.9% + USD 0.30, flagged there as an assumption to verify). Worked examples at the default: a USD 79.00 plan charge = 2.29 + 0.30 = **USD 2.59**; a USD 44.14 plan charge = 1.28 + 0.30 = **USD 1.58**; a USD 10.00 boost = 0.29 + 0.30 = **USD 0.59**. |
+| FE-4 | **Config is data, never a literal in logic.** One exported, read-only entry, `STRIPE_FEE_ESTIMATE`, a map from currency code to `{ percentBps, fixedMinor }`, holding only `USD` today, with a range check beside it in the style of `FAR_OVER_ALLOWANCE_PERCENT_RANGE` (`percentBps` an integer 0 to 1000, `fixedMinor` an integer 0 to 1000; a value out of range makes every fee Unknown, never a guessed fee). The builder takes it as an **input parameter** (SA-WR-4: pure; the formula imports no rate), so tests can pass other rates. Its file is SA-Q81. Changing the rate later is a one-line data change with no logic change. |
+| FE-5 | **Refunds.** A refunded or partly refunded charge **keeps its fee**: Stripe does not normally return its processing fee on a refund. The fee is counted on the gross charge, in the month of the charge (`paid_at`), whatever happens to the charge later. This is part of the estimate and the note says so (§11K.5). |
+| FE-6 | **Disputes.** A `disputed` or `dispute_lost` charge keeps its processing fee (FE-5). The separate fee Stripe charges for a dispute is **not** estimated in 6b (BQ-15 (c)); the note says so. |
+| FE-7 | **Dating.** A charge's fee is dated by the charge (`paid_at`), the same column as its revenue (M3-W-1), so the fee and the revenue it belongs to are always in the same window. 4b.2's refund-month rule (BD-17, needs 4b.1's table) moves refund amounts, never fees, and is out of scope. |
+
+### 11K.4 Margin and currency rules
+
+| # | Rule |
+|---|---|
+| FE-8 | **Margin after Stripe fees (estimate) = AI margin minus the estimated fees**, in USD, computed in the builder at the ledger scale. It is integer and safe-integer checked, with one division at the edge (SA-W75). The fee is subtracted from the revenue **in minor units, before the one scale step**: `(revenue_minor − fee_minor) × MINOR_TO_COST_UNITS − cost_units`. That equals `(revenue × k − cost) − fee × k` exactly, and it keeps the 6a pin of a single multiply (E-74, SA-W-6b-2). The AI margin is **never replaced or changed**; the new figure is shown beside it. |
+| FE-9 | **Same currency, and only when exact.** A figure is shown only when the AI margin of the same row (or the platform line, or the one account) is a figure under M3-W-4, **and** every USD charge of that row was readable with a config entry for USD, **and** the fee sum is a safe integer. Otherwise the cell takes the AI margin's word, in the same SA-W82 precedence: **"Not available: AI cost is charged only from 29 Sep 2026"** (window before the cut-over) > **"n/a, different currency"** (any non-USD line, so no fee is ever estimated in another currency today, and no USD-only partial) > **Unknown** (a failed or ceiling read, an inexact line, an unreadable charge, an out-of-range config, an overflow). USD is the only currency with a config entry. Any non-USD line already gives "n/a, different currency" through the AI margin, so a figure is only ever computed for USD. **A missing or out-of-range USD entry is a config fault:** every margin-after-fees cell reads Unknown, the section's fee note reads "Stripe fees are an estimate: none are recorded for plan or boost payments. The assumed fee could not be read, so no margin after Stripe fees is shown.", and the AI margin is unaffected (E-73, SA-W-6b-5). Unknown is never 0. |
+| FE-10 | **No revenue.** An account with no charge in the window has estimated fees **0** (exact) and its margin after fees equals its AI margin, with the AI margin's "No revenue in this window" note. |
+| FE-11 | **Estimated fees shown too.** Each figure cell carries a second small line "Stripe fees, estimate: USD X" (the fee sum, `formatMoney`, USD), so the reader sees what was taken off. When the margin after fees is not a figure, the fee line is not shown. |
+| FE-12 | **Wording (CF-6).** Every new string says **"estimate"**, never the guarded word "estimated", so `aiCostVocabulary.source.guard` passes with no ALLOWED entry and no edit (SA-Q86). |
+| FE-13 | **Platform line.** The platform line (M3-W-9) gains the same two figures over every account and the Deleted accounts row, before any filter and cap, by the same functions (E-47 precedent). |
+| FE-14 | **One account.** `buildAccountMargin` gains the same two figures from the account-scoped reads, so the Accounts row and the one-account summary show the same figure for the same window (the AC-142 rule extended). |
+| FE-15 | **Sort and filter unchanged.** "AI margin, lowest first" and "Negative AI margin" keep reading the AI margin; no new option in 6b (SA-Q84). |
+| FE-16 | **No client arithmetic** (M3-FR-13): the fee, the subtraction, every word state and the config values shown in the note come from the payload. The client formats only. |
+| FE-17 | **Logs and payload:** the route's info line gains no amount and no rate (SEC-8); the payload gains no Stripe id, tier literal or `livemode`. |
+
+### 11K.5 Display
+
+| Where | Change |
+|---|---|
+| Accounts tab table | A new column **"Margin after Stripe fees (estimate, USD)"** directly after "AI margin (USD)": the figure through `formatUsd` (sign kept, as the AI margin), or the FE-9 word; the FE-11 fee line under a figure. The Deleted accounts row gets the same cell. |
+| Platform margin line (above the table) | A new pair under "AI margin": **"Margin after Stripe fees (estimate)"** and **"Stripe fees, estimate"**. |
+| One-account summary | A new line **"Margin after Stripe fees (estimate, USD)"** directly under "AI margin (USD)", with the FE-11 fee line. |
+| Accounts tab notes (always shown) | One new note: **"Stripe fees are an estimate: none are recorded for plan or boost payments. Assumed {percent}% + {currency} {fixed} per card charge. A refunded charge keeps its fee. Dispute fees are not included."** The values come from the payload's copy of the config (FE-16), so the text cannot drift from the rate used. The 6a note is reworded so it is clearly about the AI margin column: **"Paid us is after tax, net of refunds and disputes. The AI margin does not deduct Stripe fees."** |
+| Never | The word "actual", "real" or "recorded" beside a fee; a fee in Section 2 block A (Our revenue) or on K-5 (they stay "Stripe fees not deducted"); removing the "Real Stripe fees" cannot-show item (it stays true) |
+
+### 11K.6 KPI tile order (BD-35)
+
+Order only. Every tile keeps its id, test id, label, value, status, sub-line, headline, link or jump target (BD-31, SA-W7) and the placeholder count (five). The strip stays above the filter bar on both tabs (BD-29). Keyboard and reading order follow the new DOM order.
+
+| Position | Before (F-5) | After (6b) | Group (BD-35) |
+|---|---|---|---|
+| 1 | K-1 Charged AI cost this month | **K-5 Our revenue** | Revenue |
+| 2 | K-2 Accounts far over allowance | **K-1 Charged AI cost this month** | Cost |
+| 3 | K-3 Founding Partners with no end date | **K-3 Founding Partners with no end date** | Accounts (plan) |
+| 4 | K-4 Gifted credits outstanding | **K-2 Accounts far over allowance** | Accounts (credit use) |
+| 5 | K-5 Our revenue | **K-4 Gifted credits outstanding** | Accounts (credits given) |
+
+K-3 leads the account group because it is about who the accounts are; K-2 and K-4 are both about credits and sit together, use before gifts. The change is in `FinanceKpiStrip.tsx` only; the shared `KpiStrip` and `KpiTile` do not change.
+
+### 11K.7 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| **Frozen pins** | AC-173 pin `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`; **Pin A** `30f5fc24…2e01`; **Pin B** `24ff0da7…df9f`; **Pin C** `98ea0507…1e4b` and helper `02813360…5bd8`; **Pin D** `1f7cf07a…f144` | All **byte-identical** (LF-normalised), hashes checked at Step 0 and at handover. BA reading (CF-5): Pin B does not pin order, so the reorder leaves it green and unedited; Pin A is untouched because `KpiStrip` is. If SA finds otherwise, **one** ruled re-freeze, as E-55, with the new hash recorded (SA-Q87, SA-Q88) |
+| New tile-order test | Pins the §11K.6 order | A new render case (not in Pin B): the five tile test ids follow the new DOM order on Overview and on the Accounts tab, five placeholders while loading |
+| `aiCostVocabulary.source.guard.test.ts` | Scans `financeCopy.ts` (CF-6) | No edit and no ALLOWED entry: the new strings say "estimate" (FE-12). The `financeCopy.ts` text floor (439) can only rise |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | Builder changes; config entry added | The builder stays pure (no repository, data layer, entitlements or clock import); the "no cross-currency total" control covers the fee step; the DF-5 zero-token pin on `accountEconomics.ts` stays at zero (no `amount_refunded_minor`, `'disputed'` or `'dispute_lost'`); no new export from `boostRevenue.ts` or `planRevenue.ts` (the 6a export pins unchanged). A new rule, with a planted control, fails a numeric fee literal in `accountEconomics.ts` |
+| `app/admin/finance/__tests__/source.guard.test.ts` | New cells and lines | Type imports only; no arithmetic on money in components; no `console.` |
+| Route tests, AC-145 Overview baseline | `accountEconomics` and `accountMargin` gain fields | Without `tab` and with no business picked: same reads and payload as before (AC-145 unchanged). The picked-business payload's `accountMargin` gains the fields: SA-Q85 rules whether that touches the baseline (one ruled update, as E-55, if it does) |
+| Repository caller lists, `serviceColumn.guard`, webhook placement guards, `tierLiteral.forbidden`, `test:bos-entitlements` | Not tripped (no new read, no `lib/business-os/billing/` file, no tier literal, no entitlements import) | Run unchanged |
+| `layoutFolder.guard` (C-14), contrast LF-1 | Finance components touched | Run; no exclusion added |
+| `financeUrl.test.ts`, `FINANCE_URL_KEYS`, AC-173 | No URL or request change | Run unchanged |
+
+Dev runs before SA code review and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, layout and Health suites, the vocabulary guard, `npm run lint:hooks`, eslint on touched files, the scoped `tsc` with canary (AC-44), and the seven pin hashes. No new CI job and no added critical-path time.
+
+### 11K.8 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check. Figures are compared with checks 19, 20, 27 and 28 run at test time.
+
+- [ ] **AC-243** **Formula (unit):** at the default rate, gross 7900 gives fee 259, 4414 gives 158, 1000 gives 59; a zero invoice is no charge; an exact half rounds up (gross 500: 145,000 + 5,000 div 10,000 = 15, plus 30 = 45) and below half rounds down (gross 499 gives 14 + 30 = 44); fees are rounded per charge, then summed.
+- [ ] **AC-244** **Config is data:** the builder takes the rate as a parameter; a test passing 350 / 25 changes every fee with no code change; an out-of-range value (`percentBps` 1001, a fraction, a negative) makes every fee and margin after fees Unknown; no fee literal (290, 30, 0.029, 0.3) appears in `accountEconomics.ts` (source guard with a planted control).
+- [ ] **AC-245** **Which charges:** a plan payment above 0 and each paid-family boost are one charge each; a zero invoice, a paid-family boost with total 0 (E-72), a refused plan row and a boost outside the paid family are not; `refunded`, `partially_refunded`, `disputed` and `dispute_lost` boosts keep their fee on the gross total.
+- [ ] **AC-246** **Margin after fees** per account equals check 19 `ai_margin_usd` minus check 27 `usd_fee_minor` / 100, for every row where both are figures; the AI margin column is unchanged from before 6b for the same fixture.
+- [ ] **AC-247** **Word states:** before the cut-over the new cell reads "Not available: AI cost is charged only from 29 Sep 2026"; an account with an ILS boost (alone or beside USD) reads "n/a, different currency" with no fee line; a ceiling, a failed read, an unreadable charge or an inexact refund reads Unknown, never 0; precedence as SA-W82.
+- [ ] **AC-248** **No revenue:** an account with AI cost and no charge shows fees 0 and a margin after fees equal to its AI margin.
+- [ ] **AC-249** **Platform line:** "Margin after Stripe fees (estimate)" and "Stripe fees, estimate" cover every account and the Deleted accounts row, are unchanged by any filter, sort or cap, and equal check 20's margin minus check 28 `usd_fee_minor` / 100.
+- [ ] **AC-250** **Same figure both ways:** for the owner test account and October 2026, the Accounts row and the one-account summary show the same margin after fees, and the fee line reads USD 3.18 while only its two known charges (plan 79.00, boost 10.00) fall in the window.
+- [ ] **AC-251** **Labels:** the new column, platform pair, summary line and note read exactly as §11K.5; the note's rate comes from the payload; every new string says "estimate"; none says "actual", "real" or "recorded" beside a fee; K-5 and Our revenue still say "Stripe fees not deducted".
+- [ ] **AC-252** **Sort and filter unchanged:** each sort and Show option orders and narrows exactly as before 6b for the same fixture (they read the AI margin, FE-15).
+- [ ] **AC-253** **Tile order:** on Overview and on the Accounts tab, with and without a business picked, the tiles render K-5, K-1, K-3, K-2, K-4 in DOM order; five placeholders while loading; every tile value, status, label, link and jump target equals the value before 6b (Pin B passes unedited).
+- [ ] **AC-254** **No client arithmetic, logs, payload:** the components compute no fee, sum or difference (source test); the route info line carries no amount or rate; the payload has no Stripe id, tier literal or `livemode`; the Overview payload with no tab and no business is unchanged (AC-145).
+- [ ] **AC-255** **Guards and read-only:** every §11K.7 row passes; the seven frozen pins are byte-identical (or re-frozen once by SA ruling, recorded); the vocabulary guard passes with no edit; no write, migration, SQL function, read or repository method added; scoped `tsc` with canary.
+- [ ] **AC-256** **Manual QA (L-142 to L-147; PR #447 holds L-137 to L-141):** open Finance, This month: the tiles read Our revenue, Charged AI cost, Founding Partners, Accounts far over allowance, Gifted credits; open Accounts: the owner test account shows its AI margin and, beside it, its margin after Stripe fees (estimate) with the fee line, matching checks 19 and 27; the platform line matches checks 20 and 28; open the row and see the same two lines in the one-account summary; set a window starting 2026-09-15 and see "Not available" in both margin cells; record it in the workplan.
+
+### 11K.9 SQL cross-checks (27 and 28)
+
+Read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live together (BD-14). Amounts are **minor units** (divide by 100). The rate is the **6b default** written in each check; if the config changes, change `pct_bps` and `fixed_minor` to match. Margin after fees = check 19 `ai_margin_usd` minus check 27 `usd_fee_minor` / 100 (per account), and check 20 margin minus check 28 `usd_fee_minor` / 100 (platform). Written against §11K.1; not executed by BA.
+
+**File:** `check 27 - estimated Stripe fees per account this month` (AC-243, AC-245, AC-246, AC-250, AC-256)
+
+```sql
+-- Finance page check 27: estimated Stripe fees per account in one UTC month, read only.
+-- Compare with the fee line under the margin after Stripe fees on the Accounts tab.
+-- The month is the current UTC month. To check another month, replace null in the
+-- p block below with a quoted UTC month start, such as 2026-10-01 00:00:00+00.
+-- The rate is the 6b default: 290 basis points plus 30 minor units per charge, USD only.
+-- One charge per plan payment above 0 and per boost in the paid family.
+-- The fee is on the gross amount charged, tax included, rounded half up per charge.
+-- A refunded or disputed charge keeps its fee. Dispute fees are not included.
+with p as (
+  select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start,
+         290::bigint as pct_bps,
+         30::bigint as fixed_minor
+),
+charges as (
+  select coalesce(e.user_id::text, 'deleted accounts') as account,
+         upper(btrim(e.currency)) as currency,
+         e.amount_minor::bigint as gross_minor
+  from public.business_os_billing_events e
+  cross join p
+  where e.kind = 'invoice_paid'
+    and e.amount_minor > 0
+    and e.paid_at >= p.month_start
+    and e.paid_at < p.month_start + interval '1 month'
+  union all
+  select coalesce(b.user_id::text, 'deleted accounts') as account,
+         upper(btrim(b.currency)) as currency,
+         b.amount_total_minor::bigint as gross_minor
+  from public.business_os_boost_purchases b
+  cross join p
+  where b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+    and b.amount_total_minor > 0
+    and b.paid_at >= p.month_start
+    and b.paid_at < p.month_start + interval '1 month'
+)
+select
+  c.account,
+  count(*) filter (where c.currency = 'USD') as usd_charges,
+  count(*) filter (where c.currency is distinct from 'USD') as other_currency_charges,
+  coalesce(sum((c.gross_minor * p.pct_bps + 5000) / 10000 + p.fixed_minor)
+    filter (where c.currency = 'USD'), 0) as usd_fee_minor
+from charges c
+cross join p
+group by c.account
+order by 4 desc, 1;
+```
+
+**File:** `check 28 - estimated Stripe fees for the platform this month` (AC-249, AC-256)
+
+```sql
+-- Finance page check 28: estimated Stripe fees over every account in one UTC month, one row, read only.
+-- Compare with the platform line pair Stripe fees, estimate and margin after Stripe fees.
+-- Same month rule, rate and charge rule as check 27. Deleted accounts are included.
+-- A non USD charge anywhere means the platform margin after fees reads n/a, different currency.
+with p as (
+  select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start,
+         290::bigint as pct_bps,
+         30::bigint as fixed_minor
+),
+charges as (
+  select upper(btrim(e.currency)) as currency,
+         e.amount_minor::bigint as gross_minor
+  from public.business_os_billing_events e
+  cross join p
+  where e.kind = 'invoice_paid'
+    and e.amount_minor > 0
+    and e.paid_at >= p.month_start
+    and e.paid_at < p.month_start + interval '1 month'
+  union all
+  select upper(btrim(b.currency)) as currency,
+         b.amount_total_minor::bigint as gross_minor
+  from public.business_os_boost_purchases b
+  cross join p
+  where b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+    and b.amount_total_minor > 0
+    and b.paid_at >= p.month_start
+    and b.paid_at < p.month_start + interval '1 month'
+)
+select
+  count(*) as charges,
+  count(*) filter (where c.currency = 'USD') as usd_charges,
+  count(*) filter (where c.currency is distinct from 'USD') as other_currency_charges,
+  coalesce(sum((c.gross_minor * p.pct_bps + 5000) / 10000 + p.fixed_minor)
+    filter (where c.currency = 'USD'), 0) as usd_fee_minor
+from charges c
+cross join p;
+```
+
+### 11K.10 Open questions for SA (slice 6b)
+
+Technical only. The one business assumption, the fee rate, is **BQ-15** (§0.4); it does not block the build.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q81** | Where does `STRIPE_FEE_ESTIMATE` live: in `financeRules.ts` beside `FINANCE_METRIC_PARAMS`, a new data file in `lib/business-os/finance/`, or a database setting? | A code data constant in `financeRules.ts` (the BD-11 "thresholds are data" precedent), passed to the builder by `financeHealth.ts`. A database setting is a new pattern and a migration, out of 6b |
+| **SA-Q82** | Fee on the gross amount charged (tax included) or on the after-tax revenue? | Gross: Stripe takes its fee on what it charged; the after-tax rule (BD-22) is about what we earn, not about the fee base |
+| **SA-Q83** | Round per charge (half up, integer) and sum, or sum the grosses and round once? | Per charge: that is how a processor fee arises, and it keeps checks 27 and 28 exact |
+| **SA-Q84** | Sort and filter: keep them on the AI margin (FE-15), or add "Margin after Stripe fees, lowest first"? | Keep them on the AI margin in 6b; the estimate is a second view, not the ranking key. A new option is a later, small change |
+| **SA-Q85** | Payload: the new fields sit inside `accountEconomics` rows, its platform line and `accountMargin`, plus one copy of the config for the note. Does the `accountMargin` change touch the AC-145 baseline (picked-business payload)? If so, one ruled update as E-55? | Yes to the shape; the no-tab, no-business baseline stays byte-identical; if the picked case is in the baseline, one ruled update with the new hash recorded |
+| **SA-Q86** | The vocabulary guard forbids "estimated" in `financeCopy.ts` (CF-6). Use "estimate" wording (FE-12, no guard edit), or add one ALLOWED entry for the fee strings? | "Estimate" wording: an ALLOWED entry is a substring exemption for the whole file and would also let the word back in for AI cost, which the guard exists to stop |
+| **SA-Q87** | **Pin B and order.** BA reads Pin B as not pinning tile order (CF-5: lookup by test id, a count of five, line order excluded by its header). Confirm it stays byte-identical and green after the reorder. If SA finds that any assertion depends on order, how is it updated honestly? | Confirm unedited. If an order dependency exists, **one** ruled re-freeze, as E-55: the only change is the order expectation, the new hash is recorded in §0.3 and in the workplan, and no value or status literal changes |
+| **SA-Q88** | **Pin A.** The reorder lives only in `FinanceKpiStrip.tsx` (CF-4); the shared `KpiStrip` and the ten other callers are untouched. Confirm Pin A needs no edit | Confirm: no shared-component change, so Pin A is byte-identical |
+| **SA-Q89** | The order test: a new case in `financePage.render.test.tsx` (or a new small file), never in Pin B? | A new case in the page render test; Pin B stays frozen |
+| **SA-Q90** | Path: full cycle for the fee (new money logic, payload fields), with the reorder in the same workplan and PR, under BD-33's fast track? | Yes: one workplan, one PR, full cycle; BD-33 applies (no migration, and BQ-15 does not block) |
+| **SA-Q91** | Landing order with 4b.2 (PR #447's second part edits `accountEconomics.ts` for the refund-month rule) | 6b needs nothing from 4b.1. Whichever lands second rebases; FE-7 keeps fees on the charge month, so the two rules do not conflict |
+
+### 11K.11 Estimate
+
+**About 1.75 days** (inside BD-32's 1.5 to 2): config and the fee step in the builder, with unit tests, about 0.5 day; payload and wiring in `financeHealth.ts` and the route about 0.25 day; the column, the platform pair, the summary line and the note about 0.5 day; the tile reorder and its test about 0.25 day; guards, pin hashes, checks 27 and 28 and QA about 0.25 day.
+
+---
+
+## 11L. Slice DF-6: since it started (one account)
+
+Specified 2026-10-17 from **BD-26** (CR BQ-9: "Yes to a 'since it started' view for one account, beyond the 92-day cap, only when one account is picked, starting from the charging cut-over"), CR G-9 and **CR SA-Q-6** ("raise the 92-day cap for account-scoped reads only; bounded below by the cut-over; the ledger per account is small"), **BD-32** (DF-6 after 6b, about 1.5 days), **BD-33** (fast track), **BD-30** (U-4), the 6a and 6b margin rules (§11E.3, §11K.4) and the code on `feature/bos-finance-health-df6` (cut from the 6b tip `ea56ad04`, which includes 6b). **No migration, no new SQL function, no new table, no write, no new read and no new repository method.** It adds one window choice, valid only with a business picked, resolved on the server from the cut-over constant and the request clock (E-75).
+
+**Numbering note.** PR #447 (4b.1, §11I, not on main) reserves AC-204 to AC-232, SA-Q65 to SA-Q74, checks 23 to 26 and L-137 to L-141; M-8 used AC-233 to AC-242 and SA-Q75 to SA-Q80; 6b used AC-243 to AC-256, SA-Q81 to SA-Q91, checks 27 and 28 and L-142 to L-147. DF-6 therefore starts at **AC-257**, **SA-Q92**, **check 29** and **L-148**. As in 6b, its checks sit in this section, not in §13, so this PR and #447 do not touch the same lines.
+
+**The question it answers.** "Has this customer been worth it, since we started charging?" For the owner test account: everything it paid us, everything it cost us in charged AI, the AI margin and the margin after Stripe fees (estimate), from 29 Sep 2026 to now, on one screen, even once that span is longer than 92 days.
+
+### 11L.1 Code facts (read at `ea56ad04`, 2026-10-17)
+
+No live query was needed: DF-6 adds no read. Checks 29 and 30 (§11L.9) were written against these facts and the live facts of §11E.1 and §11K.1, and not executed by BA.
+
+| # | Fact | Where |
+|---|---|---|
+| CF-1 | **The 92-day cap is a route and page rule, not a read rule.** `customRangeProblem` (shared `adminWindowPresets.ts`, `ADMIN_WINDOW_MAX_DAYS = 92`, pinned equal to `CREDIT_REPORT_LIMITS.MAX_WINDOW_DAYS`) is applied by the finance route's strict Zod schema (`superRefine`, custom windows only) and by the page's URL parser (`financeFilters.ts`). No finance read checks the window length | `app/api/admin/business-os/finance/route.ts` `buildQuerySchema`; `app/admin/finance/financeFilters.ts` `financeWindowField` |
+| CF-2 | **Every account-scoped read already has a row ceiling** and reports reaching it: the ledger read (`FINANCE_LIMITS.LEDGER_CEILING` 20,000, `reachedCeiling`), client payments and refunds (`FINANCE_READ_LIMITS.CLIENT_CEILING` 5,000, the `>=` rule), boost and plan payments (same paging), the recorded AI cost read (`TOKEN_USAGE_READ_LIMITS.MAX_CEILING` 5,000). An inexact or ceiling read already gives "At least X" or Unknown (AGG-3) | `financeHealth.ts`, `BusinessOsFinanceReadRepository.ts`, `TokenUsageRepository.ts` |
+| CF-3 | **The cut-over is an instant**, `CHARGING_CUTOVER_FLOOR_MS` = 2026-09-29 16:50:53.914 UTC. `cutoverClamp(start, end)` gives `after_cutover` only when the window starts at or after it; a whole-day window from 2026-09-29 00:00 UTC is `starts_before_cutover`, and every margin then reads "Not available" (`buildMargins`) | `lib/business-os/credits/aiActivity.ts:146, :219` |
+| CF-4 | **The picked account's plan row is read first**, before any other read (`findPlanForAccount`, step 1, SEC-3); it carries `onboarding_started_at` and `profile_created_at` ("facts: written once by the provisioning triggers") and `created_at`. **`created_at` is not the account's start:** for every backfilled account it is the moment the backfill ran (repository comment on `findRecentOnboardedPlans`). **Since E-75, DF-6 uses none of these facts** for its window | `financeHealth.ts` step 1; `BusinessOsAccountPlanRepository.ts:41-61, :413-416` |
+| CF-5 | **The shared Window control already supports a page's own extra windows** (`ADMIN_WINDOW_EXTRAS`, `windowFilter({ extras })`, `DatePresets extras`), opt-in per page, so a page that lists none ignores the value (U-4). Names use underscores (`this_week`, `last_month`) | `app/admin/components/layout/adminWindow.ts:16-18, :48`, `DatePresets.tsx:74` |
+| CF-6 | **Links out carry the window** in the target's keys (`financeLinks.ts`): Activity and Charge checks take `range=<preset>` or `range=custom&from&to`; AI calls & usage takes `today` / `this_month` or custom dates. Activity's and Charge checks' routes cap custom windows at 92 days | `app/admin/finance/financeLinks.ts`; `app/api/admin/business-os/ai-activity/route.ts:121`; `.../credits/report/route.ts:78` |
+| CF-7 | **No time buckets.** The page has no monthly or daily trend; every section is a total for the window or a state as of now. Slice 8 (history snapshots) is where trends belong | `lib/business-os/finance/*`, `app/admin/finance/components/*` |
+| CF-8 | **No timezone is read by the page.** Windows resolve in UTC (TZ-1); no finance file reads `user_preferences.timezone` | `grep` over `lib/business-os/finance/` and `app/admin/finance/` |
+| CF-9 | **The AC-173 request pin** (`financeRequestPins.ts`, 15 rows) holds no row with a since-start value, and its self-check requires every request to start `?preset=` | `app/admin/finance/__tests__/financeRequestPins.ts` |
+
+### 11L.2 Scope
+
+| In scope | Not in scope |
+|---|---|
+| One new window choice, **"Since it started"**, offered only with one business picked; its server-side resolution (§11L.3); the route's validation change (§11L.4); the URL value and U-4 behaviour (§11L.5); how every tile and section reads over it (§11L.6); its link-out rule (DF6-FR-9); checks 29 and 30 | The choice with **all businesses** (BD-26: refused); the Accounts tab (it is all businesses only, SA-W84); any change to the 92-day cap for Today, 7 days, 30 days, This month or Custom; any time bucket or trend line (CF-7, slice 8); the account's own local clock (§11L.3 DF6-W-4); history before the cut-over; any new read, repository method, SQL function or migration; raising any read ceiling; the 92-day caps of Activity, Charge checks and AI calls & usage |
+
+### 11L.3 Window rules
+
+| # | Rule |
+|---|---|
+| DF6-W-1 | **Start (E-75, DF6-F1).** The window starts at **the charging cut-over instant**, `CHARGING_CUTOVER_FLOOR_MS` (2026-09-29 16:50:53.914 UTC, CF-3), for every account. No plan-row fact is used (not `onboarding_started_at`, not `profile_created_at`, never `created_at`): an account newer than the cut-over simply has no rows before it starts, so the totals are the same and no row can be dropped. Because the start is the cut-over instant, coverage is always `after_cutover` (CF-3), so the margins are figures, not "Not available". |
+| DF6-W-2 | **End.** The window ends at **now**, the request's one clock (`now`, exclusive end), not at the end of today. The end is never a client value. |
+| DF6-W-3 | **Resolved on the server only (E-75, SA-Q92).** The client sends only the choice and the account id. The route resolves the window by a pure `since_start` branch of `resolveFinanceWindow` (`now` passed in): `start` = `CHARGING_CUTOVER_FLOOR_MS`, `end` = `now`, `from` = `2026-09-29`, `to` = today UTC. No plan row is needed and the builder is unchanged. Any `from` or `to` sent with the choice is format-checked and **ignored**, as for every preset (SA-W6). |
+| DF6-W-4 | **Timezone.** `user_preferences.timezone` is the authority for an account's clock (CLAUDE.md); `business_profiles.timezone` does not exist and is never selected. DF-6 has **no day or month boundary to place**: both ends are instants (DF6-W-1, DF6-W-2), so the window does not depend on any timezone and nothing reads `user_preferences.timezone`. Labels stay UTC (TZ-1). If a later slice shows the account's own local dates (for example monthly buckets in its clock), `user_preferences.timezone` is the only source and NULL ("not asked") is labelled UTC, never assumed. |
+| DF6-W-5 | **Payload window.** `window.preset` = `since_start`; `window.start` = the start instant (ISO); `window.end` = now (ISO); `window.from` = the UTC date of the start; `window.to` = today's UTC date. `from` and `to` are labels and link inputs only; no read uses them. |
+| DF6-W-6 | **Read ceilings are unchanged** (CF-2). The window passes through the same reads with the same page sizes and ceilings as a 92-day window. A read that reaches its ceiling gives "At least X", "partial" or Unknown under AGG-3 and the per-section rules already in force (Section 3's charged figure, M-4's recorded figure, the 6a and 6b margins), **never a guessed or truncated figure**. No ceiling is raised for DF-6. |
+| DF6-W-7 | **One window for every section.** Every window-based section and tile reads the same span. Client takings (layer B) therefore start at the cut-over too, although client payments exist before it (BQ-16, default: same window). |
+
+### 11L.4 Validation change
+
+| # | Rule |
+|---|---|
+| DF6-FR-1 | The route's `preset` enum becomes the shared `ADMIN_WINDOW_CHOICES` **plus `since_start`**, a Finance-local addition in the route (the shared `ADMIN_WINDOW_CHOICES` list is not edited, so the Activity and credit report routes are unchanged). |
+| DF6-FR-2 | `preset=since_start` **without `accountId` is a 400** (`INVALID_QUERY`; development detail "since_start needs a business picked"). This is the only way a window longer than 92 days can be asked for, and it cannot be asked for all businesses (BD-26). |
+| DF6-FR-3 | `preset=since_start` with `tab` is already a 400 through SA-W84 (no tab with a business); no new rule. `sort`, `group` and `show` are 400 without the tab (E-48), unchanged. |
+| DF6-FR-4 | **The 92-day cap is otherwise unchanged:** `custom` still goes through `customRangeProblem` (at most 92 inclusive days, `to` not after today UTC), with or without a business picked. A custom window of 93 days with a business picked is still a 400. |
+| DF6-FR-5 | **Order is unchanged:** `requireAdmin` first (nothing above it), the repeated-key check, the strict schema, the platform-account 404, then the builder's plan check (404 / 500) before any other read. With `since_start`, the window is resolved in the route from the constant and `now` only (DF6-W-3); the builder's order is unchanged. |
+| DF6-FR-6 | The route's info line logs `window.preset` = `since_start` and the resolved `from` / `to` dates, as for every preset; never the plan row's facts, an amount or a name (SEC-8). |
+
+### 11L.5 URL value, U-4 and the page control
+
+| # | Rule |
+|---|---|
+| DF6-FR-7 | **URL value:** `range=since_start` (underscore, as the existing extras, CF-5), always with `account=<uuid>`. It is a Finance **window extra**: `since_start` is added to the shared `ADMIN_WINDOW_EXTRAS`, and `ADMIN_WINDOW_EXTRA_LABELS` gains **"Since it started"** (SA-Q93). The shared resolver (`adminWindow.ts:228-231`, which today sends every other extra to `resolveDateExtra`) gets an **explicit `since_start` case returning `{ kind: 'none' }`**: the shared folder never resolves it to dates, Finance resolves it on the server (E-76, DF6-F2). The exact-list pin of the extras (`adminWindow.test.ts:203`) is updated **once**, by this ruling. Finance lists the extra in its window field only. No `from` / `to` are written for it. The legacy alias `preset=since_start` is read as `range` like every other value (U-9). The request it sends is `preset=since_start&accountId=<uuid>`. |
+| DF6-FR-8 | **U-4 (BD-30): a bad link drops only the bad filter.** (a) `range=since_start` with no valid `account`: the **window** is the dependent, bad filter, so it falls back to This month and nothing else changes (the cross-key repair in `financeFilterRepair`, the SA-W3 precedent). (b) `range=since_start&account=<bad>`: the account is dropped by its own parser, then (a) applies. (c) `range=since_start&from=…&to=…`: the dates are ignored, the choice kept. (d) `range=since_start&tab=accounts&account=<uuid>`: the existing rule drops the tab and its keys (the business wins). No notice, no reset of other filters, and no request is ever sent that the route would refuse. |
+| DF6-FR-9 | **Page control:** the Window control shows **"Since it started"** after the standard choices **only while a business is picked** (`DatePresets extras` passed only then). Picking **All businesses** while it is selected sets the window to This month in the same single write (DF6-FR-8 (a)). **Clear** resets to This month and all businesses, as today. The window label under the bar reads **"Since it started: {from} to now (UTC)"**, `{from}` from the payload: `formatUtc(window.start)` with its trailing " UTC" removed, so the line reads **"Since it started: 2026-09-29 16:50 to now (UTC)"** (E-81, SA-W-DF6-1). |
+| DF6-FR-10 | **Links out** (CF-6): with `since_start`, a link to Activity, Charge checks or AI calls & usage carries `range=custom&from={window.from}&to={window.to}` **while that span is at most 92 inclusive days**; once it is longer, the link carries **the account only and no window**, so the target opens on its own default, never on a window it would refuse (SA-Q95). **No link ever carries `range=since_start`** (E-77, DF6-F3): `wholeDayWindow` (Activity, Charge checks) and `analyticsWindow` each branch on `since_start` explicitly, with an exhaustive `never` check on `FinanceWindowChoice`, so no choice can fall through to `range=<preset>`. The Businesses link carries no window, as today. K-1's link is unchanged (This month, F5-R1). |
+
+### 11L.6 Tiles, account summary and margins over the long window
+
+| Where | Behaviour with "Since it started" |
+|---|---|
+| **K-5 Our revenue** | Follows the page window, as for any window: the account's plan payments received plus boost net since the start, per currency (M2-FR-5, 4a rules). Its information line names the window ("since it started"). |
+| **K-1 Charged AI cost this month** | Unchanged: always this calendar month in UTC against the same span of last month (§7.1), whatever the window. |
+| **K-2, K-3, K-4** | Unchanged: as of now (credit period, cohort, lots), not window-based. |
+| **Section 1 Accounts by plan** | The picked account's group, as of now. **Note (E-79, DF6-F5):** the "new in window" count is not as of now: `classifyAccounts` counts it by the plan row's `created_at` (`planGroups.ts:224`), which follows the window. Over the long window a backfilled account counts as new, because its backfill time falls after the cut-over (CF-4). This is existing behaviour for any window that covers the backfill and DF-6 does not change it. |
+| **Section 2 Our revenue and Takings** | Window-based: every plan payment, boost and client payment of the account since the start, per currency, no FX (BD-12). The plan payments list keeps its defensive cap (`PLAN_PAYMENTS_SHOWN` 50, about four years of monthly payments); above it the existing "first 50 shown" wording applies and the totals still cover every row read. |
+| **Section 3 Charged AI cost, Recorded AI cost, Recorded above charged** | Window-based, from the start; coverage `after_cutover` (DF6-W-1). The recorded read's 5,000-call ceiling (CF-2) can be reached by a busy account over a long window: then the recorded figure is "At least X" and "Recorded above charged" reads Unknown, exactly as M-4 already does (R4 rules). Never 0. |
+| **Section 4 Credits, Section 6 Payment problems** | Unchanged: as of now. |
+| **Account summary (M-1) and margins (6a, 6b)** | "Paid us", charged AI cost, **AI margin (USD)** and **Margin after Stripe fees (estimate, USD)** cover the whole window by the same builder functions (`buildAccountMargin`), with the same SA-W82 precedence: "n/a, different currency" when any non-USD line exists, Unknown on any failed, ceiling or inexact read, a figure otherwise. "Not available: AI cost is charged only from 29 Sep 2026" can no longer appear (coverage is always after the cut-over). The fee estimate counts every charge in the window (FE-1 to FE-7). The summary gains a window line **for `since_start` only** (there is none today; every other window's summary is unchanged), with the same text as the page label, computed once and passed in (E-82, SA-W-DF6-2). |
+| **Monthly trend buckets** | None exist (CF-7) and DF-6 adds none. |
+| **Accounts tab** | Not reachable: the tab is all businesses only (SA-W84), and the choice needs a business. |
+
+### 11L.7 Reads and performance bounds
+
+| # | Rule |
+|---|---|
+| DF6-P-1 | **Same reads, same count.** A since-start request makes exactly the reads a picked-business request with a 92-day window makes (same methods, same `accountId`, same page sizes and ceilings), only with a different `start`. No platform-wide read runs with a business picked (unchanged: R-d not called, SA-Q35; the all-accounts recorded read not called, AC-157). |
+| DF6-P-2 | **Bounded by ceilings, not by days.** The window has no day limit, but every read stops at its ceiling (CF-2, DF6-W-6). The worst case is therefore the same number of pages as today's worst case for one account: ledger 20 pages of 1,000, recorded 5 pages of 1,000, client payments and refunds 5 pages each, boosts and plans their own. |
+| DF6-P-3 | **Timing is recorded, not gated.** QA records `durationMs` from the route's info line for the owner test account with "Since it started", beside This month and a 92-day custom window (L-153). A slow read follows the existing rules (the recorded read's 2 s deadline is race-only; a timed-out read is Unknown, never a wrong figure). No new CI job and no added critical-path time. |
+
+### 11L.8 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| `requireAdmin` first (`test:authz-guard`) | Route edited | Unchanged order (DF6-FR-5); the guard passes with no edit |
+| **tenant-isolation-guard** (skill) | The route is a service-role, cross-account admin read that takes a caller-supplied `accountId` | Apply the skill: the window does not depend on account data at all (E-75); every account-scoped read still receives that id and no other; no all-accounts read is reachable with `since_start`; a test proves a since-start request for account A never passes account B's id to any dep, and that a since-start request with no account never reaches the builder (400) |
+| **Frozen pins** | AC-173 pin `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`; Pin A `30f5fc24…2e01`; Pin B `24ff0da7…df9f`; Pin C `98ea0507…1e4b` and helper `02813360…5bd8`; Pin D `1f7cf07a…f144` | All **byte-identical** (LF-normalised), hashes at Step 0 and at handover. The since-start request is a **new** state (CF-9), pinned in a new test, never by editing the AC-173 table. If SA finds a pin must change, one ruled re-freeze as E-55 (SA-Q96) |
+| `aiCostVocabulary.source.guard.test.ts` | New strings in `financeCopy.ts` | No edit and no ALLOWED entry: "Since it started" and the window line use none of the SA-Q51 words |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | New `since_start` branch of `resolveFinanceWindow` | Pure (no repository, data layer, entitlements or clock import; `now` passed in); no `user_preferences` or `timezone` token in `lib/business-os/finance/`; `financeWindow.ts` reads no plan-row field |
+| **Type changes (E-80, DF6-F6)** | `since_start` widens three types | `FinanceWindowChoice` (`financeTypes.ts:56`) gains `since_start`; `FinanceQuery.preset` (`financeUrl.ts:29`, today `AdminWindowChoice`) becomes `AdminWindowChoice \| 'since_start'`; the route's `preset` enum gains it (DF6-FR-1). `windowQuery` maps `{ kind: 'extra', extra: 'since_start' }` to `preset: 'since_start'` and `fromFinanceQuery` maps it back. The AC-173 table stays untouched |
+| `app/admin/finance/__tests__/source.guard.test.ts` | Filter bar and summary | Type imports only; no date arithmetic on the window in components; no `console.` |
+| Shared window tests (`adminWindow`, `DatePresets`, the extras parity tests) | `ADMIN_WINDOW_EXTRAS` gains `since_start` | An explicit `since_start` case returns `{ kind: 'none' }` (E-76); the `adminWindow.test.ts:203` exact-list pin is updated once (SA-Q93 ruling); one test each on Analytics, Activity and Costs that `range=since_start` is ignored (U-4) |
+| `financeFilters.test.ts`, `financeUrl.test.ts`, `financeUrlState.render.test.tsx` | New value and repair | New cases for DF6-FR-7 and DF6-FR-8 (a) to (d); the existing cases unchanged |
+| `financeLinks.test.ts` | New link rule | New cases for DF6-FR-10 at 92 and 93 inclusive days |
+| `app/admin/finance/__tests__/source.guard.test.ts:192-196` (SA-W56 links import pin) | **Tripped:** the 92-day rule needs the shared day count | **One ruled update (E-83, SA-W-DF6-3):** the exact list becomes `['@/lib/business-os/finance/financeTypes', '@/app/admin/components/adminWindowPresets']`; `financeLinks.ts` imports `inclusiveDays` and `ADMIN_WINDOW_MAX_DAYS` from there, never a local `92`; the planted control stays |
+| Route tests, AC-145 baseline | New enum value and rule | The no-tab, no-business Overview payload is byte-identical (AC-145 unchanged) |
+| Repository caller lists, `serviceColumn.guard`, `tierLiteral.forbidden`, `test:bos-entitlements`, `layoutFolder.guard` (C-14), contrast | Not tripped (no new read, no tier literal, no entitlements import; the filter bar is already migrated) | Run unchanged |
+
+Dev runs before SA code review and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, shared layout and Health suites, the vocabulary guard, `npm run lint:hooks`, eslint on touched files, the scoped `tsc` with canary (AC-44), and the seven pin hashes.
+
+### 11L.9 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check. Figures are compared with checks 29 and 30 run at test time.
+
+- [ ] **AC-257** **Start rule (unit, E-75):** the start is `CHARGING_CUTOVER_FLOOR_MS` and the end is the injected `now`; `from` is `2026-09-29` and `to` is today UTC.
+- [ ] **AC-258** **Coverage:** for the AC-257 start, `cutoverClamp` gives `after_cutover`, and no margin cell reads "Not available".
+- [ ] **AC-259** **Validation:** `preset=since_start&accountId=<uuid>` is accepted; `preset=since_start` alone is a 400 with the `INVALID_QUERY` message; with `tab=accounts` it is a 400; `from` / `to` sent with it are ignored (the resolved window is the same); an unknown value such as `since-start` is a 400.
+- [ ] **AC-260** **Cap unchanged:** a custom window of 93 inclusive days is a 400 with and without `accountId`; 92 days is accepted; Today, 7 days, 30 days and This month resolve exactly as before (route tests unchanged).
+- [ ] **AC-261** **Order and isolation:** `requireAdmin` runs first; with `since_start`, the plan check runs before any other read, a missing plan row is a 404 and a failed check a 500; every account-scoped dep receives exactly the picked id; no all-accounts read is called (`countRevenueRows` and the all-accounts recorded read: zero calls).
+- [ ] **AC-262** **Same reads:** a since-start request calls the same deps with the same page sizes and ceilings as a picked 92-day custom request; only the range start and end differ (E-78: a custom window ends at the next UTC midnight, `since_start` at `now`) (DF6-P-1).
+- [ ] **AC-263** **Ceilings honoured:** with a fixture where the ledger read reaches its ceiling, Section 3 shows "At least X" and both margins read Unknown; where the recorded read reaches its ceiling, "Recorded above charged" reads Unknown; never 0 and never a figure (DF6-W-6).
+- [ ] **AC-264** **URL and U-4:** `range=since_start&account=<uuid>` loads the choice and sends `preset=since_start&accountId=<uuid>`; `range=since_start` with no account, or with a bad account, shows This month and all businesses and sends `preset=this_month`; dates beside `since_start` are dropped; with `tab=accounts` and an account the tab is dropped; the legacy `preset=since_start&accountId=<uuid>` reaches the same state; every AC-173 row still sends its pinned literal.
+- [ ] **AC-265** **Control:** "Since it started" is offered only with a business picked; choosing All businesses while it is selected switches to This month in one URL write; Clear resets to This month and all businesses; pages that do not list the extra ignore `range=since_start`.
+- [ ] **AC-266** **Labels:** the choice reads "Since it started"; the window line under the bar and in the account summary reads "Since it started: {from} to now (UTC)" with `{from}` from the payload (for the cut-over: "Since it started: 2026-09-29 16:50 to now (UTC)", E-81); the summary line appears for `since_start` only and every other window's summary is unchanged (E-82); the vocabulary guard passes with no edit.
+- [ ] **AC-267** **Tiles:** K-5 equals check 29's revenue for the account (per currency); K-1 equals its This month value with the same account picked; K-2, K-3 and K-4 equal their values with This month picked (as of now).
+- [ ] **AC-268** **Summary and margins:** for the owner test account, "Paid us", charged AI cost, AI margin and the margin after Stripe fees (estimate) with its fee line equal check 29 (`usd_revenue_after_tax_minor`, `ai_cost_usd`, `ai_margin_usd`, `usd_fee_minor`); an ILS line gives "n/a, different currency"; Section 3 and the summary show the same charged figure.
+- [ ] **AC-269** **Links out:** with a since-start span of at most 92 inclusive days, the Activity, Charge checks and AI calls & usage links carry `range=custom&from&to` from the payload and the account; at 93 days or more they carry the account and no window; no link ever carries `range=since_start` (E-77); the Businesses and K-1 links are unchanged.
+- [ ] **AC-270** **No timezone, no new read:** no file under `lib/business-os/finance/` or `app/admin/finance/` names `user_preferences` or `timezone`; no write, migration, SQL function, read or repository method is added; scoped `tsc` with canary.
+- [ ] **AC-271** **Guards and pins:** every §11L.8 row passes; the seven frozen pins are byte-identical (or re-frozen once by SA ruling, recorded); the Overview payload with no tab and no business is unchanged (AC-145); the route info line carries no plan fact, amount or name.
+- [ ] **AC-272** **Manual QA (L-148 to L-154):** run the steps below and record them in the workplan.
+
+**Manual browser steps** (user or QA, recorded in the workplan):
+
+- **L-148** Open Finance with all businesses: the Window control has no "Since it started".
+- **L-149** Pick the owner test account: "Since it started" appears; choose it. The URL reads `range=since_start&account=…`; the window line reads "Since it started: 2026-09-29 16:50 to now (UTC)" (E-81).
+- **L-150** Compare K-5, "Paid us", charged AI cost, AI margin and the margin after Stripe fees (estimate) with check 29 for the account; run check 30 and note the rows before the cut-over that the view leaves out (BQ-16).
+- **L-151** Choose All businesses: the window becomes This month, in one step. Paste `…/admin/finance?range=since_start` (no account): This month, all businesses, no error.
+- **L-152** Pick the account again with "Since it started" and open the Activity, Charge checks and AI calls & usage links: each opens on the same account with the window from the payload (or, past 92 days, on its own default).
+- **L-153** Record `durationMs` from the route line for "Since it started", This month and a 92-day custom window, for the owner test account.
+- **L-154** Set Custom to 93 days with the account picked: Apply is refused with the 92-day sentence, as before.
+
+### 11L.10 SQL cross-checks (29 and 30)
+
+Read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live together (BD-14). Revenue amounts are **minor units** (divide by 100); AI cost is USD at the ledger scale. Replace `null` in each `p` block with the quoted account id. Revenue and AI cost follow check 19; fees follow check 27 at the 6b default. Written against §11L.1, §11E.1 and §11K.1; not executed by BA.
+
+**File:** `check 29 - one account since it started` (AC-257, AC-267, AC-268, L-150)
+
+```sql
+-- Finance page check 29: one account since it started, one row, read only.
+-- Compare with K-5, the account summary and Section 3 when Since it started is picked.
+-- Replace null in the p block below with the quoted account id, such as
+-- 1a2b3c4d-1111-4111-8111-abcdefabcdef. With null the row holds zeros only.
+-- The start is the charging cut-over (2026-09-29 16:50:53.914 UTC) for every account.
+-- The end is now.
+-- Revenue is after tax, as in check 19. Fees are 290 basis points plus 30 minor units
+-- per USD charge above 0, as in check 27. A margin is given only when all revenue is USD
+-- and nothing is inexact.
+with p as (
+  select null::uuid as account_id,
+         timestamptz '2026-09-29 16:50:53.914+00' as cutover_at,
+         now() as end_at
+),
+s as (
+  select p.account_id,
+         p.end_at,
+         p.cutover_at as start_at
+  from p
+),
+rev as (
+  select upper(btrim(e.currency)) as currency,
+         e.amount_minor - e.amount_tax_minor as after_tax_minor,
+         e.amount_minor::bigint as gross_minor
+  from public.business_os_billing_events e
+  cross join s
+  where e.user_id = s.account_id
+    and e.kind = 'invoice_paid'
+    and e.paid_at >= s.start_at
+    and e.paid_at < s.end_at
+  union all
+  select upper(btrim(b.currency)) as currency,
+         case
+           when b.status = 'paid' then b.amount_total_minor - b.amount_tax_minor
+           when b.status in ('disputed', 'dispute_lost') then 0
+           when b.amount_refunded_minor = b.amount_total_minor then 0
+           when b.amount_tax_minor = 0 then b.amount_total_minor - b.amount_refunded_minor
+           else null
+         end as after_tax_minor,
+         b.amount_total_minor::bigint as gross_minor
+  from public.business_os_boost_purchases b
+  cross join s
+  where b.user_id = s.account_id
+    and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+    and b.paid_at >= s.start_at
+    and b.paid_at < s.end_at
+),
+cost as (
+  select coalesce(sum(c.cost_usd), 0) as ai_cost_usd,
+         count(*) as ledger_rows
+  from public.business_os_credit_charges c
+  cross join s
+  where c.user_id = s.account_id
+    and c.created_at >= s.start_at
+    and c.created_at < s.end_at
+),
+t as (
+  select
+    coalesce(sum(r.after_tax_minor) filter (where r.currency = 'USD'), 0) as usd_revenue_after_tax_minor,
+    count(r.currency) filter (where r.currency is distinct from 'USD') as other_currency_rows,
+    count(r.currency) filter (where r.after_tax_minor is null) as inexact_revenue_rows,
+    coalesce(sum((r.gross_minor * 290 + 5000) / 10000 + 30)
+      filter (where r.currency = 'USD' and r.gross_minor > 0), 0) as usd_fee_minor
+  from rev r
+)
+select
+  (select start_at from s) as window_start,
+  (select end_at from s) as window_end,
+  t.usd_revenue_after_tax_minor,
+  t.other_currency_rows,
+  t.inexact_revenue_rows,
+  t.usd_fee_minor,
+  cost.ai_cost_usd,
+  cost.ledger_rows,
+  case
+    when t.other_currency_rows > 0 or t.inexact_revenue_rows > 0 then null
+    else round(t.usd_revenue_after_tax_minor / 100.0 - cost.ai_cost_usd, 6)
+  end as ai_margin_usd,
+  case
+    when t.other_currency_rows > 0 or t.inexact_revenue_rows > 0 then null
+    else round((t.usd_revenue_after_tax_minor - t.usd_fee_minor) / 100.0 - cost.ai_cost_usd, 6)
+  end as margin_after_fees_usd
+from t
+cross join cost;
+```
+
+**File:** `check 30 - one account, rows before the charging cut-over` (BQ-16, L-150)
+
+```sql
+-- Finance page check 30: rows of one account dated before the charging cut-over, one row, read only.
+-- Replace null in the p block below with the quoted account id.
+-- The page never counts these rows when Since it started is picked. They are expected for
+-- an account that existed before the cut-over. Client payments are counted for BQ-16.
+with p as (
+  select null::uuid as account_id,
+         timestamptz '2026-09-29 16:50:53.914+00' as cutover_at
+)
+select
+  p.cutover_at as window_start,
+  (select count(*) from public.business_os_credit_charges c
+    where c.user_id = p.account_id and c.created_at < p.cutover_at) as ledger_rows_before_cutover,
+  (select count(*) from public.payment_transactions x
+    where x.user_id = p.account_id and x.paid_at < p.cutover_at) as client_payments_before_cutover
+from p;
+```
+
+### 11L.11 Open questions for SA (DF-6)
+
+Technical only. The one business point, whether client takings also start at the cut-over, is **BQ-16** (§0.4); it does not block the build.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q92** | Where is the start resolved: a pure helper in `financeWindow.ts` called by `buildFinanceHealth` right after the step 1 plan check (the route passes a provisional window), or the route reading the plan row itself? | The builder, after step 1: the plan row is already read there, so there is no second read and no read before the check (SEC-3). The route never resolves `since_start` |
+| **SA-Q93** | `since_start` cannot be resolved to dates by the shared folder (the start needs the account's plan row, and the shared folder may not import `lib/business-os/`). Add it to `ADMIN_WINDOW_EXTRAS` with a label and have the shared date resolver return "no dates" for it, or keep it a Finance-local value outside the shared extras? Any exact-list pin on `ADMIN_WINDOW_EXTRAS`? | Add it to the shared extras (the "a later page adds its own here" rule, CF-5), with the shared resolver giving `none` for it; Finance resolves it on the server. If an exact-list pin exists, one ruled update |
+| **SA-Q94** | First activity: the earliest of `onboarding_started_at` and `profile_created_at` (BA, CF-4), or only `onboarding_started_at` (the repository's "the account's own start")? | The earliest of the two: it can only make the window wider, never drop a row; check 30 proves it on live data |
+| **SA-Q95** | Links out past 92 days: no window (the target's default), or the last 92 days ending today? | No window: a "last 92 days" link would show a different span under the same label. The Finance page itself is the place for the long view |
+| **SA-Q96** | Pins: confirm none of the seven pins reads the window choice list or the route enum, so all stay byte-identical, and that the since-start request belongs in a new test, not in the AC-173 table (CF-9) | Confirm both; a new request case beside the pin, never inside it |
+| **SA-Q97** | The tenant-isolation-guard test shape: is a since-start case added to the existing route isolation test (two accounts, a spy on every dep) enough? | Yes, one case per account-scoped dep, plus the 400 case with no account |
+| **SA-Q98** | The recorded read's 5,000-call ceiling over a long window (Section 3, M-4): leave as is (Unknown at the ceiling), or raise it for one account? | Leave it: raising a ceiling is a read change, out of DF-6 (DF6-W-6); L-153 records whether the owner account comes near it |
+| **SA-Q99** | Path: full cycle (route validation and window change), one workplan and one PR, under BD-33's fast track? | Yes: no migration, no business question that blocks |
+
+### 11L.12 Estimate
+
+**About 1.5 days** (BD-32): the window helper, the route enum and rule, with unit and route tests, about 0.5 day; the URL value, the cross-key repair, the control and the labels about 0.5 day; the link rule, the isolation test, guards, pin hashes, checks 29 and 30 and QA about 0.5 day.
+
+### SA Requirement Review — DF-6 (§11L) — 2026-10-17
+
+**Reviewed by SA, 2026-10-17, against `ea56ad04` on `feature/bos-finance-health-df6`.**
+**Status: APPROVED WITH CONDITIONS (SA-RR-DF6).** The workplan starts after BA applies E-75 to E-80.
+**BA, 2026-10-17: E-75 to E-80 applied** in §11L (E-75: DF6-W-1, DF6-W-3, DF6-FR-5, CF-4, the isolation and source-guard rows, AC-257, AC-258, AC-261, L-149, L-150, checks 29 and 30; E-76: DF6-FR-7 and the shared window tests row; E-77: DF6-FR-10 and AC-269; E-78: AC-262; E-79: the §11L.6 Section 1 row; E-80: a new type-changes row in §11L.8). Ready for the Dev workplan.
+
+**Verified in the code**
+
+| Claim | Result |
+|---|---|
+| The 92-day cap is a route and page rule only (CF-1) | ✅ `buildQuerySchema` applies `customRangeProblem` to `custom` only; no finance read checks the length |
+| `requireAdmin` is the first statement (DF6-FR-5) | ✅ `route.ts` GET: correlation id, then `requireAdmin`; nothing reads the request above it |
+| Account-scoped reads have ceilings and report them (CF-2) | ✅ ledger `reachedCeiling`, client, boost and plan paging, recorded `MAX_CEILING`; a longer window only reaches them sooner, and the existing "At least" / Unknown rules hold |
+| Columns in checks 29 and 30 | ✅ `BusinessOsFinanceReadRepository` column lists (billing events, boosts, `payment_transactions`), `PLAN_COLUMNS` (`onboarding_started_at`, `profile_created_at`); same tables and rules as checks 19 and 27; editor-safe (no "into", no apostrophes) |
+| Provisioning facts are real history | ✅ `20261005b` backfill sets them from `MIN(onboarding_conversations.created_at)` and `business_profiles.created_at`, not the run time; `created_at` is the run time (CF-4) |
+| No timezone read | ✅ no file under `lib/business-os/finance/` or `app/admin/finance/` names `user_preferences` or `timezone`; both ends are instants, so DF6-W-4 is right |
+| No buckets (CF-7) | ✅ |
+| Tenant isolation | ✅ every account-scoped dep already takes the checked `accountId`; with E-75 the window does not depend on account data at all |
+
+**Findings**
+
+| # | Sev | Finding | Edit |
+|---|---|---|---|
+| DF6-F1 | Medium | **The first-activity start can drop rows and adds nothing.** For an account older than the cut-over the start is the cut-over either way. For a newer one, the rule gives the same totals only if no charge is dated before the earliest fact. The first AI charge and the first `onboarding_conversations` row are written by different code, so a charge a few ms earlier is possible and would silently leave the window. Check 30 on the owner account (older than the cut-over) cannot catch it. BD-26 says "starting from the charging cut-over". | **E-75:** DF6-W-1 becomes "the start is the cut-over instant `CHARGING_CUTOVER_FLOOR_MS`"; the plan-row facts are not used. DF6-W-3: resolved in the route by a pure `since_start` branch of `resolveFinanceWindow` (`now` passed in), with no plan row needed. AC-257 is reduced to "start = cut-over, end = injected `now`". Check 29's `s` block uses `p.cutover_at`. Check 30 keeps only `ledger_rows_before_cutover` and `client_payments_before_start` (renamed `_before_cutover`), for BQ-16 |
+| DF6-F2 | Medium | **The shared resolver routes every unknown extra to `resolveDateExtra`** (`adminWindow.ts:228-231`). With `since_start` in `ADMIN_WINDOW_EXTRAS`, an explicit branch is needed. TS forces one, but the requirement must say what it returns. `adminWindow.test.ts:203` is an exact-list pin of the extras. | **E-76:** DF6-FR-7: `resolveWindow` returns `{ kind: 'none' }` for `since_start`, from an explicit case; `ADMIN_WINDOW_EXTRA_LABELS` gains "Since it started"; the `:203` list pin is updated once (ruled here, SA-Q93); one test per extras page (Analytics, Activity, Costs) that `range=since_start` is ignored |
+| DF6-F3 | Medium | **`financeLinks.ts` `wholeDayWindow` falls through to `range=<preset>`**, so `since_start` would be sent to Activity and Charge checks, which would drop it to their own default without saying so. | **E-77:** DF6-FR-10: both link helpers branch on `since_start` explicitly, with an exhaustive `never` check on `FinanceWindowChoice`; AC-269 adds "no link ever carries `range=since_start`" |
+| DF6-F4 | Low | **AC-262 says only `from` differs.** The end differs too: a custom window ends at the next UTC midnight (`windowInstants`), `since_start` ends at `now`. | **E-78:** AC-262 reads "only the range start and end differ" |
+| DF6-F5 | Low | **Section 1 is not entirely "as of now".** `classifyAccounts` counts "new in window" by the plan row's `created_at` (`planGroups.ts:225`). Over the long window, a backfilled account counts as new, because its backfill time falls after the cut-over. This already happens for any window that covers the backfill; it is not fixed here. | **E-79:** the §11L.6 Section 1 row notes the "new in window" count follows the window by `created_at` (existing behaviour, CF-4) |
+| DF6-F6 | Low | **Types widen in three places:** `FinanceWindowChoice` (`financeTypes.ts:56`), `FinanceQuery.preset` (`financeUrl.ts:29`, today `AdminWindowChoice`) and the route enum. `fromFinanceQuery` and `windowQuery` must map `since_start` to and from `{ kind: 'extra' }`. | **E-80:** add these to the §11L.8 rows so the workplan lists them; the AC-173 table stays untouched |
+
+**Answers to SA-Q92 to SA-Q99**
+
+| # | Ruling |
+|---|---|
+| SA-Q92 | **Route, pure.** After E-75 the start needs no plan row: `resolveFinanceWindow` gains a `since_start` branch (`start = CHARGING_CUTOVER_FLOOR_MS`, `end = now`, `from` = `2026-09-29`, `to` = today UTC). The builder is unchanged. The 400 for a missing `accountId` is in `superRefine`. The info line already logs the resolved window |
+| SA-Q93 | **Shared extras**, with the `none` resolution (E-76). Exactly one ruled update to the `adminWindow.test.ts:203` list pin |
+| SA-Q94 | **Neither: the cut-over** (DF6-F1, E-75). Use no plan-row fact, and never `created_at` |
+| SA-Q95 | **No window past 92 inclusive days**, as BA suggests |
+| SA-Q96 | **Confirmed:** the since-start request is a new test beside the AC-173 pin, never a row in it. All seven pins stay byte-identical (LF-normalised), hashed at Step 0 and at handover. No re-freeze is expected; if one is needed, it is a ruled re-freeze as for E-55 |
+| SA-Q97 | **Yes:** a since-start case in the existing route isolation test, one assertion per account-scoped dep (picked id only; `countRevenueRows` and the all-accounts reads called zero times), plus the 400 with no account (builder never called) |
+| SA-Q98 | **Leave the ceiling** (DF6-W-6). L-153 records whether the owner account comes near it |
+| SA-Q99 | **Yes:** full cycle, one workplan and one PR, BD-33 fast track |
+
+**Other checks.** U-4 (DF6-FR-8) fits `financeFilterRepair`: add one branch, "no account and `since_start`, so window to default". Vocabulary guard: "Since it started" uses no SA-Q51 word, so no ALLOWED entry. No new CI job: the new cases go into the existing finance, layout and route suites. BQ-16 default accepted (one window); it does not block the build. **Estimate:** about 1.25 days after E-75; 1.5 days accepted as the plan figure.
+
+---
+
+## 11M. Slice 8: history snapshots
+
+Specified 2026-10-17 from the §0.1 slice 8 row ("a migration and a cron (SA)"), the §9 slice 8 row, §8.1 "Cannot produce" ("Plan mix at the end of a past month → slice 8"), §11L CF-7 ("Slice 8 (history snapshots) is where trends belong"), **BD-32** (slice 8 last, about 3 to 4 days), **BD-33** (fast track, but a production migration stops for the user), the cron pattern of `docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md` §8.1 and §9, the `durable-queue-drain` and `tenant-isolation-guard` skills, `lib/cron/bosCronJobs.ts`, the `20261011_bos_cron_runs.sql` run record and the house style of `20261072` (PR #447) with its checker, pre-check and rollback. Code read on `feature/bos-finance-health-8`, cut from the DF-6 tip `f6182697` (6b and DF-6 included). **One migration (one new table), one new cron, one new admin read route and one new repository; no change to any existing table, function, read or payload.** Columns were confirmed by reading the migrations (the `business-os-schema-check` approach), not by a live query.
+
+**Numbering note.** PR #447 (4b.1, not on main) reserves AC-204 to AC-232, SA-Q65 to SA-Q74, checks 23 to 26 and L-137 to L-141; 6b used AC-243 to AC-256, SA-Q81 to SA-Q91, checks 27 and 28 and L-142 to L-147; DF-6 used AC-257 to AC-272, SA-Q92 to SA-Q99, checks 29 and 30 and L-148 to L-154. Slice 8 therefore starts at **AC-273**, **SA-Q100**, **check 31**, **L-155** and **BQ-17**. Its checks sit in this section, as in 6b and DF-6. **Migration number:** the highest on `origin/main` is `20261071`; the highest on any open PR or remote branch is `20261073` (#447: `20261072` and `20261073`). Slice 8 proposes **`20261074_business_os_finance_snapshots.sql`**; RM re-checks the number when 8.1 opens and renumbers if another PR has taken it. **Renumbered by SA, 2026-10-17 (E-91, SA-WR-8.1):** #451 (DE-8a) merged `20261074_business_os_data_exports` and `20261075`, and #447 is being renumbered to `20261076` and `20261077`, so slice 8.1 is **`20261078_business_os_finance_snapshots.sql`** (every later mention in §11M says so). RM re-checks the number when 8.1 opens.
+
+**The question it answers.** "Is the business growing, and are credits piling up?" Today every Finance figure is a total for the window or a state as of now (§11L CF-7). A state as of now (how many accounts are on each plan, how many credits are outstanding) is gone the next day: nothing records yesterday's. Slice 8 records those states once a night, so a trend can be drawn from the first night on.
+
+### 11M.1 Code facts (read at `f6182697`, 2026-10-17)
+
+| # | Fact | Where |
+|---|---|---|
+| CF-1 | **Plan mix is derived, not stored.** Section 1 groups each plan row through `deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)` and `groupFor` / `paidTierOf`, with the paying set from the billing rows' **current** `subscription_status`. The plan row holds only the current `tier`, `cohort` and expiries (overwritten on change); there is no plan history table. **A past plan mix cannot be rebuilt** | `lib/business-os/finance/planGroups.ts`; `20261005_business_os_entitlements.sql` |
+| CF-2 | **Credit positions are derived for the current period.** `readAdminCreditPositions` gives `{ allowance, used, trial }` per account from the entitlement snapshot (`getSnapshots`), the period anchors (`findPeriodAnchorsBatch`) and `business_os_credit_totals`. The allowance follows the plan in force now and the anchor moves each period. **A past allowance, period use or "over allowance" count cannot be rebuilt** | `lib/business-os/credits/adminCreditPercent.ts:72-100, :382` |
+| CF-3 | **Gifted and bought outstanding are rebuildable, approximately.** `extraCreditsAt(lots, at)` takes any instant: a lot counts from `created_at`, draws count at or before `at`, a lot is expired when `expires_at <= at`. The lots and draws are kept (`business_os_credit_lots`: `user_id`, `source` in (`admin_grant`, `boost_purchase`), `credits_granted`, `expires_at`, `created_at`; `business_os_credit_lot_draws`: `lot_id`, `kind` `reversal`, `credits`, `created_at`). **But** K-4 counts existing accounts only, and an account deleted later has its lots set to `user_id` NULL, so a rebuild drifts after a deletion | `lib/business-os/credits/creditLots.ts:93-155`; `20261017_business_os_credit_lots.sql` |
+| CF-4 | **Flows are rebuildable from dated rows.** Charged AI cost and credits charged (`business_os_credit_charges.created_at`), recorded AI cost (`token_usage`), our revenue (`business_os_billing_events.paid_at`, `business_os_boost_purchases.paid_at`; boost refunds dated from 4b.1 on), takings and client refunds (`payment_transactions.paid_at`, `payment_refunds.created_at`), gifts granted and taken back (lots and draws `created_at`), credits bought (`business_os_boost_purchases.credits_total` by `paid_at`), new plan rows (`created_at`, with the backfill caveat of §8.1) | the finance reads in `BusinessOsFinanceReadRepository.ts`, `BusinessOsCreditLedgerReadRepository.ts`, `BusinessOsCreditLotRepository.ts` |
+| CF-5 | **The cron pattern.** A cron route checks `CRON_SECRET` fail-closed (401 and an `error` log without it in production) and runs inside `withCronRunRecord`, which writes `bos_cron_runs` (job `^[a-z][a-z0-9-]{0,63}$`, counts numbers only, keys `^[a-zA-Z][a-zA-Z0-9]{0,39}$`, **no money word** in a key, kept 30 days). Every job is one entry in `BOS_CRON_JOBS`, pinned by `bosCronJobs.test.ts` to `vercel.json` and to the route's `maxDuration`; that entry is what the Jobs & queues page and the Health tiles read. A job added after recording began sets `addedOn` to its real deploy day | `app/api/cron/credit-leak-check/route.ts:1-60`; `lib/cron/bosCronJobs.ts`; `20261011_bos_cron_runs.sql:320-350` |
+| CF-6 | **Taken cron minutes.** Hourly or more often: every 5 minutes, every 15 minutes, `:00`, `:10`, `:15`, `:20`, `:30`, `:40`. Daily: 03:00, 03:30, 04:45, 04:55, 05:17, 05:41; weekly Sunday 04:30. **Minute 7 of hour 0 is free** | `vercel.json` |
+| CF-7 | **The house style for a server-only table** (`20261072`): RLS on, no policy, `REVOKE ALL` from `PUBLIC`, `anon`, `authenticated` **and** `service_role`, then `GRANT SELECT` and a column-list `GRANT INSERT` to `service_role` only; no UPDATE, no DELETE; `id` and the time column take their defaults; a `COMMENT ON TABLE` with no apostrophe and not the editor word; a pre-check, a post-apply checker and a rollback in `supabase/SQL Scripts/` that refuses once the table holds history | `20261072_business_os_boost_reversal_events.sql` (PR #447); `scripts/check-bos-boost-reversal-events-migration.sql`; `scripts/precheck-bos-boost-reversal-events.sql` |
+| CF-8 | **Every table is classified.** A new table needs a `descriptors.ts` entry (platform tables: `never(…, G, exclude(EXPORT_REASON.PLATFORM), …)`, as `bos_cron_runs` and `archive_runs`), checked by `businessOwnedTables.test.ts`, which scans the migrations | `lib/business-os/purge/descriptors.ts:1470-1478`; `lib/business-os/__tests__/businessOwnedTables.test.ts` |
+| CF-9 | **The Overview payload is pinned.** AC-145 keeps the no-tab, no-business payload byte-identical, and AC-173 pins the page's request literals. A new key in the finance payload would break both | `app/admin/finance/__tests__/financeRequestPins.ts`; §11L.8 |
+| CF-10 | **No chart is drawn in admin today.** `recharts` is a dependency, but no file under `app/admin/` imports it | `grep` over `app/admin/` |
+
+### 11M.2 What is snapshotted, and what is not
+
+**Rule of thumb:** a figure is snapshotted only if it is a **state** the page shows today that **cannot be rebuilt for a past date** from dated rows. Every **flow** (something that happened at a dated moment) is rebuilt from its own rows when a later slice draws its trend, and is never copied.
+
+| Figure on the page today | Rebuildable for a past date? | Snapshotted? |
+|---|---|---|
+| Section 1: accounts per plan group, the total, grace and past due per group, lifecycle state counts, Founding Partners with no end date (K-3), dormant Founding Partners, ending in the next 30 days | **No** (CF-1) | **Yes**, family `plan` |
+| Section 4: accounts counted, over allowance, far over allowance (K-2), unknown, no allowance; included credits (allowance) and credits used in the current periods, summed | **No** (CF-2) | **Yes**, family `credit` |
+| Gifted outstanding (K-4), gifted outstanding on deleted accounts, bought outstanding (boost lots) | **Approximately** (CF-3: drifts after a deletion) | **Yes**, family `lots`: the outstanding total needs all three parts at one instant, and the rows are cheap |
+| Outstanding total (included credits left + gifted + bought) | No (it has a CF-2 part) | **Yes**, family `lots`, only when every part is exact |
+| Charged AI cost (K-1, Section 3), recorded AI cost, credits charged | Yes (CF-4) | **No** |
+| Our revenue (K-5, Section 2 block A), takings and client refunds (block B), the Stripe fee estimate, the AI margins (6a, 6b) | Yes (CF-4); margins are computed from those | **No** |
+| Gifts granted and taken back in a window, credits bought in a window | Yes (CF-4) | **No** |
+| New plan rows in the window | Yes (CF-4, backfill caveat) | **No** |
+| Section 6 block B overdue invoices and instalments "as of now" | No | **No, deferred (DF-9):** it is money in the clients' currencies, and slice 8 stores no money (HS-W-9) |
+| Section 1 with one business, the Accounts tab (6a), the account summary | Per account | **Never** (HS-W-8) |
+
+### 11M.3 Scope
+
+| In scope | Not in scope |
+|---|---|
+| The table `business_os_finance_snapshots` (migration `20261078`) with its pre-check, checker, local self-test and rollback (§11M.6, §11M.9); the nightly job `finance-snapshot`, registered on the Jobs page (§11M.7); the snapshot builder, which reuses Section 1's and Section 4's own functions (§11M.5); a read route and a **History** block on Finance, all businesses only, with an honest start line (§11M.8); checks 31 to 34 | Any money in a snapshot (HS-W-9); any per-account row; a trend of a rebuildable flow (charged AI cost, revenue, takings): a later slice reads its own dated rows; backfill of past days (BQ-19); a chart library (SA-Q106); churn of free accounts (the §9 row mentions it: aggregate counts give the net change only; per-account churn needs per-account history and stays with slice 7 or later); pruning (BQ-18); Section 6 overdue history (DF-9); any change to an existing table, read, payload or pin, or to the 92-day cap |
+
+### 11M.4 Rules: grain, timing, idempotency, isolation, currency
+
+| # | Rule |
+|---|---|
+| HS-W-1 | **Grain: daily (BQ-17, default).** One snapshot per UTC day, **as of the end of that day**. A monthly view is the last daily snapshot of each month; it needs no second table. |
+| HS-W-2 | **When: 00:07 UTC** (`7 0 * * *`, a free minute, CF-6). A run that starts on UTC date D records **`as_of_date` = D − 1**, the day that has just ended. The state read is the state at the run's start (`taken_at`), about seven minutes after the day ended. |
+| HS-W-3 | **Late runs write nothing.** A run that starts at or after **02:00 UTC** (constant `SNAPSHOT_LATEST_START_HOUR_UTC` = 2, SA-Q103) writes no row and reports `lateRun = 1` (partly done). Its state is too far from the day's end to label that day; the day becomes a gap. |
+| HS-W-4 | **Idempotent.** The key is **(`as_of_date`, `metric`, `dimension`)**, enforced by a unique index. Every insert is `ON CONFLICT DO NOTHING` on that key, so a re-run, an overlapping run or a retry writes nothing new and changes nothing. The first row of a day stands; nothing is ever updated (append-only). |
+| HS-W-5 | **Only exact figures are written.** A family whose source read failed, timed out or reached its ceiling is **not written that day** (no row, never a lower bound, never 0), and the run is "partly done" (`familiesSkipped`). In detail: `plan` only when the plan walk completed under its ceiling **and** the paying read succeeded (so history never mixes the folded "Tier set" group with the real groups); the `credit` counts only when the credit pass is `ok`; the `credit` sums (`credit_allowance`, `credit_used`, `credit_included_left`) only when, in addition, no account is unknown; `credit_far_over_allowance` only when the configured line is valid; the `lots` parts only when the lots read succeeded; `credit_outstanding_total` only when its three parts are written. **A row outside the dimension shape (E-86)**, such as a tier key the CHECK would refuse, is caught by the builder before the insert and skips the `plan` family only (`familiesSkipped`); it never fails the batch, so the other families are still written. |
+| HS-W-6 | **No gap filling.** A missing day (no run, a late run, a skipped family) stays missing. The page shows it as a gap; nothing interpolates, carries forward or backfills it. |
+| HS-W-7 | **Same definitions as the page.** The builder calls the functions Section 1 and Section 4 use (`classifyAccounts` / `groupFor` / `paidTierOf`, the report predicates, the credits section core, `extraCreditsAt`), with `now` = the run's start and all businesses. A snapshot therefore equals what the page would have shown at that instant with all businesses (AC-280). No second definition is written. |
+| HS-W-8 | **Isolation: platform aggregates only.** No row holds an account id, a name, an email, an admin id, a reason text, a Stripe id or any free text. `dimension` is a group key, a lifecycle state or `all`, constrained by a pattern. Deleting an account changes no snapshot (they are counts of the past). The table has no `user_id`, so it is not tenant data and is not in `USER_OWNED_TABLES` or the test-account cleanup. |
+| HS-W-9 | **Currency: no money is stored.** Every value is a count of accounts or an amount of credits (the platform's own unit, never money). `unit` is CHECKed to `accounts` or `credits`. Nothing is summed across currencies because no currency is stored. A later money metric needs a new migration with a `currency` column and one row per currency (CUR-1, BD-12); it is never added to this table's `value` as it stands. |
+| HS-W-10 | **Tier keys are data.** A tier group's `dimension` is the group key as the classifier builds it (`tier:` + the config tier). No tier string is written in code or SQL (the tier-literal guard; no CHECK lists tiers, as in `20261005`). A tier later removed from config keeps its stored key; the page shows the stored key with "(no longer configured)". |
+| HS-W-11 | **Not a queue drain.** The job claims nothing, dispatches nothing and has no per-row effect; its one write is idempotent by key (HS-W-4; §9 of the event-driven plan). The `durable-queue-drain` claim pattern does not apply, exactly as for `credit-leak-check` (CF-5); the route's header says so. |
+
+### 11M.5 Metrics (one row each per day)
+
+`unit` `accounts` values are whole numbers; `credits` values have up to 6 decimal places (the ledger scale). `dimension` is `all` unless stated.
+
+| Family | `metric` | `dimension` | `unit` | Page source |
+|---|---|---|---|---|
+| plan | `accounts_total` | `all` | accounts | Section 1 Total |
+| plan | `accounts_in_group` | the group key (`trial`, `founding_partner`, `comped`, `tier:<tier>`, `unknown_held`); every seeded group, zeros included (BD-3) | accounts | Section 1 groups |
+| plan | `accounts_in_grace`, `accounts_past_due` | the group key | accounts | Section 1 grace and past due beside each group |
+| plan | `accounts_in_state` | the lifecycle state as `deriveLifecycle` names it | accounts | Section 1 `byState` |
+| plan | `founding_no_end_date` | `all` | accounts | K-3 (all businesses) |
+| plan | `founding_dormant` | `all` | accounts | Section 1 dormant Founding Partners |
+| plan | `accounts_ending_soon` | `all` | accounts | Section 1 "ending in the next 30 days" |
+| credit | `credit_accounts`, `credit_over_allowance`, `credit_unknown_accounts`, `credit_no_allowance_accounts` | `all` | accounts | Section 4 counts |
+| credit | `credit_far_over_allowance` | `all` | accounts | K-2 |
+| credit | `credit_allowance` | `all` | credits | Σ allowance of the accounts with a position (the included credits granted for the current periods) |
+| credit | `credit_used` | `all` | credits | Σ used in the current periods |
+| credit | `credit_included_left` | `all` | credits | Σ max(allowance − used, 0) |
+| lots | `gifted_outstanding` | `all` | credits | K-4 (existing accounts) |
+| lots | `gifted_outstanding_deleted` | `all` | credits | Section 4's gifted figure for deleted accounts (SA-W9) |
+| lots | `bought_outstanding` | `all` | credits | `extraCreditsAt` over the `boost_purchase` lots of existing accounts. No such figure exists on the page yet, so it comes from **one shared helper**, `outstandingBySource(lots, source, now)` in `creditsSection.ts`. That helper is K-4's own per-account loop with the source as a parameter, and `giftedFigures` calls it with `admin_grant`. "Existing accounts" means the same as for K-4 (E-95). Until BQ-13 is answered a refunded boost keeps its credits, and the figure follows the lots as they are |
+| lots | `credit_outstanding_total` | `all` | credits | `credit_included_left` + `gifted_outstanding` + `bought_outstanding` |
+
+About 30 to 40 rows a night today (about 13,000 a year). The metric list is one exported constant in the builder, pinned by a test; the migration CHECKs only the shape (SA-Q101).
+
+### 11M.6 The migration (`20261078_business_os_finance_snapshots.sql`, slice 8.1)
+
+| Column | Type | Rule |
+|---|---|---|
+| `id` | `uuid NOT NULL DEFAULT gen_random_uuid()` | Primary key; not in the INSERT grant |
+| `as_of_date` | `date NOT NULL` | The UTC day whose end the state describes (HS-W-2) |
+| `metric` | `text NOT NULL` | CHECK `metric ~ '^[a-z][a-z0-9_]{0,47}$'` |
+| `dimension` | `text NOT NULL` | CHECK `dimension ~ '^([a-z][a-z0-9_]{0,47}\|tier:[a-z0-9_-]{1,40})$'` (E-86: a hyphen only after `tier:`, as Finance's `FINANCE_GROUP_SHAPE` admits, so a uuid still cannot pass; no space, no `@`, no free text; HS-W-8). The builder checks every row against one exported shape constant, pinned equal to this CHECK by the migration test, before the insert (HS-W-5) |
+| `unit` | `text NOT NULL` | CHECK `unit IN ('accounts', 'credits')` (HS-W-9) |
+| `value` | `numeric(18,6) NOT NULL` | CHECK `value >= 0`; CHECK `unit <> 'accounts' OR value = trunc(value)` |
+| `taken_at` | `timestamptz NOT NULL DEFAULT now()` | When the state was read; not in the INSERT grant. CHECK that the day had ended in UTC when it was taken: `taken_at >= ((as_of_date + 1)::timestamp AT TIME ZONE 'UTC')` (SA-Q104 ruling: deterministic, kept) |
+
+**Constraint and index names:** `business_os_finance_snapshots_pkey`; six checks `…_metric_shape`, `…_dimension_shape`, `…_unit_known`, `…_value_not_negative`, `…_accounts_whole`, `…_day_ended`; the unique index **`business_os_finance_snapshots_day_metric_key`** on `(as_of_date, metric, dimension)`, not partial (it is the `ON CONFLICT` target and serves the date-range read, so no other index).
+
+**Order inside the file** (one transaction, `20261072` style): `BEGIN; SET LOCAL lock_timeout = '5s';` → `CREATE TABLE` with the columns and the primary key → the six `ALTER TABLE … ADD CONSTRAINT … CHECK` → the unique index → `COMMENT ON TABLE` (text: one row per platform figure per UTC day, counts and credits only, no money, no account, append only, written only by the nightly finance snapshot job, server only, never purged) → `ENABLE ROW LEVEL SECURITY` → `REVOKE ALL ON TABLE` from `PUBLIC`, `anon`, `authenticated`, `service_role` → `GRANT SELECT` to `service_role` → `GRANT INSERT (as_of_date, metric, dimension, unit, value)` to `service_role` → `NOTIFY pgrst, 'reload schema';` (E-89, house style; the rollback ends the same way) → `COMMIT`. **No policy, no UPDATE, DELETE or TRUNCATE grant, no trigger, no function** (`ON CONFLICT DO NOTHING` needs the INSERT privilege only; SA-Q102 confirms it with the PostgREST write used). No quoted string in the file contains an apostrophe or the editor word (the migration test pins both).
+
+**In the same change (8.1):** `supabase/migrations/__tests__/business-os-finance-snapshots.migration.test.ts` (source test: columns, CHECKs, the unique index, RLS, no policy, the exact grants, no UPDATE or DELETE, no trigger, no function, the editor-word and apostrophe pins, and the metric and dimension CHECK patterns equal to the shape constants in `lib/business-os/finance/financeSnapshotShape.ts`, a pure module with no import that 8.1 creates and 8.2's builder imports, with no second copy allowed; its tier branch pinned equal to the tier part of `FINANCE_GROUP_SHAPE`; E-86, E-90); a `descriptors.ts` entry `never('business_os_finance_snapshots', G, exclude(EXPORT_REASON.PLATFORM), …)` (platform history, no `user_id`, never purged, never archived; CF-8); `supabase/SQL Scripts/20261078_business_os_finance_snapshots_rollback.sql`; `scripts/precheck-bos-finance-snapshots.sql` (check 31); `scripts/check-bos-finance-snapshots-migration.sql` (check 32); `scripts/test-bos-finance-snapshots.sql` (the local-only self-test, §11M.9).
+
+**Rollback:** `DROP TABLE public.business_os_finance_snapshots;` in one transaction, which **refuses** (raises and changes nothing) once the table holds any row: the history cannot be rebuilt (CF-1, CF-2), so a defect found after the first night is fixed forward. Apply it only together with a revert of 8.2's code (otherwise the job fails each night, visibly on Jobs & queues).
+
+**The user's hand-apply steps (8.1; the BD-33 stop):**
+
+1. Run **check 31** on production. Every row must show `ok = true`; otherwise stop and tell the session.
+2. Apply `20261078` in the SQL editor, the whole file at once.
+3. Run **check 32**. Every row must show `ok = true`; if one does not, run the rollback and tell the session.
+4. Tell the session "applied". RM merges 8.1 by hand (it is **not** on auto-merge: the migration-gated rule). 8.2 starts after that.
+5. After 8.2's first night: run **check 33**, then **check 34** (L-158).
+
+### 11M.7 The nightly job (slice 8.2)
+
+| # | Rule |
+|---|---|
+| HS-FR-1 | **Route** `app/api/cron/finance-snapshot/route.ts`, `GET` (as the other crons), `runtime = 'nodejs'`, `maxDuration = 60`. `CRON_SECRET` is checked **fail-closed**, copied from `credit-leak-check` (CF-5): in production a missing secret refuses with 401 and an `error` log. It runs inside `withCronRunRecord`. Pino `createLogger({ module: 'FinanceSnapshotCron' })` with a `correlationId` child logger; no `console.`. |
+| HS-FR-2 | **Registry:** a `finance-snapshot` entry in `BOS_CRON_JOBS` (`BosCronJobId` widened): path `/api/cron/finance-snapshot`, schedule `7 0 * * *`, byte for byte as in `vercel.json`, `DAILY`, `MAX_60`, label **"Finance history snapshot"**, description **"Records last night's plan mix and credit position for the Finance history"**, `scheduleWords` **"Daily at 00:07 UTC"**, `drainsQueue: null`, `addedOn` = the real deploy day (RM sets it in the PR). It then appears on Jobs & queues (late, stopped, keeps failing after 2) and in the Health tiles with no other edit. |
+| HS-FR-3 | **Counts** (numbers only, no money word in a key; CF-5): `metricsWritten`, `metricsAlreadyThere`, `metricsSkipped`, `familiesSkipped`, `accountsRead`, `lateRun` (1 = yes). `partlyDoneWhen`: `familiesSkipped` at least 1; `lateRun` at least 1. |
+| HS-FR-4 | **Builder** `lib/business-os/finance/financeSnapshot.ts`, **pure** (no repository, no clock, no entitlements import beyond what `planGroups.ts` already has): input = the plan rows, the paying set, the config, the credit positions pass, the lots and `now`; output = the rows of §11M.5 and the skipped families. It calls the Section 1 and Section 4 functions (HS-W-7). The wiring `financeSnapshotDeps.ts` reuses the finance wiring's reads (the plan walk, R-c, `adminCreditPercentDeps()`, `listLotsWithDrawsAllAccounts` through a `Pick`), maps lots field by field (SA-W14) and passes `getEntitlementConfig()`; whether it reuses `financeHealthDeps` or a narrow wiring is SA-Q105. |
+| HS-FR-5 | **Writer:** a new `BusinessOsFinanceSnapshotRepository` (the `new-repository` skill), service role (`supabaseServer`); its header documents why there is no `.eq('user_id')`: the table has none, it holds platform aggregates (the CLAUDE.md rule 4 bypass). `insertSnapshotRows(rows)`: one batched insert, **`upsert(rows, { onConflict: 'as_of_date,metric,dimension', ignoreDuplicates: true }).select('id')`** (E-88: `ON CONFLICT DO NOTHING`, returning the ids of the rows actually written; it needs only `SELECT` and the column `INSERT` grant, never UPDATE), only the five granted fields, built field by field (tenant-isolation-guard step 3). Written = the returned ids; already there = rows sent minus rows returned. No update or delete method. |
+| HS-FR-6 | **Order:** secret → late-run gate (HS-W-3) → reads → builder → one insert → the response `{ success: true, data: { asOfDate, …counts } }`. A read that fails skips its family (HS-W-5); an insert error is a 500 with `success: false`, a generic error and development-only details, and the run record marks it failed. |
+| HS-FR-7 | **Logs:** one `info` line with `asOfDate`, the counts and `durationMs`; never a value, an account id or a name. |
+| HS-FR-8 | **Time:** the reads are the all-businesses Section 1 and Section 4 reads the page makes today, under the same ceilings. **The credit pass gets a night budget (E-87):** the job passes `budgetMs` = 30 s to `readAdminCreditPositions` (a named constant beside `maxDuration` 60, with a test that it is below it); the page keeps its 2 s. The same functions with a longer budget, not a new read. QA records `durationMs` and `familiesSkipped` (L-157). No read is added to the page's own request. |
+| HS-FR-8a | **Wiring (E-94, amends SA-Q105):** `financeSnapshotDeps()` **picks** its four reads and the config from `financeHealthDeps()`, typed by a `Pick` of `FinanceHealthDeps`, and adds only the snapshot writer. The reads are therefore the page's reads by construction, and no repository caller list or entitlements-importer pin changes. `walkPlans` is exported as is, and the paying derivation becomes an exported `payingSetOf(rows)` that the page calls in the same place. Neither move may change any page figure; the AC-145 hash and the unedited Section 1 / Section 4 tests prove it. The credit sums are added up in micro-credits from `buildCreditsSection`'s per-account rows; no second definition of a position is written |
+| HS-FR-8b | **Table not installed (E-96):** after the late gate and before any read, the job probes the table. On a missing relation (the shared `isMissingRelationError`; a missing column is a 500, not "missing") it reads and writes nothing, logs one `error` `{ tableMissing: true }` and returns **503**, so the run reads "failed" on Jobs & queues. **Clock (E-97):** the route takes its start from an injectable `financeSnapshotClock.now()`, so the cron run-record adoption test and the route tests can fix the hour. There is no "Run now" for this job (the Jobs page has none; a later requirement may add one) |
+
+### 11M.8 The History block (slice 8.3)
+
+| # | Rule |
+|---|---|
+| HS-FR-9 | **Read route** `GET /api/admin/business-os/finance/history` (the `new-api-route` skill): `requireAdmin` is the **first statement**; a strict Zod schema with the finance route's window input (`preset`, `from`, `to`), re-resolved on the server with its own clock (SA-Q2); **`accountId` is a 400** (history is all businesses only), `since_start` is a 400 (it needs a business), and an unknown key is a 400. **It returns a server-built view, not raw rows (E-99, SA-W-8.3-1):** `{ success: true, data: { window, firstSnapshotDate, state, weekly, planMix: { columns, points, change }, credits: { columns, points, change } } }`. The view comes from a pure `buildHistoryView`, which applies HS-FR-12 to HS-FR-15 (the points, "No snapshot", "Not recorded", weekly sampling, the change lines), because the browser may only format. Raw rows never leave the server. A separate route keeps the Overview payload (AC-145) and the AC-173 request pins untouched (CF-9). |
+| HS-FR-10 | **Reads:** `listSnapshotsInRange(fromDate, toDate)` (at most 93 days of about 40 rows; ceiling 5,000 rows, **an error at the ceiling**, never a partial list) and `findFirstSnapshotDate()`, on **a separate read-only repository, `BusinessOsFinanceSnapshotReadRepository`** (E-98, SA-W-8.3-5). The writer repository keeps one importer (the 8.2 job's wiring), so the 8.2-R2 guard stays exactly as strict. Selected columns: `as_of_date`, `metric`, `dimension`, `unit`, `value` only. |
+| HS-FR-11 | **Where:** one **History** block on the Overview, after Section 4, in the shared `FinanceSection` shell, **all businesses only**. With a business picked it shows one line, **"History is kept for all businesses together, not per business."**, and sends no history request. **E-85: the block renders closed**, with a **"Show history"** button; the history request is sent **only when the admin opens it**, never on page load, so the page still sends exactly one request on load (AC-173 and the other one-fetch render tests are unchanged). It is never part of the finance request. If the closed block's markup trips Pin A or Pin B, Dev stops and raises it to SA (no silent re-freeze). The history request literal is pinned in its own new test, never in the AC-173 table. |
+| HS-FR-12 | **Honest start line**, always first: **"History starts on {firstSnapshotDate} (UTC)."** With no snapshot at all: **"No history yet: a snapshot is taken every night at 00:07 UTC."** (E-101: true on any day, unlike "tonight"). With snapshots but none in the window: **"No snapshot in this window. History starts on {firstSnapshotDate} (UTC)."** Dates are `YYYY-MM-DD`. Below it: **"Each point is the state at the end of that UTC day. Credits are units, not money."** |
+| HS-FR-13 | **Two small tables, no chart** (minimal; SA-Q106). **Plan mix:** Date, one column per group in Section 1's order (labels from config; a stored key no longer in config shows the key and "(no longer configured)", HS-W-10), Total, Founding Partners with no end date. **Credits:** Date, Included credits, Used this period, Gifted outstanding, Bought outstanding, Outstanding total, Accounts over allowance, Far over allowance. Newest first. |
+| HS-FR-14 | **Points:** a window of up to 31 days shows **one row per day**; a longer window shows one row per 7 days, counting back from its last day, and says "Weekly points". A day with no row shows **"No snapshot"** across the table (HS-W-6). A metric not written that day shows **"Not recorded"** in its cell, never 0. |
+| HS-FR-15 | **Change line** under each table: the newest point minus the oldest point in the window, per column, **only** when both cells are recorded; otherwise "Not available". It is labelled "Change in this window". |
+| HS-FR-16 | **States:** the block uses `AdminLoading`, `AdminError` (with Try again) and `AdminNotice`, like the rest of Finance; a failed history read fails the block only, never the page. **Not installed (E-100):** when the table is missing (the shared `isMissingRelationError`; a missing column is still an error), the route answers 200 with `state: 'not_installed'` and logs a `warn`. The block shows the calm `AdminNotice` "History is not available yet: it starts once the nightly snapshot is installed.", with no error tone and no Try again. This is proven by tests only; there is no browser step (production has the table before 8.3 ships). The chip: `FinanceSection` gains an optional `statusChip` (default true, so every existing caller's DOM is unchanged); the closed block hides it. |
+
+### 11M.9 Scripts and SQL checks (31 to 34)
+
+Read-only, ASCII only, no apostrophes in comments, the editor word never used, one final result set each. Written against §11M.1 and §11M.6; not executed by BA. Checks 31 and 32 are the files named in §11M.6; checks 33 and 34 are pasted from here.
+
+**Local self-test (not a check):** `scripts/test-bos-finance-snapshots.sql`, in the shape of `scripts/test-bos-boost-reversal-events.sql`: **local only**; it refuses on a real Supabase database (`auth.refresh_tokens` exists) and unless `bos.selftest_local` is `on`, and runs between BEGIN and ROLLBACK on the PGlite harness. Cases: a valid row of each unit is written; the same key a second time writes nothing (`ON CONFLICT DO NOTHING`, idempotency); a negative value, a fraction of an account, an unknown unit, a metric or dimension with a space or `@`, a bare uuid as a dimension, and a `taken_at` before the day ended are each refused by their CHECK; a hyphenated tier key such as `tier:pro-plus` is accepted (E-86); as `service_role` with no UPDATE grant, the `ON CONFLICT DO NOTHING` insert with a returned `id` works and returns only the new rows (E-88); as `service_role`, UPDATE and DELETE are refused (42501), and so is setting `id` or `taken_at`; the rollback refuses with a row present and drops an empty table.
+
+**File:** `scripts/precheck-bos-finance-snapshots.sql` (check 31, before applying `20261078`; AC-273, L-155)
+
+```sql
+-- Finance check 31: run BEFORE applying migration 20261078, read only.
+-- Every row must show ok = true. If one does not, stop and tell the session.
+select 'snapshots table absent' as item,
+  to_regclass('public.business_os_finance_snapshots') is null as ok
+union all
+select 'snapshot key index name free',
+  to_regclass('public.business_os_finance_snapshots_day_metric_key') is null
+union all
+select 'no constraint already uses the snapshot table name',
+  not exists (select 1 from pg_catalog.pg_constraint c
+              where c.conname like 'business_os_finance_snapshots%')
+union all
+select 'service_role exists and bypasses row level security',
+  coalesce((select r.rolbypassrls from pg_catalog.pg_roles r where r.rolname = 'service_role'), false)
+union all
+select 'gen_random_uuid is available',
+  exists (select 1 from pg_catalog.pg_proc p where p.proname = 'gen_random_uuid')
+union all
+select 'cron run record installed',
+  to_regclass('public.bos_cron_runs') is not null;
+```
+
+**File:** `scripts/check-bos-finance-snapshots-migration.sql` (check 32, after applying `20261078`; AC-273, L-155)
+
+```sql
+-- Finance check 32: run AFTER applying migration 20261078, read only.
+-- Every row must show ok = true. If one does not, run the rollback and tell the session.
+with t as (
+  select to_regclass('public.business_os_finance_snapshots') as tbl
+)
+select 'table exists' as item, t.tbl is not null as ok from t
+union all
+select 'row level security on',
+  coalesce((select c.relrowsecurity from pg_catalog.pg_class c where c.oid = t.tbl), false) from t
+union all
+select 'no policy on the table',
+  not exists (select 1 from pg_catalog.pg_policy pol where pol.polrelid = t.tbl) from t
+union all
+select 'anon has no privilege on the table or any column',
+  not coalesce(has_table_privilege('anon', t.tbl, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+    or has_any_column_privilege('anon', t.tbl, 'SELECT, INSERT, UPDATE, REFERENCES'), true) from t
+union all
+select 'authenticated has no privilege on the table or any column',
+  not coalesce(has_table_privilege('authenticated', t.tbl, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+    or has_any_column_privilege('authenticated', t.tbl, 'SELECT, INSERT, UPDATE, REFERENCES'), true) from t
+union all
+select 'service_role can select',
+  coalesce(has_table_privilege('service_role', t.tbl, 'SELECT'), false) from t
+union all
+select 'service_role can insert exactly five columns',
+  coalesce((select count(*) from pg_catalog.pg_attribute a
+            where a.attrelid = t.tbl and a.attnum > 0 and not a.attisdropped
+              and has_column_privilege('service_role', t.tbl, a.attnum, 'INSERT')) = 5, false) from t
+union all
+select 'service_role cannot set id or taken_at',
+  not coalesce(has_column_privilege('service_role', t.tbl, 'id', 'INSERT')
+    or has_column_privilege('service_role', t.tbl, 'taken_at', 'INSERT'), true) from t
+union all
+select 'service_role cannot update',
+  not coalesce(has_table_privilege('service_role', t.tbl, 'UPDATE')
+    or has_any_column_privilege('service_role', t.tbl, 'UPDATE'), true) from t
+union all
+select 'service_role cannot delete or truncate',
+  not coalesce(has_table_privilege('service_role', t.tbl, 'DELETE, TRUNCATE'), true) from t
+union all
+select 'seven columns and no user_id column',
+  coalesce((select count(*) = 7 and bool_and(a.attname <> 'user_id')
+            from pg_catalog.pg_attribute a
+            where a.attrelid = t.tbl and a.attnum > 0 and not a.attisdropped), false) from t
+union all
+select 'unique key on day, metric and dimension, not partial',
+  exists (select 1 from pg_catalog.pg_index i
+          join pg_catalog.pg_class ic on ic.oid = i.indexrelid
+          where i.indrelid = t.tbl and i.indisunique and i.indpred is null
+            and ic.relname = 'business_os_finance_snapshots_day_metric_key') from t
+union all
+select 'the six checks are present',
+  coalesce((select count(*) from pg_catalog.pg_constraint c
+            where c.conrelid = t.tbl and c.contype = 'c'
+              and c.conname in ('business_os_finance_snapshots_metric_shape',
+                                'business_os_finance_snapshots_dimension_shape',
+                                'business_os_finance_snapshots_unit_known',
+                                'business_os_finance_snapshots_value_not_negative',
+                                'business_os_finance_snapshots_accounts_whole',
+                                'business_os_finance_snapshots_day_ended')) = 6, false) from t
+union all
+select 'dimension check is exactly the E-86 pattern',
+  coalesce((select position('^([a-z][a-z0-9_]{0,47}|tier:[a-z0-9_-]{1,40})$' in pg_catalog.pg_get_constraintdef(c.oid)) > 0
+            from pg_catalog.pg_constraint c
+            where c.conrelid = t.tbl and c.conname = 'business_os_finance_snapshots_dimension_shape'), false) from t
+union all
+select 'no trigger on the table',
+  not exists (select 1 from pg_catalog.pg_trigger tg where tg.tgrelid = t.tbl and not tg.tgisinternal) from t
+union all
+select 'table comment present',
+  obj_description(t.tbl, 'pg_class') is not null from t;
+```
+
+**File:** `check 33 - finance history, the last 14 snapshot days` (AC-283, L-158)
+
+```sql
+-- Finance check 33: the last 14 snapshot days, one row per day, read only.
+-- Run after the first nightly snapshot, and whenever the History block looks wrong.
+-- groups_match_total and taken_after_day_end must be true on every day.
+-- A day missing from the list is a missed or late night and shows as a gap on the page.
+with s as (
+  select f.as_of_date, f.metric, f.value, f.taken_at
+  from public.business_os_finance_snapshots f
+  where f.as_of_date >= (now() at time zone 'UTC')::date - 14
+),
+d as (
+  select s.as_of_date,
+         count(*) as snapshot_rows,
+         count(*) filter (where s.metric like 'credit%' or s.metric like 'gifted%' or s.metric like 'bought%') as credit_rows,
+         max(s.value) filter (where s.metric = 'accounts_total') as accounts_total,
+         sum(s.value) filter (where s.metric = 'accounts_in_group') as accounts_in_groups,
+         min(s.taken_at) as first_taken_at
+  from s
+  group by s.as_of_date
+),
+r as (
+  select (c.started_at at time zone 'UTC')::date - 1 as as_of_date,
+         string_agg(distinct c.outcome, ' ') as run_outcomes,
+         count(*) as runs
+  from public.bos_cron_runs c
+  where c.job = 'finance-snapshot'
+    and c.started_at >= now() - interval '15 days'
+  group by 1
+)
+select d.as_of_date,
+       d.snapshot_rows,
+       d.credit_rows,
+       d.accounts_total,
+       d.accounts_in_groups,
+       (d.accounts_total is null or d.accounts_total = d.accounts_in_groups) as groups_match_total,
+       (d.first_taken_at >= ((d.as_of_date + 1)::timestamp at time zone 'UTC')) as taken_after_day_end,
+       d.first_taken_at,
+       r.runs,
+       r.run_outcomes
+from d
+left join r on r.as_of_date = d.as_of_date
+order by d.as_of_date desc;
+```
+
+**File:** `check 34 - finance history, the newest snapshot against the lots and plan rows` (AC-280, L-158)
+
+```sql
+-- Finance check 34: the newest snapshot against the lots and plan rows, one row, read only.
+-- Gifted and bought outstanding are rebuilt from the lots and draws as they stood at taken_at,
+-- for lots that still have an account. A difference is expected only when an account was
+-- deleted after taken_at (its lots lose their account) or a lot was written in the same second.
+-- plan_rows_then counts plan rows created by taken_at. It can be lower than the snapshot
+-- only when an account was deleted since.
+with newest as (
+  select max(g.as_of_date) as as_of_date from public.business_os_finance_snapshots g
+),
+snap as (
+  select f.metric, f.value, f.taken_at
+  from public.business_os_finance_snapshots f
+  join newest n on n.as_of_date = f.as_of_date
+  where f.dimension = 'all'
+),
+at_time as (
+  select (select n.as_of_date from newest n) as as_of_date,
+         (select min(snap.taken_at) from snap) as taken_at
+),
+lots as (
+  select l.source,
+         greatest(l.credits_granted - coalesce((
+           select sum(dr.credits)
+           from public.business_os_credit_lot_draws dr
+           where dr.lot_id = l.id and dr.created_at <= a.taken_at), 0), 0) as remaining
+  from public.business_os_credit_lots l
+  cross join at_time a
+  where l.user_id is not null
+    and l.created_at <= a.taken_at
+    and (l.expires_at is null or l.expires_at > a.taken_at)
+)
+select a.as_of_date,
+       a.taken_at,
+       (select snap.value from snap where snap.metric = 'gifted_outstanding') as snapshot_gifted,
+       coalesce((select sum(lots.remaining) from lots where lots.source = 'admin_grant'), 0) as rebuilt_gifted,
+       (select snap.value from snap where snap.metric = 'bought_outstanding') as snapshot_bought,
+       coalesce((select sum(lots.remaining) from lots where lots.source = 'boost_purchase'), 0) as rebuilt_bought,
+       (select snap.value from snap where snap.metric = 'accounts_total') as snapshot_accounts,
+       (select count(*) from public.business_os_account_plans p where p.created_at <= a.taken_at) as plan_rows_then
+from at_time a;
+```
+
+### 11M.10 Guards and tests affected
+
+| Guard or test | Effect | What Dev must do |
+|---|---|---|
+| **Frozen pins** | AC-173 pin `3a1a2dd4…f6f8` and helper `b84e0c96…aabf`; Pin A `30f5fc24…2e01`; Pin B `24ff0da7…df9f`; Pin C `98ea0507…1e4b` and helper `02813360…5bd8`; Pin D `1f7cf07a…f144` | All **byte-identical** (LF-normalised), hashed at Step 0 and at handover, in each of 8.1, 8.2 and 8.3. The history request is a new test, never a row of the AC-173 table; the Overview payload is unchanged (AC-145) because history has its own route |
+| `requireAdmin` first (`test:authz-guard`) | New admin route (8.3) | `requireAdmin` is the first statement of the history `GET`; the guard passes with no allow-list edit |
+| **tenant-isolation-guard** (skill) | A service-role write (8.2) and a service-role all-accounts read (8.3) | Apply the skill: the job takes no caller input; the insert allow-lists the five fields (step 3); no row can carry an account id (HS-W-8; the dimension pattern refuses a uuid with dashes, and the builder refuses any dimension outside its known keys); the history route refuses `accountId`; a test proves no account id, name or reason reaches a row or the response |
+| `aiCostVocabulary.source.guard.test.ts` | New strings in `financeCopy.ts` (8.3) and the registry label (8.2) | No edit and no ALLOWED entry: none of the History strings is about AI cost or uses an SA-Q51 word |
+| `lib/business-os/finance/__tests__/finance.source.guard.test.ts` | New `financeSnapshot.ts` | Pure: no repository, data layer or clock import; no `user_preferences` or `timezone` token; no tier literal |
+| `tierLiteral.forbidden.test.ts`, `npm run test:bos-entitlements` | The wiring passes `getEntitlementConfig()` | Register the new importer as a **non-gate** importer in the same change (the `business-os-entitlements` skill), as `planGroups.ts` is; no tier or cohort literal anywhere |
+| `lib/cron/__tests__/bosCronJobs.test.ts` | New job (8.2) | The entry matches `vercel.json` byte for byte and the route's `maxDuration`; keys pass the key rule and the no-money rule; `addedOn` is set; the file still imports nothing |
+| Repository caller lists (the lot repository's and the G3 lists, the RC-15 deps pin) | A second caller of `listLotsWithDrawsAllAccounts` and of the plan walk (8.2) | One ruled update each, recorded in the workplan (SA-Q105) |
+| `businessOwnedTables.test.ts`, `descriptors.invariant.test.ts`, `no-deletion-paths.guard.test.ts` | New table (8.1) | The `never(…, G, exclude(EXPORT_REASON.PLATFORM))` entry; no deletion path is added |
+| **Descriptor count pins (E-92, SA-W-8.1-3)**: `classification-baseline.json` (`count`, `levels`, `reviewNotes`), `descriptors.invariant.test.ts` `baseline.count`, `exportClassification.test.ts` (two `toHaveLength`, the `kinds` exclude total, the test title) | New descriptor (8.1) | +1 each, with a dated comment. **The numbers are recomputed at code time from merged `origin/main`**, never copied from this document (main is already at 156 / exclude 118 after DE-8a). #447 and 8.1 each add one, so **whichever lands second re-counts** when it merges main |
+| Test-account cleanup function (`scripts/generate-test-account-cleanup-sql.ts`, drift test) | **None** (SA-WR-8.1): a global `never` is filtered out by `descriptorsForRun`, and the table has no FK and no `user_id` | No new function version; the drift test passes with no regeneration against main's generator state (`20261075`, and later #447's `20261077`) |
+| Migration source test (8.1) | New | The §11M.6 contents, the grants, the editor-word and apostrophe pins |
+| `app/admin/finance/__tests__/source.guard.test.ts`, `layoutFolder.guard` (C-14), contrast | New `HistorySection.tsx` (8.3) | Shared shell and states; type imports only; no date arithmetic in the component beyond formatting; no `console.` |
+| **CI time** | New Jest files only | They run inside the existing Jest job: **no new CI job and no added critical-path time** (the user's standing rule). The local self-test runs on the PGlite harness, not in CI, unless SA rules it fits an existing job |
+
+Dev runs before SA code review and pastes in the workplan: `npm run test:bos-entitlements`, `npm run test:authz-guard`, the finance, cron and shared layout suites, the vocabulary guard, `npm run lint:hooks`, eslint on touched files, the scoped `tsc` with canary (AC-44), and the seven pin hashes.
+
+### 11M.11 Acceptance criteria
+
+All testable by Jest or by QA's recorded manual check.
+
+**8.1 (migration):**
+
+- [ ] **AC-273** *(8.1)* `20261078` creates `business_os_finance_snapshots` with the §11M.6 columns, the six CHECKs, the unique `(as_of_date, metric, dimension)` index, RLS on, no policy, `REVOKE ALL` from the four roles, `GRANT SELECT` and the five-column `GRANT INSERT` to `service_role` only, no trigger and no function (migration test; checks 31 and 32).
+- [ ] **AC-274** *(8.1)* The migration file, the rollback and checks 31 to 34 contain no apostrophe in a quoted string or comment and never the editor word; they are ASCII only (source test).
+- [ ] **AC-275** *(8.1)* The rollback drops the table when it is empty and **refuses**, changing nothing, when it holds a row (local self-test).
+- [ ] **AC-276** *(8.1)* The local self-test passes every case of §11M.9 (the idempotent key, each CHECK, `tier:pro-plus` accepted and a bare uuid refused (E-86), the returning insert with no UPDATE grant (E-88), no UPDATE, no DELETE, no `id` or `taken_at` from the writer); the migration test pins the dimension CHECK equal to the builder's shape constant.
+- [ ] **AC-277** *(8.1)* The `descriptors.ts` entry exists and the classification, invariant and no-deletion guards pass.
+
+**8.2 (the job):**
+
+- [ ] **AC-278** *(8.2)* The route refuses without the secret in production (401 and an `error` log) and runs in development without it; the run is recorded in `bos_cron_runs` with the HS-FR-3 counts.
+- [ ] **AC-279** *(8.2)* With an injected start at 00:07 UTC on date D the rows carry `as_of_date` = D − 1; a start at 02:00 UTC or later writes no row and reports `lateRun = 1` (partly done).
+- [ ] **AC-280** *(8.2)* **Same definitions:** for one fixture, every `plan`, `credit` and `lots` value equals the figure Section 1, Section 4, K-2, K-3 and K-4 give for all businesses with the same `now` (a builder test against `buildFinanceHealth`'s own output); on production, check 34's rebuilt gifted and bought figures equal the snapshot.
+- [ ] **AC-281** *(8.2)* **Idempotent (E-88):** the writer calls `upsert(…, { onConflict: 'as_of_date,metric,dimension', ignoreDuplicates: true }).select('id')`; `metricsWritten` = the ids returned and `metricsAlreadyThere` = rows sent minus rows returned; a second run for the same day writes 0 rows (`metricsAlreadyThere` = the first run's `metricsWritten`) and changes no value.
+- [ ] **AC-282** *(8.2)* **Only exact figures (HS-W-5):** a failed plan walk, a plan walk at its ceiling or a failed paying read writes no `plan` row; a failed or timed-out credit pass writes no `credit` row; an unknown account suppresses the three `credit` sums but not the counts; an invalid far-over line suppresses `credit_far_over_allowance` only; a failed lots read writes no `lots` row and no outstanding total; a row outside the dimension shape (for example a tier key with a character the CHECK refuses) skips the `plan` family only and every other family is still written (E-86); each case reports `familiesSkipped` or `metricsSkipped` and the run is partly done. Never a 0 in place of a missing figure. The credit pass runs with `budgetMs` = 30 s, a named constant below `maxDuration` 60 (E-87, unit test).
+- [ ] **AC-283** *(8.2)* Every seeded plan group is written, zeros included, and `accounts_in_group` sums to `accounts_total` (unit test; check 33 `groups_match_total`).
+- [ ] **AC-284** *(8.2)* **Isolation:** no written row holds an account id, name, email, reason, Stripe id or admin id; a planted account id as a dimension is refused by the builder before the insert (tenant-isolation test).
+- [ ] **AC-285** *(8.2)* **No money:** every row's unit is `accounts` or `credits`; the builder's pinned metric list holds no revenue, cost, fee, takings or currency metric.
+- [ ] **AC-286** *(8.2)* The registry entry shows on Jobs & queues with its label, schedule words and counts; `bosCronJobs.test.ts` passes with `vercel.json` `7 0 * * *` and `maxDuration` 60.
+
+**8.3 (the History block):**
+
+- [ ] **AC-287** *(8.3)* The history route runs `requireAdmin` first; with `accountId`, `since_start` or an unknown key it is a 400; the window is re-resolved on the server; it returns only `as_of_date`, `metric`, `dimension`, `unit` and `value` rows and `firstSnapshotDate`; at the 5,000-row ceiling it is an error, never a partial list (route tests: happy path, auth failure, invalid input).
+- [ ] **AC-288** *(8.3)* The History block shows the HS-FR-12 start line in each of its three forms (no history; none in the window; history), with `YYYY-MM-DD` dates.
+- [ ] **AC-289** *(8.3)* Daily rows for a window of up to 31 days and weekly rows beyond; "No snapshot" rows for missing days; "Not recorded" for a missing metric, never 0; the change line only between two recorded cells.
+- [ ] **AC-290** *(8.3)* **On demand (E-85):** on page load the block is closed with a "Show history" button and **no history request is sent** (AC-173's one fetch and the other one-fetch render tests pass unedited); the request is sent only on "Show history", and its literal is pinned in its own new test. With a business picked, the block shows the "all businesses together" line, no button and no request; the finance request and its AC-173 literal are unchanged.
+- [ ] **AC-291** *(8.3)* A tier key no longer in config shows its stored key and "(no longer configured)"; group labels otherwise come from config; there is no tier literal in the component.
+- [ ] **AC-292** *(8.3)* A failed history read shows the block's error with Try again and leaves every other section rendered.
+- [ ] **AC-293** *(all)* Every §11M.10 row passes; the seven frozen pins are byte-identical; the Overview payload with no tab and no business is unchanged (AC-145); the vocabulary guard passes with no edit; no new CI job.
+- [ ] **AC-294** *(all)* **Manual QA (L-155 to L-162):** run the steps below and record them in the relevant workplan.
+
+**Manual steps** (user or QA, recorded in the workplan):
+
+- **L-155** *(8.1, user)* Run check 31 on production: every row `ok = true`. Apply `20261078`. Run check 32: every row `ok = true`. Tell the session "applied".
+- **L-156** *(8.2)* After the deploy, open Jobs & queues: "Finance history snapshot" is listed, "Daily at 00:07 UTC", with no run until the first night.
+- **L-157** *(8.2)* After the first night: the run is green; note `metricsWritten`, `familiesSkipped` (expected 0) and `durationMs` from the route line (E-87).
+- **L-158** *(8.2)* Run check 33 (one day; `groups_match_total` and `taken_after_day_end` true) and check 34 (the rebuilt gifted and bought figures equal the snapshot).
+- **L-159** *(8.3)* Open Finance, all businesses, This month: the History block is closed and the network panel shows one request; click "Show history": one history request, and the block reads "History starts on {first day} (UTC)." and shows one row per snapshot day.
+- **L-160** *(8.3)* The morning after a snapshot, compare its Plan mix row with Section 1 and its Credits row with Section 4, K-2 and K-4 (they may differ only by changes made since 00:07 UTC).
+- **L-161** *(8.3)* Pick the owner test account: the block shows the "all businesses together" line and nothing else.
+- **L-162** *(8.3)* Choose a custom window of 60 days: "Weekly points"; days before the first snapshot are not listed and nothing reads 0.
+
+### 11M.12 Open questions for SA (slice 8)
+
+Technical only. The business points are **BQ-17** (daily or monthly), **BQ-18** (how long to keep) and **BQ-19** (backfill) in §0.4; none blocks the build, and each has a default.
+
+| # | Question | BA suggestion |
+|---|---|---|
+| **SA-Q100** | A long table (one row per metric and dimension, §11M.6) or a wide one (one row per day, a column per figure)? | Long: a new group or metric needs no migration, the idempotency key is natural, and the history read is one range scan |
+| **SA-Q101** | CHECK the metric list in SQL, or only its shape, with the list pinned in code? | Shape only (the `20261005` "no second source of truth" precedent); the code list is pinned by a test, and HS-W-9 is enforced by the `unit` CHECK |
+| **SA-Q102** | The write: a PostgREST insert that ignores duplicates on the key (INSERT grant only), or a SECURITY INVOKER SQL function? Does the insert with a returned count need anything beyond SELECT and the column INSERT grant? | The PostgREST insert, no function (no new function surface); the self-test proves the grants suffice |
+| **SA-Q103** | The late-run cut-off: 02:00 UTC, or none (always label the previous day)? | 02:00 UTC: a state read at noon is not "the end of yesterday", and a gap is more honest |
+| **SA-Q104** | The `…_day_ended` CHECK: which expression (the date to UTC midnight) is safe in a CHECK, or drop it and rely on the builder and check 33? | Keep it if an immutable form exists; otherwise drop it and keep check 33's `taken_after_day_end` |
+| **SA-Q105** | Wiring: reuse `financeHealthDeps` for the four reads, or a narrow `financeSnapshotDeps` with its own `Pick`s? Which caller-list pins change? | A narrow wiring that names only the four reads; one ruled update per caller list |
+| **SA-Q106** | The trend as two tables (no chart), or the first admin use of `recharts`? | Tables: minimal and no new pattern (CF-10, CLAUDE.md rule 7); a chart is a later UI slice |
+| **SA-Q107** | Path: 8.1 full cycle and migration-gated (merged by hand after the user applies it); 8.2 full cycle (a new cron and writer); 8.3 full cycle (a new admin route as well as UI, so not the UI short path)? | Yes to all three; 8.2 and 8.3 may auto-merge under BD-33 once 8.1 is applied |
+
+### 11M.13 Estimate and split
+
+**About 3.5 days** (inside BD-32's 3 to 4), in three small slices:
+
+| Slice | Contents | Estimate | Gate |
+|---|---|---|---|
+| **8.1** | Migration `20261078`, its source test, the descriptor entry, the rollback, checks 31 and 32, the local self-test; AC-273 to AC-277 | about 1 day | **Stops for the user**: the PR is off auto-merge; the user runs check 31, applies `20261078` on production by hand and runs check 32 (L-155); RM merges by hand |
+| **8.2** | The repository writer, the pure builder, the wiring, the cron route, the registry entry and `vercel.json`; checks 33 and 34; AC-278 to AC-286 | about 1.5 days | Starts after 8.1 is applied and merged; BD-33 fast track |
+| **8.3** | The repository reads, the history route, the History block and its copy; AC-287 to AC-292 | about 1 day | After 8.2; BD-33 fast track |
+
+AC-293 and AC-294 apply to every slice. Each slice gets its own workplan and PR (§9).
+
+### SA Requirement Review — Slice 8 (§11M) — 2026-10-17
+
+**Reviewed by SA, 2026-10-17, on `feature/bos-finance-health-8` (DF-6 tip) and `origin/feature/bos-finance-health-4b` (#447).**
+**Status: APPROVED WITH CONDITIONS (SA-RR-8).** The 8.1 workplan may start; E-85 to E-88 must be in the requirement before the 8.2 / 8.3 workplans.
+**BA, 2026-10-17: E-85 to E-88 applied** in §11M (E-85: HS-FR-11, AC-290, L-159; E-86: the §11M.6 dimension CHECK and migration test, HS-W-5, the self-test cases, AC-276, AC-282, a check 32 row; E-87: HS-FR-8, AC-282, L-157; E-88: HS-FR-5, the self-test, AC-276, AC-281; the SA-Q104 CHECK expression written in the §11M.6 `taken_at` row). Ready for the Dev workplan (8.1).
+
+**Verified**
+
+| Claim | Result |
+|---|---|
+| Migration number | ✅ The highest on `origin/main` is `20261071`. The only open PR touching `2026107x` is #447 (`20261072`, `20261073`). `20261074` is free; RM re-checks it when 8.1 opens |
+| House style (CF-7) | ✅ `20261072` on the #447 branch: `BEGIN`, `lock_timeout`, named `ADD CONSTRAINT … CHECK`, `COMMENT ON TABLE`, RLS, `REVOKE ALL` from the four roles, `GRANT SELECT` plus a column-list `GRANT INSERT`. Its precheck, checker, local self-test and refusing rollback exist in the paths §11M.6 copies |
+| Tables and columns named | ✅ Read from the migrations: lots (`source` CHECK `admin_grant` / `boost_purchase`, `credits_granted`, `expires_at`, `created_at`), draws (`kind` CHECK `reversal` only, `lot_id`, `credits`, `created_at`), `bos_cron_runs` (`job`, `started_at`, `outcome`), `business_os_account_plans.created_at`. `extraCreditsAt`, `readAdminCreditPositions` (with a `budgetMs` option), `listLotsWithDrawsAllAccounts` and `withCronRunRecord` exist |
+| Cron pattern (CF-5) | ✅ `credit-leak-check` uses `withCronRunRecord`; `BosCronJob` has `addedOn`; minute `7 0` is free in `vercel.json`. Not a queue drain (HS-W-11) is correct: no claim, an idempotent key-only write |
+| Descriptors (CF-8) | ✅ The `never('bos_cron_runs', G, exclude(EXPORT_REASON.PLATFORM), …)` precedent is at `descriptors.ts:1475` |
+| Isolation and currency | ✅ No `user_id` or free text, platform aggregates only, `unit` limited to accounts or credits, no money (HS-W-8, HS-W-9). DF-9 deferral is correct |
+| Reuse | ✅ HS-W-7 and AC-280 (builder output equals `buildFinanceHealth`'s figures for the same `now`) prevent a second definition |
+| SQL checks 31 to 34 | ✅ ASCII only, no apostrophe in a comment, never the editor word, one result set each. Columns match the migrations |
+| CI time, vocabulary, pins | ✅ Jest files only; no new job. The pins are untouched by 8.1 and 8.2; for 8.3 see E-85 |
+
+**Findings**
+
+| # | Sev | Finding | Edit |
+|---|---|---|---|
+| S8-F1 | High | **A History fetch on page load collides with frozen pins.** AC-173 (`financeRequest.pin.render.test.tsx:108`) asserts `fetch` is called **exactly once**, and Pin B mocks `fetch` with the finance body for every URL. Five other finance render tests also assert one fetch call. A second request "beside the finance request" (HS-FR-11) puts all of these at risk, and the pins cannot be edited. | **E-85:** HS-FR-11 and AC-290 become: the History block renders **closed**, with a "Show history" button. The history request is sent **only when the admin opens it**, never on load, so no existing request count changes. If the closed block's markup trips Pin A or Pin B, Dev stops and raises it to SA; no silent re-freeze. The history request literal is pinned in its own new test |
+| S8-F2 | High | **The dimension CHECK refuses real tier keys.** Tier ids are unconstrained text (`20261005`: no CHECK), and Finance's own `FINANCE_GROUP_SHAPE` admits `tier:[a-z0-9_-]{1,40}`. `^[a-z][a-z0-9_:]{0,47}$` refuses a hyphen, so one hyphenated tier would make the single batched insert fail, and **every** family would be lost that night. | **E-86:** the `…_dimension_shape` CHECK becomes `dimension ~ '^([a-z][a-z0-9_]{0,47}|tier:[a-z0-9_-]{1,40})$'`. A hyphen is allowed only after `tier:`, so a uuid still cannot pass. The builder checks every row against one exported shape constant, pinned equal to the CHECK by the migration test, **before** the insert. A tier key outside it skips the `plan` family only (`familiesSkipped`), never the batch. Self-test case: `tier:pro-plus` is accepted and a bare uuid is refused |
+| S8-F3 | Medium | **The 2 s credit-pass budget is a page budget.** At night, as accounts grow, it would skip the `credit` family every night with no visible cause. `readAdminCreditPositions` takes `budgetMs`. | **E-87:** HS-FR-8: the job passes `budgetMs` = 30 s (a named constant beside `maxDuration` 60, with a test that it is under it). These are the same functions with a longer budget, not a new read. L-157 also records `familiesSkipped` |
+| S8-F4 | Low | **Insert and select need the right PostgREST call.** It must be `upsert(rows, { onConflict: 'as_of_date,metric,dimension', ignoreDuplicates: true }).select('id')` (`ON CONFLICT DO NOTHING`, returning only rows written). It needs only `SELECT` plus the column `INSERT` grant. | **E-88:** HS-FR-5 names that call; "already there" = sent minus returned; the self-test covers the `service_role` path with no UPDATE grant |
+
+**Answers to SA-Q100 to SA-Q107**
+
+| # | Ruling |
+|---|---|
+| SA-Q100 | **Long**, as BA suggests |
+| SA-Q101 | **Shape only** in SQL (with E-86); the metric list is pinned in code |
+| SA-Q102 | **PostgREST insert, no function** (E-88); the self-test proves the grants |
+| SA-Q103 | **02:00 UTC** cut-off; late runs write nothing |
+| SA-Q104 | **Keep the CHECK:** `taken_at >= ((as_of_date + 1)::timestamp AT TIME ZONE 'UTC')`. It is deterministic (a literal zone; `date + integer` and the cast are immutable). Check 33 keeps its own test |
+| SA-Q105 | **Narrow `financeSnapshotDeps`** with its own `Pick`s, read-only; one ruled update per caller list, named in the 8.2 workplan; entitlements importer registered as a non-gate importer |
+| SA-Q106 | **Two tables, no chart** (no new pattern, rule 7) |
+| SA-Q107 | **Yes.** 8.1 is migration-gated and merged by hand. 8.2 and 8.3 run the full cycle and may auto-merge under BD-33 once 8.1 is applied |
+
+**Business questions.** The BQ-17 (daily), BQ-18 (keep forever) and BQ-19 (no backfill) defaults are sound and block nothing. **Estimate:** 3.5 days accepted (8.1 about 1, 8.2 about 1.5, 8.3 about 1).
+
+---
+
 ## 12. Testing and CI guards
 
 ### 12.1 Expected tests
@@ -1752,6 +3459,7 @@ This table is SA's guard table from the SA review (SA-F5), replacing the earlier
 | Slice 5a rows (Money M-1 picker swap and account summary; M-2 plan payments received) | M-1 deletes the original picker named by four guards and touches the Businesses page; M-2 adds R-m, R-m′ on a table the repository already reads, and changes the plans line and K-5 | See §11D.7: the picker contract test, layout folder guard, contrast guard and finance render tests (M-1); the finance table pin does **not** grow, the repository test gains one test per method, the billing event caller list and the four billing placement guards are not tripped (run unchanged), the 4a plans-line and K-5 tests are updated (M-2) | 5a (M-1, M-2) |
 | Slice 6a rows (Money M-3 accounts tab and AI margin) | A new pure builder in `lib/business-os/finance/`, new route fields, a tab; no new read or repository method | See §11E.6: the finance source guards gain the new files; repository, ledger, lot and billing event caller lists, the finance table pin and the billing placement guards are not tripped (run unchanged); route and URL tests cover the new fields | 6a (M-3) |
 | Money M-4 rows (OV-1 labels; OV-5 recorded, not charged) | OV-1 changes strings pinned by tests in five admin folders; OV-5 makes the route name two usage-log repositories, which the finance "no token_usage" rule forbids | See §11F.8: string pins updated and a vocabulary guard added (OV-1); the finance source guard narrowed to allow the route only, its pattern widened to catch `AdminTokenUsageAnalyticsRepository`, a positive pin on the two read methods; the analytics repository isolation guard and the `TokenUsageRepository` contract are not tripped (headers amended); Health rule tests unchanged | M-4 (OV-1, OV-5) |
+| Slice 4b rows (reversal events writer; refund dates, problems, bought credits) | 4b.1 adds a table and replaces the boost transition function in a migration; 4b.2 adds R-n, R-n′ on the new table and changes the DF-5 rule | See §11I.8: purge descriptor, classification baseline (156), business-owned inventory, export `BILLING_TABLES`, the regenerated test-account cleanup, a new migration test, rollback and check scripts (4b.1); the finance table pin grows by one, the DF-5 pin is re-pinned, the repository test gains one test per method, the Accounts tab pins by SA ruling, the frozen pins kept (4b.2); boost repository, webhook placement and SECURITY DEFINER guards not tripped | 4b.1, 4b.2 |
 
 **Not tripped:** L8, BD-26 owner-read, `businessOwnedTables` / purge descriptors, `adminReadMethods`, `accountSeam.guard` (if SA-Q7 is followed), billing-account and billing-event caller lists, boost repository pins (SA-F2 keeps the page off them). **No new CI job and no added PR critical-path time:** every new test runs in the existing Jest gate or the existing `test:bos-entitlements` job.
 
@@ -2254,7 +3962,7 @@ order by 1, 2;
 
 ### Slice 6a checks (19 and 20)
 
-Both back M-3 (§11E). The same rules hold: read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live mode are counted together (BD-14). Revenue amounts are **minor units** (divide by 100); AI cost is USD at the ledger scale. Written against the live facts of §11E.1; not yet executed by BA. A month that starts before the charging cut-over (2026-09-29 16:50:53.914 UTC) returns a null margin, as the page shows "Not available". Known differences, by design (SA-W81): a paid boost whose tax is above its amount shows Unknown on the page while check 19 gives a negative figure; and the page applies the status-free rule of E-45 to a paid boost with a refund recorded, which the boost transition function never produces. Neither row exists today. A third, also by design (SA-CR-6a): a readable plan invoice of zero in a currency other than USD makes no line on the page (M2-W-5, a zero invoice is not a payment), so the margin stays a figure, while check 19 counts it as an other-currency row and returns a null margin. The page is right. No such row exists today.
+Both back M-3 (§11E). The same rules hold: read-only, ASCII only, no apostrophes in comments, one final result set each. Test and live mode are counted together (BD-14). Revenue amounts are **minor units** (divide by 100); AI cost is USD at the ledger scale. Written against the live facts of §11E.1; not yet executed by BA. A month that starts before the charging cut-over (2026-09-29 16:50:53.914 UTC) returns a null margin, as the page shows "Not available". Known differences, by design (SA-W81): a paid boost whose tax is above its amount shows Unknown on the page while check 19 gives a negative figure; and the page applies the status-free rule of E-45 to a paid boost with a refund recorded, which the boost transition function never produces. Neither row exists today. **Re-issued 2026-10-17 for slice 4b.2 (SA-CR-4b2 CR-2):** checks 19 and 20 now follow the event rule of FR-4B-11 (a boost paid in the month gives total less tax whatever its status; refund and lost-dispute events recorded in the month are taken off the account of their purchase; a taxed purchase makes that event inexact; held now is never deducted), so they equal the Accounts tab again for refunded and disputed purchases. Before migration 20261076 is applied, both checks fail with relation does not exist; run them after the apply. A third, also by design (SA-CR-6a): a readable plan invoice of zero in a currency other than USD makes no line on the page (M2-W-5, a zero invoice is not a payment), so the margin stays a figure, while check 19 counts it as an other-currency row and returns a null margin. The page is right. No such row exists today.
 
 **File:** `check 19 - account economics this month` (AC-132, AC-134, AC-135, AC-142, AC-149)
 
@@ -2264,8 +3972,12 @@ Both back M-3 (§11E). The same rules hold: read-only, ASCII only, no apostrophe
 -- The month is the current UTC month. To check another month, replace null in the
 -- p block below with a quoted UTC month start, such as 2026-10-01 00:00:00+00.
 -- Revenue is after tax. Plans: amount_minor less amount_tax_minor, invoice_paid only.
--- Boosts: paid is total less tax; a full refund adds 0; a refund with tax 0 is total
--- less refunded; disputed and dispute_lost add 0; a part refund of a taxed boost is inexact.
+-- Re-issued 2026-10-17 for slice 4b.2 (SA-CR-4b2 CR-2, BD-17, FR-4B-11).
+-- Boosts paid in the month: total less tax, whatever the status now.
+-- Boost reversal events recorded in the month (kinds refund and dispute_lost):
+-- the amount is taken off the account of the purchase of the event, in the event
+-- currency. An event on a taxed purchase is inexact. An event on a purchase that
+-- was never paid is not revenue. Opened and won disputes move no money.
 -- AI cost is the charged cost: every credit ledger row created in the month, in USD.
 -- A margin is given only when all revenue of the account is USD and nothing is inexact.
 with p as (
@@ -2283,18 +3995,27 @@ rev as (
   union all
   select coalesce(b.user_id::text, 'deleted accounts') as account,
          upper(btrim(b.currency)) as currency,
-         case
-           when b.status = 'paid' then b.amount_total_minor - b.amount_tax_minor
-           when b.status in ('disputed', 'dispute_lost') then 0
-           when b.amount_refunded_minor = b.amount_total_minor then 0
-           when b.amount_tax_minor = 0 then b.amount_total_minor - b.amount_refunded_minor
-           else null
-         end as after_tax_minor
+         b.amount_total_minor - b.amount_tax_minor as after_tax_minor
   from public.business_os_boost_purchases b
   cross join p
   where b.paid_at >= p.month_start
     and b.paid_at < p.month_start + interval '1 month'
     and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+  union all
+  select coalesce(b.user_id::text, 'deleted accounts') as account,
+         upper(btrim(v.currency)) as currency,
+         case
+           when v.amount_minor = 0 then 0
+           when b.amount_tax_minor = 0 then 0 - v.amount_minor
+           else null
+         end as after_tax_minor
+  from public.business_os_boost_reversal_events v
+  join public.business_os_boost_purchases b on b.id = v.purchase_id
+  cross join p
+  where v.kind in ('refund', 'dispute_lost')
+    and v.recorded_at >= p.month_start
+    and v.recorded_at < p.month_start + interval '1 month'
+    and b.paid_at is not null
 ),
 rev_acc as (
   select r.account,
@@ -2341,6 +4062,8 @@ order by 5 desc, 1;
 -- The month is the current UTC month. To check another month, replace null in the
 -- p block below with a quoted UTC month start, such as 2026-10-01 00:00:00+00.
 -- Same revenue and cost rules as check 19, over every account, deleted accounts included.
+-- Re-issued 2026-10-17 with check 19 for slice 4b.2: boost refunds and lost disputes are
+-- the reversal events recorded in the month, not the purchase status.
 -- Any revenue row in another currency makes the platform margin null (no exchange rate).
 with p as (
   select coalesce(null::timestamptz, date_trunc('month', now(), 'UTC')) as month_start
@@ -2355,18 +4078,26 @@ rev as (
     and e.paid_at < p.month_start + interval '1 month'
   union all
   select upper(btrim(b.currency)) as currency,
-         case
-           when b.status = 'paid' then b.amount_total_minor - b.amount_tax_minor
-           when b.status in ('disputed', 'dispute_lost') then 0
-           when b.amount_refunded_minor = b.amount_total_minor then 0
-           when b.amount_tax_minor = 0 then b.amount_total_minor - b.amount_refunded_minor
-           else null
-         end as after_tax_minor
+         b.amount_total_minor - b.amount_tax_minor as after_tax_minor
   from public.business_os_boost_purchases b
   cross join p
   where b.paid_at >= p.month_start
     and b.paid_at < p.month_start + interval '1 month'
     and b.status in ('paid', 'partially_refunded', 'refunded', 'disputed', 'dispute_lost')
+  union all
+  select upper(btrim(v.currency)) as currency,
+         case
+           when v.amount_minor = 0 then 0
+           when b.amount_tax_minor = 0 then 0 - v.amount_minor
+           else null
+         end as after_tax_minor
+  from public.business_os_boost_reversal_events v
+  join public.business_os_boost_purchases b on b.id = v.purchase_id
+  cross join p
+  where v.kind in ('refund', 'dispute_lost')
+    and v.recorded_at >= p.month_start
+    and v.recorded_at < p.month_start + interval '1 month'
+    and b.paid_at is not null
 ),
 cost as (
   select coalesce(sum(c.cost_usd), 0) as ai_cost_usd, count(*) as ledger_rows
@@ -2505,6 +4236,169 @@ from rec r
 cross join chg c;
 ```
 
+### Slice 4b checks (23 to 26)
+
+Checks 23 and 24 back 4b.1 (the user runs them on production around the hand-applied migration, §11I.6); checks 25 and 26 back 4b.2 (§11I). The same rules hold: read-only, ASCII only, no apostrophes in comments, never the word that the Supabase SQL editor misreads, one final result set each. Amounts are minor units (cents for USD). Written against the facts of §11I.1; not executed by BA. For 4b.1, checks 23 and 24 are the strengthened text in the 4b.1 workplan §6: added rows for column-level privileges, the nine INSERT columns, BYPASSRLS, the index shape, the body md5 and the cleanup version (SA-W113, SA-WP-4b1, E-70). The 4b.1 PR carries those files.
+
+**File:** `check 23 - before applying 20261076` (AC-212, AC-216)
+
+```sql
+-- Finance check 23: run BEFORE applying migration 20261076, read only.
+-- Every row must show ok = true. If one does not, stop and tell the session.
+select 'reversal events table absent' as item,
+  to_regclass('public.business_os_boost_reversal_events') is null as ok,
+  null::bigint as found
+union all
+select 'transition function present with six arguments',
+  to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)') is not null,
+  null::bigint
+union all
+select 'transition function is security invoker',
+  coalesce(bool_and(not p.prosecdef), false),
+  count(*)
+from pg_catalog.pg_proc p
+where p.oid = to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)')
+union all
+select 'no boost purchase with a refund',
+  count(*) = 0,
+  count(*)
+from public.business_os_boost_purchases b
+where b.amount_refunded_minor > 0
+union all
+select 'no boost purchase with a dispute',
+  count(*) = 0,
+  count(*)
+from public.business_os_boost_purchases b
+where b.stripe_dispute_id is not null;
+```
+
+**File:** `check 24 - after applying 20261076` (AC-204, AC-205, AC-206, AC-216)
+
+```sql
+-- Finance check 24: run AFTER applying migration 20261076, read only.
+-- Every row must show ok = true. If one does not, stop and tell the session.
+-- The function must name the events table six times, once per insert point.
+with t as (
+  select to_regclass('public.business_os_boost_reversal_events') as tbl,
+         to_regprocedure('public.business_os_transition_boost_purchase(uuid, text, text, integer, text, text)') as fn
+)
+select 'table exists' as item, t.tbl is not null as ok from t
+union all
+select 'row level security on', coalesce((select c.relrowsecurity from pg_catalog.pg_class c where c.oid = t.tbl), false) from t
+union all
+select 'no policy on the table', not exists (select 1 from pg_catalog.pg_policy pol where pol.polrelid = t.tbl) from t
+union all
+select 'anon has no select', not coalesce(has_table_privilege('anon', t.tbl, 'SELECT'), true) from t
+union all
+select 'authenticated has no select', not coalesce(has_table_privilege('authenticated', t.tbl, 'SELECT'), true) from t
+union all
+select 'authenticated cannot insert', not coalesce(has_table_privilege('authenticated', t.tbl, 'INSERT'), true) from t
+union all
+select 'service_role can select', coalesce(has_table_privilege('service_role', t.tbl, 'SELECT'), false) from t
+union all
+select 'service_role can insert kind', coalesce(has_column_privilege('service_role', t.tbl, 'kind', 'INSERT'), false) from t
+union all
+select 'service_role can insert purchase_id', coalesce(has_column_privilege('service_role', t.tbl, 'purchase_id', 'INSERT'), false) from t
+union all
+select 'service_role cannot set recorded_at', not coalesce(has_column_privilege('service_role', t.tbl, 'recorded_at', 'INSERT'), true) from t
+union all
+select 'service_role cannot update', not coalesce(has_table_privilege('service_role', t.tbl, 'UPDATE'), true) from t
+union all
+select 'service_role cannot delete', not coalesce(has_table_privilege('service_role', t.tbl, 'DELETE'), true) from t
+union all
+select 'foreign key to purchases cascades',
+  exists (select 1 from pg_catalog.pg_constraint con
+          where con.conrelid = t.tbl and con.contype = 'f'
+            and con.confrelid = 'public.business_os_boost_purchases'::regclass
+            and con.confdeltype = 'c') from t
+union all
+select 'function still security invoker', coalesce((select not p.prosecdef from pg_catalog.pg_proc p where p.oid = t.fn), false) from t
+union all
+select 'function names the events table six times',
+  coalesce((select (length(pg_get_functiondef(t.fn)) - length(replace(pg_get_functiondef(t.fn), 'business_os_boost_reversal_events', '')))
+            / length('business_os_boost_reversal_events') = 6), false) from t
+union all
+select 'anon cannot execute the function', not coalesce(has_function_privilege('anon', t.fn, 'EXECUTE'), true) from t
+union all
+select 'service_role can execute the function', coalesce(has_function_privilege('service_role', t.fn, 'EXECUTE'), false) from t
+union all
+select 'no refund or dispute recorded without an event',
+  not exists (select 1 from public.business_os_boost_purchases b
+              where (b.amount_refunded_minor > 0 or b.stripe_dispute_id is not null)
+                and not exists (select 1 from public.business_os_boost_reversal_events e where e.purchase_id = b.id))
+from t;
+```
+
+**File:** `check 25 - reversal events against purchases` (AC-207 to AC-209, SA-Q67, SA-Q74)
+
+```sql
+-- Finance check 25: boost reversal events against the purchase rows, read only.
+-- One row per purchase that has a refund, a dispute or an event.
+-- refunds_ok: the refund event amounts add up to the refunded amount on the purchase.
+-- dispute_ok: a purchase now in status disputed has more opened than closed dispute events.
+-- over_total: refunds plus lost disputes exceed the purchase total (see SA-Q74).
+with ev as (
+  select e.purchase_id,
+    coalesce(sum(e.amount_minor) filter (where e.kind = 'refund'), 0) as refund_events_minor,
+    count(*) filter (where e.kind = 'refund') as refund_events,
+    coalesce(sum(e.amount_minor) filter (where e.kind = 'dispute_lost'), 0) as lost_events_minor,
+    count(*) filter (where e.kind = 'dispute_opened') as disputes_opened,
+    count(*) filter (where e.kind in ('dispute_won', 'dispute_lost')) as disputes_closed,
+    min(e.recorded_at) as first_event,
+    max(e.recorded_at) as last_event
+  from public.business_os_boost_reversal_events e
+  group by e.purchase_id
+)
+select
+  b.id as purchase_id,
+  b.status,
+  b.paid_at is not null as was_paid,
+  b.amount_total_minor,
+  b.amount_refunded_minor,
+  coalesce(ev.refund_events_minor, 0) as refund_events_minor,
+  coalesce(ev.refund_events, 0) as refund_events,
+  coalesce(ev.lost_events_minor, 0) as lost_events_minor,
+  coalesce(ev.disputes_opened, 0) as disputes_opened,
+  coalesce(ev.disputes_closed, 0) as disputes_closed,
+  ev.first_event,
+  ev.last_event,
+  coalesce(ev.refund_events_minor, 0) = b.amount_refunded_minor as refunds_ok,
+  (b.status <> 'disputed' or coalesce(ev.disputes_opened, 0) > coalesce(ev.disputes_closed, 0)) as dispute_ok,
+  coalesce(ev.refund_events_minor, 0) + coalesce(ev.lost_events_minor, 0) > coalesce(b.amount_total_minor, 0) as over_total
+from public.business_os_boost_purchases b
+left join ev on ev.purchase_id = b.id
+where b.amount_refunded_minor > 0
+   or b.stripe_dispute_id is not null
+   or ev.purchase_id is not null
+order by b.id;
+```
+
+**File:** `check 26 - boost refunds and lost disputes recorded this month` (AC-217, AC-218, AC-220, AC-221)
+
+```sql
+-- Finance check 26: boost refunds and disputes recorded this UTC month, per currency, read only.
+-- Compare with the refunded and lost figures of Our revenue (boosts), window This month.
+-- An event counts in the UTC month of recorded_at, whatever month its purchase was paid in.
+-- Rows with on_paid_purchase = false are purchases never credited: not revenue, shown in the problems note.
+-- Net for the month = gross_minor of check 14 minus refunded_minor minus lost_minor of the paid rows here.
+select
+  upper(btrim(e.currency)) as currency,
+  b.paid_at is not null as on_paid_purchase,
+  count(*) filter (where e.kind = 'refund') as refunds,
+  coalesce(sum(e.amount_minor) filter (where e.kind = 'refund'), 0) as refunded_minor,
+  count(*) filter (where e.kind = 'dispute_lost') as disputes_lost,
+  coalesce(sum(e.amount_minor) filter (where e.kind = 'dispute_lost'), 0) as lost_minor,
+  count(*) filter (where e.kind = 'dispute_opened') as disputes_opened,
+  count(*) filter (where e.kind = 'dispute_won') as disputes_won,
+  count(*) filter (where b.user_id is null) as events_of_deleted_accounts
+from public.business_os_boost_reversal_events e
+join public.business_os_boost_purchases b on b.id = e.purchase_id
+where e.recorded_at >= date_trunc('month', now(), 'UTC')
+  and e.recorded_at < date_trunc('month', now(), 'UTC') + interval '1 month'
+group by 1, 2
+order by 1, 2;
+```
+
 ---
 
 ## 14. Open questions for SA
@@ -2540,7 +4434,7 @@ Technical questions only; none needs the user (BD-13 settled the only business q
 | **SA-Q18** | Layout standard: 2a / 2b import shared components but do not migrate the page shell (DF-4). 2b builds the deferred shared `formatUtcDate`, which runs that part on the full cycle (layout R-7). Confirm both, and confirm the shell adoption is its own slice after 2b (renaming the URL params to `range` / `account`, with `preset` / `accountId` as legacy aliases, and replacing `router.replace` with `useAdminFilters`). | Confirm: new blocks on the standard now; shell in its own UI slice after 2b, because a layout migration must not ride in a data slice | Ruled 2026-10-11 (§0.3) |
 | **SA-Q19** | Refunds by `created_at` or by `succeeded_at`? Both are present; every refund is succeeded today. | `created_at`: one window column for every status, so a refund that is not completed can be counted beside the succeeded ones; Stripe refunds succeed within seconds | Ruled 2026-10-11 (§0.3) |
 
-**Slice 4 questions** (SA-Q25 to SA-Q31) are in §11C.9 and ruled (§0.3). **Slice 5a questions** (Money M-1 and M-2, SA-Q32 to SA-Q41, raised 2026-10-14) are in §11D.9, open.
+**Slice 4 questions** (SA-Q25 to SA-Q31) are in §11C.9 and ruled (§0.3). **Slice 4b questions** (SA-Q65 to SA-Q74, raised 2026-10-17) are in §11I.10, open. **Slice 5a questions** (Money M-1 and M-2, SA-Q32 to SA-Q41, raised 2026-10-14) are in §11D.9, open.
 
 ---
 
@@ -3117,3 +5011,67 @@ Exporting the row readers (SA-Q45) changes both lists. Separately, the DF-5 pin 
 | 2026-10-15 | SA code review, M-4 Part B (OV-5) | Code Approved (SA-CR-M4B in §0.3). D1 to D5 approved; the D5 distortion sentence is confirmed as written (it matches R4-10), so no E-edit. No requirement body text changed. |
 | 2026-10-15 | M-4 Part B ready for PR | SA-CR-M4B APPROVED; QA PASS WITH ISSUES, no bugs; fix round 1 made the recorded-read failure notice conditional (no reference to charged figures above when the charged read also failed). The 92-day read timing (SA-WR-49) could not be measured by QA and is now user manual step L-104; a slow read shows Unknown, never a wrong figure. User go-ahead (no diff review) applies. TL retrospective covers both parts. User manual QA L-98 to L-105 owed. |
 | 2026-10-15 | M-4 Part B PR opened (RM) | Part B (OV-5) committed on `feature/bos-money-m4b` (`cde25b99`); `origin/main` (`69e52ada`) merged in as `ee1471e9` with no overlapping files. All re-runs after the merge are green: `test:bos-entitlements` 269 / 7,994; `test:authz-guard` 203; finance suites 27 / 2,242; `app/admin/users` 25 / 601; `app/admin` + `lib/admin/health` 146 / 4,474; vocabulary guard 137; TokenUsageRepository contract + isolation 37. PR [#407](https://github.com/AgentsPilot/neuronforge/pull/407) is open under the user's pre-authorisation (no diff review), with no auto-merge. Not merged. No migration. User manual QA L-98 to L-105 owed, including the 92-day timing (L-104). §0.1 M-4 row updated. |
+| 2026-10-15 | BA: Finance shell (DF-4 / M-6) specified as F-2, F-4, F-5; BD-28 to BD-31 recorded | The admin-layout session's six-slice Finance plan (F-0 #414 and F-1 #418 merged, F-3 #420 merged) hands F-2, F-4 and F-5 to the finance stream. User decisions BD-28 (h1 "Finance"), BD-29 (tiles above the filter bar, both tabs), BD-30 (a bad link drops only the bad filter, U-4), BD-31 (tiles clickable to their sections). New §11G (scope, rules, user-visible changes, AC-169 to AC-183, including the F-4 byte-identical request pin AC-173); §0.1 rows F-2 (starting, blocked on #420), F-4, F-5; DF-4 marked as delivered by them; §0.2 log line; TOC entry. No code changed. |
+| 2026-10-15 | F-3 merged; F-row wording checked | PR #420 (F-3) merged, unblocking F-2. Follow-ups requirement F-0, F-1 and F-3 rows reworded to match the merged PRs #414, #418, #420. |
+| 2026-10-15 | SA workplan ruling, F-2 (Finance header and states) | APPROVED WITH CONDITIONS (SA-WP-F2 in §0.3): SA-W1 (a), SA-W2 now, SA-W3 "Try again" now, SA-W4 accepted; F2-R1 to F2-R3 in the workplan. No requirement body text changed. |
+| 2026-10-15 | SA code review, F-2 (Finance header and states) | Code Approved (SA-CR-F2 in §0.3). No conditions; three deviations approved. No requirement body text changed. |
+| 2026-10-15 | F-2 ready for PR | SA-CR-F2 APPROVED with no conditions; QA PASS, no bugs, AC-169 to AC-172 pass. Fast track: RM commits, opens the PR and switches on auto-merge. User read-only browser look L-106 to L-111 owed after merge. |
+| 2026-10-15 | F-2 PR opened (RM) | Committed on `feature/finance-f2-header-states` (`9f6bcbb3`), origin/main `0f71e70d` merged in (`bffac050`), clean; RM re-ran finance 366, components 730, aiCostVocabulary 137, authz-guard 203, all pass. [PR #424](https://github.com/AgentsPilot/neuronforge/pull/424) opened, auto-merge on (merge queue). |
+| 2026-10-16 | SA requirement and workplan review, F-4 (filter bar and URL state) | APPROVED WITH CONDITIONS (SA-WP-F4 in §0.3). SA applied E-60 (AC-173: valid page states, and four by-decision request changes pinned with new literals) and E-61 (§11G.2 F-4 row: recorded page deviations SA-W6, SA-W5, SA-W2). F4-R1 to F4-R5 in the workplan. |
+| 2026-10-16 | SA code review, F-4 (filter bar and URL state) | Code Approved (SA-CR-F4 in §0.3). One permitted amendment to the AC-173 pin file (timeouts only; the new hash is the frozen value); two stale comments fixed in the PR. No requirement body text changed. |
+| 2026-10-16 | F-4 ready for PR | SA-CR-F4 APPROVED; one SA-approved AC-173 pin amendment (10 s wait, 30 s per-test timeout; no literal or hash input changed), new frozen pin hash 3a1a2dd4...f6f8, helper unchanged b84e0c96...aabf; stale router.replace comments fixed. QA PASS, no bugs; pin 21/21 on 5 runs including one under load. Fast track: RM commits, opens the PR and switches on auto-merge. User browser look L-112 to L-119 owed. |
+| 2026-10-16 | F-4 PR opened (RM) | Committed on `feature/finance-f4-filter-bar` (`c9496495`); pin hashes verified (3a1a2dd4...f6f8, helper b84e0c96...aabf); origin/main `15d8d3f2` merged in (`b7a4dfd5`), clean; RM re-ran finance 458, users 615, components 739, authz-guard 203, all pass. [PR #434](https://github.com/AgentsPilot/neuronforge/pull/434) opened, auto-merge on (merge queue). |
+| 2026-10-16 | SA workplan review, F-5 (KPI tiles); §0.1 status fixed | APPROVED WITH CONDITIONS (SA-WP-F5 in §0.3). SA applied E-62 (§11G.2 F-5 row: K-1 link period, the Accounts-tab jump, neutral tiles). §0.1 rows corrected: F-2 merged (#424), F-4 merged (#434), F-5 workplan SA-approved. |
+| 2026-10-16 | SA code review, F-5 (KPI tiles) | Code Approved (SA-CR-F5 in §0.3). All four pin hashes recomputed and frozen; no conditions. Follow-up: harden `bosLens.render` P-8's 5 s default wait (merge-queue flake risk, outside this slice). |
+| 2026-10-16 | F-5 ready for PR | SA-CR-F5 APPROVED with no conditions; QA PASS, no bugs; frozen pins re-verified (Pin A 30f5fc24...2e01, Pin B 24ff0da7...df9f, AC-173 3a1a2dd4...f6f8, helper b84e0c96...aabf). One retrospective covers F-2, F-4 and F-5 (docs/retrospectives/FINANCE_LAYOUT_F2_F4_F5_RETROSPECTIVE.md). Fast track: RM commits, opens the PR and switches on auto-merge. With F-5 merged, M-6 (DF-4) is complete. User browser look L-120 to L-127 owed. |
+| 2026-10-16 | F-5 PR opened (RM) | Committed on `feature/finance-f5-kpi-tiles` (`24cf0c3d`); all four frozen pin hashes verified before commit (Pin A 30f5fc24...2e01, Pin B 24ff0da7...df9f, AC-173 3a1a2dd4...f6f8, helper b84e0c96...aabf); origin/main `09e2d3ad` merged in (`e8fee379`); re-run green: finance 527, components 804, analytics 191, business-os-llm 854, authz-guard 203. PR [#437](https://github.com/AgentsPilot/neuronforge/pull/437) opened, auto-merge on (merge queue). §0.1 F-5 row updated. |
+| 2026-10-16 | BA: Money M-5 "The Money section" specified | New §11H from CR (§1, §5.1, M-5 row, SA-Q-4, BQ-1, BQ-6, BQ-10), BD-21, BD-24, BD-27, FU-M4-1 and SA-Q55, re-verified against main `98735db9` (CF-1 to CF-13): Money sidebar section (Finance, Charge checks, AI calls & usage (detail)); Costs & credits with its Leak check mounted at `/admin/finance/charges`, old `?tab=costs` links redirected (temporary, `next.config.js`), the two in-app links changed at source; Business OS AI keeps Settings and Activity; strings S-1 to S-17 (S-14 to S-17 close FU-M4-1, wording only); Health tile page link to Finance; guards §11H.6; AC-184 to AC-203; L-128 to L-136; SA-Q58 to SA-Q64. Sidebar sign-off recorded as already given 2026-10-14 (BQ-1, BQ-6). §0.1 row M-5 (new) and F-5 (merged); §0.2 log line; §0.4 FU-M4-1 note; TOC; Money area source line. About 2 days, UI short path. Awaiting SA review. No code changed. |
+| 2026-10-16 | BA: user roadmap decisions BD-32 to BD-35; BQ-13 open | BD-32 order M-5 → 4b → M-8 → 6b → DF-6 → 5b → 7 → 3 → 8 with estimates; BD-33 no per-slice user approval (SA, QA, TL approve; RM commits, opens the PR, turns on auto-merge; business questions and production migrations still stop for the user); BD-34 M-8 marks Platform dashboard and Exchange rates redundant in comments and unlinks them, no deletion (amends BD-25); BD-35 6b re-orders the KPI tiles (revenue, cost, then user and account data). BQ-13 (refunded boost credits) open in §0.4, attached to 4b, today's behaviour kept meanwhile. §0.1 rows 4 and 6 annotated; Status line notes BQ-13; CR M-8 row updated. No code changed. |
+| 2026-10-16 | SA requirement and workplan review, Money M-5 (§11H) | SA-RR-M5 approved and SA-WP-M5 approved with conditions (§0.3). SA applied E-63 (S-18 `ANALYTICS_WHAT`, AC-195 to S-18) and E-64 (§11H.6: `tabCoexistence` X-8, X-8b, X-10 re-scoped, not deleted). M5-R1 to M5-R4 in the workplan. |
+| 2026-10-17 | SA code review, Money M-5 | Code Approved (SA-CR-M5 in §0.3). No conditions. Follow-up chip: harden the load-sensitive timing tests (`app/api/admin/jobs-queues/__tests__/qa-slice5-pr2.route.test.ts`, `bosLens.render` P-8). No requirement body text changed. |
+| 2026-10-17 | RM: Money M-5 committed, PR #444 opened, auto-merge on | Commit `1c7b7554` on `feature/bos-money-m5`; origin/main (`16cb2a1f`) merged in `4e96e719` (one trivial Change History conflict in ADMIN_IDENTIFICATION_AND_ACCESS.md, both rows kept). All seven frozen pin hashes verified. Re-run green after the merge. §0.1 M-5 row: status, workplan and PR columns |
+| 2026-10-17 | BA: slice 4b specified (§11I) | New §11I from §11C, BD-17 and its dispute defaults, DF-5, the refund-timing scoping (option (ii)) and pre-work re-verified at main `16cb2a1f` and live (PF-1 to PF-11). **4b.1:** migration `20261072` (table `business_os_boost_reversal_events`, RLS with no policy, service_role SELECT and a column-level INSERT grant without `recorded_at`, append-only; the transition function replaced with the same signature, six insert points, refund delta and dispute amount at stake, `ON CONFLICT DO NOTHING`; refuse if any refund or dispute exists), rollback that refuses while rows exist, regenerated test-account cleanup `20261073` (G-18 blocks the new FK), purge, baseline 156, inventory and export registration; PR off auto-merge until the user applies the migration. **4b.2:** R-n, R-n′; refunds and lost disputes by `recorded_at`; held now, never taken off a month; boost problems; K-5 dispute rule; bought credits beside gifted (K-4 unchanged); Accounts tab on the same rule; table-absent tolerance. AC-204 to AC-232, L-137 to L-141, checks 23 to 26, SA-Q65 to SA-Q74. §0.1 row 4, §0.2 log, §0.4 BQ-13 and DF-5, §12.2 row, §14 pointer, TOC. BQ-13 open: no take-back. Awaiting SA review |
+| 2026-10-17 | SA requirement review, slice 4b (§11I) | APPROVED WITH CONDITIONS (SA-RR-4b, SA-Q65 to SA-Q74 in §0.3). New section "SA Requirement Review — 4b (§11I) — 2026-10-17". SA applied E-65 (`LOCK TABLE` step and a check 24 row "no refund or dispute recorded without an event"), E-66 (local-only SQL proof for AC-207 to AC-211), E-67 (rollback order, fix forward), E-68 (Pin B stays byte-identical) and E-69 (two reads, 100-id chunks). No code changed. |
+| 2026-10-17 | SA workplan review, slice 4b.1 (reversal events) | APPROVED WITH CONDITIONS (SA-WP-4b1; SA-W105 to SA-W115 in §0.3). SA applied E-70 (the §13 checks 23 and 24 are superseded by the strengthened 4b.1 workplan §6 text). PGlite satisfies E-66, so no user test-mode refund is needed. No user action beyond the planned apply steps. |
+| 2026-10-17 | SA code review, slice 4b.1 (reversal events) | Code Approved (SA-CR-4b1 in §0.3). Migration verified byte for byte by SA; checks editor-safe; frozen pins unchanged; the 9 local `test:gate` failures are Windows-only and outside 4b.1. The PR stays off auto-merge until the user applies 20261072 and 20261073 and check 24 is all ok. |
+| 2026-10-17 | RM: slice 4b.1 committed and PR opened | Commit `240b14de`, merge of origin/main `6d8ecfb8` (QA-4B1-1 applied: both `toHaveLength` 156, totals 38 + 0 + 118). PR [#447](https://github.com/AgentsPilot/neuronforge/pull/447) open, **auto-merge OFF**; awaiting the user apply of `20261072` and `20261073` (checks 23 and 24) before RM merges by hand |
+| 2026-10-17 | BA: Money M-8 specified (§11J) | New §11J "Mark the Platform dashboard and Exchange rates pages redundant" from BD-34, CR M-8, I-15, I-19 and main `5c214310`: scope, rules RP-1 to RP-7, guards, AC-233 to AC-242, SA-Q75 to SA-Q80, BQ-14 (default: visible notice), FU-M8-1. §0.1 row M-8 (in progress), §0.2 log line, TOC entry. No code changed. |
+| 2026-10-17 | SA requirement and workplan review, Money M-8 (§11J) | SA-RR-M8 approved and SA-WP-M8 approved with conditions (§0.3). E-71 applied: BD-34 read as code comments only, no visible notice (RP-4, AC-236, scope, §11J.4, BQ-14 resolved); MULTI_CURRENCY doc pointer added; estimate about 0.75 day. |
+| 2026-10-17 | SA code review, Money M-8 | Code Approved (SA-CR-M8 in §0.3). No conditions. |
+| 2026-10-17 | RM: Money M-8 committed, PR #448 opened, auto-merge on | Commit `92ef1454` on `feature/bos-money-m8`; origin/main (`5c214310`) had not moved, so no merge was needed. Seven frozen pins byte-identical (LF-normalised). Re-run: app/admin/components 818, redundant-pages guard 17, Health guards 56, test:authz-guard 203, all passed. §0.1 M-8 row updated. |
+| 2026-10-17 | BA: slice 6b specified (§11K) | New §11K "Slice 6b: margin after estimated Stripe fees, and KPI order" from BD-7, BD-12, BD-22, BD-29, BD-31, BD-35, DF-8, the 6a builder at main `e43dcb60` and a read-only live check (LF-1 to LF-3): fee rule FE-1 to FE-7 (per charge, gross, half up, config data `STRIPE_FEE_ESTIMATE`, default 290 bps + 30 minor units, USD only; refunded charges keep their fee; no dispute fee), margin rules FE-8 to FE-17, display, tile order K-5, K-1, K-3, K-2, K-4 (order only), guards with the seven frozen pins and the vocabulary guard ("estimate", never "estimated"), AC-243 to AC-256, checks 27 and 28, SA-Q81 to SA-Q91, estimate about 1.75 days. New BQ-15 (§0.4) with its default, not blocking. §0.1 row 6b, §0.2 log line, TOC entry. No code changed. |
+| 2026-10-17 | SA requirement and workplan review, slice 6b (§11K) | SA-RR-6b approved and SA-WP-6b approved with conditions (§0.3). SA applied E-72 (zero-total boost is no charge; checks 27 and 28 filter it), E-73 (invalid fee config gives Unknown) and E-74 (fee subtracted in minor units before the one scale step). |
+| 2026-10-17 | SA code review, slice 6b | Code Approved (SA-CR-6b in §0.3). No conditions. |
+| 2026-10-17 | RM: slice 6b committed, PR #449 opened, auto-merge on | Commit `8d2f5ff6` on `feature/bos-finance-health-6b`; origin/main (`e43dcb60`) had not moved, so no merge was needed. Re-run: app/admin/finance, lib/business-os/finance and the finance route, 36 suites, 2355 tests, all passed. Seven frozen pins unchanged. §0.1 row 6b: status, workplan and PR columns. |
+| 2026-10-17 | BA: slice DF-6 specified (§11L) | New §11L "Slice DF-6: since it started (one account)" from BD-26, CR G-9 and SA-Q-6, BD-30, BD-32, BD-33 and the code at `ea56ad04`: window rules DF6-W-1 to DF6-W-7 (start = later of the cut-over instant and the earliest plan-row start fact, end = now, server-resolved, no timezone read, ceilings unchanged), validation DF6-FR-1 to DF6-FR-6 (`since_start` only with `accountId`, else 400; 92-day cap otherwise unchanged), URL and U-4 DF6-FR-7 to DF6-FR-10, tile and section behaviour, reads and bounds DF6-P-1 to DF6-P-3, guards; AC-257 to AC-272, checks 29 and 30, L-148 to L-154, SA-Q92 to SA-Q99; new BQ-16 in §0.4. No migration. §0.1 DF-6 row added; §0.4 DF-6 row scheduled; ToC; §0.2 log. |
+| 2026-10-17 | SA requirement review, DF-6 (§11L): **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — DF-6 (§11L) — 2026-10-17" after §11L.12, checked against `ea56ad04`. §0.3 row SA-RR-DF6 added; SA-Q92 to SA-Q99 ruled. Findings DF6-F1 (start is the cut-over only) to DF6-F6; BA edits E-75 to E-80. Cap, admin gate, ceilings, columns, timezone, isolation and pins verified in code. No code changed. |
+| 2026-10-17 | BA: SA-RR-DF6 edits E-75 to E-80 applied (§11L) | E-75 the window starts at the cut-over instant only, resolved in the route by a pure `since_start` branch of `resolveFinanceWindow` (no plan-row fact; AC-257, checks 29 and 30 reduced); E-76 shared extras case resolving to none, one ruled update of the `adminWindow.test.ts:203` list pin; E-77 no link carries `range=since_start` (exhaustive branch); E-78 AC-262 start and end differ; E-79 Section 1 "new in window" note; E-80 type changes listed in §11L.8. §0.1 DF-6: SA approved, ready for Dev workplan. |
+| 2026-10-17 | SA workplan review, DF-6 (§11L): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-DF6. SA applied E-81 (label "Since it started: 2026-09-29 16:50 to now (UTC)" in DF6-FR-9, AC-266, L-149), E-82 (summary window line for since_start only, §11L.6, AC-266), E-83 (§11L.8 row: one ruled update of the links import pin to add adminWindowPresets) and E-84 (planGroups.ts:224). No code changed. |
+| 2026-10-17 | SA code review, DF-6 (§11L): **Code Approved** | §0.3 row SA-CR-DF6. D-1 approved (schema pinned by AC-173 part B; SA-Q96 corrected). D-2 approved and applied by SA (DF6-R3 amended: financeLinks.test.ts type narrowing); scoped tsc clean 0. Seven pins equal; 2605 tests passed. |
+| 2026-10-17 | RM: slice DF-6 committed, PR #450 opened, auto-merge on | Commit `fd7b7f02` on `feature/bos-finance-health-df6`; origin/main (`fdaf90c1`, 6b #449) merged in `e73ec431` with no conflicts. Re-run: finance UI, finance lib, finance route, admin layout, analytics and business-os-llm filters, 80 suites, 4218 tests, all passed. Seven frozen pins unchanged. §0.1 row DF-6: status and PR columns. |
+| 2026-10-17 | Dev: slice 4b.1 rebased onto DE-8a (PR #451) | main took `20261074`/`20261075`. 4b.1 renumbered: `20261072` → **`20261076`** (bytes unchanged, body md5 `018c4447f2b52dd87e4ae3b229e5b42c`; no migration since redefines the transition function) and `20261073` → **`20261077`** (regenerated over `20261075`, so it keeps `business_os_data_exports`; stamp `f854486b31baf784` → **`b78b4579fc6631f8`**; rollback restores `20261075`). Check 23 now expects DE-8a live (9 rows, stamp `a824848e0a538477`); check 24 pins the new stamp. Runbook: check 23 → `20261076` → `20261077` → check 24. Updated: §0.1, §11I (PF-1 note, 11I.2, 11I.4, 11I.6, 11I.8), §13 check headings. SA rulings and reviews keep the old numbers as history. Merge staged, not committed |
+| 2026-10-17 | SA code review, 4b.1 rebase onto DE-8a | APPROVED WITH CONDITIONS (SA-CR-4B1-R in §0.3). R-1: DE-8a rollback guard must test for any live cleanup body naming business_os_data_exports (fix in #447). R-2, R-3 small. No code changed by SA. |
+| 2026-10-17 | BA: slice 8 specified (§11M) | New §11M "Slice 8: history snapshots" on `feature/bos-finance-health-8` (DF-6 tip `f6182697`): code facts CF-1 to CF-10; what is snapshotted (states that cannot be rebuilt: plan mix, credit positions, gifted, bought and outstanding credits) and what is not (flows rebuilt from dated rows); rules HS-W-1 to HS-W-11 (daily at 00:07 UTC for the day just ended, late runs write nothing, key `(as_of_date, metric, dimension)` with `ON CONFLICT DO NOTHING`, only exact figures, no gap filling, the page's own functions, no account and no money); the metric list; migration `20261074` (`business_os_finance_snapshots`, RLS on, no policy, service-role SELECT and five-column INSERT, refusing rollback) with checks 31 and 32 and a local self-test; the `finance-snapshot` job HS-FR-1 to HS-FR-8; the History block HS-FR-9 to HS-FR-16 on its own admin route; checks 33 and 34; guards; AC-273 to AC-294; L-155 to L-162; SA-Q100 to SA-Q107; estimate about 3.5 days, split 8.1 / 8.2 / 8.3 (8.1 stops for the user's production apply). §0.1 slice 8 row, §9 slice 8 row, ToC, §0.2 log; §0.4 gains BQ-17, BQ-18, BQ-19 and DF-9. No code changed. |
+| 2026-10-17 | SA requirement review, slice 8 (§11M): **APPROVED WITH CONDITIONS** | New section "SA Requirement Review — Slice 8 (§11M) — 2026-10-17" after §11M.13. §0.3 row SA-RR-8. Findings S8-F1 (History fetched on demand, AC-173 one-fetch pin) to S8-F4; BA edits E-85 to E-88. Migration number, house style, columns, cron pattern, descriptors and checks 31 to 34 verified. No code changed. |
+| 2026-10-17 | BA: SA-RR-8 edits E-85 to E-88 applied (§11M) | E-85 the History block opens closed and sends its request only on "Show history", so AC-173 and the one-fetch render tests keep one request per load (HS-FR-11, AC-290, L-159); E-86 the dimension CHECK admits `tier:` keys with hyphens (`^([a-z][a-z0-9_]{0,47}\|tier:[a-z0-9_-]{1,40})$`), pinned equal to a builder shape constant that pre-checks rows so a bad key skips only the `plan` family (§11M.6, HS-W-5, self-test, AC-276, AC-282, new check 32 row); E-87 the job gives the credit pass a 30 s night budget (HS-FR-8, AC-282, L-157); E-88 the writer uses upsert with ignoreDuplicates and `.select(id)`, written = ids returned (HS-FR-5, AC-276, AC-281). SA-Q104 CHECK expression written in. §0.1 slice 8 row: SA approved, ready for Dev workplan (8.1). No code changed. |
+| 2026-10-17 | SA workplan review, slice 8.1 (§11M): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-8.1. SA applied E-89 (NOTIFY pgrst in the §11M.6 order), E-90 (the pure shape module in 8.1), E-91 (migration renumbered 20261074 to 20261078 across §11M, the §0.1 row and the §9 row; numbering note), E-92 (§11M.10 rows: count pins recomputed from main, cleanup function needs no version) and E-93 (check 32 tier row is an exact pattern match). No code changed. |
+| 2026-10-17 | SA code review, slice 8.1 (§11M): **Code Approved** | §0.3 row SA-CR-8.1. D-1 to D-3 approved. The remaining scoped tsc TS2353 is reproduced on origin/main (DE-7 adf9e37f), outside scope. Merge rule MR-1: the second of #447 and 8.1 to merge recounts to 158 / 120. No code changed by SA. |
+| 2026-10-17 | RM: slice 8.1 committed, PR #452 opened, auto-merge OFF | Commit `0439f94f` on `feature/bos-finance-health-8`; origin/main (`e5bc1e1f`) had not moved, so no merge was needed. #447 still open, so MR-1 did not apply (counts stay as committed). `20261078` free on main and every remote branch. Re-run: finance UI and lib, purge, data-export, test-account-cleanup and the migration test, 57 suites, 2999 tests, all passed. Seven frozen pins unchanged. Merge held for the user's production apply (L-155). §0.1 row 8: status and PR columns. |
+| 2026-10-17 | SA workplan review, slice 8.2 (§11M): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-8.2. SA applied E-94 (HS-FR-8a: the wiring picks from financeHealthDeps, amending SA-Q105; exported walkPlans and payingSetOf), E-95 (§11M.5 bought_outstanding through the shared outstandingBySource), E-96 and E-97 (HS-FR-8b: missing table means 503 with no reads; injectable clock; no Run now). No code changed. |
+| 2026-10-17 | SA code review, slice 8.2 (§11M): **Code Approved** | §0.3 row SA-CR-8.2. D-1 to D-5 approved. RM sets addedOn to the UTC date of the first 00:07 run after the production deploy. The qa-slice5-pr2 flake is unrelated (task_d3dcf2de). No code changed by SA. |
+| 2026-10-17 | SA workplan review, slice 4b.2 (§11I): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-4b2. SA applied E-102 (FR-4B-10: K-5 also moves on an open dispute; follows BD-17 and FR-4B-5, no BQ), E-103 (§11I.8 Pin B row and FR-4B-15: optional wire fields) and E-104 (FR-4B-15: heldNow per-currency list). No code changed. |
+| 2026-10-17 | SA code review, slice 4b.2 (§11I): **Code Approved with conditions** | §0.3 row SA-CR-4b2. CR-1 Section 6 frame relabel (our boost problems no longer under "not ours"), CR-2 SQL check 19 on the event rule, CR-3 Pin C load re-run. DV-1 to DV-12 ruled. No code changed by SA. |
+| 2026-10-17 | RM: slice 4b.2 PR #459 opened, auto-merge on | Commit `81d688e3` on `feature/bos-finance-health-4b2`; after #447 merged (`e5dbfa99`), origin/main (#447, #451 to #458) merged in `ba6772c8` with no conflicts and no leftover markers. Re-run: finance, finance route, repositories, data-export and purge jest 172 suites / 5878 tests; test:bos-entitlements 287 / 8692; test:authz-guard 2 / 203; all passed. AC-145 at the ruled hash `39b35743…56ea`, other six pins unchanged. §0.1 row 4: status and PR columns. |
+| 2026-10-17 | SA workplan review, slice 8.3 (§11M): **APPROVED WITH CONDITIONS** | §0.3 row SA-WR-8.3. SA applied E-98 (HS-FR-10: separate read-only snapshot repository), E-99 (HS-FR-9: server-built view), E-100 (HS-FR-16: not_installed notice, statusChip) and E-101 (HS-FR-12 copy). No code changed. |
+| 2026-10-17 | SA code review, slice 8.3 (§11M): **Fix Required** | §0.3 row SA-CR-8.3. C-1 (High): the history range read is cut at PostgREST max-rows 1,000; page it in 1,000-row pages up to the 5,000 ceiling. D-1 to D-3 approved. No code changed by SA. |
+| 2026-10-17 | SA re-check, slice 8.3 C-1 | SA-CR-8.3 now **Code Approved**: listSnapshotsInRange pages at 1,000 rows, stops on a short page, errors past 5,000; tests pass (29). |
+| 2026-10-18 | Migrations applied to production (session, at the user's request) | #447: check 23 (8/9; cleanup row read the 20261047 version, DE-8a 20261075 never applied and superseded by 20261077), then `20261076` (transition body md5 `018c4447f2b52dd87e4ae3b229e5b42c` verified) and `20261077` (cleanup body md5 `42ae104365dce86933e99da3c62aaabc` = file), check 24 23/23; #447 MERGED. #452: check 31 6/6, then `20261078`, check 32 16/16. MR-1 applied in #452 (second to merge): classification 158 = 38 + 0 + 120, baseline 158. **20261075 must not be applied any more** (it would downgrade the cleanup) |
+| 2026-10-18 | RM: slice 8.2 PR #460 opened, auto-merge on | Commit `9bb0395c`; after #452 merged (`9616315d`, `20261078` live), origin/main merged in `2043dffb` keeping both sides: data-export stays the 18th cron, finance-snapshot the 19th (count pins 18 to 19), both Change History rows kept, classification pins main's 158/120. `addedOn` set to 2026-10-19 (`6225e6e5`, SA D-3). Re-run: finance, repositories, cron and jobs jest 158 / 5502; Jobs & queues 15 suites, 624 / 625 (known qa-slice5-pr2 flake, task_d3dcf2de, passes alone); test:authz-guard 2 / 203; test:bos-entitlements 289 / 8706. §0.1 row 8: status and PR columns. |
+| 2026-10-18 | RM: slice 8.3 PR #461 opened, auto-merge on | Commit `3209bda9`; after #460 merged (`587d3812`), origin/main merged in `bf5d93ee` keeping both sides (FinanceView: History block plus main's PaymentProblemsSection accountId; financePage.render.test.tsx: 8.3 and 4b.2 blocks; slice 8 row and Change History). 8.2 files are main's. Re-run: finance, finance route, repositories and admin components jest 175 / 6183; pins and vocabulary guard 6 / 273; test:authz-guard 2 / 203; test:bos-entitlements 290 / 8752. Seven pin hashes unchanged; AC-145 at `39b35743…56ea` (4b.2). §0.1 row 8: status and PR columns. |
+| 2026-10-18 | RM: follow-ups FF-1b to FF-1d committed, PR #463 opened, auto-merge on | Commit `0a50f14a` on `feature/bos-finance-followups` (from main `f7429b57`, which had not moved). FF-1b: check 32 exact-pattern row for the metric CHECK (QA-81-N1). FF-1c: checks 33 and 34 extracted to `scripts/check-bos-finance-history-days.sql` and `scripts/check-bos-finance-history-newest.sql`. FF-1d: `rangeCap.source.guard.test.ts` against one-shot reads above PostgREST's 1,000-row cap, allow-list pinned at 14 files / 20 entries (FF-3 burn-down, can only shrink). FF-1a (Exchange rates read-only) held for BQ-20, not included. Latent B-1 (BizQL truncation) and B-2 (purge preview and snapshot under-read) handed to separate tasks. No migration. SA-CR-FF1 approved, QA passed (QA-FF1-1 fixed), TL approved. Re-run: repositories, finance, migrations and scripts jest 188 / 7502. [Retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_FOLLOWUPS_FF1_RETROSPECTIVE.md). |
+| 2026-10-18 | User decision BQ-20 recorded (BD-36); FF-1a | The user answered BQ-20: make the redundant Exchange rates page read-only. §0.2 gains BD-36 and a log line; §0.4 gains BQ-20 (answered), FU-M8-1 (closed by FF-1a) and FF-2 (write-only database lockdown after check 35; SELECT stays for authenticated). FF-1a implemented uncommitted on `feature/bos-finance-ff1a` (page read-only, guard G-6, check 35). No migration |
+| 2026-10-18 | RM: FF-1a committed, PR #465 opened, auto-merge on | Commit `d9fe11f4` on `feature/bos-finance-ff1a` (main `399070d4`, with FF-1 #463, had not moved). Exchange rates page read-only (BD-36), check 35 added, FF-2 recorded; no DB change. SA-CR-FF1a approved, QA passed, TL approved. Re-run: admin tests, exchange-rates, migration source test and range-cap guard, 18 suites / 674 tests. [Retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_FF1A_RETROSPECTIVE.md). |
+| 2026-10-18 | User decision BD-37 recorded; Finance R4 | BD-37 (billing status for the current Stripe mode only; revenue keeps both modes, BD-14) in §0.2 with a log line; R4-FU-1 (remove the unwired R-c / R-c′) added to §0.4 as the next Finance follow-up. R4 implemented uncommitted on `fix/bos-finance-r4-billing-mode` (SA-R4 fixes R4-C1 to R4-C3). No migration |
+| 2026-10-18 | RM: Finance R4 committed, PR #471 opened, auto-merge on | Commit `7afe71c5` on `fix/bos-finance-r4-billing-mode` (from main `5e9a59f1`); origin/main (`5126beda`, #470) merged in `da560d79` with no conflicts. Billing status reads the current Stripe mode only (BD-37); revenue keeps both modes. Must land before live Stripe keys. No migration; pins unchanged. SA-R4 approved, QA passed, TL approved. Re-run: finance UI, finance lib, finance route, repositories, admin billing and the webhook router-placement guard 158 / 5547; test:authz-guard 203; test:bos-entitlements 8942. R4-FU-1 open. [Retrospective](/docs/retrospectives/BUSINESS_OS_FINANCE_HEALTH_R4_RETROSPECTIVE.md). |
+| 2026-10-19 | BA: Money area KPI restructure spliced (SA-RR-MK conditions MK-C1 to MK-C4) | The user-approved restructure ([ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md)) is recorded in §0.2 as BD-38 to BD-45 (review C-1 to C-8), BD-46 to BD-49 (Page 1 rules: leading or lagging icon, `$`-only, Paying accounts %, Converted this month), BD-50 to BD-52 (Q-10 to Q-12) and BD-53 / BD-54 (Q-13 / Q-14: keep "AI margin" and "AI cost"), with a log line. §0.1: slice 5 row marks 5b superseded (MRR part by MK-4, the rest becomes MK-9; §11N not built as written); new pointer row MK-0..MK-9. No code changed |
+| 2026-10-19 | User decision BD-55 recorded (Exchange rates page maintained again); FF-2 superseded | §0.2 gains **BD-55** (the user's 2026-10-19 message, verbatim) and a log line: the Exchange rates page becomes a maintained admin tool for manual rate entry, amending BD-34 and BD-36 for that page only; the Platform dashboard stays redundant; BD-12 and CUR-3 unchanged (no conversion, nothing in Finance reads a rate). §0.4 FF-2 marked superseded by slice 1b of [ADMIN_EXCHANGE_RATES_REQUIREMENT.md](/docs/requirements/ADMIN_EXCHANGE_RATES_REQUIREMENT.md); cross-linked from the Related header. Applied per SA-R2 of that requirement. No code changed |

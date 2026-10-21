@@ -867,11 +867,17 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // marketing_consent_state, marketing_consent_settings.
     // +1 data export DE-2 (2026-10-15): intent_examples (never, global), the USER_OWNED_TABLES
     // entry that had no descriptor.
+    // +1 finance 4b.1 (2026-10-17): business_os_boost_reversal_events (never, via its purchase).
+    // +1 data export DE-8a (2026-10-17): business_os_data_exports, the export jobs (purge).
+    // +1 finance slice 8.1 (2026-10-17): business_os_finance_snapshots (never, global).
+    // +1 data export DE-10b.1 (2026-10-18): business_os_deletion_receipts (never, global).
     // +1 abandoned bookings (2026-10-16): abandoned_bookings (reset) — the record of
     // somebody who gave their details and did not finish, which replaced the `pending`
     // booking that used to hold the slot for ever.
-    /* 157 since 2026-10-17: `scheduling_meetings` (20261073). */
-    expect(baseline.count).toBe(157);
+    // +1 scheduling meetings (2026-10-17): scheduling_meetings (reset), from 20261073.
+    //   Both arrived on a branch cut before DE-7 and are classified `include`
+    //   (section `bookings`) by analogy with `scheduling_bookings`.
+    expect(baseline.count).toBe(161);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

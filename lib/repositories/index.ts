@@ -13,8 +13,11 @@ export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
 export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
+export { AiModelImagePricingRepository, aiModelImagePricingRepository } from './AiModelImagePricingRepository';
 export { AiPriceProposalRepository, aiPriceProposalRepository } from './AiPriceProposalRepository';
+export { AiPriceApplyRepository, aiPriceApplyRepository } from './AiPriceApplyRepository';
 export { BoostPackRepository, boostPackRepository } from './BoostPackRepository';
+export { ExchangeRatesRepository, exchangeRatesRepository } from './ExchangeRatesRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
@@ -337,6 +340,33 @@ export type {
 export { UserPreferencesRepository, userPreferencesRepository } from './UserPreferencesRepository';
 // Lineage (Slice 1b). Written only by the finalise function; read by the admin list.
 export { BusinessOsAccountLineageRepository, businessOsAccountLineageRepository } from './BusinessOsAccountLineageRepository';
+// Data export jobs (DE-8a). Service-role table: per-account methods filter
+// (id, user_id); the two sweep reads are cross-account for the DE-8b cron.
+export {
+  BusinessOsDataExportJobRepository,
+  businessOsDataExportJobRepository,
+  DATA_EXPORT_JOB_COLUMNS,
+  DATA_EXPORT_JOB_LIMITS,
+} from './BusinessOsDataExportJobRepository';
+export type {
+  DataExportJob,
+  DataExportJobCounts,
+  DataExportJobRef,
+  DataExportJobState,
+  DataExportSweepRef,
+  DataExportJobStatus,
+  DataExportFailureReason,
+  DataExportRequesterKind,
+  DataExportStartOutcome,
+} from './types';
+// Data export zip bucket (DE-8b): paths only from exportObjectPath. The files
+// repository (BusinessDataExportFilesRepository) is deliberately NOT exported
+// here: its one importer is lib/business-os/data-export/fileManifest.ts (F-6).
+export {
+  BusinessOsDataExportStorageRepository,
+  businessOsDataExportStorageRepository,
+} from './BusinessOsDataExportStorageRepository';
+export type { ExportBucketListing, ExportBucketObject, ExportFileBudget } from './types';
 
 // Types
 export type {
@@ -373,17 +403,29 @@ export type {
   FreeTierUpdateOutcome,
   // AI model pricing types
   AiModelPricing,
-  CreateAiModelPricingInput,
-  AiModelPricingSyncEntry,
-  AiModelPricingSyncResult,
   AiModelPricingExactRow,
+  AiModelImagePricing,
+  AiModelImagePricingExactRow,
   AiPriceSubmitLine,
   AiPriceSubmitInput,
   AiPriceSubmitResultLine,
   AiPricePendingLine,
+  AiPriceDecisionLine,
+  AiPriceApplyLineInput,
+  AiPriceApplyMargin,
+  AiPriceApplyResultRow,
+  AiPriceOpenMarginReview,
+  AiModelPricingHistoryRow,
+  AiModelImagePricingHistoryRow,
+  PriceHistoryRowsPage,
+  AiPriceAppliedLineRecord,
+  AiPriceApplyBatchRecord,
   // Boost pack (agent-platform catalog) types
   BoostPack,
   BoostPackWriteInput,
+  // Exchange rates (admin-maintained platform table) types
+  ExchangeRateRow,
+  ExchangeRateHistoryRow,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

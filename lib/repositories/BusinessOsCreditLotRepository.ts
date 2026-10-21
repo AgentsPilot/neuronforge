@@ -46,6 +46,10 @@
 // of deleted accounts (`user_id` NULL) too: the caller decides what to count.
 // Its one caller is `lib/business-os/finance/financeHealthDeps.ts`, reached
 // only from `GET /api/admin/business-os/finance` when no business is picked.
+// Finance slice 8.2 (HS-FR-8a, E-94): the nightly history cron
+// `GET /api/cron/finance-snapshot` reaches the same read through
+// `financeSnapshotDeps` -> `financeHealthDeps`, behind CRON_SECRET, with no
+// caller input; it records platform totals only (no account in any row).
 //
 // CALLERS: the slice 11b admin credit ops (`lib/business-os/credits/creditAdminOps.ts`,
 // through an injected dependency), the entitlements accounts route that

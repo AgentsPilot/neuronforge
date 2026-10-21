@@ -21,8 +21,12 @@ export const ADMIN_NETWORK_ERROR = 'Could not reach the server. Check your conne
 /** §5.10 "Session ended": 401 or 403, for pages that opt in (RC-4). */
 const ADMIN_SESSION_ENDED = 'Your admin session has ended. Sign in again.';
 
-/** §5.10 rule 2: the page's fixed fallback when the body has no usable error. */
-function adminReadFallback(what: string): string {
+/**
+ * §5.10 rule 2: the page's fixed fallback when the body has no usable error.
+ * Exported for a caller's own defensive catch (Finance F-2, SA-W1), so the
+ * sentence keeps its one home here.
+ */
+export function adminReadFallback(what: string): string {
   return `Could not read ${what}. Try again in a moment.`;
 }
 

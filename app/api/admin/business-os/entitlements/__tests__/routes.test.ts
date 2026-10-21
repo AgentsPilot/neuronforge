@@ -1451,3 +1451,37 @@ describe('P-5b.2: held friends are listed apart, never as would-be champions or 
     expect(lineageCalls).toEqual([]);
   });
 });
+
+describe('P-8a.3 (AM-7, SA Q-7): `subscribed` in the audit details, never in the response', () => {
+  // The suite's shared plan-repository mock has no createOverride; it is added
+  // for this test only, so the mock every other test uses stays as it was.
+  const repo = (jest.requireMock('@/lib/repositories/BusinessOsAccountPlanRepository') as {
+    businessOsAccountPlanRepository: Record<string, unknown>;
+  }).businessOsAccountPlanRepository;
+  beforeEach(() => {
+    repo.createOverride = async () => ({ data: { id: '33333333-3333-4333-8333-333333333333' }, error: null });
+  });
+  afterEach(() => {
+    delete repo.createOverride;
+  });
+
+  it('add_override: the entry carries subscribed (false here: no billing record), the body does not', async () => {
+    const response = await accountRoute.POST(
+      post(`/api/admin/business-os/entitlements/accounts/${ACCOUNT}`, {
+        op: 'add_override',
+        capability: 'chat.search',
+        overrideOp: 'set',
+        value: true,
+        reason: 'support case',
+      }),
+      { params: { accountId: ACCOUNT } }
+    );
+
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(await response.json())).not.toContain('subscribed');
+    expect(state.audit).toHaveLength(1);
+    expect(state.audit[0]).toMatchObject({ action: 'BOS_ENTITLEMENT_OVERRIDE_ADDED', severity: 'warning' });
+    expect((state.audit[0].details as { subscribed: unknown }).subscribed).toBe(false);
+    expect(state.events).toEqual(['log', 'flush']);
+  });
+});

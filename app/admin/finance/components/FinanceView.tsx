@@ -3,39 +3,94 @@
 /**
  * The finance page's body (slice 1a, S1-FR-1 to S1-FR-6, L-1 to L-7).
  *
- * THE URL IS THE STATE (L-4): the filters are read from `useSearchParams`
- * (inside the page's Suspense boundary) through the pure `parseFinanceUrl`, and
- * a change is written back with `router.replace(…, { scroll: false })`, never
- * `push`. A reload or a shared link reproduces the view. An invalid value falls
- * back to the default with a small notice. Only ids and enums reach the URL.
+ * THE URL IS THE STATE (Finance F-4, Admin Layout Standard §5.6 U-1 to U-10):
+ * the filters are the shared `useAdminFilters(FINANCE_FILTER_SPEC)` hook's
+ * state, read once from the URL (inside the page's Suspense boundary) and
+ * written back by the hook alone with `history.replaceState`, never `push` and
+ * never the router. The page URL uses the canonical keys (`range`, `account`;
+ * the old `preset` / `accountId` are read as aliases), and a bad value drops
+ * only its own filter, silently (U-4, BD-30). The REQUEST is unchanged:
+ * `toFinanceQuery` maps the state onto `FinanceQuery` and `serialiseFinanceUrl`
+ * writes it (AC-173). Only ids and enums reach the URL.
  *
- * Order (S1-FR-5, §11A.0): KPI strip, our revenue, takings through the
- * platform (Section 2 block B, slice 2a, directly under our revenue),
- * Section 1, Section 3, Section 4 (credits, slice 1b), then Section 6 block
- * B, client payment problems (slice 2b), last.
+ * Order (S1-FR-5, §11A.0): our revenue, takings through the platform
+ * (Section 2 block B, slice 2a, directly under our revenue), Section 1,
+ * Section 3, Section 4 (credits, slice 1b), then Section 6 block B, client
+ * payment problems (slice 2b). Money MK-1 (KPI restructure review §12):
+ * takings, renamed "Client payments (the businesses' money, not ours)", moves
+ * from under our revenue to the very bottom, after the payment problems.
+ *
+ * Finance F-5 (BD-29, standard §5.1): the KPI strip sits between the header
+ * and the filter bar, on Overview, on the Accounts tab and with a business
+ * picked; placeholders while the first read runs, nothing on an error (K-10).
+ * Its tiles are links (BD-31): K-1 opens AI cost & usage for This month and
+ * the business (SA-W7 (a)); the others jump to their section with a plain
+ * anchor, or, on the Accounts tab where the sections are not mounted, select
+ * Overview and scroll there once (SA-W3 (a), F5-R2). The page never writes a
+ * hash or history itself: the hook stays the one URL writer.
  *
  * Money M-1 (finance health §11D.3): with a business picked, the account
- * header and the account summary sit above the KPI strip (never with all
- * businesses, M1-FR-10). The picked NAME is held here, in state, and never in
+ * header and the account summary sit at the top of the content (never with
+ * all businesses, M1-FR-10). The picked NAME is held here, in state, and never in
  * the URL, a request or a log (SA-Q32, AC-109): the URL is written only from
- * the query, whose type has no name field.
+ * the filters, whose type has no name field.
  *
  * Money M-3 (slice 6a, M3-FR-1, SA-W88): with NO business picked, two
  * page-local tabs, Overview (everything above, unchanged) and Accounts. The
- * tab is the URL's `tab=accounts`, written with the same `router.replace`;
- * leaving Accounts resets its sort and filters. The filter bar sits above both
- * tabs. With a business picked there are no tabs, and picking a business drops
- * `tab`, `sort`, `group` and `show`. The summary gains the AI margin line from
- * `accountMargin`.
+ * tab is the URL's `tab=accounts`, a field of the same filter spec (SA-W2), so
+ * every change is one write; leaving Accounts resets its sort and filters. The
+ * filter bar sits above both tabs. With a business picked there are no tabs,
+ * and picking a business drops `tab`, `sort`, `group` and `show`. A link that
+ * combines them anyway keeps the business and loses the tab keys (SA-W3).
+ *
+ * Finance F-2 (Admin Layout Standard §5.3, §5.10): the header is the shared
+ * `AdminPageHeader` (h1 "Finance", the sidebar label), and the states are the
+ * shared `AdminLoading` and `AdminError`, inside one always-mounted content area
+ * that is `aria-busy` while a read runs. The hook still clears the data on a
+ * failure, so a failed read never shows old figures. F-4 ended DV-1: Refresh
+ * and "Read at" are in the shared filter bar, and the URL notice is gone
+ * (BD-30, SA-W1).
+ *
+ * Admin Exchange Rates slice 2a (SQ-19 to SQ-21, SQ-24): a fourth tab,
+ * Exchange rates (`tab=exchange-rates`, no business only), renders the rates
+ * view from its own folder. The rates have no window and no business, and the
+ * finance tiles describe money, so on that tab the KPI strip (and its
+ * placeholders), the filter bar, the finance error and loading states, the
+ * busy flag and the window "as of" line are not rendered; the view brings its
+ * own. The header stays the one h1, "Finance", with the rates sentence. The
+ * tablist and the rates panel do not wait on the finance read: their gate is
+ * `onRatesTab || (data && !error)`, and every hidden block is a hole in place,
+ * so the tablist keeps its place in the tree and a tab switch keeps keyboard
+ * focus. The finance read keeps running (the Plans precedent): the request is
+ * unchanged. The spec also owns the tab's Show key, `currencies`, and every
+ * other tab's selection resets it in the same single write.
  */
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { DEFAULT_FINANCE_QUERY, parseFinanceUrl, serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
-import { useFinanceData } from '../useFinanceData';
-import { LOADING, NOTICE_LABEL, NAME_PLATFORM, PAGE_LOAD_FAILED, PAGE_PURPOSE, PAGE_TITLE, PRESET_LABELS, REFRESH, RETRY } from '../financeCopy';
+import { AdminPageHeader } from '@/app/admin/components/layout/AdminPageHeader';
+import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
+import { formatUtc } from '@/app/admin/components/layout/adminFormat';
+import { ADMIN_WINDOW_EXTRA_LABELS, ADMIN_WINDOW_LABELS, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
+import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
+
+import type { FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
+
+import { serialiseFinanceUrl, type FinanceQuery } from '../financeUrl';
+import {
+  FINANCE_CLEAR_PATCH,
+  FINANCE_DEFAULT_WINDOW,
+  FINANCE_FILTER_SPEC,
+  financeCanClear,
+  financeFilterRepair,
+  financeWindowProblem,
+  fromFinanceQuery,
+  isSinceStart,
+  toFinanceQuery,
+  type FinanceFilters,
+} from '../financeFilters';
+import { FINANCE_WHAT, useFinanceData } from '../useFinanceData';
+import { ACCOUNTS_WHAT, NAME_PLATFORM, PAGE_PURPOSE, PAGE_TITLE, sinceStartWindowLine } from '../financeCopy';
 import { accountNameFor, type PickedName } from '../financeAccount';
 import { AccountHeader } from './AccountHeader';
 import { AccountSummary } from './AccountSummary';
@@ -43,12 +98,41 @@ import { AccountsTab } from './AccountsTab';
 import { FinanceTabPanel, FinanceTabs, type FinanceTab } from './FinanceTabs';
 import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
+import { HistoryAllBusinessesLine } from './HistoryBlock';
+import { FinanceHistoryProvider, HistoryTrend } from './HistoryTrends';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
-import { FinanceKpiStrip } from './FinanceKpiStrip';
-import { PaymentProblemsSection } from './PaymentProblemsSection';
+import {
+  FinanceKpiPlaceholders,
+  FinanceKpiStrip,
+  type FinanceTabTarget,
+  type FinanceTileSection,
+  type FinanceTileTarget,
+} from './FinanceKpiStrip';
+import { PlansSubscriptions } from './PlansSubscriptions';
+import { ConvertedThisMonthSection } from './ConvertedThisMonthSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
+// Relative on purpose: the alias path would spell the page route the G-4 guard (redundantPages) refuses (DV-1, SQ-18).
+import { EXCHANGE_RATES_PURPOSE, ExchangeRatesView } from '../../exchange-rates/components/ExchangeRatesView';
+
+/** M3-FR-1: the Accounts tab's keys at their defaults (a pick, or leaving the tab). */
+const TAB_RESET: Partial<FinanceFilters> = { sort: 'ai_cost', group: '', show: 'all' };
+
+/** Slice 2a (SQ-20 (2), Q-2 (a)): the Exchange rates tab's Show at its default, for leaving that tab. */
+const CURRENCIES_RESET: Partial<FinanceFilters> = { currencies: FINANCE_FILTER_SPEC.currencies.defaultValue };
+
+/** This page's path, for the Accounts-tab tiles' real links (F-5, SA-W3 (a)). */
+const FINANCE_PATH = '/admin/finance';
+
+/**
+ * SA-W8: one label set, the shared bar's. DF-6 (E-81): "Since it started" reads from the
+ * payload's start, `formatUtc` without its trailing " UTC" (the line ends in "(UTC)").
+ */
+function windowLabelOf(window: FinanceWindowInfo): string {
+  if (window.preset === 'since_start') return sinceStartWindowLine(formatUtc(window.start).replace(/ UTC$/, ''));
+  return `${ADMIN_WINDOW_LABELS[window.preset]}, ${window.from} to ${window.to} UTC`;
+}
 
 /**
  * Today's sections, unchanged. With no business picked they are the Overview
@@ -65,151 +149,296 @@ function OverviewBody({ tabbed, children }: { tabbed: boolean; children: ReactNo
 }
 
 export function FinanceView() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-
-  const { query, notice } = useMemo(
-    () => parseFinanceUrl(new URLSearchParams(searchParams?.toString() ?? ''), new Date()),
-    [searchParams]
-  );
+  const { filters, setFilters, hrefFor } = useAdminFilters(FINANCE_FILTER_SPEC);
+  const query = useMemo(() => toFinanceQuery(filters), [filters]);
   const queryString = serialiseFinanceUrl(query);
-  const { data, loading, error, reload } = useFinanceData(queryString, PAGE_LOAD_FAILED);
+  const { data, loading, error, reload } = useFinanceData(queryString);
 
-  const setQuery = useCallback(
-    (next: FinanceQuery) => router.replace(`${pathname ?? '/admin/finance'}?${serialiseFinanceUrl(next)}`, { scroll: false }),
-    [router, pathname]
+  // AccountsTab's controls (its API stays `FinanceQuery`) → one hook write.
+  const setQuery = useCallback((next: FinanceQuery) => setFilters(fromFinanceQuery(next)), [setFilters]);
+
+  // SA-W3: a link combining a business with the tab keys, or the tab keys
+  // without the tab, keeps the business and the window and loses the
+  // dependent keys. `toFinanceQuery` already ignores them, so this cleans the
+  // URL only: the request string does not change and no second read is sent.
+  useEffect(() => {
+    const fix = financeFilterRepair(filters);
+    if (fix) setFilters(fix);
+  }, [filters, setFilters]);
+
+  // SA-W5 (a): a refused custom window, held against the window it was refused
+  // on, so any applied window (a preset, Apply, Clear, an outside change) hides it.
+  const [windowProblem, setWindowProblem] = useState<{ text: string; on: AdminWindowValue } | null>(null);
+  const onWindowChange = useCallback(
+    (next: AdminWindowValue) => {
+      const problem = financeWindowProblem(next, new Date());
+      if (problem) {
+        setWindowProblem({ text: problem, on: filters.window });
+        return;
+      }
+      setWindowProblem(null);
+      setFilters({ window: next });
+    },
+    [filters.window, setFilters]
   );
+  const onClear = useCallback(() => {
+    setWindowProblem(null);
+    setFilters(FINANCE_CLEAR_PATCH);
+  }, [setFilters]);
 
   // SA-Q32: the name the admin picked, for the chip, the header and the summary only.
   const [pickedName, setPickedName] = useState<PickedName | null>(null);
   const onPick = useCallback(
     (accountId: string, name: string | null) => {
-      setPickedName({ accountId, name });
-      // M3-FR-1: a picked business has no tab; the tab's sort and filters go with it.
-      setQuery({
-        ...query,
-        accountId: accountId || null,
-        tab: null,
-        sort: DEFAULT_FINANCE_QUERY.sort,
-        group: DEFAULT_FINANCE_QUERY.group,
-        show: DEFAULT_FINANCE_QUERY.show,
-      });
+      // The spec holds the id lower-cased (SA-W11), so the name is held against the same form.
+      const account = accountId.toLowerCase();
+      setPickedName({ accountId: account, name });
+      // M3-FR-1: a picked business has no tab; the tab's sort and filters go with it. One write.
+      setFilters({ account, tab: '', ...TAB_RESET });
     },
-    [query, setQuery]
+    [setFilters]
+  );
+  // DF-6 (DF6-FR-9): "Since it started" needs a business, so removing it also resets the window, in one write.
+  const onRemoveBusiness = useCallback(
+    () => setFilters(isSinceStart(filters.window) ? { account: '', window: FINANCE_DEFAULT_WINDOW } : { account: '' }),
+    [filters.window, setFilters]
   );
   // SA-Q43: selecting a tab writes `tab`; leaving Accounts resets its sort and filters.
+  // Money MK-4: Plans & subscriptions is the page URL's `tab=plans`; it never reaches the request
+  // (`toFinanceQuery` sends `tab` for Accounts only), so the finance read is the Overview's.
+  // Slice 2a (SQ-20 (2)): Exchange rates resets the Accounts keys and `status`; every other tab
+  // resets `currencies`. Still one write each way.
   const onSelectTab = useCallback(
     (tab: FinanceTab) =>
-      setQuery(
+      setFilters(
         tab === 'accounts'
-          ? { ...query, tab: 'accounts' }
-          : { ...query, tab: null, sort: DEFAULT_FINANCE_QUERY.sort, group: DEFAULT_FINANCE_QUERY.group, show: DEFAULT_FINANCE_QUERY.show }
+          ? { tab: 'accounts', status: '', ...CURRENCIES_RESET }
+          : tab === 'plans'
+            ? { tab: 'plans', ...TAB_RESET, ...CURRENCIES_RESET }
+            : tab === 'exchange-rates'
+              ? { tab: 'exchange-rates', ...TAB_RESET, status: '' }
+              : { tab: '', ...TAB_RESET, status: '', ...CURRENCIES_RESET }
       ),
-    [query, setQuery]
+    [setFilters]
   );
-  const selectedTab: FinanceTab = query.tab === 'accounts' ? 'accounts' : 'overview';
+  // Slice 2a (SQ-24): as Plans, Exchange rates is selected only with no business, so the rates view never mounts on a business link.
+  const selectedTab: FinanceTab =
+    query.tab === 'accounts'
+      ? 'accounts'
+      : query.accountId !== null
+        ? 'overview'
+        : filters.tab === 'plans'
+          ? 'plans'
+          : filters.tab === 'exchange-rates'
+            ? 'exchange-rates'
+            : 'overview';
+  const onRatesTab = selectedTab === 'exchange-rates';
+  // F-5: on a tab other than Overview the sections are not on screen, so a tile is a link to Overview.
+  const onAccountsTab = selectedTab !== 'overview' && query.accountId === null;
+
+  // F-5 (SA-W3 (a), F5-R2): the section an Accounts-tab tile asked for. Once
+  // Overview is mounted it is scrolled into view ONCE and cleared; no hash.
+  const [jumpTo, setJumpTo] = useState<FinanceTileSection | null>(null);
+  useEffect(() => {
+    if (jumpTo === null || onAccountsTab || !data) return;
+    const target = document.getElementById(jumpTo);
+    if (!target) return;
+    target.scrollIntoView({ block: 'start' });
+    setJumpTo(null);
+  }, [jumpTo, onAccountsTab, data]);
+
+  // F-5 (BD-31): where the sections are on screen, a plain anchor; on the
+  // Accounts tab, the shared filter mode: a real link to Overview at the same
+  // window and business, whose plain click is the Overview tab's one write.
+  const targetFor = useCallback(
+    (section: FinanceTileSection): FinanceTileTarget =>
+      onAccountsTab
+        ? {
+            filter: {
+              href: `${FINANCE_PATH}${hrefFor({ tab: '', ...TAB_RESET })}#${section}`,
+              apply: () => {
+                onSelectTab('overview');
+                setJumpTo(section);
+              },
+            },
+          }
+        : { href: `#${section}` },
+    [onAccountsTab, hrefFor, onSelectTab]
+  );
+  // Money MK-5: F-K4 opens the Accounts tab and F-K5 the Plans & subscriptions tab (§3.1), through the
+  // shared filter mode: a real link, and a plain click is the tab's one write. A picked business has no tabs.
+  const tabTarget = useCallback(
+    (tab: 'accounts' | 'plans'): FinanceTabTarget =>
+      query.accountId !== null
+        ? {}
+        : {
+            filter: {
+              href: `${FINANCE_PATH}${hrefFor(tab === 'accounts' ? { tab: 'accounts', status: '' } : { tab: 'plans', ...TAB_RESET })}`,
+              apply: () => onSelectTab(tab),
+              current: selectedTab === tab,
+            },
+          },
+    [query.accountId, hrefFor, onSelectTab, selectedTab]
+  );
   const accountName = query.accountId !== null ? accountNameFor(query.accountId, pickedName, data) : null;
   const chipName = accountName === null ? null : accountName.platform ? NAME_PLATFORM : accountName.name;
 
+  // SA-W8: one label set, the shared bar's ("7 days", "30 days").
+  // DF-6 (E-81, DF6-R2): the since-start line is built ONCE, here, from the payload's start
+  // (formatUtc without its trailing " UTC"), and handed to the summary.
   const windowLabel = data
-    ? `${PRESET_LABELS[data.window.preset]}, ${data.window.from} to ${data.window.to} UTC`
-    : PRESET_LABELS[query.preset];
+    ? windowLabelOf(data.window)
+    : query.preset === 'since_start'
+      ? ADMIN_WINDOW_EXTRA_LABELS.since_start
+      : ADMIN_WINDOW_LABELS[query.preset];
+  const sinceStartLine = data && data.window.preset === 'since_start' ? windowLabel : null;
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-700 pb-4">
-        <div>
-          <h1 className="text-xl font-semibold text-white">{PAGE_TITLE}</h1>
-          <p className="mt-1 text-sm text-slate-400">{PAGE_PURPOSE}</p>
-          {data && <p className="mt-1 text-xs text-slate-500" data-testid="as-of">{windowLabel}</p>}
-        </div>
-        <button
-          type="button"
-          onClick={reload}
-          aria-busy={loading}
-          disabled={loading}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"
-        >
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          {REFRESH}
-        </button>
-      </header>
-
-      <FinanceFilterBar
-        query={query}
-        resolved={data ? { from: data.window.from, to: data.window.to } : null}
-        onChange={setQuery}
-        onPick={onPick}
-        chipName={chipName}
+      {/* Slice 2a (SQ-21): one h1, "Finance"; on the rates tab its sentence is the rates one and no window applies. */}
+      <AdminPageHeader
+        title={PAGE_TITLE}
+        purpose={onRatesTab ? EXCHANGE_RATES_PURPOSE : PAGE_PURPOSE}
+        asOf={onRatesTab ? null : data ? windowLabel : null}
       />
 
-      {notice && (
-        <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="status" data-testid="finance-url-notice">
-          {NOTICE_LABEL} {notice}
-        </p>
+      {/* F-5 (BD-29): header, KPI strip, filter bar. K-10: placeholders on the first read, nothing on an error. */}
+      {/* Slice 2a (SQ-19 (i), SA-2a-1): on the rates tab this and the bar below are holes in place. */}
+      {onRatesTab ? null : data && !error ? (
+        <FinanceKpiStrip
+          data={data}
+          windowLabel={windowLabel}
+          targetFor={targetFor}
+          accountsTab={tabTarget('accounts')}
+          plansTab={tabTarget('plans')}
+        />
+      ) : (
+        loading && !error && <FinanceKpiPlaceholders />
       )}
 
-      {loading && !data && <p className="text-sm text-slate-400">{LOADING}</p>}
-
-      {error && (
-        <div className="flex items-center gap-3 text-sm text-slate-300" role="alert" data-testid="finance-error">
-          <span>{error}</span>
-          <button type="button" onClick={reload} className="rounded border border-slate-600 px-2 py-1 text-xs hover:bg-slate-700">
-            {RETRY}
-          </button>
-        </div>
+      {!onRatesTab && (
+        <FinanceFilterBar
+          filters={filters}
+          onWindowChange={onWindowChange}
+          onPick={onPick}
+          onRemoveBusiness={onRemoveBusiness}
+          chipName={chipName}
+          onClear={onClear}
+          canClear={financeCanClear(filters)}
+          busy={loading}
+          readAt={data?.generatedAt ?? null}
+          onRefresh={reload}
+          windowProblem={windowProblem !== null && windowProblem.on === filters.window ? windowProblem.text : null}
+        />
       )}
 
-      {data && !error && (
-        <div className="space-y-4">
-          {data.accountId !== null && (
-            <>
-              <AccountHeader
-                accountId={data.accountId}
-                name={accountNameFor(data.accountId, pickedName, data)}
-                accounts={data.accounts}
-              />
-              <AccountSummary
-                accountId={data.accountId}
-                window={data.window}
-                aiCost={data.aiCost}
-                revenue={data.revenue}
-                credits={data.credits}
-                accounts={data.accounts}
-                accountMargin={data.accountMargin ?? null}
-              />
-            </>
-          )}
-          {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
-          {selectedTab === 'accounts' && query.accountId === null ? (
-            <FinanceTabPanel id="accounts">
-              {data.accountEconomics ? (
-                <AccountsTab
-                  section={data.accountEconomics}
-                  window={data.window}
-                  windowLabel={windowLabel}
-                  query={query}
-                  onChange={setQuery}
-                  onRetry={reload}
+      {/* Always mounted, so a refresh keeps the current figures and says it is busy (§5.10). */}
+      {/* Slice 2a (SQ-19 (i)): on the rates tab no finance busy flag, error or loading line; the view has its own. */}
+      <div data-testid="finance-content" aria-busy={onRatesTab ? undefined : loading} className="space-y-4">
+        {!onRatesTab && error && <AdminError message={error} testId="finance-error" onRetry={reload} />}
+
+        {!onRatesTab && loading && !data && !error && <AdminLoading what={FINANCE_WHAT} />}
+
+        {/* Slice 2a (SQ-19 (i), SA-2a-1): the rates do not depend on the finance read, so their tab is not gated by it. */}
+        {(onRatesTab || (data && !error)) && (
+          // Money MK-7: the one shared, lazy history read for the trends under Plan mix and Credits (E-85).
+          <FinanceHistoryProvider query={query}>
+          <div className="space-y-4">
+            {!onRatesTab && data && data.accountId !== null && (
+              <>
+                <AccountHeader
+                  accountId={data.accountId}
+                  name={accountNameFor(data.accountId, pickedName, data)}
+                  accounts={data.accounts}
                 />
-              ) : (
-                <p className="text-sm text-slate-400">{LOADING}</p>
-              )}
-            </FinanceTabPanel>
-          ) : (
-            <OverviewBody tabbed={query.accountId === null}>
-              <FinanceKpiStrip tiles={data.tiles} farOverAllowancePercent={data.credits.farOverAllowancePercent} windowLabel={windowLabel} />
-              <RevenuePanel revenue={data.revenue} windowLabel={windowLabel} onRetry={reload} />
-              <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} />
-              <AccountsByPlanSection accounts={data.accounts} windowLabel={windowLabel} onRetry={reload} />
-              <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
-              <CreditsSection credits={data.credits} windowLabel={windowLabel} onRetry={reload} />
-              <PaymentProblemsSection problems={data.paymentProblems} windowLabel={windowLabel} onRetry={reload} />
-            </OverviewBody>
-          )}
-        </div>
-      )}
+                <AccountSummary
+                  accountId={data.accountId}
+                  window={data.window}
+                  aiCost={data.aiCost}
+                  revenue={data.revenue}
+                  credits={data.credits}
+                  accounts={data.accounts}
+                  accountMargin={data.accountMargin ?? null}
+                  windowLine={sinceStartLine}
+                />
+              </>
+            )}
+            {query.accountId === null && <FinanceTabs selected={selectedTab} onSelect={onSelectTab} />}
+            {onRatesTab ? (
+              <FinanceTabPanel id="exchange-rates">
+                {/* No `active` prop (SQ-20 (4)): Finance unmounts hidden panels. */}
+                <ExchangeRatesView />
+              </FinanceTabPanel>
+            ) : !data ? null : selectedTab === 'plans' ? (
+              <FinanceTabPanel id="plans">
+                {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
+                <div className="space-y-4">
+                  <AccountsByPlanSection
+                    accounts={data.accounts}
+                    windowLabel={windowLabel}
+                    onRetry={reload}
+                    k3={data.tiles?.k3}
+                    trend={<HistoryTrend trend="planMix" />}
+                  />
+                  {/* Money MK-5b (§5.1): from the same finance payload, so the tab makes no new request (AC-173). */}
+                  {data.converted && <ConvertedThisMonthSection converted={data.converted} onRetry={reload} />}
+                  <PlansSubscriptions
+                    status={filters.status === '' ? null : filters.status}
+                    onStatus={(next) => setFilters({ status: next ?? '' })}
+                  />
+                </div>
+              </FinanceTabPanel>
+            ) : selectedTab === 'accounts' && query.accountId === null ? (
+              <FinanceTabPanel id="accounts">
+                {data.accountEconomics ? (
+                  <AccountsTab
+                    section={data.accountEconomics}
+                    window={data.window}
+                    windowLabel={windowLabel}
+                    query={query}
+                    onChange={setQuery}
+                    onRetry={reload}
+                  />
+                ) : (
+                  <AdminLoading what={ACCOUNTS_WHAT} />
+                )}
+              </FinanceTabPanel>
+            ) : (
+              <OverviewBody tabbed={query.accountId === null}>
+                {/* Money MK-6 (BD-38): our boost problems sit in Revenue; the clients' problems in Client payments. */}
+                <RevenuePanel
+                  revenue={data.revenue}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  mrr={data.mrr}
+                  stripeMode={data.stripeMode ?? null}
+                  boostProblems={data.paymentProblems?.boosts}
+                  accountId={data.accountId}
+                />
+                {/* Money MK-7 (§6 item 13): each trend under its KPI; closed on load, so no request (E-85). */}
+                <AccountsByPlanSection
+                  accounts={data.accounts}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  k3={data.tiles?.k3}
+                  trend={query.accountId === null ? <HistoryTrend trend="planMix" /> : <HistoryAllBusinessesLine />}
+                />
+                <AiCostSection aiCost={data.aiCost} accountId={data.accountId} window={data.window} windowLabel={windowLabel} onRetry={reload} />
+                <CreditsSection
+                  credits={data.credits}
+                  windowLabel={windowLabel}
+                  onRetry={reload}
+                  k2={data.tiles?.k2}
+                  trend={query.accountId === null ? <HistoryTrend trend="credits" /> : <HistoryAllBusinessesLine />}
+                />
+                {/* Money MK-1: the businesses' client payments, not ours (BD-1), last on the Overview. */}
+                <TakingsSection takings={data.takings} windowLabel={windowLabel} onRetry={reload} problems={data.paymentProblems} />
+              </OverviewBody>
+            )}
+          </div>
+          </FinanceHistoryProvider>
+        )}
+      </div>
     </div>
   );
 }

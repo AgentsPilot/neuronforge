@@ -755,7 +755,7 @@ describe('PF-13: the credit-period anchor on a subscribed account (plan payments
 
   it.each([
     ['set_expiry', { op: 'set_expiry', field: 'grace_ends_at', value: null, reason: 'support case' } as AdminOp, {}],
-    ['add_override', { op: 'add_override', capability: 'chat.search', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp, {}],
+    // P-8a.3 (SA Q-7): add_override now reads it, for its audit entry only (tested below).
     ['ensure_plan_row', { op: 'ensure_plan_row', cohort: 'champion', expiresAt: null, reason: 'trigger failed' } as AdminOp, { plan: null }],
   ] as Array<[string, AdminOp, Parameters<typeof context>[0]]>)('%s never reads the billing record (it does not move the anchor)', async (_name, op, options) => {
     const { ctx, calls } = context({ ...options, subscribed: null });
@@ -763,6 +763,41 @@ describe('PF-13: the credit-period anchor on a subscribed account (plan payments
 
     expect(result).toMatchObject({ ok: true });
     expect(calls.all).not.toContain('billing.hasLivePlanSubscription');
+  });
+});
+
+describe('P-8a.3 (AM-7, SA Q-7): `subscribed` in the audit details of assign_tier and add_override', () => {
+  const ASSIGN = { op: 'assign_tier', tier: readCodeConfig().tierOrder[0] ?? null, expiresAt: null, reason: 'support case' } as AdminOp;
+  const OVERRIDE = { op: 'add_override', capability: 'chat.search', overrideOp: 'set', value: true, reason: 'support case' } as AdminOp;
+
+  it.each([true, false])('assign_tier records subscribed: %p, from the one PF-13 read, in auditDetails only', async (subscribed) => {
+    const { ctx, calls } = context({ subscribed });
+    const result = await executeAdminOp(ASSIGN, ctx);
+    if (!result.ok) throw new Error(`refused: ${result.error}`);
+    expect(result.auditDetails).toEqual({ subscribed });
+    expect(result.data).not.toHaveProperty('subscribed');
+    expect(calls.all.filter((call) => call === 'billing.hasLivePlanSubscription')).toHaveLength(1);
+  });
+
+  it('assign_tier still refuses when the billing read fails (PF-13, unchanged)', async () => {
+    const { ctx } = context({ subscribed: null });
+    expect(await executeAdminOp(ASSIGN, ctx)).toMatchObject({ ok: false, status: 500, error: 'billing_read_failed' });
+  });
+
+  it.each([true, false, null])('add_override records subscribed: %p and is never refused by it', async (subscribed) => {
+    const { ctx, calls } = context({ subscribed });
+    const result = await executeAdminOp(OVERRIDE, ctx);
+    if (!result.ok) throw new Error(`refused: ${result.error}`);
+    expect(result.auditDetails).toEqual({ subscribed });
+    expect(result.data).not.toHaveProperty('subscribed');
+    expect(calls.createOverride).toHaveLength(1);
+  });
+
+  it('set_cohort sets no auditDetails (out of AM-7 scope; its entry is unchanged)', async () => {
+    const { ctx } = context({ subscribed: true });
+    const result = await executeAdminOp({ op: 'set_cohort', cohort: 'trial', reason: 'support case' } as AdminOp, ctx);
+    expect(result).toMatchObject({ ok: true });
+    expect(result).not.toHaveProperty('auditDetails');
   });
 });
 

@@ -84,7 +84,8 @@ function recordingClient(respond: (calls: Call[], index: number) => Response) {
       const index = queries.length;
       queries.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'not', 'gt', 'gte', 'lt', 'or', 'order', 'limit', 'maybeSingle']) {
+      // Slice 4b.2: `in` joins (the 100-id chunks, E-69).
+      for (const method of ['select', 'eq', 'in', 'not', 'gt', 'gte', 'lt', 'or', 'order', 'limit', 'maybeSingle']) {
         builder[method] = (...args: unknown[]) => {
           calls.push({ method, args });
           return builder;
@@ -843,7 +844,6 @@ const boostRow = (id: string) => ({
   currency: 'usd',
   amount_total_minor: 98765,
   amount_tax_minor: 0,
-  amount_refunded_minor: 0,
   credits_total: '5000.000000',
   paid_at: '2026-10-12T10:00:00.000Z',
 });
@@ -866,8 +866,9 @@ describe('slice 4a column allow-list (§11C.6, S4-FR-9)', () => {
 
   it('boost purchases: exactly the revenue columns', () => {
     expect(cols(FINANCE_BOOST_PURCHASE_COLUMNS)).toEqual([
+      // Slice 4b.2 (SA-W119): no refunded amount; refunds are dated events (R-n).
       'id', 'user_id', 'status', 'package_id', 'package_version', 'currency',
-      'amount_total_minor', 'amount_tax_minor', 'amount_refunded_minor', 'credits_total', 'paid_at',
+      'amount_total_minor', 'amount_tax_minor', 'credits_total', 'paid_at',
     ]);
   });
 
@@ -1159,4 +1160,320 @@ describe('R-m′ listPlanPaymentsForAccountPaidInRange: the account id (SA-W1, A
       expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(id || 'never-empty');
     }
   );
+});
+
+// ── Slice 4b.2: the reversal events (R-n, R-n′) and the purchases needing attention (R-l, R-l′) ──
+// The describes above are unedited apart from the recording client's `in` and the 4a column list (SA-W119).
+
+import {
+  FINANCE_BOOST_ATTENTION_COLUMNS,
+  FINANCE_ID_CHUNK,
+  FINANCE_REVERSAL_EVENT_COLUMNS,
+  FINANCE_REVERSAL_PURCHASE_COLUMNS,
+  FinanceReadTableAbsentError,
+} from '../BusinessOsFinanceReadRepository';
+
+const idOf = (prefix: string, n: number) => `${prefix}-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const evRaw = (n: number, purchase_id: string) => ({
+  id: idOf('eeeeeeee', n),
+  purchase_id,
+  kind: 'refund',
+  amount_minor: 100,
+  currency: 'USD',
+  recorded_at: '2026-10-05T00:00:00.000Z',
+});
+const purchaseRaw = (id: string, user_id: string | null = A) => ({
+  id,
+  user_id,
+  package_id: 'pkg-a',
+  package_version: 1,
+  amount_total_minor: 1000,
+  amount_tax_minor: 0,
+  paid_at: '2026-10-01T00:00:00.000Z',
+});
+const tableOf = (q: Call[]) => q[0].args[0];
+const inArgs = (q: Call[]) => argsOf(q, 'in');
+
+describe('slice 4b.2 column allow-lists (§11I.7, AC-230)', () => {
+  const cols = (list: string) => list.split(',').map((c) => c.trim());
+  it('events: exactly six columns; no Stripe id, no mode, no status around the step, no cumulative', () => {
+    expect(cols(FINANCE_REVERSAL_EVENT_COLUMNS)).toEqual(['id', 'purchase_id', 'kind', 'amount_minor', 'currency', 'recorded_at']);
+    for (const list of [FINANCE_REVERSAL_EVENT_COLUMNS, FINANCE_REVERSAL_PURCHASE_COLUMNS, FINANCE_BOOST_ATTENTION_COLUMNS]) {
+      expect(list).not.toMatch(/livemode|stripe_|receipt|flag_reason|lot_id|status_before|status_after|cumulative/);
+    }
+    expect(cols(FINANCE_REVERSAL_PURCHASE_COLUMNS)).toEqual(['id', 'user_id', 'package_id', 'package_version', 'amount_total_minor', 'amount_tax_minor', 'paid_at']);
+    expect(cols(FINANCE_BOOST_ATTENTION_COLUMNS)).toEqual(['id', 'user_id', 'status', 'currency', 'amount_total_minor', 'amount_refunded_minor', 'status_changed_at']);
+    expect(FINANCE_ID_CHUNK).toBe(100);
+  });
+});
+
+describe('R-n listBoostReversalEventsAllAccountsRecordedInRange', () => {
+  it('events by half-open recorded_at, keyset at 1000, then their purchases by id; joined field by field; paid as a boolean', async () => {
+    const PUR = idOf('pppppppp', 1);
+    const { client, queries } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_reversal_events'
+        ? { data: [evRaw(1, PUR), evRaw(2, PUR)], error: null }
+        : { data: [{ ...purchaseRaw(PUR), paid_at: null }], error: null }
+    );
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(RANGE);
+    expect(result.error).toBeNull();
+    expect(queries).toHaveLength(2);
+    const [events, purchases] = queries;
+    expect(tableOf(events)).toBe('business_os_boost_reversal_events');
+    expect(argsOf(events, 'select')).toEqual([[FINANCE_REVERSAL_EVENT_COLUMNS]]);
+    expect(argsOf(events, 'gte')).toEqual([['recorded_at', '2026-10-01T00:00:00.000Z']]);
+    expect(argsOf(events, 'lt')).toEqual([['recorded_at', '2026-11-01T00:00:00.000Z']]);
+    expect(argsOf(events, 'limit')).toEqual([[1000]]);
+    expect(argsOf(events, 'eq')).toEqual([]);
+    expect(tableOf(purchases)).toBe('business_os_boost_purchases');
+    expect(inArgs(purchases)).toEqual([['id', [PUR]]]);
+    expect(argsOf(purchases, 'limit')).toEqual([[1000]]);
+    expect(result.data!.rows[0]).toEqual({
+      ...evRaw(1, PUR),
+      purchase: { user_id: A, package_id: 'pkg-a', package_version: 1, amount_total_minor: 1000, amount_tax_minor: 0, paid: false },
+    });
+    expect(JSON.stringify(queries)).not.toContain('livemode');
+  });
+
+  it('AC-217: a month-boundary window carries exactly its half-open bounds (the database applies the microsecond rule)', async () => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const november = { from: new Date('2026-11-01T00:00:00.000Z'), to: new Date('2026-12-01T00:00:00.000Z') };
+    await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(november);
+    expect(argsOf(queries[0], 'gte')).toEqual([['recorded_at', '2026-11-01T00:00:00.000Z']]);
+    expect(argsOf(queries[0], 'lt')).toEqual([['recorded_at', '2026-12-01T00:00:00.000Z']]);
+    // No event → no purchase read.
+    expect(queries).toHaveLength(1);
+  });
+
+  it('4B2-R1: 1,000 events per page → a next page with gt(last id); and the purchases go out in chunks of 100, each paged', async () => {
+    const page = (start: number, n: number) => Array.from({ length: n }, (_, i) => evRaw(start + i, idOf('pppppppp', start + i)));
+    const { client, queries } = recordingClient((calls, i) => {
+      if (tableOf(calls) === 'business_os_boost_reversal_events') return { data: i === 0 ? page(1, 1000) : page(1001, 250), error: null };
+      const [[, ids]] = inArgs(calls) as [string, string[]][];
+      return { data: ids.map((id) => purchaseRaw(id)), error: null };
+    });
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(RANGE);
+    expect(result.data!.rows).toHaveLength(1250);
+    const eventQueries = queries.filter((q) => tableOf(q) === 'business_os_boost_reversal_events');
+    expect(eventQueries).toHaveLength(2);
+    expect(argsOf(eventQueries[1], 'gt')).toEqual([['id', idOf('eeeeeeee', 1000)]]);
+    const purchaseQueries = queries.filter((q) => tableOf(q) === 'business_os_boost_purchases');
+    expect(purchaseQueries).toHaveLength(13);
+    for (const q of purchaseQueries) {
+      const [[, ids]] = inArgs(q) as [string, string[]][];
+      expect(ids.length).toBeLessThanOrEqual(100);
+      expect(argsOf(q, 'limit')[0][0]).toBeLessThanOrEqual(1000);
+    }
+    for (const q of queries) for (const [n] of argsOf(q, 'limit') as number[][]) expect(n).toBeLessThanOrEqual(1000);
+  });
+
+  it('the ceiling (>=) → reachedCeiling, never an error', async () => {
+    const { client } = recordingClient((calls) => {
+      if (tableOf(calls) !== 'business_os_boost_reversal_events') return { data: [], error: null };
+      const [[size]] = argsOf(calls, 'limit') as number[][];
+      return { data: Array.from({ length: size }, (_, i) => evRaw(i + 1, idOf('pppppppp', 1))), error: null };
+    });
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(RANGE, { ceiling: 3, pageSize: 2 });
+    expect(result.data).toMatchObject({ reachedCeiling: true });
+    expect(result.data!.rows).toHaveLength(3);
+  });
+
+  it.each([['42P01'], ['PGRST205']])('§7: the table absent (%s) → FinanceReadTableAbsentError, logged at warn, never at error, never thrown', async (code) => {
+    const { client } = recordingClient(() => ({ data: null, error: { code, message: 'relation does not exist' } }));
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(RANGE);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeInstanceOf(FinanceReadTableAbsentError);
+    expect(mockLog.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: 'table_absent' }), expect.any(String));
+    expect(mockLog.error).not.toHaveBeenCalled();
+  });
+
+  it('any other error is { data: null, error } at error; a bad range is refused before any query', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    expect((await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(RANGE)).error).toBeInstanceOf(Error);
+    expect(mockLog.error).toHaveBeenCalled();
+    const empty = recordingClient(() => ({ data: [], error: null }));
+    const refused = await new BusinessOsFinanceReadRepository(empty.client).listBoostReversalEventsAllAccountsRecordedInRange({ from: RANGE.to, to: RANGE.from });
+    expect(refused.data).toBeNull();
+    expect(empty.queries).toHaveLength(0);
+  });
+
+  it('logs one info line with counts and timing only', async () => {
+    const { client } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_reversal_events' ? { data: [evRaw(1, P1)], error: null } : { data: [purchaseRaw(P1)], error: null }
+    );
+    await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsAllAccountsRecordedInRange(RANGE);
+    expect(mockLog.info).toHaveBeenCalledTimes(1);
+    const [ctx] = mockLog.info.mock.calls[0];
+    expect(Object.keys(ctx).sort()).toEqual(['durationMs', 'method', 'purchases', 'reachedCeiling', 'rows']);
+    expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(P1);
+  });
+});
+
+describe('R-n′ listBoostReversalEventsForAccountRecordedInRange (4B2-R2: isolation)', () => {
+  it('the account’s purchases first (.eq user_id on every page, every status), then only their events, in chunks', async () => {
+    const OWN = idOf('pppppppp', 1);
+    const { client, queries } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_purchases' ? { data: [purchaseRaw(OWN)], error: null } : { data: [evRaw(1, OWN)], error: null }
+    );
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsForAccountRecordedInRange(A, RANGE);
+    const [purchases, events] = queries;
+    expect(tableOf(purchases)).toBe('business_os_boost_purchases');
+    expect(argsOf(purchases, 'eq')).toEqual([['user_id', A]]);
+    expect(argsOf(purchases, 'in')).toEqual([]);
+    expect(tableOf(events)).toBe('business_os_boost_reversal_events');
+    expect(inArgs(events)).toEqual([['purchase_id', [OWN]]]);
+    expect(argsOf(events, 'gte')).toEqual([['recorded_at', '2026-10-01T00:00:00.000Z']]);
+    expect(result.data!.rows.map((r) => r.purchase_id)).toEqual([OWN]);
+  });
+
+  it('fail closed: an event whose purchase is not the account’s is DROPPED (a foreign event)', async () => {
+    const OWN = idOf('pppppppp', 1);
+    const FOREIGN = idOf('pppppppp', 9);
+    const { client } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_purchases'
+        ? { data: [purchaseRaw(OWN)], error: null }
+        : { data: [evRaw(1, OWN), evRaw(2, FOREIGN)], error: null }
+    );
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsForAccountRecordedInRange(A, RANGE);
+    expect(result.data!.rows.map((r) => r.purchase_id)).toEqual([OWN]);
+    expect(mockLog.debug).toHaveBeenCalledWith(expect.objectContaining({ dropped: 1 }), expect.any(String));
+  });
+
+  it('the purchase read pages at 1,000 with .eq(user_id) on EVERY page; no purchase → no event query', async () => {
+    const { client, queries } = recordingClient((calls, i) =>
+      tableOf(calls) === 'business_os_boost_purchases'
+        ? { data: i === 0 ? Array.from({ length: 1000 }, (_, k) => purchaseRaw(idOf('pppppppp', k + 1))) : [], error: null }
+        : { data: [], error: null }
+    );
+    await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsForAccountRecordedInRange(A, RANGE);
+    const purchaseQueries = queries.filter((q) => tableOf(q) === 'business_os_boost_purchases');
+    expect(purchaseQueries).toHaveLength(2);
+    for (const q of purchaseQueries) expect(argsOf(q, 'eq')).toEqual([['user_id', A]]);
+    expect(argsOf(purchaseQueries[1], 'gt')).toEqual([['id', idOf('pppppppp', 1000)]]);
+    // 1,000 purchase ids → ten event chunks of 100.
+    expect(queries.filter((q) => tableOf(q) === 'business_os_boost_reversal_events')).toHaveLength(10);
+
+    const none = recordingClient(() => ({ data: [], error: null }));
+    await new BusinessOsFinanceReadRepository(none.client).listBoostReversalEventsForAccountRecordedInRange(A, RANGE);
+    expect(none.queries.map(tableOf)).toEqual(['business_os_boost_purchases']);
+  });
+
+  it('4B2-R1: 1,000 events inside one chunk → the next page inside that chunk', async () => {
+    const OWN = idOf('pppppppp', 1);
+    let eventCalls = 0;
+    const { client, queries } = recordingClient((calls) => {
+      if (tableOf(calls) === 'business_os_boost_purchases') return { data: [purchaseRaw(OWN)], error: null };
+      eventCalls += 1;
+      return { data: eventCalls === 1 ? Array.from({ length: 1000 }, (_, k) => evRaw(k + 1, OWN)) : [evRaw(2000, OWN)], error: null };
+    });
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsForAccountRecordedInRange(A, RANGE);
+    const eventQueries = queries.filter((q) => tableOf(q) === 'business_os_boost_reversal_events');
+    expect(eventQueries).toHaveLength(2);
+    expect(inArgs(eventQueries[1])).toEqual([['purchase_id', [OWN]]]);
+    expect(argsOf(eventQueries[1], 'gt')).toEqual([['id', idOf('eeeeeeee', 1000)]]);
+    expect(result.data!.rows).toHaveLength(1001);
+  });
+
+  it.each([[''], ['not-a-uuid'], ["11111111-1111-4111-8111-111111111111' or 1=1"]])('refuses %p before any query, at warn', async (id) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsForAccountRecordedInRange(id, RANGE);
+    expect(result.data).toBeNull();
+    expect(queries).toHaveLength(0);
+    expect(mockLog.warn).toHaveBeenCalled();
+  });
+
+  it('the events table absent → the typed error', async () => {
+    const { client } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_purchases' ? { data: [purchaseRaw(P1)], error: null } : { data: null, error: { code: '42P01', message: 'x' } }
+    );
+    expect((await new BusinessOsFinanceReadRepository(client).listBoostReversalEventsForAccountRecordedInRange(A, RANGE)).error).toBeInstanceOf(
+      FinanceReadTableAbsentError
+    );
+  });
+});
+
+const attentionRaw = (n: number, status = 'disputed', user_id: string | null = A) => ({
+  id: idOf('aaaaaaaa', n),
+  user_id,
+  status,
+  currency: 'USD',
+  amount_total_minor: 1000,
+  amount_refunded_minor: 0,
+  status_changed_at: '2026-10-03T00:00:00.000Z',
+});
+
+describe.each([
+  { name: 'R-l listBoostPurchasesNeedingAttentionAllAccounts', scoped: false },
+  { name: 'R-l′ listBoostPurchasesNeedingAttentionForAccount', scoped: true },
+])('$name', ({ scoped }) => {
+  const call = (repo: Repo, opts?: Opts) =>
+    scoped ? repo.listBoostPurchasesNeedingAttentionForAccount(A, opts) : repo.listBoostPurchasesNeedingAttentionAllAccounts(opts);
+
+  it('the two statuses, the exact columns, keyset at 1000; the scope on every page; then the opened dates of the disputed ones only', async () => {
+    const { client, queries } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_purchases'
+        ? { data: [attentionRaw(1), attentionRaw(2, 'flagged_mismatch')], error: null }
+        : {
+            data: [
+              { id: idOf('eeeeeeee', 1), purchase_id: idOf('aaaaaaaa', 1), recorded_at: '2026-10-02T00:00:00.000Z' },
+              { id: idOf('eeeeeeee', 2), purchase_id: idOf('aaaaaaaa', 1), recorded_at: '2026-10-04T00:00:00.000Z' },
+            ],
+            error: null,
+          }
+    );
+    const result = await call(new BusinessOsFinanceReadRepository(client));
+    const [purchases, opened] = queries;
+    expect(argsOf(purchases, 'select')).toEqual([[FINANCE_BOOST_ATTENTION_COLUMNS]]);
+    expect(inArgs(purchases)).toEqual([['status', ['disputed', 'flagged_mismatch']]]);
+    expect(argsOf(purchases, 'eq')).toEqual(scoped ? [['user_id', A]] : []);
+    expect(argsOf(purchases, 'limit')).toEqual([[1000]]);
+    expect(tableOf(opened)).toBe('business_os_boost_reversal_events');
+    expect(inArgs(opened)).toEqual([['purchase_id', [idOf('aaaaaaaa', 1)]]]);
+    expect(argsOf(opened, 'eq')).toEqual([['kind', 'dispute_opened']]);
+    expect(result.data!.openedDates).toBe('read');
+    // The latest opening is the open dispute's.
+    expect(result.data!.rows.map((r) => r.disputeOpenedAt)).toEqual(['2026-10-04T00:00:00.000Z', null]);
+  });
+
+  it('4B2-R1 / R2: 1,000 rows → next page with gt(last id); the scope on EVERY page', async () => {
+    const { client, queries } = recordingClient((calls, i) =>
+      tableOf(calls) === 'business_os_boost_purchases'
+        ? { data: i === 0 ? Array.from({ length: 1000 }, (_, k) => attentionRaw(k + 1, 'flagged_mismatch')) : [attentionRaw(5000, 'flagged_mismatch')], error: null }
+        : { data: [], error: null }
+    );
+    const result = await call(new BusinessOsFinanceReadRepository(client));
+    const purchaseQueries = queries.filter((q) => tableOf(q) === 'business_os_boost_purchases');
+    expect(purchaseQueries).toHaveLength(2);
+    expect(argsOf(purchaseQueries[1], 'gt')).toEqual([['id', idOf('aaaaaaaa', 1000)]]);
+    for (const q of purchaseQueries) expect(argsOf(q, 'eq')).toEqual(scoped ? [['user_id', A]] : []);
+    expect(result.data!.rows).toHaveLength(1001);
+    // No disputed row → no events query.
+    expect(queries.filter((q) => tableOf(q) === 'business_os_boost_reversal_events')).toHaveLength(0);
+  });
+
+  it('§7: the opened dates failing (table absent) never fails the read: openedDates failed, dates null, warn', async () => {
+    const { client } = recordingClient((calls) =>
+      tableOf(calls) === 'business_os_boost_purchases' ? { data: [attentionRaw(1)], error: null } : { data: null, error: { code: 'PGRST205', message: 'x' } }
+    );
+    const result = await call(new BusinessOsFinanceReadRepository(client));
+    expect(result.error).toBeNull();
+    expect(result.data).toMatchObject({ openedDates: 'failed', rows: [expect.objectContaining({ disputeOpenedAt: null })] });
+    expect(mockLog.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: 'table_absent' }), expect.any(String));
+  });
+
+  it('the purchase read failing is { data: null, error }, never thrown', async () => {
+    const { client } = recordingClient(() => ({ data: null, error: new Error('boom') }));
+    const result = await call(new BusinessOsFinanceReadRepository(client));
+    expect(result.data).toBeNull();
+    expect(mockLog.error).toHaveBeenCalled();
+  });
+});
+
+describe('R-l′: the account id', () => {
+  it.each([[''], ['not-a-uuid']])('refuses %p before any query', async (id) => {
+    const { client, queries } = recordingClient(() => ({ data: [], error: null }));
+    const result = await new BusinessOsFinanceReadRepository(client).listBoostPurchasesNeedingAttentionForAccount(id);
+    expect(result.data).toBeNull();
+    expect(queries).toHaveLength(0);
+  });
 });

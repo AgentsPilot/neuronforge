@@ -178,6 +178,9 @@ let detailGate: Promise<void> | null = null;
 
 const calls: Array<{ url: string; method: string }> = [];
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function route(url: string): ResponseLike {
   if (url.startsWith('/api/admin/users?')) {
     if (listFails) return json(500, { success: false, error: 'Failed to fetch users' });
@@ -197,6 +200,8 @@ function route(url: string): ResponseLike {
   if (url.endsWith('/boost') && url.includes('/credits/accounts/')) return json(200, BOOST);
   if (url.includes('/api/admin/business-os/credits/accounts/')) return json(200, CREDITS);
   if (url === '/api/admin/archiving') return json(200, ARCHIVING);
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return json(200, { success: true, data: NO_EXPORTS });
   if (url === '/api/admin/test-account-cleanup/check') return json(200, { success: true, data: { configured: true } });
   return json(404, { success: false, error: 'not mocked' });
 }
@@ -284,18 +289,21 @@ describe('D-1 / D-2 / D-17 the closed page', () => {
     expect(screen.queryByTestId('bos-panel')).toBeNull();
   });
 
-  it('D-2: each first cell holds one Open button; the row has no tabindex and no role; six headers', async () => {
+  // LF-8 (user request 2026-10-15): the Open button, now an icon, left the first
+  // cell for its own narrow last column, so seven headers (was: first cell, six).
+  it('D-2: each last cell holds one Open button; the row has no tabindex and no role; seven headers', async () => {
     await renderPage();
     const button = screen.getByRole('button', { name: 'Open details for Dana Cohen' });
-    expect(button.textContent).toBe('Open');
-    const firstCell = button.closest('td') as HTMLTableCellElement;
-    expect(firstCell.cellIndex).toBe(0);
-    expect(within(firstCell).getAllByRole('button')).toHaveLength(1);
+    expect(button.textContent).toBe('');
+    const openCell = button.closest('td') as HTMLTableCellElement;
+    const row = openCell.closest('tr') as HTMLTableRowElement;
+    expect(openCell.cellIndex).toBe(row.cells.length - 1);
+    expect(within(openCell).getAllByRole('button')).toHaveLength(1);
     for (const tr of screen.getAllByTestId('row-business').map((p) => p.closest('tr') as HTMLTableRowElement)) {
       expect(tr.hasAttribute('tabindex')).toBe(false);
       expect(tr.hasAttribute('role')).toBe(false);
     }
-    expect(screen.getAllByRole('columnheader')).toHaveLength(6);
+    expect(screen.getAllByRole('columnheader')).toHaveLength(7);
     expect(screen.queryByRole('columnheader', { name: 'Actions' })).toBeNull();
   });
 
@@ -638,7 +646,8 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
     const h2s = dialog.querySelectorAll('h2');
     expect(h2s).toHaveLength(1);
     expect(h2s[0].textContent).toBe('Acme Therapy 99999999…');
-    // LF-4a.2 (BD-4, SA C2): exactly five sections for a Business OS account,
+    // LF-4a.2 (BD-4, SA C2): exactly six sections for a Business OS account
+    // (the sixth, Data export, added by data export DE-10a, SA-9),
     // each named by its first heading, its h3. One named exception, asserted by
     // containment: Plan & entitlements also holds the snapshot's own h3 inside
     // the plan fold. LF-4b turned the money blocks' h4s into labels, so Credits
@@ -653,6 +662,7 @@ describe('D-16 / D-18 / D-19 / D-20 the body', () => {
       'AI usage',
       'Account & security',
       'Activity',
+      'Data export',
     ]);
     const allowedExtra = (section: Element): Element[] => {
       const name = section.querySelector('h3')?.textContent;

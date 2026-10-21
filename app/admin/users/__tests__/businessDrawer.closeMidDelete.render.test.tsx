@@ -190,6 +190,9 @@ const PANEL_READS: Record<string, { entitlements: Reply; summary: Reply }> = {
   [SARA_ID]: { entitlements: { status: 200, body: recordedAccountBody }, summary: SERVER_ERROR },
 };
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function routeGet(url: string): Queued {
   if (url.startsWith('/api/admin/users?')) {
     return { status: 200, body: { success: true, data: listRows, stats: { totalUsers: listRows.length, activeUsers: 0, newUsersToday: 0 } } };
@@ -204,6 +207,8 @@ function routeGet(url: string): Queued {
     if (url === `/api/admin/business-os/credits/accounts/${id}/boost`) return ok(boost(id));
   }
   if (url === ARCHIVING_URL) return { status: 200, body: ARCHIVING };
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return ok(NO_EXPORTS);
   if (url === CLEANUP_CHECK_URL) return ok({ configured: true });
   unexpected.push(`GET ${url}`);
   return refused(404, 'not mocked');
@@ -321,7 +326,7 @@ const CHECK_POST = {
   method: 'POST',
   headers: JSON_HEADERS,
   cache: undefined,
-  body: { email: DANA_EMAIL, tag: DANA_EMAIL },
+  body: { mode: 'hard', email: DANA_EMAIL, tag: DANA_EMAIL },
 };
 /** The whole expected cleanup delete request (PIN-e; no cache option today, F-4). */
 const DELETE_POST = {
@@ -329,14 +334,19 @@ const DELETE_POST = {
   method: 'POST',
   headers: JSON_HEADERS,
   cache: undefined,
-  body: { email: DANA_EMAIL, tag: DANA_EMAIL, confirmEmail: DANA_EMAIL },
+  body: { mode: 'hard', email: DANA_EMAIL, tag: DANA_EMAIL, confirmEmail: DANA_EMAIL, reason: { category: 'test_account' } },
 };
 
 const panelOf = (drawer: HTMLElement) => within(drawer).getByTestId('test-account-cleanup-panel');
 
-/** Check, then type the confirmation; returns the Delete button. */
+/**
+ * Pick "Test account" (the hard delete), Check, then type the confirmation;
+ * returns the Delete button. DE-10b.1: the drawer defaults to "Customer
+ * account" (close and anonymise); the hard flow is one click away.
+ */
 async function checkAndConfirm(drawer: HTMLElement): Promise<HTMLButtonElement> {
   const panel = panelOf(drawer);
+  fireEvent.click(within(panel).getByTestId('cleanup-mode-hard'));
   checkQueue.push(ok(checkView()));
   fireEvent.click(within(panel).getByRole('button', { name: 'Check' }));
   await within(panel).findByTestId('cleanup-confirm');

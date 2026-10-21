@@ -459,6 +459,7 @@ export function CreditsBlock({ accountId, businessLabel, takeBackRequest = null,
           businessLabel={businessLabel}
           limits={limits}
           onSuccess={handleSuccess}
+          lots={loadedData && loadedData.extra.status === 'ok' ? loadedData.extra.lots : []}
         />
       )}
     </div>

@@ -16,9 +16,19 @@ const mockListActiveExact = jest.fn();
 jest.mock('@/lib/repositories/AiModelPricingRepository', () => ({
   aiModelPricingRepository: { listActiveExact: () => mockListActiveExact() },
 }));
+// Slice 7 (RC7-7): the comparison also reads the image price table, fresh and exact.
+const mockListImageActiveExact = jest.fn();
+jest.mock('@/lib/repositories/AiModelImagePricingRepository', () => ({
+  aiModelImagePricingRepository: { listActiveExact: () => mockListImageActiveExact() },
+}));
 const mockListPending = jest.fn();
 jest.mock('@/lib/repositories/AiPriceProposalRepository', () => ({
   aiPriceProposalRepository: { listPendingLines: () => mockListPending() },
+}));
+// Slice 8 (SA O-8): the comparison also reads the open margin reviews.
+const mockListOpenMarginReviews = jest.fn(async () => ({ data: [] as unknown[], error: null as unknown }));
+jest.mock('@/lib/repositories/AiPriceApplyRepository', () => ({
+  aiPriceApplyRepository: { listOpenMarginReviews: () => mockListOpenMarginReviews() },
 }));
 jest.mock('@/lib/repositories/AdminUserRepository', () => ({
   adminUserRepository: {
@@ -101,6 +111,7 @@ beforeEach(() => {
     error: null,
   });
   mockListPending.mockResolvedValue({ data: [], error: null });
+  mockListImageActiveExact.mockResolvedValue({ data: [], error: null });
   mockImageConfig.mockResolvedValue({ model: 'ignored', quality: 'auto', sizes: { wide: '1536x1024', portrait: '1024x1536', square: '1024x1024' }, pricesUsd: {} });
   mockResolveImagePrice.mockImplementation((prices: Record<string, number>, model: string, size: string, quality: string) => {
     const key = `${model}:${size}:${quality}`;
@@ -135,8 +146,15 @@ describe('current = what we charge today', () => {
     expect(row.units.find((unit) => unit.unit === 'output')?.current).toBe('0.6');
   });
 
-  it('cached input is derived (half the input) for OpenAI, ignoring a stored cached column (no reader until slice 7)', async () => {
+  // Slice 7 (O-3, RC7-7): a stored cached rate above 0 IS what is charged now.
+  // Before slice 7 this case expected the derived half ('0.075', 'derived').
+  it('cached input is the stored cached column when it is above 0 (slice 7)', async () => {
     const cached = rowOf((await buildComparison()).rows, liveModel).units.find((unit) => unit.unit === 'cached_input');
+    expect(cached).toMatchObject({ current: '0.01', currentBasis: 'table' });
+  });
+
+  it('cached input is derived (half the input) for OpenAI when no cached rate is stored', async () => {
+    const cached = rowOf((await buildComparison()).rows, fallbackModel).units.find((unit) => unit.unit === 'cached_input');
     expect(cached).toMatchObject({ current: '0.075', currentBasis: 'derived' });
   });
 
@@ -292,7 +310,8 @@ describe('lineContextFor (manual entry)', () => {
       current_row_id: 'row-new',
       current_input_cost_per_token: '0.00000015',
       current_output_cost_per_token: '0.0000006',
-      current_cached_input_cost_per_token: '0.000000075',
+      // Slice 7 (O-3): the stored cached rate (was the derived '0.000000075').
+      current_cached_input_cost_per_token: '0.00000001',
     });
     expect(context).toMatchObject({ inCoverage: true, inputOnly: false, conservative: { input: '0.00003', output: '0.00018' } });
   });
@@ -316,5 +335,75 @@ describe('lineContextFor (manual entry)', () => {
     });
     expect(snapshotFields).toMatchObject({ current_basis: 'in_code_fallback', current_cost_per_image: '0.167' });
     expect(context).toMatchObject({ inCoverage: true, fallback: { perImage: '0.167' }, conservative: { perImage: '0.25' } });
+  });
+});
+
+// AI model price review slice 9 (workplan §2.4, SA SC9-7): the history's "charged today" row is
+// the comparison's currentRowId on the same stored rows, including a row stored at 0 (still the
+// charged row: no zero skip for tokens) and a non-OpenAI row with a stored cached rate.
+describe('slice 9 parity: the price history marks the same current row as the comparison', () => {
+  const historyRow = (over: Record<string, unknown>) => ({
+    provider: 'openai',
+    model_name: liveModel,
+    input_cost_per_token: '0.00000015',
+    output_cost_per_token: '0.0000006',
+    cached_input_cost_per_token: null,
+    effective_date: '2026-06-29',
+    retired_date: null as string | null,
+    created_at: '2026-06-29T10:00:00Z',
+    proposal_id: null,
+    proposal_line_id: null,
+    ...over,
+  });
+
+  it.each([
+    [
+      'openai with a later row, a zero-priced charged row, a retired row and a shadowed row',
+      'openai',
+      liveModel,
+      [
+        historyRow({ id: 'h-future', effective_date: '2099-01-01' }),
+        historyRow({ id: 'h-zero', effective_date: '2026-10-11', input_cost_per_token: '0' }),
+        historyRow({ id: 'h-retired', effective_date: '2026-10-05', retired_date: '2026-10-11' }),
+        historyRow({ id: 'h-shadowed', effective_date: '2026-06-29' }),
+      ],
+    ],
+    [
+      'anthropic with a stored cached rate behind a retired newer row',
+      'anthropic',
+      tableOnlyModel,
+      [
+        historyRow({ id: 'a-retired', provider: 'anthropic', model_name: tableOnlyModel, effective_date: '2026-10-01', retired_date: '2026-10-02' }),
+        historyRow({ id: 'a-current', provider: 'anthropic', model_name: tableOnlyModel, effective_date: '2026-06-29', cached_input_cost_per_token: '0.0000003' }),
+      ],
+    ],
+  ])('%s', async (_label, provider, model, rows) => {
+    const { buildPriceHistory } = await import('../priceHistory');
+    const today = new Date().toISOString().slice(0, 10);
+    // The SQL filter of listActiveExact (not retired, already in effect), same order.
+    mockListActiveExact.mockResolvedValue({
+      data: rows.filter((row) => row.retired_date === null && String(row.effective_date) <= today),
+      error: null,
+    });
+    const comparisonId = rowOf((await buildComparison()).rows, model).currentRowId;
+    const history = buildPriceHistory({
+      query: { kind: 'token', provider: provider as 'openai', model },
+      now: new Date(),
+      tokenRows: rows as never,
+      imageRows: [],
+      truncated: false,
+      lines: [],
+      batches: [],
+      events: [],
+      auditTruncated: false,
+      syncRuns: [],
+      syncTruncated: false,
+      emailByUserId: new Map(),
+      systemActorIds: [],
+      inputOnly: false,
+    });
+    const current = history.units[0].rows.filter((row) => row.status === 'current');
+    expect(current).toHaveLength(1);
+    expect(current[0].rowId).toBe(comparisonId);
   });
 });

@@ -525,3 +525,33 @@ describe('P-3b.2 switch ON: subscriptions, by their item prices', () => {
     await expect(resolverWith(catalog, fakeStripe(), true)(SUB_UPDATED)).rejects.toThrow('catalog down');
   });
 });
+
+// ── P-6a.2: invoice.payment_action_required, behind the price switch (§5.4) ──
+
+describe('P-6a.2 invoice.payment_action_required: routed only while the price switch is on', () => {
+  const ACTION = withInvoice(FAILED, () => undefined);
+  ACTION.type = 'invoice.payment_action_required' as Stripe.Event['type'];
+
+  it('switch OFF: not_business_os (its outcome before P-6a.2), with NO catalog read and NO Stripe call', async () => {
+    const stripe = fakeStripe();
+    const catalog = catalogKnowing({ [linePrices(FAILED)[0]]: 'probe_b' });
+    expect(await resolverWith(catalog, stripe, false)(ACTION)).toEqual({ kind: 'not_business_os' });
+    expect(catalog.load).not.toHaveBeenCalled();
+    expect(stripe.factory).not.toHaveBeenCalled();
+  });
+
+  it('switch OFF by default (the price switch unset in this suite): the same, never an unknown_price deny', async () => {
+    const catalog = catalogKnowing({});
+    expect(await resolveWith(catalog, ACTION)).toEqual({ kind: 'not_business_os' });
+    expect(catalog.load).not.toHaveBeenCalled();
+  });
+
+  it('switch ON: a known plan price is a plan flow, exactly like invoice.payment_failed', async () => {
+    const catalog = catalogKnowing({ [linePrices(FAILED)[0]]: 'probe_b' });
+    expect(await resolverWith(catalog, fakeStripe(), true)(ACTION)).toEqual({ kind: 'flow', flow: 'plan', lookupKeys: ['probe_b'] });
+  });
+
+  it('switch ON: an unknown price is denied, as invoice.payment_failed is (SA Q-1)', async () => {
+    expect(reasonOf(await resolverWith(catalogKnowing({}), fakeStripe(), true)(ACTION))).toBe('unknown_price');
+  });
+});

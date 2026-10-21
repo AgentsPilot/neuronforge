@@ -101,7 +101,9 @@ export type PurgeArea =
   | 'briefings'
   | 'integrations'
   | 'agents'
-  | 'activity_history';
+  | 'activity_history'
+  // Data export DE-8a: the account's "Download my data" jobs (purge level).
+  | 'data_exports';
 
 export interface PurgeDescriptor {
   table: string;

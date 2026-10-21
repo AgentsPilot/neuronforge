@@ -517,8 +517,8 @@ describe('backward: a gate cannot ship unregistered', () => {
     {
       // Plan payments P-4.2 (workplan §3.4, §3.7; SA W-6, W-7).
       file: 'lib/business-os/billing/planPurchaseView.ts',
-      symbols: ['FreeAccessEndedByPurchase', 'freeAccessEndedByPurchase', 'hasOpenEndedFreeAccess'],
-      why: 'Plan payments P-4.2 (SA W-6, W-7): the Settings → Plan purchase view behind the my-plan route. It reads `hasOpenEndedFreeAccess` (BQ-P10) over the snapshot the route already holds, to feed `planPurchaseOffer` the same fact the checkout uses, and `freeAccessEndedByPurchase` (with its `FreeAccessEndedByPurchase` TYPE) to pick the "ends your free trial / free access today" sentence. It DESCRIBES what the checkout would sell, for display; it refuses nothing itself (the checkout route does), grants or withholds no capability, and calls no `check()` / `decide()`, so there is no capability to register it under. P-7b.1b re-check: it also feeds `planUpgradeOffer` (planCheckoutEligibility.ts) from the same billing row, for `purchase.upgrade`; no new entitlements symbol, and the upgrade routes refuse, not this view. If it ever refuses a request or a feature by plan, it moves to ENFORCEMENT_POINTS.',
+      symbols: ['FreeAccessEndedByPurchase', 'freeAccessEndedByPurchase', 'getEntitlementMode', 'hasOpenEndedFreeAccess'],
+      why: 'Plan payments P-4.2 (SA W-6, W-7): the Settings → Plan purchase view behind the my-plan route. It reads `hasOpenEndedFreeAccess` (BQ-P10) over the snapshot the route already holds, to feed `planPurchaseOffer` the same fact the checkout uses, and `freeAccessEndedByPurchase` (with its `FreeAccessEndedByPurchase` TYPE) to pick the "ends your free trial / free access today" sentence. It DESCRIBES what the checkout would sell, for display; it refuses nothing itself (the checkout route does), grants or withholds no capability, and calls no `check()` / `decide()`, so there is no capability to register it under. P-7b.1b re-check: it also feeds `planUpgradeOffer` (planCheckoutEligibility.ts) from the same billing row, for `purchase.upgrade`; no new entitlements symbol, and the upgrade routes refuse, not this view. If it ever refuses a request or a feature by plan, it moves to ENFORCEMENT_POINTS. P-6a.2 (workplan §5.7, SA Q-5): `getEntitlementMode` is read only to know whether the effective mode is `enforce`, so the Settings line never says "paused" before S-5; it decides wording, never access.',
     },
     {
       file: 'components/test-business-os/PlanCheckoutPanel.tsx',
@@ -546,6 +546,42 @@ describe('backward: a gate cannot ship unregistered', () => {
       symbols: ['getEntitlementConfig'],
       why: 'Finance & business health slice 1a (SA-WR-4): the production wiring of the admin finance page reads the entitlement config once and hands it to the pure classifier as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
     },
+    // ── Plan payments P-8a.1, 2026-10-18 — the admin Subscriptions page ─────
+    {
+      file: 'lib/admin/billing/subscriptionsView.ts',
+      symbols: [
+        'EntitlementConfig',
+        'LifecycleResult',
+        'deriveLifecycle',
+        'fromPlanRow',
+        'lifecycleInputs',
+        'planLabel',
+        'planMonthlyPriceUsd',
+      ],
+      why: "Plan payments P-8a.1 (SA-WP-P8a): builds the admin Subscriptions list for DISPLAY only. Grace and paused come from `deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)`, the same call the Finance classifier makes; plan names from `planLabel`; each tier's monthly list price from `planMonthlyPriceUsd`, for MRR. The config arrives as a parameter. It never calls check() / decide() and refuses nothing. If it ever does, it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
+    {
+      file: 'lib/admin/billing/subscriptionsDeps.ts',
+      symbols: ['EntitlementConfig', 'getEntitlementConfig'],
+      why: 'Plan payments P-8a.1: the production wiring of the admin Subscriptions page reads the entitlement config once and hands it to the pure builder as a parameter. It resolves no account, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.',
+    },
+    // ── Money MK-4, 2026-10-19 — MRR now in the admin Finance payload ───────
+    {
+      file: 'lib/admin/billing/financeMrr.ts',
+      symbols: ['EntitlementConfig', 'getEntitlementConfig'],
+      why: "Money MK-4 (KPI restructure review SA-2): the admin finance route's MRR wiring reads the entitlement config once and hands it to `subscriptionsMrr` (the Subscriptions list's own MRR rule) as a parameter, for each tier's monthly list price. For DISPLAY only: it resolves no account's plan, reads no snapshot and refuses nothing. If it ever calls check() / decide(), it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
+    // ── Plan payments P-8a.2, 2026-10-18 — the billing panel in the Businesses drawer ─
+    {
+      file: 'lib/admin/billing/billingPanelView.ts',
+      symbols: ['EntitlementConfig', 'deriveLifecycle', 'fromPlanRow', 'lifecycleInputs', 'planLabel'],
+      why: "Plan payments P-8a.2 (SA-WP-P8a): builds one account's admin billing panel for DISPLAY only: the plan row's lifecycle state with `deriveLifecycle(fromPlanRow(row), lifecycleInputs(config), now)`, as the Subscriptions list does, and plan names from `planLabel`. The config arrives as a parameter. It never calls check() / decide() and refuses nothing. If it ever does, it is a gate and belongs in ENFORCEMENT_POINTS.",
+    },
+    {
+      file: 'app/api/admin/business-os/billing/accounts/[accountId]/route.ts',
+      symbols: ['getEntitlementConfig', 'isBusinessOsTenant'],
+      why: 'Plan payments P-8a.2: the admin billing panel route asks whether the account is a Business OS tenant (the same check as the summary route, tenant-isolation-guard order) and reads the config once for the pure builder. Read-only; it refuses no capability and calls no check() / decide().',
+    },
     // ── Plan payments P-3b.2, 2026-10-07 — the webhook plan handler ─────────
     {
       file: 'lib/business-os/billing/planBillingHandler.ts',
@@ -556,6 +592,16 @@ describe('backward: a gate cannot ship unregistered', () => {
       file: 'lib/business-os/billing/planPaymentApply.ts',
       symbols: ['EntitlementConfig', 'RecordPlanChangeInput', 'resolveAccountId', 'tierIsConfigured'],
       why: 'Plan payments P-3b.2 (workplan §3.2, §3.3): applies a PAID Stripe plan invoice. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `tierIsConfigured` refuses to WRITE a tier the config does not define (RC-1, a data-integrity refusal of a payment, not a refusal of a request by plan); the two TYPES describe its ports. It calls no `check()` / `decide()` and gates no feature. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'lib/business-os/billing/planSubscriptionMirror.ts',
+      symbols: ['RecordPlanChangeInput', 'resolveAccountId'],
+      why: 'Plan payments P-6a.2 (workplan §5.5, SA C-4): on `customer.subscription.deleted` it records the `subscription_ended` money history row and the BOS_BILLING_SUBSCRIPTION_ENDED audit. `resolveAccountId` is the account seam for the id taken from our billing row (SR-8); `RecordPlanChangeInput` is the TYPE of its audit port. It writes no plan row, invalidates nothing, calls no `check()` / `decide()` and refuses nothing by plan.',
+    },
+    {
+      file: 'lib/business-os/billing/readPaymentNotice.ts',
+      symbols: ['getEntitlementConfig', 'getEntitlementMode', 'getEntitlementService', 'planLabel', 'resolveAccountId'],
+      why: 'Plan payments P-6a.2 (workplan §5.6, SA C-13): the owner payment banner read for the Business OS layout. It reads the session account snapshot (`getEntitlementService` through `resolveAccountId`) for the lifecycle state and grace end, `getEntitlementMode` only to know whether the effective mode is `enforce` (no "paused" wording before S-5, SA Q-5), and `planLabel` / `getEntitlementConfig` for the plan name. DISPLAY ONLY, like readPlanBadge: it refuses nothing, grants nothing and calls no `check()` / `decide()`.',
     },
   ];
 

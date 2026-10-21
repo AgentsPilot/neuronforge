@@ -15,7 +15,12 @@
  *   - the page fetches no row value of its own (C-8, tightened): the plan and
  *     consent drawers load their data when they open, and any page-load read
  *     belongs in its own effect through an existing route, never here by
- *     accident;
+ *     accident. Since C-a (C-5) the consent drawer's reads may start early
+ *     through `useDrawerPrefetch` and the read module `marketingDrawerReads`,
+ *     which names the route, so the page still never does
+ *     (`consentPrefetch.guard.test.ts` pins that wiring). Since C-b (C-2) the
+ *     plan drawer's read does the same through `planDrawerReads`
+ *     (`planPrefetch.guard.test.ts`);
  *   - the two dead log-out helpers stay gone.
  *
  * Positive pins run on comment-stripped source, so a commented-out line cannot
@@ -45,12 +50,19 @@ describe('S-5: every account-card chevron mirrors in RTL', () => {
 
   it('every ChevronRight on the page takes its class from the helper', () => {
     const chevrons = code.match(/<ChevronRight\b[^>]*\/>/g) ?? [];
-    // Plan, consent, password, export, log out, delete. Invite has its own (mirrored) row.
-    expect(chevrons.length).toBeGreaterThanOrEqual(6);
+    // Plan, consent, password, log out, delete. Invite and, since data export
+    // DE-9, "Download my data" own their rows (and their mirrored chevrons).
+    expect(chevrons.length).toBeGreaterThanOrEqual(5);
     for (const chevron of chevrons) {
       expect(chevron).toMatch(/className=\{rowChevron\(/);
       expect(chevron).toContain('aria-hidden="true"');
     }
+  });
+
+  it('the "Download my data" row, which owns its own chevron since DE-9, mirrors it', () => {
+    expect(code).toMatch(/<DownloadMyDataButton variant="row" \/>/);
+    const control = stripComments(read('components/business-os/data-export/DownloadMyDataButton.tsx'));
+    expect(control).toMatch(/<ChevronRight[\s\S]*?(?<![!\w])isRTL && 'scale-x-\[-1\]'[\s\S]*?\/>/);
   });
 
   it('the invite row, which owns its own chevron, keeps its mirror', () => {
@@ -70,7 +82,7 @@ describe('S-5: the plan anchor stays (SA W-5)', () => {
 
 describe('S-5 / C-8: no row-value request from the page', () => {
   it.each(['/api/business-os/entitlements/my-plan', '/api/business-os/consent-settings'])(
-    'the page does not call %s (the drawers load it on open)',
+    "the page does not call %s (only the drawers' read modules name it)",
     (route) => {
       expect(code).not.toContain(route);
     }

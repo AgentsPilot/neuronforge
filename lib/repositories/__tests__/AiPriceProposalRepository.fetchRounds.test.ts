@@ -145,6 +145,8 @@ describe('newest fetch round reads (SC-12)', () => {
   it.each([
     ['openai', 'ok', 'eq', 'provider_outcomes->openai->>outcome'],
     ['openai', 'not_ok', 'neq', 'provider_outcomes->openai->>outcome'],
+    ['anthropic', 'ok', 'eq', 'provider_outcomes->anthropic->>outcome'],
+    ['anthropic', 'not_ok', 'neq', 'provider_outcomes->anthropic->>outcome'],
     ['litellm', 'ok', 'eq', 'provider_outcomes->litellm->>outcome'],
     ['litellm', 'not_ok', 'neq', 'provider_outcomes->litellm->>outcome'],
   ] as const)('latestFetchRoundByOutcome(%s, %s) filters with .%s on the JSON path, never .or()', async (source, match, method, path) => {
@@ -154,6 +156,28 @@ describe('newest fetch round reads (SC-12)', () => {
     expect(data).toBeNull();
     expect(queries[0].calls).toContainEqual({ method, args: [path, 'ok'] });
     expect(queries[0].calls.map((call) => call.method)).not.toContain('or');
+  });
+
+  it('slice 10 (SC10-3): an Anthropic failure excludes `manual_only` with a second chained .neq, never .or()', async () => {
+    const { client, queries } = makeClient([{ data: [], error: null }]);
+    await new AiPriceProposalRepository(client).latestFetchRoundByOutcome('anthropic', 'not_ok');
+    const path = 'provider_outcomes->anthropic->>outcome';
+    expect(queries[0].calls).toEqual([
+      { method: 'select', args: ['id, created_at, created_by, provider_outcomes'] },
+      { method: 'eq', args: ['source_kind', 'fetch'] },
+      { method: 'neq', args: [path, 'ok'] },
+      { method: 'neq', args: [path, 'manual_only'] },
+      { method: 'order', args: ['created_at', { ascending: false }] },
+      { method: 'limit', args: [1] },
+    ]);
+  });
+
+  it('slice 10: OpenAI and LiteLLM failures carry no extra exclusion', async () => {
+    for (const source of ['openai', 'litellm'] as const) {
+      const { client, queries } = makeClient([{ data: [], error: null }]);
+      await new AiPriceProposalRepository(client).latestFetchRoundByOutcome(source, 'not_ok');
+      expect(queries[0].calls.filter((call) => call.method === 'neq')).toEqual([{ method: 'neq', args: [`provider_outcomes->${source}->>outcome`, 'ok'] }]);
+    }
   });
 
   it('returns the error instead of throwing', async () => {

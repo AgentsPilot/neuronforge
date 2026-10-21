@@ -75,6 +75,27 @@
  * imports (`react`, `lucide-react`, `@/components/ui/dialog` and siblings
  * through `./`) were already on the S-3 allow-list, and it never fetches. The
  * Messages registry entry drops `MessagesConfirmDialog.tsx`, deleted by LF-7.
+ *
+ * Amended by Finance F-2: Finance joins the registry (SA-W2) with its page, its
+ * view and its hook; F-4 and F-5 extend the entry. No rule change. The one
+ * shared source change is `readAdminResponse.ts` exporting `adminReadFallback`
+ * (SA-W1), which adds no import.
+ *
+ * Amended by Finance F-5: the Finance entry gains the KPI strip (now the
+ * shared `KpiStrip` / `KpiTile`) and the section frame (the tiles' anchor
+ * targets). No rule change: `StatusChip.tsx` still holds the one green
+ * constant (now the object `OK_GREEN`, SA Q-3), and `KpiStrip.tsx` adds only
+ * `next/link` and `./StatusChip`, both on the S-3 allow-list.
+ *
+ * Amended by Exchange rates 1c.2: the Exchange rates entry gains its filter
+ * spec `exchangeRatesFilters.ts` (as `usersFilters.ts` and `costsFilters.ts`
+ * sit in theirs). Registration only: no rule change and no shared source change.
+ *
+ * Amended by Admin Exchange Rates slice 2b (SQ-22): the Exchange rates page is
+ * deleted (its old URL redirects to Finance's Exchange rates tab), so its entry
+ * is removed and its five non-page files move to the Finance entry, listed
+ * there and only there. Registration only: no rule change and no shared source
+ * change.
  */
 
 import * as fs from 'fs';
@@ -531,7 +552,7 @@ const MIGRATED_PAGES = [
   {
     // L-2a (part a): header, KPI strip, filter bar, states, URL. L-2b (part b):
     // the table, the call drawer, the run card and the summary cards.
-    page: '/admin/analytics (AI cost & usage)',
+    page: '/admin/analytics (AI calls & usage (detail))',
     files: [
       'app/admin/analytics/page.tsx',
       'app/admin/analytics/analyticsTypes.ts',
@@ -632,9 +653,10 @@ const MIGRATED_PAGES = [
     ],
   },
   {
-    // L-8a / L-8b (header, tabs, Activity), L-9a / L-9b (Costs & credits),
-    // L-10 (Settings): one entry for the page's three tabs (SA L-10 Q-10). The
-    // filter-spec modules are listed because they import the shared folder
+    // L-8a / L-8b (header, tabs, Activity), L-10 (Settings): one entry for the
+    // page's tabs (SA L-10 Q-10). The Costs & credits tab (L-9a / L-9b) moved
+    // to Charge checks in Money M-5, and its files moved to that entry below.
+    // The filter-spec modules are listed because they import the shared folder
     // (SA L-10 M-4). Deliberately NOT listed (the G-6 precedent):
     // `components/LedgerCheckPanel.tsx`, parked since 2026-09-24 and not
     // mounted, still reads with `.json(` (F-123, slice 3 re-mounts and
@@ -647,7 +669,6 @@ const MIGRATED_PAGES = [
     files: [
       'app/admin/business-os-llm/page.tsx',
       'app/admin/business-os-llm/activityFilters.ts',
-      'app/admin/business-os-llm/costsFilters.ts',
       'app/admin/business-os-llm/tabWindowFilter.ts',
       'app/admin/business-os-llm/components/SettingsKpis.tsx',
       'app/admin/business-os-llm/components/AreaCard.tsx',
@@ -667,11 +688,6 @@ const MIGRATED_PAGES = [
       'app/admin/business-os-llm/components/activity/CutoverNotice.tsx',
       'app/admin/business-os-llm/components/activity/DeletedAccountsBucket.tsx',
       'app/admin/business-os-llm/components/activity/RecordStateMarker.tsx',
-      'app/admin/business-os-llm/components/costs/CostsTab.tsx',
-      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
-      'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
-      'app/admin/business-os-llm/components/costs/CostsSections.tsx',
-      'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
     ],
   },
   {
@@ -680,6 +696,46 @@ const MIGRATED_PAGES = [
     // filters, no table, no drawer, no dialog: the page is read-only.
     page: '/admin/settings (Admin users)',
     files: ['app/admin/settings/page.tsx'],
+  },
+  {
+    // Finance F-2: the shared header (h1 "Finance") and states; the read on
+    // readAdminResponse since F-3. Finance F-4: the shared filter bar and the
+    // URL hook; DV-1 ended in F-4 (Refresh moved from the header to the bar).
+    // Finance F-5: the KPI strip on the shared tiles (BD-29, BD-31).
+    page: '/admin/finance (Finance)',
+    files: [
+      'app/admin/finance/page.tsx',
+      'app/admin/finance/components/FinanceView.tsx',
+      'app/admin/finance/useFinanceData.ts',
+      'app/admin/finance/components/FinanceFilterBar.tsx',
+      'app/admin/finance/financeFilters.ts',
+      // Finance F-5: the shared KPI tiles, and the sections they jump to.
+      'app/admin/finance/components/FinanceKpiStrip.tsx',
+      'app/admin/finance/components/FinanceSection.tsx',
+      // Admin Exchange Rates slice 2b (SQ-22): the Exchange rates tab. The view
+      // stays in app/admin/exchange-rates/ (SA-R13) and is listed here, and only here.
+      'app/admin/exchange-rates/exchangeRatesFilters.ts',
+      'app/admin/exchange-rates/components/ExchangeRatesView.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesKpis.tsx',
+      'app/admin/exchange-rates/components/ExchangeRatesTable.tsx',
+      'app/admin/exchange-rates/components/RateHistoryTable.tsx',
+    ],
+  },
+  {
+    // Money M-5 (finance health §11H.4, AC-200): the cost report and its Leak
+    // check (L-9a / L-9b), moved from the Business OS AI page's Costs & credits
+    // tab. The page imports the header; the report's files stay where they are
+    // (SA-Q59) and are listed here, and only here.
+    page: '/admin/finance/charges (Charge checks)',
+    files: [
+      'app/admin/finance/charges/page.tsx',
+      'app/admin/business-os-llm/costsFilters.ts',
+      'app/admin/business-os-llm/components/costs/CostsTab.tsx',
+      'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
+      'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
+      'app/admin/business-os-llm/components/costs/CostsSections.tsx',
+      'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
+    ],
   },
 ] as const;
 
@@ -713,6 +769,21 @@ describe('C-14 part (b): migrated pages', () => {
       const specs = specifiersOf(codeOf(read(file)));
       expect({ file, relative: specs.filter((s) => reachesLayoutRelatively(file, s)) }).toEqual({ file, relative: [] });
     });
+  });
+});
+
+describe('C-14 part (b): the registry itself (Money M-5, AC-200)', () => {
+  it('lists every file in exactly one page entry', () => {
+    const all = MIGRATED_PAGES.flatMap((entry) => [...entry.files]);
+    const twice = all.filter((file, index) => all.indexOf(file) !== index);
+    expect(twice).toEqual([]);
+  });
+
+  it('Charge checks is registered with its page and the report files', () => {
+    const entry = MIGRATED_PAGES.find((e) => e.page === '/admin/finance/charges (Charge checks)');
+    expect(entry?.files).toEqual(expect.arrayContaining(['app/admin/finance/charges/page.tsx', 'app/admin/business-os-llm/components/costs/CostsTab.tsx']));
+    const bosAi = MIGRATED_PAGES.find((e) => e.page === '/admin/business-os-llm (Business OS AI)');
+    expect(bosAi?.files.some((file) => file.includes('/costs/') || file.endsWith('costsFilters.ts'))).toBe(false);
   });
 });
 

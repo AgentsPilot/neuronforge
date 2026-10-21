@@ -192,6 +192,9 @@ const PANEL_READS: Record<string, { entitlements: Reply; summary: Reply }> = {
   [SARA_ID]: { entitlements: { status: 200, body: recordedAccountBody }, summary: SERVER_ERROR },
 };
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function routeGet(url: string): Queued {
   if (url.startsWith('/api/admin/users?')) {
     return { status: 200, body: { success: true, data: listRows, stats: { totalUsers: listRows.length, activeUsers: 0, newUsersToday: 0 } } };
@@ -206,6 +209,8 @@ function routeGet(url: string): Queued {
     if (url === `/api/admin/business-os/credits/accounts/${id}/boost`) return ok(boost(id));
   }
   if (url === ARCHIVING_URL) return { status: 200, body: ARCHIVING };
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return ok(NO_EXPORTS);
   if (url === CLEANUP_CHECK_URL) return ok({ configured: true });
   unexpected.push(`GET ${url}`);
   return refused(404, 'not mocked');
@@ -261,7 +266,7 @@ const CHECK_POST = {
   method: 'POST',
   headers: JSON_HEADERS,
   cache: undefined,
-  body: { email: DANA_EMAIL, tag: DANA_EMAIL },
+  body: { mode: 'hard', email: DANA_EMAIL, tag: DANA_EMAIL },
 };
 /** The whole expected cleanup delete request (PIN-e; no cache option today, F-4). */
 const DELETE_POST = {
@@ -269,14 +274,19 @@ const DELETE_POST = {
   method: 'POST',
   headers: JSON_HEADERS,
   cache: undefined,
-  body: { email: DANA_EMAIL, tag: DANA_EMAIL, confirmEmail: DANA_EMAIL },
+  body: { mode: 'hard', email: DANA_EMAIL, tag: DANA_EMAIL, confirmEmail: DANA_EMAIL, reason: { category: 'test_account' } },
 };
 
 const panelOf = (drawer: HTMLElement) => within(drawer).getByTestId('test-account-cleanup-panel');
 
-/** Check, then type the confirmation; returns the Delete button. */
+/**
+ * Pick "Test account" (the hard delete), Check, then type the confirmation;
+ * returns the Delete button. DE-10b.1: the drawer defaults to "Customer
+ * account" (close and anonymise); the hard flow is one click away.
+ */
 async function checkAndConfirm(drawer: HTMLElement): Promise<HTMLButtonElement> {
   const panel = panelOf(drawer);
+  fireEvent.click(within(panel).getByTestId('cleanup-mode-hard'));
   checkQueue.push(ok(checkView()));
   fireEvent.click(within(panel).getByRole('button', { name: 'Check' }));
   await within(panel).findByTestId('cleanup-confirm');
@@ -312,6 +322,8 @@ const commonReads = (id: string) => [
   `GET /api/admin/business-os/accounts/${id}/summary cache=no-store headers=none`,
   `GET ${ARCHIVING_URL} cache=none headers=none`,
   `GET ${CLEANUP_CHECK_URL} cache=none headers=none`,
+  // Data export DE-10a (BC-5, W10-10): the Data export box's one status read, for every login.
+  `GET /api/admin/users/${id}/data-exports cache=no-store headers=none`,
 ];
 const moneyReads = (id: string) => [
   `GET /api/admin/business-os/credits/accounts/${id} cache=no-store headers=none`,
@@ -319,12 +331,12 @@ const moneyReads = (id: string) => [
 ];
 
 describe('PIN-k / AC-4.3: the requests one opening sends', () => {
-  it('READS-1: a Business OS account: the nine reads below, each exactly once, and no POST', async () => {
+  it('READS-1: a Business OS account: the ten reads below, each exactly once, and no POST', async () => {
     const sent = await requestsOfOneOpen('Dana Cohen', 'boost-cap');
     expect(sent).toEqual([...commonReads(DANA_ID), ...moneyReads(DANA_ID)].sort());
   });
 
-  it('READS-2 (BD-13 today): a login with no Business OS business: the seven common reads, no credits or top-ups read; the one-line note; no money block', async () => {
+  it('READS-2 (BD-13 today): a login with no Business OS business: the eight common reads, no credits or top-ups read; the one-line note; no money block', async () => {
     const sent = await requestsOfOneOpen('Oren Levi', 'bos-panel-not-bos');
     expect(sent).toEqual([...commonReads(OREN_ID)].sort());
     const drawer = screen.getByTestId('users-drawer');
@@ -340,7 +352,7 @@ describe('PIN-k / AC-4.3: the requests one opening sends', () => {
     expect(within(drawer).getByTestId('test-account-cleanup-panel')).toBeTruthy();
   });
 
-  it('READS-3: a failed entitlements read: the same nine reads once each (the money blocks still mount); the plan error is shown', async () => {
+  it('READS-3: a failed entitlements read: the same ten reads once each (the money blocks still mount); the plan error is shown', async () => {
     const sent = await requestsOfOneOpen('Eli Plan', 'boost-cap');
     expect(sent).toEqual([...commonReads(ELI_ID), ...moneyReads(ELI_ID)].sort());
     const drawer = screen.getByTestId('users-drawer');
@@ -348,7 +360,7 @@ describe('PIN-k / AC-4.3: the requests one opening sends', () => {
     expect(within(drawer).getByTestId('credits-block')).toBeTruthy();
   });
 
-  it('READS-4: a failed summary read: the same nine reads once each; the summary error is shown under a neutral header', async () => {
+  it('READS-4: a failed summary read: the same ten reads once each; the summary error is shown under a neutral header', async () => {
     const sent = await requestsOfOneOpen('Sara Summary', 'boost-cap');
     expect(sent).toEqual([...commonReads(SARA_ID), ...moneyReads(SARA_ID)].sort());
     const drawer = screen.getByTestId('users-drawer');
@@ -374,6 +386,15 @@ describe('PIN-j: Remove this account and the hidden Delete… entry', () => {
     expect(within(drawer).getAllByTestId('test-account-cleanup-panel')).toHaveLength(1);
 
     expect(within(panel).getByRole('heading').textContent).toBe('Remove this account');
+    // DE-10b.1: the row's account id turns on the mode choice; "Customer account" is the default.
+    expect((within(panel).getByTestId('cleanup-mode-anonymise') as HTMLInputElement).checked).toBe(true);
+    expect((within(panel).getByTestId('cleanup-mode-hard') as HTMLInputElement).checked).toBe(false);
+    expect(within(panel).getByTestId('cleanup-anonymise-warning').textContent).toContain('our billing records stay with personal details removed');
+    // The anonymise mode reads no tag: the one field is the locked email.
+    const anonymiseFields = within(panel).getAllByRole('textbox') as HTMLInputElement[];
+    expect(anonymiseFields.map((field) => [field.value, field.readOnly])).toEqual([['dana@example.com', true]]);
+    // "Test account" brings back the hard delete exactly as before.
+    fireEvent.click(within(panel).getByTestId('cleanup-mode-hard'));
     expect(within(panel).getByTestId('cleanup-locked-warning').textContent).toBe(
       'Permanently removes a real account, its login and money history.'
     );
@@ -448,6 +469,55 @@ describe('PIN-j: Remove this account and the hidden Delete… entry', () => {
     expect(within(drawer).queryByTestId('cleanup-report')).toBeNull();
     expect(listReads()).toBe(listBefore);
     expect(screen.getByTestId('users-drawer').getAttribute('data-state')).toBe('open');
+  });
+
+  it('DANGER-6 (DE-10b.1): close and anonymise: the exact requests, a required reason, the closed report, Done reads the list once', async () => {
+    await renderPage();
+    const drawer = await openRow('Dana Cohen', 'boost-cap');
+    const panel = panelOf(drawer);
+    checkQueue.push(ok({ ...checkView(), notes: [{ guard: 'G-14', item: 'no consent ledger rows', found: 2, clears: 'Reported only: kept' }] }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Check' }));
+    await within(panel).findByTestId('cleanup-confirm');
+    expect(within(panel).getByTestId('cleanup-notes').textContent).toContain('G-14');
+    const button = within(panel).getByRole('button', { name: 'Close and anonymise this account' }) as HTMLButtonElement;
+    fireEvent.change(within(panel).getByLabelText('Type the email again to confirm'), { target: { value: 'dana@example.com' } });
+    // BQ-4: no reason, no delete.
+    expect(button.disabled).toBe(true);
+    fireEvent.click(within(panel).getByTestId('cleanup-reason-customer_asked'));
+    expect(button.disabled).toBe(false);
+
+    const listBefore = listReads();
+    deleteQueue.push(
+      ok({
+        mode: 'anonymise',
+        targetUserId: DANA_ID,
+        filesRemoved: 0,
+        receiptId: '88888888-8888-4888-8888-888888888888',
+        placeholderRef: '888888888888',
+        receiptMode: 'anonymised',
+        rowsRemoved: 5,
+        tablesRemoved: 2,
+        rowsBlanked: 1,
+        serverMs: { check: 10, delete: 20 },
+      })
+    );
+    fireEvent.click(button);
+    const report = await within(drawer).findByTestId('cleanup-anonymised');
+    expect(report.textContent).toContain('Deleted account 888888888888');
+    await quiet();
+    expect(listReads()).toBe(listBefore);
+    expect(posts().map((p) => requestOf(p))).toStrictEqual([
+      { ...CHECK_POST, body: { mode: 'anonymise', email: DANA_EMAIL, subject: DANA_ID } },
+      {
+        ...DELETE_POST,
+        body: { mode: 'anonymise', email: DANA_EMAIL, subject: DANA_ID, confirmEmail: DANA_EMAIL, reason: { category: 'customer_asked' } },
+      },
+    ]);
+    listRows = [OREN, ELI, SARA];
+    fireEvent.click(within(report).getByTestId('cleanup-done'));
+    await waitFor(() => expect(screen.queryByTestId('users-drawer')).toBeNull());
+    await quiet();
+    expect(listReads()).toBe(listBefore + 1);
   });
 
   it('DANGER-5: the Delete… entry is not rendered and its preview is never requested', async () => {

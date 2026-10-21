@@ -1,5 +1,8 @@
 'use client';
 
+// REDUNDANT (BD-34, 2026-10-16): superseded by the Money area; kept, not deleted; do not extend or link.
+// Its AI cost totals are in AI calls & usage (all products). Finance requirement §11J.
+
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
@@ -27,9 +30,11 @@ import {
  * kept intact here (decision D-3: nothing is deleted); the only change is the
  * Pino conversion of its one `console.error` (CLAUDE.md rule 3).
  *
- * Reachable BY URL ONLY (user decision U-6, 2026-09-26): its sidebar entry sits
- * in the hidden "AgentsPilot (parked)" section, and nothing links here. The user
+ * Reachable BY URL ONLY (user decision U-6, 2026-09-26). The user
  * decides later whether it stays at all (FU-4).
+ *
+ * FU-4 answered by BD-34 (Money M-8): kept, redundant, and unlinked. Its hidden
+ * parked sidebar entry was removed, so nothing in the product links here.
  */
 
 const logger = createLogger({ module: 'AdminPlatformDashboard' });

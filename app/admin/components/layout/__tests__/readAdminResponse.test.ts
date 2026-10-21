@@ -9,7 +9,7 @@
  */
 
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
-import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
+import { ADMIN_NETWORK_ERROR, adminReadFallback, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 
 const ALLOWED = new Set(['ok', 'status', 'json']);
 
@@ -117,6 +117,13 @@ describe('readAdminResponse', () => {
   ])('a %s error field gives the fixed fallback', async (_label, error) => {
     const result = await readAdminResponse(withBody(500, { success: false, error }), { what: WHAT });
     expect(result).toEqual({ ok: false, status: 500, message: FALLBACK });
+  });
+
+  it('F2-R1: the exported adminReadFallback is the very sentence the helper returns for a body without an error', async () => {
+    const result = await readAdminResponse(withBody(500, { success: false }), { what: 'x' });
+    expect(result).toEqual({ ok: false, status: 500, message: adminReadFallback('x') });
+    expect(adminReadFallback('x')).toBe('Could not read x. Try again in a moment.');
+    expect(adminReadFallback(WHAT)).toBe(FALLBACK);
   });
 
   it('the network copy is the fixed §5.10 rule 3 text', () => {

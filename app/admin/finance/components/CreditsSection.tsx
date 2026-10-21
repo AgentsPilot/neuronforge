@@ -12,9 +12,28 @@
  * read leaves the gifted figures "Unknown" while the rest renders (AC-38).
  */
 
-import type { FinanceCreditRow, FinanceCreditsSection } from '@/lib/business-os/finance/financeTypes';
+import type { ReactNode } from 'react';
+import type { FinanceCreditRow, FinanceCreditsSection, FinanceTile } from '@/lib/business-os/finance/financeTypes';
+import type { StatusTone } from '@/app/admin/components/layout/StatusChip';
+import {
+  ADMIN_TABLE,
+  ADMIN_TABLE_WRAP,
+  ADMIN_TBODY,
+  ADMIN_TD,
+  ADMIN_TD_NUM,
+  ADMIN_TH,
+  ADMIN_TH_NUM,
+  ADMIN_THEAD,
+} from '@/app/admin/components/layout/adminTable';
 import {
   CREDITS_ALLOWANCE,
+  CREDITS_BOUGHT,
+  CREDITS_BOUGHT_BOOSTS,
+  CREDITS_BOUGHT_COLUMN,
+  CREDITS_BOUGHT_DELETED_NOTE,
+  CREDITS_BOUGHT_IN_WINDOW,
+  CREDITS_BOUGHT_UNKNOWN,
+  CREDITS_NOT_TAKEN_BACK,
   CREDITS_BUSINESS,
   CREDITS_DELETED_NOTE,
   CREDITS_FAR_OVER,
@@ -31,7 +50,9 @@ import {
   CREDITS_NO_ACCOUNTS,
   CREDITS_NO_ALLOWANCE,
   CREDITS_NOT_LISTED_NOTE,
-  CREDITS_OVER,
+  BLOCK_KPI_FAR_OVER_CHIP,
+  BLOCK_KPI_OVER_ALLOWANCE_DEFINITION,
+  BLOCK_KPI_OVER_ALLOWANCE_LABEL,
   CREDITS_OVER_COLUMN,
   CREDITS_PLAN,
   CREDITS_SHOWING,
@@ -50,10 +71,8 @@ import {
 } from '../financeCopy';
 import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
+import { BlockKpi } from './BlockKpi';
 import { FinanceSection } from './FinanceSection';
-
-const TH = 'px-2 py-1 text-left text-[11px] font-medium uppercase tracking-wide text-slate-400';
-const TD = 'px-2 py-1 text-sm text-slate-200';
 
 function nameOf(row: FinanceCreditRow): string {
   switch (row.nameStatus) {
@@ -81,78 +100,134 @@ export function usedPercent(row: FinanceCreditRow): string {
 const credits = (value: number | null | undefined) => (value === null || value === undefined ? CREDITS_UNKNOWN : formatCredits(value));
 const yesNo = (value: boolean | null) => (value === null ? CREDITS_UNKNOWN : value ? CREDITS_YES : CREDITS_NO);
 
+/** The K-2 rule's status as the chip's tone: the rule decides, this only maps it (BD-11). */
+function k2ChipTone(k2: FinanceTile | undefined): StatusTone {
+  if (k2?.status === 'red') return 'danger';
+  if (k2?.status === 'amber') return 'warn';
+  return 'neutral';
+}
+
 export function CreditsSection({
   credits: section,
   windowLabel,
   onRetry,
+  k2,
+  trend,
 }: {
   credits: FinanceCreditsSection;
   windowLabel: string;
   onRetry: () => void;
+  /**
+   * SA-CR-MK5 C-2: K-2's tile, so the far-over chip carries the BD-11 rule's own status
+   * (red, amber, or grey) instead of a fixed amber. Absent (older fixtures): grey.
+   */
+  k2?: FinanceTile;
+  /**
+   * Money MK-7 (§6 item 13): this KPI's history trend (`HistoryTrend`, or the
+   * all-businesses line with a business picked). Its own lazy read, so it also
+   * shows when the section could not load. Absent: as before.
+   */
+  trend?: ReactNode;
 }) {
   const f = section.figures;
   const gifted = section.gifted;
+  // Slice 4b.2 (S4-FR-18 to S4-FR-20): bought credits beside gifted, never added to them. Absent only in
+  // fixtures written before it (E-103), which then render exactly as before.
+  const hasBought = section.bought !== undefined;
+  const bought = section.bought ?? null;
   const count = (value: number | null) => (value === null ? CREDITS_UNKNOWN : formatCount(value));
 
   return (
-    <FinanceSection id="credits" title={CREDITS_TITLE} subtitle={`${CREDITS_SOURCE}, ${windowLabel}`} status={section.status} onRetry={onRetry}>
+    <FinanceSection
+      id="credits"
+      title={CREDITS_TITLE}
+      subtitle={`${CREDITS_SOURCE}, ${windowLabel}`}
+      status={section.status}
+      onRetry={onRetry}
+      alsoWhenUnknown={trend}
+    >
       {f && (
         <div className="space-y-3">
-          <dl className="grid gap-3 sm:grid-cols-3" data-testid="credits-summary">
-            <div><dt className="text-xs text-slate-400">{CREDITS_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-over">{formatCount(f.overAllowance)}</dd></div>
+          {/* Money MK-1: the block KPI is the headline (§3.2), leading (§5); K-2's far-over count is its amber chip. */}
+          <BlockKpi
+            label={BLOCK_KPI_OVER_ALLOWANCE_LABEL}
+            value={formatCount(f.overAllowance)}
+            indicator={{ kind: 'leading', definition: BLOCK_KPI_OVER_ALLOWANCE_DEFINITION }}
+            chip={
+              f.farOverAllowance !== null && f.farOverAllowance > 0
+                ? { tone: k2ChipTone(k2), label: BLOCK_KPI_FAR_OVER_CHIP(formatCount(f.farOverAllowance), section.farOverAllowancePercent) }
+                : null
+            }
+            testId="credits-over"
+          />
+          <dl className={`grid gap-3 ${hasBought ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`} data-testid="credits-summary">
             <div><dt className="text-xs text-slate-400">{CREDITS_FAR_OVER}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-far-over">{count(f.farOverAllowance)}</dd></div>
             <div><dt className="text-xs text-slate-400">{CREDITS_GIFTED}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-gifted">{credits(gifted?.outstanding)}</dd></div>
+            {hasBought && (
+              <div><dt className="text-xs text-slate-400">{CREDITS_BOUGHT}</dt><dd className="text-lg font-semibold text-white" data-testid="credits-bought">{credits(bought?.outstanding)}</dd></div>
+            )}
           </dl>
           <p className="text-xs text-slate-400" data-testid="credits-window">
             {gifted?.window
               ? `${CREDITS_GRANTED}: ${formatCredits(gifted.window.granted)} (${formatCount(gifted.window.grants)} ${CREDITS_GRANTS}, ${formatCount(gifted.window.grantingAdmins)} ${CREDITS_GRANTING_ADMINS}) · ${CREDITS_TAKEN_BACK}: ${formatCredits(gifted.window.takenBack)}`
               : CREDITS_GIFTED_UNKNOWN}
           </p>
+          {hasBought && (
+            <p className="text-xs text-slate-400" data-testid="credits-bought-window">
+              {bought?.window
+                ? `${CREDITS_BOUGHT_IN_WINDOW}: ${formatCredits(bought.window.credits)} (${formatCount(bought.window.lots)} ${CREDITS_BOUGHT_BOOSTS})`
+                : CREDITS_BOUGHT_UNKNOWN}
+            </p>
+          )}
 
           {f.rows.length === 0 ? (
             <p className="text-sm text-slate-300">{CREDITS_NO_ACCOUNTS}</p>
           ) : (
-            <table className="w-full" data-testid="credits-table">
-              <thead>
-                <tr>
-                  <th scope="col" className={TH}>{CREDITS_BUSINESS}</th>
-                  <th scope="col" className={TH}>{CREDITS_PLAN}</th>
-                  <th scope="col" className={TH}>{CREDITS_ALLOWANCE}</th>
-                  <th scope="col" className={TH}>{CREDITS_USED}</th>
-                  <th scope="col" className={TH}>{CREDITS_USED_PERCENT}</th>
-                  <th scope="col" className={TH}>{CREDITS_OVER_COLUMN}</th>
-                  <th scope="col" className={TH}>{CREDITS_GIFTED_COLUMN}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {f.rows.map((row) => (
-                  <tr key={row.accountId} className="border-t border-slate-700/60" data-testid={`credits-row-${row.accountId}`}>
-                    <th scope="row" className={`${TD} font-normal text-left`}>{nameOf(row)}</th>
-                    <td className={TD}>{row.group ? groupLabel({ key: row.group, tierLabel: row.tierLabel }) : CREDITS_UNKNOWN}</td>
-                    {row.kind === 'position' ? (
-                      <>
-                        <td className={TD}>{credits(row.allowance)}</td>
-                        <td className={TD}>{credits(row.used)}</td>
-                        <td className={TD}>
-                          {usedPercent(row)}
-                          {row.trial && <span className="ml-1 text-[11px] text-slate-400">({CREDITS_TRIAL})</span>}
-                        </td>
-                        <td className={TD}>{yesNo(row.overAllowance)}</td>
-                      </>
-                    ) : (
-                      <td className={TD} colSpan={4}>{row.kind === 'no_allowance' ? CREDITS_NO_ALLOWANCE : CREDITS_UNKNOWN}</td>
-                    )}
-                    <td className={TD}>{credits(row.giftedOutstanding)}</td>
+            <div className={ADMIN_TABLE_WRAP}>
+              <table className={ADMIN_TABLE} data-testid="credits-table">
+                <thead className={ADMIN_THEAD}>
+                  <tr>
+                    <th scope="col" className={ADMIN_TH}>{CREDITS_BUSINESS}</th>
+                    <th scope="col" className={ADMIN_TH}>{CREDITS_PLAN}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_ALLOWANCE}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_USED}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_USED_PERCENT}</th>
+                    <th scope="col" className={ADMIN_TH}>{CREDITS_OVER_COLUMN}</th>
+                    <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_GIFTED_COLUMN}</th>
+                    {hasBought && <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_BOUGHT_COLUMN}</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className={ADMIN_TBODY}>
+                  {f.rows.map((row) => (
+                    <tr key={row.accountId} data-testid={`credits-row-${row.accountId}`}>
+                      <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(row)}</th>
+                      <td className={ADMIN_TD}>{row.group ? groupLabel({ key: row.group, tierLabel: row.tierLabel }) : CREDITS_UNKNOWN}</td>
+                      {row.kind === 'position' ? (
+                        <>
+                          <td className={ADMIN_TD_NUM}>{credits(row.allowance)}</td>
+                          <td className={ADMIN_TD_NUM}>{credits(row.used)}</td>
+                          <td className={ADMIN_TD_NUM}>
+                            {usedPercent(row)}
+                            {row.trial && <span className="ml-1 text-[11px] text-slate-400">({CREDITS_TRIAL})</span>}
+                          </td>
+                          <td className={ADMIN_TD}>{yesNo(row.overAllowance)}</td>
+                        </>
+                      ) : (
+                        <td className={ADMIN_TD} colSpan={4}>{row.kind === 'no_allowance' ? CREDITS_NO_ALLOWANCE : CREDITS_UNKNOWN}</td>
+                      )}
+                      <td className={ADMIN_TD_NUM}>{credits(row.giftedOutstanding)}</td>
+                      {hasBought && <td className={ADMIN_TD_NUM} data-testid="credits-bought-cell">{credits(row.boughtOutstanding ?? null)}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {f.rows.length < f.accounts && (
             <p className="text-xs text-slate-400" data-testid="credits-showing">{CREDITS_SHOWING(f.rows.length, f.accounts)}</p>
           )}
 
-          <ul className="space-y-1 text-[11px] text-slate-500" data-testid="credits-notes">
+          <ul className="space-y-1 text-[11px] text-slate-400" data-testid="credits-notes">
             {f.unknownAccounts > 0 && <li>{CREDITS_UNKNOWN_NOTE(f.unknownAccounts)}</li>}
             <li>{CREDITS_GIFTED_NOTE}</li>
             {gifted && gifted.deletedAccountsOutstanding !== 0 && (
@@ -160,9 +235,14 @@ export function CreditsSection({
             )}
             {gifted?.accountsNotListed ? <li>{CREDITS_NOT_LISTED_NOTE(gifted.accountsNotListed)}</li> : null}
             {gifted && gifted.inconsistentAccounts > 0 && <li>{CREDITS_INCONSISTENT_NOTE(gifted.inconsistentAccounts)}</li>}
+            {bought && bought.deletedAccountsOutstanding !== 0 && (
+              <li>{CREDITS_BOUGHT_DELETED_NOTE(credits(bought.deletedAccountsOutstanding))}</li>
+            )}
+            {bought?.refundNotTakenBack && <li data-testid="credits-not-taken-back">{CREDITS_NOT_TAKEN_BACK}</li>}
           </ul>
         </div>
       )}
+      {trend}
     </FinanceSection>
   );
 }

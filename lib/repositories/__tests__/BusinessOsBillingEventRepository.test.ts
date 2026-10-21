@@ -479,12 +479,19 @@ describe('source rules', () => {
       'lib/business-os/billing/__tests__/planPaymentApply.n2.test.ts',
       // P-3b.2: the apply use case's test imports the input and result TYPES to build its fake.
       'lib/business-os/billing/__tests__/planPaymentApply.test.ts',
+      // P-6a.2 (T10): the renewal captured-payload test imports the apply input and event TYPES for its fake.
+      'lib/business-os/billing/__tests__/planRenewal.captured.test.ts',
+      // P-6a.2: the mirror test imports the event input TYPE for its fake history.
+      'lib/business-os/billing/__tests__/planSubscriptionMirror.test.ts',
       // P-7b.1b (U-7): the captured-payload test imports the apply input and event TYPES for its fake.
       'lib/business-os/billing/__tests__/planUpgrade.captured.test.ts',
       // P-3b.2 (workplan §3.1): the plan webhook handler wires the singleton;
       // the apply use case takes it as a port TYPE (applyPlanPayment, recordEvent).
       'lib/business-os/billing/planBillingHandler.ts',
       'lib/business-os/billing/planPaymentApply.ts',
+      // P-6a.2 (workplan §5.5): the subscription mirror records the
+      // `subscription_ended` row through a port TYPE (recordEvent).
+      'lib/business-os/billing/planSubscriptionMirror.ts',
       'lib/repositories/BusinessOsBillingEventRepository.ts',
       // Not a caller: the billing account repository's own caller guard lists
       // this file's path, because it imports that repository's status type.

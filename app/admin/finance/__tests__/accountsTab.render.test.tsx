@@ -11,7 +11,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import type {
   FinanceAccountEconomicsSection,
@@ -34,6 +34,23 @@ jest.mock('@/app/admin/components/layout/AdminBusinessPicker', () => ({
     </button>
   ),
 }));
+// Finance F-4: leaving the tab (or picking a business) now changes the view at
+// once, so the Overview renders with this file's tab-only payload until the next
+// read answers. The Overview sections are not this file's subject: stand-ins.
+// Finance F-5: the strip now shows on the Accounts tab too (BD-29); its first-read placeholders join the stand-in.
+jest.mock('../components/FinanceKpiStrip', () => ({
+  FinanceKpiStrip: () => <div data-testid="kpi-strip" />,
+  FinanceKpiPlaceholders: () => null,
+}));
+jest.mock('../components/RevenuePanel', () => ({ RevenuePanel: () => null }));
+jest.mock('../components/TakingsSection', () => ({ TakingsSection: () => null }));
+jest.mock('../components/AccountsByPlanSection', () => ({
+  ...jest.requireActual('../components/AccountsByPlanSection'),
+  AccountsByPlanSection: () => null,
+}));
+jest.mock('../components/AiCostSection', () => ({ AiCostSection: () => null }));
+jest.mock('../components/CreditsSection', () => ({ CreditsSection: () => null }));
+jest.mock('../components/PaymentProblemsSection', () => ({ PaymentProblemsSection: () => null }));
 
 import { FinanceView } from '../components/FinanceView';
 import { AccountsTab } from '../components/AccountsTab';
@@ -81,6 +98,8 @@ const row = (accountId: string, extra: Partial<FinanceEconomicsRow> = {}): Finan
   paid: { failed: false, lines: [{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }] },
   aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
   margin: { kind: 'figure', marginUsd: 87.7655, noRevenue: false },
+  // Slice 6b: plan 7900 + boost 1000 → fees 259 + 59 = 318.
+  marginAfterFees: { kind: 'figure', afterFeesUsd: 84.5855, feesUsd: 3.18, currency: 'USD', noRevenue: false },
   credits: { kind: 'position', used: 400, allowance: 1000, usedTenths: 400 },
   ...extra,
 });
@@ -94,6 +113,7 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
       paid: { failed: false, lines: [{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }] },
       aiCost: { kind: 'figure', costUsd: 3.5, exact: true },
       margin: { kind: 'figure', marginUsd: 85.5, noRevenue: false },
+      marginAfterFees: { kind: 'figure', afterFeesUsd: 82.32, feesUsd: 3.18, currency: 'USD', noRevenue: false },
       accountsCovered: 4,
       includesDeleted: true,
     },
@@ -109,6 +129,7 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
         paid: { failed: false, lines: [{ currency: 'ILS', afterTax: 10, exact: true, planAfterTax: 0, boostsAfterTax: 10 }] },
         aiCost: { kind: 'figure', costUsd: 0.25, exact: true },
         margin: { kind: 'other_currency' },
+        marginAfterFees: { kind: 'other_currency' },
         credits: { kind: 'no_plan_row' },
       }),
       row(C, {
@@ -117,24 +138,36 @@ function section(extra: Partial<FinanceAccountEconomicsSection> = {}): FinanceAc
         paid: { failed: false, lines: [] },
         aiCost: { kind: 'figure', costUsd: 0.1234, exact: true },
         margin: { kind: 'figure', marginUsd: -0.1234, noRevenue: true },
+        marginAfterFees: { kind: 'figure', afterFeesUsd: -0.1234, feesUsd: 0, currency: 'USD', noRevenue: true },
         credits: { kind: 'no_allowance' },
       }),
-      row(PLATFORM, { kind: 'platform', name: null, nameStatus: 'platform', group: null, tierLabel: null, foundingPartner: false, margin: { kind: 'unknown' }, credits: { kind: 'unknown' } }),
+      row(PLATFORM, { kind: 'platform', name: null, nameStatus: 'platform', group: null, tierLabel: null, foundingPartner: false, margin: { kind: 'unknown' }, marginAfterFees: { kind: 'unknown' }, credits: { kind: 'unknown' } }),
     ],
-    deleted: { paid: { failed: false, lines: [] }, aiCost: { kind: 'figure', costUsd: 0.3, exact: true }, margin: { kind: 'figure', marginUsd: -0.3, noRevenue: true } },
+    deleted: { paid: { failed: false, lines: [] }, aiCost: { kind: 'figure', costUsd: 0.3, exact: true }, margin: { kind: 'figure', marginUsd: -0.3, noRevenue: true }, marginAfterFees: { kind: 'figure', afterFeesUsd: -0.89, feesUsd: 0.59, currency: 'USD', noRevenue: true } },
     counts: { accounts: 4, matching: 4, shown: 4, notListed: 0 },
     groupOptions: [
       { key: 'trial', tierLabel: null },
       { key: 'tier:x', tierLabel: 'Essentials-ish' },
     ],
+    feeEstimate: { currency: 'USD', percent: 2.9, fixed: 0.3 },
     notes: { walkIncomplete: false, ledgerFailed: false, boostsFailed: false, plansFailed: false, creditsUnavailable: false, refundOrDispute: false },
     ...extra,
   };
 }
 
-/** Only what the Accounts tab and the shell read: the Overview sections are not rendered on this tab. */
+/**
+ * Only what the Accounts tab and the shell read: the Overview sections are not rendered on this tab.
+ * Finance F-4: plus the one field the view itself reads for the (stubbed) Overview, which now
+ * renders at once when the tab is left, before the next read answers.
+ */
 const tabPayload = (s: FinanceAccountEconomicsSection = section()) =>
-  ({ generatedAt: '2026-10-14T10:00:00.000Z', window: WINDOW, accountId: null, accountEconomics: s }) as unknown as FinancePayload;
+  ({
+    generatedAt: '2026-10-14T10:00:00.000Z',
+    window: WINDOW,
+    accountId: null,
+    accountEconomics: s,
+    credits: { farOverAllowancePercent: 150 },
+  }) as unknown as FinancePayload;
 
 function serve(body: unknown): jest.Mock {
   const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => body }));
@@ -151,7 +184,12 @@ const renderTab = (s = section(), onChange = jest.fn()) => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockSearch = '';
+  // Finance F-4: the shared hook writes the address bar with history.replaceState.
+  window.history.replaceState(null, '', '/admin/finance');
 });
+
+/** Finance F-4: what the hook wrote to the address bar. */
+const address = () => `${window.location.pathname}${window.location.search}`;
 
 describe('AC-130: the tabs, through the real view', () => {
   it('tab=accounts in the URL (a reload) → Accounts selected, its panel shown, the request carries tab=accounts', async () => {
@@ -163,7 +201,9 @@ describe('AC-130: the tabs, through the real view', () => {
     expect(screen.getByRole('tab', { name: TAB_OVERVIEW })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'finance-tab-accounts');
     expect(String(fetchMock.mock.calls[0][0])).toContain('tab=accounts');
-    expect(screen.queryByTestId('kpi-strip')).toBeNull();
+    // Finance F-5 (BD-29): the KPI strip now shows on the Accounts tab too, above the bar, outside the tab panel.
+    expect(screen.getByTestId('kpi-strip')).toBeInTheDocument();
+    expect(within(screen.getByRole('tabpanel')).queryByTestId('kpi-strip')).toBeNull();
   });
 
   it('keyboard: Left / Right / Home / End move focus only (manual activation); Enter selects; roving tabIndex', async () => {
@@ -173,32 +213,51 @@ describe('AC-130: the tabs, through the real view', () => {
     await screen.findByTestId('econ-table');
     const overview = screen.getByRole('tab', { name: TAB_OVERVIEW });
     const accounts = screen.getByRole('tab', { name: TAB_ACCOUNTS });
+    // Money MK-4 (ruled): a third tab, Plans & subscriptions, after Accounts; slice 2a: a fourth, Exchange rates, last; the keys wrap over four.
+    const plans = screen.getByTestId('finance-tab-plans');
+    const rates = screen.getByTestId('finance-tab-exchange-rates');
     expect(accounts).toHaveAttribute('tabIndex', '0');
     expect(overview).toHaveAttribute('tabIndex', '-1');
+    expect(plans).toHaveAttribute('tabIndex', '-1');
+    expect(rates).toHaveAttribute('tabIndex', '-1');
     accounts.focus();
     fireEvent.keyDown(accounts, { key: 'ArrowRight' });
+    expect(plans).toHaveFocus();
+    fireEvent.keyDown(plans, { key: 'ArrowRight' });
+    expect(rates).toHaveFocus();
+    fireEvent.keyDown(rates, { key: 'ArrowRight' });
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'End' });
-    expect(accounts).toHaveFocus();
-    fireEvent.keyDown(accounts, { key: 'Home' });
+    expect(rates).toHaveFocus();
+    fireEvent.keyDown(rates, { key: 'Home' });
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'ArrowLeft' });
+    expect(rates).toHaveFocus();
+    fireEvent.keyDown(rates, { key: 'ArrowLeft' });
+    expect(plans).toHaveFocus();
+    fireEvent.keyDown(plans, { key: 'ArrowLeft' });
     expect(accounts).toHaveFocus();
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(address()).toBe('/admin/finance?tab=accounts');
     // Enter / Space on a focused tab is the button's own click.
     fireEvent.click(overview);
-    expect(mockReplace).toHaveBeenCalledWith('/admin/finance?preset=this_month', { scroll: false });
+    expect(address()).toBe('/admin/finance');
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
   it('selecting Accounts writes tab=accounts with replace; leaving it resets sort, group and show', async () => {
     mockSearch = 'tab=accounts&sort=margin&group=trial&show=negative';
-    serve({ success: true, data: tabPayload() });
+    window.history.replaceState(null, '', `/admin/finance?${mockSearch}`);
+    const fetchMock = serve({ success: true, data: tabPayload() });
     render(<FinanceView />);
     await screen.findByTestId('econ-table');
     fireEvent.click(screen.getByRole('tab', { name: TAB_OVERVIEW }));
-    expect(mockReplace).toHaveBeenLastCalledWith('/admin/finance?preset=this_month', { scroll: false });
+    expect(address()).toBe('/admin/finance');
+    // Finance F-4: the hook's state really changes, so coming back shows the reset keys.
     fireEvent.click(screen.getByRole('tab', { name: TAB_ACCOUNTS }));
-    expect(mockReplace).toHaveBeenLastCalledWith('/admin/finance?preset=this_month&tab=accounts&sort=margin&group=trial&show=negative', { scroll: false });
+    expect(address()).toBe('/admin/finance?tab=accounts');
+    expect(String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0])).toBe('/api/admin/business-os/finance?preset=this_month&tab=accounts');
+    expect(mockReplace).not.toHaveBeenCalled();
+    await screen.findByTestId('econ-table');
   });
 
   it('picking a business from the Accounts tab drops tab, sort, group and show (M3-FR-1)', async () => {
@@ -206,11 +265,14 @@ describe('AC-130: the tabs, through the real view', () => {
     serve({ success: true, data: tabPayload() });
     render(<FinanceView />);
     await screen.findByTestId('econ-table');
+    const fetchMock = serve({ success: true, data: tabPayload() });
     fireEvent.click(screen.getByTestId('picker-pick'));
-    expect(mockReplace).toHaveBeenLastCalledWith(`/admin/finance?preset=this_month&accountId=${OWNER}`, { scroll: false });
+    expect(address()).toBe(`/admin/finance?account=${OWNER}`);
+    expect(String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0])).toBe(`/api/admin/business-os/finance?preset=this_month&accountId=${OWNER}`);
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 
-  it('a malformed tab key → the default view with the notice (and no tab key sent)', async () => {
+  it('a malformed tab key → the Overview, silently (Finance F-4, AC-175: no notice), and no tab key sent', async () => {
     mockSearch = 'tab=overview';
     // The request never answers: the default (Overview) view would need a full payload, and this
     // case is about the URL only. Answering with the tab-only payload raced the assertion.
@@ -218,8 +280,10 @@ describe('AC-130: the tabs, through the real view', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
     (global as any).fetch = fetchMock;
     render(<FinanceView />);
-    expect(await screen.findByTestId('finance-url-notice')).toBeInTheDocument();
-    expect(String(fetchMock.mock.calls[0][0])).not.toContain('tab=');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('finance-url-notice')).toBeNull();
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/admin/business-os/finance?preset=this_month');
+    expect(address()).toBe('/admin/finance');
   });
 });
 
@@ -231,9 +295,9 @@ describe('the Accounts tab body (T10)', () => {
     expect(notes).not.toHaveTextContent(REVENUE_REFUND_TIMING_NOTE);
     const platform = screen.getByTestId('econ-platform');
     expect(platform).toHaveTextContent(ECON_PLATFORM_TITLE);
-    expect(screen.getByTestId('econ-platform-paid')).toHaveTextContent('USD 89.00');
-    expect(screen.getByTestId('econ-platform-cost')).toHaveTextContent('USD 3.50');
-    expect(screen.getByTestId('econ-platform-margin')).toHaveTextContent('USD 85.50');
+    expect(screen.getByTestId('econ-platform-paid')).toHaveTextContent('$89.00');
+    expect(screen.getByTestId('econ-platform-cost')).toHaveTextContent('$3.50');
+    expect(screen.getByTestId('econ-platform-margin')).toHaveTextContent('$85.50');
   });
 
   it('S4-W-3: the refund-timing sentence shows when the boost part carries it', () => {
@@ -249,17 +313,17 @@ describe('the Accounts tab body (T10)', () => {
     expect(ECON_COST).toMatch(/\(USD\)$/);
     expect(ECON_MARGIN).toMatch(/\(USD\)$/);
     const owner = screen.getByTestId(`econ-row-${OWNER}`);
-    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('USD 89.00');
-    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('plan USD 79.00 · boosts USD 10.00');
+    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('$89.00');
+    expect(within(owner).getByTestId(`econ-paid-${OWNER}-USD`)).toHaveTextContent('plan $79.00 · boosts $10.00');
     // The cost cell is Section 3's own text for the same figure (formatUsd, 2 to 4 decimals).
     expect(screen.getByTestId(`econ-cost-${OWNER}`).textContent).toBe(formatUsd(1.2345));
-    expect(screen.getByTestId(`econ-margin-${OWNER}`)).toHaveTextContent('USD 87.7655');
+    expect(screen.getByTestId(`econ-margin-${OWNER}`)).toHaveTextContent('$87.7655');
     expect(within(owner).getByTestId(`econ-founding-${OWNER}`)).toHaveTextContent(ACCOUNTS_FOUNDING_CHIP);
   });
 
   it('SA-WR-43: a negative margin keeps its minus sign, with "No revenue in this window"', () => {
     renderTab();
-    expect(screen.getByTestId(`econ-margin-${C}`)).toHaveTextContent('USD -0.1234');
+    expect(screen.getByTestId(`econ-margin-${C}`)).toHaveTextContent('-$0.1234');
     expect(screen.getByTestId(`econ-row-${C}`)).toHaveTextContent(ECON_NO_REVENUE);
   });
 
@@ -268,7 +332,7 @@ describe('the Accounts tab body (T10)', () => {
     const b = screen.getByTestId(`econ-row-${B}`);
     expect(screen.getByTestId(`econ-margin-${B}`)).toHaveTextContent(ECON_MARGIN_OTHER_CURRENCY);
     expect(within(b).getByTestId(`econ-paid-${B}-ILS`)).toHaveTextContent('ILS 10.00');
-    expect(b.textContent).not.toMatch(/USD 10\.00 ILS|USD 99/);
+    expect(b.textContent).not.toMatch(/\$10\.00 ILS|\$99/);
     expect(b).toHaveTextContent(ECON_NO_PLAN_ROW);
   });
 
@@ -302,8 +366,8 @@ describe('the Accounts tab body (T10)', () => {
     renderTab(
       section({
         coverage: 'starts_before_cutover',
-        rows: [row(OWNER, { margin: { kind: 'not_available' } })],
-        platform: { ...section().platform, margin: { kind: 'not_available' } },
+        rows: [row(OWNER, { margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } })],
+        platform: { ...section().platform, margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } },
         notes: { ...section().notes, walkIncomplete: true },
       })
     );
@@ -316,10 +380,10 @@ describe('the Accounts tab body (T10)', () => {
   it('AC-137: an "At least" figure and an Unknown margin read as words, never a 0', () => {
     renderTab(
       section({
-        rows: [row(OWNER, { aiCost: { kind: 'figure', costUsd: 1.2345, exact: false }, margin: { kind: 'unknown' } })],
+        rows: [row(OWNER, { aiCost: { kind: 'figure', costUsd: 1.2345, exact: false }, margin: { kind: 'unknown' }, marginAfterFees: { kind: 'unknown' } })],
       })
     );
-    expect(screen.getByTestId(`econ-cost-${OWNER}`)).toHaveTextContent('At least USD 1.2345');
+    expect(screen.getByTestId(`econ-cost-${OWNER}`)).toHaveTextContent('At least $1.2345');
     expect(screen.getByTestId(`econ-margin-${OWNER}`)).toHaveTextContent(ECON_UNKNOWN);
   });
 
@@ -356,5 +420,119 @@ describe('fix round 1 (QA B-1): only rows the one-account view can open are link
     expect(screen.getByTestId(`econ-open-${OWNER}`)).toHaveAttribute('href', accountViewHref(OWNER, WINDOW));
     expect(screen.getByTestId(`econ-open-${C}`)).toHaveAttribute('href', accountViewHref(C, WINDOW));
     expect(within(screen.getByTestId(`econ-row-${PLATFORM}`)).queryByRole('link')).toBeNull();
+  });
+});
+
+// ── Slice 6b (§11K.5, AC-247 to AC-251, 6B-R2): margin after Stripe fees (estimate) ──
+// A separate import, so the lines above stay unedited.
+import { cleanup } from '@testing-library/react';
+import {
+  ECON_AFTER_FEES,
+  ECON_FEE_NOTE_UNREADABLE,
+  ECON_FEES,
+  ECON_MARGIN as ECON_MARGIN_6B,
+  ECON_MARGIN_NOT_AVAILABLE as NOT_AVAILABLE_6B,
+  ECON_MARGIN_OTHER_CURRENCY as OTHER_CURRENCY_6B,
+  ECON_NO_REVENUE as NO_REVENUE_6B,
+  ECON_NOTES as ECON_NOTES_6B,
+  ECON_PLATFORM_AFTER_FEES,
+  ECON_UNKNOWN as UNKNOWN_6B,
+  econFeeNote,
+  econFeesLine,
+} from '../financeCopy';
+
+describe('slice 6b: margin after Stripe fees (estimate) on the Accounts tab', () => {
+  it('AC-251: the column sits directly after "AI margin (USD)", with the exact label', () => {
+    renderTab();
+    const headers = within(screen.getByTestId('econ-table')).getAllByRole('columnheader').map((th) => th.textContent);
+    expect(headers[headers.indexOf(ECON_MARGIN_6B) + 1]).toBe('Margin after Stripe fees (estimate, USD)');
+    expect(ECON_AFTER_FEES).toBe('Margin after Stripe fees (estimate, USD)');
+  });
+
+  it('a figure through formatUsd, with the fee line "Stripe fees, estimate: $3.18" under it', () => {
+    renderTab();
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(/^\$84\.5855$/);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}-fees`)).toHaveTextContent(/^Stripe fees, estimate: \$3\.18$/);
+    expect(econFeesLine('$3.18')).toBe('Stripe fees, estimate: $3.18');
+  });
+
+  it('AC-247: another currency → "n/a, different currency" with no fee line; Unknown and Not available are words, never 0', () => {
+    renderTab();
+    expect(screen.getByTestId(`econ-after-fees-${B}`)).toHaveTextContent(OTHER_CURRENCY_6B);
+    expect(screen.queryByTestId(`econ-after-fees-${B}-fees`)).toBeNull();
+    expect(screen.getByTestId(`econ-after-fees-${PLATFORM}`)).toHaveTextContent(UNKNOWN_6B);
+    expect(screen.queryByTestId(`econ-after-fees-${PLATFORM}-fees`)).toBeNull();
+    cleanup();
+    renderTab(
+      section({
+        coverage: 'starts_before_cutover',
+        rows: [row(OWNER, { margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } })],
+        platform: { ...section().platform, margin: { kind: 'not_available' }, marginAfterFees: { kind: 'not_available' } },
+      })
+    );
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(NOT_AVAILABLE_6B);
+    expect(screen.getByTestId('econ-platform-after-fees')).toHaveTextContent(NOT_AVAILABLE_6B);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(NOT_AVAILABLE_6B);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`).textContent).not.toMatch(/0\.00/);
+  });
+
+  it('AC-248: no revenue → the fee line $0.00 and "No revenue in this window"; the sign is kept', () => {
+    renderTab();
+    expect(screen.getByTestId(`econ-after-fees-${C}`)).toHaveTextContent('-$0.1234');
+    expect(screen.getByTestId(`econ-after-fees-${C}-fees`)).toHaveTextContent('Stripe fees, estimate: $0.00');
+    expect(screen.getByTestId(`econ-after-fees-${C}`).parentElement).toHaveTextContent(NO_REVENUE_6B);
+  });
+
+  it('the Deleted accounts row gets the same cell', () => {
+    renderTab();
+    expect(screen.getByTestId('econ-after-fees-deleted')).toHaveTextContent('-$0.89');
+    expect(screen.getByTestId('econ-after-fees-deleted-fees')).toHaveTextContent('Stripe fees, estimate: $0.59');
+  });
+
+  it('AC-249 / AC-251: the platform pair is labelled "Margin after Stripe fees (estimate)" and "Stripe fees, estimate"', () => {
+    renderTab();
+    const platform = screen.getByTestId('econ-platform');
+    const labels = [...platform.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels.slice(labels.indexOf(ECON_MARGIN_6B) + 1)).toEqual(['Margin after Stripe fees (estimate)', 'Stripe fees, estimate']);
+    expect([ECON_PLATFORM_AFTER_FEES, ECON_FEES]).toEqual(['Margin after Stripe fees (estimate)', 'Stripe fees, estimate']);
+    expect(screen.getByTestId('econ-platform-after-fees')).toHaveTextContent(/^\$82\.32$/);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(/^\$3\.18$/);
+  });
+
+  it('6B-R2: the fee note reads exactly "Assumed 2.9% + $0.30 per card charge" at the default, and "3.5% + $0.25" at 350 / 25', () => {
+    renderTab();
+    const note = screen.getByTestId('econ-fee-note');
+    expect(note).toHaveTextContent(
+      /^Stripe fees are an estimate: none are recorded for plan or boost payments\. Assumed 2\.9% \+ \$0\.30 per card charge\. A refunded charge keeps its fee\. Dispute fees are not included\.$/
+    );
+    cleanup();
+    renderTab(section({ feeEstimate: { currency: 'USD', percent: 3.5, fixed: 0.25 } }));
+    expect(screen.getByTestId('econ-fee-note')).toHaveTextContent('Assumed 3.5% + $0.25 per card charge.');
+    expect(econFeeNote('2.9', '$0.30')).toContain('Assumed 2.9% + $0.30 per card charge.');
+  });
+
+  it('E-73: no fee config → the unreadable note, and every cell Unknown', () => {
+    renderTab(
+      section({
+        feeEstimate: null,
+        rows: [row(OWNER, { marginAfterFees: { kind: 'unknown' } })],
+        platform: { ...section().platform, marginAfterFees: { kind: 'unknown' } },
+      })
+    );
+    expect(screen.getByTestId('econ-fee-note')).toHaveTextContent(ECON_FEE_NOTE_UNREADABLE);
+    expect(screen.getByTestId(`econ-after-fees-${OWNER}`)).toHaveTextContent(UNKNOWN_6B);
+    expect(screen.getByTestId('econ-platform-fees')).toHaveTextContent(UNKNOWN_6B);
+  });
+
+  it('AC-251: the reworded 6a note; no new string says "actual", "real" or "recorded" beside a fee', () => {
+    renderTab();
+    expect(ECON_NOTES_6B[0]).toBe('Paid us is after tax, net of refunds and disputes. The AI margin does not deduct Stripe fees.');
+    const fresh = [ECON_AFTER_FEES, ECON_PLATFORM_AFTER_FEES, ECON_FEES, econFeesLine('$1.00'), ECON_FEE_NOTE_UNREADABLE];
+    for (const text of fresh) {
+      expect(text).toMatch(/estimate/);
+      expect(text).not.toMatch(/estimated|actual|\breal\b/i);
+    }
+    // "recorded" appears only in the sentence that says none are recorded.
+    expect(econFeeNote('2.9', '$0.30')).not.toMatch(/\bactual\b|\breal\b|recorded fee/i);
   });
 });

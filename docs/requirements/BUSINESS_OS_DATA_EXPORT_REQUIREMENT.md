@@ -1,12 +1,13 @@
 # Requirement: Business OS — Export My Data
 
-> **Last Updated**: 2026-10-15
+> **Last Updated**: 2026-10-17
 
 **Created by:** BA
 **Date:** 2026-10-05
 **Status:** Draft, **PARKED until the admin delete (AD-2, AD-3, AD-4) is finished** — the whole export scope, **including DE-0 (token exposure)**, runs LAST (user decisions 2026-10-05, DX-11 = no). Open business questions DX-1 to DX-10 and DX-12 are asked when the work resumes, then SA review (§9.2). **Re-baseline §1 against main first** (PR #218 merged 2026-10-05; see SQ-E10).
 **Status update (2026-10-14):** the user decided DX-1 to DX-9 (see [§0.2](#02-user-decisions-2026-10-14)). Where §0.2 differs from the BA recommendations in §9.1 or from §3 / §5 / §6 / §8, **§0.2 wins**. DX-10 and DX-12 stay open.
 **Status update (2026-10-15):** **DE-0 is complete** (DE-0a + DE-0b shipped; the user waived DE-0b's B-9 manual checks on 2026-10-14, see §0.1.4). **DE-1 is code complete**, uncommitted, on `feature/data-export-de1`, awaiting SA code review (see [§0.5](#05-de-1-status-and-notes-for-later-slices-2026-10-15)).
+**Status update (2026-10-15, DE-4):** **DE-4 (clients and scheduling) is code complete**, uncommitted, on `feature/data-export-de4`, awaiting SA code review (see [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15)). **The owner's synced outside calendar (`external_calendar_events`) is now OUT** (user BC-5, 2026-10-15): this supersedes §0.3.1 SQ-E7, the §3.1 B2 row and the §9.2 SQ-E7 default, each of which carries a note.
 
 ## Overview
 
@@ -51,6 +52,7 @@ Evidence tags: ✅ read in code or docs, or measured live, on 2026-10-05 · 🧠
 | **DE-0 — security (token exposure)** | **Separate from the feature.** The finding (§1.2) is independent of export: the browser can read and write the owner's own OAuth tokens, whether or not anyone presses Export. **User decision pending:** does DE-0 jump the queue? BA recommends yes (DX-11) |
 | **Consequence of the order** | Admin delete AD-2…AD-4 will ship **before** the business data can be exported. Until DE-3/DE-4 ship, a deleted owner can take away only today's agent-platform export. See DX-12 |
 | **DE-2 — classification, CI check, skill rule** | Code complete, uncommitted (2026-10-15), see §0.6. **§0.3.6 tsc clause superseded by SA DE-2 review: T-1 Jest runtime check is the enforcement.** Drift command is `npm run schema:reconcile` (SA-Q4). BC-1 = BC-2 = No (user, 2026-10-15) |
+| **Phase 1 (2026-10-17)** | **Every Phase 1 slice is built; DE-10a, the last one, is code complete (§0.15).** Phase 1 is complete once DE-8b T-14 is recorded, DE-9 (#454) merges, and DE-10a passes SA, QA and its merge. Then the user decides Phase 2 (§0.4.1 F) |
 
 ### 0.1 SA ruling — DE-0 re-baseline and implementation conditions (2026-10-13)
 
@@ -279,6 +281,8 @@ No `.update(...).select()` exists on an `authenticated` path; that form would ne
 
 DX-10 (name in the file) and DX-12 (admin delete before export) are **not** decided by this round.
 
+**DX-1 open lawyer note, extended 2026-10-15 (user, during DE-4):** the note now names **connected apps** (`plugin_connections`: which apps the owner connected, the account name and email on each) alongside **activity** and the owner's billing. Both are out of the export by user decision (connected apps: §0.7, 2026-10-15); a formal GDPR access or erasure request may still require them. Non-blocking; the owner checks with the lawyer.
+
 ### 0.3 SA ruling — delivery design, classification and slice plan (2026-10-14)
 
 **Reviewed by SA — 2026-10-14, against origin/main `392a9b53`.** Status: ✅ **Requirement approved for slicing, with the rulings below.** Inputs: §0.2 (binding, not reopened) and the [async evaluation](/docs/requirements/BUSINESS_OS_DATA_EXPORT_ASYNC_EVALUATION.md) (BA). This section answers SQ-A1…SQ-A6 and SQ-E1, SQ-E4…SQ-E9. Where it differs from §3, §5, §6, §8 or the evaluation, **this section wins** (§0.2 still wins over this section). Each slice still gets a Dev workplan and an SA workplan review. These rulings are the conditions for those workplans.
@@ -296,6 +300,8 @@ DX-10 (name in the file) and DX-12 (admin delete before export) are **not** deci
 | **SQ-E6 ledger** | Follow `ledgerService` **conventions only** (refunds as their own dated negative rows, currency on every amount, per-currency totals). Do **not** add the accountant workbook as a second file: two money views of the same rows can disagree, and the owner already has the ledger export |
 | **SQ-E7 borderline** | `website_page_views` out (above). `derived_metrics`, `daily_briefing_sends`, `business_events` out (derived / activity). `external_calendar_events` **in** (the owner's own calendar as we hold it, scheduling group). `email_sends` bodies: out with the table |
 | **FR-E12 failed section** | Kept: a section that fails is written to the README and `data.json` as `failed`, never silently empty. The job still finishes, and the page shows "complete with N sections missing" |
+
+> **Superseded in part (user BC-5, 2026-10-15, DE-4):** the SQ-E7 row above says `external_calendar_events` is **in**. It is now **out**: `exclude`, reason "user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data". The owner's real calendar stays with Google / Outlook. B2 is in without it. See [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15).
 
 #### 0.3.2 Delivery engine — SQ-A1 … SQ-A5 (and SQ-E4, SQ-E8)
 
@@ -531,6 +537,8 @@ The legal-entity line behind "AgentPilot" is README copy; it follows the open la
 
 **Order:** DE-0b → DE-1 → DE-2 → DE-3…DE-6 (any order; DE-4 first is the most valuable) → DE-7 → DE-8a → DE-8b → DE-9 → DE-10a. DE-10b rides with purge slice 5.
 
+> **User request 2026-10-16 (recorded in DE-6, §0.10):** DE-10a (admin export) is the **last Phase 1 slice**, and its admin control lives in **`/admin/users`, in the business area, placed just above the Danger Zone**.
+
 **Total:** about **14.5 working days** (DE-1 to DE-10a), excluding DE-0b (~1 d) and DE-10b (inside purge slice 5). §0.3's plan was about 19 days; the difference is the engine, the split and the email.
 
 ##### H. User decisions on the Phase 1 trade-offs (2026-10-14)
@@ -597,6 +605,563 @@ Phase 1 plan is **approved by the user for building.** Each slice still gets a D
 **As built (measured on the branch):** 155 table descriptors = 2 `include` (`profiles` → `user_profile`, `plugin_connections` → `plugin_connections`, the same columns in the same order as DE-1, so the file is unchanged) + 45 `planned` (DE-3: 4, DE-4: 9, DE-5: 15, DE-6: 12, DE-7: 5) + 108 `exclude`; 3 buckets = 2 `planned` DE-8b + 1 `exclude`. `intent_examples` gained a `never` / `global` descriptor (count 154 → 155); no Reset, Purge or admin delete removes anything different (`descriptorsForRun` identical for all 16 combinations). The two repositories select `exportColumnsOf(table).join(', ')`. `plugin_connections` notes record that disconnected rows are a status (§0.5) and that `ACCOUNT_PROFILE_KEYS` is the control on `profile_data` (SA C-4).
 
 **Follow-up (SA-Q9):** `intent_examples` is listed in `USER_OWNED_TABLES` but has no `user_id`; decide in the next ownership pass. DE-2 leaves the ownership entry alone.
+
+### 0.7 DE-4 status, user decisions and notes for DE-8b (2026-10-15)
+
+**DE-4 — Code complete, uncommitted, on `feature/data-export-de4`; awaiting SA code review.** T-0 live read done 2026-10-15 (TL, prod read-only: column counts 19, 11, 10, 16, 15, 26, 36, 8, 11, all as expected; `crm_contacts.notes` live; cross-tenant integrity 0 on all five parent/child edges; largest owner 885 rows / ~200 kB). `npm run schema:reconcile` on the branch (`exportColumnDrift` 0, `exportColumnsMissing` 0) is owed before merge. Workplan: [BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md) (SA approved with conditions C-1…C-12, 2026-10-15).
+
+**What it delivers:** today's JSON download (`GET /api/user/data-export`) gains eight sections in a new group `client_records` (AgentPilot the processor, the account holder the controller): `pipeline_stages`, `clients`, `client_activities`, `client_tasks`, `client_documents` (details only; files in DE-8b), `services`, `bookings`, `time_off`. Each is one table with an explicit column list and a written reason for every column left out. Every read goes through one repository, keyed on the session user's id, paged to the end in `id` order (no silent 1,000-row cut), deleted documents left out. `format_version` stays 2 (additive). No migration, no new route, no new dependency, no flag.
+
+**User decisions (via TL, 2026-10-15; binding, recorded by SA).** These DE-4 BC numbers are separate from DE-2's BC-1 / BC-2 in §0.6.
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| **BC-1** | The owner's private booking notes (`internal_notes`, never shown to the client) | **In** | `scheduling_bookings.internal_notes` included |
+| **BC-2** | Cancelled, no-show and completed bookings; finished and cancelled tasks | **In**, with their status | No status filter anywhere except BC-3 |
+| **BC-3** | Archived documents / deleted documents | **Archived in, deleted out** | `contact_documents` `rowFilter`: `status` not in (`deleted`). `status` is NOT NULL, so no NULL row is dropped |
+| **BC-4** | How a client found the business (`crm_contacts.source_metadata`) | **Readable keys only** | Allow-list, named one by one: `capture_page_url`, `referrer_url`, `referrer_domain`, `capture_channel`, `device_type`, `capture_timestamp`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`. Out: `ip_hash` (a day-salted IP hash, recoverable), `user_agent`, `session_id`, `smart_link_id`, and every key not named (`page_type`, `smart_link_code`, `smart_link_name` are not on the list; none is in live data today) |
+| **BC-5** | The synced copy of the owner's own Google / Outlook calendar (`external_calendar_events`) | **Out** | `exclude`, "user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data". **Supersedes §0.3.1 SQ-E7 ("in"), the §3.1 B2 row and the §9.2 SQ-E7 default** (each carries a note) |
+| **BC-6** | "Reminder sent" and "intake form sent" markers on a booking | **Out** (DX-1d: emails sent are activity) | `reminder_24hr_sent`, `reminder_2hr_sent`, `intake_sent_at`, `intake_reminded_at` excluded. The client's intake answers and their completion time stay in |
+| **BC-7** | The assistant's stored suggestions on a service (`ai_suggestions`) | **Out** | Excluded (assistant output, not a setting the owner chose) |
+
+**SA rulings recorded here (DE-4 review):**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q1** | One descriptor-driven, read-only `BusinessDataExportRepository`: a granularity exception inside the repository layer (as `BusinessPurgeRepository`, DEV-Q1), bounded E-1…E-6 (read-only; `include` + `user_id` scope only, resolved from a section id; columns only from `exportColumnsOf`; first filter `.eq('user_id', session id)`; service role documented; sole importer `data-export/sections.ts`). DE-5/6/7 sections go through it |
+| **SA-Q2** | Soft-delete filter as an optional `rowFilter` on the `include` classification; the filter column must be NOT NULL live (SA C-6) |
+| **SA-Q5** | Second `DENY_EXCEPTIONS` entry: `crm_pipeline_stages.stage_key` (the stage's short name, which `crm_contacts.stage` refers to; not a credential) |
+| **SA-Q7** | The Phase 1 ceiling is built **now, in today's JSON route** (below) |
+| **SA-Q8** | Rows are in `id` (uuid) order, not date order; each row carries its dates. DE-8b's README says so |
+| **SA-Q13** | `export_metadata.groups[].controller` is `'AgentPilot'` or `'account_holder'`; DE-8b replaces `account_holder` with the business name |
+
+**Phase 1 ceiling in today's JSON route (SA-Q7, C-9).** Over either limit the route answers **413** `{ success: false, error: "Your account holds more than the on-screen download can package. Nothing was downloaded. Please contact support and we will prepare your export.", code: "export_too_large" }`, `Cache-Control: no-store`, and sends **no file**, never a partial one:
+
+| Limit | Value | Why |
+|---|---|---|
+| Rows across all sections | **100,000** (`EXPORT_LIMITS.ROW_CEILING`, the §0.4.1 C constant DE-8b reuses) | Bounds memory; reading stops at the first section that passes it |
+| JSON body | **4 MB** (`EXPORT_LIMITS.JSON_BODY_MAX_BYTES`), measured on the exact bytes that would be sent, pretty-print included | Vercel refuses a function response over 4.5 MB with a platform crash, not a message. At pretty-printed JSON this is the **binding** limit in Phase 1. Today's largest account is ~200 kB |
+
+A refusal writes **no** `DATA_EXPORTED` entry (nothing was exported; `DATA_EXPORT_FAILED` arrives with the audit names in DE-8a). It logs one `warn` (`event: data_export_over_ceiling`, ids and counts only); the 413 body carries no counts. The browser helper maps it to `code: 'too_large'` only when the body carries `export_too_large` (not on the status alone); the three screens show their generic error until DE-9 writes the copy.
+
+**Third-party data in today's file (accepted in §0.4, restated):** from DE-4's merge, the current "Export data" button includes the owner's clients' details. It is downloaded only by the signed-in owner, never cached, and logs and audit carry counts only.
+
+**Notes for DE-8b (binding conditions):**
+
+| # | Condition |
+|---|---|
+| **C-11 (SA-Q12)** | The "Your files" manifest for the `contact-documents` bucket **drops any object whose `contact_documents` row is `deleted` or missing**. Deleting a document removes its file from storage, but the delete route continues with the soft delete if the storage call fails, so orphan objects can exist (DE-4 workplan F-7) |
+| **C-11 (body cap)** | The 4 MB JSON body cap exists only while the export is a direct JSON response. It is **removed when DE-8b's signed-URL zip replaces** the direct response; the §0.4.1 C zip ceilings (40 MB files, 150 files, 45 MB zip, 100,000 rows) take over |
+| CSV header | DE-8b takes each section's CSV header from `exportColumnsOf(exportDescriptorOfSection(id).table)`, so an empty section still has a header row. Rows are flat objects keyed by those columns; arrays and jsonb cells are JSON text in one cell; `clients.source_metadata` is the one reshaped cell |
+| README | Says rows are in `id` order (not date order) and that deleted documents are not included |
+
+**As built (measured on the branch):** 155 table descriptors = **10** `include` (`profiles`, `plugin_connections` + the eight DE-4 tables) + **36** `planned` (DE-3: 4, DE-5: 15, DE-6: 12, DE-7: 5; DE-4: 0) + **109** `exclude` (+ `external_calendar_events`). `level`, `order`, `scope`, `snapshot` and notes are unchanged on all nine DE-4 tables (purge baseline green). `PluginConnectionRepository.listForUserDataExport` stays unpaged on purpose: one row per `(user_id, plugin_key)` (SA C-10).
+
+**T-9 done — 2026-10-15 (SA F-3).** The "`npm run schema:reconcile` owed before merge" above is closed: TL ran the same comparison as read-only SQL on prod (DE-4 workplan §10.2): declared include ∪ excluded columns vs `information_schema.columns` for the eight included tables, **drift 0, missing 0**; `contact_documents.status` is **NOT NULL** (C-6 confirmed). Done in lieu of the script because the worktree has no DB env.
+
+**User decisions 2026-10-15, after SA code review and QA (binding; DE-4 workplan "Post-review changes — 2026-10-15"):**
+
+| # | Decision | Effect |
+|---|---|---|
+| **DE4-U1** | **The time goes in the file name, now** | `agentpilot-data-export-YYYY-MM-DD-HHmm.json`, from the route's one `exportedAt` instant (the same one written as `export_date`, UTC, and as the audit `export_timestamp`), on the **owner's clock**: `user_preferences.timezone`, read through `UserPreferencesRepository.findTimezone` (one explicit column, the session user's id). NULL (never set), blank or an invalid zone gives **UTC**, explicitly (`FALLBACK_TIMEZONE`). A failed read also gives UTC and a `warn` line: the export never fails over its name. DE-8b later swaps the `agentpilot-data-export` prefix for the business-name slug |
+| **DE4-U2** | **Connected apps are dropped from the export entirely** (business data only) | `plugin_connections` is `exclude`, "user 2026-10-15: connected apps dropped from the export (business data only); see lawyer note §0.2 DX-1". The `plugin_connections` section, its reader, its `profile_data` allow-list (`accountProfile` / `ACCOUNT_PROFILE_KEYS`), the `plugin_connections.plugin_key` deny exception and the now-dead `PluginConnectionRepository.listForUserDataExport` are removed. The table is never read by the export (pinned, with token-bearing rows seeded). The DE-0a / DE-0b browser-access controls are unchanged. The DX-1 lawyer note in §0.2 now names connected apps |
+
+**As built after DE4-U2 (measured on the branch, 2026-10-15):** 155 table descriptors = **9** `include` (`profiles` + the eight DE-4 tables) + **36** `planned` (unchanged) + **110** `exclude` (+ `plugin_connections`). The export file holds 2 account sections (`account_identity`, `user_profile`) + 8 `client_records` sections. The SA C-10 note on `listForUserDataExport` above no longer applies: the method is gone.
+
+**User manual check DE-1 — 2026-10-15: PASS** (Danger zone Export works).
+
+**UI-1 (new work item, folded into DE-9; recorded 2026-10-15):** the export result message does not match the system's look and feel. The Danger zone shows a small grey text line (`DangerZonePanel.tsx` `<p role="status" className="text-xs …">`), while the Business OS settings page uses a green banner with an icon (`app/business-os/settings/page.tsx` successMessage block) and other screens use `sonner` toasts. DE-9 must use the system's standard success/error notification for every export entry point (4 call sites: Business OS settings page, `DangerZonePanel`, `SecurityTab`, `SecurityTabV2`) and add a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1). SA picks the standard pattern in the DE-9 workplan review. No code change for this in DE-4.
+
+### 0.8 DE-3 status, user decisions and SA rulings (2026-10-16)
+
+**DE-3 — Code complete on `feature/data-export-de3`; SA code-approved 2026-10-16; QA PASS 2026-10-16 (21/21 negative controls, 0 new failures); T-9 done by TL read-only SQL: 0 drift / 0 missing over 157 names; all ids uuid.** T-0 live read done 2026-10-16 (TL, prod read-only; DE-3 workplan §10.1): live column counts `profiles` 18, `user_preferences` 23, `notification_settings` 24, `business_profiles` 85 (`subdomain` is live), `business_addresses` 7; every table has an `id` primary key; `user_id` unique on the three 1:1 tables; max 1 row per user on all four; 0 cross-tenant address pointers. Workplan: [BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md) (SA approved with conditions C-1…C-9, 2026-10-16). T-9 drift check (declared vs live, all five tables, 157 names): done, 0 drift / 0 missing (DE-3 workplan §10.2).
+
+**What it delivers:** today's JSON download (`GET /api/user/data-export`) gains four sections in the existing `account` group (AgentPilot the controller), after `user_profile`: `preferences` (`user_preferences`), `notification_settings`, `business_profile` (`business_profiles`) and `business_addresses`. Each is one table with an explicit column list and a written reason for every column left out, read through the DE-4 `BusinessDataExportRepository` (keyed on the session user's id, paged to the end, inside the Phase 1 row ceiling). The `profiles` section loses `hourly_rate_usd` and `org_id`. `format_version` stays 2 (additive). No migration, no new route, no new dependency, no flag, no new file.
+
+**User decisions (via TL, 2026-10-16; binding, recorded by SA).** These DE-3 BC numbers are separate from DE-2's and DE-4's.
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| **BC-A** | Agent-platform settings on the account (the hourly rate behind "money saved" on agent runs; the AI model settings) | **Out** | Reason, verbatim: "user 2026-10-16: agent-platform setting, Business OS data only" (`AGENT_SETTING`). `profiles.hourly_rate_usd`; `user_preferences.default_model`, `max_tokens`, `temperature`, `auto_save_conversations`, `debug_mode`, `beta_features`; `notification_settings.email_agent_updates`, `push_agent_updates`, `desktop_agent_updates` (SA R-3) |
+| **BC-B** | The bank details printed on the owner's invoices | **Out** | Reason, verbatim: "user 2026-10-16: bank details left out of the file" (`BANK_DETAILS`). `business_profiles.invoice_bank_name`, `invoice_bank_account`, `invoice_bank_routing`, and `invoice_payment_instructions` (SA R-2) |
+| BC-C | The owner's answers about the business in; the assistant's website analysis, what it extracted from the bio, and the onboarding chat out | **Confirmed** | `website_analysis`, `extracted_data`, `onboarding_conversation` excluded |
+| BC-D | Setup-progress markers out | **Confirmed** | `onboarding_completed`, `profile_completeness`, `setup_checklist_dismissed`, `dismissed_setup_steps`, `needs_stripe_connect` excluded (`SETUP_STATE`) |
+| BC-E | Calendar-sync settings on the business profile out | **Confirmed** | `calendar_sync_enabled`, `calendar_sync_provider`, `calendar_last_synced_at` excluded (`CALENDAR_SYNC`) |
+| BC-F | The list of connected apps on the business profile out | **Confirmed** | `connected_plugins` excluded (as DE4-U2) |
+| BC-G | The organisation id on the profile out; the role (persona) in | **Confirmed** | `profiles.org_id` excluded (DE-2 BC-2); `profiles.role` kept |
+
+**SA rulings recorded here (DE-3 workplan review, 2026-10-16):**
+
+| Ruling | Change |
+|---|---|
+| **R-1** | `invoice_tax_id` is **in**: a tax registration number printed on every invoice by law identifies the business; it is not a bank detail |
+| **R-2** | `invoice_payment_instructions` is **out** under `BANK_DETAILS`, with the suffix "(free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3)". The product treats bank details and written payment instructions as the same thing (`profileReadiness.ts` `hasPaymentMethod`, `invoicePaymentOptions.ts`), so the free text often holds the IBAN. TL states this to the user as a one-line confirmation. `invoice_footer_text` stays in |
+| **R-3** | `debug_mode`, `beta_features` and the three `*_agent_updates` toggles fall under BC-A. The general display and privacy switches on `user_preferences` and the other notification choices (`push_mentions`, system / security / marketing) stay **in** |
+| **SA-Q1** | Moot: all four tables have an `id` primary key, so the normal keyset read works. No single-row read, no `rowKey`; `classification.ts` is not touched |
+| **SA-Q2** | The four sections are group `account`, AgentPilot the controller: facts about the account holder's own business, given to us to run the account |
+| **SA-Q3** | `user_code` and `subdomain` in: the business's public address, not a credential |
+| **SA-Q4** | `primary_crm`, `primary_calendar`, `primary_payment`, `tools` in (the owner's answers); `connected_plugins` out (connection plumbing, DE4-U2) |
+| **SA-Q5** | The jsonb columns travel whole, on the live key census: `scheduling_availability` (day keys), `address_parts` / `invoice_address` / `business_addresses.parts` (the six address parts), `theme` (design tokens, the design's `id` / `source`), `process_steps` (no object elements today). `profiles.onboarding_data` stays as DE-1 decided |
+| **SA-Q6** | Moot: no jsonb and no push-subscription column on either settings table. `DENY_EXCEPTIONS` stays at one entry; no value-shape deny rule |
+| **SA-Q7** | `profiles.domain` and `onboarding*` stay as DE-1 decided (the person's onboarding answers, not settings) |
+| **SA-Q8** | Both timezone columns exported as held; see the DE-8b README note below |
+| **SA-Q9** | Setup-progress columns out (confirmed by the user as BC-D) |
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table):**
+
+| Table → section | In | Out (reason) | Total |
+|---|---|---|---|
+| `profiles` → `user_profile` | `id, full_name, avatar_url, company, job_title, timezone, language, created_at, updated_at, role, domain, onboarding, onboarding_goal, onboarding_mode, onboarding_data` (15) | `plan` (no plan or billing data), `org_id` (DE-2 BC-2), `hourly_rate_usd` (`AGENT_SETTING`) | 18 |
+| `user_preferences` → `preferences` | `id, preferred_language, timezone, timezone_confirmed_at, preferred_currency, theme, sidebar_collapsed, compact_mode, show_timestamps, enable_sounds, keyboard_shortcuts, data_retention_days, analytics_enabled, telemetry_enabled, created_at, updated_at` (16) | `user_id` (`OWNER_ID`); `default_model, max_tokens, temperature, auto_save_conversations, debug_mode, beta_features` (`AGENT_SETTING`) | 23 |
+| `notification_settings` → `notification_settings` | `id, email_enabled, email_frequency, email_system_alerts, email_security_alerts, email_marketing, push_enabled, push_system_alerts, push_mentions, desktop_enabled, desktop_system_alerts, inapp_enabled, inapp_sounds, inapp_popups, quiet_hours_enabled, quiet_hours_start, quiet_hours_end, quiet_hours_timezone, created_at, updated_at` (20) | `user_id` (`OWNER_ID`); `email_agent_updates, push_agent_updates, desktop_agent_updates` (`AGENT_SETTING`) | 24 |
+| `business_profiles` → `business_profile` | 68 columns: the owner's answers about the business, contact details and address (incl. the bare `address_id` / `invoice_address_id`), public presence (incl. `subdomain`, `user_code`), working hours, language and currency, the invoice profile without the bank lines (incl. `invoice_tax_id`, `invoice_footer_text`), collection settings, and the automations the owner switched on or declined; `id`, `created_at`, `updated_at` | 17: `user_id` (`OWNER_ID`); `website_analysis`, `extracted_data` (`ASSISTANT_OUTPUT`); `onboarding_conversation` (activity); `connected_plugins` (`CONNECTED_APPS`); 3 × calendar sync (`CALENDAR_SYNC`); 5 × setup progress (`SETUP_STATE`); 4 × bank details (`BANK_DETAILS`) | 85 |
+| `business_addresses` → `business_addresses` | `id, label, parts, is_default, created_at, updated_at` (6) | `user_id` (`OWNER_ID`) | 7 |
+
+The exact 68 / 17 lists are the `BUSINESS_PROFILES_EXPORT` descriptor in `lib/business-os/purge/descriptors.ts`, pinned literally in `exportClassification.test.ts` (`DE3_PINS`) and byte for byte in the route characterization test.
+
+**Tenant isolation (tenant-isolation-guard, SA approved):** the only id is the session's `getUser().id`; every DE-3 read's first filter is `.eq('user_id', <session id>)`. The addresses are read by their own `user_id`, never by following `address_id` / `invoice_address_id`, which are exported as bare uuids: even a crossed pointer would carry an id, never another tenant's address (pinned by a cross-tenant test). Read-only; no write path.
+
+**Notes for DE-8b (binding):**
+
+| # | Note |
+|---|---|
+| README: timezones (SA-Q8) | The file holds three timezone columns. `preferences.timezone` (`user_preferences.timezone`) is the **authority** for the owner's clock; `user_profile.timezone` (`profiles.timezone`) is a **mirror** of it; `notification_settings.quiet_hours_timezone` is the zone of the **quiet hours only** |
+| CSV | The four sections follow the DE-4 CSV rule (header from `exportColumnsOf`; arrays and jsonb cells as JSON text in one cell). `business_profile` is one row with 68 columns |
+
+**As built (measured on the branch, 2026-10-16):** 155 table descriptors = **13** `include` (`profiles`, the eight DE-4 tables, + `user_preferences`, `notification_settings`, `business_profiles`, `business_addresses`) + **32** `planned` (DE-5: 15, DE-6: 12, DE-7: 5; DE-3: 0) + **110** `exclude` (unchanged). `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged on the four DE-3 rows (purge suites green). The export file holds 6 `account` sections + 8 `client_records` sections. The DE-4 sections, their eight selects, order, group, role and the `clients` `source_metadata` reshaping are unchanged (SA C-2).
+
+### 0.9 DE-5 status, user decisions and SA rulings (2026-10-16)
+
+**DE-5 (client money): SA code-approved + QA PASS 2026-10-16 (25/25 negative controls); T-10 drift 0/0 (TL). Uncommitted on `feature/data-export-de5`; SA F-1 applied 2026-10-16.** Before that, T-0 live read done 2026-10-16 (TL, prod read-only; DE-5 workplan §11.1) and SA C-1 counts done (§11.2). The SA workplan review is approved with conditions C-1…C-9 and rulings SA-Q1…SA-Q15 (2026-10-16). T-10 drift check done (TL, 0 drift / 0 missing) and billing table names checked live (SA C-6; 13 of 14 live, `subscriptions` dropped from the test lists by F-1). Workplan: [BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md).
+
+**What it delivers:** the JSON download (`GET /api/user/data-export`) gains ten sections. Two go in the `account` group (AgentPilot the controller), after `business_addresses`: `payment_account` (`stripe_connect_accounts`) and `payment_providers` (`payment_processors`). Eight go in the `client_records` group (AgentPilot the processor), after `time_off`: `quotes` (`proposals`), `invoices` (`payment_invoices`), `payments` (`payment_transactions`), `refunds` (`payment_refunds`), `payment_plans`, `client_payment_plans` (`payment_plan_subscriptions`), `installments` (`payment_plan_installments`) and `client_payment_methods` (`saved_payment_methods`). Each section is one table with an explicit column list and a written reason for every column left out. Each is read through the DE-4 `BusinessDataExportRepository`, keyed on the session user's id, paged to the end, inside the Phase 1 row ceiling. Child tables (refunds, instalments) are read by their own `user_id`, never by following a parent id. Five money tables are `exclude`. `format_version` stays 2. There is no migration, no new route, repository method, file, dependency or flag.
+
+**Money paid to AgentPilot is not in the file (DX-1a).** It lives in the billing tables, never in these ten. A test pins it at route level and at classification level (SA C-6).
+
+**User decisions (via TL, 2026-10-16; binding).** These DE-5 BC numbers are separate from the BC numbers of DE-2, DE-3 and DE-4.
+
+| # | Question | Decision | Effect |
+|---|---|---|---|
+| BC-1 | Card data on saved methods and client plans | **Brand and last 4 only** | `card_brand`, `card_last4`, `brand`, `last_four` are in. `card_exp_month`, `card_exp_year`, `expiry_month`, `expiry_year` are out (`CARD_EXPIRY`). No card number is stored anywhere |
+| BC-2 | Failed, cancelled, refunded and draft rows | **All in**, each with its status | No `rowFilter` on any DE-5 table (none of them soft-deletes) |
+| **BC-3** | The Stripe invoice web link and PDF link | **In. This overrides the workplan default and SA-Q5, which were "out".** The user accepts that anyone holding the file can open those invoice pages | `stripe_hosted_invoice_url` and `stripe_invoice_pdf` are in `payment_invoices` columns. No deny rule matches them, so there is no exception entry |
+| BC-4 | Payment reminders sent to clients | **Out** (activity) | `payment_reminders` is `exclude` |
+| BC-5 | Payment event log and automatic-action history | **Out** (activity) | `payment_events` and `payment_automation_executions` are `exclude`. This meets the SA-Q14 condition |
+| BC-6 | The built-in payment rules | **Out** | `payment_automation_rules` is `exclude` (platform defaults the owner cannot edit) |
+| BC-7 | Private invoice notes; the owner's typed notes on manual payments | **In** | `internal_notes` is in. On `payments.metadata`, only `notes` and `source` are exported (SA-Q3). The invoice and quote sent / viewed dates are in |
+| BC-8…BC-10 | Fees and net amount (each in its own currency); Stripe reference numbers | **In** | `processor_fee` and `net_amount` are exported with `fee_currency`. The Stripe / processor ids are in |
+| BC-11 | Totals | **None of any kind** | `summary` keeps exactly its four keys (counts, failed sections, size, duration). Per-currency totals stay in the ledger export |
+| BC-12 | Provider name and status in; keys never | **Default kept** | `payment_processors.credentials` is never selected (`SECRET`) |
+
+`payment_methods` is `exclude` as a dead table (0 rows live, superseded by `saved_payment_methods`; SA-Q8).
+
+**SA rulings recorded here (DE-5 workplan review, 2026-10-16):**
+
+| Ruling | Change |
+|---|---|
+| SA-Q1 | `payment_account` and `payment_providers` are group `account`, AgentPilot the controller, after `business_addresses`. The other eight are `client_records`, processor |
+| SA-Q2 | The section ids are as listed above (`quotes`, `client_payment_plans`, `client_payment_methods`) |
+| **SA-Q3 (Dev default overruled in part)** | `payment_refunds.metadata` and `payment_plan_subscriptions.metadata` are out whole. `payment_transactions.metadata` is in through a named allow-list of exactly `notes` and `source`, strings only. This uses a new general `pickStringKeys(value, keys)`. `sourceMetadata` (DE-4) is now a one-line call to it, and its output is byte-identical |
+| SA-Q4 | Refunds are exported as stored, with positive amounts. No signed column is added. DE-5 adds no total |
+| SA-Q5 | The processor and Stripe ids are references, not credentials, so they are in. Invoice `id` is in. (The ruling on the two invoice links is superseded by user BC-3.) |
+| **SA-Q6** | `fee_returned` and `refund_fee` are exported as stored with **no currency**. Nothing is copied from the parent payment. The pairing test lists exactly these two in a "no currency column" set. Live: 0 rows have either one set (§11.2). **DE-8b README wording:** "these two amounts have no recorded currency; for a Stripe refund they are normally in the payment's fee currency (`payments.fee_currency` on the linked payment); check your Stripe dashboard." |
+| **SA-Q7 (Dev default overruled)** | `charge_account_kind` is **out**, together with `account_resolution` (`RECONCILIATION_STATE`). On live rows, `platform` only ever goes with `manual` (37 / 37, C-1). In a client-money file it would read as money paid to AgentPilot, which it is not |
+| SA-Q8 | `payment_methods` is excluded (0 rows) |
+| SA-Q9 | A NULL currency stays NULL and is never filled in (live: 0 rows). A NULL fee with a NULL `fee_currency` means "fee not recorded", which is not zero. The Connect currency `usd` is exported lower case, as stored |
+| SA-Q10 | The amount-to-currency pairing lives in a map inside the test. No descriptor field is added |
+| SA-Q11 | `card_number`, `cvc` and `cvv` are added to `SECRET_COLUMN_DENY_EXACT`. `client_secret` is not added, because `/_secret$/` already covers it (noted in a comment). There is no new hit on any existing include |
+| SA-Q12 | The retry counters (`retry_count`, `last_retry_at`, `next_retry_at`) on invoices and instalments are out (`RETRY_STATE`) |
+| SA-Q13 | The `stripe_connect_accounts` facts are in, including `stripe_email` (the owner's own) and `currency` (the settlement currency) |
+| SA-Q14 | `payment_events` is out as activity (user BC-5) |
+| SA-Q15 | `payment_refunds.initiated_by` is out (`ACTOR_ID`). `idempotency_key` and `credentials` are always out |
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table):**
+
+| Table → section | In | Out | Total |
+|---|---|---|---|
+| `payment_transactions` → `payments` | 28, incl. `metadata` (only `notes` and `source` exported), `processor_fee`, `net_amount`, `fee_currency` | `user_id`, `account_resolution`, `charge_account_kind` | 31 |
+| `payment_refunds` → `refunds` | 20, incl. `amount_minor`, `fee_returned`, `refund_fee` | `user_id`, `idempotency_key`, `initiated_by`, `metadata` | 24 |
+| `payment_invoices` → `invoices` | 35, incl. `internal_notes`, `stripe_hosted_invoice_url`, `stripe_invoice_pdf` | `user_id`, 3 × retry | 39 |
+| `proposals` → `quotes` | 32 | `user_id` | 33 |
+| `payment_plans` → `payment_plans` | 15 | `user_id` | 16 |
+| `payment_plan_subscriptions` → `client_payment_plans` | 29, incl. `card_brand`, `card_last4` | `user_id`, 2 × card expiry, `metadata` | 33 |
+| `payment_plan_installments` → `installments` | 26 | `user_id`, 3 × retry | 30 |
+| `saved_payment_methods` → `client_payment_methods` | 12, incl. `brand`, `last_four` | `user_id`, 2 × expiry | 15 |
+| `stripe_connect_accounts` → `payment_account` | 13, incl. `stripe_email`, `currency` | `user_id` | 14 |
+| `payment_processors` → `payment_providers` | 8 | `user_id`, `credentials`, 4 × provider capability | 14 |
+
+The exact lists are the `*_EXPORT` descriptors in `lib/business-os/purge/descriptors.ts`. They are pinned literally in `exportClassification.test.ts` (`DE5_PINS`) and byte for byte in the route characterization test.
+
+**Currency (CLAUDE.md § Currency & Timezone):** every amount goes out as stored, next to the currency column it is denominated in. `processor_fee` and `net_amount` are paired with `fee_currency`, not with the payment's `currency`. Nothing is converted, defaulted, case-changed or summed. Tests pin this:
+- an exhaustive pairing check (catalog money columns plus columns whose names look like amounts, with a planted `deposit_amount` as negative control);
+- a test with live trap values: an ILS payment with USD fees, a NULL fee with a NULL fee currency, an ILS refund under a USD-fee payment, lower-case `usd`, and two currencies for one owner;
+- a source scan for FX or conversion code.
+
+**Notes for DE-8b (binding):**
+
+| # | Note |
+|---|---|
+| README: refund fees (SA-Q6) | Use the wording in the SA-Q6 row above |
+| README: fees | `processor_fee` / `net_amount` are in `fee_currency`, which can differ from the payment's `currency`. An empty fee means "fee not recorded", not zero (SA-Q9) |
+| README: refunds | A refund row is money returned to the client, stored positive. `payments.amount` is the gross charge, so do not count refunds twice. There are no totals in the file; for totals per currency, use the ledger export (SA-Q4, BC-11) |
+| README: invoice links | `stripe_hosted_invoice_url` and `stripe_invoice_pdf` open the invoice page for anyone who holds them (user BC-3) |
+| CSV | The ten sections follow the DE-4 CSV rule. `payments.metadata`, `line_items`, `payment_shape`, `sessions`, `accepted_snapshot` and `client_address` go as JSON text in one cell |
+
+**Follow-ups:**
+
+- Purge follow-up (not DE-5): the `never('subscriptions', …)` purge descriptor names a table that is not live in prod (TL §11.3, 2026-10-16); SchemaReconciler already reports it under `missingNever`. Remove or re-point it in the purge workstream.
+
+**As built (measured on the branch, 2026-10-16):** 155 table descriptors = **23** `include` + **17** `planned` (DE-6: 12, DE-7: 5; DE-5: 0) + **115** `exclude`. On the 15 DE-5 rows, `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged (purge suites green). The export file holds 8 `account` sections and 16 `client_records` sections. The 13 earlier selects (DE-3, DE-4, `profiles`) are byte-identical (SA C-7).
+
+### 0.10 DE-6 status, TL defaults and SA rulings (2026-10-16)
+
+**DE-6 (intake, leads and consent): code complete 2026-10-16; SA code-approved + QA PASS 2026-10-16; committed on `feature/data-export-de6` by RM.** T-0 live read done (TL, prod read-only; DE-6 workplan §11.1), SA-owed reads done (§11.2: Q7b, Q11, F-DE6-1 count). SA workplan review approved with conditions C-1…C-12 and rulings SA-Q1…SA-Q10 (2026-10-16). T-10 done by TL: 0 drift / 0 missing over 124 names; SA code-approved + QA PASS 2026-10-16 (28/28 negative controls). Workplan: [BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md).
+
+**What it delivers:** the JSON download (`GET /api/user/data-export`) gains ten `client_records` sections (AgentPilot the processor; SA-Q2), after `client_payment_methods`: `intake_settings` (`user_intake_settings`), `intake_forms` (`business_intake_forms`, every version), `email_campaigns`, `email_sequences`, `email_sequence_steps`, `email_sequence_enrollments`, `newsletter_subscribers` (`business_subscribers`), `consent_records` (`marketing_consent_events`), `consent_settings` (`marketing_consent_settings`) and `email_unsubscribes` (the do-not-email list). Each is one table with an explicit column list and a written reason for every column left out, read through the DE-4 `BusinessDataExportRepository`, keyed on the session user's id, inside the Phase 1 row ceiling. Child tables (steps, enrollments, consent records) are read by their own `user_id`. Two tables are `exclude`: `lead_responses` (activity) and `marketing_consent_state` (derived). `format_version` stays 2. There is no migration, no new route, file, dependency or flag. Client answers to intake forms were already in the file (DE-4 `bookings.intake_responses`); DE-6 adds the forms they answer.
+
+**Business calls: TL defaults 2026-10-16 — user may change.** The user asked for an autonomous run, so TL took these defaults, following the user's earlier decisions (activity out, tracking out, AI-generated out, everything we hold in). These DE-6 BC numbers are separate from the BC numbers of DE-2…DE-5.
+
+| # | Question | TL default 2026-10-16 — user may change | Effect |
+|---|---|---|---|
+| BC-1 | Consent technical evidence (scrambled IP and its key, browser signature, visit id) | **Out** | `ip_hash`, `ip_hash_salt`, `user_agent`, `session_id` are `excludedColumns` (`VISITOR_EVIDENCE`). The wording, time, method, form and page are in. The evidence stays in AgentPilot's records (the ledger is never purged) |
+| BC-2 | Automatic invitations, chases and reminders to leads (`lead_responses`) | **Out** (activity) | `lead_responses` is `exclude` |
+| BC-3 | Campaign and sequence sent / opened / clicked counts | **Counts out**; the campaign, its status and sent date in | The counters are `excludedColumns` (`DELIVERY_STATS`) |
+| BC-4 | Intake form drafts and old versions | **All versions in**; the AI generation details out | Every status in; `generated_from` out (`GENERATION_METADATA`) |
+| BC-5 | Unconfirmed and unsubscribed newsletter sign-ups | **In**, with status | No row filter |
+| BC-6 | A separate "current answer per address" list | **No** | `marketing_consent_state` is `exclude` (derived); DE-8b's README explains how to read the current answer |
+| BC-7 | Consent settings (statements per language, privacy notice, postal address) | **In** | `consent_settings` section (single-row read, SA-Q1) |
+| BC-8 | Consent records of people later erased | **In, as held** | Redacted rows go out with `redacted@invalid` and `redacted_at` |
+
+**SA rulings recorded here (DE-6 workplan review, 2026-10-16):**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q1** | `marketing_consent_settings` has no `id` (PK `user_id`). The `include` classification gains an optional `rowKey?: 'user_id'` (that literal only). The repository reads such a table as ONE query inside `listOwnedRowsForExport`, after the E-2 scope and E-3 deny checks: `.eq('user_id', session id).limit(2)`, no order, no `gt`, no other filter; 0 rows ok-empty, 1 ok, 2 fail the section closed; the ceiling applies. CI (`tableExportProblems`): with `rowKey` it must be `'user_id'`, the scope `user_id`, `user_id` not in `columns`, no `rowFilter`. **New converse CI rule:** an `include` without `rowKey` must list `id` (it lived only at runtime before). A test pins `marketing_consent_settings` as the only `rowKey` descriptor; a second one is an SA item |
+| SA-Q2 | All ten sections are `client_records` / processor, in the order above |
+| SA-Q3 | `marketing_consent_state` excluded as derived (Q11: 0 key mismatches, 0 disagreements, 0 orphan state rows) |
+| SA-Q4 | `questions`, `segment_filter`, `trigger_config` go out whole. `business_subscribers.attribution` goes through `SOURCE_METADATA_KEYS` (the DE-4 list, by identity). `marketing_consent_events.evidence` goes through the new `CONSENT_EVIDENCE_KEYS = ['client_statement', 'confirmed_via', 'note']`, strings only. C-5: every writer of `segment_filter` / `trigger_config` is owner-authenticated or a server constant (DE-6 workplan Dev notes) |
+| SA-Q5 | Deny-list hardening: `ip_hash_salt`, `user_agent`, `session_id`, `ip_address`, `fingerprint` added to `SECRET_COLUMN_DENY_EXACT`, and `/_salt$/` to `SECRET_COLUMN_DENY_PATTERNS` ("secrets and visitor tracking"). No DE-1…DE-5 include is hit; `DENY_EXCEPTIONS` keeps its one entry |
+| SA-Q6 | `email_sequence_enrollments.next_send_at` out (`QUEUE_STATE`); `current_step_number` in |
+| **SA-Q7** | Page URLs lose their query string and fragment: a string is cut at the first `?` or `#` (plain slicing, never `new URL()`); scheme, host and path kept; non-strings pass through. Applied to `consent_records.source_page_url` and to the subscriber `attribution` keys `capture_page_url` / `referrer_url` (C-2). `privacy_policy_url` is kept as held (§11.2: 0 with a query string, C-3) |
+| SA-Q8 | `email_normalized` out on both tables (`DERIVED_COPY`) |
+| SA-Q9 | `lead_responses` excluded as activity; its purge note left as it is |
+| SA-Q10 | `marketing_consent_events.recorded_by` out (`ACTOR_ID`); live 8 of 8 are the owner |
+
+**F-DE6-1 (TL decision 2026-10-16): the one deliberate change to DE-4 output.** `crm_contacts.source_metadata.referrer_url` carries token-like parameters on 4 live contacts, and `capture_page_url` comes from the same public `page_url` (§11.2). The same strip helper now applies to the `clients` section's `source_metadata.capture_page_url` and `referrer_url`. It is a deliberate DE-4 re-pin, marked `DE-6 (F-DE6-1):` in code, with tests that seed `?token=…&sid=…#frag` and assert none of it reaches the body. A value without `?` or `#` is byte-identical to DE-4. Every other DE-1…DE-5 select, section, group and role is unchanged (C-7: the 23 earlier select strings are compared against the literals of origin/main `98735db9`).
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table):**
+
+| Table → section | In | Out | Total |
+|---|---|---|---|
+| `user_intake_settings` → `intake_settings` | 5 | `user_id` | 6 |
+| `business_intake_forms` → `intake_forms` | 8, incl. `questions` (whole), `generated_at` | `user_id`, `generated_from` | 10 |
+| `email_campaigns` → `email_campaigns` | 11, incl. `segment_filter`, `status`, `scheduled_at`, `sent_at` | `user_id`, 5 × counters | 17 |
+| `email_sequences` → `email_sequences` | 8, incl. `trigger_config` | `user_id`, 3 × counters | 12 |
+| `email_sequence_steps` → `email_sequence_steps` | 8 | `user_id`, 3 × counters | 12 |
+| `email_sequence_enrollments` → `email_sequence_enrollments` | 7 | `user_id`, `next_send_at` | 9 |
+| `business_subscribers` → `newsletter_subscribers` | 12, incl. `attribution` (allow-listed, URLs cut) | `user_id`, `email_normalized` | 14 |
+| `marketing_consent_events` → `consent_records` | 17, incl. `statement_text`, `statement_locale`, `statement_version`, `privacy_policy_url`, `source_page_url` (cut), `evidence` (allow-listed), `redacted_at` | `user_id`, `email_normalized`, `ip_hash`, `ip_hash_salt`, `user_agent`, `session_id`, `recorded_by` | 24 |
+| `marketing_consent_settings` → `consent_settings` | 13 (no `id` exists; `rowKey: 'user_id'`) | `user_id` | 14 |
+| `email_unsubscribes` → `email_unsubscribes` | 5 | `user_id` | 6 |
+
+The exact lists are the `*_EXPORT` descriptors in `lib/business-os/purge/descriptors.ts`, pinned literally in `exportClassification.test.ts` (`DE6_PINS`) and byte for byte in the route characterization test.
+
+**Notes for DE-8b (binding):**
+
+| # | Note |
+|---|---|
+| README: current consent | The current answer for an address is its latest consent record (a withdrawal wins a tie). For email, `email_unsubscribes` and `newsletter_subscribers.status` give it directly (BC-6) |
+| README: privacy notice | Only the current hosted privacy notice text is stored (`consent_settings.privacy_policy_body`); each consent record keeps the exact sentence agreed and the notice link it was shown (R-5) |
+| README: erased people | A redacted record reads `redacted@invalid` with `redacted_at` set: a decision existed and was erased (BC-8) |
+| README: page addresses | Page addresses in consent records, newsletter sign-ups and client sources are shown without their query string (SA-Q7, F-DE6-1) |
+| CSV | The ten sections follow the DE-4 CSV rule; `questions`, `segment_filter`, `trigger_config`, `attribution` and `evidence` go as JSON text in one cell |
+
+**User request 2026-10-16 (for DE-10a):** DE-10a (admin export) lives in **`/admin/users`, in the business area, placed just ABOVE the Danger Zone**, and it is the **LAST Phase 1 slice**. Noted at the Phase 1 order (§0.4.1 G).
+
+**As built (measured on the branch, 2026-10-16):** 155 table descriptors = **33** `include` + **5** `planned` (DE-7) + **117** `exclude`. On the 12 DE-6 rows, `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged (purge suites green). The export file holds 8 `account` sections and 26 `client_records` sections. The 23 earlier selects are byte-identical (SA C-7); the only earlier output change is F-DE6-1.
+
+### 0.11 DE-7 status, TL defaults and SA rulings (2026-10-17)
+
+**DE-7 (website and content): code complete 2026-10-17, uncommitted on `feature/data-export-de7` (merged up to origin/main `16cb2a1f`, which carries DE-6 PR #443), awaiting SA code review and QA.** T-0 live read done (TL, prod read-only; DE-7 workplan §11.1). SA workplan review approved with conditions C-1…C-10 and rulings SA-Q1…SA-Q12 (2026-10-17). **Owed:** the T-10 drift check (Q14: 84 declared names, five tables, one FULL OUTER JOIN; expect 0 rows), which TL runs as read-only SQL from the workplan. Workplan: [BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md).
+
+**What it delivers:** the JSON download (`GET /api/user/data-export`) gains five sections in a new group, `content` (AgentPilot the processor, the account holder the controller; SA-Q3), after `email_unsubscribes`: `website_content` (the website text per section), `website_pages` (every website and landing page, every status), `website_blocks` (the content of every block on those pages, hidden ones included), `smart_links` (every link, on or off) and `images` (the `user_media` picture library RECORDS; the files themselves arrive in DE-8b's "Your files"). Each is one table with an explicit column list and a written reason for every column left out, read through the DE-4 `BusinessDataExportRepository`, keyed on the session user's id, inside the Phase 1 row ceiling. `format_version` stays 2 (additive). `export_metadata.groups` gains `content`, the only change to earlier output. There is no migration, no new route, file, dependency or flag.
+
+**Business calls: TL defaults 2026-10-17 — user may change.** The user authorised an autonomous run, so TL took these defaults, following the user's earlier decisions (activity out, tracking out, everything we hold in). These DE-7 BC numbers are separate from the BC numbers of DE-2…DE-6.
+
+| # | Question | Default | Effect |
+|---|---|---|---|
+| BC-1 | Smart-link click, sign-up and attributed-revenue totals | **Out** (activity; the revenue total is derived and has no currency of its own). TL default 2026-10-17 — user may change | `click_count`, `conversion_count` (`VISIT_STATS`) and `revenue_cents` (`ATTRIBUTED_REVENUE`) are `excludedColumns`; the link itself (short code, name, destination, campaign tags, on/off) is in |
+| BC-2 | Switched-off smart links, including system-created ones | **In**, with on/off. TL default 2026-10-17 — user may change | No row filter |
+| BC-3 | Draft, unpublished and archived pages | **In**, with status. TL default 2026-10-17 — user may change | No row filter |
+| BC-4 | Website text the assistant drafted | **In** (the owner's published content). TL default 2026-10-17 — user may change | `content_generated_at` (a timestamp) is in; no generation inputs are stored on these tables |
+| BC-5 | The picture library, descriptions included (for an assistant-made picture, the request the owner typed; also the alt text) | **In**. TL default 2026-10-17 — user may change | Every `source` (stock, generated, upload) in; `description` in |
+| BC-6 | Public web addresses and short codes | **In**. TL default 2026-10-17 — user may change | `slug`, `subdomain`, `custom_domain`, `smart_links.code`, `public_url` in |
+| BC-7 | Hidden blocks | **In**, marked hidden (`enabled`). TL default 2026-10-17 — user may change | No row filter |
+| BC-8 | Page views and visitor data | **Out** (already decided; restated). TL default 2026-10-17 — user may change | `website_page_views` and `smart_link_clicks` stay `exclude` (visitor tracking) and are pinned never read |
+
+**SA rulings recorded here (DE-7 workplan review, 2026-10-17):**
+
+| Ruling | Change |
+|---|---|
+| **SA-Q1 (new pattern, rule 7): the parent-scoped read** | `website_blocks` has no `user_id` (a block belongs to a page, the page to the owner). It is read inside `listOwnedRowsForExport`, never by a caller-supplied id: first the owner's page ids, `website_pages.select('id').eq('user_id', session id)`, keyset paged (the ownership oracle, the same E-4 boundary as every other section); then the blocks, `.in('page_id', chunk)` as the first filter, per chunk of `EXPORT_LIMITS.VIA_PARENT_CHUNK` (100) ids, keyset paged on `id`; every returned block is then checked against its chunk (V-6), so a PostgREST or proxy that ignored `.in` fails the section instead of leaking. Rejected: a PostgREST `!inner` embed (one missing character returns every tenant's blocks), a view or `SECURITY DEFINER` RPC (breaks E-1, needs a migration), a `user_id` column on `website_blocks` (migration and five write paths; a reasonable future follow-up), excluding the table (loses the page content), one query per page |
+| SA-Q1 hardening C-1…C-6 | **C-1** V-6 per chunk; `id` and `page_id` must be strings; a repeated `id` after the final sort fails the section. **C-2** final sort in code-unit order, never `localeCompare` (source pin). **C-3** `lastId` resets per chunk. **C-4** past `ROW_CEILING` parent ids the read stops `overCeiling` with no child query; parent ids never count against the row budget. **C-5** order: Zod, E-2 resolve, V-1…V-3 at request time, E-3 for the child AND the parent, then the reads; a `via` scope without the opt-in keeps the DE-4 `not_user_scoped` code; the parent is resolved from the child descriptor's own table name. **C-6** each parent id must be a canonical lowercase uuid before it joins the set; `.in()` gets a plain string array |
+| **SA-Q2** | Two-key opt-in: the `include` classification gains `viaParent?: { parent, fk }`, which must deep-equal the purge `scope` (`via`). Checked in CI (`tableExportProblems` + the new `viaParentProblems`: one hop, the parent a `user_id`-scoped `include` listing `id`, no `rowKey`, no `rowFilter`; the child lists `id` and the fk) and again at request time (`viaParentOf`). A purge scope changed to `via` alone still reads nothing. Only `website_blocks` carries it (pinned); a second one, or any via-of-via, is an SA item. Repository header E-2 amended accordingly |
+| SA-Q3 | New group `content`: processor, controller `account_holder`, description "Your website, landing pages, smart links and picture library. You, the account holder, are the controller of this content. AgentPilot hosts it on your behalf, as its processor." |
+| SA-Q4 | Section ids `website_content`, `website_pages`, `website_blocks`, `smart_links`, `images`, in that order; the blocks after their parent |
+| SA-Q5 | `user_media.storage_path` out (`DOCUMENT_STORAGE`, the DE-4 text byte for byte); `public_url` in (already public on the site and inside block content) |
+| SA-Q6 | `user_media.source_ref` out (`REUSE_KEY`: a stock library id or a hash of a picture request, used only to avoid fetching or paying twice); `source` in |
+| SA-Q7 | Every jsonb column out whole (Q6 key census clean); no allow-list |
+| SA-Q8 | URLs kept as held (0 token-like query parameters live; the 3 `destination_url` query strings are the owner's own UTM tags); no row mapper |
+| **SA-Q9: the planned flip** | Every table is now classified: 155 = 38 `include` + 0 `planned` + 117 `exclude`. `PLANNED_TABLES_ALLOWED` is now `false`, so **the CI forbids `planned` on any table** from DE-7 on. The `planned()` helper is removed from `descriptors.ts` (a new table is classified on the spot); the `planned` type variant and `PlannedTableSlice` stay, marked "forbidden on tables since DE-7", for the CI rule and its negative controls. Every control that planted on `smart_links` "because still planned" moved to `website_page_views` (excluded) with its asserted message, each shown red once. Buckets keep their own `planned` until DE-8b (`PLANNED_FILES_ALLOWED` stays `true`). The DE-2 skill rule needs no change (with the flag false, `planned` is no longer an escape hatch) |
+| SA-Q10 | Chunk 100 parent ids per `.in` (about 3.7 kB of URL); rows sorted by `id` after collection, so "rows are in `id` order" holds for every section |
+| SA-Q11 | Counters out per BC-1; `code` in (public, matches no deny rule) |
+| SA-Q12 | `user_media.description` in (the owner's own words and the site's alt text, not system generation metadata); `website_pages.content_generated_at` in (a timestamp, as DE-6 `generated_at`) |
+| C-8 | The 33 earlier select strings and all DE-1…DE-6 output are byte-identical to `6f309f39` (the characterization literals are untouched; DE-7 adds six literals: five sections and the parent `id`) |
+
+**Final column lists (as built; `columns` ∪ `excludedColumns` = the live set of each table, 84 names):**
+
+| Table → section | In | Out | Total |
+|---|---|---|---|
+| `website_content` → `website_content` | 22: `id`, the 19 jsonb sections (incl. `intake_form`), `created_at`, `updated_at` | `user_id` | 23 |
+| `website_pages` → `website_pages` | 22, incl. `slug`, SEO text, `theme`, `client_flow`, `status`, `subdomain`, `custom_domain`, `content_generated_at`, `template_id` (bare id) | `user_id` | 23 |
+| `website_blocks` → `website_blocks` | 9, incl. `page_id`, `content`, `styles`, `enabled`, `capability_config` (no `user_id` column; `viaParent`) | — | 9 |
+| `smart_links` → `smart_links` | 13, incl. `code`, `destination_url`, the UTM tags, `is_active`, `metadata` | `user_id`, `click_count`, `conversion_count`, `revenue_cents` | 17 |
+| `user_media` → `images` | 9, incl. `public_url`, `source`, `section`, `description`, `width`, `height` | `user_id`, `storage_path`, `source_ref` | 12 |
+
+The exact lists are the `*_EXPORT` descriptors in `lib/business-os/purge/descriptors.ts`, pinned literally in `exportClassification.test.ts` (`DE7_PINS`, with the inline live set from §11.1) and byte for byte in the route characterization test.
+
+**Notes for DE-8b:**
+
+| # | Note |
+|---|---|
+| **File mapping: PROPOSAL (SA-Q5), not a DE-8b decision** | The files manifest comes from the `STORAGE_DESCRIPTORS` `include` buckets listed under `{user_id}/` (`website-images`, `contact-documents`). The zip entry is the object name with the `{user_id}/` prefix removed, under the bucket's folder. Any link column DE-8b adds to `images` / `client_documents` (for example `file_in_export`, the zip-relative path) is COMPUTED from DE-8b's own internal, non-exported read of `storage_path`, and never writes our raw storage key. **DE-8b's workplan rules the column name and whether it exists** |
+| **Owed: Q10b** | DE-8b's workplan carries Q10b: `website-images` objects without a `user_media` row (logos before F-27, older uploads: still in "Your files", the bucket listing is the inventory), rows without an object, and objects outside an owner folder. Not run in DE-7 |
+| README: pages | `website_content` holds only the owner's edits, merged over the block content; to rebuild a page, read `website_blocks` (the base) and `website_content` together |
+| README: smart links | Click, sign-up and revenue totals are not in the file (BC-1); the payments themselves are in `payments` |
+| README: subdomain | `website_pages.subdomain` is a per-page copy; `business_profile.subdomain` is the authority (one live owner differs, exported as stored) |
+| README: amounts | `website_content.payment_button` keeps its own `amount` and `currency` exactly as held (CLAUDE.md § Currency) |
+| CSV | The five sections follow the DE-4 CSV rule; every jsonb column goes as JSON text in one cell |
+
+**As built (measured on the branch, 2026-10-17):** 155 table descriptors = **38** `include` + **0** `planned` + **117** `exclude`. On the 5 DE-7 rows, `level`, `order`, `scope`, `snapshot`, `area` and notes are unchanged (pinned; purge suites green). The export file holds 8 `account`, 26 `client_records` and 5 `content` sections. A run reads `website_pages` twice (its section, then the parent ids) and reads `website_blocks` only when the owner has a page. Jest time: about +2.8 s summed over the six touched suites (warm, local; in the existing required job, off the `next build` path), reported to SA under C-10.
+
+Follow-up (QA-E3, Low): pin `ReadInputSchema` so `opts` may only ever contain `maxRows` (a schema-shape test), so a deliberately renamed caller key cannot slip past the D-10 scan.
+
+### 0.12 DE-8a status, SA rulings, TL defaults and the PROD apply plan (2026-10-17)
+
+**DE-8a (export foundation, Phase 1 cut): code complete 2026-10-17, uncommitted on `feature/data-export-de8a` (merged up to origin/main `fdaf90c1`, which carries DE-7 PR #446), awaiting SA code review and QA.** Nothing is applied to PROD yet. Workplan: [BUSINESS_OS_DATA_EXPORT_DE8A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE8A_WORKPLAN.md) (SA workplan review 2026-10-17: approved with C-1…C-11, rulings Q-1…Q-13). TL pre-check done on PROD read-only (workplan §9.2, §9.3): nothing exists under the new names, no storage policy of any kind, default privileges hand new public tables and functions to `anon` and `authenticated`, the live cleanup function carries stamp `789e4758d674b561` (20261047), pg_cron is not installed.
+
+**What it delivers (no route, no cron, no UI, no zip code: those are DE-8b):**
+
+| Piece | As built |
+|---|---|
+| Table `public.business_os_data_exports` | One row per export job: who (`user_id` → `auth.users` ON DELETE CASCADE; `requested_by` with **no** FK, SA Q-2; `requested_by_kind` owner / admin), status `queued` (Phase 2 only) / `running` / `ready` / `failed` / `expired`, failure reason, bytes, file and row counts, the dates, `owner_downloaded_at` (SA Q-7). Dates, counts and bytes only, never content. 11 named CHECKs; the expiry CHECK is NULL-safe and fixed at 72 hours (SA C-1, C-2). RLS on, **no policy**, every privilege revoked from PUBLIC / anon / authenticated / service_role, then service_role gets exactly SELECT, INSERT, UPDATE, DELETE (SA Q-4, C-4). No trigger. A partial unique index allows one `queued` / `running` row per account |
+| Start function `public.business_os_data_export_start(uuid, uuid, text)` | **SECURITY INVOKER**, VOLATILE, `SET search_path = pg_catalog, public, pg_temp`, EXECUTE for service_role only. Order: guard the inputs (22023), per-account advisory lock, turn a `running` row older than 90 s into `failed` / `timeout`, one at a time (`in_progress`, retry at that row + 90 s), three per rolling 24 h over `running`, `ready`, `expired` (`daily_limit`, retry at the third-newest + 24 h), insert (a unique violation is answered as `in_progress`). It takes no job id; every statement is scoped `user_id = p_user_id` |
+| Bucket `business-data-exports` | Private, 50 MB, `application/zip` only, no policy (asserted, not dropped). Objects at `{user_id}/{job_id}/1.zip`, built only by `exportObjectPath` from two uuids. **Stays empty until DE-8b**, which ships the writer and the 3-day sweep in one PR (SA Q-6) |
+| Repository `BusinessOsDataExportJobRepository` | `startForOwner(sessionUserId)` and `startForAdmin(targetUserId, adminUserId)` (SA C-10: an owner route cannot build a mismatched call), `findById`, `findLatestForUser`, `listForUser`, `markReady`, `markFailed`, `markOwnerDownloaded`, `expireOtherReady`, `markExpired`, and the two cross-account sweep reads for the DE-8b cron, `listDueForExpiry`, `findJobsByIds`. Zod on every input (invalid input never reaches the database), Pino, `{ data, error }`, every per-account method filtered by `(id, user_id)` |
+| Registrations (§0.3.3) | Purge descriptor (`level: 'purge'`, area `data_exports`, LEAF, snapshot `ids`, export `exclude`: the export itself), storage descriptor (`purge`, `{user_id}/`, `exclude`), `PurgeArea` + admin label "Data exports", `USER_OWNED_TABLES`, classification baseline 156. Classification totals now 156 = 38 include + 0 planned + 118 exclude |
+| Audit event names (no emitter yet) | `DATA_EXPORT_REQUESTED` info, `DATA_EXPORT_READY` **info**, `DATA_EXPORT_FAILED` warning, `DATA_EXPORT_DOWNLOADED` info, `DATA_EXPORT_EXPIRED` info, `DATA_EXPORT_DOWNLOADED_BY_ADMIN` **critical**; audience `shared` |
+| `fflate` | `0.8.3` exact as a direct dependency. The lockfile changes by one line in the root dependency list; the installed package entry is unchanged, so nothing new is downloaded |
+| Scripts for TL | `scripts/precheck-business-os-data-exports.sql` (read-only, Q1…Q11, Q11 = SA C-9), `scripts/check-business-os-data-exports.sql` (read-only, 18 rows + VERDICT; FAIL before apply, PASS after both migrations), `scripts/probe-business-os-data-exports.sql` (P1…P14 as service_role, always rolled back), `scripts/rollback-business-os-data-exports.sql`, `scripts/measure-data-export-size.sql` (the M-1 text plus the new bucket) |
+
+**SA rulings recorded here (DE-8a workplan review, 2026-10-17):**
+
+| Ruling | Change |
+|---|---|
+| **Q-1: SECURITY INVOKER replaces the "SECURITY DEFINER" wording of §0.4.1 and §0.3.2 SQ-E8** | The only caller is service_role, which already holds the table privileges and bypasses RLS, so DEFINER would add owner rights nobody needs; INVOKER fails closed if a grant ever widens. The post-condition asserts `prosecdef = false`. Precedents 20261023 and SA-Q69. Wherever §0.3 or §0.4.1 says the limit RPC is SECURITY DEFINER, read SECURITY INVOKER |
+| **Q-9: audit severities** | `DATA_EXPORT_READY` is **info**, not critical: critical feeds the Health "Critical audit events" tile and the 7-year class, and an ordinary self-export must not raise an operational alarm (as password changes and refunds, #157/#160). GDPR + SOC2 flags kept. `DATA_EXPORT_DOWNLOADED_BY_ADMIN` is **critical** (business call B-2). FAILED warning; REQUESTED, DOWNLOADED, EXPIRED info |
+| Q-2 | `requested_by` is the admin's auth user id from the session, never `admin_users.id`; no FK. The audit row's `actor_id` is the durable link |
+| Q-3, C-7, C-8 | The generated cleanup migration ships in this PR (two-migration shape below). `FUNCTION_REQUIRED_TABLES` carries `business_os_data_exports` → `20261074`, so 20261075 refuses until 20261074 is applied |
+| Q-4, Q-5, Q-6, Q-7, Q-8, Q-10, Q-11, Q-13 | Service-role table with no owner policy; storage helpers in DE-8b; retention cron in DE-8b with the writer; `owner_downloaded_at` column; concurrency evidence = unique index + lock pinned in Jest + the in-transaction probe (two simultaneous sessions are not shown anywhere, PGlite is one connection too); limits as SQL literals mirrored by `EXPORT_JOB_POLICY` and pinned by the migration test; one tsc-forced label line; no `admin_users` check in the function |
+| C-1…C-6, C-9, C-10 | NULL-safe 72-hour expiry CHECK; probe runs every start as service_role (`SET LOCAL ROLE`) and checks the role is restored; service_role least privilege; VOLATILE pinned; severities as Q-9; a checker FAIL row (and a pre-check query, and a post-condition) for any storage policy open to browser roles that does not name a bucket; `startForOwner` / `startForAdmin` |
+| Q-12 and forward notes for DE-8b | The daily cron also turns stale `running` rows into `failed` / `timeout` (same predicate, scoped by each row's own `user_id`). The route's `maxDuration` stays at 60 s or less, below the 90 s stale rule. Uploads set `contentType: 'application/zip'`. Writer and sweep ship in one PR |
+
+**The two-migration shape and the chaining rule with finance 4b.1.** A new table with a foreign key to `auth.users`, a new purge descriptor and a new bucket change the test-account cleanup plan, so DE-8a carries **two** hand-applied migrations: `20261074_business_os_data_exports.sql` (this slice) and `20261075_operator_test_account_cleanup_data_exports.sql`, **generated** by `scripts/generate-test-account-cleanup-sql.ts`, never hand-written (the drift test enforces it), with its generated rollback in `supabase/SQL Scripts/`. New cleanup stamp `a824848e0a538477`. Finance 4b.1 (`20261072` + `20261073`) regenerates the same function and was **not** on main when DE-8a was built, so DE-8a chains on `20261047` (now pinned as applied history). Per SA C-7, whichever lands second takes the next free number above the first one's: **if DE-8a merges first, finance 4b.1 renumbers its regenerated cleanup to 20261076 or later and chains on 20261075** (allowed: 20261073 is unapplied); if 4b.1 merges first, DE-8a re-merges, chains on 20261073, and TL applies 20261072 → 20261073 → 20261074 → 20261075 in numeric order. A lower-numbered cleanup file is never applied after a higher one, and an applied file is never renumbered or edited.
+
+**Business calls: TL defaults 2026-10-17 — user may change** (workplan §15.1; SA accepted all three).
+
+| # | Question | Default |
+|---|---|---|
+| B-1 | How long do we keep the record that an export happened (date, size, who started it, whether the owner downloaded it; never any of the data)? | **Until the account is deleted.** The file itself is always deleted after 3 days. TL default 2026-10-17 — user may change |
+| B-2 | Should an admin downloading a customer's data raise a flag on the Health page and be kept 7 years? | **Yes** (the customer is not told, already decided). Implemented by the `critical` severity alone. TL default 2026-10-17 — user may change |
+| B-3 | For a few minutes after release, until the database step is applied, account deletion and the test-account cleanup refuse | **Accepted** (both refuse safely; nothing is lost). TL applies right after the deploy. TL default 2026-10-17 — user may change |
+
+**PROD apply plan (TL, by hand, after SA ✅, QA ✅ and the merge):**
+
+| Step | What | Gate |
+|---|---|---|
+| 0 | Confirm finance 4b.1 has not merged first; if it has, DE-8a re-chains first (above) | — |
+| 1 | Re-run `scripts/precheck-business-os-data-exports.sql` | Q1 all NULL, Q5 / Q6 / Q11 empty, Q8 false / false, Q9 still the 20261047 stamp |
+| 2 | Right after the deploy, apply `supabase/migrations/20261074_business_os_data_exports.sql` | Its post-condition passes, else nothing is applied |
+| 3 | Apply `supabase/migrations/20261075_operator_test_account_cleanup_data_exports.sql` | It refuses until 20261074 is applied |
+| 4 | Run `scripts/check-business-os-data-exports.sql` | `VERDICT PASS 18/0` |
+| 5 | Run `scripts/probe-business-os-data-exports.sql` with TL's own user id pasted | `PROBE PASS P1 to P14` (an expected error; everything rolled back) |
+| 6 | `npm run schema:reconcile` (read-only) | 0 unclassified, 0 missing for the new table |
+| Rollback, only if needed | First the generated `supabase/SQL Scripts/20261075_operator_test_account_cleanup_data_exports_rollback.sql`, then `scripts/rollback-business-os-data-exports.sql` (it refuses while the bucket holds files or the 20261075 function is still live; it leaves the empty bucket row for the Storage dashboard), then RM reverts the PR | — |
+
+**PROD apply record.** 20261074 applied by TL (post-condition passed). 20261075 applied by the user in the SQL editor on 2026-10-17; TL then ran the checker: `VERDICT PASS 18/0`. Extra read-only probe: the cleanup function is SECURITY DEFINER, owned by postgres, names `business_os_data_exports` and the `business-data-exports` bucket, carries stamp `a824848e0a538477` (old `789e4758d674b561` gone), EXECUTE for service_role only.
+
+Between the deploy and step 3 (minutes) the deployed build names a table that is not live and pins the new cleanup stamp: Reset / Purge / admin delete and the test-account cleanup refuse. Nobody deletes an account in that window (B-3).
+
+**Evidence (Dev, 2026-10-17):** Jest only in CI (file scans and a mocked client, in the existing Tests job: no added critical-path time). Locally, the migration, the checker, the probe and the rollback were run on PGlite 0.5.8 (Postgres 18.3, one connection) with stubbed `auth.users`, `storage.buckets` / `objects` and Supabase-like roles and default privileges: checker FAIL before, `PASS 18/0` after; probe `PROBE PASS P1 to P14` with zero rows left; post-condition refused eight planted faults with nothing applied; the probe caught four planted function faults. Recorded in the workplan; scenario evidence, not concurrency evidence (SA Q-8).
+
+### 0.13 DE-8b status, SA amendments and TL defaults (2026-10-17)
+
+**Status:** DE-8b **code complete, uncommitted** on `feature/data-export-de8b` (worktree `neuronforge-de8b`, merged with `origin/main` after DE-8a PR #451). Awaiting SA code review, then QA. No migration, no new dependency, no entitlements import. Workplan: [BUSINESS_OS_DATA_EXPORT_DE8B_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE8B_WORKPLAN.md). The SA workplan review (2026-10-17) approved it with conditions C-1 … C-16; the amendments below are binding for Phase 1 and win over §0.3 and §0.4.1 where they differ.
+
+**What DE-8b built.** `POST /api/business-os/data-exports` (one request, `maxDuration = 60`): auth → strict empty body → the existing `create` throttle → `startForOwner(user.id)` → pre-flight file ceiling (listing only) → bounded records pass → downloads → one zip (README en + he, `data.json`, one CSV per section, `files-index.csv`, "Your files") → finished-size and time check → upload `{user_id}/{job_id}/1.zip` → `markReady` → 120 s signed URL named per DX-10. `POST /api/business-os/data-exports/[jobId]/parts/1/download` (download again). Daily `/api/cron/data-export` at `25 5 * * *` (reap, 3-day expiry, orphan sweep, 60% size watch), in the same PR (SA DE-8a Q-6). The two file buckets are classified `include` (`client-documents`, `website-images`); `planned` is now forbidden on buckets. The JSON route `GET /api/user/data-export` and its 4 MB cap are **unchanged**; the four "Export data" buttons still call it.
+
+**SA amendments (DE-8b workplan review, 2026-10-17):**
+
+| # | Amends | Ruling |
+|---|---|---|
+| Flag | §0.4.1 B ("behind `isBusinessOsDataExportEnabled`, env, default off, until DE-9") | **No env flag.** `isBusinessOsDataExportEnabled` / `NEXT_PUBLIC_BUSINESS_OS_DATA_EXPORT_ENABLED` is not built. **The owner-facing switch is DE-9's merge**: DE-8b ships no UI, so the new routes are live but unlinked. They act only on the caller's own data, behind `getUser()`, the database limit (1 at a time, 3 a day) and the request throttle |
+| Q-1 | §0.7 C-11 (body cap) | The JSON route, its 4 MB cap, `DATA_EXPORTED` and its characterization test stay byte-identical in DE-8b. **Removing the cap moves to DE-9**, the slice that switches the buttons and retires the JSON route. `ownerTimezone` moved to `ownerClock.ts` as a pure move |
+| Q-3 | §0.4.1 C ("rows from `count` head queries") | **The bounded records pass is the row check.** It reads at most 100,000 rows and stops before any file download, which is "before any heavy work" |
+| Q-6 | §0.4.1 A ("delete any object older than 3 days without a live job row") | **10-minute grace**: an export object is kept only if a job row has the same id **and** the same `user_id` as its folder and is `running` or `ready`; otherwise it is removed once older than 10 minutes. Only objects named exactly `{uuid}/{uuid}/1.zip` are candidates (C-10); anything else is counted and left alone |
+| Q-7 | §0.4.1 C ("one aggregate over `storage.objects`") | **The size watch walks the Storage API** (no migration) and reuses **the export's own file inventory**, so a document orphan never inflates it (C-11) |
+| C-7 | §0.3.2 / §0.4.1 A ("download again" as `GET`) | **Download again is `POST`** with a strict empty body: it records `owner_downloaded_at` and `DATA_EXPORT_DOWNLOADED`, and a cross-site `GET` would carry the Lax session cookie |
+| C-16 | §0.4.1 E (file name `…-<YYYY-MM-DD>.zip`; ASCII fallback `data-export-<date>.zip`) | The zip name keeps the time: `<slug>-data-export-YYYY-MM-DD-HHmm.zip` (DE4-U1 extended to the zip), stamped from the job's `created_at` on the owner's clock. The no-name and ASCII fallback is `agentpilot-data-export-YYYY-MM-DD-HHmm.zip` |
+| Q-8 | — (forward note, **binding on DE-10a**) | The zip route writes no `DATA_EXPORTED`; owner visibility is acceptable for every DE-8b event. **DE-10a:** an admin-started `DATA_EXPORT_REQUESTED` and `DATA_EXPORT_DOWNLOADED_BY_ADMIN` written with `entityType 'user'` against the target account would be readable by the owner, contradicting BQ-SA-2 (no notice to the owner). DE-10a must write those under an **operator-only entity type** (new type, classified in `AUDIT_ENTITY_OWNER_VISIBILITY` and the RLS policy mirror) or otherwise prove they are hidden |
+| Q-12 | — | The cron reap writes `DATA_EXPORT_FAILED` with `userId` = the row's own `user_id`, `actorId: null` and `details.actor_kind: 'system'` (no "system" actor id is invented) |
+| Q-13, Q-17 | DE-7 SA-Q5 proposal | Document entries are named from `contact_documents.file_name` (Hebrew survives) under `files/client-documents/<contact_id>/`; pictures keep their cleaned storage path under `files/website-images/`. `clean()` is a security control: the public intake upload stores the uploader's file name verbatim (C-4) |
+| Q-15 | — | The start route uses the existing `rateLimit` rule `create` (10 per 900 s), the download route `read` |
+| Q-16 | — | A truncated file inventory fails the export (`error`): "Your files" is never offered as complete when it is not |
+
+**TL defaults 2026-10-17 (§20.1 of the workplan; autonomous run — user may change):**
+
+| # | Business call | TL default 2026-10-17 — user may change |
+|---|---|---|
+| BC-1 | Spreadsheet cells that start with `= + - @` (phone numbers like `+972…` included) get a leading apostrophe; `data.json` keeps the exact value | Yes, protect |
+| BC-2 | Instructions file language | Both English and Hebrew, always |
+| BC-3 | Client documents in the zip | Original file names (Hebrew kept), one folder per client id |
+| BC-4 | Website pictures with no picture-library record (logos, older uploads) | Included |
+| BC-5 | A file that cannot be read during packaging | The export still completes; the instructions file says how many are missing |
+| BC-6 | Handing over the link counts as "the owner downloaded it" (feeds the DE-10a delete warning) | Yes |
+| BC-7 | The file is unreachable after 3 days and physically deleted at the next daily clean-up (up to about one more day) | Accept (daily) |
+| BC-8 | The business name is visible in the download link's address (and so in browser history) | Accept (decided in DX-10) |
+
+**Owed after merge:** T-14 on the Vercel preview (Hebrew, English and no-business accounts; the `Content-Disposition` Storage actually sends for a Hebrew name; the zip opened in Windows Explorer and macOS Archive Utility; a CSV opened in Excel). If Storage does not send a correct `filename*`, the URL switches to `download: asciiFileName` and DE-9 saves through fetch-and-blob with the Unicode `fileName` the 200 body already carries (§0.4.1 E fallback).
+
+**Follow-ups (Low, not blocking):** SA L-1 pin listOwnerFolders to exportSweep only; L-2 a throw after markReady reports failed while the job is ready (cosmetic); L-3 explicit maxDuration on download-again; L-4 body size cap; L-5 count failed reap removals; QA edge notes 1–5 (README orphan wording, Unicode look-alike separators, trailing-space test, 413 copy for rows → DE-9, nul.tar.gz); QA c2 test gap. T-14 Preview/prod manual check owed by TL BEFORE DE-9 switches the buttons.
+
+### 0.14 DE-9 status, SA rulings and TL defaults (2026-10-17)
+
+**Status:** DE-9 **code complete, uncommitted** on `feature/data-export-de9` (worktree `neuronforge-de9`, merged with `origin/main` at `4e10ebba`, DE-8b PR #453). Awaiting SA code review, then QA. No migration, no new dependency, no entitlements import, no new table or bucket. Workplan: [BUSINESS_OS_DATA_EXPORT_DE9_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE9_WORKPLAN.md). SA workplan review 2026-10-17: approved with conditions C-1 … C-11.
+
+**Merge gate (T-0b): T-14 is NOT yet recorded.** There is no env flag (§0.13), so **merging DE-9 is the owner-facing switch**. The PR must not merge until TL records the DE-8b T-14 Preview result in the DE-8b workplan. DE-9 is built in save mode A (the page navigates to the signed URL, Storage answers `Content-Disposition: attachment`). If T-14 shows a wrong `filename*`, mode A is replaced by mode B (fetch and blob with the Unicode `fileName`), about +0.5 d (SA Q9: one mode ships, never both).
+
+**What DE-9 built.**
+
+- **One control, `DownloadMyDataButton`** (`components/business-os/data-export/`), on all four entry points: the Business OS settings Security list (`row`), the Danger zone (`button`, inside `ErasureRequestContent`), `/settings` `SecurityTab` and `/v2/settings` `SecurityTabV2` (`button`, BC-1). Every outcome of the zip routes has its own copy in en / he / es (`downloadMyDataCopy.ts`; he and es are drafts for native review). The status line reads "Last export {date}. You can download it again until {until}. Download again".
+- **One browser seam**, `lib/client/businessOsDataExport.ts`: `startDataExport`, `downloadDataExportAgain`, `fetchLastDataExport`, `saveSignedDownload`. Refusals are read from the body `code`; 401 and 429 by status; a non-JSON body (a platform 502 / 504) is `timeout`; a 75 s client timer (AbortController + setTimeout) is `client_timeout`.
+- **`GET /api/business-os/data-exports`** ("Last export") on the existing route file, backed by the new `BusinessOsDataExportJobRepository.findLatestCompletedForUser` (`user_id`, `requested_by_kind = 'owner'`, status `ready` or `expired`, newest one). The query string is ignored; a job id leaves the server only while that export is downloadable; no counts; no audit; `read` throttle under `data-export-status`.
+- **Retired:** `GET /api/user/data-export` and both its test files, `lib/client/downloadUserDataExport.ts` and its test, `EXPORT_LIMITS.JSON_BODY_MAX_BYTES` (the §0.7 C-11 cap), `exportFileName` and its `sections.test.ts` block (its winter-time and behind-UTC clock cases moved to `fileName.test.ts`), the five `settings.security.export_*` keys in en / he / es and the three in the Danger zone's `FALLBACK_COPY`. `app/api/user/data-export/__tests__` left `test:bos-entitlements`.
+- **Kept:** `EXPORT_GDPR_ARTICLE` (written into `data.json` meta), `findForUserDataExport` (the zip builder's profile read), `AUDIT_EVENTS.DATA_EXPORTED` (historical rows carry it).
+- **Support contact moved, unchanged:** `PLACEHOLDER_ERASURE_CONTACT` and its `TEMP-ERASURE-CONTACT` marker now live in `lib/business-os/supportContact.ts`, the single swap point read by both the Danger zone and the new control (SA C-3). The N2 pin is repo-wide.
+
+**SA rulings (DE-9 workplan review, 2026-10-17):**
+
+| # | Ruling |
+|---|---|
+| Q1 / UI-1 | **Option A, an inline notice inside the control** (`DataExportNotice`, in the control's folder, presentation only; no `components/ui` primitive until a second consumer and SA review). Both live regions (`role="status"`, `role="alert"`) exist from the first paint. **Nothing auto-dismisses.** The email in "too large" is wrapped in `<bdi>` so Hebrew cannot reorder it. `sonner` and the hybrid were rejected |
+| Q2 | The JSON route is **deleted (404)**, not a 410 tombstone |
+| Q3 + C-4 | `GET` status route + `findLatestCompletedForUser`, **owner-requested jobs only** |
+| Q4 | Closing the dialog while preparing keeps the request; the file is still saved on 200 |
+| Q5 + C-5 | 75 s client timeout, AbortController + setTimeout, cleared in `finally`; the one-shot 30 s status reload after a client timeout is cleared on unmount |
+| Q6 | `test:bos-entitlements` drops the deleted folder only; the zip route tests run in the required Jest gate |
+| Q7 | Owner audit labels for `DATA_EXPORT_*`: out of DE-9 (follow-up) |
+| Q8 + C-7 | `EXPORT_GDPR_ARTICLE` and `findForUserDataExport` stay; `exportFileName` and `JSON_BODY_MAX_BYTES` go |
+| Q9 | One save mode only (A), no `EXPORT_SAVE_MODE` constant |
+| C-1 | Dates use explicit Intl fields (`year`, `month: 'short'`, `day`, `hour`, `minute`, `timeZoneName: 'short'`): `dateStyle` / `timeStyle` with `timeZoneName` throws. Tested with the real Intl |
+| C-2 | `lib/audit/__tests__/ownerAuditReads.guard.test.ts` re-pointed at the two zip routes (they read no audit rows), negative controls kept |
+| C-3 | The contact constant moved to one neutral module (above) |
+| C-6 | `saveSignedDownload` follows `https:` only (`http:` only for localhost in development); anything else is a failure and never navigates |
+| C-8 | In the Danger zone the control is one stacked block beside "Contact us"; no `flex-row-reverse` wrapper |
+| C-9 | Live regions as in Q1; a notice stays until dismissed or replaced by the next action |
+| C-10 | `{limit}` from `EXPORT_JOB_POLICY.DAILY_LIMIT`, dates through the C-1 formatter; the parity test checks every placeholder in all three languages |
+| C-11 | This splice; §0.4.1 B's "flag on after QA" is superseded by §0.13 (no flag: the switch is this merge) |
+
+**TL defaults 2026-10-17 (§10.1 of the workplan; autonomous run — user may change):**
+
+| # | Business call | TL default 2026-10-17 — user may change |
+|---|---|---|
+| BC-1 | The agent-platform settings screens' own export card | The same "Download my data" button (one export everywhere) |
+| BC-2 | The old JSON download | Retired (route, browser helper, 4 MB limit) |
+| BC-3 | The email named in "too large, contact support" | The same contact as the Danger zone, `PLACEHOLDER_ERASURE_CONTACT`. **It is today the product owner's personal Gmail address, shown to every owner.** The code keeps one swap point (`lib/business-os/supportContact.ts`); **the user is asked to supply a support address** (accept for now and swap later is technically fine, a one-line change) |
+| BC-4 | "Download my data" when an export is already ready | Always prepares a fresh one; "Download again" below hands over the existing one |
+| BC-5 | Button name | "Download my data" (DX-5), he / es to match |
+| BC-6 | A "what's included" line under the button | No; the README in the zip explains it |
+
+**Supersessions (each also noted in place):**
+
+- §0.4.1 B row DE-9, "the old GET route is retired": **done**.
+- §0.7 C-11, the 4 MB body cap: **removed**.
+- **FR-E14** (one export control): met by `DownloadMyDataButton` on all four entry points.
+- **FR-E15** and **AC-E22** ("every export writes `DATA_EXPORTED`"; "Last exported shows the latest `DATA_EXPORTED` date"): **superseded**. The zip writes `DATA_EXPORT_REQUESTED` / `READY` / `FAILED` / `DOWNLOADED` / `EXPIRED`, and "Last export" reads the jobs table through `GET /api/business-os/data-exports`.
+- **AC-E1** ("each export button downloads `GET /api/user/data-export`"): **superseded**; each entry point renders the one control, which calls the zip routes. The first half (no browser request to the four tables) still holds and is pinned by `pluginConnectionsBrowserAccess.guard.test.ts`.
+
+**Forward notes, binding on DE-10a (from SA C-4):**
+
+1. **Download again must answer 404 to the owner for an admin-kind job.** Today `findById` filters only by `id` and `user_id`, so an owner who learned an admin job's id could fetch it. The status route already never returns one; DE-10a closes the download route the same way.
+2. **`expireOtherReady` treats owner and admin jobs alike today**: a new owner export expires a ready admin export of the same account, and the reverse. DE-10a must decide (and pin) how the two kinds replace each other, so neither silently replaces the other's export.
+
+**Owed / follow-ups:** T-14 (merge gate, above); the manual browser check after deploy (TL list in the workplan); native review of the he / es copy; owner audit labels for `DATA_EXPORT_*` (SA Q7); a support mailbox (BC-3).
+
+**Follow-ups (Low):** QA E-1 daily_limit refusal with no retryAt shows the in-progress text (useDownloadMyData noticeFor); E-2 focus after dismiss; E-3 stale snippet docs/CLIENT_DATA_REMOVAL_IMPLEMENTATION.md L339; E-4 --v2-border fallback on /settings; SA: when the support address is swapped also clean lib/agentkit/v6/translation/NaturalLanguageCorrectionHandler.ts and prompt templates that send the personal email to an LLM as sample text; SA: SecurityTab.tsx direct Supabase calls (rule 1) on the parked agent-platform screen.
+
+### 0.15 DE-10a status, SA rulings and TL defaults (2026-10-17)
+
+**Status:** DE-10a (admin: export status, prepare, audited download) **code complete, uncommitted** on `feature/data-export-de10a` (worktree `neuronforge-de10a`; merged `origin/main` and then `origin/feature/data-export-de9` at `e7fbc24a`, by merge, never rebase). Awaiting SA code review, then QA. No migration, no env flag, no new dependency, no new table, bucket or CI job. Workplan: [BUSINESS_OS_DATA_EXPORT_DE10A_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10A_WORKPLAN.md). SA workplan review 2026-10-17: approved, rulings SA-1 … SA-11, binding conditions W10-1 … W10-12.
+
+**Depends on DE-9 (PR #454, held until T-14).** This branch carries DE-9's commit. Its PR targets `main` and merges only **after #454 is on `main`** (no stacked PR into the DE-9 branch). DE-10a is the **last Phase 1 slice** (user request 2026-10-16, §0.4.1 G).
+
+**What DE-10a built.**
+
+- **Three admin routes**, `requireAdmin` the first statement of each, registered in the gate oracle (`adminGate.writes`, 65 → 68 handlers): `GET /api/admin/users/[id]/data-exports` (the last 10 exports: who, when, state, sizes, owner downloaded or not; no link, no file name; not audited), `POST /api/admin/users/[id]/data-exports` `{ reason }` (prepares an export with the owner's own `runZipExport` and the target's context; counts against the account's 3 a day, DX-4; returns **no link**) and `POST …/data-exports/[jobId]/parts/1/download` `{ reason }` (the only admin link: job read scoped by the path account → **write-ahead `DATA_EXPORT_DOWNLOADED_BY_ADMIN` with `writeNow`, critical** → 503 `audit_unavailable` and nothing signed if it was not written → a 60 s link). Ids from the path and the session only; bodies `.strict()`.
+- **One audit builder**, `lib/business-os/data-export/adminExportAudit.ts`: every admin-path row is admin-owned (below).
+- **Owner path changes (DE-9 C-4 notes):** owner "download again" reads `findOwnerJobById` (owner-requested jobs only), so an admin job id is a 404; `markOwnerDownloaded` is owner-kind only; `expireOtherReady` replaces only older exports **of the same kind**, the kind read from the ready row; the file name rule moved, unchanged, to `lib/business-os/data-export/downloadName.ts` (both routes name the file one way).
+- **Cron sweep:** the reap and retention rows of an admin-kind job (or any kind that is not exactly `owner`) are written with no user and no actor.
+- **UI:** a sixth boxed section **"Data export"** in the `/admin/users` business drawer, between Activity and the Danger area (admin dark tone): the status list, "Prepare export" and "Download (audited)…" with a reason dialog, the "owner has not downloaded" warning, nothing in the Danger area disabled or hidden by it.
+
+**SA rulings (DE-10a workplan review, 2026-10-17):**
+
+| # | Ruling |
+|---|---|
+| SA-1 | **Admin-owned audit rows** satisfy DE-8b Q-8's "otherwise proven hidden" branch: `user_id = actor_id = the admin`, `entity_type 'user'`, `entity_id = the target`, `details.target_user_id`. The owner reads audit rows only where `user_id` is theirs (the one owner policy, verified on PROD by TL §13.1; every in-app owner reader filters by the session id). Covers every row about an admin job: REQUESTED, READY, FAILED, replaced EXPIRED, DOWNLOADED_BY_ADMIN. No operator entity type, no migration. Supersedes nothing (§0.3.4 already said `user_id = admin`) |
+| SA-2 | Cron rows on admin-kind jobs: `userId: null`, `actorId: null`, `details.actor_kind 'system'`, `requested_by_kind 'admin'`, `target_user_id` (the invites N-6 precedent). Owner-kind rows unchanged |
+| SA-3 | `AuditTrailService` untouched. D-7 is **closed for admin-path rows** by an explicit `actorId = admin` on every input; "explicit null means no actor" stays open (F-3) |
+| SA-4 | `expireOtherReady(userId, keepJobId, kind)`; the kind comes from the row `markReady` returned, never a caller argument |
+| SA-5 | `findOwnerJobById` for the owner route; `findById` unchanged for the admin route and the engine re-read; `markOwnerDownloaded` owner-kind only |
+| SA-6 | `downloadName.ts` is a pure move; the owner file name is byte-identical (the owner route's name assertions were kept unedited) |
+| SA-7 | A signing failure after a written DOWNLOADED_BY_ADMIN is a 500 with no compensating row |
+| SA-8 | The status GET is not audited; REQUESTED non-blocking; READY / FAILED bounded flushes; DOWNLOADED_BY_ADMIN is the only write-ahead row |
+| SA-9 | **BD-4 amended: six drawer sections, not five** (Data export between Activity and the Danger area, at the user's request); the L-12 "five groups" pins became six, the Danger area is still last |
+| SA-10 | The prepare returns no link; the download route is the only admin link minter |
+| SA-11 | **Changed from the workplan:** status throttled on `RATE_LIMITS.read`, prepare on `RATE_LIMITS.create`, **download on `RATE_LIMITS.write`** (every call writes a critical row and raises the Health tile) |
+
+**TL defaults 2026-10-17 (workplan §14.1; autonomous run — user may change):**
+
+| # | Business call | TL default 2026-10-17 — user may change |
+|---|---|---|
+| BC-1 | Prepare and download: one action or two? | **Two**, each with a reason; the download reason is pre-filled with the reason of the prepare the admin just made |
+| BC-2 | May an admin download an export the owner made (within its 3 days)? | **Yes**, recorded the same way (DX-7) |
+| BC-3 | Do an owner's and an admin's new exports replace each other? | **No**; each replaces only its own kind. An account can hold two ready files for up to 3 days |
+| BC-4 | When does the box warn "the owner has not downloaded an export"? | When the owner's newest export was not downloaded by them, or they never exported. In the new box; the hidden AD-2 delete preview gets its line when AD-2 is switched on |
+| BC-5 | Show the box for a login with no Business OS business? | **Yes** |
+| BC-6 | May an admin use the admin path on their own account? | **No** (refused server-side; they use "Download my data") |
+| BC-7 | Must an admin download appear in that business's Activity list in the drawer? | **No**: it is in the Audit trail and raises the Health "Critical audit events" tile |
+| BC-8 | (DX-4 consequence) An admin-prepared export uses one of the owner's 3 per day | Noted; no new decision |
+
+**Accepted side effect (for the user, no change):** because the 3-a-day limit is shared (DX-4), an owner whose own "Download my data" is refused with "in progress" or "daily limit" can infer that *something* used their allowance or is running. That reveals no admin identity, reason or file and is not an owner notice in the BQ-SA-2 sense.
+
+**Follow-ups (not DE-10a scope):**
+
+- **F-1 (Medium, pre-existing class).** Admin-owned rows live under the admin's own `user_id`, so the admin's **own** Purge "activity history" option, or a deletion of the admin's own account, would erase the record of their admin actions on other accounts. This already applies to AD-1b, AD-2a and the test-account cleanup outcome rows. Purge is inert today: **fix before Purge is enabled** (for example exclude admin-on-target rows from that scope, or store them with `user_id NULL`, `actor_id = admin`). A platform-wide decision.
+- **F-2 (Low).** The admin sees these rows in their own `/monitoring` (target id and reason in details). Their own action, as AD-1b; revisit with F-1.
+- **F-3.** D-7: "explicit null means no actor" across the null-actor callers (SA-3).
+- **Follow-ups (Low):** QA — add `?userId=` query cases to both admin POST route tests; padded-reason trim test on prepare; daily-limit wording 'its 3 exports'; pre-existing gate-oracle KNOWN GAP (handler missing from oracle not detected). SA — write an admin FAILED row when `runZipExport` throws in prepare (today the cron reaps it null/null); count 404/410 download answers in the failure throttle bucket.
+
+**Phase 1 status: complete in code, pending T-14 and the merges.** With DE-10a every Phase 1 slice of §0.4.1 B is built. Phase 1 is done once DE-8b T-14 is recorded, DE-9 (#454) is merged, and this slice passes SA, QA and its merge. Then the user decides the Phase 2 next steps (§0.4.1 F).
 
 ---
 
@@ -706,6 +1271,8 @@ Table names are as classified in `businessOwnedTables.ts` ✅. **Every column is
 | **D Insight & assistant activity** | `business_chat_conversation`, `business_chat_saved_plans`, `business_chat_verified_questions`, `daily_briefings`, `insights`, `insight_outcomes`, `insight_actions`, `insight_automations`, `business_health_summaries`, `owner_insight_history`, `channel_connections` (no tokens), `channel_metrics_daily`, `website_page_views` (aggregated, SQ-E7) | Mixed | DE-7 |
 | **E Agent platform (existing)** | `agents`, `agent_executions`, `agent_configurations`, `user_subscriptions`, `credit_transactions`, kept as today with explicit columns | Controller | DE-1 |
 
+> **Superseded in part (user BC-5, 2026-10-15, DE-4):** the B2 row lists `external_calendar_events`. It is **out** of the export (synced copy of the owner's own outside calendar). B2 as built is `scheduling_services`, `scheduling_bookings`, `scheduling_availability_exceptions`. See [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15).
+
 ### 3.2 Never in the export (each needs a recorded reason in the registry)
 
 | Category | Examples | Reason |
@@ -777,7 +1344,9 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 
 13. **FR-E13** Format per DX-3, delivery per DX-4. If a link is used, it is a private bucket, a signed URL valid ≤ 24 h, owner-only, and the file is deleted after expiry.
 14. **FR-E14** One export control in the UI (DX-5). Settings, the Danger zone, `SecurityTab` and `SecurityTabV2` all use it.
+    *DE-9 note (2026-10-17): met by `DownloadMyDataButton` on all four entry points (§0.14).*
 15. **FR-E15** Every export writes a `DATA_EXPORTED` audit row, non-blocking, with section counts and never contents. An admin-triggered send (DE-10) also writes an `operator`-class row.
+    *DE-9 note (2026-10-17): superseded. The JSON route that wrote `DATA_EXPORTED` is retired; the zip writes `DATA_EXPORT_REQUESTED` / `READY` / `FAILED` / `DOWNLOADED` / `EXPIRED` (§0.13, §0.14). `DATA_EXPORTED` stays as a constant for historical rows.*
 16. **FR-E16** Rate limit: one export in progress per account, plus a cool-down (SQ-E8).
 
 ### 6.4 Classification and enforcement (DE-2)
@@ -813,6 +1382,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 
 **DE-0a**
 - [ ] AC-E1 None of the three settings surfaces sends a browser request to `profiles`, `user_preferences`, `plugin_connections` or `notification_settings` for export. Each export button downloads `GET /api/user/data-export`.
+  *DE-9 note (2026-10-17): the second sentence is superseded. Each entry point renders the one control, which calls the zip routes (`POST /api/business-os/data-exports`, download again); the JSON route is retired (§0.14). The first sentence still holds.*
 - [ ] AC-E2 A Jest guard fails if any `'use client'` file calls `.from('plugin_connections')` (negative control included).
 - [ ] AC-E3 The downloaded file contains no `access_token`, `refresh_token` or other credential key (test account with a connected plugin).
 
@@ -845,6 +1415,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 - [ ] AC-E20 An account above the threshold gets the DX-4 path. The link works for the owner only, and expires.
 - [ ] AC-E21 Files in the zip match that account's storage objects (count and size).
 - [ ] AC-E22 One export control. "Last exported" shows the latest `DATA_EXPORTED` date.
+  *DE-9 note (2026-10-17): the date source is superseded. "Last export" reads the newest owner-requested `ready` or `expired` job through `GET /api/business-os/data-exports` (§0.14), not `DATA_EXPORTED`.*
 - [ ] AC-E23 The customer delete flow cannot reach the preview without an export or an explicit decline. The admin preview shows last export. The admin send goes only to the target's own email and writes an `operator` audit row.
 
 **All slices:** route integration tests for happy path + 401 + invalid input where there is input. QA records a manual download check on a real test account.
@@ -881,6 +1452,7 @@ Small, numbered and independent, a few days each. Every slice leaves the export 
 - [ ] **SQ-E5** Soft-deleted rows per section (the `agents` "includes deleted" precedent). (raised by: BA | status: open)
 - [ ] **SQ-E6** Reuse of `lib/payments/ledgerService`: include its workbook as an extra file, or only follow its conventions? (raised by: BA | status: open)
 - [ ] **SQ-E7** Classify the borderline tables: `website_page_views` (visitor IP or user agent?), `derived_metrics`, `daily_briefing_sends`, `external_calendar_events`, `business_events`, and where `email_sends` bodies are stored. (raised by: BA | status: open)
+  - Note (2026-10-15, DE-4): SA ruled this in §0.3.1. The `external_calendar_events` part of that ruling ("in") is superseded by the user (BC-5): **out**. See [§0.7](#07-de-4-status-user-decisions-and-notes-for-de-8b-2026-10-15).
 - [ ] **SQ-E8** DE-8 background job (queue + drain per `durable-queue-drain`, or on-demand), private bucket, link TTL, cleanup, and the rate-limit mechanism. (raised by: BA | status: open)
 - [ ] **SQ-E9** Admin send-export (DE-10): route under the `/api/admin/users/[id]/…` family. Does it fit SA-3's admin-target exception? (raised by: BA | status: open)
 - [x] **SQ-E10** Merge state of `refactor/data-export-repositories` and of AD-1a's `SchemaReconciler`. DE-1 and DE-2 build on both. (raised by: BA | status: answered 2026-10-05 by coordinator — both are on main: `refactor/data-export-repositories` (38f527f0) and AD-1a PR #216. **Also merged today: PR #218 `fix(export): include audit history and plugin connections, explicit columns, no raw error (FU-1, FU-P1, FU-P2)`.** This discovery was read from an older worktree, so §1 and DE-1 must be re-baselined against main before the work starts — parts of DE-1 are likely already done.)
@@ -944,3 +1516,16 @@ To be added by Dev in DE-2, with the same wording in `.claude/skills/new-reposit
 | 2026-10-14 | DE-0b B-9 waived; DE-0 complete | The user waived the B-9 manual checks (all agent-platform flows; that app is parked). DE-0 (DE-0a + DE-0b) complete |
 | 2026-10-15 | DE-1 code complete (§0.5) | Uncommitted on `feature/data-export-de1`, awaiting SA code review. Six sections out (DX-1, BQ-SA-1), section model with FR-E12 `failed`, typed payload `format_version: 2`, `logAndFlush`, Danger zone through the shared helper, file name `agentpilot-data-export-<date>.json`. Q-3 ruling recorded (`profiles.plan` removed). AC-E7 note (audit half no longer applies). C-6 notes for DE-2 (disconnected = status), DE-3 (`hourly_rate_usd` / `role` / `org_id`), DE-8b (`business_profiles.business_name` does not exist, 42703) |
 | 2026-10-15 | DE-2 code complete; SA rulings and user decisions (§0.6) | Uncommitted on `feature/data-export-de2`, C-3 live read done (drift 0, missing 0) and SA code-approved the same day. Required `export` field on every purge descriptor and bucket (155 + 3); CI enforcement is the Jest runtime check `exportClassification.test.ts`: **the §0.3.6 tsc clause is superseded** (SA-Q1 declined widening `typecheck:bos-llm`). BC-1 (modules switched on) and BC-2 (organisation record) = No, both `exclude`. SA-Q4: drift surfaced by the new `npm run schema:reconcile`, not `schema:check` (supersedes §0.3.6 / FR-E19 wording); SA-Q5 `exportColumnsMissing`. SA-Q9 follow-up: `intent_examples` is user-owned without a `user_id`. SA-Q12: skill text diverges from Appendix A (points at `descriptors.ts`, names buckets and `schema:reconcile`) |
+| 2026-10-15 | DE-4 code complete; user decisions BC-1…BC-7; calendar out (§0.7) | Uncommitted on `feature/data-export-de4`, awaiting SA code review; `schema:reconcile` owed before merge. Eight `client_records` sections (clients, notes and history, tasks, pipeline stages, document details, services, bookings, time off) in today's JSON export, through one read-only descriptor-driven repository (SA-Q1), keyset-paged on `id` to an empty page, deleted documents out via a descriptor `rowFilter` (SA-Q2). User decisions 2026-10-15: BC-1 internal notes in, BC-2 all history in, BC-3 archived in / deleted out, BC-4 `source_metadata` readable keys only (named allow-list), **BC-5 `external_calendar_events` out (supersedes §0.3.1 SQ-E7, §3.1 B2, §9.2 SQ-E7; notes added there)**, BC-6 sent-markers out, BC-7 `ai_suggestions` out. `DENY_EXCEPTIONS` + `crm_pipeline_stages.stage_key` (SA-Q5). Phase 1 ceiling built in today's route: 413 `export_too_large` over 100,000 rows or a 4 MB body (exact bytes), no file, no `DATA_EXPORTED`. DE-8b conditions (C-11): the files manifest drops objects whose `contact_documents` row is deleted or missing; the 4 MB body cap goes when the signed-URL zip replaces the JSON response |
+| 2026-10-15 | DE-4 post-review: T-9 recorded; user decisions DE4-U1 / DE4-U2; DX-1 note extended (§0.2, §0.7) | SA F-3: T-9 done by TL's read-only SQL (§10.2 of the DE-4 workplan: drift 0, missing 0, `contact_documents.status` NOT NULL), closing "`schema:reconcile` owed before merge". DE4-U1: file name `agentpilot-data-export-YYYY-MM-DD-HHmm.json` on the owner's clock (`user_preferences.timezone`; NULL / invalid / unreadable gives UTC; never fails the export). DE4-U2: connected apps (`plugin_connections`) dropped from the export: descriptor `exclude`, section, reader, allow-list, deny exception and `listForUserDataExport` removed; totals 9 include / 36 planned / 110 exclude. §0.2 DX-1 open lawyer note now names connected apps alongside activity |
+| 2026-10-15 | User manual check DE-1 PASS; UI-1 folded into DE-9 (§0.7) | Danger zone Export works. UI-1: the export result message must use the system's standard success/error notification on all 4 export entry points, plus a clear "too large — contact support" message for `too_large` (QA DE-4 Low 1); SA picks the pattern in the DE-9 workplan review. No DE-4 code change |
+| 2026-10-16 | DE-3 code complete; user decisions BC-A…BC-G; SA rulings (§0.8) | Uncommitted on `feature/data-export-de3`, awaiting SA code review; T-9 drift check (157 names, five tables) owed, TL runs it as read-only SQL. Four `account` sections (preferences, notification settings, business profile, business addresses) through the DE-4 repository; `profiles` loses `hourly_rate_usd` and `org_id`, keeps `role`. BC-A agent-platform settings out (`AGENT_SETTING`, verbatim); BC-B invoice bank details out (`BANK_DETAILS`, verbatim) incl. `invoice_payment_instructions` (SA R-2); `invoice_tax_id` in (SA R-1); BC-C…BC-G confirmed. SA-Q1 single-row read dropped (all tables have `id`). DE-8b README note: three timezone columns (authority, mirror, quiet hours only). Totals 13 include / 32 planned / 110 exclude |
+| 2026-10-16 | DE-5 code complete; user decisions BC-1…BC-12; SA rulings (§0.9) | Uncommitted on `feature/data-export-de5`, waiting for SA code review. T-10 drift check (249 names, ten tables) owed: TL runs it as read-only SQL. Ten money sections: 2 `account` (payment account, payment providers) and 8 `client_records` (quotes, invoices, payments, refunds, payment plans, client payment plans, instalments, client payment methods). Five money tables excluded: reminders, event log and automation runs (activity), built-in rules, and dead `payment_methods`. **BC-3: the Stripe invoice web and PDF links are IN, which overrides the workplan default and SA-Q5.** BC-1: card brand and last 4 only. BC-11: no totals. SA-Q3: `payments.metadata` limited to `notes` and `source` through the new `pickStringKeys` (DE-4 `sourceMetadata` output byte-identical). SA-Q6: refund fee columns have no currency, plus the DE-8b README wording. SA-Q7: `charge_account_kind` out. SA-Q11: `card_number`, `cvc` and `cvv` added to the deny list. Totals 23 include / 17 planned / 115 exclude |
+| 2026-10-16 | DE-6 code complete; TL defaults BC-1…BC-8; SA rulings; F-DE6-1; DE-10a placement (§0.10) | T-10 done by TL: 0 drift / 0 missing over 124 names; SA code-approved + QA PASS 2026-10-16 (28/28 negative controls); committed on `feature/data-export-de6` by RM. Ten `client_records` sections (intake settings, intake forms, email campaigns, sequences, steps, enrollments, newsletter sign-ups, consent records, consent settings, do-not-email list); `lead_responses` and `marketing_consent_state` excluded. TL defaults 2026-10-16 (user may change): visitor evidence, lead messages and delivery counters out; all form versions, sign-ups and redacted consent records in. SA-Q1: `rowKey: 'user_id'` single-row read for `marketing_consent_settings`, plus the CI rule "include without rowKey lists id". SA-Q5: visitor-tracking names and `/_salt$/` on the deny list. SA-Q7: page URLs cut at the query string. **F-DE6-1: the same cut on DE-4 `clients.source_metadata` `capture_page_url` / `referrer_url`, the one deliberate change to earlier output.** User request: DE-10a in `/admin/users`, business area, just above the Danger Zone, last Phase 1 slice. Totals 33 include / 5 planned / 117 exclude |
+| 2026-10-17 | DE-7 code complete; TL defaults BC-1…BC-8; SA rulings incl. the parent-scoped read; the planned flip (§0.11) | Uncommitted on `feature/data-export-de7`, awaiting SA code review and QA; T-10 drift check (Q14, 84 names, five tables) owed, TL runs it as read-only SQL. Five sections in the new `content` group (processor; the account holder the controller): website text, website and landing pages, blocks, smart links, picture library records. TL defaults 2026-10-17 (user may change): smart-link counters and attributed revenue out; switched-off links, drafts and archived pages, assistant-drafted text, every picture with its description, public addresses and hidden blocks in. **SA-Q1 (new pattern): `website_blocks` is read through the owner's own pages** (`viaParent` two-key opt-in, `.in('page_id', chunk)`, every block checked against its chunk, C-1…C-6). `storage_path` and `source_ref` out. **The planned flip: every table is classified; the CI now forbids `planned` on tables; the `planned()` helper is removed.** DE-8b file-mapping recorded as a PROPOSAL; Q10b owed to DE-8b. Totals 38 include / 0 planned / 117 exclude |
+| 2026-10-17 | DE-8a code complete; SA rulings Q-1 (SECURITY INVOKER replaces the DEFINER wording) and Q-9 (severities); two-migration shape; TL defaults B-1…B-3; PROD apply plan (§0.12) | Uncommitted on `feature/data-export-de8a`, awaiting SA code review and QA; nothing applied to PROD. Jobs table `business_os_data_exports` (service role only, RLS on with no policy, NULL-safe 72-hour expiry CHECK), start function `business_os_data_export_start` (INVOKER, VOLATILE, service_role EXECUTE only; one at a time, three per rolling 24 h, failed never counts, 90 s stale rule), private 50 MB zip bucket `business-data-exports` (empty until DE-8b), repository with `startForOwner` / `startForAdmin`, registrations (156 = 38 include + 0 planned + 118 exclude), six audit names (READY info, DOWNLOADED_BY_ADMIN critical), `fflate` 0.8.3 exact. Migrations `20261074` + generated cleanup `20261075` (stamp `a824848e0a538477`, chained on 20261047; finance 4b.1 renumbers above it if DE-8a lands first, SA C-7). Pre-check, checker, probe, rollback and measure scripts; local PGlite evidence |
+| 2026-10-17 | DE-8b code complete; SA workplan amendments (no env flag, Q-1, Q-3, Q-6, Q-7, C-7, C-16), DE-10a audit-visibility forward note (Q-8), Q-12; TL defaults BC-1…BC-8 (§0.13) | Uncommitted on `feature/data-export-de8b`, awaiting SA code review and QA; no migration, no dependency. One-request zip route (`POST /api/business-os/data-exports`), POST download-again route, daily `/api/cron/data-export` (`25 5 * * *`: reap, 3-day expiry, orphan sweep with 10-minute grace, 60% size watch on the export's own inventory). File buckets classified `include` (`client-documents`, `website-images`); `planned` forbidden on buckets. No env flag: the owner switch is DE-9. JSON route and 4 MB cap unchanged (cap removal moves to DE-9). File name keeps `-HHmm`; fallback `agentpilot-data-export-…zip`. T-14 Preview check owed after merge |
+| 2026-10-17 | DE-9 code complete; SA rulings Q1–Q9, C-1…C-11; TL defaults BC-1…BC-6; FR-E15 / AC-E22 / AC-E1 superseded; DE-10a forward notes (§0.14) | Uncommitted on `feature/data-export-de9`, awaiting SA code review and QA; no migration, no dependency. One `DownloadMyDataButton` on all four entry points (UI-1 option A: inline notice, nothing auto-dismisses); one browser seam `lib/client/businessOsDataExport.ts` (save mode A, https-only); `GET /api/business-os/data-exports` "Last export" (owner-requested jobs only, C-4). Retired: `GET /api/user/data-export` + tests, `downloadUserDataExport`, `JSON_BODY_MAX_BYTES`, `exportFileName`, the dead `export_*` copy. `PLACEHOLDER_ERASURE_CONTACT` moved unchanged to `lib/business-os/supportContact.ts` (single swap point; the user to supply a support address, BC-3). **Merge gated on T-14** (no flag: the merge is the switch). DE-10a must 404 download-again for admin jobs and settle `expireOtherReady` owner vs admin |
+| 2026-10-17 | DE-10a code complete; SA rulings SA-1…SA-11 (SA-11 changed: download on the write throttle); TL defaults BC-1…BC-8; follow-ups F-1…F-3; Phase 1 complete in code (§0.15) | Uncommitted on `feature/data-export-de10a`, carrying DE-9 (#454); the PR merges only after #454 is on `main`. No migration, flag or dependency. Three admin routes (status, prepare, audited download with a write-ahead critical `DATA_EXPORT_DOWNLOADED_BY_ADMIN`, 503 if not recorded, 60 s link), gated from birth and in the gate oracle (68). Every admin-path audit row admin-owned through one builder; admin-job cron rows with no user and no actor; owner download-again 404 on admin jobs; same-kind replacement; shared `downloadName.ts`. Sixth drawer section "Data export" above the Danger area (BD-4 → six sections). Accepted side effect: the shared 3-a-day limit lets an owner infer usage, no notice. F-1: admin-owned rows erasable by the admin's own activity purge or account deletion (also AD-1b, AD-2a, cleanup rows), fix before Purge is enabled; F-2 rows in the admin's own `/monitoring`; F-3 D-7 null actor. **Phase 1: every slice built; complete pending T-14 and the merges** |
+| 2026-10-17 | 20261075 applied to PROD; checker 18/0; contents reference added | User applied the generated cleanup migration; TL checker `PASS 18/0` (§0.12). What the zip holds and how it is packaged is now documented in [BUSINESS_OS_DATA_EXPORT_CONTENTS.md](/docs/business-os/BUSINESS_OS_DATA_EXPORT_CONTENTS.md); scope review (export only owner-proprietary data) sent to Offir and Eyal for a second opinion |
+| 2026-10-17 | Finance 4b.1 rebased over DE-8a (SA-CR-4B1-R) | 4b.1 renumbered to `20261076`/`20261077`; `20261077` regenerates the cleanup over `20261075` and keeps `business_os_data_exports`. R-1: `scripts/rollback-business-os-data-exports.sql` now refuses while any live cleanup body names `business_os_data_exports` (was: only the `20261075` stamp); rollback order `20261077` → `20261075` → this script. R-2: after `20261077` the DE-8a checker's cleanup-stamp row reads false by design (DE-8a workplan §10) |

@@ -4,19 +4,19 @@
  *
  * The comparison is the single source of every displayed price, gap, status,
  * area and flag. The stored list (`GET /api/admin/system-config/pricing`)
- * supplies only the row id behind Edit, the dates and the retired rows; its
+ * supplies only the row ids, the dates and the retired rows; its
  * per-token numbers are never displayed.
  *
  *   - compared:     every comparison row. Joined to its stored row by
  *                   `currentRowId` (SA N-1); a missing match (the two reads
- *                   raced) leaves `stored` null, so there is no Edit.
+ *                   raced) leaves `stored` null.
  *   - starts_later: a stored, non-retired row that no comparison row points at
  *                   and whose effective date is after the SERVER date (the
  *                   comparison's `generatedAt`, never the browser clock): it
- *                   will be charged, so it keeps Edit (SA NR-1).
+ *                   will be charged (SA NR-1).
  *   - superseded:   the same, but already in effect: an older row "newest
- *                   wins" never charges. No Edit (SA NR-1).
- *   - retired:      `retired_date` set. No Edit (SA RC-4).
+ *                   wins" never charges (SA NR-1).
+ *   - retired:      `retired_date` set (SA RC-4).
  *
  * Retired and other stored-only rows always sort after the compared rows.
  */

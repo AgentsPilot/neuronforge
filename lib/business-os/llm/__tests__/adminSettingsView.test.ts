@@ -45,6 +45,8 @@ jest.mock('@/lib/ai/pricing', () => ({
   ...jest.requireActual('@/lib/ai/pricing'),
   getPricing: async (provider: string, model: string) =>
     mockPricedModels.has(`${provider}:${model}`) ? { input: 0.0025, output: 0.01 } : null,
+  // Slice 7 (RC7-5): the settings refill warms the price cache; never a real read here.
+  warmPricingCache: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('@/lib/business-os/llm/modelOptions', () => ({

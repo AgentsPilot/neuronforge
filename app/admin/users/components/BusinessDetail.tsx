@@ -8,13 +8,16 @@
  *
  * Order (Admin Layout follow-ups LF-4a.2, BD-4): the Business OS panel (its
  * header line, the summary strip, Credits & billing, Plan & entitlements, AI
- * usage), then Account & security, Activity, and the danger area last. The
+ * usage), then Account & security, Activity, Data export (data export DE-10a,
+ * SA-9: directly above the danger area, at the user's request), and the
+ * danger area last. The
  * "All products" AI figures come from this body's stats and are handed to the
  * panel, which shows them inside AI usage (BD-7).
  *
  * The danger area is byte-equivalent to the expanded row's: the gate, the
- * Delete… entry and its dialog, then the hard delete locked to this row's
- * email. It is never mounted while the drawer is closed: the drawer renders
+ * Delete… entry and its dialog, then the account cleanup locked to this row's
+ * email and id (the test-account hard delete, or close and anonymise, DE-10b.1).
+ * It is never mounted while the drawer is closed: the drawer renders
  * this body only when open (Radix unmounts closed content).
  */
 
@@ -25,6 +28,7 @@ import { AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { BusinessOsPanel } from './BusinessOsPanel';
 import { BusinessAuditSection } from './BusinessAuditSection';
+import { DataExportBlock } from './DataExportBlock';
 import { AllProductsUsage } from './AllProductsUsage';
 import { DeleteBusinessDialog } from './DeleteBusinessDialog';
 import { DrawerBox, PART_BOX, PartPurpose } from './DrawerBox';
@@ -232,6 +236,10 @@ export function BusinessDetail({
 
       <BusinessAuditSection logs={auditLogs} filter={auditFilter} onFilterChange={onAuditFilterChange} />
 
+      {/* Data export (DE-10a, BC-5: every login, with or without a business):
+          the account's exports, prepare, audited download. Never gates the danger area. */}
+      <DataExportBlock key={user.id} accountId={user.id} />
+
       {/* Danger area (admin delete AD-1c, FR-A1): inside the open drawer only, never the list row. */}
       <div
         data-testid="danger-area"
@@ -268,11 +276,14 @@ export function BusinessDetail({
             />
           </>
         )}
-        {/* AU-1: the Danger Zone's hard delete, locked to this row's email (tag = email). */}
+        {/* AU-1: the Danger Zone's cleanup, locked to this row's email (tag = email). DE-10b.1: with the
+            row's account id it also offers "close and anonymise" (the default) beside the test-account
+            hard delete; G-2a proves in the database that the id and the email are the same login. */}
         {user.email ? (
           <TestAccountCleanupPanel
             key={user.id}
             lockedEmail={user.email}
+            lockedAccountId={user.id}
             tone="admin-dark"
             onRemoved={() => {
               // AU-C2: CLEAN only, once the admin clicks Done (or the panel unmounts); the row leaves the list.

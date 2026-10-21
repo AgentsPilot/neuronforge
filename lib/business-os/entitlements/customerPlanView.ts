@@ -37,6 +37,20 @@ import 'server-only';
  * both directions and is the point of showing it. Different from a bare "you do
  * not have X".)
  *
+ * ── UM-D1 (2026-10-19): the comparison, and why rule 1 still holds ──────────
+ * `comparison` puts the plans shown to customers side by side, ✓ / ✕ per row,
+ * for the upgrade modal's table. The user chose ✕ shown (UM-BQ2 reversed), and
+ * SA re-review (d) amended rule 1 narrowly rather than deleting it:
+ *   - the "does not exist" reason is removed structurally: a row exists only if
+ *     some shown plan includes it, and a `not_built` capability is never in one;
+ *   - the shadow-mode reason (Essentials is told it lacks chat while nothing
+ *     enforces it) is the trade-off the user accepted;
+ *   - the "describe by inclusions" reason still holds where it applies: the
+ *     comparison is a statement about PLANS AS DEFINED, side by side — every
+ *     column resolved through `previewAccountFor`, identical for every viewer —
+ *     not a list attached to "your plan". `included` and `nextPlanUp` keep
+ *     rule 1 unchanged, and no field carries a list of what anyone lacks.
+ *
  * **2. Anything about a capability that does not exist.** A `not_built`
  * capability is not a feature the plan withholds; it is a feature nobody has.
  * Naming it invites "so how do I get it?", and the answer is "you cannot, from
@@ -87,6 +101,8 @@ import {
 import { resolveEntitlements } from './resolver';
 import type { EntitlementResolution } from './resolver';
 import { getEntitlementConfig, type EntitlementConfig } from './source';
+import { describeCapabilityAmount } from './capabilityDisplay';
+import { PLAN_COMPARISON_ROWS, type PlanComparisonRowConfig } from './config/planComparison';
 import { defaultLocale, type Locale } from '@/lib/i18n/config';
 import type { CapabilityDef, CapabilityValue } from './types';
 
@@ -375,8 +391,57 @@ export interface CustomerPlanView {
    * plan that cannot be read offers nothing to choose.
    */
   plans: CustomerPlanChoice[];
+  /**
+   * The plans shown to customers, side by side (upgrade modal UM-0, UM-D1).
+   *
+   * The same for every viewer: each column is the plan as defined, never this
+   * account's own resolution. `null` on every non-`ok` path (C-16): a plan that
+   * cannot be read offers nothing to compare.
+   */
+  comparison: CustomerPlanComparison | null;
   /** Plain words for the customer when we cannot answer. `null` when we can. */
   problem: PlanSentence | null;
+}
+
+/**
+ * The comparison table's data (UM-0). Plan names and prices are NOT here: they
+ * are in `plans`, joined by `planId`, so they exist once.
+ *
+ * Deliberately absent: capability ids (a client must have nothing to branch on,
+ * C-21), any list of what a plan lacks, any sentence.
+ */
+export interface CustomerPlanComparison {
+  /** The columns: exactly `plans.map(p => p.planId)`, same order (tierOrder, shown only). */
+  planIds: string[];
+  /** Non-empty sections only, in `SECTION_PRESENTATION` order. */
+  sections: CustomerPlanComparisonSection[];
+}
+
+export interface CustomerPlanComparisonSection {
+  /** A config id (`run_business`, `ai_assistant`, `included`), not shown. */
+  section: string;
+  /** Dictionary key for the heading, e.g. `plan.comparison.section.run_business`. */
+  labelKey: string;
+  rows: CustomerPlanComparisonRow[];
+}
+
+export interface CustomerPlanComparisonRow {
+  /** The config row id (or the capability id for a fallback row). Never shown. */
+  row: string;
+  /** In the reader's language, from config. */
+  label: string;
+  /** One per `planIds` entry, same order. */
+  cells: CustomerPlanComparisonCell[];
+}
+
+export interface CustomerPlanComparisonCell {
+  planId: string;
+  /** Every visible member of the row is granted by this plan as defined (UM-D2). */
+  included: boolean;
+  /** Server-formatted amount for amount rows when included; `null` for feature rows and for ✕. */
+  value: string | null;
+  /** Strictly greater than every other column, same unit; single-member amount rows only. */
+  highlight: boolean;
 }
 
 /**
@@ -438,28 +503,70 @@ export function shownPlanChoices(config: EntitlementConfig, locale: Locale = def
  * Reuses the dashboard card's `usage.explain.*` keys, so the plan screen, the
  * invite page and the card cannot say different things about what a credit is.
  */
+/**
+ * `section` (upgrade modal UM-0, C-20): which comparison-table heading a
+ * category's FEATURE rows sit under. Amount rows (metered, fair-use, quantity)
+ * go under `included` by shape instead — see `isAmountShape`. It changes
+ * nothing about `included`, `nextPlanUp` or the invite page, which read only the
+ * order, `labelKey` and `note`.
+ */
 interface CategoryPresentation {
   category: string;
   labelKey: string;
+  section: ComparisonSectionId;
   note?: { monthly: string; total: string };
 }
+
+/** The comparison table's sections, in order, with the dictionary key for each heading (C-20). */
+export const SECTION_PRESENTATION = [
+  { section: 'run_business', labelKey: 'plan.comparison.section.run_business' },
+  { section: 'ai_assistant', labelKey: 'plan.comparison.section.ai_assistant' },
+  // "What's included" (user decision, 2026-10-19): seats and locations are not
+  // monthly, so the heading does not say "each month".
+  { section: 'included', labelKey: 'plan.comparison.section.included' },
+] as const;
+
+type ComparisonSectionId = (typeof SECTION_PRESENTATION)[number]['section'];
+
+/** The section every amount row sits under, whatever its category. */
+const AMOUNT_SECTION: ComparisonSectionId = 'included';
 
 const CATEGORY_PRESENTATION: ReadonlyArray<CategoryPresentation> = [
   {
     category: 'credits',
     labelKey: 'plan.category.credits',
+    section: 'included',
     note: { monthly: 'usage.explain.monthly', total: 'usage.explain.trial' },
   },
-  { category: 'crm', labelKey: 'plan.category.crm' },
-  { category: 'website_intake', labelKey: 'plan.category.website_intake' },
-  { category: 'payments', labelKey: 'plan.category.payments' },
-  { category: 'ai_chat', labelKey: 'plan.category.ai_chat' },
-  { category: 'marketing', labelKey: 'plan.category.marketing' },
-  { category: 'insights', labelKey: 'plan.category.insights' },
-  { category: 'support', labelKey: 'plan.category.support' },
-  { category: 'platform', labelKey: 'plan.category.platform' },
-  { category: 'addon', labelKey: 'plan.category.addon' },
+  { category: 'crm', labelKey: 'plan.category.crm', section: 'run_business' },
+  { category: 'website_intake', labelKey: 'plan.category.website_intake', section: 'run_business' },
+  { category: 'payments', labelKey: 'plan.category.payments', section: 'run_business' },
+  { category: 'ai_chat', labelKey: 'plan.category.ai_chat', section: 'ai_assistant' },
+  { category: 'marketing', labelKey: 'plan.category.marketing', section: 'run_business' },
+  { category: 'insights', labelKey: 'plan.category.insights', section: 'run_business' },
+  { category: 'support', labelKey: 'plan.category.support', section: 'run_business' },
+  { category: 'platform', labelKey: 'plan.category.platform', section: 'run_business' },
+  { category: 'addon', labelKey: 'plan.category.addon', section: 'run_business' },
 ];
+
+/**
+ * Is this capability an AMOUNT (its cells carry a number) rather than a feature?
+ *
+ * By catalog shape only (C-20): metered, fair-use and quantity. The `addon` shape
+ * is a three-state offer, not an amount.
+ */
+export function isAmountShape(definition: CapabilityDef | undefined): boolean {
+  const kind = definition?.shape.kind;
+  return kind === 'metered' || kind === 'fair_use' || kind === 'quantity';
+}
+
+/**
+ * The comparison section a category's feature rows sit under, or `undefined`
+ * for a category not in `CATEGORY_PRESENTATION` (a guard test fails on that).
+ */
+export function comparisonSectionForCategory(category: string): ComparisonSectionId | undefined {
+  return CATEGORY_PRESENTATION.find((entry) => entry.category === category)?.section;
+}
 
 /**
  * Which note variant a category takes, from the shape of its metered value.
@@ -749,6 +856,159 @@ function buildUpgrade(
   };
 }
 
+/** A config or catalog label in the reader's language: the `labelIn` rule (locale, then English, then the id). */
+function comparisonLabel(labels: Partial<Record<Locale, string>> | undefined, locale: Locale, fallback: string): string {
+  return labels?.[locale] ?? labels?.en ?? fallback;
+}
+
+/**
+ * The plan comparison table (upgrade modal UM-0, UM-D1 / UM-D2).
+ *
+ * ── Plans as defined, never the account ─────────────────────────────────────
+ * Takes no resolution and no account, so it cannot be built from the viewer's
+ * own row by mistake (C-17). Every column is a shown tier resolved through
+ * `previewAccountFor` with no overrides and no add-ons — the same synthetic the
+ * next-plan-up preview uses — so a trial, a Founding Partner and a paying owner
+ * are all shown the same table.
+ *
+ * ── Rows ────────────────────────────────────────────────────────────────────
+ * From `PLAN_COMPARISON_ROWS` (server config, UM-D2). A row's `not_built`
+ * members are dropped first (nobody has them); a row survives only if some
+ * shown plan grants at least one remaining member. A cell is ✓ only if the
+ * plan grants EVERY remaining member. A visible capability a shown plan grants
+ * that no row lists becomes its own row at the end of its section — ugly on
+ * purpose; the config guard keeps that unreachable in production (SA S-6).
+ *
+ * ── Sections (C-20) ─────────────────────────────────────────────────────────
+ * Derived, never written on a row: all-amount rows go under `included`, others
+ * under their members' `CATEGORY_PRESENTATION.section`. An unknown category
+ * gets its own section keyed by its raw id, like `groupByCategory`'s fallback.
+ *
+ * Pure, no I/O. Exported for its tests only (SA S-4): not re-exported from the
+ * module's index, and the `my-plan` route reaches it only through
+ * `buildCustomerPlanView`.
+ */
+export function buildPlanComparison(input: {
+  config: EntitlementConfig;
+  locale: Locale;
+  now: Date;
+  /** Default `PLAN_COMPARISON_ROWS`; injectable so fixture rows can be tested (SA Q-4). */
+  rows?: ReadonlyArray<PlanComparisonRowConfig>;
+}): CustomerPlanComparison {
+  const { config, locale, now } = input;
+  const rowsConfig = input.rows ?? PLAN_COMPARISON_ROWS;
+  const catalog = config.catalog as Record<string, CapabilityDef>;
+
+  const columns = shownPlanChoices(config, locale).map((choice) => {
+    const resolution = resolveEntitlements({
+      config,
+      account: previewAccountFor(config, choice.planId, now),
+      overrides: [],
+      addons: [],
+      now,
+    });
+    return {
+      planId: choice.planId,
+      resolution,
+      described: new Map(describePlanCapabilities(resolution, catalog, locale).map((row) => [row.capability, row])),
+    };
+  });
+
+  const isVisible = (capability: string) =>
+    catalog[capability] !== undefined && !isHiddenFromCustomer(capability, catalog[capability]);
+  const grants = (column: (typeof columns)[number], capability: string) =>
+    column.described.get(capability)?.granting === true;
+  const grantedBySome = (capability: string) => columns.some((column) => grants(column, capability));
+
+  // Configured rows first, in config order; fallback rows after them, in catalog order.
+  const candidates: Array<{ row: string; label: string; members: string[] }> = [];
+  const placed = new Set<string>();
+
+  for (const rowConfig of rowsConfig) {
+    for (const capability of rowConfig.capabilities) placed.add(capability);
+    const members = rowConfig.capabilities.filter(isVisible);
+    if (members.length === 0 || !members.some(grantedBySome)) continue;
+    candidates.push({ row: rowConfig.id, label: comparisonLabel(rowConfig.labels, locale, rowConfig.id), members });
+  }
+
+  for (const capability of Object.keys(catalog)) {
+    if (placed.has(capability) || !isVisible(capability) || !grantedBySome(capability)) continue;
+    candidates.push({
+      row: capability,
+      label: comparisonLabel(catalog[capability].labels, locale, capability),
+      members: [capability],
+    });
+  }
+
+  const buckets = new Map<string, CustomerPlanComparisonRow[]>();
+
+  for (const candidate of candidates) {
+    const isAmountRow = candidate.members.every((capability) => isAmountShape(catalog[capability]));
+    const section = isAmountRow
+      ? AMOUNT_SECTION
+      : (comparisonSectionForCategory(catalog[candidate.members[0]].category) ?? catalog[candidate.members[0]].category);
+
+    const cells: CustomerPlanComparisonCell[] = columns.map((column) => {
+      const included = candidate.members.every((capability) => grants(column, capability));
+      const value =
+        isAmountRow && included
+          ? candidate.members
+              .map((capability) => {
+                const raw = column.resolution.values[capability]?.value;
+                // A one-off `{ total }` (or anything not a plain monthly rate or
+                // count) keeps its full wording, so it never reads as a monthly figure.
+                return (
+                  (raw === undefined ? null : describeCapabilityAmount(raw, locale)) ??
+                  column.described.get(capability)?.display ??
+                  ''
+                );
+              })
+              .join(' · ')
+          : null;
+      return { planId: column.planId, included, value, highlight: false };
+    });
+
+    // Highlight: one member only, two or more columns, and one column strictly
+    // above every other in the same unit. Equal, unlike units or unrankable → none.
+    if (isAmountRow && candidate.members.length === 1 && columns.length > 1) {
+      const capability = candidate.members[0];
+      const amounts = columns.map((column) => comparableAmount(column.resolution.values[capability]?.value));
+      amounts.forEach((mine, index) => {
+        if (!mine || !cells[index].included) return;
+        const isTop = amounts.every(
+          (other, otherIndex) =>
+            otherIndex === index || (other !== null && other.unit === mine.unit && mine.amount > other.amount)
+        );
+        if (isTop) cells[index].highlight = true;
+      });
+    }
+
+    const bucket = buckets.get(section);
+    const row = { row: candidate.row, label: candidate.label, cells };
+    if (bucket) bucket.push(row);
+    else buckets.set(section, [row]);
+  }
+
+  const known: ReadonlyArray<{ section: string; labelKey: string }> = SECTION_PRESENTATION;
+  const ordered = [
+    ...known.filter((entry) => buckets.has(entry.section)),
+    // A section no presentation names: its raw id as the key, last. Ugly on purpose.
+    ...[...buckets.keys()]
+      .filter((section) => !known.some((entry) => entry.section === section))
+      .sort()
+      .map((section) => ({ section, labelKey: section })),
+  ];
+
+  return {
+    planIds: columns.map((column) => column.planId),
+    sections: ordered.map((entry) => ({
+      section: entry.section,
+      labelKey: entry.labelKey,
+      rows: buckets.get(entry.section) ?? [],
+    })),
+  };
+}
+
 /**
  * The whole payload for one account.
  *
@@ -789,6 +1049,8 @@ export function buildCustomerPlanView(input: {
     included: [],
     nextPlanUp: null,
     plans: [],
+    // C-16: nothing to compare when the plan cannot be read.
+    comparison: null,
   };
 
   // A read that failed is not a customer without a plan (the S-0 lesson, one
@@ -896,6 +1158,9 @@ export function buildCustomerPlanView(input: {
         ? upgrade
         : null,
     plans: shownPlanChoices(config, locale),
+    // The plans as defined, side by side: built from config, not from `resolution`,
+    // so it is the same table whatever this account is on (UM-0, C-17).
+    comparison: buildPlanComparison({ config, locale, now }),
     problem: null,
   };
 }

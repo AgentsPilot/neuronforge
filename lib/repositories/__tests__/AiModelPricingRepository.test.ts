@@ -2,12 +2,9 @@
  * T0-8 (Layer 2 Step 0, SA addendum §G) for `AiModelPricingRepository`.
  *
  * Every case runs against an INJECTED Supabase double, so this is a real unit
- * test of the repository's own contract: the "no such row" results the routes
- * turn into 404s, the empty-update guard, the never-throws rule, and the sync
- * semantics the pricing table depends on — match on `(provider, model_name)`
- * only, take the NEWEST row, and never `upsert` (the unique constraint includes
- * `effective_date`, which every sync run re-stamps, so an upsert would grow the
- * table without bound).
+ * test of the repository's own contract: the read filters and ordering, and the
+ * never-throws rule. Since AI model price review slice 6 the repository is
+ * read-only; the write and sync cases went with the methods.
  */
 
 jest.mock('@/lib/logger', () => {
@@ -228,187 +225,22 @@ describe('listActiveExact (admin price comparison, exact text)', () => {
   });
 });
 
-describe('findById', () => {
-  it('returns { null, null } for a missing row rather than an error', async () => {
-    recorder.results.push({ data: null, error: null });
-
-    const { data, error } = await repo.findById(ROW.id);
-
-    expect(data).toBeNull();
-    expect(error).toBeNull();
-    expect(methodsOf(recorder.queries[0])).toContain('maybeSingle');
-  });
-
-  it('returns the row when it exists', async () => {
-    recorder.results.push({ data: ROW, error: null });
-
-    const { data, error } = await repo.findById(ROW.id);
-
-    expect(data).toEqual(ROW);
-    expect(error).toBeNull();
-  });
-});
-
-describe('create', () => {
-  it('inserts and returns the created row', async () => {
-    recorder.results.push({ data: ROW, error: null });
-
-    const { data, error } = await repo.create({
-      provider: ROW.provider,
-      model_name: ROW.model_name,
-      input_cost_per_token: 1,
-      output_cost_per_token: 2,
-      effective_date: ROW.effective_date,
-    });
-
-    expect(error).toBeNull();
-    expect(data).toEqual(ROW);
-    expect(methodsOf(recorder.queries[0])).toEqual(['insert', 'select', 'single']);
-  });
-});
-
-describe('updateCosts', () => {
-  it('returns { null, null } when no row matched, so the route can answer 404', async () => {
-    recorder.results.push({ data: null, error: null });
-
-    const { data, error } = await repo.updateCosts(ROW.id, { input_cost_per_token: 1 });
-
-    expect(data).toBeNull();
-    expect(error).toBeNull();
-  });
-
-  it('sends only the cost fields that were provided', async () => {
-    recorder.results.push({ data: ROW, error: null });
-
-    await repo.updateCosts(ROW.id, { output_cost_per_token: 5 });
-
-    const update = recorder.queries[0].calls.find((c) => c.method === 'update');
-    expect(update?.args[0]).toEqual({ output_cost_per_token: 5 });
-  });
-
-  it('refuses an empty update without touching the database', async () => {
-    const { data, error } = await repo.updateCosts(ROW.id, {});
-
-    expect(data).toBeNull();
-    expect(error).toBeInstanceOf(Error);
-    expect(recorder.queries).toHaveLength(0);
-  });
-});
-
-describe('deleteById', () => {
-  it('reports true when a row was deleted', async () => {
-    recorder.results.push({ data: [{ id: ROW.id }], error: null });
-
-    const { data, error } = await repo.deleteById(ROW.id);
-
-    expect(data).toBe(true);
-    expect(error).toBeNull();
-  });
-
-  it('reports false when nothing matched, so the route can answer 404', async () => {
-    recorder.results.push({ data: [], error: null });
-
-    const { data, error } = await repo.deleteById(ROW.id);
-
-    expect(data).toBe(false);
-    expect(error).toBeNull();
-  });
-});
-
-describe('syncMany', () => {
-  const entry = {
-    provider: 'openai',
-    model_name: 'gpt-4o-mini',
-    input_cost_per_token: 1,
-    output_cost_per_token: 2,
-    effective_date: '2026-09-20T00:00:00.000Z',
-  };
-
-  it('updates the existing row in place', async () => {
-    recorder.results.push({ data: { id: ROW.id }, error: null }, { data: null, error: null });
-
-    const { data, error } = await repo.syncMany([entry]);
-
-    expect(error).toBeNull();
-    expect(data).toEqual({ updated: ['gpt-4o-mini'], created: [], failed: [] });
-    expect(methodsOf(recorder.queries[1])).toEqual(['update', 'eq']);
-  });
-
-  it('inserts when there is no row for that provider/model', async () => {
-    recorder.results.push({ data: null, error: null }, { data: null, error: null });
-
-    const { data } = await repo.syncMany([entry]);
-
-    expect(data).toEqual({ updated: [], created: ['gpt-4o-mini'], failed: [] });
-    expect(methodsOf(recorder.queries[1])).toEqual(['insert']);
-  });
-
-  it('matches on (provider, model_name) only and takes the newest row', async () => {
-    recorder.results.push({ data: { id: ROW.id }, error: null }, { data: null, error: null });
-
-    await repo.syncMany([entry]);
-
-    const lookup = recorder.queries[0];
-    expect(lookup.calls.filter((c) => c.method === 'eq').map((c) => c.args)).toEqual([
-      ['provider', 'openai'],
-      ['model_name', 'gpt-4o-mini'],
-    ]);
-    expect(lookup.calls.find((c) => c.method === 'order')?.args).toEqual([
-      'effective_date',
-      { ascending: false },
-    ]);
-    expect(lookup.calls.find((c) => c.method === 'limit')?.args).toEqual([1]);
-    expect(methodsOf(lookup)).toContain('maybeSingle');
-  });
-
-  it('NEVER issues an upsert — that would add a row per model on every run', async () => {
-    recorder.results.push(
-      { data: null, error: null },
-      { data: null, error: null },
-      { data: { id: ROW.id }, error: null },
-      { data: null, error: null }
-    );
-
-    await repo.syncMany([entry, { ...entry, model_name: 'gpt-4o' }]);
-
-    expect(allMethods(recorder)).not.toContain('upsert');
-  });
-
-  it('records a failed row and carries on with the rest of the catalogue', async () => {
-    recorder.results.push(
-      { data: null, error: new Error('lookup failed') },
-      { data: null, error: null },
-      { data: null, error: null }
-    );
-
-    const { data, error } = await repo.syncMany([entry, { ...entry, model_name: 'gpt-4o' }]);
-
-    expect(error).toBeNull();
-    expect(data).toEqual({ updated: [], created: ['gpt-4o'], failed: ['gpt-4o-mini'] });
-  });
-});
-
 describe('never throws', () => {
   it('turns a thrown client error into { data: null, error } on every method', async () => {
     recorder.throwOnFrom = new Error('client exploded');
 
-    const results = await Promise.all([
-      repo.listAll(),
-      repo.findById(ROW.id),
-      repo.create({
-        provider: 'openai',
-        model_name: 'm',
-        input_cost_per_token: 1,
-        output_cost_per_token: 1,
-        effective_date: ROW.effective_date,
-      }),
-      repo.updateCosts(ROW.id, { input_cost_per_token: 1 }),
-      repo.deleteById(ROW.id),
-      repo.syncMany([]),
-    ]);
+    const results = await Promise.all([repo.listAll(), repo.listActive(), repo.listActiveExact()]);
 
-    // syncMany with an empty catalogue never calls `from`, so it succeeds.
-    expect(results.slice(0, 5).every((r) => r.data === null && r.error instanceof Error)).toBe(true);
-    expect(results[5].error).toBeNull();
+    expect(results.every((r) => r.data === null && r.error instanceof Error)).toBe(true);
+  });
+});
+
+// AI model price review slice 6 (MP-FR-11): the repository is read-only. The
+// write methods went with Sync and the single-row edit (see the header).
+describe('read-only (slice 6)', () => {
+  // Slice 9: the admin history read is the fourth (LW-2 lists it too; its callers are pinned by adminReadMethods.guard).
+  it('has exactly the four read methods', () => {
+    const methods = Object.getOwnPropertyNames(AiModelPricingRepository.prototype).filter((name) => name !== 'constructor');
+    expect(methods.sort()).toEqual(['listActive', 'listActiveExact', 'listAll', 'listHistoryExact']);
   });
 });

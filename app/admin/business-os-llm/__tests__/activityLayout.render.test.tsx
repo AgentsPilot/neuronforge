@@ -29,7 +29,6 @@ import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import { resolvePreset } from '../activityPresets';
 import { ACTIVITY_INTRO, DRILL_DOWN_NOT_FOUND, MIN_COST_FORMAT_PROBLEM, PLATFORM_ACCOUNT_ERROR, TIMES_ARE_UTC } from '../activityCopy';
 import { PAGE_SUBTITLE } from '../copy';
-import { COSTS_INTRO } from '../costCopy';
 import { formatUsd } from '../costFormat';
 import type { ActivityPayload, ActivityRow } from '../activityTypes';
 
@@ -158,9 +157,8 @@ describe('T-1: the page header and the per-tab purpose line (F-68)', () => {
     expect(screen.queryByTestId('page-subtitle')).toBeNull();
     expect(purposeLine()).toHaveTextContent(PAGE_SUBTITLE);
 
-    await user.click(screen.getByTestId('tab-costs'));
-    expect(purposeLine()?.textContent).toBe(COSTS_INTRO);
-    expect(await screen.findByTestId('costs-tab')).not.toHaveTextContent(COSTS_INTRO);
+    // Money M-5: no Costs tab (its purpose line is Charge checks' own now).
+    expect(screen.queryByTestId('tab-costs')).toBeNull();
 
     await user.click(screen.getByTestId('tab-activity'));
     expect(purposeLine()?.textContent).toBe(`${ACTIVITY_INTRO} ${TIMES_ARE_UTC}`);
@@ -174,10 +172,11 @@ describe('T-2: the tabs (A-4, SA Q-5: manual activation, roving tabIndex)', () =
     const fetchMock = stub(() => ok(payload()));
     const user = userEvent.setup();
     openAt('');
+    // Money M-5: two tabs, Settings and Activity (Costs moved to Charge checks).
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
     const settings = screen.getByTestId('tab-settings');
-    const costs = screen.getByTestId('tab-costs');
     const activity = screen.getByTestId('tab-activity');
-    expect([settings.tabIndex, costs.tabIndex, activity.tabIndex]).toEqual([0, -1, -1]);
+    expect([settings.tabIndex, activity.tabIndex]).toEqual([0, -1]);
 
     act(() => settings.focus());
     await user.keyboard('{ArrowLeft}');
@@ -186,21 +185,21 @@ describe('T-2: the tabs (A-4, SA Q-5: manual activation, roving tabIndex)', () =
     await user.keyboard('{ArrowRight}');
     expect(settings).toHaveFocus();
     await user.keyboard('{ArrowRight}');
-    expect(costs).toHaveFocus();
-    expect(costs).toHaveAttribute('aria-selected', 'false');
-    await user.keyboard('{End}');
     expect(activity).toHaveFocus();
+    expect(activity).toHaveAttribute('aria-selected', 'false');
     await user.keyboard('{Home}');
     expect(settings).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(activity).toHaveFocus();
     // Focus alone read nothing.
     expect(reportCalls(fetchMock)).toHaveLength(0);
     expect(listCalls(fetchMock)).toHaveLength(0);
 
-    await user.keyboard('{ArrowRight}');
     await user.keyboard('{Enter}');
-    expect(costs).toHaveAttribute('aria-selected', 'true');
-    await waitFor(() => expect(reportCalls(fetchMock).length).toBeGreaterThan(0));
-    expect([settings.tabIndex, costs.tabIndex, activity.tabIndex]).toEqual([-1, 0, -1]);
+    expect(activity).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(listCalls(fetchMock).length).toBeGreaterThan(0));
+    expect(reportCalls(fetchMock)).toHaveLength(0);
+    expect([settings.tabIndex, activity.tabIndex]).toEqual([-1, 0]);
   });
 });
 

@@ -1,5 +1,5 @@
 // lib/repositories/UserProfileRepository.ts
-// Repository for read access to the user `profiles` table.
+// Repository for the user `profiles` table: reads plus four targeted writes.
 //
 // Note on user_id filtering: the `profiles` table's primary key column is `id`,
 // and that value IS the Supabase auth user id (one row per user). Filtering by
@@ -7,8 +7,58 @@
 // `.eq('user_id', userId)` requirement called out in REPOSITORY_STRATEGY.md —
 // the column is just named differently because the row is the user.
 //
-// Profile rows are created/updated through auth flows and the onboarding UI,
-// not through this code path, so this repository is intentionally read-only.
+// Profile rows are created by the signup trigger and updated through auth flows
+// and the onboarding UI. The writes here behave differently on a missing row:
+//
+//   updateTimezoneMirror  (settings drawer D-1) UPDATE only. Mirrors the
+//                         timezone onto an EXISTING row; a missing row stays
+//                         missing.
+//   saveSettingsCard      (settings drawer D-2) UPSERT on `id`. Saves the
+//                         settings card's name / job title and DOES create the
+//                         row for an account that has none, exactly as the
+//                         page's old browser upsert did. An upsert is right
+//                         here, unlike D-1's `preferred_language` (which needs
+//                         different values on the insert and update paths):
+//                         the payload is identical on both paths, and a
+//                         created row takes the column defaults exactly as a
+//                         signup-created row does (`role 'user'`, `timezone
+//                         'UTC'`, which is only the best-effort mirror; the
+//                         authority is `user_preferences.timezone`). It is one
+//                         atomic `INSERT ... ON CONFLICT (id) DO UPDATE` that
+//                         sets only the payload's columns, so `avatar_url`,
+//                         `role`, `timezone` and the rest of an existing row
+//                         are left alone. `profiles_role_privilege_guard`
+//                         exempts `service_role`, and `role` is never in the
+//                         payload anyway. `role` and `avatar_url` are never
+//                         written by `saveSettingsCard` (D-3 owns `avatar_url`).
+//   setAvatarUrl          (settings drawer D-3) UPSERT on `id`, for the same
+//                         reasons as `saveSettingsCard`: the account with no
+//                         `profiles` row gets one (SA-D2-8), where the old
+//                         browser UPDATE silently saved nothing. Payload is
+//                         `avatar_url`, `updated_at`, then `id` LAST.
+//   clearAvatarUrl        (settings drawer D-3) UPDATE only. Nothing to clear
+//                         on a missing row, so none is created.
+//
+// `findAvatarUrl`, `setAvatarUrl` and `clearAvatarUrl` are called only by
+// `POST` / `DELETE /api/user/avatar`, with the SESSION user's id. None of them
+// logs a URL value.
+//
+// SERVICE-ROLE CLIENT (`supabaseServer`, bypasses RLS) by design: the callers of
+// the writes (`PATCH /api/business-os/preferences`, `PATCH
+// /api/business-os/account-profile`) pass the SESSION user's id. The mirror is
+// scoped with `.eq('id', userId)`; the card upsert carries `id: userId` as its
+// conflict key, set LAST in a payload built field by field from an allow-list,
+// so nothing the caller sends can name another row or another column
+// (tenant-isolation-guard).
+//
+// Database errors: `findById`, `updateTimezoneMirror`, `findSettingsCard`,
+// `saveSettingsCard` and the three avatar methods reduce a PostgREST error to
+// `{ code, message }` (`safeDbError`) before logging or returning it, because
+// its `details` can carry row values ("Failing row contains ..."; D-1 SA code review CR-1). The
+// admin and export reads (`listForAdmin`, `findAdminNamesByIds`,
+// `findForUserDataExport`) still log and return the raw error: follow-up
+// CR-1b (Low), to be done when the data-export stream is not editing
+// `userDataExportReads.test.ts`.
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
@@ -16,6 +66,30 @@ import { createLogger, Logger } from '@/lib/logger';
 import type { AgentRepositoryResult as RepositoryResult } from './types';
 import { ADMIN_IDENTITY_CHUNK, ilikeContainsPattern, matchesLiterally } from './BusinessProfileRepository';
 import { exportColumnsOf } from '@/lib/business-os/data-export/classification';
+import { safeDbError } from './BusinessOsInviteRepository';
+
+/** A fresh Error from the safe projection: no `details`, no `hint` (CR-1). */
+function toSafeError(error: unknown): Error {
+  const safe = safeDbError(error);
+  const out = new Error(safe.message) as Error & { code?: string };
+  if (safe.code) out.code = safe.code;
+  return out;
+}
+
+/** The settings profile card (D-2). Exported for tests. */
+export const SETTINGS_CARD_COLUMNS = 'full_name, avatar_url, job_title';
+
+export interface ProfileSettingsCard {
+  full_name: string | null;
+  avatar_url: string | null;
+  job_title: string | null;
+}
+
+/** The only fields the card may write. No role, no avatar_url, no id. */
+export interface ProfileSettingsCardPatch {
+  full_name?: string;
+  job_title?: string;
+}
 
 /**
  * Subset of the `profiles` table columns used for building UserContext.
@@ -111,8 +185,176 @@ export class UserProfileRepository {
       if (error) throw error;
       return { data: data as UserProfile | null, error: null };
     } catch (error) {
-      this.logger.error({ err: error, userId }, 'Failed to fetch user profile');
-      return { data: null, error: error as Error };
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to fetch user profile');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Mirror the business timezone onto the user's existing `profiles` row.
+   *
+   * `user_preferences.timezone` is the authority; this copy is best-effort and
+   * the caller does not fail the save over it. A targeted UPDATE of two
+   * columns, never an upsert or insert: a missing row stays missing (count 0
+   * is logged at info and is not an error). `{ count: 'exact' }` and no
+   * `.select()` (the PostgREST update + select 42703 hazard). `stamp` is the
+   * same one the caller wrote to `user_preferences`. Never throws.
+   */
+  async updateTimezoneMirror(userId: string, zone: string, stamp: string): Promise<RepositoryResult<true>> {
+    try {
+      const { error, count } = await this.supabase
+        .from('profiles')
+        .update({ timezone: zone, updated_at: stamp }, { count: 'exact' })
+        .eq('id', userId);
+
+      if (error) throw error;
+      if (count === 0) {
+        this.logger.info({ userId }, 'No profile row to mirror the timezone onto');
+      }
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to mirror the timezone onto the profile');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * The settings profile card (D-2): name, avatar URL and job title.
+   *
+   * `.maybeSingle()`: no row is `{ data: null, error: null }`, not an error
+   * (the route shows empty fields). Never throws.
+   */
+  async findSettingsCard(userId: string): Promise<RepositoryResult<ProfileSettingsCard | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select(SETTINGS_CARD_COLUMNS)
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data ?? null) as ProfileSettingsCard | null, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to read the profile card');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Save the settings card's name and / or job title (D-2). See the header for
+   * why this is an upsert on `id`.
+   *
+   * The payload is built field by field from the allow-list, never by
+   * spreading `patch`, so a cast object carrying `role`, `avatar_url`,
+   * `timezone` or another id cannot reach the table. `id` is set LAST so
+   * nothing earlier can override it. No `.select()` after the upsert (the
+   * PostgREST update + select hazard). Values are never logged. Never throws.
+   */
+  async saveSettingsCard(userId: string, patch: ProfileSettingsCardPatch): Promise<RepositoryResult<true>> {
+    try {
+      const payload: Record<string, string> = {};
+      if (typeof patch.full_name === 'string') payload.full_name = patch.full_name;
+      if (typeof patch.job_title === 'string') payload.job_title = patch.job_title;
+
+      if (Object.keys(payload).length === 0) {
+        this.logger.warn({ userId }, 'Profile card save with nothing to write');
+        const empty = new Error('Nothing to update') as Error & { code?: string };
+        empty.code = 'EMPTY_PATCH';
+        return { data: null, error: empty };
+      }
+
+      // Reset by the BEFORE UPDATE trigger on the update path; needed on insert.
+      payload.updated_at = new Date().toISOString();
+      payload.id = userId;
+
+      const { error } = await this.supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to save the profile card');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * The stored profile-picture URL (D-3, C-19), so `POST` / `DELETE
+   * /api/user/avatar` know which old file to consider deleting.
+   *
+   * `.maybeSingle()`: no row, or a NULL column, is `{ data: null, error: null }`.
+   * The URL is never logged. Never throws.
+   */
+  async findAvatarUrl(userId: string): Promise<RepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('profiles')
+        .select('avatar_url')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      const value = (data as { avatar_url?: unknown } | null)?.avatar_url;
+      return { data: typeof value === 'string' ? value : null, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to read the avatar URL');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Store a new profile-picture URL (D-3). An UPSERT on `id`, so it also works
+   * for an account with no `profiles` row (SA-D2-8 / RK-2 / F-25 D-3 note):
+   * the old hook's UPDATE silently saved nothing there. Same reasoning as
+   * `saveSettingsCard` (see the header): identical payload on both paths,
+   * `role` never in it, `id` set LAST. No `.select()`. The URL is never
+   * logged. Never throws.
+   */
+  async setAvatarUrl(userId: string, url: string): Promise<RepositoryResult<true>> {
+    try {
+      if (typeof url !== 'string' || url.length === 0) {
+        this.logger.warn({ userId }, 'Avatar URL save with nothing to write');
+        const empty = new Error('Nothing to update') as Error & { code?: string };
+        empty.code = 'EMPTY_VALUE';
+        return { data: null, error: empty };
+      }
+
+      const payload: Record<string, string> = {};
+      payload.avatar_url = url;
+      // Reset by the BEFORE UPDATE trigger on the update path; needed on insert.
+      payload.updated_at = new Date().toISOString();
+      payload.id = userId;
+
+      const { error } = await this.supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to save the avatar URL');
+      return { data: null, error: toSafeError(error) };
+    }
+  }
+
+  /**
+   * Clear the profile-picture URL (D-3, Remove). A targeted UPDATE, never an
+   * upsert: there is nothing to clear on a missing row, so none is created
+   * (count 0 is logged at info and is not an error). `{ count: 'exact' }` and
+   * no `.select()` (the PostgREST update + select hazard). Never throws.
+   */
+  async clearAvatarUrl(userId: string): Promise<RepositoryResult<true>> {
+    try {
+      const { error, count } = await this.supabase
+        .from('profiles')
+        .update({ avatar_url: null, updated_at: new Date().toISOString() }, { count: 'exact' })
+        .eq('id', userId);
+
+      if (error) throw error;
+      if (count === 0) {
+        this.logger.info({ userId }, 'No profile row to clear the avatar on');
+      }
+      return { data: true, error: null };
+    } catch (error) {
+      this.logger.error({ dbError: safeDbError(error), userId }, 'Failed to clear the avatar URL');
+      return { data: null, error: toSafeError(error) };
     }
   }
 
@@ -191,11 +433,13 @@ export class UserProfileRepository {
    *
    * Runs on the default service-role client (`supabaseServer`), so it
    * intentionally bypasses RLS on `profiles` — admin-only context: it reads
-   * every account's name, by design. The boundary is `requireAdmin` on the only
-   * caller, `app/api/admin/audit-trail/route.ts`, plus the caller guard in
-   * lib/repositories/__tests__/adminReadMethods.guard.test.ts, which allows
-   * calls from `app/api/admin/**` only. Read-only; the ids come from the
-   * `audit_trail` rows the route already loaded, not from the request.
+   * every account's name, by design. The boundary is `requireAdmin` on the two
+   * callers, `app/api/admin/audit-trail/route.ts` and (Admin Exchange Rates
+   * slice 1c.1, SQ-13) `app/api/admin/exchange-rates/route.ts`, plus the caller
+   * guard in lib/repositories/__tests__/adminReadMethods.guard.test.ts, which
+   * allows calls from `app/api/admin/**` only. Read-only; the ids come from the
+   * rows each route already loaded (`audit_trail`, `exchange_rate_history`),
+   * never from the request.
    *
    * One `.in('id', …)` per chunk of ADMIN_IDENTITY_CHUNK ids, never one read per
    * row; an empty list makes no query. Accounts without a profile row are simply
@@ -224,7 +468,9 @@ export class UserProfileRepository {
   }
 
   /**
-   * GDPR export only (GET /api/user/data-export, Art. 15 / 20). The caller's
+   * GDPR export only ("Download my data", Art. 15 / 20: the zip builder's
+   * `user_profile` section, lib/business-os/data-export/sections.ts; the JSON
+   * route GET /api/user/data-export was retired by DE-9). The caller's
    * profile row, the `profiles` descriptor's export columns only (DE-2:
    * lib/business-os/purge/descriptors.ts PROFILES_EXPORT, where the privacy
    * reasoning now lives). Changing that list changes what the export holds,

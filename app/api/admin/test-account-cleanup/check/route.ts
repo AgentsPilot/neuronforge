@@ -1,20 +1,25 @@
 /**
- * Test-account cleanup, the read-only CHECK and the status probe (OX-1r).
+ * Account cleanup, the read-only CHECK and the status probe (OX-1r, DE-10b.1).
  *
  *   GET  /api/admin/test-account-cleanup/check   -> { configured }   the section's banner probe
- *   POST /api/admin/test-account-cleanup/check   body { email, tag } -> OK / BLOCKED report
+ *   POST /api/admin/test-account-cleanup/check
+ *     { mode: 'hard', email, tag }          -> OK / BLOCKED report of the test-account delete
+ *     { mode: 'anonymise', email, subject } -> OK / BLOCKED report of the close-and-anonymise,
+ *                                              with the informational rows apart (`notes`)
  *
- * Calls the secret-gated cleanup function in check mode, which sets its own
- * transaction read-only, so the database itself guarantees it changes nothing.
- * Checks are not audited (BQ-5): frequent, and they change nothing.
+ * Calls the secret-gated cleanup function in check or anonymise_check mode,
+ * which sets its own transaction read-only, so the database itself guarantees
+ * it changes nothing. Checks are not audited (BQ-5): frequent, and they change
+ * nothing. `subject` is the account id of the row the admin picked; guard G-2a
+ * proves in the database that the email resolves to it.
  *
  * Order, and nothing before it: `requireAdmin` (401 / 403) -> body, Zod
  * `.strict()` (400) -> the second secret present, else 503 "not configured"
  * (the off switch) -> the check. A database refusal of the secret (42501) or a
  * missing function is also a 503, logged as an error.
  *
- * Pino: admin id, target login id, guard ids, counts, elapsed ms. Never the
- * email, the tag or the secret (SA-12, R-5).
+ * Pino: admin id, mode, target login id, guard ids, counts, elapsed ms. Never
+ * the email, the tag or the secret (SA-12, R-5).
  *
  * Requirement: docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md
  *
@@ -81,11 +86,16 @@ export async function POST(request: NextRequest) {
 
   const started = Date.now();
   try {
-    const result = await new TestAccountCleanupRepository().check(parsed.data);
+    const repo = new TestAccountCleanupRepository();
+    const input = parsed.data;
+    const result =
+      input.mode === 'hard'
+        ? await repo.check({ email: input.email, tag: input.tag })
+        : await repo.anonymiseCheck({ email: input.email, subject: input.subject });
     if (result.error || !result.data) {
       const facts = cleanupErrorFacts(result.error);
       const unavailable = unavailableReasonOf(result.error);
-      requestLogger.error({ err: facts, elapsedMs: Date.now() - started }, 'Test-account cleanup check failed');
+      requestLogger.error({ mode: input.mode, err: facts, elapsedMs: Date.now() - started }, 'Account cleanup check failed');
       return NextResponse.json(
         {
           success: false,
@@ -104,9 +114,11 @@ export async function POST(request: NextRequest) {
     const functionUpToDate = check.version === CLEANUP_FUNCTION_VERSION;
     requestLogger.info(
       {
+        mode: input.mode,
         targetUserId: check.targetUserId,
         verdict: check.verdict,
         guards: [...new Set(check.blockers.map((blocker) => blocker.guard))],
+        notes: [...new Set(check.notes.map((note) => note.guard))],
         storageObjects: check.storageObjects.length,
         rows: check.rows.length,
         functionUpToDate,

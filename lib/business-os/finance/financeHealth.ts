@@ -104,6 +104,18 @@
  * The pure `buildRecordedAiCost` decides exactness and the difference; this
  * file hands it Section 3's integer units and never adds the two measures.
  *
+ * CONVERTED THIS MONTH (Money MK-5b, §5.1 F-K5b, SA-10). ONE more read, made
+ * only when the wiring supplies `converted`, AFTER the one `Promise.all`
+ * (it needs the plan walk's ids): the first plan payment of each non-platform
+ * plan-row account (or exactly the picked id), through the injected
+ * `converted.firstPlanPayments`, which decides the billing mode outside this
+ * tree. The pure `convertedThisMonth` counts the accounts paying now whose
+ * first payment is in the current UTC month (BD-9); the ones no longer paying
+ * are listed, never counted. Then one names call and one source call, for the
+ * shown rows only. A failed read is `unknown`, never 0; a capped plan walk is
+ * `partial` ("at least"). Without the dep, no `converted` key (AC-145 holds
+ * for every fixture written before MK-5b).
+ *
  * READ-ONLY: no write, no LLM call, no audit entry. Logs read failures only,
  * with the read's name: never a figure, a name or an account id.
  *
@@ -132,9 +144,11 @@ import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCredit
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
 import { buildTakings } from './takings';
 import { buildBoostRevenue } from './boostRevenue';
+import { buildBoostProblems } from './boostProblems';
+import { k5DisputeHeadline, K5_DISPUTE_CHECK_FAILED } from '@/app/admin/finance/financeCopy';
 import { buildPlanRevenue } from './planRevenue';
 import { combineOurRevenue } from './ourRevenue';
-import { buildAccountEconomics, buildAccountMargin } from './accountEconomics';
+import { buildAccountEconomics, buildAccountMargin, buildPlatformMargin } from './accountEconomics';
 import { buildRecordedAiCost, type RecordedReadInput, type RecordedRowInput } from './recordedCost';
 import type { AiCostUnits } from './aiCost';
 import {
@@ -149,17 +163,25 @@ import {
   colourFarOverAllowanceTile,
   colourFinanceTile,
   farOverAllowancePercentOf,
+  FEE_ESTIMATE_CURRENCY,
   FINANCE_METRIC_PARAMS,
   FINANCE_RULES,
   K4_INFORMATION_HEADLINE,
+  STRIPE_FEE_ESTIMATE,
+  stripeFeeEntryOf,
   type FinanceMeasurement,
   type FinanceRuleSet,
 } from './financeRules';
 import { isEmptySpan, k1Spans, type FinanceSpan, type ResolvedFinanceWindow } from './financeWindow';
 import { classifyAccounts, tierLabelForGroup, type ClassifyInput } from './planGroups';
+import { CONVERTED_SHOWN_LIMIT, convertedThisMonth, currentUtcMonth } from './convertedThisMonth';
 import type {
   FinanceAccountEconomicsSection,
   FinanceAccountMargin,
+  FinanceConverted,
+  FinanceConvertedRow,
+  FinancePaying,
+  FinanceSignupSource,
   FinanceAccountsSection,
   FinanceAccountsTabQuery,
   FinanceAiCostSection,
@@ -266,6 +288,10 @@ export interface FinanceHealthDeps {
     | 'listBoostPurchasesForAccountPaidInRange'
     | 'listPlanPaymentsAllAccountsPaidInRange'
     | 'listPlanPaymentsForAccountPaidInRange'
+    | 'listBoostReversalEventsAllAccountsRecordedInRange'
+    | 'listBoostReversalEventsForAccountRecordedInRange'
+    | 'listBoostPurchasesNeedingAttentionAllAccounts'
+    | 'listBoostPurchasesNeedingAttentionForAccount'
   >;
   /** Business names for display. Injected by the admin route (admin identity reads stay in `app/api/admin/**`). */
   findNames: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ user_id: string; company_name: string | null }>>>;
@@ -318,6 +344,20 @@ export interface FinanceHealthDeps {
   };
   /** Injected in tests (SA-W10); production uses `FINANCE_METRIC_PARAMS`. */
   metricParams?: unknown;
+  /**
+   * Money MK-5b (§5.1, SA-10): Converted this month. Optional: absent, the
+   * payload has no `converted` key. `firstPlanPayments` reads exactly the given
+   * ids, in the current billing mode (decided by the wiring, never here);
+   * `signupSources` reads where each shown account came from (at most 200 ids).
+   */
+  converted?: {
+    firstPlanPayments: (accountIds: readonly string[]) => Promise<RepoResult<Array<{ accountId: string; paidAt: string }>>>;
+    signupSources: (
+      accountIds: string[]
+    ) => Promise<RepoResult<Array<{ account_id: string; source: FinanceSignupSource; stamped_at: string | null }>>>;
+  };
+  /** Slice 6b (FE-4, SA-Q81): injected in tests; production uses `STRIPE_FEE_ESTIMATE`. */
+  feeEstimate?: unknown;
 }
 
 export interface FinanceHealthInput {
@@ -402,6 +442,16 @@ export interface FinanceHealthCounts {
     currencies: number;
     packages: number;
     deletedAccountPurchases: number;
+    /** Slice 4b.2: reversal events read (R-n / R-n′); null when that read failed. */
+    events: number | null;
+    eventsCeiling: boolean;
+    eventsState: 'read' | 'failed' | 'not_available';
+    unreadableEvents: number;
+    /** Slice 4b.2: purchases needing attention now (R-l / R-l′); null when that read failed. */
+    attention: number | null;
+    openDisputes: number;
+    notCredited: number;
+    openedDates: 'read' | 'failed' | null;
   };
   /** Our revenue, plans (slice 5a): counts and booleans only, never an amount, a currency, a tier or a name (M2-FR-11). */
   plans: {
@@ -421,6 +471,26 @@ export interface FinanceHealthCounts {
   };
   /** R-d (SA-Q35): read with all businesses, `not_called` with a business picked, `failed` when it failed. */
   revenueExistence: 'read' | 'failed' | 'not_called';
+  /**
+   * Money MK-5b: Converted this month. Counts, a status and a scope only, never
+   * an id, a date or a name. Absent when the wiring supplies no `converted`.
+   * `stampDiffers`: shown rows whose lineage first-payment stamp is missing or
+   * not in this month (the G-1 cross-check, logged only).
+   */
+  converted?: {
+    scope: 'all' | 'one';
+    status: FinanceConverted['status'];
+    /** Accounts asked about; null when no read was made. */
+    asked: number | null;
+    /** First payments found (any month); null when the read failed or was not made. */
+    found: number | null;
+    converted: number | null;
+    stopped: number | null;
+    shown: number;
+    namesFound: number;
+    sourcesFound: number;
+    stampDiffers: number;
+  };
   /**
    * The Accounts tab (slice 6a, M3-FR-14): counts, booleans and enum words
    * only, never an amount, a name, a currency or a tier id (`group` is its kind).
@@ -476,7 +546,7 @@ export type FinanceHealthResult =
   | { kind: 'account_not_found' }
   | { kind: 'account_check_failed' };
 
-interface PlanWalk {
+export interface PlanWalk {
   rows: BusinessOsAccountPlan[];
   capped: boolean;
 }
@@ -487,8 +557,11 @@ const EMPTY_LEDGER: RepoResult<CreditLedgerPagedResult<CreditLedgerRow>> = {
   error: null,
 };
 
-/** The all-accounts plan walk (SA-Q3): keyset, stop on a short page, capped with `>=`. */
-async function walkPlans(plans: FinanceHealthDeps['plans']): Promise<RepoResult<PlanWalk>> {
+/**
+ * The all-accounts plan walk (SA-Q3): keyset, stop on a short page, capped with `>=`.
+ * Exported for the nightly history snapshot job (slice 8.2, SA-W-8.2-3 ruling 3): the same walk, never a copy.
+ */
+export async function walkPlans(plans: FinanceHealthDeps['plans']): Promise<RepoResult<PlanWalk>> {
   const rows: BusinessOsAccountPlan[] = [];
   let after: string | null = null;
   for (;;) {
@@ -501,6 +574,29 @@ async function walkPlans(plans: FinanceHealthDeps['plans']): Promise<RepoResult<
     if (page.data.length < FINANCE_LIMITS.PLAN_PAGE_SIZE) return { data: { rows, capped: false }, error: null };
     after = page.data[page.data.length - 1].user_id;
   }
+}
+
+/**
+ * The paying set Section 1 classifies with (slice 8.2 extract, 8.2-R3). Test and
+ * real billing rows count together (BD-14). `null` rows (the read failed) give
+ * `payingIds: null`, "paying unknown", never an empty set, so the classifier
+ * folds the paid groups into `tier_set` exactly as before.
+ *
+ * SA-Q20 fallback for a paying Founding Partner with no plan tier: the bought
+ * tier of the PAYING row only, validated by the classifier against
+ * config.tierOrder. Never logged.
+ */
+export function payingSetOf(rows: readonly FinanceBillingStatusRow[] | null): {
+  payingIds: Set<string> | null;
+  paidTierHints: Map<string, string>;
+} {
+  const payingRows = rows ? rows.filter(isPayingBillingRow) : null;
+  const payingIds = payingRows ? new Set(payingRows.map((row) => row.user_id)) : null;
+  const paidTierHints = new Map<string, string>();
+  for (const row of payingRows ?? []) {
+    if (row.bought_tier) paidTierHints.set(row.user_id, row.bought_tier);
+  }
+  return { payingIds, paidTierHints };
 }
 
 export async function buildFinanceHealth(
@@ -609,6 +705,8 @@ export async function buildFinanceHealth(
     boostPurchases,
     planPayments,
     recordedRead,
+    reversalEvents,
+    boostAttention,
   ] = await Promise.all([
     plansPromise,
     accountId !== null
@@ -674,6 +772,19 @@ export async function buildFinanceHealth(
       : accountId !== null
         ? underDeadline('recorded', recordedTimings, () => readRecordedOne(accountId), FINANCE_LIMITS.RECORDED_DEADLINE_MS)
         : underDeadline('recorded', recordedTimings, (signal) => readRecordedAll(signal), FINANCE_LIMITS.RECORDED_DEADLINE_MS),
+    // R-n / R-n′ (slice 4b.2, BD-17): our boost refunds and disputes RECORDED in the window; R-n never
+    // with a business picked (AC-229). In this same Promise.all, so the page still makes one request (AC-173).
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listBoostReversalEventsForAccountRecordedInRange(accountId, windowRange)
+        : deps.finance.listBoostReversalEventsAllAccountsRecordedInRange(windowRange)
+    ),
+    // R-l / R-l′ (slice 4b.2, S4-FR-15): our boost purchases that need attention NOW; R-l never with a business picked.
+    settle(() =>
+      accountId !== null
+        ? deps.finance.listBoostPurchasesNeedingAttentionForAccount(accountId)
+        : deps.finance.listBoostPurchasesNeedingAttentionAllAccounts()
+    ),
   ]);
 
   if (plansResult.error) failed('plans', plansResult.error);
@@ -690,6 +801,11 @@ export async function buildFinanceHealth(
   if (clientPlans.error) failed('client_plans', clientPlans.error);
   if (boostPurchases.error) failed('boost_purchases', boostPurchases.error);
   if (planPayments.error) failed('plan_payments', planPayments.error);
+  // Slice 4b.2 (§7, SA-W121): the events table missing is a deploy state, logged at warn, never an alarm.
+  const eventsAbsent = reversalEvents.error?.name === 'FinanceReadTableAbsentError';
+  if (eventsAbsent) logger.warn({ read: 'boost_reversal_events', reason: 'table_absent' }, 'Finance read: reversal events not available');
+  else if (reversalEvents.error) failed('boost_reversal_events', reversalEvents.error);
+  if (boostAttention.error) failed('boost_attention', boostAttention.error);
   // Logged as `{ err }`, like every other finance read (CLAUDE.md logging standard). It cannot
   // carry client data: R-j is head counts filtered by fixed statuses and server-computed times,
   // and its repository wraps a PostgREST error to its message and code only; a deadline is the
@@ -700,23 +816,134 @@ export async function buildFinanceHealth(
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
   // Test and real billing rows count together (BD-14); one row per account
   // (BD-16): two rows make the read itself fail, so they never reach here.
-  const payingRows = payingResult.data ? payingResult.data.filter(isPayingBillingRow) : null;
-  const payingIds = payingRows ? new Set(payingRows.map((row) => row.user_id)) : null;
-  // SA-Q20 fallback for a paying Founding Partner with no plan tier: the
-  // bought tier of the PAYING row only, validated by the classifier against
-  // config.tierOrder. Never logged.
-  const paidTierHints = new Map<string, string>();
-  for (const row of payingRows ?? []) {
-    if (row.bought_tier) paidTierHints.set(row.user_id, row.bought_tier);
-  }
+  const { payingIds, paidTierHints } = payingSetOf(payingResult.data);
   const classified = plansResult.data
     ? classifyAccounts({ rows: plansResult.data.rows, payingIds, paidTierHints, window, now, config: deps.config })
     : null;
+  // Money MK-5 (§5.1, Q-11): F-K5 over the same rows and the same paying set as Section 1.
+  // SA-CR-MK5 C-1: platform accounts are not counted, in the numerator or the denominator
+  // (§5.1), by the one existing rule (`deps.isPlatformAccount`); deleted accounts have no plan row.
+  // SA-CR-MK5B (Low): the non-platform PLAN rows (F-K5's denominator), named for what they hold.
+  const planRows = plansResult.data ? plansResult.data.rows.filter((row) => !deps.isPlatformAccount(row.user_id)) : null;
+  const paying: FinancePaying =
+    accountId !== null
+      ? payingIds === null
+        ? { scope: 'one', status: 'unknown', paying: null }
+        : { scope: 'one', status: 'ok', paying: payingIds.has(accountId) }
+      : !plansResult.data || !planRows || payingIds === null
+        ? { scope: 'all', status: 'unknown', paying: null, accounts: null }
+        : {
+            scope: 'all',
+            status: plansResult.data.capped ? 'partial' : 'ok',
+            paying: planRows.filter((row) => payingIds.has(row.user_id)).length,
+            accounts: planRows.length,
+          };
   const accounts: FinanceAccountsSection = {
     status: !classified ? 'unknown' : plansResult.data?.capped ? 'partial' : 'ok',
     scope: accountId !== null ? 'one' : 'all',
     figures: classified?.figures ?? null,
   };
+
+  // ── Money MK-5b: Converted this month (§5.1 F-K5b) ────────────────────────
+  // Over F-K5's own accounts and paying set; the first payments are read for
+  // exactly those ids (or the picked one), after the walk that names them.
+  let converted: FinanceConverted | undefined;
+  let convertedCounts: FinanceHealthCounts['converted'];
+  if (deps.converted) {
+    const month = currentUtcMonth(now);
+    // MK5B-FU-1: every plan-row account is asked about, so the requests grow with the accounts (rework past 1,000).
+    const askIds = accountId !== null ? [accountId] : planRows ? planRows.map((row) => row.user_id) : null;
+    const canRead = askIds !== null && payingIds !== null;
+    const firstRead = canRead
+      ? await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).firstPlanPayments(askIds))
+      : null;
+    if (firstRead?.error) failed('first_plan_payments', firstRead.error);
+    const base = { asked: canRead ? askIds.length : null, found: firstRead?.data ? firstRead.data.length : null };
+    const result =
+      canRead && firstRead?.data
+        ? convertedThisMonth({ firstPayments: firstRead.data, accountIds: new Set(askIds), payingIds, month })
+        : null;
+
+    if (accountId !== null) {
+      const one = result?.accounts[0] ?? null;
+      converted = result
+        ? {
+            scope: 'one',
+            status: 'ok',
+            month,
+            state: one === null ? 'not_converted' : one.payingNow ? 'converted' : 'stopped',
+            firstPaymentAt: one?.firstPaymentAt ?? null,
+          }
+        : { scope: 'one', status: 'unknown', month, state: null, firstPaymentAt: null };
+      convertedCounts = {
+        scope: 'one', status: converted.status, ...base,
+        converted: result ? result.converted : null, stopped: result ? result.stopped : null,
+        shown: 0, namesFound: 0, sourcesFound: 0, stampDiffers: 0,
+      };
+    } else if (!result) {
+      converted = { scope: 'all', status: 'unknown', month, converted: null, paying: null, stopped: null, rows: null, shownLimit: CONVERTED_SHOWN_LIMIT };
+      convertedCounts = {
+        scope: 'all', status: 'unknown', ...base, converted: null, stopped: null,
+        shown: 0, namesFound: 0, sourcesFound: 0, stampDiffers: 0,
+      };
+    } else {
+      const shown = result.accounts.slice(0, CONVERTED_SHOWN_LIMIT);
+      const shownIds = shown.map((row) => row.accountId);
+      const convertedNames = shownIds.length > 0 ? await settle(() => deps.findNames(shownIds)) : { data: [], error: null };
+      if (convertedNames.error) failed('converted_names', convertedNames.error);
+      const sources = shownIds.length > 0
+        ? await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).signupSources(shownIds))
+        : { data: [], error: null };
+      if (sources.error) failed('converted_sources', sources.error);
+      const nameOf = new Map((convertedNames.data ?? []).map((n) => [n.user_id, n.company_name]));
+      const sourceOf = new Map((sources.data ?? []).map((s) => [s.account_id, s]));
+      const monthFrom = Date.parse(month.from);
+      const monthTo = Date.parse(month.to);
+      let stampDiffers = 0;
+      const rows: FinanceConvertedRow[] = shown.map((row) => {
+        const lineage = sourceOf.get(row.accountId);
+        const stamp = lineage?.stamped_at ? Date.parse(lineage.stamped_at) : Number.NaN;
+        if (sources.data && !(Number.isFinite(stamp) && stamp >= monthFrom && stamp < monthTo)) stampDiffers += 1;
+        const group = classified?.groupByAccount.get(row.accountId) ?? null;
+        const name = nameOf.get(row.accountId);
+        return {
+          accountId: row.accountId,
+          ...(!convertedNames.data
+            ? { name: null, nameStatus: 'unavailable' as const }
+            : name
+              ? { name, nameStatus: 'found' as const }
+              : { name: null, nameStatus: 'missing' as const }),
+          group,
+          tierLabel: group === null ? null : tierLabelForGroup(deps.config, group),
+          firstPaymentAt: row.firstPaymentAt,
+          ...(!sources.data
+            ? { source: null, sourceStatus: 'unavailable' as const }
+            : lineage
+              ? { source: lineage.source, sourceStatus: 'found' as const }
+              : { source: null, sourceStatus: 'missing' as const }),
+          payingNow: row.payingNow,
+        };
+      });
+      const payingCount = paying.scope === 'all' ? paying.paying : null;
+      converted = {
+        scope: 'all',
+        status: plansResult.data?.capped ? 'partial' : 'ok',
+        month,
+        converted: result.converted,
+        paying: payingCount,
+        stopped: result.stopped,
+        rows,
+        shownLimit: CONVERTED_SHOWN_LIMIT,
+      };
+      convertedCounts = {
+        scope: 'all', status: converted.status, ...base, converted: result.converted, stopped: result.stopped,
+        shown: rows.length,
+        namesFound: rows.filter((row) => row.nameStatus === 'found').length,
+        sourcesFound: rows.filter((row) => row.sourceStatus === 'found').length,
+        stampDiffers,
+      };
+    }
+  }
 
   // ── 4. Section 3 ──────────────────────────────────────────────────────────
   let aiCost: FinanceAiCostSection;
@@ -801,7 +1028,22 @@ export async function buildFinanceHealth(
   // sets `state`; with a business picked `state` comes from that business's own
   // two reads (E-36). The section's status comes from the two money parts only (SA-W62).
   const scope = accountId !== null ? 'one' : 'all';
-  const builtBoosts = buildBoostRevenue({ purchases: boostPurchases.data, scope });
+  // Slice 4b.2: block A and held now come from R-l / R-l′ (as of now); refunds and lost disputes
+  // from R-n / R-n′ (recorded in the window). The problems block takes the revenue's event notes.
+  const preProblems = buildBoostProblems({ attention: boostAttention.data, eventsOnUnpaidPurchases: null, overTotal: null });
+  const builtBoosts = buildBoostRevenue({
+    purchases: boostPurchases.data,
+    events: reversalEvents.data,
+    eventsAbsent,
+    heldNow: preProblems.heldNow,
+    scope,
+  });
+  const eventsKnown = builtBoosts.events !== null && builtBoosts.events.state === 'read';
+  const builtProblems = buildBoostProblems({
+    attention: boostAttention.data,
+    eventsOnUnpaidPurchases: eventsKnown && builtBoosts.events ? builtBoosts.events.onUnpaidPurchases : null,
+    overTotal: eventsKnown && builtBoosts.events ? builtBoosts.events.overTotal : null,
+  });
   // SA-W65: a tier outside the config's tier order is "Unknown plan" (null), never its raw id.
   const tierOrder: readonly string[] = deps.config.tierOrder;
   const planLabelOf = (tier: string | null): string | null =>
@@ -911,6 +1153,8 @@ export async function buildFinanceHealth(
       packages: builtBoosts.packages,
       deletedAccounts: builtBoosts.deletedAccounts,
       notes: builtBoosts.notes,
+      heldNow: builtBoosts.heldNow,
+      events: builtBoosts.events,
     },
     totals: combined.totals,
   };
@@ -931,6 +1175,8 @@ export async function buildFinanceHealth(
     now,
     farOverAllowancePercent,
     displayCap: FINANCE_LIMITS.CREDIT_ROWS_SHOWN,
+    // FR-4B-13 / BQ-13: a refund recorded in the window keeps its credits; the section says so.
+    refundNotTakenBack: (builtBoosts.events?.refundEvents ?? 0) > 0,
   });
 
   // Names for the rows shown only, ids taken from the plan rows already read;
@@ -962,19 +1208,31 @@ export async function buildFinanceHealth(
     farOverAllowancePercent,
     figures: builtCredits.figures ? { ...builtCredits.figures, rows: creditRows } : null,
     gifted: builtCredits.gifted,
+    bought: builtCredits.bought,
   };
 
   // ── 6a. The Accounts tab, or the picked business's margin (slice 6a, §11E) ──
   // No new read: R-a (through `units`), R-k, R-m, the walk and Section 4's rows.
+  // Slice 6b: the fee estimate config is data (FE-4); an invalid one is logged once,
+  // naming no value (SA-W-6b-9), and every margin after fees reads Unknown (E-73).
+  const feeEstimate = deps.feeEstimate ?? STRIPE_FEE_ESTIMATE;
   const economicsReads = {
     coverage: clamp.coverage,
     aiCost: aiCostUnits && windowResult.data ? { units: aiCostUnits, reachedCeiling: windowResult.data.reachedCeiling } : null,
     boosts: boostPurchases.data,
+    // Slice 4b.2 (FR-4B-11): the same events as Our revenue, so the two tabs agree.
+    events: reversalEvents.data,
     plans: planPayments.data,
+    feeEstimate,
   };
+  if ((accountId !== null || input.accountsTab !== null) && stripeFeeEntryOf(feeEstimate, FEE_ESTIMATE_CURRENCY) === null) {
+    logger.error({ read: 'fee_estimate' }, 'Finance Stripe fee estimate config is invalid');
+  }
   let accountEconomics: FinanceAccountEconomicsSection | null = null;
   let accountEconomicsCounts: FinanceHealthCounts['accountEconomics'] = { built: false };
   let accountMargin: FinanceAccountMargin | null = null;
+  // Money MK-5: F-K4 for all businesses, the Accounts tab's own platform line over the same reads.
+  const platformMargin: FinanceAccountMargin | null = accountId === null ? buildPlatformMargin(economicsReads) : null;
   if (accountId !== null) {
     // M3-FR-8: the same functions over R-a′ / R-k′ / R-m′, which already carry exactly this id.
     accountMargin = buildAccountMargin({ ...economicsReads, accountId });
@@ -1131,7 +1389,13 @@ export async function buildFinanceHealth(
       : null,
   });
   const paymentProblems: FinancePaymentProblemsSection = {
-    status: paymentProblemsStatus([builtInvoices.status, builtInstalments.status, builtPlans.status, reminders.status]),
+    status: paymentProblemsStatus([
+      builtInvoices.status,
+      builtInstalments.status,
+      builtPlans.status,
+      reminders.status,
+      builtProblems.part.status,
+    ]),
     scope: accountId !== null ? 'one' : 'all',
     today,
     failedPayments: { state: 'not_stored' },
@@ -1139,6 +1403,8 @@ export async function buildFinanceHealth(
     overdueInstalments: namedPart(builtInstalments),
     clientPlans: { status: builtPlans.status, figures: builtPlans.figures },
     reminders,
+    // Slice 4b.2, block A (FR-4B-12): our boost problems, as of now.
+    boosts: builtProblems.part,
   };
 
   // ── 7. Tiles ──────────────────────────────────────────────────────────────
@@ -1176,15 +1442,30 @@ export async function buildFinanceHealth(
   // K-5 (slice 4a, SA-W47; slice 5a, SA-W60): boost net plus plans received in ONE currency, from the
   // combiner (the same `totals` the account summary reads). Information only (no rule, never green).
   // Either money read failing is "Unknown"; R-d failing changes `state` only, never K-5.
+  // Slice 4b.2 (S4-FR-17, AC-103): its colour comes from the dispute rule (data, `FINANCE_RULES`) over
+  // R-l / R-l′'s open disputes. Precedence: the money failing stays "unavailable" as before; else the
+  // dispute read failing is grey with "Dispute check failed", value unchanged; else the rule list.
   const k5Money = combined.k5;
-  const k5Colour = colourFinanceTile(
+  const k5Information = k5Money.kind === 'none' ? K5_NO_DATA_YET : K5_REVENUE_HEADLINE;
+  const moneyFailed = k5Money.kind === 'unknown' && k5Money.reason === 'failed';
+  const openDisputes = builtProblems.openDisputes;
+  let k5Colour = colourFinanceTile(
     'k5_our_revenue',
     rules.k5_our_revenue,
-    k5Money.kind === 'unknown' && k5Money.reason === 'failed'
+    moneyFailed
       ? null
-      : { metrics: {}, information: k5Money.kind === 'none' ? K5_NO_DATA_YET : K5_REVENUE_HEADLINE },
+      : {
+          metrics: openDisputes === null ? {} : { boostOpenDisputes: { value: openDisputes.value, exact: openDisputes.exact } },
+          information: k5Information,
+        },
     { onRuleError }
   );
+  if (!moneyFailed && openDisputes === null && k5Colour.ruleId === null && k5Colour.status !== 'unavailable') {
+    k5Colour = { ...k5Colour, status: 'neutral', headline: K5_DISPUTE_CHECK_FAILED };
+  } else if (k5Colour.ruleId !== null && openDisputes !== null) {
+    // Every K-5 rule can only name `boostOpenDisputes`, so a match is a dispute: say how many (SA-W120).
+    k5Colour = { ...k5Colour, headline: k5DisputeHeadline(openDisputes.value) };
+  }
 
   // K-2 (SA-WR-8): an account that could not be read makes the count a lower bound.
   const creditFigures = credits.figures;
@@ -1238,6 +1519,11 @@ export async function buildFinanceHealth(
     credits,
     takings,
     paymentProblems,
+    // Money MK-5: F-K5 always; F-K4's platform line with no business picked.
+    paying,
+    // Money MK-5b: present only when the wiring supplies the first-payment read.
+    ...(converted ? { converted } : {}),
+    ...(platformMargin ? { platformMargin } : {}),
     // Slice 6a (SA-W74): optional keys, ABSENT (not null) when not built, so the Overview payload is unchanged.
     ...(accountEconomics ? { accountEconomics } : {}),
     ...(accountMargin ? { accountMargin } : {}),
@@ -1264,6 +1550,7 @@ export async function buildFinanceHealth(
       unresolvedAdjustments: figures?.unresolvedAdjustments ?? 0,
       topAccounts: topAccounts.length,
       namesFound,
+      ...(convertedCounts ? { converted: convertedCounts } : {}),
       creditAccounts: positionsPass ? positionsPass.byUserId.size : null,
       creditsPass: positionsPass ? positionsPass.outcome : 'skipped',
       creditPositions,
@@ -1309,6 +1596,14 @@ export async function buildFinanceHealth(
         currencies: builtBoosts.lines?.length ?? 0,
         packages: builtBoosts.packages?.length ?? 0,
         deletedAccountPurchases: builtBoosts.counts.deletedAccountPurchases,
+        events: reversalEvents.data ? reversalEvents.data.rows.length : null,
+        eventsCeiling: reversalEvents.data?.reachedCeiling ?? false,
+        eventsState: builtBoosts.events?.state ?? (eventsAbsent ? 'not_available' : 'failed'),
+        unreadableEvents: builtBoosts.events?.unreadable ?? 0,
+        attention: builtProblems.counts.openedDates === null ? null : builtProblems.counts.rows,
+        openDisputes: builtProblems.counts.openDisputes,
+        notCredited: builtProblems.counts.notCredited,
+        openedDates: builtProblems.counts.openedDates,
       },
       plans: {
         rows: planPayments.data ? planPayments.data.rows.length : null,

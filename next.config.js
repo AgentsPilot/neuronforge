@@ -75,6 +75,36 @@ const nextConfig = {
         destination: '/business-os/orders',
         permanent: false,
       },
+      {
+        // Money M-5 (§11H.4 R-1): the Business OS AI "Costs & credits" tab
+        // moved to Charge checks. Temporary for the same reason as above. Next
+        // passes the query through, so the window (range, from, to) and the
+        // business (account) arrive; the stray tab=costs is not a Charge checks
+        // key and is ignored there (SA-Q60, SA-W1). `value` is matched whole.
+        source: '/admin/business-os-llm',
+        has: [{ type: 'query', key: 'tab', value: 'costs' }],
+        destination: '/admin/finance/charges',
+        permanent: false,
+      },
+      {
+        // Money MK-4 (KPI restructure review SA-6): the Subscriptions page is
+        // now Finance's Plans & subscriptions tab. Temporary for the same
+        // reason as above. Next merges the incoming query with the
+        // destination's, so a status filter (?status=failed) arrives with it.
+        source: '/admin/subscriptions',
+        destination: '/admin/finance?tab=plans',
+        permanent: false,
+      },
+      {
+        // Admin Exchange Rates slice 2 (SQ-4, SQ-17): the Exchange rates page
+        // is now Finance's Exchange rates tab. Temporary for the same reason
+        // as above. Next merges the incoming query with the destination's, so
+        // a Show filter (?currencies=all) arrives with it, and the
+        // destination's tab wins over an incoming one.
+        source: '/admin/exchange-rates',
+        destination: '/admin/finance?tab=exchange-rates',
+        permanent: false,
+      },
     ];
   },
 }

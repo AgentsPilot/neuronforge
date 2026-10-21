@@ -4,6 +4,9 @@
  * The Costs & credits tab (credit deduction slice 4a, workplan §4.6, §10.1 UI):
  * each state, each section, the labels SA asked for (S-6, S-7), and that the
  * Settings tab is still what the page opens on.
+ *
+ * Money M-5: the report moved to its own page, Charge checks; the last block
+ * covers both pages. One case was deleted there (named in the block).
  */
 
 import '@testing-library/jest-dom';
@@ -12,10 +15,12 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { CostsTab } from '../components/costs/CostsTab';
 import BusinessOsLlmSettingsPage from '../page';
+import ChargeChecksPage from '@/app/admin/finance/charges/page';
+import { ACTIVITY_TAB_LABEL } from '../activityCopy';
 import {
+  CHARGE_CHECKS_TITLE,
   COSTS_EMPTY,
   COSTS_INCOMPLETE,
-  COSTS_TAB_LABEL,
   NET_INCLUDING_CORRECTIONS,
   SETTINGS_TAB_LABEL,
 } from '../costCopy';
@@ -332,7 +337,7 @@ describe('controls', () => {
   });
 });
 
-describe('the page: two tabs, Settings first and unchanged', () => {
+describe('the pages: Business OS AI has two tabs, Settings first; the report is on Charge checks (Money M-5)', () => {
   function stubBoth() {
     return stubReport((url) =>
       url.includes('/credits/report')
@@ -341,44 +346,35 @@ describe('the page: two tabs, Settings first and unchanged', () => {
     );
   }
 
-  it('opens on Settings, and does not read the cost report until asked', async () => {
+  it('Business OS AI opens on Settings, shows Settings and Activity only, and never reads the cost report', async () => {
     const fetchMock = stubBoth();
     render(<BusinessOsLlmSettingsPage />);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([SETTINGS_TAB_LABEL, ACTIVITY_TAB_LABEL]);
     expect(screen.getByTestId('tab-settings')).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByTestId('tab-settings')).toHaveTextContent(SETTINGS_TAB_LABEL);
-    expect(screen.getByTestId('tab-costs')).toHaveTextContent(COSTS_TAB_LABEL);
+    expect(screen.queryByTestId('tab-costs')).toBeNull();
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toEqual(
       expect.arrayContaining([expect.stringContaining('/credits/report')])
     );
     expect(screen.getByTestId('page-standing-note')).toBeVisible();
     expect(screen.queryByTestId('costs-tab')).not.toBeInTheDocument();
+    expect(document.getElementById('bos-llm-panel-costs')).toBeNull();
   });
 
-  it('the Costs & credits tab mounts the report and hides the settings controls', async () => {
+  it('Charge checks mounts the report under its own h1, with no tabs', async () => {
     const fetchMock = stubBoth();
-    render(<BusinessOsLlmSettingsPage />);
-    fireEvent.click(screen.getByTestId('tab-costs'));
-    expect(screen.getByTestId('tab-costs')).toHaveAttribute('aria-selected', 'true');
+    render(<ChargeChecksPage />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(CHARGE_CHECKS_TITLE);
     expect(await screen.findByTestId('costs-periods')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/credits/report'))).toBe(true);
-    expect(screen.getByTestId('page-standing-note')).not.toBeVisible();
-    // E-1 (Admin Layout Standard L-10, F-69 / D-15): the Settings Refresh is
-    // "Refresh the settings" in the Settings tab's own bar, rendered only while
-    // Settings is shown (SA M-1), so on Costs it is not in the document at all.
-    expect(screen.queryByRole('button', { name: 'Refresh the settings', hidden: true })).toBeNull();
-
-    fireEvent.click(screen.getByTestId('tab-settings'));
-    // Kept mounted but hidden (CR-N2), so its window and account survive.
-    expect(screen.getByTestId('costs-tab')).not.toBeVisible();
-    expect(screen.getByTestId('page-standing-note')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Refresh the settings' })).toBeVisible();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.getByTestId('costs-tab')).toBeVisible();
   });
 
-  it('each tab controls its own tabpanel (CR-N2)', async () => {
+  it('each of the two tabs controls its own tabpanel (CR-N2)', async () => {
     stubBoth();
     render(<BusinessOsLlmSettingsPage />);
-    for (const id of ['settings', 'costs']) {
+    for (const id of ['settings', 'activity']) {
       const tab = screen.getByTestId(`tab-${id}`);
       const panelId = tab.getAttribute('aria-controls');
       expect(panelId).toBeTruthy();
@@ -386,39 +382,17 @@ describe('the page: two tabs, Settings first and unchanged', () => {
       expect(panel).toHaveAttribute('role', 'tabpanel');
       expect(panel).toHaveAttribute('aria-labelledby', tab.id);
     }
-    const costsPanel = document.getElementById(screen.getByTestId('tab-costs').getAttribute('aria-controls')!)!;
-    expect(costsPanel).not.toBeVisible();
-    fireEvent.click(screen.getByTestId('tab-costs'));
-    expect(costsPanel).toBeVisible();
-    expect(await within(costsPanel).findByTestId('costs-periods')).toBeInTheDocument();
+    const activityPanel = document.getElementById(screen.getByTestId('tab-activity').getAttribute('aria-controls')!)!;
+    expect(activityPanel).not.toBeVisible();
+    fireEvent.click(screen.getByTestId('tab-activity'));
+    expect(activityPanel).toBeVisible();
   });
 
-  // E-6 (L-9a): same intent, new controls (the standard "7 days", the picker
-  // and its chip in place of the select).
-  it('switching tabs keeps the chosen window and account, and does not re-read (CR-N2)', async () => {
-    const fetchMock = stubReport((url) =>
-      url.split('?')[0] === BUSINESSES_PATH
-        ? businessesAnswer
-        : url.includes('/credits/report')
-          ? ok(report())
-          : { status: 200, body: { success: true, data: { areas: [], generatedAt: '2026-09-23T09:00:00.000Z' } } }
-    );
-    render(<BusinessOsLlmSettingsPage />);
-    fireEvent.click(screen.getByTestId('tab-costs'));
-    await screen.findByTestId('costs-periods');
-    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
-    const reportReads = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/credits/report')).length;
-    await waitFor(() => expect(reportReads()).toBe(2));
-    await pickBusiness('Beta Bakery');
-    await waitFor(() => expect(reportReads()).toBe(3));
-
-    fireEvent.click(screen.getByTestId('tab-settings'));
-    fireEvent.click(screen.getByTestId('tab-costs'));
-    expect(screen.getByRole('button', { name: '7 days' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('business-filter-chip')).toHaveTextContent('Business: Beta Bakery');
-    expect(screen.getByTestId('costs-periods')).toBeVisible();
-    expect(reportReads()).toBe(3);
-  });
+  // Deleted in Money M-5 (SA-W6, M5-R1): "switching tabs keeps the chosen
+  // window and account, and does not re-read (CR-N2)". It switched between the
+  // Costs and Settings tabs; there is no Costs tab any more, and Charge checks
+  // has no tabs. Activity's own keep-on-switch behaviour is pinned by
+  // `tabCoexistence.render.test.tsx` X-4.
 });
 
 describe('CR-N2 and QA Low items: which response the screen shows', () => {

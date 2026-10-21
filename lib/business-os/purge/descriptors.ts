@@ -72,27 +72,268 @@ const EXPORT_REASON = {
   CACHE: "cache or derived data, not the owner's data",
   MODULE_SETUP: 'PLATFORM: module setup, not data the owner entered (user 2026-10-15)',
   ORGANISATION: 'PLATFORM: agent-platform organisation record (user 2026-10-15)',
+  // Data export DE-8a (requirement §0.3.3): the jobs table and the bucket that
+  // hold the export are not exported again inside a later export.
+  EXPORT_ITSELF: "the export itself: a short-lived copy of this account's data",
 } as const;
 
 /** Not in the export. `detail` adds what is specific to this table. */
 const exclude = (reason: string, detail?: string): TableExportClassification =>
   ({ kind: 'exclude', reason: detail ? `${reason}; ${detail}` : reason });
 
-/** In scope, not built yet: `slice` adds the section. Allowed until DE-7. */
-const planned = (slice: Extract<TableExportClassification, { kind: 'planned' }>['slice']): TableExportClassification =>
-  ({ kind: 'planned', slice });
+// DE-7 (SA-Q9): the `planned()` helper is gone. Every table is now `include`
+// or `exclude`, and the CI forbids `planned` on a table
+// (exportClassification.test.ts, PLANNED_TABLES_ALLOWED = false), so a new
+// table is classified on the spot. Buckets kept their own `planned` until
+// DE-8b, which classified the last two (PLANNED_FILES_ALLOWED = false).
+
+// `PROFILES_EXPORT` (section `user_profile`) moved to the DE-3 block below,
+// after EXPORT_COLUMN_REASON, whose AGENT_SETTING reason it now uses.
+
+/**
+ * `plugin_connections` is NOT exported (user decision 2026-10-15, DE-4): the
+ * export holds business data only, and a connected app is account plumbing.
+ * The pending lawyer note in the requirement's §0.2 DX-1 now names connected
+ * apps alongside activity. Until DE-4 this was an `include` of 13 columns with
+ * a `profile_data` allow-list (DE-1 / DE-2); the reader, its repository method
+ * and the allow-list were removed with it. The DE-0a / DE-0b token controls are
+ * unaffected: they are about browser access, not the export.
+ */
+const PLUGIN_CONNECTIONS_EXCLUDED =
+  'user 2026-10-15: connected apps dropped from the export (business data only); see lawyer note §0.2 DX-1';
+
+// ── DE-4: client records (BUSINESS_OS_DATA_EXPORT_DE4_WORKPLAN.md §3) ─────────
+// Eight tables, one section each, group `client_records` (AgentPilot is the
+// processor; the account holder is the controller). Every list was checked
+// column by column against the live schema on 2026-10-15 (workplan §10.1, SA
+// review DE-4). Order matters: the export repository selects
+// `columns.join(', ')`, pinned byte for byte in the characterization test.
+// Ids and foreign-key ids ARE included: they are how a booking points at its
+// client and its service inside the file. Changing a list changes what the
+// export holds: a privacy decision, and an SA item.
+
+/** Why a COLUMN stays out. Repeated reasons are named, not retyped (DE-4 SA-Q4). */
+const EXPORT_COLUMN_REASON = {
+  OWNER_ID: 'always the exporting account; it is in export_metadata.user_id',
+  DOCUMENT_STORAGE:
+    "where the file sits in our storage; the file itself arrives in 'Your files' (DE-8b), whose manifest comes from STORAGE_DESCRIPTORS",
+  REMINDER_SENT: 'DX-1d: a reminder email sent is activity (user BC-6, 2026-10-15)',
+  INTAKE_SENT: 'DX-1d: when the intake email was sent is activity (user BC-6, 2026-10-15)',
+  CALENDAR_SYNC: 'calendar sync plumbing',
+  // DE-3. The two user reasons are VERBATIM (user decisions BC-A / BC-B,
+  // 2026-10-16; DE-3 SA C-1). Do not reword them.
+  AGENT_SETTING: 'user 2026-10-16: agent-platform setting, Business OS data only',
+  BANK_DETAILS: 'user 2026-10-16: bank details left out of the file',
+  ASSISTANT_OUTPUT: 'assistant output, not something the owner entered (DX-1d; as DE-4 BC-7)',
+  CONNECTED_APPS: 'connected apps are not exported (user DE4-U2, 2026-10-15)',
+  SETUP_STATE: 'setup progress state the product keeps, not data the owner entered (as DE-2 BC-1; user BC-D, 2026-10-16)',
+} as const;
+
+/**
+ * `crm_contacts` -> section `clients`. `source_metadata` is read but never
+ * written raw: the section keeps only the user's BC-4 keys
+ * (SOURCE_METADATA_KEYS in data-export/sections.ts). It also holds `ip_hash`
+ * (a day-salted hash of the visitor's IP, recoverable), `session_id` and
+ * `user_agent`, which never reach the file. The four attribution columns are
+ * generated from `source_metadata` (20260826).
+ */
+const CRM_CONTACTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'clients',
+  columns: [
+    'id', 'first_name', 'last_name', 'email', 'phone', 'stage', 'stage_entered_at', 'tags', 'custom_fields', 'notes',
+    'source', 'source_metadata', 'referrer_domain', 'utm_source', 'utm_medium', 'utm_campaign', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `crm_activities` -> `client_activities`: notes and the history timeline, every type (B1 in whole). */
+const CRM_ACTIVITIES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_activities',
+  columns: [
+    'id', 'contact_id', 'activity_type', 'title', 'description', 'activity_date', 'auto_logged', 'source_capability',
+    'source_entity_id', 'created_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `crm_pipeline_stages` -> `pipeline_stages`. `stage_key` passes the deny list through DENY_EXCEPTIONS (SA-Q5). */
+const CRM_PIPELINE_STAGES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'pipeline_stages',
+  columns: ['id', 'vertical', 'stage_key', 'stage_label', 'position', 'color', 'stage_type', 'is_primary_client_stage', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `crm_tasks` -> `client_tasks`. Completed and cancelled tasks are in: statuses (BC-2). */
+const CRM_TASKS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_tasks',
+  columns: [
+    'id', 'contact_id', 'title', 'description', 'priority', 'status', 'due_date', 'reminder_at', 'completed_at',
+    'created_by', 'source_entity_type', 'source_entity_id', 'tags', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `contact_documents` -> `client_documents`: the details only; the files
+ * arrive in DE-8b. Deleted documents (`status = 'deleted'`, the soft delete
+ * of ContactDocumentsRepository) are left out; archived ones are in (BC-3).
+ * `status` is NOT NULL DEFAULT 'active' (20260722), so NOT IN drops no NULL row.
+ */
+const CONTACT_DOCUMENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_documents',
+  columns: [
+    'id', 'contact_id', 'name', 'document_type', 'file_name', 'file_size', 'mime_type', 'description', 'tags', 'status',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    storage_path: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+    storage_bucket: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+  },
+  rowFilter: {
+    column: 'status',
+    notIn: ['deleted'],
+    reason: 'SQ-E5: soft-deleted documents are not exported (user BC-3, 2026-10-15: archived ones are)',
+  },
+};
+
+/**
+ * `scheduling_services` -> `services`. `price` always travels with
+ * `currency`, the authority for what a client is charged (FR-E9). Draft and
+ * inactive services are in: statuses.
+ */
+const SCHEDULING_SERVICES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'services',
+  columns: [
+    'id', 'service_name', 'description', 'duration_minutes', 'price', 'currency', 'buffer_minutes', 'max_bookings_per_day',
+    'advance_booking_days', 'min_notice_hours', 'availability', 'is_active', 'status', 'is_scheduled', 'collection',
+    'sale_mode', 'payment_type', 'installment_count', 'installment_frequency', 'first_payment_due', 'first_payment_days',
+    'source', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    ai_suggestions: 'assistant output kept to pre-fill the service form, not a setting the owner chose (DX-1d; user BC-7, 2026-10-15)',
+  },
+};
+
+/**
+ * `scheduling_bookings` -> `bookings`. Cancelled, completed and no-show
+ * bookings are in (BC-2); the owner's private `internal_notes` are in (BC-1).
+ * `payment_amount` travels with `payment_currency`. `intake_responses` are the
+ * client's answers: the owner's record.
+ */
+const SCHEDULING_BOOKINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'bookings',
+  columns: [
+    'id', 'service_id', 'contact_id', 'parent_booking_id', 'occurrence_number', 'start_time', 'end_time', 'timezone',
+    'status', 'cancellation_reason', 'cancel_reason', 'cancel_note', 'cancelled_by', 'booking_source', 'notes',
+    'internal_notes', 'payment_status', 'payment_method', 'payment_amount', 'payment_currency', 'payment_id', 'invoice_id',
+    'payment_plan_id', 'intake_responses', 'intake_completed_at', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    reminder_24hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
+    reminder_2hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
+    intake_sent_at: EXPORT_COLUMN_REASON.INTAKE_SENT,
+    intake_reminded_at: EXPORT_COLUMN_REASON.INTAKE_SENT,
+    external_calendar_event_id: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_provider: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_synced_at: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_error: "the calendar provider's error text from our integration",
+  },
+};
+
+/*
+ * DE-7 replaced `planned()`: every table is classified on the spot, and the CI
+ * forbids the old placeholder. These two arrived on a branch written before
+ * that rule and are classified here by analogy with `SCHEDULING_BOOKINGS_EXPORT`
+ * above — the same domain, already reviewed — so the owner's export contains
+ * their appointments and the enquiries that nearly became bookings.
+ *
+ * Every live column appears in `columns` or `excludedColumns`; a column in
+ * neither is reported by `npm run schema:reconcile`.
+ */
+const SCHEDULING_MEETINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'bookings',
+  columns: [
+    'id', 'booking_id', 'start_time', 'end_time', 'timezone', 'meeting_status',
+    'occurrence_number', 'session_number', 'outcome_by', 'outcome_at', 'moved_by',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    reminder_24hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
+    reminder_2hr_sent: EXPORT_COLUMN_REASON.REMINDER_SENT,
+    external_calendar_event_id: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_synced_at: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_provider: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_error: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+  },
+};
+
+const ABANDONED_BOOKINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'bookings',
+  columns: [
+    'id', 'service_id', 'booking_id', 'first_name', 'last_name', 'email', 'phone',
+    'start_time', 'end_time', 'timezone', 'source', 'status', 'page_url', 'locale',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    session_id: 'the browser session that was being tracked, not data anyone entered',
+    checkout_session_id: 'a Stripe checkout reference, machinery rather than business data',
+    recovery_email_sent_at: EXPORT_COLUMN_REASON.REMINDER_SENT,
+  },
+};
+
+
+/** `scheduling_availability_exceptions` -> `time_off`. */
+const SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'time_off',
+  columns: ['id', 'exception_type', 'start_date', 'end_date', 'custom_hours', 'reason', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+// ── DE-3: profile details (BUSINESS_OS_DATA_EXPORT_DE3_WORKPLAN.md §3) ────────
+// The person's account and their business's own details (DX-1a), group
+// `account` (AgentPilot is the controller; DE-3 SA-Q2). Every list below is
+// SA's "Final column lists" (SA review DE-3, 2026-10-16), reconciled with the
+// live schema on 2026-10-16 (workplan §10.1): `columns` ∪ `excludedColumns` is
+// exactly the live column set of each table. Order matters: the export
+// repository selects `columns.join(', ')`, pinned byte for byte in the route
+// characterization test. Changing a list changes what the export holds: a
+// privacy decision, and an SA item.
 
 /**
  * The `profiles` columns the export reads (section `user_profile`): the
  * person's own profile and onboarding answers. Listed by name so a column added
- * later is NOT exported until someone decides it should be. Changing this
- * changes what the export holds: a privacy decision. Order matters: the
- * repository selects `columns.join(', ')`, pinned byte for byte.
+ * later is NOT exported until someone decides it should be.
  *
  * `plan` is left out ON PURPOSE (DE-1, SA ruling Q-3): the export carries
  * profile details only, no plan or billing data (user decision DX-1a,
- * requirement §0.3.1). `hourly_rate_usd`, `role` and `org_id` stay until DE-3
- * decides the explicit Business OS profile set (§0.5).
+ * requirement §0.3.1). DE-3 settled the three columns DE-1 left open (§0.5):
+ * `role` (the persona picked in onboarding; it grants nothing, 20261002) is
+ * IN; `org_id` and `hourly_rate_usd` (the agent-platform ROI rate) are OUT.
  * Moved from UserProfileRepository PROFILE_DATA_EXPORT_COLUMNS (DE-2).
  */
 const PROFILES_EXPORT: TableExportClassification = {
@@ -100,40 +341,694 @@ const PROFILES_EXPORT: TableExportClassification = {
   section: 'user_profile',
   columns: [
     'id', 'full_name', 'avatar_url', 'company', 'job_title', 'timezone', 'language', 'created_at', 'updated_at',
-    'role', 'domain', 'onboarding', 'onboarding_goal', 'onboarding_mode', 'onboarding_data', 'hourly_rate_usd', 'org_id',
+    'role', 'domain', 'onboarding', 'onboarding_goal', 'onboarding_mode', 'onboarding_data',
   ],
   excludedColumns: {
     plan: 'DX-1a / DE-1 SA Q-3: no plan or billing data',
+    org_id: 'DE-2 BC-2 (user 2026-10-15): the agent-platform organisation record is not exported; its id alone points at nothing in the file',
+    hourly_rate_usd: EXPORT_COLUMN_REASON.AGENT_SETTING,
   },
 };
 
 /**
- * The `plugin_connections` columns the export reads (section
- * `plugin_connections`). Changing this changes what the export holds: a
- * privacy decision. Order matters, as for PROFILES_EXPORT.
- *
- * `profile_data` IS read, because it holds the person's own provider profile,
- * but some providers also store an access token inside it, under names nobody
- * can predict, and the deny list cannot see inside a jsonb value. The control
- * is the ALLOW-list `ACCOUNT_PROFILE_KEYS` in
- * lib/business-os/data-export/sections.ts (`accountProfile`, SA C-1): only
- * those keys reach the file, never the raw value (DE-2 SA C-4).
- * Moved from PluginConnectionRepository USER_DATA_EXPORT_COLUMNS (DE-2).
+ * `user_preferences` -> section `preferences`: the person's clock, language,
+ * currency and display / privacy choices. `timezone` here is the clock
+ * authority (`profiles.timezone` is a mirror); both are exported as held.
+ * The agent-platform AI tuning and developer flags are out (user BC-A,
+ * 2026-10-16; SA R-3). No jsonb column, no secret (workplan §10.1).
  */
-const PLUGIN_CONNECTIONS_EXPORT: TableExportClassification = {
+const USER_PREFERENCES_EXPORT: TableExportClassification = {
   kind: 'include',
-  section: 'plugin_connections',
+  section: 'preferences',
   columns: [
-    'user_id', 'plugin_key', 'plugin_name', 'username', 'email', 'scope', 'status', 'connected_at',
-    'created_at', 'updated_at', 'last_used', 'disconnected_at', 'profile_data',
+    'id', 'preferred_language', 'timezone', 'timezone_confirmed_at', 'preferred_currency', 'theme', 'sidebar_collapsed',
+    'compact_mode', 'show_timestamps', 'enable_sounds', 'keyboard_shortcuts', 'data_retention_days', 'analytics_enabled',
+    'telemetry_enabled', 'created_at', 'updated_at',
   ],
   excludedColumns: {
-    id: 'internal row id, never output',
-    access_token: 'credential, never read',
-    refresh_token: 'credential, never read',
-    expires_at: 'token plumbing',
-    last_refreshed_at: 'token plumbing',
-    settings: 'free-form; a secret could land there unseen',
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    default_model: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    max_tokens: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    temperature: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    auto_save_conversations: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    debug_mode: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    beta_features: EXPORT_COLUMN_REASON.AGENT_SETTING,
+  },
+};
+
+/**
+ * `notification_settings` -> section `notification_settings`: how we may
+ * contact the person. `quiet_hours_timezone` is the zone of the quiet hours
+ * only (SA-Q8). The three `*_agent_updates` toggles are about agent runs only:
+ * out (user BC-A, 2026-10-16; SA R-3). No jsonb, no token or push-subscription
+ * column (workplan §10.1).
+ */
+const NOTIFICATION_SETTINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'notification_settings',
+  columns: [
+    'id', 'email_enabled', 'email_frequency', 'email_system_alerts', 'email_security_alerts', 'email_marketing',
+    'push_enabled', 'push_system_alerts', 'push_mentions', 'desktop_enabled', 'desktop_system_alerts', 'inapp_enabled',
+    'inapp_sounds', 'inapp_popups', 'quiet_hours_enabled', 'quiet_hours_start', 'quiet_hours_end', 'quiet_hours_timezone',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    email_agent_updates: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    push_agent_updates: EXPORT_COLUMN_REASON.AGENT_SETTING,
+    desktop_agent_updates: EXPORT_COLUMN_REASON.AGENT_SETTING,
+  },
+};
+
+/**
+ * `business_profiles` -> section `business_profile`: what the owner told us
+ * about their business, its contact details, public address, working hours,
+ * invoice profile and the automations they chose. The jsonb columns travel
+ * whole: the 2026-10-16 key census (workplan §10.1 Q4) shows owner-chosen
+ * content only (SA-Q5). `address_id` / `invoice_address_id` are bare ids: the
+ * addresses are read by their own `user_id` in `business_addresses`, never by
+ * following these pointers (tenant-isolation-guard; DE-3 SA).
+ *
+ * Out: the assistant's output and the onboarding chat (user BC-C), the
+ * connected apps (BC-F), calendar sync (BC-E), setup progress (BC-D) and the
+ * invoice bank details (BC-B). `invoice_payment_instructions` goes with the
+ * bank details (SA R-2); `invoice_tax_id` stays (SA R-1).
+ */
+const BUSINESS_PROFILES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'business_profile',
+  columns: [
+    'id',
+    'vertical', 'sub_vertical', 'company_name', 'company_size', 'clients_per_week', 'revenue_tier', 'description', 'services',
+    'pain_points', 'goals', 'tools', 'payment_mode', 'online_presence_mode', 'primary_crm', 'primary_calendar', 'primary_payment',
+    'phone', 'email', 'address', 'address_parts', 'address_id', 'invoice_address_id',
+    'website_url', 'landing_pages', 'logo_url', 'show_logo_on_smart_links', 'theme', 'template_id', 'subdomain', 'user_code',
+    'scheduling_availability', 'process_steps', 'language', 'currency',
+    'invoice_company_name', 'invoice_address', 'invoice_tax_id', 'invoice_footer_text', 'invoice_number_prefix',
+    'invoice_document_type', 'invoice_prices_include_tax', 'invoice_tax_rate', 'invoice_tax_label', 'invoice_payment_terms_days',
+    'collection_method', 'default_payment_processor', 'payment_retry_enabled', 'payment_retry_intervals', 'payment_max_retries',
+    'payment_reminder_enabled', 'payment_reminder_days_before', 'payment_overdue_reminder_days', 'payment_reminder_channels',
+    'daily_briefing_email_enabled', 'lead_alert_email_enabled', 'lead_autosend_enabled', 'chase_invoices_enabled',
+    'chase_intake_enabled', 'chase_quotes_enabled', 'automations_declined', 'meeting_reminder_enabled',
+    'meeting_reminder_hours_before', 'meeting_reminder_notify_client', 'meeting_reminder_notify_owner',
+    'auto_complete_meetings_enabled',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    website_analysis: `${EXPORT_COLUMN_REASON.ASSISTANT_OUTPUT}: scraped website data and the assistant's analysis of it`,
+    extracted_data: `${EXPORT_COLUMN_REASON.ASSISTANT_OUTPUT}: what the assistant extracted from the onboarding bio`,
+    onboarding_conversation: `${EXPORT_REASON.ACTIVITY}: the onboarding chat`,
+    connected_plugins: EXPORT_COLUMN_REASON.CONNECTED_APPS,
+    calendar_sync_enabled: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_sync_provider: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    calendar_last_synced_at: EXPORT_COLUMN_REASON.CALENDAR_SYNC,
+    onboarding_completed: EXPORT_COLUMN_REASON.SETUP_STATE,
+    profile_completeness: EXPORT_COLUMN_REASON.SETUP_STATE,
+    setup_checklist_dismissed: EXPORT_COLUMN_REASON.SETUP_STATE,
+    dismissed_setup_steps: EXPORT_COLUMN_REASON.SETUP_STATE,
+    needs_stripe_connect: `${EXPORT_COLUMN_REASON.SETUP_STATE}: derived from the onboarding answers`,
+    invoice_bank_name: EXPORT_COLUMN_REASON.BANK_DETAILS,
+    invoice_bank_account: EXPORT_COLUMN_REASON.BANK_DETAILS,
+    invoice_bank_routing: EXPORT_COLUMN_REASON.BANK_DETAILS,
+    invoice_payment_instructions:
+      `${EXPORT_COLUMN_REASON.BANK_DETAILS} (free-text payment instructions; the product treats them as the same thing as bank details: SA DE-3)`,
+  },
+};
+
+/** `business_addresses` -> `business_addresses`: the saved address book. Not soft-deleted, so no rowFilter. */
+const BUSINESS_ADDRESSES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'business_addresses',
+  columns: ['id', 'label', 'parts', 'is_default', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+// ── DE-5: client money (BUSINESS_OS_DATA_EXPORT_DE5_WORKPLAN.md §3) ───────────
+// What the business's clients were quoted, invoiced, charged and refunded, the
+// payment plans they are on and their instalments (group `client_records`,
+// AgentPilot the processor), and which Stripe account and payment provider the
+// business takes money through (group `account`, AgentPilot the controller;
+// DE-5 SA-Q1). Money paid to US (plans, credits, boosts) is not in these
+// tables and never in the file (DX-1a). Every list was reconciled with the
+// live schema on 2026-10-16 (workplan §11.1): `columns` ∪ `excludedColumns` is
+// exactly the live column set of each table. Order matters: the export
+// repository selects `columns.join(', ')`, pinned byte for byte in the route
+// characterization test.
+//
+// Currency (CLAUDE.md § Currency & Timezone): every amount is exported as
+// stored, next to the currency column it is denominated in; nothing is
+// converted, summed or defaulted. `processor_fee` / `net_amount` are in
+// `fee_currency`, which is not always the payment's. `payment_refunds.
+// fee_returned` / `refund_fee` have NO currency column and are exported with
+// none (SA-Q6). No total of any kind (user BC-11). The pairing is pinned in
+// exportClassification.test.ts (SA C-4).
+//
+// All history is in: failed, cancelled, refunded, draft, superseded rows, each
+// with its status (user BC-2). None of these tables soft-deletes, so no
+// rowFilter. Changing a list changes what the export holds: a privacy
+// decision, and an SA item.
+
+/** Why a DE-5 COLUMN stays out. Repeated reasons are named, not retyped. */
+const MONEY_COLUMN_REASON = {
+  PROCESSOR_METADATA:
+    'processor plumbing (Stripe object ids already in their own columns, routing bits); no key the owner entered on live rows (DE-5 SA-Q3)',
+  RECONCILIATION_STATE:
+    'which Stripe account our refund path must target; internal routing state (DE-5 SA-Q7)',
+  RETRY_STATE: "the collection run's retry counters: product machinery, not the owner's data (DE-5 SA-Q12)",
+  CARD_EXPIRY: 'user 2026-10-16 (DE-5 BC-1): card brand and last 4 digits only; the expiry stays out',
+  ACTOR_ID:
+    'the id that started the refund inside our system, which can be an AgentPilot operator; `source` says how it was started (DE-5 SA-Q15)',
+  IDEMPOTENCY: "our internal dedupe key for the refund request, not the owner's data (and a secret deny-list name)",
+  PROVIDER_CAPABILITY: "what the payment provider can do: a product fact, not the owner's data",
+} as const;
+
+/**
+ * `payment_transactions` -> section `payments`: every payment a client made
+ * or attempted (failed and pending in, with their status). `processor_fee`
+ * and `net_amount` are in `fee_currency` (NULL fee and NULL fee_currency mean
+ * "fee not recorded", not zero). `metadata` is READ but never written raw: the
+ * section keeps only `notes` (what the owner typed when recording a cash or
+ * bank payment) and `source` (how the payment was recorded), as strings
+ * (PAYMENT_METADATA_KEYS in data-export/sections.ts, DE-5 SA-Q3, user BC-7).
+ * `charge_account_kind` is out with `account_resolution` (SA-Q7): on live
+ * rows `platform` only ever marks a manual payment the owner recorded, and in
+ * a client-money file it would read as money paid to AgentPilot.
+ */
+const PAYMENT_TRANSACTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payments',
+  columns: [
+    'id', 'contact_id', 'invoice_id', 'booking_id', 'service_id', 'amount', 'currency', 'status', 'payment_method',
+    'description', 'metadata', 'failure_reason', 'paid_at', 'refund_status', 'refunded_amount', 'refunded_at',
+    'refund_reason', 'processor_type', 'processor_refund_id', 'processor_fee', 'net_amount', 'fee_currency',
+    'stripe_payment_intent_id', 'stripe_charge_id', 'stripe_customer_id', 'stripe_connect_account_id', 'created_at',
+    'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    account_resolution: MONEY_COLUMN_REASON.RECONCILIATION_STATE,
+    charge_account_kind: MONEY_COLUMN_REASON.RECONCILIATION_STATE,
+  },
+};
+
+/**
+ * `payment_refunds` -> `refunds`: the append-only refund ledger, one dated row
+ * per refund, amounts POSITIVE as stored (money returned to the client; SA-Q4).
+ * `amount_minor` is the figure Stripe was told, in the refund's own
+ * `currency`. `fee_returned` / `refund_fee` carry no currency (SA-Q6).
+ */
+const PAYMENT_REFUNDS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'refunds',
+  columns: [
+    'id', 'transaction_id', 'invoice_id', 'amount', 'amount_minor', 'currency', 'status', 'reason', 'reason_note',
+    'processor_type', 'processor_refund_id', 'stripe_connect_account_id', 'source', 'failure_code', 'failure_message',
+    'fee_returned', 'refund_fee', 'created_at', 'updated_at', 'succeeded_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    idempotency_key: MONEY_COLUMN_REASON.IDEMPOTENCY,
+    initiated_by: MONEY_COLUMN_REASON.ACTOR_ID,
+    metadata: MONEY_COLUMN_REASON.PROCESSOR_METADATA,
+  },
+};
+
+/**
+ * `payment_invoices` -> `invoices`: drafts, cancelled and refunded invoices
+ * in. The owner's private `internal_notes` are in (user BC-7). The Stripe
+ * invoice web and PDF links (`stripe_hosted_invoice_url`,
+ * `stripe_invoice_pdf`) are IN by the user's decision (BC-3, 2026-10-16, which
+ * overrides the workplan default and SA-Q5): anyone holding the file can open
+ * those invoice pages.
+ */
+const PAYMENT_INVOICES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'invoices',
+  columns: [
+    'id', 'contact_id', 'booking_id', 'service_id', 'invoice_number', 'amount', 'currency', 'status', 'line_items',
+    'due_date', 'payment_terms', 'notes', 'internal_notes', 'sent_at', 'paid_at', 'payment_method', 'payment_received_at',
+    'payment_notes', 'processor_type', 'processor_checkout_id', 'processor_payment_id', 'processor_customer_id',
+    'processor_payment_method_id', 'stripe_invoice_id', 'stripe_hosted_invoice_url', 'stripe_invoice_pdf', 'client_name',
+    'client_email', 'client_address', 'refunded_amount', 'refund_status', 'refunded_at', 'allow_online_payment',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    retry_count: MONEY_COLUMN_REASON.RETRY_STATE,
+    last_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+    next_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+  },
+};
+
+/**
+ * `proposals` -> `quotes` (the product calls them quotes). Every status in.
+ * `decline_note` is the client's own words to the business; `accepted_snapshot`
+ * is the record of what the client agreed to, whole (live key census: the
+ * quote's own terms only, workplan §11.1 Q4).
+ */
+const PROPOSALS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'quotes',
+  columns: [
+    'id', 'contact_id', 'service_id', 'booking_id', 'package_booking_id', 'document_id', 'supersedes_id',
+    'created_invoice_id', 'created_plan_id', 'title', 'description', 'currency', 'total', 'prices_include_tax', 'tax_rate',
+    'tax_label', 'payment_shape', 'payment_terms_days', 'sessions', 'status', 'valid_until', 'decline_reason',
+    'decline_note', 'stop_reason', 'stop_note', 'accepted_snapshot', 'sent_at', 'viewed_at', 'decided_at', 'stopped_at',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/** `payment_plans` -> `payment_plans`: the owner's plan templates, inactive ones in. */
+const PAYMENT_PLANS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payment_plans',
+  columns: [
+    'id', 'service_id', 'name', 'description', 'total_amount', 'currency', 'supported_currencies', 'installment_count',
+    'installment_amount', 'installment_frequency', 'allowed_processors', 'preferred_processor', 'is_active', 'created_at',
+    'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `payment_plan_subscriptions` -> `client_payment_plans`: the plans clients
+ * are on, past-due, cancelled and completed ones in. Card brand and last 4
+ * in; expiry out (user BC-1).
+ */
+const PAYMENT_PLAN_SUBSCRIPTIONS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_payment_plans',
+  columns: [
+    'id', 'contact_id', 'booking_id', 'service_id', 'payment_plan_id', 'stripe_subscription_id', 'stripe_schedule_id',
+    'stripe_price_id', 'stripe_customer_id', 'stripe_connect_account_id', 'installment_count', 'installment_amount',
+    'currency', 'frequency', 'periods_paid', 'status', 'next_charge_at', 'next_charge_amount', 'last_failure_code',
+    'last_failure_at', 'card_brand', 'card_last4', 'cancel_reason', 'cancel_note', 'cancelled_by', 'created_at',
+    'updated_at', 'completed_at', 'cancelled_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    card_exp_month: MONEY_COLUMN_REASON.CARD_EXPIRY,
+    card_exp_year: MONEY_COLUMN_REASON.CARD_EXPIRY,
+    metadata: MONEY_COLUMN_REASON.PROCESSOR_METADATA,
+  },
+};
+
+/** `payment_plan_installments` -> `installments`: every instalment, cancelled ones in. */
+const PAYMENT_PLAN_INSTALLMENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'installments',
+  columns: [
+    'id', 'payment_plan_id', 'subscription_id', 'booking_id', 'contact_id', 'proposal_id', 'invoice_id', 'transaction_id',
+    'installment_number', 'label', 'trigger', 'amount', 'currency', 'due_date', 'status', 'paid_at', 'payment_method',
+    'processor_type', 'stripe_invoice_id', 'completed_at', 'cancel_reason', 'cancel_note', 'cancelled_by', 'cancelled_at',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    retry_count: MONEY_COLUMN_REASON.RETRY_STATE,
+    last_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+    next_retry_at: MONEY_COLUMN_REASON.RETRY_STATE,
+  },
+};
+
+/**
+ * `saved_payment_methods` -> `client_payment_methods`. `processor_method_id`
+ * is a Stripe reference, not a credential: charging it needs the business's
+ * own secret key (SA-Q5). No card number is ever stored. Expiry out (BC-1).
+ */
+const SAVED_PAYMENT_METHODS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'client_payment_methods',
+  columns: [
+    'id', 'contact_id', 'processor_type', 'processor_customer_id', 'processor_method_id', 'method_type', 'brand',
+    'last_four', 'is_default', 'is_valid', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    expiry_month: MONEY_COLUMN_REASON.CARD_EXPIRY,
+    expiry_year: MONEY_COLUMN_REASON.CARD_EXPIRY,
+  },
+};
+
+/**
+ * `stripe_connect_accounts` -> `payment_account` (group `account`): the
+ * business's own Stripe account, one per owner. `currency` is the account's
+ * settlement currency, stored lower case and exported as stored; it explains
+ * `fee_currency` on payments. `stripe_email` is the owner's own email for the
+ * account (SA-Q13).
+ */
+const STRIPE_CONNECT_ACCOUNTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payment_account',
+  columns: [
+    'id', 'stripe_account_id', 'stripe_account_type', 'charges_enabled', 'payouts_enabled', 'details_submitted',
+    'onboarding_completed', 'country', 'currency', 'business_type', 'stripe_email', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `payment_processors` -> `payment_providers` (group `account`): which
+ * provider the business uses and whether it is connected (disconnected rows
+ * are a status, in). `credentials` is never selected, not even to drop later
+ * (user BC-12: keys never).
+ */
+const PAYMENT_PROCESSORS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'payment_providers',
+  columns: ['id', 'processor_type', 'is_active', 'is_default', 'connection_status', 'last_verified_at', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    credentials: EXPORT_REASON.SECRET,
+    supports_checkout: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+    supports_saved_methods: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+    supports_refunds: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+    supports_partial_refunds: MONEY_COLUMN_REASON.PROVIDER_CAPABILITY,
+  },
+};
+
+// ── DE-6: intake, email marketing and consent (BUSINESS_OS_DATA_EXPORT_DE6_WORKPLAN.md §3) ──
+// The questions the owner asks clients (every version), the intake on/off
+// settings, the email campaigns and sequences the owner wrote, which clients
+// are in which sequence, the newsletter sign-up list, the do-not-email list,
+// the consent record and the owner's consent settings. Ten sections, group
+// `client_records` (AgentPilot the processor; DE-6 SA-Q2). Every list was
+// reconciled with the live schema on 2026-10-16 (workplan §11.1, SA review
+// DE-6): `columns` ∪ `excludedColumns` is exactly the live column set of each
+// table. Order matters: the export repository selects `columns.join(', ')`,
+// pinned byte for byte in the route characterization test.
+//
+// All history is in: draft and archived forms, pending and unsubscribed
+// sign-ups, withdrawn and redacted consent records, cancelled enrollments
+// (DX-8; TL defaults BC-4, BC-5, BC-8, 2026-10-16). None of these tables
+// soft-deletes, so no rowFilter. Every child table (steps, enrollments,
+// consent records) is read by its OWN `user_id`, never by following a parent
+// id. Out: visitor tracking (BC-1), delivery counters (BC-3), the AI
+// provenance of a form (BC-4), and two whole tables (the lead-message queue,
+// BC-2; the derived consent projection, BC-6). Changing a list changes what
+// the export holds: a privacy decision, and an SA item.
+
+/** Why a DE-6 COLUMN stays out. Repeated reasons are named, not retyped. */
+const MARKETING_COLUMN_REASON = {
+  DELIVERY_STATS:
+    'DX-1d: how many emails went out, were opened or were clicked is activity (TL default BC-3, 2026-10-16)',
+  QUEUE_STATE: 'when the next email is scheduled to go: sending machinery, not a record (DE-6 SA-Q6)',
+  GENERATION_METADATA: `${EXPORT_COLUMN_REASON.ASSISTANT_OUTPUT}: how the assistant built the form (model, inputs) (TL default BC-4, 2026-10-16)`,
+  VISITOR_EVIDENCE:
+    'a scrambled internet address with the key to check it, the browser signature and the visit id: visitor tracking, not exported (TL default BC-1, 2026-10-16; as DE-4 BC-4)',
+  DERIVED_COPY: 'a generated lower-case copy of email, which is in (DE-6 SA-Q8)',
+  ACTOR_ID:
+    'the id that recorded the decision inside our system (the owner on every live row); `method` says how it was recorded (DE-6 SA-Q10; as DE-5 SA-Q15)',
+} as const;
+
+/** `user_intake_settings` -> `intake_settings`: one row per owner (UNIQUE user_id). */
+const USER_INTAKE_SETTINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'intake_settings',
+  columns: ['id', 'is_enabled', 'send_after_booking', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `business_intake_forms` -> `intake_forms`: every version and status (draft,
+ * published, archived), so an answer in `bookings.intake_responses` can be
+ * read against the form it was given to. `questions` travels whole (SA-Q4).
+ */
+const BUSINESS_INTAKE_FORMS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'intake_forms',
+  columns: ['id', 'version', 'status', 'questions', 'generated_at', 'published_at', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    generated_from: MARKETING_COLUMN_REASON.GENERATION_METADATA,
+  },
+};
+
+/** `email_campaigns` -> `email_campaigns`: the wording, audience, status and dates; no counters. */
+const EMAIL_CAMPAIGNS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_campaigns',
+  columns: [
+    'id', 'name', 'subject', 'body_html', 'body_text', 'segment_filter', 'status', 'scheduled_at', 'sent_at', 'created_at',
+    'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    recipients_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    sent_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    opened_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    clicked_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    failed_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+  },
+};
+
+/** `email_sequences` -> `email_sequences`: `trigger_config` travels whole (SA-Q4, C-5). */
+const EMAIL_SEQUENCES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_sequences',
+  columns: ['id', 'name', 'description', 'trigger_type', 'trigger_config', 'is_active', 'created_at', 'updated_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    total_sent: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    total_opened: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    total_clicked: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+  },
+};
+
+/** `email_sequence_steps` -> `email_sequence_steps`: read by its own `user_id`, never via `sequence_id`. */
+const EMAIL_SEQUENCE_STEPS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_sequence_steps',
+  columns: ['id', 'sequence_id', 'step_number', 'delay_minutes', 'subject', 'body_html', 'body_text', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    sent_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    opened_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+    clicked_count: MARKETING_COLUMN_REASON.DELIVERY_STATS,
+  },
+};
+
+/** `email_sequence_enrollments` -> `email_sequence_enrollments`: which client is in which sequence, every status. */
+const EMAIL_SEQUENCE_ENROLLMENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_sequence_enrollments',
+  columns: ['id', 'sequence_id', 'contact_id', 'status', 'current_step_number', 'enrolled_at', 'completed_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    next_send_at: MARKETING_COLUMN_REASON.QUEUE_STATE,
+  },
+};
+
+/** `email_unsubscribes` -> `email_unsubscribes`: the owner's do-not-email list (derived by trigger from the ledger). */
+const EMAIL_UNSUBSCRIBES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'email_unsubscribes',
+  columns: ['id', 'contact_id', 'email', 'reason', 'unsubscribed_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `marketing_consent_events` -> `consent_records`: every grant and withdrawal,
+ * with the exact wording agreed to, its locale and version, the method, the
+ * form and page, and when. Redacted rows go out as held (BC-8). `evidence` is
+ * READ but never written raw: only `client_statement`, `confirmed_via` and
+ * `note`, as strings (CONSENT_EVIDENCE_KEYS in data-export/sections.ts,
+ * SA-Q4). `source_page_url` loses its query string and fragment in the
+ * section mapper (SA-Q7: 2 of 16 live URLs carried token-like parameters).
+ * `privacy_policy_url` is kept as held (0 with a query string, §11.2).
+ */
+const MARKETING_CONSENT_EVENTS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'consent_records',
+  columns: [
+    'id', 'contact_id', 'email', 'channel', 'purpose', 'decision', 'method', 'statement_text', 'statement_locale',
+    'statement_version', 'privacy_policy_url', 'source_surface', 'source_page_url', 'evidence', 'redacted_at',
+    'occurred_at', 'created_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    email_normalized: MARKETING_COLUMN_REASON.DERIVED_COPY,
+    ip_hash: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    ip_hash_salt: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    user_agent: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    session_id: MARKETING_COLUMN_REASON.VISITOR_EVIDENCE,
+    recorded_by: MARKETING_COLUMN_REASON.ACTOR_ID,
+  },
+};
+
+/**
+ * `marketing_consent_settings` -> `consent_settings`: the owner's consent
+ * wording per language, privacy notice, postal address and advertisement
+ * label (BC-7). The table has NO `id`: its primary key is `user_id`, so it is
+ * read as one row (`rowKey: 'user_id'`, DE-6 SA-Q1), not keyset paged. The
+ * only descriptor with a `rowKey`; a second one is an SA item.
+ */
+const MARKETING_CONSENT_SETTINGS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'consent_settings',
+  rowKey: 'user_id',
+  columns: [
+    'capture_enabled', 'statement_en', 'statement_es', 'statement_he', 'statement_version', 'privacy_policy_mode',
+    'privacy_policy_url', 'privacy_policy_body', 'privacy_policy_updated_at', 'postal_address', 'label_as_advertisement',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: `${EXPORT_COLUMN_REASON.OWNER_ID}; it is also the row key (one row per owner)`,
+  },
+};
+
+/**
+ * `business_subscribers` -> `newsletter_subscribers`: every sign-up, pending
+ * and unsubscribed included, with its status (BC-5). `attribution` is built
+ * by the same code as `crm_contacts.source_metadata`, so it goes through the
+ * same SOURCE_METADATA_KEYS allow-list, with the page URLs cut at the query
+ * string (SA-Q7 C-2).
+ */
+const BUSINESS_SUBSCRIBERS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'newsletter_subscribers',
+  columns: [
+    'id', 'email', 'name', 'status', 'source', 'attribution', 'subscribed_at', 'confirmed_at', 'promoted_contact_id',
+    'promoted_at', 'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    email_normalized: MARKETING_COLUMN_REASON.DERIVED_COPY,
+  },
+};
+
+// ── DE-7: website and content (BUSINESS_OS_DATA_EXPORT_DE7_WORKPLAN.md §3) ────
+// The business's website text, every website and landing page (draft, live
+// and archived), the blocks on those pages (hidden ones included), every
+// smart link (on or off) and the picture library. Five sections, group
+// `content` (AgentPilot the processor; the account holder the controller;
+// DE-7 SA-Q3). Every list was reconciled with the live schema on 2026-10-17
+// (workplan §11.1, SA review DE-7): `columns` ∪ `excludedColumns` is exactly
+// the live column set of each table. Order matters: the export repository
+// selects `columns.join(', ')`, pinned byte for byte in the route
+// characterization test.
+//
+// All history is in (DX-8; TL defaults BC-2, BC-3, BC-7, 2026-10-17): none of
+// these tables soft-deletes, so no rowFilter. These are the RECORDS; the
+// picture files arrive in DE-8b's "Your files". Out: the smart-link counters
+// and attributed revenue (BC-1), the picture reuse key and our storage key.
+// `website_blocks` has no `user_id`: it is read through its owner's pages
+// (`viaParent`, DE-7 SA-Q1, the one parent-scoped read). Changing a list
+// changes what the export holds: a privacy decision, and an SA item.
+
+/** Why a DE-7 COLUMN stays out. Repeated reasons are named, not retyped. */
+const CONTENT_COLUMN_REASON = {
+  VISIT_STATS: 'DX-1d: how many visits and sign-ups a link brought is activity (TL default BC-1, 2026-10-17)',
+  ATTRIBUTED_REVENUE:
+    'a running total derived from payments already in the file, with no currency of its own (DX-1d; CLAUDE.md § Currency; TL default BC-1, 2026-10-17)',
+  REUSE_KEY:
+    'our lookup key that stops the same picture being fetched or paid for twice (a stock library id, or a hash of a picture request); `source` says where the picture came from (DE-7 SA-Q6)',
+} as const;
+
+/**
+ * `website_content` -> `website_content`: the website text per section, one
+ * row per owner (UNIQUE user_id), the owner's edits merged over the block
+ * content. The 19 jsonb sections go out whole (Q6 census clean, SA-Q7).
+ * `payment_button` carries its own `currency` key: out exactly as held.
+ */
+const WEBSITE_CONTENT_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'website_content',
+  columns: [
+    'id', 'hero', 'about', 'services', 'testimonials', 'faq', 'team', 'contact', 'process', 'features', 'stats',
+    'pricing', 'gallery', 'cta', 'newsletter', 'logo_cloud', 'video', 'booking_widget', 'payment_button', 'intake_form',
+    'created_at', 'updated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `website_pages` -> `website_pages`: every website and landing page, every
+ * status (BC-3), with its public addresses (BC-6, as DE-3 SA-Q3) and
+ * `content_generated_at` (a timestamp only; BC-4, SA-Q12). `template_id` is a
+ * bare id; the platform template is never read. Also the PARENT of
+ * `website_blocks`: its `id` is the ownership oracle of the parent-scoped read.
+ */
+const WEBSITE_PAGES_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'website_pages',
+  columns: [
+    'id', 'page_type', 'slug', 'title', 'meta_description', 'seo_keywords', 'published', 'published_at', 'template_id',
+    'theme', 'created_at', 'updated_at', 'subdomain', 'custom_domain', 'custom_domain_verified', 'status',
+    'last_published_at', 'favicon_url', 'og_image_url', 'client_flow', 'website_language', 'content_generated_at',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+  },
+};
+
+/**
+ * `website_blocks` -> `website_blocks`: the content of every block on the
+ * owner's pages, hidden blocks included with `enabled` (BC-7). No `user_id`:
+ * ownership is `page_id -> website_pages.user_id`, so the reader takes the
+ * owner's page ids first and the blocks by `.in('page_id', ids)`, and checks
+ * every block against those ids (DE-7 SA-Q1, C-1…C-6). `viaParent` restates
+ * the purge scope on purpose (two-key opt-in, SA-Q2). Nothing to exclude.
+ */
+const WEBSITE_BLOCKS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'website_blocks',
+  viaParent: { parent: 'website_pages', fk: 'page_id' },
+  columns: ['id', 'page_id', 'block_type', 'position', 'content', 'styles', 'created_at', 'enabled', 'capability_config'],
+};
+
+/**
+ * `smart_links` -> `smart_links`: every link, on or off, system-created ones
+ * included (BC-2). `code` is the link's public short code (BC-6, SA-Q11); the
+ * UTM tags are the owner's settings. The counters and the attributed revenue
+ * are out (BC-1).
+ */
+const SMART_LINKS_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'smart_links',
+  columns: [
+    'id', 'code', 'name', 'destination_url', 'destination_type', 'source', 'medium', 'campaign', 'content', 'is_active',
+    'created_at', 'updated_at', 'metadata',
+  ],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    click_count: CONTENT_COLUMN_REASON.VISIT_STATS,
+    conversion_count: CONTENT_COLUMN_REASON.VISIT_STATS,
+    revenue_cents: CONTENT_COLUMN_REASON.ATTRIBUTED_REVENUE,
+  },
+};
+
+/**
+ * `user_media` -> `images`: the picture library records, every source
+ * (stock, generated, upload; BC-5), each with its public address and its
+ * description (for a generated picture, the request the owner typed; SA-Q12).
+ * `storage_path` is out with the same reason as `contact_documents` (SA-Q5);
+ * the file itself arrives in DE-8b.
+ */
+const USER_MEDIA_EXPORT: TableExportClassification = {
+  kind: 'include',
+  section: 'images',
+  columns: ['id', 'public_url', 'source', 'section', 'aspect', 'description', 'width', 'height', 'created_at'],
+  excludedColumns: {
+    user_id: EXPORT_COLUMN_REASON.OWNER_ID,
+    storage_path: EXPORT_COLUMN_REASON.DOCUMENT_STORAGE,
+    source_ref: CONTENT_COLUMN_REASON.REUSE_KEY,
   },
 };
 
@@ -299,91 +1194,91 @@ export const CASCADE_COUNT_EXEMPT: readonly string[] = ['crm_activities'];
 
 const IN_SCOPE: PurgeDescriptor[] = [
   // ── §3.1 Business profile ────────────────────────────────────────────────
-  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows', export: planned('DE-3'),
+  { table: 'business_profiles', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.TENANCY_ROOT, snapshot: 'rows', export: BUSINESS_PROFILES_EXPORT,
     notes: '1:1 with auth.users — THIS is the "business" row. Kept by Reset so tests re-run without onboarding. No DELETE RLS policy. Alone in the final band (TENANCY_ROOT): 56 tables CASCADE from it (measured 2026-10-05; 57 with business_addresses, 20261037), so it goes last or their counts read 0 (F-SA-3).' },
   // Added 2026-10-06 (20261036_business_addresses_book.sql + 20261037_…_ownership_fk.sql):
   // the address book behind business_profiles.address_parts / invoice_address.
-  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-3'),
+  { table: 'business_addresses', level: 'purge', area: 'business_profile', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: BUSINESS_ADDRESSES_EXPORT,
     notes: 'The business\'s saved addresses. Same level as business_profiles, which Reset keeps: its address_id / invoice_address_id point here and its address_parts / invoice_address are copies of these rows, so a Reset that emptied the book would leave the profile showing an address the picker no longer offers. CASCADE child of business_profiles (business_addresses_business_fk), so CONFIG keeps it ahead of TENANCY_ROOT for an accurate count. Its only inbound FKs are those two business_profiles columns, ON DELETE SET NULL — no blocking edge.' },
 
   // ── §3.2 CRM ─────────────────────────────────────────────────────────────
-  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_contacts', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: CRM_CONTACTS_EXPORT,
     notes: 'CRM hub. CASCADE parent of proposals and crm_activities. Has no DELETE trigger since 20260928_contact_delete_handled_in_app.sql dropped T1 (B4 retired, slice 3a).' },
-  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_activities', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LAST, snapshot: 'rows', export: CRM_ACTIVITIES_EXPORT,
     notes: 'DELETED LAST. The single live T5 residue path writes here mid-purge; ordering is the only available mitigation.' },
-  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_pipeline_stages', level: 'purge', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: CRM_PIPELINE_STAGES_EXPORT,
     notes: 'Seeded by /api/onboarding/build; Reset keeps them so the board still works.' },
-  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4') },
-  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'crm_tasks', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CRM_TASKS_EXPORT },
+  { table: 'contact_documents', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: CONTACT_DOCUMENTS_EXPORT,
     notes: 'Rows index objects in the contact-documents bucket. NOTE: ContactDocumentsRepository soft-deletes, which is why the snapshot must NOT read through it (B-4).' },
 
   // ── §3.3 Website ─────────────────────────────────────────────────────────
-  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-7') },
-  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids', export: planned('DE-7'),
+  { table: 'website_pages', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: WEBSITE_PAGES_EXPORT },
+  { table: 'website_blocks', level: 'reset', area: 'website', scope: { kind: 'via', parent: 'website_pages', fk: 'page_id' }, order: ORDER.LEAF, snapshot: 'ids', export: WEBSITE_BLOCKS_EXPORT,
     notes: 'No user_id column. Child ids captured pre-delete so AC-5 has an oracle (C-13).' },
-  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-7'),
+  { table: 'website_content', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: WEBSITE_CONTENT_EXPORT,
     notes: '1:1. No DELETE RLS policy.' },
   { table: 'website_page_views', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.VISITOR),
     notes: 'IDS ONLY (DEV-Q6). Unbounded, publicly writable (WITH CHECK true), append-only, forensically worthless row-by-row. A row ceiling here would make a busy business undeletable.' },
 
   // ── §3.4 Scheduling ──────────────────────────────────────────────────────
-  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-4') },
-  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: SCHEDULING_SERVICES_EXPORT },
+  { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows', export: SCHEDULING_BOOKINGS_EXPORT,
     notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a). ROOT - 2 (2026-10-08): N1 — contact_id is NOT NULL with ON DELETE SET NULL to crm_contacts, so deleting a contact first fails with 23502; it must run before crm_contacts (ROOT). Still after payment_plan_subscriptions (B2) and before scheduling_services, its CASCADE parent.' },
-  { table: 'abandoned_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'abandoned_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: ABANDONED_BOOKINGS_EXPORT,
     notes: 'Somebody who gave their details on a booking page and did not finish. LEAF: its two references — service_id and booking_id — are both ON DELETE SET NULL, so it blocks nothing and can go at any point. Reset rather than purge: the prospects belong to the business, like the bookings they nearly became.' },
-  { table: 'scheduling_meetings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'scheduling_meetings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: SCHEDULING_MEETINGS_EXPORT,
     notes: 'The appointments themselves (20261073). Scoped by user_id rather than via the booking, because it carries its own — CLAUDE.md rule 4 wants the tenant filter reachable without a join. PRE_BLOCKING, not LEAF: booking_id is ON DELETE CASCADE, so scheduling_bookings would take these rows with it and this descriptor would report 0 deleted for a table that was in fact emptied. Running first makes the count honest. Nothing references it except payment_plan_installments.meeting_id, which is ON DELETE SET NULL and so blocks nothing.' },
-  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4') },
-  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-4'),
+  { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT },
+  { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude("user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data"),
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },
 
   // ── §3.5 Payments ────────────────────────────────────────────────────────
-  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_refunds', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: PAYMENT_REFUNDS_EXPORT,
     notes: 'B1 — RESTRICT onto payment_transactions, so this goes first. Deleting it fires T2, the single T5 residue path.' },
-  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_plan_subscriptions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.BLOCKING_CHILD, snapshot: 'rows', export: PAYMENT_PLAN_SUBSCRIPTIONS_EXPORT,
     notes: 'B2 (RESTRICT onto scheduling_bookings), so this goes first. CASCADE parent of payment_plan_installments, which sit in PRE_BLOCKING ahead of it. SELECT-only RLS.' },
-  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_transactions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: PAYMENT_TRANSACTIONS_EXPORT },
+  { table: 'payment_invoices', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: PAYMENT_INVOICES_EXPORT },
+  { table: 'payment_plans', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: PAYMENT_PLANS_EXPORT },
+  { table: 'payment_plan_installments', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING + 1, snapshot: 'rows', export: PAYMENT_PLAN_INSTALLMENTS_EXPORT,
     notes: 'CASCADE child of payment_plan_subscriptions (BLOCKING_CHILD), so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
-  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_events', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'payment event log feeding the automation engine; the payments, invoices and refunds it records are exported themselves (user BC-5, 2026-10-16; as business_events, §0.3.1 SQ-E7)') },
+  { table: 'payment_automation_rules', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.PLATFORM, 'the built-in payment rules the platform seeds; the owner cannot create or edit them (defaultPaymentRules.ts; user BC-6, 2026-10-16)') },
+  { table: 'payment_automation_executions', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'automation run history and its claim / lease columns (user BC-5, 2026-10-16)') },
+  { table: 'payment_reminders', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'payment reminders scheduled and sent to clients: emails sent are activity (user BC-4, 2026-10-16; as DE-4 BC-6)'),
     notes: 'CASCADE child of payment_plan_installments, so it is ordered ahead of it for an accurate count (slice 3a, M-4).' },
-  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5') },
-  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'saved_payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: SAVED_PAYMENT_METHODS_EXPORT },
+  { table: 'payment_methods', level: 'reset', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.PLATFORM, 'dead table superseded by saved_payment_methods: no app reads or writes it, 0 rows (live 2026-10-16); drop migration pending'),
     notes: 'Live — 2026-08-14_drop_payment_methods.sql was never applied. Measured, not assumed.' },
-  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'payment_processors', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: PAYMENT_PROCESSORS_EXPORT,
     notes: 'Holds credentials JSONB. Kept by Reset so test payments work immediately.' },
-  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'stripe_connect_accounts', level: 'purge', area: 'payments', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: STRIPE_CONNECT_ACCOUNTS_EXPORT,
     notes: 'The pre-flight gate READS this in phase 1, long before phase 2 deletes it.' },
 
   // ── §3.6 Email automation ────────────────────────────────────────────────
-  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6') },
+  { table: 'email_sequences', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: EMAIL_SEQUENCES_EXPORT },
+  { table: 'email_sequence_steps', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: EMAIL_SEQUENCE_STEPS_EXPORT },
+  { table: 'email_campaigns', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: EMAIL_CAMPAIGNS_EXPORT },
   { table: 'email_sends', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
-  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'email_sequence_enrollments', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: EMAIL_SEQUENCE_ENROLLMENTS_EXPORT },
+  { table: 'email_unsubscribes', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: EMAIL_UNSUBSCRIBES_EXPORT,
     notes: 'K* — RETAINED BY BOTH LEVELS (D8). A third party withdrew consent. auth.users survives, so the same user_id can re-onboard; deleting this would resume emailing people who opted out. FR-23 requires the copy to say so. Now DERIVED from marketing_consent_events by trigger, and kept because this promise is made to users in two places.' },
 
-  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'business_subscribers', level: 'reset', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: BUSINESS_SUBSCRIBERS_EXPORT,
     notes: 'The newsletter audience. Reset clears it with the rest of the business data — unlike the consent ledger, which records what each person AGREED to and is retained forever. A rebuilt business starts with an empty list and has to earn it again.' },
 
   // ── §3.6b Marketing consent ──────────────────────────────────────────────
-  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'marketing_consent_events', level: 'never', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: MARKETING_CONSENT_EVENTS_EXPORT,
     notes: 'Same reasoning as email_unsubscribes, in both directions. A withdrawal must outlive the business, or a reset resumes mailing people who opted out. A GRANT must outlive it too: the evidence of what someone agreed to is what answers a complaint or a subject access request years later, and it cannot be reconstructed.' },
-  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'marketing_consent_state', level: 'never', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.CACHE, 'the current consent per address, rebuilt by trigger from marketing_consent_events, which is exported whole as consent_records; no id column to page on (TL default BC-6, 2026-10-16; DE-6 SA-Q3)'),
     notes: 'The projection the send gate reads. Deleting it would read as "no decision recorded", which fails closed for grants but would also lose every suppression. Derived, but not disposable.' },
-  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'marketing_consent_settings', level: 'purge', area: 'email_marketing', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: MARKETING_CONSENT_SETTINGS_EXPORT,
     notes: 'Business configuration — the tenant\'s own consent wording, privacy notice and postal address. Unlike the decisions above, this is theirs, not their clients\'.' },
 
   // ── §3.7 Intake ──────────────────────────────────────────────────────────
-  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6') },
-  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'user_intake_settings', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: USER_INTAKE_SETTINGS_EXPORT },
+  { table: 'business_intake_forms', level: 'purge', area: 'intake', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: BUSINESS_INTAKE_FORMS_EXPORT,
     notes: 'Confirmed live by T1, so §10.2 para 2 is firm and AC-3 asserts it unconditionally.' },
 
   // ── §3.8 Onboarding & chat ───────────────────────────────────────────────
@@ -407,7 +1302,7 @@ const IN_SCOPE: PurgeDescriptor[] = [
     notes: 'No user_id. Child ids captured pre-delete for AC-5. Ordered one ahead of its parent so the reported count is the rows this delete actually removed, rather than 0 because the parent CASCADE got there first.' },
 
   // ── §3.10 Conversion / attribution ───────────────────────────────────────
-  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: planned('DE-7') },
+  { table: 'smart_links', level: 'reset', area: 'smart_links', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: SMART_LINKS_EXPORT },
   { table: 'smart_link_clicks', level: 'reset', area: 'smart_links', scope: { kind: 'via', parent: 'smart_links', fk: 'smart_link_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.VISITOR),
     notes: 'IDS ONLY (DEV-Q6) and no user_id. Publicly writable (WITH CHECK true). Ids-only still satisfies AC-5, which needs the ids and not the rows.' },
 
@@ -444,19 +1339,23 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'kernel_action_log', level: 'reset', area: 'insights', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
 
   // ── §3.14 Owner configuration ────────────────────────────────────────────
-  { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: planned('DE-3'),
+  { table: 'user_preferences', level: 'never', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: USER_PREFERENCES_EXPORT,
     notes: 'K* — RETAINED BY BOTH LEVELS. Holds preferred_language and currency. Deleting it resets the owner\'s language while they are reading the result screen, and renders their NEXT sign-in wrong — on a login that survives every level (D3).' },
 
   // ── §3.15 Newly classified in scope (T1 pass) ────────────────────────────
-  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-5'),
+  { table: 'proposals', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: PROPOSALS_EXPORT,
     notes: 'Business content the owner authored and sent to their clients. Self-FK supersedes_id is SET NULL — no ordering needed. LEAF (slice 3a, M-4): a CASCADE child of crm_contacts, so it goes before it for an accurate count.' },
-  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-6'),
+  { table: 'lead_responses', level: 'reset', area: 'crm', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY, 'queued and sent automatic messages to leads and clients (invitations, chases, reminders) with their claim / lease columns: messages sent are activity (TL default BC-2, 2026-10-16; as payment_reminders, DE-5 BC-4)'),
     notes: 'Lead data is customer data.' },
   { table: 'daily_briefings', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY) },
   { table: 'daily_briefing_sends', level: 'reset', area: 'briefings', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude(EXPORT_REASON.ACTIVITY),
     notes: 'A send log. It has the email_unsubscribes flavour but not its substance: a send history is the business\'s own activity record, not a third party\'s withdrawal of consent, so D8\'s retention reasoning does not extend to it.' },
-  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: planned('DE-7'),
+  { table: 'user_media', level: 'reset', area: 'website', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: USER_MEDIA_EXPORT,
     notes: 'CONFIRMED at T4: storage_path points at the EXISTING website-images bucket (GeneratedImageService and StockImageService both write BUCKET = website-images and record here). So NO fourth StorageDescriptor is needed and AC-4 does not extend to a new bucket.' },
+
+  // ── §3.16 Data export (DE-8a, migration 20261074) ────────────────────────
+  { table: 'business_os_data_exports', level: 'purge', area: 'data_exports', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'ids', export: exclude(EXPORT_REASON.EXPORT_ITSELF),
+    notes: 'The "Download my data" jobs (data export requirement §0.4.1 A). user_id -> auth.users CASCADE, no FK to business_profiles (an agent-platform user may export too), requested_by has no FK (SA Q-2), no inbound FK, no trigger: LEAF. A row holds dates, counts and bytes, never content. snapshot ids: the pre-purge snapshot must not copy another copy of the business. Kept by Reset (an owner may export, then start over); Purge and account deletion remove it, and the business-data-exports bucket with it.' },
 ];
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -464,8 +1363,8 @@ const IN_SCOPE: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 const OPT_IN: PurgeDescriptor[] = [
-  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: PLUGIN_CONNECTIONS_EXPORT,
-    notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it. Export (DE-2): disconnected rows are a STATUS, not a soft delete (DE-1 SA Q-7), so they stay in the export. profile_data is read but only its allow-listed keys reach the file (ACCOUNT_PROFILE_KEYS in data-export/sections.ts, SA C-4).' },
+  { table: 'plugin_connections', level: 'optional:integrations', area: 'integrations', scope: { kind: 'user_id' }, order: ORDER.CONFIG, snapshot: 'rows', export: exclude(PLUGIN_CONNECTIONS_EXCLUDED),
+    notes: 'READ during phase 1 for Stripe account resolution, deleted in phase 2 — the phase split is what makes AC-33 true, and T9 asserts the order rather than assuming it. Export: excluded since DE-4 (user 2026-10-15, connected apps out), so the export never reads this table.' },
 
   // "Also delete my agents". B6 and B7 both live here, and both are invisible
   // to a default T28 run because the option is off by default (C-28).
@@ -625,6 +1524,9 @@ const EXCLUDED: PurgeDescriptor[] = [
     'Boost purchases: one row per attempt to buy credits, with the price, the Stripe references and the link to the credit lot. A financial record: never purged and never archived — a Reset that removed it would erase what the account paid for. Keyed to auth.users (ON DELETE SET NULL), not business_profiles.'),
   never('business_os_boost_cap_overrides', U, exclude(EXPORT_REASON.BILLING),
     "Admin changes to the account's boost purchase cap, ended and never deleted. An audited admin record: never purged and never archived. Keyed to auth.users (ON DELETE SET NULL), not business_profiles."),
+  // Finance slice 4b.1 (BD-17, migration 20261076): the dated refund and dispute history of a boost purchase.
+  never('business_os_boost_reversal_events', { kind: 'via', parent: 'business_os_boost_purchases', fk: 'purchase_id' }, exclude(EXPORT_REASON.BILLING),
+    'One append-only, dated row per refund step or dispute stage of a boost purchase: the date Finance counts it in. A financial record: never purged and never archived. No user_id: the account comes through the purchase, and the row is removed only with its purchase (ON DELETE CASCADE).'),
 
   // Admin Archiving (Slice 2, condition C-4)
   never('archive_runs', G, exclude(EXPORT_REASON.PLATFORM),
@@ -633,6 +1535,12 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Admin reorganisation slice 5 (SA SC-4): the Business OS cron run record.
   never('bos_cron_runs', G, exclude(EXPORT_REASON.PLATFORM),
     'The platform run record of the Business OS scheduled jobs: job name, times, an outcome word, an error class and numeric counts. No user_id and no business content. Platform monitoring data, pruned at 30 days by the recorder; never purged.'),
+  // Finance slice 8.1 (§11M.6, HS-W-8): the nightly platform history of states that cannot be rebuilt.
+  never('business_os_finance_snapshots', G, exclude(EXPORT_REASON.PLATFORM),
+    'One row per platform figure per UTC day: counts of accounts and amounts of credits, written by the nightly finance snapshot job. No user_id, no account, no money: platform aggregates, not tenant data. Append only; never purged and never archived (the history cannot be rebuilt).'),
+  // Data export DE-10b.1 (SA Review 2 §E, migration 20261080): the deletion receipt.
+  never('business_os_deletion_receipts', G, exclude(EXPORT_REASON.PLATFORM),
+    'One row per committed account deletion, inserted only by the cleanup function inside its own transaction. No user_id, no owner_user_id and no foreign key, so no cascade, purge, audit erasure or archiving reaches it: the proof of an erasure must outlive the account. Holds a keyed fingerprint of the email, never the email. Never purged by a business purge; retention is its own release-3 sweep.'),
   never('bos_cron_run_recording', G, exclude(EXPORT_REASON.PLATFORM),
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 
@@ -668,7 +1576,7 @@ const EXCLUDED: PurgeDescriptor[] = [
     'Actor reference on platform data: acknowledged_by -> auth.users is NO ACTION (sla_id -> automation_slas is CASCADE; automation_slas is never). FU-9: blocks a hard delete of the auth user, as exchange_rates.'),
 
   // §8.12 Account configuration and unowned tables
-  never('notification_settings', U, planned('DE-3'), 'Account configuration that survives the business.'),
+  never('notification_settings', U, NOTIFICATION_SETTINGS_EXPORT, 'Account configuration that survives the business.'),
   never('security_settings', U, exclude(EXPORT_REASON.SECRET, 'security configuration, not in the DX-1a set (may hold second-factor material)'), 'Account configuration that survives the business.'),
   never('api_keys', U, exclude(EXPORT_REASON.SECRET), 'Account configuration.'),
   never('user_rewards', U, exclude(EXPORT_REASON.BILLING), 'Rewards ledger, adjacent to billing.'),
@@ -683,10 +1591,17 @@ const EXCLUDED: PurgeDescriptor[] = [
 // ────────────────────────────────────────────────────────────────────────────
 
 export const STORAGE_DESCRIPTORS: readonly StorageDescriptor[] = [
-  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'planned', slice: 'DE-8b' } },
-  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'planned', slice: 'DE-8b' } },
+  // DE-8b (SA Q-17): both buckets are in "Your files", under these zip folders
+  // (`files/<folder>/...`). Classification only: the purge fields are untouched.
+  // Documents: only objects a live contact_documents row points at (C-11);
+  // images: every object in the owner's folder (Q10b, BC-4).
+  { bucket: 'contact-documents', level: 'reset', pathPrefix: '{user_id}/', purpose: 'CRM contact documents; indexed by contact_documents rows.', export: { kind: 'include', folder: 'client-documents' } },
+  { bucket: 'website-images', level: 'reset', pathPrefix: '{user_id}/', purpose: 'Website images. ALSO backs user_media — confirmed at T4, which is why no fourth bucket descriptor is needed.', export: { kind: 'include', folder: 'website-images' } },
   { bucket: 'business-purge-snapshots', level: 'never', pathPrefix: '{user_id}/', purpose: 'The pre-purge snapshot itself. NEVER emptied by a purge — deleting the forensic artefact as part of the act it records would defeat its purpose. Private, no RLS policy granting authenticated anything (AC-36).',
     export: { kind: 'exclude', reason: 'an internal copy taken before a purge, not the live data' } },
+  // Data export DE-8a (migration 20261074). Objects sit at {user_id}/{job_id}/1.zip.
+  { bucket: 'business-data-exports', level: 'purge', pathPrefix: '{user_id}/', purpose: 'Phase 1 "Download my data" zips, kept 3 days. Private, no policy (AC-36 pattern). Emptied by Purge and account deletion, kept by Reset like its jobs table.',
+    export: { kind: 'exclude', reason: EXPORT_REASON.EXPORT_ITSELF } },
 ];
 
 /** The single structure the executor iterates. Nothing else may enumerate tables. */

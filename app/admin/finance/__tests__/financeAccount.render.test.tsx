@@ -95,7 +95,7 @@ function aiCost(extra: Partial<FinanceAiCostSection> = {}, exact = true): Financ
 }
 
 const boostLine = (extra: Partial<FinanceBoostLine> = {}): FinanceBoostLine => ({
-  currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableCredits: 0, ...extra,
+  currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableEvents: 0, unreadableCredits: 0, ...extra,
 });
 
 function boosts(lines: FinanceBoostLine[] | null, notes: Partial<NonNullable<FinanceBoostRevenue['notes']>> = {}): FinanceBoostRevenue {
@@ -126,7 +126,7 @@ function credits(row: FinanceCreditRow | null, status: FinanceCreditsSection['st
   } as FinanceCreditsSection;
 }
 
-/** The owner's October plan payment: USD 79.00, exact. */
+/** The owner's October plan payment: $79.00, exact. */
 function plans(extra: Partial<FinancePlanRevenue> = {}): FinancePlanRevenue {
   return {
     status: 'ok',
@@ -203,11 +203,11 @@ describe('AccountSummary (M1-FR-5, M1-FR-6)', () => {
     expect(summary.tagName).toBe('SECTION');
     expect(summary).toHaveAttribute('aria-labelledby', 'account-summary-heading');
     expect(within(summary).queryAllByRole('navigation')).toHaveLength(0);
-    expect(screen.getByTestId('account-summary-ai-cost')).toHaveTextContent('USD 3.50');
-    expect(screen.getByTestId('account-summary-boost-USD')).toHaveTextContent('USD 10.00');
-    // M-2 (the M-1 placeholder assertion replaced): the plan line and the total, USD 79.00 and USD 89.00.
-    expect(screen.getByTestId('account-summary-plan-USD')).toHaveTextContent('USD 79.00');
-    expect(screen.getByTestId('account-summary-total-USD')).toHaveTextContent('USD 89.00');
+    expect(screen.getByTestId('account-summary-ai-cost')).toHaveTextContent('$3.50');
+    expect(screen.getByTestId('account-summary-boost-USD')).toHaveTextContent('$10.00');
+    // M-2 (the M-1 placeholder assertion replaced): the plan line and the total, $79.00 and $89.00.
+    expect(screen.getByTestId('account-summary-plan-USD')).toHaveTextContent('$79.00');
+    expect(screen.getByTestId('account-summary-total-USD')).toHaveTextContent('$89.00');
     expect(screen.getByText(ACCOUNT_PAID_TOTAL)).toBeInTheDocument();
     expect(screen.getByTestId('account-summary-credits')).toHaveTextContent('Allowance 100 · used 40 (40.0%) · gifted outstanding 12.5');
     expect(screen.getByTestId('account-summary-group')).toHaveTextContent('Essentials-ish');
@@ -215,13 +215,13 @@ describe('AccountSummary (M1-FR-5, M1-FR-6)', () => {
 
   it('AI cost: partial → "At least"; failed → "Unknown"; starts before cut-over → the note; entirely before → the note instead of a figure', () => {
     let summary = renderSummary({ ai: aiCost({ status: 'partial' }, false) });
-    expect(within(summary).getByTestId('account-summary-ai-cost')).toHaveTextContent('At least USD 3.50');
+    expect(within(summary).getByTestId('account-summary-ai-cost')).toHaveTextContent('At least $3.50');
     cleanup();
     summary = renderSummary({ ai: { status: 'unknown', coverage: 'after_cutover', figures: null } });
     expect(within(summary).getByTestId('account-summary-ai-cost')).toHaveTextContent('Unknown');
     cleanup();
     summary = renderSummary({ ai: aiCost({ coverage: 'starts_before_cutover' }) });
-    expect(within(summary).getByTestId('account-summary-ai-cost')).toHaveTextContent(`USD 3.50${ACCOUNT_CUTOVER_NOTE}`);
+    expect(within(summary).getByTestId('account-summary-ai-cost')).toHaveTextContent(`$3.50${ACCOUNT_CUTOVER_NOTE}`);
     cleanup();
     summary = renderSummary({ ai: aiCost({ coverage: 'entirely_before_cutover' }) });
     const line = within(summary).getByTestId('account-summary-ai-cost');
@@ -232,7 +232,7 @@ describe('AccountSummary (M1-FR-5, M1-FR-6)', () => {
   it('AC-112: two boost currencies are two lines, never a total', () => {
     const summary = renderSummary({ b: boosts([boostLine({ currency: 'EUR', net: 7.5 }), boostLine()]) });
     expect(within(summary).getByTestId('account-summary-boost-EUR')).toHaveTextContent('EUR 7.50');
-    expect(within(summary).getByTestId('account-summary-boost-USD')).toHaveTextContent('USD 10.00');
+    expect(within(summary).getByTestId('account-summary-boost-USD')).toHaveTextContent('$10.00');
     expect(within(summary).getByTestId('account-summary-boosts').textContent).not.toMatch(/17\.50/);
   });
 
@@ -280,7 +280,7 @@ describe('AccountSummary (M1-FR-5, M1-FR-6)', () => {
     expect(within(summary).getByTestId('account-summary-plan').textContent).not.toMatch(/0\.00/);
     cleanup();
     summary = renderSummary({ p: plans({ lines: [{ currency: 'USD', payments: 1, received: 79, tax: 0, businesses: 1, zeroAmountInvoices: 0, unreadable: 0, exact: false }] }) });
-    expect(within(summary).getByTestId('account-summary-plan-USD')).toHaveTextContent('At least USD 79.00');
+    expect(within(summary).getByTestId('account-summary-plan-USD')).toHaveTextContent('At least $79.00');
   });
 
   it('AC-122: "Paid us, total" per currency from the server totals; Unknown where a total is null or a read failed; never across currencies', () => {
@@ -315,6 +315,8 @@ describe('slice 6a: the summary’s AI margin line (M3-FR-8)', () => {
     paid: { failed: false, lines: [] },
     aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
     margin: m,
+    // Slice 6b: the margin after fees follows the AI margin's word; a figure with no fees here.
+    marginAfterFees: m.kind === 'figure' ? { kind: 'figure', afterFeesUsd: m.marginUsd, feesUsd: 0, currency: 'USD', noRevenue: m.noRevenue } : m,
   });
   const renderWith = (accountMargin: FinanceAccountMargin | null) => {
     cleanup();
@@ -334,7 +336,7 @@ describe('slice 6a: the summary’s AI margin line (M3-FR-8)', () => {
 
   it('sits directly under "Paid us, total", labelled "AI margin (USD)", the figure through formatUsd', () => {
     const line = renderWith(margin({ kind: 'figure', marginUsd: 87.7655, noRevenue: false }));
-    expect(line).toHaveTextContent('USD 87.7655');
+    expect(line).toHaveTextContent('$87.7655');
     const labels = [...screen.getByTestId('account-summary').querySelectorAll('dt')].map((dt) => dt.textContent);
     expect(labels[labels.indexOf(ACCOUNT_PAID_TOTAL) + 1]).toBe(ACCOUNT_MARGIN);
     expect(ACCOUNT_MARGIN).toBe('AI margin (USD)');
@@ -342,7 +344,7 @@ describe('slice 6a: the summary’s AI margin line (M3-FR-8)', () => {
 
   it('SA-WR-43: a negative margin keeps its sign; no revenue says so', () => {
     const line = renderWith(margin({ kind: 'figure', marginUsd: -0.1234, noRevenue: true }));
-    expect(within(line).getByTestId('account-summary-margin-value')).toHaveTextContent('USD -0.1234');
+    expect(within(line).getByTestId('account-summary-margin-value')).toHaveTextContent('-$0.1234');
     expect(line).toHaveTextContent(ECON_NO_REVENUE);
   });
 
@@ -381,14 +383,14 @@ describe('Money M-4: the summary’s "Recorded above charged" line (M4-FR-2)', (
     const labels = [...summary.querySelectorAll('dt')].map((dt) => dt.textContent);
     expect(labels[labels.indexOf(ACCOUNT_AI_COST) + 1]).toBe(ACCOUNT_RECORDED_ABOVE);
     expect(ACCOUNT_RECORDED_ABOVE).toBe('Recorded above charged');
-    expect(within(summary).getByTestId('account-summary-recorded-above')).toHaveTextContent('USD 0.25');
+    expect(within(summary).getByTestId('account-summary-recorded-above')).toHaveTextContent('$0.25');
     expect(summary.textContent).not.toContain('3.75');
     expect(within(summary).queryByText(RECORDED_LABEL)).toBeNull();
   });
 
   it.each([
     [rec({ aboveCharged: { state: 'none', usd: null } }), ABOVE_NONE],
-    [rec({ aboveCharged: { state: 'none', usd: null }, chargedAboveUsd: 0.4 }), `${ABOVE_NONE}${aboveChargedAboveLine('USD 0.40')}`],
+    [rec({ aboveCharged: { state: 'none', usd: null }, chargedAboveUsd: 0.4 }), `${ABOVE_NONE}${aboveChargedAboveLine('$0.40')}`],
     [rec({ aboveCharged: { state: 'not_available', usd: null } }), ABOVE_NOT_AVAILABLE],
     [rec({ status: 'partial', recordedExact: false, aboveCharged: { state: 'unknown', usd: null } }), RECORDED_UNKNOWN],
   ])('AC-158: %o → the same text Section 3’s renderer gives', (recorded, text) => {
@@ -403,5 +405,103 @@ describe('Money M-4: the summary’s "Recorded above charged" line (M4-FR-2)', (
   it('no recorded key → no line', () => {
     const summary = renderWith(undefined);
     expect(within(summary).queryByTestId('account-summary-recorded-above')).toBeNull();
+  });
+});
+
+// ── Slice 6b (FE-14, AC-250, AC-251): the summary's "Margin after Stripe fees (estimate, USD)" line ──
+// A separate import, so the lines above stay unedited.
+import { MarginAfterFeesValue } from '../components/AccountEconomicsTable';
+import { ACCOUNT_AFTER_FEES } from '../financeCopy';
+
+describe('slice 6b: the summary’s margin after Stripe fees line (FE-14)', () => {
+  const OWNER_MARGIN: FinanceAccountMargin = {
+    paid: { failed: false, lines: [{ currency: 'USD', afterTax: 89, exact: true, planAfterTax: 79, boostsAfterTax: 10 }] },
+    aiCost: { kind: 'figure', costUsd: 1.2345, exact: true },
+    margin: { kind: 'figure', marginUsd: 87.7655, noRevenue: false },
+    // The test account in October: plan 7900 + boost 1000 → fees 259 + 59 = 318.
+    marginAfterFees: { kind: 'figure', afterFeesUsd: 84.5855, feesUsd: 3.18, currency: 'USD', noRevenue: false },
+  };
+  const renderWith = (accountMargin: FinanceAccountMargin | null) => {
+    cleanup();
+    render(
+      <AccountSummary
+        accountId={A}
+        window={WINDOW}
+        aiCost={aiCost()}
+        revenue={revenue(boosts([boostLine()]))}
+        credits={credits(creditRow())}
+        accounts={accounts('tier:x')}
+        accountMargin={accountMargin}
+      />
+    );
+    return screen.getByTestId('account-summary');
+  };
+
+  it('sits directly under "AI margin (USD)", labelled exactly, with the fee line "Stripe fees, estimate: $3.18"', () => {
+    const summary = renderWith(OWNER_MARGIN);
+    const labels = [...summary.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels[labels.indexOf(ACCOUNT_MARGIN) + 1]).toBe('Margin after Stripe fees (estimate, USD)');
+    expect(ACCOUNT_AFTER_FEES).toBe('Margin after Stripe fees (estimate, USD)');
+    expect(within(summary).getByTestId('account-summary-after-fees-value')).toHaveTextContent(/^\$84\.5855$/);
+    expect(within(summary).getByTestId('account-summary-after-fees-value-fees')).toHaveTextContent(/^Stripe fees, estimate: \$3\.18$/);
+  });
+
+  it('AC-250: the summary prints the same text as the tab row cell for the same value', () => {
+    const summary = renderWith(OWNER_MARGIN);
+    const summaryText = within(summary).getByTestId('account-summary-after-fees').textContent;
+    cleanup();
+    render(<MarginAfterFeesValue value={OWNER_MARGIN.marginAfterFees} testId="row-cell" />);
+    expect(screen.getByTestId('row-cell').parentElement?.textContent).toBe(summaryText);
+  });
+
+  it.each([
+    [{ kind: 'not_available' } as const, ECON_MARGIN_NOT_AVAILABLE],
+    [{ kind: 'other_currency' } as const, ECON_MARGIN_OTHER_CURRENCY],
+    [{ kind: 'unknown' } as const, ACCOUNT_UNKNOWN],
+  ])('%o → its words, no fee line, never a 0', (value, text) => {
+    const summary = renderWith({ ...OWNER_MARGIN, marginAfterFees: value });
+    const line = within(summary).getByTestId('account-summary-after-fees');
+    expect(line).toHaveTextContent(text);
+    expect(within(summary).queryByTestId('account-summary-after-fees-value-fees')).toBeNull();
+    expect(line.textContent).not.toMatch(/0\.00/);
+  });
+
+  it('no accountMargin in the payload → "Unknown"', () => {
+    const summary = renderWith(null);
+    expect(within(summary).getByTestId('account-summary-after-fees')).toHaveTextContent(ACCOUNT_UNKNOWN);
+  });
+});
+
+// ── DF-6 (E-82, DF6-R2): the summary shows the view's since-start line as given ──
+describe('DF-6: the summary window line', () => {
+  const SINCE: FinanceWindowInfo = { preset: 'since_start', from: '2026-09-29', to: '2026-10-17', start: '2026-09-29T16:50:53.914Z', end: '2026-10-17T12:00:00.000Z' };
+  const renderLine = (window: FinanceWindowInfo, windowLine?: string | null) => {
+    cleanup();
+    render(
+      <AccountSummary
+        accountId={A}
+        window={window}
+        aiCost={aiCost()}
+        revenue={revenue(boosts([boostLine()]))}
+        credits={credits(creditRow())}
+        accounts={accounts('tier:x')}
+        windowLine={windowLine}
+      />
+    );
+    return screen.getByTestId('account-summary');
+  };
+
+  it('AC-266: shows the line it is given, under the heading, unformatted', () => {
+    const summary = renderLine(SINCE, 'Since it started: 2026-09-29 16:50 to now (UTC)');
+    expect(within(summary).getByTestId('account-summary-window')).toHaveTextContent('Since it started: 2026-09-29 16:50 to now (UTC)');
+  });
+
+  it('E-82: no line when none is given (every other window)', () => {
+    expect(within(renderLine(WINDOW)).queryByTestId('account-summary-window')).toBeNull();
+    expect(within(renderLine(WINDOW, null)).queryByTestId('account-summary-window')).toBeNull();
+  });
+
+  it('AC-258: over the since-start window no margin reads "Not available"', () => {
+    expect(renderLine(SINCE, 'x').textContent).not.toContain('Not available');
   });
 });

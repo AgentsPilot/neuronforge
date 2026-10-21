@@ -199,6 +199,9 @@ let summaryGate: Promise<void> | null = null;
 /** The summary read's `fetch` rejects, as a network error does (SA F1, C1). */
 let summaryRejects = false;
 
+/** Data export DE-10a: the Data export box's status read, an account with no export. */
+const NO_EXPORTS = { exports: [], ownerDownloadedLatest: false, isOwnAccount: false, dailyLimit: 3 };
+
 function route(url: string): ResponseLike {
   if (url.startsWith('/api/admin/users?')) {
     return answer(200, { success: true, data: [DANA, OREN, ELI, SARA], stats: { totalUsers: 4, activeUsers: 0, newUsersToday: 0 } });
@@ -221,6 +224,8 @@ function route(url: string): ResponseLike {
   if (url.endsWith('/boost')) return answer(200, BOOST);
   if (url.startsWith('/api/admin/business-os/credits/accounts/')) return answer(200, CREDITS);
   if (url === '/api/admin/archiving') return answer(200, { success: true, data: { sources: [] } });
+  // Data export DE-10a: the drawer's Data export box reads its status once per open.
+  if (url.startsWith('/api/admin/users/') && url.endsWith('/data-exports')) return answer(200, { success: true, data: NO_EXPORTS });
   if (url === '/api/admin/test-account-cleanup/check') return answer(200, { success: true, data: { configured: true } });
   return answer(404, { success: false, error: 'not mocked' });
 }
@@ -319,15 +324,17 @@ afterEach(() => {
 // ── L-1 order (BD-4, AC-4.2) ────────────────────────────────────────────────
 
 describe('L-1: the strip, then six sections in a fixed order', () => {
-  it('strip, Credits & billing, Plan & entitlements, AI usage, Account & security, Activity, danger last; blocks in their sections', async () => {
+  it('strip, Credits & billing, Plan & entitlements, AI usage, Account & security, Activity, Data export, danger last; blocks in their sections', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
     const credits = group(drawer, 'Credits & billing');
     const plan = group(drawer, 'Plan & entitlements');
     const ai = group(drawer, 'AI usage');
     const account = group(drawer, 'Account & security');
     const activity = group(drawer, 'Activity');
+    // Data export DE-10a (SA-9): the sixth section, directly above the danger area.
+    const exportSection = group(drawer, 'Data export');
     const danger = within(drawer).getByTestId('danger-area');
-    expectInOrder([within(drawer).getByTestId('drawer-strip'), credits, plan, ai, account, activity, danger]);
+    expectInOrder([within(drawer).getByTestId('drawer-strip'), credits, plan, ai, account, activity, exportSection, danger]);
     expect(danger.parentElement?.lastElementChild).toBe(danger);
 
     expect(credits.getAttribute('data-testid')).toBe('drawer-section-credits');
@@ -335,6 +342,8 @@ describe('L-1: the strip, then six sections in a fixed order', () => {
     expect(ai.getAttribute('data-testid')).toBe('drawer-section-ai');
     expect(account.getAttribute('data-testid')).toBe('drawer-section-account');
     expect(activity.getAttribute('data-testid')).toBe('detail-audit');
+    expect(exportSection.getAttribute('data-testid')).toBe('drawer-section-export');
+    expect(within(exportSection).getByTestId('data-export-block')).toBeTruthy();
 
     expect(within(credits).getByTestId('credits-block')).toBeTruthy();
     expect(within(credits).getByTestId('boost-block')).toBeTruthy();
@@ -346,7 +355,7 @@ describe('L-1: the strip, then six sections in a fixed order', () => {
     ]);
     // One h2 (the title); each section named by its own h3 (L-11).
     expect(drawer.querySelectorAll('h2')).toHaveLength(1);
-    for (const section of [credits, plan, ai, account, activity]) {
+    for (const section of [credits, plan, ai, account, activity, exportSection]) {
       const labelledBy = section.getAttribute('aria-labelledby');
       expect(section.querySelector('h3')?.id).toBe(labelledBy);
     }
@@ -628,6 +637,8 @@ const BOXED_SECTIONS: Array<[string, DrawerSectionKey, string]> = [
   ['AI usage', 'ai', 'drawer-section-ai'],
   ['Account & security', 'account', 'drawer-section-account'],
   ['Activity', 'activity', 'detail-audit'],
+  // Data export DE-10a (SA-9).
+  ['Data export', 'export', 'drawer-section-export'],
 ];
 
 /** Each part's root test id and its own purpose key. */
@@ -658,7 +669,7 @@ function closestPart(el: Element): Element | null {
 const DANGER_SENTENCE = 'Permanent actions for this account. Each runs a check first; a refused check changes nothing.';
 
 describe('L-12: a box and a purpose line per section (LF-4d, BD-16)', () => {
-  it('L-12a: five section boxes, each directly around its named group, in order; the danger area last', async () => {
+  it('L-12a: six section boxes, each directly around its named group, in order; the danger area last', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
     const boxes = BOXED_SECTIONS.map(([title, key, testId]) => {
       const box = within(drawer).getByTestId(`drawer-box-${key}`);
@@ -718,7 +729,8 @@ describe('L-12: a box and a purpose line per section (LF-4d, BD-16)', () => {
 
   it('L-12e: parts are not groups and purpose lines are not headings', async () => {
     const drawer = await openDrawer('Dana Cohen', 'boost-cap');
-    expect(drawer.querySelectorAll('[role="group"]')).toHaveLength(5);
+    // Six since data export DE-10a added the Data export section (SA-9).
+    expect(drawer.querySelectorAll('[role="group"]')).toHaveLength(6);
     for (const id of PART_IDS) {
       const part = within(drawer).getByTestId(id);
       expect({ id, role: part.getAttribute('role'), labelledBy: part.getAttribute('aria-labelledby') }).toEqual({
@@ -761,7 +773,7 @@ describe('L-12: a box and a purpose line per section (LF-4d, BD-16)', () => {
     }
   });
 
-  it('L-12f: a non-Business OS login: five section boxes and sentences; in AI usage only All products; no money part', async () => {
+  it('L-12f: a non-Business OS login: six section boxes and sentences (Data export too, BC-5); in AI usage only All products; no money part', async () => {
     const drawer = await openDrawer('Oren Levi', 'bos-panel-not-bos');
     for (const [, key] of BOXED_SECTIONS) {
       expect(within(drawer).getByTestId(`drawer-box-${key}`).className).toBe(SECTION_BOX);
@@ -803,5 +815,30 @@ describe('L-12: a box and a purpose line per section (LF-4d, BD-16)', () => {
     await act(async () => gate.resolve());
     await within(drawer).findByTestId('boost-cap');
     await quiet();
+  });
+});
+
+// ── T-30 the Data export box sits directly above the danger area (DE-10a) ───
+
+describe('T-30 (data export DE-10a; SA-9, W10-10): the Data export box above the danger area', () => {
+  it('the export box is the element straight before the danger area, which is still last; the danger area keeps its controls', async () => {
+    const drawer = await openDrawer('Dana Cohen', 'boost-cap');
+    const box = within(drawer).getByTestId('drawer-box-export');
+    const danger = within(drawer).getByTestId('danger-area');
+    expect(danger.previousElementSibling).toBe(box);
+    expect(danger.parentElement?.lastElementChild).toBe(danger);
+    expect(box.nextElementSibling).toBe(danger);
+    // Nothing in the danger area is disabled or hidden by the box (BC-4 is informational only).
+    expect(danger.querySelectorAll('[disabled], [hidden], [aria-disabled="true"]')).toHaveLength(0);
+    expect(within(danger).getByText(DANGER_SENTENCE)).toBeTruthy();
+    // One status read for the open account.
+    expect(calls.filter((url) => url.endsWith('/data-exports'))).toEqual([`/api/admin/users/${DANA_ID}/data-exports`]);
+  });
+
+  it('a non-Business OS login gets the box too (BC-5), above its danger area', async () => {
+    const drawer = await openDrawer('Oren Levi', 'bos-panel-not-bos');
+    const box = within(drawer).getByTestId('drawer-box-export');
+    expect(box.nextElementSibling).toBe(within(drawer).getByTestId('danger-area'));
+    expect(within(box).getByTestId('data-export-empty').textContent).toBe('No exports yet.');
   });
 });

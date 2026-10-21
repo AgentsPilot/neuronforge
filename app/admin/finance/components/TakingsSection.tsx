@@ -1,7 +1,9 @@
 'use client';
 
 /**
- * Section 2 block B, "Takings through the platform" (finance & business health
+ * Section 2 block B, "Client payments (the businesses' money, not ours)", the
+ * last block of the Overview since Money MK-1 (formerly "Takings through the
+ * platform"; finance & business health
  * slice 2a, S2-FR-1 to S2-FR-14). What clients paid the businesses through
  * AgentPilot: NOT our revenue (BD-1), so it carries a neutral "Not our
  * revenue" chip and never feeds a tile.
@@ -18,6 +20,7 @@
  */
 
 import type { FinanceTakingsFigures, FinanceTakingsLine, FinanceTakingsRow, FinanceTakingsSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinancePaymentProblemsSection } from '@/lib/business-os/finance/financeTypes';
 import { AdminEmpty, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatCount } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -32,6 +35,8 @@ import {
   ADMIN_THEAD,
 } from '@/app/admin/components/layout/adminTable';
 import {
+  BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION,
+  BLOCK_KPI_CLIENT_PAYMENTS_LABEL,
   NAME_MISSING,
   NAME_PLATFORM,
   NAME_UNAVAILABLE,
@@ -40,7 +45,6 @@ import {
   PROCESSOR_NOT_RECORDED,
   TAKINGS_AMOUNT_REFUNDED,
   TAKINGS_BUSINESS,
-  TAKINGS_BUSINESSES,
   TAKINGS_BUSINESSES_COLUMN,
   TAKINGS_BY_BUSINESS,
   TAKINGS_CANNOT,
@@ -82,10 +86,12 @@ import {
   TAKINGS_UNKNOWN_CURRENCY,
 } from '../financeCopy';
 import { atLeast, formatMoney } from '../financeFormat';
+import { BlockKpi } from './BlockKpi';
 import { FinanceSection } from './FinanceSection';
+import { ClientPaymentProblems } from './PaymentProblemsSection';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
-const NOTE = 'text-[11px] text-slate-500';
+const NOTE = 'text-[11px] text-slate-400';
 
 function processorLabel(processorType: string | null): string {
   if (processorType === null) return PROCESSOR_NOT_RECORDED;
@@ -111,11 +117,20 @@ export function TakingsSection({
   takings,
   windowLabel,
   onRetry,
+  problems,
 }: {
   takings: FinanceTakingsSection;
   windowLabel: string;
   onRetry: () => void;
+  /**
+   * Money MK-6 (§6 item 15): "Client payment problems", moved here from the old
+   * Payment problems section: the same owner as the client payments, the
+   * businesses. Its own reads, so it also shows when the takings could not load.
+   * Absent: not rendered.
+   */
+  problems?: FinancePaymentProblemsSection;
 }) {
+  const clientProblems = problems ? <ClientPaymentProblems problems={problems} windowLabel={windowLabel} /> : null;
   return (
     <FinanceSection
       id="takings"
@@ -124,8 +139,10 @@ export function TakingsSection({
       status={takings.status}
       onRetry={onRetry}
       badge={{ tone: 'neutral', label: TAKINGS_CHIP }}
+      alsoWhenUnknown={clientProblems}
     >
       {takings.figures && <TakingsBody f={takings.figures} />}
+      {clientProblems}
     </FinanceSection>
   );
 }
@@ -148,6 +165,13 @@ function TakingsBody({ f }: { f: FinanceTakingsFigures }) {
 
   return (
     <div className="space-y-4" data-testid="takings-body">
+      {/* Money MK-1: the block KPI is the headline (§3.2), leading (§5), with its icon (LL-1). */}
+      <BlockKpi
+        label={BLOCK_KPI_CLIENT_PAYMENTS_LABEL}
+        value={count(f.businesses)}
+        indicator={{ kind: 'leading', definition: BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION }}
+        testId="takings-businesses"
+      />
       {/* Each partial cause says so on its own (L-5, S2-FR-8). */}
       {!f.paymentsExact && <AdminNotice testId="takings-notice-payments-cut">{TAKINGS_NOTICE_PAYMENTS_CUT}</AdminNotice>}
       {f.refundsState === 'partial' && <AdminNotice testId="takings-notice-refunds-cut">{TAKINGS_NOTICE_REFUNDS_CUT}</AdminNotice>}
@@ -195,11 +219,6 @@ function TakingsBody({ f }: { f: FinanceTakingsFigures }) {
       {f.otherStatusPayments > 0 && (
         <p className={NOTE} data-testid="takings-other-status">{TAKINGS_OTHER_STATUS(f.otherStatusPayments)}</p>
       )}
-
-      {/* ── Businesses with takings ── */}
-      <p className="text-sm text-slate-300" data-testid="takings-businesses">
-        {TAKINGS_BUSINESSES}: <span className="font-semibold text-white tabular-nums">{count(f.businesses)}</span>
-      </p>
 
       {/* ── Refunds ── */}
       <div className="space-y-2" data-testid="takings-refunds">

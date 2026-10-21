@@ -11,11 +11,17 @@
  *     response or a log;
  *   - the ledger read repository: the all-accounts and one-account reads by
  *     time, and the charges by action id (declared on its importer guard);
- *   - the finance read repository: billing status and revenue head counts,
+ *   - the billing status of every account or the picked one, read for the
+ *     CURRENT Stripe mode only (Finance R4, P8A-R4) through
+ *     `currentModeBillingStatus`, which reuses the plan payments one-mode
+ *     reader and its key resolution; R-c and R-c' are no longer wired;
+ *   - the finance read repository: revenue head counts,
  *     the client payments and refunds (layer B, slice 2a), and the overdue
  *     invoices and instalments, and client plans (layer B, slice 2b), and the
- *     boost purchases paid in the window (layer A, slice 4a), and the paid
- *     plan invoices in the window (layer A, slice 5a): the
+ *     boost purchases paid in the window (layer A, slice 4a), the paid
+ *     plan invoices in the window (layer A, slice 5a), and the boost reversal
+ *     events recorded in the window and the boost purchases needing attention
+ *     now (layer A, slice 4b.2): the
  *     named all-accounts reads only when no business is picked, the
  *     account-scoped ones with exactly the picked id (the builder chooses);
  *   - slice 1b, the credit-position pass: `adminCreditPercentDeps()`, the
@@ -32,6 +38,13 @@
  *     the credit value version stop HERE, so they can never reach the builder,
  *     the response or a log, and a column added to the repository later cannot
  *     travel by accident.
+ *
+ *   - Money MK-5b (§5.1, SA-10), Converted this month: the first plan payment
+ *     of the given accounts, read for the CURRENT billing mode by
+ *     `listCurrentModeFirstPlanPayments` (the mode is decided in
+ *     `lib/admin/billing`, never here), and the lineage repository's one
+ *     select-only `findSignupSourcesForAccountsForAdmin` (where each shown
+ *     account came from).
  *
  * The admin-pinned name read (`findAdminIdentitiesByUserIds`) is NOT wired
  * here: it may be called only from `app/api/admin/**`, so the route injects it.
@@ -53,6 +66,12 @@ import 'server-only';
 import { businessOsAccountPlanRepository } from '@/lib/repositories/BusinessOsAccountPlanRepository';
 import { businessOsCreditLedgerReadRepository } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import { businessOsFinanceReadRepository } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+import {
+  findCurrentModeBillingStatusForAccount,
+  listCurrentModeBillingStatusesAllAccounts,
+} from '@/lib/admin/billing/currentModeBillingStatus';
+import { listCurrentModeFirstPlanPayments } from '@/lib/admin/billing/firstPlanPayments';
+import { businessOsAccountLineageRepository } from '@/lib/repositories/BusinessOsAccountLineageRepository';
 import {
   businessOsCreditLotRepository,
   type BusinessOsCreditLotRepository,
@@ -121,8 +140,9 @@ export function financeHealthDeps(): Omit<
       findChargesByActionIds: (actionIds) => businessOsCreditLedgerReadRepository.findChargesByActionIds(actionIds),
     },
     finance: {
-      listBillingStatusesAllAccounts: (opts) => businessOsFinanceReadRepository.listBillingStatusesAllAccounts(opts),
-      findBillingStatusForAccount: (accountId) => businessOsFinanceReadRepository.findBillingStatusForAccount(accountId),
+      // Finance R4: billing STATUS is the current Stripe mode only (PF-15); revenue below still counts both (BD-14).
+      listBillingStatusesAllAccounts: (opts) => listCurrentModeBillingStatusesAllAccounts(opts),
+      findBillingStatusForAccount: (accountId) => findCurrentModeBillingStatusForAccount(accountId),
       countRevenueRows: () => businessOsFinanceReadRepository.countRevenueRows(),
       listClientPaymentsAllAccountsPaidInRange: (range, opts) =>
         businessOsFinanceReadRepository.listClientPaymentsAllAccountsPaidInRange(range, opts),
@@ -150,6 +170,15 @@ export function financeHealthDeps(): Omit<
         businessOsFinanceReadRepository.listPlanPaymentsAllAccountsPaidInRange(range, opts),
       listPlanPaymentsForAccountPaidInRange: (accountId, range, opts) =>
         businessOsFinanceReadRepository.listPlanPaymentsForAccountPaidInRange(accountId, range, opts),
+      // Slice 4b.2: the dated reversal events (R-n / R-n′) and the purchases needing attention now (R-l / R-l′).
+      listBoostReversalEventsAllAccountsRecordedInRange: (range, opts) =>
+        businessOsFinanceReadRepository.listBoostReversalEventsAllAccountsRecordedInRange(range, opts),
+      listBoostReversalEventsForAccountRecordedInRange: (accountId, range, opts) =>
+        businessOsFinanceReadRepository.listBoostReversalEventsForAccountRecordedInRange(accountId, range, opts),
+      listBoostPurchasesNeedingAttentionAllAccounts: (opts) =>
+        businessOsFinanceReadRepository.listBoostPurchasesNeedingAttentionAllAccounts(opts),
+      listBoostPurchasesNeedingAttentionForAccount: (accountId, opts) =>
+        businessOsFinanceReadRepository.listBoostPurchasesNeedingAttentionForAccount(accountId, opts),
     },
     // SA-WR-4: the classifier takes the config as a parameter; this is where it is read.
     config: getEntitlementConfig(),
@@ -159,6 +188,11 @@ export function financeHealthDeps(): Omit<
     lots: {
       allAccounts: () => narrowLots(lotReads.listLotsWithDrawsAllAccounts()),
       forAccount: (accountId) => narrowLots(lotReads.listLotsWithDraws(accountId)),
+    },
+    // Money MK-5b: the first plan payments (current billing mode, decided in lib/admin/billing) and the sources.
+    converted: {
+      firstPlanPayments: (accountIds) => listCurrentModeFirstPlanPayments(accountIds),
+      signupSources: (accountIds) => businessOsAccountLineageRepository.findSignupSourcesForAccountsForAdmin(accountIds),
     },
   };
 }

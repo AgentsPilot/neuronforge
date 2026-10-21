@@ -221,7 +221,20 @@ export interface SendEmailResult {
    * caller that throws here will have its queue row retried forever. Close the
    * row as skipped instead.
    */
-  blocked?: MarketingBlockReason | 'multi_recipient';
+  blocked?: MarketingBlockReason | 'multi_recipient' | 'invalid_recipient';
+}
+
+/**
+ * True for an address on the reserved `invalid` top-level domain (RFC 2606):
+ * `x@invalid`, `x@deleted.invalid`, any case. A closed account's login carries
+ * `deleted-{ref}@deleted.invalid` (data export DE-10b.1, SA TQ-21), so this one
+ * check keeps every sender, cron and reminder off the tombstones at once.
+ */
+export function isInvalidDomainRecipient(address: string): boolean {
+  const at = address.lastIndexOf('@');
+  if (at < 0) return false;
+  const domain = address.slice(at + 1).trim().toLowerCase().replace(/\.$/, '');
+  return domain === 'invalid' || domain.endsWith('.invalid');
 }
 
 /**
@@ -612,6 +625,15 @@ async function resolveSender(
 }
 
 export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
+  // DE-10b.1 (SA TQ-21): never send to a `.invalid` address, the closed-account
+  // placeholder among them. A mixed list is refused whole, before any gate or
+  // transport, and the log holds the count only, never an address.
+  const invalidRecipients = p.to.filter(isInvalidDomainRecipient).length;
+  if (invalidRecipients > 0) {
+    logger.warn({ recipientCount: p.to.length, invalidRecipients }, 'Refused a send to an .invalid recipient');
+    return { sent: false, provider: 'none', blocked: 'invalid_recipient' };
+  }
+
   const errors: string[] = [];
 
   /*

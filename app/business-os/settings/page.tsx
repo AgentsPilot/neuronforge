@@ -12,8 +12,7 @@ import {
   linkedOAuthLabel,
   linkedProviderAccountUrl,
 } from '@/lib/authIdentities';
-import { supabase } from '@/lib/supabaseClient';
-import { downloadUserDataExport } from '@/lib/client/downloadUserDataExport';
+import { DownloadMyDataButton } from '@/components/business-os/data-export/DownloadMyDataButton';
 import { signOutUser } from '@/lib/client/auth-actions';
 import { marketingLogoutUrl } from '@/lib/utils/marketingUrl';
 import {
@@ -22,7 +21,6 @@ import {
   DollarSign,
   Clock,
   Lock,
-  Download,
   Trash2,
   ChevronRight,
   ChevronDown,
@@ -42,6 +40,9 @@ import { ChangePasswordDrawer } from '@/components/business-os/settings/ChangePa
 import { useLinkOpenedDrawer } from '@/components/business-os/settings/useLinkOpenedDrawer';
 import { InviteFriendsSection } from '@/components/business-os/settings/InviteFriendsSection';
 import { MarketingConsentDrawer } from '@/components/business-os/settings/MarketingConsentDrawer';
+import { startMarketingDrawerReads } from '@/components/business-os/settings/marketingDrawerReads';
+import { startPlanDrawerRead } from '@/components/business-os/settings/planDrawerReads';
+import { DRAWER_PREFETCH_MAX_AGE_MS, useDrawerPrefetch } from '@/components/business-os/settings/useDrawerPrefetch';
 import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
@@ -61,6 +62,9 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+
+/** The profile card as `GET /api/business-os/account-profile` returns it (D-2). */
+type ProfileCardValues = { full_name: string; avatar_url: string; job_title: string };
 
 /**
  * Scroll a deep-linked settings section into view, clear of the sticky header.
@@ -90,7 +94,7 @@ function BusinessOSSettingsContent() {
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
-  const { openConfiguration } = useConfigurationDialog();
+  const { openConfiguration, isConfigurationOpen } = useConfigurationDialog();
 
   /*
    * The chevron on every account-card row (settings drawer S-5). Mirrored in
@@ -132,8 +136,68 @@ function BusinessOSSettingsContent() {
   // link anywhere opens it. Its form lives inside the drawer and goes on close.
   const [consentDrawerOpen, setConsentDrawerOpen] = useState(false);
   const consentRowRef = useRef<HTMLButtonElement>(null);
+  /*
+   * Its two reads (consent and the address book), started before the click
+   * (settings drawer review C-5): when the browser is idle after the page has
+   * loaded, and on the row's hover, focus or press. The drawer takes them once
+   * when it opens instead of asking again. Its own hook and effect, never
+   * `loadData` (SA condition C-8); the routes are named in
+   * `marketingDrawerReads`, not here. `start` and `key` are built in the same
+   * render, so they always agree on the language.
+   */
+  const consentPrefetch = useDrawerPrefetch({
+    start: () => startMarketingDrawerReads(language),
+    key: user?.id ? `${user.id}:${language}` : null,
+    // Not while the page's own reads run; never while the configuration dialog
+    // is open, because that is where the address book is edited.
+    enabled: !loading && !isConfigurationOpen,
+    // Nothing starts while this drawer is open (QA-CA-B1): a save happens in
+    // there, so a pair started meanwhile (the idle warm firing late, the Safari
+    // timer) would carry the wording from before the save, and a reopen would
+    // show it as clean. Paused rather than disabled so the drawer can still
+    // take the set it opened with; the close drops anything left, so the next
+    // warm after a save is fresh (the hook's rule 6).
+    paused: consentDrawerOpen,
+    maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
+    warmOnIdle: true,
+  });
 
-  const [exporting, setExporting] = useState(false);
+  /*
+   * Your plan's read, started before the click (settings drawer review C-2,
+   * slice C-b), in the same way and through the same hook as the consent
+   * reads above. `PlanSection` takes it once, for its first read only; a
+   * checkout return and every re-read still fetch. The route is named in
+   * `planDrawerReads`, not here (B-4).
+   *
+   * Warmed only until the drawer has been opened and closed once (SA Q-1 (b),
+   * rule 7). Unlike the consent drawer, this one has no busy lock: it can
+   * close while a purchase or an upgrade is still landing, so a read started
+   * after the close could predate it, and a reopen would show the old plan,
+   * with its Upgrade or Choose button, as current. After the first close every
+   * open reads fresh, as before.
+   *
+   * The spent flag is derived in render (state set during render, React's
+   * pattern for a value that depends on earlier renders), so it is never true
+   * while the drawer is open and is true in the very render that closes it:
+   * `enabled` and `paused` change together, and no warm can start after the
+   * close (SA-CB-1). Set on the open instead, `enabled` would drop the set
+   * before the drawer's portal mounted to take it.
+   */
+  const [planDrawerOpened, setPlanDrawerOpened] = useState(false);
+  if (planDrawer.open && !planDrawerOpened) setPlanDrawerOpened(true);
+  const planWarmSpent = planDrawerOpened && !planDrawer.open;
+  const planPrefetch = useDrawerPrefetch({
+    start: () => startPlanDrawerRead(language),
+    // B-3: the language is in the key, never on the request.
+    key: user?.id ? `${user.id}:${language}` : null,
+    // As the consent hook (parity, SA Q-5), and never after the first close.
+    enabled: !loading && !isConfigurationOpen && !planWarmSpent,
+    // Paused rather than disabled while open, so the drawer can still take the
+    // set it opened with (the hook's rule 6).
+    paused: planDrawer.open,
+    maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
+    warmOnIdle: true,
+  });
 
   // Delete account dialog state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -252,25 +316,60 @@ function BusinessOSSettingsContent() {
     try {
       setLoading(true);
 
-      const [profileRes, prefsRes] = await Promise.all([
-        supabase.from('profiles').select('full_name, avatar_url, job_title').eq('id', user.id).single(),
-        supabase.from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle(),
+      /*
+       * Two independent halves (settings drawer D-1): a failed profile read
+       * cannot blank the timezone, and a failed timezone read cannot blank the
+       * profile. The timezone comes from the preferences route, RAW: `null`
+       * ("not asked") shows the placeholder, never 'UTC'. `LanguageContext`'s
+       * timezone cannot be reused, because it falls back to 'UTC'.
+       */
+      const [profileSettled, timezoneSettled] = await Promise.allSettled([
+        // The card comes from the account-profile route (settings drawer D-2):
+        // each field a string, '' when unset or when there is no row.
+        (async (): Promise<ProfileCardValues | null> => {
+          const res = await fetch('/api/business-os/account-profile', { method: 'GET' });
+          const payload = await res.json().catch(() => null);
+          if (!res.ok || payload?.success !== true || !payload.data) {
+            logger.error({ userId: user.id, status: res.status }, 'Failed to load the profile card');
+            return null;
+          }
+          const card = payload.data as Record<string, unknown>;
+          const text = (v: unknown) => (typeof v === 'string' ? v : '');
+          return { full_name: text(card.full_name), avatar_url: text(card.avatar_url), job_title: text(card.job_title) };
+        })(),
+        (async (): Promise<string> => {
+          const res = await fetch('/api/business-os/preferences', { method: 'GET' });
+          const payload = await res.json().catch(() => null);
+          const locale = res.ok && payload?.success === true ? payload.data?.locale : null;
+          if (!locale) {
+            logger.warn({ userId: user.id, status: res.status }, 'Could not read the stored timezone');
+            return '';
+          }
+          return typeof locale.timezone === 'string' ? locale.timezone : '';
+        })(),
       ]);
+      if (profileSettled.status === 'rejected') {
+        logger.error({ err: profileSettled.reason, userId: user.id }, 'Failed to load the profile row');
+      }
+      if (timezoneSettled.status === 'rejected') {
+        logger.warn({ err: timezoneSettled.reason, userId: user.id }, 'Could not read the stored timezone');
+      }
+      const card = profileSettled.status === 'fulfilled' ? profileSettled.value : null;
+      const storedTimezone = timezoneSettled.status === 'fulfilled' ? timezoneSettled.value : '';
 
       /*
        * Not gated on the profile row.
        *
-       * `.single()` returns nothing when no `profiles` row exists yet, and this
-       * used to skip the whole assignment — including the timezone, which comes
-       * from a different table entirely. An account with a saved zone and no
-       * profile row showed an empty timezone picker, which reads as "never set"
-       * and invites someone to set it again.
+       * A missing `profiles` row used to skip the whole assignment — including
+       * the timezone, which comes from a different table entirely. An account
+       * with a saved zone and no profile row showed an empty timezone picker,
+       * which reads as "never set" and invites someone to set it again.
        */
       setProfile({
-        full_name: profileRes.data?.full_name || '',
-        avatar_url: profileRes.data?.avatar_url || '',
-        job_title: profileRes.data?.job_title || '',
-        timezone: prefsRes.data?.timezone || '',
+        full_name: card?.full_name || '',
+        avatar_url: card?.avatar_url || '',
+        job_title: card?.job_title || '',
+        timezone: storedTimezone,
       });
     } catch (error) {
       logger.error({ err: error }, 'Failed to load the account settings');
@@ -297,60 +396,64 @@ function BusinessOSSettingsContent() {
    * each error, and READS THE VALUE BACK. A write that silently fails to take
    * is otherwise indistinguishable from success, and this one field governs
    * every time the platform displays.
+   *
+   * Since settings drawer D-1 the write, the `profiles` mirror and the
+   * read-back all run on the server, behind `PATCH /api/business-os/preferences`
+   * (CLAUDE.md rule 1). `success: true` means the server read the value back
+   * and it matched. No language is sent: a new preferences row takes the
+   * business's language on the server, and an existing row keeps its own.
+   * Returns the zone, or `null` on any failure. Never throws.
    */
   const persistTimezone = async (zone: string): Promise<string | null> => {
     if (!user) return null;
 
-    const stamp = new Date().toISOString();
+    try {
+      const res = await fetch('/api/business-os/preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: zone }),
+      });
+      const payload = await res.json().catch(() => null);
 
-    const { error: prefsError } = await supabase.from('user_preferences').upsert({
-      user_id: user.id,
-      timezone: zone,
-      // A human just answered, so record THAT as well as what they said — the
-      // value alone cannot tell a chosen 'UTC' from the old column default.
-      timezone_confirmed_at: stamp,
-      // Carried even though this save is about the timezone. Without it the
-      // upsert CREATES the row, and `preferred_language` lands on its `en`
-      // default — which server-side features read as a deliberate choice
-      // and used to generate English insights for a Hebrew business.
-      preferred_language: language,
-      updated_at: stamp,
-    }, { onConflict: 'user_id' });
+      if (res.ok && payload?.success === true && payload?.data?.timezone === zone) {
+        return zone;
+      }
 
-    if (prefsError) {
-      logger.error({ err: prefsError, userId: user.id, zone }, 'Failed to store the timezone');
+      logger.error({ userId: user.id, zone, status: res.status }, 'The server did not confirm the timezone');
+      return null;
+    } catch (err) {
+      logger.error({ err, userId: user.id, zone }, 'Failed to save the timezone');
       return null;
     }
-
-    /*
-     * A targeted UPDATE, not an upsert: the row exists, and naming the single
-     * column cannot clobber a field this screen did not intend to write.
-     */
-    const { error: mirrorError } = await supabase
-      .from('profiles')
-      .update({ timezone: zone, updated_at: stamp })
-      .eq('id', user.id);
-
-    if (mirrorError) {
-      logger.error({ err: mirrorError, userId: user.id, zone }, 'Failed to mirror the timezone onto the profile');
-    }
-
-    const { data: prefsRow } = await supabase
-      .from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle();
-
-    if (prefsRow?.timezone !== zone) {
-      logger.error(
-        { userId: user.id, zone, stored: prefsRow?.timezone },
-        'The timezone did not persist: the write reported success but the stored value differs'
-      );
-      return null;
-    }
-
-    return zone;
   };
 
   const saveProfile = async (overrides?: Partial<typeof profile>) => {
     if (!user) return;
+
+    // The timezone row passes { timezone } and must save ONLY the timezone.
+    // The card's Save passes nothing and must NEVER touch the timezone:
+    // re-sending it stamped timezone_confirmed_at and answered the publish
+    // gate's question on the owner's behalf (F-24). The pick does not re-write
+    // the card either, so it cannot save a half-typed or cancelled name, and
+    // it leaves the editor as it was (settings drawer D-2, SA ruling Q-1 (b)).
+    if (overrides?.timezone !== undefined) {
+      const zone = overrides.timezone;
+      try {
+        setSaving(true);
+        setSuccessMessage('');
+        setErrorMessage('');
+        const saved = zone ? await persistTimezone(zone) : null;
+        if (!saved) {
+          setErrorMessage(t('settings.profile.error'));
+          return;
+        }
+        setSuccessMessage(t('settings.profile.saved'));
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
 
     // Passed in rather than read back out of state, so the save cannot depend
     // on whether React has re-rendered yet.
@@ -361,26 +464,24 @@ function BusinessOSSettingsContent() {
       setSuccessMessage('');
       setErrorMessage('');
 
-      const { error: profileError } = await supabase.from('profiles').upsert({
-        id: user.id,
-        full_name: next.full_name,
-        avatar_url: next.avatar_url,
-        job_title: next.job_title,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' });
-
-      if (profileError) {
-        logger.error({ err: profileError, userId: user.id }, 'Failed to save the profile row');
+      // The name only. No avatar_url (the avatar hook stored it at pick time,
+      // F-6), no job_title (the card has no field for it, F-1, and a failed
+      // read would blank it), and no timezone (F-24).
+      const res = await fetch('/api/business-os/account-profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: next.full_name }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || payload?.success !== true) {
+        logger.error({ userId: user.id, status: res.status }, 'Failed to save the profile card');
         setErrorMessage(t('settings.profile.error'));
         return;
       }
-
-      if (next.timezone) {
-        const saved = await persistTimezone(next.timezone);
-        if (!saved) {
-          setErrorMessage(t('settings.profile.error'));
-          return;
-        }
+      // Show what was stored (the route trims).
+      const storedName: unknown = payload.data?.full_name;
+      if (typeof storedName === 'string') {
+        setProfile(p => ({ ...p, full_name: storedName }));
       }
 
       setEditingProfile(false);
@@ -418,31 +519,6 @@ function BusinessOSSettingsContent() {
       </div>
     </div>
   );
-
-  const handleExportData = async () => {
-    if (!user) return;
-
-    try {
-      setExporting(true);
-
-      // The server export, not a client read (DE-0a): reading the tables here
-      // with `select('*')` put every plugin's OAuth tokens in the file.
-      const result = await downloadUserDataExport();
-      if (!result.success) {
-        logger.error({ code: result.code, status: result.status }, 'Failed to export the account data');
-        setErrorMessage(t('settings.security.export_error'));
-        return;
-      }
-
-      setSuccessMessage(t('settings.security.export_success'));
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to export the account data');
-      setErrorMessage(t('settings.security.export_error'));
-    } finally {
-      setExporting(false);
-    }
-  };
 
   /**
    * Sign out, properly.
@@ -485,9 +561,12 @@ function BusinessOSSettingsContent() {
      * particular, because a second copy of it here drifts the moment a key is
      * added and silently starts leaking one person's state to the next.
      *
-     * Nothing it does can trap someone in a session they asked to leave: a
-     * failed audit write or a failed server sign-out is logged inside and the
-     * local state is cleared regardless.
+     * It cannot trap someone in a session they asked to leave, by contract:
+     * it never rejects, it returns within about 9 seconds (each network step
+     * has a deadline), and it always clears this browser's session, cookies
+     * included, even when the server does not answer. When the server fails
+     * a GLOBAL sign-out, other devices may stay signed in until their session
+     * expires; this browser is signed out either way.
      */
     const result = await signOutUser({ scope: 'global', user, method: 'settings' });
     if (!result.ok) {
@@ -935,8 +1014,11 @@ function BusinessOSSettingsContent() {
             sale it stays read-only and shows no button that does nothing.
 
             Since settings drawer S-1 the row opens a drawer instead of expanding
-            in place. It shows the title only (C-8): the plan is fetched when the
-            drawer opens, by `PlanSection`, as it was when the row expanded.
+            in place. It shows the title only (C-8). Since C-b the plan read is
+            started before the click (browser idle, or the row's hover, focus or
+            press) and `PlanSection` takes it for its first read, but only until
+            the drawer has been opened and closed once. A checkout return, every
+            later open and every re-read inside the drawer read fresh.
           */}
           {/* Id kept (S-5, SA W-5). Nothing in the repo links to it any more (every
               sender uses `?section=plan`), but it costs nothing, matches the
@@ -948,6 +1030,9 @@ function BusinessOSSettingsContent() {
               type="button"
               aria-haspopup="dialog"
               aria-expanded={planDrawer.open}
+              onPointerEnter={planPrefetch.warm}
+              onFocus={planPrefetch.warm}
+              onPointerDown={planPrefetch.warm}
               onClick={planDrawer.openFromRow}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
@@ -968,7 +1053,7 @@ function BusinessOSSettingsContent() {
             >
               {/* P-4.2: the checkout return marker (display only; the section
                   pattern-checks it and only the server re-read shows a plan). */}
-              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} />
+              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} takePrefetched={planPrefetch.take} />
             </SettingsDrawer>
           </div>
 
@@ -1002,6 +1087,9 @@ function BusinessOSSettingsContent() {
               type="button"
               aria-haspopup="dialog"
               aria-expanded={consentDrawerOpen}
+              onPointerEnter={consentPrefetch.warm}
+              onFocus={consentPrefetch.warm}
+              onPointerDown={consentPrefetch.warm}
               onClick={() => setConsentDrawerOpen(true)}
               className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
             >
@@ -1015,6 +1103,7 @@ function BusinessOSSettingsContent() {
               open={consentDrawerOpen}
               onOpenChange={setConsentDrawerOpen}
               returnFocusRef={consentRowRef}
+              takePrefetched={consentPrefetch.take}
             />
           </div>
 
@@ -1062,18 +1151,10 @@ function BusinessOSSettingsContent() {
           </div>
           )}
 
-          {/* Export Data */}
-          <button
-            onClick={handleExportData}
-            disabled={exporting}
-            className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors disabled:opacity-50"
-          >
-            <div className="flex items-center gap-3">
-              <Download className="w-5 h-5 text-[var(--v2-text-muted)]" />
-              <span className="text-sm text-[var(--v2-text-primary)]">{t('settings.security.export_data')}</span>
-            </div>
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className={rowChevron()} aria-hidden="true" />}
-          </button>
+          {/* Download my data (data export DE-9): the one shared control. It
+              owns its request, status line and notice (UI-1); the page banner
+              above no longer carries export messages. */}
+          <DownloadMyDataButton variant="row" />
 
           {/* Log out.
               Between "export my data" and "destroy my account": the last

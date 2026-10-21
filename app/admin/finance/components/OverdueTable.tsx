@@ -59,7 +59,7 @@ import {
 } from '../financeCopy';
 import { atLeast, formatMoney } from '../financeFormat';
 
-const NOTE = 'text-[11px] text-slate-500';
+const NOTE = 'text-[11px] text-slate-400';
 
 function businessName(row: FinanceDueRow): string {
   switch (row.nameStatus) {

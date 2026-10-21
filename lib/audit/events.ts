@@ -115,6 +115,16 @@ export const AUDIT_EVENTS = {
   // The owner's own data download from the V2 security settings. Distinct from
   // DATA_EXPORTED, which is the server-side GDPR export.
   USER_DATA_EXPORTED: 'USER_DATA_EXPORTED',
+  // Business OS "Download my data" (data export DE-8a registers the names; the
+  // emitters arrive in DE-8b, DE-9 and DE-10a). entityType 'user', entityId =
+  // the account, details.job_id = the business_os_data_exports row. Never the
+  // business name, a file name or any exported content.
+  DATA_EXPORT_REQUESTED: 'DATA_EXPORT_REQUESTED',
+  DATA_EXPORT_READY: 'DATA_EXPORT_READY',
+  DATA_EXPORT_FAILED: 'DATA_EXPORT_FAILED',
+  DATA_EXPORT_DOWNLOADED: 'DATA_EXPORT_DOWNLOADED',
+  DATA_EXPORT_EXPIRED: 'DATA_EXPORT_EXPIRED',
+  DATA_EXPORT_DOWNLOADED_BY_ADMIN: 'DATA_EXPORT_DOWNLOADED_BY_ADMIN',
   DATA_DELETED: 'DATA_DELETED', // Right to erasure
   DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
   // Business OS purge (Reset / Purge of one business's data). Distinct from
@@ -163,6 +173,21 @@ export const AUDIT_EVENTS = {
   // guard ids, the resolved login id if any and the correlationId. Never the
   // email and never the tag (the tag is free text and can itself be an email).
   BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED: 'BUSINESS_TEST_ACCOUNT_REMOVAL_REFUSED',
+  // Data export DE-10b.1 (SA Review 2 §D, O-8): an account closed and anonymised
+  // in place (the tombstone). Written ONLY inside the cleanup database function,
+  // in the same transaction as the deletes, the blanks, the login closure and
+  // the deletion receipt. Entity type 'user', id = the closed login. user_id =
+  // actor_id = the admin for an admin run, NULL for an owner run (the owner's
+  // login is closed, SA F-2). Details: source, receipt id, mode, counts. Never
+  // an email, a reason note or a fingerprint. The SQL literal is pinned to this
+  // registration by scripts/__tests__/testAccountCleanupSql.test.ts.
+  ACCOUNT_PSEUDONYMISED: 'ACCOUNT_PSEUDONYMISED',
+  // Data export DE-10b.1 (R-3): an account deletion in the anonymise mode that
+  // was refused or failed (a guard, the typed confirmation, the storage step, a
+  // missing key or an error). Written by the route through logAndFlush. Carries
+  // the guard ids, the resolved login id if any, files_removed and the
+  // correlationId. Never the email, the reason note or the fingerprint.
+  ACCOUNT_DELETION_REFUSED: 'ACCOUNT_DELETION_REFUSED',
   // Business OS AI activity (Layer 3): one entry per AI action or background
   // job, summarising its LLM calls. Written by the server only; a browser can
   // never write one (lib/audit/requestSchemas.ts) and owners never read one
@@ -358,6 +383,22 @@ export const AUDIT_EVENTS = {
   BOS_QUEUE_ITEM_RETRIED: 'BOS_QUEUE_ITEM_RETRIED',
 
   // ==========================================
+  // PLATFORM EXCHANGE RATES (admin-only, server-written)
+  // ==========================================
+  // Admin Exchange Rates slice 1a (SA-R9): an admin set ONE currency's rate to
+  // USD (PATCH /api/admin/exchange-rates/[currencyCode], field 'rate'), or
+  // switched ONE currency on or off (field 'enabled'). Entity type
+  // 'exchange_rate', id = the currency code; user_id = actor = the admin.
+  // Written with logAndFlush before the response (WC-7). Details are exactly
+  // { currencyCode, field, oldValue, newValue }: rates as decimal strings, the
+  // enabled flag as stored (a null old value stays null). A same-value save
+  // ("confirmed for this month", SA-R7) records oldValue equal to newValue. No
+  // amount is converted with any rate (D-5). The rate change is also
+  // historised by the database trigger; the toggle is recorded only here.
+  EXCHANGE_RATE_UPDATED: 'EXCHANGE_RATE_UPDATED',
+  EXCHANGE_RATE_ENABLED_CHANGED: 'EXCHANGE_RATE_ENABLED_CHANGED',
+
+  // ==========================================
   // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
   // ==========================================
   // Plan payments P-3a (AM-7, SA-P3): an owner opened a Business OS plan
@@ -419,6 +460,31 @@ export const AUDIT_EVENTS = {
   // id, new and previous customer ids, record path, livemode false, correlation
   // id. Logged and flushed before the response (WC-7).
   BOS_BILLING_TEST_CLOCK_ATTACHED: 'BOS_BILLING_TEST_CLOCK_ATTACHED',
+  // Plan payments P-6a.2 (workplan §5.3, §5.11; SA C-10, U-10): a RENEWAL
+  // payment of a Business OS plan failed (invoice.payment_failed with
+  // billing_reason subscription_cycle). Written once per new money history
+  // row by planPaymentApply through recordPlanChange (bounded flush, PF-11);
+  // never for an upgrade (U-10), never for a replay. Platform actor and
+  // details.actor 'stripe_webhook'. Entity type 'business_os_account_plan',
+  // id = the account. Details: invoice and subscription ids, Stripe's attempt
+  // count, billing reason, livemode, event id, money history row id. Written
+  // BEFORE the billing record write (so a thrown write cannot lose it), so it
+  // does not say what that write did: the bos_billing_renewal_failure_counted
+  // log line does. Never the hosted invoice URL, an email or a card.
+  BOS_BILLING_PAYMENT_FAILED: 'BOS_BILLING_PAYMENT_FAILED',
+  // Plan payments P-6a.2 (§5.4): a RENEWAL payment needs the owner's bank
+  // authentication (3-D Secure, invoice.payment_action_required with
+  // billing_reason subscription_cycle). Same writer, actor, entity and rules as
+  // BOS_BILLING_PAYMENT_FAILED. The hosted invoice URL is NEVER in the details.
+  BOS_BILLING_PAYMENT_ACTION_REQUIRED: 'BOS_BILLING_PAYMENT_ACTION_REQUIRED',
+  // Plan payments P-6a.2 (§5.5; SA C-4): Stripe ended a Business OS plan
+  // subscription (customer.subscription.deleted, once per subscription).
+  // Written by planSubscriptionMirror through recordPlanChange, only when the
+  // subscription_ended money history row is new. Platform actor. Entity type
+  // 'business_os_account_plan', id = the account. Details: subscription id,
+  // Stripe's cancellation reason when given (payment_failed or
+  // cancellation_requested), livemode, event id, money history row id.
+  BOS_BILLING_SUBSCRIPTION_ENDED: 'BOS_BILLING_SUBSCRIPTION_ENDED',
 
   // ==========================================
   // ADMIN ARCHIVING (admin-only, server-written)
@@ -454,10 +520,13 @@ export const AUDIT_EVENTS = {
   // SYSTEM CONFIGURATION EVENTS
   // ==========================================
   ROUTING_CONFIG_UPDATED: 'ROUTING_CONFIG_UPDATED', // Intelligent routing settings
+  // Historic: the five AI_PRICING_* events below are no longer emitted since AI model
+  // price review slice 6 removed Sync and the single-row edit. They stay registered so
+  // existing audit rows keep their label and severity (SA D-4).
   AI_PRICING_CREATED: 'AI_PRICING_CREATED',
   AI_PRICING_UPDATED: 'AI_PRICING_UPDATED',
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
-  AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
+  AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Sync copied a built-in list from the code; it never contacted a provider
   AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
   // AI model price review slice 3: an admin recorded a provider's new price by hand. It is
   // PENDING only (ai_price_proposal_lines) and changes no charge until someone applies it.
@@ -465,6 +534,13 @@ export const AUDIT_EVENTS = {
   // AI model price review slice 5: an admin pressed "Check provider prices". The
   // fetched prices are PENDING only and change no charge until someone applies them.
   AI_PRICE_FETCH_RUN: 'AI_PRICE_FETCH_RUN',
+  // AI model price review slice 8: an admin applied a pending price. One entry per line;
+  // the charge for that model changes on every server within 1 hour (MP-FR-9).
+  AI_PRICING_APPLIED_LINE: 'AI_PRICING_APPLIED_LINE',
+  // Slice 8: an admin dismissed a pending price, with a reason. No charge changes.
+  AI_PRICE_LINE_DISMISSED: 'AI_PRICE_LINE_DISMISSED',
+  // Slice 8: an admin marked the margin review of one Apply done, with a note (MP-FR-14).
+  AI_PRICE_MARGIN_REVIEW_DONE: 'AI_PRICE_MARGIN_REVIEW_DONE',
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -838,6 +914,42 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'User data exported (GDPR Article 20)',
   },
+  // Data export DE-8a (SA Q-9, 2026-10-17). An owner's own export is routine,
+  // so READY is info, not critical: critical feeds the Health "Critical audit
+  // events" tile and the 7-year class, and an ordinary self-export must not
+  // raise an operational alarm (as password changes and refunds, #157/#160).
+  // An admin downloading a customer's data is the one rare, high-impact act:
+  // critical (business call B-2, TL default 2026-10-17).
+  [AUDIT_EVENTS.DATA_EXPORT_REQUESTED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'A data export (Download my data) was started by the owner or an admin',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_READY]: {
+    severity: 'info',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'A data export finished and is ready to download for 3 days (GDPR Article 20)',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR'],
+    description: 'A data export failed (too large, timed out or an error); it does not count against the daily limit',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_DOWNLOADED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'The owner downloaded their data export',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_EXPIRED]: {
+    severity: 'info',
+    complianceFlags: ['GDPR'],
+    description: 'A data export file was removed after its 3 days, or replaced by a newer export',
+  },
+  [AUDIT_EVENTS.DATA_EXPORT_DOWNLOADED_BY_ADMIN]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: "An admin downloaded a customer's data export",
+  },
   [AUDIT_EVENTS.DATA_DELETED]: {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
@@ -1065,10 +1177,41 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: "An admin put a Business OS account's test-mode billing record on a fresh Stripe test clock (test mode only; the test-mode customer was replaced)",
   },
+  // Plan payments P-6a.2. 'info' (SA C-10): a customer's card being declined,
+  // asked for authentication, or a subscription ending needs no operator
+  // action; 'warning' stays for "an operator looks" (BOS_BILLING_PAYMENT_REFUSED).
+  // SOC2, as every Business OS billing event.
+  [AUDIT_EVENTS.BOS_BILLING_PAYMENT_FAILED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS plan renewal payment failed (Stripe attempt count recorded; Stripe retries it)',
+  },
+  [AUDIT_EVENTS.BOS_BILLING_PAYMENT_ACTION_REQUIRED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "A Business OS plan renewal payment needs the owner's bank authentication (3-D Secure)",
+  },
+  [AUDIT_EVENTS.BOS_BILLING_SUBSCRIPTION_ENDED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: "Stripe ended a Business OS plan subscription (Stripe's reason recorded when given)",
+  },
   [AUDIT_EVENTS.BOS_QUEUE_ITEM_RETRIED]: {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin put one failed Business OS queue item back for exactly one more send attempt',
+  },
+  // Admin Exchange Rates slice 1a (SA-R9): info; no figure on the platform is
+  // converted with a rate (D-5).
+  [AUDIT_EVENTS.EXCHANGE_RATE_UPDATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Exchange rate set by an admin (no amount converted)',
+  },
+  [AUDIT_EVENTS.EXCHANGE_RATE_ENABLED_CHANGED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Currency switched on or off by an admin',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {
@@ -1115,6 +1258,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An admin test-account removal was refused or failed; nothing or only storage files were removed',
+  },
+  // DE-10b.1. 'critical': an irreversible erasure of a real account (the receipt is the proof).
+  [AUDIT_EVENTS.ACCOUNT_PSEUDONYMISED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An account was closed and anonymised in place; our billing kept with personal details removed',
+  },
+  [AUDIT_EVENTS.ACCOUNT_DELETION_REFUSED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'An account deletion was refused or failed; nothing or only storage files were removed',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',
@@ -1340,7 +1494,7 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   [AUDIT_EVENTS.AI_PRICING_SYNCED]: {
     severity: 'info',
     complianceFlags: ['SOC2'],
-    description: 'AI model pricing synced from external source',
+    description: 'AI model pricing synced from the built-in list',
   },
   // Critical, like AI_PRICING_DELETED: the revenue effect is comparable — every
   // call to a zero-priced model is billed at $0 until someone notices.
@@ -1365,6 +1519,27 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Provider prices checked (stored as pending, not applied)',
+  },
+  // Warning: a live price changed, so every later charge on that model changes (SA O-13).
+  // Written with logAndFlush (one list call for the whole Apply, SA RC-12) by
+  // POST /api/admin/model-pricing/apply; entity 'ai_pricing', entity id the line id,
+  // entity_kind 'price_line' in details.
+  [AUDIT_EVENTS.AI_PRICING_APPLIED_LINE]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'AI model price applied (a live price changed)',
+  },
+  // Info: nothing is charged differently. POST /api/admin/model-pricing/dismiss.
+  [AUDIT_EVENTS.AI_PRICE_LINE_DISMISSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Pending AI model price dismissed (not applied)',
+  },
+  // Info: the margin review prompt of one Apply marked done; entity_kind 'apply_batch'.
+  [AUDIT_EVENTS.AI_PRICE_MARGIN_REVIEW_DONE]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Margin review after an AI model price change marked done',
   },
 
   // Workflow Pilot events

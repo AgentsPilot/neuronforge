@@ -14,12 +14,21 @@
  * (BD-12). Every money cell names its currency (`formatMoney`).
  *
  * HONESTY: "At least" when the read stopped at its limit or an amount was
- * left out; net and the dispute amounts "Unknown" when they cannot be exact,
- * never a lower bound. No mode wording anywhere (BD-14). Shared layout parts
+ * left out; net "Unknown" when it cannot be exact, never a lower bound.
+ *
+ * SLICE 4b.2 (BD-17): refunded and lost are the amounts RECORDED in the
+ * window (from the reversal events), "Unknown" when that read failed, with no
+ * purchase-month fallback. Held in open disputes is a NOW figure, its own
+ * small table beside the lines (E-104), never in a net. A negative net shows
+ * its minus sign (`formatMoney`). No mode wording anywhere (BD-14). Shared layout parts
  * through the alias (S4-FR-12); every string from `financeCopy.ts`.
  */
 
-import type { FinanceBoostLine, FinanceBoostNotes, FinanceBoostPackageRow, FinanceBoostRevenue, FinanceRevenueSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceBoostEventsNote, FinanceBoostHeldNowLine, FinanceBoostLine, FinanceBoostNotes, FinanceBoostPackageRow, FinanceBoostRevenue, FinanceRevenueSection } from '@/lib/business-os/finance/financeTypes';
+import type { FinanceBoostProblemsPart } from '@/lib/business-os/finance/financeTypes';
+// Money MK-4: a separate import, so the line above stays unedited.
+import type { FinanceMrrSection } from '@/lib/business-os/finance/financeTypes';
+import { RecurringNowPart } from './RecurringNowPart';
 import { AdminEmpty, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatCount } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -44,7 +53,14 @@ import {
   REVENUE_DELETED_NONE,
   REVENUE_EXCLUDES_UNREADABLE,
   REVENUE_GROSS,
+  REVENUE_EVENTS_FAILED,
+  REVENUE_EVENTS_NOT_AVAILABLE,
+  REVENUE_EVENTS_OVER_TOTAL,
+  REVENUE_EVENTS_UNREADABLE,
   REVENUE_HELD,
+  REVENUE_HELD_DISPUTES,
+  REVENUE_HELD_FAILED,
+  REVENUE_HELD_NONE,
   REVENUE_LOST,
   REVENUE_NET,
   REVENUE_NET_SHORT,
@@ -71,10 +87,11 @@ import {
 } from '../financeCopy';
 import { atLeast, formatCredits, formatMoney } from '../financeFormat';
 import { FinanceSection } from './FinanceSection';
+import { OurBoostProblems } from './PaymentProblemsSection';
 import { PlanRevenuePart } from './PlanRevenuePart';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
-const NOTE = 'text-[11px] text-slate-500';
+const NOTE = 'text-[11px] text-slate-400';
 
 const currencyLabel = (currency: string | null) => currency ?? TAKINGS_UNKNOWN_CURRENCY;
 
@@ -85,12 +102,29 @@ export function RevenuePanel({
   revenue,
   windowLabel,
   onRetry,
+  mrr,
+  stripeMode = null,
+  boostProblems,
+  accountId = null,
 }: {
   revenue: FinanceRevenueSection;
   windowLabel: string;
   onRetry: () => void;
+  /** Money MK-4: MRR now. Absent (fixtures before MK-4): no "Recurring now" part, the panel as before. */
+  mrr?: FinanceMrrSection;
+  /** Money MK-4 (CR-2): the key the MRR was read with; labels the MRR line only. */
+  stripeMode?: 'test' | 'live' | null;
+  /**
+   * Money MK-6 (§6 item 14): "Our payment problems (boosts)", moved here from the
+   * old Payment problems section. Its own read, so it also shows when Revenue
+   * could not load. Absent (fixtures before 4b.2): not rendered.
+   */
+  boostProblems?: FinanceBoostProblemsPart;
+  /** The picked business, for the boost problems' Businesses link; null for all businesses. */
+  accountId?: string | null;
 }) {
   const scope = revenue.boosts.scope;
+  const ourProblems = boostProblems ? <OurBoostProblems part={boostProblems} accountId={accountId} /> : null;
   return (
     <FinanceSection
       id="revenue"
@@ -98,16 +132,20 @@ export function RevenuePanel({
       subtitle={scope === 'one' ? REVENUE_SUBTITLE_ONE(windowLabel) : REVENUE_SUBTITLE_ALL(windowLabel)}
       status={revenue.status}
       onRetry={onRetry}
+      alsoWhenUnknown={ourProblems}
     >
       <div className="space-y-4" data-testid="revenue-body" data-state={revenue.state}>
         <div className="space-y-2" data-testid="revenue-plans-part">
           <h3 className={SUBHEAD}>{REVENUE_PLANS_HEADING}</h3>
           <PlanRevenuePart plans={revenue.plans} />
         </div>
+        {mrr && <RecurringNowPart mrr={mrr} stripeMode={stripeMode} />}
         <div className="space-y-2" data-testid="revenue-boosts-part">
           <h3 className={SUBHEAD}>{REVENUE_BOOSTS_HEADING}</h3>
           <BoostsPart boosts={revenue.boosts} />
         </div>
+        {/* MK-6: our boost problems, with our money (BD-38). */}
+        {ourProblems}
         <div data-testid="revenue-cannot">
           <p className={NOTE}>{REVENUE_CANNOT_TITLE}</p>
           <ul className={`list-disc pl-5 ${NOTE}`}>
@@ -130,13 +168,21 @@ function BoostsPart({ boosts }: { boosts: FinanceBoostRevenue }) {
     );
   }
   const notes = boosts.notes;
+  // Slice 4b.2: absent only in fixtures written before it (E-103); the builder always sets both.
+  const events = boosts.events ?? null;
+  const heldNow = boosts.heldNow;
   if (notes.empty) {
     return (
       <div className="space-y-2" data-testid="revenue-boosts">
         {!notes.exact && <AdminNotice testId="revenue-notice-cut">{REVENUE_NOTICE_CUT}</AdminNotice>}
+        {events && <EventNotices events={events} />}
         <AdminEmpty testId="revenue-no-boosts" message={REVENUE_NO_BOOSTS} />
         {notes.otherStatusPurchases > 0 && (
           <p className={NOTE} data-testid="revenue-other-status">{REVENUE_OTHER_STATUS(notes.otherStatusPurchases)}</p>
+        )}
+        {heldNow !== undefined && <HeldNowTable heldNow={heldNow} />}
+        {notes.refundOrDispute && (
+          <p className={NOTE} data-testid="revenue-refund-note">{REVENUE_REFUND_TIMING_NOTE}</p>
         )}
       </div>
     );
@@ -144,7 +190,9 @@ function BoostsPart({ boosts }: { boosts: FinanceBoostRevenue }) {
   return (
     <div className="space-y-4" data-testid="revenue-boosts">
       <BoostNotices notes={notes} lines={boosts.lines} />
+      {events && <EventNotices events={events} />}
       <LinesTable lines={boosts.lines} exact={notes.exact} />
+      {heldNow !== undefined && <HeldNowTable heldNow={heldNow} />}
       {notes.otherStatusPurchases > 0 && (
         <p className={NOTE} data-testid="revenue-other-status">{REVENUE_OTHER_STATUS(notes.otherStatusPurchases)}</p>
       )}
@@ -188,6 +236,61 @@ function BoostNotices({ notes, lines }: { notes: FinanceBoostNotes; lines: Finan
   );
 }
 
+/** FR-4B-9 / FR-4B-16 / SA-Q74: how the refund and dispute dates were read. */
+function EventNotices({ events }: { events: FinanceBoostEventsNote }) {
+  return (
+    <>
+      {events.state === 'failed' && <AdminNotice testId="revenue-notice-events-failed">{REVENUE_EVENTS_FAILED}</AdminNotice>}
+      {events.state === 'not_available' && (
+        <AdminNotice testId="revenue-notice-events-not-available">{REVENUE_EVENTS_NOT_AVAILABLE}</AdminNotice>
+      )}
+      {events.unreadable > 0 && (
+        <AdminNotice testId="revenue-notice-events-unreadable">{REVENUE_EVENTS_UNREADABLE(events.unreadable)}</AdminNotice>
+      )}
+      {events.overTotal > 0 && (
+        <p className={NOTE} data-testid="revenue-events-over-total">{REVENUE_EVENTS_OVER_TOTAL(events.overTotal)}</p>
+      )}
+    </>
+  );
+}
+
+/** FR-4B-4 / E-104: held in open disputes NOW, per currency; never taken off any month. */
+function HeldNowTable({ heldNow }: { heldNow: FinanceBoostHeldNowLine[] | null }) {
+  if (heldNow === null) {
+    return <p className={NOTE} data-testid="revenue-held-now-failed">{REVENUE_HELD_FAILED}</p>;
+  }
+  if (heldNow.length === 0) {
+    return <p className={NOTE} data-testid="revenue-held-now-none">{REVENUE_HELD_NONE}</p>;
+  }
+  return (
+    <div className="space-y-2" data-testid="revenue-held-now">
+      <p className={SUBHEAD}>{REVENUE_HELD}</p>
+      <div className={ADMIN_TABLE_WRAP}>
+        <table className={ADMIN_TABLE} aria-label={REVENUE_HELD}>
+          <thead className={ADMIN_THEAD}>
+            <tr>
+              <th scope="col" className={ADMIN_TH}>{REVENUE_CURRENCY}</th>
+              <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_HELD_DISPUTES}</th>
+              <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_HELD}</th>
+            </tr>
+          </thead>
+          <tbody className={ADMIN_TBODY}>
+            {heldNow.map((line) => (
+              <tr key={line.currency ?? 'unknown'} data-testid={`revenue-held-now-${line.currency ?? 'unknown'}`}>
+                <th scope="row" className={`${ADMIN_TD} font-normal`}>{currencyLabel(line.currency)}</th>
+                <td className={ADMIN_TD_NUM}>{formatCount(line.disputes)}</td>
+                <td className={ADMIN_TD_NUM} data-money="held">
+                  {line.amount === null ? REVENUE_UNKNOWN : formatMoney(line.amount, line.currency)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function LinesTable({ lines, exact }: { lines: FinanceBoostLine[]; exact: boolean }) {
   const exactMoney = (amount: number | null, currency: string | null) =>
     amount === null ? unknownText(exact) : formatMoney(amount, currency);
@@ -201,7 +304,6 @@ function LinesTable({ lines, exact }: { lines: FinanceBoostLine[]; exact: boolea
             <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_GROSS}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_TAX}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_REFUNDED}</th>
-            <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_HELD}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_LOST}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_NET}</th>
             <th scope="col" className={ADMIN_TH_NUM}>{REVENUE_CREDITS_SOLD}</th>
@@ -212,6 +314,10 @@ function LinesTable({ lines, exact }: { lines: FinanceBoostLine[]; exact: boolea
             // A lower bound when the read was cut off, or a purchase on this line was left out.
             const moneyExact = exact && line.unreadable === 0;
             const lowerBound = (amount: number) => atLeast(formatMoney(amount, line.currency), moneyExact);
+            // Slice 4b.2: refunded and lost are Unknown when the event read failed; "at least" when an event was left out.
+            const eventsExact = exact && line.unreadableEvents === 0;
+            const eventMoney = (amount: number | null) =>
+              amount === null ? REVENUE_UNKNOWN : atLeast(formatMoney(amount, line.currency), eventsExact);
             return (
               <tr key={line.currency ?? 'unknown'} data-testid={`revenue-line-${line.currency ?? 'unknown'}`}>
                 <th scope="row" className={`${ADMIN_TD} font-normal`}>
@@ -221,9 +327,8 @@ function LinesTable({ lines, exact }: { lines: FinanceBoostLine[]; exact: boolea
                 <td className={ADMIN_TD_NUM}>{atLeast(formatCount(line.purchases), exact)}</td>
                 <td className={ADMIN_TD_NUM} data-money="gross">{lowerBound(line.gross)}</td>
                 <td className={ADMIN_TD_NUM} data-money="tax">{lowerBound(line.tax)}</td>
-                <td className={ADMIN_TD_NUM} data-money="refunded">{lowerBound(line.refunded)}</td>
-                <td className={ADMIN_TD_NUM} data-money="held">{exactMoney(line.held, line.currency)}</td>
-                <td className={ADMIN_TD_NUM} data-money="lost">{exactMoney(line.lost, line.currency)}</td>
+                <td className={ADMIN_TD_NUM} data-money="refunded">{eventMoney(line.refunded)}</td>
+                <td className={ADMIN_TD_NUM} data-money="lost">{eventMoney(line.lost)}</td>
                 <td className={ADMIN_TD_NUM} data-money="net">{exactMoney(line.net, line.currency)}</td>
                 <td className={ADMIN_TD_NUM}>{atLeast(formatCredits(line.creditsSold), exact && line.unreadableCredits === 0)}</td>
               </tr>
@@ -264,7 +369,9 @@ function PackagesTable({ packages, exact }: { packages: FinanceBoostPackageRow[]
                   <th scope="row" className={`${ADMIN_TD} font-normal`}>{label}</th>
                   <td className={ADMIN_TD_NUM}>{atLeast(formatCount(row.purchases), exact)}</td>
                   <td className={ADMIN_TD_NUM} data-money="gross">{atLeast(formatMoney(row.gross, row.currency), moneyExact)}</td>
-                  <td className={ADMIN_TD_NUM} data-money="refunded">{atLeast(formatMoney(row.refunded, row.currency), moneyExact)}</td>
+                  <td className={ADMIN_TD_NUM} data-money="refunded">
+                    {row.refunded === null ? REVENUE_UNKNOWN : atLeast(formatMoney(row.refunded, row.currency), moneyExact)}
+                  </td>
                   <td className={ADMIN_TD_NUM} data-money="net">
                     {row.net !== null ? formatMoney(row.net, row.currency) : unknownText(exact)}
                   </td>

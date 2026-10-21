@@ -16,7 +16,9 @@
 //     `ALTER POLICY "Users can view their own audit logs"`: 20261018, then
 //     20261035 for `bos_queue_item`, ADMIN_BOS_CLEANUP slice 7b);
 //   - AuditTrailRepository.listOwnerEntries (GET /api/audit/query, /monitoring);
-//   - the data export route (app/api/user/data-export).
+//   - the data export (app/api/business-os/data-exports and
+//     lib/business-os/data-export/, which since DE-1 read no audit rows at
+//     all; the JSON route app/api/user/data-export was retired by DE-9).
 // lib/audit/__tests__/ownerVisibility.test.ts fails if the policy's list and
 // this registry differ, and lib/audit/__tests__/ownerAuditReads.guard.test.ts
 // fails if a new owner-facing reader of `audit_trail` appears.
@@ -98,6 +100,11 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   // operator entity type, or reclassify this one together with the
   // owner-policy migration.
   business_os_account_lineage: 'owner',
+  // Admin Exchange Rates slice 1a (SA O-6): written with the admin's own id as
+  // user_id (PATCH /api/admin/exchange-rates/[currencyCode]), never against a
+  // customer account, so 'owner' shows it to nobody but that admin, and the
+  // owner policy's NOT IN list (and so its migration) is unchanged.
+  exchange_rate: 'owner',
 } as const satisfies Record<EntityType, AuditOwnerVisibility>;
 
 /**

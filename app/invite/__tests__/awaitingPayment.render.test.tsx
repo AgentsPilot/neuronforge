@@ -64,7 +64,7 @@ jest.mock('@stripe/react-stripe-js', () => ({
 }));
 
 const signOuts: unknown[] = [];
-let signOutResult = { ok: true };
+let signOutResult: { ok: boolean; clearedLocally?: boolean } = { ok: true };
 jest.mock('@/lib/client/auth-actions', () => ({
   signOutUser: async (options: unknown) => {
     signOuts.push(options);
@@ -146,6 +146,34 @@ describe('held (FR-35)', () => {
     await renderPage();
     await userEvent.setup().click(screen.getByTestId('awaiting-payment-sign-out'));
     expect(await screen.findByRole('alert')).toHaveTextContent(AWAITING_PAYMENT_COPY.en.signOutFailed);
+  });
+
+  /*
+   * Slice C-c (SA-CC-7): the server did not confirm, but this browser IS signed
+   * out. After a hung request a retry cannot succeed (the auth lock is held),
+   * so the friend goes on to sign-in instead of seeing "failed".
+   */
+  it('server unconfirmed but cleared locally: goes on to sign-in, no failure shown', async () => {
+    hold.value = held('en');
+    signOutResult = { ok: false, clearedLocally: true };
+    const assign = jest.fn();
+    Object.defineProperty(window, 'location', { value: { ...window.location, assign }, writable: true });
+    await renderPage();
+    await userEvent.setup().click(screen.getByTestId('awaiting-payment-sign-out'));
+    expect(assign).toHaveBeenCalledWith(expect.stringMatching(/\/login$/));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('not cleared locally either: failure shown, button enabled for a retry, no navigation', async () => {
+    hold.value = held('en');
+    signOutResult = { ok: false, clearedLocally: false };
+    const assign = jest.fn();
+    Object.defineProperty(window, 'location', { value: { ...window.location, assign }, writable: true });
+    await renderPage();
+    await userEvent.setup().click(screen.getByTestId('awaiting-payment-sign-out'));
+    expect(await screen.findByRole('alert')).toHaveTextContent(AWAITING_PAYMENT_COPY.en.signOutFailed);
+    expect(screen.getByTestId('awaiting-payment-sign-out')).toBeEnabled();
+    expect(assign).not.toHaveBeenCalled();
   });
 });
 

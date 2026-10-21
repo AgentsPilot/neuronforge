@@ -81,6 +81,8 @@ import type {
 import type { FinanceBillingStatusRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 // Slice 4a: a separate import too.
 import type { FinanceBoostPurchaseRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
+// Slice 4b.2: a separate import, so the line above stays unedited.
+import type { FinanceBoostAttentionResult, FinanceBoostAttentionRow, FinanceBoostReversalRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 // Slice 5a: a separate import too.
 import type { FinancePlanPaymentRow } from '@/lib/repositories/BusinessOsFinanceReadRepository';
 import { tierLabelForGroup } from '../planGroups';
@@ -99,6 +101,8 @@ import { financeHealthDeps, findPlanWithoutOverrides, toFinanceLot } from '../fi
 import type { FinanceLot } from '../creditsSection';
 import { resolveFinanceWindow } from '../financeWindow';
 import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../financeRules';
+// Slice 4b.2: a separate import, so the line above stays unedited.
+import { FINANCE_RULES } from '../financeRules';
 // Slice 6a: a separate import, so the lines above stay unedited.
 import type { FinanceAccountsTabQuery } from '../financeTypes';
 
@@ -297,6 +301,19 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       listPlanPaymentsForAccountPaidInRange: jest.fn<Result<ClientRead<FinancePlanPaymentRow>>, unknown[]>(() =>
         ok({ rows: [], reachedCeiling: false })
       ),
+      // Slice 4b.2: empty by default; the 4b.2 describes seed their own rows.
+      listBoostReversalEventsAllAccountsRecordedInRange: jest.fn<Result<ClientRead<FinanceBoostReversalRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listBoostReversalEventsForAccountRecordedInRange: jest.fn<Result<ClientRead<FinanceBoostReversalRow>>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false })
+      ),
+      listBoostPurchasesNeedingAttentionAllAccounts: jest.fn<Result<FinanceBoostAttentionResult>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false, openedDates: 'read' as const })
+      ),
+      listBoostPurchasesNeedingAttentionForAccount: jest.fn<Result<FinanceBoostAttentionResult>, unknown[]>(() =>
+        ok({ rows: [], reachedCeiling: false, openedDates: 'read' as const })
+      ),
     },
     readReminderFigures: jest.fn<Result<FinanceReminderFiguresInput>, [Date, AbortSignal]>(() => ok(REMINDERS)),
     // M-4 (OV-5): the two route-injected recorded AI cost reads. All accounts: USD 7 recorded against
@@ -472,7 +489,6 @@ function boostRow(user_id: string | null, extra: Partial<FinanceBoostPurchaseRow
     currency: 'USD',
     amount_total_minor: 1000,
     amount_tax_minor: 0,
-    amount_refunded_minor: 0,
     credits_total: '5000.000000',
     paid_at: '2026-11-05T10:00:00.000Z',
     ...extra,
@@ -536,7 +552,8 @@ describe('R-d sets `state` with all businesses only (SA-WR-32 kept; SA-W61, SA-W
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.revenue.status).toBe('unknown');
     expect(result.payload.revenue.totals).toBeNull();
-    expect(result.payload.revenue.boosts).toEqual({ status: 'unknown', scope: 'all', lines: null, packages: null, deletedAccounts: null, notes: null });
+    // Slice 4b.2: held now (R-l, read fine) and the events note still travel (E-103).
+    expect(result.payload.revenue.boosts).toEqual({ status: 'unknown', scope: 'all', lines: null, packages: null, deletedAccounts: null, notes: null, heldNow: [], events: null });
     expect(result.payload.revenue.plans).toMatchObject({ status: 'unknown', lines: null, accounts: null, notes: null });
     expect(result.payload.accounts.status).toBe('ok');
     expect(result.payload.takings.status).toBe('ok');
@@ -560,7 +577,7 @@ describe('our boost revenue, all businesses (slice 4a)', () => {
     const boosts = result.payload.revenue.boosts;
     expect(boosts).toMatchObject({ status: 'ok', scope: 'all', deletedAccounts: [] });
     expect(boosts.lines).toEqual([
-      { currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, held: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableCredits: 0 },
+      { currency: 'USD', purchases: 1, gross: 10, tax: 0, refunded: 0, lost: 0, net: 10, creditsSold: 5000, unreadable: 0, unreadableEvents: 0, unreadableCredits: 0 },
     ]);
     expect(boosts.packages).toEqual([
       { currency: 'USD', packageId: 'pkg-small', packageVersion: 1, purchases: 1, gross: 10, refunded: 0, net: 10, unreadable: 0 },
@@ -607,7 +624,8 @@ describe('our boost revenue, all businesses (slice 4a)', () => {
     const { result } = await run(boostDeps([boostRow(A)], true));
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload.revenue).toMatchObject({ status: 'partial', boosts: { status: 'partial', notes: { exact: false } } });
-    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ net: null, held: null, lost: null });
+    // Slice 4b.2: lost is an event figure (the events were read in full); net is still Unknown.
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ net: null, lost: 0 });
     expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', money: { kind: 'unknown', reason: 'cut_off' } });
     expect(result.counts.boosts).toMatchObject({ rows: 1, ceiling: true });
   });
@@ -650,6 +668,15 @@ describe('our boost revenue, all businesses (slice 4a)', () => {
       currencies: 1,
       packages: 1,
       deletedAccountPurchases: 0,
+      // Slice 4b.2: counts, states and booleans only.
+      events: 0,
+      eventsCeiling: false,
+      eventsState: 'read',
+      unreadableEvents: 0,
+      attention: 0,
+      openDisputes: 0,
+      notCredited: 0,
+      openedDates: 'read',
     });
     const text = JSON.stringify(result.counts);
     for (const secret of ['9876', 'USD', 'pkg-small']) expect(text).not.toContain(secret);
@@ -1572,13 +1599,17 @@ describe('AC-65 (2a): with a business picked, R-e′ and R-f′ get exactly the 
 });
 
 describe('the wiring (slices 2a and 2b)', () => {
-  it('exposes exactly the seventeen finance reads: the four of 2a, the six of 2b, the two of 4a and the two of 5a included', () => {
+  it('exposes exactly the twenty-one finance reads: the four of 2a, the six of 2b, the two of 4a, the two of 5a and the four of 4b.2 included', () => {
     expect(Object.keys(financeHealthDeps().finance).sort()).toEqual([
       'countRevenueRows',
       'findBillingStatusForAccount',
       'listBillingStatusesAllAccounts',
       'listBoostPurchasesAllAccountsPaidInRange',
       'listBoostPurchasesForAccountPaidInRange',
+      'listBoostPurchasesNeedingAttentionAllAccounts',
+      'listBoostPurchasesNeedingAttentionForAccount',
+      'listBoostReversalEventsAllAccountsRecordedInRange',
+      'listBoostReversalEventsForAccountRecordedInRange',
       'listClientPaymentsAllAccountsPaidInRange',
       'listClientPaymentsForAccountPaidInRange',
       'listClientPlansAllAccounts',
@@ -1978,12 +2009,37 @@ describe('slice 6a: account economics through the builder', () => {
     if (tab.result.kind !== 'ok' || picked.result.kind !== 'ok') throw new Error('expected ok');
     // The picked ledger read holds only A's charge (cost 3), as the tab row's cost.
     const row = tab.result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
-    expect(picked.result.payload.accountMargin).toEqual({ paid: row?.paid, aiCost: row?.aiCost, margin: row?.margin });
+    expect(picked.result.payload.accountMargin).toEqual({ paid: row?.paid, aiCost: row?.aiCost, margin: row?.margin, marginAfterFees: row?.marginAfterFees });
     expect(picked.result.payload).not.toHaveProperty('accountEconomics');
     expect(picked.result.counts.accountEconomics).toEqual({ built: false });
     expect(picked.deps.finance.listBoostPurchasesAllAccountsPaidInRange).not.toHaveBeenCalled();
     expect(picked.deps.finance.listPlanPaymentsAllAccountsPaidInRange).not.toHaveBeenCalled();
     expect(picked.deps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+  });
+
+  // Slice 6b (FE-4, SA-Q81, SA-W-6b-9, E-73): the fee config is injected like metricParams.
+  it('6b: production uses the default fee config; an injected one changes the fees; an invalid one is Unknown with one error line naming no value', async () => {
+    const plain = await runTab(ownerDeps());
+    if (plain.result.kind !== 'ok') throw new Error('expected ok');
+    expect(plain.result.payload.accountEconomics?.feeEstimate).toEqual({ currency: 'USD', percent: 2.9, fixed: 0.3 });
+    expect(plain.log.error).not.toHaveBeenCalledWith(expect.anything(), 'Finance Stripe fee estimate config is invalid');
+
+    const injected = ownerDeps();
+    Object.assign(injected, { feeEstimate: { USD: { percentBps: 350, fixedMinor: 25 } } });
+    const other = await runTab(injected);
+    if (other.result.kind !== 'ok') throw new Error('expected ok');
+    expect(other.result.payload.accountEconomics?.feeEstimate).toEqual({ currency: 'USD', percent: 3.5, fixed: 0.25 });
+
+    const broken = ownerDeps();
+    Object.assign(broken, { feeEstimate: { USD: { percentBps: 1001, fixedMinor: 30 } } });
+    const bad = await runTab(broken);
+    if (bad.result.kind !== 'ok') throw new Error('expected ok');
+    expect(bad.result.payload.accountEconomics?.feeEstimate).toBeNull();
+    const row = bad.result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+    expect(row?.marginAfterFees).toEqual({ kind: 'unknown' });
+    expect(bad.result.payload.accountEconomics?.platform.marginAfterFees).toEqual({ kind: 'unknown' });
+    expect(bad.log.error).toHaveBeenCalledWith({ read: 'fee_estimate' }, 'Finance Stripe fee estimate config is invalid');
+    expect(bad.result.payload.accountEconomics?.status).toBe(plain.result.payload.accountEconomics?.status);
   });
 
   it('BD-15: a paying Founding Partner in its tier group carries the chip (the same set as Section 1’s note)', async () => {
@@ -2326,5 +2382,478 @@ describe('Money M-4: the recorded AI cost through the builder', () => {
     const wired = financeHealthDeps() as Record<string, unknown>;
     expect(wired).not.toHaveProperty('readRecordedAllAccounts');
     expect(wired).not.toHaveProperty('readRecordedForAccount');
+  });
+});
+
+// ── DF-6 (§11L): since it started, through the UNCHANGED builder (AC-263, AC-267, AC-268) ──
+describe('DF-6: a since-start window through the builder', () => {
+  const SINCE = resolveFinanceWindow({ preset: 'since_start' }, NOW);
+  const picked = async (deps: ReturnType<typeof makeDeps>, window = SINCE) => {
+    const { result } = await run(deps, A, logger(), NOW, window);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    return result;
+  };
+
+  it('every window-based read gets the since-start instants; coverage is after the cut-over; margins are figures', async () => {
+    const deps = ownerDeps();
+    const result = await picked(deps);
+    const range = { from: SINCE.start, to: SINCE.end };
+    expect(deps.finance.listBoostPurchasesForAccountPaidInRange).toHaveBeenCalledWith(A, range);
+    expect(deps.finance.listPlanPaymentsForAccountPaidInRange).toHaveBeenCalledWith(A, range);
+    expect(deps.ledger.listRowsForAccountCreatedInRange).toHaveBeenCalledWith(A, expect.objectContaining(range), expect.anything());
+    expect(result.payload.window).toEqual({ preset: 'since_start', from: '2026-09-29', to: '2026-11-09', start: '2026-09-29T16:50:53.914Z', end: NOW.toISOString() });
+    expect(result.payload.aiCost.coverage).toBe('after_cutover');
+    expect(result.payload.accountMargin?.margin.kind).toBe('figure');
+    expect(result.payload.accountMargin?.marginAfterFees.kind).toBe('figure');
+  });
+
+  it('AC-263: the ledger read at its ceiling → Section 3 "at least" (partial) and both margins Unknown, never 0', async () => {
+    const deps = ownerDeps();
+    deps.ledger.listRowsForAccountCreatedInRange.mockImplementation(() => ok({ rows: [charge(A, '3')], reachedCeiling: true }));
+    const result = await picked(deps);
+    expect(result.payload.aiCost.status).toBe('partial');
+    expect(result.payload.accountMargin?.margin).toEqual({ kind: 'unknown' });
+    expect(result.payload.accountMargin?.marginAfterFees).toEqual({ kind: 'unknown' });
+  });
+
+  it('AC-263: the recorded read at its ceiling → the recorded figure is not exact and "Recorded above charged" is Unknown', async () => {
+    const deps = makeDeps({ readRecordedForAccount: jest.fn(() => ok({ rows: [{ cost_usd: '3.5' }], reachedCeiling: true })) });
+    const recorded = (await picked(deps)).payload.aiCost.recorded;
+    expect(recorded).toMatchObject({ recordedExact: false, aboveCharged: { state: 'unknown', usd: null } });
+  });
+
+  it('AC-267: K-1 to K-4 equal their This month values; K-5 follows the window', async () => {
+    const since = await picked(ownerDeps());
+    const month = await picked(ownerDeps(), WINDOW);
+    for (const key of ['k1', 'k2', 'k3', 'k4'] as const) expect(since.payload.tiles[key]).toEqual(month.payload.tiles[key]);
+    expect(since.payload.tiles.k5.id).toBe('k5_our_revenue');
+  });
+
+  it('AC-268: an ILS boost in the window → both margins "n/a, different currency"', async () => {
+    const deps = boostDeps([boostRow(A), boostRow(A, { currency: 'ILS' })]);
+    const margin = (await picked(deps)).payload.accountMargin;
+    expect(margin?.margin).toEqual({ kind: 'other_currency' });
+    expect(margin?.marginAfterFees).toEqual({ kind: 'other_currency' });
+  });
+});
+
+// ── Slice 4b.2: the reversal events and the purchases needing attention (BD-17, FR-4B-1 to FR-4B-16) ──
+describe('slice 4b.2: refunds by event date, held now, block A, the K-5 dispute rule', () => {
+  let evSeq = 0;
+  const evRow = (extra: Partial<FinanceBoostReversalRow> = {}): FinanceBoostReversalRow => {
+    evSeq += 1;
+    return {
+      id: `dddddddd-0000-4000-8000-${String(evSeq).padStart(12, '0')}`,
+      purchase_id: 'pppppppp-0000-4000-8000-000000000001',
+      kind: 'refund',
+      amount_minor: 400,
+      currency: 'USD',
+      recorded_at: '2026-11-06T10:00:00.000Z',
+      purchase: { user_id: A, package_id: 'pkg-small', package_version: 1, amount_total_minor: 1000, amount_tax_minor: 0, paid: true },
+      ...extra,
+    };
+  };
+  const disputed = (extra: Partial<FinanceBoostAttentionRow> = {}): FinanceBoostAttentionRow => ({
+    id: 'qqqqqqqq-0000-4000-8000-000000000001',
+    user_id: A,
+    status: 'disputed',
+    currency: 'USD',
+    amount_total_minor: 1000,
+    amount_refunded_minor: 0,
+    status_changed_at: '2026-11-04T00:00:00.000Z',
+    disputeOpenedAt: '2026-11-04T00:00:00.000Z',
+    ...extra,
+  });
+  const withAttention = (deps: ReturnType<typeof makeDeps>, rows: FinanceBoostAttentionRow[]) => {
+    deps.finance.listBoostPurchasesNeedingAttentionAllAccounts.mockImplementation(() => ok({ rows, reachedCeiling: false, openedDates: 'read' as const }));
+    deps.finance.listBoostPurchasesNeedingAttentionForAccount.mockImplementation(() => ok({ rows, reachedCeiling: false, openedDates: 'read' as const }));
+    return deps;
+  };
+
+  it('AC-217: a refund recorded in the window lowers net and K-5 there; R-n gets the window', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => ok({ rows: [evRow()], reachedCeiling: false }));
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ gross: 10, refunded: 4, net: 6 });
+    expect(result.payload.tiles.k5.money).toEqual({ kind: 'one', currency: 'USD', net: 6 });
+    expect(deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mock.calls).toEqual([[{ from: WINDOW.start, to: WINDOW.end }]]);
+    expect(result.payload.credits.bought?.refundNotTakenBack).toBe(true);
+  });
+
+  it('AC-103 / AC-219: one open dispute → K-5 red "1 boost payment in dispute", value unchanged; held now shown, not in net', async () => {
+    const { result } = await run(withAttention(boostDeps(), [disputed()]));
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'red', headline: '1 boost payment in dispute', money: { kind: 'one', currency: 'USD', net: 10 } });
+    expect(result.payload.revenue.boosts.heldNow).toEqual([{ currency: 'USD', disputes: 1, amount: 10 }]);
+    expect(result.payload.revenue.boosts.lines![0].net).toBe(10);
+    expect(result.payload.paymentProblems.boosts?.figures).toMatchObject({ openDisputes: 1, empty: false });
+    expect(Object.keys(result.payload.tiles)).toHaveLength(5);
+  });
+
+  it('AC-103: the threshold is data: raising it to 2 keeps K-5 grey with no code change', async () => {
+    const deps = withAttention(boostDeps(), [disputed()]);
+    const rules = {
+      ...FINANCE_RULES,
+      k5_our_revenue: [{ ...FINANCE_RULES.k5_our_revenue[0], condition: { kind: 'atLeast', metric: 'boostOpenDisputes', value: 2 } }],
+    };
+    const { result } = await run({ ...deps, rules } as typeof deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5.status).toBe('neutral');
+  });
+
+  it('AC-103: R-l failing → K-5 grey "Dispute check failed", its value unchanged; block A unknown, the others render', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostPurchasesNeedingAttentionAllAccounts.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.tiles.k5).toMatchObject({ status: 'neutral', headline: 'Dispute check failed', money: { kind: 'one', currency: 'USD', net: 10 } });
+    expect(result.payload.paymentProblems.boosts).toEqual({ status: 'unknown', figures: null });
+    expect(result.payload.revenue.boosts.heldNow).toBeNull();
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_attention' }), 'Finance read failed');
+  });
+
+  it('AC-224 / §7: the events table absent → refunded, lost and net Unknown, partial, logged at warn not error; every other section renders', async () => {
+    const deps = boostDeps();
+    const absent = Object.assign(new Error('The boost reversal events table is not available'), { name: 'FinanceReadTableAbsentError' });
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => Promise.resolve({ data: null, error: absent }) as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.lines![0]).toMatchObject({ gross: 10, refunded: null, lost: null, net: null });
+    expect(result.payload.revenue.boosts.events).toMatchObject({ state: 'not_available' });
+    expect(result.payload.revenue.status).toBe('partial');
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_reversal_events', reason: 'table_absent' }), expect.any(String));
+    expect(log.error).not.toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_reversal_events' }), expect.anything());
+    for (const section of ['accounts', 'aiCost', 'credits', 'takings'] as const) expect(result.payload[section].status).toBe('ok');
+  });
+
+  it('AC-224: any other event read failure is an error log and the same Unknown figures', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(fail as never);
+    const { result, log } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.revenue.boosts.events).toMatchObject({ state: 'failed' });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'boost_reversal_events' }), 'Finance read failed');
+  });
+
+  it('AC-229: a business picked → R-n′ and R-l′ with exactly that id; R-n and R-l never called', async () => {
+    const deps = boostDeps();
+    await run(deps, A);
+    expect(deps.finance.listBoostReversalEventsForAccountRecordedInRange.mock.calls).toEqual([[A, { from: WINDOW.start, to: WINDOW.end }]]);
+    expect(deps.finance.listBoostPurchasesNeedingAttentionForAccount.mock.calls).toEqual([[A]]);
+    expect(deps.finance.listBoostReversalEventsAllAccountsRecordedInRange).not.toHaveBeenCalled();
+    expect(deps.finance.listBoostPurchasesNeedingAttentionAllAccounts).not.toHaveBeenCalled();
+  });
+
+  it('AC-226: the Accounts tab reads the same events as Our revenue', async () => {
+    const deps = boostDeps();
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => ok({ rows: [evRow()], reachedCeiling: false }));
+    const { result } = await run(deps, null, logger(), NOW, WINDOW, { sort: 'ai_cost', group: null, show: 'all' });
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const row = result.payload.accountEconomics?.rows.find((r) => r.accountId === A);
+    expect(row?.paid.lines[0].boostsAfterTax).toBe(6);
+  });
+
+  it('E-103: every new 4b.2 wire field is set on every built payload', async () => {
+    for (const deps of [makeDeps(), boostDeps(), withAttention(boostDeps(), [disputed()])]) {
+      for (const accountId of [null, A]) {
+        const { result } = await run(deps, accountId);
+        if (result.kind !== 'ok') throw new Error('expected ok');
+        expect(result.payload.revenue.boosts).toHaveProperty('heldNow');
+        expect(result.payload.revenue.boosts).toHaveProperty('events');
+        expect(result.payload.paymentProblems.boosts).toBeDefined();
+        expect(result.payload.credits).toHaveProperty('bought');
+        for (const row of result.payload.credits.figures?.rows ?? []) expect(row).toHaveProperty('boughtOutstanding');
+      }
+    }
+  });
+
+  it('AC-230: the payload carries no Stripe id, mode or purchase id from the new reads', async () => {
+    const deps = withAttention(boostDeps(), [disputed()]);
+    deps.finance.listBoostReversalEventsAllAccountsRecordedInRange.mockImplementation(() => ok({ rows: [evRow()], reachedCeiling: false }));
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const text = JSON.stringify([result.payload, result.counts]);
+    for (const secret of ['pppppppp', 'qqqqqqqq', 'dddddddd', 'livemode', 'stripe_']) expect(text).not.toContain(secret);
+  });
+});
+
+// ── Money MK-5 (§5.1, Q-11; F-K4): paying accounts and the platform AI margin in the payload ──
+describe('Money MK-5: paying (F-K5) and platformMargin (F-K4)', () => {
+  it('all businesses: paying is the plan rows in the paying set over EVERY plan row (Q-11), ok', async () => {
+    const { result } = await run();
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    // Two plan rows (A, B); only B has a paying billing row.
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 1, accounts: 2 });
+    expect(result.payload.accounts.figures?.total).toBe(2);
+  });
+
+  it('the paying read failed: unknown, never 0 of n', async () => {
+    const deps = makeDeps();
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'unknown', paying: null, accounts: null });
+  });
+
+  it('the plan read failed: unknown', async () => {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'unknown', paying: null, accounts: null });
+  });
+
+  it('a business picked: whether it pays, from its own billing row', async () => {
+    const notPaying = await run(makeDeps(), A);
+    if (notPaying.result.kind !== 'ok') throw new Error('expected ok');
+    expect(notPaying.result.payload.paying).toEqual({ scope: 'one', status: 'ok', paying: false });
+    const deps = makeDeps();
+    deps.findPlanForAccount.mockImplementation(() => ok({ plan: plan(B, { tier: TIER, cohort: null }) }));
+    deps.finance.findBillingStatusForAccount.mockImplementation(
+      () => ok({ user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null }) as never
+    );
+    const paying = await run(deps, B);
+    if (paying.result.kind !== 'ok') throw new Error('expected ok');
+    expect(paying.result.payload.paying).toEqual({ scope: 'one', status: 'ok', paying: true });
+  });
+
+  it('platformMargin: present for all businesses, absent with a business picked (F-K4 reads accountMargin then)', async () => {
+    const all = await run();
+    if (all.result.kind !== 'ok') throw new Error('expected ok');
+    expect(all.result.payload.platformMargin).toEqual(expect.objectContaining({ margin: expect.any(Object), marginAfterFees: expect.any(Object) }));
+    const one = await run(makeDeps(), A);
+    if (one.result.kind !== 'ok') throw new Error('expected ok');
+    expect(one.result.payload).not.toHaveProperty('platformMargin');
+    expect(one.result.payload.accountMargin).toBeDefined();
+  });
+
+  it('platformMargin equals the Accounts tab platform line for the same reads (one function)', async () => {
+    const overview = await run();
+    const tab = await run(makeDeps(), null, logger(), NOW, WINDOW, { sort: 'ai_cost', group: null, show: 'all' });
+    if (overview.result.kind !== 'ok' || tab.result.kind !== 'ok') throw new Error('expected ok');
+    const line = tab.result.payload.accountEconomics?.platform;
+    expect(line).toBeDefined();
+    const { accountsCovered: _covered, includesDeleted: _deleted, ...lineMargin } = line!;
+    expect(overview.result.payload.platformMargin).toEqual(lineMargin);
+    expect(tab.result.payload.platformMargin).toEqual(lineMargin);
+  });
+});
+
+// ── SA-CR-MK5 C-1 (§5.1): platform accounts are out of both counts ──
+describe('Money MK-5 C-1: Paying % leaves platform accounts out of the numerator and the denominator', () => {
+  it('a paying platform account with a plan row is in neither count (the existing isPlatformAccount rule)', async () => {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(A), plan(B, { tier: TIER, cohort: null }), plan(PLATFORM, { tier: TIER, cohort: null })]) as never);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(
+      () =>
+        ok<FinanceBillingStatusRow[]>([
+          { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null },
+          { user_id: PLATFORM, subscription_status: 'active', ended_at: null, bought_tier: null },
+        ]) as never
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 1, accounts: 2 });
+  });
+
+  it('control: without the rule the platform row would count (the guard is not vacuous)', async () => {
+    const deps = makeDeps({ isPlatformAccount: () => false });
+    deps.plans.pagePlans.mockImplementation(() => ok([plan(A), plan(B, { tier: TIER, cohort: null }), plan(PLATFORM, { tier: TIER, cohort: null })]) as never);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(
+      () =>
+        ok<FinanceBillingStatusRow[]>([
+          { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null },
+          { user_id: PLATFORM, subscription_status: 'active', ended_at: null, bought_tier: null },
+        ]) as never
+    );
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.paying).toEqual({ scope: 'all', status: 'ok', paying: 2, accounts: 3 });
+  });
+});
+
+// ── Money MK-5b (§5.1 F-K5b, SA-10): Converted this month through the builder ──
+describe('Money MK-5b: converted (F-K5b) through the builder', () => {
+  // NOW is 2026-11-09: "this month" is November 2026 in UTC, whatever the window.
+  const NOV = { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' };
+  const C = '33333333-3333-4333-8333-333333333333';
+
+  /** Plan rows A (not paying), B (paying), C (paying); first payments as given. */
+  function convertedDeps(first: Array<{ accountId: string; paidAt: string }>, sources = [{ account_id: B, source: 'account_invite' as const, stamped_at: '2026-11-03T00:00:00.000Z' }]) {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(
+      () => ok([plan(A), plan(B, { tier: TIER, cohort: null }), plan(C, { tier: TIER, cohort: null }), plan(PLATFORM, { tier: TIER, cohort: null })]) as never
+    );
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(
+      () =>
+        ok<FinanceBillingStatusRow[]>([
+          { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null },
+          { user_id: C, subscription_status: 'active', ended_at: null, bought_tier: null },
+        ]) as never
+    );
+    const converted = {
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() => ok(first)),
+      signupSources: jest.fn<Result<Array<{ account_id: string; source: 'admin_invite' | 'account_invite' | 'organic'; stamped_at: string | null }>>, [string[]]>(
+        () => ok(sources)
+      ),
+    };
+    return { ...deps, converted };
+  }
+
+  it('without the dep: no converted key and no counts entry (every earlier fixture unchanged)', async () => {
+    const { result } = await run();
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload).not.toHaveProperty('converted');
+    expect(result.counts).not.toHaveProperty('converted');
+  });
+
+  it('all businesses: asks for exactly the non-platform plan-row ids; counts the paying accounts that first paid this month', async () => {
+    const deps = convertedDeps([
+      { accountId: B, paidAt: '2026-11-03T10:00:00.000Z' },
+      // C first paid last month: not converted this month (G-3: once only).
+      { accountId: C, paidAt: '2026-10-20T10:00:00.000Z' },
+    ]);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(deps.converted.firstPlanPayments).toHaveBeenCalledTimes(1);
+    expect([...(deps.converted.firstPlanPayments.mock.calls[0][0] as string[])].sort()).toEqual([A, B, C].sort());
+    expect(result.payload.converted).toEqual({
+      scope: 'all',
+      status: 'ok',
+      month: NOV,
+      converted: 1,
+      paying: 2,
+      stopped: 0,
+      rows: [
+        {
+          accountId: B,
+          name: null,
+          nameStatus: 'missing',
+          group: `tier:${TIER}`,
+          tierLabel: tierLabelForGroup(config, `tier:${TIER}`),
+          firstPaymentAt: '2026-11-03T10:00:00.000Z',
+          source: 'account_invite',
+          sourceStatus: 'found',
+          payingNow: true,
+        },
+      ],
+      shownLimit: 100,
+    });
+    // Names and sources for the shown rows only.
+    expect(deps.converted.signupSources).toHaveBeenCalledWith([B]);
+    expect(result.counts.converted).toEqual({
+      scope: 'all', status: 'ok', asked: 3, found: 2, converted: 1, stopped: 0, shown: 1, namesFound: 0, sourcesFound: 1, stampDiffers: 0,
+    });
+  });
+
+  it('converted this month but no longer paying: listed as stopped, never counted', async () => {
+    const deps = convertedDeps([{ accountId: A, paidAt: '2026-11-02T00:00:00.000Z' }], []);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const c = result.payload.converted;
+    if (c?.scope !== 'all') throw new Error('expected all');
+    expect(c.converted).toBe(0);
+    expect(c.stopped).toBe(1);
+    expect(c.rows).toEqual([
+      expect.objectContaining({ accountId: A, payingNow: false, name: 'Acme Dental', nameStatus: 'found', source: null, sourceStatus: 'missing' }),
+    ]);
+    // G-1 cross-check: A has no lineage stamp, so it differs (logged only).
+    expect(result.counts.converted?.stampDiffers).toBe(1);
+  });
+
+  it('the first-payment read failed (the ceiling, the mode, the database): unknown, never 0', async () => {
+    const deps = convertedDeps([]);
+    deps.converted.firstPlanPayments.mockImplementation(() => ({ data: null, error: new Error('ceiling') }) as never);
+    const { result, log } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.converted).toEqual({
+      scope: 'all', status: 'unknown', month: NOV, converted: null, paying: null, stopped: null, rows: null, shownLimit: 100,
+    });
+    expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ read: 'first_plan_payments' }), 'Finance read failed');
+    expect(deps.converted.signupSources).not.toHaveBeenCalled();
+  });
+
+  it('the paying read or the plan read failed: unknown, and no first-payment read', async () => {
+    const paying = convertedDeps([]);
+    paying.finance.listBillingStatusesAllAccounts.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const a = await run(paying as never);
+    if (a.result.kind !== 'ok') throw new Error('expected ok');
+    expect(a.result.payload.converted).toEqual(expect.objectContaining({ status: 'unknown', converted: null }));
+    expect(paying.converted.firstPlanPayments).not.toHaveBeenCalled();
+
+    const plans = convertedDeps([]);
+    plans.plans.pagePlans.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const b = await run(plans as never);
+    if (b.result.kind !== 'ok') throw new Error('expected ok');
+    expect(b.result.payload.converted).toEqual(expect.objectContaining({ status: 'unknown', converted: null }));
+    expect(plans.converted.firstPlanPayments).not.toHaveBeenCalled();
+  });
+
+  it('the source read failed: the rows stay, each source "unavailable" (shown as Unknown)', async () => {
+    const deps = convertedDeps([{ accountId: B, paidAt: '2026-11-03T10:00:00.000Z' }]);
+    deps.converted.signupSources.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const c = result.payload.converted;
+    if (c?.scope !== 'all') throw new Error('expected all');
+    expect(c.status).toBe('ok');
+    expect(c.rows?.[0]).toEqual(expect.objectContaining({ source: null, sourceStatus: 'unavailable' }));
+  });
+
+  it('a capped plan walk: partial ("at least"), never a plain figure', async () => {
+    let page = 0;
+    const pagePlans = jest.fn(() => {
+      page += 1;
+      return ok(Array.from({ length: 500 }, (_, i) => plan(`${String(page).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`)));
+    });
+    const deps = { ...convertedDeps([]), plans: { pagePlans } };
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.converted).toEqual(expect.objectContaining({ scope: 'all', status: 'partial', converted: 0 }));
+  });
+
+  it('a business picked: exactly its id; converted, stopped, not converted, unknown', async () => {
+    const picked = (first: Array<{ accountId: string; paidAt: string }>, paying: boolean) => {
+      const deps = convertedDeps(first);
+      deps.findPlanForAccount.mockImplementation(() => ok({ plan: plan(B, { tier: TIER, cohort: null }) }));
+      deps.finance.findBillingStatusForAccount.mockImplementation(
+        () => ok(paying ? { user_id: B, subscription_status: 'active', ended_at: null, bought_tier: null } : null) as never
+      );
+      return deps;
+    };
+    const yes = picked([{ accountId: B, paidAt: '2026-11-03T00:00:00.000Z' }], true);
+    const r1 = await run(yes as never, B);
+    if (r1.result.kind !== 'ok') throw new Error('expected ok');
+    expect(yes.converted.firstPlanPayments).toHaveBeenCalledWith([B]);
+    expect(yes.converted.signupSources).not.toHaveBeenCalled();
+    expect(r1.result.payload.converted).toEqual({ scope: 'one', status: 'ok', month: NOV, state: 'converted', firstPaymentAt: '2026-11-03T00:00:00.000Z' });
+
+    const stopped = await run(picked([{ accountId: B, paidAt: '2026-11-03T00:00:00.000Z' }], false) as never, B);
+    if (stopped.result.kind !== 'ok') throw new Error('expected ok');
+    expect(stopped.result.payload.converted).toEqual(expect.objectContaining({ state: 'stopped' }));
+
+    const earlier = await run(picked([{ accountId: B, paidAt: '2026-10-03T00:00:00.000Z' }], true) as never, B);
+    if (earlier.result.kind !== 'ok') throw new Error('expected ok');
+    expect(earlier.result.payload.converted).toEqual(expect.objectContaining({ state: 'not_converted', firstPaymentAt: null }));
+
+    const failing = picked([], true);
+    failing.converted.firstPlanPayments.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const unknown = await run(failing as never, B);
+    if (unknown.result.kind !== 'ok') throw new Error('expected ok');
+    expect(unknown.result.payload.converted).toEqual({ scope: 'one', status: 'unknown', month: NOV, state: null, firstPaymentAt: null });
+  });
+
+  it('"this month" is the month of now in UTC, whatever window is picked', async () => {
+    const deps = convertedDeps([{ accountId: B, paidAt: '2026-11-01T00:00:00.000Z' }]);
+    const lastWeek = resolveFinanceWindow({ preset: '7d' }, NOW);
+    const { result } = await run(deps as never, null, logger(), NOW, lastWeek);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.converted).toEqual(expect.objectContaining({ month: NOV, converted: 1 }));
+  });
+
+  it('the production wiring supplies the converted reads by name', () => {
+    const wired = financeHealthDeps();
+    expect(Object.keys(wired.converted ?? {}).sort()).toEqual(['firstPlanPayments', 'signupSources']);
   });
 });

@@ -44,7 +44,9 @@ export type BosCronJobId =
   | 'credit-leak-check'
   | 'stripe-settlement-gap'
   | 'bos-billing-reconcile'
-  | 'payment-reminders';
+  | 'data-export'
+  | 'payment-reminders'
+  | 'finance-snapshot';
 
 export type BosQueueId =
   | 'payment_reminders'
@@ -449,14 +451,14 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ...DAILY,
     ...MAX_60,
     label: 'Credit leak check',
-    description: "Checks that yesterday's Business OS AI spend was all charged",
+    description: "Checks that yesterday's recorded Business OS AI cost was all charged",
     scheduleWords: 'Daily at 04:45 UTC',
     // QA4b-B1: added after run recording began (2026-09-27/28); the deploy day.
     addedOn: '2026-09-30',
     drainsQueue: null,
     counts: [
       { key: 'accountsChecked', path: ['data', 'accountsChecked'], label: 'businesses checked' },
-      { key: 'accountsWithLeak', path: ['data', 'accountsWithLeak'], label: 'businesses with uncharged AI spend' },
+      { key: 'accountsWithLeak', path: ['data', 'accountsWithLeak'], label: 'businesses with recorded AI cost not charged' },
       { key: 'unchargedGroups', path: ['data', 'unchargedGroups'], label: 'AI actions with no charge' },
       { key: 'ungroupedCalls', path: ['data', 'ungroupedCalls'], label: 'AI calls with no grouping id' },
       { key: 'underchargedGroups', path: ['data', 'underchargedGroups'], label: 'AI actions charged less than they cost' },
@@ -581,6 +583,47 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     ],
   },
   {
+    /*
+     * Data export DE-8b (requirement §0.4.1 A, C): the daily sweep of the
+     * "Download my data" zips. Reaps runs killed mid-build, deletes zips after
+     * their 3 days, removes orphan objects, and watches how close each
+     * account's stored files are to the Phase 1 ceiling. NOT a queue drain:
+     * every step is idempotent. Counts only.
+     *
+     * Near/over-ceiling accounts are a FINDING (the
+     * `data_export_accounts_near_ceiling` warn), shown as numbers that do not
+     * colour the job. "Partly done" = a step could not finish, or a due zip
+     * could not be removed.
+     */
+    id: 'data-export',
+    path: '/api/cron/data-export',
+    schedule: '25 5 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Data export sweep',
+    description: 'Deletes data export zips after 3 days, cleans up after failed runs and watches account size against the export limit',
+    scheduleWords: 'Daily at 05:25 UTC',
+    // QA4b-B1: the deploy day (merge 2026-10-17, set by RM).
+    addedOn: '2026-10-17',
+    drainsQueue: null,
+    counts: [
+      { key: 'staleReaped', path: ['data', 'staleReaped'], label: 'stuck exports marked failed' },
+      { key: 'expired', path: ['data', 'expired'], label: 'exports deleted after 3 days' },
+      { key: 'expireFailed', path: ['data', 'expireFailed'], label: 'due exports not deleted (retried tomorrow)' },
+      { key: 'orphansRemoved', path: ['data', 'orphansRemoved'], label: 'leftover zips removed' },
+      { key: 'orphansKept', path: ['data', 'orphansKept'], label: 'zips kept' },
+      { key: 'orphansUnexpected', path: ['data', 'orphansUnexpected'], label: 'unexpected objects left alone' },
+      { key: 'accountsWatched', path: ['data', 'accountsWatched'], label: 'accounts with files checked' },
+      { key: 'accountsNearCeiling', path: ['data', 'accountsNearCeiling'], label: 'accounts at 60% or more of the file limit' },
+      { key: 'accountsOverCeiling', path: ['data', 'accountsOverCeiling'], label: 'accounts over the file limit' },
+      { key: 'incompleteSteps', path: ['data', 'incompleteSteps'], label: 'steps that could not finish' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'incompleteSteps', value: 1 },
+      { kind: 'atLeast', key: 'expireFailed', value: 1 },
+    ],
+  },
+  {
     id: 'payment-reminders',
     path: '/api/cron/payment-reminders',
     /*
@@ -612,6 +655,39 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { key: 'invoicesMarkedOverdue', path: ['data', 'invoicesMarkedOverdue'], label: 'invoices marked overdue' },
     ],
     partlyDoneWhen: [{ kind: 'atLeast', key: 'remindersFailed', value: 1 }],
+  },
+  {
+    /*
+     * Finance slice 8.2 (§11M.7): last night's plan mix and credit position,
+     * counts and credits only, in one idempotent insert. Not a queue drain
+     * (HS-W-11): nothing is claimed, and a second run the same day writes
+     * nothing new. A run at or after 02:00 UTC writes nothing (lateRun).
+     * `metricsSkipped` alone does not make a run partly done (SA-WR-8.2).
+     */
+    id: 'finance-snapshot',
+    path: '/api/cron/finance-snapshot',
+    schedule: '7 0 * * *',
+    ...DAILY,
+    ...MAX_60,
+    label: 'Finance history snapshot',
+    description: "Records last night's plan mix and credit position for the Finance history",
+    scheduleWords: 'Daily at 00:07 UTC',
+    // QA4b-B1: added after run recording began. The UTC date of the first 00:07 run after the
+    // production deploy (SA D-3: later shows only "No run yet", earlier shows "Stopped").
+    addedOn: '2026-10-19',
+    drainsQueue: null,
+    counts: [
+      { key: 'metricsWritten', path: ['data', 'metricsWritten'], label: 'figures written' },
+      { key: 'metricsAlreadyThere', path: ['data', 'metricsAlreadyThere'], label: 'figures already recorded for the day' },
+      { key: 'metricsSkipped', path: ['data', 'metricsSkipped'], label: 'figures not recorded (source unreadable)' },
+      { key: 'familiesSkipped', path: ['data', 'familiesSkipped'], label: 'groups of figures not recorded' },
+      { key: 'accountsRead', path: ['data', 'accountsRead'], label: 'businesses read' },
+      { key: 'lateRun', path: ['data', 'lateRun'], label: 'started too late to record (1 = yes)' },
+    ],
+    partlyDoneWhen: [
+      { kind: 'atLeast', key: 'familiesSkipped', value: 1 },
+      { kind: 'atLeast', key: 'lateRun', value: 1 },
+    ],
   },
 ];
 
