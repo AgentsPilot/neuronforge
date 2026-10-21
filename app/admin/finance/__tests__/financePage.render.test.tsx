@@ -3131,3 +3131,157 @@ describe('Money MK-6: payment problems in Revenue and Client payments', () => {
     expect(within(revenue).getByTestId('problems-boosts-link')).toBeInTheDocument();
   });
 });
+
+// ── Money MK-8 (§3 drawer column, Q-7): the read-only Finance drawers on the page ──
+describe('Money MK-8: the business drawer and the plan drawer on the page', () => {
+  const SUBS_ROUTE_8 = '/api/admin/business-os/billing/subscriptions';
+  const PLAN_ROUTE_8 = '/api/admin/business-os/billing/plans/tier_a';
+  const SUBS_8 = {
+    generatedAt: '2026-10-21T09:00:00.000Z',
+    mode: 'test',
+    status: null,
+    totals: {
+      mrr: [{ currency: 'USD', totalHundredths: 4900, cancellingHundredths: 0, pastDueHundredths: 0, subscriptions: 1, overflow: false }],
+      mrrUnpriced: 0,
+      mrrDiscountUnknown: 0,
+      mrrPastDueCounted: true,
+      paidByPlan: [{ id: 'tier_a', name: 'Plan A', accounts: 1 }],
+      byStatus: { ended: 0, paused: 0, grace: 0, failed: 0, cancelling: 0, active: 1, other: 0, no_stripe: 0 },
+      accounts: 1,
+    },
+    rows: [
+      {
+        accountId: A, businessName: 'Acme Dental', status: 'active', statuses: ['active'], stripeStatus: 'active',
+        planBought: { id: 'tier_a', name: 'Plan A' }, planOnRecord: { id: 'tier_a', name: 'Plan A' },
+        paidThrough: '2026-11-01T00:00:00.000Z', currentPeriodEnd: '2026-11-01T00:00:00.000Z', cancelAtPeriodEnd: false,
+        endedAt: null, lastPaidAt: '2026-10-01T00:00:00.000Z', lastPaymentFailedAt: null, failedAttempts: 0, pendingPlan: null, discounted: false,
+      },
+    ],
+    matching: 1,
+  };
+  /** The finance route (the page and the business drawer), the subscriptions list, and the plan route. */
+  function serveAll(): jest.Mock {
+    const fetchMock = jest.fn(async (url: string) => {
+      const u = String(url);
+      const body = u.startsWith(SUBS_ROUTE_8)
+        ? { success: true, data: SUBS_8 }
+        : u.startsWith(PLAN_ROUTE_8)
+          ? { success: true, data: SUBS_8 }
+          : { success: true, data: u.includes('accountId=') ? payload({ accountId: A }) : payload() };
+      return { ok: true, status: 200, json: async () => body };
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return fetchMock;
+  }
+  const urlsOf = (fetchMock: jest.Mock) => fetchMock.mock.calls.map((call) => String(call[0]));
+  const openPlansTab = () => {
+    mockSearch = 'tab=plans';
+    window.history.replaceState(null, '', '/admin/finance?tab=plans');
+  };
+
+  it('AC-173 kept: the Overview loads with exactly one request; no drawer is open', async () => {
+    const fetchMock = serveAll();
+    render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    expect(urlsOf(fetchMock)).toEqual(['/api/admin/business-os/finance?preset=this_month']);
+    expect(screen.queryByTestId('business-drawer')).toBeNull();
+    expect(screen.queryByTestId('plan-drawer')).toBeNull();
+  });
+
+  it('a subscription row opens the business drawer: one more request (this business, the page window); header, summary, own-currency client payments, Plan billing closed, Open full view', async () => {
+    openPlansTab();
+    const fetchMock = serveAll();
+    render(<FinanceView />);
+    fireEvent.click(await screen.findByTestId('subscription-quick-look'));
+    const drawer = await screen.findByTestId('business-drawer');
+    const body = await within(drawer).findByTestId('business-drawer-body');
+    expect(urlsOf(fetchMock)).toEqual([
+      '/api/admin/business-os/finance?preset=this_month',
+      SUBS_ROUTE_8,
+      `/api/admin/business-os/finance?preset=this_month&accountId=${A}`,
+    ]);
+    expect(within(body).getByTestId('account-header')).toHaveTextContent('Acme Dental');
+    expect(within(body).getByTestId('account-summary')).toBeInTheDocument();
+    // USD-4 (Q-10): the business's own currency sign, one line per currency, never one total.
+    expect(within(body).getByTestId('business-drawer-client-line-ILS')).toHaveTextContent('gross ₪230.30 · net ₪215.30');
+    expect(within(body).getByTestId('business-drawer-client-line-USD')).toHaveTextContent('gross $150.50 · net $130.50');
+    expect(within(body).getByTestId('business-drawer-overdue-invoices')).toBeInTheDocument();
+    // The read-only Plan billing panel (P-8a.2): shown closed, and it reads nothing until opened.
+    expect(within(body).getByRole('button', { name: 'Show plan billing' })).toBeInTheDocument();
+    expect(within(body).getByTestId('business-drawer-open-full')).toHaveAttribute('href', `/admin/finance?preset=this_month&accountId=${A}`);
+    expect(urlsOf(fetchMock)).toHaveLength(3);
+    // Read-only (§8, NG-1): the only buttons are the panel's own read toggle and the drawer's close.
+    const buttons = within(drawer).getAllByRole('button').map((b) => b.textContent?.trim() || b.getAttribute('aria-label') || '');
+    expect(buttons.filter((name) => name !== 'Show plan billing' && !/close/i.test(name))).toEqual([]);
+  });
+
+  it('a plan in "Paid accounts" opens the plan drawer: one more request, to the plan route; its MRR in $', async () => {
+    openPlansTab();
+    const fetchMock = serveAll();
+    render(<FinanceView />);
+    fireEvent.click(await screen.findByTestId('plans-subscriptions-plan-tier_a'));
+    const drawer = await screen.findByTestId('plan-drawer');
+    const body = await within(drawer).findByTestId('plan-drawer-body');
+    expect(urlsOf(fetchMock)).toEqual(['/api/admin/business-os/finance?preset=this_month', SUBS_ROUTE_8, PLAN_ROUTE_8]);
+    expect(within(body).getByTestId('plan-drawer-mrr-line')).toHaveTextContent(/^\$49 /);
+    // The "Paid accounts" words are unchanged by the opener.
+    expect(screen.getByTestId('plans-subscriptions-paid')).toHaveTextContent('1 Plan A 1');
+  });
+});
+
+// ── SA-CR-MK8 CR-2: the business drawer from the AI cost top accounts, Credits and Client payments rows ──
+describe('Money MK-8 CR-2: more rows open the business drawer', () => {
+  function serveFinance(): jest.Mock {
+    const fetchMock = jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: String(url).includes('accountId=') ? payload({ accountId: A }) : payload() }),
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return fetchMock;
+  }
+  const urlsOf = (fetchMock: jest.Mock) => fetchMock.mock.calls.map((call) => String(call[0]));
+  const DRAWER_URL = `/api/admin/business-os/finance?preset=this_month&accountId=${A}`;
+
+  it('openers sit inside the business cells (columns unchanged); never on the platform row; one fetch on load', async () => {
+    const fetchMock = serveFinance();
+    render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    expect(urlsOf(fetchMock)).toEqual(['/api/admin/business-os/finance?preset=this_month']);
+    // AI cost top accounts: Acme has one, the platform row none.
+    const top = screen.getByTestId('ai-top');
+    expect(within(top).getByTestId(`ai-top-quick-look-${A}`)).toHaveAttribute('aria-label', 'Quick look at Acme Dental');
+    expect(within(top).queryByTestId('ai-top-quick-look-00000000-0000-0000-0000-000000000000')).toBeNull();
+    expect(within(top).getAllByRole('columnheader')).toHaveLength(3);
+    // Credits rows and Client payments rows.
+    expect(screen.getByTestId(`credits-quick-look-${A}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`takings-quick-look-${A}-USD`)).toBeInTheDocument();
+    expect(screen.queryByTestId('takings-quick-look-00000000-0000-0000-0000-000000000000-USD')).toBeNull();
+  });
+
+  it.each([
+    ['the AI cost top accounts', `ai-top-quick-look-${A}`],
+    ['the Credits rows', `credits-quick-look-${A}`],
+    ['the Client payments rows', `takings-quick-look-${A}-USD`],
+  ])('%s: the opener opens the same business drawer with exactly one more request', async (_where, testId) => {
+    const fetchMock = serveFinance();
+    render(<FinanceView />);
+    fireEvent.click(await screen.findByTestId(testId));
+    const drawer = await screen.findByTestId('business-drawer');
+    await within(drawer).findByTestId('business-drawer-body');
+    expect(urlsOf(fetchMock)).toEqual(['/api/admin/business-os/finance?preset=this_month', DRAWER_URL]);
+    // Opened from a non-subscription row: no Plan billing panel.
+    expect(within(drawer).queryByRole('button', { name: 'Show plan billing' })).toBeNull();
+  });
+
+  it('with a business picked there are no openers (the page already is that business)', async () => {
+    mockSearch = `accountId=${A}`;
+    window.history.replaceState(null, '', `/admin/finance?accountId=${A}`);
+    serveFinance();
+    render(<FinanceView />);
+    await screen.findByTestId('account-header');
+    expect(screen.queryAllByTestId(/quick-look/)).toHaveLength(0);
+  });
+});

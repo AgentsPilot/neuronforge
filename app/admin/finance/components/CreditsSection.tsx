@@ -73,6 +73,7 @@ import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
 import { BlockKpi } from './BlockKpi';
 import { FinanceSection } from './FinanceSection';
+import { BusinessQuickLook } from './BusinessDrawer';
 
 function nameOf(row: FinanceCreditRow): string {
   switch (row.nameStatus) {
@@ -200,7 +201,11 @@ export function CreditsSection({
                 <tbody className={ADMIN_TBODY}>
                   {f.rows.map((row) => (
                     <tr key={row.accountId} data-testid={`credits-row-${row.accountId}`}>
-                      <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(row)}</th>
+                      <th scope="row" className={`${ADMIN_TD} font-normal`}>
+                        {nameOf(row)}
+                        {/* SA-CR-MK8 CR-2: the business drawer, inside the cell (columns unchanged). */}
+                        <BusinessQuickLook accountId={row.accountId} name={row.name} nameStatus={row.nameStatus} label={nameOf(row)} testId={`credits-quick-look-${row.accountId}`} />
+                      </th>
                       <td className={ADMIN_TD}>{row.group ? groupLabel({ key: row.group, tierLabel: row.tierLabel }) : CREDITS_UNKNOWN}</td>
                       {row.kind === 'position' ? (
                         <>

@@ -4,11 +4,16 @@
  * The Subscriptions table (plan payments P-8a.1, AM-2). One row per account,
  * already filtered, sorted and capped by the server. This component only
  * formats: it adds no figures together and sorts nothing.
+ *
+ * Money MK-8: with `onQuickLook`, a narrow last column (LF-8) holds each
+ * row's opener for the Finance business drawer. Without it the table renders
+ * exactly as before (the plan drawer reuses the table without openers).
  */
 
 import Link from 'next/link';
 
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
 import {
   ADMIN_TABLE,
   ADMIN_TABLE_WRAP,
@@ -16,8 +21,10 @@ import {
   ADMIN_TD,
   ADMIN_TD_ID,
   ADMIN_TD_NUM,
+  ADMIN_TD_OPEN,
   ADMIN_TH,
   ADMIN_TH_NUM,
+  ADMIN_TH_OPEN,
   ADMIN_THEAD,
   formatShortId,
 } from '@/app/admin/components/layout/adminTable';
@@ -26,6 +33,7 @@ import { businessesHref } from '@/app/admin/finance/financeLinks';
 import type { SubscriptionRow } from '@/lib/admin/billing/subscriptionsTypes';
 
 import { NO_ACCOUNT, NO_NAME, NONE, STATUS_LABEL, STATUS_TONE } from '../plansCopy';
+import { BUSINESS_DRAWER } from '../financeCopy';
 
 const LINK_CLASS = 'text-blue-300 underline hover:text-blue-200';
 
@@ -61,7 +69,14 @@ function Renewal({ row }: { row: SubscriptionRow }) {
   );
 }
 
-export function SubscriptionsTable({ rows }: { rows: readonly SubscriptionRow[] }) {
+export function SubscriptionsTable({
+  rows,
+  onQuickLook,
+}: {
+  rows: readonly SubscriptionRow[];
+  /** Money MK-8: open the business drawer for a row (an account, never a detached row). */
+  onQuickLook?: (row: SubscriptionRow & { accountId: string }, opener: HTMLButtonElement) => void;
+}) {
   return (
     <div className={ADMIN_TABLE_WRAP}>
       <table data-testid="subscriptions-table" className={ADMIN_TABLE}>
@@ -76,6 +91,11 @@ export function SubscriptionsTable({ rows }: { rows: readonly SubscriptionRow[] 
             <th scope="col" className={ADMIN_TH}>Renewal</th>
             <th scope="col" className={ADMIN_TH}>Last payment</th>
             <th scope="col" className={ADMIN_TH_NUM}>Failed attempts</th>
+            {onQuickLook && (
+              <th scope="col" className={ADMIN_TH_OPEN}>
+                <span className="sr-only">Details</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody className={ADMIN_TBODY}>
@@ -115,6 +135,17 @@ export function SubscriptionsTable({ rows }: { rows: readonly SubscriptionRow[] 
                 )}
               </td>
               <td className={ADMIN_TD_NUM}>{row.failedAttempts}</td>
+              {onQuickLook && (
+                <td className={ADMIN_TD_OPEN}>
+                  {row.accountId !== null && (
+                    <OpenRowButton
+                      label={BUSINESS_DRAWER.quickLook(row.businessName ?? NO_NAME)}
+                      onOpen={(button) => onQuickLook({ ...row, accountId: row.accountId as string }, button)}
+                      testId="subscription-quick-look"
+                    />
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

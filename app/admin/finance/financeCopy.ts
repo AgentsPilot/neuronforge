@@ -833,3 +833,35 @@ export const HISTORY_COLUMN_LABELS = {
   credit_over_allowance: 'Accounts over allowance',
   credit_far_over_allowance: 'Far over allowance',
 } as const;
+
+// ── Money MK-8: the Finance drawers (read-only quick looks, Q-7) ──
+export const BUSINESS_DRAWER = {
+  /** The drawer title when no name is known (the short id follows it). */
+  titleFallback: 'Business',
+  /** Noun phrase for the shared reading / error sentences. */
+  what: 'this business',
+  /** The opener's accessible name and tooltip. */
+  quickLook: (name: string) => `Quick look at ${name}`,
+  clientPayments: 'Client payments (their money, not ours)',
+  clientPaymentsNote: "In this business's own currency. Never added to our revenue.",
+  clientPaymentsNone: 'No client payments recorded in this window',
+  clientPaymentsUnknown: 'Client payments could not be read.',
+  clientPaymentsLine: (payments: string, gross: string, net: string) => `${payments} payments · gross ${gross} · net ${net}`,
+  overdue: 'Overdue items, as of now',
+  overdueInvoices: 'Overdue invoices',
+  overdueInstalments: 'Overdue instalments',
+  unknown: 'Unknown',
+  openFull: 'Open full view',
+} as const;
+
+export const PLAN_DRAWER = {
+  what: 'this plan',
+  /** The opener's accessible name and tooltip. */
+  open: (plan: string) => `Open plan ${plan}`,
+  mrr: 'MRR',
+  mrrNone: 'None',
+  statuses: 'Accounts by status',
+  accounts: 'Accounts',
+  empty: 'No account on this plan.',
+  showing: (shown: string, total: string) => `Showing ${shown} of ${total} accounts`,
+} as const;
