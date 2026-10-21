@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+import { MEETING_HOLDS_SLOT_FILTER } from '@/lib/business-os/bookingStatus';
 
 const logger = createLogger({ module: 'OpsPeakUnutilizedDetector' });
 
@@ -92,7 +93,18 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
       .eq('user_id', userId)
       .gte('start_time', sixtyDaysAgo.toISOString())
       .lt('start_time', thirtyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed']);
+      .in('status', ['confirmed', 'completed'])
+      /*
+       * And the meeting itself was not missed or called off.
+       *
+       * The status pair means "not cancelled", and it used to exclude a
+       * no-show too because `markNoShow()` wrote `status: 'no_show'`. It no
+       * longer does — it writes `meeting_status` — so without this line a
+       * no-show reads as `confirmed` and starts counting towards the busy
+       * baseline, which is the opposite of what it is. See
+       * `MEETING_HOLDS_SLOT_FILTER` for why this cannot be a `NOT IN`.
+       */
+      .or(MEETING_HOLDS_SLOT_FILTER);
 
     if (histError) {
       throw histError;
@@ -109,7 +121,10 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
       .select('start_time, status')
       .eq('user_id', userId)
       .gte('start_time', thirtyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed']);
+      .in('status', ['confirmed', 'completed'])
+      /* Same as the baseline above: a missed meeting is not a busy hour. The
+         two windows are compared, so they must count the same way. */
+      .or(MEETING_HOLDS_SLOT_FILTER);
 
     if (recentError) {
       throw recentError;
@@ -185,7 +200,13 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
       .select('payment_amount, service:scheduling_services(price)')
       .eq('user_id', userId)
       .gte('start_time', thirtyDaysAgo.toISOString())
-      .in('status', ['completed']);
+      /*
+       * What the owner actually earned, so only meetings that HAPPENED count —
+       * which is `meeting_status`, not `status`. `complete()` no longer writes
+       * `status: 'completed'`, so the old filter was on its way to averaging an
+       * ever-smaller slice of real revenue and falling back to the estimate.
+       */
+      .eq('meeting_status', 'held');
 
     if (avgValueError) {
       logger.warn(

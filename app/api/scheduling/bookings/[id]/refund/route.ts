@@ -2,10 +2,24 @@
  * Booking Refund API
  * POST /api/scheduling/bookings/[id]/refund
  *
- * Processes refunds for booking payments:
- * 1. If booking has payment_id -> uses payment blocks API
- * 2. If no payment_id but has Stripe transaction -> looks up by booking metadata
- * 3. If no Stripe transaction -> just updates payment_status (manual payment)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EVERY REFUND GOES THROUGH A TRANSACTION. There is no second path.
+ *
+ * This header used to describe three branches, the last of which was "if no
+ * Stripe transaction -> just updates payment_status (manual payment)". That
+ * branch is gone: the refund itself is `RefundService`'s, the targets come from
+ * `resolveRefundTargets`, and money with no `payment_transactions` row behind
+ * it is a 404 rather than a status write.
+ *
+ * Nothing was lost with it. A payment recorded by hand DOES have a transaction
+ * — `mark-paid` writes one with `processor_type: 'manual'`, which is what makes
+ * it refundable at all — and `RefundService` settles those directly instead of
+ * calling a processor. The comment outlived the code by long enough to describe
+ * an untested path as though it were load-bearing.
+ *
+ * What stays in this route is only what it alone knows: the booking's own
+ * `payment_status`, and telling the client.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { NextRequest, NextResponse } from 'next/server';

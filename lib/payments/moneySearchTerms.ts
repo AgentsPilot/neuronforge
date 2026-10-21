@@ -68,7 +68,85 @@ export interface TextTerm {
   raw: string;
 }
 
-export type MoneySearchTerm = AmountTerm | PeriodTerm | TextTerm;
+/**
+ * A state the money is in, typed as a word.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * "open" was the question this search could not answer, and it is the one the
+ * advisor card asks out loud: an owner told ₪510 of invoices is open went to
+ * this list and had no way to say so. The KPI tiles carry the same states, but
+ * a tile is something you find — a word is something you already know.
+ *
+ * `value` is a `MoneyFilter`, so the caller hands it straight to the control
+ * rather than re-deriving a mapping of its own. See `matchesTerms` for why this
+ * kind is not matched here.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface StatusTerm {
+  kind: 'status';
+  /** 'unpaid' | 'overdue' | 'paid' | 'refunded' | 'draft' | 'cancelled'. */
+  value: string;
+  raw: string;
+}
+
+/**
+ * How the money arrives — a bill sent, a card charged, a plan.
+ *
+ * The other half of "₪510 of INVOICES is open". `value` is what the `method`
+ * query parameter takes, for the same reason as above.
+ */
+export interface MethodTerm {
+  kind: 'method';
+  /** 'invoice' | 'direct' | 'plan'. */
+  value: string;
+  raw: string;
+}
+
+export type MoneySearchTerm = AmountTerm | PeriodTerm | TextTerm | StatusTerm | MethodTerm;
+
+/**
+ * The state words, in the three languages the product speaks.
+ *
+ * Several words per state on purpose: an owner reaches for "open" or "unpaid"
+ * or "owed" for the same thing, and the list's own label ("Outstanding") is
+ * only one of them. Every word here is asserted to parse by the vocabulary
+ * test, the same guarantee the period tokens carry.
+ */
+const STATUS_WORDS: Record<string, string> = {
+  open: 'unpaid', unpaid: 'unpaid', outstanding: 'unpaid', owed: 'unpaid', due: 'unpaid',
+  pendiente: 'unpaid', impagado: 'unpaid', 'פתוח': 'unpaid', 'פתוחות': 'unpaid', 'חייב': 'unpaid',
+  overdue: 'overdue', late: 'overdue', vencido: 'overdue', atrasado: 'overdue',
+  'באיחור': 'overdue', 'מאחר': 'overdue',
+  paid: 'paid', collected: 'paid', pagado: 'paid', cobrado: 'paid',
+  'שולם': 'paid', 'נגבה': 'paid',
+  refunded: 'refunded', refund: 'refunded', reembolsado: 'refunded', 'הוחזר': 'refunded',
+  draft: 'draft', borrador: 'draft', 'טיוטה': 'draft',
+  cancelled: 'cancelled', canceled: 'cancelled', cancelado: 'cancelled', 'בוטל': 'cancelled',
+};
+
+/** And the collection words. `plan` reaches a filter no control ever did. */
+const METHOD_WORDS: Record<string, string> = {
+  invoice: 'invoice', invoices: 'invoice', bill: 'invoice', factura: 'invoice',
+  facturas: 'invoice', 'חשבונית': 'invoice', 'חשבוניות': 'invoice',
+  card: 'direct', direct: 'direct', tarjeta: 'direct', directo: 'direct',
+  'כרטיס': 'direct', 'ישיר': 'direct',
+  plan: 'plan', plans: 'plan', installments: 'plan', plazos: 'plan',
+  'תשלומים': 'plan',
+};
+
+/** A state or collection word, or null. Checked before the number readers. */
+function readWord(token: string): StatusTerm | MethodTerm | null {
+  const word = token.trim().toLowerCase().replace(/[.,]$/, '');
+  if (!word) return null;
+
+  const status = STATUS_WORDS[word];
+  if (status) return { kind: 'status', value: status, raw: token };
+
+  const collection = METHOD_WORDS[word];
+  if (collection) return { kind: 'method', value: collection, raw: token };
+
+  return null;
+}
 
 /**
  * Month names this understands, in the three languages the product speaks.
@@ -410,6 +488,18 @@ export function parseMoneySearch(input: string, today: string): MoneySearchTerm[
       continue;
     }
 
+    /*
+     * Before the number readers, because these are words and those are not —
+     * and after the month pairing above, so a month name still wins. No word
+     * appears in both tables; the vocabulary test asserts it.
+     */
+    const word = readWord(token);
+    if (word) {
+      flush();
+      terms.push(word);
+      continue;
+    }
+
     const read = readToken(token, today);
     if (read) {
       flush();
@@ -489,6 +579,61 @@ const RELATIVE: Record<SearchLanguage, Suggestion[]> = {
 /** Every relative span the picker offers, in the reader's language. */
 export function relativePeriods(language: SearchLanguage): Suggestion[] {
   return RELATIVE[language] ?? RELATIVE.en;
+}
+
+/**
+ * The states, as the picker offers them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The parser has read these words since the states became terms, and nothing
+ * offered them — so the panel showed an amount box and six period pills, and a
+ * state could only be found by an owner who already guessed it was typeable.
+ * "Open" is the one question the advisor card asks out loud, and it was the one
+ * the picker would not help with.
+ *
+ * ONE SPELLING PER STATE, the way `CANONICAL_MONTHS` offers one month name
+ * while `MONTHS` accepts every alias. "open", "unpaid", "outstanding" and
+ * "owed" all parse; a panel listing four pills that do the same thing is noise.
+ *
+ * The METHODS are deliberately not offered here. They have a control of their
+ * own in the toolbar, two steps away, and a second way to set the same filter
+ * from the same screen is how the two come to disagree about which is on. The
+ * words still parse, for anyone who types them.
+ *
+ * Every token is asserted to parse by `the picker cannot offer a dead token` —
+ * offering one the reader cannot read is the one unforgivable failure here.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const STATUS_OFFERS: Record<SearchLanguage, Suggestion[]> = {
+  en: [
+    { token: 'open', label: 'Open' },
+    { token: 'overdue', label: 'Overdue' },
+    { token: 'paid', label: 'Paid' },
+    { token: 'refunded', label: 'Refunded' },
+    { token: 'draft', label: 'Draft' },
+    { token: 'cancelled', label: 'Cancelled' },
+  ],
+  he: [
+    { token: 'פתוח', label: 'פתוח' },
+    { token: 'באיחור', label: 'באיחור' },
+    { token: 'שולם', label: 'שולם' },
+    { token: 'הוחזר', label: 'הוחזר' },
+    { token: 'טיוטה', label: 'טיוטה' },
+    { token: 'בוטל', label: 'בוטל' },
+  ],
+  es: [
+    { token: 'pendiente', label: 'Pendiente' },
+    { token: 'vencido', label: 'Vencido' },
+    { token: 'pagado', label: 'Pagado' },
+    { token: 'reembolsado', label: 'Reembolsado' },
+    { token: 'borrador', label: 'Borrador' },
+    { token: 'cancelado', label: 'Cancelado' },
+  ],
+};
+
+/** The states this picker may offer, in the reader's own language. */
+export function statusFilters(language: SearchLanguage): Suggestion[] {
+  return STATUS_OFFERS[language] ?? STATUS_OFFERS.en;
 }
 
 /**
@@ -585,6 +730,22 @@ export function matchesTerms(
       if (term.max !== null && item.amount > term.max) return false;
       continue;
     }
+
+    /*
+     * STATE AND COLLECTION ARE APPLIED ELSEWHERE, deliberately.
+     *
+     * Both already have a control of their own — the KPI tiles and the method
+     * group — and both travel to this endpoint as explicit parameters. Matching
+     * them here as well would make the typed word a SECOND source of truth for
+     * the same narrowing, and two of those drift.
+     *
+     * So the word's whole job is to move the control: `MoneyList` reads these
+     * terms and sets `filter` / `method` from them, which is what the request
+     * carries. Recognising it here is still necessary — it keeps the word out
+     * of the text haystack, where "open" would otherwise be matched against
+     * client names, and it is what lets the field draw a chip for it.
+     */
+    if (term.kind === 'status' || term.kind === 'method') continue;
 
     /* A row with no date cannot be in a period. Excluding it is the honest
        answer: "October" asked for October, and this is not known to be in it. */

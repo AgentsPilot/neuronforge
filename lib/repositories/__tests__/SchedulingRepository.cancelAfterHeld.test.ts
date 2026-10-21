@@ -50,7 +50,14 @@ jest.mock('@/lib/business-os/insight/events/recordEvent', () => ({
 const USER = 'user-1';
 const BOOKING = 'booking-1';
 
-type Current = { status: string; cancelled_by?: string | null; cancel_reason?: string | null };
+type Current = {
+  status: string;
+  /* The meeting's own answer, which `cancel()` must not overwrite once one
+     exists — see "a meeting already called off". */
+  meeting_status?: string | null;
+  cancelled_by?: string | null;
+  cancel_reason?: string | null;
+};
 
 /**
  * A Supabase double. The FIRST `from()` answers `cancel()`'s status pre-read;
@@ -109,6 +116,55 @@ function mockSupabase(current: Current | null, claimed = true) {
 const emitted = () => (recordBusinessEvent as jest.Mock).mock.calls.map(c => c[1].eventType);
 
 beforeEach(() => jest.clearAllMocks());
+
+describe('a meeting already called off', () => {
+  /*
+   * Stopping the JOB afterwards is a second, later event. It writes the
+   * booking's own cancellation fields, and it must leave the MEETING's answer
+   * alone: `outcome_by` and `outcome_at` record who called the appointment off
+   * and when, and restamping them puts the moment the work stopped onto the
+   * appointment's row.
+   *
+   * Measured on a real booking: the meeting was called off at 01:55 and the
+   * job stopped later, after which the journey read "you cancelled the meeting"
+   * at the LATER time. The half hour in which the appointment was off and the
+   * work was not had disappeared.
+   */
+  it('keeps the moment its own cancellation was recorded', async () => {
+    const { repo, writes } = mockSupabase({ status: 'confirmed', meeting_status: 'cancelled' });
+
+    await repo.cancel(BOOKING, USER, 'Not going ahead', {
+      code: 'client_unresponsive',
+      cancelledBy: 'owner',
+    });
+
+    const payload = writes[0].payload;
+    /* The JOB still stops — this is not the `held` guard, which also withholds
+       the status. */
+    expect(payload.status).toBe('cancelled');
+    expect(payload.cancelled_by).toBe('owner');
+    /* But the meeting's answer is not restamped. */
+    expect(payload).not.toHaveProperty('outcome_at');
+    expect(payload).not.toHaveProperty('outcome_by');
+  });
+
+  it('while a meeting nobody answered for still gets one', async () => {
+    /* The ordinary case, and the reason the stamp exists at all: an
+       appointment with no outcome is called off by the job going off, and
+       somebody has to be recorded as having done it. */
+    const { repo, writes } = mockSupabase({ status: 'confirmed', meeting_status: null });
+
+    await repo.cancel(BOOKING, USER, 'Not going ahead', {
+      code: 'client_unresponsive',
+      cancelledBy: 'client',
+    });
+
+    const payload = writes[0].payload;
+    expect(payload.meeting_status).toBe('cancelled');
+    expect(payload.outcome_by).toBe('client');
+    expect(payload.outcome_at).toEqual(expect.any(String));
+  });
+});
 
 describe('a meeting that was held', () => {
   it('is not rewritten to cancelled', async () => {

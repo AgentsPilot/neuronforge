@@ -58,6 +58,12 @@ const BOS_CRONS: CronEntry[] = [
   { path: '/api/cron/daily-briefing', schedule: '10 * * * *' },
   { path: '/api/cron/lead-response', schedule: '*/5 * * * *' },
   { path: '/api/cron/abandoned-proposal-invoices', schedule: '20 * * * *' },
+  /*
+   * The client who filled the form and never paid. Twice an hour, because an
+   * attempt is only worth recovering while the client still remembers making
+   * it.
+   */
+  { path: '/api/cron/abandoned-bookings', schedule: '5,35 * * * *' },
   // Credit deduction slice 4b: the nightly leak check (read-only).
   { path: '/api/cron/credit-leak-check', schedule: '45 4 * * *' },
   /*
@@ -88,6 +94,15 @@ const BOS_CRONS: CronEntry[] = [
    * Step 8), after migration 20261032 is applied.
    */
   { path: '/api/cron/bos-billing-reconcile', schedule: '41 5 * * *' },
+  /*
+   * CLIENTS' money, as opposed to the platform's own above.
+   *
+   * Every quarter hour, not nightly: this repairs a client who has paid and
+   * whose booking shows nothing collected, and an owner should not spend a day
+   * looking at that. The pass is bounded and idempotent, so a frequent run is
+   * cheap and two overlapping ones cannot corrupt each other.
+   */
+  { path: '/api/cron/booking-money-reconcile', schedule: '*/15 * * * *' },
 ];
 
 const RETIRED_AGENTSPILOT = [
@@ -99,8 +114,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 17 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(17);
+  it('schedules exactly the 19 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(19);
     expect(crons).toEqual(BOS_CRONS);
   });
 

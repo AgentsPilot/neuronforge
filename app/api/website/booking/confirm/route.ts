@@ -12,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
+import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -39,6 +39,39 @@ const ConfirmBookingSchema = z.object({
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
+
+  /*
+   * ── CLOSED, BECAUSE NOTHING CALLS IT AND ANYONE CAN ─────────────────────
+   *
+   * The note further down already said it: "Nothing in the app calls this
+   * route today; the widgets use /finalize." Confirmed by search — no caller
+   * in `app/` or `components/`.
+   *
+   * What it still did was accept an unauthenticated POST carrying only a
+   * subdomain and a service id, and from that mint a `crm_contacts` row and a
+   * `confirmed` booking that holds a slot. Both are public values. So it was
+   * an open door into any business's CRM and calendar, kept ajar by nothing
+   * but obscurity, and it predates every rule the live path now follows: it
+   * creates the contact before any money, it writes its own find-or-create
+   * copy, and it sets a pipeline stage no route is supposed to set.
+   *
+   * Refused rather than deleted. A deleted route 404s and tells the next
+   * reader nothing; this says what replaced it, and stays greppable from the
+   * logs if some caller nobody has found starts hitting it.
+   */
+  requestLogger.warn(
+    { path: '/api/website/booking/confirm' },
+    'Refused a call to the retired public confirm route'
+  );
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: 'This endpoint has been retired. Bookings are created by /api/website/booking/finalize once a payment has been confirmed.',
+      code: 'route_retired',
+    },
+    { status: 410 }
+  );
 
   try {
     const body = await request.json();
@@ -112,18 +145,20 @@ export async function POST(request: NextRequest) {
     // and an invalid end time is written to the row without complaint.
     const endTime = new Date(startTime.getTime() + (service.duration_minutes || 0) * 60 * 1000);
 
-    // Check for conflicts (double-check availability)
-    const { data: conflicts } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('id')
-      .eq('user_id', ownerId)
-      // A booking that will not happen does not hold its slot — that is
-      // `cancelled` AND `no_show`, which this asked as "not cancelled" and so
-      // kept a no-show's time shut. See `SLOT_HOLDING_STATUSES`.
-      .in('status', SLOT_HOLDING_STATUSES)
-      .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
+    /*
+     * Check for conflicts (double-check availability).
+     *
+     * `busyMeetings` is bounded by the appointment's own span, so the window IS
+     * the overlap test — anything it returns collides by definition.
+     */
+    const conflicts = await busyMeetings(
+      supabaseServer,
+      ownerId,
+      startTime.toISOString(),
+      endTime.toISOString()
+    );
 
-    if (conflicts && conflicts.length > 0) {
+    if (conflicts.length > 0) {
       return NextResponse.json(
         { success: false, error: 'This time slot is no longer available' },
         { status: 409 }

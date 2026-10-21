@@ -94,8 +94,19 @@ describe('the card itself', () => {
      * could have broken: every call carries `row.id`, the meeting's own, and
      * never the container's.
      */
-    expect(tab).toContain('onSetBookingStatus(row.id, next)');
+    expect(tab).toMatch(/onSetBookingStatus\(\s*row\.id,\s*next,/);
     expect(tab).toContain('onEditSession(row.id)');
+
+    /*
+     * AND the meeting it is, which is new and load-bearing.
+     *
+     * A package is now ONE booking with N meetings, so `row.id` is a MEETING
+     * id for a session and there is no booking to complete. The handler sends
+     * it to `/api/scheduling/meetings/[id]/outcome` only if the row says which
+     * meeting it is — without this, marking session four held would fall
+     * through to the booking route and bill session one.
+     */
+    expect(tab).toContain('row.meeting_id ?? null');
 
     // Nothing in the list acts on the parent booking by mistake.
     const start = tab.indexOf('ONE LIST, NOT A STACK OF CARDS');
@@ -184,5 +195,265 @@ describe('looking a booking up by id', () => {
     // Six meetings that no longer appear in the count is a number the owner
     // reads as bookings disappearing.
     expect(drawer).toContain('everyBooking().filter(s =>');
+  });
+});
+
+describe('a package whose sessions are MEETINGS, not child bookings', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * The shape this moved to: one booking, N rows in `scheduling_meetings`.
+   *
+   * The fold used to have only one job — group the child cards. There are no
+   * child cards now, so without this branch an accepted package draws as a
+   * purchase with nothing under it: no dates, no sessions, no package step.
+   * That is the shape of every "the client booked it and I cannot see it" bug
+   * this drawer has had.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const code = drawer
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  const fold = code.slice(code.indexOf('function sessionCardsFromMeetings'));
+  const upToFold = fold.slice(0, fold.indexOf('function foldPackageMeetings'));
+
+  it('reads the sessions off the booking that holds them', () => {
+    expect(upToFold).toContain('card.booking.attempts');
+  });
+
+  it('tells a session apart from an attempt at one appointment', () => {
+    /*
+     * Both are rows on one booking. On an ordinary booking the list is tries
+     * at a single hour; here each numbered session is a different hour. Read
+     * the wrong way, a package of six draws as six attempts at one date.
+     */
+    expect(upToFold).toContain('session_number');
+  });
+
+  it('shows the hour the client actually holds, not one that was given back', () => {
+    /*
+     * A moved session leaves its old attempt behind, stamped `moved`. Listing
+     * it would show a date nobody holds; ranking it as current would
+     * contradict the attempt that replaced it.
+     */
+    expect(upToFold).toContain("meeting_status === 'moved'");
+    expect(upToFold).toContain('occurrence_number');
+  });
+
+  it('marks each row with the meeting its actions must target', () => {
+    /* Without this the outcome goes to a booking route that has no such
+       booking, and the money keys on the wrong session. */
+    expect(upToFold).toContain('meeting_id: attempt.id');
+  });
+
+  it('carries parent_booking_id, so every existing session check still holds', () => {
+    /*
+     * `isQuotedJob`, `sessionNextStep` and the card grouping all ask "is this a
+     * session rather than a purchase" by looking for a parent. Setting it on
+     * the view model keeps all of them right without editing one of them.
+     */
+    expect(upToFold).toContain('parent_booking_id: card.booking.id');
+  });
+
+  it('gives a session its own money, which is its stage', () => {
+    /*
+     * An invoice for session three now carries the CONTAINER's `booking_id`,
+     * so the booking-keyed payment on the card describes the purchase. The
+     * stage is the only thing that knows which hour was billed.
+     */
+    expect(upToFold).toContain('stage.meeting_id');
+  });
+
+  it('still folds child bookings, because packages sold earlier are that shape', () => {
+    /* A package accepted last month is child bookings, and a client can pay
+       for it today. Both shapes are read; neither replaced the other. */
+    const both = code.slice(code.indexOf('function foldPackageMeetings'));
+    expect(both).toContain('card.booking.parent_booking_id');
+    expect(both).toContain('sessionCardsFromMeetings');
+  });
+});
+
+describe('calling off one session is not cancelling the order', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THE OWNER SAW
+   *
+   * Pressing Cancel on one session of a running package opened the BOOKING
+   * cancellation dialog: "לבטל את ההזמנה?" — cancel the order? — with the
+   * reasons a JOB ends for. The client will not pay. The service is
+   * discontinued. The money was refunded and it is being closed out.
+   *
+   * None of those is a thing that happens to one hour of a package that is
+   * still running, and the client would have been told their order was
+   * cancelled when five of their six sessions were untouched.
+   *
+   * `CancelMeetingDialog` is the one that calls off an appointment and leaves
+   * the work alone — it exists, and the session row was simply not reaching it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const drawerCode = drawer
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  it('opens the MEETING dialog for a session', () => {
+    expect(drawerCode).toContain('setPendingMeetingCancel({ bookingId, isQuoted: false, meetingId })');
+  });
+
+  it('and the ORDER dialog only when there is no session', () => {
+    /* An ordinary booking keeps the dialog it always had — cancelling it does
+       end the job, and the reasons are the right ones for that. */
+    const branch = drawerCode.slice(drawerCode.indexOf("if (status === 'cancelled') {"));
+    const body = branch.slice(0, branch.indexOf('return;'));
+
+    expect(body).toContain('if (meetingId)');
+    expect(body).toContain('setPendingCancelBookingId(bookingId)');
+  });
+
+  it('asks no quote question of a package', () => {
+    /*
+     * The toggle exists for a consultation whose quote may still be coming. A
+     * package's quote was accepted already — that is what created the
+     * sessions — so there is nothing left to decide.
+     */
+    expect(drawerCode).toContain('isQuoted: false, meetingId');
+  });
+
+  it('writes the outcome against the meeting, not the purchase', () => {
+    /*
+     * `meeting-cancel` takes a BOOKING and stamps its mirror, which for a
+     * package would read as the whole thing being off. The session's own
+     * endpoint stamps that hour, frees it, and leaves the other five.
+     */
+    const confirm = drawerCode.slice(drawerCode.indexOf('onConfirm={async ({ proposalContinues })'));
+    const body = confirm.slice(0, confirm.indexOf('const data ='));
+
+    expect(body).toContain('/outcome');
+    expect(body).toContain("{ status: 'cancelled', notifyClient: true }");
+    expect(body).toContain('meeting-cancel');
+  });
+});
+
+describe('a called-off session says so, and only held stops a move', () => {
+  const drawerSrc = drawer
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  it('takes its status from the session, not the purchase', () => {
+    /*
+     * A session the owner had just called off read "מאושרת" — confirmed —
+     * beside its own struck-through date, because the row borrowed the
+     * container's status and a running package stays confirmed throughout.
+     * Two parts of one row saying opposite things about the same hour.
+     */
+    const fold = drawerSrc.slice(drawerSrc.indexOf('function sessionCardsFromMeetings'));
+    const body = fold.slice(0, fold.indexOf('function foldPackageMeetings'));
+
+    expect(body).toContain("attempt.meeting_status === 'cancelled'");
+    expect(body).toContain("? 'cancelled'");
+    expect(body).toContain("? 'completed'");
+  });
+
+  it('falls back to the job only while nothing has happened', () => {
+    /* An unmarked session is as confirmed as the package that sold it. */
+    const fold = drawerSrc.slice(drawerSrc.indexOf('function sessionCardsFromMeetings'));
+    const body = fold.slice(0, fold.indexOf('function foldPackageMeetings'));
+
+    expect(body).toContain('card.booking.status');
+  });
+});
+
+describe('the move endpoint agrees with the menu that offers it', () => {
+  const route = readFileSync(
+    join(process.cwd(), 'app', 'api', 'scheduling', 'meetings', '[id]', 'reschedule', 'route.ts'),
+    'utf8'
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  it('refuses a session that already happened', () => {
+    /* On a package billed per session, held is what raised the invoice — so
+       moving the date would leave it and the appointment on two days. */
+    expect(route).toContain("meeting.meeting_status === 'held'");
+    expect(route).toContain("code: 'already_held'");
+  });
+
+  it('and one the owner called off', () => {
+    /*
+     * Moving it would undo a decision through a control that says something
+     * else, and the client has already been told the hour is not happening.
+     */
+    expect(route).toContain("meeting.meeting_status === 'cancelled'");
+    expect(route).toContain("code: 'called_off'");
+  });
+
+  it('but NOT one that was missed', () => {
+    /*
+     * Nobody decided anything — the client did not turn up — and another
+     * attempt at that session is the ordinary next move. Refusing every marked
+     * session is what this replaced.
+     */
+    expect(route).not.toContain('meeting.meeting_status !== null');
+    expect(route).not.toContain("meeting.meeting_status === 'no_show'");
+  });
+
+  it('which is the same rule the menu applies', () => {
+    const actions = readFileSync(
+      join(process.cwd(), 'components', 'crm', 'contact-drawer', 'MeetingRowActions.tsx'),
+      'utf8'
+    );
+
+    expect(actions).toContain("const held = status === 'completed' || meetingStatus === 'held'");
+    expect(actions).toContain("const calledOff = status === 'cancelled' || meetingStatus === 'cancelled'");
+    expect(actions).toContain('if (onReschedule && !held && !calledOff)');
+  });
+});
+
+describe('a called-off session is not owed for', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A per-session stage bills when its session is marked HELD, so one called
+   * off never bills. The stage nonetheless went on reading `pending` against
+   * it: the row showed "133.33 ₪ · ממתין" directly beside the word בוטלה, and
+   * the plan still totalled six sessions when only five could ever bill.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const repo = readFileSync(
+    join(process.cwd(), 'lib', 'repositories', 'SchedulingRepository.ts'),
+    'utf8'
+  )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  const outcome = repo.slice(repo.indexOf('async setMeetingOutcome('));
+  const body = outcome.slice(0, outcome.indexOf('private async mirrorSessionOutcome('));
+
+  it('voids the stage when the session is called off', () => {
+    expect(body).toContain("if (status === 'cancelled')");
+    expect(body).toContain("from('payment_plan_installments')");
+    expect(body).toContain("status: 'cancelled'");
+  });
+
+  it('never one that has already been invoiced', () => {
+    /* That amount is on a document the client is holding; refunding is the
+       deliberate action, not a silent void. */
+    expect(body).toContain(".eq('status', 'pending')");
+    expect(body).toContain(".is('invoice_id', null)");
+  });
+
+  it('keyed on the session, so the other five are untouched', () => {
+    expect(body).toContain(".eq('meeting_id', meetingId)");
+    expect(body).toContain(".eq('user_id', userId)");
+  });
+
+  it("drops the plan's total by what was voided", () => {
+    /* Adding a session raises it; calling one off has to lower it, or the plan
+       claims money no invoice will ever ask for. */
+    expect(body).toContain("from('payment_plans')");
+    expect(body).toContain('total_amount');
+  });
+
+  it('and the row stops showing money for it', () => {
+    const drawerCode = drawer.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(drawerCode).toContain("stage && stage.status !== 'cancelled'");
   });
 });

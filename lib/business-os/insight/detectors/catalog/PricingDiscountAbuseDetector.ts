@@ -39,6 +39,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+import { MEETING_HOLDS_SLOT_FILTER } from '@/lib/business-os/bookingStatus';
 
 const logger = createLogger({ module: 'PricingDiscountAbuseDetector' });
 
@@ -146,7 +147,11 @@ export class PricingDiscountAbuseDetector extends BaseDetector {
       .select('id, payment_amount')
       .eq('user_id', userId)
       .gte('created_at', thirtyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed']);
+      .in('status', ['confirmed', 'completed'])
+      /* And the meeting was not missed or called off. The status pair meant
+         that too until `markNoShow()` stopped writing `status`; this restores
+         the sample these rates are measured against. */
+      .or(MEETING_HOLDS_SLOT_FILTER);
 
     if (bookingsError) {
       logger.warn(

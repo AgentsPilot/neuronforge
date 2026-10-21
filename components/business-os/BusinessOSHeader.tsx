@@ -111,7 +111,15 @@ export function BusinessOSHeader({ planBadge = null }: { planBadge?: PlanBadgePr
   }, []);
 
   return (
-    <div className="sticky top-0 z-50 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
+    /*
+     * NOT `sticky` ANY MORE, AND IT HAS ONLY ONE CALLER.
+     *
+     * It stuck to the top while the document scrolled beneath it. The Business
+     * OS layout now holds the chrome outside its scrolling body, so there is
+     * nothing for this to stick to — the rule was inert, and inert positioning
+     * is the kind of thing that gets copied into the next header.
+     */
+    <div className="relative z-50 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
       <div className={`${PAGE_CONTAINER} py-3 sm:py-4 flex items-center justify-between`}>
         {/*
           * The logo, and the way back to the dashboard from any Business OS page.

@@ -72,7 +72,35 @@ describe('the availability route resolves an owner the same way payment does', (
     // The route is now reachable by an authenticated caller with no subdomain,
     // so owner scoping is the only thing standing between businesses.
     const scoped = route.match(/\.eq\('user_id', ownerId\)/g) ?? [];
-    expect(scoped.length).toBeGreaterThanOrEqual(3);
+
+    /*
+     * Was 3. The busy-slot read moved into `busyMeetings`, which takes the
+     * owner as a required argument and applies `.eq('user_id', userId)`
+     * itself — so one of the three scopings now lives there and is asserted by
+     * that helper's own guard.
+     *
+     * Counting inline `.eq()` calls is a proxy for the real rule, and the real
+     * rule is checked below: no read in this route may go unscoped. A delegated
+     * read is still scoped; a count alone cannot tell the difference, so the
+     * number drops and the delegation is named instead.
+     */
+    expect(scoped.length).toBeGreaterThanOrEqual(2);
+    expect(route).toMatch(/busyMeetings\(\s*supabaseServer,\s*ownerId/);
+  });
+
+  it('passes the resolved owner to every helper that reads for it', () => {
+    /*
+     * The failure this replaces the lost count with: a helper called with the
+     * wrong identifier — `user.id` instead of `ownerId` — would read one
+     * business's diary onto another's booking page, and the inline-count test
+     * above would still pass.
+     */
+    const delegated = route.match(/busyMeetings\([^)]*\)/g) ?? [];
+    expect(delegated.length).toBeGreaterThan(0);
+    for (const call of delegated) {
+      expect(call).toContain('ownerId');
+      expect(call).not.toMatch(/\buser\.id\b/);
+    }
   });
 });
 

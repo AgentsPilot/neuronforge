@@ -500,9 +500,23 @@ const meetingUpcoming: GapDefinition = {
     safely('meeting_upcoming', async () => {
       const { data } = await supabaseServer
         .from('scheduling_bookings')
-        .select('id, contact_id, start_time, created_at, payment_status, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, start_time, created_at, payment_status, meeting_status, service:scheduling_services(service_name), contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .eq('status', 'confirmed')
+        /*
+         * And the meeting has not already been settled.
+         *
+         * `status = 'confirmed'` no longer means "still on": `markNoShow()` and
+         * `cancel()` write `meeting_status` and leave the status alone. Without
+         * this the gap sends "see you tomorrow" for an appointment that has
+         * been marked missed or called off — and there are live rows in exactly
+         * that state, carrying a settled outcome on a FUTURE date.
+         *
+         * `.is(null)` and not a NOT IN: `NULL NOT IN (…)` is NULL in SQL, so a
+         * NOT IN would drop every unmarked booking and the reminder would stop
+         * sending entirely.
+         */
+        .is('meeting_status', null)
         .gte('start_time', new Date(now).toISOString())
         .order('start_time', { ascending: true })
         .limit(50);
@@ -896,7 +910,7 @@ const stageAwaitingCompletion: GapDefinition = {
     safely('stage_awaiting_completion', async () => {
       const { data: stages } = await supabaseServer
         .from('payment_plan_installments')
-        .select('id, contact_id, amount, currency, label, created_at, proposal_id, booking_id')
+        .select('id, contact_id, amount, currency, label, created_at, proposal_id, booking_id, meeting_id')
         .eq('user_id', userId)
         .eq('trigger', 'manual')
         .eq('status', 'pending')
@@ -915,26 +929,66 @@ const stageAwaitingCompletion: GapDefinition = {
 
       /*
        * ───────────────────────────────────────────────────────────────────────
-       * A STAGE THAT BILLS A MEETING WAITS FOR THAT MEETING.
+       * A STAGE THAT BILLS A SESSION WAITS FOR THAT SESSION.
        *
        * The header above says "there is nothing to wait for: no date will ever
        * arrive to make it billable", and `staleAfterHours: 0` follows from it.
        * That is true of a quote phase, which has no date of its own.
        *
-       * It is FALSE for a recurring booking, where the stage has an obvious
-       * date: the session it bills for. A real series on 2026-10-02 created six
-       * manual stages of ₪74.99, one per session, for meetings running from 8
-       * October to 17 December — and the card asked the owner to mark December's
-       * session done and invoice for it, in October. Every one of the six.
+       * It is FALSE for a package, where the stage has an obvious date: the
+       * session it bills for. A real series created six manual stages, one per
+       * session, for meetings running from 8 October to 17 December — and the
+       * card asked the owner to mark December's session done and invoice for
+       * it, in October. Every one of the six.
        *
-       * So a stage carrying a `booking_id` is held until that booking's start
-       * time has passed. A stage with no booking behind it is unchanged: it is
-       * the quote phase the gap was written for, and it has nothing to wait on.
+       * ───────────────────────────────────────────────────────────────────────
+       * WHY THE FIRST FIX FOR THAT STOPPED WORKING, which is the bug here.
        *
-       * The owner decided this on 2026-10-02: only once the meeting has
-       * happened, with no grace period.
+       * It held a stage against its `booking_id`. That worked while each
+       * session had a booking of its own, and a package is now ONE container
+       * booking with N `scheduling_meetings` — so every stage of a package
+       * shares the container's id, and `ProposalAcceptanceService` says what
+       * the container is: "a container carries no time and the bookings
+       * constraint therefore skips it."
+       *
+       * So `start` was always null, the fail-open below fired, and all six
+       * stages were released the moment the quote was accepted. The guard did
+       * not weaken — it became unreachable, because the column it read can
+       * never hold a value for the case it was written for.
+       *
+       * The session is named by `meeting_id`, which the acceptance service has
+       * stamped all along. Precedence is `billSessionOnCompletion`'s, so the
+       * card and the biller agree about which session a stage belongs to:
+       * the meeting first, the booking only for stages written before that
+       * column existed.
+       *
+       * A stage whose `meeting_id` cannot be read does NOT fall back to the
+       * booking. That fallback is the bug: the container has no time, so it
+       * releases everything. It falls through to the same fail-open instead.
        * ───────────────────────────────────────────────────────────────────────
        */
+      const meetingIds = [...new Set(allStages.map(row => row.meeting_id).filter(Boolean))] as string[];
+
+      const meetingById = new Map<
+        string,
+        { start: string | null; end: string | null; session: number | null; status: string | null }
+      >();
+      for (const ids of chunked(meetingIds)) {
+        const { data: meetings } = await supabaseServer
+          .from('scheduling_meetings')
+          .select('id, start_time, end_time, session_number, meeting_status')
+          .eq('user_id', userId)
+          .in('id', ids);
+        for (const meeting of meetings || []) {
+          meetingById.set(meeting.id as string, {
+            start: (meeting.start_time as string) ?? null,
+            end: (meeting.end_time as string) ?? null,
+            session: (meeting.session_number as number) ?? null,
+            status: (meeting.meeting_status as string) ?? null,
+          });
+        }
+      }
+
       const bookingIds = [...new Set(allStages.map(row => row.booking_id).filter(Boolean))] as string[];
 
       const startByBooking = new Map<string, string | null>();
@@ -951,6 +1005,39 @@ const stageAwaitingCompletion: GapDefinition = {
 
       const nowMs = Date.now();
       const rows = allStages.filter(row => {
+        const meeting = row.meeting_id ? meetingById.get(row.meeting_id as string) : undefined;
+
+        if (meeting) {
+          /*
+           * A session that did not happen is not billable, and asking the owner
+           * to mark one done is the same wrong question in another form. The
+           * stage is not deleted — it comes back if the session is reinstated.
+           *
+           * `no_show` is deliberately NOT here: the hour was held, the client
+           * did not come, and whether that is charged for is the owner's call
+           * to make on a row they can see.
+           *
+           * `moved` should be unreachable: `moveMeeting` repoints a pending
+           * unbilled stage at the new attempt precisely so the money follows
+           * the session. If one appears anyway the invariant has broken, and
+           * releasing it on a superseded date is the bug this block exists to
+           * fix — so it is held, and said out loud rather than dropped in
+           * silence.
+           */
+          if (meeting.status === 'cancelled') return false;
+          if (meeting.status === 'moved') {
+            logger.warn(
+              { stageId: row.id, meetingId: row.meeting_id },
+              'Pending stage still names a moved meeting; holding it rather than billing a superseded date'
+            );
+            return false;
+          }
+
+          // Unreadable time: the same fail-open as below, for the same reason.
+          if (!meeting.start) return true;
+          return Date.parse(meeting.start) <= nowMs;
+        }
+
         if (!row.booking_id) return true;
         const start = startByBooking.get(row.booking_id as string);
         /*
@@ -1003,7 +1090,10 @@ const stageAwaitingCompletion: GapDefinition = {
        * fall due at different times, and each is its own invoice. Collapsing them
        * would tell the owner one thing was waiting and hide the rest.
        */
-      return rows.map(row => ({
+      return rows.map(row => {
+        const meeting = row.meeting_id ? meetingById.get(row.meeting_id as string) : undefined;
+
+        return {
         contactId: row.contact_id as string,
         name: nameById.get(row.contact_id as string) || 'Someone',
         /*
@@ -1015,11 +1105,41 @@ const stageAwaitingCompletion: GapDefinition = {
           .filter(Boolean)
           .join(' · ') || undefined,
         /*
-         * When the stage was created, which is when the client accepted the quote.
-         * There is no better answer: a phase has no date of its own, and that is
-         * the whole reason this gap exists.
+         * ─────────────────────────────────────────────────────────────────────
+         * THE SESSION, WHERE THERE IS ONE.
+         *
+         * This was `created_at` for every stage, under the note that "a phase
+         * has no date of its own, and that is the whole reason this gap
+         * exists". True of a quote phase, and never true of a package: the
+         * session IS the date.
+         *
+         * It read badly as well as wrongly. Five rows said "7 hours since they
+         * approved the proposal" — all five identical, none of them about the
+         * thing the owner was being asked to confirm. A session held last week
+         * and still unbilled is older than one held this morning, and the card
+         * could not tell them apart.
+         *
+         * `staleFrom` is the meeting's END, which is the distinction the field
+         * was added for: `since` is what the row SAYS, and the question "did it
+         * happen" cannot be answered until the session is over. Without it a
+         * long session is asked about while it is still running.
+         * ─────────────────────────────────────────────────────────────────────
          */
-        since: row.created_at as string,
+        since: meeting?.start ?? (row.created_at as string),
+        staleFrom: meeting?.end ?? undefined,
+        /*
+         * WHICH session of the package, as a NUMBER.
+         *
+         * Composed into a sentence here it would ship English to a Hebrew
+         * owner: this runs server-side, the gaps route resolves no language,
+         * and `note` is rendered raw by the card. So the figure travels and the
+         * card says "מפגש 3" in the reader's own words.
+         *
+         * Without it two sessions due to be billed produce two rows identical
+         * to the character, and the owner cannot tell which one they just
+         * billed.
+         */
+        sessionNumber: meeting?.session ?? undefined,
         entityId: row.id as string,
         /*
          * The JOB this phase belongs to, which is what the button opens.
@@ -1034,7 +1154,8 @@ const stageAwaitingCompletion: GapDefinition = {
         bookingId: (row.booking_id as string | null) ?? undefined,
         value: Number(row.amount) || undefined,
         currency: str(row.currency) || undefined,
-      }));
+        };
+      });
     }),
 };
 
@@ -1086,9 +1207,19 @@ const meetingUnmarked: GapDefinition = {
     safely('meeting_unmarked', async () => {
       const { data: bookings } = await supabaseServer
         .from('scheduling_bookings')
-        .select('id, contact_id, start_time, end_time, status, service:scheduling_services(service_name)')
+        .select('id, contact_id, start_time, end_time, status, meeting_status, service:scheduling_services(service_name)')
         .eq('user_id', userId)
         .in('status', ['confirmed', 'pending'])
+        /*
+         * Nobody has answered yet — which is the entire question this gap asks.
+         *
+         * The status pair was the answer while an outcome overwrote the status.
+         * It is not any more: a meeting marked held keeps `status: 'confirmed'`,
+         * so this gap went on asking "what happened at this meeting?" about
+         * meetings the owner had already told it about, and no number of
+         * answers would make it stop.
+         */
+        .is('meeting_status', null)
         .not('start_time', 'is', null)
         /*
          * Already past. The staleness window in `findGaps` then holds it back
@@ -1215,9 +1346,15 @@ const meetingAutoCompleted: GapDefinition = {
        */
       const { data: bookings } = await supabaseServer
         .from('scheduling_bookings')
-        .select('id, contact_id, start_time, status, service:scheduling_services(service_name)')
+        .select('id, contact_id, start_time, status, meeting_status, service:scheduling_services(service_name)')
         .eq('user_id', userId)
-        .eq('status', 'completed')
+        /*
+         * Still marked HELD, which is `meeting_status` — the column the
+         * automation's answer now lives in. `complete()` stopped writing
+         * `status: 'completed'`, so against the old filter this gap matched
+         * nothing the automation had marked and quietly stopped asking.
+         */
+        .eq('meeting_status', 'held')
         .in('id', [...markedAt.keys()]);
 
       const rows = (bookings || []).filter(row => row.contact_id);

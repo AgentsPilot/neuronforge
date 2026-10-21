@@ -32,6 +32,16 @@ export interface FinancialDetailProps {
   invoicesSent: number;
   overdueAmount: number;
   overdueCount: number;
+  /**
+   * What the count is made of.
+   *
+   * The note read "{n} invoices" while the figure above it counted plan stages
+   * too — a stage is not an invoice, and on a live account three of them were
+   * being described as invoices that do not exist. Optional so a caller that
+   * has not been updated keeps the old wording rather than breaking.
+   */
+  overdueInvoiceCount?: number;
+  overduePlanCount?: number;
   refunded: number;
   /** Collected BEFORE refunds, so the refund ratio cannot exceed 100%. */
   gross: number;
@@ -107,7 +117,13 @@ export function FinancialDetail(p: FinancialDetailProps) {
       key: 'late',
       label: t('reports.tile_late'),
       value: p.money(p.overdueAmount),
-      note: `${p.overdueCount} ${t('reports.overdue_invoices')}`,
+      /* Named separately once plan stages are in the number: "5 invoices · 3
+         plan payments" says what the figure is, where one noun could only be
+         wrong about part of it. */
+      note:
+        p.overduePlanCount
+          ? `${p.overdueInvoiceCount ?? 0} ${t('reports.overdue_invoices')} · ${p.overduePlanCount} ${t('reports.overdue_plan_payments')}`
+          : `${p.overdueCount} ${t('reports.overdue_invoices')}`,
       alarm: p.overdueCount > PERFORMANCE_THRESHOLDS.OUTSTANDING_WARNING,
     },
     {

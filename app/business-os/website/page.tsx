@@ -1268,18 +1268,11 @@ export default function WebsiteManagementPage() {
   const [analytics, setAnalytics] = useState<WebsiteAnalytics | null>(null);
 
   // Landing page analytics state (keyed by page ID)
-  const [landingPagesAnalytics, setLandingPagesAnalytics] = useState<Record<string, {
-    total_views: number;
-    unique_visitors: number;
-    views_today: number;
-    visitors_today: number;
-    views_this_month: number;
-    visitors_this_month: number;
-    views_30d: number;
-    visitors_30d: number;
-    views_7d: number;
-    visitors_7d: number;
-  }>>({});
+  /* `WebsiteAnalytics`, not a second copy of its ten fields. A landing page's
+     activity has the same shape as the site's, and the inline duplicate is why
+     the fetch below could be typed `unknown` without anything noticing. */
+  const [landingPagesAnalytics, setLandingPagesAnalytics] =
+    useState<Record<string, WebsiteAnalytics>>({});
 
   // Delete confirmation dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -1400,9 +1393,20 @@ export default function WebsiteManagementPage() {
         setHasPaidServices(paidServices.length > 0);
       }
 
-      if (pagesData.success && pagesData.pages?.length > 0) {
+      /*
+       * Narrowed ONCE, into a local, rather than optional-chained four times.
+       *
+       * `pagesData.pages?.length > 0` does not narrow anything: the guard
+       * succeeds, and every later `pagesData.pages` is still `WebsitePage[] |
+       * undefined` — which is four type errors and, more to the point, four
+       * places that would throw if the field ever really were absent. Holding
+       * the array in a const proves it once for all of them.
+       */
+      const pages = pagesData.pages;
+
+      if (pagesData.success && pages && pages.length > 0) {
         // Store all pages
-        setAllPages(pagesData.pages);
+        setAllPages(pages);
 
         // Get the homepage (first page)
         // The homepage, or nothing. The `|| pages[0]` fallback that used to be
@@ -1410,7 +1414,7 @@ export default function WebsiteManagementPage() {
         // first — a landing page, on any account without a site. That is why
         // the header opened already wearing a landing page's title, and why the
         // Overview tab could show one where the website belongs.
-        const homepage = pagesData.pages.find((p: WebsitePage) => p.page_type === 'homepage') || null;
+        const homepage = pages.find((p: WebsitePage) => p.page_type === 'homepage') || null;
         setPage(homepage);
 
         /*
@@ -1433,9 +1437,12 @@ export default function WebsiteManagementPage() {
           '/api/website/analytics'
         );
 
-        const landingPages = pagesData.pages.filter((p: WebsitePage) => p.page_type === 'landing');
+        const landingPages = pages.filter((p: WebsitePage) => p.page_type === 'landing');
         const activityPromises = landingPages.map((lp: WebsitePage) =>
-          startFetch<{ success: boolean; analytics?: unknown }>(
+          /* Typed, not `unknown`. The route returns the same shape the site's
+             own analytics do, and saying so is what lets the map below be
+             assigned to state without a cast. */
+          startFetch<{ success: boolean; analytics?: WebsiteAnalytics }>(
             `/api/website/pages/${lp.id}/activity?full=true`
           ).then(result => ({
             pageId: lp.id,
@@ -1513,7 +1520,11 @@ export default function WebsiteManagementPage() {
         // Fetch analytics for all landing pages
         if (activityPromises.length > 0) {
           const results = await Promise.all(activityPromises);
-          const analyticsMap: Record<string, typeof results[0]['analytics']> = {};
+          /* The map holds only what was PRESENT — the guard below drops a page
+             whose activity came back empty — so its type says so. Deriving it
+             from the response (`typeof results[0]['analytics']`) carried the
+             optionality of the fetch into a map that never stores a blank. */
+          const analyticsMap: Record<string, WebsiteAnalytics> = {};
           results.forEach(r => {
             if (r.analytics) {
               analyticsMap[r.pageId] = r.analytics;
@@ -2425,15 +2436,38 @@ export default function WebsiteManagementPage() {
       const response = await fetch(`/api/website/pages/${target}/publish`);
       const data = await response.json();
 
-      if (data.ready === false) {
-        logger.warn({ pageId: target, reason: data.reason }, 'Preview refused');
-        setPublishGaps(Array.isArray(data.gaps) ? data.gaps : []);
-        setPublishError(data.error || labels.publish_failed);
-        return;
+      /*
+       * PREVIEW SHOWS. IT DOES NOT REFUSE.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * This used to `return` on a gap, so an owner part-way through setup
+       * could not look at the page they were building. That is the wrong thing
+       * to withhold: a preview is the owner looking at their own work, not a
+       * promise to a client, and these rules exist to sit at the moment
+       * something becomes CLIENT-facing — publishing, or taking a booking —
+       * never to police the work leading up to it.
+       *
+       * The original reason for blocking was that a preview walks a live
+       * booking flow, so an owner could reach a booking with nothing behind it.
+       * That reason is gone: both booking routes now refuse on exactly these
+       * gaps, so the dangerous action is stopped at its source however it is
+       * reached — preview, smart link or the live site.
+       *
+       * The gaps are still SET, so the notice stays beside the publish button.
+       * The owner sees what is missing AND sees their page.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const notReady = data.ready === false;
+
+      if (notReady) {
+        logger.info(
+          { pageId: target, reason: data.reason },
+          'Previewing a page that is not ready to publish'
+        );
       }
 
-      setPublishError(null);
-      setPublishGaps([]);
+      setPublishGaps(notReady && Array.isArray(data.gaps) ? data.gaps : []);
+      setPublishError(notReady ? (data.error || labels.publish_failed) : null);
       open();
     } catch (error) {
       // A failed CHECK must not stand between an owner and their preview.
@@ -2456,7 +2490,40 @@ export default function WebsiteManagementPage() {
   const handlePublish = async () => {
     if (!page) return;
 
+    /*
+     * THE GATE COMES BEFORE THE DIALOG, NOT AFTER IT.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * The address dialog opened first and returned, so readiness was not
+     * asked until the owner had chosen a subdomain and pressed publish again.
+     * They were taken through a decision they could not act on — naming the
+     * address their clients will use — and only then told the site could not
+     * go live because the invoice details are empty.
+     *
+     * Asked here, before anything opens, so a refusal lands on the button
+     * they actually pressed and names what to fix. Only on the FIRST publish
+     * path, because that is the branch that opens the dialog; the publish
+     * below already surfaces the same gaps when it refuses.
+     *
+     * Fails open: a readiness check that errors must not stand between an
+     * owner and publishing. The POST behind this is the authority and gates
+     * again regardless.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     if (!page.published && !publishAddressOpen) {
+      try {
+        const probe = await fetch(`/api/website/pages/${page.id}/publish`);
+        const readiness = await probe.json();
+
+        if (probe.ok && readiness && readiness.ready === false) {
+          setPublishGaps(Array.isArray(readiness.gaps) ? readiness.gaps : []);
+          setPublishError(readiness.error || labels.publish_failed);
+          return;
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Could not check publish readiness before asking for the address');
+      }
+
       setPublishAddressValue(page.subdomain || subdomain || '');
       setSubdomainAvailable(null);
       setPublishAddressOpen(true);
@@ -4749,7 +4816,7 @@ export default function WebsiteManagementPage() {
 
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]">
+    <div className="min-h-full bg-[var(--v2-bg)]">
 
       {/* Main Content with max-width like CRM dashboard */}
       <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
@@ -6376,7 +6443,11 @@ export default function WebsiteManagementPage() {
                                                       processorReady={processorReady}
                                                       service={{
                                                         scheduled: (service as { is_scheduled?: boolean }).is_scheduled !== false,
-                                                        collection: (service as { collection?: string | null }).collection ?? null,
+                                                        /* The column's own union, not `string`. `scheduling_services.collection`
+                                                           is 'online' | 'invoice' | null and nothing else — a CHECK enforces it —
+                                                           so widening it to `string` here only broke the assignment to
+                                                           `ClientJourneyStrip`, which asks for the real type. */
+                                                        collection: (service as { collection?: 'online' | 'invoice' | null }).collection ?? null,
                                                         price: (service as { priceRaw?: number | null }).priceRaw ?? null,
                                                       }}
                                                     />

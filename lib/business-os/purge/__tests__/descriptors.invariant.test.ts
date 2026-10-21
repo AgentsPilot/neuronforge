@@ -867,7 +867,11 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // marketing_consent_state, marketing_consent_settings.
     // +1 data export DE-2 (2026-10-15): intent_examples (never, global), the USER_OWNED_TABLES
     // entry that had no descriptor.
-    expect(baseline.count).toBe(155);
+    // +1 abandoned bookings (2026-10-16): abandoned_bookings (reset) — the record of
+    // somebody who gave their details and did not finish, which replaced the `pending`
+    // booking that used to hold the slot for ever.
+    /* 157 since 2026-10-17: `scheduling_meetings` (20261073). */
+    expect(baseline.count).toBe(157);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

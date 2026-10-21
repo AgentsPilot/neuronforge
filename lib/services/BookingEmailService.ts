@@ -32,6 +32,7 @@ import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository'
 // The same source `/book/manage/[token]/intake` reads, so the email asking for
 // an intake form and the page it links to cannot disagree about whether one exists.
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
+import { proposalRepository } from '@/lib/repositories/ProposalRepository';
 import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateMissedAppointmentEmail, generateICSContent, icsSequenceFor } from '@/lib/email/templates/booking-confirmation';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
@@ -44,6 +45,7 @@ import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { packageSessionLines } from '@/lib/scheduling/packageSessionLines';
 // The payment half of a reschedule email. Each is the SAME rule used elsewhere:
 // the settled checks the reminder sender reads, and the card/bank resolver the
 // invoice email uses — so no surface can disagree with another about whether
@@ -378,6 +380,55 @@ export function cancellationReasonForClient(input: {
   return clientFacingCancelReason(input.code, input.locale);
 }
 
+/**
+ * Which continuation sentence is TRUE for this booking.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The meeting-cancellation email exists to say what is not cancelled, and one
+ * wording is wrong in two of the three states: telling a client their quote is
+ * on its way when they are holding it, or when they have already accepted it,
+ * is worse than saying nothing.
+ *
+ * Falls back to `quote_coming` when the proposal cannot be read. That is the
+ * safest of the three to be wrong about: it promises something still to come
+ * rather than contradicting a document the client already has in front of
+ * them. A failure here must not stop the mail — the appointment is off either
+ * way, and that is the part the client needs.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function resolveQuoteContinuation(
+  bookingId: string,
+  userId: string,
+  /**
+   * The owner's answer from the dialog: is the quote still coming?
+   *
+   * It OUTRANKS the stored state in one direction only. Said no, the client is
+   * told no quote will follow, whatever is in the table — the owner has just
+   * decided something the data cannot yet know. Said yes, the data still
+   * decides WHICH yes, because "on its way" and "the one you already have
+   * stands" are different sentences and only the proposal knows which is true.
+   */
+  proposalContinues: boolean,
+  /* `typeof logger` rather than importing a Logger type: this file never had
+     one, and a child logger is what every caller actually holds. */
+  log: typeof logger
+): Promise<'quote_coming' | 'quote_stands' | 'quote_accepted' | 'no_quote'> {
+  if (!proposalContinues) return 'no_quote';
+  try {
+    const { data: proposal, error } = await proposalRepository.latestForBooking(bookingId, userId);
+    if (error || !proposal) return 'quote_coming';
+
+    if (proposal.status === 'accepted') return 'quote_accepted';
+    /* Sent, viewed, or anything else that means it left the building. A draft
+       has not reached them, so it is still coming. */
+    if (proposal.status && proposal.status !== 'draft') return 'quote_stands';
+    return 'quote_coming';
+  } catch (err) {
+    log.warn({ err, bookingId }, 'Could not read the quote state for a meeting cancellation');
+    return 'quote_coming';
+  }
+}
+
 export class BookingEmailService {
   /**
    * Send booking confirmation email with calendar invite
@@ -387,6 +438,14 @@ export class BookingEmailService {
     bookingId: string,
     userId: string,
     options?: {
+      /**
+       * This is the owner re-sending a confirmation the client already had.
+       *
+       * Carried to `recordEmailSend` so the journey can say "נשלח שוב" instead
+       * of showing it as an original — which read as a confirmation going out
+       * during that attempt when nothing new had been agreed.
+       */
+      isResend?: boolean;
       skipInvoice?: boolean;
       invoiceId?: string;
       stripeHostedInvoiceUrl?: string;
@@ -404,6 +463,15 @@ export class BookingEmailService {
        * session carries its own links on its own reminder.
        */
       sessions?: Array<{ start: Date; end: Date }>;
+      /**
+       * This is a session ADDED to a package already running.
+       *
+       * The plain confirmation is accurate about the hour and silent about the
+       * package, so a client holding six sessions could not tell a seventh
+       * from a standalone booking. `chargedAmount` is the owner's own answer
+       * about the money, present only when they added it charged.
+       */
+      addedSession?: { chargedAmount?: string | null };
     }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendBookingConfirmation' });
@@ -496,9 +564,28 @@ export class BookingEmailService {
         }, 'Payment URL NOT generated');
       }
 
-      // Parse booking datetime
-      const startTime = new Date(booking.start_time);
-      const endTime = new Date(booking.end_time);
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE FIRST SESSION'S CLOCK, WHEN THE BOOKING HAS NONE OF ITS OWN.
+       *
+       * A package is one booking with N meetings, and that booking is the
+       * PURCHASE: `start_time` is null on it, deliberately, because a purchase
+       * does not happen at an hour.
+       *
+       * `new Date(null)` is 1970 and `new Date(undefined)` is Invalid Date, so
+       * without this the package's confirmation announced an invalid date and a
+       * NaN duration — to the client, as the one email that lists their dates.
+       * This used to be reached with the first CHILD booking's id, which had a
+       * clock; there is no child booking any more.
+       *
+       * `sessions` is already the authority on what this email prints when it
+       * is given, so taking the first of them is not a guess: it is the same
+       * list, read for the one field the template needs outside it.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const firstSession = options?.sessions?.[0];
+      const startTime = booking.start_time ? new Date(booking.start_time) : new Date(firstSession?.start ?? NaN);
+      const endTime = booking.end_time ? new Date(booking.end_time) : new Date(firstSession?.end ?? NaN);
       const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
 
       // Build email data
@@ -576,6 +663,13 @@ export class BookingEmailService {
          * and the template then renders exactly as it did before.
          */
         sessions: options?.sessions,
+        /* A seventh session added to a block already running — see the option. */
+        addedSession: options?.addedSession,
+        /*
+         * And the whole block, so the client can see where the new one sits
+         * among the ones they already have. Empty for an ordinary booking.
+         */
+        sessionLines: await packageSessionLines(bookingId, userId),
         branding,
         locale
       };
@@ -743,9 +837,17 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
+        /* And whether it repeats one the client already had (20261079). The
+           journey shows "נשלח שוב" for these instead of an original. */
+        isResend: options?.isResend ?? false,
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        kind: 'booking_confirmed',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -1033,6 +1135,20 @@ export class BookingEmailService {
         timezone,
         bookingManageUrl,
         /*
+         * Every session of the package, where this receipt is for one of them.
+         *
+         * The generic schedule below names its rows from the stage labels —
+         * "פגישה 1", and the whole quote title for an added session — so a
+         * receipt for session four listed eight differently-shaped lines and
+         * said nothing about when any of them is. This is the same table the
+         * other three session emails use, so a client reads one shape
+         * wherever a session is mentioned. Empty for an ordinary booking,
+         * which then keeps the schedule exactly as it was.
+         */
+        sessionLines: paymentData.bookingId
+          ? await packageSessionLines(paymentData.bookingId, userId)
+          : undefined,
+        /*
          * The schedule this payment belongs to.
          *
          * A receipt saying "₪400.00 paid" is complete about the money and
@@ -1068,9 +1184,13 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId,
+        /* The job this payment was for. No `meetingId`: a payment concerns the
+           booking, not one of its appointments. */
+        bookingId: paymentData.bookingId ?? null,
         toEmail: paymentData.customerEmail,
         subject,
         bodyHtml: html,
+        kind: 'payment_receipt',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -1126,6 +1246,21 @@ export class BookingEmailService {
     reason?: string,
     options?: {
       /**
+       * The booking whose sessions this email should list.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * A package sale leaves two booking rows: the one the quote was written
+       * from, which the cancellation is ABOUT and which carries no meetings,
+       * and the one its acceptance created, which carries all of them. Without
+       * this the email is addressed to the right booking and lists the wrong
+       * one's sessions, which is none.
+       *
+       * Omitted everywhere else, and the list is then read off the booking
+       * being cancelled, exactly as before. Empty for an ordinary booking.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      sessionsFrom?: string | null;
+      /**
        * Whether to invite the client to book again. Defaults to true, which is
        * right for every ordinary cancellation.
        *
@@ -1149,6 +1284,21 @@ export class BookingEmailService {
        * ─────────────────────────────────────────────────────────────────────
        */
       shareNoteWithClient?: boolean;
+      /**
+       * The SESSION this is about, when the booking has no clock of its own.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * A package is one booking with N meetings, and that booking is the
+       * PURCHASE: `start_time` is null on it deliberately. Calling off session
+       * three has to name session three's hour, and there is no booking
+       * carrying it any more — the meeting does.
+       *
+       * Ignored when the booking HAS a time, so every ordinary cancellation is
+       * untouched.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      sessionStart?: string | Date;
+
       /**
        * A PACKAGE's cancelled meetings, when a whole block is called off.
        *
@@ -1176,6 +1326,25 @@ export class BookingEmailService {
       /** Collected before any refund, and how much of it has gone back. */
       paidAmount?: number;
       refundedAmount?: number;
+      /**
+       * ONLY the appointment is off; the job continues.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * The owner and the client agreeing to proceed without meeting, which is
+       * a different event from stopping the work and has to read as one. The
+       * template swaps the subject for one naming the DATE, adds the sentence
+       * saying what is NOT cancelled, and drops the money notice — a meeting
+       * going away does not move money.
+       *
+       * The continuation is resolved here rather than asked of the caller: the
+       * proposal's state is already loaded below, and a caller passing the
+       * wrong one would tell a client their quote is coming when they are
+       * holding it.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      meetingOnly?: { proposalContinues: boolean };
+      /** A repeat of mail already sent — the journey's "send again". */
+      isResend?: boolean;
     }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendCancellationEmail' });
@@ -1235,7 +1404,10 @@ export class BookingEmailService {
           : await resolveBookingUrl(userId, profileResult.data);
 
       // Parse booking datetime
-      const startTime = new Date(booking.start_time);
+      /* The session's hour where the purchase has none — see `sessionStart`. */
+      const startTime = booking.start_time
+        ? new Date(booking.start_time)
+        : new Date(options?.sessionStart ?? NaN);
 
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
@@ -1249,6 +1421,41 @@ export class BookingEmailService {
         // and the template then renders exactly as it did before.
         sessions: options?.sessions,
         heldSessions: options?.heldSessions,
+        /*
+         * Every session, so "the meeting below will not take place" is
+         * followed by what the client still has. They have no other record.
+         */
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * EVERY SESSION, ON A WHOLE-BOOKING CANCELLATION TOO.
+         *
+         * This was attached only to a single-session cancellation. Calling off
+         * the WHOLE package therefore sent "your order was cancelled" with no
+         * mention of the thirteen meetings it cancelled, and the client had no
+         * record of which hours are now off or what became of what they paid.
+         *
+         * `sessionsFrom` is what makes it reach them. A package sale leaves two
+         * booking rows — the one the quote was written from, which carries no
+         * meetings, and the one its acceptance created, which carries all of
+         * them — and the cancellation email is sent about the first. Reading
+         * the list off `bookingId` found nothing; the caller names the row that
+         * actually holds the sessions.
+         *
+         * Returns [] for an ordinary booking, and the template then renders
+         * exactly as it always has.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        sessionLines: await packageSessionLines(options?.sessionsFrom ?? bookingId, userId),
+        meetingOnly: options?.meetingOnly
+          ? {
+              continuation: await resolveQuoteContinuation(
+                bookingId,
+                userId,
+                options.meetingOnly.proposalContinues,
+                requestLogger
+              ),
+            }
+          : undefined,
         timezone: await getBusinessTimezone(userId, booking.timezone),
         /*
          * The free text, or ONLY the reason — the owner's choice.
@@ -1331,7 +1538,10 @@ export class BookingEmailService {
               clientName,
               clientEmail,
               serviceName: service.service_name,
-              dateTime: new Date(booking.start_time),
+              /* The session's hour where the purchase has none — the same
+                 `startTime` resolved above, so the calendar file and the body
+                 of the mail can never name different times. */
+              dateTime: startTime,
               endTime: new Date(booking.end_time),
               duration: 0,
               timezone: await getBusinessTimezone(userId, booking.timezone),
@@ -1374,9 +1584,17 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        /* The same sender answers both, and they are not the same message:
+           one ends the job, the other only the appointment. */
+        kind: options?.meetingOnly ? 'meeting_cancelled' : 'booking_cancelled',
+        isResend: options?.isResend ?? false,
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -1403,7 +1621,35 @@ export class BookingEmailService {
    */
   static async sendMissedAppointmentEmail(
     bookingId: string,
-    userId: string
+    userId: string,
+    options?: {
+    /**
+     * A REPEAT of mail the client already had — the owner pressing "send
+     * again" on the journey.
+     *
+     * Recorded on the row rather than derived (20261079): every reschedule
+     * notice shares one subject, so "this subject appeared before" would
+     * label the second genuine notice a resend of the first.
+     */
+      isResend?: boolean;
+      /**
+       * The SESSION this is about, when the booking has no clock of its own.
+       *
+       * A package is one booking with N meetings, and the booking is the
+       * purchase. Calling a session missed has to name that session's hour.
+       * Ignored when the booking has a time of its own.
+       */
+      sessionStart?: string | Date;
+      /**
+       * WHICH session row the list should mark as the one this mail is about.
+       *
+       * `sessionStart` already names the hour in the body; this is what bolds
+       * the matching row in the table of all of them, the same way the
+       * cancellation and reschedule emails mark theirs. Omitted for an
+       * ordinary booking, which has no list.
+       */
+      meetingId?: string | null;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendMissedAppointmentEmail' });
 
@@ -1431,7 +1677,18 @@ export class BookingEmailService {
        * order. "We missed you" about a course purchase is nonsense, so there is
        * nothing to send.
        */
-      if (!booking.start_time) {
+      /*
+       * A package's purchase has no clock, so the session's own hour is passed
+       * in — see `sessionStart`. Without one there is genuinely no appointment
+       * to call missed, which is what this refusal is for.
+       */
+      const missedAt = booking.start_time
+        ? new Date(booking.start_time)
+        : options?.sessionStart
+          ? new Date(options.sessionStart)
+          : null;
+
+      if (!missedAt || Number.isNaN(missedAt.getTime())) {
         requestLogger.info({ bookingId }, 'Booking has no scheduled time; no missed-appointment email');
         return { sent: false, error: 'Booking has no scheduled time' };
       }
@@ -1446,22 +1703,64 @@ export class BookingEmailService {
       const profileResult = await businessProfileRepository.findByUserId(userId);
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // The whole point of the email. Without somewhere to book, it is only a
-      // note telling someone they were absent — so there is nothing to send.
-      const bookAgainUrl = await resolveBookingUrl(userId, profileResult.data);
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE BUTTON MOVES THIS APPOINTMENT. IT DOES NOT START A NEW ONE.
+       *
+       * This pointed at `resolveBookingUrl` — the business's own booking page,
+       * which is where a smart link goes. So a client who missed their slot was
+       * sent to a blank page to pick a service and re-enter their details, and
+       * the appointment they had actually booked stayed where it was. The owner
+       * then had two records of one job, or none.
+       *
+       * `manageUrlFor` signs a token for THIS booking and lands them on its
+       * reschedule panel, which is the same flow the reschedule email's
+       * "קבע מחדש שוב" button uses. Moving the booking they have is what the
+       * toggle in the no-show dialog offers to let them do.
+       *
+       * The generic page stays as the FALLBACK, for the two cases
+       * `manageUrlFor` returns null — no `APP_URL`, or no secret to sign with.
+       * A client who can only rebook from scratch is better served than one who
+       * gets no email at all.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const rescheduleUrl = booking.client_email
+        ? manageUrlFor(bookingId, booking.client_email, requestLogger)
+        : null;
+
+      const bookAgainUrl =
+        rescheduleUrl ?? (await resolveBookingUrl(userId, profileResult.data));
+
       if (!bookAgainUrl) {
         requestLogger.info({ bookingId }, 'No booking page to point at; no missed-appointment email');
         return { sent: false, error: 'No booking url' };
       }
+
+      requestLogger.info(
+        { bookingId, destination: rescheduleUrl ? 'reschedule' : 'booking_page' },
+        'Missed-appointment email: where its button points'
+      );
 
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
 
       const { subject, html } = generateMissedAppointmentEmail({
         clientName,
         serviceName: service.service_name,
-        dateTime: new Date(booking.start_time),
+        dateTime: missedAt,
         timezone: await getBusinessTimezone(userId, booking.timezone),
         bookAgainUrl,
+        /*
+         * Every session, with the missed one marked.
+         *
+         * A missed session is BILLED unless the owner waived it, so without
+         * this the client could be invoiced for an hour whose only mention in
+         * writing was "you missed it". The list says where that hour stands
+         * and leaves the other five exactly as they were.
+         *
+         * Returns [] for an ordinary booking, and the template then prints
+         * nothing — the same shape the other four emails use.
+         */
+        sessionLines: await packageSessionLines(bookingId, userId, options?.meetingId ?? null),
         branding,
         locale
       });
@@ -1489,9 +1788,17 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        kind: 'missed_appointment',
+        /* The owner pressing "send again" on the journey. Recorded so the
+           rail shows it as a repeat rather than a second genuine notice. */
+        isResend: options?.isResend ?? false,
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -1509,7 +1816,29 @@ export class BookingEmailService {
   static async sendRescheduledEmail(
     bookingId: string,
     userId: string,
-    previousDateTime: Date
+    previousDateTime: Date,
+    options?: {
+      /**
+       * The SESSION's new hour, when the booking has no clock of its own.
+       *
+       * A package is one booking with N meetings, so moving session three has
+       * to name session three's new time — there is no booking carrying it.
+       * Ignored when the booking has a time, so every ordinary reschedule
+       * notice is untouched.
+       */
+      sessionStart?: string | Date;
+      /** And its end, for the duration the notice prints. */
+      sessionEnd?: string | Date;
+    /**
+     * A REPEAT of mail the client already had — the owner pressing "send
+     * again" on the journey.
+     *
+     * Recorded on the row rather than derived (20261079): every reschedule
+     * notice shares one subject, so "this subject appeared before" would
+     * label the second genuine notice a resend of the first.
+     */
+      isResend?: boolean;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendRescheduledEmail' });
 
@@ -1560,8 +1889,13 @@ export class BookingEmailService {
       const cancelUrl = `${appUrl()}/book/manage/${token}/cancel`;
 
       // Parse booking datetime
-      const newDateTime = new Date(booking.start_time);
-      const endTime = new Date(booking.end_time);
+      /* The session's hour where the purchase has none — see `sessionStart`. */
+      const newDateTime = booking.start_time
+        ? new Date(booking.start_time)
+        : new Date(options?.sessionStart ?? NaN);
+      const endTime = booking.end_time
+        ? new Date(booking.end_time)
+        : new Date(options?.sessionEnd ?? NaN);
       const durationMinutes = Math.round((endTime.getTime() - newDateTime.getTime()) / 60000);
 
       // Build client name
@@ -1689,6 +2023,11 @@ export class BookingEmailService {
         serviceName: service.service_name,
         oldDateTime: previousDateTime,
         newDateTime,
+        /*
+         * Every session, so a client told their meeting moved can see what
+         * that leaves them with — the other five, and what each costs.
+         */
+        sessionLines: await packageSessionLines(bookingId, userId),
         newEndTime: endTime,
         duration: durationMinutes,
         timezone: await getBusinessTimezone(userId, booking.timezone),
@@ -1735,9 +2074,17 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        kind: 'booking_rescheduled',
+        /* The owner pressing "send again" on the journey. Recorded so the
+           rail shows it as a repeat rather than a second genuine notice. */
+        isResend: options?.isResend ?? false,
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -1866,6 +2213,7 @@ export class BookingEmailService {
         toEmail: formData.email,
         subject,
         bodyHtml: html,
+        kind: 'contact_welcome',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -1967,6 +2315,7 @@ export class BookingEmailService {
         toEmail: formData.email,
         subject,
         bodyHtml: html,
+        kind: 'contact_returning',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -2162,6 +2511,19 @@ export class BookingEmailService {
             toEmail: clientEmail,
             subject,
             bodyHtml: html,
+            /*
+             * A reminder is ABOUT one appointment, so it belongs on that
+             * appointment's row in the journey. Without this it recorded no
+             * booking at all, and the rail matches mail to an attempt on
+             * `meeting_id` — so the mail went out, the client received it, and
+             * the card showed nothing.
+             *
+             * `meetingId` is left to `resolveMeetingId`, which picks the latest
+             * attempt. Correct here: a reminder is only ever sent for the time
+             * that currently stands.
+             */
+            bookingId: booking.id,
+            kind: 'meeting_reminder',
             result: outcome,
           }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
         }
@@ -2238,6 +2600,19 @@ export class BookingEmailService {
             toEmail: ownerEmail,
             subject,
             bodyHtml: html,
+            /*
+             * A reminder is ABOUT one appointment, so it belongs on that
+             * appointment's row in the journey. Without this it recorded no
+             * booking at all, and the rail matches mail to an attempt on
+             * `meeting_id` — so the mail went out, the client received it, and
+             * the card showed nothing.
+             *
+             * `meetingId` is left to `resolveMeetingId`, which picks the latest
+             * attempt. Correct here: a reminder is only ever sent for the time
+             * that currently stands.
+             */
+            bookingId: booking.id,
+            kind: 'meeting_reminder_owner',
             result: outcome,
           }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
         }
@@ -2476,9 +2851,22 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
+        /*
+         * A REPEAT when the form has gone out before (20261079).
+         *
+         * `intake_sent_at` is stamped by the first send, so a manual send with
+         * it already set is the owner chasing — not a new request. The rail
+         * says "נשלח שוב" for those instead of showing a second original.
+         */
+        isResend: Boolean(booking.intake_sent_at),
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        kind: 'intake_requested',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -2620,9 +3008,14 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        kind: 'intake_received',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
@@ -2742,9 +3135,14 @@ export class BookingEmailService {
       recordEmailSend({
         userId,
         contactId: booking.contact_id,
+        /* What this mail was about. `email_sends` had no link to a booking, so
+           the journey matched them by guessing the booking's creation time and
+           service name — see 20261077. */
+        bookingId: booking.id,
         toEmail: clientEmail,
         subject,
         bodyHtml: html,
+        kind: 'refund_confirmed',
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 

@@ -7,6 +7,7 @@ import { V2ThemeProvider } from '@/lib/design-system-v2';
 import { LanguageProvider } from '@/lib/business-os/LanguageContext';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { BusinessOSTabs } from '@/components/business-os/BusinessOSTabs';
+import { BUSINESS_OS_SCROLL_ID } from '@/lib/business-os/pageContainer';
 import { ConfigurationDialogProvider } from '@/components/business-os/ConfigurationDialogProvider';
 import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvider';
 import { Space_Grotesk, Inter } from 'next/font/google';
@@ -89,7 +90,26 @@ export default async function BusinessOSLayout({
           */}
           <CapabilitiesProvider>
             <ConfigurationDialogProvider>
-              <div className={`w-full h-full ${spaceGrotesk.variable} ${inter.variable}`}>
+              {/*
+                A COLUMN THE HEIGHT OF THE WINDOW, WITH ONE SCROLLING PART.
+                ─────────────────────────────────────────────────────────────
+                The document used to scroll and the chrome was held in place
+                with `position: sticky`. That puts the scrollbar beside the
+                header: the track runs from the very top of the window, past a
+                header that never moves, so the thumb describes a page taller
+                than the part anyone can actually scroll.
+
+                The chrome is outside the scrolling element now, so the track
+                begins under the tabs — beside the only thing that moves.
+
+                `100dvh`, not `100vh`: on a phone `vh` is the viewport with the
+                address bar collapsed, which is taller than what you can see,
+                and the bottom of the page would sit under the browser chrome
+                with nothing able to bring it back.
+              */}
+              <div
+                className={`flex h-[100dvh] w-full flex-col overflow-hidden ${spaceGrotesk.variable} ${inter.variable}`}
+              >
                 {/*
                   The chrome lives here, not in each page.
 
@@ -98,16 +118,25 @@ export default async function BusinessOSLayout({
                   and navigation that every page has to remember to import is
                   navigation that will eventually go missing from one.
 
-                  Wrapped in a single sticky container rather than sticking each
-                  separately: the header already carried `sticky top-0`, and the
-                  tabs have to sit BELOW it while scrolling. One wrapper does that
-                  without anybody hardcoding the header's height into an offset.
+                  Wrapped together in one block above the scrolling body. They
+                  were held in place with `position: sticky` while the document
+                  scrolled underneath — which works, and puts the scrollbar
+                  beside them. Out of the scroller entirely, they simply do not
+                  move, and nobody has to hardcode the header's height into an
+                  offset.
                 */}
-                <div className="sticky top-0 z-50">
+                {/* `shrink-0` so a long page cannot squeeze the chrome, and
+                    `relative z-50` so the header's own menus still sit over the
+                    body — `sticky` is gone, because nothing is scrolling past
+                    this any more. */}
+                <div className="relative z-50 shrink-0">
                   <BusinessOSHeader planBadge={planBadge} />
                   <BusinessOSTabs />
                 </div>
-                {children}
+
+                <div id={BUSINESS_OS_SCROLL_ID} className="flex-1 overflow-y-auto">
+                  {children}
+                </div>
               </div>
             </ConfigurationDialogProvider>
           </CapabilitiesProvider>

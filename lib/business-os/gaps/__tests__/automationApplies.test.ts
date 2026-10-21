@@ -27,14 +27,29 @@ jest.mock('@/lib/repositories/SchedulingRepository', () => ({
  * `.from().select().eq().not()` resolves to a count.
  */
 const proposalCount = { value: 0 };
+/*
+ * And how many bills it has ever raised. `bills_for_anything` asks
+ * `payment_invoices` the same way: a count, not a row anybody reads.
+ *
+ * The chain differs by one link — quotes end in `.not('sent_at', 'is', null)`
+ * and invoices stop at `.eq()` — so `eq()` has to be BOTH awaitable and still
+ * carry `.not`. It returned a bare object before, which a non-quote caller
+ * awaited to get the object itself: `count` undefined, read as zero, and the
+ * automation hidden from everyone rather than from the right businesses.
+ */
+const invoiceCount = { value: 0 };
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
-    from: () => ({
+    from: (table: string) => ({
       select: () => ({
-        eq: () => ({
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          not: () => Promise.resolve({ count: proposalCount.value, error: null }),
-        }),
+        eq: () =>
+          Object.assign(
+            Promise.resolve({
+              count: table === 'payment_invoices' ? invoiceCount.value : proposalCount.value,
+              error: null,
+            }),
+            { not: () => Promise.resolve({ count: proposalCount.value, error: null }) }
+          ),
       }),
     }),
   },
@@ -54,6 +69,11 @@ function quotesSent(count: number) {
   proposalCount.value = count;
 }
 
+/** How many bills it has ever raised. */
+function billsRaised(count: number) {
+  invoiceCount.value = count;
+}
+
 function bookableServices(count: number) {
   listServices.mockResolvedValue({
     data: Array.from({ length: count }, (_, i) => ({ id: `svc-${i}` })),
@@ -64,12 +84,14 @@ function bookableServices(count: number) {
 const chaseIntake = OPERATIONAL_AUTOMATIONS.find(a => a.id === 'chase_intake')!;
 const chaseInvoices = OPERATIONAL_AUTOMATIONS.find(a => a.id === 'chase_invoices')!;
 const remindAboutMeeting = OPERATIONAL_AUTOMATIONS.find(a => a.id === 'remind_about_meeting')!;
+const replyToEnquiries = OPERATIONAL_AUTOMATIONS.find(a => a.id === 'reply_to_enquiries')!;
 
 beforeEach(() => {
   jest.clearAllMocks();
   // Reset the quote count too: it lives outside the jest mock registry, so
   // `clearAllMocks` does not touch it and it would leak between tests.
   proposalCount.value = 0;
+  invoiceCount.value = 0;
   // The default for the tests that are not about scheduling.
   bookableServices(1);
 });
@@ -117,9 +139,40 @@ describe('automationApplies', () => {
   });
 
   it('asks nothing of an automation with no requirement', async () => {
-    expect(await automationApplies('user-1', chaseInvoices)).toBe(true);
+    /*
+     * `chase_invoices` used to be this test's subject, as the one entry in the
+     * registry with no requirement. It has one now — see below — so the claim
+     * moved to an automation that genuinely applies to everybody: every
+     * business can be sent an enquiry.
+     */
+    expect(await automationApplies('user-1', replyToEnquiries)).toBe(true);
     expect(getSettings).not.toHaveBeenCalled();
     expect(getPublished).not.toHaveBeenCalled();
+  });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN INVOICE CHASER NEEDS AN INVOICE.
+   *
+   * This was the only entry in the registry with no requirement at all, so a
+   * business whose catalogue is a single free consultation — or one using the
+   * platform as a website and a CRM with no catalogue — was offered an
+   * automation that could never have anything to do.
+   *
+   * Asked of the bills rather than the prices, the same way `sends_quotes` is
+   * asked of proposals: a service priced today proves less than a bill raised.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('offers the invoice chase to a business that has raised a bill', async () => {
+    billsRaised(1);
+
+    expect(await automationApplies('user-1', chaseInvoices)).toBe(true);
+  });
+
+  it('does not offer it to a business that has never billed anybody', async () => {
+    billsRaised(0);
+
+    expect(await automationApplies('user-1', chaseInvoices)).toBe(false);
   });
 });
 
@@ -161,6 +214,7 @@ describe('applicableAutomations', () => {
   it('drops only the one that cannot apply', async () => {
     intakeState({ enabled: true, published: false });
     bookableServices(1);
+    billsRaised(1);
 
     const result = await applicableAutomations('user-1', OPERATIONAL_AUTOMATIONS);
 
@@ -175,10 +229,11 @@ describe('applicableAutomations', () => {
     );
   });
 
-  it('keeps every entry for a business with a form, a bookable service and a quote sent', async () => {
+  it('keeps every entry for a business with a form, a bookable service, a quote sent and a bill raised', async () => {
     intakeState({ enabled: true, published: true });
     bookableServices(1);
     quotesSent(1);
+    billsRaised(1);
 
     const result = await applicableAutomations('user-1', OPERATIONAL_AUTOMATIONS);
 
@@ -192,10 +247,20 @@ describe('applicableAutomations', () => {
 
     const result = await applicableAutomations('user-1', OPERATIONAL_AUTOMATIONS);
 
-    // The two ungated ones remain: every business can receive an enquiry and
-    // every business can issue an invoice. Intake, meetings and quotes all
-    // need machinery this business does not have.
-    expect(result.map(a => a.id)).toEqual(['reply_to_enquiries', 'chase_invoices']);
+    /*
+     * ONE ungated entry remains, not two.
+     *
+     * This expected `chase_invoices` as well, on the reasoning that "every
+     * business can issue an invoice". True of the capability, false of the
+     * business: one whose catalogue is a single free consultation, or which
+     * sells nothing through the platform at all, never raises a bill — and was
+     * shown a chaser with permanently nothing to chase.
+     *
+     * Receiving an enquiry is the one thing that really does apply to
+     * everybody, because the contact form is live on day one and cannot be
+     * switched off.
+     */
+    expect(result.map(a => a.id)).toEqual(['reply_to_enquiries']);
   });
 
   it('reads each fact once however many entries need it', async () => {

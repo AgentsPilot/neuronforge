@@ -268,13 +268,58 @@ describe('pressing a shape', () => {
 });
 
 describe('the processor the owner cannot see', () => {
-  it('warns at the choice, and the sentence says INVOICED', async () => {
+  /*
+   * THE CHIP IS OFFERED, AND GATED. IT WAS HIDDEN FOR PART OF ONE DAY.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Hiding it reasoned that a question the editor knows the answer to is a trap
+   * with an apology underneath. True of the apology, wrong about the question:
+   * an owner who decides today to start taking cards found no way to say so,
+   * and nothing told them a one-minute connection stood between them and it.
+   * Removing the choice is not the same as enabling it.
+   *
+   * So the option is shown, the warning beside it carries the way out, and the
+   * refusal happens where it costs nothing to recover from — on save and on
+   * publish, both naming `processor_required`.
+   *
+   * What has NOT changed: `processor` stays non-blocking in `isBlockingGap`, so
+   * a service already live on card keeps taking bookings and keeps being
+   * invoiced. These tests pin the editor only.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const ON_CARD = { ...SERVICE, collection: 'online' } as unknown as SchedulingService;
+
+  it('offers card even with no processor, because choosing it is how you ask for one', async () => {
     await openEditor({ processorReady: false });
 
-    fireEvent.click(screen.getByText('They pay by card'));
+    expect(screen.getAllByText('They pay by card').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('You invoice them').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('You quote first').length).toBeGreaterThan(0);
+  });
+
+  it('and offers it with a processor too', async () => {
+    await openEditor({ processorReady: true });
+
+    expect(screen.getAllByText('They pay by card').length).toBeGreaterThan(0);
+  });
+
+  it('still says INVOICED on a service already set to card', async () => {
+    await openEditor({ processorReady: false, service: ON_CARD });
 
     says(/Card payments need a connected processor/);
     says(/While Stripe is not connected you invoice ₪300 after they buy/);
+  });
+
+  /*
+   * The half that makes the warning actionable. Without a dialog provider
+   * there is nowhere to send the owner, so `useGapFixOptional` returns null
+   * and only the sentence renders — which is what this harness mounts.
+   */
+  it('names the state even with no dialog to open, rather than rendering a dead button', async () => {
+    await openEditor({ processorReady: false, service: ON_CARD });
+
+    says(/Card payments need a connected processor/);
+    expect(screen.queryByRole('button', { name: 'Connect payments' })).not.toBeInTheDocument();
   });
 });
 

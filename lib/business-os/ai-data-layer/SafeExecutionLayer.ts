@@ -350,7 +350,14 @@ export class SafeExecutionLayer {
           result = await schedulingServiceRepository.update(entityId, this.userId, { [field]: value });
           break;
         case 'bookings':
-          result = await schedulingBookingRepository.update(entityId, this.userId, { [field]: value });
+          result = await schedulingBookingRepository.update(
+            entityId,
+            this.userId,
+            { [field]: value },
+            /* This writes ONE named field, which is sometimes the time
+               (20261082). Anything else is not a move. */
+            field === 'start_time' ? 'owner' : undefined
+          );
           break;
         case 'invoices':
           result = await paymentInvoiceRepository.update(entityId, this.userId, { [field]: value });
@@ -2027,7 +2034,16 @@ export class SafeExecutionLayer {
         if (payload?.start_time) updateData.start_time = payload.start_time as string;
         if (payload?.end_time) updateData.end_time = payload.end_time as string;
 
-        const result = await schedulingBookingRepository.update(id, this.userId, updateData);
+        const result = await schedulingBookingRepository.update(
+          id,
+          this.userId,
+          updateData,
+          /*
+           * Only when this call is actually a move (20261082). The same path
+           * writes a status or a note, and neither is a reschedule.
+           */
+          updateData.start_time ? 'owner' : undefined
+        );
         return result.error
           ? { success: false, error: result.error.message }
           : { success: true, data: result.data };

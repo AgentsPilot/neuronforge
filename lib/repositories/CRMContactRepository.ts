@@ -316,19 +316,39 @@ export class CRMContactRepository {
     userId: string
   ): Promise<CRMContactRepositoryResult<CRMContact>> {
     try {
+      /*
+       * ── OLDEST FIRST, ONE ROW ───────────────────────────────────────────
+       *
+       * This used `.single()`, and PostgREST answers PGRST116 for MORE than
+       * one row as well as for none. The branch below reads that as "no
+       * contact" either way — so on a tenant that already has two rows for one
+       * address, every caller was told there was none and created a third.
+       * Duplicates bred duplicates, and the helper reported success each time.
+       *
+       * `limit(1)` after an order is what the three hand-written copies in the
+       * public booking flow already do, with a comment saying why. This is the
+       * shared one catching up.
+       *
+       * Oldest rather than newest: the first row is the one other records
+       * reference, so returning it keeps a caller from attaching new work to a
+       * duplicate.
+       */
       const { data, error } = await this.supabase
         .from('crm_contacts')
         .select('*')
         .eq('email', email)
         .eq('user_id', userId)
-        .single();
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
       if (error) {
-        // Not found is not an error in this case
-        if (error.code === 'PGRST116') {
-          return { data: null, error: null };
-        }
         throw error;
+      }
+
+      if (!data) {
+        // Not found is not an error in this case
+        return { data: null, error: null };
       }
 
       return { data, error: null };

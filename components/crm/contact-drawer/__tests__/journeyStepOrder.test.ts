@@ -83,9 +83,17 @@ describe('the reported product sale', () => {
     expect(at(keys, 'confirmation')).toBeLessThan(at(keys, 'payment'));
   });
 
-  it('still opens on the service and the client', () => {
-    expect(keys[0]).toBe('service');
-    expect(keys[1]).toBe('client');
+  /*
+   * `booked` is ONE node, not two.
+   *
+   * The journey opened on a `service` step and a `client` step — the service
+   * booked, then who booked it — which read as two events for a single moment.
+   * They were merged into `booked`, and who placed it moved onto that node's
+   * metadata (`origin` / `originBy`), which is also what lets the owner's own
+   * bookings be marked differently from a client's.
+   */
+  it('still opens on the booking itself', () => {
+    expect(keys[0]).toBe('booked');
   });
 
   it('still ends on the fulfilment, which is what a product has instead of a session', () => {
@@ -145,6 +153,36 @@ describe('a quoted job, which has its own ordering rule', () => {
     expect(at(keys, 'proposal')).toBeLessThan(at(keys, 'payment'));
   });
 
+  it('and a quoted package with NO visit ends at the quote, with nothing to deliver', () => {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A treatment package bought from a smart link: quoted, nothing scheduled.
+     *
+     * It carried a trailing "אספקת השירות" nobody could ever action. Such a
+     * job is quoted, agreed, and only then does the work appear — as RECURRING
+     * MEETINGS created against the booking, each with its own row. That is why
+     * it has no initial meeting, and why a single delivery tick is the wrong
+     * shape for it.
+     *
+     * The quoted job WITH a visit has no delivery step either. This one now
+     * matches it: the journey ends where the owner's part does.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const keys = steps({
+      booking: booking({
+        start_time: null,
+        end_time: null,
+        service: { service_name: 'חבילת טיפולים', is_scheduled: false, sale_mode: 'proposal' },
+      }),
+      confirmationEmail: CONFIRMED_EMAIL,
+      proposal: null,
+    });
+
+    expect(keys).not.toContain('fulfillment');
+    expect(keys).not.toContain('session');
+    expect(keys[keys.length - 1]).toBe('proposal');
+  });
+
   it('and the confirmation is still ahead of the money', () => {
     expect(at(keys, 'confirmation')).toBeLessThan(at(keys, 'payment'));
   });
@@ -182,8 +220,7 @@ describe('the steps that may be absent', () => {
   it('a booking with no confirmation email keeps every other step in order', () => {
     const keys = steps({ booking: booking(), payment: paid() });
 
-    expect(keys[0]).toBe('service');
-    expect(keys[1]).toBe('client');
+    expect(keys[0]).toBe('booked');
     expect(keys[keys.length - 1]).toBe('fulfillment');
   });
 
@@ -197,7 +234,7 @@ describe('the steps that may be absent', () => {
     if (at(keys, 'payment') > -1) {
       expect(at(keys, 'confirmation')).toBeLessThan(at(keys, 'payment'));
     }
-    expect(keys[0]).toBe('service');
+    expect(keys[0]).toBe('booked');
   });
 
   it('no payment at all leaves the confirmation where it was built', () => {
@@ -223,7 +260,7 @@ describe('the whole sequence, pinned', () => {
   it('product sale', () => {
     expect(
       steps({ booking: booking(), payment: paid(), confirmationEmail: CONFIRMED_EMAIL })
-    ).toEqual(['service', 'client', 'confirmation', 'payment', 'fulfillment']);
+    ).toEqual(['booked', 'confirmation', 'payment', 'fulfillment']);
   });
 
   it('scheduled service', () => {
@@ -237,7 +274,7 @@ describe('the whole sequence, pinned', () => {
         payment: paid({ amount: 400 }),
         confirmationEmail: CONFIRMED_EMAIL,
       })
-    ).toEqual(['service', 'client', 'confirmation', 'payment', 'session']);
+    ).toEqual(['booked', 'confirmation', 'payment', 'session']);
   });
 
   it('quoted job: the price follows the visit, the money follows the price', () => {
@@ -252,13 +289,13 @@ describe('the whole sequence, pinned', () => {
         confirmationEmail: CONFIRMED_EMAIL,
         proposal: null,
       })
-    ).toEqual(['service', 'client', 'confirmation', 'session', 'proposal', 'payment']);
+    ).toEqual(['booked', 'confirmation', 'session', 'proposal', 'payment']);
   });
 
   it('nothing to pay', () => {
     expect(
       steps({ booking: booking(), payment: null, confirmationEmail: CONFIRMED_EMAIL })
-    ).toEqual(['service', 'client', 'confirmation', 'fulfillment']);
+    ).toEqual(['booked', 'confirmation', 'fulfillment']);
   });
 });
 
