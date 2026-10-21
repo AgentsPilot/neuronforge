@@ -486,6 +486,8 @@ Run the rows from top to bottom.
 
 **After the run:** QA fills in the Observed column. Row 20 (b) is ticked if rows 14, 19, 21 and 22 pass; row 20 (c) is ticked if rows 12 and 24 pass. The run creates Stripe test subscriptions for Trial A, B, C and D; cancel or keep them, as you prefer.
 
+**Live test result.** 2026-10-21 — user ran the live test on localhost:3010 (sandbox) and approved: 'It looks good now.' Rows not individually recorded.
+
 ---
 
 ## 15. Go-live row 20, proposed text (C-11)
@@ -843,3 +845,4 @@ upgradeModal.flow.qa.render.test.tsx  Tests: 10 passed, 10 total
 | 2026-10-20 | SA re-check: CODE APPROVED | D-7 accepted for CR-1: Stripe.js loads only when a checkout is offered, and `paymentsConfigured` is correct without loading it, because nothing else reads it (tested for Autopilot and open-ended Founding Partner, with a trial control). CR-2 (style while `busy \|\| frameOpen`, tested) and CR-3 (ref-map focus return) verified. Settings suites 34 / 34, 651 tests; eslint clean |
 | 2026-10-20 | QA: §14 made the MASTER run sheet (UM-3 D3-13) | One running order of 34 rows for the user's single end-of-stream session: UM-1b S-rows, UM-2 §13 U2-rows and UM-3 §12 U3-rows merged. Offered accounts open the pop-up from the row (no "See plans" step); buys and upgrades stay in the pop-up; Autopilot and Founding Partner with no end date open the drawer with "Compare plans"; slow-read fallback row; Trial D and both Founding Partner accounts listed |
 | 2026-10-21 | QA: §14 updated for live-test fixes LF-1 / LF-2 | New "What changed after the first live test" paragraph (app orange palette, own-plan first column for trial / Founding Partner). Rows 1, 8, 25, 26, 27 and 30 now expect the own-plan column and the orange colours (row 8: Confirm is solid orange, not indigo; LF-F1 noted). Rows unchanged otherwise; still 34 rows |
+| 2026-10-21 | Live test recorded (RM) | 2026-10-21 — user ran the live test on localhost:3010 (sandbox) and approved: 'It looks good now.' Rows not individually recorded. Go-live row 20 checkbox left unticked. PRs opened in order UM-1b, UM-2, UM-3 |
