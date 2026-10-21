@@ -15,11 +15,13 @@
  *
  * With a business picked, `HistoryAllBusinessesLine` is shown instead: one
  * line, no button, no request (HS-FR-11).
+ *
+ * Money MK-7 (KPI restructure review §6 item 13): the block is SPLIT, so each
+ * trend sits under its KPI (`HistoryTrends.tsx`: the provider and the two
+ * trends). This file keeps the formatting (the table, E-99) and the
+ * all-businesses line; the one-frame History section is gone.
  */
 
-import { useState } from 'react';
-
-import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import {
   ADMIN_TABLE,
   ADMIN_TABLE_WRAP,
@@ -36,33 +38,16 @@ import {
   HISTORY_ALL_BUSINESSES_ONLY,
   HISTORY_CHANGE,
   HISTORY_COLUMN_LABELS,
-  HISTORY_CREDITS,
   HISTORY_DATE,
-  HISTORY_HIDE,
   HISTORY_NO_LONGER_CONFIGURED,
   HISTORY_NO_SNAPSHOT,
-  HISTORY_NONE_YET,
   HISTORY_NOT_AVAILABLE,
-  HISTORY_NOT_INSTALLED,
   HISTORY_NOT_RECORDED,
-  HISTORY_PLAN_MIX,
-  HISTORY_SHOW,
-  HISTORY_SUBTITLE,
-  HISTORY_TITLE,
-  HISTORY_WEEKLY,
-  historyNoneInWindow,
-  historyStartsOn,
 } from '../financeCopy';
 import { formatCount, formatCredits } from '../financeFormat';
-import type { FinanceQuery } from '../financeUrl';
-import { serialiseHistoryQuery } from '../historyUrl';
-import { HISTORY_WHAT, useFinanceHistory } from '../useFinanceHistory';
 import { groupLabel } from './AccountsByPlanSection';
-import { FinanceSection } from './FinanceSection';
 
 const NOTE = 'text-xs text-slate-400';
-const BUTTON =
-  'inline-flex items-center rounded border border-slate-600 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400';
 
 function columnLabel(column: HistoryColumn): string {
   if (column.id === 'group') {
@@ -85,7 +70,7 @@ function changeText(column: HistoryColumn, change: HistoryChange): string {
   return `${sign}${formatValue(column, change.value)}`;
 }
 
-function HistoryTableView({ caption, table, testId }: { caption: string; table: HistoryTable; testId: string }) {
+export function HistoryTableView({ caption, table, testId }: { caption: string; table: HistoryTable; testId: string }) {
   return (
     <div className={ADMIN_TABLE_WRAP}>
       <table className={ADMIN_TABLE} data-testid={testId}>
@@ -143,66 +128,5 @@ export function HistoryAllBusinessesLine() {
     <p className={NOTE} data-testid="history-all-businesses-only">
       {HISTORY_ALL_BUSINESSES_ONLY}
     </p>
-  );
-}
-
-export function HistoryBlock({ query }: { query: Pick<FinanceQuery, 'preset' | 'from' | 'to'> }) {
-  const [open, setOpen] = useState(false);
-  const { view, loading, error, reload } = useFinanceHistory(serialiseHistoryQuery(query), open);
-  const ready = open && !loading && !error && view !== null && view.state !== 'not_installed';
-
-  return (
-    <FinanceSection
-      id="history"
-      title={HISTORY_TITLE}
-      subtitle={HISTORY_SUBTITLE}
-      // Always 'ok' to the shell: a failed read is the block's own AdminError (HS-FR-16), and the
-      // chip shows only once a view has been read (SA-W-8.3-2).
-      status="ok"
-      onRetry={reload}
-      statusChip={ready}
-    >
-      <div className="space-y-3">
-        <button
-          type="button"
-          className={BUTTON}
-          aria-expanded={open}
-          aria-controls="history-body"
-          onClick={() => setOpen((was) => !was)}
-          data-testid="history-toggle"
-        >
-          {open ? HISTORY_HIDE : HISTORY_SHOW}
-        </button>
-        {open && (
-          <div id="history-body" className="space-y-3" data-testid="history-body">
-            {loading && !view && <AdminLoading what={HISTORY_WHAT} />}
-            {error && <AdminError message={error} testId="history-error" onRetry={reload} />}
-            {!error && view?.state === 'not_installed' && <AdminNotice testId="history-not-installed">{HISTORY_NOT_INSTALLED}</AdminNotice>}
-            {!error && view && view.state !== 'not_installed' && (
-              <>
-                <p className="text-sm text-slate-200" data-testid="history-start-line">
-                  {view.state === 'no_history'
-                    ? HISTORY_NONE_YET
-                    : view.state === 'none_in_window'
-                      ? historyNoneInWindow(view.firstSnapshotDate ?? '')
-                      : historyStartsOn(view.firstSnapshotDate ?? '')}
-                </p>
-                {view.state === 'ready' && (
-                  <>
-                    {view.weekly && (
-                      <p className={NOTE} data-testid="history-weekly">
-                        {HISTORY_WEEKLY}
-                      </p>
-                    )}
-                    <HistoryTableView caption={HISTORY_PLAN_MIX} table={view.planMix} testId="history-plan-mix" />
-                    <HistoryTableView caption={HISTORY_CREDITS} table={view.credits} testId="history-credits" />
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </FinanceSection>
   );
 }

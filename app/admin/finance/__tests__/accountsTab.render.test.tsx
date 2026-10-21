@@ -213,21 +213,27 @@ describe('AC-130: the tabs, through the real view', () => {
     await screen.findByTestId('econ-table');
     const overview = screen.getByRole('tab', { name: TAB_OVERVIEW });
     const accounts = screen.getByRole('tab', { name: TAB_ACCOUNTS });
-    // Money MK-4 (ruled): a third tab, Plans & subscriptions, after Accounts; the keys wrap over three.
+    // Money MK-4 (ruled): a third tab, Plans & subscriptions, after Accounts; slice 2a: a fourth, Exchange rates, last; the keys wrap over four.
     const plans = screen.getByTestId('finance-tab-plans');
+    const rates = screen.getByTestId('finance-tab-exchange-rates');
     expect(accounts).toHaveAttribute('tabIndex', '0');
     expect(overview).toHaveAttribute('tabIndex', '-1');
     expect(plans).toHaveAttribute('tabIndex', '-1');
+    expect(rates).toHaveAttribute('tabIndex', '-1');
     accounts.focus();
     fireEvent.keyDown(accounts, { key: 'ArrowRight' });
     expect(plans).toHaveFocus();
     fireEvent.keyDown(plans, { key: 'ArrowRight' });
+    expect(rates).toHaveFocus();
+    fireEvent.keyDown(rates, { key: 'ArrowRight' });
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'End' });
-    expect(plans).toHaveFocus();
-    fireEvent.keyDown(plans, { key: 'Home' });
+    expect(rates).toHaveFocus();
+    fireEvent.keyDown(rates, { key: 'Home' });
     expect(overview).toHaveFocus();
     fireEvent.keyDown(overview, { key: 'ArrowLeft' });
+    expect(rates).toHaveFocus();
+    fireEvent.keyDown(rates, { key: 'ArrowLeft' });
     expect(plans).toHaveFocus();
     fireEvent.keyDown(plans, { key: 'ArrowLeft' });
     expect(accounts).toHaveFocus();
