@@ -86,6 +86,7 @@ describe('it can be removed in three deletions', () => {
       .filter(file => !file.includes('__tests__'));
 
     expect(hits.sort()).toEqual([
+      'app/api/scheduling/meetings/[id]/outcome/route.ts',
       'components/crm/contact-drawer/MeetingRowActions.tsx',
       'lib/utils/featureFlags.ts',
     ]);

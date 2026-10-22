@@ -270,3 +270,56 @@ export async function linkPaymentsToBooking(
     return NOTHING;
   }
 }
+
+/**
+ * Link an attempt's money once the attempt is known to have converted.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS LIVES HERE AND NOT IN THE WEBHOOK
+ *
+ * The Stripe route called `linkPaymentsToBooking` directly and did its own two
+ * reads first — the attempt, then the booking's contact. That put queries in a
+ * `route.ts`, which CLAUDE.md rule 1 forbids and `routerPlacement.guard`
+ * enforces: the route is a router, and the moment it holds a query of its own
+ * the next reader has two places to look for how the money is joined.
+ *
+ * Same two reads, one call, and `reconcileBookingMoney` can use the identical
+ * entry point rather than repeating them.
+ *
+ * NEVER THROWS. The client has paid and the booking exists; a failed join is a
+ * reporting problem, and the reconcile pass retries it.
+ */
+export async function linkPaymentsForConvertedAttempt(
+  attemptId: string
+): Promise<LinkPaymentsResult> {
+  if (!attemptId) return NOTHING;
+
+  try {
+    const { data: attempt } = await supabaseServer
+      .from('abandoned_bookings')
+      .select('id, user_id, booking_id')
+      .eq('id', attemptId)
+      /* Before the booking exists there is nothing to link to; the reconcile
+         pass is the backstop for anything both sides miss. */
+      .not('booking_id', 'is', null)
+      .maybeSingle();
+
+    if (!attempt?.booking_id) return NOTHING;
+
+    const { data: booking } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('contact_id')
+      .eq('id', attempt.booking_id as string)
+      .maybeSingle();
+
+    return await linkPaymentsToBooking({
+      attemptId: attempt.id as string,
+      bookingId: attempt.booking_id as string,
+      contactId: (booking?.contact_id as string | null) ?? null,
+      userId: attempt.user_id as string,
+    });
+  } catch (err) {
+    logger.error({ err, attemptId }, 'Linking a converted attempt threw; the reconcile pass will retry');
+    return NOTHING;
+  }
+}

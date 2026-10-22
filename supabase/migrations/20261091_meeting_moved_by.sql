@@ -41,6 +41,6 @@ ALTER TABLE public.scheduling_meetings
   CHECK (moved_by IS NULL OR moved_by IN ('owner', 'client', 'system'));
 
 COMMENT ON COLUMN public.scheduling_meetings.moved_by IS
-  'Who caused this attempt to exist, for attempts created by a reschedule: owner, client or system. NULL on attempt #1 (the booking created it, not a move) and on every row predating 20261082. Deliberately not backfilled — the journey labelled every move as the owner''s, and guessing the same thing again in the data would make the error permanent. Read by the contact drawer for the line between two attempts.';
+  'Who caused this attempt to exist, for attempts created by a reschedule: owner, client or system. NULL on attempt #1 (the booking created it, not a move) and on every row predating 20261091. Deliberately not backfilled — the journey labelled every move as the owner''s, and guessing the same thing again in the data would make the error permanent. Read by the contact drawer for the line between two attempts.';
 
 COMMIT;

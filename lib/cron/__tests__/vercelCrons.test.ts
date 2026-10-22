@@ -123,8 +123,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 19 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(19);
+  it('schedules exactly the 21 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(21);
     expect(crons).toEqual(BOS_CRONS);
   });
 

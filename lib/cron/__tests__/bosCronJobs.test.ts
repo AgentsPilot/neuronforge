@@ -34,6 +34,24 @@ function intervalOf(schedule: string): number {
   let m: RegExpMatchArray | null;
   if ((m = schedule.match(/^\*\/(\d+) \* \* \* \*$/))) return Number(m[1]);
   if (/^\d{1,2} \* \* \* \*$/.test(schedule)) return 60;
+  /*
+   * A LIST OF MINUTES, added 2026-10-21 for `abandoned-bookings` (`5,35`),
+   * which sat in `vercel.json` with no registry row — the same omission the
+   * weekly shape was added for.
+   *
+   * The gap between the minutes IS the interval, and it has to divide the
+   * hour evenly or the job runs at an uneven cadence the operator page
+   * would report as late every other tick. Checked, not assumed.
+   */
+  if ((m = schedule.match(/^(\d{1,2}(?:,\d{1,2})+) \* \* \* \*$/))) {
+    const minutes = m[1].split(',').map(Number);
+    const gaps = minutes.slice(1).map((minute, k) => minute - minutes[k]);
+    const wrap = 60 - minutes[minutes.length - 1] + minutes[0];
+    if (![...gaps, wrap].every((gap) => gap === gaps[0])) {
+      throw new Error(`Uneven minute list: ${schedule}`);
+    }
+    return gaps[0];
+  }
   if (/^\d{1,2} \d{1,2} \* \* \*$/.test(schedule)) return 1440;
   if (/^\d{1,2} \d{1,2} \* \* [0-6]$/.test(schedule)) return 10_080;
   throw new Error(`Unsupported schedule shape: ${schedule}`);
@@ -43,14 +61,14 @@ function intervalOf(schedule: string): number {
 const codeOf = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 describe('FR-R9: the registry is vercel.json', () => {
-  it('has exactly the 19 scheduled jobs, with the same schedules, byte for byte', () => {
+  it('has exactly the 21 scheduled jobs, with the same schedules, byte for byte', () => {
     const fromVercel = vercel.crons.map((c) => `${c.path} ${c.schedule}`).sort();
     const fromRegistry = BOS_CRON_JOBS.map((j) => `${j.path} ${j.schedule}`).sort();
     expect(fromRegistry).toEqual(fromVercel);
     // 17th: bos-billing-reconcile (credits boost slice 4b.2, 2026-10-09).
     // 18th: data-export (data export DE-8b, 2026-10-17).
     // 19th: finance-snapshot (finance slice 8.2, 2026-10-17).
-    expect(BOS_CRON_JOBS).toHaveLength(19);
+    expect(BOS_CRON_JOBS).toHaveLength(21);
   });
 
   it('ids are unique, match their path, and satisfy the database job rule', () => {
@@ -78,6 +96,9 @@ describe('late and stopped thresholds equal the requirement table (§S5.8)', () 
   const expected: Record<number, [number, number]> = {
     5: [15, 20],
     15: [25, 40],
+    // Added 2026-10-21 with the minute-list shape: one interval plus ten
+    // minutes' grace, then the stopped bound a tick later.
+    30: [40, 70],
     60: [70, 130],
     1440: [25 * 60, 49 * 60],
     // Weekly, added 2026-10-06: one interval plus three hours' grace, then two.

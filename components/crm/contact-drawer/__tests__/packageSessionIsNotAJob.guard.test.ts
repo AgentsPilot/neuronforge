@@ -403,7 +403,11 @@ describe('the move endpoint agrees with the menu that offers it', () => {
     );
 
     expect(actions).toContain("const held = status === 'completed' || meetingStatus === 'held'");
-    expect(actions).toContain("const calledOff = status === 'cancelled' || meetingStatus === 'cancelled'");
+    /* Wrapped and three-termed since the package cascade (`|| bookingCancelled`):
+       a meeting on a cancelled booking is called off too. */
+    expect(actions).toMatch(
+      /const calledOff =\s*\n?\s*status === 'cancelled' \|\| meetingStatus === 'cancelled'/
+    );
     expect(actions).toContain('if (onReschedule && !held && !calledOff)');
   });
 });
@@ -428,7 +432,10 @@ describe('a called-off session is not owed for', () => {
   const body = outcome.slice(0, outcome.indexOf('private async mirrorSessionOutcome('));
 
   it('voids the stage when the session is called off', () => {
-    expect(body).toContain("if (status === 'cancelled')");
+    /* `|| options?.releaseStage` joined it: a WAIVED no-show releases the stage
+       too. The closing paren is not pinned; what matters is that a cancelled
+       session still reaches this branch. */
+    expect(body).toContain("if (status === 'cancelled'");
     expect(body).toContain("from('payment_plan_installments')");
     expect(body).toContain("status: 'cancelled'");
   });
@@ -448,8 +455,15 @@ describe('a called-off session is not owed for', () => {
   it("drops the plan's total by what was voided", () => {
     /* Adding a session raises it; calling one off has to lower it, or the plan
        claims money no invoice will ever ask for. */
-    expect(body).toContain("from('payment_plans')");
-    expect(body).toContain('total_amount');
+    /* The write MOVED to `lib/payments/planFollowsItsStages.ts`, shared by the
+       three stage-closing paths, and gained a guard the repository never had:
+       a plan used by more than one booking is a shared template, left alone. */
+    const plans = readFileSync(
+      join(process.cwd(), 'lib', 'payments', 'planFollowsItsStages.ts'),
+      'utf8'
+    );
+    expect(plans).toContain("from('payment_plans')");
+    expect(plans).toContain('total_amount');
   });
 
   it('and the row stops showing money for it', () => {

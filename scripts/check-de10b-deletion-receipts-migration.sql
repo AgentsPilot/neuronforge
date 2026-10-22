@@ -59,8 +59,8 @@ checks AS (
     AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) AS acl
       WHERE p.oid = (SELECT fn.oid FROM fn) AND acl.grantee = 0)
   UNION ALL
-  SELECT 11, 'its body holds the version stamp this build pins (d72232d8fcc75e5e)',
-    EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('d72232d8fcc75e5e' in p.prosrc) > 0)
+  SELECT 11, 'its body holds the version stamp this build pins (2bd40a46795e4555)',
+    EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('2bd40a46795e4555' in p.prosrc) > 0)
 )
 SELECT checks.ord, checks.check_name, CASE WHEN checks.passed THEN 'ok' ELSE 'FAIL' END AS status
 FROM checks

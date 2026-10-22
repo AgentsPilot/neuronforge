@@ -158,7 +158,14 @@ describe('the client sees the whole block, whichever session changed', () => {
 
   it('all three emails carry the list', () => {
     /* Added, cancelled, moved — every action that reaches the client. */
-    expect(service.match(/packageSessionLines\(bookingId, userId\)/g)?.length).toBeGreaterThanOrEqual(3);
+    /*
+     * The ARGUMENT is not pinned. A package sale leaves two bookings, and the
+     * cancellation reads the list off the PACKAGE rather than the row being
+     * cancelled — `packageSessionLines(options?.sessionsFrom ?? bookingId,
+     * userId)` — so a literal match counted two of the three and called a
+     * correct email missing.
+     */
+    expect(service.match(/packageSessionLines\(/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
   it('and all three render it', () => {

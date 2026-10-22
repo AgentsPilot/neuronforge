@@ -32,6 +32,9 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { createLogger } from '@/lib/logger';
 import { reconcileBookingMoney } from '@/lib/payments/reconcileBookingMoney';
+/* Every scheduled route records its runs in `bos_cron_runs`, so the operator
+   page can say when this last ran and what it found. */
+import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -96,9 +99,7 @@ async function runJob(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
-  return runJob(request);
-}
+export const GET = withCronRunRecord('booking-money-reconcile', runJob);
 
 /* Vercel crons issue GET; POST is here for the manual trigger. */
 export async function POST(request: NextRequest) {

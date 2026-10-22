@@ -1440,35 +1440,17 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     const attemptId = subscriptionMetadataFromInvoice(invoice).attempt_id;
 
     if (attemptId) {
-      try {
-        const { data: attempt } = await supabaseServer
-          .from('abandoned_bookings')
-          .select('id, user_id, booking_id')
-          .eq('id', attemptId)
-          .not('booking_id', 'is', null)
-          .maybeSingle();
-
-        if (attempt?.booking_id) {
-          const [{ linkPaymentsToBooking }, { data: booking }] = await Promise.all([
-            import('@/lib/payments/linkPaymentsToBooking'),
-            supabaseServer
-              .from('scheduling_bookings')
-              .select('contact_id')
-              .eq('id', attempt.booking_id as string)
-              .maybeSingle(),
-          ]);
-
-          await linkPaymentsToBooking({
-            attemptId: attempt.id as string,
-            bookingId: attempt.booking_id as string,
-            contactId: (booking?.contact_id as string | null) ?? null,
-            userId: attempt.user_id as string,
-          });
-        }
-      } catch (err) {
-        /* Non-fatal: the money is recorded and the reconcile pass will retry. */
-        log.warn({ err, attemptId, subscriptionId }, 'Could not link this plan to its booking yet');
-      }
+      /*
+       * One call, and the two reads it needs live in the payments module.
+       * A `route.ts` holding its own queries is what CLAUDE.md rule 1 and
+       * `routerPlacement.guard` forbid: this file routes events, and the
+       * money join has exactly one home.
+       */
+      const { linkPaymentsForConvertedAttempt } = await import(
+        '@/lib/payments/linkPaymentsToBooking'
+      );
+    
+      await linkPaymentsForConvertedAttempt(attemptId);
     }
     // A period belongs to its plan, not to a platform invoice. Returning here
     // stops the ordinary invoice path treating it as an unmatched Stripe

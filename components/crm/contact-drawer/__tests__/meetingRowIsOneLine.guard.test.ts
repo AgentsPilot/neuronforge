@@ -99,7 +99,13 @@ describe('every action survived the move', () => {
      * undoing that through a control that says something else.
      */
     expect(actions).toMatch(/const held = status === 'completed' \|\| meetingStatus === 'held'/);
-    expect(actions).toMatch(/const calledOff = status === 'cancelled' \|\| meetingStatus === 'cancelled'/);
+    // Wrapped and three-termed since the package cascade: a meeting on a
+    // CANCELLED BOOKING is called off too, so `|| bookingCancelled` joined it.
+    // The rule held here is that both status columns are consulted, not the
+    // exact line break or the full list of terms.
+    expect(actions).toMatch(
+      /const calledOff =\s*\n?\s*status === 'cancelled' \|\| meetingStatus === 'cancelled'/
+    );
     expect(actions).toMatch(/if \(onReschedule && !held && !calledOff\)/);
   });
 
