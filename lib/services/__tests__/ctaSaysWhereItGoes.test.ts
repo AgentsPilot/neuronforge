@@ -131,11 +131,33 @@ describe('the reported bug', () => {
     }
   });
 
-  it('puts the booking words on the closing CTA and the contact words on the footer', () => {
+  /*
+   * The closing block asks to be CONTACTED, which it did not used to.
+   *
+   * It made the page's primary ask — buy, on any business with a catalogue —
+   * and that was a second booking button: the same ask as the header, the same
+   * ask as every card in the services list, put to somebody who had already
+   * declined it twice on the way down. The useful question to put last is the
+   * one the page has not asked yet.
+   *
+   * This test is the reason the change is visible rather than silent: it named
+   * the old pairing exactly, so moving the intent had to be deliberate.
+   */
+  it('closes by asking to be contacted, and the footer agrees', () => {
     const blocks = build({ buttons: LABELS.en });
 
-    expect(pairOn(blocks, 'cta')).toMatchObject({ text: 'Book a session', link: '#services' });
+    expect(pairOn(blocks, 'cta')).toMatchObject({ text: 'Get in touch', link: '#contact' });
     expect(pairOn(blocks, 'footer')).toMatchObject({ text: 'Get in touch', link: '#contact' });
+  });
+
+  it('still makes the primary ask in the header, where it belongs', () => {
+    /*
+     * The other half: moving the closing block must not leave a page that
+     * never offers to sell anything. The header is where the ask lives now.
+     */
+    const blocks = build({ buttons: LABELS.en });
+
+    expect(pairOn(blocks, 'header')).toMatchObject({ text: 'Book a session', link: '#services' });
   });
 
   it('sends the hero on into the page rather than to a purchase', () => {
@@ -186,7 +208,9 @@ describe('in every language, on both shapes of business', () => {
     const blocks = build({ language: 'he', buttons: LABELS.he });
 
     expect(pairOn(blocks, 'footer')).toMatchObject({ text: 'צרו קשר', link: '#contact' });
-    expect(pairOn(blocks, 'cta')).toMatchObject({ text: 'קבעו פגישה', link: '#services' });
+    /* The closing block now asks to be contacted; the header keeps the sale. */
+    expect(pairOn(blocks, 'cta')).toMatchObject({ text: 'צרו קשר', link: '#contact' });
+    expect(pairOn(blocks, 'header')).toMatchObject({ text: 'קבעו פגישה', link: '#services' });
   });
 });
 

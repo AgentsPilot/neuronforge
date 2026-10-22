@@ -935,11 +935,18 @@ export class CRMContactRepository {
   async listBasic(
     userId: string,
     options: { ids?: string[]; stage?: string; search?: string; limit?: number } = {}
-  ): Promise<CRMContactRepositoryResult<Pick<CRMContact, 'id' | 'first_name' | 'last_name' | 'email' | 'phone' | 'stage'>[]>> {
+  ): Promise<CRMContactRepositoryResult<Pick<CRMContact, 'id' | 'first_name' | 'last_name' | 'email' | 'phone' | 'stage' | 'source'>[]>> {
     try {
+      /*
+       * `source` is here because the mailable-audience list shows where each
+       * person came from, and it is a scalar column like the rest — no join,
+       * no subquery, so the "lightweight" promise above still holds. Added
+       * rather than given its own method: a second near-identical select is
+       * how two readers of one table drift apart.
+       */
       let query = this.supabase
         .from('crm_contacts')
-        .select('id, first_name, last_name, email, phone, stage')
+        .select('id, first_name, last_name, email, phone, stage, source')
         .eq('user_id', userId);
 
       if (options.ids) {

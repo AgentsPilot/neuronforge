@@ -1,5 +1,26 @@
 import { journeySteps } from '@/lib/business-os/clientJourney';
+import { anchorForBlockType } from '@/lib/website-builder/sectionAnchors';
 import type { FlowStep, SelectedServiceData } from './types';
+
+/**
+ * The one destination that is itself a conversion endpoint.
+ *
+ * Resolved through `anchorForBlockType` rather than written as `'#contact'`,
+ * because the renderer stamps the section's id from that same table — the two
+ * are one contract, and a literal here is how they come apart.
+ */
+const CONTACT_FORM_ANCHOR = `#${anchorForBlockType('contact_form')}`;
+
+/**
+ * Does this destination name the contact form on this very page?
+ *
+ * Only an exact fragment counts. By the time a block renders, `repairBlockLinks`
+ * has already replaced or removed every fragment naming a section the page does
+ * not have, so a surviving `#contact` is a section that is really there.
+ */
+function namesTheContactForm(href: string | null | undefined): boolean {
+  return (href ?? '').trim().toLowerCase() === CONTACT_FORM_ANCHOR;
+}
 
 /**
  * The two facts a journey is built from, plus the two that shape its middle.
@@ -97,6 +118,27 @@ export function flowForService(
  * modal opens at its catalogue step and the client picks first. Which is also
  * the only honest thing a page-level button can do now that each service has
  * its own journey.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ONE DESTINATION THAT OVERRULES ALL OF THAT: THE CONTACT FORM.
+ *
+ * Everything above assumes the authored link is a place to SCROLL to, and that
+ * scrolling is always the weaker answer. For `#services`, `#pricing` and
+ * `#about` it is: those are lists, and moving the page down to one instead of
+ * opening the booking is the bug this function was written to end.
+ *
+ * `#contact` is not a list. It is a form the visitor completes — the page's
+ * second conversion endpoint, and the only ask available to somebody who does
+ * not want to buy yet. A button sent there is asking a different question from
+ * a button that opens the checkout, and hijacking it into the booking dialog
+ * made that question unaskable: a closing call to action reading "More
+ * details" opened a catalogue of things to pay for.
+ *
+ * So a destination naming the contact form is honoured, and everything else
+ * still defers to the booking. The guard that makes this safe is upstream:
+ * `repairBlockLinks` runs over the blocks the renderer is about to draw and
+ * strips any fragment whose section is missing or switched off, so `#contact`
+ * reaching here is a contact form that exists on this page.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export type BookingAction =
@@ -120,9 +162,24 @@ export function resolveBookingAction(input: {
    */
   onOpenBooking?: (service: SelectedServiceData | null) => void;
   bookingUrl?: string;
-  /** Where to go when this page cannot take a booking at all. */
+  /**
+   * The destination this button was authored with.
+   *
+   * No longer only a fallback: where it names the contact form it is the
+   * ANSWER, and it is checked before the booking dialog. The name is kept
+   * because every one of the seven call sites passes it under that name and
+   * renaming it would touch each of them for no gain.
+   */
   fallbackHref: string;
 }): BookingAction {
+  /*
+   * First, not last. A button pointing at the contact form is asking to be
+   * contacted; opening a checkout instead answers a question nobody asked.
+   */
+  if (namesTheContactForm(input.fallbackHref)) {
+    return { kind: 'link', href: input.fallbackHref };
+  }
+
   if (input.onOpenBooking) {
     const open = input.onOpenBooking;
     return { kind: 'open', onClick: () => open(null) };
