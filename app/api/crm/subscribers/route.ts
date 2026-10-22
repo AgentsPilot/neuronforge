@@ -1,14 +1,49 @@
 /**
- * The business's newsletter audience, and the button that turns one into a client.
+ * Everyone this business may email, and the button that turns one into a client.
  *
- * `GET` lists the roster. `POST` promotes one: creates the CRM contact at the
- * owner's first pipeline stage and marks the roster row as where that contact
- * came from.
+ * `GET` lists the audience. `POST` promotes a roster signup: creates the CRM
+ * contact at the owner's first pipeline stage and marks the roster row as where
+ * that contact came from.
  *
  * Promotion is also automatic — a trigger on `crm_contacts` links any contact
  * created for an address that already subscribed, so somebody who simply books
  * ends up in the pipeline without anyone deciding. This route is the owner's
  * explicit version of the same thing.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NO LONGER THE ROSTER ALONE
+ *
+ * It listed `business_subscribers` and nothing else. That table has a narrow
+ * and deliberate scope: newsletter signups who were not already contacts. Only
+ * the two newsletter forms write to it.
+ *
+ * Consent is given in four other places — a tickbox inside the booking flow,
+ * the same tickbox on the contact form, the owner entering it in the CRM
+ * drawer, and the double opt-in link — and none of them touch the roster,
+ * correctly, because those people are contacts and a contact is not an
+ * anonymous address.
+ *
+ * The consequence was a screen that answered a question nobody asks. On a live
+ * account: nine people consented, every one of them mailable, and the
+ * Subscribers tab showed zero. Seven had never been near a newsletter form,
+ * one was already a contact so the roster insert skipped them by design, and
+ * one predated the roster feature by eleven minutes.
+ *
+ * So the list is built from `marketing_consent_state` — the authority on who
+ * may be written to, the same table every send checks and `countMailable`
+ * counts — and the roster is folded in for the one thing it knows that the
+ * consent table does not: somebody who has signed up and NOT yet confirmed.
+ *
+ * Two sources, one row per person, keyed on the normalised address:
+ *
+ *   on the roster only          a signup mid-confirmation      pending
+ *   consented, has a contact    a client who said yes          contact
+ *   consented, no contact       an address and a yes, no more  confirmed
+ *
+ * The roster row wins where both exist: it carries the signup's own history —
+ * when they subscribed, what they confirmed, where they came from — and the
+ * consent row would flatten that to a single date.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -20,6 +55,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { businessSubscriberRepository } from '@/lib/repositories/BusinessSubscriberRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
+import { buildAudience } from './buildAudience';
 
 const logger = createLogger({ module: 'CRMSubscribersAPI' });
 
@@ -35,36 +71,50 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
+    /*
+     * The flag is NOT pushed into the roster query: `buildAudience` needs the
+     * full roster as its deduplication key, and applies the flag to both
+     * sources itself. Pre-filtering here is what let a hidden row return
+     * through the consent table wearing a different label.
+     */
     const includePromoted =
-      new URL(request.url).searchParams.get('includePromoted') === 'true';
+      new URL(request.url).searchParams.get('includePromoted') !== 'false';
 
-    const { data: subscribers, error } = await businessSubscriberRepository.list(user.id, {
-      includePromoted,
-    });
+    const [{ data: roster, error }, { data: consented }] = await Promise.all([
+      businessSubscriberRepository.list(user.id, { includePromoted: true }),
+      marketingConsentRepository.listConsented(user.id),
+    ]);
 
     if (error) throw error;
 
     /*
-     * The live consent answer, alongside the roster's own status.
-     *
-     * They can disagree: consent can be withdrawn through an unsubscribe link
-     * that never touched this table. `marketing_consent_state` is the authority
-     * on whether anybody may be emailed, so it is shown rather than inferred —
-     * the roster says how far through signing up they got, this says whether
-     * they can be written to today.
+     * Names for the consent-only rows, in one round trip rather than one per
+     * row. A consent row carries `contact_id` precisely so this does not have
+     * to match people on their address.
      */
-    const { data: consent } = await marketingConsentRepository.getStateBulk(
-      user.id,
-      (subscribers ?? []).map((s) => s.email)
-    );
+    const contactIds = (consented ?? [])
+      .map((c) => c.contact_id)
+      .filter((id): id is string => Boolean(id));
 
-    return NextResponse.json({
-      success: true,
-      subscribers: (subscribers ?? []).map((s) => ({
-        ...s,
-        mailable: consent?.get(s.email_normalized) === true,
-      })),
+    const [{ data: contacts }, { data: consentByEmail }] = await Promise.all([
+      contactIds.length
+        ? crmContactRepository.listBasic(user.id, { ids: contactIds })
+        : Promise.resolve({ data: [], error: null }),
+      marketingConsentRepository.getStateBulk(
+        user.id,
+        (roster ?? []).map((s) => s.email)
+      ),
+    ]);
+
+    const rows = buildAudience({
+      roster: roster ?? [],
+      consented: consented ?? [],
+      contacts: contacts ?? [],
+      consentByEmail: consentByEmail ?? new Map(),
+      includePromoted,
     });
+
+    return NextResponse.json({ success: true, subscribers: rows });
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to list subscribers');
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
@@ -95,6 +145,13 @@ export async function POST(request: NextRequest) {
     });
     const subscriber = (all ?? []).find((s) => s.id === parsed.data.subscriberId);
 
+    /*
+     * Also the answer for a row that came from the consent table rather than
+     * the roster. Those people are already contacts — the list sets their
+     * `promoted_contact_id`, so the button is never rendered for them — and
+     * there is nothing here to promote. A 404 is the honest reply: this id
+     * names no roster row.
+     */
     if (!subscriber) {
       return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
     }
