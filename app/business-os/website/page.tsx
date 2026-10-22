@@ -5605,8 +5605,27 @@ export default function WebsiteManagementPage() {
                 className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                 style={{ borderRadius: 'var(--v2-radius-card)' }}
               >
-                <div className="mb-6 flex items-start justify-between">
-                  <div>
+                {/*
+                  ───────────────────────────────────────────────────────────
+                  THIS ROW HAS TO WRAP, BECAUSE ON A PHONE IT CANNOT NOT.
+
+                  It was `flex items-start justify-between` with a non-wrapping
+                  button group inside it, and neither child could give way. So
+                  on a narrow screen the two fought over one line: the heading
+                  column collapsed to a few characters wide — "הפעל/כבה חלקים
+                  וגרור לסידור מחדש" came out as a vertical ribbon — while the
+                  buttons broke their own labels mid-phrase, "סנכרן עם נתוני
+                  העסק" over four lines.
+
+                  Stacked below `sm`, side by side above it. `min-w-0` on the
+                  text column because a flex child defaults to `min-width:auto`
+                  and will push the row wider rather than wrap its own text,
+                  which is what let the buttons squeeze it in the first place.
+                  `whitespace-nowrap` on each button keeps a label one word.
+                  ───────────────────────────────────────────────────────────
+                */}
+                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
                     <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
                       {page?.page_type === 'landing'
                         ? (language === 'he' ? 'עריכת דף נחיתה' : language === 'es' ? 'Editar Página de Destino' : 'Edit Landing Page')
@@ -5620,14 +5639,14 @@ export default function WebsiteManagementPage() {
                   </div>
 
                   {/* Action Buttons - Different for landing pages vs main website */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                     {/* Preview Button for Landing Pages - "View Landing Page" */}
                     {page?.page_type === 'landing' && (
                       <button
                         type="button"
                         onClick={() => handlePreview(page.id)}
                         disabled={previewChecking}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all disabled:opacity-50"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all disabled:opacity-50"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Eye className="w-4 h-4" />
@@ -5646,7 +5665,7 @@ export default function WebsiteManagementPage() {
                       <button
                         onClick={handleResetBlockOrder}
                         disabled={resettingOrder}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                         title={language === 'he' ? 'איפוס סדר לברירת מחדל' : language === 'es' ? 'Restablecer orden' : 'Reset to default order'}
                       >
@@ -5662,7 +5681,7 @@ export default function WebsiteManagementPage() {
                     {page?.page_type !== 'landing' && (
                       <button
                         onClick={() => setShowAddSectionModal(true)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Plus className="w-4 h-4" />
@@ -5674,7 +5693,7 @@ export default function WebsiteManagementPage() {
                       <button
                         onClick={handleSyncWithBusinessData}
                         disabled={syncing}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         {syncing ? (

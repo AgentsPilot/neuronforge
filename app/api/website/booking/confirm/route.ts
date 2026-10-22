@@ -16,6 +16,7 @@ import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { z } from 'zod';
@@ -170,12 +171,13 @@ export async function POST(request: NextRequest) {
     const clientFirstName = nameParts[0] || data.name;
     const clientLastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
 
-    // Get user's pipeline stages to find the best "active client" stage for paid customers
-    const { data: pipelineStages } = await supabaseServer
-      .from('crm_pipeline_stages')
-      .select('stage_key, position')
-      .eq('user_id', ownerId)
-      .order('position', { ascending: true });
+    /*
+     * The start of this owner's board, resolved in the repository that owns the
+     * table. This was an inline read ending `|| 'lead'` — one of eight copies,
+     * and a stage many pipelines do not contain.
+     */
+    const { data: resolvedFirstStage } =
+      await crmPipelineStagesRepository.firstStageKey(ownerId);
 
     /*
      * A new contact starts at the beginning; the booking promotes them.
@@ -186,7 +188,7 @@ export async function POST(request: NextRequest) {
      * not this route's decision any more: the booking below is written
      * `confirmed`, and `promote_contact_on_confirmed_booking` moves them.
      */
-    const activeClientStage = pipelineStages?.[0]?.stage_key ?? 'lead';
+    const activeClientStage = resolvedFirstStage;
 
     requestLogger.debug({ startingStage: activeClientStage }, 'Starting stage for a new contact');
 
@@ -237,7 +239,7 @@ export async function POST(request: NextRequest) {
           source: 'website_booking',
           // The first stage. The trigger promotes them when the booking below
           // is confirmed, which is the only rule that decides this now.
-          stage: activeClientStage
+          ...(activeClientStage ? { stage: activeClientStage } : {})
         })
         .select('id')
         .single();

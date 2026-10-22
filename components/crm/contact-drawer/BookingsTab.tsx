@@ -6593,8 +6593,24 @@ export function BookingsTab({
                                                       for a dot, a gap and a number, and would
                                                       have spilled the moment it stopped being
                                                       a mere hint to the auto layout. */}
+                                                  {/* ── NARROWER ON A PHONE, AND THAT IS THE FIX ──
+                                                      Under `fixed` these widths are binding and
+                                                      the money column is the REMAINDER. The
+                                                      comment below says money "takes the slack",
+                                                      which is true on a desktop and inverts on a
+                                                      phone: 60 + 142 + 52 + 56 is 310px of
+                                                      declared columns, so on a ~340px drawer the
+                                                      money column was left about 30px. A refund
+                                                      note needs about 90, could not wrap, and ran
+                                                      out past the table's border.
+
+                                                      The date column is untouched — it is sized
+                                                      to the longest string it must show whole.
+                                                      The three columns that hold a dot, a glyph
+                                                      and a button give up 36px between them,
+                                                      which is what the money column was missing. */}
                                                   <th
-                                                    className="w-[60px] px-3 py-1.5 text-start font-medium"
+                                                    className="w-[48px] px-2 py-1.5 text-start font-medium sm:w-[60px] sm:px-3"
                                                     style={{ borderBottom: '1px solid var(--v2-border)' }}
                                                   />
                                                   {/* ── THE WIDTHS LIVE HERE NOW ───────────
@@ -6613,7 +6629,7 @@ export function BookingsTab({
                                                     {t('crm.booking.package.col_when') || 'When'}
                                                   </th>
                                                   <th
-                                                    className="w-[52px] whitespace-nowrap px-1 py-1.5 text-start font-medium"
+                                                    className="w-[44px] whitespace-nowrap px-1 py-1.5 text-start font-medium sm:w-[52px]"
                                                     style={{ borderBottom: '1px solid var(--v2-border)' }}
                                                   >
                                                     {t('crm.booking.package.col_state') || 'State'}
@@ -6755,7 +6771,7 @@ export function BookingsTab({
                                                         : '1px solid var(--v2-border)',
                                                   }}
                                                 >
-                                                  <td className="w-[60px] whitespace-nowrap px-3 py-2.5 align-middle">
+                                                  <td className="w-[60px] whitespace-nowrap px-2 py-2.5 align-middle sm:px-3">
                                                     <span className="flex items-center gap-1.5">
                                                       {/* The state, in no space at all — the
                                                           same four colours every other list
@@ -7095,7 +7111,7 @@ export function BookingsTab({
                                                     background: 'var(--v2-surface)',
                                                   }}
                                                 >
-                                                  <td className="w-9 px-3 py-2.5" />
+                                                  <td className="w-9 px-2 py-2.5 sm:px-3" />
 
                                                   {/* The label starts where the dates do and
                                                       runs to the figure, so nothing in the
@@ -7136,8 +7152,26 @@ export function BookingsTab({
 
                                                     {(collected > 0 || refunded > 0) && (
                                                       <span className="mt-0.5 block text-[11px] font-normal leading-snug">
+                                                        {/* ── THE NOTES MAY WRAP. THE FIGURES MAY NOT. ──
+                                                            `whitespace-nowrap` here is what let a
+                                                            note leave the table: in a fixed layout
+                                                            a column cannot grow, so a note wider
+                                                            than its column simply overflowed.
+
+                                                            Wrapping is safe because the figure is
+                                                            already unbreakable without help —
+                                                            `Intl.NumberFormat` joins the number to
+                                                            its currency with U+00A0, a NON-BREAKING
+                                                            space. So "133.33 ₪" survives as one
+                                                            unit and only the word beside it moves
+                                                            to the next line.
+
+                                                            Belt and braces with the widths above:
+                                                            those give the column enough room at
+                                                            the sizes we know about, this keeps the
+                                                            note inside the frame at any other. */}
                                                         {collected > 0 && (
-                                                          <span className="whitespace-nowrap text-[var(--v2-text-muted)]">
+                                                          <span className="text-[var(--v2-text-muted)]">
                                                             {(t('crm.booking.package.already_collected') || '{amount} collected')
                                                               .replace('{amount}', asMoney(collected))}
                                                           </span>
@@ -7150,10 +7184,7 @@ export function BookingsTab({
                                                              the same orange the row uses, because
                                                              a refund is a deliberate act and not
                                                              a failure. */
-                                                          <span
-                                                            className="whitespace-nowrap"
-                                                            style={{ color: '#B54708' }}
-                                                          >
+                                                          <span style={{ color: '#B54708' }}>
                                                             {(t('crm.booking.package.already_refunded') || '{amount} refunded')
                                                               .replace('{amount}', asMoney(refunded))}
                                                           </span>
@@ -7162,7 +7193,7 @@ export function BookingsTab({
                                                     )}
                                                   </td>
 
-                                                  <td className="w-14 px-3 py-2.5" />
+                                                  <td className="w-14 px-2 py-2.5 sm:px-3" />
                                                 </tr>
                                               );
                                             })()}

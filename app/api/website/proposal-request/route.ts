@@ -37,6 +37,7 @@ import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { ConsentInputSchema } from '@/lib/validation/consent';
 import { recordConsent } from '@/lib/consent/recordConsent';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
 import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
@@ -238,12 +239,39 @@ export async function POST(request: NextRequest) {
 
     let contactId: string;
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE FIRST STAGE OF THIS OWNER'S PIPELINE, NOT THE WORD "lead".
+     *
+     * `stage: 'lead'` was written here as a literal. Pipeline vocabulary is
+     * per-tenant: a business whose stages read inquiry > initial_consultation
+     * > family_enrolled > completed has no 'lead', so a quote request filed a
+     * contact into a stage that does not exist on their board. Observed live —
+     * one contact sitting at 'lead' on an account where nothing else does, and
+     * the owner asking what it was.
+     *
+     * The five other routes that create a contact already resolve it this way
+     * (`booking/create`, `scheduling/bookings`, `crm/subscribers`,
+     * `forms/contact`, `CapabilityEngine`). This was the odd one out.
+     *
+     * `'lead'` remains the fallback for an account with no stages configured,
+     * which is what every one of those five does — a contact with an unknown
+     * stage is still better than no contact.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * The start of this owner's board, resolved in one place. Previously an
+     * inline read ending `|| 'lead'` — a stage many pipelines do not contain.
+     * Null means no pipeline: the column's own DEFAULT then applies.
+     */
+    const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(ownerId);
+
     if (existing) {
       contactId = existing.id;
       /*
        * An existing contact keeps its stage. Someone already in the pipeline
        * asking for a second quote has not gone backwards, and resetting them to
-       * 'lead' would undo the owner's own bookkeeping.
+       * the first stage would undo the owner's own bookkeeping.
        */
       await supabaseServer
         .from('crm_contacts')
@@ -259,7 +287,7 @@ export async function POST(request: NextRequest) {
           last_name: lastName,
           email,
           phone: data.phone || null,
-          stage: 'lead',
+          ...(firstStage ? { stage: firstStage } : {}),
           source: 'quote_request',
           source_metadata: attribution,
         })
