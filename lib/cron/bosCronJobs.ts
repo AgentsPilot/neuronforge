@@ -644,7 +644,10 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
     scheduleWords: 'Twice an hour, at :05 and :35',
     addedOn: '2026-10-16',
     drainsQueue: null,
-    counts: [],
+    counts: [
+      { key: 'swept', path: ['swept'], label: 'abandoned attempts swept' },
+      { key: 'recovered', path: ['recovered'], label: 'recovery emails sent' },
+    ],
     partlyDoneWhen: [],
   },
   {

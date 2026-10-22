@@ -111,7 +111,7 @@ describe('it can be removed in three deletions', () => {
 
   it('is written down where flags are, with its removal steps', () => {
     /* A temporary flag nobody recorded is a permanent flag. */
-    const doc = read('docs/feature_flags.md');
+    const doc = read('docs/FEATURE_FLAGS.md');
 
     expect(doc).toContain('NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME');
     expect(doc).toContain('Remove when');

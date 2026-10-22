@@ -576,8 +576,27 @@ describe('a service that is bought rather than booked', () => {
     expect(bookingNextStep(course)).toMatchObject({ stage: 'payment', whoseMove: 'client' });
   });
 
-  it('is finished once it is paid', () => {
-    expect(bookingNextStep({ ...course, money: 'paid' }).stage).toBe('done');
+  it('is not finished merely because it is paid', () => {
+    /*
+     * PAID IS NOT DELIVERED, and this used to say it was.
+     *
+     * The journey has always drawn a `fulfillment` step for a dateless
+     * service, and owners had ticked it; what was missing is that nothing
+     * ASKED. `moneyStep` returned `done` the moment the money landed, so the
+     * badge read "all done" directly above a step that was still open. A
+     * course is given on a different day from the one it is bought on.
+     */
+    expect(bookingNextStep({ ...course, money: 'paid' }).stage).toBe('fulfillment');
+  });
+
+  it('is finished once it has been handed over', () => {
+    expect(
+      bookingNextStep({
+        ...course,
+        money: 'paid',
+        booking: { status: 'confirmed', meeting_status: 'held' },
+      }).stage
+    ).toBe('done');
   });
 
   it('is never asked to mark a meeting it does not have', () => {
