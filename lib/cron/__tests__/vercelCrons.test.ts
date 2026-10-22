@@ -58,6 +58,12 @@ const BOS_CRONS: CronEntry[] = [
   { path: '/api/cron/daily-briefing', schedule: '10 * * * *' },
   { path: '/api/cron/lead-response', schedule: '*/5 * * * *' },
   { path: '/api/cron/abandoned-proposal-invoices', schedule: '20 * * * *' },
+  /*
+   * The client who filled the form and never paid. Twice an hour, because an
+   * attempt is only worth recovering while the client still remembers making
+   * it.
+   */
+  { path: '/api/cron/abandoned-bookings', schedule: '5,35 * * * *' },
   // Credit deduction slice 4b: the nightly leak check (read-only).
   { path: '/api/cron/credit-leak-check', schedule: '45 4 * * *' },
   /*
@@ -89,13 +95,22 @@ const BOS_CRONS: CronEntry[] = [
    */
   { path: '/api/cron/bos-billing-reconcile', schedule: '41 5 * * *' },
   /*
-   * The 18th: the data export daily sweep (DE-8b, 2026-10-17), shipped in the
+   * The 18th: CLIENTS' money, as opposed to the platform's own above.
+   *
+   * Every quarter hour, not nightly: this repairs a client who has paid and
+   * whose booking shows nothing collected, and an owner should not spend a day
+   * looking at that. The pass is bounded and idempotent, so a frequent run is
+   * cheap and two overlapping ones cannot corrupt each other.
+   */
+  { path: '/api/cron/booking-money-reconcile', schedule: '*/15 * * * *' },
+  /*
+   * The 19th: the data export daily sweep (DE-8b, 2026-10-17), shipped in the
    * same PR as the zip writer (SA DE-8a Q-6). 05:25 is between the settlement
    * gap check (05:17) and the billing reconcile (05:41); no hourly or daily
    * job runs at :25.
    */
   { path: '/api/cron/data-export', schedule: '25 5 * * *' },
-  // The 19th: finance slice 8.2 (§11M.7): 00:07 UTC, a free minute (CF-6), appended last.
+  // The 20th: finance slice 8.2 (§11M.7): 00:07 UTC, a free minute (CF-6), appended last.
   { path: '/api/cron/finance-snapshot', schedule: '7 0 * * *' },
 ];
 
@@ -108,8 +123,8 @@ const RETIRED_AGENTSPILOT = [
 describe('vercel.json crons (slice 5, part A)', () => {
   const crons = vercel.crons ?? [];
 
-  it('schedules exactly the 19 Business OS jobs, unchanged and in order', () => {
-    expect(crons).toHaveLength(19);
+  it('schedules exactly the 21 Business OS jobs, unchanged and in order', () => {
+    expect(crons).toHaveLength(21);
     expect(crons).toEqual(BOS_CRONS);
   });
 

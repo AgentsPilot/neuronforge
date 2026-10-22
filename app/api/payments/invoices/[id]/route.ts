@@ -3,8 +3,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
-import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
-import { deleteInvoice, InvoiceSettledError } from '@/lib/payments/invoiceLifecycle';
+import { deleteInvoice, voidInvoice, InvoiceSettledError } from '@/lib/payments/invoiceLifecycle';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'PaymentInvoiceDetailAPI' });
@@ -124,27 +123,59 @@ export async function PUT(
 
     requestLogger.info({ userId: user.id, invoiceId: id }, 'Updating payment invoice');
 
-    // Voiding is the one update that destroys standing: it tells the client the
-    // invoice no longer applies. Doing that to an invoice they have already
-    // paid would leave money received against a cancelled document.
+    /*
+     * ── VOIDING GOES THROUGH THE LIFECYCLE, LIKE DELETING ───────────────────
+     *
+     * Cancelling is the one update that destroys standing: it tells the client
+     * the invoice no longer applies. Doing that to an invoice they have already
+     * paid would leave money received against a cancelled document.
+     *
+     * This branch used to check that and then write `status: 'cancelled'`
+     * straight to the row — which left the invoice OPEN AT STRIPE. Observed on
+     * INV-00042: local status `cancelled`, Stripe status `open`, amount_due 500,
+     * `voided_at` null. The client still held a working hosted payment page for
+     * a demand the business had withdrawn, and had they paid it the money would
+     * have arrived against a cancelled document with no stage to settle.
+     *
+     * The DELETE handler below already carries the comment describing this exact
+     * bug, because it was fixed there and not here. `voidInvoice` is that fix:
+     * it refuses a settled invoice, voids at the processor FIRST, writes the
+     * status, releases the plan stage and audits — one definition of voiding for
+     * both callers.
+     * ────────────────────────────────────────────────────────────────────────
+     */
     if (validated.status === 'cancelled') {
-      const { data: existing, error: loadError } = await paymentInvoiceRepository.findById(id, user.id);
+      const { error: voidError } = await voidInvoice({
+        invoiceId: id,
+        userId: user.id,
+        request,
+        /*
+         * This is the owner pressing "cancel this payment" on one invoice, so
+         * the client is told. The bulk callers deliberately do not: they send
+         * one email about the whole ending instead of one per invoice.
+         */
+        notifyClient: true,
+      });
 
-      if (loadError || !existing) {
-        requestLogger.error({ err: loadError, id }, 'Failed to load invoice before voiding');
+      if (voidError) {
+        if (voidError instanceof InvoiceSettledError) {
+          requestLogger.info(
+            { userId: user.id, invoiceId: id },
+            'Refused to void an invoice that has been paid'
+          );
+          return settledInvoiceResponse(voidError.invoice);
+        }
+
+        const notFound = voidError.message === 'Invoice not found';
+        requestLogger.error({ err: voidError, id }, 'Failed to void invoice');
         return NextResponse.json(
-          { success: false, error: 'Failed to update invoice' },
-          { status: loadError ? 500 : 404 }
+          { success: false, error: notFound ? 'Invoice not found' : 'Failed to update invoice' },
+          { status: notFound ? 404 : 500 }
         );
       }
 
-      if (isSettledInvoice(existing)) {
-        requestLogger.info(
-          { userId: user.id, invoiceId: id, invoiceNumber: existing.invoice_number },
-          'Refused to void an invoice that has been paid'
-        );
-        return settledInvoiceResponse(existing);
-      }
+      const { data: voided } = await paymentInvoiceRepository.findById(id, user.id);
+      return NextResponse.json({ success: true, data: voided });
     }
 
     const { data, error } = await paymentInvoiceRepository.update(id, user.id, validated);

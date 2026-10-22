@@ -98,6 +98,7 @@ export async function sendQuoteReceivedEmail(
       toEmail: input.clientEmail,
       subject,
       bodyHtml: html,
+      kind: 'quote_request',
       result,
     }).catch(err => log.warn({ err }, 'Email logging failed (non-blocking)'));
 

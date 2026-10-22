@@ -10,6 +10,8 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CALENDAR_PLUGIN_KEYS } from '@/lib/plugins/pluginKeys';
 import { isThemeCustomized } from '@/lib/business-os/setup/profileReadiness';
+import { SETUP_STEPS, UNKNOWN_SHAPE } from '@/lib/business-os/setup/setupGraph';
+import { resolveBusinessShape } from '@/lib/business-os/businessShape.server';
 
 const logger = createLogger({ module: 'SetupStatusAPI' });
 
@@ -184,7 +186,7 @@ export async function GET(request: NextRequest) {
 
     // 4. Build steps array (order matters for display)
     // Only include steps that are NOT complete - we only show what's missing
-    const steps: SetupStep[] = [
+    const allStepsForDisplay: SetupStep[] = [
       { id: 'services', complete: hasServices },
       { id: 'availability', complete: hasAvailability },
       { id: 'payments', complete: hasStripe },
@@ -192,6 +194,46 @@ export async function GET(request: NextRequest) {
       { id: 'website', complete: hasWebsite },
       { id: 'design', complete: hasTheme },
     ];
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AND ONLY THE STEPS THIS BUSINESS HAS ANY USE FOR.
+     *
+     * `SETUP_STEPS` has carried an `applies` rule per step for some time —
+     * availability and the calendar only where something is booked against a
+     * time, payments only where cards are taken — and this route never asked.
+     * It built all six unconditionally, and the card that renders them filters
+     * on `complete` alone.
+     *
+     * So a consultancy that invoices for everything was told to connect a card
+     * processor, and a business that sells nothing through the platform was
+     * told to add services, set working hours and connect Stripe: three items
+     * it had declined, with no action anywhere that would ever clear them. A
+     * checklist with permanent entries is one people stop reading, and that
+     * costs the items that do matter.
+     *
+     * The graph decides, not a second rule written here — the readiness card,
+     * the settings dialog and this list have to agree about what a business
+     * needs, and they only can if there is one answer. `applies === null`
+     * ("cannot tell yet", a new account) keeps the step, which is the
+     * direction the whole graph fails in.
+     *
+     * The counts below follow from the filtered list on purpose: "3 of 4" has
+     * to be out of the steps that can actually be finished, or `allComplete`
+     * never fires for a business that declined one.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const shape = await resolveBusinessShape(user.id).catch(err => {
+      // A shape that cannot be read must not empty the checklist.
+      requestLogger.warn({ err, userId: user.id }, 'Could not resolve business shape; showing every step');
+      return UNKNOWN_SHAPE;
+    });
+
+    const steps: SetupStep[] = allStepsForDisplay.filter(step => {
+      const node = SETUP_STEPS.find(candidate => candidate.id === step.id);
+      if (!node?.applies) return true;
+      return node.applies(shape) !== false;
+    });
 
     const completedCount = steps.filter(s => s.complete).length;
     const totalCount = steps.length;

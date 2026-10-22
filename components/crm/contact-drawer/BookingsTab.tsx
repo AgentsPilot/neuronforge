@@ -5,21 +5,59 @@ import {
   Calendar, Clock, CreditCard, ClipboardCheck, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Search, Plus, Edit2,
   Loader2, ShoppingBag, Package, User, MapPin,
+  /*
+   * WHO recorded an outcome, as a mark rather than a sentence.
+   *
+   * `UserCog` is the owner — the person operating the business — and `User` the
+   * client, so the pair reads as "someone running this" against "someone it was
+   * done for". `Bot` is an automation, which must not look like either: a lead
+   * reply that auto-completed a booking was nobody's decision.
+   */
+  UserCog, Bot,
   Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban, FileText, Paperclip,
+  // The journey rail's "done" mark. A bare tick inside the filled disc, not
+  // `CheckCircle2`, which would draw a ring inside a ring.
+  Check,
   type LucideIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '../CollapsibleSection';
-import type { SessionCardData, BookingJourneyData, BookingJourneyStep } from './types';
+import type { SessionCardData, BookingJourneyData, BookingJourneyStep, MeetingAttempt } from './types';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
-import { groupJourneyByDay } from '@/lib/business-os/journeyDays';
+/*
+ * `groupJourneyByDay` is gone from this card, deliberately.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The journey was bucketed under date headings — "16 אוק׳", "עתידי", "16 אוק׳"
+ * again, "18 אוק׳" — with dashed wait markers between them. Reported as
+ * confusing, and it is: a client journey is a SEQUENCE OF STAGES, and the day
+ * each one happened to land on is incidental to the question an owner is
+ * asking, which is "where is this up to and what do I do".
+ *
+ * Grouping by date also scattered one journey across four headings and made
+ * the same date appear twice, so the eye could not follow the rail at all.
+ *
+ * The steps now render flat, in order, on one continuous rail. Each carries
+ * its own timestamp, so nothing is lost but the bucketing. The module stays
+ * for any other caller.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 import { cancelReasonKey } from '@/lib/business-os/cancellationReasons';
 import { MeetingRowActions } from './MeetingRowActions';
 import { StageRowActions } from './StageRowActions';
 /* Pure, no I/O — the clock rule lives beside `quoteGate` rather than in this
    three-thousand-line component, for the reason that module's header gives. */
 import { isMeetingPastDue } from '@/lib/business-os/quoteGate';
+import { opensItself, type NextStep, type NextStepAction } from '@/lib/business-os/bookingNextStep';
+import { sessionNextStep } from './sessionNextStep';
+import { createLogger } from '@/lib/logger';
+
+/* CLAUDE.md rule 3: structured logging, never `console.*`. Used only where a
+   render-time failure is swallowed so it cannot take the drawer down — see
+   `nextStep` below — because a swallowed error with no record is the kind
+   nobody ever finds. */
+const logger = createLogger({ module: 'BookingsTab' });
 /*
  * Two constants and a split, no dependencies — safe in a client component. The
  * prefix itself stays stored English because a gap and a detector match on it;
@@ -29,6 +67,16 @@ import { splitClientCancellationReason } from '@/lib/services/bookingCancellatio
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
 import { REFUND_CLASS, REFUND_HEX } from '@/components/payments/refundTone';
+import { firstTranslated, translated } from '@/lib/business-os/translateOptional';
+
+/**
+ * Where closed notices are remembered, for the reasons at `dismissedNotices`.
+ *
+ * Namespaced and versioned by its own name rather than by a counter: if the
+ * shape of what is stored ever changes, this string changes with it and the old
+ * value is simply never read again. Nothing here is worth migrating.
+ */
+const NOTICE_DISMISSED_KEY = 'bos.crm.booking.notices.dismissed.v1';
 
 /**
  * Add another date to a package already under way.
@@ -74,6 +122,17 @@ import { REFUND_CLASS, REFUND_HEX } from '@/components/payments/refundTone';
 function jobIsOver(input: {
   /** `scheduling_bookings.status`. */
   status?: string | null;
+  /**
+   * `scheduling_bookings.meeting_status` — where the appointment's outcome
+   * actually lives now.
+   *
+   * Without it this function could not tell that a simple job had finished.
+   * `complete()` writes `meeting_status: 'held'` and leaves `status` at
+   * `confirmed`, so the `status === 'completed'` test below stopped matching
+   * anything marked from that point on: the job read as still running and its
+   * action strip never retired.
+   */
+  meeting_status?: string | null;
   /** A `sale_mode: 'proposal'` booking that is not a package session. */
   isQuoted: boolean;
   /** The payment step reached `completed` or `refunded`: money did arrive. */
@@ -108,12 +167,45 @@ function jobIsOver(input: {
      Nothing the appointment does ends it. */
   if (input.isQuoted) return cancelled || input.quotePaid;
 
-  return cancelled || input.status === 'completed' || input.status === 'no_show';
+  /*
+   * For everything else the appointment IS the job, so its outcome ends it —
+   * read from `meeting_status` first, with the old `status` values kept for
+   * rows written before the column existed and never touched since.
+   */
+  const settled =
+    input.meeting_status === 'held' ||
+    input.meeting_status === 'no_show' ||
+    input.status === 'completed' ||
+    input.status === 'no_show';
+
+  return cancelled || settled;
 }
 
 /** Has the appointment itself been dealt with? Attendance only. */
-function attendanceRecorded(status?: string | null): boolean {
-  return status === 'completed' || status === 'cancelled' || status === 'no_show';
+/**
+ * Has this appointment been dealt with? Attendance only.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * READS THE MEETING'S OWN COLUMN NOW.
+ *
+ * It tested `booking.status`, which worked only while every meeting outcome
+ * overwrote it. Held and no-show now write `meeting_status` and leave the job
+ * alone — so a consultation marked held stays `confirmed`, and a predicate
+ * reading the status would go on offering "mark it held" to an owner who had
+ * just marked it, forever.
+ *
+ * The job's own ending still counts: a cancelled booking has no attendance to
+ * record and never will, so its buttons go too.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function attendanceRecorded(booking: { status?: string | null; meeting_status?: string | null }): boolean {
+  return (
+    booking.meeting_status != null ||
+    booking.status === 'cancelled' ||
+    // Rows written before `meeting_status` existed, and never touched since.
+    booking.status === 'completed' ||
+    booking.status === 'no_show'
+  );
 }
 
 function AddPackageMeeting({
@@ -139,6 +231,26 @@ function AddPackageMeeting({
     </button>
   );
 }
+
+/**
+ * The kinds the journey offers to send again.
+ *
+ * Mirrors the resend route's own list and must stay in step with it: a kind
+ * missing here hides a link the API would have honoured, and one added here
+ * that the API refuses hands the owner a button that returns an error.
+ *
+ * Short on purpose. A payment receipt or a refund notice describes a
+ * transaction at a moment in time and cannot be truthfully rebuilt from where
+ * the booking stands now, so neither is offered.
+ */
+const RESENDABLE_KINDS = new Set([
+  'booking_confirmed',
+  'booking_rescheduled',
+  'missed_appointment',
+  'meeting_cancelled',
+  'booking_cancelled',
+  'intake_requested',
+]);
 
 interface BookingsTabProps {
   sessions: SessionCardData[];
@@ -255,7 +367,34 @@ interface BookingsTabProps {
    * Deliberately not pointed at `onSendInvoice`, which sends a different email
    * entirely — a button that does the wrong thing is worse than one that waits.
    */
-  onResendConfirmation?: (bookingId: string) => Promise<void> | void;
+  /**
+   * Send one message again, named by what it WAS.
+   *
+   * Replaces `onResendConfirmation`, which always sent the confirmation
+   * whatever row the link sat on — so on a booking whose last mail was a
+   * cancellation it offered to send "your appointment is confirmed".
+   */
+  onResendMail?: (bookingId: string, kind: string) => Promise<void> | void;
+  /**
+   * Call off the APPOINTMENT and leave the job running.
+   *
+   * Separate from `onSetBookingStatus(id, 'cancelled')`, which ends the work.
+   * This exists for the case the owner and client agree to proceed WITHOUT
+   * meeting: the site visit is off, the quote still gets written.
+   */
+  /**
+   * Call off the appointment and leave the job running.
+   *
+   * `isQuoted` travels with it because the question the owner has to answer
+   * next depends on it: a quoted job can continue without the meeting, so the
+   * client's email has to say whether the quote is still coming, and only the
+   * owner knows. A booking whose meeting IS the thing bought has no such
+   * question.
+   */
+  onCancelMeeting?: (
+    bookingId: string,
+    context?: { isQuoted: boolean }
+  ) => Promise<void> | void;
   /**
    * Record how an appointment actually went, from the card header.
    *
@@ -265,7 +404,34 @@ interface BookingsTabProps {
    */
   onSetBookingStatus?: (
     bookingId: string,
-    status: 'completed' | 'no_show' | 'cancelled'
+    status: 'completed' | 'no_show' | 'cancelled',
+    /**
+     * The MEETING this is about, for one session of a package.
+     *
+     * A package is one booking with N meetings, so a session has no booking to
+     * complete — the outcome is recorded against the meeting, at a different
+     * endpoint. Absent for every ordinary booking, which is the common case.
+     */
+    meetingId?: string | null,
+    /**
+     * Whether this session still has money of its own to decide.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * Only `no_show` reads it, and only to decide whether to OFFER the choice.
+     *
+     * A missed session used to do nothing to the money: only `held` bills a
+     * per-session stage and only `cancelled` voids one, so the stage sat at
+     * `pending` for ever, and the client was neither charged nor released. The
+     * owner now answers that in the dialog, and this says whether there is
+     * anything to answer.
+     *
+     * True only for an unbilled stage: `pending` with no invoice. A stage
+     * already invoiced is the client's document to honour or have refunded,
+     * not a decision still open, and an ordinary booking was invoiced when it
+     * was made.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    chargeable?: boolean
   ) => Promise<void> | void;
   /**
    * Add a meeting to a package that is already running.
@@ -495,7 +661,8 @@ export function BookingsTab({
   onViewProposal,
   onSendInvoice,
   onResendRefundEmail,
-  onResendConfirmation,
+  onResendMail,
+  onCancelMeeting,
   onSetBookingStatus,
   onAddPackageMeeting,
   isLoading = false,
@@ -511,10 +678,118 @@ export function BookingsTab({
    * row again every time this component re-rendered for an unrelated reason,
    * and would fight an owner who closed it. `useState`'s initialiser runs once.
    */
-  const [expandedBookings, setExpandedBookings] = useState<Set<string>>(
-    () => (focusBookingId ? new Set([focusBookingId]) : new Set())
-  );
+  const [expandedBookings, setExpandedBookings] = useState<Set<string>>(() => {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A CARD OPENS ITSELF WHEN THE BALL IS IN YOUR COURT.
+     *
+     * The drawer used to be a record you inspect: every card shut, the journey
+     * one click further in, and nothing saying which of a booking's layers —
+     * the meeting, the quote, the money — was waiting on the owner. An owner
+     * had to already know that marking the meeting held is what opens the
+     * quote step. That is a product you operate from memory.
+     *
+     * `opensItself` is true only for `whoseMove === 'owner'`. A quote sitting
+     * with the client stays shut, deliberately: it is not a task, and opening
+     * it would put the same weight on "they have not answered yet" as on
+     * "nobody has asked them".
+     *
+     * In the INITIALISER, like the focus row above and for the same reason:
+     * as an effect this would re-open on every unrelated re-render and fight
+     * an owner who had just closed it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const open = new Set<string>();
+    if (focusBookingId) open.add(focusBookingId);
+
+    for (const session of sessions) {
+      try {
+        if (opensItself(sessionNextStep(session))) open.add(session.booking.id);
+      } catch {
+        /*
+         * A card that cannot be read still has to render. Nothing here is
+         * worth taking the drawer down for, and shut is the safe default:
+         * the owner sees the booking and can open it themselves.
+         */
+      }
+    }
+    return open;
+  });
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+  /**
+   * Notices the owner has closed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A NOTICE IS NOT A TASK, SO IT HAS TO BE POSSIBLE TO IGNORE.
+   *
+   * The banner above it states what the card is waiting for and carries the
+   * button that answers it; it goes away by being acted on. A notice states
+   * something true that may or may not need anything — "money was collected
+   * for work that stopped" is a refund DECISION, and the owner may have taken
+   * it already, outside this system, in cash, or by agreeing the deposit is
+   * kept. There is no action that could retire it, so without a close control
+   * it would sit on the card for ever and teach them to stop reading that part
+   * of it.
+   *
+   * Keyed by booking AND notice, so closing one says nothing about the same
+   * notice on another job or a different notice on this one.
+   *
+   * In `localStorage` rather than the database: it is one person's reading
+   * preference on one screen, it carries nothing another device or another user
+   * needs, and a wrong answer costs a reminder reappearing. Every access is
+   * wrapped, because a browser with site data blocked throws on the getter
+   * itself and a card that cannot render is a far worse failure than a notice
+   * that will not stay closed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [dismissedNotices, setDismissedNotices] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const stored = window.localStorage.getItem(NOTICE_DISMISSED_KEY);
+      const parsed: unknown = stored ? JSON.parse(stored) : [];
+      return new Set(Array.isArray(parsed) ? (parsed as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+
+  const dismissNotice = (noticeId: string) => {
+    setDismissedNotices(previous => {
+      const next = new Set(previous).add(noticeId);
+      try {
+        window.localStorage.setItem(NOTICE_DISMISSED_KEY, JSON.stringify([...next]));
+      } catch {
+        /* Storage refused. It stays closed for this session, which is the part
+           the owner just asked for; it will be back next visit. */
+      }
+      return next;
+    });
+  };
+
+  /**
+   * Which meetings have their history open.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * CLOSED BY DEFAULT, AND THAT IS THE POINT.
+   *
+   * The header answers the question most visits have — when is it, where does
+   * it stand — and the chain beneath answers one that is asked occasionally.
+   * Drawn always, a booking moved twice put nine lines between the owner and
+   * the buttons they opened the card for.
+   *
+   * Keyed by booking id, so opening one leaves the others shut.
+   */
+  const [openHistory, setOpenHistory] = useState<Set<string>>(new Set());
+
+  const toggleHistory = (bookingId: string) => {
+    setOpenHistory(prev => {
+      const next = new Set(prev);
+      if (next.has(bookingId)) next.delete(bookingId);
+      else next.add(bookingId);
+      return next;
+    });
+  };
   /**
    * Finding one booking among a client's history, and reading it five at a time.
    *
@@ -633,18 +908,59 @@ export function BookingsTab({
   };
 
   // Sort sessions: upcoming first, then by date
-  const sortedSessions = [...sessions].sort((a, b) => {
-    const now = new Date();
-    const aDate = a.booking.start_time ? new Date(a.booking.start_time) : (a.booking.created_at ? new Date(a.booking.created_at) : new Date());
-    const bDate = b.booking.start_time ? new Date(b.booking.start_time) : (b.booking.created_at ? new Date(b.booking.created_at) : new Date());
-    const aUpcoming = a.booking.status === 'confirmed' && a.booking.start_time && aDate > now;
-    const bUpcoming = b.booking.status === 'confirmed' && b.booking.start_time && bDate > now;
+  /**
+   * YOUR QUEUE FIRST, THEN THE DIARY.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This sorted by the clock alone: anything upcoming to the top, soonest
+   * first, then everything else newest first. On a client with a year of
+   * history that buries the one booking actually waiting on the owner
+   * underneath three appointments that need nothing from anybody.
+   *
+   * The question an owner opens this list with is "what do I have to do", and
+   * `nextStep` already answers it for four other surfaces. Three bands:
+   *
+   *   1. NEEDS YOU      a quote to write, a meeting to mark, money to ask for
+   *   2. WITH THE CLIENT a quote sent, an invoice out — live, but not a task
+   *   3. SETTLED        done, or called off
+   *
+   * Inside each band the clock still decides, and it decides differently by
+   * band on purpose: in band 1 the OLDEST is the most urgent, because it has
+   * been waiting longest. In the others the newest is the most interesting.
+   * Sorting band 1 newest-first would put the thing you forgot about last.
+   *
+   * A booking whose next step cannot be worked out sorts as settled rather
+   * than taking the list down — same reasoning as the render guard.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const sortedSessions = (() => {
+    const band = (s: SessionCardData): number => {
+      try {
+        const move = sessionNextStep(s).whoseMove;
+        return move === 'owner' ? 0 : move === 'client' ? 1 : 2;
+      } catch {
+        return 2;
+      }
+    };
 
-    if (aUpcoming && !bUpcoming) return -1;
-    if (!aUpcoming && bUpcoming) return 1;
-    if (aUpcoming && bUpcoming) return aDate.getTime() - bDate.getTime();
-    return bDate.getTime() - aDate.getTime();
-  });
+    const when = (s: SessionCardData): number => {
+      const raw = s.booking.start_time || s.booking.created_at;
+      const at = raw ? new Date(raw).getTime() : 0;
+      return Number.isNaN(at) ? 0 : at;
+    };
+
+    return [...sessions]
+      .map((session, index) => ({ session, index, band: band(session), when: when(session) }))
+      .sort((a, b) => {
+        if (a.band !== b.band) return a.band - b.band;
+        // Oldest first where it is a task; newest first everywhere else.
+        if (a.when !== b.when) return a.band === 0 ? a.when - b.when : b.when - a.when;
+        // A stable tiebreak, so two bookings on the same day never swap places
+        // between renders and make the list look like it is moving on its own.
+        return a.index - b.index;
+      })
+      .map(entry => entry.session);
+  })();
 
 
   // Format helpers
@@ -1125,6 +1441,94 @@ export function BookingsTab({
   };
 
   // Handle sending/resending intake form email
+  /**
+   * The banner's one button, routed to the control that already owns the write.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `NextStepAction` names an INTENT, not a button, and this is the only place
+   * that knows which handler serves it. That indirection is what lets the
+   * banner and the stage row offer the same move without one owning the
+   * other's markup — and what keeps `bookingNextStep` free of any knowledge of
+   * this drawer.
+   *
+   * Every branch delegates. This component writes nothing itself: the parent
+   * owns the reload that has to follow, which is why each of these is a prop.
+   * A missing handler does nothing rather than throwing, because this
+   * component renders in surfaces that pass only some of them.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const runNextStepAction = (action: NextStepAction, session: SessionCardData) => {
+    const bookingId = session.booking.id;
+
+    switch (action) {
+      case 'mark_held':
+        onSetBookingStatus?.(bookingId, 'completed');
+        return;
+      /*
+       * HANDED OVER. The same write as marking a meeting held — `completed` is
+       * what both end at — under the word that matches what the owner did.
+       *
+       * Nobody attends a course, so "סמן שהתקיימה" would make them hesitate
+       * over the one button that closes the job. The billing takes care of
+       * itself either way: completing bills an unbilled manual stage where one
+       * exists, which is right for a quoted job, and finds nothing on a course
+       * that was paid at checkout.
+       */
+      case 'mark_delivered':
+        onSetBookingStatus?.(bookingId, 'completed');
+        return;
+      case 'mark_no_show':
+        onSetBookingStatus?.(bookingId, 'no_show');
+        return;
+      case 'reschedule':
+        onEditSession?.(bookingId);
+        return;
+      case 'new_meeting':
+        /*
+         * The tab's own "book another" control, which is what the meeting step
+         * offers in this state. `reschedule` would edit the failed
+         * appointment's time and contradict the outcome recorded on it.
+         */
+        onNewSession?.();
+        return;
+      case 'cancel_booking':
+        /*
+         * The same control the footer carries, reached from the banner. Routed
+         * rather than reimplemented so the two cannot diverge — one of them
+         * cascading through the quote and the money while the other only sets
+         * a status is exactly the kind of split this card has been bitten by.
+         */
+        onSetBookingStatus?.(bookingId, 'cancelled');
+        return;
+      case 'send_intake':
+        void handleSendIntake(bookingId);
+        return;
+      /*
+       * A fresh quote, with no version behind it. The builder takes the
+       * supersede context because a revision is the same screen; `null` here
+       * says this is the first price, not a replacement for a refused one.
+       */
+      case 'create_quote':
+        onOpenProposalBuilder?.(bookingId, {
+          supersedesId: null,
+          declineReason: null,
+          declineNote: null,
+        });
+        return;
+      /*
+       * Chasing a quote or an invoice both land on the payment manager, which
+       * is where the document and its reminder live. Not `onSendInvoice`: that
+       * sends a NEW invoice, and the move here is to chase one already out.
+       */
+      case 'remind_quote':
+      case 'remind_payment':
+      case 'send_invoice':
+      case 'bill_next_stage':
+        onManagePayment?.(session);
+        return;
+    }
+  };
+
   const handleSendIntake = async (bookingId: string) => {
     if (!onSendIntake || sendingIntakeBookingId) return;
 
@@ -1598,6 +2002,50 @@ export function BookingsTab({
               const isUnscheduled = isUnscheduledBooking(booking);
 
               /*
+               * WHAT THIS BOOKING NEEDS FROM ITS OWNER, asked once.
+               *
+               * The same value decided whether this card opened itself, above.
+               * Recomputing rather than threading it down is deliberate: it is
+               * a pure function of the session, so the two cannot disagree, and
+               * a second source of truth is the exact disease this module was
+               * written to end.
+               */
+              /*
+               * ───────────────────────────────────────────────────────────────
+               * A CARD THAT CANNOT BE READ STILL HAS TO RENDER.
+               *
+               * This is called during render, so anything it throws unmounts
+               * the whole drawer — the owner is thrown out of the contact they
+               * were working in, mid-task, with no way back to what they were
+               * doing. That is a far worse failure than a card with no banner.
+               *
+               * It reads five layers' worth of shapes that arrive from an API:
+               * a proposal's status, a plan's stages, a package's children. Any
+               * one of them being a shape nobody anticipated must cost the
+               * banner, not the screen.
+               *
+               * `nobody` is the safe fallback: no banner, no auto-expand, no
+               * claim about what is needed. The card renders, the journey
+               * renders, and the stage buttons still work.
+               * ───────────────────────────────────────────────────────────────
+               */
+              let nextStep: NextStep;
+              try {
+                nextStep = sessionNextStep(session);
+              } catch (err) {
+                logger.error(
+                  { err, bookingId: booking.id },
+                  'Could not work out the next step for a booking'
+                );
+                nextStep = {
+                  stage: 'done',
+                  whoseMove: 'nobody',
+                  labelKey: 'next.unknown',
+                  actions: [],
+                };
+              }
+
+              /*
                * A quoted booking is a CONSULTATION inside a longer job.
                *
                * Everything below that reads `booking.status` as "is this over"
@@ -1674,6 +2122,45 @@ export function BookingsTab({
                 quoteState === 'stopped';
 
               /**
+               * The BOOKING was called off, which is not the same as its quote
+               * being stopped.
+               *
+               * ───────────────────────────────────────────────────────────────
+               * `jobCalledOff` above folds a stopped quote in with the real
+               * cancellation columns, and for almost everything on this card
+               * that is right: a stopped quote and a cancelled job both mean
+               * no more price is coming, and the rail and the header should
+               * read the same for either.
+               *
+               * One place it is wrong, and it is the place that ends things.
+               * Stopping the quote deliberately touches NO booking — that
+               * separation is the whole point of the stop — so the booking
+               * stays `confirmed`, holds its slot and sits in the list as live
+               * work. The footer strip asked `jobCalledOff`, decided the job
+               * was over, and took its Cancel button away: the owner stopped
+               * the quote and lost the one control that closes the booking.
+               *
+               * The banner was already contradicting it, out loud, two
+               * sentences up the same card. `bookingNextStep`'s stopped-quote
+               * branch returns `actions: ['cancel_booking']` with "the booking
+               * is still open", because it reads the proposal and the booking
+               * as two facts. Two predicates for one question is what produced
+               * a card telling the owner to cancel beside no way to do it.
+               *
+               * So this signal drops the quote and keeps the three columns
+               * every cancel path writes. `jobCalledOff` is untouched, and so
+               * is what `jobIsOver` is passed — a cancelled job must still
+               * retire the strip, and cancelling one WRITES the quote to
+               * `stopped` (`cancelQuoteStages`), so "the quote is stopped"
+               * alone can never be allowed to bring Cancel back.
+               * ───────────────────────────────────────────────────────────────
+               */
+              const bookingCalledOff =
+                booking.status === 'cancelled' ||
+                Boolean(booking.cancel_reason) ||
+                Boolean(booking.cancelled_by);
+
+              /**
                * The money came back, and that outranks "completed".
                *
                * ───────────────────────────────────────────────────────────────
@@ -1705,12 +2192,70 @@ export function BookingsTab({
                     )
                   ));
 
+              /*
+               * ─────────────────────────────────────────────────────────────
+               * THE BADGE SAYS WHAT THIS BOOKING IS WAITING FOR.
+               *
+               * It used to name a STATE, and the state it named was often not
+               * one: before the meeting a quoted booking read `מאושרת`
+               * (approved) — from `crm.booking.status.confirmed`, while this
+               * file's own fallback and comment both said "Upcoming". Nothing
+               * had been approved. A client had asked for a price.
+               *
+               * `nextStep` already answers the question an owner is actually
+               * asking, and the banner below reads the same value, so the two
+               * cannot describe different situations. Amber when the move is
+               * theirs, quiet otherwise — that distinction is the whole point:
+               * one is a task, the other is permission to stop checking.
+               *
+               * Money returned still wins: "Refunded" is the more useful fact
+               * about a job than where its journey stopped.
+               * ─────────────────────────────────────────────────────────────
+               */
+              /*
+               * THE BADGE SAYS THE STATE; THE BANNER ASKS FOR THE ACTION.
+               *
+               * Both read the same `labelKey` and the sentence appeared twice,
+               * stacked — "הלקוח לא הגיע. הצע מועד חדש" as the badge and again
+               * as the prompt directly beneath it.
+               *
+               * A short form per owner-state fixes it, and reads better anyway:
+               * a badge is a label, not an instruction. Falls back to the full
+               * sentence where no short form exists — every state the banner
+               * never shows (waiting on the client, done, called off) has only
+               * the one wording, and it is already a statement of fact.
+               */
+              const nextStepLabel =
+                /*
+                 * `firstTranslated`, not `||`. `t()` returns the KEY on a miss
+                 * and a key is truthy, so the fallback this line was written to
+                 * perform never ran: nine of the sixteen states have no short
+                 * form and printed `crm.next.badge.<state>` to the owner.
+                 * Reported as a missing translation for `meeting_ahead`.
+                 */
+                firstTranslated(
+                  t,
+                  `crm.next.badge.${nextStep.labelKey.replace('next.', '')}`,
+                  `crm.${nextStep.labelKey}`
+                );
               const statusInfo = moneyReturned
                 ? {
                     text: t('crm.payment.status.refunded') || 'Refunded',
                     color: REFUND_CLASS.full.text,
                     bgColor: REFUND_CLASS.full.bg,
                   }
+                : nextStepLabel
+                  ? {
+                      text: nextStepLabel,
+                      color:
+                        nextStep.whoseMove === 'owner'
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-[var(--v2-text-secondary)]',
+                      bgColor:
+                        nextStep.whoseMove === 'owner'
+                          ? 'bg-amber-500/10'
+                          : 'bg-[var(--v2-text-muted)]/10',
+                    }
                 : isQuoted
                 ? getQuotedStatusLabel(
                     booking.status,
@@ -1725,19 +2270,43 @@ export function BookingsTab({
                   )
                 : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid', booking.start_time);
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
-              const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
-              const isPendingUnscheduled = isUnscheduled && booking.status !== 'completed' && booking.status !== 'cancelled';
+              /*
+               * Both of these only ever tinted the card, and the card now takes
+               * its tint from `nextStep.whoseMove` — see the note at the
+               * container. Removed rather than left dangling: a derived value
+               * nothing reads is a rule the next person will assume is live.
+               */
 
               const hasIntake = booking.intake_responses && Object.keys(booking.intake_responses.responses || {}).length > 0;
 
               return (
                 <div
                   key={booking.id}
+                  /*
+                   * ─────────────────────────────────────────────────────────
+                   * THE CARD'S TINT FOLLOWS WHAT IT NEEDS, NOT WHEN IT IS.
+                   *
+                   * It was keyed on `isUpcoming` — any booking with a future
+                   * date — and washed the WHOLE card in 5% amber. Three things
+                   * went wrong with that:
+                   *
+                   *   · 5% of anything is not a colour. On the light theme it
+                   *     reads as a smudge, which is what made every card look,
+                   *     in the owner's word, blurry.
+                   *   · "Has a future date" is true of almost every live
+                   *     booking, so the highlight marked nothing out.
+                   *   · It is a fact about the CLOCK. The question a colour
+                   *     should answer here is whether this needs you.
+                   *
+                   * So: a readable tint and a matching border when the move is
+                   * the owner's, and the plain surface otherwise. A card that
+                   * is merely waiting looks like every other card, which is
+                   * the point — only the ones asking for something stand out.
+                   * ─────────────────────────────────────────────────────────
+                   */
                   className={`border rounded-lg overflow-hidden transition-all ${
-                    isUpcoming
-                      ? 'border-amber-500/50 bg-amber-500/5'
-                      : isPendingUnscheduled
-                      ? 'border-purple-500/50 bg-purple-500/5'
+                    nextStep.whoseMove === 'owner'
+                      ? 'border-amber-500/60 bg-amber-500/[0.08] dark:bg-amber-500/[0.06]'
                       : 'border-[var(--v2-border)] bg-[var(--v2-surface)]'
                   }`}
                 >
@@ -1751,15 +2320,20 @@ export function BookingsTab({
                       {/* Type indicator icon */}
                       {isUnscheduled ? (
                         <ShoppingBag className={`h-5 w-5 flex-shrink-0 ${
+                          /* A product sale has no appointment, so `status` is still
+                             the right question for this one. */
                           booking.status === 'completed' ? 'text-green-500' :
                           booking.status === 'cancelled' ? 'text-red-500' :
                           'text-purple-500'
                         }`} />
                       ) : (
                         <Calendar className={`h-5 w-5 flex-shrink-0 ${
-                          booking.status === 'completed' ? 'text-green-500' :
-                          booking.status === 'confirmed' ? 'text-amber-500' :
+                          /* Green once the appointment HAPPENED — `meeting_status`.
+                             Asking `status` left every held meeting's icon amber,
+                             which reads as "still coming up". */
+                          booking.meeting_status === 'held' || booking.status === 'completed' ? 'text-green-500' :
                           booking.status === 'cancelled' ? 'text-red-500' :
+                          booking.status === 'confirmed' ? 'text-amber-500' :
                           'text-slate-500'
                         }`} />
                       )}
@@ -1861,6 +2435,167 @@ export function BookingsTab({
 
                       So only "did not attend" is conditional. The other two mean
                       the same thing either way. */}
+                  {/* ── THE NEXT STEP. One sentence, and the thing to press. ──
+                      ─────────────────────────────────────────────────────────
+                      The question an owner opens this drawer with is "what do I
+                      do now", and nothing answered it. The journey knew what
+                      each stage was waiting for, but it sat behind a click; the
+                      header showed a STATE, not an instruction; and the fact
+                      that marking the meeting held is what opens the quote step
+                      was something you had to already know.
+
+                      So one line says it, in the owner's words, with the action
+                      beside it. The stage it belongs to carries the same action
+                      further down — the banner is unmissable, the stage is
+                      where the thing lives, and both read the same `nextStep`
+                      so they cannot describe different moves.
+
+                      ONLY WHEN IT IS THE OWNER'S MOVE. A quote with the client
+                      is not a task: an amber banner over "they have not replied
+                      yet" is how a task list teaches an owner to ignore it.
+                      ───────────────────────────────────────────────────────── */}
+                  {nextStep.whoseMove === 'owner' && nextStep.actions.length > 0 && (
+                    /* Both themes, deliberately. The first version used only
+                       dark-mode tones — `amber-200` text on a 7%-amber wash —
+                       which on the light theme's white ground is a pale band
+                       with pale writing on it. Each theme gets a tint it can
+                       actually be read against.
+
+                       A PLAIN block comment, not `{/* … *\/}`: this sits in
+                       EXPRESSION position, straight after `&& (`, where braces
+                       are an object literal rather than a JSX child. Written
+                       the JSX way it took the whole build down. */
+                    <div style={{ margin: '0 14px 14px' }} className="rounded-[10px] border border-amber-500/40 bg-amber-500/[0.12] dark:border-amber-500/30 dark:bg-amber-500/[0.07] px-3.5 py-2.5 flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-amber-600 dark:text-amber-500" />
+                        <span className="text-[13px] font-semibold text-amber-800 dark:text-amber-200/90">
+                          {firstTranslated(t, `crm.${nextStep.labelKey}`, 'crm.next.fallback') ||
+                            'Needs you'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {nextStep.actions.map(action => (
+                          <button
+                            key={action}
+                            type="button"
+                            onClick={() => runNextStepAction(action, session)}
+                            /* ── COMPACT, AND THE SAME COLOURS AS THE STAGE ──
+                               These were full-size buttons — `px-4 py-2` at
+                               13px — so three of them filled the banner and it
+                               read as a dialog rather than a prompt.
+
+                               Sized to match the stage's own pills, and tinted
+                               the same way: green for the outcome that happened,
+                               amber for the one that did not, blue for moving
+                               the date. The banner and the stage are the same
+                               control in two places, so they should not look
+                               like two different offers. */
+                            className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-colors ${
+                              /* ── MONEY BORROWS THE GREEN, IT DOES NOT SHOUT ──
+                                 `send_invoice`, `bill_next_stage` and
+                                 `remind_payment` fell through to the neutral
+                                 outline — grey writing on an amber wash, which
+                                 is the least visible thing in a banner whose
+                                 whole job is to be seen.
+
+                                 Given the same green as `create_quote` rather
+                                 than a solid fill: every control here is an
+                                 outline, and one filled button among them reads
+                                 as a different KIND of thing rather than a more
+                                 important one. Green is already the card's word
+                                 for money, and billing a stage is the same act
+                                 as quoting for it. */
+                              action === 'mark_held' ||
+                              /* The outcome that happened, like `mark_held`:
+                                 the service was given. Same green. */
+                              action === 'mark_delivered' ||
+                              action === 'create_quote' ||
+                              action === 'send_invoice' ||
+                              action === 'bill_next_stage' ||
+                              action === 'remind_payment'
+                                ? 'border-green-600/40 text-green-700 hover:bg-green-500/10 dark:text-green-400'
+                                : action === 'mark_no_show'
+                                  ? 'border-amber-600/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400'
+                                  : action === 'reschedule' || action === 'new_meeting'
+                                    ? 'border-blue-600/40 text-blue-700 hover:bg-blue-500/10 dark:text-blue-400'
+                                    : action === 'cancel_booking'
+                                      /* The only action here that ENDS the
+                                         work, and the card reserves red for
+                                         exactly that — the footer's own cancel
+                                         carries it. A neutral pill beside two
+                                         ways of continuing would read as a
+                                         third way of continuing. */
+                                      ? 'border-red-600/40 text-red-600 hover:bg-red-500/10 dark:text-red-400'
+                                      : 'border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+                            }`}
+                          >
+                            {t(`crm.next.action.${action}`) || action}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── A NOTICE, BESIDE THE STATE AND NOT INSIDE IT ──────────
+                      ─────────────────────────────────────────────────────────
+                      This started life folded into `labelKey`, which is also
+                      what the header badge reads through
+                      `crm.next.badge.<state>`. With no short form to match, the
+                      badge fell back to the full sentence, so "money was
+                      already collected, refund it if it is owed" was printed
+                      as the booking's STATUS and then again in the banner
+                      underneath it. Reported with a screenshot of both: "what
+                      you added is not a status".
+
+                      So it renders on its own, and it is told apart from the
+                      banner above by every means available:
+
+                      · QUIETER. The banner is amber because it is a task. This
+                        is the card's own surface and border, because it is
+                        information. Two amber boxes stacked read as two jobs
+                        to do.
+                      · NO ACTION. The banner's whole point is the button in
+                        it. Nothing here is pressable except the close.
+                      · CLOSEABLE, which the banner is not. A task goes away by
+                        being done; this may need nothing at all, so the owner
+                        gets to say so.
+
+                      Independent of the banner on purpose, rather than nested
+                      inside it: the banner is withheld whenever the move is the
+                      client's, and a fact about money already taken does not
+                      stop being true while you wait for somebody to reply.
+                      ───────────────────────────────────────────────────────── */}
+                  {nextStep.notice &&
+                    !dismissedNotices.has(`${booking.id}:${nextStep.notice}`) && (
+                      <div
+                        style={{ margin: '0 14px 14px' }}
+                        /* `--v2-surface-hover`, not `--v2-surface-2`: the
+                           latter is referenced in a handful of files and
+                           DEFINED in none, so it resolves to nothing and the
+                           box would have come out transparent. The two tokens
+                           that exist are the card's own surface and this one,
+                           which is the lighter step above it. */
+                        className="rounded-[10px] border border-[var(--v2-border)] bg-[var(--v2-surface-hover)] px-3.5 py-2.5 flex items-start gap-2"
+                      >
+                        <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-[2px] text-[var(--v2-text-secondary)]" />
+                        <span className="flex-1 text-[12.5px] leading-[1.5] text-[var(--v2-text-secondary)]">
+                          {translated(t, `crm.${nextStep.notice}`) || ''}
+                        </span>
+                        {/* `title` and `aria-label` both, so it is nameable to a
+                            screen reader and explains itself on hover. The hit
+                            area is padded well past the 14px glyph. */}
+                        <button
+                          type="button"
+                          onClick={() => dismissNotice(`${booking.id}:${nextStep.notice}`)}
+                          title={t('crm.next.notice.dismiss') || 'Dismiss'}
+                          aria-label={t('crm.next.notice.dismiss') || 'Dismiss'}
+                          className="-m-1 p-1 flex-shrink-0 rounded text-[var(--v2-text-secondary)] opacity-60 transition-opacity hover:opacity-100"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+
                   {/*
                     THE STRIP LIVES AS LONG AS THE JOB DOES.
 
@@ -1876,58 +2611,6 @@ export function BookingsTab({
                     job. Within the strip, the two attendance buttons hide once
                     attendance is recorded, because that part IS settled.
                   */}
-                  {onSetBookingStatus &&
-                    !jobIsOver({
-                      status: booking.status,
-                      isQuoted,
-                      quotePaid: Boolean(quotePaid),
-                      calledOff: jobCalledOff,
-                    }) && (
-                      <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-                        {!attendanceRecorded(booking.status) && (
-                        <button
-                          type="button"
-                          onClick={() => onSetBookingStatus(booking.id, 'completed')}
-                          className="px-3 py-1 rounded-full text-[12px] font-medium border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-500/10 transition-colors"
-                        >
-                          {/* "Completed" for a session that was held; the same
-                              word serves an order that was delivered.
-
-                              On a quoted booking it means neither — the
-                              consultation happened and the job has barely
-                              started — so the button says what the click
-                              actually records. The stored value is still
-                              `completed`, which is true of the APPOINTMENT;
-                              only the word changes. */}
-                          {isQuoted
-                            ? t('crm.booking.quoted.meeting_held')
-                            : t('crm.booking.status.completed') || 'Completed'}
-                        </button>
-                        )}
-
-                        {/* The one that needs a time to mean anything, and the
-                            one that stops meaning anything once attendance has
-                            been recorded. */}
-                        {!isUnscheduled && !attendanceRecorded(booking.status) && (
-                          <button
-                            type="button"
-                            onClick={() => onSetBookingStatus(booking.id, 'no_show')}
-                            className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
-                          >
-                            {t('crm.booking.status.no_show') || 'No show'}
-                          </button>
-                        )}
-
-                        {/* Last, and the only one in red: it reaches the client. */}
-                        <button
-                          type="button"
-                          onClick={() => onSetBookingStatus(booking.id, 'cancelled')}
-                          className="px-3 py-1 rounded-full text-[12px] font-medium border border-red-600/40 text-red-600 dark:text-red-400 hover:bg-red-500/10 transition-colors"
-                        >
-                          {t('crm.booking.status.cancelled') || 'Cancel'}
-                        </button>
-                      </div>
-                    )}
 
                   {/* Expanded content - Full Journey from journeySteps */}
                   {isExpanded && (
@@ -1944,126 +2627,7 @@ export function BookingsTab({
                             reschedule and resend added as visible buttons
                             rather than affordances hidden on an icon. */}
                         {session.journeySteps && session.journeySteps.length > 0 ? (
-                          groupJourneyByDay(session.journeySteps).map(group => {
-                            if (group.kind === 'wait') {
-                              return (
-                                <div
-                                  key={group.key}
-                                  className="relative py-3.5 text-[11.5px] text-[var(--v2-text-muted)]"
-                                  /* 52px = the rail gutter (40) plus the card's own
-                                     horizontal padding (12), so this line starts exactly
-                                     where the text in every card above and below it does.
-                                     It was 51px, measured against the row layout the cards
-                                     replaced. */
-                                  style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '52px' }}
-                                >
-                                  {/* The rail carries through the gap: the line is
-                                      still the journey, it just has nothing on it. */}
-                                  <span
-                                    className="absolute top-0 bottom-0 border-s-2 border-dashed border-[var(--v2-border)]"
-                                    style={{ [isRTL ? 'right' : 'left']: '11px' }}
-                                    aria-hidden="true"
-                                  />
-                                  {(t('crm.journey.wait_days') || '{count} days of waiting')
-                                    .replace('{count}', String(group.days))}
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <div key={group.key}>
-                                {/* One marker per DAY, not a date repeated on
-                                    every row. */}
-                                <div className="flex items-baseline gap-2 pt-4 pb-2">
-                                  {group.date ? (
-                                    <>
-                                      {/* The day marker names the business's
-                                          day. Read on the owner's laptop, a
-                                          step near midnight sat under the
-                                          neighbouring date's heading. */}
-                                      <span className="text-[16px] font-bold leading-none text-[var(--v2-text-primary)]">
-                                        {new Intl.DateTimeFormat(language, timeZoneOptions({ day: 'numeric' })).format(group.date)}
-                                      </span>
-                                      <span className="text-[11px] tracking-wide text-[var(--v2-text-muted)]">
-                                        {new Intl.DateTimeFormat(language, timeZoneOptions({ month: 'short' })).format(group.date)}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    /*
-                                     * UNDATED IS NOT THE SAME AS UPCOMING.
-                                     *
-                                     * `groupJourneyByDay` buckets every step with no
-                                     * timestamp together, on the reasonable assumption that
-                                     * a step with no date has not happened yet — the session
-                                     * ahead, an intake not yet returned. This heading then
-                                     * stated that assumption as fact.
-                                     *
-                                     * It is wrong whenever a step HAS happened and its time
-                                     * was never recorded. The payment step is the live case:
-                                     * its timestamp is `refundedAt || paidAt`, and 11 of the
-                                     * 13 paid bookings on this account have no `paid_at` on
-                                     * either the transaction or the invoice. A payment that
-                                     * has been taken was filed under "Upcoming".
-                                     *
-                                     * So the heading reads the steps it actually holds. If
-                                     * any of them is still to come, the group is upcoming.
-                                     * If they have all happened, the only honest thing to
-                                     * say is that we do not know when.
-                                     */
-                                    <span className="text-[11px] text-[var(--v2-text-muted)]">
-                                      {group.steps.some(s => s.status === 'pending' || s.status === 'active')
-                                        ? t('crm.journey.upcoming') || 'Upcoming'
-                                        : isUnscheduled
-                                          /*
-                                           * NOTHING, on a sale with no appointment.
-                                           * ───────────────────────────────────────
-                                           * This slot holds a DATE on every other
-                                           * group. A service sold without a meeting
-                                           * has none, and every wording tried here
-                                           * described an absence: "time not
-                                           * recorded" claimed a clock had been lost,
-                                           * "no appointment" announced the lack of a
-                                           * thing this sale never involved. Both
-                                           * read as a date that failed to load.
-                                           *
-                                           * The step below it — service delivery —
-                                           * already says what it is and whether it
-                                           * has happened. A label that only restates
-                                           * what is missing is worse than no label.
-                                           */
-                                          ? ''
-                                          : group.steps.every(s => s.status === 'skipped')
-                                            /*
-                                             * NOTHING HAPPENED HERE, so there is no
-                                             * time that failed to be recorded.
-                                             * ─────────────────────────────────────
-                                             * "Time not recorded" is the honest answer
-                                             * for a step that DID happen and left no
-                                             * timestamp — a payment taken without a
-                                             * `paid_at`, which is the case it was
-                                             * written for.
-                                             *
-                                             * A SKIPPED step is the opposite: it never
-                                             * happened and never will. An intake form
-                                             * on a booking that has already been
-                                             * delivered is skipped, carries no
-                                             * timestamp, and landed in this same
-                                             * undated bucket — so the card announced
-                                             * that the time of a form nobody ever sent
-                                             * had not been recorded.
-                                             *
-                                             * `every`, not `some`: a group holding one
-                                             * skipped step beside a real one that did
-                                             * happen still owes the reader the label.
-                                             */
-                                            ? ''
-                                            : t('crm.journey.undated') || 'Time not recorded'}
-                                    </span>
-                                  )}
-                                  <span className="flex-1 h-px bg-[var(--v2-border)]" aria-hidden="true" />
-                                </div>
-
-                                {group.steps.map((step, index) => {
+                          session.journeySteps.map((step, index) => {
                                   /*
                                    * ─────────────────────────────────────────────────────
                                    * THE GLYPH FOLLOWS THE STATUS, NOT ONLY THE STEP.
@@ -2080,10 +2644,70 @@ export function BookingsTab({
                                    * glyph is what tells them apart at a glance.
                                    * ─────────────────────────────────────────────────────
                                    */
+                                  /*
+                                   * ─────────────────────────────────────────────────────
+                                   * THREE STATES, READ WITHOUT READING.
+                                   *
+                                   * The node used to carry the STEP's icon — a calendar
+                                   * for the meeting, a person for the client, an envelope
+                                   * for the confirmation — tinted by status. So a glance
+                                   * down the rail told you what each stage WAS, and
+                                   * nothing about where the journey had got to: the one
+                                   * question the rail exists to answer.
+                                   *
+                                   * Now the glyph is the status, and only the status:
+                                   *
+                                   *   done        a tick
+                                   *   active      no glyph — a solid amber disc, which
+                                   *               reads as "here" the way a filled dot
+                                   *               does on any progress rail
+                                   *   not started no glyph — a dashed, empty ring
+                                   *   failed      a cross
+                                   *   refunded    the money went back, which is neither
+                                   *               a success nor a failure and keeps its
+                                   *               own mark
+                                   *
+                                   * The step still names itself in its own title beside
+                                   * the node, so nothing is lost by dropping its icon.
+                                   * ─────────────────────────────────────────────────────
+                                   */
                                   const StepIcon =
                                     step.status === 'refunded'
                                       ? RotateCcw
-                                      : STEP_ICONS[step.key] || CheckCircle2;
+                                      : step.status === 'failed'
+                                        ? X
+                                        : step.status === 'completed'
+                                          ? Check
+                                          : null;
+
+                                  /*
+                                   * WHEN, as one string, for the line UNDER the title.
+                                   *
+                                   * It used to sit on the title's own row. A stage name and
+                                   * a date are not the same kind of fact — the name says
+                                   * what this is, the date is detail about it — and pairing
+                                   * them put a number in the corner of every row, which the
+                                   * eye then tracks as a second column.
+                                   *
+                                   * Composed here rather than in the markup so both halves
+                                   * are formatted once, in the owner's locale and the
+                                   * business's timezone. The date came back with the day
+                                   * groupings' removal: without it every step read "15:54"
+                                   * and a journey spanning weeks looked like one afternoon.
+                                   */
+                                  const stepWhen = step.timestamp
+                                    ? `${new Intl.DateTimeFormat(language, timeZoneOptions({ day: 'numeric', month: 'short' })).format(new Date(step.timestamp))} · ${formatTime(step.timestamp)}`
+                                    : null;
+
+                                  /*
+                                   * Whether to PRINT it is decided at the render site, not
+                                   * here: the test needs `isScheduleStep`, which is
+                                   * declared further down this same block. Read up here it
+                                   * is a temporal-dead-zone error — "Cannot access
+                                   * 'isScheduleStep' before initialization" — which takes
+                                   * the whole drawer down at render rather than failing to
+                                   * compile.
+                                   */
 
                                   /*
                                     THE LAST STEP NAMES THE OUTCOME, NOT THE STAGE.
@@ -2123,15 +2747,49 @@ export function BookingsTab({
                                     product that is exactly right.
                                   */
                                   const isMeetingStep = step.key === 'session';
+                                  /*
+                                   * Read off `meeting_status`, with the old statuses kept
+                                   * for rows that predate the column.
+                                   *
+                                   * `complete()` writes `meeting_status: 'held'` and leaves
+                                   * `status` at `confirmed`, so both branches below fell
+                                   * through to `null` — the closing node lost its wording
+                                   * entirely the moment an owner marked the meeting held,
+                                   * which is the one press that should have produced it.
+                                   */
+                                  const outcomeHeld =
+                                    booking.meeting_status === 'held' ||
+                                    (booking.meeting_status == null && booking.status === 'completed');
+                                  const outcomeOff =
+                                    booking.meeting_status === 'no_show' ||
+                                    booking.meeting_status === 'cancelled' ||
+                                    booking.status === 'cancelled' ||
+                                    (booking.meeting_status == null && booking.status === 'no_show');
+                                  /*
+                                   * A MISSED meeting is not a cancelled order.
+                                   *
+                                   * Both outcomes used to print "הזמנה בוטלה", so a client
+                                   * who simply did not turn up produced a journey node
+                                   * announcing the booking had been cancelled — on a job
+                                   * that was still running and was in fact rescheduled a
+                                   * minute later. Each outcome now says itself, in the
+                                   * words its own button used.
+                                   */
+                                  const outcomeMissed =
+                                    booking.meeting_status === 'no_show' ||
+                                    (booking.meeting_status == null && booking.status === 'no_show');
                                   const outcomeTitle =
-                                    isFinalStep && booking.status === 'completed'
-                                      ? isMeetingStep
-                                        ? t('crm.booking.quoted.meeting_held')
-                                        : t('crm.booking.step.booking_completed')
-                                      : isFinalStep &&
-                                          (booking.status === 'cancelled' || booking.status === 'no_show')
-                                        ? t('crm.booking.step.booking_cancelled')
-                                        : null;
+                                    !isFinalStep
+                                      ? null
+                                      : outcomeHeld
+                                        ? isMeetingStep
+                                          ? t('crm.booking.quoted.meeting_held')
+                                          : t('crm.booking.step.booking_completed')
+                                        : outcomeMissed
+                                          ? t('crm.booking.status.no_show')
+                                          : outcomeOff
+                                            ? t('crm.booking.step.booking_cancelled')
+                                            : null;
 
                                   /*
                                    * WHY it was called off, under the title that says it was.
@@ -2173,8 +2831,42 @@ export function BookingsTab({
                                           'No reason given'
                                       : null;
 
+                                  /*
+                                   * ───────────────────────────────────────────────────────
+                                   * THE TITLE NAMES THE STAGE. THE STATE IS SHOWN ONCE.
+                                   *
+                                   * `outcomeTitle` IS the status word, and the stage already
+                                   * renders a state pill beside its title — so on a missed
+                                   * meeting both printed "לא הגיע" and the node read:
+                                   *
+                                   *     לא הגיע
+                                   *     לא הגיע
+                                   *
+                                   * A stage that carries its own state keeps its NAME here,
+                                   * which gives "הפגישה · לא הגיע" — the stage, then what
+                                   * happened to it, each said once.
+                                   *
+                                   * `outcomeTitle` still names the CLOSING stage of a job
+                                   * that has no state pill of its own (a product's
+                                   * fulfilment reading "הזמנה הושלמה"), which is what it was
+                                   * written for.
+                                   *
+                                   * Keyed off `step.key` rather than `meetingStateWord`
+                                   * deliberately: that is declared several hundred lines
+                                   * below, and reading it here is a temporal dead zone — a
+                                   * mistake this file has already produced twice.
+                                   * ───────────────────────────────────────────────────────
+                                   */
+                                  const stageShowsItsOwnState =
+                                    step.key === 'session' ||
+                                    step.key === 'schedule' ||
+                                    step.metadata?.state != null;
+
                                   const stepTitle =
-                                    step.label || outcomeTitle || t(`crm.booking.step.${step.key}`) || step.key;
+                                    step.label ||
+                                    (stageShowsItsOwnState ? null : outcomeTitle) ||
+                                    translated(t, `crm.booking.step.${step.key}`) ||
+                                    step.key;
                                   const isIntakeStep = step.key === 'intake';
                                   const isProposalStep = step.key === 'proposal';
 
@@ -2189,7 +2881,353 @@ export function BookingsTab({
                                     : [];
                                   const isPaymentStep = step.key === 'payment';
                                   const isConfirmationStep = step.key === 'confirmation';
+                                  /* The job ending, as its own node. Not the meeting
+                                     being called off — that has its own line on the
+                                     rail and leaves the work running. */
+                                  const isCancelledStep = step.key === 'cancelled';
                                   const isScheduleStep = step.key === 'session' || step.key === 'schedule';
+                                  /* Is there a meeting rail on this card? One
+                                     attempt is enough to draw it, and the rail owns
+                                     the actions that belong to an appointment. */
+                                  const hasMeetingRail = (booking.attempts?.length ?? 0) > 0;
+
+                                  /* Worth a history at all: more than one attempt, or mail
+                                     to show against the single attempt there is. */
+                                  const attemptsForHistory = booking.attempts ?? [];
+                                  const mailCount = attemptsForHistory.reduce(
+                                    (n, a) => n + (a.emails?.length ?? 0),
+                                    0
+                                  );
+                                  const hasHistory =
+                                    attemptsForHistory.length > 1 || mailCount > 0;
+                                  const historyOpen = openHistory.has(booking.id);
+
+                                  /*
+                                   * HOW MUCH, never what. The whole value of the collapsed
+                                   * state is that it does not make the owner read the chain
+                                   * to find out whether there is one.
+                                   *
+                                   * Composed rather than interpolated: `t()` takes a key and
+                                   * nothing else.
+                                   */
+                                  const historySummary = [
+                                    attemptsForHistory.length > 1
+                                      ? `${attemptsForHistory.length - 1} ${
+                                          translated(t, 'crm.journey.changes_count') || 'time changes'
+                                        }`
+                                      : null,
+                                    mailCount > 0
+                                      ? `${mailCount} ${
+                                          translated(t, 'crm.journey.mails_count') || 'emails to the client'
+                                        }`
+                                      : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ');
+
+                                  /*
+                                   * The arrow between two attempts: who moved it, and when.
+                                   *
+                                   * The time is the NEXT attempt's creation — the moment the
+                                   * move happened — not the appointment's own hour, which is
+                                   * what it was moved TO.
+                                   */
+                                  const movedSentence = (next?: MeetingAttempt) => {
+                                    /*
+                                     * ── WHO, FROM THE ROW, NOT FROM AN ASSUMPTION ──
+                                     * This said "you changed the time" for every
+                                     * move, including the ones a client made for
+                                     * themselves on the public booking portal. An
+                                     * owner opening the card after their client
+                                     * rebooked was told they had done it.
+                                     *
+                                     * `moved_by` (20261082) is on the attempt the
+                                     * move created, which is exactly this `next`.
+                                     * Null where nobody recorded it — every row
+                                     * written before the column — and then the line
+                                     * reports the move WITHOUT naming a side, which
+                                     * is the honest reading of a blank.
+                                     */
+                                    const who =
+                                      next?.moved_by === 'client'
+                                        ? translated(t, 'crm.journey.client_moved') ||
+                                          'The client changed the time'
+                                        : next?.moved_by === 'owner'
+                                          ? translated(t, 'crm.journey.you_moved') ||
+                                            'You changed the time'
+                                          : next?.moved_by === 'system'
+                                            ? translated(t, 'crm.journey.auto_moved') ||
+                                              'The time was changed automatically'
+                                            : translated(t, 'crm.journey.time_moved') ||
+                                              'The time was changed';
+                                    const at = next?.created_at;
+                                    return at ? `${who} · ${formatTime(at)}` : who;
+                                  };
+
+                                  /*
+                                   * One mail, as a sentence. The verb says whose doing it
+                                   * was — "sent to the client" for the system, "you sent
+                                   * again" for a resend — which is what the owner could not
+                                   * tell when both rows ended in the same word.
+                                   */
+                                  const renderMailRow = (
+                                    mail: NonNullable<MeetingAttempt['emails']>[number],
+                                    isLatest: boolean,
+                                    stamp: (at: string | null | undefined) => string | null
+                                  ) => {
+                                    const failed =
+                                      mail.status === 'bounced' ||
+                                      mail.status === 'complained' ||
+                                      mail.status === 'failed';
+
+                                    const verb = mail.isResend
+                                      ? translated(t, 'crm.journey.mail_resent_by_you') || 'You sent again'
+                                      : translated(t, 'crm.journey.mail_to_client') || 'Sent to the client';
+
+                                    /*
+                                     * WHAT was sent, named rather than quoted.
+                                     * ───────────────────────────────────────────
+                                     * The row used to print the raw subject, so
+                                     * one booking read:
+                                     *
+                                     *   ✉ נשלח ללקוח הפגישה שלך אושרה - הצעת מחיר לשיפוץ
+                                     *   ✉ נשלח ללקוח הפגישה נקבעה מחדש - הצעת מחיר לשיפוץ
+                                     *
+                                     * with the service name repeated on every
+                                     * line, carrying nothing: it is one booking,
+                                     * so it is one service throughout.
+                                     *
+                                     * The kind is recorded on the row (20261081)
+                                     * by the sender that knew it. Falling back to
+                                     * the subject keeps every pre-column row
+                                     * rendering exactly as it does today, and
+                                     * covers a kind that has no label yet —
+                                     * showing a raw identifier like
+                                     * `booking_confirmed` to an owner would be
+                                     * worse than the subject it replaced.
+                                     */
+                                    const what =
+                                      (mail.kind
+                                        ? translated(t, `crm.journey.mail_kind.${mail.kind}`)
+                                        : null) || mail.subject;
+
+                                    return (
+                                      <span
+                                        key={mail.id}
+                                        className="flex items-baseline gap-2 text-[12px] text-[var(--v2-text-secondary)]"
+                                      >
+                                        {mail.isResend && !failed ? (
+                                          <RotateCcw
+                                            className="h-3 w-3 shrink-0 text-[#3B5AE5] dark:text-[#93A8FF]"
+                                            style={{ transform: 'translateY(2px)' }}
+                                            aria-hidden="true"
+                                          />
+                                        ) : (
+                                          <Mail
+                                            className="h-3 w-3 shrink-0"
+                                            style={{
+                                              transform: 'translateY(2px)',
+                                              color: failed ? '#F04438' : 'var(--v2-text-muted)',
+                                            }}
+                                            aria-hidden="true"
+                                          />
+                                        )}
+                                        <span className="flex-1 min-w-0">
+                                          {verb} <span className="font-medium">{what}</span>
+                                          {failed && (
+                                            <>
+                                              <span aria-hidden="true"> · </span>
+                                              <span style={{ color: '#9A3412' }}>
+                                                {t(`crm.email.status.${mail.status}`)}
+                                              </span>
+                                            </>
+                                          )}
+                                          {/* ── NOTHING LEFT TO CONFIRM ──────────────────
+                                              "Send again" regenerates the CONFIRMATION with
+                                              the appointment's current time. Once the
+                                              meeting has happened there is nothing to
+                                              confirm, and the link sat on the newest mail —
+                                              which after a no-show is "we missed you",
+                                              directly above the line saying the meeting took
+                                              place. Two contradictory messages, one press
+                                              apart.
+
+                                              Still offered while the appointment is ahead or
+                                              unresolved, which is when a client who cannot
+                                              find the details actually needs them. */}
+                                          {/* ── ON THE LAST MAIL, WHATEVER IT WAS ──────
+                                              This was gated off after an outcome was
+                                              recorded, and the reason was never that
+                                              resending is wrong: the link always called
+                                              the CONFIRMATION route, so on a booking
+                                              whose last message was a cancellation it
+                                              would have sent "your appointment is
+                                              confirmed" one line under "you cancelled
+                                              the meeting".
+
+                                              It now resends the KIND it sits on, which
+                                              `email_kind` made knowable (20261081), so
+                                              the gate can go. A client who lost any of
+                                              these messages can be sent it again.
+
+                                              Still closed on a job that was called off:
+                                              there is nothing to re-send a client about
+                                              work that has stopped. */}
+                                          {/* ── NOT ONCE THE JOB IS OFF, BECAUSE THESE ARE
+                                              NO LONGER TRUE ──────────────────────────────
+                                              The resend must survive a cancellation — a
+                                              client who cannot find the message is exactly
+                                              who needs it again. But the message they need
+                                              is the CANCELLATION, and that is not what sits
+                                              here: this rail holds mail about the
+                                              appointment, and once the work has stopped
+                                              every one of them is superseded.
+
+                                              Observed: with this open, "send again" on the
+                                              last rail row re-sent "the meeting is off,
+                                              your quote is still coming" twenty minutes
+                                              after the whole booking was cancelled.
+
+                                              So the cancellation node owns the resend from
+                                              then on, and it offers `booking_cancelled` —
+                                              the one message that is still true. */}
+                                          {isLatest &&
+                                            onResendMail &&
+                                            !jobCalledOff &&
+                                            RESENDABLE_KINDS.has(mail.kind ?? '') && (
+                                            <>
+                                              <span aria-hidden="true"> · </span>
+                                              <button
+                                                type="button"
+                                                onClick={e => {
+                                                  e.stopPropagation();
+                                                  onResendMail(booking.id, mail.kind as string);
+                                                }}
+                                                className="underline underline-offset-2 hover:text-[var(--v2-text-primary)]"
+                                              >
+                                                {translated(t, 'crm.journey.resend') || 'Send again'}
+                                              </button>
+                                            </>
+                                          )}
+                                        </span>
+                                        {mail.at && (
+                                          <span className="text-[var(--v2-text-muted)] tabular-nums shrink-0">
+                                            {stamp(mail.at)}
+                                          </span>
+                                        )}
+                                      </span>
+                                    );
+                                  };
+
+                                  /*
+                                   * ───────────────────────────────────────────────────────
+                                   * AN ANSWER CAN BE CHANGED.
+                                   *
+                                   * All four meeting actions were gated on
+                                   * `!meetingSettled`, so recording any outcome removed
+                                   * every one of them: an owner who marked a no-show by
+                                   * mistake, or whose client turned up after all, had no
+                                   * way back from the card. The journey was treating a
+                                   * record as final when the thing it records is a human
+                                   * judgement made in a hurry.
+                                   *
+                                   * So the stage keeps offering the OTHER answers, and
+                                   * drops only the one already given — there is nothing to
+                                   * do with "mark as no-show" on a meeting already marked
+                                   * no-show.
+                                   *
+                                   * The JOB being called off is different and still hides
+                                   * them all: there is no appointment left to judge.
+                                   */
+                                  /*
+                                   * ───────────────────────────────────────────────────────
+                                   * CORRECTABLE WHILE THE JOB IS RUNNING. NOT AFTER IT ENDS.
+                                   *
+                                   * This was `!jobCalledOff` alone, which was too wide: it
+                                   * offered "mark as no-show" on booking 64834a57 — held,
+                                   * completed, and REFUNDED. Editing the attendance of work
+                                   * that is finished and whose money has gone back is not a
+                                   * correction, it is rewriting a closed record.
+                                   *
+                                   * `status === 'completed'` can be used here BECAUSE of the
+                                   * split. `complete()` no longer writes it, so a meeting
+                                   * marked held today keeps `status: 'confirmed'` and stays
+                                   * correctable — while a legacy row that carries
+                                   * `completed` is a job its owner closed, and closes here
+                                   * too. The two are finally distinguishable.
+                                   * ───────────────────────────────────────────────────────
+                                   */
+                                  const jobFinished =
+                                    booking.status === 'completed' ||
+                                    moneyReturned ||
+                                    (isQuoted && Boolean(quotePaid));
+
+                                  const meetingAnswerable =
+                                    isScheduleStep && !jobCalledOff && !jobFinished;
+                                  /*
+                                   * ───────────────────────────────────────────────────────
+                                   * AN APPOINTMENT THAT HAPPENED CANNOT BE MOVED OR CALLED
+                                   * OFF.
+                                   *
+                                   * The outcomes are not interchangeable. A no-show leaves
+                                   * the appointment unresolved — rescheduling it or calling
+                                   * it off are both real next moves. `held` means it took
+                                   * place, and "change the time" on a meeting that already
+                                   * happened is a contradiction, not flexibility.
+                                   *
+                                   * NOR MARKED AS A NO-SHOW. The correction was kept here
+                                   * at first, on the reasoning that an owner who ticked
+                                   * held by mistake needs a way back. But a lone amber
+                                   * "mark as no-show" under a line reading "you marked the
+                                   * meeting as held" reads as an open question, not as an
+                                   * undo — which is how it was reported.
+                                   *
+                                   * So held closes the row completely: a meeting that took
+                                   * place is answered, and the card stops asking. The rail
+                                   * above still says what happened and when.
+                                   *
+                                   * A NO-SHOW is the opposite and keeps its controls: the
+                                   * appointment is unresolved, and moving it, calling it
+                                   * off or recording that they turned up after all are all
+                                   * real next moves.
+                                   * ───────────────────────────────────────────────────────
+                                   */
+                                  const meetingHappened = booking.meeting_status === 'held';
+                                  /*
+                                   * ── AND ONE THAT WAS CALLED OFF DID NOT HAPPEN ──
+                                   * A cancelled appointment cannot also have been
+                                   * attended, and nobody can have failed to turn up
+                                   * to it: those are rival accounts of the same
+                                   * hour, not corrections of each other.
+                                   *
+                                   * Moving it is not a move either. A called-off
+                                   * appointment is a record of an hour that was
+                                   * dropped, and dragging that row to a new date
+                                   * rewrites what happened instead of arranging
+                                   * anything. The same rule the card already
+                                   * applies after a no-show: what comes next is a
+                                   * NEW appointment, not an edit of the dead one.
+                                   */
+                                  /* `meetingCancelled`, not `meetingCalledOff`: this
+                                     file already has the latter, and it means
+                                     something wider — no-show OR cancelled OR the
+                                     legacy spellings — which is right for colouring
+                                     a row and wrong for every rule below. */
+                                  const meetingCancelled = booking.meeting_status === 'cancelled';
+
+                                  const canMarkHeld =
+                                    meetingAnswerable &&
+                                    !meetingCancelled &&
+                                    booking.meeting_status !== 'held';
+                                  const canMarkNoShow =
+                                    meetingAnswerable &&
+                                    !meetingHappened &&
+                                    !meetingCancelled &&
+                                    booking.meeting_status !== 'no_show';
+                                  const canCancelMeeting =
+                                    meetingAnswerable &&
+                                    !meetingHappened &&
+                                    booking.meeting_status !== 'cancelled';
                                   const intakeExpandable = isIntakeStep && hasIntake;
                                   const sectionKey = `${booking.id}-${step.key}-${index}`;
                                   const isSectionExpanded = expandedSections.has(sectionKey);
@@ -2531,6 +3569,7 @@ export function BookingsTab({
                                     return minutes && minutes > 0 ? formatDuration(minutes) : null;
                                   })();
 
+
                                   const scheduleFact =
                                     isScheduleStep && !step.details && booking.start_time
                                       ? [
@@ -2651,7 +3690,64 @@ export function BookingsTab({
                                    * was held, whether it can still be moved,
                                    * whether a confirmation is worth resending.
                                    */
-                                  const meetingSettled = attendanceRecorded(booking.status);
+                                  const meetingSettled = attendanceRecorded(booking);
+
+                                  /*
+                                   * ─────────────────────────────────────────────────────
+                                   * THE MEETING'S STATE, FOR ITS TITLE.
+                                   *
+                                   * "טרם התקיימה" was the tail of the fact line, after the
+                                   * date and the length, so the one thing on this stage an
+                                   * owner acts on sat third in a grey sentence. It belongs
+                                   * beside the stage's name, where every other stage now
+                                   * carries its state.
+                                   *
+                                   * Lifted out of the join rather than copied, so the line
+                                   * below and the title can never disagree about it.
+                                   * ─────────────────────────────────────────────────────
+                                   */
+                                  const meetingStateWord = !isScheduleStep || !booking.start_time
+                                    ? null
+                                    : meetingSettled
+                                      ? /*
+                                         * ── THE MEETING READS ITS OWN COLUMN ─────────
+                                         * This took its word from `booking.status`, which
+                                         * described the meeting only while every outcome
+                                         * overwrote it. Held and no-show now leave the job
+                                         * alone, so a missed consultation stays
+                                         * `confirmed` — and this printed מאושרת, APPROVED,
+                                         * over a meeting the client never turned up to.
+                                         *
+                                         * Each outcome says itself, in the words its own
+                                         * button used: pressing סמן שהתקיימה and being told
+                                         * הושלם reads as a different outcome than the one
+                                         * just recorded.
+                                         */
+                                        booking.meeting_status === 'held'
+                                        ? t('crm.booking.quoted.meeting_held')
+                                        : booking.meeting_status === 'no_show'
+                                          ? t('crm.booking.status.no_show')
+                                          : booking.meeting_status === 'cancelled'
+                                            ? t('crm.booking.status.cancelled')
+                                            /* Rows written before the column existed. */
+                                            : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid', booking.start_time).text
+                                      : new Date(booking.start_time) > new Date()
+                                        /*
+                                         * ── AHEAD IS NOT A SHORTFALL ──────────────
+                                         * This said "טרם התקיימה" / "Not yet held"
+                                         * about an appointment three days away. Both
+                                         * read as a judgement on something that
+                                         * should already have happened, and the same
+                                         * card says "the meeting is still ahead" a
+                                         * few lines above — two phrasings of one fact,
+                                         * one of them wrong.
+                                         *
+                                         * "Not yet held" belongs to the branch below:
+                                         * the hour has PASSED and nobody has said what
+                                         * happened. That one is a real question.
+                                         */
+                                        ? t('crm.journey.scheduled_ahead') || 'Scheduled'
+                                        : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome';
 
                                   /*
                                    * Is the JOB over?
@@ -2664,6 +3760,7 @@ export function BookingsTab({
                                    */
                                   const settledStatus = jobIsOver({
                                     status: booking.status,
+                                    meeting_status: booking.meeting_status,
                                     isQuoted,
                                     quotePaid: Boolean(quotePaid),
                                   });
@@ -2707,9 +3804,23 @@ export function BookingsTab({
                                    * would read as two different opinions about one meeting.
                                    * ─────────────────────────────────────────────────────────
                                    */
-                                  const meetingHeld = booking.status === 'completed';
+                                  /*
+                                   * `meeting_status`, not `status`. This dot is the
+                                   * answer to "did the meeting happen", and that fact
+                                   * moved columns: `complete()` writes
+                                   * `meeting_status: 'held'` and leaves `status` at
+                                   * `confirmed`, so the dot stayed grey for every
+                                   * meeting marked held after the split. The old values
+                                   * are still honoured for rows that predate it.
+                                   */
+                                  const meetingHeld =
+                                    booking.meeting_status === 'held' ||
+                                    (booking.meeting_status == null && booking.status === 'completed');
                                   const meetingCalledOff =
-                                    booking.status === 'cancelled' || booking.status === 'no_show';
+                                    booking.meeting_status === 'no_show' ||
+                                    booking.meeting_status === 'cancelled' ||
+                                    (booking.meeting_status == null &&
+                                      (booking.status === 'cancelled' || booking.status === 'no_show'));
 
                                   /*
                                    * IS THERE STILL A MEETING TO PREPARE FOR?
@@ -2761,18 +3872,10 @@ export function BookingsTab({
                                             this card an owner acts on, and it now gets
                                             a line and a dot of its own.
                                           */
-                                          meetingSettled
-                                            ? // The same word the button used.
-                                              // Pressing "הפגישה התקיימה" and
-                                              // being told "הושלם" reads as a
-                                              // different outcome than the one
-                                              // just recorded.
-                                              isQuoted && booking.status === 'completed'
-                                              ? t('crm.booking.quoted.meeting_held')
-                                              : getBookingStatusLabel(booking.status, !isUnscheduled, booking.payment_status !== undefined && booking.payment_status !== 'paid', booking.start_time).text
-                                            : new Date(booking.start_time) > new Date()
-                                              ? t('crm.journey.not_yet_held') || 'Not yet held'
-                                              : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
+                                          /* The state has moved to the stage's title — see
+                                             `meetingStateWord`. What is left on this line
+                                             is the appointment itself: which day, which
+                                             hours, how long. */
                                         ]
                                           .filter(Boolean)
                                           .join(' · ')
@@ -2853,7 +3956,17 @@ export function BookingsTab({
                                       !!step.metadata?.canResend &&
                                       onSendInvoice &&
                                       booking.status !== 'cancelled') ||
-                                    (isScheduleStep && onEditSession && !isUnscheduled && !meetingSettled) ||
+                                    /* The meeting's own actions now live on this step
+                                       (held / no-show / reschedule), so the step has a
+                                       body whenever any of them is offered. Held needs
+                                       no `onEditSession` and no `isUnscheduled`, so the
+                                       old condition alone would have drawn a card with
+                                       its only content hidden. */
+                                    /* The same rule the buttons use: a settled meeting
+                                       still offers the other answers, so the step still
+                                       has a body. Gated on the JOB instead. */
+                                    (isScheduleStep && !jobCalledOff) ||
+                                    (isScheduleStep && onEditSession && !isUnscheduled && !jobCalledOff) ||
                                     // The cancelled-plan notice. Rendered by an IIFE rather
                                     // than a `&&`, which is why it is easy to miss when
                                     // reading the blocks off the markup — it is a body like
@@ -2886,7 +3999,12 @@ export function BookingsTab({
                                           column 3 is now column 2. */}
                                       <div
                                         className="relative"
-                                        style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '40px', paddingBottom: '8px' }}
+                                        /* 32px, not 40: the gutter was sized for a 22px
+                                           node and left the rail a thumb's width from the
+                                           text it labels, so the line and the stage read
+                                           as two columns rather than one list. 18px node
+                                           plus 14px of air. */
+                                        style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '32px', paddingBottom: '10px' }}
                                       >
                                         {/* The rail, behind the nodes and continuous through
                                             the gap between cards. `inset-block` rather than
@@ -2894,7 +4012,10 @@ export function BookingsTab({
                                             draw the same line dashed. */}
                                         <span
                                           className="absolute w-0.5 bg-[var(--v2-border)]"
-                                          style={{ [isRTL ? 'right' : 'left']: '11px', top: 0, bottom: 0 }}
+                                          /* Dead centre of an 18px node: 9px. It was 11px,
+                                             centred under the old 22px one, so the line
+                                             entered and left each node off-axis. */
+                                          style={{ [isRTL ? 'right' : 'left']: '9px', top: 0, bottom: 0 }}
                                           aria-hidden="true"
                                         />
 
@@ -2918,7 +4039,16 @@ export function BookingsTab({
                                                 ? t('crm.invoice.resend') || 'Resend invoice'
                                                 : undefined
                                           }
-                                          className={`absolute z-10 w-[22px] h-[22px] rounded-full flex items-center justify-center border-2 ${colors.bg} ${colors.border} ${
+                                          /* `border-dashed` on a step that has not started:
+                                             an empty dashed ring says "not yet" without a
+                                             word, the way a solid disc says "here". It is
+                                             the only one of the five that is drawn as an
+                                             outline rather than a fill. */
+                                          className={`absolute z-10 w-[18px] h-[18px] rounded-full flex items-center justify-center border-2 ${colors.bg} ${colors.border} ${
+                                            step.status === 'pending' || step.status === 'skipped'
+                                              ? 'border-dashed'
+                                              : ''
+                                          } ${
                                             onNodeClick && !nodeLoading
                                               ? 'cursor-pointer hover:scale-110 transition-transform'
                                               : 'cursor-default'
@@ -2928,14 +4058,25 @@ export function BookingsTab({
                                              through it. `top` aligns it with the first line
                                              of the card header, not the card's box. */
                                           style={{
-                                            [isRTL ? 'right' : 'left']: '1px',
-                                            top: '10px',
-                                            boxShadow: '0 0 0 3px var(--v2-surface)',
+                                            [isRTL ? 'right' : 'left']: '0px',
+                                            /* Aligned to the stage name's cap height, which
+                                               moved when the title went to 13.5px. */
+                                            top: '4px',
+                                            /*
+                                               NO HALO. It was a 3px ring painted in
+                                               `--v2-surface` so the rail appeared to pass
+                                               behind the node — which worked only while
+                                               every card wore that exact colour. The card
+                                               is now tinted when it needs the owner, so the
+                                               ring became a grey disc floating on amber.
+                                               The node is opaque and covers the line on its
+                                               own, so the ring was only ever cosmetic.
+                                            */
                                           }}
                                         >
                                           {nodeLoading ? (
                                             <Loader2 className={`h-3 w-3 ${colors.icon} animate-spin`} />
-                                          ) : (
+                                          ) : StepIcon ? (
                                             /*
                                               A heavier stroke, because these are
                                               drawn at half the size they are designed
@@ -2943,8 +4084,8 @@ export function BookingsTab({
                                               a 24px canvas; scaled to 12 it lands near
                                               1px and the glyphs go faint and ragged.
                                             */
-                                            <StepIcon className={`h-3 w-3 ${colors.icon}`} strokeWidth={2.4} />
-                                          )}
+                                            <StepIcon className={`h-2.5 w-2.5 ${colors.icon}`} strokeWidth={3} />
+                                          ) : null}
                                         </button>
 
                                         {/* The card. Everything that happened at this node.
@@ -2954,11 +4095,36 @@ export function BookingsTab({
                                             to sit on one line, or a one-word step and a
                                             three-line one stop agreeing. */}
                                         <div
-                                          /* `overflow-hidden` so the header's band stops at
-                                             the rounded corners instead of squaring them off.
-                                             No longer `relative`: the clock it used to anchor
-                                             now sits in the header's own flex row. */
-                                          className="overflow-hidden rounded-[10px] border border-[var(--v2-border)] bg-[var(--v2-bg)]"
+                                          /*
+                                           * ───────────────────────────────────────────
+                                           * NO BOX. A STAGE IS A POINT ON A LINE.
+                                           *
+                                           * Each step used to be a bordered, filled card
+                                           * — a rounded rectangle with a banded header
+                                           * and a rule under it. Six of those stacked
+                                           * down a rail read as six separate things that
+                                           * happened to be near each other, and the rail
+                                           * itself disappeared between them.
+                                           *
+                                           * A journey is one line with marks on it. The
+                                           * node carries the state, the title names the
+                                           * stage, and the body sits under it as plain
+                                           * text. Nothing else is needed to tell two
+                                           * stages apart, and without the boxes the eye
+                                           * follows the rail instead of re-finding the
+                                           * edge of a card on every row.
+                                           *
+                                           * A step that is genuinely still ahead is
+                                           * dimmed rather than drawn — see the opacity
+                                           * below — because its content is a promise
+                                           * about the future, not a record.
+                                           * ───────────────────────────────────────────
+                                           */
+                                          className={
+                                            step.status === 'pending' || step.status === 'skipped'
+                                              ? 'opacity-55'
+                                              : ''
+                                          }
                                         >
                                           {/* ── The header ───────────────────────────────
                                               What this step IS, and when. Banded, with a
@@ -2978,13 +4144,58 @@ export function BookingsTab({
                                               a header alone, and a line under nothing reads
                                               as a card that failed to load. */}
                                           <div
-                                            className={`flex items-baseline gap-2 px-3 py-2 bg-[var(--v2-surface)] ${
-                                              hasCardBody ? 'border-b border-[var(--v2-border)]' : ''
+                                            /* Unbanded and unruled, with the box gone: a
+                                               tinted strip and a divider were how one card
+                                               separated its own header from its own body,
+                                               and there is no longer a card for them to
+                                               belong to. The title's weight does that work
+                                               now, which is all a stage name needs. */
+                                            className={`flex items-baseline gap-2 ps-0 pe-3 pt-1 pb-0.5 ${
+                                              hasCardBody ? '' : ''
                                             }`}
                                           >
-                                            <span className="text-[12px] font-medium leading-[1.5] text-[var(--v2-text-secondary)] break-words">
+                                            {/* The stage's name, and with the box gone it is
+                                                what separates one stage from the next — so it
+                                                carries the weight the border used to. Amber on
+                                                the active one, matching its node, so the eye
+                                                lands on the stage holding the ball. */}
+                                            <span
+                                              /* ── THE MOCKUP IS DARK; THE APP IS BOTH ────
+                                                 Copying its tones literally is what made
+                                                 the active stage invisible on the light
+                                                 theme: `amber-300` is a dark-mode value and
+                                                 on white it is barely a colour.
+
+                                                 Tailwind's amber-700/300 pair is kept for
+                                                 the one stage that must stand out, because
+                                                 the V2 tokens carry no accent of their own
+                                                 — but every other stage reads from the
+                                                 theme's own text tokens, so the rail
+                                                 follows the app rather than the mockup. */
+                                              className={`text-[13.5px] leading-[1.5] break-words ${
+                                                step.status === 'active'
+                                                  ? 'font-bold text-amber-700 dark:text-amber-300'
+                                                  : 'font-semibold text-[var(--v2-text-primary)]'
+                                              }`}
+                                            >
                                               {stepTitle}
                                             </span>
+
+                                            {/* ── THE STATE, ON THE TITLE ────────────────
+                                                "Not sent yet", "answered", "awaiting a
+                                                reply" — the one word an owner scanning the
+                                                rail needs. It used to sit on the line
+                                                below, among the timestamps, so every stage
+                                                read as a name with no state attached.
+
+                                                Carried in metadata by whichever step has
+                                                one, so this is a slot rather than a rule
+                                                about any particular stage. */}
+                                            {step.metadata?.state || meetingStateWord ? (
+                                              <span className="text-[11.5px] font-medium text-[var(--v2-text-muted)] whitespace-nowrap">
+                                                {String(step.metadata?.state ?? meetingStateWord)}
+                                              </span>
+                                            ) : null}
 
                                             {/* The clock. In the flow now rather than
                                                 absolutely placed: it sits in a flex row that
@@ -2998,11 +4209,22 @@ export function BookingsTab({
                                                 was nowhere on the card. The length now
                                                 sits under the date, beside the range it
                                                 describes. */}
-                                            {step.timestamp && (
-                                              <span className="ms-auto text-[11.5px] tabular-nums text-[var(--v2-text-muted)] whitespace-nowrap">
-                                                {formatTime(step.timestamp)}
-                                              </span>
-                                            )}
+                                            {/* ── BESIDE THE TITLE, NOT IN A GUTTER ──────
+                                                `ms-auto` threw this to the far edge of the
+                                                row, so every step had a lone "15:54"
+                                                floating a hand's width from the stage it
+                                                belonged to, with white space between. On a
+                                                rail that reads top to bottom, a column of
+                                                stranded numbers is a second thing to track.
+
+                                                It sits right after the stage's name now, in
+                                                the same quiet grey as the body — part of
+                                                the sentence rather than a column of its
+                                                own. */}
+                                            {/* The date has moved to the line BELOW this
+                                                one, where it reads as detail about the
+                                                stage rather than a number in the corner of
+                                                every row. See `stepWhen`. */}
                                           </div>
 
                                           {/* ── The body ─────────────────────────────────
@@ -3011,7 +4233,13 @@ export function BookingsTab({
                                               in column 2 sits in column 1 and starts at the
                                               card's own padding. */}
                                           <div
-                                            className="grid items-baseline px-3 py-2.5 empty:hidden empty:py-0"
+                                            /* The box is gone, so its inset goes with it.
+                                               `px-3` indented the body away from a border
+                                               that no longer exists, leaving the detail
+                                               line hanging off its own title. It now sits
+                                               flush under the stage name, with only the
+                                               breathing room between stages kept. */
+                                            className="grid items-baseline ps-0 pe-3 pt-0.5 pb-2 empty:hidden empty:py-0"
                                             style={{ gridTemplateColumns: 'minmax(0, 1fr)', rowGap: '2px' }}
                                           >
                                         {/* What happened. */}
@@ -3038,7 +4266,17 @@ export function BookingsTab({
                                         */}
                                         {(
                                           <span
-                                            className="text-[14.5px] font-medium leading-[1.5] text-[var(--v2-text-primary)] break-words"
+                                            /* ── QUIETER THAN ITS OWN TITLE ──────────────
+                                               This was 14.5px, medium, in the PRIMARY text
+                                               colour — larger and louder than the stage
+                                               name above it, so every row shouted its
+                                               detail and whispered what the detail was
+                                               about. Five of those down a rail is a wall.
+
+                                               A stage is its name; the line under it is
+                                               supporting text and is sized and coloured to
+                                               say so. */
+                                            className="text-[12px] leading-[1.55] text-[var(--v2-text-secondary)] break-words"
                                             style={{ gridColumn: 1, gridRow: 1 }}
                                           >
                                             {/* A quote shows BOTH: the amount is
@@ -3066,6 +4304,52 @@ export function BookingsTab({
                                                 outstanding. Printed as well, it read as a
                                                 fourth figure the reader had to reconcile
                                                 against the other three. */}
+                                            {/* ── WHEN, THEN WHAT ──────────────────────
+                                                The date leads the line and the detail
+                                                follows it, which is the order the mockup
+                                                reads in and the order the fact arrived in.
+                                                Muted and tabular so a column of them lines
+                                                up without competing with the words. */}
+                                            {/* NOT ON THE MEETING STEP: it already prints
+                                                the appointment in full — "יום ראשון, 18
+                                                באוג׳ 2026", then the range and the length —
+                                                because that is the one stage whose time IS
+                                                the content. A short stamp above it repeated
+                                                the same day in a worse format. */}
+                                            {stepWhen && !isScheduleStep && (
+                                              <span className="tabular-nums text-[var(--v2-text-muted)]">
+                                                {stepWhen}
+                                                {/* A separator only when something follows
+                                                    ON THIS LINE. The email outcome, the
+                                                    payment account and the stage list all
+                                                    render as their own blocks underneath,
+                                                    so counting them left "17 אוק׳ · 21:49 ·"
+                                                    with the middot pointing at nothing. */}
+                                                {cardFact ? ' · ' : ''}
+                                              </span>
+                                            )}
+                                            {/* ── WHO STARTED IT, MARKED ────────────────
+                                                "The client asked for a quote" and "created
+                                                by you" are different events: one is demand
+                                                arriving on its own, the other is the owner
+                                                recording something already agreed. In one
+                                                grey sentence they read the same.
+
+                                                The client's half is tinted, the owner's
+                                                stays quiet — so a list of jobs shows at a
+                                                glance which ones came IN. */}
+                                            {step.metadata?.origin ? (
+                                              <span
+                                                className={
+                                                  step.metadata?.originBy === 'client'
+                                                    ? 'font-medium text-emerald-700 dark:text-emerald-400'
+                                                    : 'text-[var(--v2-text-muted)]'
+                                                }
+                                              >
+                                                {String(step.metadata.origin)}
+                                                {cardFact ? ' · ' : ''}
+                                              </span>
+                                            ) : null}
                                             {isProposalStep ? (
                                               quoteAnswered ? null : (
                                                 <span className="tabular-nums">{cardFact}</span>
@@ -3168,8 +4452,19 @@ export function BookingsTab({
                                                 }`;
 
                                           return (
+                                            /* ── ONE ROW: THE OUTCOME AND WHAT WAS SENT ──
+                                               The subject sat on its own line beneath
+                                               "מייל נשלח", so a step that reports one event
+                                               — an email went out — spent three lines
+                                               saying it: the stage name, the outcome, then
+                                               the subject.
+
+                                               They are one fact. `flex-wrap` keeps the
+                                               subject beside the outcome and lets it drop
+                                               only when the drawer is too narrow to hold
+                                               both, rather than always. */
                                             <div
-                                              className="flex flex-col gap-0.5"
+                                              className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5"
                                               style={{ gridColumn: 1 }}
                                             >
                                               <span className="flex items-center gap-2">
@@ -3195,7 +4490,7 @@ export function BookingsTab({
                                                   not reordered into nonsense. */}
                                               {step.details && (
                                                 <span
-                                                  className="text-[12px] leading-[1.5] break-words"
+                                                  className="text-[12px] leading-[1.5] break-words min-w-0"
                                                   style={{ color: 'var(--v2-text-muted)' }}
                                                 >
                                                   <bdi>{`„${step.details}”`}</bdi>
@@ -3261,13 +4556,25 @@ export function BookingsTab({
                                                         : null,
                                                     ]
                                                       .filter(Boolean)
-                                                      .join(' — ')
+                                                      /* A colon, not a dash: the
+                                                         reason explains the
+                                                         refusal rather than
+                                                         standing beside it, and
+                                                         the dash is not ours to
+                                                         put in front of an
+                                                         owner. */
+                                                      .join(': ')
                                                   : step.metadata?.proposalStatus === 'expired'
                                                     ? t('crm.proposal.expired')
                                                     : step.metadata?.proposalStatus === 'viewed'
                                                       ? t('crm.proposal.viewed')
                                                       : step.metadata?.waitingOn === 'owner'
-                                                        ? t('crm.proposal.waiting_on_you')
+                                                        ? booking.proposal_continues === false
+                                                          /* They said it is not coming. The
+                                                             line must not go on calling it
+                                                             their move. */
+                                                          ? t('crm.proposal.not_continuing')
+                                                          : t('crm.proposal.waiting_on_you')
                                                         : t('crm.proposal.waiting_on_client')}
                                           </span>
                                         )}
@@ -3400,7 +4707,7 @@ export function BookingsTab({
                                                     )}
 
                                                     <span
-                                                      className="ms-auto shrink-0 text-[11.5px] tabular-nums"
+                                                      className="justify-self-end whitespace-nowrap text-[11.5px] tabular-nums"
                                                       style={{ color: 'var(--v2-text-muted)' }}
                                                     >
                                                       {version.at ? formatShortDate(version.at) : ''}
@@ -4214,7 +5521,16 @@ export function BookingsTab({
                                           );
                                         })()}
 
+
                                         {/* A plan that is no longer running.
+
+                                            A CARD under the table, not a bare line.
+                                            As loose text directly above the buttons
+                                            it read as a caption for them — a stop
+                                            sign sitting over "refund" and "manage
+                                            payment". Boxed, it reads as what it is:
+                                            a closing statement about the plan the
+                                            table above describes.
                                             Only when it has actually ended: an
                                             active plan needs no announcement,
                                             and a line saying so on every plan
@@ -4235,9 +5551,18 @@ export function BookingsTab({
                                           if (planState.status !== 'cancelled') return null;
 
                                           return (
-                                            <span
-                                              className="flex items-center gap-1.5 text-[12.5px] leading-[1.5] text-orange-600"
-                                              style={{ gridColumn: 1 }}
+                                            <div
+                                              className="mt-2 flex items-center gap-2 px-3 py-2 text-[12.5px] leading-[1.5] text-orange-600"
+                                              style={{
+                                                gridColumn: 1,
+                                                borderRadius: '10px',
+                                                /* The same border and surface as the
+                                                   stage table above it, so the two
+                                                   read as one block of money rather
+                                                   than a table with a stray note. */
+                                                border: '1px solid var(--v2-border)',
+                                                background: 'var(--v2-surface)',
+                                              }}
                                             >
                                               <Ban className="h-3.5 w-3.5 shrink-0" />
                                               <bdi>
@@ -4251,7 +5576,7 @@ export function BookingsTab({
                                                   </span>
                                                 )}
                                               </bdi>
-                                            </span>
+                                            </div>
                                           );
                                         })()}
 
@@ -4296,6 +5621,373 @@ export function BookingsTab({
                                           </span>
                                         )}
 
+                                        {/*
+                                          ── THE MEETING'S HISTORY, AS SENTENCES ─────────
+                                          Closed by default: the header answers the question
+                                          most visits have, and a chain of nine lines between
+                                          the owner and the buttons is the reason this was
+                                          reported as overwhelming.
+
+                                          Open, it reads as what happened. Each attempt is a
+                                          named milestone on a connector line, and BETWEEN
+                                          them an arrow states the move itself — the step the
+                                          flat list never showed, and the reason two emails
+                                          under one attempt stopped looking like a duplicate:
+                                          one announced that time, one followed its outcome.
+
+                                          Every line has a verb and a subject, so "who" and
+                                          "when" need no icon to decode.
+                                        */}
+                                        {isScheduleStep && hasHistory && (
+                                          <div className="mt-2 flex flex-col gap-1.5" style={{ gridColumn: 1 }}>
+
+                                            {/* The summary, and the way in. Says HOW MUCH
+                                                there is, never what — that is the point of
+                                                keeping it shut. */}
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <span className="text-[12px] text-[var(--v2-text-muted)]">
+                                                {historySummary}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={e => {
+                                                  e.stopPropagation();
+                                                  toggleHistory(booking.id);
+                                                }}
+                                                /* The brand blue is mixed for a light card and
+                                                   near-invisible on a dark one, so it carries a
+                                                   lightened form of the SAME hue rather than a
+                                                   different colour — the link stays recognisable
+                                                   and stays readable. Every other adaptive colour
+                                                   in this file pairs light and dark the same way. */
+                                                className="inline-flex items-center gap-1 text-[12px] font-medium text-[#3B5AE5] dark:text-[#93A8FF] hover:underline"
+                                              >
+                                                {historyOpen
+                                                  ? translated(t, 'crm.journey.hide_history') || 'Hide'
+                                                  : translated(t, 'crm.journey.show_history') || 'Show what happened'}
+                                                {historyOpen ? (
+                                                  <ChevronUp className="h-3 w-3" aria-hidden="true" />
+                                                ) : (
+                                                  <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                                                )}
+                                              </button>
+                                            </div>
+
+                                            {historyOpen && (
+                                              <div className="mt-0.5 flex flex-col">
+                                                {(booking.attempts ?? []).map((attempt, attemptIndex) => {
+                                                  const isCurrentAttempt =
+                                                    attemptIndex === (booking.attempts?.length ?? 1) - 1;
+                                                  const isLastOfChain = isCurrentAttempt;
+
+                                                  /* The state, in the words its own button
+                                                     used. Only reached where nobody recorded
+                                                     WHO — with an actor the sentence below
+                                                     says it better. */
+                                                  const word =
+                                                    attempt.meeting_status === 'held'
+                                                      ? t('crm.booking.quoted.meeting_held')
+                                                      : attempt.meeting_status === 'no_show'
+                                                        ? t('crm.booking.status.no_show')
+                                                        : attempt.meeting_status === 'cancelled'
+                                                          ? t('crm.booking.status.cancelled')
+                                                          : !isCurrentAttempt
+                                                            ? translated(t, 'crm.journey.superseded') ||
+                                                              'Moved to another time'
+                                                            : translated(t, 'crm.journey.awaiting_outcome') ||
+                                                              'Awaiting an outcome';
+
+                                                  /* The milestone's name. Ordinals up to six,
+                                                     then a plain number — a booking moved
+                                                     seven times is past the point where a
+                                                     word helps. */
+                                                  const attemptLabel = isCurrentAttempt
+                                                    ? translated(t, 'crm.journey.attempt_current') || 'Current time'
+                                                    : translated(t, `crm.journey.attempt_ordinal.${attemptIndex + 1}`) ||
+                                                      `${translated(t, 'crm.journey.attempt') || 'Time'} ${attemptIndex + 1}`;
+
+                                                  /* The outcome, as a sentence. The actor
+                                                     chooses the verb, which is what removes
+                                                     the icon the owner had to decode. */
+                                                  const outcomeSentence = (() => {
+                                                    if (!attempt.meeting_status) return null;
+                                                    const by = attempt.outcome_by;
+                                                    if (by === 'client' && attempt.meeting_status === 'cancelled') {
+                                                      return translated(t, 'crm.journey.client_cancelled_meeting');
+                                                    }
+                                                    if (by === 'system') {
+                                                      const auto = translated(t, 'crm.journey.auto_marked');
+                                                      return auto ? `${auto}: ${word}` : word;
+                                                    }
+                                                    if (by === 'owner') {
+                                                      if (attempt.meeting_status === 'held') {
+                                                        return translated(t, 'crm.journey.you_marked_held');
+                                                      }
+                                                      if (attempt.meeting_status === 'no_show') {
+                                                        return translated(t, 'crm.journey.you_marked_no_show');
+                                                      }
+                                                      if (attempt.meeting_status === 'cancelled') {
+                                                        /*
+                                                         * ── WHY, NOT ONLY THAT ──────────
+                                                         * Two cancellations look identical
+                                                         * on this row and mean opposite
+                                                         * things: one drops the appointment
+                                                         * and keeps the job, the other ends
+                                                         * the quote with it. The client was
+                                                         * emailed one of two opposite
+                                                         * messages, and the rail is where
+                                                         * the owner goes to see which.
+                                                         *
+                                                         * Only on the CURRENT attempt:
+                                                         * `proposal_continues` lives on the
+                                                         * booking and describes where the
+                                                         * job stands now, so stamping it on
+                                                         * a superseded row would put
+                                                         * today's answer on last week's
+                                                         * appointment.
+                                                         */
+                                                        if (
+                                                          isCurrentAttempt &&
+                                                          booking.proposal_continues === false
+                                                        ) {
+                                                          return (
+                                                            translated(
+                                                              t,
+                                                              'crm.journey.you_cancelled_meeting_and_quote'
+                                                            ) ||
+                                                            translated(t, 'crm.journey.you_cancelled_meeting')
+                                                          );
+                                                        }
+                                                        return translated(t, 'crm.journey.you_cancelled_meeting');
+                                                      }
+                                                    }
+                                                    /* Nobody recorded who. The plain state is
+                                                       the honest answer, not an invented one. */
+                                                    return word;
+                                                  })();
+
+                                                  const outcomeFailed =
+                                                    attempt.meeting_status === 'no_show' ||
+                                                    attempt.meeting_status === 'cancelled';
+
+                                                  /* The clock alone on a row that falls on the
+                                                     attempt's own day; the date only when it
+                                                     differs. Four repetitions of one date is
+                                                     the noise this replaces. */
+                                                  const stamp = (at: string | null | undefined) => {
+                                                    if (!at) return null;
+                                                    const sameDay =
+                                                      new Date(at).toDateString() ===
+                                                      new Date(attempt.start_time).toDateString();
+                                                    return sameDay
+                                                      ? formatTime(at)
+                                                      : `${formatShortDate(at)} · ${formatTime(at)}`;
+                                                  };
+
+                                                  const mails = [...(attempt.emails ?? [])].sort(
+                                                    (a, b) =>
+                                                      new Date(a.at ?? 0).getTime() - new Date(b.at ?? 0).getTime()
+                                                  );
+                                                  const lastMailAt = mails[mails.length - 1]?.at;
+
+                                                  return (
+                                                    <div key={attempt.id}>
+                                                      <div className="flex gap-2.5">
+                                                        {/* The connector. Filled for the
+                                                            current attempt, hollow for the
+                                                            ones it replaced. */}
+                                                        <div className="flex flex-col items-center shrink-0" style={{ width: '14px' }}>
+                                                          <span
+                                                            className="shrink-0 rounded-full"
+                                                            style={{
+                                                              width: '11px',
+                                                              height: '11px',
+                                                              marginTop: '4px',
+                                                              background: isCurrentAttempt
+                                                                ? outcomeFailed
+                                                                  ? '#F04438'
+                                                                  : 'var(--v2-primary)'
+                                                                : 'var(--v2-surface)',
+                                                              border: isCurrentAttempt
+                                                                ? 'none'
+                                                                : '2px solid var(--v2-border)',
+                                                            }}
+                                                            aria-hidden="true"
+                                                          />
+                                                          {!isLastOfChain && (
+                                                            <span
+                                                              className="flex-1"
+                                                              style={{ width: '2px', background: 'var(--v2-border)', margin: '4px 0' }}
+                                                              aria-hidden="true"
+                                                            />
+                                                          )}
+                                                        </div>
+
+                                                        <div className="flex-1 min-w-0 pb-3">
+                                                          <div className="flex items-baseline justify-between gap-2">
+                                                            <span
+                                                              className={`text-[13px] font-semibold ${
+                                                                isCurrentAttempt
+                                                                  ? 'text-[var(--v2-text-primary)]'
+                                                                  : 'text-[var(--v2-text-secondary)]'
+                                                              }`}
+                                                            >
+                                                              {attemptLabel} · {formatTime(attempt.start_time)}
+                                                            </span>
+                                                            <span className="text-[11.5px] text-[var(--v2-text-muted)] tabular-nums shrink-0">
+                                                              {formatShortDate(attempt.start_time)}
+                                                            </span>
+                                                          </div>
+
+                                                          <div className="mt-1.5 flex flex-col gap-1.5">
+                                                            {/* Mail sent BEFORE the outcome. */}
+                                                            {mails
+                                                              .filter(
+                                                                m =>
+                                                                  !attempt.outcome_at ||
+                                                                  new Date(m.at ?? 0).getTime() <=
+                                                                    new Date(attempt.outcome_at).getTime()
+                                                              )
+                                                              .map(mail =>
+                                                                renderMailRow(mail, mail.at === lastMailAt && isCurrentAttempt, stamp)
+                                                              )}
+
+                                                            {/* The outcome, in its place. */}
+                                                            {outcomeSentence && (
+                                                              <span className="flex items-baseline gap-2 text-[12px] font-medium">
+                                                                <svg
+                                                                  width="12"
+                                                                  height="12"
+                                                                  viewBox="0 0 24 24"
+                                                                  fill="none"
+                                                                  stroke={outcomeFailed ? '#C2410C' : '#15803D'}
+                                                                  strokeWidth="2.4"
+                                                                  strokeLinecap="round"
+                                                                  className="shrink-0"
+                                                                  style={{ transform: 'translateY(2px)' }}
+                                                                  aria-hidden="true"
+                                                                >
+                                                                  {outcomeFailed ? (
+                                                                    <path d="M18 6 6 18M6 6l12 12" />
+                                                                  ) : (
+                                                                    <path d="M20 6 9 17l-5-5" />
+                                                                  )}
+                                                                </svg>
+                                                                <span
+                                                                  className="flex-1 min-w-0"
+                                                                  style={{ color: outcomeFailed ? '#9A3412' : '#15803D' }}
+                                                                >
+                                                                  {outcomeSentence}
+                                                                </span>
+                                                                {attempt.outcome_at && (
+                                                                  <span className="text-[var(--v2-text-muted)] tabular-nums shrink-0">
+                                                                    {stamp(attempt.outcome_at)}
+                                                                  </span>
+                                                                )}
+                                                              </span>
+                                                            )}
+
+                                                            {/* And mail that FOLLOWED it. */}
+                                                            {attempt.outcome_at &&
+                                                              mails
+                                                                .filter(
+                                                                  m =>
+                                                                    new Date(m.at ?? 0).getTime() >
+                                                                    new Date(attempt.outcome_at as string).getTime()
+                                                                )
+                                                                .map(mail =>
+                                                                  renderMailRow(mail, mail.at === lastMailAt && isCurrentAttempt, stamp)
+                                                                )}
+                                                          </div>
+                                                        </div>
+                                                      </div>
+
+                                                      {/* ── THE MOVE ITSELF ──────────────
+                                                          Between one attempt and the next.
+                                                          Without it the chain showed times
+                                                          but never the act of changing them,
+                                                          which is what made the sequence
+                                                          unreadable. */}
+                                                      {!isCurrentAttempt && (
+                                                        <div className="flex items-center gap-2.5 -mt-1 mb-1.5">
+                                                          <span className="flex justify-center shrink-0" style={{ width: '14px' }}>
+                                                            <ChevronDown
+                                                              className="h-3.5 w-3.5 text-[var(--v2-text-muted)]"
+                                                              aria-hidden="true"
+                                                            />
+                                                          </span>
+                                                          <span className="text-[11.5px] text-[var(--v2-text-muted)]">
+                                                            {movedSentence(booking.attempts?.[attemptIndex + 1])}
+                                                          </span>
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        {/* ── WHAT THE CLIENT WAS TOLD, AND A WAY TO SAY IT AGAIN ──
+                                            The cancellation message had nowhere to live.
+                                            Filed under an attempt it read as a detail of
+                                            one appointment; filed nowhere it vanished. It
+                                            belongs under the event it announces.
+
+                                            The resend is offered on a cancelled booking
+                                            deliberately — a client who cannot find the
+                                            message is exactly who needs it sent again, and
+                                            withholding it here was the owner's own
+                                            correction. */}
+                                        {isCancelledStep && (
+                                          <span
+                                            className="flex items-baseline gap-2 text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
+                                            style={{ gridColumn: 1 }}
+                                          >
+                                            <Mail
+                                              className="h-3 w-3 shrink-0"
+                                              style={{ transform: 'translateY(2px)', color: 'var(--v2-text-muted)' }}
+                                              aria-hidden="true"
+                                            />
+                                            <span className="flex-1 min-w-0">
+                                              {step.metadata?.emailId
+                                                ? translated(t, 'crm.journey.cancellation_mail') ||
+                                                  'The client was told'
+                                                : translated(t, 'crm.journey.cancellation_mail_none') ||
+                                                  'The client was not told'}
+                                              {/* `Boolean(...)`: `metadata` is
+                                                  an index signature of
+                                                  `unknown`, and `unknown && x`
+                                                  is not a ReactNode, so this
+                                                  was a type error wherever it
+                                                  was not being ignored. The
+                                                  ternary above is fine because
+                                                  both of its arms are strings. */}
+                                              {Boolean(step.metadata?.emailId) && onResendMail && (
+                                                <>
+                                                  <span aria-hidden="true"> · </span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={e => {
+                                                      e.stopPropagation();
+                                                      onResendMail(booking.id, 'booking_cancelled');
+                                                    }}
+                                                    className="underline underline-offset-2 hover:text-[var(--v2-text-primary)]"
+                                                  >
+                                                    {translated(t, 'crm.journey.resend') || 'Send again'}
+                                                  </button>
+                                                </>
+                                              )}
+                                            </span>
+                                            {step.metadata?.emailSentAt ? (
+                                              <span className="text-[var(--v2-text-muted)] tabular-nums shrink-0">
+                                                {formatTime(step.metadata.emailSentAt as string)}
+                                              </span>
+                                            ) : null}
+                                          </span>
+                                        )}
+
                                         {isIntakeStep && hasIntake && (
                                           <span
                                             className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
@@ -4335,12 +6027,52 @@ export function BookingsTab({
                                               </span>
                                             )}
 
-                                          {cancelledUnpaid && (
-                                            <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400">
-                                              {t('crm.payment.request_cancelled') ||
-                                                'Payment request cancelled'}
-                                            </span>
-                                          )}
+                                          {cancelledUnpaid && (() => {
+                                            /*
+                                              ── WHICH PAYMENT, ON A PLAN ──────────────────
+                                              "Payment request cancelled" is the whole truth
+                                              on a single payment and badly misleading on a
+                                              plan: one of two periods withdrawn reads as the
+                                              entire payment being off, while ₪500 is still
+                                              due next week.
+
+                                              Named exactly as the row above names itself —
+                                              `stage.label || index + 1` — so the chip and the
+                                              list cannot call the same period two things.
+
+                                              Three sentences rather than one with a count,
+                                              because "1 תשלומים" is wrong in a way a reader
+                                              notices, and "all of them" is a different fact
+                                              from "these ones".
+                                            */
+                                            const stages = payment?.plan?.stages ?? [];
+                                            const cancelledNames = stages
+                                              .map((stage, i) => ({ stage, name: stage.label || `${i + 1}` }))
+                                              .filter(({ stage }) => stage.status === 'cancelled')
+                                              .map(({ name }) => name);
+
+                                            const label =
+                                              cancelledNames.length === 0
+                                                ? /* No plan, or no period says so: the booking's
+                                                     own invoice was withdrawn. */
+                                                  t('crm.payment.request_cancelled') ||
+                                                  'Payment request cancelled'
+                                                : cancelledNames.length === stages.length
+                                                  ? t('crm.payment.request_cancelled_all') ||
+                                                    'All payment requests cancelled'
+                                                  : (cancelledNames.length === 1
+                                                      ? t('crm.payment.request_cancelled_one') ||
+                                                        'Payment {payments} cancelled'
+                                                      : t('crm.payment.request_cancelled_many') ||
+                                                        'Payments {payments} cancelled'
+                                                    ).replace('{payments}', cancelledNames.join(', '));
+
+                                            return (
+                                              <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400">
+                                                {label}
+                                              </span>
+                                            );
+                                          })()}
 
                                           {intakeExpandable && (
                                             <button
@@ -4429,11 +6161,25 @@ export function BookingsTab({
                                               and in both the owner may still quote —
                                               which is the whole reason the gate asks
                                               rather than closing the step. */}
+                                          {/* ── AND NOT WHEN THE OWNER HAS SAID NO QUOTE ──
+                                              `proposal_continues === false` is them
+                                              answering, in the cancel dialog, that the
+                                              quote is not going ahead — and the client
+                                              has been emailed exactly that. Still
+                                              offering "send a quote" here invites the
+                                              one action that contradicts the message
+                                              already sent.
+
+                                              `false` only. NULL is nobody having been
+                                              asked, which is every booking that never
+                                              had a meeting cancelled, and must change
+                                              nothing. */}
                                           {isProposalStep
                                             && onOpenProposalBuilder
                                             && (step.metadata?.waitingOn === 'owner'
                                               || step.metadata?.waitingOn === 'unmarked'
                                               || step.metadata?.waitingOn === 'noshow')
+                                            && booking.proposal_continues !== false
                                             && booking.status !== 'cancelled' && (
                                             <button
                                               type="button"
@@ -4539,14 +6285,37 @@ export function BookingsTab({
                                               without one elsewhere, and a button
                                               that silently does nothing is worse
                                               than one that shows it cannot. */}
-                                          {isConfirmationStep && step.status === 'completed' && !meetingSettled && (
+                                          {/* ── NOT HERE ONCE THERE IS A MEETING RAIL ──
+                                              "Send again" regenerates from the
+                                              booking, so it carries the time the
+                                              meeting has NOW. Its home is the
+                                              meeting's own rail, beside the mail it
+                                              would repeat, not on the confirmation
+                                              stage which records what was sent once
+                                              at the beginning.
+
+                                              This was keyed on having SEVERAL
+                                              attempts, which is the wrong question:
+                                              the rail renders from the first one, so
+                                              a plain booking showed the button in
+                                              both places at once. What matters is
+                                              whether there is a rail to host it.
+
+                                              With no rail at all — a service that is
+                                              bought rather than booked — this stays,
+                                              because it is then the only way. */}
+                                          {isConfirmationStep && step.status === 'completed' && !meetingSettled && !hasMeetingRail && (
                                             <button
                                               type="button"
-                                              disabled={!onResendConfirmation}
-                                              title={onResendConfirmation ? undefined : t('crm.journey.not_wired') || 'Not connected yet'}
+                                              disabled={!onResendMail}
+                                              title={onResendMail ? undefined : t('crm.journey.not_wired') || 'Not connected yet'}
                                               onClick={e => {
                                                 e.stopPropagation();
-                                                onResendConfirmation?.(booking.id);
+                                                /* The step records the booking's
+                                                   CONFIRMATION, which is the only
+                                                   message this control ever stood
+                                                   for. */
+                                                onResendMail?.(booking.id, 'booking_confirmed');
                                               }}
                                               className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                             >
@@ -4586,14 +6355,121 @@ export function BookingsTab({
                                             </button>
                                           )}
 
-                                          {isScheduleStep && onEditSession && !isUnscheduled && !meetingSettled && (
+                                          {/* ── WHAT HAPPENED AT THE MEETING, ON THE MEETING'S OWN STEP ──
+                                              Asked for directly: "move the meeting
+                                              buttons/actions to the journey step where
+                                              we have the meeting".
+
+                                              They lived in the card's action strip,
+                                              beside Cancel, which is a JOB action that
+                                              cascades through every layer under it. Two
+                                              facts about an appointment and one decision
+                                              about the work, in one row, with nothing to
+                                              say which was which — reported as "is the
+                                              button related to the booking or to the
+                                              meeting?".
+
+                                              Here the step itself answers that. The row
+                                              names the time, and these say what happened
+                                              at it. Reschedule already sat here for
+                                              exactly this reason.
+
+                                              `meetingSettled` hides them once recorded,
+                                              the same guard Reschedule uses below, so the
+                                              step never offers to re-answer a question it
+                                              has already answered.
+
+                                              Workplan P3-1: docs/workplans/BOOKING_MEETING_SEPARATION_WORKPLAN.md */}
+                                          {/* Guarded on the handler, like every other write
+                                              this component delegates: it renders in
+                                              surfaces that pass only some of them, and a
+                                              button that silently does nothing is worse
+                                              than one that is not there. */}
+                                          {/* ── THE APPOINTMENT IS OFF, THE WORK IS NOT ──
+                                              The third thing that can happen to a
+                                              meeting, and it had no control at all: the
+                                              owner and the client agree to proceed
+                                              without meeting. Previously the only
+                                              cancel on the card ended the whole job, so
+                                              an owner in that position either killed
+                                              work that was still live or left an
+                                              appointment nobody would attend sitting
+                                              there as an unanswered question.
+
+                                              Deliberately NOT red, and deliberately not
+                                              beside the footer's "בטל הזמנה": this
+                                              cancels one appointment, and the label
+                                              names its own subject so the two cannot be
+                                              confused. */}
+                                          {canCancelMeeting && onCancelMeeting && (
+                                            <button
+                                              type="button"
+                                              title={translated(t, 'crm.booking.action.cancel_meeting_hint') || undefined}
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onCancelMeeting(booking.id, { isQuoted });
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                            >
+                                              {translated(t, 'crm.booking.action.cancel_meeting') || 'Cancel meeting'}
+                                            </button>
+                                          )}
+
+                                          {canMarkHeld && onSetBookingStatus && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onSetBookingStatus(booking.id, 'completed');
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-500/10 transition-colors"
+                                            >
+                                              {t('crm.booking.action.mark_held') || 'Mark as held'}
+                                            </button>
+                                          )}
+
+                                          {/* Needs a time to mean anything: a service
+                                              that is bought rather than booked has
+                                              nobody who could fail to turn up. */}
+                                          {canMarkNoShow && !isUnscheduled && onSetBookingStatus && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onSetBookingStatus(booking.id, 'no_show');
+                                              }}
+                                              /* ── AMBER, NOT GREY ────────────────────────
+                                                 It sat in the same neutral as Reschedule,
+                                                 so the two controls beside "held" were
+                                                 indistinguishable — and one of them records
+                                                 that the client did not turn up.
+
+                                                 Not red: a no-show is not a failure and not
+                                                 destructive. The job stays alive and the
+                                                 next move is another time. Amber is the
+                                                 card's word for "something needs your
+                                                 attention", which is exactly right. */
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-amber-600/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 transition-colors"
+                                            >
+                                              {t('crm.booking.action.mark_no_show') || 'Mark as no-show'}
+                                            </button>
+                                          )}
+
+                                          {/* Not on a meeting that took place — see
+                                              `meetingHappened`. */}
+                                          {meetingAnswerable && !meetingHappened && !meetingCancelled && onEditSession && !isUnscheduled && (
                                             <button
                                               type="button"
                                               onClick={e => {
                                                 e.stopPropagation();
                                                 onEditSession(booking.id);
                                               }}
-                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                              /* Blue: moving an appointment is neither an
+                                                 outcome nor a warning. It is the neutral,
+                                                 reversible action of the three, and giving
+                                                 it its own hue stops a row of identical grey
+                                                 pills where one records a no-show. */
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-blue-600/40 text-blue-700 dark:text-blue-400 hover:bg-blue-500/10 transition-colors"
                                             >
                                               {t('crm.booking.reschedule') || 'Reschedule'}
                                             </button>
@@ -4646,18 +6522,136 @@ export function BookingsTab({
                                                 their own, so there is nothing for the
                                                 radius to clip anyway: the border and the
                                                 corner are the container's. */}
-                                            <div
-                                              className="flex flex-col gap-px"
+                                            {/*
+                                              ─────────────────────────────────────────────
+                                              A REAL TABLE, because six separate grids can
+                                              never line up.
+
+                                              Each row was its own CSS grid, so an `auto`
+                                              column sized itself from THAT row alone: the
+                                              dates differ in width, the header's empty
+                                              leading cells collapsed to nothing, and every
+                                              row put its state and its figure at a
+                                              different x. Columns only share a width when
+                                              they share a grid — or a table.
+
+                                              `border-collapse` so the row rules meet the
+                                              frame cleanly, and NO `overflow-hidden`
+                                              anywhere: the ⋯ menu is positioned absolutely
+                                              and a clipping ancestor cuts it to a strip.
+                                              ───────────────────────────────────────────── */}
+                                            {/*
+                                              ─────────────────────────────────────────────
+                                              `fixed`, BECAUSE `w-full` AND `auto` CANNOT
+                                              BOTH BE HONOURED.
+
+                                              Reported as two faults and they are one:
+                                              the table ran off the end of the drawer, and
+                                              the headings no longer sat above their
+                                              columns in Hebrew.
+
+                                              `w-full` is `width: 100%`, so the table may
+                                              NOT grow to fit its content. Under automatic
+                                              layout the browser then squeezes the columns
+                                              to that width — and a cell carrying
+                                              `whitespace-nowrap` cannot be squeezed, so
+                                              its text simply draws outside its own box.
+                                              Three of the five columns here were nowrap.
+                                              The dates, the figures and the row menu spilled
+                                              past their cells and past the panel; the
+                                              headings, being short, stayed correctly inside
+                                              theirs. Hence a header that looks "off" while
+                                              nothing about the header changed.
+
+                                              Under `fixed` the widths are declared, not
+                                              negotiated: every column is exactly as wide as
+                                              the head says, the total is always the
+                                              container, and a body cell cannot be wider
+                                              than the heading above it. The two faults go
+                                              together because they were the same one.
+                                              ───────────────────────────────────────────── */}
+                                            <table
+                                              className="w-full text-start"
                                               style={{
+                                                borderCollapse: 'collapse',
                                                 borderRadius: '10px',
                                                 border: '1px solid var(--v2-border)',
+                                                tableLayout: 'fixed',
                                               }}
                                             >
+                                              <thead>
+                                                <tr
+                                                  className="text-[10.5px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]"
+                                                  style={{ background: 'var(--v2-surface)' }}
+                                                >
+                                                  {/* The state dot and the number, which
+                                                      need no label of their own. */}
+                                                  {/* 60, not `w-9`. These widths are now
+                                                      BINDING, and `box-sizing: border-box`
+                                                      means the `px-3` comes out of them: at
+                                                      36px this column had 12px of content box
+                                                      for a dot, a gap and a number, and would
+                                                      have spilled the moment it stopped being
+                                                      a mere hint to the auto layout. */}
+                                                  <th
+                                                    className="w-[60px] px-3 py-1.5 text-start font-medium"
+                                                    style={{ borderBottom: '1px solid var(--v2-border)' }}
+                                                  />
+                                                  {/* ── THE WIDTHS LIVE HERE NOW ───────────
+                                                      Under `fixed` these are the column
+                                                      definitions, so they are stated in the
+                                                      order a reader needs them: the date is
+                                                      the widest single string and gets what
+                                                      it measures; the state is one glyph; the
+                                                      money takes the slack, because it is the
+                                                      only cell whose length is unbounded (a
+                                                      partial refund names two figures). */}
+                                                  <th
+                                                    className="w-[142px] whitespace-nowrap px-1 py-1.5 text-start font-medium"
+                                                    style={{ borderBottom: '1px solid var(--v2-border)' }}
+                                                  >
+                                                    {t('crm.booking.package.col_when') || 'When'}
+                                                  </th>
+                                                  <th
+                                                    className="w-[52px] whitespace-nowrap px-1 py-1.5 text-start font-medium"
+                                                    style={{ borderBottom: '1px solid var(--v2-border)' }}
+                                                  >
+                                                    {t('crm.booking.package.col_state') || 'State'}
+                                                  </th>
+                                                  {/* NO width, deliberately. Under `fixed` a
+                                                      percentage resolves against the whole
+                                                      table, so `w-full` beside four fixed
+                                                      columns asks for 100% PLUS 318px and the
+                                                      row overflows again. The column left
+                                                      `auto` is the one that takes whatever is
+                                                      left, which is exactly the behaviour the
+                                                      money column wants. */}
+                                                  <th
+                                                    className="px-1 py-1.5 text-end font-medium"
+                                                    style={{ borderBottom: '1px solid var(--v2-border)' }}
+                                                  >
+                                                    {t('crm.booking.package.col_payment') || 'Payment'}
+                                                  </th>
+                                                  {/* Room for the row menu's button plus its
+                                                      padding, for the same border-box reason. */}
+                                                  <th
+                                                    className="w-[64px] px-3 py-1.5 font-medium"
+                                                    style={{ borderBottom: '1px solid var(--v2-border)' }}
+                                                  />
+                                                </tr>
+                                              </thead>
+                                              <tbody>
                                             {session.meetings.map((meeting, meetingIndex) => {
                                               const row = meeting.booking;
-                                              const held = row.status === 'completed';
+                                              /* Same column move as the step dot above. */
+                                              const held =
+                                                row.meeting_status === 'held' ||
+                                                (row.meeting_status == null && row.status === 'completed');
                                               const off =
-                                                row.status === 'cancelled' || row.status === 'no_show';
+                                                row.meeting_status === 'no_show' ||
+                                                row.meeting_status === 'cancelled' ||
+                                                (row.meeting_status == null &&
+                                                  (row.status === 'cancelled' || row.status === 'no_show'));
                                               const meetingStatus = getBookingStatusLabel(row.status, true, false, row.start_time);
 
                                               /*
@@ -4685,8 +6679,23 @@ export function BookingsTab({
                                                 for it would imply one is missing.
                                               */
                                               const pay = meeting.payment;
+                                              /*
+                                               * ─────────────────────────────────────
+                                               * PARTLY RETURNED IS ITS OWN ANSWER.
+                                               *
+                                               * Any refund read as "refunded", so a
+                                               * session paid 133.33 with 66.67 returned
+                                               * claimed the whole amount had gone back
+                                               * — and the owner had no sign that half
+                                               * of it is still theirs.
+                                               * ─────────────────────────────────────
+                                               */
+                                              const refundedBack = Number(pay?.refundedAmount || 0);
+                                              const partlyRefunded =
+                                                refundedBack > 0 && pay ? refundedBack < pay.amount : false;
                                               const refunded =
-                                                pay?.status === 'refunded' || Boolean(pay?.refundedAt);
+                                                !partlyRefunded &&
+                                                (pay?.status === 'refunded' || Boolean(pay?.refundedAt));
                                               const payState =
                                                 !pay || pay.status === 'free' || !(pay.amount > 0)
                                                   ? null
@@ -4695,93 +6704,224 @@ export function BookingsTab({
                                                          above — a refund is a completed,
                                                          deliberate act, not a failure. */
                                                       { text: t('crm.payment.status.refunded'), tone: '#B54708' }
-                                                    : pay.status === 'paid'
-                                                      ? { text: t('crm.payment.status.paid'), tone: '#22C58B' }
-                                                      : pay.invoiceStatus === 'overdue'
-                                                        ? { text: t('payments.invoice.overdue'), tone: '#D97706' }
-                                                        : { text: t('crm.payment.status.pending'), tone: 'var(--v2-text-muted)' };
+                                                    : partlyRefunded
+                                                      ? /* What came back, named beside what
+                                                           was charged — the figure already
+                                                           says the rest is still held. */
+                                                        {
+                                                          text: `${t('payments.money_status.partially_refunded') || 'Partly refunded'} ${new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-US', { style: 'currency', currency: pay.currency, maximumFractionDigits: 2 }).format(refundedBack)}`,
+                                                          tone: '#B54708',
+                                                        }
+                                                      : pay.status === 'paid'
+                                                        ? { text: t('crm.payment.status.paid'), tone: '#22C58B' }
+                                                        : pay.invoiceStatus === 'overdue'
+                                                          ? { text: t('payments.invoice.overdue'), tone: '#D97706' }
+                                                          : { text: t('crm.payment.status.pending'), tone: 'var(--v2-text-muted)' };
 
                                               return (
-                                                <div
+                                                /*
+                                                 * ─────────────────────────────────────
+                                                 * A GRID, NOT A WRAPPING ROW.
+                                                 *
+                                                 * `flex-wrap` let a row drop its money to
+                                                 * a second line as soon as the pieces
+                                                 * stopped fitting, and every row chose a
+                                                 * different moment to do it — six
+                                                 * meetings read as six sentences of
+                                                 * different shapes.
+                                                 *
+                                                 * It gets worse as the package runs:
+                                                 * "הושלמה" is longer than "מאושרת", and
+                                                 * none of these six has reached it yet.
+                                                 * The first one to be marked held would
+                                                 * have been the first to wrap.
+                                                 *
+                                                 * Fixed columns put every date, every
+                                                 * state and every figure on the same
+                                                 * edge, and the state column takes the
+                                                 * slack — so a longer word shortens the
+                                                 * gap rather than breaking the line.
+                                                 * ─────────────────────────────────────
+                                                 */
+                                                <tr
                                                   key={row.id}
-                                                  className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-2"
+                                                  className="transition-colors hover:bg-[var(--v2-surface)]"
+                                                  style={{
+                                                    /* A hairline between rows; the head
+                                                       already draws the one above the first. */
+                                                    borderTop:
+                                                      meetingIndex === 0
+                                                        ? undefined
+                                                        : '1px solid var(--v2-border)',
+                                                  }}
                                                 >
-                                                  {/* The state, in no space at all — the
-                                                      same four colours every other list on
-                                                      this card uses. */}
-                                                  <span
-                                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                                                    style={{
-                                                      background: held
-                                                        ? '#22C58B'
-                                                        : off
-                                                          ? '#B54708'
-                                                          : 'var(--v2-border)',
-                                                    }}
-                                                    aria-hidden="true"
-                                                  />
+                                                  <td className="w-[60px] whitespace-nowrap px-3 py-2.5 align-middle">
+                                                    <span className="flex items-center gap-1.5">
+                                                      {/* The state, in no space at all — the
+                                                          same four colours every other list
+                                                          on this card uses. */}
+                                                      <span
+                                                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                        style={{
+                                                          background: held
+                                                            ? '#22C58B'
+                                                            : off
+                                                              ? '#B54708'
+                                                              : 'var(--v2-border)',
+                                                        }}
+                                                        aria-hidden="true"
+                                                      />
+                                                      <span className="text-[11px] font-semibold tabular-nums text-[var(--v2-text-muted)]">
+                                                        {row.occurrence_number ?? meetingIndex + 1}
+                                                      </span>
+                                                    </span>
+                                                  </td>
 
-                                                  <span className="w-4 shrink-0 text-[11px] font-semibold tabular-nums text-[var(--v2-text-muted)]">
-                                                    {row.occurrence_number ?? meetingIndex + 1}
-                                                  </span>
-
-                                                  <span
-                                                    className={`text-[12.5px] ${
+                                                  <td
+                                                    /* `truncate` is the pair `fixed` needs:
+                                                       the column can no longer widen for a
+                                                       long date, so the date has to agree to
+                                                       end. `title` keeps the full value one
+                                                       hover away on the rare row that clips. */
+                                                    title={row.start_time ? formatDate(row.start_time) : undefined}
+                                                    className={`truncate px-1 py-2.5 align-middle text-[12.5px] ${
                                                       off
                                                         ? 'text-[var(--v2-text-muted)] line-through'
                                                         : 'text-[var(--v2-text-primary)]'
                                                     }`}
                                                   >
                                                     {row.start_time ? formatDate(row.start_time) : '—'}
-                                                  </span>
+                                                  </td>
 
-                                                  {/* The word keeps its colour and loses the
-                                                      filled pill. Six solid chips reading
-                                                      down a card look like six alerts; the
-                                                      colour alone still separates held from
-                                                      cancelled from past due. */}
-                                                  <span
-                                                    className={`text-[11.5px] ${meetingStatus.color}`}
-                                                  >
-                                                    {meetingStatus.text}
-                                                  </span>
+                                                  {/* ── A MARK, NOT A WORD ─────────────────
+                                                      ───────────────────────────────────────
+                                                      The word kept its colour and lost its
+                                                      pill for the reason below, and that was
+                                                      right as far as it went. It was still
+                                                      the widest flexible thing in the row and
+                                                      the one that grows as a package runs:
+                                                      "התקיימה" is longer than "מאושרת", so
+                                                      the table got wider the more of it was
+                                                      done.
+
+                                                      A glyph is the same four states in a
+                                                      fixed 14px, in the same four colours the
+                                                      rest of the card uses — and the colour
+                                                      was already doing most of the work, which
+                                                      is why the dot in the first column has
+                                                      never needed a label.
+
+                                                      The word is not lost: `title` on hover,
+                                                      `sr-only` for anything reading the page
+                                                      aloud. A glyph with no accessible name
+                                                      would be a state only a sighted user can
+                                                      know.
+
+                                                      (The earlier note, still true: six solid
+                                                      chips reading down a card look like six
+                                                      alerts.) */}
+                                                  <td className="w-[52px] px-1 py-2.5 align-middle">
+                                                    <span
+                                                      className={`inline-flex ${meetingStatus.color}`}
+                                                      title={meetingStatus.text}
+                                                    >
+                                                      {held ? (
+                                                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                                                      ) : row.meeting_status === 'no_show' ? (
+                                                        /* Missed and called off are not the
+                                                           same fact, and `off` groups them.
+                                                           Asked separately so the glyph can
+                                                           tell them apart: nobody came, versus
+                                                           it was called off. */
+                                                        <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                                                      ) : off ? (
+                                                        <Ban className="h-3.5 w-3.5" aria-hidden="true" />
+                                                      ) : (
+                                                        <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                                                      )}
+                                                      <span className="sr-only">{meetingStatus.text}</span>
+                                                    </span>
+                                                  </td>
 
                                                   {/*
                                                     The amount AND the word, because either
                                                     alone leaves the question open: a figure
-                                                    on its own does not say whether it arrived,
-                                                    and "Paid" on its own does not say what
-                                                    was. `ms-auto` puts every one of them on
-                                                    the same edge, so six meetings read as a
-                                                    column of money rather than six sentences
-                                                    of different lengths — and the row already
-                                                    wraps, so on a phone it drops to its own
-                                                    line instead of squeezing the date.
+                                                    on its own does not say whether it
+                                                    arrived, and "Paid" on its own does not
+                                                    say what was.
                                                   */}
-                                                  {payState && (
-                                                    <span
-                                                      className="ms-auto shrink-0 text-[11.5px] tabular-nums"
-                                                      style={{ color: payState.tone }}
-                                                    >
-                                                      {new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-US', {
-                                                        style: 'currency',
-                                                        currency: pay!.currency,
-                                                        maximumFractionDigits: pay!.amount % 1 === 0 ? 0 : 2,
-                                                      }).format(pay!.amount)}
-                                                      {' · '}
-                                                      {payState.text}
-                                                    </span>
-                                                  )}
+                                                  {/* The one cell allowed to WRAP. Its length
+                                                      has no ceiling — a partial refund names
+                                                      what was charged and what came back — and
+                                                      under `fixed` the alternative to a second
+                                                      line is text drawn outside the cell,
+                                                      which is the fault being fixed. Wrapping
+                                                      changes a row's height; it cannot move a
+                                                      column, which is what made the old
+                                                      flex-wrap version unreadable. */}
+                                                  <td className="px-1 py-2.5 text-end align-middle text-[11.5px] tabular-nums">
+                                                    {payState && (
+                                                      <span style={{ color: payState.tone }}>
+                                                        {new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-US', {
+                                                          style: 'currency',
+                                                          currency: pay!.currency,
+                                                          maximumFractionDigits: pay!.amount % 1 === 0 ? 0 : 2,
+                                                        }).format(pay!.amount)}
+                                                        {' · '}
+                                                        {payState.text}
+                                                      </span>
+                                                    )}
+                                                  </td>
 
+                                                  <td className="w-[64px] px-3 py-2.5 align-middle">
                                                   <MeetingRowActions
                                                     status={row.status}
+                                                    meetingStatus={row.meeting_status}
                                                     startTime={row.start_time ?? null}
+                                                    /*
+                                                     * The PURCHASE's state, not this hour's.
+                                                     * A missed session stays movable on its
+                                                     * own — another time is the obvious next
+                                                     * move — but not once the package it
+                                                     * belongs to has been called off.
+                                                     */
+                                                    bookingCancelled={
+                                                      session.booking.status === 'cancelled' ||
+                                                      session.booking.meeting_status === 'cancelled'
+                                                    }
                                                     onSetStatus={
                                                       onSetBookingStatus
-                                                        ? next => onSetBookingStatus(row.id, next)
+                                                        ? next =>
+                                                            onSetBookingStatus(
+                                                              row.id,
+                                                              next,
+                                                              /* A session's outcome lives on the meeting. */
+                                                              row.meeting_id ?? null,
+                                                              /*
+                                                               * Is there money still to decide on this hour?
+                                                               *
+                                                               * `pay` is already null for a voided stage, so
+                                                               * reaching here means a live one. `pending` with
+                                                               * no invoice is the only state where the answer
+                                                               * is still open: billed is the client's document,
+                                                               * and paid is settled.
+                                                               */
+                                                              Boolean(
+                                                                pay &&
+                                                                  pay.status === 'pending' &&
+                                                                  !pay.invoiceId
+                                                              )
+                                                            )
                                                         : undefined
                                                     }
                                                     onReschedule={
+                                                      /*
+                                                       * Offered for a session too. The dialog is a time
+                                                       * picker either way; the drawer notices the row is a
+                                                       * MEETING and saves it at the session's own
+                                                       * endpoint, which writes a second attempt and
+                                                       * releases the hour the old one held.
+                                                       */
                                                       onEditSession ? () => onEditSession(row.id) : undefined
                                                     }
                                                     /*
@@ -4831,10 +6971,203 @@ export function BookingsTab({
                                                     }
                                                     t={t}
                                                   />
-                                                </div>
+                                                  </td>
+                                                </tr>
                                               );
                                             })}
-                                            </div>
+
+                                            {/*
+                                              ─────────────────────────────────────────────
+                                              WHAT IS ACTUALLY LEFT TO COLLECT.
+
+                                              The last ROW of the same table, not a line
+                                              under it: it belongs to the figures above and
+                                              shares their columns, so the number lands
+                                              directly beneath the per-session amounts.
+
+                                              It exists because a package stops adding up
+                                              the moment a session is called off. Six at
+                                              133.33 was 800; with three off it is 533.34,
+                                              and nothing on this card said so — the owner
+                                              had to read six rows, notice which were
+                                              struck through, and do the arithmetic.
+
+                                              Only sessions that can still bill are counted.
+                                              A called-off one has no stage left to show,
+                                              which is why it contributes nothing here
+                                              rather than being subtracted.
+                                              ─────────────────────────────────────────────
+                                            */}
+                                            {(() => {
+                                              const money = session.meetings
+                                                .map(m => m.payment)
+                                                .filter((p): p is NonNullable<typeof p> => Boolean(p));
+
+                                              /* A package not billed per session has no
+                                                 figures to total. */
+                                              if (money.length === 0) return null;
+
+                                              /*
+                                               * ───────────────────────────────────────────
+                                               * WHAT WENT BACK, WHICH FELL THROUGH BOTH SUMS.
+                                               *
+                                               * A refunded stage is neither owing nor kept,
+                                               * so counting only `paid` and `pending` made
+                                               * it vanish: the owner refunded a session and
+                                               * the table carried no sign of it. The row
+                                               * says "זוכה", and the figures beneath said
+                                               * nothing at all.
+                                               *
+                                               * And a PARTIAL refund was worse than silent.
+                                               * A stage paid 133.33 with 50 returned reads
+                                               * as `refunded`, so the whole 133.33 dropped
+                                               * out of what was collected — understating by
+                                               * the 83.33 the business actually kept.
+                                               *
+                                               * So refunds are subtracted rather than used
+                                               * to disqualify a stage: collected is what is
+                                               * STILL HELD, which is the only figure that
+                                               * can be reconciled against a bank account.
+                                               * ───────────────────────────────────────────
+                                               */
+                                              const refunded = money.reduce(
+                                                (sum, p) =>
+                                                  sum +
+                                                  Number(
+                                                    p.refundedAmount ??
+                                                      /* Returned, amount unrecorded: the whole
+                                                         stage went back. */
+                                                      (p.refundedAt || p.status === 'refunded'
+                                                        ? p.amount || 0
+                                                        : 0)
+                                                  ),
+                                                0
+                                              );
+
+                                              const received = money
+                                                .filter(p => p.status === 'paid' || p.refundedAt || p.status === 'refunded')
+                                                .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+                                              const collected = Math.max(0, received - refunded);
+
+                                              const outstanding = money
+                                                .filter(p => p.status !== 'paid' && p.status !== 'refunded' && !p.refundedAt)
+                                                .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+                                              /*
+                                               * ─────────────────────────────────────────────
+                                               * HOW MANY WERE CALLED OFF, counted as that.
+                                               *
+                                               * This was `meetings.length - money.length`:
+                                               * every session with no live stage behind it.
+                                               * That set is mostly cancellations, which is why
+                                               * it passed for one — but it also swept in any
+                                               * session added WITHOUT a charge, a make-up for
+                                               * one the client missed. The foot then said "5
+                                               * cancelled" with one of the five standing in the
+                                               * list above it, upcoming, going ahead free.
+                                               *
+                                               * The column that answers this already exists, so
+                                               * ask it. A free session is now simply not
+                                               * mentioned, which is the honest thing to say
+                                               * about a session nobody cancelled and nobody is
+                                               * paying for.
+                                               * ─────────────────────────────────────────────
+                                               */
+                                              const dropped = session.meetings.filter(
+                                                m => m.booking.meeting_status === 'cancelled'
+                                              ).length;
+
+                                              const money0 = money[0];
+                                              const asMoney = (value: number) =>
+                                                new Intl.NumberFormat(isRTL ? 'he-IL' : 'en-US', {
+                                                  style: 'currency',
+                                                  currency: money0.currency,
+                                                  maximumFractionDigits: value % 1 === 0 ? 0 : 2,
+                                                }).format(value);
+
+                                              return (
+                                                <tr
+                                                  style={{
+                                                    /* Heavier than a row seam: this is the
+                                                       table's foot, not another meeting. */
+                                                    borderTop: '1px solid var(--v2-border)',
+                                                    background: 'var(--v2-surface)',
+                                                  }}
+                                                >
+                                                  <td className="w-9 px-3 py-2.5" />
+
+                                                  {/* The label starts where the dates do and
+                                                      runs to the figure, so nothing in the
+                                                      foot pretends to be a column it is not. */}
+                                                  <td
+                                                    colSpan={2}
+                                                    className="truncate px-1 py-2.5 text-[11.5px] text-[var(--v2-text-muted)]"
+                                                  >
+                                                    {t('crm.booking.package.left_to_collect') || 'Left to collect'}
+                                                    {dropped > 0 && (
+                                                      <>
+                                                        {' · '}
+                                                        {(t('crm.booking.package.sessions_off') || '{count} cancelled')
+                                                          .replace('{count}', String(dropped))}
+                                                      </>
+                                                    )}
+                                                  </td>
+
+                                                  {/* ── THE FOOT STAYS INSIDE THE FRAME ──────
+                                                      This cell was `whitespace-nowrap` with up
+                                                      to three figures on one line, and the
+                                                      table is `tableLayout: fixed`: a column
+                                                      cannot grow to fit its content there, so
+                                                      the text simply ran out of the cell and
+                                                      past the table's own border. A package
+                                                      with a refund showed its totals floating
+                                                      outside the bordered list.
+
+                                                      The headline figure keeps its own line,
+                                                      because a sum broken across two lines is
+                                                      unreadable. The notes beside it move
+                                                      underneath, where there is as much room
+                                                      as they need. */}
+                                                  <td className="px-1 py-2.5 text-end text-[12.5px] font-semibold tabular-nums text-[var(--v2-text-primary)]">
+                                                    <span className="block whitespace-nowrap">
+                                                      {asMoney(outstanding)}
+                                                    </span>
+
+                                                    {(collected > 0 || refunded > 0) && (
+                                                      <span className="mt-0.5 block text-[11px] font-normal leading-snug">
+                                                        {collected > 0 && (
+                                                          <span className="whitespace-nowrap text-[var(--v2-text-muted)]">
+                                                            {(t('crm.booking.package.already_collected') || '{amount} collected')
+                                                              .replace('{amount}', asMoney(collected))}
+                                                          </span>
+                                                        )}
+                                                        {collected > 0 && refunded > 0 && (
+                                                          <span className="text-[var(--v2-text-muted)]">{' · '}</span>
+                                                        )}
+                                                        {refunded > 0 && (
+                                                          /* Named, in the refund's own colour —
+                                                             the same orange the row uses, because
+                                                             a refund is a deliberate act and not
+                                                             a failure. */
+                                                          <span
+                                                            className="whitespace-nowrap"
+                                                            style={{ color: '#B54708' }}
+                                                          >
+                                                            {(t('crm.booking.package.already_refunded') || '{amount} refunded')
+                                                              .replace('{amount}', asMoney(refunded))}
+                                                          </span>
+                                                        )}
+                                                      </span>
+                                                    )}
+                                                  </td>
+
+                                                  <td className="w-14 px-3 py-2.5" />
+                                                </tr>
+                                              );
+                                            })()}
+                                              </tbody>
+                                            </table>
 
                                             {/* Another date on a block already under way:
                                                 a make-up for one the client missed, or a
@@ -4843,7 +7176,21 @@ export function BookingsTab({
                                                 Outside the bordered list deliberately: it
                                                 adds a meeting rather than being one, and
                                                 inside the frame it read as a seventh row. */}
-                                            {onAddPackageMeeting && (
+                                            {/*
+                                              NOT ON A PACKAGE THAT IS OFF.
+                                              ─────────────────────────────────
+                                              Adding a fourteenth session to a
+                                              block the owner has just called
+                                              off would schedule an hour inside
+                                              work that has stopped, and bill
+                                              for it on a per-session package.
+                                              The control stays for every live
+                                              package, which is all of them
+                                              until somebody stops one.
+                                            */}
+                                            {onAddPackageMeeting &&
+                                              session.booking.status !== 'cancelled' &&
+                                              session.booking.meeting_status !== 'cancelled' && (
                                               <AddPackageMeeting
                                                 containerId={
                                                   (step.metadata?.containerId as string) ?? booking.id
@@ -4881,9 +7228,6 @@ export function BookingsTab({
                                       </div>{/* rail + node wrapper */}
                                     </div>
                                   );
-                                })}
-                              </div>
-                            );
                           })
                         ) : (
                           // Fallback: No journey steps provided - show message
@@ -4908,28 +7252,113 @@ export function BookingsTab({
 
                       </div>
 
-                      {/* Edit — only while the booking can still change.
-                          A completed appointment, a cancellation or a no-show is a
-                          record of what happened; editing its time afterwards
-                          rewrites history and, for a completed one, contradicts the
-                          outcome the owner just recorded. */}
-                      {/* Attendance, not the job: a held consultation still
-                          must not have its time rewritten, even though the quoted
-                          job it belongs to is very much still running. */}
-                      {onEditSession && !isUnscheduled && !attendanceRecorded(booking.status) && (
-                        <div className="mt-4 pt-3 border-t border-[var(--v2-border)]">
-                          <Button
-                            type="button"
-                            onClick={() => onEditSession(booking.id)}
-                            size="sm"
-                            variant="outline"
-                            className="w-full border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
-                          >
-                            <Edit2 className="h-4 w-4 me-2" />
-                            {t('crm.booking.edit') || 'Edit Booking'}
-                          </Button>
-                        </div>
-                      )}
+                  {onSetBookingStatus &&
+                    /* The booking's own cancellation is the only thing that
+                       retires this strip. Checked first and separately, because
+                       a stopped quote must not retire it and a CANCELLED job
+                       writes its quote to `stopped` — so the clause below could
+                       not be trusted to tell those two apart on its own. */
+                    !bookingCalledOff &&
+                    /* A stopped quote keeps the footer: the booking is still
+                       confirmed, still holding its hour, and closing it is
+                       exactly what the banner above is asking for. */
+                    (quoteState === 'stopped' ||
+                      !jobIsOver({
+                        status: booking.status,
+                        meeting_status: booking.meeting_status,
+                        isQuoted,
+                        quotePaid: Boolean(quotePaid),
+                        calledOff: jobCalledOff,
+                      })) && (
+                      /* ── THESE ARE CONTROLS, AND THEY HAVE TO LOOK LIKE IT ──
+                         Reported as "they are not buttons but like a title",
+                         with a screenshot that makes it obvious: they were
+                         `rounded-full` outlined pills sitting beside the
+                         "מאושרת" STATUS BADGE, which is also a rounded-full
+                         outlined pill. Same shape reads as the same kind of
+                         thing, so a row of actions looked like a row of states.
+
+                         Two fixes, and neither is the grouping I tried first.
+
+                         1. SHAPE. The drawer already has a button idiom — the
+                            `Button` primitive, `size="sm"`, with a leading icon,
+                            which is what "Edit Booking" below uses. A badge is
+                            a capsule with no icon; a control is a rounded rect
+                            with one. Reusing the house component is also how
+                            this stops drifting the next time badges restyle.
+
+                         2. WORDS. Every label was a STATUS key. `בוטלה` is "it
+                            was cancelled" — a statement about state, not an
+                            instruction, which is half of why the row read as
+                            badges. The owner's own correction was "בוטלה need
+                            to be בטל הזמנה". So the copy is imperative now, and
+                            each label names its own subject, which is what
+                            removes the "is this the booking or the meeting?"
+                            ambiguity without needing group headings above them.
+
+                         `crm.stage.mark_done` ("סימון כהושלם") is the same
+                         gesture already phrased this way on the payment stages.
+
+                         Workplan P3-1: docs/workplans/BOOKING_MEETING_SEPARATION_WORKPLAN.md */
+                      /* ── THE JOB'S OWN ACTIONS, BELOW THE JOURNEY ──────────
+                         They sat in the header, above everything, which made
+                         the most destructive control on the card the first
+                         thing under its title — and put a decision about the
+                         WHOLE JOB above the stages it would cascade through.
+
+                         A footer is where an action that ends something
+                         belongs: you read what happened, then you decide. The
+                         rule above it is the card's own, so the strip reads as
+                         the end of the card rather than another stage on the
+                         rail.
+
+                         Ruled and padded here rather than in the header's
+                         spacing, because it is no longer in the header. */
+                      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--v2-border)] pt-3">
+                        {/* ── ONE ACTION HERE, BECAUSE ONLY ONE OF THEM IS THE JOB'S ──
+                            Held and no-show have moved to the meeting's own step
+                            in the journey, where the row that names the time can
+                            say what happened at it.
+
+                            What is left is the only decision that belongs to the
+                            BOOKING rather than to one layer inside it: calling
+                            off the work, which cascades through the meeting, the
+                            quote and the money. It carries the only red, and it
+                            is now the only thing in this strip, so there is
+                            nothing here to mistake it for. */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onSetBookingStatus(booking.id, 'cancelled')}
+                          className="border-red-600/40 text-red-600 hover:bg-red-500/10 hover:text-red-600 dark:text-red-400 dark:hover:text-red-400"
+                        >
+                          <XCircle className="h-3.5 w-3.5 me-1.5" />
+                          {t('crm.booking.action.cancel_booking') || 'Cancel booking'}
+                        </Button>
+                      </div>
+                    )}
+
+                      {/* ── "EDIT BOOKING" WAS THIS CARD'S SECOND RESCHEDULE ──
+                          Removed, not moved. It called `onEditSession(booking.id)`
+                          — the identical handler the meeting step's Reschedule
+                          calls — and carried the identical gate: a scheduled
+                          service whose attendance is not yet recorded. Both sat
+                          inside this same expanded view, so the card offered one
+                          action twice, under two names, a few rows apart.
+
+                          Its name was also the wider of the two and wrong for
+                          what it opens: `handleEditSession` loads the booking
+                          modal with the service picker DISABLED and the contact
+                          search hidden, which leaves the time and the notes. It
+                          never edited "the booking" in any sense the word
+                          implies, and sitting under a full-width rule at the
+                          foot of the card it read as the card's primary action.
+
+                          The surviving control sits on the row that names the
+                          time, which is the row an owner is looking at when they
+                          want to move it. Same modal, same fields, same gate.
+
+                          Workplan P3-1: docs/workplans/BOOKING_MEETING_SEPARATION_WORKPLAN.md */}
                     </div>
                   )}
                 </div>

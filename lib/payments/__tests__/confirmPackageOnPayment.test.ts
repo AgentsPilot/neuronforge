@@ -66,6 +66,8 @@ interface Recorded {
   tables: string[];
   proposalFilters: Array<[string, unknown]>;
   updates: Array<{ table: string; payload: Record<string, unknown>; filters: Array<[string, unknown]> }>;
+  /** Filters the sessions read applied, for the owner-scoping assertion. */
+  meetingFilters: Array<[string, unknown]>;
 }
 
 function fakeClient(options: {
@@ -74,8 +76,11 @@ function fakeClient(options: {
   children?: Array<Record<string, unknown>> | null;
   childrenError?: Error | null;
   containerError?: Error | null;
+  /** The new shape: sessions as rows in `scheduling_meetings`. */
+  meetings?: Array<Record<string, unknown>> | null;
+  meetingsError?: Error | null;
 }): { client: SupabaseClient; recorded: Recorded } {
-  const recorded: Recorded = { tables: [], proposalFilters: [], updates: [] };
+  const recorded: Recorded = { tables: [], proposalFilters: [], updates: [], meetingFilters: [] };
 
   const client = {
     from(table: string) {
@@ -84,19 +89,31 @@ function fakeClient(options: {
       return {
         // ── the proposal lookup ────────────────────────────────────────────
         select() {
+          const meetingsRead = table === 'scheduling_meetings';
           const chain = {
             eq(column: string, value: unknown) {
-              recorded.proposalFilters.push([column, value]);
+              (meetingsRead ? recorded.meetingFilters : recorded.proposalFilters).push([column, value]);
               return chain;
             },
             not(column: string, op: string, value: unknown) {
               recorded.proposalFilters.push([`${column} ${op}`, value]);
               return chain;
             },
+            /* The sessions read asks for the unmarked ones only. */
+            is(column: string, value: unknown) {
+              recorded.meetingFilters.push([`${column} is`, value]);
+              return chain;
+            },
+            order() {
+              return chain;
+            },
             maybeSingle: async () => ({
               data: options.proposal ?? null,
               error: options.proposalError ?? null,
             }),
+            /* Awaited directly after `.order()`, the way the sessions read ends. */
+            then: (resolve: (value: { data: unknown; error: Error | null }) => unknown) =>
+              resolve({ data: options.meetings ?? [], error: options.meetingsError ?? null }),
           };
           return chain;
         },

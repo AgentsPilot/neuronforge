@@ -12,6 +12,8 @@ import {
   emailPalette,
   emailTone,
   emailPlanSchedule,
+  emailSessionRows,
+  type EmailSessionLine,
   type BrandingData,
   type EmailPlanPeriod
 } from './base-template';
@@ -28,6 +30,17 @@ export interface PaymentReceiptData {
   appointmentDate?: Date;
   timezone?: string;
   bookingManageUrl?: string;
+  /**
+   * Every session of this package, where the receipt is for one of them.
+   *
+   * The generic plan schedule names its rows from the stage labels — "פגישה 1",
+   * and for an added session the whole quote title — so a receipt for session
+   * four listed eight differently-shaped lines and said nothing about when any
+   * of them is. The other three session emails answer that with a table of
+   * date, state and money; this is the same table, so a client reads one shape
+   * wherever a session is mentioned.
+   */
+  sessionLines?: EmailSessionLine[];
   /**
    * The instalment plan this payment is one period of.
    *
@@ -223,7 +236,29 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
           </p>
           ${emailDetailsTable(detailRows, brandingWithLocale)}
 
-          ${data.plan?.periods?.length
+          ${data.sessionLines?.length
+            ? `<p style="margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${tPlan.sessionListTitle[locale]}</p>
+               ${emailSessionRows(data.sessionLines, data.timezone, locale, brandingWithLocale, {
+                 states: {
+                   upcoming: tPlan.sessionUpcoming[locale],
+                   held: tPlan.sessionHeld[locale],
+                   missed: tPlan.sessionMissed[locale],
+                   cancelled: tPlan.sessionCancelled[locale],
+                 },
+                 money: {
+                   paid: tPlan.sessionPaid[locale],
+                   due: tPlan.sessionDue[locale],
+                   refunded: tPlan.sessionRefunded[locale],
+                   partly_refunded: tPlan.sessionPartlyRefunded[locale],
+                 },
+                 columns: {
+                   when: tPlan.sessionColWhen[locale],
+                   state: tPlan.sessionColState[locale],
+                   payment: tPlan.sessionColPayment[locale],
+                 },
+                 zoneNote: tPlan.sessionZoneNote[locale],
+               })}`
+            : data.plan?.periods?.length
             ? emailPlanSchedule({
                 periods: data.plan.periods,
                 totalAmount: data.plan.totalAmount,

@@ -502,10 +502,16 @@ export class CapabilityEngine {
     }
 
     // Update booking
-    const result = await schedulingBookingRepository.update(bookingId, this.userId, {
-      start_time: newStartTime.toISOString(),
-      end_time: newEndTime.toISOString()
-    });
+    const result = await schedulingBookingRepository.update(
+      bookingId,
+      this.userId,
+      {
+        start_time: newStartTime.toISOString(),
+        end_time: newEndTime.toISOString(),
+      },
+      /* The owner asked for this in their own chat (20261082). */
+      'owner'
+    );
 
     if (result.error) {
       return { success: false, error: result.error.message };

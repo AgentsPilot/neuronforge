@@ -61,9 +61,21 @@ interface Props {
   onFilter: (filter: string) => void;
   /** How many orders the collected figure came from. */
   orderCount: number;
+  /**
+   * The state is being set by a word typed into the search, so these cells
+   * must not offer to set it too.
+   *
+   * `activeFilter` already reflects the typed word, so the right cell is lit
+   * and the strip agrees with the rows. What has to go is the CLICK: the typed
+   * term wins, so a press here would change nothing and a control that looks
+   * live and does nothing is worse than one that is plainly unavailable.
+   *
+   * The way back is removing the chip, which is where the word lives.
+   */
+  selectionLocked?: boolean;
 }
 
-export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, orderCount }: Props) {
+export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, orderCount, selectionLocked = false }: Props) {
   const { t } = useLanguage();
 
   const waiting = Math.max(0, totals.outstanding - totals.overdue);
@@ -89,7 +101,7 @@ export function MoneySummaryStrip({ totals, money, activeFilter, onFilter, order
 
   /** Clicking the active cell clears the filter; any other cell applies it. */
   const select = (key: string, hasValue: boolean) =>
-    hasValue ? () => onFilter(activeFilter === key ? 'all' : key) : undefined;
+    hasValue && !selectionLocked ? () => onFilter(activeFilter === key ? 'all' : key) : undefined;
 
   const cells: MoneySummaryCell[] = [
     {

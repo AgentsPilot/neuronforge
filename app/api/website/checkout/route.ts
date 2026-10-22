@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { attachCheckoutSession } from '@/lib/scheduling/abandonedBookings';
 import { platformOrigin } from '@/lib/utils/origins';
 import { isInstallmentPlan, type PlanTerms } from '@/lib/payments/PaymentPlanService';
 import { toMinorUnits } from '@/lib/payments/refundMath';
@@ -57,6 +58,15 @@ const CheckoutSchema = z.object({
   description: z.string().min(1).max(500),
   customer_email: z.string().email().optional(),
   booking_id: z.string().uuid().optional(),
+  /*
+   * A card journey has no booking yet.
+   *
+   * For a service that takes payment the booking is created only once the
+   * payment succeeds — writing it earlier left a `pending` row holding the slot
+   * against every other client for ever. What is being paid for is an
+   * `abandoned_bookings` attempt, and this is its id.
+   */
+  attempt_id: z.string().uuid().optional(),
   service_id: z.string().uuid().optional(),
   success_url: z.string().url().optional(),
   cancel_url: z.string().url().optional(),
@@ -405,6 +415,9 @@ export async function POST(request: NextRequest) {
             subdomain: effectiveSubdomain || '',
             owner_id: ownerId,
             booking_id: data.booking_id || '',
+            /* So the outcome can be matched back to the attempt from the
+               webhook — the only signal that survives a closed tab. */
+            attempt_id: data.attempt_id || '',
             service_id: data.service_id || '',
             // What the webhook needs to bound the plan. Without these it cannot
             // tell a plan's first charge from an ordinary one.
@@ -413,7 +426,57 @@ export async function POST(request: NextRequest) {
             plan_count: planTerms ? String(planTerms.installmentCount) : '',
             plan_frequency: planTerms ? planTerms.frequency : '',
             ...data.metadata
-          }
+          },
+          /*
+           * ── THE SAME METADATA ON THE SUBSCRIPTION ITSELF ─────────────────
+           *
+           * A Checkout Session's metadata does NOT reach the subscription it
+           * creates: Stripe keeps them separate, and the webhook that binds an
+           * instalment plan reads `subscription.metadata`. So the subscription
+           * arrived with `{}` and the plan was recorded naming no owner, no
+           * service and — the one that matters — no attempt.
+           *
+           * `attempt_id` is the thread for a card journey, where there is no
+           * booking yet by design. Without it on the subscription, the plan,
+           * its periods and its charge are written with nothing to join them to
+           * the booking that appears a minute later, and the drawer shows ₪0
+           * collected over money the client has actually paid.
+           *
+           * The one-off case needs the same thing for the same reason. A
+           * `mode: 'payment'` session creates a PAYMENT INTENT, and session
+           * metadata does not reach that either — so `linkPaymentsToBooking`,
+           * which searches Stripe for `metadata['attempt_id']`, finds the
+           * charge for a plan and nothing for a single payment. Same silent
+           * outcome: the client has paid and the card says ₪0 collected.
+           *
+           * Which key to use is forced by the mode — `subscription_data` is
+           * invalid on a payment session and `payment_intent_data` on a
+           * subscription one; Stripe rejects the wrong one outright.
+           */
+          ...(planTerms
+            ? {
+                subscription_data: {
+                  metadata: {
+                    owner_id: ownerId,
+                    attempt_id: data.attempt_id || '',
+                    booking_id: data.booking_id || '',
+                    service_id: data.service_id || '',
+                    plan_total: String(planTerms.totalAmount),
+                    plan_currency: planTerms.currency,
+                    plan_count: String(planTerms.installmentCount),
+                  },
+                },
+              }
+            : {
+                payment_intent_data: {
+                  metadata: {
+                    owner_id: ownerId,
+                    attempt_id: data.attempt_id || '',
+                    booking_id: data.booking_id || '',
+                    service_id: data.service_id || '',
+                  },
+                },
+              }),
         },
         {
           stripeAccount: stripeAccountId
@@ -451,6 +514,22 @@ export async function POST(request: NextRequest) {
         // Re-throw other errors
         throw connectError;
       }
+    }
+
+    /*
+     * ── SO THE CHARGE CAN BE FOUND AGAIN ────────────────────────────────────
+     *
+     * The attempt already travels in the session metadata, and that covers the
+     * webhook reading forwards. This covers reading BACKWARDS: given a session,
+     * which attempt was it? `checkout_session_id` has been on the table since
+     * 20261070 with nothing writing it, and its index was dead.
+     *
+     * Awaited but unable to fail: the helper swallows its own errors, because
+     * the client is being sent to Stripe and a missing cross-reference must not
+     * take the journey down.
+     */
+    if (data.attempt_id) {
+      await attachCheckoutSession(data.attempt_id, session.id);
     }
 
     requestLogger.info(

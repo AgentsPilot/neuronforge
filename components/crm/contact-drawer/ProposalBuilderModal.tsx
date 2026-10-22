@@ -226,12 +226,32 @@ interface ProposalBuilderModalProps {
    * the same layout, minus the ability to change it.
    */
   readOnly?: boolean;
-  /** Leave read-only mode and revise this version. Absent hides the button. */
-  onRevise?: () => void;
   /** Their reason for declining, so the owner can revise against it. */
   declineReason?: string | null;
   declineNote?: string | null;
   onSent: () => void;
+  /**
+   * The meeting has passed and nobody has said what happened.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS AN OFFER AND NOT A GATE
+   *
+   * Pricing a job normally means the consultation happened — but owners quote
+   * from the van and rarely tick the appointment first. `bookingStatus` records
+   * that as "the ordinary state of a past meeting, not an error".
+   *
+   * So the quote is never blocked on the tick. Closing the meeting rides along
+   * with the thing the owner came to do: one press, both facts. The failure
+   * modes are not comparable — a quote stopped by bookkeeping can cost the job,
+   * a meeting marked an hour late costs a slightly stale figure.
+   *
+   * Only safe because `complete()` no longer writes `status`: marking held
+   * closes the MEETING, not the work, so a job can still be quoted and paid
+   * after it.
+   */
+  offerMarkHeld?: boolean;
+  /** Records it. Called only when the owner leaves the tick on. */
+  onMarkHeld?: () => Promise<void> | void;
   t: (key: string) => string;
   isRTL?: boolean;
 }
@@ -261,10 +281,11 @@ export function ProposalBuilderModal({
   supersedesId = null,
   basedOn = null,
   readOnly = false,
-  onRevise,
   declineReason = null,
   declineNote = null,
   onSent,
+  offerMarkHeld = false,
+  onMarkHeld,
   t,
   isRTL = false,
 }: ProposalBuilderModalProps) {
@@ -294,8 +315,6 @@ export function ProposalBuilderModal({
    * striking a new one, which is not this button.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const REVISABLE = ['draft', 'sent', 'viewed', 'declined'];
-  const canRevise = Boolean(basedOn?.status && REVISABLE.includes(basedOn.status));
 
   const [title, setTitle] = useState(defaultTitle);
   const [description, setDescription] = useState('');
@@ -928,8 +947,36 @@ export function ProposalBuilderModal({
         if (!minutesFromQuote && Number.isFinite(minutes) && minutes > 0) {
           setSessionMinutes(minutes);
         }
-        // Its weekly hours, which is what makes "outside the hours" answerable.
-        if (service?.availability) setServiceHours(service.availability);
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE HOURS THAT APPLY: the service's own, or the business's.
+         *
+         * This read the SERVICE's `availability` and stopped. A package service
+         * is not booked into an hour itself — `is_scheduled` is false and it
+         * keeps no weekly pattern — so `serviceHours` stayed null, the whole
+         * "outside the hours" check was skipped, and a session could be sold at
+         * any hour at all with nothing said about it.
+         *
+         * Found on a real quote: six weekly sessions where the first sat at
+         * 00:00 on a business open 09:00–17:00. The row showed no warning,
+         * because nothing had any hours to compare it against.
+         *
+         * So the business's weekly hours are the fallback — the same ones the
+         * public booking page offers slots from, through the same route the
+         * drawer's booking dialog already loads. A WARNING either way: the
+         * owner may well mean to see one client outside their usual hours, and
+         * acceptance books it regardless. It just stops being silent.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        if (service?.availability) {
+          setServiceHours(service.availability);
+          return;
+        }
+
+        const hours = await fetch('/api/scheduling/availability');
+        const hoursData = await hours.json();
+        if (cancelled) return;
+        if (hoursData?.success && hoursData.availability) setServiceHours(hoursData.availability);
       } catch {
         // An hour is the fallback, and the owner can change it.
       }
@@ -1082,6 +1129,7 @@ export function ProposalBuilderModal({
     >
       {options.map(option => (
         <button
+          disabled={readOnly}
           key={option.value}
           type="button"
           onClick={option.onClick}
@@ -1098,6 +1146,16 @@ export function ProposalBuilderModal({
       ))}
     </div>
   );
+
+  /*
+   * Ticked by default, and never silent.
+   *
+   * Quoting usually means the meeting happened, which is why the default is on.
+   * It is a visible control rather than an inference because "usually" is not
+   * "always" — a job agreed without meeting is exactly the case the
+   * cancel-meeting action exists for.
+   */
+  const [alsoMarkHeld, setAlsoMarkHeld] = useState(true);
 
   const handleSend = async () => {
     if (!canSend) return;
@@ -1271,6 +1329,26 @@ export function ProposalBuilderModal({
         return;
       }
 
+      /*
+       * After the send, and never before it.
+       *
+       * The quote going out is what the owner asked for; marking the meeting is
+       * the convenience riding along. If marking fails, the quote is still sent
+       * and the meeting stays unmarked — which the `meeting_unmarked` chaser
+       * picks up two hours later. The reverse order could mark a meeting held
+       * for a quote that never left.
+       */
+      if (offerMarkHeld && alsoMarkHeld && onMarkHeld) {
+        try {
+          await onMarkHeld();
+        } catch (markErr) {
+          logger.warn(
+            { err: markErr instanceof Error ? { message: markErr.message } : markErr, contactId },
+            'Quote sent, but the meeting could not be marked held'
+          );
+        }
+      }
+
       onSent();
       onClose();
     } catch (err) {
@@ -1399,6 +1477,7 @@ export function ProposalBuilderModal({
               {t('proposal.field.description')}
             </label>
             <textarea
+              disabled={readOnly}
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={4}
@@ -1970,6 +2049,7 @@ export function ProposalBuilderModal({
                   {t('proposal.field.frequency')}
                 </label>
                 <select
+                  disabled={readOnly}
                   value={frequency}
                   onChange={e => setFrequency(e.target.value as typeof frequency)}
                   className="w-full rounded-lg border border-[var(--v2-border)] bg-[var(--v2-surface)] px-3 py-2 text-sm text-[var(--v2-text-primary)]"
@@ -2043,6 +2123,7 @@ export function ProposalBuilderModal({
                     {totalValid ? money(stageAmount(stage.percent)) : '—'}
                   </span>
                   <button
+                    disabled={readOnly}
                     type="button"
                     onClick={() => setStages(prev => prev.filter((_, i) => i !== index))}
                     className="shrink-0 p-1.5 text-[var(--v2-text-secondary)] hover:text-red-500"
@@ -2054,6 +2135,7 @@ export function ProposalBuilderModal({
               ))}
 
               <button
+                disabled={readOnly}
                 type="button"
                 onClick={() => setStages(prev => [...prev, { label: '', percent: '' }])}
                 className="flex items-center gap-1.5 text-sm text-[var(--v2-primary)]"
@@ -2161,6 +2243,7 @@ export function ProposalBuilderModal({
               */}
               <div dir="ltr" className="mt-0.5 shrink-0">
                 <Switch
+                  disabled={readOnly}
                   id="attach-proposal-document"
                   checked={attachDocument}
                   onCheckedChange={checked => {
@@ -2179,6 +2262,7 @@ export function ProposalBuilderModal({
             {attachDocument && (
               <div className="mt-3">
                 <input
+                  disabled={readOnly}
                   ref={fileInputRef}
                   type="file"
                   /* From the same list the store enforces. It read
@@ -2241,6 +2325,7 @@ export function ProposalBuilderModal({
                       {(file.size / 1024 / 1024).toFixed(1)} MB
                     </span>
                     <button
+                      disabled={readOnly}
                       type="button"
                       onClick={() => {
                         setFile(null);
@@ -2254,6 +2339,7 @@ export function ProposalBuilderModal({
                   </div>
                 ) : (
                   <button
+                    disabled={readOnly}
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--v2-border)] px-3 py-3 text-sm text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-primary)] hover:text-[var(--v2-primary)]"
@@ -2329,27 +2415,49 @@ export function ProposalBuilderModal({
             {t('proposal.cancel')}
           </button>
           {/*
-            Read-only offers the way OUT of read-only, not a second Send.
-            Revising is the only thing an owner can do to a quote already with a
-            client, and it reopens this dialog on this version with
-            `supersedesId` set — which is what the version strip has always done.
+            ── NOTHING ACTS FROM A VIEW ──────────────────────────────────────
+            A "revise" button stood here, and it was removed because it read as
+            an edit and this product has none: saving a quote always CREATES a
+            new row linked to the old by `supersedes_id`, and the API refuses
+            outright once a client has accepted one. The label said
+            "update the quote" for an action that supersedes it.
+
+            Opening a quote is now reading it, and that is the whole of it. The
+            way to replace one is the card's own "send a quote", which opens
+            this same builder with the same `supersedesId` — one door, named
+            for what it does.
           */}
-          {readOnly && onRevise && canRevise && (
-            <button
-              type="button"
-              onClick={onRevise}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium border transition-all"
-              style={{
-                borderRadius: 'var(--v2-radius-button)',
-                color: 'var(--v2-primary)',
-                borderColor: 'var(--v2-primary)',
-                background: 'color-mix(in srgb, var(--v2-primary) 10%, transparent)',
-              }}
+          {/* ── THE MEETING, CLOSED ON THE WAY PAST ──────────────────────────
+              Beside Send rather than buried in the form: it describes what this
+              press will ALSO do, so it has to be where the press is.
+
+              Hidden entirely when there is nothing to close — a meeting still
+              ahead, or one already answered. An offer to record something that
+              is already recorded is noise. */}
+          {!readOnly && offerMarkHeld && onMarkHeld && (
+            <label
+              className="flex items-center gap-2 text-sm cursor-pointer select-none me-auto"
+              style={{ color: 'var(--v2-text-secondary)' }}
             >
-              <FileText className="w-4 h-4" />
-              {t('proposal.revise')}
-            </button>
+              <input
+                type="checkbox"
+                checked={alsoMarkHeld}
+                onChange={e => setAlsoMarkHeld(e.target.checked)}
+                className="h-4 w-4 cursor-pointer"
+                style={{ accentColor: 'var(--v2-primary)' }}
+              />
+              <span>
+                {t('proposal.also_mark_held') || 'Also mark the meeting as held'}
+                <span
+                  className="block text-xs"
+                  style={{ color: 'var(--v2-text-muted)' }}
+                >
+                  {t('proposal.also_mark_held_hint') || 'The meeting has passed and is not marked yet'}
+                </span>
+              </span>
+            </label>
           )}
+
           {!readOnly && (
           <button
             type="button"

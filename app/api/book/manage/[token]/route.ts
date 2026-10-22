@@ -17,6 +17,25 @@ import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 
 const logger = createLogger({ module: 'API', service: 'BookingManage' });
 
+/**
+ * Is this appointment still the client's to move or call off?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `held` and `cancelled` are answers, and both make the offer a contradiction:
+ * one cannot move a meeting that already happened, nor call off one that is
+ * already off. The client portal was offering both, because it read the job's
+ * `status` — which those outcomes deliberately leave alone.
+ *
+ * `no_show` is NOT excluded, and that is the point of listing them rather than
+ * testing for "any outcome": a missed appointment is unresolved, and the client
+ * choosing another time is exactly the right next move. The repository handles
+ * it properly — moving the time opens a fresh attempt rather than rewriting the
+ * one that was missed.
+ */
+function settleable(meetingStatus: string | null | undefined): boolean {
+  return meetingStatus !== 'held' && meetingStatus !== 'cancelled';
+}
+
 // GET /api/book/manage/[token]
 // Returns booking details for the token holder
 /**
@@ -43,12 +62,95 @@ async function packageMeetings(
 
   const { data: rows } = await supabaseServer
     .from('scheduling_bookings')
-    .select('id, start_time, end_time, status, occurrence_number')
+    .select('id, start_time, end_time, status, meeting_status, occurrence_number')
     .eq('parent_booking_id', containerId)
     .eq('user_id', booking.user_id)
     .order('occurrence_number', { ascending: true });
 
-  if (!rows?.length) return [];
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE NEW SHAPE: SESSIONS ARE MEETINGS ON ONE BOOKING.
+   *
+   * A package used to be a container plus one child BOOKING per date, which is
+   * what the query above finds. Since the split it is one booking with N rows
+   * in `scheduling_meetings`, and that query finds nothing — so a client
+   * opening their link saw a purchase with no dates on it at all.
+   *
+   * Both are read. A package sold last month is still child bookings, and its
+   * client can open their link today.
+   *
+   * `canModify` is FALSE for these, deliberately and not as an oversight. The
+   * reschedule and cancel routes this page posts to take a BOOKING id, and a
+   * session has none — offering the button would produce an action that fails
+   * after the client has chosen a new time. Saying nothing is better than
+   * that, and the page already renders a row it cannot offer to change.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (!rows?.length) {
+    const { data: sessionRows } = await supabaseServer
+      .from('scheduling_meetings')
+      .select('id, start_time, end_time, meeting_status, session_number, occurrence_number')
+      .eq('booking_id', containerId)
+      .eq('user_id', booking.user_id)
+      .not('session_number', 'is', null)
+      .order('session_number', { ascending: true })
+      .order('occurrence_number', { ascending: true });
+
+    if (!sessionRows?.length) return [];
+
+    /*
+     * One row per session: the CURRENT attempt at each, which is the hour the
+     * client actually holds. A `moved` attempt is an hour they gave back, and
+     * showing it would tell them to turn up at a time nobody is expecting them.
+     */
+    const current = new Map<number, (typeof sessionRows)[number]>();
+
+    for (const row of sessionRows) {
+      if (row.meeting_status === 'moved') continue;
+      current.set(Number(row.session_number), row);
+    }
+
+    return [...current.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([session, row]) => {
+        const start = row.start_time ? new Date(row.start_time as string) : null;
+        const hoursAway = start ? (start.getTime() - now.getTime()) / 3_600_000 : null;
+        const open = settleable(row.meeting_status as string | null);
+
+        return {
+          id: row.id as string,
+          occurrenceNumber: session,
+          startTime: row.start_time as string | null,
+          endTime: row.end_time as string | null,
+          /* A session has no status of its own; what it carries instead is
+             whether it has happened. */
+          status: open ? 'confirmed' : 'cancelled',
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * THE SAME THREE CONDITIONS AS EVERY OTHER ROW: standing, dated,
+           * and far enough away.
+           *
+           * These were all `false` while a session could not be moved at all —
+           * the reschedule route took a BOOKING id and a session has none. It
+           * takes `meetingId` now, checked against the booking the token
+           * names, so a client holding a link to one package can move its own
+           * hours and nothing else.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          canModify: open && hoursAway !== null && hoursAway > noticeHours,
+          tooSoon: open && hoursAway !== null && hoursAway <= noticeHours,
+          /*
+           * The PURCHASE's token, which is the only booking there is — and the
+           * one this request has just proved the caller holds a link to.
+           * `meetingId` is what says which session it is about; the route
+           * refuses a meeting that is not this booking's.
+           */
+          token: generateBookingToken(containerId, clientEmail),
+          meetingId: row.id as string,
+          isCurrent: false,
+        };
+      });
+  }
 
   return rows.map(row => {
     const start = row.start_time ? new Date(row.start_time as string) : null;
@@ -64,9 +166,17 @@ async function packageMeetings(
        * The same three conditions the single booking is judged by: it has to be
        * standing, dated, and far enough away.
        */
-      canModify: row.status === 'confirmed' && hoursAway !== null && hoursAway > noticeHours,
+      canModify:
+        row.status === 'confirmed' &&
+        settleable(row.meeting_status as string | null) &&
+        hoursAway !== null &&
+        hoursAway > noticeHours,
       /** Why not, when not — so the row can say it rather than go quiet. */
-      tooSoon: row.status === 'confirmed' && hoursAway !== null && hoursAway <= noticeHours,
+      tooSoon:
+        row.status === 'confirmed' &&
+        settleable(row.meeting_status as string | null) &&
+        hoursAway !== null &&
+        hoursAway <= noticeHours,
       token: generateBookingToken(row.id as string, clientEmail),
       /** This one, so the page can mark where the client came in. */
       isCurrent: row.id === booking.id,
@@ -133,6 +243,15 @@ export async function GET(
      * Note: client_* fields removed from scheduling_bookings - now JOINed from
      * crm_contacts.
      */
+    /*
+     * `meeting_status` is selected alongside `status`: the appointment's own
+     * outcome stopped being answerable from the job's status when held and
+     * no-show began writing here instead. See `settleable`.
+     *
+     * Said here rather than inside the select, which is a STRING sent to
+     * PostgREST — a comment in it travels to the server as part of the column
+     * list, and a backtick in it ends the template literal.
+     */
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
@@ -142,6 +261,7 @@ export async function GET(
         end_time,
         timezone,
         status,
+        meeting_status,
         payment_status,
         notes,
         intake_completed_at,
@@ -234,6 +354,14 @@ export async function GET(
 
     const canModify =
       booking.status === 'confirmed' &&
+      /*
+       * And nobody has settled the appointment. `status` alone was the whole
+       * question only while every outcome overwrote it; marking a meeting held
+       * now leaves the job `confirmed`, so this went on offering the CLIENT
+       * "change the time" and "cancel the meeting" for an appointment the owner
+       * had already recorded as having taken place.
+       */
+      settleable(booking.meeting_status as string | null) &&
       hoursUntilBooking !== null &&
       hoursUntilBooking > noticeHours;
 
@@ -492,8 +620,22 @@ export async function GET(
     const plan =
       installments && installments.length > 0
         ? {
+            /*
+             * ─────────────────────────────────────────────────────────────
+             * A CALLED-OFF SESSION IS NOT A PAYMENT THEY STILL OWE.
+             *
+             * `total` counted every stage, cancelled ones included, so a
+             * package with three sessions called off told the client "0 of
+             * 11 payments made" when only 8 can ever be made. The figure
+             * they are being asked for is right; the one describing their
+             * progress through it was not.
+             *
+             * The rows themselves still list a cancelled stage, which is
+             * honest — it says בוטלה and carries no amount owing.
+             * ─────────────────────────────────────────────────────────────
+             */
             paid: installments.filter(row => String(row.status) === 'paid').length,
-            total: installments.length,
+            total: installments.filter(row => String(row.status) !== 'cancelled').length,
             periods: [...installments]
               /*
                 BY INSTALMENT NUMBER, which is the agreement's own order.

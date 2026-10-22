@@ -5,9 +5,16 @@
  * service and left their details; there is nothing to schedule and nothing to
  * charge, because nobody has said what the work costs yet.
  *
- * What this does NOT do, deliberately:
- *  - create a booking. `scheduling_bookings.start_time` is NOT NULL and no time
- *    has been agreed. A booking here would be a fiction with a made-up date.
+ * It DOES create a booking, with no times on it when no meeting was picked.
+ * That is new: the original rule was "a request is not a booking", justified by
+ * `scheduling_bookings.start_time` being NOT NULL — true when it was written,
+ * and false since meetings moved onto `scheduling_meetings` and took the clock
+ * with them. The owner looks for the job in their bookings, and everything they
+ * do next hangs off one.
+ *
+ * What it still does NOT do, deliberately:
+ *  - invent a time. The booking carries no clock rather than a made-up date,
+ *    which is what the original comment was right to refuse.
  *  - create an invoice or take payment. There is no price.
  *
  * What it does: makes sure the person exists in the CRM, records what they
@@ -301,7 +308,28 @@ export async function POST(request: NextRequest) {
      */
     let bookingId: string | null = null;
 
-    if (service.is_scheduled !== false && data.start_time) {
+    /*
+     * WHETHER A CONSULTATION WAS ACTUALLY BOOKED.
+     *
+     * Named, because two decisions below depend on it and one of them used to
+     * read `bookingId` instead — which worked only while a booking existed in
+     * this branch alone. The moment a quoted service with NO meeting started
+     * writing a booking too, that proxy broke and the client was emailed "your
+     * booking is confirmed" for a package with no date and no quote.
+     *
+     * A booking ROW is not an appointment. This is the appointment.
+     */
+    const booksAConsultation = service.is_scheduled !== false && Boolean(data.start_time);
+
+    /*
+     * `data.start_time` repeated, although `booksAConsultation` already proves
+     * it: narrowing does not travel through an intermediate boolean, so the
+     * compiler still sees `string | undefined` here and `new Date(undefined)`
+     * is an Invalid Date rather than an error anyone would notice. Asserted
+     * with `!` it would compile and stay a silent trap; checked, the type is
+     * honest and the runtime behaviour is identical.
+     */
+    if (booksAConsultation && data.start_time) {
       const start = new Date(data.start_time);
       const end = data.end_time
         ? new Date(data.end_time)
@@ -380,6 +408,62 @@ export async function POST(request: NextRequest) {
         requestLogger.error(
           { err: bookingError, ownerId, contactId, serviceId: service.id },
           'Quote request saved but the consultation booking failed'
+        );
+      } else {
+        bookingId = booking.id;
+      }
+    } else {
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * A QUOTED SERVICE WITH NO MEETING IS STILL A JOB.
+       *
+       * This branch wrote nothing. The reason given at the top of the file was
+       * that `scheduling_bookings.start_time` is NOT NULL, so a booking with
+       * no agreed time was impossible — and that was true when it was written.
+       *
+       * It stopped being true when meetings were separated onto
+       * `scheduling_meetings` and the clock moved with them: the column is
+       * nullable now. The rule outlived the constraint that forced it.
+       *
+       * What it cost: a client picked a package from a smart link, left their
+       * details and finished. The owner got the email, went to look for the
+       * job in their bookings, and found nothing — the request existed only as
+       * a line in the contact's activity timeline. Everything the owner does
+       * next (quote it, chase it, take the money) hangs off a booking.
+       *
+       * `pending`, not `confirmed`: nobody has said what the work costs yet,
+       * which is the whole point of a quote. The scheduled branch above says
+       * `confirmed` because there a TIME has been agreed and the owner has to
+       * turn up for it. Here nothing has been agreed at all.
+       *
+       * No times, deliberately — a made-up date is the fiction the original
+       * comment was right to refuse. The booking carries no clock, and the
+       * journey for a quoted service has no date step to want one.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      const { data: booking, error: bookingError } = await supabaseServer
+        .from('scheduling_bookings')
+        .insert({
+          user_id: ownerId,
+          service_id: service.id,
+          contact_id: contactId,
+          start_time: null,
+          end_time: null,
+          timezone: data.timezone || null,
+          status: 'pending',
+          booking_source: 'quote_request',
+          notes: data.note?.trim() || null,
+        })
+        .select('id')
+        .single();
+
+      if (bookingError) {
+        /* The lead and the activity below still land, so the request is not
+           lost — but the owner's list will not show it, which is the fault
+           this branch exists to fix. Loud, and not fatal. */
+        requestLogger.error(
+          { err: bookingError, ownerId, contactId, serviceId: service.id },
+          'Quote request saved but its booking failed — it will not appear in the bookings list'
         );
       } else {
         bookingId = booking.id;
@@ -483,8 +567,15 @@ export async function POST(request: NextRequest) {
        * appointment that does not exist — but silence is worse, because from
        * the client's side a form that answers nothing is indistinguishable
        * from one that failed.
+       *
+       * Asked of `booksAConsultation`, NOT of `bookingId`. Both branches write
+       * a booking now, so the id says only that the row exists — it says
+       * nothing about whether there is an appointment to confirm. Reading it
+       * as though it did sent "ההזמנה שלך אושרה" to a client who had asked for
+       * a quote on a package: nothing was confirmed, nothing was priced, and
+       * there was no date in the mail because there is no date.
        */
-      bookingId
+      booksAConsultation && bookingId
         ? BookingEmailService.sendBookingConfirmation(bookingId, ownerId)
         : sendQuoteReceivedEmail({
             ownerId,

@@ -113,6 +113,7 @@ export async function POST(
         contact_id,
         start_time,
         status,
+        meeting_status,
         timezone,
         contact:crm_contacts(email, first_name, last_name),
         service:scheduling_services(min_notice_hours, service_name)
@@ -146,6 +147,35 @@ export async function POST(
       return NextResponse.json(
         { success: false, code: 'not_cancellable', error: 'This booking cannot be cancelled' },
         { status: 400 }
+      );
+    }
+
+    /*
+     * ── AND THE APPOINTMENT IS STILL OPEN ────────────────────────────────
+     *
+     * `status` stopped answering this when held and no-show began writing
+     * `meeting_status` and leaving the job alone. Without it a meeting the
+     * owner had already recorded as having taken place could still be moved
+     * or called off from the client's own link.
+     *
+     * Checked HERE as well as on the page that draws the buttons: hiding a
+     * control is a courtesy, refusing the write is the guard. A page left open
+     * across the owner marking the meeting would otherwise still post.
+     *
+     * `no_show` passes deliberately — a missed appointment is unresolved, and
+     * the client picking another time is the right next move.
+     */
+    if (booking.meeting_status === 'held' || booking.meeting_status === 'cancelled') {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'already_settled',
+          error:
+            booking.meeting_status === 'held'
+              ? 'That meeting has already taken place.'
+              : 'That meeting has already been cancelled.',
+        },
+        { status: 409 }
       );
     }
 

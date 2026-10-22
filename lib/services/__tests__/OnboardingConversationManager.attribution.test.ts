@@ -223,30 +223,38 @@ describe('one grouping id per onboarding conversation (AC-3)', () => {
     const manager = new OnboardingConversationManager();
     const owner = { userId: OWNER_ID, groupId: GROUP };
 
+    /*
+     * The count leads. A zero here ends the step, so the two questions below
+     * are only ever asked of a business that has something to sell.
+     */
+    const counted = await manager.processUserMessage(
+      owner,
+      '3',
+      state('service_details', { pendingQuestion: 'service_count' })
+    );
+    expect(counted.updatedState.pendingQuestion).toBe('sell_scheduled');
+    expect(counted.updatedState.collectedData.clientWorkflow?.service_count).toBe(3);
+
     const scheduled = await manager.processUserMessage(
       owner,
       'Clients book a time with me',
-      state('service_details', { pendingQuestion: 'sell_scheduled' })
+      counted.updatedState
     );
     expect(scheduled.updatedState.pendingQuestion).toBe('sell_collection');
     expect(scheduled.updatedState.collectedData.clientWorkflow?.sells_scheduled).toBe(true);
-
-    const collected = await manager.processUserMessage(
-      owner,
-      'Nothing I sell is paid for',
-      scheduled.updatedState
-    );
-    expect(collected.updatedState.pendingQuestion).toBe('service_count');
-    expect(collected.updatedState.collectedData.clientWorkflow?.collection_method).toBe('none');
 
     /* The point: a capability answer costs nothing. Two turns, no model. */
     expect(calls()).toHaveLength(0);
 
     /*
-     * The count turn is different, and deliberately so. It is the one place
+     * The money turn is different, and deliberately so. It is the one place
      * the interview spends a call on something other than understanding the
      * business: naming the placeholder rows the build is about to create, so
      * they are not "Service 1", "Service 2", "Service 3".
+     *
+     * It is also the LAST of the three, which is what makes the stamping below
+     * provable rather than lucky — both answers it writes onto the rows were
+     * given in this same step, on the two turns above.
      */
     mockComplete.mockResolvedValueOnce({
       content: JSON.stringify({
@@ -258,10 +266,14 @@ describe('one grouping id per onboarding conversation (AC-3)', () => {
       }),
     });
 
-    const counted = await manager.processUserMessage(owner, '3', collected.updatedState);
-    expect(counted.updatedState.collectedData.clientWorkflow?.service_count).toBe(3);
+    const collected = await manager.processUserMessage(
+      owner,
+      'Nothing I sell is paid for',
+      scheduled.updatedState
+    );
+    expect(collected.updatedState.collectedData.clientWorkflow?.collection_method).toBe('none');
 
-    const named = counted.updatedState.collectedData.clientWorkflow?.services ?? [];
+    const named = collected.updatedState.collectedData.clientWorkflow?.services ?? [];
     expect(named.map(service => service.name)).toEqual(['Kids haircut', 'Colour', 'Styling']);
     /* The owner's answers, carried onto the placeholder: without them the
        catalogue INVERTS the Stripe and scheduling decisions. */
@@ -278,13 +290,13 @@ describe('one grouping id per onboarding conversation (AC-3)', () => {
      * asked whether its clients fill in a form first, which was asked of
      * nobody and set for nobody before.
      */
-    expect(counted.updatedState.currentStep).toBe('service_details');
-    expect(counted.updatedState.pendingQuestion).toBe('intake');
+    expect(collected.updatedState.currentStep).toBe('service_details');
+    expect(collected.updatedState.pendingQuestion).toBe('intake');
 
     const intake = await manager.processUserMessage(
       owner,
       'Yes, they fill in a form first',
-      counted.updatedState
+      collected.updatedState
     );
     expect(intake.updatedState.collectedData.clientWorkflow?.needs_intake).toBe(true);
     expect(intake.updatedState.currentStep).toBe('client_acquisition');

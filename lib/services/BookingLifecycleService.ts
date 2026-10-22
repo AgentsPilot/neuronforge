@@ -623,9 +623,38 @@ export async function cancelBooking(
        */
       .not('status', 'in', '(paid,cancelled)')
       .is('subscription_id', null)
-      .select('id');
+      /* `amount` and `payment_plan_id` so the plan can be brought into line
+         below. The id alone was enough only while nothing did. */
+      .select('id, amount, payment_plan_id');
 
     stagesClosed = closed?.length ?? 0;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AND THE PLAN STOPS CLAIMING THE MONEY IT JUST CANCELLED.
+     *
+     * `payment_plans.total_amount` and `installment_count` are stored, not
+     * derived. Closing every stage above left both standing, so a stopped
+     * package went on reading "1,066.74 over 11 payments" with nothing left
+     * that anyone could collect, and every figure built from the plan
+     * overstated by the whole remaining balance.
+     *
+     * Calling off ONE session has always lowered the total, which is how the
+     * same plan got from 1,466.74 to 1,066.74. Stopping the whole booking
+     * lowered nothing. Same helper on both paths now, so the plan cannot
+     * disagree with its own stages depending on which button stopped the work.
+     *
+     * Non-fatal by construction: the helper logs and returns. The booking is
+     * already cancelled and the stages are already closed, which is what the
+     * owner asked for.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (closed?.length) {
+      const { lowerPlansForCancelledStages } = await import(
+        '@/lib/payments/planFollowsItsStages'
+      );
+      await lowerPlansForCancelledStages(supabaseServer, userId, closed);
+    }
 
     /*
      * An ACCEPTED quote ends with the booking, not just its stages.
@@ -650,19 +679,83 @@ export async function cancelBooking(
      * ───────────────────────────────────────────────────────────────────────
      */
     if (stagesClosed > 0 || params.cancelReason) {
-      const { data: stoppedQuotes } = await supabaseServer
-        .from('proposals')
-        .update({
-          status: 'stopped',
-          stop_reason: params.cancelReason ?? null,
-          stop_note: params.cancelNote?.trim() || null,
-          stopped_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId)
-        .eq('booking_id', bookingId)
-        .eq('status', 'accepted')
-        .select('id');
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * FOUND FIRST, THEN STOPPED BY ID. Two statements, for one reason.
+       *
+       * The quote has two bookings — `booking_id` is the job it was written
+       * for, `package_booking_id` is the package its acceptance created — and
+       * either should find it. Writing that as `.or(...)` directly on the
+       * UPDATE is the obvious thing and it does not work: PostgREST accepts an
+       * `or` filter on a SELECT and rejects it on an UPDATE, with the
+       * misleading "column proposals.booking_id does not exist".
+       *
+       * Verified against this project's PostgREST, supabase-js 2.75.1:
+       *
+       *   SELECT .or(booking_id…)   ok
+       *   UPDATE .eq(booking_id…)   ok
+       *   UPDATE .or(booking_id…)   ERROR: column proposals.booking_id does not exist
+       *
+       * It threw inside the try this block sits in, whose catch only logs, so
+       * the quote was silently never stopped, its email never sent and the
+       * cascade below never reached. One read and an `.in('id', …)` is the
+       * boring version that works.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * AND THE READ ITSELF ASKS TWICE RATHER THAN WITH `.or(...)`.
+       *
+       * `.or()` on a SELECT is legal and this read was correct with it. It is
+       * written as two equality reads anyway, because `mutationOrSelect.guard`
+       * scans forward from every `.update(` to the end of the enclosing BLOCK —
+       * 242 lines here — and reported this unrelated `.or()` as if it belonged
+       * to the instalment update far above. The guard protects against a real
+       * production failure and is not worth weakening with an exemption for a
+       * file that does not actually break the rule.
+       *
+       * Two reads, merged by id, cost one extra round trip and cannot be
+       * mistaken for anything by any reader, human or parser.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const quoteRows = await Promise.all(
+        (['booking_id', 'package_booking_id'] as const).map(column =>
+          supabaseServer
+            .from('proposals')
+            .select('id, package_booking_id')
+            .eq('user_id', userId)
+            .eq(column, bookingId)
+            .eq('status', 'accepted')
+        )
+      );
+
+      /* One quote can match on both columns; `id` is what de-duplicates it. */
+      const quotes = [
+        ...new Map(
+          quoteRows
+            .flatMap(result => result.data ?? [])
+            .map(row => [row.id as string, row])
+        ).values(),
+      ];
+
+      const { data: stoppedQuotes } = quotes?.length
+        ? await supabaseServer
+            .from('proposals')
+            .update({
+              status: 'stopped',
+              stop_reason: params.cancelReason ?? null,
+              stop_note: params.cancelNote?.trim() || null,
+              stopped_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('user_id', userId)
+            .in(
+              'id',
+              quotes.map(q => q.id as string)
+            )
+            .eq('status', 'accepted')
+            /* `package_booking_id` so the work the quote SOLD can be stopped
+               with it. See the cascade below. */
+            .select('id, package_booking_id')
+        : { data: [] as Array<{ id: string; package_booking_id: string | null }> };
 
       if ((stoppedQuotes?.length ?? 0) > 0) {
         log.info(
@@ -694,7 +787,34 @@ export async function cancelBooking(
          * throwing here would report a failure for work that completed.
          * ───────────────────────────────────────────────────────────────────
          */
-        if (params.notifyClient !== false) {
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * ONLY WHEN THE CANCELLATION EMAIL WILL NOT COVER IT.
+         *
+         * Both emails fire on one press, and the client received two notices
+         * about the same decision, minutes apart: "the remaining work has
+         * stopped" and "your order was cancelled". Neither mentioned the
+         * other, and on a package neither listed the meetings.
+         *
+         * This one is NOT simply deleted, because there is a case where it is
+         * the only word the client gets. The cancellation email is withheld
+         * once the meeting has passed — see `meetingStillAhead` — so a job
+         * closed after the consultation happened would otherwise be stopped in
+         * silence. That is the bug this email was added to fix, and it stays
+         * fixed: the condition below sends it exactly when nothing else will.
+         *
+         * The same expression as the cancellation email's own gate further
+         * down, written out rather than hoisted so the two cannot be read as
+         * unrelated. `booking` is the row this cancel is about.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const cancellationEmailCoversThis =
+          params.notifyClient !== false &&
+          (meetingsCancelled > 0 ||
+            !booking.start_time ||
+            new Date(booking.start_time) > new Date());
+
+        if (params.notifyClient !== false && !cancellationEmailCoversThis) {
           /* Imported once, outside the loop. Lazy for the reason
              `cancelQuoteStages` gives: `ProposalSendService` drags in the email
              transport, the branding resolver and the PDF stack, and a static
@@ -733,6 +853,130 @@ export async function cancelBooking(
     }
   } catch (err) {
     log.error({ err, bookingId }, 'Could not close the quote stages for a cancelled booking');
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND THE PACKAGE THIS SALE ACTUALLY SCHEDULED.
+   *
+   * A package sale leaves TWO booking rows behind:
+   *
+   *   proposals.booking_id          the booking the quote was written from.
+   *                                 For a package that row carries no date, no
+   *                                 sessions and no money.
+   *   proposals.package_booking_id  the booking the acceptance created. It owns
+   *                                 every session, every stage and the plan.
+   *
+   * Everything above this line is scoped to `bookingId`, which is the first of
+   * the two — it is the id the drawer's cancel button sends, even on the card
+   * that is DISPLAYING the second one's thirteen sessions. So cancelling a
+   * package cancelled an empty row and left the work running: thirteen hours
+   * still held, seven stages still owing, a plan still totalling all of it, and
+   * nothing on screen changing.
+   *
+   * Recursing through `cancelBooking` rather than repeating its steps is the
+   * point. The package then gets exactly the same treatment as any other
+   * cancelled booking, and a step added to cancellation later cannot apply to
+   * one and not the other.
+   *
+   * ── WHY IT IS OUT HERE, NOT INSIDE THE QUOTE BLOCK ────────────────────────
+   * It was in there, and that made it conditional on two unrelated things: on
+   * the owner having typed a cancellation reason, and on the quote still
+   * reading `accepted`. Neither has anything to do with whether a package is
+   * still running. A cancel with no reason given would silently have left it
+   * going, which is the bug this is fixing.
+   *
+   * ── WHY IT CANNOT TOUCH AN ORDINARY BOOKING ───────────────────────────────
+   * `package_booking_id` is null for every quote that did not sell a package,
+   * which is 40 of the 42 on this account, so the query returns nothing and
+   * this block does nothing at all. The consultation-then-work shape keeps one
+   * booking and is not reached.
+   *
+   * Looked up by `booking_id` ALONE, deliberately: that is the direction the
+   * cascade runs. Cancelling the package itself finds no quote by that column
+   * and so cannot turn round and cancel anything, which is what keeps this from
+   * recursing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * Kept for the cancellation email far below, which has to list the sessions
+   * and cannot find them on the booking it is about. Resolved here rather than
+   * looked up twice.
+   */
+  let packageBookingId: string | null = null;
+
+  try {
+    const { data: packageQuotes } = await supabaseServer
+      .from('proposals')
+      .select('id, package_booking_id')
+      .eq('user_id', userId)
+      .eq('booking_id', bookingId)
+      .not('package_booking_id', 'is', null);
+
+    for (const quote of packageQuotes ?? []) {
+      const packageId = quote.package_booking_id as string;
+      if (!packageId || packageId === bookingId) continue;
+
+      /* Noted whether or not it was already off: the email lists the sessions
+         either way, and a package cancelled a moment ago still has them. */
+      packageBookingId = packageId;
+
+      /* Already off, from an earlier attempt or the other direction. Doing it
+         again would rewrite its `outcome_at` and re-run its side effects. */
+      const { data: already } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('status, meeting_status')
+        .eq('id', packageId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      /*
+       * BOTH columns, because `status` alone can miss.
+       *
+       * `cancel()` writes `status` and `meeting_status` together — except on a
+       * booking whose outcome was already recorded, where it deliberately
+       * writes NEITHER and leaves the outcome standing. A package whose
+       * sessions were all held therefore keeps `status: 'confirmed'` after
+       * being called off, and a guard reading only that would run the whole
+       * cascade again on the next press.
+       */
+      if (already?.status === 'cancelled' || already?.meeting_status === 'cancelled') {
+        log.info({ bookingId, packageBookingId: packageId }, 'The package was already cancelled');
+        continue;
+      }
+
+      const cascaded = await cancelBooking({
+        bookingId: packageId,
+        userId,
+        reason: params.reason,
+        cancelReason: params.cancelReason,
+        cancelNote: params.cancelNote,
+        cancelledBy: params.cancelledBy,
+        /*
+         * Told once, about the sale, by the cancellation this cascaded from.
+         * A second email about a booking the client never saw as separate is
+         * the "why did I get two emails" already reported.
+         */
+        notifyClient: false,
+      });
+
+      log.info(
+        {
+          bookingId,
+          packageBookingId: packageId,
+          stagesClosed: cascaded.data?.stagesClosed ?? 0,
+          error: cascaded.error?.message ?? null,
+        },
+        'Cancelled the package this sale scheduled'
+      );
+    }
+  } catch (err) {
+    /* Non-fatal, like every step above: the booking the owner pressed cancel on
+       is already off, and a package left running is visible in the drawer. */
+    log.error(
+      { err, bookingId },
+      'The booking was cancelled but the package it sold is still running'
+    );
   }
 
   /*
@@ -893,6 +1137,12 @@ export async function cancelBooking(
     log.info({ bookingId }, 'Cancellation email skipped — the meeting had already passed');
   } else try {
     const email = await BookingEmailService.sendCancellationEmail(bookingId, userId, reason, {
+      /*
+       * The sessions live on the package this sale scheduled, not on the row
+       * being cancelled. Null for everything that is not a package sale, and
+       * the email then reads its own booking exactly as before.
+       */
+      sessionsFrom: packageBookingId,
       offerRebooking,
       // Undefined leaves it shared, which is what every caller that has not been
       // updated — and every CLIENT cancellation — should keep doing.
@@ -1119,7 +1369,18 @@ export async function closedDayCheck(
   userId: string,
   startTime: string,
   endTime: string,
-  timezone: string,
+  /*
+   * Nullable, because a business that has not been asked its timezone yet has
+   * none — NULL means "not asked", which the platform keeps distinguishable
+   * from a chosen 'UTC'.
+   *
+   * Declared `string` before, while the one caller passes a value that may be
+   * undefined. `safeTimezone` below already accepts and falls back on exactly
+   * that, so the behaviour was always correct and only the signature disagreed.
+   * Widening it here rather than casting at the call site: a cast would assert
+   * something untrue about the value and silence the next real case.
+   */
+  timezone: string | null | undefined,
   log: ContextLogger = logger
 ): Promise<{ kind: 'all_day' | 'short_day'; error: BookingOnClosedDayError } | null> {
   const zone = safeTimezone(timezone);
@@ -1450,12 +1711,17 @@ export async function createBooking(
     log.warn({ err, bookingId: booking.id }, 'Confirmation email threw');
   }
 
-  // 8. Intake form, when asked for. The empty `intake_responses` is what makes
-  //    the journey timeline show "intake pending" rather than nothing.
+  /*
+   * 8. Intake form, when asked for.
+   *
+   * No placeholder is written first. This used to stamp an empty
+   * `intake_responses` sentinel so the journey would draw "intake pending";
+   * `intake_sent_at` is stamped by the send itself and the journey reads that
+   * column now, so the sentinel was a second source of truth whose only
+   * remaining effect was to set `intake_responses` non-null with no answers in
+   * it — which every reader then had to special-case.
+   */
   if (sendIntakeForm) {
-    await schedulingBookingRepository.update(booking.id, userId, {
-      intake_responses: { template_id: '', template_key: 'pending', responses: {} },
-    });
 
     /*
      * `manual`, because the OWNER asked for this one.
@@ -1966,6 +2232,15 @@ export interface RescheduleBookingParams {
    * Pass it to CHANGE the length. Omit it to move the appointment.
    */
   endTime?: string;
+  /**
+   * Which side asked for the new time (20261082).
+   *
+   * Omit it from anything the OWNER drives; the public booking portal passes
+   * `'client'`. It reaches the attempt the move creates, so the journey can
+   * say who moved it instead of telling the owner they did something a client
+   * did.
+   */
+  movedBy?: 'owner' | 'client' | 'system';
   request?: NextRequest;
   logger?: ContextLogger;
   /**
@@ -2083,7 +2358,45 @@ export async function rescheduleBooking(
   const result = await schedulingBookingRepository.update(bookingId, userId, {
     start_time: startTime,
     end_time: endTime,
-  });
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE NEW ATTEMPT HAS NOT HAPPENED YET
+     *
+     * A booking being given a new time is a fresh attempt, so whatever was
+     * recorded about the last one does not describe it.
+     *
+     * Leaving this alone used to be harmless, because `markNoShow()` wrote
+     * `status: 'no_show'` and the reschedule routes refuse anything whose
+     * status is not `confirmed` — a missed appointment simply could not be
+     * rescheduled. It writes `meeting_status` now and leaves `status` at
+     * `confirmed`, so those routes let it through, and the booking arrived at
+     * its new time still carrying `no_show`.
+     *
+     * That is worse than a wrong label. `MEETING_HOLDS_SLOT_FILTER` reads a
+     * no-show as free time, so the newly booked hour was not held: availability
+     * would offer it again and two clients would arrive for it.
+     *
+     * The missed attempt is not lost by clearing this. `syncMeeting` sees the
+     * outcome on the stored meeting and the changed time, and writes the new
+     * attempt as its own row — the old one keeps both its outcome and the time
+     * it was actually for.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    meeting_status: null,
+  },
+  /*
+   * WHICH SIDE ASKED FOR THE NEW TIME (20261082).
+   *
+   * Both surfaces come through here: the drawer's "change the time" and the
+   * client's own move from the public booking portal. The journey used to
+   * label every one of them "you changed the time", which is false for half of
+   * them and was reported as such.
+   *
+   * Defaults to the owner because every caller that does not say is an owner
+   * acting from inside the product; the client's route is the one that has to
+   * declare itself, and it does.
+   */
+  params.movedBy ?? 'owner');
 
   // Same race as creating one, and the same answer: the new time went while the
   // move was in flight, and the booking is untouched where it was.
@@ -2615,11 +2928,7 @@ export async function sendIntakeForm(params: {
     };
   }
 
-  if (!existing.data.intake_responses) {
-    await schedulingBookingRepository.update(bookingId, userId, {
-      intake_responses: { template_id: '', template_key: 'pending', responses: {} },
-    });
-  }
+  /* No sentinel here either — see the note on the creation path above. */
 
   let clientNotified = false;
   try {

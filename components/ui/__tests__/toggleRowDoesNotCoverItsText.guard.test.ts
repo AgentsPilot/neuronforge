@@ -92,21 +92,23 @@ describe('the "send the client a form" row', () => {
  * below `sm`, which is exactly why this looked correct in a narrow desktop
  * window and wrong on a handset.
  */
-describe('the start and end time fields', () => {
-  it('stack on a phone', () => {
-    expect(bookingModal).toContain('grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4');
-  });
-
-  it('and their cells may shrink below the control\'s natural width', () => {
-    const timeRow = bookingModal.slice(
-      bookingModal.indexOf('grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4'),
-      bookingModal.indexOf("t('scheduling.booking.end_time')")
-    );
-
-    // One cell for each field, both named.
-    expect(timeRow.match(/<div className="min-w-0">/g) ?? []).toHaveLength(2);
-  });
-});
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE START AND END TIME FIELDS WERE TESTED HERE, AND NO LONGER EXIST.
+ *
+ * Two `datetime-local` inputs sat under the slot grid behind "שעה אחרת…", and
+ * these two tests guarded their layout on a handset. They were removed on
+ * request: the grid offers every hour the working day allows and the gap
+ * between appointments permits, so the three warnings those fields needed —
+ * this day is closed, that hour is taken, your own clock reads differently —
+ * became unreachable rather than unsaid.
+ *
+ * What went with them is the deliberate off-hours booking. If it comes back it
+ * belongs in the GRID as something offered, not as a second way to answer a
+ * question the grid has already asked — at which point this guard comes back
+ * with it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
 /**
  * And the reason `color-scheme: inherit` on those fields now does something.

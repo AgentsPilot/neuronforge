@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { serviceShapeFields } from '@/lib/business-os/serviceShape';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Clock, Settings, ChevronDown, ChevronRight, Check, Trash2, Loader2, AlertCircle, CreditCard } from 'lucide-react';
@@ -257,24 +258,31 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
           // collected at all.
           duration_minutes: formData.duration_minutes || null,
           /*
-           * A quoted service publishes no collection.
+           * THE COLUMNS THAT DEPEND ON THE KIND OF SERVICE — all of them.
            *
-           * Nobody has said what the work costs, so there is no money for a
-           * method to describe — that is settled on the proposal. Writing one
-           * here would put a payment step on the half of the journey that ends
-           * at a request.
-           */
-          /*
-           * A quoted service carries no price and no collection method.
+           * This cleared the price and the collection method for a quote, and
+           * the inline row editor in the services list cleared the collection
+           * method and kept the price and the whole instalment configuration.
+           * Same action, two different rows depending on which screen the
+           * owner used, and the row that came out of the other one lost a
+           * booking: a quoted package still carrying a price was read as
+           * taking money, so the route waited for a payment the client was
+           * never asked for.
            *
-           * Both are settled on the proposal. Saving the last figure the field
-           * held before it went dead is how a quoted job ends up with a
-           * published price nobody agreed to.
+           * One rule, in `serviceShapeFields`, called from both.
            */
-          price: formData.sale_mode === 'proposal' ? null : formData.price,
-          collection: formData.sale_mode === 'proposal'
-            ? null
-            : (formData.price > 0 ? formData.collection : null),
+          ...serviceShapeFields({
+            saleMode: formData.sale_mode,
+            isScheduled: formData.is_scheduled,
+            price: formData.price,
+            collection: formData.collection,
+            paymentType: formData.payment_type,
+            installmentCount: formData.installment_count,
+            installmentFrequency: formData.installment_frequency,
+            firstPaymentDue: formData.first_payment_due,
+            firstPaymentDays: formData.first_payment_days,
+            bufferMinutes: formData.buffer_minutes,
+          }),
         })
       });
 

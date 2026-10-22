@@ -27,12 +27,18 @@ jest.mock('@/lib/auth', () => ({ getUser: () => mockGetUser() }));
 
 const mockFindById = jest.fn();
 const mockFindChildren = jest.fn();
+const mockCreateMeeting = jest.fn();
+const mockFindService = jest.fn();
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingBookingRepository: {
     findById: (...args: unknown[]) => mockFindById(...args),
     findChildren: (...args: unknown[]) => mockFindChildren(...args),
+    createMeeting: (...args: unknown[]) => mockCreateMeeting(...args),
   },
+  schedulingServiceRepository: { findById: (...args: unknown[]) => mockFindService(...args) },
 }));
+
+const mockClosedDayCheck = jest.fn();
 
 const mockCreateBooking = jest.fn();
 class BookingSlotUnavailableError extends Error {}
@@ -48,8 +54,21 @@ class BookingOnClosedDayError extends Error {
 }
 jest.mock('@/lib/services/BookingLifecycleService', () => ({
   createBooking: (...args: unknown[]) => mockCreateBooking(...args),
+  closedDayCheck: (...args: unknown[]) => mockClosedDayCheck(...args),
   BookingSlotUnavailableError,
   BookingOnClosedDayError,
+}));
+
+const mockSendConfirmation = jest.fn();
+jest.mock('@/lib/services/BookingEmailService', () => ({
+  BookingEmailService: {
+    sendBookingConfirmation: (...args: unknown[]) => mockSendConfirmation(...args),
+  },
+}));
+
+const mockSyncCalendar = jest.fn();
+jest.mock('@/lib/services/CalendarSyncService', () => ({
+  CalendarSyncService: { syncBookingToCalendar: (...args: unknown[]) => mockSyncCalendar(...args) },
 }));
 
 const mockCreateInstallments = jest.fn();
@@ -61,15 +80,35 @@ jest.mock('@/lib/repositories/PaymentPlanRepository', () => ({
 const tables: Record<string, Record<string, unknown> | null> = {};
 const planUpdates: Array<Record<string, unknown>> = [];
 
+/**
+ * The sessions a container holds as MEETINGS.
+ *
+ * Empty by default: these suites were written for the old shape, where a
+ * package was a container plus one child BOOKING per date, and that is still a
+ * shape the route has to serve — a package sold before the split can have a
+ * seventh session added today.
+ */
+let sessionMeetings: Array<Record<string, unknown>> = [];
+
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
     from: (table: string) => ({
       select: () => {
         const chain: Record<string, unknown> = {
           eq: () => chain,
+          /* The sessions read asks for rows that HAVE a session number. */
+          not: () => chain,
           order: () => chain,
           limit: () => chain,
           maybeSingle: async () => ({ data: tables[table] ?? null, error: null }),
+          /*
+           * Awaited directly, the way the sessions lookup ends. These suites
+           * describe the OLD shape — a container with child bookings — so the
+           * default is no session meetings, which is what makes the route take
+           * the child-booking path they assert on.
+           */
+          then: (resolve: (value: { data: unknown; error: null }) => unknown) =>
+            resolve({ data: table === 'scheduling_meetings' ? sessionMeetings : [], error: null }),
         };
         return chain;
       },
@@ -126,6 +165,12 @@ beforeEach(() => {
     error: null,
   });
   mockCreateInstallments.mockResolvedValue({ data: [{ id: 'stage-7' }], error: null });
+  mockCreateMeeting.mockResolvedValue({ data: { id: 'meeting-7' }, error: null });
+  mockFindService.mockResolvedValue({ data: { id: 'service-1', service_name: 'Coaching' }, error: null });
+  mockClosedDayCheck.mockResolvedValue(null);
+  mockSendConfirmation.mockResolvedValue({ sent: true });
+  mockSyncCalendar.mockResolvedValue({ success: true });
+  sessionMeetings = [];
 
   tables.proposals = {
     id: 'prop-1',
@@ -286,5 +331,225 @@ describe('when the hour cannot be had', () => {
     await POST(...post({ start_time: WHEN, allow_closed_day: true }));
 
     expect(mockCreateBooking.mock.calls[0][0].allowClosedDay).toBe(true);
+  });
+});
+
+describe('a package whose sessions are MEETINGS', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS SHAPE NEEDS ITS OWN PATH, AND WHY GETTING IT WRONG IS WORSE THAN
+   * AN ERROR
+   *
+   * A package is now ONE booking with N rows in `scheduling_meetings`, so
+   * `findChildren` returns nothing. Carrying on regardless would add a CHILD
+   * BOOKING to a package made of meetings — and because the readers prefer
+   * children wherever they exist, that single row would become the entire
+   * package on screen and hide the six sessions the client is holding.
+   *
+   * So the route has to notice, and then give the added session the four
+   * things `createBooking` would have given it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  beforeEach(() => {
+    mockFindChildren.mockResolvedValue({ data: [], error: null });
+    sessionMeetings = [
+      { id: 'meeting-6', session_number: 6, meeting_status: null },
+      { id: 'meeting-5', session_number: 5, meeting_status: 'held' },
+    ];
+  });
+
+  it('adds a MEETING, never a child booking', async () => {
+    const response = await POST(...post({ start_time: WHEN }));
+
+    expect(response.status).toBe(200);
+    expect(mockCreateMeeting).toHaveBeenCalledTimes(1);
+    expect(mockCreateBooking).not.toHaveBeenCalled();
+  });
+
+  it('numbers it after the last session, and as a first attempt at that session', async () => {
+    await POST(...post({ start_time: WHEN }));
+
+    expect(mockCreateMeeting).toHaveBeenCalledWith(
+      expect.objectContaining({
+        booking_id: 'container-1',
+        session_number: 7,
+        /* Not 7. That column counts ATTEMPTS at one appointment, and numbering
+           sessions with it would read as session 6 having been moved — which
+           frees the hour the client still holds. */
+        occurrence_number: 1,
+      })
+    );
+  });
+
+  it('refuses the hour the database refuses', async () => {
+    /* `scheduling_meetings_no_overlap` is the only constraint that can refuse
+       a session: the purchase carries no time, so the bookings constraint
+       skips it. */
+    mockCreateMeeting.mockResolvedValue({
+      data: null,
+      error: Object.assign(new Error('conflicting key value'), { code: '23P01' }),
+    });
+
+    const response = await POST(...post({ start_time: WHEN }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('slot_taken');
+  });
+
+  it('asks the closed-day question, as the booking path does', async () => {
+    mockClosedDayCheck.mockResolvedValue({
+      kind: 'all_day',
+      error: new BookingOnClosedDayError('all_day', '2026-12-31', 'holiday'),
+    });
+
+    const response = await POST(...post({ start_time: WHEN }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('closed_day');
+    expect(mockCreateMeeting).not.toHaveBeenCalled();
+  });
+
+  it('and adds it anyway when the owner has said so', async () => {
+    await POST(...post({ start_time: WHEN, allow_closed_day: true }));
+
+    expect(mockClosedDayCheck).not.toHaveBeenCalled();
+    expect(mockCreateMeeting).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the client, naming the session rather than the purchase', async () => {
+    /*
+     * The purchase has no clock of its own, so without the session's hour the
+     * confirmation announces an Invalid Date to the client.
+     */
+    await POST(...post({ start_time: WHEN }));
+
+    expect(mockSendConfirmation).toHaveBeenCalledWith(
+      'container-1',
+      'user-1',
+      expect.objectContaining({ sessions: [expect.objectContaining({ start: new Date(WHEN) })] })
+    );
+  });
+
+  it('records the calendar event on the SESSION', async () => {
+    /*
+     * Six sessions writing to the purchase's one `external_calendar_event_id`
+     * would keep the last and re-create the other five on the next sync.
+     */
+    await POST(...post({ start_time: WHEN }));
+
+    expect(mockSyncCalendar).toHaveBeenCalledWith(
+      expect.objectContaining({ external_calendar_event_id: null }),
+      expect.anything(),
+      'user-1',
+      'meeting-7'
+    );
+  });
+
+  it('binds a charged session to the meeting, and the job to the purchase', async () => {
+    /*
+     * The whole point of the split in the money: six stages share the
+     * container's `booking_id`, so only `meeting_id` can say which session is
+     * owed for. Keyed on the booking, marking session seven held would bill
+     * session one.
+     */
+    await POST(...post({ start_time: WHEN, charge: true }));
+
+    expect(mockCreateInstallments).toHaveBeenCalledWith([
+      expect.objectContaining({ booking_id: 'container-1', meeting_id: 'meeting-7' }),
+    ]);
+  });
+
+  it('is still refused on a package paid up front', async () => {
+    tables.proposals = {
+      ...(tables.proposals as Record<string, unknown>),
+      sessions: { dates: [], duration_minutes: 50, bill_per_session: false },
+    };
+
+    const response = await POST(...post({ start_time: WHEN, charge: true }));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('cannot_charge_upfront_package');
+  });
+
+  it('refuses a booking that is no package in either shape', async () => {
+    sessionMeetings = [];
+
+    const response = await POST(...post({ start_time: WHEN }));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe('not_a_package');
+  });
+});
+
+describe('what the client reads when a session is added', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * It reused the plain booking confirmation — "הפגישה שלך אושרה" — which is
+   * accurate about the hour and silent about everything that makes it
+   * different. A client holding six sessions received a mail indistinguishable
+   * from one confirming a standalone appointment.
+   *
+   * And when the owner adds it CHARGED, a stage of its own is created. The
+   * client was told nothing about that, so the invoice arrived as a surprise
+   * against a package they had already paid for by instalment.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  beforeEach(() => {
+    mockFindChildren.mockResolvedValue({ data: [], error: null });
+    sessionMeetings = [{ id: 'meeting-6', session_number: 6, meeting_status: null }];
+  });
+
+  it('says it was added to the package', async () => {
+    await POST(...post({ start_time: WHEN }));
+
+    expect(mockSendConfirmation).toHaveBeenCalledWith(
+      'container-1',
+      'user-1',
+      expect.objectContaining({ addedSession: expect.anything() })
+    );
+  });
+
+  it('and says nothing about money when nothing is charged', async () => {
+    await POST(...post({ start_time: WHEN }));
+
+    const options = mockSendConfirmation.mock.calls[0][2] as { addedSession: { chargedAmount: string | null } };
+    expect(options.addedSession.chargedAmount).toBeNull();
+  });
+
+  it('names the amount when the owner charged for it', async () => {
+    /* The one thing the mail has to say that the date does not. */
+    await POST(...post({ start_time: WHEN, charge: true }));
+
+    const options = mockSendConfirmation.mock.calls[0][2] as { addedSession: { chargedAmount: string | null } };
+    expect(options.addedSession.chargedAmount).toContain('83.33');
+  });
+
+  it('and promises no charge the stage failed to create', async () => {
+    /*
+     * Announcing one would leave the client expecting an invoice nobody can
+     * raise, with the owner unaware the two disagreed.
+     */
+    mockCreateInstallments.mockResolvedValue({ data: null, error: new Error('nope') });
+
+    await POST(...post({ start_time: WHEN, charge: true }));
+
+    const options = mockSendConfirmation.mock.calls[0][2] as { addedSession: { chargedAmount: string | null } };
+    expect(options.addedSession.chargedAmount).toBeNull();
+  });
+
+  it('tells them after the money is settled, not before', async () => {
+    /* The mail has to know whether a stage exists, so it cannot be sent while
+       the session is still being written. */
+    await POST(...post({ start_time: WHEN, charge: true }));
+
+    expect(mockCreateInstallments).toHaveBeenCalled();
+    expect(mockSendConfirmation).toHaveBeenCalled();
+    const stageAt = mockCreateInstallments.mock.invocationCallOrder[0];
+    const mailAt = mockSendConfirmation.mock.invocationCallOrder[0];
+    expect(mailAt).toBeGreaterThan(stageAt);
   });
 });

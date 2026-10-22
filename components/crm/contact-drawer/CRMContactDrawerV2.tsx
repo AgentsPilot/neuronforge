@@ -24,6 +24,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
+import { jobCalledOff } from '@/lib/business-os/bookingStatus';
 import { createLogger } from '@/lib/logger';
 /* The BROWSER client, for uploading a file straight to Storage on a signed
    URL — see `handleFileUpload`. Anon key, RLS respected; the permission comes
@@ -69,6 +70,8 @@ import { InvoiceModal } from '@/components/payments/InvoiceModal';
 import { RefundModal } from '@/components/payments/RefundModal';
 // The same switch the refund and stop-plan dialogs use, so one kind of choice
 // has one kind of control across the drawer.
+import { CancelMeetingDialog } from '@/components/scheduling/CancelMeetingDialog';
+import { translated } from '@/lib/business-os/translateOptional';
 import { SwitchRow } from '@/components/payments/SwitchRow';
 
 import { packageSessionPayment } from '@/lib/payments/packageSessionPayment';
@@ -87,7 +90,8 @@ import type {
   ContactEmail,
   IntakeResponses,
   BookingJourneyStep,
-  Appointment
+  Appointment,
+  MeetingAttempt
 } from './types';
 // The same split Stripe's prices are built from, so what the card shows for a
 // period is the figure actually charged. Both are pure functions — no server
@@ -99,6 +103,20 @@ import { fromMinorUnits } from '@/lib/payments/refundMath';
 export interface ExtendedBookingData {
   booking: Appointment;
   payment: SessionPayment | null;
+  /**
+   * The message telling the client the booking is off.
+   *
+   * Its own field rather than one of the attempt's emails: a cancellation is
+   * about the JOB, and filing it under whichever appointment happened to be
+   * current put "the booking is cancelled" inside the meeting's history
+   * directly beneath "you cancelled the meeting".
+   */
+  cancellationEmail?: {
+    id: string;
+    subject: string;
+    status: EmailSendStatus;
+    sentAt?: string | null;
+  } | null;
   confirmationEmail?: {
     /*
      * The shared roster, not a hand-written copy of it.
@@ -210,6 +228,14 @@ export interface DrawerProposal {
   /** Every stage of the agreed plan. Empty for a single payment. */
   stages: Array<{
     id: string;
+    /**
+     * The SESSION this stage bills, for a package billed per meeting.
+     *
+     * Six stages of a package share the container's `booking_id`, so that
+     * column can no longer say which session a stage belongs to. Null on every
+     * ordinary stage, which bills a job rather than one hour.
+     */
+    meeting_id: string | null;
     installment_number: number | null;
     amount: number;
     currency: string;
@@ -483,6 +509,8 @@ function quotedPayment(
           periodsPaid: paidStages.length,
           stages: stages.map(s => ({
             id: s.id,
+            /* Which SESSION of a package this stage bills, when it bills one. */
+            meetingId: s.meeting_id ?? null,
             label: s.label,
             amount: Number(s.amount),
             status: s.status,
@@ -525,6 +553,172 @@ function quotedPayment(
  *     ungrouped one.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * A package's sessions, read from the ONE booking that now holds them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A package used to be a container plus one child BOOKING per date, so its
+ * sessions arrived as cards of their own and only had to be grouped. They are
+ * now rows in `scheduling_meetings` on a single booking, and they reach the
+ * drawer as that booking's `attempts` — the same payload the journey already
+ * uses to draw the times an appointment has had.
+ *
+ * `session_number` is what separates the two readings of that list. On an
+ * ordinary booking the attempts are tries at ONE appointment; here each
+ * numbered session is a different appointment, and only the latest attempt at
+ * each is the hour the client holds.
+ *
+ * WHAT THESE ROWS ARE
+ *
+ * View models, not database rows. Each one borrows the purchase — the client,
+ * the service, the status — and puts its own clock in, because that is the
+ * only thing that differs between six sessions of one package.
+ *
+ * `parent_booking_id` is set to the container deliberately, and no such value
+ * exists in the database any more. Every client-side reader that asks "is this
+ * a session rather than a purchase" already asks that question this way:
+ * `isQuotedJob`, `sessionNextStep`, the card grouping. Setting it keeps all of
+ * them correct without touching one of them.
+ *
+ * `meeting_id` is what tells an ACTION apart. A session's outcome is recorded
+ * against the meeting, not a booking, so a handler must send it to
+ * `/api/scheduling/meetings/[id]/outcome` rather than the booking route.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function sessionCardsFromMeetings(
+  card: SessionCardData,
+  proposals: DrawerProposal[]
+): SessionCardData[] {
+  const numbered = (card.booking.attempts ?? []).filter(
+    attempt => attempt.session_number !== null && attempt.session_number !== undefined
+  );
+
+  if (numbered.length === 0) return [];
+
+  /*
+   * The CURRENT attempt at each session: the highest `occurrence_number`.
+   *
+   * `moved` is skipped rather than ranked. A superseded attempt is an hour the
+   * client gave back — listing it would show a date nobody holds, and showing
+   * it as the session's state would contradict the attempt that replaced it.
+   */
+  const current = new Map<number, MeetingAttempt>();
+
+  for (const attempt of numbered) {
+    if (attempt.meeting_status === 'moved') continue;
+
+    const session = Number(attempt.session_number);
+    const seen = current.get(session);
+
+    if (!seen || Number(attempt.occurrence_number ?? 1) > Number(seen.occurrence_number ?? 1)) {
+      current.set(session, attempt);
+    }
+  }
+
+  /* The stages of the quote that sold this package, by the session each bills. */
+  type DrawerStage = DrawerProposal['stages'][number];
+  const stageByMeeting = new Map<string, DrawerStage>();
+
+  for (const proposal of proposals) {
+    if (proposal.package_booking_id !== card.booking.id) continue;
+    for (const stage of proposal.stages ?? []) {
+      if (stage.meeting_id) stageByMeeting.set(stage.meeting_id, stage);
+    }
+  }
+
+  return [...current.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([session, attempt]) => {
+      const stage = stageByMeeting.get(attempt.id);
+
+      return {
+        booking: {
+          ...card.booking,
+          id: attempt.id,
+          meeting_id: attempt.id,
+          parent_booking_id: card.booking.id,
+          start_time: attempt.start_time,
+          end_time: attempt.end_time,
+          meeting_status: attempt.meeting_status,
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * THE SESSION'S OWN STATE, NOT THE PURCHASE'S.
+           *
+           * This borrowed the container's `status`, which is `confirmed` for
+           * the whole life of a running package — so a session the owner had
+           * just called off went on reading "מאושרת", confirmed, next to its
+           * own struck-through date. Two parts of one row saying opposite
+           * things about the same hour.
+           *
+           * The purchase is still confirmed, and that is right: calling off an
+           * hour does not cancel the package. It is simply not this row's
+           * answer. A row stands for a session, so it says what happened to
+           * the session, and falls back to the job only while nothing has.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          status:
+            attempt.meeting_status === 'cancelled'
+              ? 'cancelled'
+              : attempt.meeting_status === 'no_show'
+                ? 'no_show'
+                : attempt.meeting_status === 'held'
+                  ? 'completed'
+                  : card.booking.status,
+          /* The SESSION's number, which is what the row is labelled with. */
+          occurrence_number: session,
+          /*
+           * Not the purchase's whole list. A session's own history is the
+           * attempts that share its number, which is what the journey under it
+           * should show rather than every attempt at every session.
+           */
+          attempts: numbered.filter(a => Number(a.session_number) === session),
+        },
+        /*
+         * This session's money is its STAGE. An invoice raised for it now
+         * carries the container's `booking_id`, so the booking-keyed payment
+         * the card was built from describes the purchase, not this hour.
+         */
+        /*
+         * A voided stage is not money owing. Its session was called off, it
+         * will never bill, and showing "133.33 · pending" beside a row that
+         * says בוטלה claims an amount nobody can collect.
+         */
+        payment: stage && stage.status !== 'cancelled'
+          ? ({
+              id: stage.id,
+              amount: Number(stage.amount),
+              currency: String(stage.currency ?? card.payment?.currency ?? 'ILS'),
+              /*
+               * ───────────────────────────────────────────────────────────
+               * A PART OF IT CAME BACK IS NOT ALL OF IT CAME BACK.
+               *
+               * Any refund at all read as `refunded`, so a session paid
+               * 133.33 with 66.67 returned said the whole thing had gone
+               * back — and the row stopped offering Refund for the half
+               * still held, because that gate asks for `paid`.
+               *
+               * Only a refund that covers the amount settles it. Anything
+               * less leaves the stage paid, with what went back carried
+               * beside it.
+               * ───────────────────────────────────────────────────────────
+               */
+              status:
+                Number(stage.refunded_amount ?? 0) >= Number(stage.amount ?? 0) &&
+                Number(stage.amount ?? 0) > 0
+                  ? 'refunded'
+                  : stage.status === 'paid'
+                    ? 'paid'
+                    : 'pending',
+              invoiceId: stage.invoice_id ?? undefined,
+              paidAt: stage.paid_at ?? undefined,
+              refundedAt: stage.refunded_at ?? undefined,
+              refundedAmount: stage.refunded_amount ?? undefined,
+            } as SessionPayment)
+          : null,
+      };
+    });
+}
+
 function foldPackageMeetings(
   cards: SessionCardData[],
   proposals: DrawerProposal[] = []
@@ -540,6 +734,27 @@ function foldPackageMeetings(
     const siblings = meetingsByParent.get(parent) ?? [];
     siblings.push(card);
     meetingsByParent.set(parent, siblings);
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE NEW SHAPE, WHERE THERE ARE NO CHILD CARDS TO GROUP.
+   *
+   * A package written since the change has its sessions on the container
+   * itself, so the loop above finds nothing. Added to the same map rather than
+   * handled apart, so everything below — finding the quote that sold it,
+   * absorbing the container into that booking's journey, the package step —
+   * works on both shapes without knowing which it has.
+   *
+   * Both are read, never one or the other: a package sold last month is still
+   * child bookings, and a client can pay for it today.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  for (const card of cards) {
+    if (meetingsByParent.has(card.booking.id)) continue;
+
+    const sessions = sessionCardsFromMeetings(card, proposals);
+    if (sessions.length > 0) meetingsByParent.set(card.booking.id, sessions);
   }
 
   if (meetingsByParent.size === 0) return cards;
@@ -579,12 +794,52 @@ function foldPackageMeetings(
        * the agreement produced, so they belong on the same timeline as the
        * quote that produced them — after it, which is when they happen.
        */
-      const nextUp = ordered.find(meeting => meeting.booking.status === 'confirmed');
+      /*
+       * The next meeting STILL TO HAPPEN, which is the first one nobody has
+       * said anything about yet.
+       *
+       * This asked for `status === 'confirmed'`, and that stopped meaning
+       * "not yet held" when `complete()` moved the outcome to
+       * `meeting_status`: a package meeting marked held keeps
+       * `status: 'confirmed'`, so the search returned a meeting that had
+       * already taken place. "Next up" pointed backwards, and the package step
+       * never left `active` — a package of six read as still running after all
+       * six were done.
+       */
+      const nextUp = ordered.find(
+        meeting =>
+          meeting.booking.meeting_status == null &&
+          (meeting.booking.status === 'confirmed' || meeting.booking.status === 'pending')
+      );
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A PACKAGE THAT WAS CALLED OFF DID NOT COMPLETE.
+       *
+       * The status was `nextUp ? 'active' : 'completed'`, and nothing else.
+       * Cancelling a package answers every one of its sessions, so `nextUp`
+       * goes undefined and the step turned GREEN — the same green a block of
+       * six that all went ahead gets. The owner stopped the work and the
+       * timeline congratulated them on finishing it.
+       *
+       * `skipped` rather than `failed`: stopping work is a decision, not a
+       * fault, and red is the alarm colour this drawer keeps for things that
+       * went wrong. Skipped already renders as a faint disc with a dark glyph,
+       * which reads as "this did not happen" at a glance.
+       *
+       * Read off the CONTAINER rather than counted from the sessions. One held
+       * session out of thirteen would otherwise still earn a green tick, and a
+       * package cancelled before any session happened would look identical to
+       * one nobody ever got round to — which are different facts.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const packageCalledOff =
+        card.booking.status === 'cancelled' || card.booking.meeting_status === 'cancelled';
 
       const packageStep: BookingJourneyStep = {
         id: `${card.booking.id}-package`,
         key: 'package',
-        status: nextUp ? 'active' : 'completed',
+        status: packageCalledOff ? 'skipped' : nextUp ? 'active' : 'completed',
         timestamp: ordered[0]?.booking.start_time ?? undefined,
         metadata: { count: ordered.length, containerId },
       };
@@ -653,6 +908,30 @@ function pickProposal(bookingId: string, proposals: DrawerProposal[]): DrawerPro
 const FINISHED_STAGE = ['paid', 'cancelled', 'refunded'];
 const SETTLED_PAYMENT = ['paid', 'refunded', 'free'];
 
+/**
+ * Was this booking's money recorded by hand rather than taken by a processor?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Answered from the CHARGES, because they are the only rows that know. Money
+ * recorded by hand still writes a real `payment_transactions` row — `mark-paid`
+ * gives it `processor_type: 'manual'` — so the distinction is a field, not an
+ * absence.
+ *
+ * It asks EVERY settled charge, not the first. A job part-paid in cash and part
+ * by card can still be refunded through the processor, so telling the owner the
+ * money must be returned by hand would be wrong. That is only true when nothing
+ * went through a processor at all.
+ *
+ * No settled charge means unknown, which is `false`: an unpaid booking must not
+ * be labelled as settled by hand.
+ */
+function isManuallySettled(
+  charges: Array<{ status?: string | null; processor_type?: string | null }> | undefined
+): boolean {
+  const settled = (charges ?? []).filter(c => c.status === 'succeeded');
+  return settled.length > 0 && settled.every(c => c.processor_type === 'manual');
+}
+
 export function hasStoppableWork(payment: SessionPayment | null | undefined): boolean {
   const stages = payment?.plan?.stages;
 
@@ -712,8 +991,25 @@ export function buildJourneySteps(
   const hasIntake = booking.intake_responses && Object.keys(booking.intake_responses.responses || {}).length > 0;
   const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
   const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
-  const isCompleted = booking.status === 'completed';
-  const isCancelled = booking.status === 'cancelled' || booking.status === 'no_show';
+  /*
+   * The appointment's outcome, read from the column it lives in.
+   *
+   * `complete()` writes `meeting_status: 'held'` and leaves `status` at
+   * `confirmed`, so asking `status` alone made every meeting marked held since
+   * the split read as still running — which is what decides the intake
+   * wording ("not sent YET" versus "never sent") and several step states.
+   *
+   * `meeting_status == null &&` guards the legacy branch so the two can never
+   * both answer: once the column has a value it is the only one consulted.
+   */
+  const isCompleted =
+    booking.meeting_status === 'held' ||
+    (booking.meeting_status == null && booking.status === 'completed');
+  const isCancelled =
+    booking.meeting_status === 'no_show' ||
+    booking.meeting_status === 'cancelled' ||
+    booking.status === 'cancelled' ||
+    (booking.meeting_status == null && booking.status === 'no_show');
   /*
    * A booking that began as a quote request.
    *
@@ -764,15 +1060,29 @@ export function buildJourneySteps(
    * the session for a scheduled service and the delivery for one without.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  steps.push({
-    id: `${booking.id}-service`,
-    key: 'service',
-    status: 'completed',
-    details: booking.service?.service_name,
-    timestamp: booking.created_at
-  });
-
-  // Step 2: Client Info (captured at booking time)
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE STEP, BECAUSE ONE THING HAPPENED.
+   *
+   * This was two: `service`, whose detail was the service name, and `client`,
+   * whose detail was "name • email • phone". Both carried `booking.created_at`,
+   * so the journey opened with two rows stamped the same minute —
+   *
+   *     שירות        15:54   הצעת מחיר לשיפוץ
+   *     פרטי לקוח    15:54   דויד המלך • offir@… • 2013643030
+   *
+   * — for the single event of the booking being made. On a rail whose whole
+   * job is to show a sequence, two marks for one moment is a sequence that
+   * is not true.
+   *
+   * Both also repeated what was already on screen. The service name is the
+   * card's own title, two inches above. The client is the SUBJECT OF THE
+   * DRAWER: their name, email and phone are in its header.
+   *
+   * So: one mark, the client's name, and how the booking arrived — which is
+   * the one fact here that appears nowhere else.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
   /*
    * Each field isolated, so the separators stay put in Hebrew.
@@ -790,21 +1100,70 @@ export function buildJourneySteps(
    */
   const isolate = (value: string) => `\u2068${value}\u2069`;
 
-  const clientDetails = [
-    clientName,
-    booking.client_email,
-    booking.client_phone
-  ]
-    .filter(Boolean)
-    .map(v => isolate(String(v)))
-    .join(' • ');
+  /*
+   * HOW THE BOOKING ARRIVED — the one fact on this row that is nowhere else.
+   *
+   * Worded here rather than with a translation key because this builder is a
+   * plain function with no `t`; it takes `language` and carries its own word
+   * maps, which is the pattern the rest of the file already uses. An unknown
+   * source says nothing rather than guessing: a new `booking_source` value
+   * should read as silence, not as a wrong sentence.
+   */
+  const ORIGIN_WORDS: Record<string, Record<string, string>> = {
+    he: {
+      quote_request: 'הלקוח ביקש הצעת מחיר',
+      website: 'הלקוח הזמין דרך האתר',
+      manual: 'נוצר על ידך',
+      proposal: 'נוצר מתוך הצעת מחיר',
+    },
+    es: {
+      quote_request: 'El cliente pidió un presupuesto',
+      website: 'Reservó desde la web',
+      manual: 'Creada por ti',
+      proposal: 'Creada desde un presupuesto',
+    },
+    en: {
+      quote_request: 'The client asked for a quote',
+      website: 'Booked from the website',
+      manual: 'Created by you',
+      proposal: 'Created from a quote',
+    },
+  };
+
+  const origin = (ORIGIN_WORDS[language] ?? ORIGIN_WORDS.en)[booking.booking_source ?? ''] ?? '';
+
+  /*
+   * WHO STARTED IT — and the two are not the same kind of event.
+   *
+   * "The client asked for a quote" is demand arriving on its own. "Created by
+   * you" is the owner entering something they already agreed elsewhere. An
+   * owner scanning a list of jobs is looking for the first kind, and in one
+   * grey sentence the two are indistinguishable.
+   *
+   * Carried as metadata rather than baked into the text, because a string
+   * cannot be given a colour. The card tints the client's half.
+   */
+  const originBy: 'client' | 'owner' | null = !booking.booking_source
+    ? null
+    : booking.booking_source === 'manual' || booking.booking_source === 'proposal'
+      ? 'owner'
+      : 'client';
 
   steps.push({
-    id: `${booking.id}-client`,
-    key: 'client',
+    id: `${booking.id}-booked`,
+    key: 'booked',
     status: 'completed',
-    details: clientDetails || clientName,
-    timestamp: booking.created_at
+    /*
+     * The NAME only. The origin travels in metadata so the card can mark it;
+     * joined in here it would be one unstyleable run.
+     *
+     * Isolated because it is a strong-direction run inside a line that may be
+     * the other direction — without it the separators drift and the line reads
+     * as "· name origin".
+     */
+    details: clientName ? isolate(clientName) : '',
+    metadata: { origin, originBy },
+    timestamp: booking.created_at,
   });
 
   /*
@@ -861,6 +1220,19 @@ export function buildJourneySteps(
      */
     const gate = quoteGate({
       bookingStatus: booking.status,
+      /*
+       * The two the gate could not previously see.
+       *
+       * `calledOff` because a held consultation whose job was cancelled keeps
+       * `status = 'completed'` — so the gate's `'closed'` branch was
+       * unreachable for exactly the bookings it mattered for, and the
+       * create-quote button survived the cancellation.
+       *
+       * `meetingStatus` because the appointment's outcome now has a column of
+       * its own and no longer has to overwrite the job's.
+       */
+      calledOff: jobCalledOff(booking),
+      meetingStatus: booking.meeting_status ?? null,
       startTime: bookingDate,
       isUnscheduled,
       proposalStatus: proposal?.status ?? null,
@@ -1238,7 +1610,28 @@ export function buildJourneySteps(
   // We detect this by checking if intake_responses exists (even if empty object means intake was sent but not filled)
   // or if intake_completed_at is set (meaning it was completed)
   // Note: We check for both null and undefined because the data might come as either
-  const hasIntakeData = (booking.intake_responses != null) || (booking.intake_completed_at != null);
+  /*
+   * ── ASKED, ANSWERED, OR RECORDED ────────────────────────────────────────
+   *
+   * `intake_sent_at` is the third, and it is the one that was missing. Three
+   * places used to write a SENTINEL into `intake_responses` —
+   * `{ template_id: '', template_key: 'pending', responses: {} }` — for no
+   * reason except to make this line true, so that the journey would draw an
+   * "intake pending" step.
+   *
+   * That column exists now and is stamped by the send itself, so the sentinel
+   * was a second source of truth that could only disagree with the first. It
+   * also set `intake_responses` non-null with empty answers, which every other
+   * reader has to special-case.
+   *
+   * Reading the column directly lets the sentinel go. Strictly additive: this
+   * can only make the step appear where it already should have.
+   * ────────────────────────────────────────────────────────────────────────
+   */
+  const hasIntakeData =
+    (booking.intake_responses != null) ||
+    (booking.intake_completed_at != null) ||
+    (booking.intake_sent_at != null);
 
   /*
    * Shown when there is a response, OR when the business collects intake at all
@@ -1352,13 +1745,42 @@ export function buildJourneySteps(
           ? words.never
           : words.unsent;
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE STATE WORD BELONGS ON THE TITLE, THE DATES BELONG UNDER IT.
+     *
+     * `intakeDetails` is "word · date", and the word is the only part an owner
+     * scanning the rail actually needs: sent, answered, not sent yet. Buried on
+     * the line below, every stage read as a name with no state, and the state
+     * sat in a row of grey text competing with timestamps.
+     *
+     * Derived from the same branches rather than re-decided, and stripped off
+     * the front of `details` so the two can never say different things or
+     * repeat each other.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const intakeState = hasIntake
+      ? words.answered
+      : booking.intake_sent_at
+        ? !stillWaiting
+          ? words.unanswered
+          : words.awaiting
+        : isCompleted || isCancelled
+          ? words.never
+          : words.unsent;
+
+    const intakeRest = intakeDetails.startsWith(intakeState)
+      ? intakeDetails.slice(intakeState.length).replace(/^\s*·\s*/, '')
+      : intakeDetails;
+
     steps.push({
       id: `${booking.id}-intake`,
       key: 'intake',
       status: hasIntake ? 'completed' :
               isUpcoming ? 'active' :
               isCompleted || isCancelled ? 'skipped' : 'pending',
-      details: intakeDetails,
+      details: intakeRest,
+      metadata: { state: intakeState },
       /*
        * The form's own date, so the step files under the day it happened.
        *
@@ -1426,8 +1848,30 @@ export function buildJourneySteps(
     }
   });
 
-  // Step 6: Final status (Session for services, Fulfillment for products)
-  steps.push({
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * STEP 6: THE MEETING, OR THE DELIVERY — AND NEITHER ON A QUOTED PACKAGE.
+   *
+   * `session` for a service with a time, `fulfillment` for a product without
+   * one. A quoted job with NO initial visit gets neither, and that is the case
+   * this skip exists for.
+   *
+   * Such a job is quoted, agreed, and only then does the work appear — as
+   * RECURRING MEETINGS created against this booking, each with its own row and
+   * its own place in the diary. That is the whole reason it has no initial
+   * meeting: the meetings come later and there are several of them.
+   *
+   * So "אספקת השירות" was a step nobody could ever action. It sat at the end of
+   * the journey as a permanent open item, describing work that will be tracked
+   * by the sessions themselves rather than by a tick here — and the quoted job
+   * WITH a visit has no such step either, which is the shape this one should
+   * match. The journey ends where the owner's part ends: the quote, and the
+   * money.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const quotedWithoutVisit = isQuotedBooking && isUnscheduled;
+
+  if (!quotedWithoutVisit) steps.push({
     id: `${booking.id}-final`,
     key: isUnscheduled ? 'fulfillment' : 'session',
     status: isCompleted ? 'completed' :
@@ -1483,6 +1927,38 @@ export function buildJourneySteps(
   }
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CONFIRMATION COMES BEFORE THE FORM, BECAUSE IT ALREADY HAPPENED.
+   *
+   * The intake step was pushed first, so a journey opened:
+   *
+   *     ההזמנה נוצרה   15:54   ✓
+   *     טופס לקוח              טרם נשלח        ← second, and marked ACTIVE
+   *     אישור          15:54   ✓  מייל נשלח
+   *
+   * — a step that has not happened sitting between two that did, both stamped
+   * the same minute. The rail stopped describing a sequence.
+   *
+   * The confirmation is sent the instant the booking is made and is therefore
+   * always the second thing that happens. The form may be sent later, or never:
+   * it is a task, not an event, and a task belongs after the record of what has
+   * actually occurred.
+   *
+   * Its own pass rather than a different push position, for the reason the
+   * block above gives: the sequence is one fact about how a booking unfolds and
+   * it belongs in one place, where all of it can be read at once.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const intakeAt = steps.findIndex(s => s.key === 'intake');
+  const confirmAt = steps.findIndex(s => s.key === 'confirmation');
+
+  if (intakeAt > -1 && confirmAt > -1 && intakeAt < confirmAt) {
+    const [intake] = steps.splice(intakeAt, 1);
+    // Re-found: removing the intake shifted everything after it by one.
+    steps.splice(steps.findIndex(s => s.key === 'confirmation') + 1, 0, intake);
+  }
+
+  /*
    * A quoted job runs PAST the meeting, so its last two steps move to the end.
    *
    * The step order above is built for a booking where the appointment is the
@@ -1497,34 +1973,112 @@ export function buildJourneySteps(
    * price — and it belongs in one place. A booking that is not quoted has no
    * proposal step, so `filter` leaves it exactly as built.
    */
+  /*
+   * ── THE JOB ENDING IS ITS OWN EVENT, AND IT IS ALWAYS LAST ───────────────
+   *
+   * A node, not a line inside the meeting's history. Calling off the work is
+   * something that happened to the BOOKING, in the journey's own sequence —
+   * the same standing as the booking being taken or the quote being sent — and
+   * it is the last thing that happened.
+   *
+   * It carries the message the client was sent, which is the other half of the
+   * reason it exists: that mail had nowhere to live. Filed under an attempt it
+   * read as a detail of one appointment; filed nowhere it vanished. Here it
+   * sits under the event it announces, and the card can offer to send it again
+   * for a client who cannot find it — which is the only resend left once the
+   * work has stopped, every appointment message being superseded by then.
+   *
+   * Appended at EVERY exit, not pushed before one. It was pushed at the end of
+   * the function, after the quoted-booking reorder returns early — so on a
+   * quoted job, the one shape most likely to be cancelled, the node silently
+   * did not exist and the cancellation had no resend anywhere.
+   *
+   * On the JOB being off, not the meeting: `meeting_status: 'cancelled'` means
+   * the appointment was dropped while the work continues, which is a different
+   * thing and already has its own line on the rail.
+   */
+  const jobIsOff =
+    booking.status === 'cancelled' ||
+    Boolean(booking.cancel_reason) ||
+    Boolean(booking.cancelled_by);
+
+  const endingNode: BookingJourneyStep | null = jobIsOff
+    ? {
+        id: `${booking.id}-cancelled`,
+        key: 'cancelled',
+        status: 'failed',
+        details: '',
+        timestamp: data.cancellationEmail?.sentAt ?? booking.updated_at ?? booking.created_at,
+        metadata: {
+          cancelReason: booking.cancel_reason ?? null,
+          cancelledBy: booking.cancelled_by ?? null,
+          /* The mail, for the row beneath the node and its "send again". */
+          emailId: data.cancellationEmail?.id ?? null,
+          emailSubject: data.cancellationEmail?.subject ?? null,
+          emailStatus: data.cancellationEmail?.status ?? null,
+          emailSentAt: data.cancellationEmail?.sentAt ?? null,
+        },
+      }
+    : null;
+
+  /** Whatever order the journey ended up in, the ending goes last. */
+  const withEnding = (list: BookingJourneyStep[]): BookingJourneyStep[] =>
+    endingNode ? [...list, endingNode] : list;
+
   if (isQuotedBooking || data.proposal) {
     const deferred = steps.filter(s => s.key === 'proposal' || s.key === 'payment');
     const rest = steps.filter(s => !deferred.includes(s));
-    const meetingAt = rest.findIndex(s => s.key === 'session' || s.key === 'fulfillment');
 
-    if (deferred.length > 0 && meetingAt !== -1) {
+    /*
+     * A VISIT, which the quote follows. `fulfillment` is NOT one.
+     *
+     * This matched `session || fulfillment`, and the two are opposite ends of
+     * the job: a visit is where the work gets SCOPED, so the quote comes after
+     * it, while fulfilment is the work being DELIVERED, which cannot happen
+     * until the quote has been sent and agreed.
+     *
+     * On a quoted package with no meeting that put "אספקת השירות" above
+     * "הצעת מחיר" — the drawer telling the owner to deliver a job nobody had
+     * priced yet. It also made the branch below unreachable for the one case
+     * its own comment describes.
+     */
+    const visitAt = rest.findIndex(s => s.key === 'session');
+
+    if (deferred.length > 0 && visitAt !== -1) {
       /*
-       * Inserted directly AFTER the meeting, not appended to the end.
+       * Inserted directly AFTER the visit, not appended to the end.
        *
        * They coincide today, because `session` happens to be the last step
        * pushed — but the two are different instructions, and the one that
-       * survives someone adding a step below is "follows the meeting". The
-       * quote follows the visit; appending to whatever happens to be last is
-       * only accidentally the same thing.
+       * survives someone adding a step below is "follows the visit".
        */
-      return [
-        ...rest.slice(0, meetingAt + 1),
+      return withEnding([
+        ...rest.slice(0, visitAt + 1),
         ...deferred,
-        ...rest.slice(meetingAt + 1),
-      ];
+        ...rest.slice(visitAt + 1),
+      ]);
     }
 
-    // No meeting to follow — a quoted product, or a request with no
-    // consultation. The quote is then simply the next thing that happens.
-    if (deferred.length > 0) return [...rest, ...deferred];
+    /*
+     * No visit, but something to deliver: the quote goes BEFORE the delivery.
+     * A treatment package is quoted, agreed, and only then given.
+     */
+    const deliveryAt = rest.findIndex(s => s.key === 'fulfillment');
+
+    if (deferred.length > 0 && deliveryAt !== -1) {
+      return withEnding([
+        ...rest.slice(0, deliveryAt),
+        ...deferred,
+        ...rest.slice(deliveryAt),
+      ]);
+    }
+
+    // Neither a visit nor a delivery — a request with nothing attached yet.
+    // The quote is then simply the next thing that happens.
+    if (deferred.length > 0) return withEnding([...rest, ...deferred]);
   }
 
-  return steps;
+  return withEnding(steps);
 }
 
 interface CRMContactDrawerV2Props {
@@ -1858,6 +2412,12 @@ const logger = createLogger({ module: 'CRMContactDrawer' });
  * `Appointment` each cast it themselves, and one of them forgot.
  */
 type BookingWithService = SchedulingBooking & {
+  /*
+   * The attempts, attached by `/api/scheduling/bookings` when the fetch passes
+   * `include_attempts=true`. Optional because every other caller of that route
+   * does not ask for them.
+   */
+  attempts?: MeetingAttempt[];
   service?: {
     service_name: string;
     price?: number | null;
@@ -1905,6 +2465,63 @@ type BookingWithService = SchedulingBooking & {
  * `[first, last].filter(Boolean)`, where the two behave identically.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Pair each attempt with the mail sent about it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * On `email_sends.meeting_id` (20261077), so this is the RECORDED link rather
+ * than a guess. The journey could not do this before: it matched mail to a
+ * booking by creation time and subject, and a booking rescheduled after a
+ * no-show has several attempts that a booking-level heuristic cannot tell
+ * apart — every mail landed on the first.
+ *
+ * Attempts whose mail predates the column get an empty list, which renders as
+ * an attempt with no mail beneath it. That is honest: nothing recorded what was
+ * sent about them.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function attachAttemptEmails(
+  attempts: MeetingAttempt[] | undefined,
+  emails: Array<{ id: string; subject: string; sent_at: string | null; created_at: string; status: EmailSendStatus; meeting_id?: string | null; is_resend?: boolean; email_kind?: string | null }>
+): MeetingAttempt[] | undefined {
+  if (!attempts?.length) return attempts;
+
+  return attempts.map(attempt => ({
+    ...attempt,
+    emails: emails
+      .filter(email => email.meeting_id === attempt.id)
+      .map(email => ({
+        id: email.id,
+        subject: email.subject,
+        at: email.sent_at ?? email.created_at,
+        status: email.status,
+        isResend: email.is_resend ?? false,
+        kind: email.email_kind ?? null,
+      }))
+      /* Oldest first, matching the order the attempts themselves read in. */
+      .sort((a, b) => new Date(a.at ?? 0).getTime() - new Date(b.at ?? 0).getTime()),
+  }));
+}
+
+/**
+ * The message that told the client the booking is off.
+ *
+ * Found by KIND, not by subject: `email_kind` records what each message was
+ * (20261081), and matching "cancelled" in subject text would catch the
+ * meeting-only notice too — the one that says the quote is still coming.
+ * Newest, because a cancellation can be sent again.
+ */
+function findCancellationEmail(
+  emails: Array<{ id: string; subject: string; status: EmailSendStatus; sent_at: string | null; created_at: string; booking_id?: string | null; email_kind?: string | null }>,
+  bookingId: string
+) {
+  return emails
+    .filter(e => e.booking_id === bookingId && e.email_kind === 'booking_cancelled')
+    .sort((a, b) =>
+      new Date(b.sent_at ?? b.created_at).getTime() - new Date(a.sent_at ?? a.created_at).getTime()
+    )[0];
+}
+
 export function toAppointment(booking: BookingWithService): Appointment {
   return {
     id: booking.id,
@@ -1917,6 +2534,39 @@ export function toAppointment(booking: BookingWithService): Appointment {
     end_time: booking.end_time,
     timezone: booking.timezone ?? undefined,
     status: booking.status,
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE TWO THIS FUNCTION'S OWN WARNING WAS ABOUT.
+     *
+     * The note below says it outright: this copies field by field, so a new
+     * column is invisible until it is named here. Both of these were added to
+     * the table and read by code downstream, and both stopped at this line.
+     *
+     * `meeting_status` is the worse of the two by far. It is the appointment's
+     * own outcome — held, missed, called off — and `quoteGate`, the next-step
+     * banner, the header badge and whether the card opens itself ALL read it.
+     * Arriving as `undefined`, every one of them behaved as though no meeting
+     * had ever been marked, however many times the owner had marked it.
+     *
+     * `booking_source` is how the booking came to exist, and the journey's
+     * opening row is the only place it shows. Without it that row printed the
+     * client's name and nothing else.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    meeting_status: booking.meeting_status ?? null,
+    /*
+     * The attempts, where the fetch asked for them.
+     *
+     * Named here for the same reason as `meeting_status` above, which is the
+     * mistake this comment block exists to record: a column the API returns and
+     * this function does not copy arrives as `undefined`, and every reader
+     * downstream behaves as though it never existed. No error, no log.
+     *
+     * Left undefined when the fetch did not request attempts — which the
+     * journey treats as "draw the single meeting node", not as "no attempts".
+     */
+    attempts: booking.attempts ?? undefined,
+    booking_source: booking.booking_source ?? null,
     notes: booking.notes ?? undefined,
     // A package's meeting, and which one. Null on every ordinary booking.
     parent_booking_id: booking.parent_booking_id ?? null,
@@ -1934,6 +2584,10 @@ export function toAppointment(booking: BookingWithService): Appointment {
     cancel_note: booking.cancel_note ?? null,
     cancelled_by: booking.cancelled_by ?? null,
     cancellation_reason: booking.cancellation_reason ?? null,
+    /* The owner's answer about the quote (20261083). Named here for exactly
+       the reason the note above gives: the API returns it, and it would be
+       invisible to the card until this line exists. */
+    proposal_continues: booking.proposal_continues ?? null,
     intake_responses: booking.intake_responses ?? undefined,
     intake_completed_at: booking.intake_completed_at ?? undefined,
     intake_sent_at: booking.intake_sent_at ?? undefined,
@@ -2246,6 +2900,15 @@ export function CRMContactDrawerV2({
   // Modal states
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [editingBooking, setEditingBooking] = useState<SchedulingBooking | undefined>(undefined);
+  /**
+   * The SESSION the booking dialog is open on, when it is one.
+   *
+   * A package is one booking with N meetings, so a session has no booking to
+   * save — the dialog posts to `/api/scheduling/meetings/[id]/reschedule`,
+   * which writes a second attempt at that session and releases the hour the
+   * old one held. Null for every ordinary booking.
+   */
+  const [reschedulingMeetingId, setReschedulingMeetingId] = useState<string | null>(null);
   /*
    * ADDING A MEETING TO A PACKAGE, which borrows the booking dialog to choose
    * the hour and then writes through the meetings endpoint — see `onPickSlot`.
@@ -2255,6 +2918,8 @@ export function CRMContactDrawerV2({
     containerId: string;
     serviceId: string;
     billsPerMeeting: boolean;
+    /** How long one session runs, from the quote that sold them. */
+    sessionMinutes: number | null;
     /** Where the series says the next one falls; null when it has no rhythm. */
     nextLocal: string | null;
     /** And the few after that, to offer instead of "today, tomorrow". */
@@ -2354,6 +3019,24 @@ export function CRMContactDrawerV2({
   const [pendingIntakeBookingId, setPendingIntakeBookingId] = useState<string | null>(null);
   /* Resending the booking confirmation, the same shape as intake and invoice:
      confirm first, because this puts an email in a client's inbox. */
+  /* One object, not a pair of flags: the id and whether a quote is in play are
+     only ever meaningful together, and a half-set pair is how a dialog ends up
+     open against the wrong booking. */
+  const [pendingMeetingCancel, setPendingMeetingCancel] = useState<
+    {
+      bookingId: string;
+      isQuoted: boolean;
+      /**
+       * The SESSION being called off, when it is one of a package.
+       *
+       * A session has no booking of its own, so its outcome is recorded
+       * against the meeting. Null for an ordinary booking, whose single
+       * meeting is reached through the booking.
+       */
+      meetingId?: string | null;
+    } | null
+  >(null);
+  const [pendingResendKind, setPendingResendKind] = useState<string>('booking_confirmed');
   const [showConfirmationResend, setShowConfirmationResend] = useState(false);
   const [pendingConfirmationBookingId, setPendingConfirmationBookingId] = useState<string | null>(null);
   const [sendingConfirmation, setSendingConfirmation] = useState(false);
@@ -2381,6 +3064,28 @@ export function CRMContactDrawerV2({
    * also where the owner decides whether to invite them back.
    */
   const [pendingNoShowBookingId, setPendingNoShowBookingId] = useState<string | null>(null);
+  /**
+   * The SESSION a confirmation dialog is about, when it is one.
+   *
+   * A package's session has no booking of its own, so its outcome goes to
+   * `/api/scheduling/meetings/[id]/outcome` rather than a booking route. Set
+   * alongside the pending id above so the dialogs — which are about asking the
+   * owner, not about which row — stay exactly as they are.
+   */
+  const [pendingOutcomeMeetingId, setPendingOutcomeMeetingId] = useState<string | null>(null);
+  /**
+   * Whether that session still has an unbilled stage behind it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Read by the no-show dialog, to decide whether to ask about the money at
+   * all. A missed session used to do nothing to its stage: `held` bills one and
+   * `cancelled` voids one, and `no_show` did neither, so the stage read
+   * `pending` for ever against an hour no invoice would ever be raised for.
+   *
+   * The row supplies it, because the row is what is showing the stage.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [pendingOutcomeChargeable, setPendingOutcomeChargeable] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   /*
    * The accepted job the owner is stopping, if any.
@@ -2502,6 +3207,25 @@ export function CRMContactDrawerV2({
   // Email record type for confirmation matching
   interface EmailRecord {
     id: string;
+    /**
+     * What this mail was about (20261077).
+     *
+     * `findConfirmationEmail` prefers this over guessing by time and subject.
+     * Already on the wire — the emails route selects the whole row — so only
+     * this local type was hiding it, which is the same omission the comment
+     * above records for `status`.
+     */
+    booking_id?: string | null;
+    meeting_id?: string | null;
+    /*
+     * Both already on the wire and both were hidden here, which is the same
+     * omission the note above records. `is_resend` (20261079) and `email_kind`
+     * (20261081) reach the journey only because the route selects the whole
+     * row — the local type never stopped the value, it just stopped anyone
+     * seeing that it was available.
+     */
+    is_resend?: boolean;
+    email_kind?: string | null;
     subject: string;
     /*
      * The shared roster, not a hand-copied union.
@@ -2541,23 +3265,118 @@ export function CRMContactDrawerV2({
     const emails: EmailRecord[] = emailsData.emails || [];
 
     // Helper to find confirmation email for a booking
-    const findConfirmationEmail = (bookingCreatedAt: string, serviceName?: string): EmailRecord | undefined => {
+    const findConfirmationEmail = (bookingCreatedAt: string, serviceName?: string, bookingId?: string): EmailRecord | undefined => {
+/*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE WORDS A CONFIRMATION USES — AND NOT THE SERVICE NAME.
+       *
+       * Both subjects carry the service name:
+       *
+       *   confirmation  "הפגישה שלך אושרה - {service}"
+       *   reschedule    "הפגישה נקבעה מחדש - {service}"
+       *
+       * So a test that accepts the service name accepts BOTH, and the node
+       * titled "אישור הזמנה נשלח" showed the reschedule notice underneath it —
+       * leaving the owner unable to tell whether the confirmation had ever been
+       * sent.
+       *
+       * `אושרה` is in the list because the Hebrew confirmation never contained
+       * `אישור`: before the exact link existed, Hebrew confirmations were being
+       * found ONLY by the service-name clause. Removing that clause without
+       * this word would have broken Hebrew detection altogether.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const saysConfirmed = (email: EmailRecord) => {
+        const subject = email.subject.toLowerCase();
+        return (
+          subject.includes('confirm') ||   /* en "confirmed", es "confirmada" */
+          subject.includes('אושרה') ||
+          subject.includes('אישור')
+        );
+      };
+
+      const isConfirmationSubject = (email: EmailRecord) =>
+        saysConfirmed(email) ||
+        email.subject.toLowerCase().includes('booking') ||
+        /* The service name stays ONLY in the legacy time-window path below,
+           where the five-minute window already pins which booking it is and
+           this clause is just extra signal. */
+        Boolean(serviceName && email.subject.toLowerCase().includes(serviceName.toLowerCase()));
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE RECORDED LINK FIRST, THE GUESS ONLY AS A FALLBACK
+       *
+       * `email_sends.booking_id` exists since 20261077. Where it is set this is
+       * no longer a guess at all, and the subject test below is only used to
+       * pick the CONFIRMATION out of that booking's mail rather than to decide
+       * which booking it belonged to.
+       *
+       * The heuristic underneath — within five minutes of the booking being
+       * created, and a subject that mentions confirmation or the service — is
+       * kept for the 704 rows written before the column, which carry no link
+       * and never will. It is also why the link was added: keyed on when the
+       * BOOKING was created, it cannot tell two attempts of one booking apart,
+       * so every mail attached to the first.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (bookingId) {
+        const linked = emails
+          .filter(email => email.booking_id === bookingId)
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+        /* The confirmation if one is recognisable, else the first mail this
+           booking ever sent — which on any booking the platform creates IS the
+           confirmation. */
+        /*
+         * A linked mail that actually SAYS it is a confirmation. No
+         * `?? linked[0]` fallback: "the first mail this booking sent is the
+         * confirmation" only holds if the confirmation is linked, and on any
+         * booking predating 20261077 it is not — so the fallback handed back
+         * whatever the first LINKED mail happened to be, which here was the
+         * reschedule notice.
+         *
+         * Falling through to the time window instead can still find the real
+         * confirmation among the unlinked rows.
+         */
+        const confirmed = linked.find(saysConfirmed);
+        if (confirmed) return confirmed;
+
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE RECEIPT IS THE CONFIRMATION, when it is the only mail there was.
+         *
+         * A dateless product bought through checkout gets a payment receipt and
+         * no separate confirmation — there is no appointment to confirm, and the
+         * receipt is what tells the client the purchase went through.
+         *
+         * Without this the step found nothing, and the code that builds it
+         * ASSUMES a send when it has no record. So the card drew a green tick
+         * reading "אישור הזמנה נשלח" and then "לא נרשמה שליחה" underneath: a
+         * claim, and an admission that it has no evidence, in the same card.
+         *
+         * Last, after the real confirmation, so a scheduled booking that got
+         * both is unaffected and still reports its confirmation.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        const receipt = linked.find(email => email.email_kind === 'payment_receipt');
+        if (receipt) return receipt;
+      }
+
       const bookingTime = new Date(bookingCreatedAt).getTime();
       const fiveMinutes = 5 * 60 * 1000;
 
       return emails.find(email => {
         const emailTime = new Date(email.created_at).getTime();
         const isNearBookingTime = Math.abs(emailTime - bookingTime) < fiveMinutes;
-        const isConfirmation = email.subject.toLowerCase().includes('confirm') ||
-          email.subject.toLowerCase().includes('booking') ||
-          email.subject.toLowerCase().includes('אישור') ||
-          (serviceName && email.subject.toLowerCase().includes(serviceName.toLowerCase()));
-        return isNearBookingTime && isConfirmation;
+        return isNearBookingTime && isConfirmationSubject(email);
       });
     };
 
     const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: BookingWithService) => {
       const bookingData: Appointment = toAppointment(booking);
+      /* The mail sent about each attempt — see `attachAttemptEmails`. */
+      bookingData.attempts = attachAttemptEmails(bookingData.attempts, emails);
 
       // Map actual payment_status from booking to SessionPayment status
       const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' | 'refunded' => {
@@ -2622,7 +3441,12 @@ export function CRMContactDrawerV2({
        */
       const money = booking as SchedulingBooking & {
         invoice?: { amount?: number | null; paid_at?: string | null } | null;
-        payments?: Array<{ amount?: number | null; status?: string | null }>;
+        payments?: Array<{
+          amount?: number | null;
+          status?: string | null;
+          /* 'manual' when the owner recorded the money, not a processor. */
+          processor_type?: string | null;
+        }>;
         planPeriods?: Array<{
           id: string;
           installment_number: number;
@@ -2746,12 +3570,15 @@ export function CRMContactDrawerV2({
         paidAt: paidAtFromRecords,
       });
 
+      const manuallySettled = isManuallySettled(money.payments);
+
       const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : sessionMoney ? sessionMoney : isFreeService ? {
         amount: 0,
         currency: serviceCurrency,
         status: 'free' as const
       } : servicePrice > 0 ? {
         id: booking.payment_id || undefined,
+        isManual: manuallySettled,
         // One period for a plan, the whole price otherwise — what this payment
         // is, never what the agreement totals.
         amount: sessionPlan ? sessionPlan.installmentAmount : servicePrice,
@@ -2775,7 +3602,7 @@ export function CRMContactDrawerV2({
       } : null;
 
       // Find confirmation email for this booking
-      const confirmationEmail = findConfirmationEmail(booking.created_at, bookingWithService.service?.service_name);
+      const confirmationEmail = findConfirmationEmail(booking.created_at, bookingWithService.service?.service_name, booking.id);
 
       return {
         booking: bookingData,
@@ -2784,6 +3611,13 @@ export function CRMContactDrawerV2({
           {
             booking: bookingData,
             payment: paymentData,
+            /* The cancellation's own message, for the terminal node. */
+            cancellationEmail: (() => {
+              const found = findCancellationEmail(emails, booking.id);
+              return found
+                ? { id: found.id, subject: found.subject, status: found.status, sentAt: found.sent_at || found.created_at }
+                : null;
+            })(),
             confirmationEmail: confirmationEmail ? {
               status: confirmationEmail.status,
               sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
@@ -2855,7 +3689,9 @@ export function CRMContactDrawerV2({
          * and contacts — to render a list it has no need of. Emails now render
          * the moment they land.
          */
-        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`)
+        /* `include_attempts`: every arranged appointment, not just the current
+           one, so the journey can draw a row per attempt. See `listAttempts`. */
+        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50&include_attempts=true`)
           .then(response => (response.ok ? response.json() : { success: false }))
           .catch(error => {
             logger.warn({ err: error, contactId }, 'Could not load bookings');
@@ -3133,7 +3969,9 @@ export function CRMContactDrawerV2({
 
       // Fetch bookings and emails in parallel
       const [bookingsResponse, emailsResponse, proposalsResponse] = await Promise.all([
-        fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`, { cache: 'no-store' }),
+        /* The silent refresh asks for the same shape as the first load, or the
+           journey would lose its attempt rows the moment anything reloaded. */
+        fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50&include_attempts=true`, { cache: 'no-store' }),
         fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, { cache: 'no-store' }),
         fetch(`/api/business-os/proposals?contact_id=${contactId}`, { cache: 'no-store' })
       ]);
@@ -3157,6 +3995,13 @@ export function CRMContactDrawerV2({
       // Email subjects containing "confirmation" or service name are matched to bookings
       interface EmailRecord {
         id: string;
+        /** What this mail was about (20261077). See the copy above. */
+        booking_id?: string | null;
+        meeting_id?: string | null;
+        /** Whether it repeated earlier mail (20261079), and what kind it was
+            (20261081). Both come down with the row; see the copy above. */
+        is_resend?: boolean;
+        email_kind?: string | null;
         subject: string;
         status: EmailSendStatus;
         sent_at: string | null;
@@ -3167,24 +4012,76 @@ export function CRMContactDrawerV2({
       const emails: EmailRecord[] = emailsData.emails || [];
 
       // Helper to find confirmation email for a booking
-      const findConfirmationEmail = (bookingCreatedAt: string, serviceName?: string): EmailRecord | undefined => {
+      const findConfirmationEmail = (bookingCreatedAt: string, serviceName?: string, bookingId?: string): EmailRecord | undefined => {
+        /* Both subjects carry the service name, so accepting it accepts the
+           reschedule notice too — see the copy on the initial load. `אושרה`
+           because the Hebrew confirmation never says `אישור`. */
+        const saysConfirmed = (email: EmailRecord) => {
+          const subject = email.subject.toLowerCase();
+          return (
+            subject.includes('confirm') ||
+            subject.includes('אושרה') ||
+            subject.includes('אישור')
+          );
+        };
+
+        const isConfirmationSubject = (email: EmailRecord) =>
+          saysConfirmed(email) ||
+          email.subject.toLowerCase().includes('booking') ||
+          Boolean(serviceName && email.subject.toLowerCase().includes(serviceName.toLowerCase()));
+
+        /* The recorded link first — see the copy of this on the initial load
+           for why the heuristic below is kept as the fallback. Both copies must
+           behave identically: the first load and the silent refresh drawing the
+           same booking differently is a bug that only shows after a refresh. */
+        if (bookingId) {
+          const linked = emails
+            .filter(email => email.booking_id === bookingId)
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+          /* No `?? linked[0]`: on a booking predating the link column the
+             confirmation is unlinked, so that fallback returned whatever was
+             linked — the reschedule notice. Fall through instead. */
+          const confirmed = linked.find(saysConfirmed);
+          if (confirmed) return confirmed;
+
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * THE RECEIPT IS THE CONFIRMATION, when it is the only mail there was.
+           *
+           * A dateless product bought through checkout gets a payment receipt and
+           * no separate confirmation — there is no appointment to confirm, and the
+           * receipt is what tells the client the purchase went through.
+           *
+           * Without this the step found nothing, and the code that builds it
+           * ASSUMES a send when it has no record. So the card drew a green tick
+           * reading "אישור הזמנה נשלח" and then "לא נרשמה שליחה" underneath: a
+           * claim, and an admission that it has no evidence, in the same card.
+           *
+           * Last, after the real confirmation, so a scheduled booking that got
+           * both is unaffected and still reports its confirmation.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          const receipt = linked.find(email => email.email_kind === 'payment_receipt');
+          if (receipt) return receipt;
+        }
+
         const bookingTime = new Date(bookingCreatedAt).getTime();
         const fiveMinutes = 5 * 60 * 1000;
 
         return emails.find(email => {
           const emailTime = new Date(email.created_at).getTime();
           const isNearBookingTime = Math.abs(emailTime - bookingTime) < fiveMinutes;
-          const isConfirmation = email.subject.toLowerCase().includes('confirm') ||
-            email.subject.toLowerCase().includes('booking') ||
-            email.subject.toLowerCase().includes('אישור') ||
-            (serviceName && email.subject.toLowerCase().includes(serviceName.toLowerCase()));
-          return isNearBookingTime && isConfirmation;
+          return isNearBookingTime && isConfirmationSubject(email);
         });
       };
 
       if (bookingsData.success && bookingsData.bookings) {
         const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: BookingWithService) => {
           const bookingData: Appointment = toAppointment(booking);
+          /* Same pairing as the initial load. Both or neither, or the journey
+             loses its mail on the first silent refresh. */
+          bookingData.attempts = attachAttemptEmails(bookingData.attempts, emails);
 
           // Map actual payment_status from booking to SessionPayment status
           const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' | 'refunded' => {
@@ -3218,6 +4115,8 @@ export function CRMContactDrawerV2({
               /* Needed to sum what has actually arrived. The query has always
                  selected it; only this local type left it out. */
               amount?: number | string | null;
+              /* 'manual' when the owner recorded the money, not a processor. */
+              processor_type?: string | null;
             }>;
             /* Embedded by the booking query, and the record of what each
                meeting of a package was sold for.
@@ -3309,12 +4208,15 @@ export function CRMContactDrawerV2({
             collected,
           });
 
-          const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : sessionMoney ? sessionMoney : isFreeService ? {
+              const manuallySettledHere = isManuallySettled(bookingMoney.payments);
+
+      const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : sessionMoney ? sessionMoney : isFreeService ? {
             amount: 0,
             currency: serviceCurrency,
             status: 'free' as const
           } : servicePrice > 0 ? {
             id: booking.payment_id || undefined,  // Payment ID for refunds
+            isManual: manuallySettledHere,
             // One period for a plan, the whole price otherwise — what this
             // payment is, never what the agreement totals.
             amount: sessionPlan ? sessionPlan.installmentAmount : servicePrice,
@@ -3348,7 +4250,7 @@ export function CRMContactDrawerV2({
           } : null;
 
           // Find confirmation email for this booking
-          const confirmationEmail = findConfirmationEmail(booking.created_at, booking.service?.service_name);
+          const confirmationEmail = findConfirmationEmail(booking.created_at, booking.service?.service_name, booking.id);
 
           return {
             booking: bookingData,
@@ -3357,6 +4259,13 @@ export function CRMContactDrawerV2({
               {
                 booking: bookingData,
                 payment: paymentData,
+                /* The cancellation's own message, for the terminal node. */
+                cancellationEmail: (() => {
+                  const found = findCancellationEmail(emails, booking.id);
+                  return found
+                    ? { id: found.id, subject: found.subject, status: found.status, sentAt: found.sent_at || found.created_at }
+                    : null;
+                })(),
                 confirmationEmail: confirmationEmail ? {
                   status: confirmationEmail.status,
                   sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
@@ -3670,6 +4579,9 @@ export function CRMContactDrawerV2({
   const handleNewSession = () => {
     // Open the modal immediately; the services fill in when they arrive.
     setEditingBooking(undefined);
+    /* A new booking is not a session being moved. Left set, the next save
+       would post to the last session's reschedule endpoint. */
+    setReschedulingMeetingId(null);
     setShowBookingModal(true);
 
     /*
@@ -3692,6 +4604,12 @@ export function CRMContactDrawerV2({
   const handleEditSession = (bookingId: string) => {
     const session = findSession(bookingId);
     if (session) {
+      /*
+       * `everyBooking()` includes a package's sessions, so this id may be a
+       * MEETING. The dialog is the same — it is a time picker either way — and
+       * only where it saves differs.
+       */
+      setReschedulingMeetingId(session.booking.meeting_id ?? null);
       // Convert to SchedulingBooking format for modal (matching old drawer format)
       setEditingBooking({
         id: session.booking.id,
@@ -3730,6 +4648,7 @@ export function CRMContactDrawerV2({
   const handleBookingSaved = () => {
     setShowBookingModal(false);
     setEditingBooking(undefined);
+    setReschedulingMeetingId(null);
     fetchSessions(contact.id, { silent: true });
     fetchActivities(contact.id, { silent: true });
     onContactUpdated();
@@ -4099,10 +5018,58 @@ export function CRMContactDrawerV2({
                    */
                   const sold = proposals.find(p => p.package_booking_id === containerId);
 
-                  /* The container's own service, which the new meeting
-                     inherits — so the dialog opens on the right hours instead
-                     of on whichever service happens to be first. */
-                  const container = allBookings.find(item => item.id === containerId);
+                  /*
+                   * ───────────────────────────────────────────────────────────
+                   * THE CARD FIRST, `allBookings` ONLY AS A FALLBACK.
+                   *
+                   * A package's purchase carries no clock, and `allBookings`
+                   * is the diary — so the container could be absent from it
+                   * entirely. With no container there was no `service_id`, the
+                   * dialog opened on NO service at all, and the service step
+                   * is locked while adding a meeting: the owner could neither
+                   * be given one nor choose one.
+                   *
+                   * With no service the slot strip has nothing to ask about
+                   * either, which is why the time step came up empty beneath
+                   * it. One missing id, two blank steps.
+                   *
+                   * The drawer already holds this card — it is the row the
+                   * button was pressed on.
+                   * ───────────────────────────────────────────────────────────
+                   */
+                  /*
+                   * ───────────────────────────────────────────────────────────
+                   * THE CONTAINER MAY NOT BE A CARD AT ALL.
+                   *
+                   * `foldPackageMeetings` ABSORBS a package into the booking
+                   * its quote came out of, when that booking is on screen —
+                   * which is the whole point: one journey, with the sessions
+                   * listed under the quote that sold them, rather than a
+                   * purchase card sitting beside it saying the same thing.
+                   *
+                   * So looking the container up by id finds nothing for every
+                   * package sold from a consultation, and this quote has one:
+                   * `proposals.booking_id` points at the row the client's
+                   * request created. Both symptoms came from here — no service
+                   * to inherit, and no sessions to read the rhythm from, so
+                   * the dialog opened blank on both counts.
+                   *
+                   * The host carries the sessions, and the package step on it
+                   * names the container it is for.
+                   * ───────────────────────────────────────────────────────────
+                   */
+                  const packageCard =
+                    findSession(containerId) ??
+                    sessions.find(card =>
+                      card.journeySteps?.some(
+                        step =>
+                          step.key === 'package' &&
+                          (step.metadata as { containerId?: string } | undefined)?.containerId ===
+                            containerId
+                      )
+                    );
+                  const container =
+                    packageCard?.booking ?? allBookings.find(item => item.id === containerId);
 
                   /*
                    * WHERE THE SERIES SAYS THE NEXT ONE GOES.
@@ -4118,9 +5085,28 @@ export function CRMContactDrawerV2({
                    * A hand-adjusted series names no cadence and gets the
                    * dialog's own default instead of a guess.
                    */
-                  const meetings = allBookings
-                    .filter(item => item.parent_booking_id === containerId && item.start_time)
-                    .map(item => toBusinessLocalInput(new Date(item.start_time), timezone));
+                  /*
+                   * The sessions as the card knows them, which is the only
+                   * place they exist in the new shape: a package is one
+                   * booking with N MEETINGS, so `parent_booking_id` matches
+                   * nothing and the series read as having no rhythm at all —
+                   * the dialog then offered "tomorrow" to a course that runs
+                   * every Wednesday at 10:00.
+                   *
+                   * The old shape is still read beneath it, for a package sold
+                   * before the split whose sessions really are child bookings.
+                   */
+                  const fromCard = (packageCard?.meetings ?? [])
+                    .map(m => m.booking.start_time)
+                    .filter((value): value is string => Boolean(value));
+
+                  const meetings = (
+                    fromCard.length > 0
+                      ? fromCard
+                      : allBookings
+                          .filter(item => item.parent_booking_id === containerId && item.start_time)
+                          .map(item => item.start_time as string)
+                  ).map(startTime => toBusinessLocalInput(new Date(startTime), timezone));
 
                   /*
                    * And the dates the quote SOLD, as a second opinion.
@@ -4155,10 +5141,31 @@ export function CRMContactDrawerV2({
 
                   setAddMeetingTo({
                     containerId,
-                    serviceId: container?.service_id ?? '',
+                    /*
+                     * THREE SOURCES, MOST AUTHORITATIVE LAST RESORT FIRST.
+                     *
+                     * The card's booking, then the diary, then the QUOTE —
+                     * which is the thing that actually defines what this
+                     * package sells, and the only one that cannot be missing
+                     * for a package that exists.
+                     *
+                     * An empty id here is not a blank field, it is a dead end:
+                     * the service step is locked while adding a meeting, so
+                     * the owner can neither be given a service nor choose one,
+                     * and the slot strip below has nothing to ask about.
+                     */
+                    serviceId: container?.service_id || sold?.service_id || '',
                     billsPerMeeting: Boolean(sold?.sessions?.bill_per_session),
                     nextLocal: upcoming[0] ?? null,
                     upcoming,
+                    /*
+                     * How long one of these runs. The quote that sold them is
+                     * the only record of it — a package SERVICE keeps no
+                     * duration, being bought rather than booked into an hour —
+                     * and without it the slot strip asks for zero-minute slots
+                     * and reports a week with nothing free in it.
+                     */
+                    sessionMinutes: Number(sold?.sessions?.duration_minutes) || null,
                   });
                   setChargeNewMeeting(false);
                   setEditingBooking(undefined);
@@ -4234,14 +5241,44 @@ export function CRMContactDrawerV2({
                    Each outcome has its own endpoint — they are not interchangeable
                    writes to a status column: completing may settle money, a
                    cancellation notifies the client and frees the slot. */
-                onSetBookingStatus={async (bookingId, status) => {
+                onSetBookingStatus={async (bookingId, status, meetingId, chargeable) => {
+                  /* Carried into the dialogs below, which ask and then write. */
+                  setPendingOutcomeMeetingId(meetingId ?? null);
+                  /*
+                   * Whether the no-show dialog offers the charge decision. The
+                   * row knows, because it is the thing showing the stage.
+                   */
+                  setPendingOutcomeChargeable(Boolean(chargeable));
+
                   /*
                    * Cancelling reaches the CLIENT — it emails them and releases
                    * the slot — so it is confirmed rather than fired from a menu.
                    * The other two only record what happened.
                    */
+                  /*
+                   * ───────────────────────────────────────────────────────────
+                   * CALLING OFF ONE SESSION IS NOT CANCELLING THE ORDER.
+                   *
+                   * A session went to the booking cancellation dialog, which
+                   * asks "why is the ORDER cancelled?" and offers the reasons a
+                   * JOB ends for: the client will not pay, the service is
+                   * discontinued, the money was refunded and it is being closed
+                   * out. None of them is a thing that happens to one hour of a
+                   * package that is still running, and the client is nonetheless
+                   * told their order was cancelled.
+                   *
+                   * `CancelMeetingDialog` is the one that calls off an
+                   * appointment and leaves the work alone. `isQuoted: false`
+                   * because a package's quote was accepted already — there is
+                   * no quote still to come, so no toggle.
+                   * ───────────────────────────────────────────────────────────
+                   */
                   if (status === 'cancelled') {
-                    setPendingCancelBookingId(bookingId);
+                    if (meetingId) {
+                      setPendingMeetingCancel({ bookingId, isQuoted: false, meetingId });
+                    } else {
+                      setPendingCancelBookingId(bookingId);
+                    }
                     return;
                   }
 
@@ -4257,28 +5294,70 @@ export function CRMContactDrawerV2({
                     return;
                   }
 
-                  const path = 'complete';
-
+                  /*
+                   * A SESSION is marked on the meeting, not the booking.
+                   *
+                   * Completing the container would claim all six sessions
+                   * happened at once — and it is this call that bills the
+                   * session, so it has to name which one.
+                   */
                   try {
-                    const response = await fetch(`/api/scheduling/bookings/${bookingId}/${path}`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({})
-                    });
+                    const response = await fetch(
+                      meetingId
+                        ? `/api/scheduling/meetings/${meetingId}/outcome`
+                        : `/api/scheduling/bookings/${bookingId}/complete`,
+                      {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(meetingId ? { status: 'held' } : {})
+                      }
+                    );
                     const data = await response.json();
                     if (!response.ok || data.success === false) {
                       throw new Error(data.error || 'Failed to update the booking');
                     }
-                    toast.success(t('crm.booking.status_updated') || 'Booking updated');
+                    /*
+                     * Names what was RECORDED, not the row that changed.
+                     *
+                     * "ההזמנה עודכנה" is true of every write on this card, so it
+                     * told the owner nothing — and on a quoted job it is also
+                     * misleading: the booking is not completed, the CONSULTATION
+                     * is, and the work has barely started. `status === 'completed'`
+                     * is the only path that reaches here, cancel and no-show
+                     * having returned above, so the message can be specific.
+                     */
+                    toast.success(t('crm.booking.meeting_marked_held') || 'Meeting marked as held');
                     fetchSessions(contact.id, { silent: true });
                     fetchActivities(contact.id, { silent: true });
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to update the booking');
                   }
                 }}
-                onResendConfirmation={(bookingId) => {
-                  // Confirm first — the same as the other two sends.
+                onCancelMeeting={(bookingId, context) => {
+                  /*
+                   * ── IT ASKS NOW, AND IT HAS TO ──────────────────────────
+                   *
+                   * This fired straight away, on the reasoning that the client
+                   * was party to the decision so there was nothing to confirm
+                   * and nothing to send. Both halves turned out to be wrong:
+                   * the owner can drop a meeting alone, the client is then
+                   * holding a dead appointment, and the mail telling them has
+                   * to say whether the quote is still coming.
+                   *
+                   * That last part is not derivable. "No proposal exists" is
+                   * the same data whether one is being written or none ever
+                   * will be, and the client reads an opposite message in the
+                   * two cases. The dialog asks; the toggle only appears where
+                   * there is a quote to continue.
+                   */
+                  setPendingMeetingCancel({ bookingId, isQuoted: context?.isQuoted ?? false });
+                }}
+                onResendMail={(bookingId, kind) => {
+                  /* Confirm first — the same as the other two sends. The KIND
+                     travels with it so the dialog sends back what the row
+                     actually was, not always a confirmation. */
                   setPendingConfirmationBookingId(bookingId);
+                  setPendingResendKind(kind);
                   setShowConfirmationResend(true);
                 }}
                 onSendInvoice={async (invoiceId, bookingId) => {
@@ -4547,11 +5626,28 @@ export function CRMContactDrawerV2({
       <SchedulingBookingModal
         servicesLoading={servicesLoading}
         booking={editingBooking}
+        rescheduleMeetingId={reschedulingMeetingId}
         services={services}
+        /*
+         * NO STATUS ACTIONS IN HERE. This modal is reached from the drawer only
+         * to change a TIME — the journey's "שנה מועד" — and the journey already
+         * owns every other decision about the booking: the meeting stage has
+         * held, no-show and reschedule; the card's footer has Cancel.
+         *
+         * Left on, its footer offered an owner who came to move an appointment
+         * the chance to mark it held or delete it instead: the same decisions,
+         * in a second place, under different words, with none of the journey's
+         * guards around them.
+         *
+         * The header's calendar button opens the same component with no journey
+         * underneath it, so it keeps them.
+         */
+        showStatusActions={false}
         isOpen={showBookingModal}
         onClose={() => {
           setShowBookingModal(false);
           setEditingBooking(undefined);
+          setReschedulingMeetingId(null);
           setAddMeetingTo(null);
         }}
         onBookingUpdated={() => {
@@ -4560,6 +5656,7 @@ export function CRMContactDrawerV2({
           fetchAllBookings(); // Refresh all bookings for availability
           setShowBookingModal(false);
           setEditingBooking(undefined);
+          setReschedulingMeetingId(null);
           /*
            * Now reported, where it used to be deliberately withheld.
            *
@@ -4596,14 +5693,37 @@ export function CRMContactDrawerV2({
          * appointment belonging to no purchase.
          */
         prefilledServiceId={addMeetingTo?.serviceId}
+        sessionMinutes={addMeetingTo?.sessionMinutes}
         prefilledStartLocal={addMeetingTo?.nextLocal ?? undefined}
-        seriesSlots={addMeetingTo?.upcoming}
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * NO "בחירה מהירה" CHIPS. Deliberately not passed.
+         *
+         * They were the series' own remaining dates offered as a row of
+         * cards, from before the dialog could open ON the series date. It can
+         * now: `prefilledStartLocal` lands the picker on the next one at the
+         * same hour, so the chips repeated a choice already made — and they
+         * rendered before the slots had loaded, so the dialog appeared in one
+         * shape and rearranged itself into another a second later.
+         *
+         * The prop and its block are left intact rather than torn out: the
+         * chips are a real feature for a caller that has dates the slot
+         * endpoint cannot know, and passing them again is one line.
+         * ───────────────────────────────────────────────────────────────────
+         */
         extraToggle={
           addMeetingTo?.billsPerMeeting
             ? {
                 label: t('crm.booking.package.charge_it'),
                 checked: chargeNewMeeting,
                 onChange: setChargeNewMeeting,
+                /*
+                 * Every other session of this package is charged, so leaving
+                 * this off gives one away. That is a decision worth noticing
+                 * before the dialog is saved — it was missed once, and the
+                 * only way back is cancelling the session and adding it again.
+                 */
+                attention: true,
               }
             : undefined
         }
@@ -4638,10 +5758,27 @@ export function CRMContactDrawerV2({
                   throw new Error(data.error || t('crm.booking.package.add_failed'));
                 }
 
+                /*
+                 * ───────────────────────────────────────────────────────────
+                 * CLOSE FIRST, THEN REFRESH.
+                 *
+                 * The dialog closes when this promise resolves — and it used
+                 * to resolve only after three refreshes had come back. So it
+                 * sat open through all of them, and if any one threw it never
+                 * closed at all: an error on screen about a meeting the server
+                 * had already created, which the owner would then add again.
+                 *
+                 * The session exists the moment the response says so. Nothing
+                 * about the refreshes is the dialog's business, and the drawer
+                 * behind it updates whenever they land.
+                 * ───────────────────────────────────────────────────────────
+                 */
                 setAddMeetingTo(null);
-                await fetchSessions(contact.id, { silent: true });
-                await fetchActivities(contact.id, { silent: true });
-                await fetchAllBookings();
+                setShowBookingModal(false);
+
+                void fetchSessions(contact.id, { silent: true });
+                void fetchActivities(contact.id, { silent: true });
+                void fetchAllBookings();
               }
             : undefined
         }
@@ -4778,6 +5915,11 @@ export function CRMContactDrawerV2({
                     throw new Error(data.error || 'Failed to send intake form');
                   }
                   toast.success(t('crm.intake.email_sent') || 'Intake form email sent');
+                  /* The journey's intake step reads `intake_sent_at` off the
+                     booking, and the mail itself lands on the rail. Both come
+                     from `sessions`, so refreshing only activities left the
+                     step still reading "not sent yet" after it was. */
+                  fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
                   setShowIntakeConfirm(false);
                   setPendingIntakeBookingId(null);
@@ -4874,13 +6016,41 @@ export function CRMContactDrawerV2({
              */
             basedOn={proposals.find(p => p.id === proposalBuilder.supersedesId) ?? null}
             readOnly={proposalBuilder.readOnly ?? false}
-            onRevise={() =>
-              setProposalBuilder(current =>
-                current ? { ...current, readOnly: false } : current
-              )
-            }
             declineReason={proposalBuilder.declineReason}
             declineNote={proposalBuilder.declineNote}
+            /*
+             * ── OFFER THE TICK ONLY WHERE THERE IS SOMETHING TO CLOSE ───────
+             * The meeting must have HAPPENED (its time has passed) and nobody
+             * must have said what happened. A meeting still ahead has nothing
+             * to mark, and one already answered would be asked twice.
+             */
+            offerMarkHeld={(() => {
+              const b = session?.booking;
+              if (!b?.start_time) return false;          // bought, not booked
+              if (b.meeting_status) return false;         // already answered
+              return new Date(b.start_time).getTime() <= Date.now();
+            })()}
+            onMarkHeld={async () => {
+              const bookingId = proposalBuilder.bookingId;
+              if (!bookingId) return;
+              /*
+               * The same endpoint the "mark as held" button uses, so there is
+               * one way to record attendance. It writes `meeting_status` only:
+               * the job stays open, which is what lets a quote follow it.
+               */
+              const response = await fetch(
+                `/api/scheduling/bookings/${bookingId}/complete`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                }
+              );
+              const data = await response.json();
+              if (!response.ok || data.success === false) {
+                throw new Error(data.error || 'Could not mark the meeting as held');
+              }
+            }}
             onSent={() => {
               // The journey has to move the moment it is sent: the step flips
               // from waiting-on-you to waiting-on-them, and the activity
@@ -4925,16 +6095,41 @@ export function CRMContactDrawerV2({
         open={!!pendingNoShowBookingId}
         onOpenChange={open => !open && setPendingNoShowBookingId(null)}
         clientName={[contact?.first_name, contact?.last_name].filter(Boolean).join(' ') || null}
-        onConfirm={async ({ notifyClient }) => {
+        /*
+         * Ask about the money only where there is money still to decide: a
+         * session carrying an unbilled stage. The row said so when it opened
+         * this dialog.
+         */
+        chargeable={Boolean(pendingOutcomeMeetingId) && pendingOutcomeChargeable}
+        onConfirm={async ({ notifyClient, chargeSession }) => {
           if (!pendingNoShowBookingId) return;
 
           try {
+            /*
+             * A package session is marked on the MEETING. `notifyClient` is
+             * carried through either way, and the session's endpoint names the
+             * session's own hour in the mail — the purchase has no clock, so
+             * without that the client would be told about 1970.
+             *
+             * `chargeSession` goes only to the session endpoint, and only when
+             * there was something to ask: the booking route has no per-session
+             * stage to bill or waive, and sending it there would imply a
+             * decision that surface cannot act on.
+             */
             const response = await fetch(
-              `/api/scheduling/bookings/${pendingNoShowBookingId}/no-show`,
+              pendingOutcomeMeetingId
+                ? `/api/scheduling/meetings/${pendingOutcomeMeetingId}/outcome`
+                : `/api/scheduling/bookings/${pendingNoShowBookingId}/no-show`,
               {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ notifyClient }),
+                body: JSON.stringify(
+                  pendingOutcomeMeetingId
+                    ? pendingOutcomeChargeable
+                      ? { status: 'no_show', notifyClient, chargeSession }
+                      : { status: 'no_show', notifyClient }
+                    : { notifyClient }
+                ),
               }
             );
             const data = await response.json();
@@ -4942,7 +6137,7 @@ export function CRMContactDrawerV2({
               throw new Error(data.error || 'Failed to update the booking');
             }
 
-            toast.success(t('crm.booking.status_updated') || 'Booking updated');
+            toast.success(t('crm.booking.no_show_marked') || 'Marked as a no-show');
             fetchSessions(contact.id, { silent: true });
             // The no-show now writes a row on the timeline, so refresh it too.
             fetchActivities(contact.id, { silent: true });
@@ -4950,6 +6145,10 @@ export function CRMContactDrawerV2({
             toast.error(err instanceof Error ? err.message : 'Failed to update the booking');
           } finally {
             setPendingNoShowBookingId(null);
+            setPendingOutcomeMeetingId(null);
+            /* Cleared with the rest, so the next row's dialog cannot inherit a
+               charge question from a session that had one. */
+            setPendingOutcomeChargeable(false);
           }
         }}
       />
@@ -4957,7 +6156,11 @@ export function CRMContactDrawerV2({
       {/* Booking Cancellation Confirmation */}
       <Dialog
         open={!!pendingCancelBookingId}
-        onOpenChange={open => !open && setPendingCancelBookingId(null)}
+        onOpenChange={open => {
+          if (open) return;
+          setPendingCancelBookingId(null);
+          setPendingOutcomeMeetingId(null);
+        }}
       >
         <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
           <DialogHeader>
@@ -5055,23 +6258,41 @@ export function CRMContactDrawerV2({
                 if (!pendingCancelBookingId || !cancelReasonCode) return;
                 setCancellingBooking(true);
                 try {
+                  /*
+                   * Calling off ONE SESSION of a package goes to the meeting:
+                   * cancelling the container would call off all six, and the
+                   * money held against the others with it.
+                   *
+                   * The note is shared with the client only when the owner
+                   * said so, which is the same choice the booking route makes.
+                   */
                   const response = await fetch(
-                    `/api/scheduling/bookings/${pendingCancelBookingId}/cancel`,
+                    pendingOutcomeMeetingId
+                      ? `/api/scheduling/meetings/${pendingOutcomeMeetingId}/outcome`
+                      : `/api/scheduling/bookings/${pendingCancelBookingId}/cancel`,
                     {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        reason_code: cancelReasonCode,
-                        reason: cancelReasonNote.trim() || undefined,
-                        share_note_with_client: shareCancelNote
-                      })
+                      body: JSON.stringify(
+                        pendingOutcomeMeetingId
+                          ? {
+                              status: 'cancelled',
+                              notifyClient: true,
+                              reason: shareCancelNote ? cancelReasonNote.trim() || undefined : undefined
+                            }
+                          : {
+                              reason_code: cancelReasonCode,
+                              reason: cancelReasonNote.trim() || undefined,
+                              share_note_with_client: shareCancelNote
+                            }
+                      )
                     }
                   );
                   const data = await response.json();
                   if (!response.ok || data.success === false) {
                     throw new Error(data.error || 'Failed to cancel the booking');
                   }
-                  toast.success(t('crm.booking.status_updated') || 'Booking updated');
+                  toast.success(t('crm.booking.cancelled_done') || 'Booking cancelled');
                   fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
 
@@ -5189,18 +6410,131 @@ export function CRMContactDrawerV2({
       )}
 
       {/* Booking Confirmation Resend Dialog */}
+      <CancelMeetingDialog
+        open={pendingMeetingCancel !== null}
+        onOpenChange={next => !next && setPendingMeetingCancel(null)}
+        clientName={`${contact.first_name} ${contact.last_name || ''}`.trim() || null}
+        isQuoted={pendingMeetingCancel?.isQuoted ?? false}
+        onConfirm={async ({ proposalContinues }) => {
+          const bookingId = pendingMeetingCancel?.bookingId;
+          if (!bookingId) return;
+          const meetingId = pendingMeetingCancel?.meetingId ?? null;
+          try {
+            /*
+             * A SESSION is called off on the meeting: the booking is the
+             * purchase, and `meeting-cancel` would stamp the whole package's
+             * mirror as though its one appointment were off. The session's own
+             * endpoint stamps that hour, puts it back on sale, tells the client
+             * naming THAT hour, and leaves the other five alone.
+             *
+             * `proposalContinues` is not asked of a package — its quote was
+             * accepted already — so the dialog shows no toggle and there is
+             * nothing to send.
+             */
+            const response = await fetch(
+              meetingId
+                ? `/api/scheduling/meetings/${meetingId}/outcome`
+                : `/api/scheduling/bookings/${bookingId}/meeting-cancel`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                /* The owner's answer, which decides what the client reads. */
+                body: JSON.stringify(
+                  meetingId
+                    ? { status: 'cancelled', notifyClient: true }
+                    : { proposalContinues }
+                ),
+              }
+            );
+            const data = await response.json();
+            if (!response.ok || data.success === false) {
+              throw new Error(data.error || 'Could not cancel the meeting');
+            }
+            /* Names what was recorded, like the sibling handlers: the MEETING
+               is off, and the owner needs to see that the work was not also
+               ended. */
+            /*
+             * ── IT CANNOT PROMISE THE WORK CONTINUES ──────────────────────
+             * This read "the appointment is off, the work continues", which
+             * was true of every meeting cancellation until the dialog started
+             * asking. An owner who has just answered that no quote is coming
+             * gets told the opposite of what they chose, and of what the
+             * client was emailed a second earlier.
+             *
+             * It also names the send, because the client being told is the
+             * part the owner cannot otherwise see from this card.
+             */
+            toast.success(
+              proposalContinues
+                ? t('crm.booking.meeting_cancelled_done') ||
+                    'The meeting is off and the client has been told. The work continues.'
+                : t('crm.booking.meeting_cancelled_no_quote') ||
+                    'The meeting is off. The client has been told that no quote will follow.'
+            );
+            /* The same silent pair the other outcomes use, so the card updates
+               in place instead of closing the drawer. */
+            fetchSessions(contact.id, { silent: true });
+            fetchActivities(contact.id, { silent: true });
+            setPendingMeetingCancel(null);
+
+            /*
+             * ── AND AGAIN, ONCE THE MAIL HAS LANDED ─────────────────────
+             *
+             * The route sends the client's email NON-BLOCKING, deliberately:
+             * the appointment is already cancelled and a slow mail server must
+             * not hold up a response the owner is waiting on. The consequence
+             * is that the response arrives before the `email_sends` row does —
+             * measured at about nine seconds on a real send — so the refresh
+             * above paints a rail with the cancellation on it and no notice
+             * beneath, and the owner reads that as the client not being told.
+             *
+             * One more read, late enough to clear a normal send. It is silent
+             * and idempotent, so the worst case is a refetch that changes
+             * nothing.
+             */
+            window.setTimeout(() => {
+              fetchSessions(contact.id, { silent: true });
+            }, 8000);
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Could not cancel the meeting');
+          }
+        }}
+      />
+
       <Dialog open={showConfirmationResend} onOpenChange={setShowConfirmationResend}>
         <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
           <DialogHeader>
             <DialogTitle>
-              {t('crm.booking.resend_confirmation_title') || 'Send confirmation again'}
+              {/* ── IT NAMES THE MESSAGE, NOT ALWAYS "THE CONFIRMATION" ──
+                  The link now sends whatever kind it sits on, so a dialog
+                  saying "send the appointment confirmation again" would be
+                  describing something other than what the button does — the
+                  exact mismatch the link itself had. */}
+              {t('crm.booking.resend_title') || 'Send this message again'}
             </DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-[var(--v2-text-secondary)]">
-              {(t('crm.booking.resend_confirmation_message') ||
-                'Send the appointment confirmation to {name} again? They will receive the details and a calendar invite.')
+              {(t('crm.booking.resend_message') ||
+                'Send {what} to {name} again?')
+                .replace(
+                  '{what}',
+                  /* The same wording the rail uses for that kind, so the
+                     dialog and the row the owner just clicked agree. Falls
+                     back to a neutral phrase for a kind with no label rather
+                     than printing an identifier. */
+                  translated(t, `crm.journey.mail_kind.${pendingResendKind}`) ||
+                    t('crm.booking.resend_this_message') ||
+                    'this message'
+                )
                 .replace('{name}', contact.first_name || '')}
+            </p>
+            {/* What a repeat actually does, said once rather than per kind:
+                every one of them is rebuilt from the booking as it stands now,
+                which is the thing a client who lost the mail needs. */}
+            <p className="mt-2 text-xs text-[var(--v2-text-muted)]">
+              {t('crm.booking.resend_note') ||
+                'It is rebuilt from the booking as it stands now, so the details will be current.'}
             </p>
           </div>
           <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
@@ -5221,15 +6555,52 @@ export function CRMContactDrawerV2({
                 setSendingConfirmation(true);
                 try {
                   const response = await fetch(
-                    `/api/scheduling/bookings/${pendingConfirmationBookingId}/confirmation`,
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+                    `/api/scheduling/bookings/${pendingConfirmationBookingId}/resend`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      /* What to send again. The route rebuilds that kind from
+                         the booking as it stands now, rather than replaying a
+                         stored body that may describe a time since moved. */
+                      body: JSON.stringify({ kind: pendingResendKind }),
+                    }
                   );
                   const data = await response.json();
                   if (!response.ok || !data.success) {
                     throw new Error(data.error || 'Failed to send the confirmation');
                   }
-                  toast.success(t('crm.booking.confirmation_sent') || 'Confirmation sent');
-                  // The send lands on the timeline, so the drawer reflects it.
+                  /*
+                   * ── IT NAMES WHAT WAS SENT ────────────────────────────
+                   * "Confirmation sent" was accurate while this button only
+                   * ever sent confirmations. It now sends the kind it was
+                   * attached to, so on a cancellation notice it reported the
+                   * wrong message — the same mismatch the button itself had.
+                   *
+                   * Same wording as the rail and the dialog, so all three
+                   * agree about what just happened.
+                   */
+                  toast.success(
+                    (t('crm.booking.resent_done') || 'Sent again: {what}').replace(
+                      '{what}',
+                      translated(t, `crm.journey.mail_kind.${pendingResendKind}`) ||
+                        t('crm.booking.resend_this_message') ||
+                        'this message'
+                    )
+                  );
+                  /*
+                   * BOTH, because they are two different reads.
+                   *
+                   * `fetchActivities` refreshes the contact timeline. The
+                   * booking journey is built from `sessions` — that is where
+                   * the attempts are paired with their mail — so refreshing
+                   * only activities left the rail showing the state from
+                   * before the send: the row was written, linked and flagged
+                   * as a resend, and the card still said one message.
+                   *
+                   * Reported as "I resent the email and nothing got updated",
+                   * which was exactly true of everything the owner could see.
+                   */
+                  fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
                   setShowConfirmationResend(false);
                   setPendingConfirmationBookingId(null);
@@ -5312,6 +6683,10 @@ export function CRMContactDrawerV2({
                     );
                   }
 
+                  /* The refund confirmation is linked to its booking, so it
+                     belongs on that booking's rail — which is built from
+                     `sessions`, not from the activity timeline. */
+                  fetchSessions(contact.id, { silent: true });
                   fetchActivities(contact.id, { silent: true });
                   setShowRefundEmailConfirm(false);
                   setPendingRefundInvoiceId(null);

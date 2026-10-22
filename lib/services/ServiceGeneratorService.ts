@@ -10,7 +10,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { getProviderFactory } from '@/lib/ai/providerFactory';
 import type { SchedulingServiceInsert } from '@/lib/repositories/SchedulingRepository';
 
 const logger = createLogger({ service: 'ServiceGeneratorService' });
@@ -31,7 +31,23 @@ export interface BusinessBlueprint {
 export interface GeneratedService {
   service_name: string;
   description: string;
-  duration_minutes: number;
+  /**
+   * How long one of these takes, or null where nothing said.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Nullable because an absent answer must stay absent. This was `number` with
+   * a `|| 60` behind every read, so a model that omitted the field produced a
+   * service that LOOKED configured and was not — and 60 is a real-looking
+   * number nobody chose.
+   *
+   * The cost of that invention is paid on the public page: a scheduled service
+   * whose length is wrong books the wrong slot, and one whose length is null
+   * offers slots whose end equals their start. Null is the honest state, the
+   * editor shows the field empty, and the publish route refuses to put a
+   * scheduled service live without one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  duration_minutes: number | null;
   price: number | null;
   buffer_minutes: number;
   min_notice_hours: number;
@@ -272,7 +288,22 @@ export class ServiceGeneratorService {
     services: GeneratedService[];
     tokensUsed?: number;
   }> {
-    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE FACTORY, NOT A RAW PROVIDER
+     *
+     * `ProviderFactory.getProvider()` returns a `BaseAIProvider`, whose method
+     * is `chatCompletion`. `complete()` is on the FACTORY WRAPPER — so
+     * `provider.complete(...)` below was calling a method that does not exist
+     * on the object it was called on, and this path threw a TypeError the
+     * moment it ran. It is reached from service generation and from the
+     * onboarding build.
+     *
+     * Also what CLAUDE.md asks for: every LLM call goes through
+     * `getProviderFactory()`.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const factory = getProviderFactory();
 
     const systemPrompt = `You are a Business Architect configuring scheduling services for a business.
 
@@ -301,7 +332,10 @@ Generate service configurations for each service mentioned.
 Return as JSON array of services.`;
 
     try {
-      const response = await provider.complete({
+      const response = await factory.complete({
+        /* TODO (CLAUDE.md rule 5): still a hardcoded model name. Left as it
+           was so this change is only the crash fix; the model belongs in
+           config beside the other Business OS call settings. */
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -311,7 +345,15 @@ Return as JSON array of services.`;
         response_format: { type: 'json_object' }
       });
 
-      const content = response.choices[0]?.message?.content || '{}';
+      /*
+       * `{ content }`, not an OpenAI-shaped envelope.
+       *
+       * The factory wrapper returns the text already unwrapped, so
+       * `response.choices[0].message.content` was reading three properties
+       * that do not exist — part of the same mistake as calling `complete()`
+       * on a raw provider.
+       */
+      const content = response.content || '{}';
       const parsed = JSON.parse(content);
       const services = Array.isArray(parsed) ? parsed : (parsed.services || []);
 
@@ -319,7 +361,21 @@ Return as JSON array of services.`;
       const enrichedServices: GeneratedService[] = services.map((s: Partial<GeneratedService>) => ({
         service_name: s.service_name || 'Service',
         description: s.description || '',
-        duration_minutes: s.duration_minutes || 60,
+        /*
+         * The model's answer, or none. It said `|| 60`.
+         *
+         * The prompt asks for a duration, so an absent one means the model did
+         * not answer — and filling that silence with 60 produces a service
+         * that reads as configured while nobody has decided how long it takes.
+         * Price was already handled this way (`?? null`) one line down; the
+         * length was the odd one out.
+         */
+        duration_minutes:
+          typeof s.duration_minutes === 'number'
+            && Number.isFinite(s.duration_minutes)
+            && s.duration_minutes > 0
+            ? Math.round(s.duration_minutes)
+            : null,
         price: s.price ?? null,
         buffer_minutes: s.buffer_minutes || 15,
         min_notice_hours: s.min_notice_hours || 24,
@@ -336,13 +392,19 @@ Return as JSON array of services.`;
       logger.info({
         userId,
         servicesGenerated: enrichedServices.length,
-        tokensUsed: response.usage?.total_tokens
+        /*
+         * No token count available on this path: the factory wrapper returns
+         * only the text, and the usage is recorded by `callWithTracking`
+         * inside it rather than handed back. Reporting `undefined` is honest;
+         * reading `response.usage` was reporting a property that never existed.
+         */
       }, 'Services generated from bio extraction');
 
       return {
         success: true,
         services: enrichedServices,
-        tokensUsed: response.usage?.total_tokens
+        /* See the log above: the wrapper does not return usage. The field stays
+           optional on the result rather than carrying a fabricated zero. */
       };
 
     } catch (error) {
@@ -369,7 +431,12 @@ Return as JSON array of services.`;
     const services: GeneratedService[] = defaults.map(d => ({
       service_name: d.service_name || 'Service',
       description: d.description || '',
-      duration_minutes: d.duration_minutes || 60,
+      /* Read from the curated catalogue above, where every one of the entries
+         carries its own considered length — 30 for a consultation, 50 for a
+         session, 90 for a longer one. That is authored data, not a default, so
+         it is read rather than defaulted over: a `|| 60` here would silently
+         replace a hand-chosen 45 if an entry ever lost its field. */
+      duration_minutes: d.duration_minutes ?? null,
       price: d.price ?? null,
       buffer_minutes: d.buffer_minutes || 15,
       min_notice_hours: d.min_notice_hours || 24,
