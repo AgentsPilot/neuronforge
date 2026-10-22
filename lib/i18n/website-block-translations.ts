@@ -194,6 +194,8 @@ interface BlockTranslations {
     subscribe: TranslationRecord;
     successMessage: TranslationRecord;
     privacyNote: TranslationRecord;
+    /** The LINK to the business's privacy policy, not the sentence above it. */
+    privacyNotice: TranslationRecord;
   };
 
   // CTA Block
@@ -483,6 +485,17 @@ export const websiteBlockTranslations: BlockTranslations = {
       en: "We respect your privacy. Unsubscribe at any time.",
       es: 'Respetamos tu privacidad. Cancela cuando quieras.',
       he: 'אנו מכבדים את פרטיותך. בטל את הרישום בכל עת.'
+    },
+    /*
+     * The link, not the sentence. `privacyNote` above is copy the platform
+     * writes; this is the label on a link to the BUSINESS's own policy, and
+     * the two template surfaces both render it beside a consent statement that
+     * is already translated. It was an English literal in the template shape.
+     */
+    privacyNotice: {
+      en: 'Privacy notice',
+      es: 'Aviso de privacidad',
+      he: 'הצהרת פרטיות'
     },
   },
 
@@ -838,6 +851,81 @@ const templateContentTranslations: TemplateContentTranslations = {
   'Avg Salary Increase': { en: 'Avg Salary Increase', es: 'Aumento Salarial Prom.', he: 'עלייה ממוצעת בשכר' },
   'Client Value Created': { en: 'Client Value Created', es: 'Valor Creado para Clientes', he: 'ערך שנוצר ללקוחות' },
   'Projects Delivered': { en: 'Projects Delivered', es: 'Proyectos Entregados', he: 'פרויקטים שהושלמו' },
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE STARTER COPY A SECTION IS BORN WITH.
+   *
+   * Five code paths build a set of sections, and four of them write the page's
+   * own language: the AI generator prompts in it, the landing builder branches
+   * on it, and the template scaffold is English literals handed through
+   * `translateBlockContent` on the way into the database.
+   *
+   * The add-section modal was the fifth and the only one that did not, so a
+   * Hebrew site gained an English "Stay Updated / Subscribe to our newsletter /
+   * Subscribe" the moment its owner added a section — stored in English, which
+   * is worse than rendered in English, because the renderer's own localised
+   * fallbacks only apply to content that is ABSENT.
+   *
+   * It now goes through the same `translateBlockContent` as the scaffold, and
+   * these are the strings that pass through it. Everything the owner is
+   * offered in that modal is here; machine values (`name`, `tel`, `grid`,
+   * `#contact`) deliberately are not, because this table is keyed by the
+   * string itself and translating a field's name would break the form.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  'Welcome': { en: 'Welcome', es: 'Bienvenido', he: 'ברוכים הבאים' },
+  'Your professional service': {
+    en: 'Your professional service',
+    es: 'Tu servicio profesional',
+    he: 'השירות המקצועי שלך'
+  },
+  'What we offer': { en: 'What we offer', es: 'Lo que ofrecemos', he: 'מה אנחנו מציעים' },
+  'Ready to Get Started?': {
+    en: 'Ready to Get Started?',
+    es: '¿Listo para Comenzar?',
+    he: 'מוכנים להתחיל?'
+  },
+  'Contact us today': { en: 'Contact us today', es: 'Contáctanos hoy', he: 'צרו קשר עוד היום' },
+  'Name': { en: 'Name', es: 'Nombre', he: 'שם' },
+  'Email': { en: 'Email', es: 'Correo electrónico', he: 'אימייל' },
+  'Phone': { en: 'Phone', es: 'Teléfono', he: 'טלפון' },
+  'Message': { en: 'Message', es: 'Mensaje', he: 'הודעה' },
+  'Fill out this form to begin': {
+    en: 'Fill out this form to begin',
+    es: 'Completa este formulario para comenzar',
+    he: 'מלאו את הטופס כדי להתחיל'
+  },
+  'Features': { en: 'Features', es: 'Características', he: 'יתרונות' },
+  'Our Impact': { en: 'Our Impact', es: 'Nuestro Impacto', he: 'ההשפעה שלנו' },
+  'Book an Appointment': {
+    en: 'Book an Appointment',
+    es: 'Reservar una Cita',
+    he: 'קביעת תור'
+  },
+  'Make a Payment': { en: 'Make a Payment', es: 'Realizar un Pago', he: 'ביצוע תשלום' },
+  'Pay Now': { en: 'Pay Now', es: 'Pagar Ahora', he: 'שלם עכשיו' },
+  'Our Team': { en: 'Our Team', es: 'Nuestro Equipo', he: 'הצוות שלנו' },
+  'Stay Updated': { en: 'Stay Updated', es: 'Mantente Actualizado', he: 'הישארו מעודכנים' },
+  'Subscribe to our newsletter': {
+    en: 'Subscribe to our newsletter',
+    es: 'Suscríbete a nuestro boletín',
+    he: 'הירשמו לניוזלטר שלנו'
+  },
+  'Subscribe': { en: 'Subscribe', es: 'Suscribirse', he: 'הרשמה' },
+  'Trusted By': { en: 'Trusted By', es: 'Con la Confianza de', he: 'סומכים עלינו' },
+
+  /* The scaffold's newsletter block, which carries two more than the modal's. */
+  'Enter your email': {
+    en: 'Enter your email',
+    es: 'Ingresa tu correo',
+    he: 'הזינו את כתובת האימייל'
+  },
+  'Thanks for subscribing!': {
+    en: 'Thanks for subscribing!',
+    es: '¡Gracias por suscribirte!',
+    he: 'תודה על ההרשמה!'
+  },
 };
 
 /**

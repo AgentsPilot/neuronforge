@@ -17,6 +17,7 @@ import { createLogger } from '@/lib/logger';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { translateBlockContent } from '@/lib/i18n/website-block-translations';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/components/UserProvider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1480,8 +1481,8 @@ export default function WebsiteManagementPage() {
           // Repaired here too: this is the path that runs on opening the page,
           // so a site missing its footer regains one without the owner having
           // to click into a section first.
-          const withFooter = await ensureRequiredBlock(homepage.id, homepage.page_type, 'footer', blocksData.blocks || [], profile?.company_name);
-          setBlocks(await ensureRequiredBlock(homepage.id, homepage.page_type, 'process', withFooter));
+          const withFooter = await ensureRequiredBlock(homepage.id, homepage.page_type, 'footer', blocksData.blocks || [], homepage.website_language, profile?.company_name);
+          setBlocks(await ensureRequiredBlock(homepage.id, homepage.page_type, 'process', withFooter, homepage.website_language));
           // Extract client flow from process block
           const processBlock = (blocksData.blocks || []).find((b: WebsiteBlock) => b.block_type === 'process');
           if (processBlock?.content) {
@@ -2235,8 +2236,8 @@ export default function WebsiteManagementPage() {
       const blocksResponse = await fetch(`/api/website/pages/${selectedPage.id}/blocks-with-content`);
       const blocksData = await blocksResponse.json();
       if (blocksData.success) {
-        const repaired = await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'footer', blocksData.blocks || []);
-        setBlocks(await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'process', repaired));
+        const repaired = await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'footer', blocksData.blocks || [], selectedPage.website_language);
+        setBlocks(await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'process', repaired, selectedPage.website_language));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch blocks for page');
@@ -3213,7 +3214,36 @@ export default function WebsiteManagementPage() {
     }
   };
 
-  // Get default content for a new block
+  /**
+   * The starter copy a newly added section is born with, in the SITE's language.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS TRANSLATED ON THE WAY OUT RATHER THAN WRITTEN PER LANGUAGE
+   *
+   * Five code paths build sections, and this was the only one that shipped
+   * English. The AI generator prompts in the page's language, the landing
+   * builder branches on it, and the template scaffold keeps English literals
+   * and hands them to `translateBlockContent` on the way into the database —
+   * so adding a section is now the same mechanism as installing the scaffold,
+   * reading the same table, rather than a fourteenth set of ternaries that can
+   * drift from it.
+   *
+   * It matters that this is fixed at the WRITE and not at the render: a
+   * block's renderer does carry localised fallbacks, but they only apply to
+   * content that is absent. Storing "Stay Updated" on a Hebrew page defeats
+   * them, which is exactly what happened.
+   *
+   * THE SITE'S LANGUAGE, NOT THE OWNER'S. `language` from `useLanguage()` is
+   * the admin UI's — a Hebrew-speaking owner may run an English site, and the
+   * copy going onto that site has to follow the site. `page.website_language`
+   * is the row itself; `settingsForm` is the same value and is what every
+   * other call in this file passes, so it stands in before the row loads.
+   *
+   * Machine values are deliberately NOT translatable: the table is keyed by
+   * the string itself, and `name`, `tel`, `grid` and `#contact` appear in none
+   * of it, so a field's name and a link's target pass through untouched.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const getDefaultBlockContent = (blockType: string): Record<string, unknown> => {
     const defaults: Record<string, Record<string, unknown>> = {
       hero: { headline: 'Welcome', subheadline: 'Your professional service', cta_text: 'Get Started', cta_link: '#contact' },
@@ -3236,7 +3266,15 @@ export default function WebsiteManagementPage() {
       logo_cloud: { title: 'Trusted By', logos: [] },
       video: { title: '', video_url: '' }
     };
-    return defaults[blockType] || {};
+
+    const content = defaults[blockType];
+    if (!content) return {};
+
+    const siteLanguage = (page?.website_language ||
+      settingsForm.website_language ||
+      'en') as 'en' | 'es' | 'he';
+
+    return translateBlockContent(content, siteLanguage);
   };
 
   // Fetch enrichment summary to show what data is available
@@ -3332,6 +3370,20 @@ export default function WebsiteManagementPage() {
     blockType: 'footer' | 'process',
     loaded: WebsiteBlock[],
     /*
+     * The SITE's language, passed in for the same reason `companyName` is.
+     *
+     * This read `language` from `useLanguage()` — the admin UI's language, not
+     * the site's. A Hebrew-speaking owner running an English site got a Hebrew
+     * "איך זה עובד" heading and Hebrew footer links on an otherwise English
+     * page, and an English-speaking owner running a Hebrew site got the
+     * reverse. The page row knows which language the site is written in, and
+     * both callers are holding that row.
+     *
+     * It cannot be read from `settingsForm` here for the staleness reason
+     * below: this runs in the same pass that hydrates it.
+     */
+    siteLanguage?: 'en' | 'es' | 'he' | null,
+    /*
      * Passed in, not read from state.
      *
      * The main loader calls this in the same pass that sets `businessProfile`,
@@ -3341,6 +3393,7 @@ export default function WebsiteManagementPage() {
      */
     companyName?: string | null
   ) => {
+    const lang = siteLanguage || 'en';
     // Landing pages carry neither of these by design: a landing page is one
     // offer on one screen, with no "how it works" and no footer.
     if (pageType === 'landing') return loaded;
@@ -3361,7 +3414,7 @@ export default function WebsiteManagementPage() {
              * that nobody wrote and that enrichment would then have to
              * second-guess.
              */
-            title: language === 'he' ? 'איך זה עובד' : language === 'es' ? 'Cómo Funciona' : 'How It Works',
+            title: lang === 'he' ? 'איך זה עובד' : lang === 'es' ? 'Cómo Funciona' : 'How It Works',
             services_only: false,
           } : {
             company_name: companyName || businessProfile?.company_name || '',
@@ -3377,9 +3430,9 @@ export default function WebsiteManagementPage() {
              * with no About section does not offer a link to one.
              */
             menu_items: [
-              { type: 'about', anchor: '#about', label: language === 'he' ? 'אודות' : language === 'es' ? 'Acerca de' : 'About' },
-              { type: 'services', anchor: '#services', label: language === 'he' ? 'שירותים' : language === 'es' ? 'Servicios' : 'Services' },
-              { type: 'contact_form', anchor: '#contact', label: language === 'he' ? 'יצירת קשר' : language === 'es' ? 'Contacto' : 'Contact' },
+              { type: 'about', anchor: '#about', label: lang === 'he' ? 'אודות' : lang === 'es' ? 'Acerca de' : 'About' },
+              { type: 'services', anchor: '#services', label: lang === 'he' ? 'שירותים' : lang === 'es' ? 'Servicios' : 'Services' },
+              { type: 'contact_form', anchor: '#contact', label: lang === 'he' ? 'יצירת קשר' : lang === 'es' ? 'Contacto' : 'Contact' },
             ]
               .filter(item => loaded.some(b => b.block_type === item.type))
               .map(({ label, anchor }) => ({ label, anchor })),
