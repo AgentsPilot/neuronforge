@@ -15,6 +15,7 @@ import { useState } from 'react';
 import type { BlockRendererProps } from '@/components/website/blocks/types';
 import { useConsentCopy } from '@/hooks/useConsentCopy';
 import { ALREADY_SUBSCRIBED, CONFIRM_PROMPT } from '@/lib/consent/confirmPrompt';
+import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 interface NewsletterShape {
   title?: string;
@@ -34,6 +35,25 @@ export function NewsletterSection({
   locale,
 }: BlockRendererProps) {
   const c = content as NewsletterShape;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE WORDS THIS SHAPE SUPPLIES ITSELF ARE IN THE PAGE'S LANGUAGE.
+   *
+   * `'Subscribe'`, `'you@example.com'` and `'Privacy notice'` were English
+   * literals, so a Hebrew page rendered a Hebrew consent statement — which
+   * comes from the business and was always translated — between an English
+   * placeholder and an English button. The one part of the section the owner
+   * never writes was the one part that could not be in their language.
+   *
+   * `websiteBlockTranslations.newsletter` already carried every one of these
+   * in all three languages for the non-template renderer. Read from there
+   * rather than restated here, so the two newsletter surfaces cannot drift
+   * into saying different things.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const t = (key: string) => getBlockTranslation('newsletter', key, locale);
+
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   /** Set where the address was already confirmed, so no email is coming. */
@@ -99,10 +119,33 @@ export function NewsletterSection({
       dir={isRTL ? 'rtl' : 'ltr'}
       className={`apc-sec ${styles?.padding ?? ''} ${className ?? ''}`}
     >
-      <div className="apc-sec-head">
-        {c.title && <h2>{c.title}</h2>}
-        {c.description && <p className="apc-lede">{c.description}</p>}
-      </div>
+      {/*
+        ─────────────────────────────────────────────────────────────────────
+        THE DESCRIPTION IS NOT PART OF THE HEADER ROW.
+
+        `.apc-sec-head` is a TWO-ENDED row — Warm and Bloom lay it out as
+        `display: flex; justify-content: space-between`, Stone as a 170px + 1fr
+        grid — and every other shape puts exactly what it is built for inside
+        it: an eyebrow and a heading, at opposite ends of one baseline.
+
+        This shape put the heading and its DESCRIPTION in there instead, so the
+        two became the row's two ends: under Stone the h2 was squeezed into a
+        170px column beside its own subtitle, and under Warm and Bloom the pair
+        wrapped and each landed alone against the start edge — which on a
+        Hebrew page is the right-hand one, and reads as the whole section
+        jammed into a narrow column on the right.
+
+        The description is a lede belonging to the section, so it sits after
+        the head exactly as the other shapes' body content does. The base rule
+        `.apc-sec-head + * { margin-block-start: 0 }` closes the gap.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      {c.title && (
+        <div className="apc-sec-head">
+          <h2>{c.title}</h2>
+        </div>
+      )}
+      {c.description && <p className="apc-lede">{c.description}</p>}
 
       {sent ? (
         /*
@@ -131,13 +174,13 @@ export function NewsletterSection({
             required
             value={email}
             onChange={event => setEmail(event.target.value)}
-            placeholder={c.placeholder ?? 'you@example.com'}
+            placeholder={c.placeholder ?? t('emailPlaceholder')}
             disabled={sending}
             className="apc-field"
-            aria-label={c.placeholder ?? 'Email'}
+            aria-label={c.placeholder ?? t('emailPlaceholder')}
           />
           <button type="submit" disabled={sending} className="apc-btn apc-btn--solid">
-            {c.button_text ?? 'Subscribe'}
+            {c.button_text ?? t('subscribe')}
           </button>
         </form>
       )}
@@ -150,14 +193,28 @@ export function NewsletterSection({
       {!sent && consentCopy && (
         <p
           className="apc-lede"
-          style={{ fontSize: '0.8125rem', marginBlockStart: '0.6rem', opacity: 0.8 }}
+          /*
+           * The measure is the FORM's, not the lede's.
+           *
+           * `.apc-lede` caps itself at `44ch`, and `ch` scales with the font
+           * size — so at 0.8125rem that cap is about 290px, which breaks a
+           * three-clause consent sentence into a tall ragged stack narrower
+           * than the field above it. 520px is `.apc-signup`'s own width, so
+           * the statement and the form it belongs to share one edge.
+           */
+          style={{
+            fontSize: '0.8125rem',
+            marginBlockStart: '0.6rem',
+            opacity: 0.8,
+            maxWidth: '520px',
+          }}
         >
           {consentCopy.text}
           {consentCopy.privacyPolicyUrl && (
             <>
               {' '}
               <a href={consentCopy.privacyPolicyUrl} target="_blank" rel="noopener noreferrer">
-                Privacy notice
+                {t('privacyNotice')}
               </a>
             </>
           )}
