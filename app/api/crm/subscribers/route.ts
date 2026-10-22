@@ -51,10 +51,10 @@ import { z } from 'zod';
 
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
 import { businessSubscriberRepository } from '@/lib/repositories/BusinessSubscriberRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { buildAudience } from './buildAudience';
 
 const logger = createLogger({ module: 'CRMSubscribersAPI' });
@@ -165,14 +165,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { data: stages } = await supabaseServer
-      .from('crm_pipeline_stages')
-      .select('stage_key')
-      .eq('user_id', user.id)
-      .order('position', { ascending: true })
-      .limit(1);
-
-    const firstStage = stages?.[0]?.stage_key || 'lead';
+    /*
+     * The start of this owner's board, through the repository that owns the
+     * table. This was an inline `crm_pipeline_stages` read ending `|| 'lead'`
+     * — one of seven such copies, and a direct Supabase call from a route.
+     *
+     * Null means the business has no pipeline at all. The stage is then left
+     * off the insert so the column's own `DEFAULT 'lead'` applies, rather than
+     * this route restating that default as if it had decided it.
+     */
+    const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(user.id);
 
     /*
      * A name only where one was given. The address is the fallback for display,
@@ -186,7 +188,7 @@ export async function POST(request: NextRequest) {
       first_name: parts[0] ?? null,
       last_name: parts.length > 1 ? parts.slice(1).join(' ') : null,
       email: subscriber.email,
-      stage: firstStage,
+      ...(firstStage ? { stage: firstStage } : {}),
       source: subscriber.source,
       // Where they came from, carried across so the contact keeps its origin.
       source_metadata: subscriber.attribution as never,

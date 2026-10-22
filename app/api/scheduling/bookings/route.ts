@@ -181,8 +181,7 @@ export async function POST(request: NextRequest) {
       } else {
         // Create new contact - get user's first pipeline stage
         // `list` returns them ordered by position, so [0] is the entry stage.
-        const stagesResult = await crmPipelineStagesRepository.list(user.id);
-        const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+        const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(user.id);
 
         const newContactResult = await crmContactRepository.create({
           user_id: user.id,
@@ -190,7 +189,7 @@ export async function POST(request: NextRequest) {
           last_name: validated.client_last_name || null,
           email: validated.client_email,
           phone: validated.client_phone || null,
-          stage: firstStage,
+          ...(firstStage ? { stage: firstStage } : {}),
           tags: [],
           source: 'booking'
         });

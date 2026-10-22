@@ -607,11 +607,31 @@ export function createBlockTranslator<T extends keyof BlockTranslations>(
  */
 type TemplateContentTranslations = Record<string, TranslationRecord>;
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE ENTRY PER ENGLISH STRING. The group headings below are documentation,
+ * not scope.
+ *
+ * This is a FLAT map keyed by the English text, and the headings describe where
+ * a string tends to be used — a CTA button, a section title, a menu item. The
+ * same word belongs to more than one of those, so seven keys were written
+ * twice: 'About', 'Services', 'Testimonials', 'Contact', 'Get Started',
+ * 'Schedule Consultation' and 'Free Consultation'.
+ *
+ * A duplicate key is not an error at runtime. The later definition silently
+ * wins and the earlier one is dead, which is how 'Contact' came to resolve to
+ * the imperative menu label in Hebrew even when it heads a section, and how
+ * 'Free Consultation' settled on the Process Steps wording in Spanish. Both of
+ * those are now the ONLY definition rather than the accidental survivor.
+ *
+ * Before adding a string, search for it. If it is already here, the heading it
+ * sits under is the wrong question — one key, one translation.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 const templateContentTranslations: TemplateContentTranslations = {
   // About Block content
   'About Me': { en: 'About Me', es: 'Sobre Mí', he: 'אודותיי' },
   'About Us': { en: 'About Us', es: 'Sobre Nosotros', he: 'אודותינו' },
-  'About': { en: 'About', es: 'Acerca de', he: 'אודות' },
   'My Story': { en: 'My Story', es: 'Mi Historia', he: 'הסיפור שלי' },
   'Our Story': { en: 'Our Story', es: 'Nuestra Historia', he: 'הסיפור שלנו' },
   'Who We Are': { en: 'Who We Are', es: 'Quiénes Somos', he: 'מי אנחנו' },
@@ -649,37 +669,31 @@ const templateContentTranslations: TemplateContentTranslations = {
   'Book Session': { en: 'Book Session', es: 'Reservar Sesión', he: 'הזמן פגישה' },
   'Book Now': { en: 'Book Now', es: 'Reservar Ahora', he: 'הזמן עכשיו' },
   'Request Appointment': { en: 'Request Appointment', es: 'Solicitar Cita', he: 'בקש תור' },
-  'Get Started': { en: 'Get Started', es: 'Comenzar', he: 'התחל' },
   'Start Your Journey': { en: 'Start Your Journey', es: 'Comienza Tu Viaje', he: 'התחל את המסע שלך' },
   'Schedule a Call': { en: 'Schedule a Call', es: 'Programar Llamada', he: 'קבע שיחה' },
   'Contact Us': { en: 'Contact Us', es: 'Contáctenos', he: 'צור קשר' },
   'Learn More': { en: 'Learn More', es: 'Saber Más', he: 'למד עוד' },
   'Start Now': { en: 'Start Now', es: 'Empezar Ahora', he: 'התחל עכשיו' },
   'Book Your Free Call': { en: 'Book Your Free Call', es: 'Reserva Tu Llamada Gratis', he: 'הזמן שיחה חינם' },
-  'Schedule Consultation': { en: 'Schedule Consultation', es: 'Programar Consulta', he: 'קבע ייעוץ' },
   'Find Your Balance': { en: 'Find Your Balance', es: 'Encuentra Tu Equilibrio', he: 'מצא את האיזון שלך' },
   'Free Strategy Call': { en: 'Free Strategy Call', es: 'Llamada de Estrategia Gratis', he: 'שיחת אסטרטגיה חינם' },
   'Book Free Call': { en: 'Book Free Call', es: 'Reservar Llamada Gratis', he: 'הזמן שיחה חינם' },
   'Free Assessment': { en: 'Free Assessment', es: 'Evaluación Gratis', he: 'הערכה חינם' },
   'Get Proposal': { en: 'Get Proposal', es: 'Obtener Propuesta', he: 'קבל הצעה' },
-  'Free Consultation': { en: 'Free Consultation', es: 'Consulta Gratis', he: 'ייעוץ חינם' },
   'Free Case Review': { en: 'Free Case Review', es: 'Revisión de Caso Gratis', he: 'סקירת תיק חינם' },
   'Get Free Case Review': { en: 'Get Free Case Review', es: 'Obtener Revisión de Caso Gratis', he: 'קבל סקירת תיק חינם' },
 
   // Section Titles
   'Our Services': { en: 'Our Services', es: 'Nuestros Servicios', he: 'השירותים שלנו' },
-  'Services': { en: 'Services', es: 'Servicios', he: 'שירותים' },
   'What We Offer': { en: 'What We Offer', es: 'Lo Que Ofrecemos', he: 'מה אנחנו מציעים' },
   'How It Works': { en: 'How It Works', es: 'Cómo Funciona', he: 'איך זה עובד' },
   'The Process': { en: 'The Process', es: 'El Proceso', he: 'התהליך' },
   'Simple Steps': { en: 'Simple Steps', es: 'Pasos Simples', he: 'צעדים פשוטים' },
   'What Our Clients Say': { en: 'What Our Clients Say', es: 'Lo Que Dicen Nuestros Clientes', he: 'מה הלקוחות שלנו אומרים' },
-  'Testimonials': { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' },
   'Client Stories': { en: 'Client Stories', es: 'Historias de Clientes', he: 'סיפורי לקוחות' },
   'Questions? Reach Out': { en: 'Questions? Reach Out', es: '¿Preguntas? Contáctanos', he: 'שאלות? צור קשר' },
   'Have Questions?': { en: 'Have Questions?', es: '¿Tienes Preguntas?', he: 'יש לך שאלות?' },
   'Get in Touch': { en: 'Get in Touch', es: 'Ponte en Contacto', he: 'צור קשר' },
-  'Contact': { en: 'Contact', es: 'Contacto', he: 'יצירת קשר' },
   'Begin Your Healing Journey': { en: 'Begin Your Healing Journey', es: 'Comienza Tu Viaje de Sanación', he: 'התחל את מסע הריפוי שלך' },
   'Request an Appointment': { en: 'Request an Appointment', es: 'Solicita una Cita', he: 'בקש תור' },
   'Ready to Start?': { en: 'Ready to Start?', es: '¿Listo para Comenzar?', he: 'מוכן להתחיל?' },
@@ -687,6 +701,11 @@ const templateContentTranslations: TemplateContentTranslations = {
   'FAQ': { en: 'FAQ', es: 'Preguntas', he: 'שאלות נפוצות' },
 
   // Process Steps - Titles
+  /*
+   * Also a CTA button. A second copy under "CTA Buttons" read 'Consulta
+   * Gratis'; this one won by being later, so this is the wording in use and
+   * the other has been removed rather than this one changed.
+   */
   'Free Consultation': { en: 'Free Consultation', es: 'Consulta Gratuita', he: 'ייעוץ חינם' },
   'Initial Consultation': { en: 'Initial Consultation', es: 'Consulta Inicial', he: 'ייעוץ ראשוני' },
   'First Session': { en: 'First Session', es: 'Primera Sesión', he: 'פגישה ראשונה' },
@@ -819,6 +838,12 @@ const templateContentTranslations: TemplateContentTranslations = {
   'About': { en: 'About', es: 'Acerca de', he: 'אודות' },
   'Services': { en: 'Services', es: 'Servicios', he: 'שירותים' },
   'Testimonials': { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' },
+  /*
+   * Also a section heading. A second copy under "Section Titles" read
+   * 'יצירת קשר' — the noun — but this imperative won by being later, so it is
+   * what a Hebrew contact SECTION has been titled all along. Kept as-is: this
+   * clean-up removes a dead definition, it does not retranslate a live one.
+   */
   'Contact': { en: 'Contact', es: 'Contacto', he: 'צור קשר' },
   'Book': { en: 'Book', es: 'Reservar', he: 'הזמן' },
   'Specializations': { en: 'Specializations', es: 'Especializaciones', he: 'התמחויות' },

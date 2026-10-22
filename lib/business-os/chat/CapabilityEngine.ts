@@ -184,8 +184,7 @@ export class CapabilityEngine {
     // configured singleton, and `list(userId)` is the method - it orders by `position`
     // ascending, so `[0]` is the first stage, which is what this intended.
     // main's crm-plugin-executor already uses exactly this pair.
-    const stagesResult = await crmPipelineStagesRepository.list(this.userId);
-    const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+    const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(this.userId);
 
     const result = await crmContactRepository.create({
       user_id: this.userId,
@@ -193,7 +192,7 @@ export class CapabilityEngine {
       last_name: (params.last_name as string) || null,
       email: (params.email as string) || null,
       phone: (params.phone as string) || null,
-      stage: firstStage,
+      ...(firstStage ? { stage: firstStage } : {}),
       tags: [],
       source: 'chat'
     });

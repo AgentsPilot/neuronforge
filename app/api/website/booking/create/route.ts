@@ -24,6 +24,7 @@ import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccount
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
@@ -583,15 +584,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Get user's pipeline stages to determine appropriate stages
-    const { data: pipelineStages } = await supabaseServer
-      .from('crm_pipeline_stages')
-      .select('stage_key, position')
-      .eq('user_id', ownerId)
-      .order('position', { ascending: true });
+    /*
+     * The start of this owner's board, resolved in the repository that owns the
+     * table. This was an inline read ending `|| 'lead'` — one of eight copies,
+     * and a stage many pipelines do not contain.
+     */
+    const { data: resolvedFirstStage } =
+      await crmPipelineStagesRepository.firstStageKey(ownerId);
 
-    // First stage for leads (paid services that need payment first)
-    const firstStage = pipelineStages?.[0]?.stage_key || 'lead';
+    /*
+     * Kept as a string here, unlike the other call sites: it is compared below
+     * as well as inserted, and `crm_contacts.stage` is `DEFAULT 'lead'` anyway.
+     */
+    const firstStage = resolvedFirstStage ?? 'lead';
 
     /*
      * A new contact starts at the beginning. Always.
