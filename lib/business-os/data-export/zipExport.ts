@@ -17,9 +17,11 @@
 //      starts after the budget (SA C-9); real bytes are counted (a backstop
 //      for a wrong listing size); an unreadable file is listed as
 //      `could_not_be_read` and the export continues (TL default BC-5);
-//   5. CSVs, data.json, READMEs, files-index.csv; zipSync (store for files,
-//      deflate for text), entries in a fixed order (SA C-14), every name
-//      checked against the allow-list (SA C-4);
+//   5. CSVs, data.json (compact, C-10 P-2), READMEs, files-index.csv; the
+//      zip through `buildZip` (zipWriter.ts: Node zlib deflate for text, store
+//      for files; C-10 P-1), entries in a fixed order (SA C-14), every name
+//      checked against the allow-list (SA C-4); the time budget is checked
+//      before each entry (SA-C10-6);
 //   6. finished size <= 45 MiB and elapsed <= 40 s, else nothing is uploaded;
 //   7. upload `{user_id}/{job_id}/1.zip`; 8. markReady; 9. older ready
 //      exports of this account AND OF THE SAME KIND expire and their objects
@@ -39,18 +41,24 @@
 // took it): remove + `timeout`. No URL exists before upload and ready both
 // succeeded: signing is the caller's, after a `ready` outcome.
 //
+// C-10 (SA-C10-8): `data_export_ready` carries `stepMs` (the duration of each
+// step reached) and `textBytes` (the raw size of the text entries); the
+// timeout and over-ceiling events carry the steps completed so far, plus, on a
+// timeout during the zip, `zip` = the time spent before it stopped. This is the
+// only measure of the database read time on a real function.
+//
 // Logs carry ids, counts, bytes and durations only: never content, file
 // names, the business name or the email (§0.3.2, §0.4.1 E).
 //
 // Server-only.
 
 import 'server-only';
-import { zipSync, type Zippable } from 'fflate';
 import { EXPORT_LIMITS } from '@/lib/business-os/data-export/limits';
 import { ceilingUse, isNearCeiling, type CeilingKey, type CeilingMeasure } from '@/lib/business-os/data-export/ceiling';
 import { toCsv } from '@/lib/business-os/data-export/csv';
 import { buildReadme, cleanBusinessName, isoWithOffset, type ReadmeFacts } from '@/lib/business-os/data-export/readme';
 import { isAllowedEntryName } from '@/lib/business-os/data-export/zipEntries';
+import { buildZip, type ZipWriterEntry } from '@/lib/business-os/data-export/zipWriter';
 import {
   buildExportPayload,
   failedSections as listFailedSections,
@@ -125,8 +133,12 @@ export type ZipExportOutcome = ZipExportReady | ZipExportNotReady;
 
 const encoder = new TextEncoder();
 const BOM = '﻿';
-const STORE = { level: 0 as const };
-const DEFLATE = { level: 6 as const };
+
+/** C-10 (SA-C10-6): thrown from `buildZip`'s per-entry hook when the time budget is spent. */
+class BuildBudgetSpent extends Error {}
+
+/** The steps whose duration goes on the export's events (SA-C10-8). */
+type ExportStep = 'inventory' | 'read' | 'download' | 'build' | 'zip' | 'upload';
 
 /** The CSV header of a section: the descriptor's columns (DE-4); account_identity its three. */
 export function sectionColumns(id: ExportSectionId): readonly string[] {
@@ -158,6 +170,14 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
   const overTime = () => elapsed() > EXPORT_LIMITS.BUILD_MS_CEILING;
   let uploaded = false;
   let settled = false;
+  const stepMs: Partial<Record<ExportStep, number>> = {};
+  let stepStart = deps.now();
+  /** Close the current step: record its duration and start the next one. */
+  const step = (name: ExportStep) => {
+    const at = deps.now();
+    stepMs[name] = at - stepStart;
+    stepStart = at;
+  };
 
   /** Every exit before markReady succeeded (C-1). Settles once. */
   const settle = async (kind: 'refused' | 'failed', reason: DataExportFailureReason, over: CeilingKey[] = []): Promise<ZipExportNotReady> => {
@@ -185,6 +205,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
         files: measured.fileCount ?? 0,
         rows: measured.rows ?? 0,
         over,
+        stepMs,
       },
       'Data export refused: over the Phase 1 ceiling'
     );
@@ -192,7 +213,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
   };
 
   const timeout = async () => {
-    log.warn({ event: 'data_export_timeout', userId, jobId, elapsedMs: elapsed() }, 'Data export stopped at its time budget');
+    log.warn({ event: 'data_export_timeout', userId, jobId, elapsedMs: elapsed(), stepMs }, 'Data export stopped at its time budget');
     return settle('failed', 'timeout', ['buildMs']);
   };
 
@@ -201,6 +222,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
     const inventoryResult = await deps.files.inventory(userId, newFileBudget(deps.now()), log);
     if (!inventoryResult.ok) return await settle('failed', 'error');
     const inventory = inventoryResult.inventory;
+    step('inventory');
     measured.fileCount = inventory.files.length;
     measured.fileBytes = inventory.totalBytes;
     const preflight = ceilingUse({ fileBytes: measured.fileBytes, fileCount: measured.fileCount }).over;
@@ -208,6 +230,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
 
     // ── 2. Records: the bounded pass is the row check (SA Q-3) ──────────────
     const run = await deps.runSections(ctx, log, { rowCeiling: EXPORT_LIMITS.ROW_CEILING });
+    step('read');
     const rowsRead = run.sections.reduce((sum, section) => sum + section.row_count, 0);
     measured.rows = rowsRead;
     if (run.overCeiling) {
@@ -253,6 +276,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
     }
     if (stop === 'timeout') return await timeout();
     measured.fileBytes = realBytes;
+    step('download');
 
     // ── 5. Build ────────────────────────────────────────────────────────────
     const { timezone, isSet } = await deps.ownerClock(userId);
@@ -290,28 +314,50 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
 
     // Fixed order (SA C-14): README, README-he, data.json, records in section
     // order, files-index.csv, then the files in inventory order.
-    const entries: Zippable = {};
-    const add = (name: string, data: Uint8Array, level: typeof STORE | typeof DEFLATE) => {
+    const entries: ZipWriterEntry[] = [];
+    const names = new Set<string>();
+    let textBytes = 0;
+    const add = (name: string, data: Uint8Array, method: ZipWriterEntry['method']) => {
       // SA C-4: the last check before an entry is written.
       if (!isAllowedEntryName(name)) throw new Error('data export: an entry name failed the allow-list');
-      if (Object.prototype.hasOwnProperty.call(entries, name)) throw new Error('data export: duplicate entry name');
-      entries[name] = [data, level];
+      if (names.has(name)) throw new Error('data export: duplicate entry name');
+      names.add(name);
+      if (method === 'deflate') textBytes += data.byteLength;
+      entries.push({ name, data, method });
     };
-    add('README.txt', encoder.encode(BOM + buildReadme('en', readmeFacts)), DEFLATE);
-    add('README-he.txt', encoder.encode(BOM + buildReadme('he', readmeFacts)), DEFLATE);
-    add('data.json', encoder.encode(JSON.stringify(payload, null, 2)), DEFLATE);
+    add('README.txt', encoder.encode(BOM + buildReadme('en', readmeFacts)), 'deflate');
+    add('README-he.txt', encoder.encode(BOM + buildReadme('he', readmeFacts)), 'deflate');
+    // C-10 P-2: no indentation (-30% raw bytes at the ceiling); the same JSON value, format_version 2.
+    add('data.json', encoder.encode(JSON.stringify(payload)), 'deflate');
     for (const section of sections) {
       // FR-E12: a failed section still gets its CSV, header row only.
-      add(`records/${section.group}/${section.id}.csv`, toCsv(sectionColumns(section.id), section.rows as Record<string, unknown>[]), DEFLATE);
+      add(`records/${section.group}/${section.id}.csv`, toCsv(sectionColumns(section.id), section.rows as Record<string, unknown>[]), 'deflate');
     }
-    add('files-index.csv', toCsv(FILE_INDEX_COLUMNS, indexRows as unknown as Record<string, unknown>[]), DEFLATE);
+    add('files-index.csv', toCsv(FILE_INDEX_COLUMNS, indexRows as unknown as Record<string, unknown>[]), 'deflate');
     planned.forEach((file, i) => {
       const data = bytesOf[i];
-      if (data) add(file.entryPath, data, STORE);
+      if (data) add(file.entryPath, data, 'store');
     });
+    step('build');
 
     if (overTime()) return await timeout();
-    const zip = zipSync(entries, { mtime: startedAtDate });
+    let zip: Uint8Array;
+    try {
+      zip = buildZip(entries, {
+        mtime: startedAtDate,
+        // SA-C10-6: a slow function stops between entries, not after the whole zip.
+        beforeEntry: () => {
+          if (overTime()) throw new BuildBudgetSpent();
+        },
+      });
+    } catch (err) {
+      if (err instanceof BuildBudgetSpent) {
+        step('zip');
+        return await timeout();
+      }
+      throw err;
+    }
+    step('zip');
     measured.zipBytes = zip.byteLength;
 
     // ── 6. Finished size and time, BEFORE upload ────────────────────────────
@@ -326,6 +372,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
       return await settle('failed', 'error');
     }
     uploaded = true;
+    step('upload');
 
     // ── 8. markReady (SA C-2) ───────────────────────────────────────────────
     const sizes: DataExportJobCounts = { bytes: zip.byteLength, fileCount: filesIncluded, rowCount: measured.rows };
@@ -405,7 +452,7 @@ export async function runZipExport(input: ZipExportInput, deps: ZipExportDeps, l
       ceilingUsePct: use.pct,
       durationMs: outcome.durationMs,
     };
-    log.info({ event: 'data_export_ready', ...facts }, 'Data export ready');
+    log.info({ event: 'data_export_ready', ...facts, stepMs, textBytes }, 'Data export ready');
     if (isNearCeiling(use)) log.warn({ event: 'data_export_near_ceiling', ...facts }, 'Data export is near the Phase 1 ceiling');
     return outcome;
   } catch (err) {
