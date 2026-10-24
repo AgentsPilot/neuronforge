@@ -17,7 +17,7 @@ import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { PAGE_CONTAINER, scrollIntoBusinessOsView } from '@/lib/business-os/pageContainer';
 
 import type { DialogAction } from '@/lib/business-os/DraftManagerTypes';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
@@ -1273,7 +1273,7 @@ function BusinessOSContent() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[var(--v2-bg)]">
+      <div className="flex min-h-full items-center justify-center bg-[var(--v2-bg)]">
         <div className="text-center space-y-4">
           <div
             className="w-16 h-16 rounded-full animate-spin mx-auto border-4 border-[var(--v2-border)] border-t-orange-500"
@@ -1288,7 +1288,7 @@ function BusinessOSContent() {
 
   return (
     <div
-      className="min-h-screen bg-[var(--v2-bg)]"
+      className="min-h-full bg-[var(--v2-bg)]"
     >
       {/* Header */}
 
@@ -1399,12 +1399,10 @@ function BusinessOSContent() {
                  */
                 const target = document.getElementById(CHANNELS_CARD_ID);
                 if (target) {
-                  // Offset by the sticky header and tab bar, which would
-                  // otherwise cover the top of the card we just scrolled to.
-                  const chrome = document.querySelector('.sticky');
-                  const chromeHeight = chrome ? chrome.getBoundingClientRect().height : 0;
-                  const top = target.getBoundingClientRect().top + window.scrollY - chromeHeight - 12;
-                  window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+                  /* The page body scrolls, not the window, and the chrome no
+                     longer covers what it lands on — see
+                     `scrollIntoBusinessOsView`. */
+                  scrollIntoBusinessOsView(target);
                 }
               } else if (action === 'complete_profile') {
                 // Both of these used to be sections on the account settings

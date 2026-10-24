@@ -77,9 +77,31 @@ describe('the contact endpoint', () => {
   });
 
   it('starts an enquiry at the pipeline’s first stage', () => {
-    // The documented default, and correct again now that subscribers are gone:
-    // everyone arriving here IS waiting for a reply.
-    expect(contactSource).toContain("pipelineStages?.[0]?.stage_key || 'lead'");
+    /*
+     * The documented default, and correct again now that subscribers are gone:
+     * everyone arriving here IS waiting for a reply.
+     *
+     * This asserted the inline expression `pipelineStages?.[0]?.stage_key ||
+     * 'lead'`. That was one of eight copies of the same resolution — and the
+     * literal `'lead'` in it is a stage many pipelines do not contain, which
+     * on a live board put a real contact in no column at all. The rule now
+     * lives in `CRMPipelineStagesRepository.firstStageKey`, so the guard
+     * follows it there: what matters is that this route asks the pipeline,
+     * not which statement it uses to ask.
+     */
+    expect(contactSource).toContain('crmPipelineStagesRepository.firstStageKey(');
+  });
+
+  it('never writes a stage the business may not have', () => {
+    /*
+     * The other half, and the reason the expression above went away. With no
+     * pipeline configured the stage is OMITTED so `crm_contacts.stage`'s own
+     * `NOT NULL DEFAULT 'lead'` applies — rather than this route restating
+     * that default as though it had decided it.
+     */
+    /* The CODE shape, not the words: prose about the old expression is fine. */
+    expect(contactSource).not.toMatch(/stage_key\s*(\|\||\?\?)\s*'lead'/);
+    expect(contactSource).toContain('...(initialStage ? { stage: initialStage } : {})');
   });
 
   it('still routes a stale bundle’s newsletter post to the subscriber path', () => {

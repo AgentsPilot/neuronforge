@@ -219,6 +219,26 @@ export interface GapItem {
   value?: number;
   currency?: string;
   /**
+   * Which session of a package this row is about.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A NUMBER, not a sentence, and that is the whole point of the field.
+   *
+   * `stage_awaiting_completion` produces one row per session, and on a package
+   * every one of them carries the same client, the same job and the same
+   * amount — five rows identical to the character, with nothing to say which
+   * had just been billed.
+   *
+   * It cannot be written into `note`: the gaps run server-side, the route
+   * resolves no language, and the card renders `note` raw. A sentence composed
+   * here would reach a Hebrew owner in English. So the figure travels and the
+   * surface says it in the reader's own words.
+   *
+   * Absent on every other gap, and on a quote phase, which has no sessions.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  sessionNumber?: number;
+  /**
    * A payment plan that is STILL CHARGING this client.
    *
    * Only `booking_cancelled` sets it. It is not a detail on the row so much as

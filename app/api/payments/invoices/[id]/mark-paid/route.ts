@@ -132,6 +132,8 @@ export async function POST(
       invoiceId: invoice.id,
       userId: user.id,
       contactId: invoice.contact_id,
+      /* So the charge names the booking, not just the invoice. */
+      bookingId: invoice.booking_id,
       amount: parsed.data.amount ?? invoice.amount,
       currency: invoice.currency,
       paidAt: parsed.data.paid_at,
@@ -184,7 +186,7 @@ export async function POST(
      *
      * This used to promote the contact directly. It no longer decides that:
      * payment is not the relationship, and "a booking was confirmed" is the one
-     * rule, held by `promote_contact_on_confirmed_booking`. What this path owes
+     * rule, held by `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)`. What this path owes
      * is the confirmation — a booking held pending because money was owed is
      * confirmed once the money is recorded, however it arrived.
      *

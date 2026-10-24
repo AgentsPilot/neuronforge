@@ -215,7 +215,7 @@ export interface OperationalAutomation {
    * enquiry, so nothing gates the reply.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  requires?: 'intake_reaches_client' | 'takes_bookings' | 'sends_quotes';
+  requires?: 'intake_reaches_client' | 'takes_bookings' | 'sends_quotes' | 'bills_for_anything';
 
   /**
    * Not offered until the owner has shown they already do this work by hand.
@@ -369,6 +369,21 @@ export const OPERATIONAL_AUTOMATIONS: OperationalAutomation[] = [
     delayHours: 72,
     covers: ['invoice_chase'],
     sweepQueues: 'invoice_chase',
+    /*
+     * An invoice to chase, which not every business has.
+     *
+     * This was the ONLY entry in the registry with no requirement at all, and
+     * the omission showed: a business whose whole catalogue is free, or which
+     * sells nothing through the platform and uses the contact form, was
+     * offered an automation that can never have anything to do. That is the
+     * failure `automationApplies` opens by naming — "offering an unusable one
+     * costs their trust in every other thing this card asks them".
+     *
+     * Asked of the invoices themselves rather than of the services, the same
+     * way `sends_quotes` is asked of proposals: a service priced today proves
+     * less than a bill actually raised, and this automation chases bills.
+     */
+    requires: 'bills_for_anything',
     carriedOutBy: 'payment_reminders',
     labelKey: 'automation.chase_invoices',
     hintKey: 'automation.chase_invoices_hint',

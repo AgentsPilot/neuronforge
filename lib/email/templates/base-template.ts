@@ -598,6 +598,17 @@ export interface EmailPlanScheduleLabels {
   total: string;
   /** Precedes a period's returned amount. Omit and no refund is reported. */
   refunded?: string;
+  /**
+   * Marks a period that will never be billed.
+   *
+   * Without it a `cancelled` period rendered exactly like one still to come:
+   * same ink, same amount, no note. A client reading the schedule after a
+   * payment request was withdrawn would still count it as money they owe —
+   * which is the opposite of what the email was sent to tell them.
+   *
+   * Optional, so a caller that has no cancelled periods is unchanged.
+   */
+  cancelled?: string;
 }
 
 /**
@@ -639,7 +650,9 @@ export function emailPlanSchedule(params: {
   const rows = periods
     .map(period => {
       const paid = period.status === 'paid';
-      const highlighted = period.number === highlightNumber;
+      const cancelled = period.status === 'cancelled';
+      /* A cancelled period is never the one being asked for. */
+      const highlighted = period.number === highlightNumber && !cancelled;
 
       const when = period.dueDate
         ? new Date(`${period.dueDate}T00:00:00Z`).toLocaleDateString(intlLocale, {
@@ -649,8 +662,14 @@ export function emailPlanSchedule(params: {
           })
         : '';
 
-      const note = paid ? labels.paid : highlighted ? labels.highlight : '';
-      const ink = highlighted || paid ? c.ink : c.inkMuted;
+      const note = cancelled
+        ? (labels.cancelled ?? '')
+        : paid
+          ? labels.paid
+          : highlighted
+            ? labels.highlight
+            : '';
+      const ink = cancelled ? c.inkMuted : highlighted || paid ? c.ink : c.inkMuted;
 
       const refunded = Number(period.refunded || 0);
 
@@ -662,8 +681,13 @@ export function emailPlanSchedule(params: {
        * milestone falls due when the work is done, so having no date is its
        * ordinary state, not an edge case.
        */
-      const parts = [when, note ? `<span style="color: ${branding.primaryColor};">${note}</span>` : '']
-        .filter(Boolean);
+      const parts = [
+        /* No due date on a period nobody will be asked for. */
+        cancelled ? '' : when,
+        note
+          ? `<span style="color: ${cancelled ? c.inkMuted : branding.primaryColor};">${note}</span>`
+          : '',
+      ].filter(Boolean);
 
       /* Owner-typed, so escaped. It reaches here from `payment_plan_installments.label`,
          which the quote builder fills from a free-text field. */
@@ -680,7 +704,7 @@ export function emailPlanSchedule(params: {
           <td style="padding: 5px 0; font-size: 14px; color: ${ink};">
             ${period.number}.${name ? ` ${name}` : ''}${parts.length ? ` ${parts.join(' · ')}` : ''}
           </td>
-          <td align="${align}" style="padding: 5px 0; font-size: 14px; font-weight: ${highlighted ? '600' : '400'}; color: ${ink};">
+          <td align="${align}" style="padding: 5px 0; font-size: 14px; font-weight: ${highlighted ? '600' : '400'}; color: ${ink};${cancelled ? ' text-decoration: line-through;' : ''}">
             ${formatCurrency(period.amount, currency)}
           </td>
         </tr>`;
@@ -833,10 +857,66 @@ export function formatCurrency(amount: number, currency: string): string {
  */
 export function formatEmailDate(
   date: Date,
-  timezone: string,
-  options: { includeTime?: boolean; includeYear?: boolean; locale?: Locale } = {}
+  /*
+   * Optional in the TYPE because it has always been optional in FACT:
+   * `emailSessionRows` takes `timezone: string | undefined` and passes it
+   * straight here, which was a type error the build happens to ignore. Widened
+   * rather than defaulted, because `Intl` already does the right thing with
+   * `undefined` (the runtime's own zone) and inventing a `'UTC'` here would
+   * state a clock nobody chose. See the Currency & Timezone rules: a missing
+   * timezone is "not asked", not UTC.
+   */
+  timezone: string | undefined,
+  options: {
+    includeTime?: boolean;
+    includeYear?: boolean;
+    locale?: Locale;
+    /**
+     * Name the zone after the time. True by default, because a single
+     * appointment in an email must say which clock it is on.
+     *
+     * A LIST turns that into noise: ten dates each ending "שעון החוף המזרחי
+     * (חורף)" is the same sentence ten times, and it pushed every row onto a
+     * second line. There the zone is said once, beneath the table.
+     */
+    includeTimezone?: boolean;
+    /**
+     * The same date, narrow enough for a column on a phone.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * `weekday: 'long'` and `month: 'long'` give "יום רביעי, 18 בנובמבר 2026
+     * בשעה 10:00" — about 220px at 13px, and right for a sentence announcing
+     * one appointment, which is what every other caller is doing.
+     *
+     * In the session table it is a CELL. With the number column, a nowrap
+     * state and a nowrap amount beside it, the table needs roughly 420px; an
+     * email panel offers ~600px on a desktop and about 326px on a 390px phone
+     * once its 32px side padding is taken off. So the table could not fit, the
+     * message overflowed sideways and the rows clipped — reported from an
+     * iPhone against a desktop that was fine.
+     *
+     * Short forms are what a column wants anyway: the weekday and the month
+     * are recognisable at a glance from three letters, and the year is dropped
+     * because a schedule's rows are all in the same one and it is stated in
+     * the sentence above the table.
+     *
+     * A media query would be the usual answer. The Gmail app strips `<style>`,
+     * so nothing in a `@media` block is guaranteed to arrive; the width has to
+     * be right in the markup itself.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    compact?: boolean;
+  } = {}
 ): string {
-  const { includeTime = true, includeYear = true, locale = 'en' } = options;
+  const {
+    includeTime = true,
+    /* A compact date drops the year unless the caller insists, for the reason
+       above: every row of a schedule shares it. */
+    includeYear = !options.compact,
+    locale = 'en',
+    includeTimezone = true,
+    compact = false,
+  } = options;
 
   // Map our locales to Intl locale codes
   const intlLocales: Record<Locale, string> = {
@@ -848,8 +928,8 @@ export function formatEmailDate(
 
   try {
     const dateOptions: Intl.DateTimeFormatOptions = {
-      weekday: 'long',
-      month: 'long',
+      weekday: compact ? 'short' : 'long',
+      month: compact ? 'short' : 'long',
       day: 'numeric',
       timeZone: timezone
     };
@@ -885,7 +965,7 @@ export function formatEmailDate(
        * calendar day, and a zone on it would imply a precision it does not
        * have.
        */
-      dateOptions.timeZoneName = 'long';
+      if (includeTimezone) dateOptions.timeZoneName = 'long';
     }
 
     return new Intl.DateTimeFormat(intlLocale, dateOptions).format(date);
@@ -904,4 +984,148 @@ export function formatEmailDate(
       hour12: true
     });
   }
+}
+
+/**
+ * Every session of a package, for the CLIENT, in the email that changed one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A client holding six sessions reads "your meeting has been moved" and is left
+ * to work out what that leaves them with. They have no drawer to open and no
+ * table to look at: the email IS their record of a block they paid for.
+ *
+ * So the mail that tells them about ONE session shows them all of them — what
+ * has happened to each and what it cost — and marks the one that changed, so
+ * the news and its consequences are in the same place.
+ *
+ * Returns '' for an ordinary booking, which has no sessions to list.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface EmailSessionLine {
+  number: number;
+  start: string;
+  state: 'upcoming' | 'held' | 'missed' | 'cancelled';
+  amount: number | null;
+  currency: string | null;
+  money: 'paid' | 'due' | 'refunded' | 'partly_refunded' | null;
+  /** What came back, where some of it did. */
+  refunded?: number | null;
+  isSubject: boolean;
+}
+
+export function emailSessionRows(
+  lines: EmailSessionLine[],
+  timezone: string | undefined,
+  locale: Locale,
+  branding: BrandingData,
+  labels: {
+    states: Record<string, string>;
+    money: Record<string, string>;
+    columns: { when: string; state: string; payment: string };
+    zoneNote: (zone: string) => string;
+  }
+): string {
+  if (!lines.length) return '';
+
+  const c = emailPalette(branding);
+  const isRtl = locale === 'he';
+  const start = isRtl ? 'right' : 'left';
+  const end = isRtl ? 'left' : 'right';
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * COLUMNS, AND THE ZONE SAID ONCE.
+   *
+   * This was one sentence per session — date, zone, state and money run
+   * together — so ten of them wrapped into twenty ragged lines and the client
+   * had to parse each to find the hour. The zone came from `formatEmailDate`,
+   * which names it in full on every date it formats: correct for a single
+   * appointment, and ten repetitions of "שעון החוף המזרחי (חורף)" in a list.
+   *
+   * So: four columns with a heading, the time of day on its own, and the zone
+   * once underneath where it belongs to the whole table.
+   *
+   * A real `<table>` rather than a grid or flex, because an email client is
+   * not a browser — Outlook ignores most of modern CSS and tables are what
+   * survives it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const head = `
+    <tr>
+      <td style="padding: 0 0 6px; width: 24px;"></td>
+      <td style="padding: 0 8px 6px; text-align: ${start}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.when}</td>
+      <td style="padding: 0 8px 6px; text-align: ${start}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.state}</td>
+      <td style="padding: 0 0 6px; text-align: ${end}; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: ${c.inkFaint};">${labels.columns.payment}</td>
+    </tr>`;
+
+  /*
+   * ── NO `nowrap` ON THE STATE OR THE MONEY ─────────────────────────────────
+   *
+   * Both carried it, and together with a full long date they made this table
+   * about 420px wide. A phone gives it ~326px, so the message overflowed
+   * sideways and the rows clipped off the edge.
+   *
+   * `nowrap` means "never wrap", not "prefer one line": removing it costs
+   * nothing on a desktop, where every one of these cells fits anyway, and lets
+   * the rare long one take a second line instead of forcing the whole message
+   * wider than the screen. The money cell is the one whose length has no
+   * ceiling — a partial refund names what was taken AND what came back — and
+   * it was the cell least able to afford the promise.
+   *
+   * The amounts themselves cannot break: `formatCurrency` puts no space
+   * between the symbol and the figure.
+   * ──────────────────────────────────────────────────────────────────────────
+   */
+  const rows = lines
+    .map(line => {
+      const when = formatEmailDate(new Date(line.start), timezone, {
+        locale,
+        /* The zone is named once under the table — see above. */
+        includeTimezone: false,
+        /* And short forms, so four columns fit a phone. See `compact`. */
+        compact: true,
+      });
+
+      const state = labels.states[line.state] ?? '';
+      /*
+       * The charge, then what became of it. A partial refund names the figure
+       * that came back beside the one that was taken — "133.33 · הוחזר 66.67"
+       * — because the client is owed the difference and a bare "refunded"
+       * tells them the whole amount returned when half of it did not.
+       */
+      const back =
+        line.money === 'partly_refunded' && line.refunded
+          ? ` ${formatCurrency(line.refunded, line.currency || 'USD')}`
+          : '';
+
+      const money =
+        line.money && line.amount !== null
+          ? `${formatCurrency(line.amount, line.currency || 'USD')} <span style="color: ${c.inkFaint};">${labels.money[line.money] ?? ''}${back}</span>`
+          : '';
+
+      /* The one this email is about, marked so it can be found among ten. */
+      const weight = line.isSubject ? '600' : '400';
+      const struck = line.state === 'cancelled' ? 'text-decoration: line-through;' : '';
+
+      return `
+    <tr>
+      <td style="padding: 7px 0; border-top: 1px solid ${c.line}; width: 24px; font-size: 12px; color: ${c.inkFaint}; vertical-align: top;">${line.number}</td>
+      <td style="padding: 7px 8px; border-top: 1px solid ${c.line}; text-align: ${start}; font-size: 13px; font-weight: ${weight}; color: ${c.ink}; ${struck}">${when}</td>
+      <td style="padding: 7px 8px; border-top: 1px solid ${c.line}; text-align: ${start}; font-size: 12px; color: ${c.inkMuted};">${state}</td>
+      <td style="padding: 7px 0; border-top: 1px solid ${c.line}; text-align: ${end}; font-size: 12px; color: ${c.ink};">${money}</td>
+    </tr>`;
+    })
+    .join('');
+
+  const zoneNote = timezone
+    ? `<p style="margin: 8px 0 0; font-size: 11px; color: ${c.inkFaint};">${labels.zoneNote(timezone)}</p>`
+    : '';
+
+  return `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0;">
+      ${head}
+      ${rows}
+    </table>
+    ${zoneNote}
+  `;
 }

@@ -320,6 +320,15 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   const [hasIntake, setHasIntake] = useState(false);
   const [intakeResponses, setIntakeResponses] = useState<Record<string, unknown>>({});
   const [bookingId, setBookingId] = useState<string | null>(null);
+  /*
+   * The attempt this journey is paying for, where there is no booking yet.
+   *
+   * A service that takes a card writes no booking until the payment succeeds —
+   * one written earlier held the slot against every other client for ever. So
+   * between the details step and the payment returning, THIS is the id the
+   * journey is carried by, and `bookingId` is null.
+   */
+  const [attemptId, setAttemptId] = useState<string | null>(null);
   const [submittingIntake, setSubmittingIntake] = useState(false);
 
   // Payment state
@@ -398,10 +407,21 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     const urlParams = new URLSearchParams(window.location.search);
     const paymentStatus = urlParams.get('payment');
     const bookingIdFromUrl = urlParams.get('booking_id');
+    /*
+     * A card journey comes back with an ATTEMPT, not a booking.
+     *
+     * The booking does not exist yet: it is created by `finalize` below,
+     * now that the payment is known to have succeeded. Writing it before
+     * the client left to pay is what held the slot against every other
+     * client for ever.
+     */
+    const attemptIdFromUrl = urlParams.get('attempt_id');
+    const returningId = bookingIdFromUrl || attemptIdFromUrl;
 
-    if (paymentStatus === 'success' && bookingIdFromUrl) {
+    if (paymentStatus === 'success' && returningId) {
       // Payment succeeded, finalize the booking
-      setBookingId(bookingIdFromUrl);
+      if (bookingIdFromUrl) setBookingId(bookingIdFromUrl);
+      if (attemptIdFromUrl) setAttemptId(attemptIdFromUrl);
       setProcessingPayment(true);
 
       const finalizeBooking = async () => {
@@ -411,7 +431,11 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               subdomain,
-              booking_id: bookingIdFromUrl
+              /* One of the two. `finalize` CREATES the booking from an
+                 attempt, and looks one up from a booking id. */
+              ...(attemptIdFromUrl
+                ? { attempt_id: attemptIdFromUrl, payment_status: 'paid' as const }
+                : { booking_id: bookingIdFromUrl }),
             })
           });
 
@@ -438,9 +462,14 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
       };
 
       finalizeBooking();
-    } else if (paymentStatus === 'cancelled' && bookingIdFromUrl) {
-      // Payment cancelled, show payment step again
-      setBookingId(bookingIdFromUrl);
+    } else if (paymentStatus === 'cancelled' && returningId) {
+      /*
+       * Cancelled at Stripe. Nothing to undo: no booking was written and
+       * no slot was held, so the attempt simply stays open until the
+       * sweeper closes it — or until the client tries again here.
+       */
+      if (bookingIdFromUrl) setBookingId(bookingIdFromUrl);
+      if (attemptIdFromUrl) setAttemptId(attemptIdFromUrl);
       setStep('payment');
       setError('Payment was cancelled. Please try again.');
 
@@ -612,6 +641,9 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           notes: notes || undefined,
           timezone,
           consent: consentPayload(consentCopy, consentGiven),
+          /* The language this page is rendering in, so the abandoned-booking
+             email is written in it rather than in the business's own. */
+          locale,
           // Skip contact creation for paid services - contact will be created after payment
           skip_contact: requiresPayment
         })
@@ -621,7 +653,15 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
       if (data.success) {
         // Store booking ID for payment/intake submission
+        /*
+         * One of the two, never both.
+         *
+         * A service that takes payment returns `attempt_id` and no booking:
+         * the booking is created by `finalize` once the payment has actually
+         * succeeded. Everything else returns the booking it just made.
+         */
         setBookingId(data.booking?.id || null);
+        setAttemptId(data.attempt_id || null);
 
         // Determine next step based on payment requirement
         console.log('📋 Next step decision:', { requiresPayment, hasIntake, intakeTemplate: !!intakeTemplate });
@@ -669,8 +709,19 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
       // Build success/cancel URLs
       const baseUrl = window.location.origin;
       const bookUrl = `${baseUrl}/site/${subdomain}/book`;
-      const successUrl = `${bookUrl}?booking_id=${bookingId}&payment=success`;
-      const cancelUrl = `${bookUrl}?booking_id=${bookingId}&payment=cancelled`;
+      /*
+       * Whichever id this journey is carried by.
+       *
+       * A service that takes a card has an ATTEMPT and no booking — the
+       * booking is created when the payment succeeds. Sending `booking_id=null`
+       * in the URL is how the return handler would come back with nothing to
+       * finalise.
+       */
+      const returnParam = attemptId
+        ? `attempt_id=${attemptId}`
+        : `booking_id=${bookingId}`;
+      const successUrl = `${bookUrl}?${returnParam}&payment=success`;
+      const cancelUrl = `${bookUrl}?${returnParam}&payment=cancelled`;
 
       console.log('💳 Calling checkout API...');
 
@@ -685,6 +736,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           description: `${selectedService.name} - ${formatDate(selectedDate!)} at ${formatTime(selectedSlot!.start)}`,
           customer_email: email,
           booking_id: bookingId,
+          attempt_id: attemptId,
           service_id: selectedService.id,
           success_url: successUrl,
           cancel_url: cancelUrl,

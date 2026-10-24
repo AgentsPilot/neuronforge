@@ -24,7 +24,10 @@ import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { gapFixAction } from '@/lib/business-os/journeyGapFix';
 import type { JourneyGapKind } from '@/lib/business-os/journeyReadiness';
-import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
+import {
+  useConfigurationDialog,
+  useConfigurationDialogOptional,
+} from '@/components/business-os/ConfigurationDialogProvider';
 
 export interface RunGapFixOptions {
   /**
@@ -61,4 +64,54 @@ export function useGapFix() {
     },
     [router, openConfiguration]
   );
+}
+
+/**
+ * The same runner, for a component that also renders OUTSIDE Business OS.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Returns null where there is no configuration dialog to open, so the caller
+ * can show the explanation without a button that would go nowhere.
+ *
+ * `SchedulingServicesList` is the case this exists for: it is the services tab
+ * of the configuration dialog, and it is ALSO rendered by `LandingPageWizard`,
+ * `ProposalBuilderModal` and the legacy `/scheduling` page. Calling `useGapFix`
+ * there would throw on three surfaces to add a button to one.
+ *
+ * A route fix still works with no provider — it only needs the router — so the
+ * runner is withheld only for the gaps that are cleared in the dialog.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function useGapFixOptional(
+  kind: JourneyGapKind
+): ((options?: RunGapFixOptions) => void) | null {
+  const dialog = useConfigurationDialogOptional();
+  const fix = gapFixAction(kind);
+
+  const run = useCallback(
+    (options: RunGapFixOptions = {}) => {
+      if (fix.target !== 'dialog') return;
+      options.onOpen?.();
+      dialog?.openConfiguration(fix.tab, {
+        onClose: () => {
+          void options.onClose?.();
+        },
+      });
+    },
+    [dialog, fix]
+  );
+
+  /*
+   * Dialog gaps only, and the KIND is taken up front so that is decided here
+   * rather than at click time — a runner handed back for a route gap would be
+   * a button that looks live and does nothing.
+   *
+   * No `useRouter`, deliberately. This hook exists for components that also
+   * render outside Business OS, and calling the router hook made every test
+   * that mounts one fail with "expected app router to be mounted" — twenty of
+   * them, for a branch none of those callers use. A route gap (the timezone is
+   * the only one) belongs to `useGapFix`, which has the router and the
+   * provider both.
+   */
+  return dialog && fix.target === 'dialog' ? run : null;
 }

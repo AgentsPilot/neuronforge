@@ -44,14 +44,19 @@ export function AgentHeader({
   const getStatusColor = () => {
     if (isExecuting) return 'text-blue-600 dark:text-blue-400'
     if (agent.status === 'active') return 'text-green-600 dark:text-green-400'
-    if (agent.status === 'paused') return 'text-yellow-600 dark:text-yellow-400'
+    /* `'inactive'`, not `'paused'`. There is no `paused` in the agent status
+       union — so this branch was unreachable and an inactive agent fell through
+       to the grey "Draft" below, which is a different thing entirely. */
+    if (agent.status === 'inactive') return 'text-yellow-600 dark:text-yellow-400'
     return 'text-gray-600 dark:text-gray-400'
   }
 
   const getStatusText = () => {
     if (isExecuting) return 'Running...'
     if (agent.status === 'active') return 'Active'
-    if (agent.status === 'paused') return 'Paused'
+    /* See `getStatusColor`: the stored value is `inactive`, and an agent that
+       has been switched off is not a draft. */
+    if (agent.status === 'inactive') return 'Inactive'
     return 'Draft'
   }
 
@@ -219,9 +224,25 @@ export function AgentHeader({
               advancedMode ? 'bg-[var(--v2-primary)] shadow-md' : 'bg-[var(--v2-border)]'
             }`}
           >
-            <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${
-              advancedMode ? 'translate-x-7' : 'translate-x-0.5'
-            }`} />
+            {/* ── THE KNOB, IN BOTH DIRECTIONS ──────────────────────────────
+                This was `translate-x-7` / `translate-x-0.5` with no inset.
+                Positive X is RIGHTWARD whatever the writing direction, so in
+                Hebrew the knob started at the right edge and slid further
+                right, off the end of its own track — the same bug that was
+                reported on the no-show dialog's toggle.
+
+                Fixed with the logical property alone rather than a signed
+                translate: `insetInlineStart` means "the start edge" in either
+                direction, so this component needs no knowledge of the current
+                language — and it has none, which is why the signed-`isRTL`
+                approach used in `NoShowConfirmDialog` would have meant wiring
+                the language context into the agent header for a 24px knob.
+
+                56px track − 24px knob − 2px gap = 30px of travel. */}
+            <div
+              className="absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-all"
+              style={{ insetInlineStart: advancedMode ? '30px' : '2px' }}
+            />
           </button>
         </div>
       </div>

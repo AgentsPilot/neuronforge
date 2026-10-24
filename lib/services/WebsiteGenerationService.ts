@@ -18,6 +18,7 @@
 import { createLogger } from '@/lib/logger';
 import { adoptBusinessTemplate, adoptBusinessTheme } from '@/lib/business-os/businessTemplate';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { marketingConsentRepository } from '@/lib/repositories/MarketingConsentRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { getWebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
@@ -506,7 +507,25 @@ export class WebsiteGenerationService {
       //
       // The same plan the prompt was written from, so the copy that came back
       // has somewhere to go and nothing is built that was never asked for.
-      const sections = this.planSections(services, hasRealTestimonials);
+      /*
+       * Does this business do marketing email at all?
+       *
+       * Read once, here, because the page is built once. `capture_enabled` is
+       * tri-state in effect — absent means "never configured", which is ON —
+       * so only an explicit `false` withholds the newsletter section. A failed
+       * read is treated the same as never configured: the section is a signup
+       * form the owner can delete, and withholding it over a transient error
+       * would silently produce a different page on a retry.
+       */
+      const { data: consentSettings } = await marketingConsentRepository.settings(userId);
+      const marketingCaptureEnabled = consentSettings?.capture_enabled !== false;
+
+      const sections = this.planSections(
+        services,
+        hasRealTestimonials,
+        undefined,
+        marketingCaptureEnabled
+      );
 
       /*
        * The photographs, found while the copy is still warm.
@@ -846,7 +865,21 @@ export class WebsiteGenerationService {
     };
   }
 
-  private planSections(services: any[], hasRealTestimonials = false, facts?: ReturnType<WebsiteGenerationService['businessFacts']>): {
+  private planSections(
+    services: any[],
+    hasRealTestimonials = false,
+    facts?: ReturnType<WebsiteGenerationService['businessFacts']>,
+    /*
+     * Whether this business does marketing email at all.
+     *
+     * Defaults to true because that is what `capture_enabled` itself defaults
+     * to — only an explicit `false` turns capture off — and because the two
+     * callers that do not pass it are building a PROMPT, which the newsletter
+     * section contributes nothing to: its three strings come from the
+     * phrasebook, not from the model.
+     */
+    marketingCaptureEnabled = true
+  ): {
     services: boolean;
     process: boolean;
     booking: boolean;
@@ -854,6 +887,7 @@ export class WebsiteGenerationService {
     faq: boolean;
     contact: boolean;
     cta: boolean;
+    newsletter: boolean;
   } {
     /* The answers, where the caller read them; the catalogue alone otherwise,
        which is what every existing caller got. */
@@ -900,6 +934,16 @@ export class WebsiteGenerationService {
       faq: true,
       contact: true,
       cta: true,
+      /*
+       * A signup form for a business that has switched marketing email off is
+       * a control that cannot work: `doubleOptIn` returns without sending and
+       * `confirmConsent` refuses the record, so the visitor types an address,
+       * presses the button and is told to check an inbox nothing will arrive
+       * in. Gated here rather than hidden at render, because the page is built
+       * once and this is the only place that knows the answer without a second
+       * round trip from the visitor's browser.
+       */
+      newsletter: marketingCaptureEnabled,
     };
   }
 
@@ -1253,8 +1297,8 @@ ${sections.services ? `  "serviceDescriptions": {
     "faq": "Heading for the questions section (2-5 words)"` : ''}
   },
   "buttons": {
-    "bookCta": "Words for a button that takes the visitor to the list of services, to book or buy — 2-4 words, naming what they get",
-    "contactCta": "Words for a button that takes the visitor to the contact form — 2-4 words",
+    "bookCta": "Words for a button that OPENS THE BOOKING FLOW — pressing it starts buying or booking, it does not scroll anywhere. 2-4 words, committing: 'Book a session', 'Join the course', 'Start now'. NEVER a browsing label such as 'More details', 'Learn more' or 'See services' — those promise reading and deliver a checkout",
+    "contactCta": "Words for a button that takes the visitor to the contact form, to ask a question — 2-4 words",
     "learnMoreCta": "Words for a button that carries the visitor further down the page, to read about this business — 2-4 words"
   },
 }
@@ -1337,6 +1381,23 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
       contact: { en: 'Contact', he: 'יצירת קשר', es: 'Contacto' },
       testimonials: { en: 'What Clients Say', he: 'מה הלקוחות אומרים', es: 'Lo que Dicen los Clientes' },
       faq: { en: 'Frequently Asked Questions', he: 'שאלות נפוצות', es: 'Preguntas Frecuentes' },
+      /*
+       * The newsletter row's three strings.
+       *
+       * From the phrasebook and NOT from the model, unlike every other section
+       * on this page. The model writes what is particular to this business;
+       * these three say the same thing for every business there is, and the
+       * renderer already carries them in all three languages for the same
+       * section added by hand. Asking the model for them would buy nothing and
+       * add three more fields that can come back in the wrong language.
+       */
+      newsletter: { en: 'Stay Updated', he: 'הישארו מעודכנים', es: 'Mantente Actualizado' },
+      newsletterDescription: {
+        en: 'Get occasional updates and offers by email.',
+        he: 'קבלו מדי פעם עדכונים והצעות במייל.',
+        es: 'Recibe novedades y ofertas por correo de vez en cuando.',
+      },
+      newsletterButton: { en: 'Subscribe', he: 'הרשמה', es: 'Suscribirse' },
     };
 
     // Navigation menu item translations
@@ -1399,15 +1460,34 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
     const primaryIntent: CtaIntent = services.length > 0 ? 'book' : 'contact';
 
     /*
-     * The three buttons, resolved once each.
+     * The four buttons, resolved once each.
      *
-     * The header and the closing block make the page's primary ask; the hero
-     * reads on; the footer is the last chance to talk to a person, which is
-     * the contact form whatever else the page is selling.
+     * The HEADER makes the page's primary ask — buy if there is anything to
+     * buy — and the hero reads on. The footer is the last chance to talk to a
+     * person, which is the contact form whatever else the page is selling.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE CLOSING BLOCK ASKS TO BE CONTACTED, NOT TO BE PAID.
+     *
+     * It used to make the primary ask too, which meant that on any business
+     * with a catalogue it was a second booking button — the same ask as the
+     * header, the same ask as every card in the services list, and the third
+     * time a visitor who had already declined it was shown it.
+     *
+     * A visitor who has read the whole page and not pressed any of those is
+     * telling you something. The useful question to put to them last is the
+     * one the page has not asked yet: not "buy this now" but "talk to us" —
+     * which is also the only ask that works for somebody who wants the thing
+     * and has a question first.
+     *
+     * The booking branch is kept for a page that installs a standalone booking
+     * section: there the closing block IS the booking section's own ask.
+     * `planSections` hardcodes that to false today.
+     * ─────────────────────────────────────────────────────────────────────────
      */
     const headerCta = cta(primaryIntent);
     const heroCta = cta('learnMore');
-    const closingCta = cta(plan.booking ? 'book' : primaryIntent);
+    const closingCta = cta(plan.booking ? 'book' : 'contact');
     const footerCta = cta('contact');
 
     return [
@@ -1762,11 +1842,41 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         },
       },
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE SECOND ASK.
+       *
+       * Between the closing call to action and the footer, which is where the
+       * recipes place it too. The visitor has just been asked to book and
+       * either did or did not; the one thing worth asking of somebody who did
+       * not is permission to write to them later.
+       *
+       * Its copy is the phrasebook's, not the model's — see `blockTitles`
+       * above. `placeholder` is deliberately omitted so the renderer supplies
+       * its own localised one, which is the same string in `he` and `es` and
+       * one fewer field to get wrong.
+       *
+       * Absent entirely for a business with marketing capture switched off:
+       * `planSections` decides that, and `orderByRecipe` skips a recipe entry
+       * with no matching block.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      ...(plan.newsletter ? [{
+        page_id: pageId,
+        block_type: 'newsletter',
+        position: 10,
+        content: {
+          title: t('newsletter'),
+          description: t('newsletterDescription'),
+          button_text: t('newsletterButton'),
+        },
+      }] : []),
+
       // Footer block
       {
         page_id: pageId,
         block_type: 'footer',
-        position: 10,
+        position: 11,
         content: {
           company_name: companyName,
           tagline: content.metaDescription,

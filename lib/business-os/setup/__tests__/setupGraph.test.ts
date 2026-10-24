@@ -5,6 +5,7 @@ import {
   allSteps,
   isReadyForClients,
   shapeFromProfile,
+  sellsAnything,
   SETUP_STEPS,
   UNKNOWN_SHAPE,
   type BusinessShape,
@@ -21,6 +22,16 @@ const CARD: BusinessShape = { hasPricedServices: true, collection: 'card_online'
 
 /** Charges money, collects it herself: an invoice, then a transfer or a call. */
 const INVOICE: BusinessShape = { hasPricedServices: true, collection: 'invoice', appointments: true, collectsOnline: false, invoices: true, presence: 'booking_only', plans: 'none' };
+
+/**
+ * A website and a contact form, and nothing for sale.
+ *
+ * The shape `OnboardingConfigurationService` writes when an owner answers "none"
+ * to the services count: presence stored, both money predicates false, no
+ * appointments. Everything else about it is silence, which is exactly why the
+ * presence answer is what makes it a decision rather than an empty account.
+ */
+const WEBSITE_ONLY: BusinessShape = { hasPricedServices: false, collection: 'none', appointments: false, collectsOnline: false, invoices: false, presence: 'website_only', plans: 'none' };
 
 /** Takes cash in the room, or charges nothing at all. */
 const OFFLINE: BusinessShape = { hasPricedServices: true, collection: 'in_person', appointments: true, collectsOnline: false, invoices: false, presence: 'booking_only', plans: 'none' };
@@ -116,19 +127,24 @@ describe('[smoke] setup graph — what to do next', () => {
      * Payments is a choice — a business can invoice by hand — so it is skipped.
      * What comes next is the PAPERWORK, not the publish.
      *
-     * This used to expect 'website', and the order it was asserting was the bug:
-     * `pagePublishBlocker` refuses to publish a page for a business with no
-     * working hours and no invoice details, so naming the publish first sent
-     * owners to a screen that turned them away for things nobody had asked them
-     * for yet. Hours, then how you get paid, then open the doors.
+     * This used to expect 'website', and the order it was asserting was the
+     * bug: publishing a page then REFUSED for a business with no working hours
+     * and no invoice details, so naming the publish first sent owners to a
+     * screen that turned them away for things nobody had asked them for yet.
+     * Hours, then how you get paid, then open the doors.
+     *
+     * Publishing no longer refuses — a site may be a contact form and nothing
+     * else, and the unready services simply do not render. So this order is
+     * now ADVICE rather than a door, and it is still the right advice: a page
+     * that goes live with its catalogue missing is not what the owner meant.
      */
     const graph = resolveSetup(items(['services', 'availability']), CARD);
     expect(nextStep(graph)?.item.id).toBe('profile');
   });
 
-  it('only offers the publish once the publish gate would accept it', () => {
+  it('offers the publish last, once the page would go live with its catalogue', () => {
     // The same account with its paperwork done. `website` is what is left, and
-    // now it is a step that can actually succeed.
+    // now it is a step that publishes a page with its services actually on it.
     const graph = resolveSetup(
       items(['services', 'availability', 'profile', 'invoicing']),
       CARD
@@ -695,5 +711,68 @@ describe('third-party channels are offered, not pressed', () => {
     const graph = resolveSetup(items([...ALL_STEP_IDS, 'google_business'], WITH_GA), CARD);
 
     expect(find(graph, 'google_business')?.state).toBe('done');
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A BUSINESS THAT SELLS NOTHING IS NOT A BUSINESS WITH WORK OUTSTANDING.
+ *
+ * The setup checklist built all six steps unconditionally and filtered them on
+ * `complete` alone, so a website-and-CRM business was told forever to add
+ * services, set working hours and connect a card processor — three items it had
+ * declined, with no action anywhere that would ever clear them. A checklist
+ * with permanent entries is one people stop reading.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a business that sells nothing through the platform', () => {
+  it('is asked for no catalogue, no hours and no processor', () => {
+    const graph = resolveSetup(items([]), WEBSITE_ONLY);
+    const ids = allSteps(graph).map(step => step.item.id);
+
+    expect(ids).not.toContain('services');
+    expect(ids).not.toContain('availability');
+    expect(ids).not.toContain('payments');
+  });
+
+  it('is still offered the website and its design, which is what it came for', () => {
+    const graph = resolveSetup(items([]), WEBSITE_ONLY);
+    const ids = allSteps(graph).map(step => step.item.id);
+
+    expect(ids).toContain('website');
+    expect(ids).toContain('design');
+  });
+
+  /*
+   * The regression this rule is most likely to cause, and the reason
+   * `sellsAnything` answers TRUE rather than null when undecided: `services` is
+   * the step that ANSWERS the question. Ghosting it until the shape knows
+   * whether anything is sold would mean never showing the step that settles it.
+   */
+  it('still asks everyone else, including an account nobody has described yet', () => {
+    expect(sellsAnything(UNKNOWN_SHAPE)).toBe(true);
+    expect(sellsAnything(CARD)).toBe(true);
+    expect(sellsAnything(INVOICE)).toBe(true);
+    expect(sellsAnything(OFFLINE)).toBe(true);
+  });
+
+  /*
+   * A free service is a service. It is booked against a time, it needs hours
+   * and reminders, and it raises no invoice — so the money half is false and
+   * the booking half is not, which is the whole distinction.
+   */
+  it('does not mistake a free catalogue for an empty one', () => {
+    const freeOnly: BusinessShape = {
+      hasPricedServices: false,
+      collection: 'none',
+      appointments: true,
+      collectsOnline: false,
+      invoices: false,
+      presence: 'website_only',
+      plans: 'none',
+    };
+
+    expect(sellsAnything(freeOnly)).toBe(true);
+    expect(allSteps(resolveSetup(items([]), freeOnly)).map(s => s.item.id)).toContain('services');
   });
 });

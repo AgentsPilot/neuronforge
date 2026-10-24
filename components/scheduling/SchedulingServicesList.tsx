@@ -1,16 +1,19 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { serviceShapeFields } from '@/lib/business-os/serviceShape';
 import { serviceShapeValues, collectionToPersist } from '@/lib/business-os/serviceEditValues';
 import { serviceMoneyLine } from '@/lib/business-os/serviceMoneyLine';
 import { serviceJourney, type JourneyStep } from '@/lib/business-os/serviceJourney';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, ChevronLeft, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
+import { Clock, ChevronLeft, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power, Globe } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency, ServiceCollection, ServiceSaleMode } from '@/lib/repositories/SchedulingRepository';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
+import { useGapFixOptional } from '@/components/business-os/setup/useGapFix';
+import { gapFixAction } from '@/lib/business-os/journeyGapFix';
 
 const logger = createLogger({ module: 'SchedulingServicesList' });
 
@@ -166,6 +169,20 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   // here is direction-agnostic by construction (see the grid's note below), and
   // an icon is the one case logical properties cannot answer.
   const { t, formatCurrency, currencyCode, businessCurrency, isRTL } = useLanguage();
+  /*
+   * Null outside Business OS. This list is the configuration dialog's services
+   * tab, and it is also rendered by `LandingPageWizard`, `ProposalBuilderModal`
+   * and the legacy `/scheduling` page, where there is no dialog to open — so
+   * the optional variant, and the button renders only where it leads somewhere.
+   */
+  const connectPayments = useGapFixOptional('processor');
+  /**
+   * Their site has no services section, and now there is something to put in
+   * it. Set only after a successful publish — see the note there.
+   */
+  const [siteMissingServices, setSiteMissingServices] = useState(false);
+  /** The offer is being acted on, so it cannot be pressed twice. */
+  const [addingSiteSection, setAddingSiteSection] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   /**
    * Why the last publish did not happen.
@@ -471,7 +488,11 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       setNewRowValues({
         name: newRowPrefill?.service_name || '',
         description: newRowPrefill?.description || '',
-        duration: (newRowPrefill?.duration_minutes || 60).toString(),
+        /* Empty unless the prefill carries one. A new service starts without a
+           length rather than with an invented one — the same rule as the edit
+           mappings below, and the publish guard refuses a scheduled service
+           that still has none. */
+        duration: newRowPrefill?.duration_minutes?.toString() ?? '',
         buffer: (newRowPrefill?.buffer_minutes || 0).toString(),
         price: (newRowPrefill?.price || 0).toString(),
         currency: (newRowPrefill?.currency as ServiceCurrency) || defaultServiceCurrency,
@@ -516,7 +537,30 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         setEditRowValues({
           name: serviceToEdit.service_name,
           description: optimisticUpdates[serviceToEdit.id]?.description ?? serviceToEdit.description ?? '',
-          duration: serviceToEdit.duration_minutes?.toString() || '60',
+          /*
+           * EMPTY WHEN NOTHING IS STORED. THIS SAID `|| '60'`.
+           *
+           * ─────────────────────────────────────────────────────────────────
+           * A fallback here is indistinguishable from a saved value, and the
+           * only thing that writes it is a full Save. A service created by
+           * onboarding holds `duration_minutes: null`; the owner opened it,
+           * saw "60", had no reason to touch it, and pressed Publish — which
+           * sends no body at all. The service went live still holding null,
+           * and the public page offered a slot every thirty minutes whose end
+           * equalled its start, because `start + null * 60000` is `start`.
+           *
+           * The panel even described the invented number back: "Each booking
+           * runs 60 minutes, and keeps 15 clear afterwards, so it costs the day
+           * 75" — mixing a fabricated 60 with a real 15, since `buffer_minutes`
+           * genuinely defaults to 15 in the database and `duration_minutes`
+           * has no default at all.
+           *
+           * Empty makes the absence visible. Nothing is invented on the
+           * owner's behalf, and the publish guard refuses a scheduled service
+           * that still has none.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          duration: serviceToEdit.duration_minutes?.toString() ?? '',
           buffer: serviceToEdit.buffer_minutes?.toString() || '0',
           /*
              NULL STAYS EMPTY. `price?.toString() || '0'` turned "not priced
@@ -598,6 +642,36 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         }
         onServicePublished?.();
         onServicePublishedWithId?.(serviceId);
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * AND DOES THEIR SITE SAY SO?
+         *
+         * A website is generated once, at build, from the answers the
+         * interview gave. A business that had nothing to sell then got a site
+         * with no services section — correct at the time — and nothing
+         * regenerates it. So this press can leave an owner with a bookable
+         * service and a live site that never mentions it, with no signal
+         * anywhere: the setup checklist's website step is already complete.
+         *
+         * Asked HERE because this is the moment it becomes true, and asked
+         * rather than done because writing a section into a page somebody may
+         * have arranged by hand is a surprise that is awkward to undo.
+         *
+         * Silent on failure, and never blocks: the publish has already
+         * succeeded and this is an offer, not part of it.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        void (async () => {
+          try {
+            const site = await fetch('/api/website/services-section');
+            if (!site.ok) return;
+            const body = await site.json();
+            if (body?.data?.missing) setSiteMissingServices(true);
+          } catch {
+            /* An offer that cannot be made is not an error worth showing. */
+          }
+        })();
       } else {
         const body = await response.json().catch(() => ({}));
         logger.error(
@@ -606,7 +680,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         );
         setPublishError({
           serviceId,
-          message: body?.error || t('config.services.publish_failed'),
+          /* A known refusal is said in the owner's language; the server's own
+             sentence is the fallback for anything else, and the generic one
+             behind that. `duration_required` is the service that books a time
+             and has no length — see the publish route. */
+          message:
+            body?.code === 'duration_required'
+              ? t('config.services.publish_needs_duration') || body.error
+              : body?.code === 'price_required'
+                ? t('config.services.publish_needs_price') || body.error
+                /* Chose card, no processor. The journey's money stop already
+                   carries the Connect payments link, so this only has to say
+                   why the publish did not happen. */
+                : body?.code === 'processor_required'
+                  ? t('config.services.publish_needs_processor') || body.error
+                  : body?.error || t('config.services.publish_failed'),
         });
       }
     } catch (error) {
@@ -650,7 +738,25 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         body: JSON.stringify(update),
       });
 
-      if (!response.ok) throw new Error(`PATCH responded ${response.status}`);
+      if (!response.ok) {
+        /*
+         * A REFUSAL IS NOT A CRASH, and this threw for both.
+         *
+         * The strip can now be used to choose card, which the server refuses
+         * when no processor is connected. Thrown and caught, that reverted the
+         * pill and logged — so the owner saw it snap back with no explanation
+         * and no idea a connection would fix it. The reason is carried on the
+         * response; say it.
+         */
+        const body = await response.json().catch(() => ({}));
+        if (body?.code === 'processor_required') {
+          setPublishError({
+            serviceId: service.id,
+            message: t('config.services.publish_needs_processor') || body.error,
+          });
+        }
+        throw new Error(`PATCH responded ${response.status}`);
+      }
       onSilentRefresh?.();
     } catch (err) {
       // Put the strip back to what the server still believes.
@@ -955,23 +1061,26 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           duration_minutes: !newRowValues.is_scheduled
             ? null
             : (newRowValues.duration.trim() !== '' ? (parseInt(newRowValues.duration) || null) : null),
-          buffer_minutes: !newRowValues.is_scheduled ? 0 : (parseInt(newRowValues.buffer) || 0),
           is_scheduled: newRowValues.is_scheduled,
           sale_mode: newRowValues.sale_mode,
-          // A quoted service publishes no collection — the price, and so the
-          // method, belong to a proposal that does not exist yet.
-          collection: newRowValues.sale_mode === 'proposal'
-            ? null
-            : (parseFloat(newRowValues.price) > 0 ? newRowValues.collection : null),
-          price: parseFloat(newRowValues.price) || 0,
+          /* The same rule the two edit paths use — a new service starts in the
+             shape its kind implies, rather than carrying whatever the hidden
+             fields last held. */
+          ...serviceShapeFields({
+            saleMode: newRowValues.sale_mode,
+            isScheduled: newRowValues.is_scheduled,
+            price: newRowValues.price.trim() !== '' ? parseFloat(newRowValues.price) || 0 : null,
+            collection: newRowValues.collection,
+            paymentType: newRowValues.payment_type,
+            installmentCount: newRowValues.installment_count,
+            installmentFrequency: newRowValues.installment_frequency,
+            firstPaymentDue: newRowValues.first_payment_due,
+            firstPaymentDays: newRowValues.first_payment_days,
+            bufferMinutes: parseInt(newRowValues.buffer) || 0,
+          }),
           currency: newRowValues.currency,
           is_active: false, // Start as draft
-          status: 'draft',
-          payment_type: newRowValues.payment_type,
-          installment_count: newRowValues.installment_count,
-          installment_frequency: newRowValues.installment_frequency,
-          first_payment_due: newRowValues.first_payment_due,
-          first_payment_days: newRowValues.first_payment_days
+          status: 'draft'
         })
       });
 
@@ -1030,7 +1139,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       // The optimistic copy wins: a description saved a moment ago from the
       // publish prompt is the one the owner just wrote.
       description: optimisticUpdates[service.id]?.description ?? service.description ?? '',
-      duration: service.duration_minutes?.toString() || '60',
+      /* Empty when nothing is stored — see the same mapping above for why a
+         fallback here reads as a saved value and never gets saved. */
+      duration: service.duration_minutes?.toString() ?? '',
       buffer: service.buffer_minutes?.toString() || '0',
       /* Null stays empty — see the same mapping above. */
       price: service.price === null || service.price === undefined ? '' : String(service.price),
@@ -1098,6 +1209,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
     const priced = editRowValues.price !== '' && parseFloat(editRowValues.price) > 0;
 
+    /*
+     * NO PRICE GATE ON SAVE, DELIBERATELY. The gate is at publish.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * One was written here and removed: `collectionToPersist` treats an unset
+     * price as a question still OPEN and keeps the owner's shape choice for
+     * exactly that case — "null = not priced yet… keep the answer" — and that
+     * behaviour is itself recorded there as a fix, for a bug where choosing
+     * "they pay by card" on an unpriced service had the choice written as null
+     * and read back as "invoice" on the next open.
+     *
+     * Refusing the save would bring that back by another route: an owner part
+     * way through a service, or correcting something unrelated on one
+     * onboarding created without a price, could not save at all. A draft is
+     * allowed to be half-answered; what must not happen is a half-answered
+     * draft becoming a public booking page, and the publish route refuses that.
+     */
+
     const updateData = {
       service_name: editRowValues.name,
       description: editRowValues.description.trim() || null,
@@ -1110,26 +1239,39 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       is_scheduled: editRowValues.is_scheduled,
       sale_mode: editRowValues.sale_mode,
       /*
-       * A quoted service publishes no collection: the price, and therefore the
-       * method, belong to the proposal that has not been written yet.
+       * EVERY COLUMN THAT DEPENDS ON THE KIND OF SERVICE — see
+       * `serviceShapeFields`.
+       *
+       * This screen used to clear the collection method for a quote and keep
+       * the price, the payment type and the instalment count. The full dialog
+       * cleared the price too. Same action, two different rows depending on
+       * which screen the owner opened.
+       *
+       * That is not cosmetic: a package switched to a quote here kept its
+       * price, and the public booking route read the leftover figure as money
+       * owed. The client was shown a journey with no payment step, finished
+       * it, and no booking, contact or email was ever written.
+       *
+       * The real figure is passed through, not a flag: "not priced yet"
+       * (null) and "free" (0) are different answers and collapsing them threw
+       * away the owner's choice on every unpriced service.
        */
-      collection: editRowValues.sale_mode === 'proposal'
-        ? null
-        /* The real figure, so "not priced yet" (null) is distinguishable from
-           "free" (0). Passing `priced ? 1 : 0` collapsed both to 0 and threw
-           away the owner's choice on every unpriced service. */
-        : collectionToPersist(
-            editRowValues.collection,
-            editRowValues.price !== '' ? parseFloat(editRowValues.price) : null
-          ),
-      buffer_minutes: !editRowValues.is_scheduled ? 0 : (parseInt(editRowValues.buffer) || 0),
-      price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
+      ...serviceShapeFields({
+        saleMode: editRowValues.sale_mode,
+        isScheduled: editRowValues.is_scheduled,
+        price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
+        collection: collectionToPersist(
+          editRowValues.collection,
+          editRowValues.price !== '' ? parseFloat(editRowValues.price) : null
+        ),
+        paymentType: editRowValues.payment_type,
+        installmentCount: editRowValues.installment_count,
+        installmentFrequency: editRowValues.installment_frequency,
+        firstPaymentDue: editRowValues.first_payment_due,
+        firstPaymentDays: editRowValues.first_payment_days,
+        bufferMinutes: parseInt(editRowValues.buffer) || 0,
+      }),
       currency: editRowValues.currency,
-      payment_type: editRowValues.payment_type,
-      installment_count: editRowValues.installment_count,
-      installment_frequency: editRowValues.installment_frequency,
-      first_payment_due: editRowValues.first_payment_due,
-      first_payment_days: editRowValues.first_payment_days,
       status: 'draft' as const // Set to draft on edit - requires explicit publish
     };
 
@@ -1151,6 +1293,30 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
      * So the panel keeps the service, `recentlyEditedId` pulses Publish, and a
      * line above the fields says what is still missing.
      */
+
+    /*
+     * IN FLIGHT, AND SAYING SO. NOTHING EVER SET THIS.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * `savingRow` was declared and never written, which quietly disabled two
+     * separate protections that both read it:
+     *
+     *   the guard at the top of this function — `if (savingRow) return` could
+     *     not fire, so a second press re-entered and sent a second request;
+     *   the Save button — `disabled={saving || …}` where `saving` is this flag
+     *     on the edit path, so it never greyed out while a save was running.
+     *
+     * Two presses therefore sent two identical PATCHes. That is visible on the
+     * reporting account as a pair of SCHEDULING_SERVICE_UPDATED entries one
+     * second apart with byte-identical payloads, which is how this was found.
+     *
+     * Harmless on this endpoint — PATCH of the same values is idempotent — but
+     * it is a write path with no concurrency control, and the new-row path next
+     * to it has set `savingNewRow` correctly all along. The edit path was the
+     * copy that lost it.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    setSavingRow(true);
 
     // Background API call
     fetch(`/api/scheduling/services/${serviceId}`, {
@@ -1203,6 +1369,11 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         return updated;
       });
       onSilentRefresh?.();
+    }).finally(() => {
+      /* Released on every outcome. In `finally` rather than in each of the
+         three branches above, so a path added later cannot leave the editor
+         permanently unable to save. */
+      setSavingRow(false);
     });
   };
 
@@ -1522,7 +1693,38 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       saleShape === 'card' && !processorReady ? (
         <span key="no-processor" className="flex items-start gap-1.5 text-amber-600 dark:text-amber-400">
           <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-          <span>{t('config.services.collection.no_processor')}</span>
+          <span>
+            {t('config.services.collection.no_processor')}
+            {/*
+              THE WAY OUT, beside the sentence that says what is wrong.
+              ──────────────────────────────────────────────────────────────
+              The card chip is offered again rather than hidden, so this line
+              is now reachable by choosing it — which makes a warning with no
+              action a dead end. `gapFixAction('processor')` supplies both the
+              destination and the label, the same pairing every other gap uses,
+              so the tab and the words cannot drift apart.
+
+              Rendered only where there is a dialog to open: this list also
+              renders outside Business OS, and a button that goes nowhere is
+              worse than the sentence alone.
+            */}
+            {connectPayments && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => connectPayments()}
+                  className="underline underline-offset-2 font-medium hover:opacity-80"
+                >
+                  {(() => {
+                    const fix = gapFixAction('processor');
+                    const label = t(fix.key);
+                    return label === fix.key ? fix.fallback : label;
+                  })()}
+                </button>
+              </>
+            )}
+          </span>
         </span>
       ) : null,
       moneySentence,
@@ -1582,7 +1784,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             className={`px-3.5 py-1.5 text-[12.5px] transition-colors ${
               option.active
                 ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] font-medium shadow-sm'
-                : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+                  : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
             }`}
             style={{ borderRadius: '999px' }}
           >
@@ -2083,6 +2285,30 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             */}
             {!priceIsFree && (
               <div className="flex flex-col gap-2.5 mb-3">
+                {/*
+                  THE EDITOR OFFERS CARD, AND GATES IT.
+                  ──────────────────────────────────────────────────────────
+                  This chip was hidden without a connected processor, on the
+                  reasoning that a question the editor knows the answer to is a
+                  trap with an apology underneath it. That removed a choice
+                  instead of enabling it: an owner who decides today to start
+                  taking cards found no way to say so, and nothing anywhere
+                  told them the option existed behind a connection they could
+                  make in a minute.
+
+                  So it is offered, and choosing it raises the same kind of
+                  gate invoicing raises — the notice under the chips names what
+                  is missing and its button goes to the payments tab. That is
+                  `gapFixAction('processor')`, the mapping every other gap
+                  already uses, so the tab and the label cannot disagree.
+
+                  Nothing about the degradation changes: a card service with no
+                  processor is still INVOICED by every public surface, the money
+                  sentence still says so, and `processor` stays deliberately
+                  NON-blocking in `isBlockingGap` — the owner can save and
+                  publish, because an invoice is a real way to be paid. The
+                  gate informs and offers the fix; it does not refuse the work.
+                */}
                 {segmentWithWhy([
                   {
                     value: 'card',
@@ -2103,6 +2329,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                     onClick: () => pickShape('quote'),
                   },
                 ])}
+
 
                 {/* Says which of the two nothings this is, because the field
                     cannot: an empty box and a typed 0 look identical and mean
@@ -2698,6 +2925,68 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 );
               })}
             </div>
+
+            {/*
+              THE SITE DOES NOT MENTION WHAT THEY JUST PUBLISHED.
+              ──────────────────────────────────────────────────────────────
+              Only ever set by a successful publish, and only when the site
+              really has no services section and something really is bookable
+              — both answered by the server, which fails towards not asking.
+
+              An offer, not a warning: the service is live and bookable
+              wherever its link is shared. What is missing is one section on
+              one page, and the button is the whole fix.
+            */}
+            {siteMissingServices && (
+              <div
+                role="status"
+                className="flex-shrink-0 m-2 flex items-start gap-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                <div
+                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-[var(--v2-text-primary)] m-0">
+                    {t('config.services.site_has_no_services')}
+                  </p>
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={addingSiteSection}
+                      onClick={async () => {
+                        setAddingSiteSection(true);
+                        try {
+                          const added = await fetch('/api/website/services-section', { method: 'POST' });
+                          // Either way the offer is spent: it succeeded, or it
+                          // failed and the editor is the place to do it by hand.
+                          if (added.ok) setSiteMissingServices(false);
+                        } catch {
+                          /* Nothing to escalate: the publish already worked. */
+                        } finally {
+                          setAddingSiteSection(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors disabled:opacity-50"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {addingSiteSection && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      {t('config.services.add_services_section')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSiteMissingServices(false)}
+                      className="text-xs text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                    >
+                      {t('config.services.not_now')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {showAddButton && (
               <div className="flex-shrink-0 border-t border-[var(--v2-border)] p-2">

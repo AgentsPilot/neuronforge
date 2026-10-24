@@ -15,6 +15,9 @@ import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { buildAttributionFromRequest, appendUTMToUrl } from '@/lib/utils/attribution';
 import { utmForVariant } from '@/lib/business-os/channel-insights/shareDestinations';
+/* Asked again at redirect time: `is_active` was decided when the link was made,
+   and what it depends on can change afterwards. */
+import { journeyGapsForSmartLink, isBlockingGap } from '@/lib/business-os/journeyReadiness';
 
 const logger = createLogger({ module: 'SmartLinkRedirect' });
 
@@ -70,6 +73,55 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // the business's working booking and contact pages instead of nowhere.
       const { data: ownerCode } = await businessProfileRepository.getUserCode(smartLink.user_id);
       return unavailable(request, 'inactive', ownerCode);
+    }
+
+    /*
+     * ACTIVE IS NOT THE SAME AS STILL WORKING.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `is_active` is decided ONCE, when the link is created or edited. Nothing
+     * re-asks afterwards, and everything the link depends on can change
+     * underneath it: a service is unpublished, an edit reverts it to draft, the
+     * invoice details are cleared. The link stays `is_active: true` and goes on
+     * handing clients a journey the business can no longer complete.
+     *
+     * On the reporting account both links were live with NO published services
+     * at all — one of them a booking link, pointing at an empty catalogue.
+     * Activation-time checking cannot fix that, because at activation there was
+     * nothing wrong to find.
+     *
+     * So it is asked again HERE, at the one moment it matters: a client is
+     * standing in front of it. The row is left alone — this is not the place to
+     * write — and the client is sent to the same "unavailable" page an inactive
+     * link uses, which already offers the business's working pages instead of a
+     * dead end.
+     *
+     * FAILS OPEN. This check reaches the database several times, and a link
+     * that works must not break because a readiness query timed out. Only a gap
+     * positively found redirects.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    try {
+      const blocking = (
+        await journeyGapsForSmartLink(smartLink.user_id, {
+          destination_type: smartLink.destination_type ?? null,
+          destination_url: smartLink.destination_url,
+        })
+      ).filter(isBlockingGap);
+
+      if (blocking.length > 0) {
+        requestLogger.warn(
+          { code, linkId: smartLink.id, gaps: blocking.map(g => g.kind) },
+          'Smart link is active but the business can no longer honour it'
+        );
+        const { data: ownerCode } = await businessProfileRepository.getUserCode(smartLink.user_id);
+        return unavailable(request, 'inactive', ownerCode);
+      }
+    } catch (error) {
+      requestLogger.error(
+        { err: error, code, linkId: smartLink.id },
+        'Readiness re-check failed; honouring the link rather than breaking it'
+      );
     }
 
     // Build attribution data from request

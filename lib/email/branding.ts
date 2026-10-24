@@ -55,6 +55,47 @@ interface ProfileLike {
 }
 
 /**
+ * The logo, unless it is one an email cannot draw.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SVG IS A WEB FORMAT, NOT A MAIL ONE
+ *
+ * Gmail, Outlook and Yahoo all refuse `image/svg+xml` in a message — an SVG is
+ * a document that can carry script, and mail clients decline to run one.
+ * WebKit-based desktop mail renders it happily, which is exactly why this is
+ * invisible until somebody opens the message on a phone.
+ *
+ * What a refusing client draws instead is the `alt` text, and iOS Mail puts it
+ * in square brackets. Reported as a mystery bracket in the copy:
+ *
+ *     [בית הספר הבינלאומי להורות]
+ *
+ * That is the business name, which is the alt text, standing where the logo
+ * should be. The same account's emails look right on a desktop.
+ *
+ * Withheld rather than patched, because the shell already has a better answer
+ * for a business with no logo: it sets the name in the heading face as a
+ * wordmark. A clean wordmark beats a broken image in every client, including
+ * the ones that would have rendered the SVG.
+ *
+ * ONLY EMAIL. The website, the invoice PDF, the booking pages and the smart
+ * links are browsers and draw SVG correctly, so this lives here rather than in
+ * `resolveBusinessLogo`, which they all share. The fix for the business is to
+ * upload a PNG; until they do, their mail is not broken.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function emailSafeLogo(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+
+  /* The extension, with any query string or fragment taken off first: a signed
+     storage URL ends in its token, not in `.svg`. Lowercased because object
+     keys are case-sensitive and uploads are not consistent. */
+  const path = url.split(/[?#]/)[0].toLowerCase();
+
+  return path.endsWith('.svg') || path.endsWith('.svgz') ? undefined : url;
+}
+
+/**
  * Build branding for a user's outgoing email.
  *
  * @param userId  Owner of the emails — the tenant whose theme is applied.
@@ -135,7 +176,7 @@ export async function resolveEmailBranding(
    */
   return withSafeStyleValues({
     businessName: p.company_name || p.invoice_company_name || 'Business',
-    logoUrl: (await resolveBusinessLogo(userId, p)) || undefined,
+    logoUrl: emailSafeLogo(await resolveBusinessLogo(userId, p)),
     primaryColor: theme?.colors?.primary || DEFAULT_EMAIL_BRANDING.primaryColor,
     secondaryColor: theme?.colors?.secondary || DEFAULT_EMAIL_BRANDING.secondaryColor,
     /*

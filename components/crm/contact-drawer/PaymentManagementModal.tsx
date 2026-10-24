@@ -133,7 +133,12 @@ export function PaymentManagementModal({
     useState<'cash' | 'bank_transfer' | 'cheque' | 'card' | 'other'>('bank_transfer');
 
   // Check if refund is possible (payment status is 'paid')
-  // Note: refund works with or without payment.id - manual payments can be "refunded" by updating status
+  //
+  // The note that stood here said a manual payment is "refunded by updating
+  // status", with or without a `payment.id`. Neither half is true any more: a
+  // refund needs a `payment_transactions` row, and a payment recorded by hand
+  // has one, because `mark-paid` writes it with `processor_type: 'manual'`.
+  // There is one refund path and it runs through `RefundService`.
   const paymentData = booking?.payment;
 
   /*
@@ -325,7 +330,27 @@ export function PaymentManagementModal({
    */
   const isRefunded = paymentStatus === 'refunded';
 
-  const maxRefundable = payment.amount;
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * NET OF WHAT ALREADY WENT BACK.
+   *
+   * This was `payment.amount` — the gross charge — so on money partly refunded
+   * already it offered to return the whole of it a second time. The server's
+   * over-refund guard rejected that, but only after the owner had been shown
+   * the figure and pressed the button.
+   *
+   * The form below is NOT how a refund is taken any more: the early return
+   * further down hands `view === 'refund'` to the shared `RefundModal`, which
+   * asks the server what is actually left. Its condition (`canRefund`) is the
+   * same expression as `isPaid`, which is the only thing that renders the
+   * button that gets here, so this code is unreached.
+   *
+   * It is corrected rather than deleted because "unreached" rests on those two
+   * conditions staying identical, and a wrong cap waiting behind an edit to
+   * either of them is not worth keeping for the sake of a smaller diff.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const maxRefundable = Math.max(0, payment.amount - Number(payment.refundedAmount ?? 0));
   const refundAmount = refundType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
 
   /**
@@ -655,12 +680,18 @@ export function PaymentManagementModal({
         // This modal is opened from a booking, so deleting it afterwards is a
         // real option here in a way it is not on the payments tab.
         showDeleteBookingOption
+        /* No hour to free on a course or a training block, so the toggle's
+           description must not say it frees one. */
+        bookingUnscheduled={!booking.booking.start_time}
         /*
          * So a COMPLETED or no-show booking is not offered a cancellation. The
          * meeting happened; refunding afterwards does not un-happen it, and the
          * toggle emails the client that it was called off.
          */
         bookingStatus={booking.booking.status}
+        /* The outcome, which is where "already settled" lives: completing a
+           booking writes `meeting_status`, not `status`. */
+        bookingMeetingStatus={booking.booking.meeting_status}
         onSuccess={shouldDeleteBooking => {
           onPaymentUpdated?.();
           if (shouldDeleteBooking) onBookingDeleted?.(booking.booking.id);
@@ -1181,8 +1212,16 @@ export function PaymentManagementModal({
                         onClick={handleMarkAsPaid}
                         disabled={loading}
                         /* Flat, not a gradient. The gradient was the loudest
-                           thing in the dialog and dated it on its own. */
-                        className="w-full rounded-xl bg-[#16A34A] py-5 text-white hover:bg-[#15803D]"
+                           thing in the dialog and dated it on its own.
+
+                           NO `py-5` EITHER. The four buttons in this dialog
+                           each carried it — two and a half times the Button's
+                           own `lg`, which is `py-3` — so a confirmation that
+                           should sit quietly under the figures became the
+                           tallest thing on the screen. They take the component's
+                           default size now, like every other button in the
+                           product. */
+                        className="w-full rounded-xl bg-[#16A34A] text-white hover:bg-[#15803D]"
                       >
                         {loading ? (
                           <Loader2 className="h-4 w-4 me-2 animate-spin" />
@@ -1258,7 +1297,7 @@ export function PaymentManagementModal({
                               type="button"
                               onClick={handleVoidInvoice}
                               disabled={loading}
-                              className="flex-1 rounded-xl bg-red-600 py-5 text-white hover:bg-red-700"
+                              className="flex-1 rounded-xl bg-red-600 text-white hover:bg-red-700"
                             >
                               {loading ? (
                                 <Loader2 className="h-4 w-4 me-2 animate-spin" />
@@ -1272,7 +1311,7 @@ export function PaymentManagementModal({
                               variant="outline"
                               onClick={() => setConfirmingVoid(false)}
                               disabled={loading}
-                              className="rounded-xl py-5"
+                              className="rounded-xl"
                             >
                               {t('common.cancel') || 'Keep it'}
                             </Button>
@@ -1284,7 +1323,7 @@ export function PaymentManagementModal({
                           variant="outline"
                           onClick={() => setConfirmingVoid(true)}
                           disabled={loading}
-                          className="w-full rounded-xl border-red-300 py-5 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/60 dark:hover:bg-red-950/30"
+                          className="w-full rounded-xl border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/60 dark:hover:bg-red-950/30"
                         >
                           <Ban className="h-4 w-4 me-2" />
                           {t('crm.payment.cancel_invoice') || 'Cancel this payment'}
@@ -1293,8 +1332,21 @@ export function PaymentManagementModal({
                     </div>
                   )}
 
-                  {/* Manual payment note - no actual money refund */}
-                  {isPaid && !payment.id && (
+                  {/*
+                    * Money the owner recorded themselves, which a refund here
+                    * cannot send back.
+                    *
+                    * The test used to be `!payment.id` — the absence of
+                    * `scheduling_bookings.payment_id`, a legacy single-payment
+                    * column that is null on 74 of this account's 81 paid
+                    * bookings. So the warning appeared on card payments, which
+                    * is every instalment sale, and the one place it was telling
+                    * the truth was an accident.
+                    *
+                    * `isManual` asks the charges instead: settled, and every
+                    * one of them `processor_type: 'manual'`.
+                    */}
+                  {isPaid && payment.isManual && (
                     <div className="flex items-start gap-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 p-3 text-sm text-blue-800 dark:text-blue-200">
                       <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                       <div>
@@ -1302,7 +1354,7 @@ export function PaymentManagementModal({
                           {t('crm.payment.manual_payment') || 'Manual Payment'}
                         </span>
                         <p className="text-xs mt-0.5 opacity-80">
-                          {t('crm.payment.manual_refund_note') || 'This was marked as paid manually. Refund will only update the status.'}
+                          {t('crm.payment.manual_refund_note') || 'The money arrived outside the system, so a refund here only records it: returning the money to the client is something you do yourself.'}
                         </p>
                       </div>
                     </div>

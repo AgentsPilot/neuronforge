@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { MEETING_HOLDS_SLOT_FILTER } from '@/lib/business-os/bookingStatus';
 
 const logger = createLogger({ module: 'BusinessMetricsSummaryAPI' });
 
@@ -73,7 +74,17 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .gte('start_time', todayStart)
         .lt('start_time', todayEnd)
-        .in('status', ['confirmed', 'completed']),
+        .in('status', ['confirmed', 'completed'])
+        /*
+         * And the meeting is still on.
+         *
+         * The status pair means "not cancelled", and it used to exclude a
+         * no-show as well because `markNoShow()` wrote `status: 'no_show'`. It
+         * writes `meeting_status` now, so without this line the owner's
+         * "sessions today" counts appointments nobody attended — a number they
+         * would read first thing each morning and not be able to explain.
+         */
+        .or(MEETING_HOLDS_SLOT_FILTER),
 
       // Sessions this week
       supabaseServer
@@ -82,7 +93,10 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .gte('start_time', weekStart)
         .lt('start_time', weekEnd)
-        .in('status', ['confirmed', 'completed']),
+        .in('status', ['confirmed', 'completed'])
+        /* Same as today's count above — the two are shown side by side, so
+           they have to count the same way. */
+        .or(MEETING_HOLDS_SLOT_FILTER),
 
       // Pending invoices (for count + amount). `currency` is selected because
       // the total below cannot be computed without it — see the note there.

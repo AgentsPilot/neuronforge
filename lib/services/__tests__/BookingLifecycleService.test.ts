@@ -180,6 +180,11 @@ describe('cancelBooking', () => {
        */
       amountHeld: 0,
       heldCurrency: null,
+      /* Added by the package-cancel cascade: the package whose sessions were
+         called off with this booking, and whether the owner's note is shared.
+         Null / undefined on an ordinary booking, which sells no sessions. */
+      sessionsFrom: null,
+      shareNoteWithClient: undefined,
       paidAmount: 0,
       refundedAmount: 0,
     });
@@ -298,6 +303,11 @@ describe('cancelBooking', () => {
       offerRebooking: undefined,
       amountHeld: 0,
       heldCurrency: null,
+      /* Added by the package-cancel cascade: the package whose sessions were
+         called off with this booking, and whether the owner's note is shared.
+         Null / undefined on an ordinary booking, which sells no sessions. */
+      sessionsFrom: null,
+      shareNoteWithClient: undefined,
       paidAmount: 0,
       refundedAmount: 0,
     });
@@ -320,7 +330,15 @@ describe('cancelBooking', () => {
       BOOKING_ID,
       USER_ID,
       'This business has ceased operating',
-      { offerRebooking: false, amountHeld: 0, heldCurrency: null, paidAmount: 0, refundedAmount: 0 }
+      {
+          offerRebooking: false,
+          sessionsFrom: null,
+          shareNoteWithClient: undefined,
+          amountHeld: 0,
+          heldCurrency: null,
+          paidAmount: 0,
+          refundedAmount: 0,
+        }
     );
   });
 });

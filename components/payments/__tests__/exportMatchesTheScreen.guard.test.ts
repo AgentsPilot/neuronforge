@@ -55,8 +55,7 @@ const handler = (() => {
 
 describe('it exports every matching row, not the page', () => {
   it('re-asks the route without the page window', () => {
-    expect(handler).toMatch(/limit: String\(EXPORT_CAP\)/);
-    expect(handler).toMatch(/offset: '0'/);
+    expect(handler).toMatch(/queryFor\(\{ limit: EXPORT_CAP, offset: 0 \}\)/);
   });
 
   it('no longer serialises the page it already had', () => {
@@ -66,15 +65,48 @@ describe('it exports every matching row, not the page', () => {
     expect(handler).not.toMatch(/const chosen = selected\.size > 0 \? items\.filter\(.*\) : items/);
   });
 
-  it('carries the SAME filter the screen is showing', () => {
+  it('carries the SAME filter the screen is showing — from the same builder', () => {
     /*
-     * Not a recomputation of it. A second implementation of "what is on
-     * screen" is exactly how an export comes to disagree with the screen.
+     * ─────────────────────────────────────────────────────────────────────────
+     * THIS USED TO CHECK THAT BOTH BUILDERS CARRIED THE SAME LITERALS.
+     *
+     * It listed `filter,` `sort,` `kind:` and asserted each appeared in the
+     * export handler, the loader having its own copy of all three. That caught
+     * a parameter dropped from one side, and it could not catch a parameter
+     * ADDED to one side — which is the same bug arriving from the other
+     * direction, and it nearly happened: a `method` filter went onto the
+     * loader, and an export missing it would have written a file of rows the
+     * owner never saw, silently, in the direction nobody counts.
+     *
+     * There is now one builder and the page window is its only argument, so
+     * the two cannot differ at all. Asserting that is strictly stronger than
+     * asserting they agree, and it is what the handler's own comment has
+     * always demanded: "a second implementation of what is on screen is how an
+     * export comes to disagree with the screen."
+     * ─────────────────────────────────────────────────────────────────────────
      */
-    for (const param of ['filter,', 'sort,', 'kind:']) {
-      expect(handler).toContain(param);
+    expect(handler).toMatch(/const params = queryFor\(/);
+    // And no second assembly anywhere in it.
+    expect(handler).not.toMatch(/new URLSearchParams\(/);
+
+    // The builder itself still carries every parameter, and is the only place
+    // the search is attached.
+    const builder = list.slice(
+      list.indexOf('const queryFor = useCallback('),
+      list.indexOf('[effectiveFilter, sort, kindView, effectiveMethod, searchQuery]')
+    );
+    expect(builder.length).toBeGreaterThan(100);
+    for (const param of ['filter:', 'sort,', 'kind:', 'method:']) {
+      expect(builder).toContain(param);
     }
-    expect(handler).toMatch(/params\.set\('search', searchQuery\.trim\(\)\)/);
+    expect(builder).toMatch(/params\.set\('search', searchQuery\.trim\(\)\)/);
+  });
+
+  it('and the loader uses that same builder, so there is exactly one', () => {
+    const loader = list.slice(list.indexOf('const load = useCallback('), list.indexOf('const exportCsv'));
+
+    expect(loader).toMatch(/queryFor\(\{ limit: PAGE_SIZE, offset: page \* PAGE_SIZE \}\)/);
+    expect(loader).not.toMatch(/new URLSearchParams\(/);
   });
 
   it('the route will actually serve that many', () => {

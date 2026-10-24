@@ -20,7 +20,7 @@ import {
 } from '@/lib/repositories/SchedulingRepository';
 import { paymentInvoiceRepository, paymentTransactionRepository } from '@/lib/repositories/PaymentRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
-import { CRMPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import type {
   EntityType,
   ToolResult,
@@ -35,7 +35,6 @@ import { getAction, type ActionType } from './capabilities-schema';
 import { resolveAllSemanticFilters } from './semantic-schema';
 
 const logger = createLogger({ service: 'SafeExecutionLayer' });
-const pipelineStagesRepo = new CRMPipelineStagesRepository();
 
 // In-memory store for pending mutations (in production, use Redis or database)
 const pendingMutations = new Map<string, PendingMutation>();
@@ -350,7 +349,14 @@ export class SafeExecutionLayer {
           result = await schedulingServiceRepository.update(entityId, this.userId, { [field]: value });
           break;
         case 'bookings':
-          result = await schedulingBookingRepository.update(entityId, this.userId, { [field]: value });
+          result = await schedulingBookingRepository.update(
+            entityId,
+            this.userId,
+            { [field]: value },
+            /* This writes ONE named field, which is sometimes the time
+               (20261082). Anything else is not a move. */
+            field === 'start_time' ? 'owner' : undefined
+          );
           break;
         case 'invoices':
           result = await paymentInvoiceRepository.update(entityId, this.userId, { [field]: value });
@@ -1819,11 +1825,28 @@ export class SafeExecutionLayer {
   ): Promise<ToolResult> {
     switch (operation) {
       case 'create': {
-        // Get user's first pipeline stage if no stage provided
-        let stage = payload?.stage as string;
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THIS BRANCH COULD NEVER HAVE RUN.
+         *
+         * It read `new CRMPipelineStagesRepository()` — whose constructor
+         * requires a SupabaseClient and was given none, a standing typecheck
+         * error on line 38 — and then called `findByUser`, which the
+         * repository has never exposed. So a chat "create a contact" that did
+         * not name a stage threw rather than defaulting.
+         *
+         * `CapabilityEngine` carried the identical pair and its comment
+         * records them as fixed; this copy was missed. Both are now the one
+         * resolver, `firstStageKey`, on the configured singleton.
+         *
+         * Null means the business has no pipeline. The stage is then left off
+         * entirely so `crm_contacts.stage`'s own `DEFAULT 'lead'` applies.
+         * ───────────────────────────────────────────────────────────────────
+         */
+        let stage = payload?.stage as string | undefined;
         if (!stage) {
-          const stagesResult = await pipelineStagesRepo.findByUser(this.userId);
-          stage = stagesResult.data?.[0]?.stage_key || 'lead';
+          const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(this.userId);
+          stage = firstStage ?? undefined;
         }
 
         const result = await crmContactRepository.create({
@@ -1832,7 +1855,7 @@ export class SafeExecutionLayer {
           last_name: payload?.last_name as string,
           email: payload?.email as string,
           phone: payload?.phone as string,
-          stage,
+          ...(stage ? { stage } : {}),
           tags: (payload?.tags as string[]) || [],
           source: 'chat'
         });
@@ -2027,7 +2050,16 @@ export class SafeExecutionLayer {
         if (payload?.start_time) updateData.start_time = payload.start_time as string;
         if (payload?.end_time) updateData.end_time = payload.end_time as string;
 
-        const result = await schedulingBookingRepository.update(id, this.userId, updateData);
+        const result = await schedulingBookingRepository.update(
+          id,
+          this.userId,
+          updateData,
+          /*
+           * Only when this call is actually a move (20261082). The same path
+           * writes a status or a note, and neither is a reschedule.
+           */
+          updateData.start_time ? 'owner' : undefined
+        );
         return result.error
           ? { success: false, error: result.error.message }
           : { success: true, data: result.data };

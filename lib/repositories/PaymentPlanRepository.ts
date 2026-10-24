@@ -129,6 +129,25 @@ export interface PaymentPlanInstallmentInsert {
   user_id: string;
   payment_plan_id: string;
   booking_id?: string | null;
+  /**
+   * The one APPOINTMENT this stage bills, for a package billed per session.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `booking_id` cannot answer this on its own any more. A package is one
+   * booking with six meetings (20261085 and PACKAGE_MEETINGS_PHASE_5), so six
+   * stages share one `booking_id` and a lookup keyed on it finds all six —
+   * which bills the wrong session, or the same session twice.
+   *
+   * Both are set: `booking_id` stays the container, because every query that
+   * asks "what does this job still owe" goes through it, and this says WHICH
+   * of its meetings. NULL for an ordinary stage, which bills a job rather than
+   * an appointment.
+   *
+   * Column added in 20261074 and backfilled; this is the type catching up with
+   * it, which is why the one caller that wrote it had to bypass the repository.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  meeting_id?: string | null;
   contact_id?: string | null;
   installment_number: number;
   amount: number;

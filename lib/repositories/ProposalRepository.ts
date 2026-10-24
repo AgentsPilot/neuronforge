@@ -332,6 +332,57 @@ export class ProposalRepository {
     }
   }
 
+  /**
+   * The newest proposal raised for one booking, or null where none was.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Added for the meeting-cancellation email, which has to tell the client what
+   * is NOT cancelled — and the true sentence differs by where the quote stands:
+   * still coming, already with them, or already accepted. Getting it wrong
+   * tells somebody holding a quote that it is on its way.
+   *
+   * Newest first and one row: a renegotiation is a CHAIN of proposals, and the
+   * current one is what the client is actually holding.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async latestForBooking(
+    bookingId: string,
+    userId: string
+  ): Promise<RepositoryResult<Proposal | null>> {
+    try {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * EITHER WAY A QUOTE IS ATTACHED TO A BOOKING.
+       *
+       * `booking_id` is the consultation a quote came OUT of. A package has no
+       * such booking — it is sold without one — and is linked instead by
+       * `package_booking_id`, the purchase the acceptance created.
+       *
+       * Asking only the first column meant a caller holding a package's
+       * purchase found no quote at all. What that cost: cancelling one session
+       * told the client "a quote will not follow" about a package whose quote
+       * they had already accepted, instead of "the work goes ahead exactly as
+       * agreed" — which is the true and reassuring thing to say when five of
+       * their six sessions are untouched.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { data, error } = await this.supabase
+        .from('proposals')
+        .select('*')
+        .eq('user_id', userId)
+        .or(`booking_id.eq.${bookingId},package_booking_id.eq.${bookingId}`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as Proposal | null) ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to read the booking proposal');
+      return { data: null, error: error as Error };
+    }
+  }
+
   /** Everything still awaiting a decision, for the dashboard and the briefing. */
   async listOpen(userId: string): Promise<RepositoryResult<Proposal[]>> {
     try {

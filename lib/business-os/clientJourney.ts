@@ -222,7 +222,30 @@ export function shouldTakePayment(input: {
   collection: ServiceCollectionLike;
   /** Stripe connected with charges enabled. */
   processorReady: boolean;
+  /**
+   * How the service is sold. A QUOTED one never takes money at this point.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `journeySteps` has always known this — its quoted branch ends at `request`
+   * and never reaches the payment step — but this function did not, and the
+   * public booking route asks THIS one. So the two disagreed about the same
+   * service, and a package sold by proposal with a price on it fell down the
+   * gap between them: the client's page showed no payment step and finished at
+   * "request", while the route decided money was coming, recorded the attempt
+   * and returned without writing a booking. No booking, no contact, no email —
+   * a journey completed end to end that left nothing behind.
+   *
+   * The price on a quoted service is a STARTING figure for the quote, not an
+   * agreed amount. There is nothing to charge until somebody has agreed it.
+   *
+   * Optional, so the owner-side strip and the tests that predate it keep
+   * their answers; every caller that knows the sale mode should pass it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  saleMode?: ServiceSaleModeLike;
 }): boolean {
+  if (isQuoted(input.saleMode)) return false;
+
   return (input.price || 0) > 0
     && collectsOnline(input.collection)
     && input.processorReady;

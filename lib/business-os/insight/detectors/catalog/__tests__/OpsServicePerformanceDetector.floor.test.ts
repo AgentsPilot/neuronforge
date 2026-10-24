@@ -42,7 +42,13 @@ function mockSupabase(tables: Record<string, Row[]>) {
         then: (resolve: (v: { data: unknown; error: null }) => unknown) =>
           resolve({ data: rows, error: null }),
       };
-      for (const m of ['select', 'eq', 'in', 'gte', 'lt', 'order', 'limit', 'neq']) {
+      /*
+       * `or` included. The chain returns its rows regardless of the filters, so
+       * a missing method is not a wrong answer but a crash — `.or(...)` on
+       * undefined — which is how this mock failed when the detector started
+       * excluding missed meetings.
+       */
+      for (const m of ['select', 'eq', 'in', 'gte', 'lt', 'or', 'order', 'limit', 'neq']) {
         chain[m] = () => chain;
       }
       return chain;
@@ -55,12 +61,16 @@ function service(id: string, price = 100): Row {
   return { id, service_name: `Service ${id}`, price: String(price), duration_minutes: 60 };
 }
 
-/** `n` completed bookings against `serviceId`. */
+/** `n` bookings against `serviceId` whose meetings were held. */
 function bookings(serviceId: string, n: number, amount = 100): Row[] {
   return Array.from({ length: n }, () => ({
     service_id: serviceId,
     payment_amount: String(amount),
-    status: 'completed',
+    /* `status` stays `confirmed` and the attendance is on `meeting_status` —
+       which is what a booking looks like after `complete()` since the
+       booking/meeting split. */
+    status: 'confirmed',
+    meeting_status: 'held',
   }));
 }
 

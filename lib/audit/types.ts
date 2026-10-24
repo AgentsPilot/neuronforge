@@ -30,6 +30,10 @@ export const AUDIT_ENTITY_TYPES = [
   'system',
   'scheduling_service',
   'scheduling_booking',
+  // One SESSION of a package, which has no booking of its own: a package is
+  // one booking with N meetings, so an outcome recorded against the job would
+  // not say which of its hours it was about.
+  'scheduling_meeting',
   'payment_invoice',
   // A payment and a refund are audited against the transaction, which was not
   // in this union — so the refund route's audit entry, written at severity
