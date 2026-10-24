@@ -17,7 +17,14 @@
  * `server-only`, so importing them into this file is a build error rather than a
  * review finding.
  *
- * BUYING (plan payments P-4.2)
+ * BUYING (plan payments P-4.2; since upgrade modal UM-1b, inside the modal)
+ *
+ * Choose and Upgrade no longer render here: the plan comparison window
+ * (`UpgradeModal`, opened by "See plans") mounts the `PlanPurchase` /
+ * `PlanUpgrade` islands, never this section (C-12: one Stripe Embedded Checkout
+ * per page). It shares THIS section's `usePlanFlow` instance and closes when a
+ * checkout completes or an upgrade goes through, so the lines below ("Payment
+ * processing", "Upgrading…", "You're on …") still appear here (C-3).
  *
  * The Choose list lives in `PlanPurchase`, and it too renders only what the
  * server sent: `purchase.offer` is the same predicate the checkout refuses on,
@@ -77,11 +84,9 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { isCheckoutReturnMarker } from '@/lib/business-os/billing/checkoutReturnMarker';
 import { createLogger } from '@/lib/logger';
 
-import { PlanPurchase } from './PlanPurchase';
 import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
 import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
 import { CategoryRowText, Notice, fill, priceLine, renderSentence } from './planText';
-import { PlanUpgrade } from './PlanUpgrade';
 import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
 import { UpgradeModal } from './UpgradeModal';
 import { upgradeModalView } from './upgradeModalView';
@@ -145,10 +150,12 @@ export function PlanSection({
     succeeded,
     checkoutProcessing,
     upgradeSucceeded,
-    upgradeWatching,
     upgradeProcessing,
     processing,
     exhausted,
+    checkoutAllowed,
+    upgradeAllowed,
+    paymentsConfigured,
     onCheckoutComplete,
     onUpgrading,
     onUpgradeCheckAgain,
@@ -156,7 +163,7 @@ export function PlanSection({
   /** C-b (B-1): the first read is fixed once per mount, StrictMode included. */
   const firstStarted = useRef(false);
   const firstRead = useRef<FirstRead | null>(null);
-  /** Upgrade modal UM-1a: the view-only plan comparison, opened from the end of this section. */
+  /** Upgrade modal: the plan comparison window (UM-1a), where Choose and Upgrade live since UM-1b. */
   const [compareOpen, setCompareOpen] = useState(false);
 
   /*
@@ -261,6 +268,8 @@ export function PlanSection({
     return <Notice>{sentence(plan.problem) ?? t('plan.problem.unavailable')}</Notice>;
   }
 
+  const compare = upgradeModalView(plan);
+
   return (
     <div className="space-y-5" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* What you are on */}
@@ -364,36 +373,13 @@ export function PlanSection({
           unknown) offers nothing either, so it must not bring the line back. */}
       {plan.nextPlanUp && <NextPlanUp upgrade={plan.nextPlanUp} purchaseKnown={plan.purchase !== undefined} />}
 
-      {/* Upgrading (P-7b.1b): only what the server offers, and not while a change is landing. */}
-      {marker === null && !upgradeWatching && !upgradeSucceeded && (plan.purchase?.upgrade?.tiers.length ?? 0) > 0 && (plan.plans?.length ?? 0) > 0 && (
-        <PlanUpgrade
-          plans={plan.plans ?? []}
-          tiers={plan.purchase?.upgrade?.tiers ?? []}
-          currentPlan={{ planId: plan.planId, name: plan.name, isTier: plan.kind === 'tier' }}
-          onUpgrading={onUpgrading}
-          onCheckAgain={onUpgradeCheckAgain}
-        />
-      )}
-
-      {/* Buying (P-4.2): only what the server offers, and not while a payment is landing. */}
-      {marker === null && plan.purchase?.offer.kind === 'choose' && (plan.plans?.length ?? 0) > 0 && (
-        <PlanPurchase
-          plans={plan.plans ?? []}
-          tiers={plan.purchase.offer.tiers}
-          endsFreeAccess={plan.purchase.endsFreeAccessOnPurchase}
-          onComplete={onCheckoutComplete}
-          // SA Q-7: the plan in force, when it is a tier, labels its own row "Pay for".
-          currentTierId={plan.kind === 'tier' ? plan.planId : null}
-        />
-      )}
-
-      {/* Upgrade modal UM-1a: "Compare plans", VIEW ONLY (C-1). Last in the
-          section on purpose: the purchase tests click `getAllByRole('button')[0]`
-          for Choose (SA W-4), and under B9 is where it lands once UM-1b moves the
-          islands into the modal. Not while a payment or upgrade is landing (SA
-          Q-3: the flow's own `processing`, no new predicate), and only when the
-          server sent a comparison (C-21): the UI never builds a table itself. */}
-      {(plan.plans?.length ?? 0) > 0 && !processing && upgradeModalView(plan).available && (
+      {/* Upgrade modal: "See plans" when the server offers something (any
+          column has a button, an admin-assigned "Pay for" included), "Compare
+          plans" otherwise (§5.1, UM-1b §8.2). Last in the section, under B9.
+          Not while a payment or upgrade is landing (SA Q-3: the flow's own
+          `processing`), and only when the server sent a comparison (C-21): the
+          UI never builds a table itself. */}
+      {(plan.plans?.length ?? 0) > 0 && !processing && compare.available && (
         <>
           <button
             type="button"
@@ -409,9 +395,14 @@ export function PlanSection({
               className={`pointer-events-none absolute inset-y-0 end-0 w-8 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
             />
             <Sparkles aria-hidden="true" className="relative w-4 h-4 shrink-0" />
-            <span className="relative">{t('upgrade_modal.open_compare')}</span>
+            <span className="relative">{t(compare.hasActions ? 'upgrade_modal.open_see_plans' : 'upgrade_modal.open_compare')}</span>
           </button>
-          <UpgradeModal open={compareOpen} onOpenChange={setCompareOpen} plan={plan} />
+          <UpgradeModal
+            open={compareOpen}
+            onOpenChange={setCompareOpen}
+            plan={plan}
+            flow={{ checkoutAllowed, upgradeAllowed, paymentsConfigured, onCheckoutComplete, onUpgrading, onUpgradeCheckAgain }}
+          />
         </>
       )}
     </div>

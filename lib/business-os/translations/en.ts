@@ -297,6 +297,8 @@ export const en = {
     'plan.comparison.section.included': "What's included",
     // Upgrade modal UM-1a: the plan comparison window (view only).
     'upgrade_modal.open_compare': 'Compare plans',
+    'upgrade_modal.open_see_plans': 'See plans',
+    'upgrade_modal.back_to_plans': 'Back to plans',
     'upgrade_modal.headline.choose': 'Choose the plan that fits your business',
     'upgrade_modal.headline.top_plan': "You're on our top plan",
     'upgrade_modal.headline.compare': 'Compare our plans',
@@ -307,7 +309,6 @@ export const en = {
     'upgrade_modal.price_suffix': 'a month, excluding tax',
     'upgrade_modal.plans_label': 'Plan comparison',
     'upgrade_modal.footer_prices': 'Prices in USD, excluding tax.',
-    'upgrade_modal.view_only_note': 'To choose or upgrade, go back to Your plan.',
     'upgrade_modal.back_to_plan': 'Back to your plan',
     'upgrade_modal.current_plan': 'Current plan',
     'upgrade_modal.included': 'Included',

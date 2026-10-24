@@ -2962,6 +2962,8 @@ export const he = {
     'plan.comparison.section.included': 'מה כלול',
     // Upgrade modal UM-1a: the plan comparison window (view only). Draft wording, awaiting the user's approval.
     'upgrade_modal.open_compare': 'השוואת תוכניות',
+    'upgrade_modal.open_see_plans': 'צפייה בתוכניות',
+    'upgrade_modal.back_to_plans': 'חזרה לתוכניות',
     'upgrade_modal.headline.choose': 'בחירת התוכנית שמתאימה לעסק שלך',
     'upgrade_modal.headline.top_plan': 'התוכנית שלך היא התוכנית המלאה ביותר שלנו',
     'upgrade_modal.headline.compare': 'השוואת התוכניות שלנו',
@@ -2972,7 +2974,6 @@ export const he = {
     'upgrade_modal.price_suffix': 'לחודש, לא כולל מס',
     'upgrade_modal.plans_label': 'השוואה בין התוכניות',
     'upgrade_modal.footer_prices': 'המחירים בדולר ארה״ב, לא כולל מס.',
-    'upgrade_modal.view_only_note': 'לבחירה או לשדרוג, אפשר לחזור אל ״התוכנית שלך״.',
     'upgrade_modal.back_to_plan': 'חזרה לתוכנית שלך',
     'upgrade_modal.current_plan': 'התוכנית הנוכחית',
     'upgrade_modal.included': 'כלול',

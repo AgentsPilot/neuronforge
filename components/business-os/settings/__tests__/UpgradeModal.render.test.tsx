@@ -1,13 +1,16 @@
 /**
  * @jest-environment jsdom
  *
- * The plan comparison modal, view only (upgrade modal UM-1a, workplan §9.4).
+ * The plan comparison modal (upgrade modal UM-1a, workplan §9.4; UM-1b §12:
+ * the columns now carry the server's buttons — the flows themselves are
+ * `upgradeModal.flow.render`).
  *
  * Fed REAL payloads (`upgradeModalPayloads`: the real plan view + the real
  * purchase view, through JSON), so what is asserted is the server's table as
  * a customer would see it:
  *   - per account state: the markers, the "Current plan" label, the headline,
- *     the footer sentences, and NO dead button (only the X and "Back to your plan");
+ *     the footer sentences, and NO dead button (the X, "Back to your plan", and
+ *     a column button only for a plan the server offers this account);
  *   - C-21: rows, labels, ✓ / ✕, values and highlight follow the payload exactly;
  *   - C-22 / C-23: "Current plan" is not a control; every cell names its plan;
  *   - semantics, phone classes (C-24, W-8), C-8 / C-9 classes, RTL, es;
@@ -46,7 +49,7 @@ jest.mock('@stripe/react-stripe-js', () => ({
 
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
 import type { PlanPayload } from '@/components/business-os/settings/planPayloadTypes';
-import { UpgradeModal } from '@/components/business-os/settings/UpgradeModal';
+import { UpgradeModal, type UpgradeModalFlow } from '@/components/business-os/settings/UpgradeModal';
 
 import { FOUNDING_PARTNER, LOWER, TOP, TRIAL, inSixtyDays, payingRow, payloadFor } from './upgradeModalPayloads';
 
@@ -60,10 +63,20 @@ beforeEach(() => {
   mockLang.language = 'en';
 });
 
-function showModal(payload: PlanPayload, language: Lang = 'en') {
+/** `PlanSection`'s flow instance, as the modal receives it (UM-1b, C-3): everything may start. */
+const openFlow = (): UpgradeModalFlow => ({
+  checkoutAllowed: true,
+  upgradeAllowed: true,
+  paymentsConfigured: true,
+  onCheckoutComplete: jest.fn(),
+  onUpgrading: jest.fn(),
+  onUpgradeCheckAgain: jest.fn(async () => undefined),
+});
+
+function showModal(payload: PlanPayload, language: Lang = 'en', flow: UpgradeModalFlow = openFlow()) {
   mockLang.language = language;
   const onOpenChange = jest.fn();
-  render(<UpgradeModal open onOpenChange={onOpenChange} plan={payload} />);
+  render(<UpgradeModal open onOpenChange={onOpenChange} plan={payload} flow={flow} />);
   return { modal: screen.getByTestId('plan-compare-modal'), onOpenChange };
 }
 
@@ -71,16 +84,38 @@ const nameOf = (payload: PlanPayload, planId: string) => payload.plans!.find((pl
 const columnHeader = (planId: string) => screen.getByTestId(`plan-compare-col-${planId}`);
 const allRows = (payload: PlanPayload) => payload.comparison!.sections.flatMap((section) => section.rows);
 
-/** The only buttons the view-only modal may hold: Radix's X and "Back to your plan" (C-1). */
-function expectNoDeadButton(modal: HTMLElement, language: Lang = 'en') {
-  const names = within(modal)
-    .getAllByRole('button')
-    .map((button) => button.textContent?.trim());
-  expect(names.sort()).toEqual(['Close', translations[language]['upgrade_modal.back_to_plan']].sort());
+/** The plan ids the server offers this account (to choose, or to upgrade to). */
+const offeredIds = (payload: PlanPayload) =>
+  new Set([...(payload.purchase?.offer.kind === 'choose' ? payload.purchase.offer.tiers : []), ...(payload.purchase?.upgrade?.tiers ?? [])]);
+
+/**
+ * No dead button (UM-FR3; UM-1b §12.1): every button is Radix's X, "Back to your
+ * plan", or a column button for a plan the SERVER offers — two per offered
+ * column (header and footer). Checked against the payload, never config.
+ */
+function expectNoDeadButton(modal: HTMLElement, payload: PlanPayload, language: Lang = 'en') {
+  const offered = offeredIds(payload);
+  const columnButtons: string[] = [];
+  for (const button of within(modal).getAllByRole('button')) {
+    const match = /^plan-compare-action-(.+)-(header|footer)$/.exec(button.getAttribute('data-testid') ?? '');
+    if (match) {
+      expect({ planId: match[1], offered: offered.has(match[1]) }).toEqual({ planId: match[1], offered: true });
+      columnButtons.push(match[1]);
+      continue;
+    }
+    expect(['Close', translations[language]['upgrade_modal.back_to_plan']]).toContain(button.textContent?.trim());
+  }
+  const shownOffered = payload.comparison!.planIds.filter((planId) => offered.has(planId));
+  expect(columnButtons.sort()).toEqual([...shownOffered, ...shownOffered].sort());
+}
+
+/** The column's two buttons (header, footer), and their shared accessible name. */
+function expectColumnButtons(planId: string, name: string) {
+  for (const where of ['header', 'footer']) expect(screen.getByTestId(`plan-compare-action-${planId}-${where}`)).toHaveAccessibleName(name);
 }
 
 describe('per account state (§9.4)', () => {
-  it('Trial: no "Your plan", no label, a ribbon, headline choose, view-only note and the trial sentence', async () => {
+  it('Trial: no "Your plan", no label, a ribbon, headline choose, Choose ×2 per column and the trial sentence', async () => {
     const payload = await payloadFor({ planId: TRIAL });
     const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.choose'] })).toBe(modal);
@@ -89,32 +124,38 @@ describe('per account state (§9.4)', () => {
     expect(within(modal).getAllByText(COPY['upgrade_modal.recommended'])).toHaveLength(1);
     // UM-BQ4: the ribbon is on the top plan's column.
     expect(within(columnHeader(TOP)).getByText(COPY['upgrade_modal.recommended'])).toBeInTheDocument();
-    // Both columns offered: their slots are empty in UM-1a (SA Q-11), header and footer.
-    expect(within(modal).getAllByTestId('plan-compare-slot-empty')).toHaveLength(payload.plans!.length * 2);
-    expect(screen.getByTestId('plan-compare-view-only-note')).toHaveTextContent(COPY['upgrade_modal.view_only_note']);
+    // UM-1b: both columns offered, so each carries "Choose {plan}" in header and footer
+    // (was: empty slots + the view-only note, removed per UM-1a Q-6).
+    for (const plan of payload.plans!) expectColumnButtons(plan.planId, fill(COPY['plan.choose.button'], { plan: plan.name }));
+    expect(within(modal).queryAllByTestId('plan-compare-slot-empty')).toHaveLength(0);
+    expect(screen.queryByTestId('plan-compare-view-only-note')).not.toBeInTheDocument();
     expect(screen.getByTestId('plan-compare-ends-free-access')).toHaveTextContent(COPY['plan.choose.trial_ends_today']);
-    expectNoDeadButton(modal);
+    expectNoDeadButton(modal, payload);
   });
 
   it('Founding Partner, no end date: no marker of any kind, headline compare, no note, no ends-today', async () => {
-    const { modal } = showModal(await payloadFor({ planId: FOUNDING_PARTNER }));
+    const payload = await payloadFor({ planId: FOUNDING_PARTNER });
+    const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.compare'] })).toBe(modal);
     expect(within(modal).queryByText(COPY['upgrade_modal.your_plan'])).not.toBeInTheDocument();
     expect(within(modal).queryByText(COPY['upgrade_modal.recommended'])).not.toBeInTheDocument();
     expect(within(modal).queryAllByTestId('plan-compare-current-label')).toHaveLength(0);
-    expect(screen.queryByTestId('plan-compare-view-only-note')).not.toBeInTheDocument();
     expect(screen.queryByTestId('plan-compare-ends-free-access')).not.toBeInTheDocument();
-    expectNoDeadButton(modal);
+    // BQ-P10: nothing offered, so no column button at all.
+    expect(within(modal).queryAllByTestId(/^plan-compare-action-/)).toHaveLength(0);
+    expectNoDeadButton(modal, payload);
   });
 
   it('Founding Partner with an end date: a ribbon, headline choose, the free-access sentence', async () => {
-    const { modal } = showModal(await payloadFor({ planId: FOUNDING_PARTNER, cohortExpiresAt: inSixtyDays() }));
+    const payload = await payloadFor({ planId: FOUNDING_PARTNER, cohortExpiresAt: inSixtyDays() });
+    const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.choose'] })).toBe(modal);
     expect(within(modal).getAllByText(COPY['upgrade_modal.recommended'])).toHaveLength(1);
     // UM-BQ4: the ribbon is on the top plan's column.
     expect(within(columnHeader(TOP)).getByText(COPY['upgrade_modal.recommended'])).toBeInTheDocument();
     expect(screen.getByTestId('plan-compare-ends-free-access')).toHaveTextContent(COPY['plan.choose.free_access_ends_today']);
-    expectNoDeadButton(modal);
+    for (const plan of payload.plans!) expectColumnButtons(plan.planId, fill(COPY['plan.choose.button'], { plan: plan.name }));
+    expectNoDeadButton(modal, payload);
   });
 
   it('Essentials, renewing: "Your plan" + Current plan twice on that column, the plan above recommended, headline choose', async () => {
@@ -130,26 +171,34 @@ describe('per account state (§9.4)', () => {
     const status = screen.getByTestId('plan-compare-status');
     expect(status).toHaveTextContent(fill(COPY['upgrade_modal.status_on'], { plan: nameOf(payload, LOWER) }));
     expect(status).toHaveTextContent(/Renews on/);
-    expectNoDeadButton(modal);
+    // UM-1b: the plan above carries "Upgrade to {plan}" twice; the current column none.
+    expectColumnButtons(TOP, fill(COPY['plan.upgrade.button'], { plan: nameOf(payload, TOP) }));
+    expect(within(columnHeader(LOWER)).queryByRole('button')).not.toBeInTheDocument();
+    expectNoDeadButton(modal, payload);
   });
 
   it('Autopilot, renewing: "Your plan" + label ×2, no ribbon, headline top_plan, no "Coming soon"', async () => {
-    const { modal } = showModal(await payloadFor({ planId: TOP, billingRow: payingRow(TOP) }));
+    const payload = await payloadFor({ planId: TOP, billingRow: payingRow(TOP) });
+    const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.top_plan'] })).toBe(modal);
     expect(within(columnHeader(TOP)).getByText(COPY['upgrade_modal.your_plan'])).toBeInTheDocument();
     expect(within(modal).queryByText(COPY['upgrade_modal.recommended'])).not.toBeInTheDocument();
     expect(within(modal).getAllByTestId('plan-compare-current-label')).toHaveLength(2);
     expect(within(modal).queryByText(COPY['plan.next.coming_soon'])).not.toBeInTheDocument();
-    expectNoDeadButton(modal);
+    expect(within(modal).queryAllByTestId(/^plan-compare-action-/)).toHaveLength(0);
+    expectNoDeadButton(modal, payload);
   });
 
-  it('C-22: an admin-assigned tier offered only its own plan: "Your plan", NO Current plan label, headline top_plan, no note', async () => {
-    const { modal } = showModal(await payloadFor({ planId: TOP, buyable: [TOP] }));
+  it('C-22: an admin-assigned tier offered only its own plan: "Your plan", "Pay for" ×2 (no Current plan label), headline top_plan, the own-plan note', async () => {
+    const payload = await payloadFor({ planId: TOP, buyable: [TOP] });
+    const { modal } = showModal(payload);
     expect(screen.getByRole('dialog', { name: COPY['upgrade_modal.headline.top_plan'] })).toBe(modal);
     expect(within(columnHeader(TOP)).getByText(COPY['upgrade_modal.your_plan'])).toBeInTheDocument();
     expect(within(modal).queryAllByTestId('plan-compare-current-label')).toHaveLength(0);
-    expect(screen.queryByTestId('plan-compare-view-only-note')).not.toBeInTheDocument();
-    expectNoDeadButton(modal);
+    // UM-1b: the slot UM-1a left empty is the server's "Pay for {plan}" (plan payments Q-5 / Q-7).
+    expectColumnButtons(TOP, fill(COPY['plan.choose.button_own'], { plan: nameOf(payload, TOP) }));
+    expect(screen.getByTestId('plan-compare-own-plan-note')).toHaveTextContent(fill(COPY['plan.choose.own_plan_note'], { plan: nameOf(payload, TOP) }));
+    expectNoDeadButton(modal, payload);
   });
 
   it('nextPlanUp not available to buy: "Coming soon" and the server reason in that column, no control', async () => {
@@ -160,12 +209,15 @@ describe('per account state (§9.4)', () => {
       ...base,
       plans: base.plans!.map((choice) => (choice.planId === nextId ? { ...choice, availableToBuy: false } : choice)),
       nextPlanUp: { ...base.nextPlanUp!, availableToBuy: false, actionUnavailableBecause: reason },
+      // As the server would send it: a plan that cannot be bought is not offered as an upgrade either.
+      purchase: { ...base.purchase!, upgrade: null },
     };
     const { modal } = showModal(payload);
     expect(within(columnHeader(nextId)).getByText(COPY['plan.next.coming_soon'])).toBeInTheDocument();
     // The sentence key renders through the dictionary; an unknown key echoes, which is enough to find it.
     expect(within(columnHeader(nextId)).getByText(reason.key)).toBeInTheDocument();
-    expectNoDeadButton(modal);
+    expect(within(columnHeader(nextId)).queryByRole('button')).not.toBeInTheDocument();
+    expectNoDeadButton(modal, payload);
   });
 });
 
@@ -329,7 +381,7 @@ describe('languages', () => {
     for (const plan of payload.plans!) expect(within(modal).getByText(`$${plan.monthlyPriceUsd}`)).toBeInTheDocument();
     const headers = within(screen.getByTestId('plan-compare-table')).getAllByRole('columnheader');
     expect(headers.map((header) => header.getAttribute('data-testid'))).toEqual(payload.comparison!.planIds.map((id) => `plan-compare-col-${id}`));
-    expectNoDeadButton(modal, 'he');
+    expectNoDeadButton(modal, payload, 'he');
   });
 
   it.each(['he', 'es'] as const)('%s: no English upgrade_modal word left in the modal', async (language) => {
@@ -367,12 +419,13 @@ describe('through PlanSection (C-3, W-2, AC-UM1 view-only part)', () => {
   const SLOW = 20_000;
 
   it.each(['escape', 'x', 'back'] as const)(
-    'opens from "Compare plans" with no read; %s closes it and focus returns to the button',
+    'opens from "See plans" with no read; %s closes it and focus returns to the button',
     async (close) => {
       await showSection([await payloadFor({ billingRow: payingRow(LOWER) })]);
       const opener = screen.getByTestId('plan-compare-open');
       expect(opener).toHaveAttribute('aria-haspopup', 'dialog');
-      expect(opener).toHaveAccessibleName(COPY['upgrade_modal.open_compare']);
+      // UM-1b §8.2: the server offers this owner an upgrade, so the button reads "See plans".
+      expect(opener).toHaveAccessibleName(COPY['upgrade_modal.open_see_plans']);
       const readsBefore = server.reads;
 
       await userEvent.click(opener);
@@ -438,7 +491,7 @@ describe('through PlanSection (C-3, W-2, AC-UM1 view-only part)', () => {
       const sentenceStart = COPY[payload.endsWhen!.key].split('{')[0].trim();
       expect(sentenceStart.length).toBeGreaterThan(0);
       expect(screen.getByTestId('plan-compare-status')).toHaveTextContent(sentenceStart);
-      expectNoDeadButton(modal);
+      expectNoDeadButton(modal, payload);
     },
     SLOW
   );

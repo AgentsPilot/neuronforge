@@ -292,6 +292,8 @@ export const es = {
     'plan.comparison.section.included': 'Qué incluye',
     // Upgrade modal UM-1a: the plan comparison window (view only). Draft wording, awaiting the user's approval.
     'upgrade_modal.open_compare': 'Comparar planes',
+    'upgrade_modal.open_see_plans': 'Ver planes',
+    'upgrade_modal.back_to_plans': 'Volver a los planes',
     'upgrade_modal.headline.choose': 'Elige el plan que mejor encaja con tu negocio',
     'upgrade_modal.headline.top_plan': 'Ya tienes nuestro plan más completo',
     'upgrade_modal.headline.compare': 'Compara nuestros planes',
@@ -302,7 +304,6 @@ export const es = {
     'upgrade_modal.price_suffix': 'al mes, impuestos no incluidos',
     'upgrade_modal.plans_label': 'Comparación de planes',
     'upgrade_modal.footer_prices': 'Precios en USD, impuestos no incluidos.',
-    'upgrade_modal.view_only_note': 'Para elegir o mejorar tu plan, vuelve a Tu plan.',
     'upgrade_modal.back_to_plan': 'Volver a tu plan',
     'upgrade_modal.current_plan': 'Plan actual',
     'upgrade_modal.included': 'Incluido',

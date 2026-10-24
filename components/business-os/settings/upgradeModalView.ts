@@ -17,7 +17,7 @@
  *     LAST shown plan (server order) that the server offers and that is not the
  *     current tier; none when nothing qualifies (C-10). `nextPlanUp` does not
  *     pick it (it still drives the drawer's B9 and the coming-soon reason);
- *   - the headline, and the per-column action slot.
+ *   - the headline, and the per-column action (UM-1b: which button, if any).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -33,20 +33,39 @@ export interface PlanColumnView {
   isCurrent: boolean;
   /** Amended UM-SA4 (UM-BQ4) + C-10: the last shown plan that is offered and not current. */
   isRecommended: boolean;
-  /** `!availableToBuy` (SA Q-1): "not offered to you" is not "coming soon". */
+  /**
+   * "Coming soon" (UM-1a Q-1, widened by UM-1b SA Q-1): `!availableToBuy`, or —
+   * while CHOOSING (`offer.kind === 'choose'`) — a shown plan the server offers
+   * neither to choose nor to upgrade to, as the Choose list said (UM-FR3). Never
+   * on the current column, and never beside a button.
+   */
   comingSoon: boolean;
   /** The server's reason, on the `nextPlanUp` column only, when it cannot be bought (SA Q-1). */
   unavailableBecause: PlanSentence | null;
   /**
-   * What sits under the price and in the footer row (C-22):
-   *  'offered'       the server offers this plan to this account; UM-1a renders
-   *                  NOTHING here (C-1, SA Q-11), UM-1b mounts the trigger
+   * What sits under the price and in the footer row (C-22; UM-1b §4). Precedence
+   * (SA Q-1 / Q-3): upgrade > pay_for > choose > current_label > none.
+   *  'upgrade'       the plan is in `purchase.upgrade.tiers`: "Upgrade to {plan}"
+   *  'pay_for'       offered to choose, and it is the tier this account is on
+   *                  (admin-assigned, no billing, plan payments Q-5): "Pay for {plan}"
+   *  'choose'        offered to choose: "Choose {plan}"
    *  'current_label' the current column with nothing offered for it: the
    *                  non-interactive "Current plan"
-   *  'none'          everything else (a Coming soon chip may still show)
+   *  'none'          everything else (a Coming soon chip may show)
    */
-  action: 'offered' | 'current_label' | 'none';
+  action: PlanColumnAction;
+  /**
+   * The server's own-plan note belongs to this column's button (plan payments
+   * Q-5 / Q-7): `pay_for`, or `upgrade` on the current column. The modal shows
+   * the matching sentence in its footer.
+   */
+  ownPlanNote: 'choose' | 'upgrade' | null;
 }
+
+export type PlanColumnAction = 'upgrade' | 'pay_for' | 'choose' | 'current_label' | 'none';
+
+/** The actions that are a button: the server offers this plan to this account. */
+export const BUTTON_ACTIONS: readonly PlanColumnAction[] = ['upgrade', 'pay_for', 'choose'];
 
 export type UpgradeModalHeadline = 'choose' | 'top_plan' | 'compare';
 
@@ -60,27 +79,33 @@ export interface UpgradeModalView {
   headline: UpgradeModalHeadline;
   /** Anything offered OTHER than the current tier's own plan (W-1). */
   somethingOffered: boolean;
+  /**
+   * UM-1b §8.2: any column carries a button (its own plan's "Pay for" included),
+   * so the drawer's button reads "See plans" rather than "Compare plans".
+   */
+  hasActions: boolean;
 }
 
 const NOTHING: PlanComparisonSection[] = [];
 
-/** The plan ids the server offers this account to choose or upgrade to. */
-function offeredTiers(plan: PlanPayload): Set<string> {
-  const offered = new Set<string>();
+/** The plan ids the server offers this account to choose, and to upgrade to. */
+function offers(plan: PlanPayload): { choose: Set<string>; upgrade: Set<string>; all: Set<string>; choosing: boolean } {
+  const choose = new Set<string>();
+  const upgrade = new Set<string>();
   const purchase = plan.purchase;
-  if (!purchase) return offered;
-  if (purchase.offer.kind === 'choose') {
-    for (const tier of purchase.offer.tiers) offered.add(tier);
+  const choosing = purchase?.offer.kind === 'choose';
+  if (purchase && purchase.offer.kind === 'choose') {
+    for (const tier of purchase.offer.tiers) choose.add(tier);
   }
-  for (const tier of purchase.upgrade?.tiers ?? []) offered.add(tier);
-  return offered;
+  for (const tier of purchase?.upgrade?.tiers ?? []) upgrade.add(tier);
+  return { choose, upgrade, all: new Set([...Array.from(choose), ...Array.from(upgrade)]), choosing };
 }
 
 export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
   const plans = plan.plans ?? [];
   const comparison = plan.comparison ?? null;
   const currentId = plan.kind === 'tier' ? plan.planId : null;
-  const offered = offeredTiers(plan);
+  const { choose, upgrade, all: offered, choosing } = offers(plan);
 
   // W-1: an admin-assigned tier whose own plan is offered ("Pay for") has
   // nothing to CHOOSE here, so it must not read "Choose the plan that fits".
@@ -110,7 +135,7 @@ export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
   const available = comparison !== null && planIds.length > 0 && planIds.every((id) => byId.has(id));
 
   if (!available || comparison === null) {
-    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered };
+    return { available: false, columns: [], sections: NOTHING, headline, somethingOffered, hasActions: false };
   }
 
   const columns = planIds.map((planId): PlanColumnView => {
@@ -118,19 +143,32 @@ export function upgradeModalView(plan: PlanPayload): UpgradeModalView {
     const choice = byId.get(planId)!;
     const isCurrent = currentId !== null && planId === currentId;
     const isNext = plan.nextPlanUp?.planId === planId;
+    // SA Q-1 / Q-3 precedence, server data only.
+    const action: PlanColumnAction = upgrade.has(planId)
+      ? 'upgrade'
+      : choose.has(planId)
+        ? isCurrent
+          ? 'pay_for'
+          : 'choose'
+        : isCurrent
+          ? 'current_label'
+          : 'none';
+    const notOfferedWhileChoosing = choosing && !offered.has(planId);
     return {
       planId,
       name: choice.name,
       monthlyPriceUsd: choice.monthlyPriceUsd,
       isCurrent,
       isRecommended: planId === recommendedId,
-      comingSoon: !choice.availableToBuy,
+      comingSoon: action === 'none' && (!choice.availableToBuy || notOfferedWhileChoosing),
       unavailableBecause: isNext && !choice.availableToBuy ? plan.nextPlanUp?.actionUnavailableBecause ?? null : null,
       // C-22: the server's action first, so an admin-assigned tier offered its
-      // own plan gets the slot (empty in UM-1a), not the "Current plan" label.
-      action: offered.has(planId) ? 'offered' : isCurrent ? 'current_label' : 'none',
+      // own plan gets "Pay for", not the "Current plan" label.
+      action,
+      ownPlanNote: action === 'pay_for' ? 'choose' : action === 'upgrade' && isCurrent ? 'upgrade' : null,
     };
   });
 
-  return { available: true, columns, sections: comparison.sections, headline, somethingOffered };
+  const hasActions = columns.some((column) => BUTTON_ACTIONS.includes(column.action));
+  return { available: true, columns, sections: comparison.sections, headline, somethingOffered, hasActions };
 }

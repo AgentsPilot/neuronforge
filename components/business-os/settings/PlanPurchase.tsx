@@ -27,7 +27,7 @@
  * only), so no server code reaches the browser bundle (W-6, CLAUDE.md rule 1).
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { PlanEmbeddedCheckout } from '@/components/business-os/billing/PlanEmbeddedCheckout';
@@ -35,7 +35,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { EndsFreeAccessOnPurchaseWire } from '@/lib/business-os/billing/planPurchaseTypes';
 import { getStripePromise } from '@/lib/client/stripeJs';
 
-import { fillTemplate, planPurchaseRefusalKey, settingsPlanReturnPath } from './planPurchaseCopy';
+import { ENDS_FREE_ACCESS_KEYS, fillTemplate, planPurchaseRefusalKey, settingsPlanReturnPath } from './planPurchaseCopy';
 
 /** One plan as the payload lists it (`CustomerPlanChoice`, mirrored over HTTP). */
 export interface PlanChoice {
@@ -44,11 +44,6 @@ export interface PlanChoice {
   monthlyPriceUsd: number;
   availableToBuy: boolean;
 }
-
-const ENDS_FREE_ACCESS_KEYS: Record<Exclude<EndsFreeAccessOnPurchaseWire, null>, string> = {
-  trial: 'plan.choose.trial_ends_today',
-  free_access: 'plan.choose.free_access_ends_today',
-};
 
 const CHOOSE_BUTTON =
   'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
@@ -59,6 +54,8 @@ export function PlanPurchase({
   endsFreeAccess,
   onComplete,
   currentTierId = null,
+  startTier,
+  onFrameOpenChange,
 }: {
   plans: readonly PlanChoice[];
   /** The tiers the server offers (`purchase.offer.tiers`). */
@@ -73,6 +70,14 @@ export function PlanPurchase({
    * Label only: what is offered is still the server's `tiers`.
    */
   currentTierId?: string | null;
+  /**
+   * Upgrade modal UM-1b (SA Q-2): the plan the owner already chose with a column
+   * button. Only that row is shown, and its checkout starts on mount
+   * (`autoStart`); the request is unchanged. Still only if the server offers it.
+   */
+  startTier?: string;
+  /** UM-1b (SA Q-8): a Stripe frame is open (true) or gone (false; also on unmount). */
+  onFrameOpenChange?: (open: boolean) => void;
 }) {
   const { t } = useLanguage();
   const router = useRouter();
@@ -84,10 +89,17 @@ export function PlanPurchase({
   const [message, setMessage] = useState<string | null>(null);
 
   const heading = t('plan.choose.heading');
+  const shown = startTier === undefined ? plans : plans.filter((plan) => plan.planId === startTier);
+
+  // SA Q-8: one effect; its cleanup reports "closed", so an unmount never leaves the caller guarding a frame that is gone.
+  useEffect(() => {
+    onFrameOpenChange?.(frameOpen);
+    return () => onFrameOpenChange?.(false);
+  }, [frameOpen, onFrameOpenChange]);
 
   return (
     <div className="pt-4 border-t border-[var(--v2-border)] space-y-3" data-testid="plan-purchase">
-      <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">{heading}</h4>
+      {startTier === undefined ? <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)]">{heading}</h4> : null}
 
       {endsFreeAccess ? (
         <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-purchase-ends-free-access">
@@ -102,7 +114,7 @@ export function PlanPurchase({
       ) : null}
 
       <ul className="space-y-3" aria-label={heading}>
-        {plans.map((plan) => {
+        {shown.map((plan) => {
           const offered = tiers.includes(plan.planId);
           // Once a frame is open, only its own row keeps a checkout.
           const showCheckout = offered && stripeReady && (!frameOpen || activeTier === plan.planId);
@@ -110,7 +122,8 @@ export function PlanPurchase({
 
           return (
             <li key={plan.planId} className="space-y-2" data-testid={`plan-choice-${plan.planId}`}>
-              <div className="flex items-baseline gap-2 flex-wrap">
+              {/* UM-1b: with `startTier` the host already names the plan and its price above. */}
+              <div className={`flex items-baseline gap-2 flex-wrap${startTier === undefined ? '' : ' sr-only'}`}>
                 <span className="text-sm text-[var(--v2-text-primary)]">{plan.name}</span>
                 {plan.monthlyPriceUsd > 0 ? (
                   // Prices stay in digits and USD (SR-15); "excluding tax" travels with them (M-8).
@@ -144,6 +157,7 @@ export function PlanPurchase({
                   frameClassName="rounded border border-[var(--v2-border)] p-2"
                   disabled={activeTier !== null && activeTier !== plan.planId}
                   testId={`plan-choose-${plan.planId}`}
+                  autoStart={startTier === plan.planId}
                   onRequest={() => {
                     setMessage(null);
                     setActiveTier(plan.planId);
@@ -169,7 +183,7 @@ export function PlanPurchase({
       </ul>
 
       {message ? (
-        <p role="alert" data-testid="plan-purchase-refused" className="text-sm text-red-700">
+        <p role="alert" data-testid="plan-purchase-refused" className="text-sm text-[var(--v2-error-text)]">
           {message}
         </p>
       ) : null}

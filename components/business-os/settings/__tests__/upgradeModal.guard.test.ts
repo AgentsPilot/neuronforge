@@ -5,7 +5,8 @@
  * §9.3 (a)–(f), §9.4 (g)–(k)). Each pin has a planted-violation self-test below,
  * as `planPrefetch.guard` does, so a guard that silently stopped matching fails.
  *
- *   (a) C-1 / C-12  the modal imports no island and no Stripe
+ *   (a) C-12        UM-1b: the islands are imported by the modal ONLY, never by
+ *                   PlanSection; the modal imports no Stripe itself
  *   (b) C-3         the modal and its view take no read
  *   (c) C-2         the flow's state and success predicate live only in usePlanFlow.ts
  *   (d) C-6         no import from lib/business-os/entitlements in the new files
@@ -17,6 +18,14 @@
  *   (i) C-23        no upgrade_modal.* value reads as a claim about what a plan lacks
  *   (j) C-22        "Current plan" is a span, never a button
  *   (k) C-27        the two-column phone assumption names its tripwire
+ *   (l) SA Q-2      `autoStart` is passed only by PlanPurchase (never the holding
+ *                   screen or the harness)
+ *   (m) C-13        no `text-red-` in PlanPurchase / PlanUpgrade; PlanEmbeddedCheckout
+ *                   keeps its own (it also renders outside the theme provider)
+ *   (n) UM-FR11     the busy gate: the owner's close is refused while busy, Escape and
+ *                   outside presses are prevented behind the same flag; the hand-off
+ *                   close (SA W-2) does not consult it
+ *   (o) UM-1a Q-6   the interim view-only note is gone from every dictionary and file
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -28,7 +37,8 @@ import { PLAN_COMPARISON_ROWS } from '@/lib/business-os/entitlements/config/plan
 jest.mock('@/lib/supabaseClient', () => ({ supabase: {} }));
 
 const DIR = 'components/business-os/settings';
-const read = (file: string) => readFileSync(join(process.cwd(), file), 'utf8');
+// Line endings normalised: a Windows checkout (core.autocrlf) must not hide a '\n' pattern (jest flake note).
+const read = (file: string) => readFileSync(join(process.cwd(), file), 'utf8').replace(/\r\n/g, '\n');
 /** Without comments, so a guard pins code, not prose about it. */
 const code = (source: string) =>
   source
@@ -43,13 +53,24 @@ const TYPES = `${DIR}/planPayloadTypes.ts`;
 const FLOW = `${DIR}/usePlanFlow.ts`;
 const TEXT = `${DIR}/planText.tsx`;
 const SECTION = `${DIR}/PlanSection.tsx`;
+const PURCHASE = `${DIR}/PlanPurchase.tsx`;
+const UPGRADE = `${DIR}/PlanUpgrade.tsx`;
+const EMBEDDED = 'components/business-os/billing/PlanEmbeddedCheckout.tsx';
+const HOLDING = 'app/invite/awaiting-payment/HeldPaymentCheckout.tsx';
+const HARNESS = 'components/test-business-os/PlanCheckoutPanel.tsx';
 const NEW_FILES = [TYPES, TEXT, FLOW, VIEW, MODAL];
 
 // ── the pins, as functions so the self-tests can feed them a planted source ──
 
-function pinA(modal: string) {
-  for (const name of ['PlanPurchase', 'PlanUpgrade', 'PlanEmbeddedCheckout', 'stripeJs', '@stripe/']) {
+/** (a) UM-1b, inverted from UM-1a: the islands only in the modal (C-12), no Stripe import in the modal itself. */
+function pinA(modal: string, section: string) {
+  for (const name of ['PlanEmbeddedCheckout', 'stripeJs', '@stripe/']) {
     expect(modal).not.toMatch(new RegExp(`from\\s+'[^']*${name}`));
+  }
+  for (const island of ['PlanPurchase', 'PlanUpgrade']) {
+    expect(modal).toMatch(new RegExp(`from\\s+'\\./${island}'`));
+    expect(section).not.toMatch(new RegExp(`from\\s+'[^']*${island}'`));
+    expect(section).not.toMatch(new RegExp(`<${island}\\b`));
   }
 }
 
@@ -58,7 +79,17 @@ function pinB(source: string) {
 }
 
 /** (c) Each flow marker, across the settings product files, only in usePlanFlow.ts. */
-const FLOW_MARKERS = ["billing?.state === 'renewing'", 'PROCESSING_REFRESH_LIMIT', 'setUpgradeWatching(', 'setCompletedSession('];
+const FLOW_MARKERS = [
+  "billing?.state === 'renewing'",
+  'PROCESSING_REFRESH_LIMIT',
+  'setUpgradeWatching(',
+  'setCompletedSession(',
+  // UM-1b §8.3 / SA W-3: the start gates and the key check, defined once.
+  'const checkoutAllowed =',
+  'const upgradeAllowed =',
+  'const paymentsConfigured =',
+  '!upgradeWatching && !upgradeSucceeded',
+];
 function pinC(sources: Record<string, string>) {
   for (const marker of FLOW_MARKERS) {
     const holders = Object.entries(sources)
@@ -145,6 +176,40 @@ function pinK(modalWithComments: string) {
   expect(code(modalWithComments).match(/max-sm:grid-cols-2/g) ?? []).toHaveLength(1);
 }
 
+function pinL(sources: Record<string, string>) {
+  const passers = Object.entries(sources)
+    .filter(([, text]) => /\bautoStart=/.test(text))
+    .map(([file]) => file);
+  expect(passers).toEqual([PURCHASE]);
+}
+
+function pinM(purchase: string, upgrade: string, embedded: string) {
+  expect(purchase).not.toMatch(/text-red-/);
+  expect(upgrade).not.toMatch(/text-red-/);
+  expect(purchase).toContain('text-[var(--v2-error-text)]');
+  expect(upgrade).toContain('text-[var(--v2-error-text)]');
+  // C-13: PlanEmbeddedCheckout untouched in colour.
+  expect(embedded).toContain('text-red-700');
+}
+
+function pinN(modal: string) {
+  expect(modal).toMatch(/const requestOpenChange = \(next: boolean\) => \{\s*if \(!next && busy\) return;/);
+  expect(modal).toMatch(/onEscapeKeyDown=\{\(event\) => \{\s*if \(busy\) event\.preventDefault\(\);/);
+  expect(modal).toMatch(/onInteractOutside=\{\(event\) => \{[\s\S]*?if \(busy \|\| frameOpen\) event\.preventDefault\(\);/);
+  expect(modal).toContain('<Dialog open={open} onOpenChange={requestOpenChange}>');
+  // W-2: the hand-off close does not go through the gate.
+  const handOff = modal.slice(modal.indexOf('const handOff = () => {'), modal.indexOf('};', modal.indexOf('const handOff = () => {')));
+  expect(handOff).toContain('onOpenChange(false)');
+  expect(handOff).not.toMatch(/busy/);
+}
+
+function pinO(sources: Record<string, string>, dictionaries: Record<string, Record<string, string>>) {
+  for (const [file, text] of Object.entries(sources)) expect({ file, found: text.includes('view_only_note') }).toEqual({ file, found: false });
+  for (const [language, dictionary] of Object.entries(dictionaries)) {
+    expect({ language, found: 'upgrade_modal.view_only_note' in dictionary }).toEqual({ language, found: false });
+  }
+}
+
 // ── the guards ──
 
 const settingsProductFiles = () =>
@@ -157,7 +222,7 @@ const { translations } = jest.requireActual('@/lib/business-os/LanguageContext')
 };
 
 describe('upgrade modal source guards', () => {
-  it('(a) C-1 / C-12: the modal imports no island and no Stripe', () => pinA(code(read(MODAL))));
+  it('(a) C-12: the islands are imported by the modal only, never by PlanSection; no Stripe in the modal', () => pinA(code(read(MODAL)), code(read(SECTION))));
   it.each([MODAL, VIEW])('(b) C-3: %s takes no read', (file) => pinB(code(read(file))));
   it('(c) C-2: the flow state and the success predicate live only in usePlanFlow.ts', () => {
     pinC(Object.fromEntries(settingsProductFiles().map((file) => [file, code(read(file))])));
@@ -179,6 +244,16 @@ describe('upgrade modal source guards', () => {
     pinK(read(MODAL));
     expect(existsSync(join(process.cwd(), TRIPWIRE))).toBe(true);
   });
+  it('(l) SA Q-2: autoStart is passed only by PlanPurchase', () => {
+    pinL(Object.fromEntries([...settingsProductFiles(), HOLDING, HARNESS].map((file) => [file, code(read(file))])));
+  });
+  it('(m) C-13: the islands use --v2-error-text; PlanEmbeddedCheckout keeps its own colour', () => {
+    pinM(code(read(PURCHASE)), code(read(UPGRADE)), code(read(EMBEDDED)));
+  });
+  it('(n) UM-FR11 / W-2: the busy gate exists, and the hand-off close bypasses it', () => pinN(code(read(MODAL))));
+  it('(o) UM-1a Q-6: the view-only note is gone', () => {
+    pinO(Object.fromEntries(settingsProductFiles().map((file) => [file, code(read(file))])), { en: translations.en, he: translations.he, es: translations.es });
+  });
 });
 
 describe('negative controls: each pin fails on the violation it exists for', () => {
@@ -186,9 +261,11 @@ describe('negative controls: each pin fails on the violation it exists for', () 
   const view = code(read(VIEW));
   const section = code(read(SECTION));
 
-  it('(a) an island import', () => {
-    expect(() => pinA(`${modal}\nimport { PlanPurchase } from './PlanPurchase';`)).toThrow();
-    expect(() => pinA(`${modal}\nimport { getStripePromise } from '@/lib/client/stripeJs';`)).toThrow();
+  it('(a) an island in the drawer, or Stripe in the modal', () => {
+    expect(() => pinA(modal, `${section}\nimport { PlanPurchase } from './PlanPurchase';`)).toThrow();
+    expect(() => pinA(modal, `${section}\n<PlanUpgrade plans={[]} />`)).toThrow();
+    expect(() => pinA(`${modal}\nimport { getStripePromise } from '@/lib/client/stripeJs';`, section)).toThrow();
+    expect(() => pinA(modal.replace("from './PlanUpgrade'", "from './elsewhere'"), section)).toThrow();
   });
   it('(b) a read', () => {
     expect(() => pinB(`${view}\nvoid fetch('/api/business-os/entitlements/my-plan');`)).toThrow();
@@ -225,6 +302,25 @@ describe('negative controls: each pin fails on the violation it exists for', () 
   it('(j) a button for "Current plan"', () => {
     expect(() => pinJ(modal.replace('<span\n        data-testid="plan-compare-current-label"', '<button\n        data-testid="plan-compare-current-label"'))).toThrow();
     expect(() => pinJ(modal.replace('data-testid="plan-compare-current-label"', 'data-testid="plan-compare-current-label" tabIndex={0}'))).toThrow();
+  });
+  it('(l) autoStart passed by another caller', () => {
+    expect(() => pinL({ [PURCHASE]: 'autoStart={x}', [HOLDING]: '<PlanEmbeddedCheckout autoStart={true} />' })).toThrow();
+  });
+  it('(m) a red line back in an island, or PlanEmbeddedCheckout recoloured', () => {
+    const purchase = code(read(PURCHASE));
+    const upgrade = code(read(UPGRADE));
+    const embedded = code(read(EMBEDDED));
+    expect(() => pinM(`${purchase}\nconst c = 'text-red-700';`, upgrade, embedded)).toThrow();
+    expect(() => pinM(purchase, upgrade, embedded.replace('text-red-700', 'text-[var(--v2-error-text)]'))).toThrow();
+  });
+  it('(n) a gate that lets a busy close through, or a hand-off that consults it', () => {
+    expect(() => pinN(modal.replace('if (!next && busy) return;', ''))).toThrow();
+    expect(() => pinN(modal.replace('if (busy) event.preventDefault();', ''))).toThrow();
+    expect(() => pinN(modal.replace('const handOff = () => {', 'const handOff = () => {\n    if (busy) return;'))).toThrow();
+  });
+  it('(o) the view-only note back', () => {
+    expect(() => pinO({ [MODAL]: "t('upgrade_modal.view_only_note')" }, {})).toThrow();
+    expect(() => pinO({}, { en: { 'upgrade_modal.view_only_note': 'x' } })).toThrow();
   });
   it('(k) a second hard-coded two-column class, or the tripwire pointer gone', () => {
     const raw = read(MODAL);

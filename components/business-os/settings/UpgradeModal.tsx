@@ -1,37 +1,54 @@
 'use client';
 
 /**
- * The plan comparison window — VIEW ONLY (upgrade modal UM-1a, workplan §5).
+ * The plan comparison window, where an owner buys or upgrades (upgrade modal
+ * UM-1a view, UM-1b money; workplans §5 / §4–§8).
  *
- * Opened by "Compare plans" in Settings → "Your plan". A gradient band, a status
- * strip, and the server's comparison table: one column per shown plan (name,
- * price, action slot), short grouped rows, ✓ / ✕ / value per cell.
+ * Opened by "See plans" / "Compare plans" in Settings → "Your plan". A gradient
+ * band, a status strip, and the server's comparison table: one column per shown
+ * plan (name, price, the server's action), short grouped rows, ✓ / ✕ / value.
  *
  * ── IT RENDERS; IT DOES NOT DECIDE ──────────────────────────────────────────
  * Every row, label, ✓ / ✕, value, highlight and order is `plan.comparison`, as
- * the server sent it (C-21); the column markers come from `upgradeModalView`.
- * Nothing here names a plan or compares an id to a literal (C-7).
+ * the server sent it (C-21); each column's button is the server's offer, read by
+ * `upgradeModalView` (UM-FR3). Nothing here names a plan or compares an id to a
+ * literal (C-7).
  *
- * ── NO MONEY HERE (C-1, C-12) ───────────────────────────────────────────────
- * Choose, Pay for and Upgrade stay in the drawer in UM-1a: an offered column's
- * action slot is EMPTY (SA Q-11) and the footer says where to act. UM-1b mounts
- * the triggers in that slot. The only buttons are the dialog's X and "Back to
- * your plan" (pinned by `UpgradeModal.render`).
+ * ── MONEY (UM-1b) ───────────────────────────────────────────────────────────
+ * A column's header and footer buttons are two buttons for ONE flow (C-25):
+ * pressing either replaces the table area with that plan's island,
+ * `PlanPurchase` (embedded checkout) or `PlanUpgrade` (preview → confirm), with
+ * its start prop, so the press starts it (SA Q-2). Requests and payloads are the
+ * islands' own, unchanged (UM-FR4). One flow at a time, and the islands live
+ * only here, never in the drawer (C-12: one Stripe Embedded Checkout per page).
  *
- * ── NO READ HERE (C-3) ──────────────────────────────────────────────────────
- * `plan` is `PlanSection`'s own state, passed in: the modal shares the drawer's
- * flow instance and never fetches.
+ * ── HAND-OFF (C-3, SA W-2) ──────────────────────────────────────────────────
+ * When Stripe completes a checkout or an upgrade goes through, the modal tells
+ * `PlanSection`'s one `usePlanFlow` instance (passed in as `flow`) and closes
+ * through `handOff`, which bypasses the busy gate: the island reports "busy" from
+ * an effect, so it is still set when its success callback arrives. The drawer
+ * then shows "Payment processing" / "Upgrading…" (B5 / B6). No read here.
+ *
+ * ── BUSY LOCK (UM-FR11, SA Q-5 / Q-8) ───────────────────────────────────────
+ * While the upgrade's Confirm or 3-D Secure runs, nothing the owner does closes
+ * the window: `onOpenChange(false)` (the X included) is refused, Escape and
+ * outside presses are prevented. While a checkout frame is open an outside press
+ * is refused, but the X and Escape still close.
  */
 
-import { useRef } from 'react';
-import { Check, Sparkles, Star, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Check, ChevronLeft, Sparkles, Star, X } from 'lucide-react';
 
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
+import { PlanPurchase } from './PlanPurchase';
 import type { PlanComparisonCell, PlanComparisonSection, PlanPayload, PlanSentence } from './planPayloadTypes';
+import { ENDS_FREE_ACCESS_KEYS } from './planPurchaseCopy';
 import { fill, priceLine, renderSentence } from './planText';
+import { PlanUpgrade, type PlanUpgradeLock } from './PlanUpgrade';
 import { upgradeModalView, type PlanColumnView } from './upgradeModalView';
+import type { PlanFlow } from './usePlanFlow';
 
 /**
  * Two plan columns on a phone (UM-D1-M, option M-A, C-24): every row becomes a
@@ -43,14 +60,28 @@ import { upgradeModalView, type PlanColumnView } from './upgradeModalView';
 const PHONE_ROW = 'max-sm:grid max-sm:grid-cols-2';
 
 /**
- * The server's free-access sentence beside an offer (plan payments W-7), by the
- * same keys `PlanPurchase` uses. Not imported from it: the modal must not pull
- * the islands' module graph (C-1, C-12; `upgradeModal.guard` (a)).
+ * SA Q-7 (iii), the contained exception: Radix sets `pointer-events: none` on
+ * `body` while a modal layer is open (W-1a probe, `UpgradeModal.layers`), and
+ * Stripe.js mounts its 3-D Secure challenge on `body`, outside every layer. In
+ * BOTH phases where Stripe may do that, Stripe's frames get pointer events back:
+ * while the upgrade is busy (Confirm / its 3-D Secure), and while a checkout
+ * frame is open (the embedded checkout's own 3-D Secure, SA CR-2). Rendered only
+ * then, so it is removed as soon as the step settles or the frame goes.
+ * Stripe names every frame it mounts `__privateStripeFrame…`.
  */
-const ENDS_FREE_ACCESS_KEYS: Record<'trial' | 'free_access', string> = {
-  trial: 'plan.choose.trial_ends_today',
-  free_access: 'plan.choose.free_access_ends_today',
-};
+export const STRIPE_CHALLENGE_REACHABLE_CSS = 'iframe[name^="__privateStripeFrame"]{pointer-events:auto !important;}';
+
+/** What the modal needs from `PlanSection`'s flow instance (C-3): values and callbacks, never a second copy. */
+export type UpgradeModalFlow = Pick<
+  PlanFlow,
+  'checkoutAllowed' | 'upgradeAllowed' | 'paymentsConfigured' | 'onCheckoutComplete' | 'onUpgrading' | 'onUpgradeCheckAgain'
+>;
+
+type Where = 'header' | 'footer';
+interface OpenFlow {
+  kind: 'checkout' | 'upgrade';
+  planId: string;
+}
 
 /** The tint a marked column carries on every cell of the table, so it reads as one column. */
 function columnTint(column: PlanColumnView): string {
@@ -59,15 +90,21 @@ function columnTint(column: PlanColumnView): string {
   return '';
 }
 
+const actionKey = (planId: string, where: Where) => `${planId}:${where}`;
+const actionTestId = (planId: string, where: Where) => `plan-compare-action-${planId}-${where}`;
+
 export function UpgradeModal({
   open,
   onOpenChange,
   plan,
+  flow: planFlow,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** PlanSection's own plan state (C-3): the modal never reads it itself. */
   plan: PlanPayload;
+  /** PlanSection's `usePlanFlow` instance (C-2, C-3). */
+  flow: UpgradeModalFlow;
 }) {
   const { t, isRTL, language, timezone } = useLanguage();
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
@@ -80,6 +117,79 @@ export function UpgradeModal({
    * moves focus, so the active element there is the opener.
    */
   const opener = useRef<HTMLElement | null>(null);
+  const titleRef = useRef<HTMLDivElement | null>(null);
+  const flowHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  /** The button "Back to plans" returns focus to (header or footer, whichever was pressed). */
+  const returnFocus = useRef<string | null>(null);
+  /** The column buttons by key (SA CR-3: a ref map, not a test-id lookup). */
+  const actionButtons = useRef(new Map<string, HTMLButtonElement>());
+  const registerAction = (key: string, element: HTMLButtonElement | null) => {
+    if (element) actionButtons.current.set(key, element);
+    else actionButtons.current.delete(key);
+  };
+  const flowHeadingId = useId();
+
+  const [openFlow, setOpenFlow] = useState<OpenFlow | null>(null);
+  const [lock, setLock] = useState<PlanUpgradeLock>('none');
+  const [frameOpen, setFrameOpen] = useState(false);
+  const busy = lock === 'busy';
+
+  const resetFlow = () => {
+    setOpenFlow(null);
+    setLock('none');
+    setFrameOpen(false);
+  };
+
+  /** Every close the OWNER asks for (X, Escape, backdrop, "Back to your plan"): refused while busy. */
+  const requestOpenChange = (next: boolean) => {
+    if (!next && busy) return;
+    if (!next) {
+      returnFocus.current = null;
+      resetFlow();
+    }
+    onOpenChange(next);
+  };
+
+  /** SA W-2: the hand-off close. Not the owner's request, so the busy gate does not apply. */
+  const handOff = () => {
+    returnFocus.current = null;
+    resetFlow();
+    onOpenChange(false);
+  };
+
+  const startFlow = (column: PlanColumnView, where: Where) => {
+    returnFocus.current = actionKey(column.planId, where);
+    setOpenFlow({ kind: column.action === 'upgrade' ? 'upgrade' : 'checkout', planId: column.planId });
+  };
+
+  /** "Back to plans", and the quote's "Not now" (W-4). */
+  const backToPlans = () => resetFlow();
+
+  // Focus follows the flow: into its heading on entry; back to the pressed button on "Back to plans".
+  useEffect(() => {
+    if (openFlow !== null) {
+      flowHeadingRef.current?.focus();
+      return;
+    }
+    const target = returnFocus.current;
+    returnFocus.current = null;
+    if (target) actionButtons.current.get(target)?.focus();
+  }, [openFlow]);
+
+  /*
+   * SA Q-12: "Check again" re-read the plan and the upgrade has landed (its tier
+   * left `upgrade.tiers`): the island can no longer render, so hand off to the
+   * drawer, which says "You're on {plan}". Once per flow; the hand-off path (W-2).
+   */
+  const upgradeTiers = plan.purchase?.upgrade?.tiers ?? [];
+  const landed = openFlow?.kind === 'upgrade' && !upgradeTiers.includes(openFlow.planId);
+  const handedOff = useRef<OpenFlow | null>(null);
+  useEffect(() => {
+    if (!landed || openFlow === null || handedOff.current === openFlow) return;
+    handedOff.current = openFlow;
+    handOff();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on the landing only (SA Q-12)
+  }, [landed, openFlow]);
 
   const headline = t(`upgrade_modal.headline.${view.headline}`);
   const [statusBefore, statusAfter = ''] = t('upgrade_modal.status_on').split('{plan}');
@@ -88,14 +198,28 @@ export function UpgradeModal({
   const freeAccessKey =
     view.somethingOffered && plan.purchase?.endsFreeAccessOnPurchase ? ENDS_FREE_ACCESS_KEYS[plan.purchase.endsFreeAccessOnPurchase] : null;
   const whenThisChanges = sentence(plan.whenThisChanges);
+  const ownPlanColumn = view.columns.find((column) => column.ownPlanNote !== null) ?? null;
+  // M-2 (SA W-3): ONE line for the whole table, as the Choose list had, not one per slot.
+  const checkoutsWithoutKey =
+    !planFlow.paymentsConfigured && planFlow.checkoutAllowed && view.columns.some((column) => column.action === 'choose' || column.action === 'pay_for');
+  const flowColumn = openFlow ? view.columns.find((column) => column.planId === openFlow.planId) ?? null : null;
+  // §4.5 / C-25: no way back during Confirm, 3-D Secure or "Could not confirm".
+  const canGoBack = lock === 'none';
+
+  const actionFor = (column: PlanColumnView, where: Where) => (
+    <ActionSlot column={column} where={where} flow={planFlow} onStart={startFlow} register={registerAction} />
+  );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={requestOpenChange}>
       <DialogContent
         dir={isRTL ? 'rtl' : 'ltr'}
         data-testid="plan-compare-modal"
-        onOpenAutoFocus={() => {
+        onOpenAutoFocus={(event) => {
           opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          // SA Q-6: never a money button first; an Enter right after opening starts nothing.
+          event.preventDefault();
+          titleRef.current?.focus();
         }}
         onCloseAutoFocus={(event) => {
           if (opener.current?.isConnected) {
@@ -104,11 +228,23 @@ export function UpgradeModal({
           }
           opener.current = null;
         }}
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          // Busy: nothing outside closes it (Stripe's 3-D Secure challenge is "outside").
+          // A checkout frame open: a stray backdrop press must not lose a half-typed card (SA Q-8).
+          if (busy || frameOpen) event.preventDefault();
+        }}
         // C-8: the flex variant (no grid, no gutter, no scroll from dialog.tsx), one
         // `sm:` width, and the built-in X recoloured for the band by a child
-        // selector (SA Q-4) rather than a second X.
-        className="flex flex-col p-0 overflow-hidden w-full h-[100dvh] max-sm:rounded-none sm:h-auto sm:max-h-[90dvh] sm:max-w-4xl sm:rounded-[var(--v2-radius-panel)] border-[var(--v2-border)] [&>button]:text-white [&>button]:opacity-90 [&>button:focus]:ring-white"
+        // selector (SA Q-4) rather than a second X; dimmed and unpressable while busy.
+        className={`flex flex-col p-0 overflow-hidden w-full h-[100dvh] max-sm:rounded-none sm:h-auto sm:max-h-[90dvh] sm:max-w-4xl sm:rounded-[var(--v2-radius-panel)] border-[var(--v2-border)] [&>button]:text-white [&>button]:opacity-90 [&>button:focus]:ring-white${
+          busy ? ' [&>button]:pointer-events-none [&>button]:opacity-40' : ''
+        }`}
       >
+        {(busy || frameOpen) && <style data-testid="plan-compare-stripe-reachable">{STRIPE_CHALLENGE_REACHABLE_CSS}</style>}
+
         {/* C-9 / SA Q-5: all band text on SOLID --v2-primary-dark; the gradient
             is a decorative layer at the end edge, kept clear of the text. */}
         <div data-testid="plan-compare-band" className="relative flex-shrink-0 overflow-hidden bg-[var(--v2-primary-dark)] px-5 py-5 pe-12 sm:px-7 sm:py-6">
@@ -119,7 +255,7 @@ export function UpgradeModal({
           />
           <div className="relative flex items-start gap-3 pe-[25%] sm:pe-[22%]">
             <Sparkles aria-hidden="true" className="w-6 h-6 shrink-0 mt-0.5 text-white" />
-            <div className="min-w-0">
+            <div ref={titleRef} tabIndex={-1} data-testid="plan-compare-title" className="min-w-0 outline-none">
               {/* Typography on an inner span: `cn` concatenates, so a class on the
                   title itself would race dialog.tsx's own colour and size. */}
               <DialogTitle>
@@ -148,9 +284,64 @@ export function UpgradeModal({
             {statusEnds && <> · {statusEnds}</>}
           </p>
 
-          {/* The one element UM-1b's checkout / upgrade flows replace (C-25). */}
+          {/* The one element the checkout / upgrade flows replace (C-25). */}
           <div data-testid="plan-compare-table-area">
-            <ComparisonTable columns={view.columns} sections={view.sections} />
+            {openFlow === null || flowColumn === null ? (
+              <ComparisonTable columns={view.columns} sections={view.sections} action={actionFor} />
+            ) : (
+              <section
+                data-testid="plan-compare-flow"
+                aria-labelledby={flowHeadingId}
+                aria-busy={busy || undefined}
+                className="mx-auto w-full sm:w-[36rem] space-y-4"
+              >
+                {canGoBack && (
+                  <button
+                    type="button"
+                    data-testid="plan-compare-back"
+                    onClick={backToPlans}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-[var(--v2-primary)] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] rounded"
+                  >
+                    <ChevronLeft aria-hidden="true" className={`w-4 h-4 ${isRTL ? 'scale-x-[-1]' : ''}`} />
+                    {t('upgrade_modal.back_to_plans')}
+                  </button>
+                )}
+                <h3 id={flowHeadingId} ref={flowHeadingRef} tabIndex={-1} className="outline-none" data-testid="plan-compare-flow-heading">
+                  <span className="block text-lg font-semibold text-[var(--v2-text-primary)]">{flowColumn.name}</span>
+                  <span className="block text-sm text-[var(--v2-text-muted)]">
+                    {fill(t('plan.choose.price_ex_tax'), { amount: `$${flowColumn.monthlyPriceUsd}` })}
+                  </span>
+                </h3>
+                {openFlow.kind === 'checkout' ? (
+                  <PlanPurchase
+                    plans={plan.plans ?? []}
+                    tiers={plan.purchase?.offer.kind === 'choose' ? plan.purchase.offer.tiers : []}
+                    endsFreeAccess={plan.purchase?.endsFreeAccessOnPurchase ?? null}
+                    currentTierId={plan.kind === 'tier' ? plan.planId : null}
+                    startTier={openFlow.planId}
+                    onFrameOpenChange={setFrameOpen}
+                    onComplete={(sessionId) => {
+                      planFlow.onCheckoutComplete(sessionId);
+                      handOff();
+                    }}
+                  />
+                ) : (
+                  <PlanUpgrade
+                    plans={plan.plans ?? []}
+                    tiers={upgradeTiers}
+                    currentPlan={{ planId: plan.planId, name: plan.name, isTier: plan.kind === 'tier' }}
+                    startTier={openFlow.planId}
+                    onLockChange={setLock}
+                    onCancel={backToPlans}
+                    onCheckAgain={planFlow.onUpgradeCheckAgain}
+                    onUpgrading={(tier) => {
+                      planFlow.onUpgrading(tier);
+                      handOff();
+                    }}
+                  />
+                )}
+              </section>
+            )}
           </div>
         </div>
 
@@ -160,18 +351,32 @@ export function UpgradeModal({
         >
           <div className="min-w-0 space-y-1 text-xs text-[var(--v2-text-muted)]">
             <p>{t('upgrade_modal.footer_prices')}</p>
-            {freeAccessKey && <p data-testid="plan-compare-ends-free-access">{t(freeAccessKey)}</p>}
+            {/* In a flow the island says these itself, beside its own button. */}
+            {openFlow === null && freeAccessKey && <p data-testid="plan-compare-ends-free-access">{t(freeAccessKey)}</p>}
+            {openFlow === null && ownPlanColumn && (
+              <p data-testid="plan-compare-own-plan-note">
+                {fill(t(ownPlanColumn.ownPlanNote === 'upgrade' ? 'plan.upgrade.own_plan_note' : 'plan.choose.own_plan_note'), {
+                  plan: ownPlanColumn.name,
+                })}
+              </p>
+            )}
             {whenThisChanges && <p>{whenThisChanges}</p>}
-            {view.somethingOffered && <p data-testid="plan-compare-view-only-note">{t('upgrade_modal.view_only_note')}</p>}
+            {openFlow === null && checkoutsWithoutKey && (
+              <p role="alert" data-testid="plan-compare-not-configured">
+                {t('plan.choose.not_configured')}
+              </p>
+            )}
           </div>
-          <DialogClose asChild>
-            <button
-              type="button"
-              className="shrink-0 px-4 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-[var(--v2-radius-button)] hover:bg-[var(--v2-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]"
-            >
-              {t('upgrade_modal.back_to_plan')}
-            </button>
-          </DialogClose>
+          {!busy && (
+            <DialogClose asChild>
+              <button
+                type="button"
+                className="shrink-0 px-4 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-[var(--v2-radius-button)] hover:bg-[var(--v2-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]"
+              >
+                {t('upgrade_modal.back_to_plan')}
+              </button>
+            </DialogClose>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -186,9 +391,17 @@ export function UpgradeModal({
  * browsers (SA (f), R-12). Sticky: the whole `thead` on a phone (a sticky cell
  * cannot leave a grid row), the header cells from `sm` up (W-8, Q-14).
  */
-function ComparisonTable({ columns, sections }: { columns: PlanColumnView[]; sections: PlanComparisonSection[] }) {
+function ComparisonTable({
+  columns,
+  sections,
+  action,
+}: {
+  columns: PlanColumnView[];
+  sections: PlanComparisonSection[];
+  action: (column: PlanColumnView, where: Where) => JSX.Element;
+}) {
   const { t, language, timezone } = useLanguage();
-  const captionId = 'plan-compare-caption';
+  const captionId = useId();
 
   return (
     <table
@@ -240,7 +453,7 @@ function ComparisonTable({ columns, sections }: { columns: PlanColumnView[]; sec
                 </div>
                 <div className="mt-1 text-xs text-[var(--v2-text-muted)]">{t('upgrade_modal.price_suffix')}</div>
                 <div className="mt-2.5">
-                  <ActionSlot column={column} />
+                  {action(column, 'header')}
                   {column.unavailableBecause && (
                     <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
                       {renderSentence(column.unavailableBecause, t, language, timezone)}
@@ -302,9 +515,7 @@ function ComparisonTable({ columns, sections }: { columns: PlanColumnView[]; sec
           <td aria-hidden="true" className="max-sm:hidden" />
           {columns.map((column) => (
             <td key={column.planId} role="cell" className="p-0 align-top">
-              <div className={`px-2 pt-3 pb-3 text-center rounded-b-[var(--v2-radius-card)] ${columnTint(column)}`}>
-                <ActionSlot column={column} />
-              </div>
+              <div className={`px-2 pt-3 pb-3 text-center rounded-b-[var(--v2-radius-card)] ${columnTint(column)}`}>{action(column, 'footer')}</div>
             </td>
           ))}
         </tr>
@@ -313,13 +524,33 @@ function ComparisonTable({ columns, sections }: { columns: PlanColumnView[]; sec
   );
 }
 
+/** The recommended column carries the one primary button (white text on SOLID --v2-primary-dark, C-9). */
+const PRIMARY_ACTION =
+  'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-white bg-[var(--v2-primary-dark)] rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]';
+const SECONDARY_ACTION =
+  'inline-block w-full max-w-[12rem] px-3 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-primary)] rounded-[var(--v2-radius-button)] hover:bg-[var(--v2-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)]';
+
 /**
- * Under the price and in the footer row (C-22). UM-1a mounts NO control here:
- * an offered plan's slot is empty (C-1, SA Q-11); the current plan with nothing
- * offered for it reads "Current plan" — a label styled like a quiet button,
- * never a `<button>`, no role, no tabIndex, no aria-disabled (no dead control).
+ * Under the price and in the footer row (C-22, UM-1b §4): the server's action
+ * for this plan, or nothing. "Current plan" is a label styled like a quiet
+ * button, never a `<button>`, no role, no tabIndex, no aria-disabled (no dead
+ * control). A button appears only when the flow may start now (SA Q-4) and, for
+ * a checkout, only with a usable publishable key (SA W-3, M-2; the footer then
+ * says "Payments are not set up", once).
  */
-function ActionSlot({ column }: { column: PlanColumnView }) {
+function ActionSlot({
+  column,
+  where,
+  flow,
+  onStart,
+  register,
+}: {
+  column: PlanColumnView;
+  where: Where;
+  flow: UpgradeModalFlow;
+  onStart: (column: PlanColumnView, where: Where) => void;
+  register: (key: string, element: HTMLButtonElement | null) => void;
+}) {
   const { t } = useLanguage();
 
   if (column.action === 'current_label') {
@@ -332,6 +563,27 @@ function ActionSlot({ column }: { column: PlanColumnView }) {
       </span>
     );
   }
+
+  const isCheckout = column.action === 'choose' || column.action === 'pay_for';
+  if (column.action === 'upgrade' || isCheckout) {
+    // M-2 / SA W-3: no usable key, no checkout button (the footer says why, once).
+    const allowed = isCheckout ? flow.checkoutAllowed && flow.paymentsConfigured : flow.upgradeAllowed;
+    if (allowed) {
+      const key = column.action === 'upgrade' ? 'plan.upgrade.button' : column.action === 'pay_for' ? 'plan.choose.button_own' : 'plan.choose.button';
+      return (
+        <button
+          type="button"
+          ref={(element) => register(actionKey(column.planId, where), element)}
+          data-testid={actionTestId(column.planId, where)}
+          className={column.isRecommended ? PRIMARY_ACTION : SECONDARY_ACTION}
+          onClick={() => onStart(column, where)}
+        >
+          {fill(t(key), { plan: column.name })}
+        </button>
+      );
+    }
+  }
+
   if (column.comingSoon) {
     return (
       <span className="inline-block px-2 py-1 text-xs text-[var(--v2-text-muted)] bg-[var(--v2-bg)] rounded">

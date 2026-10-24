@@ -94,6 +94,9 @@ function paying(name: string): PlanPayload {
       endsFreeAccessOnPurchase: null,
       upgrade: { tiers: [TOP] },
     },
+    // Upgrade modal UM-1b: the "Upgrade to" button lives in the plan comparison modal,
+    // which opens only on a server comparison (C-21); no rows are needed here.
+    comparison: { planIds: [LOW, TOP], sections: [] },
   });
 }
 
@@ -286,7 +289,16 @@ describe('rule 7 (SA Q-1 (b), SA-CB-1): no warm after the first close', () => {
     expect(planGets()).toBe(2);
   });
 
-  it('D-8: close mid-upgrade, the upgrade answer lands after the close, reopen within 60 s → one fresh request (no warm exists)', async () => {
+  /*
+   * D-8, re-shaped by upgrade modal UM-1b (workplan §13, SA Q-10). The upgrade
+   * now runs in the plan comparison modal, whose busy lock refuses every close
+   * while the confirm is in flight, so "close mid-upgrade" is unreachable: the
+   * close attempt is refused (new assertion), the answer lands, the modal hands
+   * off to the drawer ("Upgrading…"), and the owner closes the drawer then. The
+   * intent is kept: no warm read is ever reused after an upgrade made in this
+   * mount.
+   */
+  it('D-8: a close during the upgrade confirm is refused; after the hand-off, close and reopen within 60 s → one fresh request (no warm exists)', async () => {
     planReplies.push(planReply(paying(WARM)), planReply(paying(FRESH)));
     const confirm = deferred<FakeResponse>();
     postReplies.push(
@@ -303,14 +315,23 @@ describe('rule 7 (SA Q-1 (b), SA-CB-1): no warm after the first close', () => {
     await within(sheet).findByText(WARM);
     expect(planGets()).toBe(1);
 
-    await userEvent.click(within(sheet).getByRole('button', { name: COPY['plan.upgrade.button'].replace('{plan}', TOP_NAME) }));
-    await within(sheet).findByTestId('plan-upgrade-quote');
-    await userEvent.click(within(sheet).getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
-    // The confirm is in flight (preview + confirm POSTed) when the owner closes.
+    await userEvent.click(within(sheet).getByTestId('plan-compare-open'));
+    const modal = await screen.findByTestId('plan-compare-modal');
+    await userEvent.click(within(modal).getAllByRole('button', { name: COPY['plan.upgrade.button'].replace('{plan}', TOP_NAME) })[0]);
+    await within(modal).findByTestId('plan-upgrade-quote');
+    await userEvent.click(within(modal).getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
+    // The confirm is in flight (preview + confirm POSTed) when the owner tries to close.
     await waitFor(() => expect(mockFetch.mock.calls.filter(([, init]) => (init as { method?: string } | undefined)?.method === 'POST')).toHaveLength(2));
-    await closeDrawer();
+    fireEvent.keyDown(modal, { key: 'Escape' });
+    // UM-1b busy lock (UM-FR11): refused; the modal and the drawer both stay.
+    expect(screen.getByTestId('plan-compare-modal')).toBeInTheDocument();
+    expect(screen.getByTestId(DRAWER)).toBeInTheDocument();
 
     await act(async () => confirm.resolve(respond({ success: true, data: { outcome: 'upgraded' } })));
+    // Hand-off (SA W-2): the modal closes itself and the drawer says "Upgrading…".
+    await waitFor(() => expect(screen.queryByTestId('plan-compare-modal')).toBeNull());
+    expect(within(screen.getByTestId(DRAWER)).getByTestId('plan-upgrade-upgrading')).toBeInTheDocument();
+    await closeDrawer();
     now += 5_000;
     warm(); // focus returns to the row
     runIdle();
