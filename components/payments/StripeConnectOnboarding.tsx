@@ -1,5 +1,21 @@
 'use client';
 
+/**
+ * SUPERSEDED, and still here only because nothing has decided its fate.
+ *
+ * `StripeEmbeddedOnboarding` replaced this on 26 Aug 2026 and is what the
+ * configuration dialog and the connect wizard actually mount. Nothing
+ * references this component, and the status poll below was broken from the
+ * day it was written (FX-5).
+ *
+ * The poll is corrected rather than the file deleted, because F-22 is about
+ * this exact return journey and should decide whether any of it is kept. If
+ * it is not, delete the file: a dead duplicate of a live component is a trap
+ * for whoever wires up the older one by mistake.
+ *
+ * @module components/payments/StripeConnectOnboarding
+ */
+
 import { useEffect, useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
@@ -69,7 +85,31 @@ export function StripeConnectOnboarding({ onboardingUrl, onComplete, onCancel }:
         });
         const result = await response.json();
 
-        if (result.success && result.account?.onboarding_completed) {
+        /*
+         * ─────────────────────────────────────────────────────────────────
+         * `result.data`, NOT `result.account` (FX-5).
+         *
+         * `refresh-status` answers `{ success, data: { … } }`. There is no
+         * `account` key and never was, so this condition was permanently
+         * undefined — and the consequence was not merely "cannot report
+         * completion". The success branch could never run, so every poll ran
+         * to `attempts >= maxAttempts` and told the owner "Account setup is
+         * taking longer than expected" however well it had gone, while
+         * `onComplete()` was never called.
+         *
+         * The second clause matches `StripeEmbeddedOnboarding`, the component
+         * actually mounted, which has read this endpoint correctly all along:
+         * Stripe can have the details and allow charges before
+         * `onboarding_completed` is set, and that is complete enough to let
+         * the owner through.
+         * ─────────────────────────────────────────────────────────────────
+         */
+        const isComplete =
+          result.success &&
+          (result.data?.onboarding_completed ||
+            (result.data?.details_submitted && result.data?.charges_enabled));
+
+        if (isComplete) {
           // Success! Account is ready
           if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);

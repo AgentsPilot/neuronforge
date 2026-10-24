@@ -59,6 +59,10 @@
       "schedule": "20 * * * *"
     },
     {
+      "path": "/api/cron/abandoned-bookings",
+      "schedule": "5,35 * * * *"
+    },
+    {
       "path": "/api/cron/credit-leak-check",
       "schedule": "45 4 * * *"
     },
@@ -73,6 +77,10 @@
     {
       "path": "/api/cron/bos-billing-reconcile",
       "schedule": "41 5 * * *"
+    },
+    {
+      "path": "/api/cron/booking-money-reconcile",
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/data-export",

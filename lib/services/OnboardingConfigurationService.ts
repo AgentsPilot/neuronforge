@@ -707,12 +707,48 @@ export class OnboardingConfigurationService {
   }
 
   /**
+   * The business told us it sells nothing through the platform.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A website and a contact form, both feeding the CRM, and no catalogue. It is
+   * a real answer — `readServiceCount` has always returned 0 rather than
+   * treating it as a parse failure — but nothing downstream used to act on it.
+   *
+   * It has to be acted on HERE because the two questions about selling are
+   * asked BEFORE the count: by the time an owner says "none", they have already
+   * answered how they take appointments and how they collect money. Those two
+   * answers then described a catalogue that does not exist, and
+   * `shapeFromProfile` reads them across whenever there are no services — so
+   * the account came out with `full_website` + `invoice`, which resolves to
+   * appointments AND money moving, and the owner was given a scheduling tab, an
+   * availability tab, an intake tab and invoice settings for a business that
+   * sells nothing. Measured through the real pipeline, not reasoned about.
+   *
+   * `=== 0` strictly: undefined means the question was never reached, and every
+   * flow that does not ask it must keep behaving exactly as it did.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private sellsNothing(data: ExtractedData): boolean {
+    return data.service_count === 0 && !(data.services && data.services.length > 0);
+  }
+
+  /**
    * Compute online presence mode based on extracted data
    * UPDATED: Now uses clientAcquisition extraction (Q4) instead of assuming from services
    */
   private computeOnlinePresenceMode(data: ExtractedData): OnlinePresenceMode {
     const hasScheduledServices = data.services?.some(s => s.is_scheduled !== false && s.duration_minutes);
-    const needsBooking = data.needs_booking === true || hasScheduledServices;
+    /*
+     * Nothing to book when there is nothing to sell.
+     *
+     * Without this an owner who books appointments and then says they sell
+     * nothing gets `full_website`, which `shapeFromProfile` reads as "takes
+     * appointments" — a booking surface over an empty catalogue. They keep the
+     * website; they just do not get the calendar that has nothing in it.
+     */
+    const needsBooking = this.sellsNothing(data)
+      ? false
+      : data.needs_booking === true || hasScheduledServices;
 
     // PRIORITY 1: Use explicit clientAcquisition extraction (Q4) if available
     if (data.clientAcquisition?.needs_website !== undefined) {
@@ -787,6 +823,23 @@ export class OnboardingConfigurationService {
    * a card processor for a business that simply named a price.
    */
   private computeCollectionMethod(data: ExtractedData, paymentMode: PaymentMode): CollectionMethod {
+    /*
+     * No catalogue, no collection — and this has to come FIRST.
+     *
+     * The line below honours whatever they tapped on the collection question,
+     * which is asked one step before the count. An owner who answered "invoice"
+     * and then "I sell nothing" had `invoice` stored against an empty
+     * catalogue, and `shapeFromProfile` reads the business-wide summary across
+     * wherever there are no services — so money moved, the payments tab
+     * appeared, and invoice details were demanded of a business that bills
+     * nobody.
+     *
+     * Nothing is lost by overriding it: the moment they publish a priced
+     * service, the per-service columns outrank this field and the tabs come
+     * back on their own. See `collectsOnline`/`invoices` in `setupGraph`.
+     */
+    if (this.sellsNothing(data)) return 'none';
+
     if (data.collection_method) return data.collection_method;
 
     if (paymentMode === 'none') return 'none';
@@ -1050,6 +1103,15 @@ export class OnboardingConfigurationService {
           is_scheduled: service.is_scheduled,
           collection: service.collection,
           price: service.price,
+          /*
+           * Carried, because a quoted service is invisible without it: it has
+           * no price and no collection by design, so `countServices` reads it
+           * as money that never moves unless `sale_mode` says otherwise. The
+           * other two callers pass repository rows straight through and get
+           * this for free; this one builds its objects by hand, which is how a
+           * field comes to be dropped on one path only.
+           */
+          sale_mode: service.sale_mode,
           payment_type:
             service.payment_plan && service.payment_plan.installment_count >= 2
               ? 'installments'

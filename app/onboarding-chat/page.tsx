@@ -1215,19 +1215,50 @@ export default function OnboardingChatPage() {
         : 'Nothing is charged.';
   })();
 
+  /**
+   * What the site will actually do for them.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `full_website` and `website_only` shared one sentence, ending "That is
+   * where clients book you". The two modes differ by exactly that: `full_website`
+   * carries a booking surface and `website_only` is the mode that means there
+   * is none. So the plan promised booking to the one business that had just
+   * said it sells nothing — and to any business selling something not booked
+   * against a time.
+   *
+   * It is the worst place for that claim. The plan is what the owner approves,
+   * and they approve it before anything exists to contradict it; the same
+   * mistake on the build page ("Your site is published", when it is a draft) is
+   * recorded there as a promise people acted on.
+   *
+   * Not "and publish" either, in any branch: the site is created as a DRAFT and
+   * the owner publishes it. That half was already right and is kept.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const presenceSummary = (() => {
     const mode = configuration?.online_presence_mode;
-    if (mode === 'full_website' || mode === 'website_only') {
-      /* Not "and publish": the site is created as a draft and the owner
-         publishes it. Promising it here is where the false claim on the build
-         page came from, and a promise is worse than a label because they act
-         on it. */
+
+    if (mode === 'full_website') {
       return selectedLanguage === 'he'
         ? 'אבנה את האתר שלך ואשאיר אותו מוכן לפרסום. משם לקוחות מזמינים.'
         : selectedLanguage === 'es'
           ? 'Construiré tu sitio y lo dejaré listo para publicar. Es donde reservan.'
           : "I'll build your site and leave it ready for you to publish. That is where clients book you.";
     }
+
+    /*
+     * A site and a contact form, and no booking — which is what this mode
+     * means. True whether the catalogue is empty or holds things nobody books
+     * a time for, so it does not need to read the count to stay honest.
+     */
+    if (mode === 'website_only') {
+      return selectedLanguage === 'he'
+        ? 'אבנה את האתר שלך ואשאיר אותו מוכן לפרסום. משם לקוחות מוצאים אותך ויוצרים קשר, וכל פנייה נכנסת לאנשי הקשר שלך.'
+        : selectedLanguage === 'es'
+          ? 'Construiré tu sitio y lo dejaré listo para publicar. Es donde te encuentran y te escriben, y cada consulta entra en tus contactos.'
+          : "I'll build your site and leave it ready for you to publish. That is where clients find you and get in touch, and every enquiry lands in your contacts.";
+    }
+
     return selectedLanguage === 'he'
       ? 'לינק להזמנות שאפשר לשלוח בוואטסאפ. בלי אתר.'
       : selectedLanguage === 'es'

@@ -38,6 +38,14 @@ const PaymentIntentSchema = z.object({
   description: z.string().min(1).max(500),
   customer_email: z.string().email().optional(),
   booking_id: z.string().uuid().optional(),
+  /*
+   * A card journey has no booking yet.
+   *
+   * The booking is created once the payment succeeds — one written earlier
+   * held the slot against every other client for ever. What is being paid
+   * for is an `abandoned_bookings` attempt, and this is its id.
+   */
+  attempt_id: z.string().uuid().optional(),
   service_id: z.string().uuid().optional(),
   metadata: z.record(z.string()).optional()
 });
@@ -272,7 +280,7 @@ export async function POST(request: NextRequest) {
           {
             email: data.customer_email,
             name: data.metadata?.customer_name || undefined,
-            metadata: { owner_id: ownerId, booking_id: data.booking_id || '' },
+            metadata: { owner_id: ownerId, booking_id: data.booking_id || '', attempt_id: data.attempt_id || '' },
           },
           accountOptions
         );
@@ -347,6 +355,23 @@ export async function POST(request: NextRequest) {
             metadata: {
               owner_id: ownerId,
               booking_id: data.booking_id || '',
+              /*
+               * ── THE THREAD FOR A CARD JOURNEY ──────────────────────────
+               *
+               * `booking_id` is empty here and that is by design: the booking
+               * is written only once the client has finished paying. So the
+               * subscription, its periods and its first charge are all created
+               * naming no booking, and without this they name nothing at all —
+               * the card then reads "₪0 collected" over money that arrived.
+               *
+               * The route has carried `attempt_id` on the ONE-OFF payment
+               * intent for a while; the subscription metadata was the half
+               * that never got it, which is why instalment sales were the only
+               * ones left orphaned. `linkPaymentsToBooking` searches Stripe
+               * on exactly this field when the booking appears, so it is the
+               * only thread between the money and the booking.
+               */
+              attempt_id: data.attempt_id || '',
               service_id: data.service_id || '',
               // What the webhook needs to bound the plan. Without these it
               // cannot tell how many periods were agreed, and an unbounded
@@ -472,6 +497,21 @@ export async function POST(request: NextRequest) {
       metadata: {
         owner_id: ownerId,
         booking_id: data.booking_id || '',
+        /*
+         * ── THE ATTEMPT, WHICH THIS PATH WAS DROPPING ───────────────────────
+         *
+         * The route has accepted `attempt_id` since the card journey stopped
+         * creating a booking up front, and it reached Stripe only on the plan
+         * branch's CUSTOMER object. The ordinary PaymentIntent carried
+         * `booking_id` — which on a card journey is the empty string, because
+         * there is no booking yet.
+         *
+         * So the one object that proves the money arrived had nothing on it
+         * tying the money to the client who sent it. The webhook now reads
+         * this, and `finalize` checks the charge it is handed really belongs
+         * to the attempt it is finalising.
+         */
+        attempt_id: data.attempt_id || '',
         service_id: data.service_id || '',
         ...data.metadata
       }

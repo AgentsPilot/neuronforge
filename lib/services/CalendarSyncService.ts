@@ -26,6 +26,24 @@ const PROVIDER_TO_PLUGIN: Record<CalendarSyncProvider, string> = {
   'outlook': 'outlook'
 };
 
+/**
+ * The row a calendar event is recorded ON, when it is not the booking.
+ *
+ * A package is one booking with N meetings, so N events cannot share the
+ * booking's single set of calendar columns — the last would win and the next
+ * sync would re-create the rest. Each session's event lives on its own meeting
+ * row (`external_calendar_event_id` and `calendar_synced_at` from 20261073,
+ * the provider and the error from 20261087), and this is what the update and
+ * delete paths are handed to find it.
+ */
+export interface CalendarEventRow {
+  id: string;
+  external_calendar_event_id: string | null;
+  /* The same union the booking's column carries, so `PROVIDER_TO_PLUGIN` can
+     be indexed with it rather than widened to `string`. */
+  calendar_sync_provider: CalendarSyncProvider | null;
+}
+
 export interface SyncResult {
   success: boolean;
   eventId?: string;
@@ -66,7 +84,22 @@ class CalendarSyncServiceImpl {
   async syncBookingToCalendar(
     booking: SchedulingBooking,
     service: SchedulingService,
-    userId: string
+    userId: string,
+    /**
+     * The MEETING this event is for, when the booking has several.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * A package is one booking with N meetings, so N events would all record
+     * themselves on that booking's single `external_calendar_event_id` — the
+     * last one wins, and the next sync re-creates the other five because
+     * nothing says they already exist. Six appointments, twelve diary entries.
+     *
+     * Given a meeting, the event id is recorded on the MEETING instead, which
+     * has its own column for it. Absent — the ordinary case — nothing changes:
+     * one booking, one appointment, one event, recorded where it always was.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    meetingId?: string | null
   ): Promise<SyncResult> {
     try {
       // Get user's sync settings
@@ -103,25 +136,43 @@ class CalendarSyncServiceImpl {
       if (!result.success) {
         logger.warn({ userId, bookingId: booking.id, error: result.error }, 'Failed to create calendar event');
 
-        // Update booking with error
-        await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
-          calendar_sync_error: result.message || result.error || 'Unknown error'
-        });
+        const syncError = result.message || result.error || 'Unknown error';
+
+        if (meetingId) {
+          await schedulingBookingRepository.updateMeetingCalendarSync(meetingId, userId, {
+            calendar_sync_error: syncError
+          });
+        } else {
+          await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
+            calendar_sync_error: syncError
+          });
+        }
 
         return { success: false, error: result.message || result.error };
       }
 
       const eventId = result.data?.event_id || result.data?.eventId;
 
-      // Update booking with sync info
-      await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
-        external_calendar_event_id: eventId,
-        calendar_sync_provider: provider,
-        calendar_synced_at: new Date().toISOString(),
-        calendar_sync_error: null
-      });
+      if (meetingId) {
+        await schedulingBookingRepository.updateMeetingCalendarSync(meetingId, userId, {
+          external_calendar_event_id: eventId,
+          /* 20261087. Without it this event could never be updated or deleted:
+             both paths look it up by provider. */
+          calendar_sync_provider: provider,
+          calendar_synced_at: new Date().toISOString(),
+          calendar_sync_error: null
+        });
+      } else {
+        // Update booking with sync info
+        await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
+          external_calendar_event_id: eventId,
+          calendar_sync_provider: provider,
+          calendar_synced_at: new Date().toISOString(),
+          calendar_sync_error: null
+        });
+      }
 
-      logger.info({ userId, bookingId: booking.id, eventId }, 'Booking synced to calendar');
+      logger.info({ userId, bookingId: booking.id, meetingId, eventId }, 'Booking synced to calendar');
       return { success: true, eventId };
     } catch (error) {
       logger.error({ err: error, userId, bookingId: booking.id }, 'Error syncing booking to calendar');
@@ -135,29 +186,62 @@ class CalendarSyncServiceImpl {
   async updateCalendarEvent(
     booking: SchedulingBooking,
     service: SchedulingService,
-    userId: string
+    userId: string,
+    /**
+     * The SESSION whose event this is, when the booking has several.
+     *
+     * A package's six events are recorded on their own meeting rows, so the
+     * booking carries no event id to look one up by — and without this, moving
+     * one session left a stale entry in the owner's diary while the client had
+     * been told a new time.
+     */
+    meeting?: CalendarEventRow | null,
+    /**
+     * What happened at it, written in front of the title.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * For an appointment whose hour has passed, the diary entry is a RECORD
+     * rather than a reservation, and the useful thing is that it says which
+     * kind. "לא הגיע: טיפול ADHD - דני" read at a glance beats an entry that
+     * looks exactly like one somebody attended, and it makes a repeat no-show
+     * obvious without opening the CRM.
+     *
+     * Only ever a prefix. The service and the client stay in the title, so
+     * searching the calendar for either still finds it.
+     *
+     * Resolved by the caller, which is where the outcome and the business's
+     * language are both known. Undefined leaves the title exactly as it was,
+     * which is what every existing caller passes.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    outcomeLabel?: string | null
   ): Promise<SyncResult> {
     try {
-      if (!booking.external_calendar_event_id || !booking.calendar_sync_provider) {
-        logger.debug({ userId, bookingId: booking.id }, 'Booking has no calendar event to update');
+      /* The row the event was recorded on. */
+      const on = meeting ?? booking;
+
+      if (!on.external_calendar_event_id || !on.calendar_sync_provider) {
+        logger.debug({ userId, bookingId: booking.id, meetingId: meeting?.id }, 'Nothing has a calendar event to update');
         return { success: false, error: 'No calendar event linked' };
       }
 
-      const provider = booking.calendar_sync_provider;
+      const provider = on.calendar_sync_provider;
       const pluginName = PROVIDER_TO_PLUGIN[provider];
 
-      logger.info({ userId, bookingId: booking.id, eventId: booking.external_calendar_event_id }, 'Updating calendar event');
+      logger.info({ userId, bookingId: booking.id, meetingId: meeting?.id, eventId: on.external_calendar_event_id }, 'Updating calendar event');
 
       const pluginExecuter = await PluginExecuterV2.getInstance();
 
       // Build updated event details
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
-      const summary = `${service.service_name} - ${clientName}`;
+      const base = `${service.service_name} - ${clientName}`;
+      /* The outcome first, so it survives a calendar view that truncates. */
+      const summary = outcomeLabel ? `${outcomeLabel}: ${base}` : base;
       const description = this.buildEventDescription(booking, service);
       const attendees = booking.client_email ? [booking.client_email] : [];
 
       const result = await pluginExecuter.execute(userId, pluginName, 'update_event', {
-        event_id: booking.external_calendar_event_id,
+        event_id: on.external_calendar_event_id,
         summary,
         description,
         start_time: booking.start_time,
@@ -167,23 +251,34 @@ class CalendarSyncServiceImpl {
       });
 
       if (!result.success) {
-        logger.warn({ userId, bookingId: booking.id, error: result.error }, 'Failed to update calendar event');
+        logger.warn({ userId, bookingId: booking.id, meetingId: meeting?.id, error: result.error }, 'Failed to update calendar event');
 
-        await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
-          calendar_sync_error: result.message || result.error || 'Unknown error'
-        });
+        const syncError = result.message || result.error || 'Unknown error';
+
+        if (meeting) {
+          await schedulingBookingRepository.updateMeetingCalendarSync(meeting.id, userId, { calendar_sync_error: syncError });
+        } else {
+          await schedulingBookingRepository.updateCalendarSync(booking.id, userId, { calendar_sync_error: syncError });
+        }
 
         return { success: false, error: result.message || result.error };
       }
 
       // Update sync timestamp
-      await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
-        calendar_synced_at: new Date().toISOString(),
-        calendar_sync_error: null
-      });
+      if (meeting) {
+        await schedulingBookingRepository.updateMeetingCalendarSync(meeting.id, userId, {
+          calendar_synced_at: new Date().toISOString(),
+          calendar_sync_error: null
+        });
+      } else {
+        await schedulingBookingRepository.updateCalendarSync(booking.id, userId, {
+          calendar_synced_at: new Date().toISOString(),
+          calendar_sync_error: null
+        });
+      }
 
-      logger.info({ userId, bookingId: booking.id }, 'Calendar event updated');
-      return { success: true, eventId: booking.external_calendar_event_id };
+      logger.info({ userId, bookingId: booking.id, meetingId: meeting?.id }, 'Calendar event updated');
+      return { success: true, eventId: on.external_calendar_event_id };
     } catch (error) {
       logger.error({ err: error, userId, bookingId: booking.id }, 'Error updating calendar event');
       return { success: false, error: (error as Error).message };
@@ -195,40 +290,63 @@ class CalendarSyncServiceImpl {
    */
   async deleteCalendarEvent(
     booking: SchedulingBooking,
-    userId: string
+    userId: string,
+    /**
+     * The SESSION whose event this is, when the booking has several.
+     *
+     * Calling off one session of a package must take ONE entry out of the
+     * owner's diary. Without this it found no event on the booking and left
+     * all six standing.
+     */
+    meeting?: CalendarEventRow | null
   ): Promise<SyncResult> {
     try {
-      if (!booking.external_calendar_event_id || !booking.calendar_sync_provider) {
-        logger.debug({ userId, bookingId: booking.id }, 'Booking has no calendar event to delete');
+      const on = meeting ?? booking;
+
+      if (!on.external_calendar_event_id || !on.calendar_sync_provider) {
+        logger.debug({ userId, bookingId: booking.id, meetingId: meeting?.id }, 'Nothing has a calendar event to delete');
         return { success: false, error: 'No calendar event linked' };
       }
 
-      const provider = booking.calendar_sync_provider;
+      const provider = on.calendar_sync_provider;
       const pluginName = PROVIDER_TO_PLUGIN[provider];
 
-      logger.info({ userId, bookingId: booking.id, eventId: booking.external_calendar_event_id }, 'Deleting calendar event');
+      logger.info({ userId, bookingId: booking.id, meetingId: meeting?.id, eventId: on.external_calendar_event_id }, 'Deleting calendar event');
 
       const pluginExecuter = await PluginExecuterV2.getInstance();
 
       const result = await pluginExecuter.execute(userId, pluginName, 'delete_event', {
-        event_id: booking.external_calendar_event_id,
+        event_id: on.external_calendar_event_id,
         send_notifications: true
       });
 
       if (!result.success) {
         // If event not found, consider it a success (already deleted)
         if (result.error === 'event_not_found' || result.message?.includes('404')) {
-          logger.info({ userId, bookingId: booking.id }, 'Calendar event already deleted');
+          logger.info({ userId, bookingId: booking.id, meetingId: meeting?.id }, 'Calendar event already deleted');
         } else {
-          logger.warn({ userId, bookingId: booking.id, error: result.error }, 'Failed to delete calendar event');
+          logger.warn({ userId, bookingId: booking.id, meetingId: meeting?.id, error: result.error }, 'Failed to delete calendar event');
           return { success: false, error: result.message || result.error };
         }
       }
 
-      // Clear sync info from booking
-      await schedulingBookingRepository.clearCalendarSync(booking.id, userId);
+      /*
+       * Clear it where it was recorded. Clearing the BOOKING's columns for a
+       * session would say the package has no calendar events at all, and the
+       * next sync would create five duplicates.
+       */
+      if (meeting) {
+        await schedulingBookingRepository.updateMeetingCalendarSync(meeting.id, userId, {
+          external_calendar_event_id: null,
+          calendar_sync_provider: null,
+          calendar_synced_at: null,
+          calendar_sync_error: null
+        });
+      } else {
+        await schedulingBookingRepository.clearCalendarSync(booking.id, userId);
+      }
 
-      logger.info({ userId, bookingId: booking.id }, 'Calendar event deleted');
+      logger.info({ userId, bookingId: booking.id, meetingId: meeting?.id }, 'Calendar event deleted');
       return { success: true };
     } catch (error) {
       logger.error({ err: error, userId, bookingId: booking.id }, 'Error deleting calendar event');

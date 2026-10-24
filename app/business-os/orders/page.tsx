@@ -37,7 +37,7 @@ export default function PaymentsPage() {
   // `useSearchParams` opts the tree into client rendering, and Next requires a
   // Suspense boundary for it or the whole route deopts at build time.
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[var(--v2-bg)]" />}>
+    <Suspense fallback={<div className="min-h-full bg-[var(--v2-bg)]" />}>
       <PaymentsPageContent />
     </Suspense>
   );

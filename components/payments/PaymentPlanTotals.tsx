@@ -125,6 +125,29 @@ export function planTotals(stages: PlanStage[], totalAmount?: number) {
   };
 }
 
+/**
+ * What the business still holds after money went back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FROM WHAT WAS COLLECTED, NOT FROM WHAT WAS AGREED.
+ *
+ * The totals strip read `total - refunded`, which is the same figure only when
+ * the whole plan has already been paid. On a plan half collected it credited
+ * the business with money nobody has sent: ₪800 agreed, ₪400 collected, ₪200
+ * returned reported ₪600 kept, when ₪200 is in hand and the other ₪400 has not
+ * been charged yet.
+ *
+ * `collected` is gross — a partly refunded period keeps its `paid` status — so
+ * subtracting the refund here is the whole of the deduction, not a second one.
+ *
+ * Floored at zero: a refund larger than the charge is a data fault, and a
+ * negative "kept" in a summary cell reads as a debt to the client that nothing
+ * else in the product would explain.
+ */
+export function keptAfterRefund(collected: number, refunded: number): number {
+  return Math.max(collected - refunded, 0);
+}
+
 export function PaymentPlanTotals({
   stages,
   currency,
@@ -181,18 +204,41 @@ export function PaymentPlanTotals({
            * ───────────────────────────────────────────────────────────────────
            */
           value: refunded,
-          tone: REFUND_HEX[refundExtent(refunded, total)],
+          /*
+           * Measured against what was COLLECTED, not what was agreed.
+           *
+           * A plan is refunded out of the money that actually arrived. Judging
+           * the extent against the agreed total called "every penny taken has
+           * gone back" a partial refund, because the periods not yet billed
+           * made the denominator larger than the money in hand.
+           */
+          tone: REFUND_HEX[refundExtent(refunded, collected || total)],
         },
         {
           /*
-           * What the business actually keeps. Floored at zero: a refund larger
-           * than the charge is a data fault, and a negative "kept" figure in a
-           * summary cell reads as a debt to the client that nothing else in the
-           * product would explain.
+           * What the business actually keeps.
+           *
+           * ───────────────────────────────────────────────────────────────────
+           * FROM WHAT WAS COLLECTED, NOT FROM WHAT WAS AGREED.
+           *
+           * This read `total - refunded`, which is only the same figure when
+           * the whole plan has already been paid. On a plan half collected it
+           * credited the business with money nobody has sent: ₪800 agreed with
+           * ₪400 collected and ₪200 returned reported ₪600 kept, when ₪200 is
+           * in hand and ₪400 is still to come.
+           *
+           * `collected` is gross — a partly refunded period stays `paid` — so
+           * subtracting the refund here is the whole of it, not a second
+           * deduction.
+           * ───────────────────────────────────────────────────────────────────
+           *
+           * Floored at zero: a refund larger than the charge is a data fault,
+           * and a negative "kept" figure in a summary cell reads as a debt to
+           * the client that nothing else in the product would explain.
            */
           label: labels.kept!,
-          value: Math.max(total - refunded, 0),
-          tone: total - refunded > 0 ? '#22C58B' : 'var(--v2-text-muted)',
+          value: keptAfterRefund(collected, refunded),
+          tone: keptAfterRefund(collected, refunded) > 0 ? '#22C58B' : 'var(--v2-text-muted)',
         },
       ]
     : [
@@ -224,6 +270,31 @@ export function PaymentPlanTotals({
    */
   if (!showsRefund && cancelled > 0 && labels.cancelled) {
     cells.push({ label: labels.cancelled, value: cancelled, tone: '#B54708' });
+  }
+
+  /*
+   * STILL TO COLLECT, EVEN WHEN MONEY HAS GONE BACK.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The refund trio replaces the ordinary three cells, so a refund on a plan
+   * that is only part collected took the outstanding figure off the screen
+   * altogether: ₪800 agreed, ₪200 returned, ₪200 kept, and the ₪400 the client
+   * still owes simply not mentioned. The owner reads that as a finished job.
+   *
+   * This is the same reasoning the cancelled cell is given above — a row the
+   * reader cannot make add up is a row that invites the wrong conclusion — and
+   * unlike `cancelled` it is not describing a different thing from the refund:
+   * charged, returned, kept and still-to-come are four facts about one plan.
+   *
+   * Only when there is some. A fully collected plan shows the trio alone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (showsRefund && outstanding > 0) {
+    cells.push({
+      label: overdue && overdueLabel ? overdueLabel : labels.outstanding,
+      value: outstanding,
+      tone: overdue ? '#F04438' : '#F79009',
+    });
   }
 
   return (

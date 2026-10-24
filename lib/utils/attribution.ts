@@ -200,7 +200,7 @@ export interface AttributionWithTracking extends LeadSourceMetadata {
  * means the submission cannot be tied to a click, which is the pre-existing
  * behaviour for anyone who did not arrive through a smart link.
  */
-function sessionIdFromUrl(candidate: string | undefined, base: string): string | undefined {
+export function sessionIdFromUrl(candidate: string | undefined, base: string): string | undefined {
   if (!candidate) return undefined;
 
   try {

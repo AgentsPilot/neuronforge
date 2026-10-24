@@ -238,6 +238,10 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
               router.push(`/business-os/crm?${params.toString()}`);
             }}
             searchQuery={searchQuery}
+            /* The same `today` the search field reads the string with, so the
+               chips it draws and the terms the list acts on cannot describe
+               two different spans. */
+            today={today}
             highlightId={highlightId}
             refreshKey={invoiceListKey}
             onReady={setMoneyApi}

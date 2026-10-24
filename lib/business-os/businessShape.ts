@@ -63,6 +63,12 @@ export interface ServiceFacts {
   /** 'online' | 'invoice', null while the service is free. */
   collection?: string | null;
   price?: number | null;
+  /**
+   * 'direct' | 'proposal'. A quoted service names neither a price nor a
+   * collection method — both are settled on the proposal — so it is invisible
+   * to every count below unless they ask for it by name. See `countServices`.
+   */
+  sale_mode?: string | null;
   /** 'full' | 'installments'. */
   payment_type?: string | null;
   installment_count?: number | null;
@@ -108,7 +114,32 @@ export function countServices(services: ServiceFacts[]): ServiceCounts {
     // is an appointment.
     scheduledServices: published.filter(s => s.is_scheduled !== false).length,
     onlineServices: published.filter(s => s.collection === 'online' && (s.price || 0) > 0).length,
-    invoicedServices: published.filter(s => s.collection === 'invoice' && (s.price || 0) > 0).length,
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A QUOTE IS AN INVOICE THAT HAS NOT BEEN WRITTEN YET.
+     *
+     * A `proposal` service deliberately carries no price and no collection —
+     * both are settled on the quote — so it matched neither half of the test
+     * below and counted as nothing at all. A business selling only by quote
+     * therefore resolved to `moneyMoves: false`: no Orders tab to see its
+     * invoices in, and no Invoice settings tab to fill in the details that
+     * print ON them.
+     *
+     * Money does move. `ProposalAcceptanceService` writes a `payment_invoices`
+     * row the moment a client accepts. That it is then settled by hand rather
+     * than by a processor is not the question `moneyMoves` asks — a plain
+     * invoiced service is counted here on exactly the same terms, and
+     * `collectsOnline` is the separate predicate for "needs a card processor".
+     *
+     * `journeyReadiness` was corrected for this and this module was not, which
+     * left the two disagreeing about what a quoted service is: the publish gate
+     * asked a quote-only business for invoice details while the shape hid the
+     * tab that holds them.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    invoicedServices: published.filter(
+      s => s.sale_mode === 'proposal' || (s.collection === 'invoice' && (s.price || 0) > 0)
+    ).length,
     hasPricedServices: published.some(s => (s.price || 0) > 0),
     /*
      * 'manual' rather than 'automatic', always.

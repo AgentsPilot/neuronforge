@@ -75,12 +75,63 @@ describe('the placeholder services are named', () => {
     expect(prompt).toMatch(/NEVER state a price, a length, a qualification, or a result/);
   });
 
-  it('never invents a duration or a price on the row it returns', () => {
+  /*
+   * THIS ASSERTION HAS BEEN SPLIT, AND THE DURATION HALF REVERSED.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It read "never invents a duration or a price". The price half still holds
+   * and is pinned below. The duration half was reversed deliberately, by the
+   * owner, after what it cost:
+   *
+   * A scheduled service stored with no length reaches the public booking page
+   * and offers a slot every thirty minutes whose END EQUALS ITS START, because
+   * `start + null * 60000` is `start`. A business set up on 15 Oct had all
+   * three services like that, and a live page reading "zero time available" on
+   * every date — with correct hours and a correct timezone, and nothing failing
+   * anywhere.
+   *
+   * So a length is asked for, as a FIELD. The rule forbidding a length in the
+   * NAME or the DESCRIPTION is untouched and still pinned above: that prose is
+   * what the website is written from.
+   *
+   * What is still never invented is a silent default. An absent or nonsensical
+   * answer stays absent, the editor shows the field empty rather than a
+   * fabricated 60, and the publish route refuses to put a scheduled service
+   * live without one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('asks for a duration, because a scheduled service cannot work without one', () => {
+    const prompt = manager.slice(
+      manager.indexOf('private async draftServices'),
+      manager.indexOf('Return JSON: {"services"')
+    );
+
+    expect(prompt).toMatch(/duration_minutes: how long ONE of these takes/);
+    // A field, never words — the prose rule above still stands.
+    expect(prompt).toMatch(/This is a FIELD, never words/);
+  });
+
+  it('and reads it back only when it is a real number', () => {
     const builder = manager.slice(
       manager.indexOf('const drafted: ExtractedService[]'),
       manager.indexOf("logger.info({ wanted: count")
     );
-    expect(builder).not.toMatch(/duration_minutes|price:/);
+
+    expect(builder).toMatch(/Number\.isFinite\(row\.duration_minutes\)/);
+    expect(builder).toMatch(/row\.duration_minutes > 0/);
+    // Absent stays absent: no `?? 60` anywhere on this path.
+    expect(builder).not.toMatch(/\?\?\s*60|\|\|\s*60/);
+  });
+
+  it('never invents a price on the row it returns', () => {
+    const builder = manager.slice(
+      manager.indexOf('const drafted: ExtractedService[]'),
+      manager.indexOf("logger.info({ wanted: count")
+    );
+    /* Unchanged. A price is the owner's to state and the editor asks for it;
+       there is no equivalent of the zero-length slot for an unpriced service,
+       because the publish gate already refuses one that collects money. */
+    expect(builder).not.toMatch(/price:/);
   });
 
   it('keeps a name the owner typed over one we generated', () => {

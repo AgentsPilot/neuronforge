@@ -122,6 +122,8 @@ async function resolve(
       return takesBookings(userId);
     case 'sends_quotes':
       return sendsQuotes(userId);
+    case 'bills_for_anything':
+      return billsForAnything(userId);
     default:
       return true;
   }
@@ -172,6 +174,48 @@ async function intakeReaches(userId: string): Promise<boolean> {
     });
   } catch (err) {
     logger.warn({ err, userId }, 'Could not resolve intake reach; not offering the intake chase');
+    return false;
+  }
+}
+
+/**
+ * Has this business ever raised a bill?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Asked of the INVOICES, not of the services, for the same reason
+ * `sendsQuotes` is asked of proposals: a service with a price on it says the
+ * business could bill, while an invoice that exists is the only proof it does.
+ * A practice whose catalogue is a single free consultation has nothing for an
+ * invoice chaser to chase, and so does a business using the platform as a
+ * website and a CRM with no catalogue at all.
+ *
+ * Any status counts, paid included. The question is whether billing is
+ * something they do, not whether anything is outstanding right now —
+ * `waiting: 0` already says the queue is empty, and the offer is about what
+ * happens from here.
+ *
+ * Unreadable counts as no, hiding the offer: the same direction every gate in
+ * this file fails in.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function billsForAnything(userId: string): Promise<boolean> {
+  try {
+    /*
+     * `payment_invoices`, which is the table. There is no `invoices` table —
+     * naming one returns an error rather than an empty count, and because this
+     * fails closed that would have hidden the automation from every business
+     * on the platform instead of from the ones with nothing to chase.
+     * `invoice_unpaid` in `./definitions` reads the same table.
+     */
+    const { count, error } = await supabaseServer
+      .from('payment_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not resolve whether this business bills; not offering the invoice chase');
     return false;
   }
 }

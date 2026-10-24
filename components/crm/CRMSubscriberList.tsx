@@ -1,18 +1,31 @@
 'use client';
 
 /**
- * The newsletter audience.
+ * Everyone the business may email.
  *
- * Deliberately not the contacts list. These people are not contacts: they gave
- * an address and nothing else, no chaser can reach them, and they have no
- * pipeline position to show. What matters here is whether they confirmed, where
- * they came from, and whether the owner wants to start working them.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This was the newsletter roster and nothing else, on the reasoning that these
+ * people "are not contacts: they gave an address and nothing else". True of a
+ * roster row, and it described almost nobody — the roster only ever receives
+ * newsletter signups who were not already contacts, while consent is given far
+ * more often inside the booking flow, on the contact form, and by the owner in
+ * the CRM drawer. On a live account that was nine people consented and an
+ * empty screen.
+ *
+ * So the list answers the question an owner actually asks of it — who may I
+ * write to — and `status` says how each person got here. A `contact` row is
+ * somebody already in the CRM: it carries a name, shows no Promote button, and
+ * is still listed, because leaving them out is what made this screen useless.
+ *
+ * Still deliberately NOT the contacts list: a contact with no consent does not
+ * appear, and a plain address with consent does.
+ * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module components/crm/CRMSubscriberList
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Mail, MailCheck, MailX, Clock, Loader2, ArrowRight } from 'lucide-react';
+import { Mail, MailCheck, MailX, Clock, Loader2, ArrowRight, User } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -25,7 +38,8 @@ interface Subscriber {
   id: string;
   email: string;
   name: string | null;
-  status: 'pending' | 'confirmed' | 'unsubscribed' | 'promoted';
+  /** `contact` is somebody already in the CRM who consented elsewhere. */
+  status: 'pending' | 'confirmed' | 'unsubscribed' | 'promoted' | 'contact';
   source: string;
   subscribed_at: string;
   confirmed_at: string | null;
@@ -38,6 +52,7 @@ const STATUS_ICON = {
   confirmed: MailCheck,
   unsubscribed: MailX,
   promoted: ArrowRight,
+  contact: User,
 } as const;
 
 const STATUS_TONE = {
@@ -45,19 +60,39 @@ const STATUS_TONE = {
   confirmed: 'text-emerald-600',
   unsubscribed: 'text-gray-400',
   promoted: 'text-[#8B5CF6]',
+  /*
+   * The same violet as `promoted`, because both mean "this person is in the
+   * CRM". The two differ in how they got there, which the label says, and
+   * giving that a second colour would imply a difference the owner can act on.
+   */
+  contact: 'text-[#8B5CF6]',
 } as const;
 
 export function CRMSubscriberList({ onPromoted }: { onPromoted?: () => void }) {
   const { t, isRTL, language } = useLanguage();
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [loading, setLoading] = useState(true);
-  const [includePromoted, setIncludePromoted] = useState(false);
+  /*
+   * ON by default, which is the opposite of what it was.
+   *
+   * The list is now "everyone you may email", and on a real account most of
+   * those people are already contacts — they consented while booking or
+   * enquiring. Opening with them hidden is how this screen came to show zero
+   * rows for an account with nine consented people. Off is a narrowing the
+   * owner chooses: show me only the ones I have not started working yet.
+   */
+  const [includePromoted, setIncludePromoted] = useState(true);
   const [promoting, setPromoting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      /*
+       * Sent on every request rather than only when true. The route's default
+       * is now "include", so an omitted parameter no longer means "exclude" —
+       * saying it outright is what keeps the two ends from disagreeing.
+       */
       const response = await fetch(
-        `/api/crm/subscribers${includePromoted ? '?includePromoted=true' : ''}`
+        `/api/crm/subscribers?includePromoted=${includePromoted}`
       );
       const json = await response.json();
       if (json.success) setSubscribers(json.subscribers ?? []);

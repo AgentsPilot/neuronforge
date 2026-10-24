@@ -132,6 +132,9 @@ export function journeyTakesPayment(service: JourneyService, processorReady: boo
     price: service.price,
     collection: service.collection,
     processorReady,
+    /* So the strip the owner reads matches the journey their client walks —
+       a quoted service shows no payment step on either. */
+    saleMode: service.saleMode,
   });
 }
 

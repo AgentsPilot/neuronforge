@@ -25,8 +25,13 @@
  * named DRAFTS, invisible until the owner publishes them.
  *
  * Flow:
- *   language → name → story → deepening (×N) → how you sell
- *            → how you collect → how many → intake (if booked) → channels → plan
+ *   language → name → story → deepening (×N) → how many
+ *            → how you sell (if any) → how you collect (if any)
+ *            → intake (if booked) → channels → plan
+ *
+ * The count leads because zero is a real answer — a website and a contact form
+ * feeding the CRM, no catalogue — and the two questions after it are both about
+ * a catalogue. See `firstSellingQuestion`.
  *
  * Steps named in `ONBOARDING_STEPS` but absent above are retired and kept only
  * so a stored conversation standing on one is resumed rather than discarded.
@@ -978,8 +983,10 @@ export class OnboardingConversationManager {
         }
 
         updatedState.currentStep = 'service_details';
-        updatedState.pendingQuestion = 'sell_scheduled';
-        logger.info({ newStep: 'service_details', pendingQuestion: 'sell_scheduled' }, 'Asking how the business sells');
+        // The count first. See `firstSellingQuestion`: a zero makes the other
+        // two questions meaningless, and it can only be known by asking.
+        updatedState.pendingQuestion = 'service_count';
+        logger.info({ newStep: 'service_details', pendingQuestion: 'service_count' }, 'Asking how much the business sells');
         break;
 
       /*
@@ -1067,7 +1074,13 @@ export class OnboardingConversationManager {
         );
 
         updatedState.currentStep = 'service_details';
-        updatedState.pendingQuestion = this.firstSellingQuestion(updatedState);
+        /*
+         * THE COUNT COMES FIRST. See `firstSellingQuestion` for why.
+         *
+         * It is the only one of the three that is always worth asking, and it
+         * is the one whose answer decides whether the other two mean anything.
+         */
+        updatedState.pendingQuestion = 'service_count';
         break;
       }
 
@@ -1098,13 +1111,15 @@ export class OnboardingConversationManager {
          * never traded for a generated one.
          */
         updatedState.currentStep = 'service_details';
-        updatedState.pendingQuestion = 'sell_scheduled';
+        // The count first here too, so both ways into this step open the same
+        // way and a zero is caught before anything is asked about selling.
+        updatedState.pendingQuestion = 'service_count';
         logger.info(
           {
             pricingModel: clientWorkflow.pricing_model,
             servicesFromStory: clientWorkflow.services?.length || 0,
           },
-          'Asking how the business sells'
+          'Asking how much the business sells'
         );
         break;
 
@@ -1149,7 +1164,34 @@ export class OnboardingConversationManager {
             ...updatedState.collectedData.clientWorkflow,
             collection_method: collection,
           };
-          updatedState.pendingQuestion = 'service_count';
+          /*
+           * All three answers are in, so the placeholder rows can be written
+           * carrying them. See `draftPlaceholderCatalogue` for why this cannot
+           * happen when the count is read.
+           */
+          await this.draftPlaceholderCatalogue(
+            updatedState,
+            updatedState.collectedData.clientWorkflow?.service_count ?? 0,
+            owner,
+            submittedServices
+          );
+
+          /*
+           * The money question is now LAST of the three, so intake is decided
+           * here rather than after the count.
+           *
+           * Nothing reaches this branch unless the count was above zero — the
+           * count is asked first and routes a zero straight out of the step —
+           * so the only remaining condition is the one this step has always
+           * used: a form filled in "before the appointment" needs there to be
+           * an appointment.
+           */
+          if (updatedState.collectedData.clientWorkflow?.sells_scheduled !== false) {
+            updatedState.pendingQuestion = 'intake';
+          } else {
+            updatedState.pendingQuestion = undefined;
+            updatedState.currentStep = this.nextStepAfterServices(updatedState);
+          }
           logger.info({ collection }, 'Read how the business collects money');
           break;
         }
@@ -1169,101 +1211,12 @@ export class OnboardingConversationManager {
           logger.info({ count }, 'Read how many services the business sells');
 
           /*
-           * Name them, now that we know how many.
-           *
-           * Anything the owner actually typed comes first and is never traded
-           * for a generated one: the story sometimes names a service outright,
-           * and that name is theirs. The naming call tops the list up to the
-           * count, which is the same rule the build applies to `seeded`.
+           * The catalogue is NOT drafted here any more. See
+           * `draftPlaceholderCatalogue`: the placeholder rows are stamped with
+           * the appointments and collection answers, and both are now asked
+           * AFTER this question. Drafting here would stamp rows with answers
+           * nobody has given yet, which inverts both decisions.
            */
-          {
-            /*
-             * A client that SENT a structured services array gets those names.
-             *
-             * The chat route accepts `services` (max 40) and passes it
-             * through, and the only branch that read it was in the free-text
-             * loop removed below — so the API accepted a catalogue and
-             * discarded it. Honoured here instead, where it can still decide
-             * what gets created: the owner's own names first, the naming call
-             * topping up to the count.
-             */
-            const sent = (submittedServices ?? []).filter(service => service.name?.trim());
-            if (sent.length) {
-              const already = new Set(
-                (updatedState.collectedData.clientWorkflow?.services ?? [])
-                  .map(service => service.name?.toLowerCase().trim())
-              );
-              updatedState.collectedData.clientWorkflow = {
-                ...updatedState.collectedData.clientWorkflow,
-                services: [
-                  ...(updatedState.collectedData.clientWorkflow?.services ?? []),
-                  ...sent.filter(service => !already.has(service.name.toLowerCase().trim())),
-                ],
-              };
-              logger.info({ sent: sent.length }, 'Used the services the client sent');
-            }
-
-            const named = updatedState.collectedData.clientWorkflow?.services ?? [];
-            const owed = count - named.length;
-
-            if (owed > 0) {
-              const drafted = await this.draftServices(
-                owed,
-                updatedState.collectedData.businessDescription || '',
-                updatedState.collectedData.businessBrief,
-                updatedState.language,
-                owner
-              );
-
-              /*
-               * Stamped with the two business-wide answers before they join
-               * the catalogue, and this is not cosmetic.
-               * ───────────────────────────────────────────────────────────────
-               * `computeConfiguration` reads the catalogue to decide two
-               * things, and both read a field. A row carrying a name and
-               * nothing else does not just fail to inform them, it INVERTS
-               * them, because an empty catalogue has a fallback and a
-               * populated one does not:
-               *
-               *   needs_stripe_connect: `services.length > 0` switches from
-               *     the business-wide `collection_method` to
-               *     `services.some(collection === 'online')`. Unstamped, an
-               *     owner who had just answered "the client pays online by
-               *     card" would get no processor. The comment at that line
-               *     records this exact bug being fixed once already.
-               *
-               *   addCapability('scheduling') is the ONLY source of that
-               *     capability and keys off the catalogue, so these rows are
-               *     what finally switch it on for a business that books, and
-               *     must not switch it on for one that does not.
-               *
-               * A placeholder may be missing a price and a length, which the
-               * owner sets. It may not be missing the answers they already
-               * gave.
-               */
-              const sellsScheduled = updatedState.collectedData.clientWorkflow?.sells_scheduled !== false;
-              const collectedBy = updatedState.collectedData.clientWorkflow?.collection_method;
-              const collection: 'online' | 'invoice' | null =
-                collectedBy === 'none' || !collectedBy
-                  ? null
-                  : collectedBy === 'card_online' || collectedBy === 'mixed'
-                    ? 'online'
-                    : 'invoice';
-
-              /* Case-insensitively distinct, so a generated name cannot
-                 duplicate one the owner gave. */
-              const taken = new Set(named.map(service => service.name?.toLowerCase().trim()));
-              updatedState.collectedData.clientWorkflow = {
-                ...updatedState.collectedData.clientWorkflow,
-                services: [
-                  ...named,
-                  ...drafted
-                    .filter(service => !taken.has(service.name.toLowerCase().trim()))
-                    .map(service => ({ ...service, is_scheduled: sellsScheduled, collection })),
-                ],
-              };
-            }
-          }
 
           /*
            * ───────────────────────────────────────────────────────────────────
@@ -1285,13 +1238,38 @@ export class OnboardingConversationManager {
            * there is no appointment.
            * ───────────────────────────────────────────────────────────────────
            */
-          if (updatedState.collectedData.clientWorkflow?.sells_scheduled !== false) {
-            updatedState.pendingQuestion = 'intake';
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * NOTHING TO SELL ENDS THE STEP HERE.
+           *
+           * The remaining two questions are both ABOUT a catalogue: whether the
+           * things you sell are booked against a time, and how clients pay for
+           * them. Asked of a business that just said it sells nothing, they are
+           * not merely redundant — they are answered, stored, and then read
+           * across by `shapeFromProfile` precisely because there are no
+           * services to outrank them. That is how "none" used to come out as a
+           * business that takes appointments and moves money.
+           *
+           * `OnboardingConfigurationService.sellsNothing` overrides both on the
+           * way out, so the stored configuration was already right; this is
+           * about not asking an owner three questions about a catalogue they
+           * have just told us does not exist.
+           *
+           * Nothing is withheld permanently. Publish one service — a free
+           * consultation is the usual first — and `shapeFromServices` answers
+           * both from the rows themselves, bringing back the availability,
+           * intake and invoice tabs without anyone being re-interviewed.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          if (count === 0) {
+            updatedState.pendingQuestion = undefined;
+            updatedState.currentStep = this.nextStepAfterServices(updatedState);
+            logger.info({}, 'Sells nothing; not asking how they sell or collect');
             break;
           }
 
-          updatedState.pendingQuestion = undefined;
-          updatedState.currentStep = this.nextStepAfterServices(updatedState);
+          // Something to sell, so the two questions about it are worth asking.
+          updatedState.pendingQuestion = this.firstSellingQuestion(updatedState);
           break;
         }
 
@@ -1573,10 +1551,17 @@ export class OnboardingConversationManager {
    * true, false, or NULL when it could not tell, and drops exactly one
    * question. Null means ask: an absent answer is not an answer.
    *
-   * `sell_collection` and `service_count` are never skipped. Nothing in the
-   * story tells us how the money arrives, and the count decides how many rows
-   * are written to a real catalogue — the file says as much where it refuses to
-   * guess one. Inferring either is how the reverted bug happened.
+   * `service_count` is never skipped and is now asked FIRST. Nothing in the
+   * story reliably says how many things a business sells, and the answer
+   * decides whether the other two questions mean anything: a business that
+   * sells nothing is not booking appointments for it or collecting money for
+   * it, and both answers would otherwise be stored and then read across by
+   * `shapeFromProfile` exactly because no services exist to outrank them.
+   *
+   * `sell_collection` is never INFERRED — nothing in the story tells us how the
+   * money arrives, and guessing it is how the reverted bug happened. It is
+   * skipped only when the count is zero, which is not an inference but the
+   * owner saying there is nothing to collect for.
    *
    * What was taken as read still reaches the owner: the pre-build summary shows
    * the journey and the capabilities that follow from it, and "change it" at
@@ -2008,6 +1993,127 @@ export class OnboardingConversationManager {
    * claim about results.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Create the placeholder catalogue, once all three selling answers are in.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY IT RUNS HERE AND NOT WHERE THE COUNT IS READ.
+   *
+   * The rows are stamped with `is_scheduled` and `collection`, and the comment
+   * inside says why that is not cosmetic: an unstamped row does not merely fail
+   * to inform `computeConfiguration`, it INVERTS it, because an empty catalogue
+   * falls back to the business-wide answers and a populated one does not.
+   *
+   * The count is now the FIRST of the three questions, so at the moment it is
+   * read neither answer exists. Drafting there would stamp every row
+   * `collection: null` and hand a business that takes cards no processor — the
+   * exact bug the inner comment records being fixed once already.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async draftPlaceholderCatalogue(
+    state: OnboardingState,
+    count: number,
+    owner: BosLlmOwner,
+    submittedServices?: ExtractedService[]
+  ): Promise<void> {
+    /*
+     * Name them, now that we know how many.
+     *
+     * Anything the owner actually typed comes first and is never traded
+     * for a generated one: the story sometimes names a service outright,
+     * and that name is theirs. The naming call tops the list up to the
+     * count, which is the same rule the build applies to `seeded`.
+     */
+    {
+      /*
+       * A client that SENT a structured services array gets those names.
+       *
+       * The chat route accepts `services` (max 40) and passes it
+       * through, and the only branch that read it was in the free-text
+       * loop removed below — so the API accepted a catalogue and
+       * discarded it. Honoured here instead, where it can still decide
+       * what gets created: the owner's own names first, the naming call
+       * topping up to the count.
+       */
+      const sent = (submittedServices ?? []).filter(service => service.name?.trim());
+      if (sent.length) {
+        const already = new Set(
+          (state.collectedData.clientWorkflow?.services ?? [])
+            .map(service => service.name?.toLowerCase().trim())
+        );
+        state.collectedData.clientWorkflow = {
+          ...state.collectedData.clientWorkflow,
+          services: [
+            ...(state.collectedData.clientWorkflow?.services ?? []),
+            ...sent.filter(service => !already.has(service.name.toLowerCase().trim())),
+          ],
+        };
+        logger.info({ sent: sent.length }, 'Used the services the client sent');
+      }
+
+      const named = state.collectedData.clientWorkflow?.services ?? [];
+      const owed = count - named.length;
+
+      if (owed > 0) {
+        const drafted = await this.draftServices(
+          owed,
+          state.collectedData.businessDescription || '',
+          state.collectedData.businessBrief,
+          state.language,
+          owner
+        );
+
+        /*
+         * Stamped with the two business-wide answers before they join
+         * the catalogue, and this is not cosmetic.
+         * ───────────────────────────────────────────────────────────────
+         * `computeConfiguration` reads the catalogue to decide two
+         * things, and both read a field. A row carrying a name and
+         * nothing else does not just fail to inform them, it INVERTS
+         * them, because an empty catalogue has a fallback and a
+         * populated one does not:
+         *
+         *   needs_stripe_connect: `services.length > 0` switches from
+         *     the business-wide `collection_method` to
+         *     `services.some(collection === 'online')`. Unstamped, an
+         *     owner who had just answered "the client pays online by
+         *     card" would get no processor. The comment at that line
+         *     records this exact bug being fixed once already.
+         *
+         *   addCapability('scheduling') is the ONLY source of that
+         *     capability and keys off the catalogue, so these rows are
+         *     what finally switch it on for a business that books, and
+         *     must not switch it on for one that does not.
+         *
+         * A placeholder may be missing a price and a length, which the
+         * owner sets. It may not be missing the answers they already
+         * gave.
+         */
+        const sellsScheduled = state.collectedData.clientWorkflow?.sells_scheduled !== false;
+        const collectedBy = state.collectedData.clientWorkflow?.collection_method;
+        const collection: 'online' | 'invoice' | null =
+          collectedBy === 'none' || !collectedBy
+            ? null
+            : collectedBy === 'card_online' || collectedBy === 'mixed'
+              ? 'online'
+              : 'invoice';
+
+        /* Case-insensitively distinct, so a generated name cannot
+           duplicate one the owner gave. */
+        const taken = new Set(named.map(service => service.name?.toLowerCase().trim()));
+        state.collectedData.clientWorkflow = {
+          ...state.collectedData.clientWorkflow,
+          services: [
+            ...named,
+            ...drafted
+              .filter(service => !taken.has(service.name.toLowerCase().trim()))
+              .map(service => ({ ...service, is_scheduled: sellsScheduled, collection })),
+          ],
+        };
+      }
+    }
+  }
+
   private async draftServices(
     count: number,
     story: string,
@@ -2041,7 +2147,15 @@ export class OnboardingConversationManager {
       '- No dashes between clauses. Use a comma, a colon or a full stop.',
       '- Write everything in the owner\'s language.',
       '',
-      'Return JSON: {"services": [{"name": "...", "description": "..."}]}',
+      '- duration_minutes: how long ONE of these takes, as a number of minutes, for a',
+      '  service a client books a time for. Read it from the work itself: a consultation',
+      '  or an assessment is usually 30 to 60, a treatment or a training session 45 to 90,',
+      '  a workshop or a full session half a day. A round, ordinary number a person would',
+      '  say out loud. Omit it only for something nobody books a slot for, like a product',
+      '  or a course sold as a whole. This is a FIELD, never words: the rule above still',
+      '  holds, and no length may appear in the name or the description.',
+      '',
+      'Return JSON: {"services": [{"name": "...", "description": "...", "duration_minutes": 60}]}',
     ].join('\n');
 
     const context_lines = [
@@ -2073,7 +2187,7 @@ export class OnboardingConversationManager {
       if (!Array.isArray(parsed)) return [];
 
       const drafted: ExtractedService[] = parsed
-        .filter((row: unknown): row is { name: string; description?: unknown } =>
+        .filter((row: unknown): row is { name: string; description?: unknown; duration_minutes?: unknown } =>
           !!row && typeof (row as { name?: unknown }).name === 'string'
           && (row as { name: string }).name.trim().length > 0
         )
@@ -2084,9 +2198,39 @@ export class OnboardingConversationManager {
             typeof row.description === 'string' && row.description.trim()
               ? withoutDashPunctuation(row.description.trim())
               : undefined,
-          /* Everything else is the business-wide answer or the editor's. A
-             duration or a price invented here is the failure this whole change
-             exists to undo. */
+          /*
+           * THE LENGTH IS NOW ASKED FOR, AND THAT REVERSES A PREVIOUS DECISION.
+           *
+           * ───────────────────────────────────────────────────────────────────
+           * This said that a duration invented here "is the failure this whole
+           * change exists to undo", and nothing was read. The cost of the
+           * alternative turned out to be worse: a scheduled service stored with
+           * no length reaches the public booking page and offers a slot every
+           * thirty minutes whose end equals its start, because
+           * `start + null * 60000` is `start`. A business set up on 15 Oct had
+           * all three services like that and a live page showing "zero time
+           * available" on every date, with correct hours and a correct
+           * timezone. Nothing failed anywhere along the way.
+           *
+           * So a length is now asked for, as a FIELD — the rule forbidding a
+           * length in the name or the description is untouched, because that
+           * prose is what the website is written from.
+           *
+           * It remains a starting point, not a fact: the editor shows it
+           * plainly and the owner can change it. What is NOT invented is a
+           * silent default — an absent or nonsensical answer stays absent, the
+           * editor shows the field empty, and the publish route refuses to put
+           * a scheduled service live without one.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          duration_minutes:
+            typeof row.duration_minutes === 'number'
+              && Number.isFinite(row.duration_minutes)
+              && row.duration_minutes > 0
+              ? Math.round(row.duration_minutes)
+              : undefined,
+          /* Price is still never invented here: it is the owner's to state, and
+             the editor asks for it. Only the length is read. */
         }));
 
       logger.info({ wanted: count, drafted: drafted.length }, 'Named the draft services');
@@ -2559,6 +2703,23 @@ export class OnboardingConversationManager {
       [8, ['eight', 'שמונה', 'ocho']],
       [9, ['nine', 'תשע', 'תשעה', 'nueve']],
       [10, ['ten', 'עשר', 'עשרה', 'diez']],
+      /*
+       * LAST, and deliberately so.
+       *
+       * "I sell nothing" is a real answer — a business that wants the website
+       * and the contact form and no catalogue — and the digit branch above has
+       * always accepted a typed `0`. This is what lets the offered chip say it
+       * in words instead of showing a bare "0", which reads as a mistake.
+       *
+       * Last in the list because a reply naming a number as well as a negation
+       * ("none ready, three planned") should be read as the number. The digit
+       * branch catches that case first; this only runs when there is no digit
+       * at all.
+       *
+       * `containsWholeWord` uses Unicode word boundaries, so 'one' does not
+       * match inside 'none' and these cannot shadow the entry above.
+       */
+      [0, ['none', 'nothing', 'no services', 'not yet', 'אין', 'כלום', 'עדיין לא', 'ninguno', 'ninguna', 'nada', 'todavía no']],
     ];
 
     // Digits win over words: "3 or 4" should read as 3, not match 'four'.
@@ -3339,10 +3500,10 @@ export class OnboardingConversationManager {
           'אני גובה את הכסף בעצמי: חשבונית, העברה, ביט או מזומן',
           'אני לא גובה כסף על מה שאני מוכר',
         ],
-        service_count_prompt: 'אחרון. כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות ותוכלו להשלים אותן אחר כך.',
+        service_count_prompt: 'כמעט סיימנו. כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות ותוכלו להשלים אותן אחר כך. אפשר גם בלי: אתר וטופס יצירת קשר בלבד.',
         intake_prompt: 'הלקוחות שלכם ממלאים משהו לפני שאתם נפגשים, כמו טופס או הצהרת בריאות?',
         intake_options: ['כן, הם ממלאים טופס לפני', 'לא, הם פשוט קובעים תור'],
-        service_count_options: ['1', '2', '3', '5'],
+        service_count_options: ['1', '2', '3', '5', 'אין עדיין'],
         client_acquisition_prompt: 'עכשיו, איך לקוחות ימצאו אותך ויזמינו? סמן כל מה שרלוונטי (או כלום), ואקים את מה שסימנת.',
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
@@ -3395,10 +3556,10 @@ export class OnboardingConversationManager {
           'Cobro yo mismo: factura, transferencia o efectivo',
           'No cobro por nada de lo que ofrezco',
         ],
-        service_count_prompt: 'La última. ¿Cuántas cosas distintas vendes más o menos? Las dejaré como borradores para que las completes luego.',
+        service_count_prompt: 'Casi está. ¿Cuántas cosas distintas vendes más o menos? Las dejaré como borradores para que las completes luego. También vale ninguna: solo web y formulario de contacto.',
         intake_prompt: '¿Tus clientes rellenan algo antes de verte, como un formulario o una ficha de salud?',
         intake_options: ['Sí, rellenan un formulario antes', 'No, solo reservan'],
-        service_count_options: ['1', '2', '3', '5'],
+        service_count_options: ['1', '2', '3', '5', 'Ninguna todavía'],
         client_acquisition_prompt: 'Ahora, ¿cómo van a encontrarte y reservar tus clientes? Marca lo que corresponda (o nada) y construiré lo que elijas.',
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
@@ -3448,7 +3609,7 @@ export class OnboardingConversationManager {
         'I collect the money myself: invoice, transfer or cash',
         'Nothing I sell is paid for',
       ],
-      service_count_prompt: "Last one. Roughly how many different things do you sell? I'll set them up as drafts for you to finish.",
+      service_count_prompt: "Nearly there. Roughly how many different things do you sell? I'll set them up as drafts for you to finish. None is fine too: just a website and a contact form.",
       /*
        * Phrased as what the CLIENT does, not as a feature name.
        * "Do you need an intake form?" asks the owner to know what we mean by
@@ -3457,7 +3618,16 @@ export class OnboardingConversationManager {
        */
       intake_prompt: "Do your clients fill in anything before you see them, like a form or health details?",
       intake_options: ['Yes, they fill in a form first', 'No, they just book'],
-      service_count_options: ['1', '2', '3', '5'],
+      /*
+       * "None yet" is an offered answer, not just a typed one.
+       *
+       * It resolves to 0 through the word list in `readServiceCount`, and 0
+       * then makes `OnboardingConfigurationService` store `website_only` and
+       * `collection_method: 'none'` — a website and a CRM, no catalogue, no
+       * booking, no invoicing. Shown as words rather than a bare "0", which
+       * reads as a mis-tap.
+       */
+      service_count_options: ['1', '2', '3', '5', 'None yet'],
       client_acquisition_prompt: "Now, how will clients find you and book? Tick whatever applies (or nothing), and I will build what you choose.",
       client_acquisition_options: [
         'Build me a professional website',

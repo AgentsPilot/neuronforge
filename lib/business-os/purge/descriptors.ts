@@ -258,6 +258,37 @@ const SCHEDULING_BOOKINGS_EXPORT: TableExportClassification = {
   },
 };
 
+/*
+ * DE-7 replaced `planned()`: every table is classified on the spot, and the CI
+ * forbids the old placeholder. These two arrived on a branch written before
+ * that rule.
+ *
+ * EXCLUDED, NOT INCLUDED, AND THAT IS A DEFERRAL RATHER THAN A DECISION.
+ *
+ * `include` needs a SECTION, and the exporter allows exactly one include
+ * descriptor per section — `BusinessDataExportRepository` raises
+ * "expected one include descriptor for the section, found 3" when three tables
+ * share `bookings`. Giving each its own section means adding ids to
+ * `ExportSectionId` and naming them in `SECTION_NAMES_EN` and
+ * `SECTION_NAMES_HE`, which changes what an owner sees in their downloaded
+ * data and its README in two languages. That is a product change, not a merge
+ * resolution.
+ *
+ * Purge is unaffected: both stay `level: 'reset'`, so deleting an account
+ * still clears them. Only the export omits them, exactly as it does today on
+ * main, where neither table is classified at all.
+ */
+const SCHEDULING_MEETINGS_EXPORT: TableExportClassification = exclude(
+  'the appointments are represented by their bookings in the bookings section',
+  'a section of its own is a product decision (DE-4 follow-up)'
+);
+
+const ABANDONED_BOOKINGS_EXPORT: TableExportClassification = exclude(
+  'enquiries that were never completed into a booking',
+  'a section of its own is a product decision (DE-4 follow-up)'
+);
+
+
 /** `scheduling_availability_exceptions` -> `time_off`. */
 const SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT: TableExportClassification = {
   kind: 'include',
@@ -1179,6 +1210,10 @@ const IN_SCOPE: PurgeDescriptor[] = [
   { table: 'scheduling_services', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT, snapshot: 'rows', export: SCHEDULING_SERVICES_EXPORT },
   { table: 'scheduling_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.ROOT - 2, snapshot: 'rows', export: SCHEDULING_BOOKINGS_EXPORT,
     notes: 'Blocked by B2 (payment_plan_subscriptions RESTRICT). No longer reached by a crm_contacts trigger: T1 was dropped (B4 retired, slice 3a). ROOT - 2 (2026-10-08): N1 — contact_id is NOT NULL with ON DELETE SET NULL to crm_contacts, so deleting a contact first fails with 23502; it must run before crm_contacts (ROOT). Still after payment_plan_subscriptions (B2) and before scheduling_services, its CASCADE parent.' },
+  { table: 'abandoned_bookings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: ABANDONED_BOOKINGS_EXPORT,
+    notes: 'Somebody who gave their details on a booking page and did not finish. LEAF: its two references — service_id and booking_id — are both ON DELETE SET NULL, so it blocks nothing and can go at any point. Reset rather than purge: the prospects belong to the business, like the bookings they nearly became.' },
+  { table: 'scheduling_meetings', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.PRE_BLOCKING, snapshot: 'rows', export: SCHEDULING_MEETINGS_EXPORT,
+    notes: 'The appointments themselves (20261073). Scoped by user_id rather than via the booking, because it carries its own — CLAUDE.md rule 4 wants the tenant filter reachable without a join. PRE_BLOCKING, not LEAF: booking_id is ON DELETE CASCADE, so scheduling_bookings would take these rows with it and this descriptor would report 0 deleted for a table that was in fact emptied. Running first makes the count honest. Nothing references it except payment_plan_installments.meeting_id, which is ON DELETE SET NULL and so blocks nothing.' },
   { table: 'scheduling_availability_exceptions', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: SCHEDULING_AVAILABILITY_EXCEPTIONS_EXPORT },
   { table: 'external_calendar_events', level: 'reset', area: 'scheduling', scope: { kind: 'user_id' }, order: ORDER.LEAF, snapshot: 'rows', export: exclude("user 2026-10-15: synced copy of the owner's own external calendar, not Business OS data"),
     notes: 'calendar-sync repopulates within ~5 min after a Reset (business_profiles is kept and drives its enumeration) — FR-26.' },

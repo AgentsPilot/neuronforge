@@ -27,15 +27,33 @@ import {
 } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { loadAttempt, materialiseAttempt } from '@/lib/scheduling/materialiseAttempt';
+import { verifyAttemptPayment } from '@/lib/scheduling/verifyAttemptPayment';
 
 const logger = createLogger({ module: 'WebsiteBookingFinalizeAPI' });
 
-const FinalizeSchema = z.object({
-  subdomain: z.string().optional(),
-  booking_id: z.string().uuid('Invalid booking ID'),
-  payment_intent_id: z.string().optional(),
-  payment_status: z.enum(['pending', 'paid', 'failed']).optional()
-});
+const FinalizeSchema = z
+  .object({
+    subdomain: z.string().optional(),
+    /*
+     * One of these two, never neither.
+     *
+     * `booking_id` is a booking that already exists — every path that takes no
+     * money writes one before the client ever gets here, and those are
+     * unchanged.
+     *
+     * `attempt_id` is a card journey, where no booking exists yet BECAUSE the
+     * client might not have come back. The booking is created below, once the
+     * payment is known to have succeeded.
+     */
+    booking_id: z.string().uuid('Invalid booking ID').optional(),
+    attempt_id: z.string().uuid('Invalid attempt ID').optional(),
+    payment_intent_id: z.string().optional(),
+    payment_status: z.enum(['pending', 'paid', 'failed']).optional(),
+  })
+  .refine(body => Boolean(body.booking_id) || Boolean(body.attempt_id), {
+    message: 'One of booking_id or attempt_id is required',
+  });
 
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -55,6 +73,119 @@ export async function POST(request: NextRequest) {
     }
 
     const data = validationResult.data;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE BOOKING IS CREATED HERE, NOT BEFORE.
+     *
+     * For a card journey `create` wrote only an `abandoned_bookings` row: the
+     * client was leaving to pay and might never return, and a booking written
+     * then held the slot against every other client for ever.
+     *
+     * So the booking comes into existence at the first moment anybody knows the
+     * client finished. Everything below this block is untouched and runs
+     * against a real booking row exactly as it did before — which is the point
+     * of materialising here rather than threading a second meaning through the
+     * four hundred lines that follow.
+     *
+     * Only on `paid`. A `failed` or `pending` finalisation leaves the attempt
+     * open, so the client can try again on the same record and the sweeper
+     * closes it if they do not.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    let bookingId = data.booking_id ?? null;
+
+    if (!bookingId && data.attempt_id) {
+      if (data.payment_status !== 'paid') {
+        requestLogger.info(
+          { attemptId: data.attempt_id, paymentStatus: data.payment_status },
+          'Finalise called without a successful payment; attempt left open'
+        );
+        return NextResponse.json(
+          { success: false, error: 'Payment has not completed', code: 'not_paid' },
+          { status: 400 }
+        );
+      }
+
+      const attempt = await loadAttempt(data.attempt_id);
+
+      if (!attempt) {
+        requestLogger.warn({ attemptId: data.attempt_id }, 'No such booking attempt');
+        return NextResponse.json(
+          { success: false, error: 'Booking attempt not found' },
+          { status: 404 }
+        );
+      }
+
+      /*
+       * ── ASK STRIPE, NOT THE BROWSER ─────────────────────────────────────
+       *
+       * `data.payment_status` above is a field the client sends. On its own it
+       * meant a POST carrying a valid attempt uuid and `payment_status:
+       * 'paid'` created a contact and a confirmed, paid booking with no money
+       * anywhere.
+       *
+       * The check below is the same standard this route already applies forty
+       * lines down to which account a charge lives on: "nothing it sends is
+       * evidence". Either witness will do — the PaymentIntent the embedded
+       * form returns, or the Checkout session recorded on the attempt — and
+       * both are read from Stripe.
+       */
+      const verdict = await verifyAttemptPayment(attempt, data.payment_intent_id);
+
+      if (!verdict.paid) {
+        requestLogger.error(
+          { attemptId: attempt.id, reason: verdict.reason, paymentIntentId: data.payment_intent_id },
+          'Finalise refused: the payment could not be confirmed with Stripe'
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'payment_unverified',
+            /* Deliberately not "you did not pay": a client who did pay and hit
+               a lookup failure must not be told they did not. */
+            error: 'We could not confirm that payment. Nothing has been booked or charged twice.',
+          },
+          { status: 402 }
+        );
+      }
+
+      requestLogger.info(
+        { attemptId: attempt.id, via: verdict.via },
+        'Payment confirmed with Stripe; creating the booking'
+      );
+
+      const made = await materialiseAttempt(attempt);
+
+      if (!made.ok) {
+        /*
+         * `slot_taken` is the one place in this design where money has been
+         * taken and no booking exists. Nothing held the slot while the client
+         * was paying, so somebody else could finish first. The caller refunds;
+         * it is never left as a bare error for the client to interpret.
+         */
+        requestLogger.error(
+          { attemptId: attempt.id, reason: made.reason },
+          'Could not create the booking for a payment that succeeded'
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            code: made.reason,
+            error:
+              made.reason === 'slot_taken'
+                ? 'That time was taken while you were paying. Your payment will be returned.'
+                : 'Your payment succeeded but the booking could not be created.',
+            refund_required: true,
+          },
+          { status: 409 }
+        );
+      }
+
+      bookingId = made.bookingId;
+    }
 
     // Look up the booking with contact data via JOIN
     // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
@@ -77,11 +208,11 @@ export async function POST(request: NextRequest) {
           phone
         )
       `)
-      .eq('id', data.booking_id)
+      .eq('id', bookingId)
       .single();
 
     if (bookingError || !booking) {
-      requestLogger.warn({ bookingId: data.booking_id }, 'Booking not found');
+      requestLogger.warn({ bookingId }, 'Booking not found');
       return NextResponse.json(
         { success: false, error: 'Booking not found' },
         { status: 404 }
@@ -324,7 +455,7 @@ export async function POST(request: NextRequest) {
     const { error: updateError } = await supabaseServer
       .from('scheduling_bookings')
       .update(updateData)
-      .eq('id', data.booking_id);
+      .eq('id', bookingId);
 
     if (updateError) {
       requestLogger.error({ err: updateError }, 'Failed to update booking');
@@ -332,6 +463,40 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Failed to finalize booking' },
         { status: 500 }
       );
+    }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE MONEY LEARNS WHICH BOOKING IT WAS FOR.
+     *
+     * Everything above tells the BOOKING about its payment. Nothing told the
+     * payment about the booking, and every reader that goes looking for a
+     * booking's money searches from that side: the drawer reads stages by
+     * `booking_id`, `resolveRefundTargets` matches on `booking_id` or an
+     * invoice, and the insight layer groups by client.
+     *
+     * The rows are written a minute before this, by the Stripe webhook, when
+     * there is no booking to name. Stripe's metadata carries the attempt, and
+     * this is the moment both exist.
+     *
+     * ── WHY NOT THE PAYMENT INTENT ──────────────────────────────────────────
+     * This block used to key off `paymentTransactionId`, found from
+     * `data.payment_intent_id`. That is null on the booking widget, which sends
+     * only `attempt_id` — and for an instalment sale there is no payment intent
+     * to send at all, because Stripe puts the charge on the subscription's
+     * invoice. So the one path that sells instalments was the one path the fix
+     * could never fire on.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (data.attempt_id) {
+      const { linkPaymentsToBooking } = await import('@/lib/payments/linkPaymentsToBooking');
+
+      await linkPaymentsToBooking({
+        attemptId: data.attempt_id,
+        bookingId,
+        contactId,
+        userId: ownerId,
+      });
     }
 
     // Create CRM activity (non-blocking)
