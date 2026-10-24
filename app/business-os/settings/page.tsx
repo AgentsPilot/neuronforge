@@ -45,7 +45,7 @@ import { MarketingConsentDrawer } from '@/components/business-os/settings/Market
 import { startMarketingDrawerReads } from '@/components/business-os/settings/marketingDrawerReads';
 import { startPlanDrawerRead } from '@/components/business-os/settings/planDrawerReads';
 import { DRAWER_PREFETCH_MAX_AGE_MS, useDrawerPrefetch } from '@/components/business-os/settings/useDrawerPrefetch';
-import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
+import { ErasureDialogBody } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { createLogger } from '@/lib/logger';
@@ -61,7 +61,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
 
@@ -1279,31 +1278,14 @@ function BusinessOSSettingsContent() {
         }
       }}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <Trash2 className="w-5 h-5" />
-              {t('settings.security.delete_dialog_title')}
-            </DialogTitle>
-            <DialogDescription className="pt-2">
-              {t('settings.security.erasure_request_title')}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            {/* Warning Box */}
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-              <p className="text-sm text-red-700 dark:text-red-400 font-medium">
-                {t('settings.security.delete_warning')}
-              </p>
-            </div>
-
-            {/*
-              Shared with /v2/settings — one copy of the copy, and one place the
-              erasure contact address lives. See components/business-os/purge/
-              DangerZonePanel.tsx.
-            */}
-            <ErasureRequestContent />
-          </div>
+          {/*
+            Header, warning and body, shared with /v2/settings: one copy of the
+            copy and one place the erasure contact lives. It mounts with the
+            dialog, so the self-delete pre-check runs once per open and the
+            header follows it (data export DE-10b.2, QA E-1). See
+            components/business-os/purge/DangerZonePanel.tsx.
+          */}
+          <ErasureDialogBody />
 
           <DialogFooter className="gap-2 sm:gap-0">
             <button

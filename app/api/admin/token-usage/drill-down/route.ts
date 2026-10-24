@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
+import { adminAccountLabel } from '@/lib/business-os/account-deletion/closedAccount';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { bosRowFilter } from '@/lib/business-os/llm/callCatalog';
 import {
@@ -523,8 +524,10 @@ async function getAvailableFilters(records: any[]): Promise<DrillDownResponse['a
     // Build maps for lookup
     const authEmailMap = new Map<string, string>();
     authUsers.forEach(u => {
-      if (u.email) {
-        authEmailMap.set(u.id, u.email);
+      // DE-10b.2: a closed account reads "Deleted account {ref}".
+      const label = adminAccountLabel(u.email);
+      if (label) {
+        authEmailMap.set(u.id, label);
       }
     });
 
@@ -734,8 +737,10 @@ async function aggregateByDimension(
     // Build a map of user_id -> email from auth.users
     const authEmailMap = new Map<string, string>();
     authUsers.forEach(u => {
-      if (u.email) {
-        authEmailMap.set(u.id, u.email);
+      // DE-10b.2: a closed account reads "Deleted account {ref}".
+      const label = adminAccountLabel(u.email);
+      if (label) {
+        authEmailMap.set(u.id, label);
       }
     });
 

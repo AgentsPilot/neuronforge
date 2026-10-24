@@ -1,6 +1,6 @@
 # Requirement: Business OS — Delete My Account, Deletion Receipt and Pseudonymised Billing (DE-10b)
 
-> **Last Updated**: 2026-10-18
+> **Last Updated**: 2026-10-21
 
 **Created by:** BA
 **Date:** 2026-10-17 (rewritten 2026-10-18 to the user's simplified flow)
@@ -831,6 +831,20 @@ The user answered "go with the suggestions, including 6".
 - **O-4** Every invite the account issued is deleted. On invites it redeemed or claimed, `email` becomes the placeholder and `personal_note`, `email_problem_detail`, `redemption_error_message` become NULL. The issuer's own columns stay.
 - **SQL-4b** The account's rows in `auth.audit_log_entries` are deleted inside the function (by actor id, target id, actor email or target email, W-4), so the privacy paragraph may say the sign-in log is cleaned.
 
+## Slice status — DE-10b.2 (Dev, 2026-10-21)
+
+| Item | State |
+|---|---|
+| Workplan | [BUSINESS_OS_DATA_EXPORT_DE10B2_WORKPLAN.md](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10B2_WORKPLAN.md), SA approved with conditions V-1 to V-10 |
+| Dependency | DE-10b.1 merged (PR #468); 20261077, 20261080 and 20261081 applied on prod; checker 11/11 ok; function stamp `d72232d8fcc75e5e` live (TL, 2026-10-18) |
+| Code | Complete on `feature/data-export-de10b2`, **uncommitted**, waiting for SA code review and QA. No migration |
+| Off switch | `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED`, server-only, default off, on only for `true`. Off: the Danger Zone is unchanged and the delete route answers 404 |
+| Routes | `GET /api/business-os/account/deletion-check` (read-only pre-check), `POST /api/business-os/account/delete` (session user only, `{ statement, language }` `.strict()`) |
+| User decisions applied | One typed statement en / he / es (draft); drawer warns and names Settings → Download my data with no download button; only Stripe-live money blocks (TL-6: sent or overdue invoices do not); a running plan reads "contact us to cancel it" (NBQ-5, X-2); no email code (BQ-11); support address stays `PLACEHOLDER_ERASURE_CONTACT` (BQ-8) |
+| Privacy paragraph | Drafted at [ACCOUNT_DELETION_PRIVACY_PARAGRAPH.md](/docs/legal/ACCOUNT_DELETION_PRIVACY_PARAGRAPH.md) for the user, lawyer and CPA. Where it is published is open (X-4) |
+| Native check owed | Hebrew and Spanish copy of the drawer, the email and the account-deleted page |
+| DE-10b.1 QA follow-ups taken | E-2 (`.invalid` refusal now reads a display-name address); I-a (the drawer's billing line does not imply live money); E-1 (the customer routes log an engine error's kind and code only, never its message) |
+
 ## Change History
 
 | Date | Change | Details |
@@ -843,3 +857,4 @@ The user answered "go with the suggestions, including 6".
 | 2026-10-18 | TL ran SQL-1…SQL-5 (C2-2) | Results recorded; new findings: auth audit log holds the email on every row; legacy/AI-cost columns to blank listed |
 | 2026-10-18 | User decisions after SA Review 2 | NBQ-1…5 suggestions accepted; invoices do not block (TL-6); no email code; personal email stays as support until Offir answers |
 | 2026-10-18 | DE-10b.1 code complete (Dev) | Slice status spliced in: migrations 20261080 / 20261081 written, not applied; §D amended per O-4, O-5, O-6, O-7 and SQL-4b; `.invalid` refusal moved here (O-11). Uncommitted, waiting for SA code review and QA |
+| 2026-10-21 | DE-10b.2 code complete (Dev) | Slice status spliced in: customer self-delete behind `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (default off), pre-check + delete routes on the session user, drawer inside the existing Danger Zone surface, `/account-deleted`, confirmation email, "Deleted account {ref}" admin label, privacy paragraph draft. Uncommitted, waiting for SA code review and QA |

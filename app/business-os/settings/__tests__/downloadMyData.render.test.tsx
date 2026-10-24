@@ -60,7 +60,7 @@ jest.mock('@/components/business-os/settings/useDrawerPrefetch', () => ({
 jest.mock('@/components/business-os/settings/useLinkOpenedDrawer', () => ({
   useLinkOpenedDrawer: () => ({ open: false, openFromRow: jest.fn(), openFromLink: jest.fn(), onOpenChange: jest.fn() }),
 }));
-jest.mock('@/components/business-os/purge/DangerZonePanel', () => ({ ErasureRequestContent: () => null }));
+jest.mock('@/components/business-os/purge/DangerZonePanel', () => ({ ErasureRequestContent: () => null, ErasureDialogBody: () => null }));
 jest.mock('@/components/ui/AvatarUpload', () => ({ __esModule: true, default: () => null }));
 jest.mock('@/lib/client/auth-actions', () => ({ signOutUser: jest.fn() }));
 
