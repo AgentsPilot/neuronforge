@@ -195,6 +195,28 @@ describe('turning it on', () => {
 });
 
 describe('the pattern', () => {
+  /*
+   * The first meeting defaults to a week from today. When that lands on the
+   * 29th-31st, "a month later" is correctly clamped to the last day of a
+   * shorter month, so the same-day-of-month assertion below only holds for an
+   * early-month start. Pin the clock (Date only — React's timers stay real).
+   */
+  beforeEach(() => {
+    jest.useFakeTimers({
+      now: new Date('2026-06-03T09:00:00Z'),
+      doNotFake: [
+        'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+        'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask',
+        'requestAnimationFrame', 'cancelAnimationFrame',
+        'requestIdleCallback', 'cancelIdleCallback', 'performance', 'hrtime',
+      ],
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('regenerates the series when the cadence changes', async () => {
     await turnPackageOn();
     const weekly = seriesValues();
