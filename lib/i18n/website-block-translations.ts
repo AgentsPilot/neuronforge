@@ -194,6 +194,8 @@ interface BlockTranslations {
     subscribe: TranslationRecord;
     successMessage: TranslationRecord;
     privacyNote: TranslationRecord;
+    /** The LINK to the business's privacy policy, not the sentence above it. */
+    privacyNotice: TranslationRecord;
   };
 
   // CTA Block
@@ -484,6 +486,17 @@ export const websiteBlockTranslations: BlockTranslations = {
       es: 'Respetamos tu privacidad. Cancela cuando quieras.',
       he: 'אנו מכבדים את פרטיותך. בטל את הרישום בכל עת.'
     },
+    /*
+     * The link, not the sentence. `privacyNote` above is copy the platform
+     * writes; this is the label on a link to the BUSINESS's own policy, and
+     * the two template surfaces both render it beside a consent statement that
+     * is already translated. It was an English literal in the template shape.
+     */
+    privacyNotice: {
+      en: 'Privacy notice',
+      es: 'Aviso de privacidad',
+      he: 'הצהרת פרטיות'
+    },
   },
 
   // CTA Block
@@ -594,11 +607,31 @@ export function createBlockTranslator<T extends keyof BlockTranslations>(
  */
 type TemplateContentTranslations = Record<string, TranslationRecord>;
 
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE ENTRY PER ENGLISH STRING. The group headings below are documentation,
+ * not scope.
+ *
+ * This is a FLAT map keyed by the English text, and the headings describe where
+ * a string tends to be used — a CTA button, a section title, a menu item. The
+ * same word belongs to more than one of those, so seven keys were written
+ * twice: 'About', 'Services', 'Testimonials', 'Contact', 'Get Started',
+ * 'Schedule Consultation' and 'Free Consultation'.
+ *
+ * A duplicate key is not an error at runtime. The later definition silently
+ * wins and the earlier one is dead, which is how 'Contact' came to resolve to
+ * the imperative menu label in Hebrew even when it heads a section, and how
+ * 'Free Consultation' settled on the Process Steps wording in Spanish. Both of
+ * those are now the ONLY definition rather than the accidental survivor.
+ *
+ * Before adding a string, search for it. If it is already here, the heading it
+ * sits under is the wrong question — one key, one translation.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 const templateContentTranslations: TemplateContentTranslations = {
   // About Block content
   'About Me': { en: 'About Me', es: 'Sobre Mí', he: 'אודותיי' },
   'About Us': { en: 'About Us', es: 'Sobre Nosotros', he: 'אודותינו' },
-  'About': { en: 'About', es: 'Acerca de', he: 'אודות' },
   'My Story': { en: 'My Story', es: 'Mi Historia', he: 'הסיפור שלי' },
   'Our Story': { en: 'Our Story', es: 'Nuestra Historia', he: 'הסיפור שלנו' },
   'Who We Are': { en: 'Who We Are', es: 'Quiénes Somos', he: 'מי אנחנו' },
@@ -636,37 +669,31 @@ const templateContentTranslations: TemplateContentTranslations = {
   'Book Session': { en: 'Book Session', es: 'Reservar Sesión', he: 'הזמן פגישה' },
   'Book Now': { en: 'Book Now', es: 'Reservar Ahora', he: 'הזמן עכשיו' },
   'Request Appointment': { en: 'Request Appointment', es: 'Solicitar Cita', he: 'בקש תור' },
-  'Get Started': { en: 'Get Started', es: 'Comenzar', he: 'התחל' },
   'Start Your Journey': { en: 'Start Your Journey', es: 'Comienza Tu Viaje', he: 'התחל את המסע שלך' },
   'Schedule a Call': { en: 'Schedule a Call', es: 'Programar Llamada', he: 'קבע שיחה' },
   'Contact Us': { en: 'Contact Us', es: 'Contáctenos', he: 'צור קשר' },
   'Learn More': { en: 'Learn More', es: 'Saber Más', he: 'למד עוד' },
   'Start Now': { en: 'Start Now', es: 'Empezar Ahora', he: 'התחל עכשיו' },
   'Book Your Free Call': { en: 'Book Your Free Call', es: 'Reserva Tu Llamada Gratis', he: 'הזמן שיחה חינם' },
-  'Schedule Consultation': { en: 'Schedule Consultation', es: 'Programar Consulta', he: 'קבע ייעוץ' },
   'Find Your Balance': { en: 'Find Your Balance', es: 'Encuentra Tu Equilibrio', he: 'מצא את האיזון שלך' },
   'Free Strategy Call': { en: 'Free Strategy Call', es: 'Llamada de Estrategia Gratis', he: 'שיחת אסטרטגיה חינם' },
   'Book Free Call': { en: 'Book Free Call', es: 'Reservar Llamada Gratis', he: 'הזמן שיחה חינם' },
   'Free Assessment': { en: 'Free Assessment', es: 'Evaluación Gratis', he: 'הערכה חינם' },
   'Get Proposal': { en: 'Get Proposal', es: 'Obtener Propuesta', he: 'קבל הצעה' },
-  'Free Consultation': { en: 'Free Consultation', es: 'Consulta Gratis', he: 'ייעוץ חינם' },
   'Free Case Review': { en: 'Free Case Review', es: 'Revisión de Caso Gratis', he: 'סקירת תיק חינם' },
   'Get Free Case Review': { en: 'Get Free Case Review', es: 'Obtener Revisión de Caso Gratis', he: 'קבל סקירת תיק חינם' },
 
   // Section Titles
   'Our Services': { en: 'Our Services', es: 'Nuestros Servicios', he: 'השירותים שלנו' },
-  'Services': { en: 'Services', es: 'Servicios', he: 'שירותים' },
   'What We Offer': { en: 'What We Offer', es: 'Lo Que Ofrecemos', he: 'מה אנחנו מציעים' },
   'How It Works': { en: 'How It Works', es: 'Cómo Funciona', he: 'איך זה עובד' },
   'The Process': { en: 'The Process', es: 'El Proceso', he: 'התהליך' },
   'Simple Steps': { en: 'Simple Steps', es: 'Pasos Simples', he: 'צעדים פשוטים' },
   'What Our Clients Say': { en: 'What Our Clients Say', es: 'Lo Que Dicen Nuestros Clientes', he: 'מה הלקוחות שלנו אומרים' },
-  'Testimonials': { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' },
   'Client Stories': { en: 'Client Stories', es: 'Historias de Clientes', he: 'סיפורי לקוחות' },
   'Questions? Reach Out': { en: 'Questions? Reach Out', es: '¿Preguntas? Contáctanos', he: 'שאלות? צור קשר' },
   'Have Questions?': { en: 'Have Questions?', es: '¿Tienes Preguntas?', he: 'יש לך שאלות?' },
   'Get in Touch': { en: 'Get in Touch', es: 'Ponte en Contacto', he: 'צור קשר' },
-  'Contact': { en: 'Contact', es: 'Contacto', he: 'יצירת קשר' },
   'Begin Your Healing Journey': { en: 'Begin Your Healing Journey', es: 'Comienza Tu Viaje de Sanación', he: 'התחל את מסע הריפוי שלך' },
   'Request an Appointment': { en: 'Request an Appointment', es: 'Solicita una Cita', he: 'בקש תור' },
   'Ready to Start?': { en: 'Ready to Start?', es: '¿Listo para Comenzar?', he: 'מוכן להתחיל?' },
@@ -674,6 +701,11 @@ const templateContentTranslations: TemplateContentTranslations = {
   'FAQ': { en: 'FAQ', es: 'Preguntas', he: 'שאלות נפוצות' },
 
   // Process Steps - Titles
+  /*
+   * Also a CTA button. A second copy under "CTA Buttons" read 'Consulta
+   * Gratis'; this one won by being later, so this is the wording in use and
+   * the other has been removed rather than this one changed.
+   */
   'Free Consultation': { en: 'Free Consultation', es: 'Consulta Gratuita', he: 'ייעוץ חינם' },
   'Initial Consultation': { en: 'Initial Consultation', es: 'Consulta Inicial', he: 'ייעוץ ראשוני' },
   'First Session': { en: 'First Session', es: 'Primera Sesión', he: 'פגישה ראשונה' },
@@ -806,6 +838,12 @@ const templateContentTranslations: TemplateContentTranslations = {
   'About': { en: 'About', es: 'Acerca de', he: 'אודות' },
   'Services': { en: 'Services', es: 'Servicios', he: 'שירותים' },
   'Testimonials': { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' },
+  /*
+   * Also a section heading. A second copy under "Section Titles" read
+   * 'יצירת קשר' — the noun — but this imperative won by being later, so it is
+   * what a Hebrew contact SECTION has been titled all along. Kept as-is: this
+   * clean-up removes a dead definition, it does not retranslate a live one.
+   */
   'Contact': { en: 'Contact', es: 'Contacto', he: 'צור קשר' },
   'Book': { en: 'Book', es: 'Reservar', he: 'הזמן' },
   'Specializations': { en: 'Specializations', es: 'Especializaciones', he: 'התמחויות' },
@@ -838,6 +876,81 @@ const templateContentTranslations: TemplateContentTranslations = {
   'Avg Salary Increase': { en: 'Avg Salary Increase', es: 'Aumento Salarial Prom.', he: 'עלייה ממוצעת בשכר' },
   'Client Value Created': { en: 'Client Value Created', es: 'Valor Creado para Clientes', he: 'ערך שנוצר ללקוחות' },
   'Projects Delivered': { en: 'Projects Delivered', es: 'Proyectos Entregados', he: 'פרויקטים שהושלמו' },
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE STARTER COPY A SECTION IS BORN WITH.
+   *
+   * Five code paths build a set of sections, and four of them write the page's
+   * own language: the AI generator prompts in it, the landing builder branches
+   * on it, and the template scaffold is English literals handed through
+   * `translateBlockContent` on the way into the database.
+   *
+   * The add-section modal was the fifth and the only one that did not, so a
+   * Hebrew site gained an English "Stay Updated / Subscribe to our newsletter /
+   * Subscribe" the moment its owner added a section — stored in English, which
+   * is worse than rendered in English, because the renderer's own localised
+   * fallbacks only apply to content that is ABSENT.
+   *
+   * It now goes through the same `translateBlockContent` as the scaffold, and
+   * these are the strings that pass through it. Everything the owner is
+   * offered in that modal is here; machine values (`name`, `tel`, `grid`,
+   * `#contact`) deliberately are not, because this table is keyed by the
+   * string itself and translating a field's name would break the form.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  'Welcome': { en: 'Welcome', es: 'Bienvenido', he: 'ברוכים הבאים' },
+  'Your professional service': {
+    en: 'Your professional service',
+    es: 'Tu servicio profesional',
+    he: 'השירות המקצועי שלך'
+  },
+  'What we offer': { en: 'What we offer', es: 'Lo que ofrecemos', he: 'מה אנחנו מציעים' },
+  'Ready to Get Started?': {
+    en: 'Ready to Get Started?',
+    es: '¿Listo para Comenzar?',
+    he: 'מוכנים להתחיל?'
+  },
+  'Contact us today': { en: 'Contact us today', es: 'Contáctanos hoy', he: 'צרו קשר עוד היום' },
+  'Name': { en: 'Name', es: 'Nombre', he: 'שם' },
+  'Email': { en: 'Email', es: 'Correo electrónico', he: 'אימייל' },
+  'Phone': { en: 'Phone', es: 'Teléfono', he: 'טלפון' },
+  'Message': { en: 'Message', es: 'Mensaje', he: 'הודעה' },
+  'Fill out this form to begin': {
+    en: 'Fill out this form to begin',
+    es: 'Completa este formulario para comenzar',
+    he: 'מלאו את הטופס כדי להתחיל'
+  },
+  'Features': { en: 'Features', es: 'Características', he: 'יתרונות' },
+  'Our Impact': { en: 'Our Impact', es: 'Nuestro Impacto', he: 'ההשפעה שלנו' },
+  'Book an Appointment': {
+    en: 'Book an Appointment',
+    es: 'Reservar una Cita',
+    he: 'קביעת תור'
+  },
+  'Make a Payment': { en: 'Make a Payment', es: 'Realizar un Pago', he: 'ביצוע תשלום' },
+  'Pay Now': { en: 'Pay Now', es: 'Pagar Ahora', he: 'שלם עכשיו' },
+  'Our Team': { en: 'Our Team', es: 'Nuestro Equipo', he: 'הצוות שלנו' },
+  'Stay Updated': { en: 'Stay Updated', es: 'Mantente Actualizado', he: 'הישארו מעודכנים' },
+  'Subscribe to our newsletter': {
+    en: 'Subscribe to our newsletter',
+    es: 'Suscríbete a nuestro boletín',
+    he: 'הירשמו לניוזלטר שלנו'
+  },
+  'Subscribe': { en: 'Subscribe', es: 'Suscribirse', he: 'הרשמה' },
+  'Trusted By': { en: 'Trusted By', es: 'Con la Confianza de', he: 'סומכים עלינו' },
+
+  /* The scaffold's newsletter block, which carries two more than the modal's. */
+  'Enter your email': {
+    en: 'Enter your email',
+    es: 'Ingresa tu correo',
+    he: 'הזינו את כתובת האימייל'
+  },
+  'Thanks for subscribing!': {
+    en: 'Thanks for subscribing!',
+    es: '¡Gracias por suscribirte!',
+    he: 'תודה על ההרשמה!'
+  },
 };
 
 /**

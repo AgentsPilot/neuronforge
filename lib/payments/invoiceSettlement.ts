@@ -116,6 +116,24 @@ export interface SettleInvoiceInput {
   description?: string;
   metadata?: Record<string, unknown>;
   /**
+   * The booking this invoice belongs to, when it belongs to one.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The charge was written with `invoice_id` alone, so money recorded by hand
+   * against a booking's invoice produced a `payment_transactions` row that
+   * named no booking: all 37 manual charges on this account carry
+   * `booking_id = NULL`. Anything reading a booking's charges therefore could
+   * not see them — the contact drawer joins `payment_transactions` on
+   * `booking_id`, so a booking settled in cash looked like a booking with no
+   * payment at all.
+   *
+   * Passed in rather than read from the invoice, because this function is
+   * deliberately free of extra network calls: it is the one path several
+   * surfaces share and it is tested against a fake database. Callers that know
+   * the booking hand it over; the rest are unchanged.
+   */
+  bookingId?: string | null;
+  /**
    * What the processor kept, when the caller already knows it.
    *
    * Passed in rather than fetched here: this function is deliberately free of
@@ -232,6 +250,8 @@ export async function settleInvoicePaid(
       user_id: input.userId,
       contact_id: input.contactId ?? null,
       invoice_id: input.invoiceId,
+      /* Null when the invoice stands alone, which is a real and common case. */
+      booking_id: input.bookingId ?? null,
       amount: input.amount,
       currency: input.currency.toUpperCase(),
       status: 'succeeded',
@@ -373,9 +393,13 @@ export async function settleInvoicePaid(
    * is. Hung off one caller, the others would settle a package and leave six
    * meetings `pending` with their client never told.
    *
-   * Non-fatal, and not awaited for its result: the money is recorded and the
-   * invoice is paid. A failure leaves the meetings pending with their slots
-   * still held, which is recoverable; failing a settled payment is not.
+   * Non-fatal but AWAITED: the `try/catch` is what keeps a failure here from
+   * failing a settled payment, and it does that whether or not anybody waits.
+   * Firing it off instead meant the work began after the response and was lost
+   * with the invocation — see the receipt below, which lost every email it was
+   * ever asked to send for exactly that reason. A dropped confirmation here
+   * leaves six meetings `pending` with their slots held and their client never
+   * told, and nothing retries it.
    *
    * The client is cast to the real client because this reads two tables
    * `SettlementDb` does not describe. Widening that interface for it would
@@ -383,7 +407,7 @@ export async function settleInvoicePaid(
    * method already cost — so the cast is here, in the one place that knows the
    * fake database in the tests answers these calls too.
    */
-  void (async () => {
+  await (async () => {
     try {
       const { confirmPackageOnPayment } = await import('@/lib/payments/confirmPackageOnPayment');
       await confirmPackageOnPayment(client as SupabaseClient, input.invoiceId, paidAt);
@@ -408,11 +432,18 @@ export async function settleInvoicePaid(
    * received NO email at all about money leaving their account.
    *
    * Below the `alreadySettled` return above, so a replayed webhook cannot send
-   * a second receipt for the same payment. Non-blocking: the money is recorded
-   * and the invoice is paid; a mail failure must not fail a settled payment the
-   * caller would then retry.
+   * a second receipt for the same payment.
+   *
+   * AWAITED. It was fired and forgotten, on the reasoning that a mail failure
+   * must not fail a settled payment the caller would then retry. True, and the
+   * `try/catch` is what secures it: this returns normally whatever the mailer
+   * does. What `void` actually bought was a continuation starting after the
+   * response, which no host keeps alive — frozen at response time on
+   * serverless, killed by the next restart in local dev. The identical block in
+   * the Stripe Connect webhook sent nothing at all on 19 Oct across three
+   * settled invoices, one of them for ₪4,750, because of this and nothing else.
    */
-  void (async () => {
+  await (async () => {
     try {
       const { data: invoice } = await db
         .from('payment_invoices')

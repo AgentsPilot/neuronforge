@@ -93,7 +93,19 @@ describe('leaving read-only re-runs the hydration', () => {
   it('and the parent really does flip it in place', () => {
     /* If the parent ever remounts instead, the dependency is harmless; if it
        keeps flipping, the dependency is load-bearing. */
-    expect(drawer).toMatch(/current \? \{ \.\.\.current, readOnly: false \} : current/);
+    /*
+     * THE PARENT REMOUNTS RATHER THAN FLIPPING, which this test already
+     * allowed for: "if the parent ever remounts instead, the dependency is
+     * harmless". It now does exactly that — `onOpenProposalBuilder` sets a
+     * fresh object to edit, and `onViewProposal` sets a separate one with
+     * `readOnly: true` — so there is no in-place flip left to pin.
+     *
+     * What still has to hold is that the two entries are DISTINCT, or
+     * viewing a sent quote would reopen the editor on it. The effect
+     * dependency above stays pinned either way.
+     */
+    expect(drawer).toMatch(/setProposalBuilder\(\{ bookingId, \.\.\.context \}\)/);
+    expect(drawer).toMatch(/readOnly: true,/);
   });
 });
 

@@ -45,6 +45,7 @@ import {
   AboutBlock,
   ProcessBlock,
   FooterBlock,
+  NewsletterBlock,
   type BuildingBlock
 } from './building-blocks';
 
@@ -153,7 +154,24 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
       button_text: 'Get started'
     }),
 
-    // 11. Footer
+    /*
+     * 11. The second ask.
+     *
+     * Added for the same reason the close above it was: every recipe now ends
+     * `… cta, newsletter, footer`, and a scaffold that emits no newsletter
+     * leaves a page created from a template without the one section that asks
+     * a visitor who did NOT book for permission to write to them later.
+     *
+     * English literals like everything else here — `convertTemplateBlockToInsert`
+     * runs the whole content object through `translateBlockContent` on the way
+     * into the database, against the page's own language.
+     */
+    NewsletterBlock.inline({
+      title: 'Stay Updated',
+      description: 'Subscribe to our newsletter'
+    }),
+
+    // 12. Footer
     FooterBlock.standard({
       company_name: 'Your Business',
       email: 'contact@yourbusiness.com',

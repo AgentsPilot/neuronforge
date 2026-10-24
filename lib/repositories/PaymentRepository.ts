@@ -1617,9 +1617,26 @@ export class PaymentInvoiceRepository {
           stats.overdue.total += amount;
         }
 
-        if (status === 'draft' || status === 'paid' || status === 'cancelled') {
-          stats[status as 'draft' | 'paid' | 'cancelled'].count++;
-          stats[status as 'draft' | 'paid' | 'cancelled'].total += amount;
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * A PARTLY REFUNDED INVOICE COUNTS AS PAID, because the tab it sits in
+         * says so.
+         *
+         * `PaymentInvoiceList` asks for `paid,refunded,partially_refunded` and
+         * lists all three under Paid, so a card counting only the literal
+         * 'paid' would show a number smaller than the rows beneath it. An
+         * invoice cannot be in the tab and absent from its count.
+         *
+         * It is not a new situation either: until 20261088 settled the trigger
+         * race these rows READ 'paid' and were already in this bucket. Naming
+         * the status here is what stops the figure moving the day that shipped.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const bucket = status === 'partially_refunded' ? 'paid' : status;
+
+        if (bucket === 'draft' || bucket === 'paid' || bucket === 'cancelled') {
+          stats[bucket as 'draft' | 'paid' | 'cancelled'].count++;
+          stats[bucket as 'draft' | 'paid' | 'cancelled'].total += amount;
         }
       }
 

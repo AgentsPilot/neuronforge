@@ -268,7 +268,25 @@ export async function PUT(
     }
 
     // 4. Update booking (only pass actual DB columns, not send_intake_form flag)
-    const result = await schedulingBookingRepository.update(bookingId, user.id, bookingUpdateData);
+    /*
+     * The OWNER is moving it (20261082).
+     *
+     * This route writes `start_time` itself rather than going through
+     * `rescheduleBooking`, as the note above records — so the actor that
+     * function supplies never reached here, and the owner's own edits were
+     * stored with no actor at all. The journey then said "the time was
+     * changed" about a move the owner had just made from this very dialog.
+     *
+     * Only when the time actually moves: a note written up after the session
+     * must not be recorded as a reschedule by anybody. `syncMeeting` would
+     * ignore it regardless, and saying so here keeps the two in agreement.
+     */
+    const result = await schedulingBookingRepository.update(
+      bookingId,
+      user.id,
+      bookingUpdateData,
+      timeIsChanging ? 'owner' : undefined
+    );
 
     /*
      * Money marked on the booking is money marked on its invoice.
@@ -333,6 +351,12 @@ export async function PUT(
             invoiceId: invoice.id,
             userId: user.id,
             contactId: invoice.contact_id,
+            /*
+             * So the charge names the booking, not just the invoice. These
+             * invoices were fetched by `.eq('booking_id', bookingId)`, so this
+             * IS their booking by construction.
+             */
+            bookingId,
             amount: invoice.amount,
             currency: invoice.currency,
             // Money that arrived outside any processor — a transfer, cash, a
@@ -571,18 +595,26 @@ export async function PUT(
 
     // 9. Send intake form if requested (non-blocking)
     // Only send if booking doesn't already have intake data
-    if (send_intake_form && !oldBooking.intake_responses && !oldBooking.intake_completed_at) {
+    /*
+     * ── SENT ONCE, AND THE COLUMN SAYS SO ───────────────────────────────────
+     *
+     * `intake_sent_at` is in the guard because it is what makes it idempotent.
+     * This used to write a sentinel into `intake_responses` and then rely on
+     * `!oldBooking.intake_responses` to stop a second send — so the thing
+     * preventing a duplicate was a placeholder, not a record of the send.
+     *
+     * The send itself stamps `intake_sent_at` (`BookingEmailService`), which is
+     * the honest answer to "has this been asked for", and the journey reads it
+     * directly now. So the sentinel is gone and the guard asks the column.
+     * ────────────────────────────────────────────────────────────────────────
+     */
+    if (
+      send_intake_form &&
+      !oldBooking.intake_responses &&
+      !oldBooking.intake_completed_at &&
+      !oldBooking.intake_sent_at
+    ) {
       requestLogger.info({ bookingId, userId: user.id }, 'Sending intake form request for existing booking');
-
-      // Mark the booking as having intake requested by setting empty intake_responses
-      // This allows the journey timeline to show "intake pending" status
-      await schedulingBookingRepository.update(bookingId, user.id, {
-        intake_responses: {
-          template_id: '',
-          template_key: 'pending',
-          responses: {}
-        }
-      });
 
       /*
        * MANUAL: the owner ticked "send the intake form" on this booking.

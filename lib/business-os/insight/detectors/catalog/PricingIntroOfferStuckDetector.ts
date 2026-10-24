@@ -10,6 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+import { MEETING_HOLDS_SLOT_FILTER } from '@/lib/business-os/bookingStatus';
 
 export class PricingIntroOfferStuckDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -73,7 +74,11 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
       .select('id, contact_id, service_id, payment_amount, created_at, status')
       .eq('user_id', userId)
       .gte('created_at', ninetyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed']);
+      .in('status', ['confirmed', 'completed'])
+      /* And the meeting was not missed or called off. The status pair meant
+         that too until `markNoShow()` stopped writing `status`; a client who
+         never turned up has not taken up the intro offer. */
+      .or(MEETING_HOLDS_SLOT_FILTER);
 
     if (bookingsError) {
       throw bookingsError;

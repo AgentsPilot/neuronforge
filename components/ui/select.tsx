@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export const Select = SelectPrimitive.Root
@@ -30,6 +30,50 @@ export const SelectTrigger = React.forwardRef<
 ))
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName
 
+/**
+ * The two buttons that make a long list reachable.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Radix scrolls its listbox through these; without them in the tree there is
+ * nothing to scroll with, and this copy of the wrapper never had them. Paired
+ * with a `max-h` on the content below — missing here too, where upstream ships
+ * `max-h-96` — the result was a list that simply ended: `overflow-hidden` with
+ * no bound does not scroll, it CLIPS.
+ *
+ * It had been papered over once, by capping one dropdown's height at its call
+ * site. The cancellation-reason list is thirteen options long and ran off the
+ * dialog with no way to reach the last of them, which is the same bug arriving
+ * somewhere else.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const SelectScrollUpButton = React.forwardRef<
+  React.ElementRef<typeof SelectPrimitive.ScrollUpButton>,
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollUpButton>
+>(({ className, ...props }, ref) => (
+  <SelectPrimitive.ScrollUpButton
+    ref={ref}
+    className={cn('flex cursor-default items-center justify-center py-1', className)}
+    {...props}
+  >
+    <ChevronUp className="h-4 w-4 opacity-60" />
+  </SelectPrimitive.ScrollUpButton>
+))
+SelectScrollUpButton.displayName = SelectPrimitive.ScrollUpButton.displayName
+
+const SelectScrollDownButton = React.forwardRef<
+  React.ElementRef<typeof SelectPrimitive.ScrollDownButton>,
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollDownButton>
+>(({ className, ...props }, ref) => (
+  <SelectPrimitive.ScrollDownButton
+    ref={ref}
+    className={cn('flex cursor-default items-center justify-center py-1', className)}
+    {...props}
+  >
+    <ChevronDown className="h-4 w-4 opacity-60" />
+  </SelectPrimitive.ScrollDownButton>
+))
+SelectScrollDownButton.displayName = SelectPrimitive.ScrollDownButton.displayName
+
 export const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
@@ -40,7 +84,20 @@ export const SelectContent = React.forwardRef<
       position={position}
       align="start"
       className={cn(
-        'z-[100] min-w-[8rem] overflow-hidden rounded-md border shadow-md',
+        /*
+         * BOUNDED, SO IT SCROLLS.
+         *
+         * `overflow-hidden` with no height limit does not scroll — it clips at
+         * whatever the popover happens to be, and the options past the fold
+         * cannot be reached at all. Upstream ships `max-h-96`; this copy lost
+         * it, and a thirteen-option list ran off the bottom of its dialog.
+         *
+         * `dvh` as well as a rem cap: on a phone `vh` is the viewport with the
+         * browser chrome hidden, so a 60vh popover can extend past what is
+         * actually visible. The rem stops it becoming a full-height column on
+         * a desktop.
+         */
+        'z-[100] min-w-[8rem] max-h-[min(60dvh,26rem)] overflow-hidden rounded-md border shadow-md',
         'border-[var(--v2-border,theme(colors.gray.200))] bg-[var(--v2-surface,white)] text-[var(--v2-text-primary,theme(colors.gray.900))]',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         position === 'popper' && 'data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1',
@@ -49,14 +106,23 @@ export const SelectContent = React.forwardRef<
       )}
       {...props}
     >
+      <SelectScrollUpButton />
+      {/*
+        `h-[...]` is deliberately NOT here, though upstream carries it.
+        `--radix-select-trigger-height` is the height of the TRIGGER — one row
+        — and pinning the viewport to it collapses the list to a single option
+        on the popper path. Width still follows the trigger, which is what makes
+        the menu line up under it.
+      */}
       <SelectPrimitive.Viewport
         className={cn(
           'p-1',
-          position === 'popper' && 'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+          position === 'popper' && 'w-full min-w-[var(--radix-select-trigger-width)]'
         )}
       >
         {children}
       </SelectPrimitive.Viewport>
+      <SelectScrollDownButton />
     </SelectPrimitive.Content>
   </SelectPrimitive.Portal>
 ))

@@ -324,6 +324,43 @@ export class CRMPipelineStagesRepository {
    * inventing a stage the business never defined.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * The key of the first stage on this business's board, or null if it has none.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS NOT SEVEN COPIES OF A SUPABASE QUERY
+   *
+   * Eight call sites created a contact and each resolved its starting stage
+   * inline: `scheduling/bookings`, `website/booking/create`,
+   * `website/booking/confirm`, `website/forms/contact`,
+   * `website/proposal-request`, `crm/subscribers`, `CapabilityEngine` and
+   * `SafeExecutionLayer`. Four read `crm_pipeline_stages` directly from a
+   * route, and every one of the eight ended `|| 'lead'`.
+   *
+   * The cost of the duplication was not theoretical. `proposal-request` skipped
+   * the lookup altogether and wrote the literal `'lead'`, which on a board
+   * reading inquiry > initial_consultation > family_enrolled > completed put a
+   * real contact in a stage that does not exist — in the CRM, on no column.
+   * `booking/confirm` had the same fault with `'client'`, and its comment still
+   * describes it.
+   *
+   * NULL RATHER THAN A GUESS, which is the rule `findActiveClientStage` below
+   * already states: better than inventing a stage the business never defined.
+   * `'lead'` is not a safe universal default — the therapist pipeline in
+   * `DEFAULT_PIPELINE_STAGES` opens at `inquiry` — and it was never adding
+   * anything anyway, because `crm_contacts.stage` is declared
+   * `NOT NULL DEFAULT 'lead'`. A caller holding null should OMIT the column and
+   * let that default stand, rather than restate it as though it were a decision.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async firstStageKey(userId: string): Promise<CRMPipelineStagesRepositoryResult<string | null>> {
+    const stagesResult = await this.list(userId);
+    if (stagesResult.error) return { data: null, error: stagesResult.error };
+
+    /* `list` orders by position, so index 0 is the start of the board. */
+    return { data: stagesResult.data?.[0]?.stage_key ?? null, error: null };
+  }
+
   async findActiveClientStage(userId: string): Promise<CRMPipelineStagesRepositoryResult<CRMPipelineStage | null>> {
     try {
       const stagesResult = await this.list(userId);

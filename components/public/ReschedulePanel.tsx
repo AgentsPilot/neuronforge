@@ -37,6 +37,15 @@ interface TimeSlot {
 interface ReschedulePanelProps {
   token: string;
   /**
+   * The SESSION being moved, for a package.
+   *
+   * A package is one booking with N meetings, so a session has no token of its
+   * own: the token names the PURCHASE, and this says which of its hours. The
+   * route checks the meeting belongs to that booking, so a link to one package
+   * can only reach its own sessions.
+   */
+  meetingId?: string | null;
+  /**
    * Opened from the booking card, where the appointment is already on screen
    * above it. Embedded it draws no heading band and no back link; standalone,
    * at `/reschedule`, it carries both for a client arriving from an email.
@@ -70,7 +79,7 @@ interface ReschedulePanelProps {
  * reminder emails link to it.
  * ───────────────────────────────────────────────────────────────────────────
  */
-export function ReschedulePanel({ token, embedded = false, onChanged }: ReschedulePanelProps) {
+export function ReschedulePanel({ token, meetingId, embedded = false, onChanged }: ReschedulePanelProps) {
   const brand = useOptionalPublicBrand();
 
   const [config, setConfig] = useState<RescheduleConfig | null>(null);
@@ -181,7 +190,9 @@ export function ReschedulePanel({ token, embedded = false, onChanged }: Reschedu
           if (bookingData.booking.startTime) setBookingStartTime(bookingData.booking.startTime);
         }
 
-        const response = await fetch(`/api/book/manage/${token}/reschedule`);
+        const response = await fetch(
+          `/api/book/manage/${token}/reschedule${meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : ''}`
+        );
         const data = await response.json();
 
         if (data.success) setConfig(data);
@@ -195,7 +206,9 @@ export function ReschedulePanel({ token, embedded = false, onChanged }: Reschedu
 
     if (token) fetchRescheduleConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+    /* `meetingId` too: opening the panel on a different session of the same
+       package changes which hour is being moved, and the config it loads. */
+  }, [token, meetingId]);
 
   useEffect(() => {
     async function fetchSlots() {
@@ -234,6 +247,8 @@ export function ReschedulePanel({ token, embedded = false, onChanged }: Reschedu
         body: JSON.stringify({
           newStartTime: selectedSlot.start_time,
           newEndTime: selectedSlot.end_time,
+          /* Which session, for a package. Omitted for an ordinary booking. */
+          ...(meetingId ? { meetingId } : {}),
         }),
       });
       const data = await response.json();
@@ -241,7 +256,13 @@ export function ReschedulePanel({ token, embedded = false, onChanged }: Reschedu
       if (data.success) {
         setRescheduled(true);
         onChanged?.();
-        setNewBookingTime(data.booking.startTime);
+        /*
+         * A moved SESSION answers with its own new hour — there is no booking
+         * whose time changed, the purchase having none. `data.booking` would be
+         * undefined and reading `.startTime` off it threw, leaving the client
+         * on a failed screen after a move that had succeeded.
+         */
+        setNewBookingTime(data.booking?.startTime ?? data.newStartTime ?? null);
       } else {
         setError(rescheduleErrorText(data));
       }

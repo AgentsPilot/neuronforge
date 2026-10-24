@@ -13,13 +13,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
-import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
+import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { windowsForDate, hasAnyAvailability, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { safeTimezone, businessInstant, businessDateKey, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 
@@ -44,7 +43,14 @@ interface Service {
   id: string;
   name: string;
   description: string | null;
-  duration_minutes: number;
+  /*
+   * Genuinely nullable. `20260901_service_shape.sql` dropped the NOT NULL so a
+   * service can exist without being booked against a span — a course, a
+   * product. Declaring it `number` made this assignment the one type error in
+   * the file and, worse, told every reader below that a duration is always
+   * there. The two slot calls now check before asking for slots.
+   */
+  duration_minutes: number | null;
   price: number | null;
   currency: string;
 }
@@ -256,7 +262,10 @@ export async function GET(request: NextRequest) {
       if (date && serviceId) {
         // Fetch specific date slots
         const selectedService = formattedServices.find(s => s.id === serviceId);
-        if (selectedService) {
+        /* A service with no duration has no span to offer slots for — a course,
+           a product. Empty list rather than coercing the null to 0, which would
+           generate slots of no length. Same rule as the owner-side route. */
+        if (selectedService?.duration_minutes) {
           slots = await calculateDaySlots(
             ownerId,
             date,
@@ -269,7 +278,8 @@ export async function GET(request: NextRequest) {
       } else if (serviceId) {
         // Fetch slots for next N days
         const selectedService = formattedServices.find(s => s.id === serviceId);
-        if (selectedService) {
+        /* Same as the single-date branch above: no duration, no slots. */
+        if (selectedService?.duration_minutes) {
           /*
            * "The next N days" counted where the BUSINESS is. This walked the
            * server's calendar and then took the UTC day of each result, so for
@@ -298,28 +308,17 @@ export async function GET(request: NextRequest) {
       const startDate = slots[0].start;
       const endDate = slots[slots.length - 1].end;
 
-      const { data: bookings } = await supabaseServer
-        .from('scheduling_bookings')
-        .select('start_time, end_time')
-        .eq('user_id', ownerId)
-        .gte('start_time', startDate)
-        .lte('end_time', endDate)
-        // A booking that will not happen does not hold its slot — that is
-      // `cancelled` AND `no_show`, which this asked as "not cancelled" and so
-      // kept a no-show's time shut. See `SLOT_HOLDING_STATUSES`.
-      .in('status', SLOT_HOLDING_STATUSES);
+      /*
+       * Appointments, not jobs. `busyMeetings` holds the single definition of
+       * what occupies time, and reads `scheduling_meetings` — see that file for
+       * why a job's cancellation needs no join to be visible here.
+       */
+      const busy = await busyMeetings(supabaseServer, ownerId, startDate, endDate);
 
       // Mark overlapping slots as unavailable
-      if (bookings && bookings.length > 0) {
+      if (busy.length > 0) {
         slots = slots.map(slot => {
-          const slotStart = new Date(slot.start).getTime();
-          const slotEnd = new Date(slot.end).getTime();
-
-          const hasConflict = bookings.some(booking => {
-            const bookingStart = new Date(booking.start_time).getTime();
-            const bookingEnd = new Date(booking.end_time).getTime();
-            return (slotStart < bookingEnd && slotEnd > bookingStart);
-          });
+          const hasConflict = overlapsBusy(slot.start, slot.end, busy);
 
           return {
             ...slot,

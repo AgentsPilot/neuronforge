@@ -190,7 +190,13 @@ export function generateChaseInvoiceEmail(data: ChaseInvoiceData): { subject: st
   );
 
   return {
-    subject: getEmailTranslation(t.subject, locale)(invoiceNumber, businessName),
+    /* Late or merely due: the only thing the subject branches on, and the one
+       the client is deciding with. `daysOverdue` is the same figure the body
+       states in full. */
+    subject:
+      daysOverdue > 0
+        ? getEmailTranslation(t.subjectOverdue, locale)(invoiceNumber, money)
+        : getEmailTranslation(t.subjectDue, locale)(invoiceNumber, money),
     html,
   };
 }

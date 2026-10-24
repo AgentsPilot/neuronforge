@@ -25,6 +25,7 @@ import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { formatPrice } from '@/lib/website-builder/servicePrice';
 import { toServiceCard } from '@/lib/website-builder/serviceCard';
+import { journeyGaps, isBlockingGap, type JourneyGap } from '@/lib/business-os/journeyReadiness';
 
 const logger = createLogger({ module: 'PublicWebsiteAPI' });
 
@@ -166,8 +167,52 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           schedulingRepo.listBookable(userId),
           loadServicePaymentPlans(userId),
         ]);
-        if (servicesResult.data && servicesResult.data.length > 0) {
-          liveServices = servicesResult.data.map(s => ({
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * BOOKABLE IS NOT THE SAME AS WALKABLE.
+         *
+         * `listBookable` answers "published and switched on". It does NOT
+         * answer "and the business can actually honour it" — a published
+         * service with no working hours behind it is bookable by that rule and
+         * shows a card whose button opens a calendar with every day empty.
+         * That is the David KPMG report: availability configured for the
+         * business, zero slots on every date, nothing anywhere saying why.
+         *
+         * The page itself still publishes — a site may be a contact form and
+         * nothing else, which is why the publish gate came off. What is
+         * withheld is the card for a service a visitor cannot complete.
+         *
+         * Matched by NAME because that is what `JourneyGap.services` carries.
+         * Fails OPEN: an unreadable check must cost a warning, not a catalogue.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        let unwalkable = new Set<string>();
+        if (servicesResult.data?.length) {
+          try {
+            const blocking = (
+              await journeyGaps(
+                userId,
+                servicesResult.data.map(s => ({
+                  name: s.service_name,
+                  is_scheduled: s.is_scheduled,
+                  collection: s.collection,
+                  price: s.price,
+                  sale_mode: s.sale_mode,
+                }))
+              )
+            ).filter(isBlockingGap);
+            unwalkable = new Set(blocking.flatMap((gap: JourneyGap) => gap.services));
+          } catch (err) {
+            requestLogger.warn({ err }, 'Could not check service readiness; showing the catalogue');
+          }
+        }
+
+        const walkable = (servicesResult.data ?? []).filter(
+          s => !unwalkable.has(s.service_name || 'a service')
+        );
+
+        if (walkable.length > 0) {
+          liveServices = walkable.map(s => ({
             // The shared mapper: icon, price, journey facts. This route had its
             // own copy of all three, which is how the same service showed a
             // different icon here than in the editor.
@@ -537,7 +582,35 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
 
       return block;
-    });
+    })
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A SECTION ABOUT SERVICES, ON A SITE WITH NO BOOKABLE SERVICE, IS NOT
+       * SHOWN AT ALL.
+       *
+       * The branch above returns the services block with `services: []` when
+       * nothing is bookable, and `ServicesBlock` has no empty state — so the
+       * live site rendered "Our Services" as a heading over nothing. A business
+       * that sells through a contact form, or whose catalogue is still in
+       * draft, published a page with a hollow section in the middle of it.
+       *
+       * Dropped HERE rather than in the component, for two reasons. The block
+       * renderer is shared with the editor, where an empty services block must
+       * stay visible and selectable or the owner cannot get at it. And this
+       * route already knows the live answer — `liveServices` is read from
+       * `listBookable`, the same `BOOKABLE` rule every public surface uses — so
+       * no second definition of "bookable" is introduced.
+       *
+       * It returns on its own: publish one service and the section is back on
+       * the next request, because nothing here is stored.
+       *
+       * The PAGE still publishes. That is the rule this follows — a website may
+       * be a contact form and nothing else, and refusing to publish it would be
+       * the gate we deliberately removed. What is withheld is an empty section,
+       * not the site.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      .filter(block => !(block.block_type === 'services' && liveServices.length === 0));
 
     // Page views are recorded by <PageViewTracker> in the browser, not here.
     // This route is reached via an internal server-to-server fetch from

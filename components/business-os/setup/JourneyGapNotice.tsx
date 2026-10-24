@@ -26,8 +26,11 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { Clock, FileText, ArrowRight } from 'lucide-react';
+import { Clock, FileText, PackageOpen, ArrowRight } from 'lucide-react';
 import { gapFixAction } from '@/lib/business-os/journeyGapFix';
+/* The pure module, NOT `journeyReadiness` — that one imports `supabaseServer`,
+   and pulling it into this client bundle stopped the platform loading. */
+import { isJourneyGapKind } from '@/lib/business-os/journeyGapKinds';
 import { useGapFix } from '@/components/business-os/setup/useGapFix';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
@@ -86,9 +89,32 @@ export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpene
     <div className="space-y-2">
       {gaps.map(gap => {
         const isInvoicing = gap.kind === 'invoicing';
-        // Tab and label together, so they cannot point at different things.
-        const fix = gapFixAction(gap.kind);
-        const GapIcon = isInvoicing ? FileText : Clock;
+        /*
+         * Tab and label together, so they cannot point at different things.
+         *
+         * Guarded because `kind` arrives as a string from API JSON while
+         * `gapFixAction` switches over five values with no default branch: an
+         * unrecognised kind returned `undefined` and the render then read
+         * `.target` off it. A gap nobody has written a fix for should still
+         * show its MESSAGE — that is the part the owner needs — just without a
+         * button that cannot work.
+         */
+        const fix = isJourneyGapKind(gap.kind) ? gapFixAction(gap.kind) : null;
+        /*
+         * A clock for the gaps that ARE about time, and not for the others.
+         *
+         * This was `isInvoicing ? FileText : Clock`, so everything that was not
+         * invoicing got a clock — including `catalogue`, which is about
+         * services nobody has published. An owner whose hours were already set
+         * saw a clock, under a sentence about services, beside a button that
+         * (before the mapping was fixed) read "Set working hours". Three
+         * signals, two of them pointing at the wrong screen.
+         */
+        const GapIcon = isInvoicing
+          ? FileText
+          : gap.kind === 'catalogue'
+            ? PackageOpen
+            : Clock;
 
         return (
           <div
@@ -111,17 +137,21 @@ export function JourneyGapNotice({ gaps, fallbackMessage, onResolved, onFixOpene
                 </p>
               )}
               <p className="text-sm text-[var(--v2-text-primary)]">{gap.message}</p>
-              <button
-                type="button"
-                onClick={() =>
-                  runGapFix(gap.kind, { onOpen: onFixOpened, onClose: onResolved })
-                }
-                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {tr(fix.key, fix.fallback)}
-                <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
-              </button>
+              {/* No button for a kind nothing can fix — see `fix` above. The
+                  message still renders, which is the half that informs. */}
+              {fix && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    runGapFix(gap.kind, { onOpen: onFixOpened, onClose: onResolved })
+                  }
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {tr(fix.key, fix.fallback)}
+                  <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
+                </button>
+              )}
             </div>
           </div>
         );

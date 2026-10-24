@@ -9,18 +9,19 @@ export default function EmailAutomationPage() {
   const [activeTab, setActiveTab] = useState<'sequences' | 'stats'>('sequences');
 
   /*
-   * `h-[100dvh]`, not `h-screen`.
+   * NO SECOND SCROLLER, AND NO SECOND VIEWPORT.
    *
-   * Tailwind's `h-screen` is `100vh`: the height the page would have with the
-   * browser's address bar collapsed. On a phone that is taller than the visible
-   * area, and this is a FIXED-height flex column whose body scrolls inside it —
-   * so the bottom of the page sat under the chrome with nothing able to bring it
-   * back. See the note in components/ui/dialog.tsx for the same distinction.
+   * This was a `100dvh` flex column with its own `overflow-auto` body — a full
+   * window's height starting BELOW the header and tabs, so the page ran past
+   * the bottom of the screen and scrolled in two places at once.
+   *
+   * The layout owns the scrolling now: the chrome sits outside it and the body
+   * scrolls under the tabs. This page just fills what it is given.
    */
   return (
-    <div className="flex flex-col h-[100dvh] bg-[var(--v2-bg)]">
+    <div className="min-h-full bg-[var(--v2-bg)]">
 
-      <div className="flex-1 overflow-auto">
+      <div>
         <div className={`${PAGE_CONTAINER} py-8`}>
           {/* Header */}
           <div className="mb-8">

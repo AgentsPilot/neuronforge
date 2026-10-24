@@ -560,7 +560,13 @@ Not included: TL's SQL run, SA reviews, and the user's apply and QA windows.
 
 **W-10, hard path proof.** After `npx tsx scripts/generate-test-account-cleanup-sql.ts`, `git status` shows **no change** to `scripts/test-account-cleanup-check.sql` or `scripts/test-account-cleanup-delete.sql`: the pasted files are byte-identical (the hard renderers take a `mode` argument that defaults to `'hard'` and renders exactly the 20261077 text; pinned by the drift test and the new "hard path is unchanged" pins). The hard `check` / `delete` branches of the function are the same builders.
 
-**Version stamp.** `CLEANUP_FUNCTION_VERSION = d72232d8fcc75e5e` (was `b78b4579fc6631f8` for 20261077). The checker pins the new one, the pre-check the old one.
+**Version stamp.** `CLEANUP_FUNCTION_VERSION = 2bd40a46795e4555`
+(was `d72232d8fcc75e5e`; moved 2026-10-21 when `abandoned_bookings` and
+`scheduling_meetings` joined the purge descriptors, which the cleanup
+function is generated from. The checker in §8 step 4 pins the new one.)
+
+<!-- superseded: -->
+**Previous stamp.** `CLEANUP_FUNCTION_VERSION = d72232d8fcc75e5e` (was `b78b4579fc6631f8` for 20261077). The checker pins the new one, the pre-check the old one.
 
 **Decisions taken inside the conditions, flagged for SA:**
 

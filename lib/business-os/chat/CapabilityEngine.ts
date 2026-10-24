@@ -184,8 +184,7 @@ export class CapabilityEngine {
     // configured singleton, and `list(userId)` is the method - it orders by `position`
     // ascending, so `[0]` is the first stage, which is what this intended.
     // main's crm-plugin-executor already uses exactly this pair.
-    const stagesResult = await crmPipelineStagesRepository.list(this.userId);
-    const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+    const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(this.userId);
 
     const result = await crmContactRepository.create({
       user_id: this.userId,
@@ -193,7 +192,7 @@ export class CapabilityEngine {
       last_name: (params.last_name as string) || null,
       email: (params.email as string) || null,
       phone: (params.phone as string) || null,
-      stage: firstStage,
+      ...(firstStage ? { stage: firstStage } : {}),
       tags: [],
       source: 'chat'
     });
@@ -502,10 +501,16 @@ export class CapabilityEngine {
     }
 
     // Update booking
-    const result = await schedulingBookingRepository.update(bookingId, this.userId, {
-      start_time: newStartTime.toISOString(),
-      end_time: newEndTime.toISOString()
-    });
+    const result = await schedulingBookingRepository.update(
+      bookingId,
+      this.userId,
+      {
+        start_time: newStartTime.toISOString(),
+        end_time: newEndTime.toISOString(),
+      },
+      /* The owner asked for this in their own chat (20261082). */
+      'owner'
+    );
 
     if (result.error) {
       return { success: false, error: result.error.message };

@@ -4,8 +4,8 @@
  * Where the upgrade modal provider lives (upgrade modal UM-2, workplan §4.4,
  * C-4): exactly one production `<UpgradeModalProvider`, in the Business OS
  * layout, inside `LanguageProvider` (the window is translated) and
- * `CapabilitiesProvider`, and outside the `sticky top-0` chrome (a modal inside
- * a sticky element is trapped in its stacking context). Each pin has a
+ * `CapabilitiesProvider`, and outside the chrome block (header + tabs, `relative z-50`; a modal
+ * inside it would be trapped in its stacking context). Each pin has a
  * planted-violation control below.
  */
 
@@ -47,7 +47,9 @@ function pinOrder(layout: string) {
   const provider = at('<UpgradeModalProvider>');
   expect(provider).toBeGreaterThan(at('<LanguageProvider'));
   expect(provider).toBeGreaterThan(at('<CapabilitiesProvider>'));
-  expect(provider).toBeLessThan(at('sticky top-0'));
+  // The chrome block (header + tabs). It was `sticky top-0` until main moved the
+  // scroll into the body (BUSINESS_OS_SCROLL_ID); the stacking rule is unchanged.
+  expect(provider).toBeLessThan(at('relative z-50 shrink-0'));
   // Closed after the chrome and the page, before the providers around it close.
   const close = at('</UpgradeModalProvider>');
   expect(close).toBeGreaterThan(at('{children}'));

@@ -425,7 +425,7 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) website
           "role": "system",
         },
         {
-          "content": "sha256:0465a958738ebd907f670134770f82aaf627449e4951388034960ae5cc94d35b (len 3779)",
+          "content": "sha256:43f43bee6a2fd31ebf9a705ce24f4f7bb33f549424154d6fc61a7286d06fa07e (len 3996)",
           "role": "user",
         },
       ],

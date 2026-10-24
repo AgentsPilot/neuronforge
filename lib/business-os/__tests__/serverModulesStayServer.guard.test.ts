@@ -56,3 +56,26 @@ describe('server-only modules stay out of client bundles', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS GUARD STILL CANNOT SEE, AND WHY IT IS WRITTEN DOWN RATHER THAN BUILT
+ *
+ * `SERVER_ONLY` is hand-maintained, so this only catches a client file
+ * importing a module somebody remembered to list. It does not follow chains.
+ *
+ * That gap is not theoretical. `JourneyGapNotice` imported `journeyReadiness`
+ * for a single type guard and took the service-role client into the browser
+ * bundle with it, which stopped the platform loading — and the module WAS on
+ * the list. The failure was that the sweep which would have reported it was
+ * never run, because the test selection had been narrowed to named files.
+ *
+ * A transitive version was attempted and is deliberately NOT here: a first cut
+ * reported twenty chains, a mixture of genuine pre-existing leaks (a client
+ * component importing `CRMPipelineStagesRepository`, which rule 1 forbids) and
+ * false positives from import-statement parsing. Shipping it would have meant a
+ * permanently red test nobody trusts. It is worth doing properly — resolving
+ * imports with the TypeScript program rather than a regex, and triaging what it
+ * finds — as its own piece of work.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
