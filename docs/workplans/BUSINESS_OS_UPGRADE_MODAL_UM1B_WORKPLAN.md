@@ -419,51 +419,74 @@ Each new guard has a planted-violation control, as UM-1a's do. `npm run test:bos
 
 ---
 
-## 14. The user's end-of-stream run sheet (W-6)
+## 14. The user's end-of-stream run sheet (W-6) — MASTER
 
-> **Rewritten per SA W-6 and the user's decision of 2026-10-20.** This is the **user's own** run, done **once, at the end of the stream** (after UM-2 and UM-3, before the PRs merge), together with go-live row 20 (§15). QA prepares this sheet and records the result; agents never sign in and never handle keys.
+> **The one sheet for the whole upgrade-modal stream** (UM-1b + UM-2 + UM-3 / UM-D3). QA rewrote it on 2026-10-20 (UM-3 D3-13). It now holds the UM-2 §13 rows (U2-…) and the UM-3 §12 rows (U3-…) as well, in one running order. Run it **once, at the end of the stream**, before the PRs merge. QA prepares it and records the result; agents never sign in and never handle keys.
 
-**Setup (the user).** In this worktree (or the latest stream worktree), run `npm run dev` with your own local environment (standard Stripe sandbox, both plan switches on, as for P-7b.1). Sign in to your own test accounts. Use the browser's device toolbar at **360 px** for the phone rows; real phones are optional (S-15).
+**What changed since UM-3 (read this once).** For any account that can buy or upgrade, "Your plan" in Settings now opens the **plans pop-up straight away**. Those accounts no longer have a "See plans" step. Accounts that can buy nothing (Autopilot, or Founding Partner with no end date) still get the **drawer**, with a "Compare plans" button. A purchase or upgrade made in the pop-up **keeps the pop-up open**, and the pop-up shows "Payment processing" or "Upgrading…". The pop-up's bottom button reads **"Close"**.
 
-**Cards** (Stripe test cards): `4242 4242 4242 4242` (no authentication) · `4000 0027 6000 3184` (3-D Secure on every payment) · `4000 0000 0000 0341` (declines on charge). Any future expiry, any CVC, any postcode.
+**What changed after the first live test (LF-1 / LF-2, 2026-10-21).** *Colours:* the pop-up and the drawer now use the app's own colours (the orange set in admin ui-config). The top band is a soft orange tint with dark words in light mode and light words in dark mode, with an orange line at the very top and an orange icon circle. "Recommended" is an orange-outlined badge. The main buttons are solid orange with white words, the same as every other Business OS button. No indigo anywhere in the pop-up or the drawer. *Columns:* a trial or Founding Partner account sees **its own plan as the first column**, marked "Your plan", price "Free", with no button, then Essentials, then Autopilot (three columns, also at 360 px). A paying account still sees two columns, its own one marked "Your plan". "Recommended" is never on the column marked "Your plan".
 
-**Accounts (three trial accounts; QA revision 2026-10-20).** An account can buy only once, so the desktop and the 360 px 3-D Secure runs need separate accounts:
+**Setup (you).** Run `npm run dev` with your own local environment: Stripe sandbox, both plan switches on (as for P-7b.1), and `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=true` in `.env.local`. For the phone rows, use the browser's device toolbar at **360 px**. For row 2, use DevTools → Network → "Slow 3G".
 
-| Account | Used for | Ends as |
-|---|---|---|
-| **Trial A** | S-1, S-17, S-2 (card `4242…`, no authentication), later S-13 and S-16 | Essentials |
-| **Trial B** | S-4, S-3 at desktop size (card `3184`), S-5, then the upgrade rows S-6, S-9, S-7, S-8 at desktop size, then S-11 | Autopilot |
-| **Trial C** | S-3p and S-8p: the same two 3-D Secure rows at **360 px** (card `3184`) | Autopilot |
+**Cards:** `4242 4242 4242 4242` (no bank check) · `4000 0027 6000 3184` (bank check on every payment) · `4000 0000 0000 0341` (declines). Any future expiry, any CVC.
 
-The `3184` card used to buy in S-3 is the card the upgrade charges in S-6 to S-9, so no card swap in the Stripe dashboard is needed. S-10 (a declining card) is optional and needs a card swap.
+**Accounts.** Each account can buy once and upgrade once, so you need these:
 
-> **Before every upgrade row (S-6 onward): open Settings from the menu, so the address bar has no `checkout=…`.** While `checkout=…` is still in the address (as after S-5's reload), the plan window opens but shows **no** Upgrade button (the same rule the old drawer had: no new payment while one is landing). That is expected, not a failure.
+| Account | Starts as | Ends as | Rows |
+|---|---|---|---|
+| **Trial A** | Trial | Autopilot | 1–12 |
+| **Trial B** | Trial | Autopilot | 13–20 |
+| **Trial C** | Trial | Autopilot | 21–22 (phone) |
+| **Trial D** | Trial | Autopilot | 23–24 |
+| **FP-0**: Founding Partner, no end date | — | unchanged | 25–26 |
+| **FP-E**: Founding Partner with an end date (set by an admin) | — | unchanged (buys nothing) | 27 |
+| *Optional:* an Essentials account whose renewal failed or needs confirming | — | — | 33 |
 
-Run in this order, top to bottom.
+> **Before every upgrade row, open Settings from the menu**, so the address bar has no `checkout=…`. While `checkout=…` is still in the address, "Your plan" opens on the payment status instead of the plans. That is expected, not a failure.
 
-| # | Account | Click steps | Expected | Observed (you fill in) |
-|---|---|---|---|---|
-| S-1 | Trial A | Settings → Your plan → **See plans** → Autopilot column, **top** button "Choose Autopilot" | The table is replaced by "Back to plans", "Autopilot · $129 a month, excluding tax", the trial sentence, the Stripe card form. Only one card form on the page | |
-| S-17 | Trial A | With the card form open: click the dark area outside the window; then press the X; then **See plans** → "Choose Autopilot" again | The outside click does nothing; the X closes the window; the window reopens on the table (not the old card form); choosing again opens a fresh card form | |
-| S-2 | Trial A | **See plans** → Essentials column, **bottom** button "Choose Essentials" → pay with `4242 4242 4242 4242` | The window closes by itself; the drawer says "Payment processing", then "You're on Essentials" within about a minute | |
-| S-4 | Trial B | **See plans** → "Choose Essentials" → `4000 0027 6000 3184` → in the bank's check press **Fail**, then close it | Stripe shows its own error inside the card form; the window stays open and usable; "Back to plans" works; nothing paid (drawer unchanged) | |
-| S-3 | Trial B | **See plans** → "Choose Essentials" → `4000 0027 6000 3184` → in the bank's check press **Complete**. Desktop size | **Row 20 (b), checkout, desktop:** the bank's check shows above everything, can be clicked and typed into, the window stays open; then the window closes and the drawer says "Payment processing" → "You're on Essentials" | |
-| S-5 | Trial B | Reload the page (the address still has `checkout=…`) | The drawer opens on "Payment processing" or straight on "You're on Essentials"; once done, the drawer button reads "See plans" (pressing it now shows no buy button: expected, see the note above) | |
-| S-6 | Trial B | **Open Settings from the menu** (no `checkout=` in the address) → Your plan → **See plans** → Autopilot "Upgrade to Autopilot" | The price check: "Back to plans", the amount due now excluding tax, "renews on … at $129 a month", Confirm / Not now | |
-| S-9 | Trial B | **Confirm** → in the bank's check press **Fail** (or close it) | "The payment was not confirmed, so nothing changed. You're still on Essentials." in red (readable in dark mode too); the "Upgrade to Autopilot" button is back inside the window; the window can be closed. (If a retry is then refused, note the message and use Trial C for S-7 / S-8) | |
-| S-7 | Trial B | **See plans** → "Upgrade to Autopilot" → **Not now** → you are back at the table → "Upgrade to Autopilot" → **Confirm** | "Not now" returns to the table. While Confirm works, Escape, the X (dimmed) and an outside click do nothing, and "Back to plans" / "Back to your plan" are gone; then the bank's check opens (this card asks every time) | |
-| S-8 | Trial B | In the bank's check click into it, type if asked, press **Complete**. Desktop size | **Row 20 (b), upgrade, desktop:** the check can be clicked and typed into, focus is not pulled back into the window, the window stays open; then it closes by itself and the drawer says "Upgrading…" → "You're on Autopilot" | |
-| S-3p | Trial C, **360 px** | As S-3 (See plans → Choose Essentials, `3184`, **Complete**) | **Row 20 (b), checkout, phone width:** as S-3; the card form and the bank's check fit the width and can be scrolled to | |
-| S-8p | Trial C, **360 px** | Open Settings from the menu → **See plans** → "Upgrade to Autopilot" → **Confirm** → **Complete** | **Row 20 (b), upgrade, phone width:** as S-8 | |
-| S-10 | Optional: an Essentials owner paying with `4000 0000 0000 0341` (needs a card swap) | Upgrade → Confirm | "Your card was declined…" and when to retry; the window can be closed | |
-| S-11 | Trial B (now Autopilot) | Settings → Your plan | The drawer button reads **"Compare plans"** (not "See plans"); in the window no Choose / Upgrade anywhere; Autopilot shows "Current plan" twice | |
-| S-12 | Founding Partner, no end date | Compare plans | No button anywhere in the window | |
-| S-13 | Trial A (Essentials, so it has an Upgrade button) | Switch to Hebrew, then Spanish; open the window, press Upgrade, then "Back to plans" | Everything translated, right to left in Hebrew (the "Back to plans" arrow points right), prices `$79` / `$129` | |
-| S-14 | Any | Dark mode: open the window and a flow | The red lines and every label readable | |
-| S-15 | Optional | Real iPhone / Android | Only if a phone can reach your local sign-in; the 360 px browser view is the required evidence | |
-| S-16 | Trial A | Tab to "See plans", press Enter, then press Tab repeatedly | Focus starts on the window title (Enter right away buys nothing); Tab goes through the column buttons (top row, then bottom row), "Back to your plan", the X | |
+Run the rows from top to bottom.
 
-**After the run:** QA records the observed column, ticks row 20 (b) if S-3, S-8, S-3p and S-8p passed, and lists the Stripe test subscriptions created (Trial A, B, C: cancel them or keep them, as you prefer).
+| # | Row | Account | Do this | You should see | Observed |
+|---|---|---|---|---|---|
+| 1 | U3-8 | Trial A | Settings → **Your plan** | The **pop-up** opens straight away. The top box reads "[Your plan] Test Flight · Free · Ends on …". **Three columns, in this order: Test Flight (marked "Your plan", "Free", no button), Essentials, Autopilot ("Recommended").** The Test Flight column's ticks and credit line match what the trial really has (fewer credits than Essentials). The band is a soft orange tint, words easy to read, no indigo. "What your plan includes" starts closed; click it and the list opens (LF-2) | |
+| 2 | U3-7 + U2-6 | Trial A | Close the pop-up. DevTools → Network → **Slow 3G** → **Your plan** | The row shows a small spinner for about 2 s, then the **drawer** opens (never the pop-up). Once the plan loads, press "See plans": the drawer's own window opens and works. Then turn throttling off | |
+| 3 | S-1 | Trial A | **Your plan** → in the Autopilot column, the **top** button "Choose Autopilot" | The table is replaced by "Back to plans", "Autopilot · $129 a month, excluding tax", the trial sentence and the Stripe card form. Only one card form shows | |
+| 4 | S-17 | Trial A | Click the dark area outside the window; then press the X; then **Your plan** → "Choose Autopilot" again | The outside click does nothing. The X closes the window. The window reopens on the table, and choosing again shows a fresh card form | |
+| 5 | U3-1 | Trial A, **360 px** | **Your plan** → "Choose Autopilot" → look at the card form | The headline takes 2 lines at most. "Nothing is charged before you choose one" does not appear under the form. The card number field shows without scrolling | |
+| 6 | S-2 | Trial A, desktop | **Your plan** → in the Essentials column, the **bottom** button "Choose Essentials" → pay with `4242…` | The **pop-up stays open** and says "Payment processing", then "You're on Essentials" within about a minute | |
+| 7 | U3-2 | Trial A (now Essentials) | Open Settings from the menu → **Your plan** | The pop-up opens straight away. Under the headline it reads "When you upgrade, you pay only the price difference for the rest of your current billing period." The Essentials column is marked "Your plan" | |
+| 8 | U3-3 | Trial A | At desktop size and at 360 px, in light and dark mode: look at the small grey lines. Then press "Upgrade to Autopilot", look, and press "Back to plans" (do **not** confirm) | Every line is easy to read. "Back to plans" is underlined. Confirm is solid orange with white words, like the app's other buttons (LF-1; white on this orange is a known theme-wide contrast point, follow-up LF-F1, not a failure of this row) | |
+| 9 | S-13 | Trial A | Switch to Hebrew, then to Spanish. Each time: **Your plan** → Upgrade → "Back to plans" | Everything is translated. Hebrew reads right to left (the arrow points right). Prices show as `$79` / `$129` | |
+| 10 | S-16 | Trial A | Tab to the **Your plan** row, press Enter, then press Tab repeatedly | Focus starts on the window title, so pressing Enter right away buys nothing. Tab moves through the column buttons, then "Close", then the X. Escape closes the window and focus goes back to the row | |
+| 11 | U3-4 | Trial A, Hebrew | Turn Narrator on (Ctrl + Win + Enter) → open the pop-up → Tab through it → turn Narrator off | Narrator reads the Hebrew title and subheading, names each button, and reads the X as "סגירה" | |
+| 12 | U2-1 | Trial A, desktop | `/business-os/upgrade-modal-demo` → "Open: settings" → "Upgrade to Autopilot" → Confirm with `3184` → Complete | **Row 20 (c):** you can click into the bank's check and type in it, and the window stays open. Then it shows "Upgrading…" → "You're on Autopilot" | |
+| 13 | S-4 | Trial B | **Your plan** → "Choose Essentials" → `3184` → press **Fail** in the bank's check, then close it | Stripe shows its own error in the card form. The window stays usable and "Back to plans" works. Nothing is paid | |
+| 14 | S-3 | Trial B, desktop | **Your plan** → "Choose Essentials" → `3184` → **Complete** | **Row 20 (b), checkout, desktop:** the bank's check shows on top, and you can click into it and type. The pop-up stays open: "Payment processing" → "You're on Essentials" | |
+| 15 | S-5 | Trial B | Reload the page (the address still has `checkout=…`) | The **pop-up** (not the drawer) opens on "Payment processing", or straight on "You're on Essentials" | |
+| 16 | S-6 | Trial B | **Open Settings from the menu** → **Your plan** → "Upgrade to Autopilot" | You see "Back to plans", the amount due now (excluding tax), "renews on … at $129 a month", and Confirm / Not now | |
+| 17 | S-9 | Trial B | **Confirm** → press **Fail** in the bank's check (or close it) | "The payment was not confirmed, so nothing changed. You're still on Essentials." shows in red, readable in dark mode too. "Upgrade to Autopilot" is back, and the window can be closed. (If a retry is refused, write down the message and use Trial C for rows 18–19) | |
+| 18 | S-7 | Trial B | **Your plan** → "Upgrade to Autopilot" → **Not now** (you are back at the table) → Upgrade → **Confirm** | "Not now" goes back to the table. While Confirm is working, Escape, the X (dimmed) and a click outside do nothing, and "Back to plans" and "Close" are hidden. Then the bank's check opens | |
+| 19 | S-8 | Trial B, desktop | Click into the bank's check, type if asked, press **Complete** | **Row 20 (b), upgrade, desktop:** you can click into the check and type. The pop-up **stays open**: "Upgrading…" → "You're on Autopilot" | |
+| 20 | S-11 + U3-10 | Trial B (now Autopilot) | Settings → **Your plan** | The **drawer** opens with **"Compare plans"**. Its window has no Choose or Upgrade button, and Autopilot shows "Current plan" | |
+| 21 | S-3p | Trial C, **360 px** | As row 14 (`3184`, Complete) | **Row 20 (b), checkout, phone:** the card form and the bank's check fit the screen width and you can scroll to them | |
+| 22 | S-8p | Trial C, **360 px** | Open Settings from the menu → **Your plan** → Upgrade → Confirm → Complete | **Row 20 (b), upgrade, phone:** the same as row 19 | |
+| 23 | U2-2 | Trial D | Demo → "Open: settings" → "Choose Essentials" → `4242…` | The demo window closes. Settings opens the **pop-up** on "Payment processing" → "You're on Essentials" | |
+| 24 | U2-1p | Trial D, **360 px** | Open Settings from the menu, then the demo → "Open: settings" → Upgrade → Confirm with `3184` → Complete | **Row 20 (c), phone:** the same as row 12 | |
+| 25 | S-12 + U3-10 | FP-0 | Settings → **Your plan** | The **drawer** opens with "Compare plans" (orange button, white words). Press it: the window shows **three columns, Founding Partner (marked "Your plan", "Free"), Essentials, Autopilot**, no "Recommended", and no Choose or Upgrade button anywhere (LF-2). Check it in light and in dark mode: the band words are easy to read | |
+| 26 | U2-4 | FP-0 | Demo → "Open: founding_partner", then "Open: locked_feature" on the top plan | The first shows "Compare our plans" with the Founding Partner column first (marked "Your plan") and no button. The locked one shows "This needs …" and "can't be bought from your account right now" **above the table**, with no button | |
+| 27 | U2-5 | FP-E | Demo → "Open: founding_partner" (buy nothing) | "Keep everything you have", Choose buttons, and "Buying ends your free access today…". Columns: Founding Partner first (marked "Your plan", "Free", no button), then Essentials and Autopilot with Choose buttons, "Recommended" on Autopilot (LF-2). Settings → **Your plan** on this account opens the same three columns in the pop-up straight away | |
+| 28 | U2-3 | Any | Demo → "Open: locked_feature" with each plan in the picker | "This needs {plan}" with a lock, that plan's column highlighted, and buttons only where a purchase is offered. Picking your own plan shows "Compare our plans" with no lock (by design) | |
+| 29 | U3-5 + U2-9 | Any, 360 px | Demo → "Open: settings" → press the bottom button | It reads **"Close"** (סגירה / Cerrar), not "Back to your plan". Focus goes back to the demo button | |
+| 30 | U2-7 + S-14 | Any | In Hebrew, Spanish and dark mode: open each window and a flow | Headlines are translated, Hebrew reads right to left (in Hebrew the "Your plan" column is on the right), and the red lines and every label are readable. The band, badges and buttons are the app's orange in both modes, never indigo (LF-1) | |
+| 31 | S-10 | *Optional:* Essentials owner paying with `0341` (needs a card swap) | Upgrade → Confirm | "Your card was declined…" and when to retry. The window can be closed | |
+| 32 | S-15 | *Optional* | Repeat a few rows on a real phone | Only if the phone can reach your local sign-in. The 360 px browser view is enough | |
+| 33 | U3-9 | *Optional:* a renewal that failed or needs confirming (Stripe test clock) | Settings → **Your plan** | "Use the link in Stripe's email…" or "Confirm your payment" shows at the top of whichever surface opens, and the link opens Stripe in a new tab. (Jest also proves this) | |
+| 34 | U2-8 | Any (run this **last**) | Set `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=false`, restart, open the demo page | You get a 404. The harness "Upgrade modal" tab still shows its note and link | |
+
+**After the run:** QA fills in the Observed column. Row 20 (b) is ticked if rows 14, 19, 21 and 22 pass; row 20 (c) is ticked if rows 12 and 24 pass. The run creates Stripe test subscriptions for Trial A, B, C and D; cancel or keep them, as you prefer.
+
+**Live test result.** 2026-10-21 — user ran the live test on localhost:3010 (sandbox) and approved: 'It looks good now.' Rows not individually recorded.
 
 ---
 
@@ -820,3 +843,6 @@ upgradeModal.flow.qa.render.test.tsx  Tests: 10 passed, 10 total
 | 2026-10-20 | QA automated pass | 77 / 77 suites, 1,696 tests (incl. new `upgradeModal.flow.qa.render.test.tsx`, 10 tests: Escape with a frame open + reopen, close on the quote, double press → one checkout, SA Q-4 marker, `action_required` renewal, payload-checked no dead button); `test:bos-entitlements` 301 / 9,131; `lint:hooks` clean; request lines unchanged; 360 px Hebrew shots. No QA bugs; 4 low edge cases. §14 revised (three trial accounts, S-9 before S-7 / S-8, open Settings without `checkout=` before upgrade rows). Live checks deferred to the user's end-of-stream run |
 | 2026-10-20 | SA code review CR-1 to CR-3 fixed (Dev) | CR-1: Stripe.js loaded only when a checkout is offered (deviation D-7: gated, not a new pure helper, to keep the twelve `stripeJs` mocks incl. QA's working); tests for no load on Autopilot / open-ended Founding Partner. CR-2: the Stripe-frames style also while a checkout frame is open; tests for present / gone after Back to plans / gone after X. CR-3: focus return by ref map. 77 / 77 suites, 1,700 tests; lint:hooks, eslint, tsc clean. Awaiting SA re-check of CR-1 / CR-2 |
 | 2026-10-20 | SA re-check: CODE APPROVED | D-7 accepted for CR-1: Stripe.js loads only when a checkout is offered, and `paymentsConfigured` is correct without loading it, because nothing else reads it (tested for Autopilot and open-ended Founding Partner, with a trial control). CR-2 (style while `busy \|\| frameOpen`, tested) and CR-3 (ref-map focus return) verified. Settings suites 34 / 34, 651 tests; eslint clean |
+| 2026-10-20 | QA: §14 made the MASTER run sheet (UM-3 D3-13) | One running order of 34 rows for the user's single end-of-stream session: UM-1b S-rows, UM-2 §13 U2-rows and UM-3 §12 U3-rows merged. Offered accounts open the pop-up from the row (no "See plans" step); buys and upgrades stay in the pop-up; Autopilot and Founding Partner with no end date open the drawer with "Compare plans"; slow-read fallback row; Trial D and both Founding Partner accounts listed |
+| 2026-10-21 | QA: §14 updated for live-test fixes LF-1 / LF-2 | New "What changed after the first live test" paragraph (app orange palette, own-plan first column for trial / Founding Partner). Rows 1, 8, 25, 26, 27 and 30 now expect the own-plan column and the orange colours (row 8: Confirm is solid orange, not indigo; LF-F1 noted). Rows unchanged otherwise; still 34 rows |
+| 2026-10-21 | Live test recorded (RM) | 2026-10-21 — user ran the live test on localhost:3010 (sandbox) and approved: 'It looks good now.' Rows not individually recorded. Go-live row 20 checkbox left unticked. PRs opened in order UM-1b, UM-2, UM-3 |
