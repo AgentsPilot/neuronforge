@@ -196,20 +196,38 @@ describe('turning it on', () => {
 
 describe('the pattern', () => {
   it('regenerates the series when the cadence changes', async () => {
-    await turnPackageOn();
-    const weekly = seriesValues();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Monthly' }));
+    /* Only the Date is pinned (no timer is faked). The first meeting defaults
+       relative to today, and "same day next month" does not hold when that
+       default lands on the 29th-31st: a monthly series from 31 October rightly
+       clamps to 30 November. Mid-month keeps the assertion about the cadence,
+       not about the calendar the suite happens to run on. */
+    jest.useFakeTimers({
+      now: new Date('2026-03-10T09:00:00Z'),
+      doNotFake: [
+        'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+        'setImmediate', 'clearImmediate', 'queueMicrotask', 'nextTick',
+        'requestAnimationFrame', 'cancelAnimationFrame',
+        'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
+      ],
     });
+    try {
+      await turnPackageOn();
+      const weekly = seriesValues();
 
-    const monthly = seriesValues();
-    expect(monthly[0]).toBe(weekly[0]);
-    // A month later, not four weeks: the dates must differ from the weekly run.
-    expect(monthly[1]).not.toBe(weekly[1]);
-    expect(new Date(`${monthly[1]}:00Z`).getUTCDate()).toBe(
-      new Date(`${monthly[0]}:00Z`).getUTCDate()
-    );
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Monthly' }));
+      });
+
+      const monthly = seriesValues();
+      expect(monthly[0]).toBe(weekly[0]);
+      // A month later, not four weeks: the dates must differ from the weekly run.
+      expect(monthly[1]).not.toBe(weekly[1]);
+      expect(new Date(`${monthly[1]}:00Z`).getUTCDate()).toBe(
+        new Date(`${monthly[0]}:00Z`).getUTCDate()
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('grows and shrinks the series with the count', async () => {
