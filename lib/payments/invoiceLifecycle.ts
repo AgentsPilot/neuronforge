@@ -22,6 +22,8 @@
 
 import type { NextRequest } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { notifyPaymentRequestCancelled } from './notifyPaymentRequestCancelled';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
   paymentInvoiceRepository,
@@ -86,6 +88,14 @@ export interface InvoiceLifecycleParams {
   invoiceId: string;
   userId: string;
   request?: NextRequest;
+  /**
+   * Email the client that this request has been withdrawn.
+   *
+   * Only for a single, deliberate cancellation. The bulk callers — a stopped
+   * quote, a stopped plan, a cancelled booking — leave this off and send their
+   * own one email describing the whole ending, rather than one per invoice.
+   */
+  notifyClient?: boolean;
 }
 
 export interface InvoiceLifecycleOutcome {
@@ -109,6 +119,57 @@ async function loadUnsettled(
   return { invoice: data, error: null };
 }
 
+
+/**
+ * Take the plan stage this invoice was raised for off the books.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY VOIDING THE DEMAND HAS TO MOVE THE STAGE
+ *
+ * A stage carries `invoice_id` once its invoice is raised, and every reader
+ * treats that as "billed": the card row reads "invoice sent", the chaser keeps
+ * chasing, and the money is still counted as owed. Voiding the invoice without
+ * touching the stage leaves all three saying a demand exists that the business
+ * has just withdrawn — observed on INV-00042, where the invoice read
+ * `cancelled` and its stage still read `pending` with the invoice attached,
+ * four minutes after the owner cancelled it.
+ *
+ * `cancelled` is in `SETTLED_PERIOD_STATUSES`, so this is what stops the stage
+ * being counted as owed and moves it into the Stopped figure instead.
+ *
+ * ONLY THIS INVOICE'S STAGE, and only when nothing was collected on it. The
+ * filter is `invoice_id`, so a plan's other periods are untouched: on a
+ * two-period plan the second stays `pending` and still bills on its own date.
+ * A stage already `paid` or `refunded` is left exactly as it is — money that
+ * arrived is not undone by withdrawing a later demand.
+ */
+async function releaseStageFor(
+  invoiceId: string,
+  userId: string
+): Promise<number> {
+  try {
+    const { data, error } = await supabaseServer
+      .from('payment_plan_installments')
+      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('invoice_id', invoiceId)
+      .not('status', 'in', '("paid","refunded")')
+      .select('id');
+
+    if (error) {
+      /* Never fatal: the invoice IS void, which is the part that protects the
+         client. A stage left behind is a reporting problem, not a money one. */
+      logger.warn({ err: error, invoiceId }, 'Could not release the stage for a voided invoice');
+      return 0;
+    }
+
+    return data?.length ?? 0;
+  } catch (err) {
+    logger.warn({ err, invoiceId }, 'Releasing the stage for a voided invoice threw');
+    return 0;
+  }
+}
+
 /**
  * Cancel an invoice: it stands as a record, but stops being owed or payable.
  *
@@ -119,6 +180,15 @@ export async function voidInvoice(
   params: InvoiceLifecycleParams
 ): Promise<{ data: InvoiceLifecycleOutcome | null; error: Error | null }> {
   const { invoiceId, userId, request } = params;
+  /*
+   * Opt-in, because `voidInvoice` has six callers and most void in BULK as part
+   * of ending something bigger — a quote stopped, a plan stopped, a booking
+   * cancelled — and each of those already sends the client one email covering
+   * the whole ending. Notifying from here would stack five "your payment
+   * request was cancelled" notes underneath it. Only the owner's explicit
+   * "cancel this payment" asks for this.
+   */
+  const notifyClient = params.notifyClient === true;
 
   const { invoice, error } = await loadUnsettled(invoiceId, userId, 'voided');
   if (error || !invoice) return { data: null, error };
@@ -130,6 +200,9 @@ export async function voidInvoice(
   });
   if (updateError) return { data: null, error: updateError as Error };
 
+  /* The plan stage this demand was raised for, if it was raised for one. */
+  const stagesReleased = await releaseStageFor(invoiceId, userId);
+
   auditTrail
     .log({
       action: 'PAYMENT_INVOICE_VOIDED',
@@ -137,13 +210,22 @@ export async function voidInvoice(
       entityId: invoiceId,
       userId,
       resourceName: invoice.invoice_number,
-      details: { voidedAtProcessor },
+      details: { voidedAtProcessor, stagesReleased },
       severity: 'warning',
       request,
     })
     .catch((err) => logger.warn({ err, invoiceId }, 'Audit failed (non-blocking)'));
 
-  logger.info({ userId, invoiceId, voidedAtProcessor }, 'Invoice voided');
+  /*
+   * After the writes, never before: the cancellation is complete whether or not
+   * the client can be reached, and `notifyPaymentRequestCancelled` swallows its
+   * own failures so a bounced address cannot fail the request.
+   */
+  if (notifyClient) {
+    await notifyPaymentRequestCancelled({ invoiceId, userId });
+  }
+
+  logger.info({ userId, invoiceId, voidedAtProcessor, stagesReleased }, 'Invoice voided');
 
   return {
     data: { invoiceId, invoiceNumber: invoice.invoice_number, voidedAtProcessor },

@@ -52,7 +52,7 @@ import { cn } from '@/lib/utils';
 const logger = createLogger({ module: 'BusinessOSSettings' });
 
 import AvatarUpload from '@/components/ui/AvatarUpload';
-import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { PAGE_CONTAINER, scrollIntoBusinessOsView } from '@/lib/business-os/pageContainer';
 
 import {
   Dialog,
@@ -78,13 +78,15 @@ function scrollToSection(section: string): ReturnType<typeof setTimeout> {
     const target = document.getElementById(`settings-section-${section}`);
     if (!target) return;
 
-    // Offset by the sticky header, which would otherwise cover the section
-    // heading the reader was sent here to find.
-    const header = document.querySelector('.sticky');
-    const headerHeight = header ? header.getBoundingClientRect().height : 0;
-    const top = target.getBoundingClientRect().top + window.scrollY - headerHeight - 12;
-
-    window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+    /*
+     * The page body scrolls, not the window — see `BUSINESS_OS_SCROLL_ID`.
+     *
+     * This measured `.sticky` and subtracted its height, because the header
+     * used to float over the document and cover whatever it scrolled to. The
+     * header sits outside the scrolling element now, so there is nothing to
+     * correct for and nothing for `window.scrollTo` to move.
+     */
+    scrollIntoBusinessOsView(target);
   }, 100);
 }
 
@@ -706,7 +708,7 @@ function BusinessOSSettingsContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="min-h-full bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center space-y-4">
             <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: 'var(--v2-primary)', borderTopColor: 'transparent' }}></div>
@@ -718,7 +720,7 @@ function BusinessOSSettingsContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="min-h-full bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
 
       {/* Main Content with max-width like CRM page */}
       <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>

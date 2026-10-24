@@ -664,7 +664,7 @@ export default function CRMPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]">
+    <div className="min-h-full bg-[var(--v2-bg)]">
 
       {/* Main Content with max-width like dashboard */}
       <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>

@@ -120,7 +120,14 @@ describe('full and partial stay distinguishable', () => {
   it('the totals cell asks the shared tone which colour this refund is', () => {
     // One cell, both answers, so a job that kept half its money never shows
     // the colour reserved for one that kept none.
-    expect(totals).toMatch(/tone: REFUND_HEX\[refundExtent\(refunded, total\)\]/);
+    //
+    // The DENOMINATOR is deliberately not pinned. It was `total`, and is now
+    // `collected || total`: a plan is refunded out of the money that actually
+    // arrived, so judging the extent against the agreed total called "every
+    // penny taken has gone back" a partial refund whenever later periods were
+    // still unbilled. What this guard holds is that the cell ASKS the shared
+    // helper rather than choosing a colour itself.
+    expect(totals).toMatch(/tone: REFUND_HEX\[refundExtent\(/);
   });
 
   it('the card badge makes the same distinction', () => {

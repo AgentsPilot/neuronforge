@@ -44,6 +44,8 @@ export type BosCronJobId =
   | 'credit-leak-check'
   | 'stripe-settlement-gap'
   | 'bos-billing-reconcile'
+  | 'booking-money-reconcile'
+  | 'abandoned-bookings'
   | 'data-export'
   | 'payment-reminders'
   | 'finance-snapshot';
@@ -581,6 +583,72 @@ export const BOS_CRON_JOBS: readonly BosCronJob[] = [
       { kind: 'atLeast', key: 'boostStripeUnavailable', value: 1 },
       { kind: 'atLeast', key: 'passesFailed', value: 1 },
     ],
+  },
+  {
+    /*
+     * The CLIENTS' money, as `bos-billing-reconcile` above is the platform's.
+     *
+     * A booking is written only once the client has paid, so the charge, the
+     * subscription and every instalment are created a minute earlier with no
+     * booking id to store. Three things then have to go right for them to be
+     * joined, and each can fail quietly: the checkout has to put the attempt in
+     * Stripe's metadata, the webhook has to run its binding branch, and the
+     * browser has to come back. The failure looks like "the client paid and the
+     * card says nothing was collected".
+     *
+     * Every quarter hour rather than nightly: an owner should not spend a day
+     * looking at that. The pass is bounded and idempotent, so a frequent run is
+     * cheap and two overlapping ones cannot corrupt each other.
+     */
+    id: 'booking-money-reconcile',
+    path: '/api/cron/booking-money-reconcile',
+    schedule: '*/15 * * * *',
+    ...EVERY_15,
+    ...MAX_60,
+    label: 'Booking money reconcile',
+    description:
+      'Attaches client money a missed or stuck webhook left loose, so a booking stops reading as uncollected over money that arrived',
+    scheduleWords: 'Every 15 minutes',
+    addedOn: '2026-10-21',
+    drainsQueue: null,
+    counts: [
+      { key: 'examined', path: ['examined'], label: 'bookings examined' },
+      { key: 'repaired', path: ['repaired'], label: 'bookings whose money was attached' },
+    ],
+    partlyDoneWhen: [],
+  },
+  {
+    /*
+     * The booking somebody started and did not finish.
+     *
+     * A card journey writes an `abandoned_bookings` row instead of a booking,
+     * because a `pending` booking holds the slot against every other client for
+     * ever. This sweep is what gives those rows an ending: it emails a recovery
+     * link once, and ages out the ones nobody came back to.
+     *
+     * Twice an hour, on :05 and :35, so it shares a tick with no other job.
+     */
+    id: 'abandoned-bookings',
+    path: '/api/cron/abandoned-bookings',
+    schedule: '5,35 * * * *',
+    /* :05 and :35 is every THIRTY minutes. Inline rather than a new preset:
+       it is the only job on this cadence, and the interval has to match the
+       schedule or the operator page reports it late twice an hour. */
+    intervalMinutes: 30,
+    graceMinutes: 10,
+    keepsFailingAfter: 3,
+    ...MAX_60,
+    label: 'Abandoned bookings',
+    description:
+      'Emails a recovery link to somebody who started a booking and did not finish, and ages out the ones nobody came back to',
+    scheduleWords: 'Twice an hour, at :05 and :35',
+    addedOn: '2026-10-16',
+    drainsQueue: null,
+    counts: [
+      { key: 'swept', path: ['swept'], label: 'abandoned attempts swept' },
+      { key: 'recovered', path: ['recovered'], label: 'recovery emails sent' },
+    ],
+    partlyDoneWhen: [],
   },
   {
     /*

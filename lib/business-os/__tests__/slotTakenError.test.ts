@@ -27,6 +27,22 @@ describe('the database refusing a taken slot', () => {
       )
     ).toBe(true);
   });
+
+  it('recognises the meetings constraint too', () => {
+    /*
+     * `scheduling_meetings_no_overlap` (20261085) is the second one, and for a
+     * package it is the ONLY one: the job carries no time of its own, so the
+     * bookings constraint skips it by its own `start_time IS NOT NULL` clause.
+     * A race on a package session therefore raises this name and nothing else,
+     * and reaching the client as an internal error would turn one of two
+     * people pressing Book into a bug report.
+     */
+    expect(
+      isSlotTakenError(
+        new Error('conflicting key value violates exclusion constraint "scheduling_meetings_no_overlap"')
+      )
+    ).toBe(true);
+  });
 });
 
 describe('everything else is still a fault', () => {

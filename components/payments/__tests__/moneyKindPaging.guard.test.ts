@@ -46,8 +46,15 @@ describe('the money list pages within the view it is showing', () => {
     expect(code).not.toContain("items.filter(item => item.kind === 'booking')");
   });
 
-  it('sends the view kind to the API', () => {
-    expect(code).toMatch(/kind: kindView === 'bookings' \? 'booking' : 'standalone'/);
+  it('sends the view kind to the API, including the combined one', () => {
+    /*
+     * `all` is the third value, and it is the one that lets the page reconcile
+     * itself: the summary strip describes the whole book by design, so with
+     * only two views an owner clicking "Outstanding ₪510" saw rows that added
+     * up to less and nothing to say the rest was behind a toggle.
+     */
+    expect(code).toMatch(/kind: kindView === 'all'\s*\? 'all'\s*: kindView === 'bookings' \? 'booking' : 'standalone'/);
+    expect(code).toMatch(/type KindView = 'all' \| 'bookings' \| 'standalone'/);
   });
 
   it('does not split the fetched page by kind in the browser', () => {
@@ -57,17 +64,28 @@ describe('the money list pages within the view it is showing', () => {
   });
 
   it('refetches when the view changes, rather than re-slicing what it holds', () => {
-    // The kind is part of the request, so it has to be part of what invalidates
-    // it. Without this the switch would show the previous view's rows.
+    /*
+     * The kind is part of the request, so it has to be part of what invalidates
+     * it — without that the switch shows the previous view's rows.
+     *
+     * The dependency is now `queryFor`, the single builder that assembles every
+     * narrowing parameter, so this holds for the kind AND for everything added
+     * beside it. Listing the parameters by hand was the weaker form: it passed
+     * while a newly added filter was missing from the dependency list, which
+     * shows as a view that does not refetch.
+     */
     const loadDeps = code.slice(code.indexOf('const load = useCallback'), code.indexOf('useEffect(() => {\n    load();'));
-    expect(loadDeps).toMatch(/\[page, filter, sort, searchQuery, kindView\]/);
+    expect(loadDeps).toMatch(/\[page, queryFor\]/);
+
+    const builderDeps = code.slice(code.indexOf('const queryFor = useCallback('), code.indexOf('const load = useCallback'));
+    expect(builderDeps).toMatch(/\[effectiveFilter, sort, kindView, effectiveMethod, searchQuery\]/);
   });
 
   it('returns to the first page when the view changes', () => {
     // Three pages of orders is commonly one page of standalone invoices, and
     // staying on page 3 of a one-page set shows nothing — the same empty view
     // this whole guard is about.
-    expect(code).toMatch(/setPage\(0\);\s*\}, \[filter, sort, searchQuery, kindView\]\)/);
+    expect(code).toMatch(/setPage\(0\);\s*\}, \[effectiveFilter, effectiveMethod, sort, searchQuery, kindView\]\)/);
   });
 
   it('judges "this business has no money at all" by the summary, not by the view', () => {

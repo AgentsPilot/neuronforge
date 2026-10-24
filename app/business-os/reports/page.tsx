@@ -166,6 +166,20 @@ interface PaymentStats {
   pending_invoices: number;
   invoices_overdue: number;
   invoices_overdue_amount: number;
+  /**
+   * Of `invoices_overdue`: how many are invoices and how many are plan stages.
+   *
+   * On the wire already — `/api/business-os/stats` declares and returns both —
+   * and only this local copy of the shape was missing them. So they arrived
+   * `undefined`, `FinancialDetail`'s `overduePlanCount ? …` was always falsy,
+   * and the owner never saw the breakdown the component exists to show.
+   *
+   * The same omission as `meeting_status` on `toAppointment` and `booking_id`
+   * on `EmailRecord`: a column the API sends and a local type does not name is
+   * silently dropped, with no error anywhere.
+   */
+  invoices_overdue_invoice_count: number;
+  invoices_overdue_plan_count: number;
   plan_pending_count: number;
   lost_potential_amount: number;
   lost_potential_count: number;
@@ -331,6 +345,11 @@ export default function ReportsPage() {
           pending_invoices: p.pending_invoices || 0,
           invoices_overdue: p.invoices_overdue || 0,
           invoices_overdue_amount: p.invoices_overdue_amount || 0,
+          /* The breakdown `FinancialDetail` splits the overdue total with. The
+             API has always sent both; this mapping was dropping them, so the
+             component's `overduePlanCount ? …` never fired. */
+          invoices_overdue_invoice_count: p.invoices_overdue_invoice_count || 0,
+          invoices_overdue_plan_count: p.invoices_overdue_plan_count || 0,
           plan_pending_count: p.plan_pending_count || 0,
           lost_potential_amount: p.lost_potential_amount || 0,
           lost_potential_count: p.lost_potential_count || 0,
@@ -450,7 +469,7 @@ export default function ReportsPage() {
       : undefined;
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="min-h-full bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className={`${PAGE_CONTAINER} py-4 sm:py-6`}>
 
         {/* Page head */}
@@ -590,6 +609,8 @@ export default function ReportsPage() {
                         invoicesSent={payments.invoices_sent_30d}
                         overdueAmount={payments.invoices_overdue_amount}
                         overdueCount={payments.invoices_overdue}
+                        overdueInvoiceCount={payments.invoices_overdue_invoice_count}
+                        overduePlanCount={payments.invoices_overdue_plan_count}
                         refunded={payments.refunds_amount_30d}
                         gross={payments.gross_revenue_30d}
                         refundFeesKept={payments.refund_fees_kept_30d}

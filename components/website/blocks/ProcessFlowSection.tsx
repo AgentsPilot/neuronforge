@@ -1158,6 +1158,15 @@ export function DetailsStep({
 interface PaymentStepProps {
   service: Service;
   bookingId: string;
+  /**
+   * The attempt being paid for, where no booking exists yet.
+   *
+   * A service that takes a card writes no booking until the payment
+   * succeeds — one written earlier held the slot against every other client
+   * for ever. So on this step `bookingId` is empty and this carries the
+   * journey; `finalize` creates the booking from it.
+   */
+  attemptId?: string | null;
   primaryColor: string;
   onBack: () => void;
   onComplete: () => Promise<void> | void;
@@ -1231,14 +1240,34 @@ function getInFlightRequests(): Map<string, Promise<PaymentIntentOutcome>> {
   return (window as unknown as Record<string, Map<string, Promise<PaymentIntentOutcome>>>).__paymentIntentRequests || new Map();
 }
 
-function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, submitting: parentSubmitting, error: parentError, isRTL, labels, theme, locale = 'en', subdomain, userCode, customerName, customerEmail, isPreview }: PaymentStepProps) {
+function PaymentStep({ service, bookingId, attemptId, primaryColor, onBack, onComplete, submitting: parentSubmitting, error: parentError, isRTL, labels, theme, locale = 'en', subdomain, userCode, customerName, customerEmail, isPreview }: PaymentStepProps) {
+  /*
+   * ── WHAT THIS STEP IS ABOUT, WHICHEVER JOURNEY BROUGHT IT HERE ───────────
+   *
+   * Everything below used to key on `bookingId`: the guard that starts the
+   * PaymentIntent, the cache, and the in-flight map that deduplicates the
+   * request across a double mount.
+   *
+   * On a card journey there IS no booking yet — that is the whole point of the
+   * change, since a booking created before payment holds a slot for a client
+   * who may never pay. The step is mounted with `bookingId={bookingId || ''}`,
+   * so the guard returned immediately, `paymentReady` never flipped, and the
+   * card form was a permanent spinner on the one journey that needs it. The
+   * request body had already been taught to send `attempt_id`; nothing ever
+   * reached it.
+   *
+   * `attemptId` first: when both exist the attempt is the more specific of the
+   * two, and it is what the server matches on.
+   */
+  const paymentKey = attemptId || bookingId;
+
   const [processing, setProcessing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
   const [paymentData, setPaymentData] = useState<PaymentIntentInfo | null>(() => {
     // Initialize from cache if available
-    if (bookingId) {
-      const cached = getPaymentIntentCache()[bookingId];
+    if (paymentKey) {
+      const cached = getPaymentIntentCache()[paymentKey];
       if (cached) return cached;
     }
     return null;
@@ -1264,11 +1293,11 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
   // Use parent submitting if provided (for booking confirmation), otherwise local processing
   const isProcessing = parentSubmitting || processing;
 
-  // Initialize Stripe PaymentIntent when component mounts
-  // Use bookingId as the key dependency - it's stable and unique per booking
+  // Initialize Stripe PaymentIntent when component mounts.
+  // Keyed on `paymentKey` — see its declaration for why not `bookingId`.
   useEffect(() => {
-    // Skip if no bookingId
-    if (!bookingId) {
+    // Nothing identifies this payment yet.
+    if (!paymentKey) {
       return;
     }
 
@@ -1279,7 +1308,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
     }
 
     // Check cache again (in case it was set by another instance)
-    const cached = getPaymentIntentCache()[bookingId];
+    const cached = getPaymentIntentCache()[paymentKey];
     if (cached) {
       setPaymentData(cached);
       setPaymentReady(true);
@@ -1305,7 +1334,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
     let cancelled = false;
 
     const requestPaymentIntent = (): Promise<PaymentIntentOutcome> => {
-      const existing = inFlightRequests.get(bookingId);
+      const existing = inFlightRequests.get(paymentKey);
       if (existing) return existing;
 
       const request = (async (): Promise<PaymentIntentOutcome> => {
@@ -1317,7 +1346,11 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
             body: JSON.stringify({
               subdomain: isPreview ? '' : (subdomain || ''),
           userCode: isPreview ? undefined : (userCode || undefined),
-              booking_id: bookingId,
+              /* Whichever this journey has. `booking_id` is validated as a
+                 uuid, so the empty string a card journey now carries would
+                 be refused — and the card step would never load. */
+              ...(attemptId ? { attempt_id: attemptId } : {}),
+              ...(bookingId ? { booking_id: bookingId } : {}),
               service_id: service.id,
               /*
                 CHARGE WHAT THE CLIENT WAS SHOWN.
@@ -1362,7 +1395,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
 
             // Cached before anyone awaits, so a mount arriving after this
             // resolves never re-asks.
-            getPaymentIntentCache()[bookingId] = paymentInfo;
+            getPaymentIntentCache()[paymentKey] = paymentInfo;
             return { info: paymentInfo };
           }
 
@@ -1378,17 +1411,17 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         } catch {
           return { info: null, error: labels.errPaymentInitRetry };
         } finally {
-          inFlightRequests.delete(bookingId);
+          inFlightRequests.delete(paymentKey);
         }
       })();
 
-      inFlightRequests.set(bookingId, request);
+      inFlightRequests.set(paymentKey, request);
       return request;
     };
 
     const initializePayment = async () => {
       // The cache may have been filled between render and effect.
-      const cachedBeforeCall = getPaymentIntentCache()[bookingId];
+      const cachedBeforeCall = getPaymentIntentCache()[paymentKey];
       if (cachedBeforeCall) {
         setPaymentData(cachedBeforeCall);
         setPaymentReady(true);
@@ -1418,7 +1451,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
       cancelled = true;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookingId]); // Only depend on bookingId - it's the unique identifier for this payment
+  }, [paymentKey]); // The one identifier this payment has, whichever journey it is
 
   const handlePaymentSuccess = async (paymentIntentId: string) => {
     // Payment succeeded - finalize the booking
@@ -1431,7 +1464,12 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         body: JSON.stringify({
           subdomain: isPreview ? '' : (subdomain || ''),
           userCode: isPreview ? undefined : (userCode || undefined),
-          booking_id: bookingId,
+          /* One of the two. `finalize` CREATES the booking from an attempt
+             — for a card journey none exists until the payment lands — and
+             looks one up from a booking id. */
+          ...(attemptId
+            ? { attempt_id: attemptId, payment_status: 'paid' as const }
+            : { booking_id: bookingId }),
           payment_intent_id: paymentIntentId,
           /*
             A saved card is not a payment.
@@ -1489,7 +1527,9 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         body: JSON.stringify({
           subdomain: isPreview ? '' : (subdomain || ''),
           userCode: isPreview ? undefined : (userCode || undefined),
-          booking_id: bookingId
+          ...(attemptId
+            ? { attempt_id: attemptId, payment_status: 'paid' as const }
+            : { booking_id: bookingId }),
         })
       });
 
@@ -2082,6 +2122,15 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [bookingId, setBookingId] = useState<string | null>(null);
+  /*
+   * The attempt this journey is paying for, where there is no booking yet.
+   *
+   * A service that takes a card writes no booking until the payment
+   * succeeds — one written earlier held the slot against every other client
+   * for ever. Between the details step and the payment landing, THIS is what
+   * the journey is carried by, and `bookingId` is null.
+   */
+  const [attemptId, setAttemptId] = useState<string | null>(null);
 
   // Slots
   const [slots, setSlots] = useState<TimeSlot[]>([]);
@@ -2610,6 +2659,22 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           phone: clientPhone || undefined,
           notes: clientNotes || undefined,
           consent: consentPayload(consentCopy, consentGiven),
+          /* The language this page renders in, so the abandoned-booking
+             email is written in it rather than the business's own. */
+          locale,
+          /*
+           * WHERE THEY WERE, for the rebook link in the recovery email.
+           *
+           * `create` has read `data.page_url` since attempts were introduced,
+           * and this payload never sent it — so every attempt stored NULL and
+           * the recovery email would have gone out with no way back. Verified
+           * on a real abandonment: `locale` landed, `page_url` did not.
+           *
+           * Taken from the address bar rather than rebuilt from the service: a
+           * booking page reached by custom domain, landing page or smart link
+           * cannot be reconstructed from the service id alone.
+           */
+          page_url: typeof window !== 'undefined' ? window.location.href : undefined,
           // Skip contact creation for paid services - contact will be created after payment
           skip_contact: requiresPayment
         })
@@ -2618,7 +2683,13 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       const data = await response.json();
 
       if (data.success) {
-        setBookingId(data.booking?.id || data.id);
+        /*
+         * One of the two, never both. A service that takes payment returns
+         * `attempt_id` and no booking: the booking is created by
+         * `finalize`, once the payment has actually succeeded.
+         */
+        setBookingId(data.booking?.id || data.id || null);
+        setAttemptId(data.attempt_id || null);
         markStepComplete('details');
 
         // Determine next step
@@ -2999,7 +3070,8 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                 {currentStep === 'payment' && selectedService && (
                   <PaymentStep
                     service={selectedService}
-                    bookingId={bookingId || ''} // May be empty for paid services (created after payment)
+                    bookingId={bookingId || ''} // Empty for paid services: the booking is created after payment
+                    attemptId={attemptId}
                     primaryColor={primaryColor}
                     onBack={() => goToStep('details', 'backward')}
                     onComplete={handlePaymentComplete}

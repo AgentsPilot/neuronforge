@@ -91,7 +91,17 @@ DECLARE
     'contact_documents',
     -- Scheduling
     'scheduling_bookings',
+    -- The appointments themselves (20261073). Already removed transitively
+    -- (booking_id is ON DELETE CASCADE), but it carries its own user_id, so it
+    -- gets its own constraint rather than relying on the parent's.
+    -- Existing databases get this one constraint from 20261076; the loop below
+    -- is idempotent, so naming it here is what makes a FRESH install correct.
+    'scheduling_meetings',
     'scheduling_services',
+    -- Somebody who gave their details on a booking page and did not
+    -- finish. Business-owned like any booking: their prospect, on their
+    -- page, and it goes with them on a reset or an export.
+    'abandoned_bookings',
     'scheduling_availability_exceptions',
     'external_calendar_events',
     -- Payments. `stripe_connect_accounts` belongs here: it is the link to this

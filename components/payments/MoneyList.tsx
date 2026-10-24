@@ -12,6 +12,7 @@ import type { MoneyCurrencyTotals, MoneyEntry, MoneyItem, MoneyTotals } from '@/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 import { toCsvFile } from '@/lib/payments/csv';
+import { parseMoneySearch } from '@/lib/payments/moneySearchTerms';
 import { MoneyDetailDrawer } from './MoneyDetailDrawer';
 import { RefundModal } from './RefundModal';
 
@@ -77,12 +78,54 @@ type MoneyFilter =
 
 // Draft and cancelled were unreachable: the API had no such filter and the bar
 // had no chip, so an unsent draft could not be found from this list at all.
+/**
+ * Which rows the list is cut from.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `all` is why this type exists. The two kinds were the whole choice, and the
+ * summary strip above them describes the WHOLE book by design — `totals` is
+ * computed before either the KPI filter or the kind is applied, so that
+ * clicking one tile does not rewrite the figures being compared.
+ *
+ * The cost was a page that could not reconcile itself. An owner told by the
+ * advisor that ₪510 of invoices was open clicked Outstanding, read ₪510 on the
+ * tile, and saw a list of rows that added up to less — with nothing to say the
+ * rest was behind a toggle. The number was right and unreachable.
+ *
+ * `all` sends `kind=all`, which the endpoint has always accepted and pages
+ * correctly (the CRM drawer has used it all along). Orders stays the landing
+ * view: it is what people come here for, and changing where the page opens is
+ * a separate decision from making the total reachable.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+type KindView = 'all' | 'bookings' | 'standalone';
+
+/**
+ * How the money arrives: a bill the owner sends, a card charged at the time, or
+ * a plan. Its own control rather than more KPI tiles, because it has to COMBINE
+ * with the state — "outstanding" AND "invoices" is the exact question the
+ * advisor card poses, and mutually exclusive tiles cannot express it.
+ */
+type MethodView = 'any' | 'invoice' | 'direct' | 'plan';
+
+const METHOD_VIEWS: MethodView[] = ['any', 'invoice', 'direct', 'plan'];
+
 type MoneySort = 'date' | 'amount' | 'client' | 'status';
 
 const SORTS: MoneySort[] = ['date', 'amount', 'client', 'status'];
 
 interface MoneyListProps {
   searchQuery?: string;
+  /**
+   * The business's own date, for reading the search the same way the field does.
+   *
+   * Passed in rather than computed here: `PaymentsView` already resolves it and
+   * hands the same value to `MoneySearchField`, and two components deriving
+   * "today" separately is how a chip comes to describe a different span from
+   * the one being filtered. Optional so the CRM drawer, which passes no search,
+   * needs no change.
+   */
+  today?: string;
   /**
    * Open a row's client in the CRM contact drawer.
    *
@@ -129,6 +172,7 @@ interface MoneyListProps {
 
 export function MoneyList({
   searchQuery = '',
+  today,
   onOpenContact,
   highlightId,
   refreshKey,
@@ -172,9 +216,76 @@ export function MoneyList({
    * were two sections of one list, so a select-all could not mean either one and
    * reaching the invoices meant scrolling past every order.
    */
-  const [kindView, setKindView] = useState<'bookings' | 'standalone'>('bookings');
+  const [kindView, setKindView] = useState<KindView>('bookings');
+  /**
+   * How the money arrives, which is a different question from what state it is
+   * in. See `MethodView` for why it is its own control.
+   */
+  const [methodView, setMethodView] = useState<MethodView>('any');
   const [sort, setSort] = useState<MoneySort>('date');
   const [page, setPage] = useState(0);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A TYPED WORD DRIVES ITS CONTROL, rather than narrowing beside it.
+   *
+   * "open invoices" names a state and a collection method, and both already
+   * have a control. Applying the word AND the control would give two sources of
+   * truth for one narrowing: type "open" with the Collected tile active and the
+   * list empties, correctly and incomprehensibly.
+   *
+   * So the word WINS and the control follows it — the tile lights up, the
+   * method group moves, and the screen explains itself. `matchesTerms` ignores
+   * these two kinds for the same reason: the request carries them as explicit
+   * parameters, and applying them a second time inside the search would be the
+   * duplication this avoids.
+   *
+   * With no such word typed, both controls are ordinary state exactly as before.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const typedTerms = useMemo(
+    () => (searchQuery.trim() && today ? parseMoneySearch(searchQuery, today) : []),
+    [searchQuery, today]
+  );
+  const typedStatus = typedTerms.find(term => term.kind === 'status');
+  const typedMethod = typedTerms.find(term => term.kind === 'method');
+
+  const effectiveFilter = (typedStatus?.kind === 'status' ? typedStatus.value : filter) as MoneyFilter;
+  const effectiveMethod = (typedMethod?.kind === 'method' ? typedMethod.value : methodView) as MethodView;
+
+  /**
+   * The question this list is asking, as query parameters.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE BUILDER, because there were two and they had to agree.
+   *
+   * The list fetch and the CSV export each assembled their own, differing only
+   * in the page window — and the export's own comment already names the hazard:
+   * "a second implementation of 'what is on screen' is how an export comes to
+   * disagree with the screen". It was true of the filter, and adding a `method`
+   * to one and not the other would have made it true again, silently, in the
+   * direction where somebody saves a file of rows they never saw.
+   *
+   * So the window is the only argument. Everything else is read once.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const queryFor = useCallback(
+    (window: { limit: number; offset: number }) => {
+      const params = new URLSearchParams({
+        limit: String(window.limit),
+        offset: String(window.offset),
+        filter: effectiveFilter,
+        sort,
+        // The view's kind, so the page window is cut from the rows actually on
+        // screen rather than from the mixed list.
+        kind: kindView === 'all' ? 'all' : kindView === 'bookings' ? 'booking' : 'standalone',
+        method: effectiveMethod,
+      });
+      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      return params;
+    },
+    [effectiveFilter, sort, kindView, effectiveMethod, searchQuery]
+  );
   /** The entry being refunded. Refunds open a dialog rather than firing. */
   const [refundTarget, setRefundTarget] = useState<MoneyEntry | null>(null);
   /** The row whose full detail is open. */
@@ -230,16 +341,7 @@ export function MoneyList({
     setError(null);
 
     try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(page * PAGE_SIZE),
-        filter,
-        sort,
-        // The view's kind, so the page window is cut from the rows actually on
-        // screen rather than from the mixed list.
-        kind: kindView === 'bookings' ? 'booking' : 'standalone',
-      });
-      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      const params = queryFor({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
 
       /*
        * `no-store`. A refresh after a refund goes to the URL just fetched, so
@@ -265,7 +367,7 @@ export function MoneyList({
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [page, filter, sort, searchQuery, kindView]);
+  }, [page, queryFor]);
 
   useEffect(() => {
     load();
@@ -297,19 +399,25 @@ export function MoneyList({
     };
   }, [refreshKey]);
 
-  // A new search or filter starts at the first page — staying on page 4 of a
-  // result set that now has one page shows nothing. `kindView` belongs here for
-  // exactly that reason: the two views have their own page counts, and three
-  // pages of orders is commonly one page of standalone invoices.
+  /*
+   * A new search or filter starts at the first page — staying on page 4 of a
+   * result set that now has one page shows nothing. `kindView` belongs here for
+   * exactly that reason: the views have their own page counts, and three pages
+   * of orders is commonly one page of standalone invoices.
+   *
+   * The EFFECTIVE filter rather than the raw one, and the effective method
+   * beside it: a status word typed into the search narrows the list just as a
+   * tile click does, so it has to reset the page just as a tile click does.
+   */
   useEffect(() => {
     setPage(0);
-  }, [filter, sort, searchQuery, kindView]);
+  }, [effectiveFilter, effectiveMethod, sort, searchQuery, kindView]);
 
   // A selection that survives a filter change would export rows the reader can
-  // no longer see.
+  // no longer see. The effective values, for the reason above.
   useEffect(() => {
     setSelected(new Set());
-  }, [filter, sort, searchQuery, page]);
+  }, [effectiveFilter, effectiveMethod, sort, searchQuery, page]);
 
   const formatCurrency = useCallback(
     (amount: number, currency: string) =>
@@ -455,14 +563,7 @@ export function MoneyList({
       chosen = items.filter(i => selected.has(i.key));
     } else {
       try {
-        const params = new URLSearchParams({
-          limit: String(EXPORT_CAP),
-          offset: '0',
-          filter,
-          sort,
-          kind: kindView === 'bookings' ? 'booking' : 'standalone',
-        });
-        if (searchQuery.trim()) params.set('search', searchQuery.trim());
+        const params = queryFor({ limit: EXPORT_CAP, offset: 0 });
 
         const response = await fetch(`/api/payments/money?${params}`, { cache: 'no-store' });
         const result = await response.json();
@@ -577,8 +678,14 @@ export function MoneyList({
       <MoneySummaryStrip
         totals={totals}
         money={money}
-        activeFilter={filter}
+        /* The EFFECTIVE state, so the lit cell is the one actually filtering —
+           a status word typed into the search is what narrows the list, and a
+           strip showing something else would be explaining a filter it is not
+           applying. Locked while such a word is present, because the word
+           wins and the cell would have nothing to do. */
+        activeFilter={effectiveFilter}
         onFilter={next => setFilter(next as typeof filter)}
+        selectionLocked={Boolean(typedStatus)}
         orderCount={summaryCount}
       />
 
@@ -597,7 +704,7 @@ export function MoneyList({
           role="group"
           style={{ borderRadius: 'var(--v2-radius-button)' }}
         >
-          {(['bookings', 'standalone'] as const).map(option => (
+          {(['all', 'bookings', 'standalone'] as const).map(option => (
             <button
               key={option}
               type="button"
@@ -616,9 +723,65 @@ export function MoneyList({
               }`}
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
-              {option === 'bookings'
-                ? t('payments.view.orders') || 'Orders'
-                : t('payments.view.standalone') || 'Invoices without an order'}
+              {option === 'all'
+                ? t('payments.view.all') || 'All money'
+                : option === 'bookings'
+                  ? t('payments.view.orders') || 'Orders'
+                  : t('payments.view.standalone') || 'Invoices without an order'}
+            </button>
+          ))}
+        </div>
+
+        {/*
+          HOW the money arrives, beside WHICH rows it is cut from.
+          ─────────────────────────────────────────────────────────────────────
+          The same segmented group as the view beside it, because it is the same
+          kind of choice and a second visual language for it would read as a
+          different sort of control.
+
+          Separate from the KPI tiles on purpose: those are states, and the one
+          question this page could not answer needs a state AND a method at once
+          — "₪510 of INVOICES is open". Tiles are mutually exclusive; this is
+          not, so the two compose.
+
+          `plan` has been a working filter in the route all along with nothing
+          anywhere to set it. This is the first control that reaches it.
+        */}
+        <div
+          className="flex gap-0.5 bg-[var(--v2-bg)] p-0.5"
+          role="group"
+          aria-label={t('payments.filter.method.label') || 'Collected by'}
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          {METHOD_VIEWS.map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => {
+                setMethodView(option);
+                setSelected(new Set());
+              }}
+              /*
+               * Reads the EFFECTIVE value, so a method word typed into the
+               * search lights up the button that is actually filtering. A
+               * control that disagrees with the rows is the failure the search
+               * field's own header calls the worst available here.
+               */
+              aria-pressed={effectiveMethod === option}
+              disabled={Boolean(typedMethod)}
+              className={`px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-60 ${
+                effectiveMethod === option
+                  ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] shadow-sm'
+                  : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+              }`}
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {/* `payments.filter.method.*`, not `payments.method.*`: the two
+                  want different words — a ROW says "Invoice", a filter says
+                  "Invoices" — and sharing one key meant whichever was defined
+                  last won for both. The money rows were reading the filter's
+                  plural. */}
+              {t(`payments.filter.method.${option}`) || option}
             </button>
           ))}
         </div>

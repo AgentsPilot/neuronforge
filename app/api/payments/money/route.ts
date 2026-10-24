@@ -101,6 +101,31 @@ const QuerySchema = z.object({
    * ───────────────────────────────────────────────────────────────────────────
    */
   kind: z.enum(['all', 'booking', 'standalone']).default('all'),
+  /**
+   * HOW the money was collected, which is a different axis from `filter`.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `filter` answers "what state is it in" — collected, outstanding, overdue.
+   * This answers "how does it arrive" — a bill the owner sends and marks paid,
+   * or a card charged at the time. An owner told by the advisor that ₪510 of
+   * INVOICES is open needs both halves of that sentence, and until now only
+   * the state half was askable: every method was mixed into one list, with no
+   * way to narrow to the bills.
+   *
+   * Its own parameter rather than more `filter` values, because the two have to
+   * COMBINE. Folding it in would make "outstanding" and "invoices" mutually
+   * exclusive, and the one question behind this change is their intersection.
+   *
+   * `plan` is the exception that proves the rest: `filter: 'plans'` already
+   * filters on `item.method`, and is unreachable from the UI because no tile or
+   * control ever set it. It stays for API callers; the new control is how a
+   * person reaches it.
+   *
+   * Like `kind`, deliberately NOT applied to the summary strip. The figures
+   * must stay comparable across whatever is being looked at.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  method: z.enum(['any', 'invoice', 'direct', 'plan']).default('any'),
 });
 
 /** Which rows a filter keeps. Applied after grouping, so it filters ROWS not sources. */
@@ -170,13 +195,14 @@ export async function GET(request: NextRequest) {
       // show anything had gone wrong.
       sort: url.searchParams.get('sort') ?? undefined,
       kind: url.searchParams.get('kind') ?? undefined,
+      method: url.searchParams.get('method') ?? undefined,
     });
 
     if (!parsed.success) {
       return NextResponse.json({ success: false, error: 'Invalid query' }, { status: 400 });
     }
 
-    const { limit, offset, contact_id, filter, search, sort, kind } = parsed.data;
+    const { limit, offset, contact_id, filter, search, sort, kind, method } = parsed.data;
 
     /*
      * No overdue refresh here any more — the daily payment-reminders cron does
@@ -506,8 +532,23 @@ export async function GET(request: NextRequest) {
      * (the CRM drawer via `fetchContactMoney`) defaults to 'all' and sees the
      * mixed list it always did.
      */
+    /*
+     * A MIXED ROW BELONGS TO BOTH, which is why this is not a plain equality.
+     *
+     * A booking can hold a card-paid session AND an invoiced programme, and
+     * `moneyItems` marks that row `mixed` rather than picking a side. A strict
+     * `item.method === method` would then hide it from Invoices and from Direct
+     * alike — findable only under "any", which is the mirror image of the bug
+     * these two lists were merged to fix: instead of a row appearing twice, it
+     * appears nowhere.
+     *
+     * It genuinely contains money of each kind, so it answers to each.
+     */
+    const matchesMethod = (item: MoneyItem) =>
+      method === 'any' || item.method === method || item.method === 'mixed';
+
     const filtered = searched.filter(
-      item => matchesFilter(item, filter) && (kind === 'all' || item.kind === kind)
+      item => matchesFilter(item, filter) && (kind === 'all' || item.kind === kind) && matchesMethod(item)
     );
 
     /**

@@ -375,7 +375,9 @@ export async function cancelQuoteStages(input: {
      */
     .not('status', 'in', '(paid,cancelled)')
     .is('subscription_id', null)
-    .select('id');
+    /* `amount` and `payment_plan_id` so the plan can be brought into line
+       below. The id alone was enough only while nothing did. */
+    .select('id, amount, payment_plan_id');
 
   if (closeError) {
     logger.error(
@@ -393,6 +395,26 @@ export async function cancelQuoteStages(input: {
   }
 
   const stagesClosed = closed?.length ?? 0;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND THE PLAN STOPS CLAIMING WHAT WAS JUST CANCELLED.
+   *
+   * The third of the three ways work is called off, and the comment above the
+   * status filter already names the other two. All three now leave the same
+   * state behind, which was the point of writing that filter the same way: a
+   * plan is `total_amount` and `installment_count`, both STORED, and closing
+   * stages without touching them leaves the plan claiming money nobody can
+   * collect.
+   *
+   * Never fatal. The helper logs and returns, and the stages above are the
+   * fact that matters.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (closed?.length) {
+    const { lowerPlansForCancelledStages } = await import('./planFollowsItsStages');
+    await lowerPlansForCancelledStages(supabaseServer, userId, closed);
+  }
 
   /*
    * Say the job ended — the second half of the one press.

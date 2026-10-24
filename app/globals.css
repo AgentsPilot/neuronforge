@@ -553,3 +553,74 @@ html.dark input,
     font-size: 16px;
   }
 }
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TWO THUMBS ON ONE TRACK, from two stacked range inputs.
+ *
+ * The orders search filters amounts by a span, and a span needs two handles.
+ * There is no slider in the design system and Radix's is not installed, so the
+ * control is two native `<input type="range">` laid over each other: the
+ * browser gives correct keyboard behaviour, touch targets and accessibility
+ * for each handle, and the track is drawn by the component behind them.
+ *
+ * POINTER EVENTS ARE THE WHOLE TRICK. Both inputs span the full width, so the
+ * upper one's track would swallow every press aimed at the lower one and its
+ * thumb could never be grabbed. Events are therefore switched off on the
+ * inputs and back on for the thumbs alone.
+ *
+ * The native track is hidden rather than styled: the component paints its own,
+ * including the filled segment between the handles, which a native track
+ * cannot express.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+.ap-range {
+  pointer-events: none;
+  /* Height comes from the wrapper; the input is only a hit area for its thumb. */
+  margin: 0;
+}
+
+.ap-range::-webkit-slider-runnable-track {
+  background: transparent;
+  border: 0;
+  height: 100%;
+}
+
+.ap-range::-moz-range-track {
+  background: transparent;
+  border: 0;
+  height: 100%;
+}
+
+.ap-range::-webkit-slider-thumb {
+  pointer-events: auto;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: var(--v2-surface, #fff);
+  border: 2px solid #22c58b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  cursor: grab;
+}
+
+.ap-range::-moz-range-thumb {
+  pointer-events: auto;
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: var(--v2-surface, #fff);
+  border: 2px solid #22c58b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  cursor: grab;
+}
+
+.ap-range:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid #22c58b;
+  outline-offset: 2px;
+}
+
+.ap-range:focus-visible::-moz-range-thumb {
+  outline: 2px solid #22c58b;
+  outline-offset: 2px;
+}

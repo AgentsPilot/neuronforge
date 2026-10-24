@@ -12,6 +12,7 @@ import { businessDayFor, wallClockToUtc } from '@/lib/business-os/businessDay';
 import { safeTimezone, toBusinessLocalInput, fromBusinessLocalInput, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
+import { holdsSlot } from '@/lib/business-os/bookingStatus';
 
 const logger = createLogger({ module: 'SchedulingDialog' });
 
@@ -109,7 +110,13 @@ function isSlotBooked(
   const slotEndUTC = slotEnd.toISOString();
 
   return existingBookings.some(booking => {
-    if (booking.status === 'cancelled' || booking.status === 'no_show') return false;
+    /*
+     * `holdsSlot` rather than a status test. A missed or called-off MEETING
+     * frees its time while the job's `status` stays `confirmed`, so asking the
+     * status alone showed a no-show's hour as still busy in the owner's own
+     * quick-pick — an hour they could no longer sell.
+     */
+    if (!holdsSlot(booking)) return false;
     // booking.start_time and booking.end_time are already UTC ISO strings
     // Overlap check: slot_start < booking_end AND slot_end > booking_start
     return slotStartUTC < booking.end_time && slotEndUTC > booking.start_time;
@@ -511,7 +518,9 @@ export function SchedulingDialog({
      * keyboard handler — cannot reopen an editor over a settled meeting just by
      * forgetting the rule.
      */
-    if (booking.status === 'completed') return;
+    /* Settled on `meeting_status`, which is where the outcome lives now; the
+       old status is still honoured for rows that predate the column. */
+    if (booking.meeting_status != null || booking.status === 'completed') return;
 
     setEditingBooking(booking);
     setShowEditModal(true);

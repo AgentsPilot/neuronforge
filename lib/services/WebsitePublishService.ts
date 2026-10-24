@@ -332,15 +332,44 @@ export async function publishPage(
   const gaps = await journeyGaps(userId, servicesForJourney);
   const blocking = gaps.filter(isBlockingGap);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THIS NO LONGER REFUSES. THE PAGE PUBLISHES; THE SECTION DOES NOT RENDER.
+   *
+   * A website is not only a shopfront. It can be a business's presence and a
+   * contact form, both feeding the CRM, with no catalogue at all or one still
+   * in draft — and that is a supported way to use the platform, not a
+   * half-finished setup. Refusing to publish it made the gate decide what kind
+   * of business someone was allowed to run.
+   *
+   * It also refused on the wrong evidence. `servicesOfferedBy` reads the
+   * SNAPSHOT in the page's blocks, so a site listing services that have since
+   * been unpublished was still gated on their working hours and invoice
+   * details — asked to complete settings for things it no longer offers.
+   *
+   * Nothing is let through that was caught before. What was one refusal is now
+   * three narrower ones, each where the promise is actually made:
+   *
+   *   the card     `/api/website/public/[subdomain]` drops a service with a
+   *                blocking gap and drops the section when none survive, so a
+   *                visitor is never shown a button that cannot complete.
+   *   the booking  `/api/website/booking/create` re-checks and refuses, which
+   *                is the belt: it holds whatever page the click came from.
+   *   the link     a booking smart link still cannot be published or previewed
+   *                without a bookable service, because a booking surface with
+   *                nothing to book is only that gap.
+   *
+   * Kept and logged rather than deleted: the readiness chain and the journey
+   * strip still show the owner what is outstanding, and `pagePublishBlocker`
+   * still answers the editor's "is this ready" probe. The difference is that it
+   * is advice now, not a door.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   if (blocking.length > 0) {
-    return {
-      data: null,
-      error: new PageNotPublishableError(
-        describeJourneyGaps(blocking),
-        blocking[0].kind === 'invoicing' ? 'no_invoice_details' : 'no_working_hours',
-        blocking.map(gap => ({ kind: gap.kind, message: describeJourneyGap(gap) }))
-      ),
-    };
+    log.info(
+      { pageId, kinds: blocking.map(gap => gap.kind) },
+      'Publishing a page whose services are not all ready; the unready ones will not render'
+    );
   }
 
   const advisory = gaps.filter(gap => !isBlockingGap(gap));

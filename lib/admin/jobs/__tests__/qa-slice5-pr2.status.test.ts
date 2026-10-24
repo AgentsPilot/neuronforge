@@ -58,6 +58,10 @@ function tilesFor(inputs: JobsQueuesInputs, now: Date = NOW) {
 const EXPECTED: Record<number, [number, number]> = {
   5: [15, 20],
   15: [25, 40],
+  // Added 2026-10-21 with the minute-list shape (`5,35`) for
+  // `abandoned-bookings`: one interval plus ten minutes' grace, then the
+  // stopped bound a tick later. Same row as its twin in bosCronJobs.test.
+  30: [40, 70],
   60: [70, 130],
   1440: [1500, 2940],
   10_080: [10_260, 20_340],

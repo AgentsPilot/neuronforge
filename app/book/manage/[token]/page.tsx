@@ -85,6 +85,14 @@ export default function BookingManagePage() {
   const [task, setTask] = useState<{
     kind: 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay';
     token: string;
+    /**
+     * The SESSION this task is about, for a package.
+     *
+     * A package is one booking with N meetings, so a session has no token of
+     * its own — the token names the purchase and this says which of its hours.
+     * Absent for every ordinary booking.
+     */
+    meetingId?: string | null;
   } | null>(null);
 
   const openOnly = (
@@ -270,7 +278,12 @@ export default function BookingManagePage() {
     if (!ready[wanted]) return;
 
     setTaskAutoOpened(true);
-    setTask({ kind: wanted as 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay', token });
+    setTask({
+      kind: wanted as 'intake' | 'reschedule' | 'cancel' | 'quote' | 'pay',
+      token,
+      /* `?session=` — which hour of a package the client came to move. */
+      meetingId: params.get('session'),
+    });
   }, [taskAutoOpened, payInvoiceId, quoteToken, intake?.required, token]);
 
   if (loading) return <PublicPageSpinner label={t('loading')} />;
@@ -1123,8 +1136,12 @@ export default function BookingManagePage() {
         <section className="apc-panel p-5">
           {task.kind === 'reschedule' ? (
             <ReschedulePanel
-              key={task.token}
+              /* The session is part of the identity: opening one session's
+                 panel after another's must remount, not reuse the first's
+                 chosen slot. */
+              key={`${task.token}:${task.meetingId ?? ''}`}
               token={task.token}
+              meetingId={task.meetingId ?? null}
               embedded
               onChanged={() => loadBooking(true)}
             />
@@ -1394,9 +1411,26 @@ export default function BookingManagePage() {
                     <bdi>{period.label}</bdi>
                   </span>
                 )}
+                {/*
+                  ─────────────────────────────────────────────────────────────
+                  A WITHDRAWN DEMAND IS NOT AN AMOUNT THEY OWE.
+
+                  The figure was drawn in full ink whatever the stage's state,
+                  so a cancelled period sat beside a live one looking exactly
+                  as payable — same weight, same colour — and the only thing
+                  separating them was the word in the chip, whose cancelled and
+                  pending styles are identical. A client totting up what is
+                  left counted money nobody will ever ask them for.
+
+                  Struck through and muted, which is how the same schedule now
+                  reads in their email.
+                  ───────────────────────────────────────────────────────────── */}
                 <span
                   className="ms-auto text-sm font-semibold tabular-nums"
-                  style={{ color: 'var(--ap-text)' }}
+                  style={{
+                    color: period.status === 'cancelled' ? 'var(--ap-text-muted)' : 'var(--ap-text)',
+                    textDecoration: period.status === 'cancelled' ? 'line-through' : undefined,
+                  }}
                 >
                   <bdi>{money(period.amount, payment.currency)}</bdi>
                 </span>
@@ -1417,7 +1451,14 @@ export default function BookingManagePage() {
                   showing. Before then, when it is owed.
                   ─────────────────────────────────────────────────────────────
                 */}
-                {(period.paidAt ?? period.dueDate) && (
+                {/*
+                  NO DUE DATE ON A CANCELLED PERIOD. "Due 21 October" of money
+                  that will never be requested is a deadline the client has no
+                  way to act on, and reads as something they have missed.
+                  `paidAt` is still honoured: a period paid and later voided
+                  keeps the day its money actually moved.
+                */}
+                {(period.paidAt ?? (period.status === 'cancelled' ? null : period.dueDate)) && (
                   <span
                     className="text-xs tabular-nums"
                     style={{ color: 'var(--ap-text-muted)' }}

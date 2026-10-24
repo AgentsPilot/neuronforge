@@ -352,7 +352,13 @@ export class OpsUtilizationLowDetector extends BaseDetector {
       .from('scheduling_bookings')
       .select('payment_amount, service:scheduling_services(price)')
       .eq('user_id', userId)
-      .eq('status', 'completed')
+      /*
+       * Only meetings that HAPPENED carry a real figure, and that is
+       * `meeting_status` now — `complete()` stopped writing `status:
+       * 'completed'`. Against the old filter this average drains towards the
+       * hardcoded fallback the comment above describes as the bug it fixed.
+       */
+      .eq('meeting_status', 'held')
       .limit(100);
 
     if (avgBookingError) {

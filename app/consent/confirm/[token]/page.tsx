@@ -12,7 +12,8 @@
  * acted — the precise failure double opt-in exists to prevent. Those get the
  * button instead, which a scanner cannot press. See `looksLikeHumanClick`.
  *
- * Built from `PortalShell` and `StatusCard` like the quote, the invoice and the
+ * Built from `PublicBrandFrame` and `StatusCard`: the business's branding
+ * around one card, with none of the portal — see the note at the render.
  * booking-management pages, so it wears the business's own template rather than
  * the platform's default. For most people this is the second thing they will
  * ever have seen from that business, and it has to be recognisable as theirs.
@@ -26,8 +27,7 @@ import { headers } from 'next/headers';
 
 import { ConfirmButton } from './ConfirmButton';
 import { BrandButton } from '@/components/public/BrandButton';
-import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
-import { PortalShell } from '@/components/public/PortalShell';
+import { PublicBrandFrame } from '@/components/public/PublicBrandFrame';
 import { StatusCard } from '@/components/public/StatusCard';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 import { verifyConsentConfirmToken } from '@/lib/consent/confirmToken';
@@ -264,14 +264,32 @@ export default async function ConsentConfirmPage({ params }: PageProps) {
   }
 
   /*
-    The same shell as every other public page. A consent confirmation is one
-    short statement and one button, so it hands the shell a narrow document
-    for the lead slot and the business's details follow beneath it, where they
-    sit on the portal and the invoice too.
+    ── NOT THE PORTAL ──────────────────────────────────────────────────────
+
+    This used `PortalShell`, the same shell as the quote and the invoice, and
+    that is wrong for whoever arrives here. `PortalBar` prints "my bookings"
+    under the business name and the shell puts the contact panel beside it, so
+    somebody who did nothing but tick a newsletter box landed in what reads as
+    their client portal — headed with bookings, on a page about none.
+
+    A SUBSCRIBER IS NOT A CLIENT, and we do not have them as one: no name, no
+    booking, no contact row to address. A portal personalised to somebody the
+    platform has never met is a promise the page cannot keep.
+
+    They confirmed one thing, the confirmation is one sentence, and the only
+    onward step worth offering is the business's own website — which the card
+    already carries. `PublicBrandFrame` is the same branding with none of the
+    portal, as `/go/unavailable` uses for its own standalone message.
+
+    ONLY THIS PAGE. The booking portal, the invoice, the quote answer and the
+    cancel panel keep `PortalShell`: each of those IS a client looking at
+    something of their own.
   */
   return (
-    <PortalShell brand={brand} aside={<BusinessInfoPanel brand={brand} variant="card" show={['contact', 'links']} />}>
-      <div className="mx-auto max-w-lg">{body}</div>
-    </PortalShell>
+    <PublicBrandFrame brand={brand}>
+      <div className="mx-auto flex max-w-lg items-center justify-center px-4 py-12">
+        {body}
+      </div>
+    </PublicBrandFrame>
   );
 }

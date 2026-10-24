@@ -17,6 +17,7 @@ import { createLogger } from '@/lib/logger';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { translateBlockContent } from '@/lib/i18n/website-block-translations';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/components/UserProvider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1268,18 +1269,11 @@ export default function WebsiteManagementPage() {
   const [analytics, setAnalytics] = useState<WebsiteAnalytics | null>(null);
 
   // Landing page analytics state (keyed by page ID)
-  const [landingPagesAnalytics, setLandingPagesAnalytics] = useState<Record<string, {
-    total_views: number;
-    unique_visitors: number;
-    views_today: number;
-    visitors_today: number;
-    views_this_month: number;
-    visitors_this_month: number;
-    views_30d: number;
-    visitors_30d: number;
-    views_7d: number;
-    visitors_7d: number;
-  }>>({});
+  /* `WebsiteAnalytics`, not a second copy of its ten fields. A landing page's
+     activity has the same shape as the site's, and the inline duplicate is why
+     the fetch below could be typed `unknown` without anything noticing. */
+  const [landingPagesAnalytics, setLandingPagesAnalytics] =
+    useState<Record<string, WebsiteAnalytics>>({});
 
   // Delete confirmation dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -1400,9 +1394,20 @@ export default function WebsiteManagementPage() {
         setHasPaidServices(paidServices.length > 0);
       }
 
-      if (pagesData.success && pagesData.pages?.length > 0) {
+      /*
+       * Narrowed ONCE, into a local, rather than optional-chained four times.
+       *
+       * `pagesData.pages?.length > 0` does not narrow anything: the guard
+       * succeeds, and every later `pagesData.pages` is still `WebsitePage[] |
+       * undefined` — which is four type errors and, more to the point, four
+       * places that would throw if the field ever really were absent. Holding
+       * the array in a const proves it once for all of them.
+       */
+      const pages = pagesData.pages;
+
+      if (pagesData.success && pages && pages.length > 0) {
         // Store all pages
-        setAllPages(pagesData.pages);
+        setAllPages(pages);
 
         // Get the homepage (first page)
         // The homepage, or nothing. The `|| pages[0]` fallback that used to be
@@ -1410,7 +1415,7 @@ export default function WebsiteManagementPage() {
         // first — a landing page, on any account without a site. That is why
         // the header opened already wearing a landing page's title, and why the
         // Overview tab could show one where the website belongs.
-        const homepage = pagesData.pages.find((p: WebsitePage) => p.page_type === 'homepage') || null;
+        const homepage = pages.find((p: WebsitePage) => p.page_type === 'homepage') || null;
         setPage(homepage);
 
         /*
@@ -1433,9 +1438,12 @@ export default function WebsiteManagementPage() {
           '/api/website/analytics'
         );
 
-        const landingPages = pagesData.pages.filter((p: WebsitePage) => p.page_type === 'landing');
+        const landingPages = pages.filter((p: WebsitePage) => p.page_type === 'landing');
         const activityPromises = landingPages.map((lp: WebsitePage) =>
-          startFetch<{ success: boolean; analytics?: unknown }>(
+          /* Typed, not `unknown`. The route returns the same shape the site's
+             own analytics do, and saying so is what lets the map below be
+             assigned to state without a cast. */
+          startFetch<{ success: boolean; analytics?: WebsiteAnalytics }>(
             `/api/website/pages/${lp.id}/activity?full=true`
           ).then(result => ({
             pageId: lp.id,
@@ -1473,8 +1481,8 @@ export default function WebsiteManagementPage() {
           // Repaired here too: this is the path that runs on opening the page,
           // so a site missing its footer regains one without the owner having
           // to click into a section first.
-          const withFooter = await ensureRequiredBlock(homepage.id, homepage.page_type, 'footer', blocksData.blocks || [], profile?.company_name);
-          setBlocks(await ensureRequiredBlock(homepage.id, homepage.page_type, 'process', withFooter));
+          const withFooter = await ensureRequiredBlock(homepage.id, homepage.page_type, 'footer', blocksData.blocks || [], homepage.website_language, profile?.company_name);
+          setBlocks(await ensureRequiredBlock(homepage.id, homepage.page_type, 'process', withFooter, homepage.website_language));
           // Extract client flow from process block
           const processBlock = (blocksData.blocks || []).find((b: WebsiteBlock) => b.block_type === 'process');
           if (processBlock?.content) {
@@ -1513,7 +1521,11 @@ export default function WebsiteManagementPage() {
         // Fetch analytics for all landing pages
         if (activityPromises.length > 0) {
           const results = await Promise.all(activityPromises);
-          const analyticsMap: Record<string, typeof results[0]['analytics']> = {};
+          /* The map holds only what was PRESENT — the guard below drops a page
+             whose activity came back empty — so its type says so. Deriving it
+             from the response (`typeof results[0]['analytics']`) carried the
+             optionality of the fetch into a map that never stores a blank. */
+          const analyticsMap: Record<string, WebsiteAnalytics> = {};
           results.forEach(r => {
             if (r.analytics) {
               analyticsMap[r.pageId] = r.analytics;
@@ -2224,8 +2236,8 @@ export default function WebsiteManagementPage() {
       const blocksResponse = await fetch(`/api/website/pages/${selectedPage.id}/blocks-with-content`);
       const blocksData = await blocksResponse.json();
       if (blocksData.success) {
-        const repaired = await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'footer', blocksData.blocks || []);
-        setBlocks(await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'process', repaired));
+        const repaired = await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'footer', blocksData.blocks || [], selectedPage.website_language);
+        setBlocks(await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'process', repaired, selectedPage.website_language));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch blocks for page');
@@ -2425,15 +2437,38 @@ export default function WebsiteManagementPage() {
       const response = await fetch(`/api/website/pages/${target}/publish`);
       const data = await response.json();
 
-      if (data.ready === false) {
-        logger.warn({ pageId: target, reason: data.reason }, 'Preview refused');
-        setPublishGaps(Array.isArray(data.gaps) ? data.gaps : []);
-        setPublishError(data.error || labels.publish_failed);
-        return;
+      /*
+       * PREVIEW SHOWS. IT DOES NOT REFUSE.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * This used to `return` on a gap, so an owner part-way through setup
+       * could not look at the page they were building. That is the wrong thing
+       * to withhold: a preview is the owner looking at their own work, not a
+       * promise to a client, and these rules exist to sit at the moment
+       * something becomes CLIENT-facing — publishing, or taking a booking —
+       * never to police the work leading up to it.
+       *
+       * The original reason for blocking was that a preview walks a live
+       * booking flow, so an owner could reach a booking with nothing behind it.
+       * That reason is gone: both booking routes now refuse on exactly these
+       * gaps, so the dangerous action is stopped at its source however it is
+       * reached — preview, smart link or the live site.
+       *
+       * The gaps are still SET, so the notice stays beside the publish button.
+       * The owner sees what is missing AND sees their page.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const notReady = data.ready === false;
+
+      if (notReady) {
+        logger.info(
+          { pageId: target, reason: data.reason },
+          'Previewing a page that is not ready to publish'
+        );
       }
 
-      setPublishError(null);
-      setPublishGaps([]);
+      setPublishGaps(notReady && Array.isArray(data.gaps) ? data.gaps : []);
+      setPublishError(notReady ? (data.error || labels.publish_failed) : null);
       open();
     } catch (error) {
       // A failed CHECK must not stand between an owner and their preview.
@@ -2456,7 +2491,40 @@ export default function WebsiteManagementPage() {
   const handlePublish = async () => {
     if (!page) return;
 
+    /*
+     * THE GATE COMES BEFORE THE DIALOG, NOT AFTER IT.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * The address dialog opened first and returned, so readiness was not
+     * asked until the owner had chosen a subdomain and pressed publish again.
+     * They were taken through a decision they could not act on — naming the
+     * address their clients will use — and only then told the site could not
+     * go live because the invoice details are empty.
+     *
+     * Asked here, before anything opens, so a refusal lands on the button
+     * they actually pressed and names what to fix. Only on the FIRST publish
+     * path, because that is the branch that opens the dialog; the publish
+     * below already surfaces the same gaps when it refuses.
+     *
+     * Fails open: a readiness check that errors must not stand between an
+     * owner and publishing. The POST behind this is the authority and gates
+     * again regardless.
+     * ───────────────────────────────────────────────────────────────────────
+     */
     if (!page.published && !publishAddressOpen) {
+      try {
+        const probe = await fetch(`/api/website/pages/${page.id}/publish`);
+        const readiness = await probe.json();
+
+        if (probe.ok && readiness && readiness.ready === false) {
+          setPublishGaps(Array.isArray(readiness.gaps) ? readiness.gaps : []);
+          setPublishError(readiness.error || labels.publish_failed);
+          return;
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Could not check publish readiness before asking for the address');
+      }
+
       setPublishAddressValue(page.subdomain || subdomain || '');
       setSubdomainAvailable(null);
       setPublishAddressOpen(true);
@@ -3146,7 +3214,36 @@ export default function WebsiteManagementPage() {
     }
   };
 
-  // Get default content for a new block
+  /**
+   * The starter copy a newly added section is born with, in the SITE's language.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS TRANSLATED ON THE WAY OUT RATHER THAN WRITTEN PER LANGUAGE
+   *
+   * Five code paths build sections, and this was the only one that shipped
+   * English. The AI generator prompts in the page's language, the landing
+   * builder branches on it, and the template scaffold keeps English literals
+   * and hands them to `translateBlockContent` on the way into the database —
+   * so adding a section is now the same mechanism as installing the scaffold,
+   * reading the same table, rather than a fourteenth set of ternaries that can
+   * drift from it.
+   *
+   * It matters that this is fixed at the WRITE and not at the render: a
+   * block's renderer does carry localised fallbacks, but they only apply to
+   * content that is absent. Storing "Stay Updated" on a Hebrew page defeats
+   * them, which is exactly what happened.
+   *
+   * THE SITE'S LANGUAGE, NOT THE OWNER'S. `language` from `useLanguage()` is
+   * the admin UI's — a Hebrew-speaking owner may run an English site, and the
+   * copy going onto that site has to follow the site. `page.website_language`
+   * is the row itself; `settingsForm` is the same value and is what every
+   * other call in this file passes, so it stands in before the row loads.
+   *
+   * Machine values are deliberately NOT translatable: the table is keyed by
+   * the string itself, and `name`, `tel`, `grid` and `#contact` appear in none
+   * of it, so a field's name and a link's target pass through untouched.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const getDefaultBlockContent = (blockType: string): Record<string, unknown> => {
     const defaults: Record<string, Record<string, unknown>> = {
       hero: { headline: 'Welcome', subheadline: 'Your professional service', cta_text: 'Get Started', cta_link: '#contact' },
@@ -3169,7 +3266,15 @@ export default function WebsiteManagementPage() {
       logo_cloud: { title: 'Trusted By', logos: [] },
       video: { title: '', video_url: '' }
     };
-    return defaults[blockType] || {};
+
+    const content = defaults[blockType];
+    if (!content) return {};
+
+    const siteLanguage = (page?.website_language ||
+      settingsForm.website_language ||
+      'en') as 'en' | 'es' | 'he';
+
+    return translateBlockContent(content, siteLanguage);
   };
 
   // Fetch enrichment summary to show what data is available
@@ -3265,6 +3370,20 @@ export default function WebsiteManagementPage() {
     blockType: 'footer' | 'process',
     loaded: WebsiteBlock[],
     /*
+     * The SITE's language, passed in for the same reason `companyName` is.
+     *
+     * This read `language` from `useLanguage()` — the admin UI's language, not
+     * the site's. A Hebrew-speaking owner running an English site got a Hebrew
+     * "איך זה עובד" heading and Hebrew footer links on an otherwise English
+     * page, and an English-speaking owner running a Hebrew site got the
+     * reverse. The page row knows which language the site is written in, and
+     * both callers are holding that row.
+     *
+     * It cannot be read from `settingsForm` here for the staleness reason
+     * below: this runs in the same pass that hydrates it.
+     */
+    siteLanguage?: 'en' | 'es' | 'he' | null,
+    /*
      * Passed in, not read from state.
      *
      * The main loader calls this in the same pass that sets `businessProfile`,
@@ -3274,6 +3393,7 @@ export default function WebsiteManagementPage() {
      */
     companyName?: string | null
   ) => {
+    const lang = siteLanguage || 'en';
     // Landing pages carry neither of these by design: a landing page is one
     // offer on one screen, with no "how it works" and no footer.
     if (pageType === 'landing') return loaded;
@@ -3294,7 +3414,7 @@ export default function WebsiteManagementPage() {
              * that nobody wrote and that enrichment would then have to
              * second-guess.
              */
-            title: language === 'he' ? 'איך זה עובד' : language === 'es' ? 'Cómo Funciona' : 'How It Works',
+            title: lang === 'he' ? 'איך זה עובד' : lang === 'es' ? 'Cómo Funciona' : 'How It Works',
             services_only: false,
           } : {
             company_name: companyName || businessProfile?.company_name || '',
@@ -3310,9 +3430,9 @@ export default function WebsiteManagementPage() {
              * with no About section does not offer a link to one.
              */
             menu_items: [
-              { type: 'about', anchor: '#about', label: language === 'he' ? 'אודות' : language === 'es' ? 'Acerca de' : 'About' },
-              { type: 'services', anchor: '#services', label: language === 'he' ? 'שירותים' : language === 'es' ? 'Servicios' : 'Services' },
-              { type: 'contact_form', anchor: '#contact', label: language === 'he' ? 'יצירת קשר' : language === 'es' ? 'Contacto' : 'Contact' },
+              { type: 'about', anchor: '#about', label: lang === 'he' ? 'אודות' : lang === 'es' ? 'Acerca de' : 'About' },
+              { type: 'services', anchor: '#services', label: lang === 'he' ? 'שירותים' : lang === 'es' ? 'Servicios' : 'Services' },
+              { type: 'contact_form', anchor: '#contact', label: lang === 'he' ? 'יצירת קשר' : lang === 'es' ? 'Contacto' : 'Contact' },
             ]
               .filter(item => loaded.some(b => b.block_type === item.type))
               .map(({ label, anchor }) => ({ label, anchor })),
@@ -4749,7 +4869,7 @@ export default function WebsiteManagementPage() {
 
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]">
+    <div className="min-h-full bg-[var(--v2-bg)]">
 
       {/* Main Content with max-width like CRM dashboard */}
       <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
@@ -5485,8 +5605,27 @@ export default function WebsiteManagementPage() {
                 className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                 style={{ borderRadius: 'var(--v2-radius-card)' }}
               >
-                <div className="mb-6 flex items-start justify-between">
-                  <div>
+                {/*
+                  ───────────────────────────────────────────────────────────
+                  THIS ROW HAS TO WRAP, BECAUSE ON A PHONE IT CANNOT NOT.
+
+                  It was `flex items-start justify-between` with a non-wrapping
+                  button group inside it, and neither child could give way. So
+                  on a narrow screen the two fought over one line: the heading
+                  column collapsed to a few characters wide — "הפעל/כבה חלקים
+                  וגרור לסידור מחדש" came out as a vertical ribbon — while the
+                  buttons broke their own labels mid-phrase, "סנכרן עם נתוני
+                  העסק" over four lines.
+
+                  Stacked below `sm`, side by side above it. `min-w-0` on the
+                  text column because a flex child defaults to `min-width:auto`
+                  and will push the row wider rather than wrap its own text,
+                  which is what let the buttons squeeze it in the first place.
+                  `whitespace-nowrap` on each button keeps a label one word.
+                  ───────────────────────────────────────────────────────────
+                */}
+                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
                     <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
                       {page?.page_type === 'landing'
                         ? (language === 'he' ? 'עריכת דף נחיתה' : language === 'es' ? 'Editar Página de Destino' : 'Edit Landing Page')
@@ -5500,14 +5639,14 @@ export default function WebsiteManagementPage() {
                   </div>
 
                   {/* Action Buttons - Different for landing pages vs main website */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                     {/* Preview Button for Landing Pages - "View Landing Page" */}
                     {page?.page_type === 'landing' && (
                       <button
                         type="button"
                         onClick={() => handlePreview(page.id)}
                         disabled={previewChecking}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all disabled:opacity-50"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all disabled:opacity-50"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Eye className="w-4 h-4" />
@@ -5526,7 +5665,7 @@ export default function WebsiteManagementPage() {
                       <button
                         onClick={handleResetBlockOrder}
                         disabled={resettingOrder}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                         title={language === 'he' ? 'איפוס סדר לברירת מחדל' : language === 'es' ? 'Restablecer orden' : 'Reset to default order'}
                       >
@@ -5542,7 +5681,7 @@ export default function WebsiteManagementPage() {
                     {page?.page_type !== 'landing' && (
                       <button
                         onClick={() => setShowAddSectionModal(true)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Plus className="w-4 h-4" />
@@ -5554,7 +5693,7 @@ export default function WebsiteManagementPage() {
                       <button
                         onClick={handleSyncWithBusinessData}
                         disabled={syncing}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        className="flex items-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         {syncing ? (
@@ -6376,7 +6515,11 @@ export default function WebsiteManagementPage() {
                                                       processorReady={processorReady}
                                                       service={{
                                                         scheduled: (service as { is_scheduled?: boolean }).is_scheduled !== false,
-                                                        collection: (service as { collection?: string | null }).collection ?? null,
+                                                        /* The column's own union, not `string`. `scheduling_services.collection`
+                                                           is 'online' | 'invoice' | null and nothing else — a CHECK enforces it —
+                                                           so widening it to `string` here only broke the assignment to
+                                                           `ClientJourneyStrip`, which asks for the real type. */
+                                                        collection: (service as { collection?: 'online' | 'invoice' | null }).collection ?? null,
                                                         price: (service as { priceRaw?: number | null }).priceRaw ?? null,
                                                       }}
                                                     />

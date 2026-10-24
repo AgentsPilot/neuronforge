@@ -217,7 +217,13 @@ describe('the triage row', () => {
       definitions.indexOf("id: 'meeting_auto_completed'"),
       definitions.indexOf('export const GAP_DEFINITIONS')
     );
-    expect(gap).toContain(".eq('status', 'completed')");
+    /*
+     * `meeting_status`, not `status`. The automation's answer moved there when
+     * `complete()` stopped writing `status: 'completed'`; asking the old column
+     * matched nothing the automation had marked, so the gap quietly stopped
+     * raising at all.
+     */
+    expect(gap).toContain(".eq('meeting_status', 'held')");
   });
 
   it('settles after a week rather than accumulating', () => {

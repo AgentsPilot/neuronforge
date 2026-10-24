@@ -54,12 +54,20 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
     const lookbackDate = new Date();
     lookbackDate.setDate(lookbackDate.getDate() - daysLookback);
 
-    // Get all completed bookings in the period, grouped by contact
+    /*
+     * Meetings that HAPPENED, grouped by contact — read off `meeting_status`.
+     *
+     * This asked `status = 'completed'`, which no longer answers the question:
+     * `complete()` writes `meeting_status: 'held'` and leaves `status` alone, so
+     * a meeting the owner marked held today is invisible to that filter and the
+     * repeat rate reads low for the wrong reason. The backfill gave every
+     * historical `completed` row a `held`, so this covers both.
+     */
     const { data: bookings, error } = await this.supabase
       .from('scheduling_bookings')
       .select('contact_id, id, start_time, payment_amount')
       .eq('user_id', userId)
-      .eq('status', 'completed')
+      .eq('meeting_status', 'held')
       .gte('start_time', lookbackDate.toISOString())
       .not('contact_id', 'is', null);
 
