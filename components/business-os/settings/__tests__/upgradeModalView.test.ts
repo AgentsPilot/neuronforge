@@ -228,3 +228,42 @@ describe('UM-1b: which button, by the server\'s offer (§4; SA Q-1, Q-3)', () =>
     expect(column(payload, TOP)).toMatchObject({ isCurrent: true, action: 'upgrade', ownPlanNote: 'upgrade' });
   });
 });
+
+describe("LF-2 (live test 2026-10-20): a non-tier account's own plan is its own column", () => {
+  it.each([
+    ['trial', () => payloadFor({ planId: TRIAL }), TRIAL],
+    ['Founding Partner, no end date', () => payloadFor({ planId: FOUNDING_PARTNER }), FOUNDING_PARTNER],
+    ['Founding Partner, dated', () => payloadFor({ planId: FOUNDING_PARTNER, cohortExpiresAt: inSixtyDays() }), FOUNDING_PARTNER],
+  ] as const)('%s: ownColumn from the server (id) and the payload (name, Free); tier columns unchanged', async (_name, make, ownId) => {
+    const payload = await make();
+    const view = upgradeModalView(payload);
+    expect(view.ownColumn).toEqual({ planId: ownId, name: payload.name, free: true });
+    // The tier columns and the server's table are untouched (C-21).
+    expect(view.columns.map((entry) => entry.planId)).toEqual(payload.comparison!.planIds);
+    expect(view.sections).toBe(payload.comparison!.sections);
+    expect(view.columns.some((entry) => entry.isCurrent)).toBe(false);
+  });
+
+  it('a tier account has no ownColumn: its plan is the column marked current', async () => {
+    const payload = await payloadFor({ billingRow: payingRow(LOWER) });
+    const view = upgradeModalView(payload);
+    expect(view.ownColumn).toBeNull();
+    expect(column(payload, LOWER).isCurrent).toBe(true);
+  });
+
+  it('the own column changes no action, offer or headline (the Founding Partner with no end date is still offered nothing)', async () => {
+    const payload = await payloadFor({ planId: FOUNDING_PARTNER });
+    const withOwn = upgradeModalView(payload);
+    const old: PlanPayload = { ...payload, comparison: { ...payload.comparison!, current: null } };
+    const without = upgradeModalView(old);
+    expect(without.ownColumn).toBeNull();
+    expect({ ...withOwn, ownColumn: null }).toEqual(without);
+    expect(withOwn.hasActions).toBe(false);
+  });
+
+  it('only what the server sent: no `current` → no own column, even for a cohort', async () => {
+    const payload = await payloadFor({ planId: TRIAL });
+    const { current: _dropped, ...comparison } = payload.comparison!;
+    expect(upgradeModalView({ ...payload, comparison }).ownColumn).toBeNull();
+  });
+});

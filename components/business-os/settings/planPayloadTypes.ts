@@ -130,6 +130,13 @@ export interface PlanPayload {
 export interface PlanComparison {
   /** The columns: exactly `plans.map(p => p.planId)`, same order. */
   planIds: string[];
+  /**
+   * Live-test fix LF-2: the account's own plan when it is not a shown tier (a
+   * trial, a Founding Partner), shown as its own first column marked "Your
+   * plan"; its cells are each row's `current`. `null` for a tier account.
+   * Optional: an older payload has none and renders the tier columns only.
+   */
+  current?: { planId: string } | null;
   /** Non-empty sections only, in the server's order. */
   sections: PlanComparisonSection[];
 }
@@ -149,6 +156,8 @@ export interface PlanComparisonRow {
   label: string;
   /** One per `planIds` entry, same order. */
   cells: PlanComparisonCell[];
+  /** LF-2: the own plan's cell, from the account's resolved plan, when `comparison.current` is set. */
+  current?: PlanComparisonCell | null;
 }
 
 export interface PlanComparisonCell {

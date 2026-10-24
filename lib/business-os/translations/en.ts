@@ -314,6 +314,16 @@ export const en = {
     'upgrade_modal.included': 'Included',
     'upgrade_modal.not_included': 'Not included',
     'upgrade_modal.cell_label': '{plan}: {state}',
+    // Upgrade modal UM-2: the locked_feature and founding_partner variants (he / es approved by the user 2026-10-20).
+    'upgrade_modal.headline.locked_feature': 'This needs {plan}',
+    'upgrade_modal.subheading.locked_feature': 'See what {plan} includes, side by side with the other plans.',
+    'upgrade_modal.locked.not_offered': "{plan} can't be bought from your account right now.",
+    'upgrade_modal.headline.founding_partner': 'Keep everything you have',
+    'upgrade_modal.subheading.founding_partner': 'Choose a plan to carry on without a break.',
+    'upgrade_modal.badge.needed': 'Needed for this',
+    // Upgrade modal UM-3 (user-approved 2026-10-20): CV-5 for an upgrade offer (SA Q-2 wording), and a translated Close (footer + the X's screen-reader name).
+    'upgrade_modal.subheading.upgrade': 'When you upgrade, you pay only the price difference for the rest of your current billing period.',
+    'upgrade_modal.close': 'Close',
     // The plan screen's remaining words, so a Hebrew or Spanish owner reads no
     // English there (user decision, 2026-10-02). {plan}, {from}, {to} are filled
     // by the component; the values arrive already in the reader's language.

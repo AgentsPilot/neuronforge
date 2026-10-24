@@ -10,6 +10,7 @@ import { BusinessOSTabs } from '@/components/business-os/BusinessOSTabs';
 import { BUSINESS_OS_SCROLL_ID } from '@/lib/business-os/pageContainer';
 import { ConfigurationDialogProvider } from '@/components/business-os/ConfigurationDialogProvider';
 import { CapabilitiesProvider } from '@/components/business-os/CapabilitiesProvider';
+import { UpgradeModalProvider } from '@/components/business-os/settings/UpgradeModalProvider';
 import { Space_Grotesk, Inter } from 'next/font/google';
 
 import { readPlanBadge } from '@/lib/business-os/entitlements/readPlanBadge';
@@ -116,6 +117,13 @@ export default async function BusinessOSLayout({
           <CapabilitiesProvider>
             <ConfigurationDialogProvider>
               {/*
+                Upgrade modal UM-2: the plan comparison window, opened from any
+                page with `useUpgradeModal()`. Here for the same two reasons as
+                the configuration dialog (translated; outside the sticky chrome),
+                and inside it so a caller in that dialog can reach both.
+              */}
+              <UpgradeModalProvider>
+              {/*
                 A COLUMN THE HEIGHT OF THE WINDOW, WITH ONE SCROLLING PART.
                 ─────────────────────────────────────────────────────────────
                 The document used to scroll and the chrome was held in place
@@ -164,6 +172,7 @@ export default async function BusinessOSLayout({
                   {children}
                 </div>
               </div>
+              </UpgradeModalProvider>
             </ConfigurationDialogProvider>
           </CapabilitiesProvider>
         </LanguageProvider>
