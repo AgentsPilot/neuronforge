@@ -314,6 +314,13 @@ export const en = {
     'upgrade_modal.included': 'Included',
     'upgrade_modal.not_included': 'Not included',
     'upgrade_modal.cell_label': '{plan}: {state}',
+    // Upgrade modal UM-2: the locked_feature and founding_partner variants (he / es approved by the user 2026-10-20).
+    'upgrade_modal.headline.locked_feature': 'This needs {plan}',
+    'upgrade_modal.subheading.locked_feature': 'See what {plan} includes, side by side with the other plans.',
+    'upgrade_modal.locked.not_offered': "{plan} can't be bought from your account right now.",
+    'upgrade_modal.headline.founding_partner': 'Keep everything you have',
+    'upgrade_modal.subheading.founding_partner': 'Choose a plan to carry on without a break.',
+    'upgrade_modal.badge.needed': 'Needed for this',
     // The plan screen's remaining words, so a Hebrew or Spanish owner reads no
     // English there (user decision, 2026-10-02). {plan}, {from}, {to} are filled
     // by the component; the values arrive already in the reader's language.

@@ -2979,6 +2979,13 @@ export const he = {
     'upgrade_modal.included': 'כלול',
     'upgrade_modal.not_included': 'לא כלול',
     'upgrade_modal.cell_label': '{plan}: {state}',
+    // Upgrade modal UM-2: the locked_feature and founding_partner variants (he / es approved by the user 2026-10-20).
+    'upgrade_modal.headline.locked_feature': 'לשם כך צריך את {plan}',
+    'upgrade_modal.subheading.locked_feature': 'מה כוללת {plan}, לצד התוכניות האחרות.',
+    'upgrade_modal.locked.not_offered': 'כרגע לא ניתן לרכוש את {plan} מהחשבון שלך.',
+    'upgrade_modal.headline.founding_partner': 'שומרים על כל מה שיש לך',
+    'upgrade_modal.subheading.founding_partner': 'בוחרים תוכנית וממשיכים בלי הפסקה.',
+    'upgrade_modal.badge.needed': 'נדרשת לשם כך',
     'plan.features_unavailable': 'לא הצלחנו להציג את התכונות שלך כרגע. שום דבר לא הוסר מהחשבון שלך.',
     'plan.next.adds_heading': 'מה נוסף ב־{plan}',
     'plan.next.improves_line': '{to} במקום {from}',

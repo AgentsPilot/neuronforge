@@ -87,8 +87,9 @@ import { createLogger } from '@/lib/logger';
 import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
 import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
 import { CategoryRowText, Notice, fill, priceLine, renderSentence } from './planText';
-import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
+import { PlanFlowStatus } from './PlanFlowStatus';
 import { UpgradeModal } from './UpgradeModal';
+import { useUpgradeModalInlineHost } from './UpgradeModalProvider';
 import { upgradeModalView } from './upgradeModalView';
 import { planFrom, usePlanFlow } from './usePlanFlow';
 
@@ -248,6 +249,14 @@ export function PlanSection({
     // Re-fetched on a language change, so the names follow the interface.
   }, [language]);
 
+  /*
+   * UM-SA2 (upgrade modal UM-2, workplan §4.3): while this section is mounted
+   * (the plan drawer is open) it hosts its own window, so the layout's
+   * `openUpgradeModal` refuses rather than portal a second one over the drawer.
+   * Declared AFTER the `[language]` effect, so P-G8 still holds.
+   */
+  useUpgradeModalInlineHost();
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-2 text-sm text-[var(--v2-text-muted)]" aria-busy="true">
@@ -304,39 +313,11 @@ export function PlanSection({
         )}
       </div>
 
-      {/* After checkout (M-6): the server's answer, or "processing" until it comes. */}
-      {marker !== null && succeeded && plan.name && (
-        <p role="status" className="text-sm text-[var(--v2-text-primary)]" data-testid="plan-purchase-done">
-          {fill(t('plan.purchase.done'), { plan: plan.name })}
-        </p>
-      )}
-      {upgradeSucceeded && plan.name && (
-        <p role="status" className="text-sm text-[var(--v2-text-primary)]" data-testid="plan-upgrade-done">
-          {fill(t('plan.upgrade.done'), { plan: plan.name })}
-        </p>
-      )}
-      {upgradeProcessing && !checkoutProcessing && !exhausted && (
-        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-upgrade-upgrading">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>{t('plan.upgrade.upgrading')}</span>
-        </p>
-      )}
-      {checkoutProcessing && !exhausted && (
-        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-purchase-processing">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>{t('plan.purchase.processing')}</span>
-        </p>
-      )}
-      {processing && exhausted && (
-        <div className="space-y-1" data-testid="plan-purchase-slow">
-          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.purchase.slow')}</p>
-          {/* Without the marker: Choose shows again if nothing is live, so a stale
-              or bookmarked marker cannot trap the owner here. */}
-          <a href={SETTINGS_PLAN_PATH} className="text-sm text-[var(--v2-primary)] underline" data-testid="plan-purchase-check-again">
-            {t('plan.purchase.check_again')}
-          </a>
-        </div>
-      )}
+      {/* B5 / B6, one rendering shared with the standalone window (UM-2 §5.3). */}
+      <PlanFlowStatus
+        flow={{ marker, succeeded, upgradeSucceeded, upgradeProcessing, checkoutProcessing, processing, exhausted }}
+        planName={plan.name}
+      />
 
       {/* Free plans only: what happens when free is not free. Written now so the
           change is something the customer has already read once. */}
