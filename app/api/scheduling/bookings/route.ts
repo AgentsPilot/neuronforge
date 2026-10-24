@@ -87,7 +87,15 @@ const listBookingsSchema = z.object({
   start_date: z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' }).optional(),
   end_date: z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' }).optional(),
   limit: z.number().min(1).max(500).optional(), // Increased max to 500 for calendar views
-  offset: z.number().min(0).optional()
+  offset: z.number().min(0).optional(),
+  /*
+   * Attach each booking's meeting ATTEMPTS — see `listAttempts`.
+   *
+   * Opt-in because it costs a second query and only the contact drawer's
+   * journey draws them. The calendar, the chat and the plugin executor all
+   * call this route and none of them should pay for it.
+   */
+  include_attempts: z.boolean().optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -173,8 +181,7 @@ export async function POST(request: NextRequest) {
       } else {
         // Create new contact - get user's first pipeline stage
         // `list` returns them ordered by position, so [0] is the entry stage.
-        const stagesResult = await crmPipelineStagesRepository.list(user.id);
-        const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+        const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(user.id);
 
         const newContactResult = await crmContactRepository.create({
           user_id: user.id,
@@ -182,7 +189,7 @@ export async function POST(request: NextRequest) {
           last_name: validated.client_last_name || null,
           email: validated.client_email,
           phone: validated.client_phone || null,
-          stage: firstStage,
+          ...(firstStage ? { stage: firstStage } : {}),
           tags: [],
           source: 'booking'
         });
@@ -239,7 +246,7 @@ export async function POST(request: NextRequest) {
     try {
       const { data: gateService } = await supabaseServer
         .from('scheduling_services')
-        .select('service_name, is_scheduled, collection, price')
+        .select('service_name, is_scheduled, collection, price, sale_mode')
         .eq('id', validated.service_id)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -251,6 +258,8 @@ export async function POST(request: NextRequest) {
               name: gateService.service_name,
               is_scheduled: gateService.is_scheduled,
               collection: gateService.collection,
+              /* A quote ends in an invoice too — see `JourneyReadinessService.sale_mode`. */
+              sale_mode: gateService.sale_mode,
               price: gateService.price,
             },
           ])
@@ -424,7 +433,8 @@ export async function GET(request: NextRequest) {
       start_date: searchParams.get('start_date') || undefined,
       end_date: searchParams.get('end_date') || undefined,
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined,
-      offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : undefined
+      offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : undefined,
+      include_attempts: searchParams.get('include_attempts') === 'true' || undefined
     };
 
     // Validate
@@ -463,9 +473,36 @@ export async function GET(request: NextRequest) {
       }))
     }, 'Returning bookings');
 
+    /*
+     * The ATTEMPTS at each booking, when they were asked for.
+     *
+     * Attached under `attempts` rather than merged into the row, so a booking
+     * with one attempt — which is every booking that has never been
+     * rescheduled after an outcome — is shaped exactly as it was before. The
+     * journey falls back to its single meeting node for those, and nothing it
+     * already drew changes.
+     *
+     * `listAttempts` returns `{}` on failure rather than throwing: a journey
+     * that cannot read its attempts should draw what it drew yesterday, not
+     * fail the whole booking list.
+     */
+    let bookings = result.data;
+
+    if (validated.include_attempts && bookings?.length) {
+      const attempts = await schedulingBookingRepository.listAttempts(
+        user.id,
+        bookings.map(b => b.id)
+      );
+
+      bookings = bookings.map(booking => ({
+        ...booking,
+        attempts: attempts[booking.id] ?? [],
+      }));
+    }
+
     return NextResponse.json({
       success: true,
-      bookings: result.data,
+      bookings,
       limit: validated.limit || 50,
       offset: validated.offset || 0
     });

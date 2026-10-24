@@ -61,6 +61,41 @@ export interface EmailSend {
   sequence_id: string | null;
   sequence_step_id: string | null;
   campaign_id: string | null;
+  /**
+   * The booking this mail was about (20261077), or null.
+   *
+   * Null on every row written before that migration, and on every campaign or
+   * sequence send — deliberately NOT backfilled: nothing in the database
+   * recorded which booking an older email concerned, so filling it in would
+   * mean writing the drawer's `(created_at + service_name)` guess into a column
+   * that then reads as a recorded fact.
+   */
+  booking_id?: string | null;
+  /**
+   * The specific APPOINTMENT it was about, for a booking with more than one
+   * attempt. `booking_id` names the job; this names which meeting of it.
+   */
+  meeting_id?: string | null;
+  /**
+   * A REPEAT of mail already sent (20261079) — the owner pressing "send again".
+   *
+   * Recorded, never derived: reschedule notices all share one subject, so a
+   * subject-based guess would mark the second genuine notice as a resend.
+   */
+  is_resend?: boolean;
+  /**
+   * WHAT the message was (20261081), as its sender knew it.
+   *
+   * NULL on every row written before that migration, and deliberately not
+   * backfilled: the only evidence for an older row is its subject, and
+   * inferring the kind from subject text is precisely what this column exists
+   * to stop — the subject is written for the CLIENT, in the client's language.
+   * The journey falls back to the subject for those rows.
+   *
+   * TEXT with no CHECK, so treat an unrecognised value as "unlabelled" rather
+   * than assuming the union in `recordEmailSend.ts` is exhaustive of the data.
+   */
+  email_kind?: string | null;
   subject: string;
   body_html: string;
   to_email: string;

@@ -435,6 +435,43 @@ export async function resolveRefundTargets(params: {
   }
 
   /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * A THIRD WAY THE MONEY HANGS OFF A BOOKING: the booking points at IT.
+   *
+   * The two links above are both written on the transaction — `booking_id` for
+   * a website or landing-page sale, `invoice_id` for an invoiced one. A product
+   * bought through website CHECKOUT gets neither: the transaction is created
+   * with `booking_id`, `invoice_id` and `contact_id` all null, and the only
+   * thread between the two rows is `scheduling_bookings.payment_id`, pointing
+   * the other way.
+   *
+   * So a course or a training block paid for by card was unrefundable from the
+   * UI. The dialog opened on "₪0.00" and "no payment recorded here", over a
+   * transaction sitting there succeeded for the full amount. Live proof:
+   * booking 590be9ef paid ₪100 through transaction 6e8f82c2, which carries no
+   * link back at all.
+   *
+   * This reads the pointer the booking already holds. It does not repair the
+   * missing links — the checkout path should stamp them when it creates the
+   * transaction, and that is the root fix — but it makes every purchase
+   * already in this state refundable, which none of them were.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const pointedAt: string[] = [];
+
+  if (bookingId && !invoiceId) {
+    const { data: booking } = await supabaseServer
+      .from('scheduling_bookings')
+      .select('payment_id')
+      .eq('id', bookingId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const paymentId = booking?.payment_id as string | null | undefined;
+    if (paymentId) pointedAt.push(paymentId);
+  }
+
+  /*
    * Newest first, and newest is not arbitrary: refunding a plan from the last
    * period backwards means a run that stops halfway has returned the money the
    * client has least benefit from, and leaves the earliest periods — the ones
@@ -464,6 +501,22 @@ export async function resolveRefundTargets(params: {
         .select('id, created_at')
         .eq('user_id', userId)
         .in('invoice_id', invoiceIds)
+        .in('status', ['succeeded', 'refunded'])
+    );
+  }
+
+  /*
+   * Scoped by `user_id` like the other two, and filtered to the same settled
+   * statuses — so a booking pointing at another tenant's transaction, or at a
+   * failed one, still resolves to nothing.
+   */
+  if (pointedAt.length > 0) {
+    queries.push(
+      supabaseServer
+        .from('payment_transactions')
+        .select('id, created_at')
+        .eq('user_id', userId)
+        .in('id', pointedAt)
         .in('status', ['succeeded', 'refunded'])
     );
   }

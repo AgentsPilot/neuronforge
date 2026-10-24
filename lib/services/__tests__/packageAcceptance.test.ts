@@ -31,8 +31,14 @@ jest.mock('@/lib/logger', () => {
 
 const mockCreateBooking = jest.fn();
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
-  schedulingBookingRepository: { create: (...args: unknown[]) => mockCreateBooking(...args) },
+  schedulingBookingRepository: {
+    create: (...args: unknown[]) => mockCreateBooking(...args),
+    createMeeting: (...args: unknown[]) => mockCreateMeeting(...args),
+  },
 }));
+
+/* A package's sessions are rows in `scheduling_meetings`, not child bookings. */
+const mockCreateMeeting = jest.fn();
 
 const mockFindTimezone = jest.fn();
 jest.mock('@/lib/repositories/UserPreferencesRepository', () => ({
@@ -97,14 +103,19 @@ function quote(over: Partial<Proposal> & { sessions?: unknown } = {}): Proposal 
 
 /** Every `create` succeeds, each row getting its own id. */
 function bookingsSucceed() {
+  mockCreateBooking.mockImplementation(async () => ({ data: { id: 'container-1' }, error: null }));
+
   let n = 0;
-  mockCreateBooking.mockImplementation(async () => {
+  mockCreateMeeting.mockImplementation(async () => {
     n += 1;
-    return { data: { id: n === 1 ? 'container-1' : `meeting-${n - 1}` }, error: null };
+    return { data: { id: `meeting-${n}` }, error: null };
   });
 }
 
+/** The bookings written. For a package that is exactly one: the purchase. */
 const createdRows = () => mockCreateBooking.mock.calls.map(call => call[0]);
+/** The sessions written, in the order sold. */
+const createdMeetings = () => mockCreateMeeting.mock.calls.map(call => call[0]);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -155,12 +166,32 @@ describe('the container', () => {
     expect(container.occurrence_number).toBeUndefined();
   });
 
-  it('owns every meeting, in the order the owner chose', async () => {
+  it('is the ONLY booking written, however many sessions were sold', async () => {
+    /*
+     * Three dates used to be three more bookings, pointed at the container by
+     * `parent_booking_id`. Seven rows for one purchase made every reader that
+     * asks "what has this client bought" count wrong unless it knew to filter.
+     */
+    await applyAcceptance(quote());
+
+    expect(mockCreateBooking).toHaveBeenCalledTimes(1);
+    expect(createdMeetings()).toHaveLength(3);
+  });
+
+  it('owns every session, in the order the owner chose', async () => {
     const result = await applyAcceptance(quote());
 
-    const children = createdRows().slice(1);
-    expect(children.map(c => c.parent_booking_id)).toEqual(['container-1', 'container-1', 'container-1']);
-    expect(children.map(c => c.occurrence_number)).toEqual([1, 2, 3]);
+    const sessions = createdMeetings();
+    expect(sessions.map(m => m.booking_id)).toEqual(['container-1', 'container-1', 'container-1']);
+    /*
+     * The SESSION number counts which of the three this is. `occurrence_number`
+     * stays 1 on all of them: it counts ATTEMPTS at one appointment, and
+     * numbering the sessions with it would make session 2 read as session 1
+     * moved — which the slot rules then treat as session 1 giving its hour
+     * back (20261085, 20261086).
+     */
+    expect(sessions.map(m => m.session_number)).toEqual([1, 2, 3]);
+    expect(sessions.map(m => m.occurrence_number)).toEqual([1, 1, 1]);
     expect(result.package).toEqual({
       container: 'container-1',
       created: 3,
@@ -176,7 +207,7 @@ describe('each meeting', () => {
   it('starts when it was sold and runs for the agreed length', async () => {
     await applyAcceptance(quote());
 
-    expect(createdRows()[1]).toMatchObject({
+    expect(createdMeetings()[0]).toMatchObject({
       start_time: '2026-10-07T09:00:00.000Z',
       end_time: '2026-10-07T09:50:00.000Z',
     });
@@ -187,6 +218,7 @@ describe('each meeting', () => {
 
     // `'UTC'` here would print an hour nobody chose in the confirmation email.
     expect(createdRows().every(row => row.timezone === 'Asia/Jerusalem')).toBe(true);
+    expect(createdMeetings().every(row => row.timezone === 'Asia/Jerusalem')).toBe(true);
   });
 
   it('falls back to a usable zone when none is stored', async () => {
@@ -194,8 +226,9 @@ describe('each meeting', () => {
 
     await applyAcceptance(quote());
 
-    expect(createdRows()[1].timezone).toBeTruthy();
-    expect(mockCreateBooking).toHaveBeenCalledTimes(4);
+    expect(createdMeetings()[0].timezone).toBeTruthy();
+    expect(mockCreateBooking).toHaveBeenCalledTimes(1);
+    expect(mockCreateMeeting).toHaveBeenCalledTimes(3);
   });
 
   it('reads the clock through a method the real repository actually has (F-13)', () => {
@@ -213,9 +246,16 @@ describe('the status, read off how the package is paid for', () => {
   it('is pending when the client pays up front', async () => {
     await applyAcceptance(quote({ payment_shape: { kind: 'single' } } as Partial<Proposal>));
 
-    // The slots are held so nobody else takes them; `settleInvoicePaid`
-    // confirms them and sends the one email when the money lands.
+    /*
+     * The slots are held so nobody else takes them; `settleInvoicePaid`
+     * confirms them and sends the one email when the money lands.
+     *
+     * One status now, on the purchase. A session is a meeting, and a meeting's
+     * row records what HAPPENED at it rather than whether the job is paid for
+     * — which is also why confirming a paid package is a single-row update.
+     */
     expect(createdRows().every(row => row.status === 'pending')).toBe(true);
+    expect(createdMeetings().every(row => 'status' in row)).toBe(false);
   });
 
   it('is confirmed when the client pays per session', async () => {
@@ -243,11 +283,19 @@ describe('a date that was taken in the meantime', () => {
   });
 
   beforeEach(() => {
+    mockCreateBooking.mockImplementation(async () => ({ data: { id: 'container-1' }, error: null }));
+
+    /*
+     * The refusal now comes from `scheduling_meetings_no_overlap` (20261085)
+     * rather than the bookings constraint — which is the only one that CAN
+     * refuse a package session, since the container carries no time and the
+     * bookings constraint skips it. Same error code, same handling.
+     */
     let n = 0;
-    mockCreateBooking.mockImplementation(async () => {
+    mockCreateMeeting.mockImplementation(async () => {
       n += 1;
-      if (n === 3) return { data: null, error: taken }; // the second meeting
-      return { data: { id: n === 1 ? 'container-1' : `meeting-${n - 1}` }, error: null };
+      if (n === 2) return { data: null, error: taken };
+      return { data: { id: `meeting-${n}` }, error: null };
     });
   });
 
@@ -375,11 +423,21 @@ describe('a package billed after each meeting', () => {
   it('binds each stage to its own meeting', async () => {
     await applyAcceptance(quote(PER_SESSION));
 
-    // The whole mechanism: marking meeting 2 held must bill stage 2.
-    expect(stageRows().map(row => row.booking_id)).toEqual(['meeting-1', 'meeting-2', 'meeting-3']);
+    /*
+     * The whole mechanism: marking session 2 held must bill stage 2.
+     *
+     * This used to be `booking_id`, and could be, while each session was its
+     * own child booking. Now that all three share one booking, that column can
+     * no longer tell them apart — a lookup keyed on it finds all three and
+     * bills the lowest-numbered one whichever session happened. So the binding
+     * is `meeting_id`, and `booking_id` goes back to meaning the job the money
+     * belongs to.
+     */
+    expect(stageRows().map(row => row.meeting_id)).toEqual(['meeting-1', 'meeting-2', 'meeting-3']);
+    expect(stageRows().map(row => row.booking_id)).toEqual(['container-1', 'container-1', 'container-1']);
   });
 
-  it('still creates the meetings confirmed, because nothing is being waited for', async () => {
+  it('still creates the package confirmed, because nothing is being waited for', async () => {
     await applyAcceptance(quote(PER_SESSION));
 
     expect(createdRows().every(row => row.status === 'confirmed')).toBe(true);

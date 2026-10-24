@@ -155,7 +155,7 @@ export async function syncBookingPaymentState(
    * a confirmation.
    *
    * The CRM stage follows from this and is not decided here:
-   * `promote_contact_on_confirmed_booking` moves the contact when a booking
+   * `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)` moves the contact when a booking
    * becomes confirmed, wherever that confirmation comes from.
    * ───────────────────────────────────────────────────────────────────────────
    */

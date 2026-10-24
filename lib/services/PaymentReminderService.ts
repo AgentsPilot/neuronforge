@@ -927,6 +927,15 @@ export class PaymentReminderService {
         subject,
         html,
         ownerUserId: userId,
+        /*
+         * Urgent only once it is actually late, the same line the subject
+         * branches on. This service sends the pre-due courtesy too, and that
+         * one must not arrive flagged: a sender who marks everything urgent
+         * teaches clients and filters to discount the flag. `urgent` on
+         * `SendEmailBase` records which headers it sets and which client
+         * ignores them.
+         */
+        urgent: daysOverdue > 0,
       });
 
       // Recorded either way, and before the early return: a chase that failed

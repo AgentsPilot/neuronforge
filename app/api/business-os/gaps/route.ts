@@ -399,6 +399,12 @@ export async function GET(request: NextRequest) {
            */
           bookingId: item.bookingId ?? null,
           /*
+           * Which session of a package, so two rows about one job can be told
+           * apart. Named here for the reason the comment above gives: this list
+           * is field by field, and a new one is dropped in silence otherwise.
+           */
+          sessionNumber: item.sessionNumber ?? null,
+          /*
            * What is held on it, where money is involved.
            *
            * The card needs this to decide which button a row gets: a cancelled

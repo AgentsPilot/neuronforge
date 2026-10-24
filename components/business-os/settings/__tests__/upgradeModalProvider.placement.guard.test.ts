@@ -47,7 +47,9 @@ function pinOrder(layout: string) {
   const provider = at('<UpgradeModalProvider>');
   expect(provider).toBeGreaterThan(at('<LanguageProvider'));
   expect(provider).toBeGreaterThan(at('<CapabilitiesProvider>'));
-  expect(provider).toBeLessThan(at('sticky top-0'));
+  // The chrome block (header + tabs). It was `sticky top-0` until main moved the
+  // scroll into the body (BUSINESS_OS_SCROLL_ID); the stacking rule is unchanged.
+  expect(provider).toBeLessThan(at('relative z-50 shrink-0'));
   // Closed after the chrome and the page, before the providers around it close.
   const close = at('</UpgradeModalProvider>');
   expect(close).toBeGreaterThan(at('{children}'));

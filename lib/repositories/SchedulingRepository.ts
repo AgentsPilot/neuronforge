@@ -7,8 +7,9 @@
 
 import { SupabaseClient, type PostgrestError } from '@supabase/supabase-js';
 import type { CancelledBy } from '@/lib/business-os/cancellationReasons';
-import type { BookingStatus } from '@/lib/business-os/bookingStatus';
-import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
+import type { BookingStatus, MeetingStatus } from '@/lib/business-os/bookingStatus';
+import { MEETING_HOLDS_SLOT_FILTER, isSlotTakenError } from '@/lib/business-os/bookingStatus';
+import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import { createLogger } from '@/lib/logger';
 import { recordBusinessEvent } from '@/lib/business-os/insight/events/recordEvent';
 
@@ -155,6 +156,85 @@ export interface BookingContact {
   phone: string | null;
 }
 
+/**
+ * One arranged appointment, from `scheduling_meetings`.
+ *
+ * Narrow on purpose: this is what a journey row needs to say when it happened
+ * and how it went. The booking beside it carries everything else — the client,
+ * the service, the money — so none of that is repeated here.
+ */
+/**
+ * Who recorded an outcome.
+ *
+ * `system` is a real actor, not a fallback: a lead reply that auto-completes a
+ * booking was recorded by no person, and naming the owner would attribute a
+ * decision they did not make.
+ */
+export type MeetingOutcomeActor = 'owner' | 'client' | 'system';
+
+/**
+ * A meeting to be written directly, rather than mirrored from a booking.
+ *
+ * Only a package needs this: its sessions have no booking of their own to be
+ * synced from. Everything else reaches `scheduling_meetings` through
+ * `syncMeeting`, which keeps one row per booking in step with the booking's
+ * clock, and must go on doing so.
+ */
+export interface SchedulingMeetingInsert {
+  user_id: string;
+  /** The container — the purchase, which carries no time itself. */
+  booking_id: string;
+  start_time: string;
+  end_time: string;
+  /** The business's zone, for the hour the confirmation prints. */
+  timezone: string | null;
+  /**
+   * Which SESSION of the package this is, counted from the order sold.
+   *
+   * Kept apart from `occurrence_number`, which counts ATTEMPTS at this one
+   * session: moving session 3 writes `session_number: 3, occurrence_number: 2`
+   * (20261086). One column answering both questions renumbers a package's
+   * sessions the first time one is moved.
+   */
+  session_number: number;
+  /** Which attempt at that session. 1 for a session nobody has moved yet. */
+  occurrence_number: number;
+}
+
+export interface SchedulingMeetingAttempt {
+  id: string;
+  booking_id: string;
+  /** Who recorded `meeting_status`. NULL on rows predating 20261078. */
+  outcome_by: MeetingOutcomeActor | null;
+  /** When it was recorded, so the rail can place it among the emails. */
+  outcome_at: string | null;
+  /**
+   * Who caused this attempt to exist (20261082), for one a move created.
+   *
+   * NULL on attempt #1, which the booking put there rather than a move, and on
+   * every row predating the column. The journey reports such a move without
+   * naming a side — it used to say the owner had done it, which was false for
+   * every reschedule a client made from the public portal.
+   */
+  moved_by: MeetingOutcomeActor | null;
+  start_time: string;
+  end_time: string;
+  timezone: string | null;
+  /** `held` | `no_show` | `cancelled`, or null while nobody has said. */
+  meeting_status: MeetingStatus | null;
+  /**
+   * Which SESSION of a package this is (20261086), or NULL on an ordinary
+   * booking, which has one appointment.
+   *
+   * Readers that list a package group by this and take the highest
+   * `occurrence_number` in each group as the session's current time.
+   */
+  session_number: number | null;
+  /** 1 for the first arrangement, incrementing for each later attempt. */
+  occurrence_number: number;
+  created_at: string | null;
+}
+
 export interface SchedulingBooking {
   id: string;
   user_id: string;
@@ -164,11 +244,27 @@ export interface SchedulingBooking {
   end_time: string;
   timezone: string;
   status: BookingStatus;
+  /**
+   * What happened at the APPOINTMENT, independent of the job.
+   *
+   * `null` means nobody has said yet, which is the ordinary state of a past
+   * meeting. See the note on `MeetingStatus` for why this is not `status`.
+   */
+  meeting_status?: MeetingStatus;
   cancellation_reason: string | null;
   /** Structured cancellation: the code, the note, and who called it off. */
   cancel_reason?: string | null;
   cancel_note?: string | null;
   cancelled_by?: CancelledBy | null;
+  /**
+   * The owner's answer when a meeting was cancelled on a quoted job
+   * (20261083): is the quote still coming?
+   *
+   * NULL where nobody was asked, which is not the same as yes. `false` is what
+   * makes the journey ask whether the booking should be closed — work nobody
+   * will quote for should not sit open.
+   */
+  proposal_continues?: boolean | null;
   payment_status: 'pending' | 'paid' | 'refunded';
   payment_id: string | null;
   notes: string | null;
@@ -183,10 +279,40 @@ export interface SchedulingBooking {
   calendar_sync_error: string | null;
   // Intake fields
   intake_responses: {
-    template_id: string;
-    template_key: string;
+    /**
+     * The form and version answered, and a SNAPSHOT of the questions.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This type said `{ template_id, template_key, responses }`, which is not
+     * what is stored and has not been for some time: all 8 live submissions on
+     * this account carry `{ form_id, version, questions, responses }`, written
+     * by the client's own submit route.
+     *
+     * The old names survived because they were never read for anything that
+     * failed loudly — `.responses` is present in both shapes, so every reader
+     * that mattered kept working while `template_id` quietly resolved to
+     * `undefined` wherever it was asked for.
+     *
+     * The questions travel WITH the answers on purpose: a form edited or
+     * republished later would otherwise render an old submission as a list of
+     * values with nothing saying what was asked.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    form_id: string;
+    version: number;
+    questions?: IntakeQuestion[];
     responses: Record<string, unknown>;
   } | null;
+  /**
+   * When the form was emailed, and when the client was nudged about it.
+   *
+   * On the row all along — `SchedulingBookingUpdate` declares both and
+   * `IntakeReminderService` filters on them — and only this READ type omitted
+   * them. So a reader holding a booking could not tell an unasked form from an
+   * unanswered one, which is the distinction the whole intake step is about.
+   */
+  intake_sent_at?: string | null;
+  intake_reminded_at?: string | null;
   intake_completed_at: string | null;
   /** A package's meeting: its purchase, and which of the N it is. See the insert type. */
   parent_booking_id?: string | null;
@@ -245,6 +371,24 @@ export interface SchedulingBookingInsert {
 
 export interface SchedulingBookingUpdate {
   status?: BookingStatus;
+  /** The meeting's own outcome. Written alongside `status`, never instead of it yet. */
+  meeting_status?: MeetingStatus;
+  /**
+   * Who recorded that outcome (20261078).
+   *
+   * Nullable because `update()` clears it: moving an appointment after somebody
+   * answered leaves the new attempt unanswered, so the actor goes with the
+   * status it described.
+   */
+  outcome_by?: MeetingOutcomeActor | null;
+  proposal_continues?: boolean | null;
+  /**
+   * WHEN that outcome was recorded (20261080).
+   *
+   * Stamped beside the status it describes. `updated_at` cannot answer this —
+   * it moves for any write, including a calendar sync or a backfill.
+   */
+  outcome_at?: string | null;
   cancellation_reason?: string | null;
   cancel_reason?: string | null;
   cancel_note?: string | null;
@@ -264,8 +408,28 @@ export interface SchedulingBookingUpdate {
   calendar_sync_error?: string | null;
   // Intake fields
   intake_responses?: {
-    template_id: string;
-    template_key: string;
+    /**
+     * The form and version answered, and a SNAPSHOT of the questions.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This type said `{ template_id, template_key, responses }`, which is not
+     * what is stored and has not been for some time: all 8 live submissions on
+     * this account carry `{ form_id, version, questions, responses }`, written
+     * by the client's own submit route.
+     *
+     * The old names survived because they were never read for anything that
+     * failed loudly — `.responses` is present in both shapes, so every reader
+     * that mattered kept working while `template_id` quietly resolved to
+     * `undefined` wherever it was asked for.
+     *
+     * The questions travel WITH the answers on purpose: a form edited or
+     * republished later would otherwise render an old submission as a list of
+     * values with nothing saying what was asked.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    form_id: string;
+    version: number;
+    questions?: IntakeQuestion[];
     responses: Record<string, unknown>;
   } | null;
   /** When the form was emailed. Distinct from `intake_completed_at`: asked is not answered. */
@@ -942,33 +1106,58 @@ export class SchedulingBookingRepository {
     excludeBookingId?: string
   ): Promise<SchedulingRepositoryResult<SchedulingBooking[]>> {
     try {
-      // Find bookings that overlap with the requested time slot
-      // Overlap occurs when: existing_start < new_end AND existing_end > new_start
-      let query = this.supabase
-        .from('scheduling_bookings')
-        .select('*')
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * MEETINGS DECIDE, BOOKINGS SUPPLY THE NAMES
+       *
+       * Which times are taken is `busyMeetings`' question and it owns the
+       * answer — see that file for why an appointment, not a job, is what
+       * occupies an hour.
+       *
+       * But this method's callers do not just want a yes or no. The chat, the
+       * plugin and the lifecycle service all tell the owner WHO has the slot,
+       * reading `client_first_name` off these rows, so the contract is a list
+       * of bookings and has to stay one. Hence the second read: meetings decide
+       * which, bookings say whose.
+       *
+       * Two queries rather than one join, and that is the cheap side of the
+       * trade. This is the owner's own double-booking check — a handful of rows
+       * at the moment they move an appointment, not the public booking page.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      let meetingQuery = this.supabase
+        .from('scheduling_meetings')
+        .select('booking_id')
         .eq('user_id', userId)
-        /*
-         * Every status that still holds its time — see `SLOT_HOLDING_STATUSES`.
-         *
-         * This read `['confirmed', 'completed']`, so a PENDING booking was
-         * invisible to the owner's own double-booking check: a client who had
-         * booked a paid service and not yet paid, or who was waiting on a
-         * quote, could have their slot filled by the owner with no warning.
-         *
-         * `no_show` and `cancelled` are correctly absent: those meetings are
-         * not happening, so their time is free to sell again.
-         */
-        .in('status', SLOT_HOLDING_STATUSES)
+        /* existing_start < new_end AND existing_end > new_start */
         .lt('start_time', endTime)
-        .gt('end_time', startTime);
+        .gt('end_time', startTime)
+        .or(MEETING_HOLDS_SLOT_FILTER);
 
       // Exclude current booking when editing
       if (excludeBookingId) {
-        query = query.neq('id', excludeBookingId);
+        meetingQuery = meetingQuery.neq('booking_id', excludeBookingId);
       }
 
-      const { data, error } = await query;
+      const { data: busy, error: busyError } = await meetingQuery;
+
+      if (busyError) throw busyError;
+
+      const bookingIds = (busy ?? [])
+        .map(m => m.booking_id as string | null)
+        .filter((id): id is string => Boolean(id));
+
+      /* Nothing in the way. Returning early also keeps `.in()` off an empty
+         array, which PostgREST accepts but which costs a round trip. */
+      if (bookingIds.length === 0) {
+        return { data: [], error: null };
+      }
+
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select('*')
+        .eq('user_id', userId)
+        .in('id', bookingIds);
 
       if (error) throw error;
 
@@ -980,8 +1169,862 @@ export class SchedulingBookingRepository {
   }
 
   /**
+   * One appointment on a job that has several — a package session.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A PACKAGE CANNOT GO THROUGH `create()`
+   *
+   * Six sessions were six BOOKINGS hanging off a container by
+   * `parent_booking_id`, each syncing one meeting. That made the series live in
+   * the bookings table, where a reader asking "what has this client bought"
+   * counts seven things and a reader asking "what is owed" has to know that six
+   * of them are not purchases.
+   *
+   * The meetings table was built for exactly this — its own comment says a job
+   * legitimately has several meetings — so a package is now ONE booking with
+   * no time of its own and N rows here.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `occurrence_number` MEANS WHICH SESSION, AND THE CALLER DECIDES
+   *
+   * On an ordinary booking the number counts ATTEMPTS: #2 is the same
+   * appointment at a new time, written by `syncMeeting` when the clock moves.
+   * On a package it counts SESSIONS: #3 is the third of six, and all six are
+   * current at once.
+   *
+   * One column, two meanings, told apart by nothing on the row — which is
+   * exactly why the number is passed in rather than derived here. Deriving it
+   * from a count would renumber a package's sessions the first time one of
+   * them was rescheduled.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A CLASH IS THE CALLER'S TO HANDLE, NOT A FAILURE TO HIDE
+   *
+   * `scheduling_meetings_no_overlap` (20261085) refuses a session whose hour
+   * went between the quote being sent and accepted, and it is the ONLY
+   * constraint that can: the container carries no time, so the bookings
+   * constraint skips it entirely.
+   *
+   * The error is returned rather than swallowed, so acceptance can create the
+   * other five and name the one it lost. `isSlotTakenError` tells that apart
+   * from a fault, and knows this constraint's name.
+   */
+  async createMeeting(
+    meeting: SchedulingMeetingInsert
+  ): Promise<SchedulingRepositoryResult<{ id: string }>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_meetings')
+        .insert({
+          user_id: meeting.user_id,
+          booking_id: meeting.booking_id,
+          start_time: meeting.start_time,
+          end_time: meeting.end_time,
+          timezone: meeting.timezone ?? null,
+          session_number: meeting.session_number,
+          occurrence_number: meeting.occurrence_number,
+          /*
+           * Nobody has said what happened at a session that has not happened.
+           * Null is that value, and it is also what makes the row hold its
+           * hour — see `MEETING_HOLDS_SLOT_FILTER`.
+           */
+          meeting_status: null,
+        })
+        .select('id')
+        .single();
+
+      if (error) return { data: null, error: error as unknown as Error };
+
+      return { data: { id: String(data.id) }, error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, bookingId: meeting.booking_id, occurrence: meeting.occurrence_number },
+        'Failed to create a meeting'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Record the calendar event for ONE meeting, rather than for its booking.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A package's six sessions are six entries in the owner's diary, and they
+   * hang off ONE booking. Writing their event ids to that booking's single
+   * `external_calendar_event_id` would keep only the last of the six — and the
+   * next sync, finding no event recorded for the other five, would create them
+   * all again. Six appointments, twelve calendar entries.
+   *
+   * `scheduling_meetings` carries `external_calendar_event_id` and
+   * `calendar_synced_at` for this (20261073), and `calendar_sync_provider`
+   * with `calendar_sync_error` since 20261087 — without the provider a
+   * session's event could be created and never changed, because the update and
+   * delete paths look the event up by it. Moving or cancelling one session
+   * left a stale entry in the owner's diary.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async updateMeetingCalendarSync(
+    meetingId: string,
+    userId: string,
+    fields: {
+      external_calendar_event_id?: string | null;
+      calendar_sync_provider?: string | null;
+      calendar_synced_at?: string | null;
+      calendar_sync_error?: string | null;
+    }
+  ): Promise<SchedulingRepositoryResult<null>> {
+    try {
+      const { error } = await this.supabase
+        .from('scheduling_meetings')
+        .update(fields)
+        .eq('id', meetingId)
+        /* CLAUDE.md rule 4, on a service-role client. */
+        .eq('user_id', userId);
+
+      if (error) return { data: null, error: error as unknown as Error };
+      return { data: null, error: null };
+    } catch (error) {
+      logger.error({ err: error, meetingId }, "Failed to record a meeting's calendar event");
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * What happened at ONE session of a package.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A SESSION CANNOT GO THROUGH `complete()`
+   *
+   * Every outcome path on this repository takes a BOOKING id and writes
+   * `meeting_status` on the booking. That was the whole truth while a session
+   * was its own child booking. A package is now one booking with N meetings,
+   * and marking "the booking" held would claim all six happened at once.
+   *
+   * So this writes the outcome on the meeting, and the booking keeps a MIRROR
+   * of it — see below.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE MIRROR IS WHY 88 READERS DID NOT HAVE TO MOVE
+   *
+   * `booking.meeting_status` is read in 88 places to answer "what is the state
+   * of this job's appointment". For a package the honest answer is the state of
+   * its NEXT UNSETTLED session — the one still to come — because that is the
+   * appointment the job is waiting on. When every session is settled the answer
+   * is the last one's outcome, so a package of six all held reads `held` and
+   * the job reads finished, which is what those readers need.
+   *
+   * Derived, never authoritative. The meetings are the record; this column is a
+   * convenience, which is what it has been since the separation began.
+   *
+   * @returns the container, so the caller can bill and audit against the job.
+   */
+  /**
+   * Move ONE appointment to a new hour, keeping the one it had on the record.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The same `move_meeting` (20261087) that `syncMeeting` uses, reached
+   * directly — because a package SESSION has no booking whose clock could
+   * drive it. Moving session three cannot go through the booking: the booking
+   * is the purchase, and changing its time would mean nothing.
+   *
+   * What comes back is a NEW row: the same `session_number`, the next
+   * `occurrence_number`, the new hour, and nothing said about it yet. The row
+   * it superseded keeps the time it was for and is stamped `moved`, so the
+   * journey can still show the client the hour they were told about — and the
+   * hour itself goes back on sale.
+   *
+   * Both halves happen in one transaction, which is the whole reason this is a
+   * function and not two statements: releasing first avoids a 60-minute
+   * appointment moved 30 minutes colliding with itself, and the transaction
+   * stops a refused hour from leaving the appointment holding no time at all.
+   *
+   * @returns the new attempt's id, or an error. `isSlotTakenError` is true
+   *          when the new hour is genuinely somebody else's, in which case
+   *          nothing changed and the appointment keeps its time.
+   */
+  async moveMeeting(
+    meetingId: string,
+    userId: string,
+    startTime: string,
+    endTime: string,
+    movedBy: MeetingOutcomeActor | null = 'owner'
+  ): Promise<SchedulingRepositoryResult<{ id: string }>> {
+    try {
+      const { data, error } = await this.supabase.rpc('move_meeting', {
+        p_meeting_id: meetingId,
+        p_user_id: userId,
+        p_start: startTime,
+        p_end: endTime,
+        p_moved_by: movedBy,
+      });
+
+      if (error) return { data: null, error: error as unknown as Error };
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE MONEY FOLLOWS THE SESSION TO ITS NEW HOUR.
+       *
+       * A stage is bound to a MEETING, and a move writes a NEW meeting — so
+       * without this the stage goes on naming the attempt that was superseded.
+       * `billSessionOnCompletion` keys on the meeting it is given, finds
+       * nothing for the new attempt, and marking the rebooked session held
+       * bills NOTHING. The client sits through a session nobody charges for,
+       * and the owner has no sign of it: the stage is still there, still
+       * pending, pointing at an hour that no longer happens.
+       *
+       * Only a stage that has not been billed moves. A billed one names a date
+       * on an invoice the client is holding — and it cannot arise here anyway,
+       * since billing requires `held` and a held session cannot be moved.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { error: stageError } = await this.supabase
+        .from('payment_plan_installments')
+        .update({ meeting_id: String(data) })
+        .eq('meeting_id', meetingId)
+        .eq('user_id', userId)
+        .eq('status', 'pending')
+        .is('invoice_id', null);
+
+      if (stageError) {
+        /*
+         * Never fatal: the appointment HAS moved, which is the fact the owner
+         * and the client are both acting on. A stage left on the old attempt
+         * is visible in the drawer and recoverable; refusing the move over it
+         * would leave an hour nobody can change.
+         */
+        logger.error(
+          { err: stageError, meetingId, newAttempt: data },
+          'The session moved but its stage still names the old attempt'
+        );
+      }
+
+      /*
+       * The job's mirror follows: its next unsettled session may now be a
+       * different one, or at a different hour. Derived, never authoritative —
+       * see `setMeetingOutcome`.
+       */
+      const { data: moved } = await this.supabase
+        .from('scheduling_meetings')
+        .select('booking_id')
+        .eq('id', String(data))
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (moved?.booking_id) {
+        await this.mirrorSessionOutcome(String(moved.booking_id), userId);
+      }
+
+      logger.info({ meetingId, newAttempt: data, to: startTime, movedBy }, 'Appointment moved');
+
+      return { data: { id: String(data) }, error: null };
+    } catch (error) {
+      logger.error({ err: error, meetingId, startTime }, 'Failed to move a meeting');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * One meeting, by id, scoped to its owner.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Added for the outcome route's clock check: `held` and `no_show` are
+   * assertions about the past and both bill, so the server has to know when the
+   * session actually starts before it accepts one. The route cannot ask
+   * Supabase itself (CLAUDE.md rule 1), and the only other reader here loads a
+   * whole package's worth of attempts.
+   *
+   * Deliberately narrow in what it selects. A caller that needs more should
+   * widen it knowingly rather than inherit a `*` that quietly grows.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async findMeetingById(
+    meetingId: string,
+    userId: string
+  ): Promise<
+    SchedulingRepositoryResult<{
+      id: string;
+      booking_id: string;
+      start_time: string | null;
+      end_time: string | null;
+      meeting_status: string | null;
+      session_number: number | null;
+      /** Where this session's own diary entry lives, for moving or removing it.
+          The BOOKING's column holds at most one event, so for a package it is
+          the last session synced and useless to the other five. */
+      external_calendar_event_id: string | null;
+      calendar_sync_provider: string | null;
+    } | null>
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_meetings')
+        .select(
+          'id, booking_id, start_time, end_time, meeting_status, session_number, external_calendar_event_id, calendar_sync_provider'
+        )
+        .eq('id', meetingId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) return { data: null, error: error as unknown as Error };
+
+      return {
+        data: (data as {
+          id: string;
+          booking_id: string;
+          start_time: string | null;
+          end_time: string | null;
+          meeting_status: string | null;
+          session_number: number | null;
+          external_calendar_event_id: string | null;
+          calendar_sync_provider: string | null;
+        } | null) ?? null,
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, meetingId, userId }, 'Failed to read a meeting');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  async setMeetingOutcome(
+    meetingId: string,
+    userId: string,
+    status: 'held' | 'no_show' | 'cancelled',
+    by: MeetingOutcomeActor = 'owner',
+    /**
+     * Release the session's unbilled stage even though it was not cancelled.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHAT THIS IS FOR: A NO-SHOW THE OWNER DECIDED NOT TO CHARGE.
+     *
+     * `no_show` used to do nothing to the money, and "nothing" is not one of
+     * the two honest answers. Marking a missed session left its stage reading
+     * `pending` for ever: never billed, because only `held` bills, and never
+     * voided, because only `cancelled` voids. The client was neither charged
+     * nor released, and their portal listed money against an hour no invoice
+     * would ever be raised for.
+     *
+     * So a no-show now takes a decision, and when that decision is "do not
+     * charge it" the stage has to be released exactly as a cancellation
+     * releases one, down to lowering the plan's total. Hence a flag rather
+     * than a second copy of that block: one definition of "this stage will
+     * never be collected", used by both.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    options?: { releaseStage?: boolean }
+  ): Promise<
+    SchedulingRepositoryResult<{
+      bookingId: string;
+      sessionNumber: number | null;
+      /** The session's own hour, which the client's mail has to name: the
+          purchase carries no clock to take it from. */
+      startTime: string | null;
+    }>
+  > {
+    try {
+      const { data: meeting, error } = await this.supabase
+        .from('scheduling_meetings')
+        .update({
+          meeting_status: status,
+          outcome_by: by,
+          outcome_at: new Date().toISOString(),
+        })
+        .eq('id', meetingId)
+        .eq('user_id', userId)
+        /*
+         * Never over an outcome already recorded. Two presses, or a chat and a
+         * button racing, must leave the first answer standing rather than the
+         * last — and the money keys on this: `billSessionOnCompletion` is
+         * idempotent through the STAGE's claim, not through this write.
+         *
+         * `moved` is in the list on purpose. A superseded attempt gave its hour
+         * back; saying something happened at it would put the hour back on hold
+         * and contradict the attempt that replaced it.
+         */
+        .is('meeting_status', null)
+        .select('id, booking_id, session_number, start_time')
+        .maybeSingle();
+
+      if (error) return { data: null, error: error as unknown as Error };
+
+      if (!meeting) {
+        /* Already answered, or not this owner's. Neither is a fault. */
+        logger.info({ meetingId, userId, status }, 'Session outcome was already recorded');
+        return { data: null, error: null };
+      }
+
+      const bookingId = String(meeting.booking_id);
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A SESSION THAT WILL NOT HAPPEN IS NOT OWED FOR.
+       *
+       * A per-session stage bills when its session is marked HELD, so one
+       * called off never bills — but the stage went on reading `pending`
+       * against it. The owner saw "133.33 ₪ · ממתין" on a row that already
+       * said בוטלה, the plan still totalled six sessions, and every figure
+       * built from it claimed money that can never be collected.
+       *
+       * Only an UNBILLED stage. One already invoiced names an amount the
+       * client is holding a document for; voiding that silently would put the
+       * two out of step, and refunding is the deliberate action for it.
+       *
+       * A WAIVED NO-SHOW arrives here too, through `releaseStage`. The session
+       * did not happen and the owner chose not to charge for it, which is the
+       * same fact about the money as a cancellation even though it is a
+       * different fact about the appointment: the row still reads לא הגיע, and
+       * only the stage is released.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (status === 'cancelled' || options?.releaseStage) {
+        const { data: voided, error: voidError } = await this.supabase
+          .from('payment_plan_installments')
+          .update({ status: 'cancelled' })
+          .eq('meeting_id', meetingId)
+          .eq('user_id', userId)
+          .eq('status', 'pending')
+          .is('invoice_id', null)
+          .select('id, amount, payment_plan_id');
+
+        if (voidError) {
+          logger.error(
+            { err: voidError, meetingId, bookingId, status },
+            'A session will never be collected for but its stage still reads as owing'
+          );
+        }
+
+        /*
+         * The plan's total and its count follow its stages, the same way
+         * adding one raises them. Left alone the plan says 800 over six while
+         * five sessions can ever bill, and every figure built from it
+         * disagrees with the invoices it raises.
+         *
+         * Shared with the whole-booking cancel, which did neither, so the plan
+         * cannot disagree with itself depending on which button stopped the
+         * work. The count was the half this path was missing.
+         */
+        const { lowerPlansForCancelledStages } = await import(
+          '@/lib/payments/planFollowsItsStages'
+        );
+        await lowerPlansForCancelledStages(this.supabase, userId, voided ?? []);
+      }
+
+      await this.mirrorSessionOutcome(bookingId, userId);
+
+      logger.info(
+        { meetingId, bookingId, session: meeting.session_number, status, by },
+        'Session outcome recorded'
+      );
+
+      return {
+        data: {
+          bookingId,
+          sessionNumber: meeting.session_number === null ? null : Number(meeting.session_number),
+          startTime: meeting.start_time === null ? null : String(meeting.start_time),
+        },
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, meetingId, status }, "Failed to record a session's outcome");
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Put the job's NEXT UNSETTLED session on the booking, for the 88 readers.
+   *
+   * Private to the outcome paths: nothing else should be writing a derived
+   * column, and a caller that wants the truth reads the meetings.
+   */
+  private async mirrorSessionOutcome(bookingId: string, userId: string): Promise<void> {
+    try {
+      const { data: sessions } = await this.supabase
+        .from('scheduling_meetings')
+        .select('session_number, occurrence_number, meeting_status')
+        .eq('booking_id', bookingId)
+        .eq('user_id', userId)
+        .not('session_number', 'is', null)
+        .order('session_number', { ascending: true })
+        .order('occurrence_number', { ascending: true });
+
+      if (!sessions?.length) return;
+
+      /*
+       * The CURRENT attempt at each session — the last one read, since the
+       * order above puts the highest occurrence last. A superseded attempt is
+       * not the session's state; its replacement is.
+       */
+      const current = new Map<string, string | null>();
+      for (const row of sessions) {
+        const key = String(row.session_number);
+        const outcome = row.meeting_status === null ? null : String(row.meeting_status);
+        if (outcome === 'moved') continue;
+        current.set(key, outcome);
+      }
+
+      const inOrder = [...current.entries()].sort((a, b) => Number(a[0]) - Number(b[0]));
+      const unsettled = inOrder.find(([, outcome]) => outcome === null);
+
+      /*
+       * Still something to come, so the job's appointment is unanswered — which
+       * is what `null` means and what every chaser and reminder reads.
+       * Otherwise the last session's outcome, so a package whose sessions were
+       * all held reads `held` and the job reads finished.
+       */
+      const mirror = unsettled ? null : (inOrder[inOrder.length - 1]?.[1] ?? null);
+
+      await this.supabase
+        .from('scheduling_bookings')
+        .update({ meeting_status: mirror })
+        .eq('id', bookingId)
+        .eq('user_id', userId);
+    } catch (err) {
+      /*
+       * Never fatal. The session's own outcome is written and is the record;
+       * a stale mirror makes a card read the previous answer, which is visible
+       * and self-corrects on the next outcome.
+       */
+      logger.warn({ err, bookingId }, 'Could not mirror the session outcome onto the job');
+    }
+  }
+
+  /**
+   * Every ATTEMPT at each of these bookings, oldest first.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT AN ATTEMPT IS
+   *
+   * One appointment that was actually arranged. A booking has one until it is
+   * rescheduled after somebody said what happened — a no-show that was moved,
+   * a consultation held and then booked again — and from then on it has one per
+   * attempt, each keeping the time it was for and the outcome it got.
+   *
+   * This is the read behind the journey's meeting rows: three missed
+   * appointments are three rows, in order, rather than one row whose date keeps
+   * being overwritten.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * OPT-IN, AND THAT IS THE POINT
+   *
+   * Not folded into `list()`. That method is on several hot paths — the
+   * calendar, the chat, the plugin executor — and none of them draw a journey,
+   * so none of them should pay for this query. The caller that needs it asks
+   * for it by calling this.
+   *
+   * Returns `[]` rather than failing: a journey that cannot read its attempts
+   * should fall back to the single meeting node it drew before, not refuse to
+   * render the booking.
+   */
+  async listAttempts(
+    userId: string,
+    bookingIds: string[]
+  ): Promise<Record<string, SchedulingMeetingAttempt[]>> {
+    const ids = [...new Set(bookingIds.filter(Boolean))];
+    if (ids.length === 0) return {};
+
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_meetings')
+        /* `session_number` (20261086) so a reader can tell a package's six
+           sessions from six attempts at one appointment. Named explicitly:
+           a column absent from a select is `undefined`, not null, and every
+           session would read as "not a session". */
+        .select('id, booking_id, start_time, end_time, timezone, meeting_status, outcome_by, outcome_at, moved_by, session_number, occurrence_number, created_at')
+        /* CLAUDE.md rule 4. The booking ids came from a list this user already
+           owns, but a filter that depends on an earlier query being right is
+           not a filter. */
+        .eq('user_id', userId)
+        .in('booking_id', ids)
+        .order('occurrence_number', { ascending: true })
+        /*
+         * A deterministic tie-break.
+         *
+         * Postgres gives no order to rows that tie, and `occurrence_number`
+         * HAS tied: a bug renumbered attempt #2 back to #1, leaving two rows
+         * both numbered 1 — so which one the journey called "current" varied
+         * between reads, and a reschedule looked like it had not refreshed.
+         *
+         * The numbering bug is fixed and the rows repaired, but ordering that
+         * depends on no duplicates ever existing is ordering that will go
+         * wrong again. `created_at` is the order attempts were arranged in,
+         * which is the order they should read in regardless.
+         */
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const byBooking: Record<string, SchedulingMeetingAttempt[]> = {};
+      for (const row of data ?? []) {
+        const key = String(row.booking_id);
+        (byBooking[key] ??= []).push(row as unknown as SchedulingMeetingAttempt);
+      }
+      return byBooking;
+    } catch (error) {
+      logger.error({ err: error, userId, bookings: ids.length }, 'Failed to list meeting attempts');
+      return {};
+    }
+  }
+
+  /**
    * Create a new booking
    */
+  /**
+   * Keep `scheduling_meetings` in step with a booking's time and outcome.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE SHADOW COPY, WHILE IT IS STILL A SHADOW.
+   *
+   * `20261073` created the meetings table and backfilled it. Nothing READS it
+   * yet — every query still asks `scheduling_bookings` — but unless something
+   * writes it, every booking made from now on is missing its meeting and the
+   * two tables drift apart silently. The first reader to move would then find
+   * holes, and the holes would be weeks old.
+   *
+   * So: one row per timed booking, kept current. A booking with no
+   * `start_time` is a service that is bought rather than booked and has no
+   * appointment to record.
+   *
+   * NON-BLOCKING, DELIBERATELY. Nothing depends on this table yet, so a
+   * failure here must never fail a booking an owner or a client just made. It
+   * is logged and the booking stands — the backfill in the migration is
+   * re-runnable and will catch anything that slipped.
+   *
+   * Plan: docs/workplans/BOOKING_MEETINGS_TABLE_PLAN.md (Phase 1)
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async syncMeeting(
+    booking: Record<string, unknown> | null | undefined,
+    /*
+     * Who caused a move, when this call is one (20261082).
+     *
+     * Undefined where the caller does not know, which is honest and is what
+     * every path that is not a reschedule passes. The journey says "the time
+     * was changed" without naming anyone rather than assuming the owner — the
+     * assumption being the defect this replaced.
+     */
+    movedBy?: MeetingOutcomeActor
+  ): Promise<void> {
+    if (!booking) return;
+    /* See `MEETING_FIELDS` for why most updates skip this entirely. */
+
+    const bookingId = booking.id as string | undefined;
+    const userId = booking.user_id as string | undefined;
+    const startTime = booking.start_time as string | null | undefined;
+    if (!bookingId || !userId || !startTime) return;
+
+    try {
+      const endTime =
+        (booking.end_time as string | null | undefined) ??
+        new Date(new Date(startTime).getTime() + 60 * 60 * 1000).toISOString();
+
+      const row = {
+        user_id: userId,
+        booking_id: bookingId,
+        start_time: startTime,
+        end_time: endTime,
+        timezone: (booking.timezone as string | null | undefined) ?? null,
+        meeting_status: (booking.meeting_status as string | null | undefined) ?? null,
+        /* Who said so. Travels with the status it describes, or the attempt
+           records an outcome with nobody behind it. */
+        outcome_by: (booking.outcome_by as string | null | undefined) ?? null,
+        outcome_at: (booking.outcome_at as string | null | undefined) ?? null,
+        occurrence_number: (booking.occurrence_number as number | null | undefined) ?? 1,
+        external_calendar_event_id:
+          (booking.external_calendar_event_id as string | null | undefined) ?? null,
+        calendar_synced_at: (booking.calendar_synced_at as string | null | undefined) ?? null,
+        updated_at: new Date().toISOString(),
+      };
+
+      /*
+       * Read-then-write rather than an upsert: there is no unique constraint on
+       * `booking_id` — a job legitimately has several meetings, which is what
+       * the block below creates — so `onConflict` has nothing to key on.
+       *
+       * The LATEST attempt, by `occurrence_number`. Ordered and limited rather
+       * than `maybeSingle()`, which raises on more than one row and would start
+       * failing the moment the first appointment is rescheduled.
+       */
+      const { data: priorRows } = await this.supabase
+        .from('scheduling_meetings')
+        .select('id, start_time, end_time, meeting_status, occurrence_number')
+        .eq('booking_id', bookingId)
+        .eq('user_id', userId)
+        .order('occurrence_number', { ascending: false })
+        .limit(1);
+
+      const latest = priorRows?.[0];
+
+      if (!latest) {
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE FIRST ROW CAN ALSO BE A MOVE, AND IT HAS TO SAY SO.
+         *
+         * A booking's meeting row is materialised lazily, so a client who
+         * reschedules before anything else touched the appointment CREATES it
+         * — and this branch wrote it with no `moved_by`, which is the one field
+         * the journey reads to tell "the client changed the time" from "you
+         * changed the time".
+         *
+         * Observed: a client moved a 10:00 appointment to 11:30, the row was
+         * inserted at that instant, and `moved_by` came out null — so the owner
+         * was never told their client had moved it. `move_meeting` below
+         * records it correctly; only this path lost it.
+         *
+         * `movedBy` is undefined for every update that is NOT a reschedule —
+         * only `rescheduleBooking` passes it, and it always passes one — so
+         * null here means "nobody moved anything, this row is the original
+         * time", which is exactly right for an ordinary first insert.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        await this.supabase
+          .from('scheduling_meetings')
+          .insert({ ...row, moved_by: movedBy ?? null });
+        return;
+      }
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A SECOND ATTEMPT IS A SECOND MEETING
+       *
+       * The appointment was missed, held, or called off, and the booking has
+       * since been given a new time. That is not an edit to what happened — it
+       * is a fresh attempt at the same job, and both facts have to survive.
+       *
+       * Overwriting instead loses two things at once. The record of the missed
+       * appointment goes (its time is replaced by the new one), and the row
+       * that remains describes a FUTURE meeting still marked `no_show` — which
+       * `MEETING_HOLDS_SLOT_FILTER` reads as free, so availability offers that
+       * hour to somebody else and two clients arrive for it.
+       *
+       * This is also what makes the journey possible: three missed attempts are
+       * three rows, in order, each with the time it was actually for.
+       *
+       * Both conditions are required. A settled outcome with the time unchanged
+       * is the owner marking attendance — one row, updated. An unsettled
+       * meeting being moved is an ordinary reschedule of an appointment nobody
+       * has said anything about yet — also one row, updated, because there is
+       * no history to keep.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const movedInTime =
+        new Date(String(latest.start_time)).getTime() !== new Date(startTime).getTime();
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * EVERY MOVE IS AN ATTEMPT, NOT ONLY A MOVE AFTER AN OUTCOME.
+       *
+       * This also required the previous attempt to carry an outcome, on the
+       * reasoning that moving an unmarked appointment has "no history worth
+       * keeping". Watching it used proved otherwise: a booking went 13:00 →
+       * 19:00 → 15:00, the middle move updated in place because nobody had
+       * marked 19:00, and the journey showed 13:00 and 15:00 with no sign of
+       * the 19:00 that two emails to the client referred to. The owner could
+       * see the mail announcing a time that appeared nowhere.
+       *
+       * So the only test is whether the appointment MOVED. A time that was
+       * communicated to a client is a fact about the job whether or not anyone
+       * recorded what happened at it.
+       *
+       * An unmarked attempt that is no longer the latest was SUPERSEDED, not
+       * awaiting an answer, and the journey labels it accordingly — nothing is
+       * stored for that, it is simply "unmarked and not current".
+       *
+       * Still nothing new when the time is unchanged: marking attendance, or
+       * re-saving the same slot, is the same appointment.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (movedInTime) {
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * ONE STEP, THROUGH `move_meeting` (20261087).
+         *
+         * This used to insert the new attempt and then stamp the old one —
+         * that order, so that a refused insert left the old hour still held
+         * rather than freeing a time nothing had replaced.
+         *
+         * The exclusion constraint ended that order. The attempt being left
+         * behind still holds its hour while the new one is written, so a
+         * 60-minute appointment moved 30 minutes collides WITH ITSELF and the
+         * insert is refused with 23P01. Proved on live data: 14:30–15:30
+         * refused 15:00–16:00.
+         *
+         * And the refusal was invisible. The booking's own update succeeds —
+         * an exclusion constraint never compares a row with itself — so the
+         * job took the new time while this table kept the old one, which left
+         * availability blocking the hour the client was moved OFF and nothing
+         * holding the hour they were moved TO.
+         *
+         * The function releases first and inserts second, inside one
+         * transaction, so a genuinely taken hour rolls the release back. Both
+         * orderings' guarantees, which no sequence of two statements from here
+         * can have.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const { error: moveError } = await this.supabase.rpc('move_meeting', {
+          p_meeting_id: latest.id,
+          p_user_id: userId,
+          p_start: startTime,
+          p_end: endTime,
+          p_moved_by: movedBy ?? null,
+        });
+
+        if (moveError) {
+          /*
+           * `23P01` here means the new hour is genuinely somebody else's, and
+           * the appointment still holds the one it had. Everything else is a
+           * fault. Non-blocking either way, which is this method's contract —
+           * but it is logged as what it is rather than as a sync failure.
+           */
+          logger.warn(
+            { err: moveError, bookingId, from: latest.start_time, to: startTime },
+            isSlotTakenError(moveError)
+              ? 'The new hour was taken; the appointment keeps the time it had'
+              : 'Could not record the new attempt; leaving the previous one holding its hour'
+          );
+          return;
+        }
+
+        logger.info(
+          {
+            bookingId,
+            from: latest.start_time,
+            to: startTime,
+            previousOutcome: latest.meeting_status ?? 'unmarked',
+            attempt: (Number(latest.occurrence_number) || 1) + 1,
+          },
+          'Appointment moved; recorded a new attempt'
+        );
+        return;
+      }
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * `occurrence_number` IS SET ONCE, AT INSERT, AND NEVER UPDATED.
+       *
+       * `row` takes it from the booking — `booking.occurrence_number ?? 1` —
+       * which is correct for a package CHILD, whose number says which session
+       * of the package it is. On an ordinary booking that column is NULL, so
+       * the fallback is 1.
+       *
+       * Writing it on every update therefore reset the attempt's own number to
+       * 1. Seen on booking ab48357a: attempt #2 was renumbered to #1 by an
+       * ordinary reschedule, leaving two rows both numbered 1 — and
+       * `listAttempts` orders by that column, so the history's order became
+       * arbitrary and "the current attempt" could resolve to the older row.
+       *
+       * The number belongs to the ATTEMPT, not to the booking, so an update
+       * must leave it exactly as the insert set it.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const { occurrence_number: _fixedAtInsert, ...movable } = row;
+      void _fixedAtInsert;
+
+      await this.supabase.from('scheduling_meetings').update(movable).eq('id', latest.id);
+    } catch (err) {
+      logger.warn({ err, bookingId }, 'Meeting row sync failed (non-blocking)');
+    }
+  }
+
   async create(
     booking: SchedulingBookingInsert
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
@@ -1034,6 +2077,10 @@ export class SchedulingBookingRepository {
        * writer per event type is what keeps the two mechanisms from
        * duplicating each other.
        */
+      /* The meetings table follows the booking. Awaited so a create and its
+         meeting land together; non-blocking inside, so it cannot fail this. */
+      await this.syncMeeting(data as unknown as Record<string, unknown>);
+
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId: booking.user_id }, 'Failed to create booking');
@@ -1061,7 +2108,7 @@ export class SchedulingBookingRepository {
             phone
           ),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at)
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at, processor_type)
         `)
         .eq('id', id)
         .eq('user_id', userId)
@@ -1251,7 +2298,7 @@ export class SchedulingBookingRepository {
           contact:crm_contacts(first_name, last_name, email, phone),
           service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode, is_scheduled),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at),
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at, processor_type),
           planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, transaction_id, label)
         `)
         .eq('user_id', userId);
@@ -1399,7 +2446,12 @@ export class SchedulingBookingRepository {
   async update(
     id: string,
     userId: string,
-    updates: SchedulingBookingUpdate
+    updates: SchedulingBookingUpdate,
+    /*
+     * Who is moving it, when this update moves the time (20261082). Reaches
+     * the new attempt so the journey can name the side that asked for it.
+     */
+    movedBy?: MeetingOutcomeActor
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
     try {
       logger.info({ bookingId: id, userId }, 'Updating booking');
@@ -1428,6 +2480,53 @@ export class SchedulingBookingRepository {
        * It is also one query fewer than before on the common path: the pre-read
        * is gone.
        */
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * MOVING AN APPOINTMENT CLEARS WHAT WAS SAID ABOUT THE OLD ONE
+       *
+       * A booking given a new time is a fresh attempt, so an outcome recorded
+       * against the previous one does not describe it.
+       *
+       * This lives HERE, not at the call sites, because there are four writers
+       * of `start_time` — `rescheduleBooking`, this route's own PATCH (whose
+       * comment says it "writes `start_time` itself instead of calling
+       * `rescheduleBooking`"), the chat capability engine and the plugin
+       * executor. The rule was added to the first one only, and the owner
+       * rescheduled through the second: booking ab48357a arrived at its new
+       * time still marked `no_show`, and so did the new attempt.
+       *
+       * That is not a cosmetic slip. `MEETING_HOLDS_SLOT_FILTER` reads a
+       * no-show as free time, so the hour a client had just been given was not
+       * held and availability would have sold it to somebody else.
+       *
+       * One read, and only when the time is actually moving.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if ('start_time' in updates && updates.start_time) {
+        const { data: current } = await this.supabase
+          .from('scheduling_bookings')
+          .select('start_time, meeting_status')
+          .eq('id', id)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        const moved =
+          current?.start_time != null &&
+          new Date(String(current.start_time)).getTime() !==
+            new Date(String(updates.start_time)).getTime();
+
+        /* Only when somebody had already answered. An unmarked meeting being
+           moved needs nothing cleared, and writing the key anyway would make
+           every reschedule trip `MEETING_FIELDS` for no reason. */
+        if (moved && current?.meeting_status != null && !('meeting_status' in updates)) {
+          (updates as Record<string, unknown>).meeting_status = null;
+          logger.info(
+            { bookingId: id, previousOutcome: current.meeting_status },
+            'Appointment moved after an outcome; the new attempt starts unmarked'
+          );
+        }
+      }
+
       const evented = Boolean(updates.status && EVENTED_BOOKING_STATUSES.has(updates.status));
 
       let data: Record<string, unknown> | null = null;
@@ -1492,6 +2591,38 @@ export class SchedulingBookingRepository {
       } : null) as SchedulingBooking | null;
 
       logger.info({ bookingId: id, userId }, 'Booking updated');
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * ONLY WHEN THE MEETING ACTUALLY CHANGED.
+       *
+       * This is the path that matters — a RESCHEDULE changes `start_time`, and
+       * held and no-show change `meeting_status` — but it is also the busiest
+       * method on this repository. `update()` is called to sync payment state,
+       * to stamp reminder flags, to record an intake timestamp. None of those
+       * touch an appointment, and syncing on each would add a read and a write
+       * against a table NOTHING YET READS, on every one.
+       *
+       * So the gate: sync only when the update names a field a meeting is made
+       * of. Everything else costs nothing. The cheapest query is the one that
+       * is never sent, and current users should pay nothing for a table that is
+       * not serving them yet.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const MEETING_FIELDS = [
+        'start_time',
+        'end_time',
+        'timezone',
+        'meeting_status',
+        'outcome_by',
+        'outcome_at',
+        'external_calendar_event_id',
+        'calendar_synced_at',
+      ] as const;
+
+      if (MEETING_FIELDS.some(field => field in updates)) {
+        await this.syncMeeting(data as unknown as Record<string, unknown>, movedBy);
+      }
 
       /*
        * Write down that this happened.
@@ -1635,20 +2766,91 @@ export class SchedulingBookingRepository {
     let alreadyCancelled = false;
     const { data: current } = await this.supabase
       .from('scheduling_bookings')
-      .select('status, cancelled_by, cancel_reason')
+      .select('status, meeting_status, cancelled_by, cancel_reason')
       .eq('id', id)
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (current?.status === 'completed' || current?.status === 'no_show') {
+    /*
+     * BOTH columns, and `meeting_status` is the one that matters now.
+     *
+     * `complete()` and `markNoShow()` no longer write `status` — that is the
+     * whole point of the separation — so a meeting marked held today reads
+     * `status = 'confirmed'` and only `meeting_status = 'held'`. Testing
+     * `status` alone would call that "no attendance recorded", fall into the
+     * branch below, and write `meeting_status: 'cancelled'` straight over the
+     * `held` this guard exists to protect.
+     *
+     * `status` is still read for the rows that predate the split, where the
+     * outcome lives there and nowhere else.
+     */
+    const outcomeOnMeeting =
+      current?.meeting_status === 'held' || current?.meeting_status === 'no_show';
+    const outcomeOnStatus =
+      current?.status === 'completed' || current?.status === 'no_show';
+
+    if (outcomeOnMeeting || outcomeOnStatus) {
       attendanceRecorded = true;
-      alreadyCancelled = Boolean(current.cancelled_by || current.cancel_reason);
+      alreadyCancelled = Boolean(current?.cancelled_by || current?.cancel_reason);
     }
 
+    /*
+     * ── SOMEBODY HAS ALREADY ANSWERED FOR THE MEETING ───────────────────────
+     *
+     * A WIDER question than `attendanceRecorded`, and it governs a different
+     * pair of columns.
+     *
+     * `attendanceRecorded` asks whether the meeting HAPPENED, because that is
+     * what decides whether `status` and `meeting_status` may be overwritten.
+     * It deliberately excludes `cancelled`: a meeting called off has not
+     * happened, so the job going off with it is no contradiction.
+     *
+     * But `outcome_by` and `outcome_at` describe WHO answered and WHEN, and a
+     * cancellation is an answer. Stamping them again puts the moment the JOB
+     * was stopped onto the meeting's own row — two different events reduced to
+     * one timestamp, and the earlier one gone.
+     *
+     * Concretely: a meeting called off at 01:55 through `cancelMeeting`, then
+     * the job stopped at 02:30, left the journey reading "you cancelled the
+     * meeting 02:30". The owner's own rail lost the half-hour in which the
+     * appointment was off and the work was not.
+     *
+     * So an answer that exists is never restamped. Null stays null where
+     * nobody recorded one — rows predating `outcome_at` have no honest value,
+     * and `now` is the one thing it certainly was not.
+     */
+    const meetingAlreadyAnswered = current?.meeting_status != null;
+
     const result = await this.update(id, userId, {
-      // Omitted, not set to the old value: `update` stamps `updated_at` and
-      // writes only the keys it is given, so leaving it out is what preserves it.
-      ...(attendanceRecorded ? {} : { status: 'cancelled' as const }),
+      /*
+       * Omitted, not set to the old value: `update` stamps `updated_at` and
+       * writes only the keys it is given, so leaving it out is what preserves it.
+       *
+       * `meeting_status` rides the SAME guard, and that is the point of the
+       * pairing. A meeting that had not happened is off, so it is cancelled
+       * with the job. A meeting already marked `held` or `no_show` keeps its
+       * outcome: the consultation did take place, and calling off the work
+       * afterwards does not un-happen it.
+       *
+       * This is the fact the platform could not previously record — it is why
+       * five rows in production read `status = 'completed'` with a
+       * `cancel_reason` beside them.
+       */
+      ...(attendanceRecorded
+        ? {}
+        : {
+            status: 'cancelled' as const,
+            meeting_status: 'cancelled' as const,
+            /* Who called it off, on the appointment as well as the job — and
+               only where the appointment had no answer of its own yet. See
+               `meetingAlreadyAnswered`. */
+            ...(meetingAlreadyAnswered
+              ? {}
+              : {
+                  outcome_by: (structured?.cancelledBy ?? 'owner') as MeetingOutcomeActor,
+                  outcome_at: new Date().toISOString(),
+                }),
+          }),
       cancellation_reason: reason || null,
       cancel_reason: structured?.code || null,
       // Trimmed to null: '' would read as a note that exists and says nothing.
@@ -1687,6 +2889,128 @@ export class SchedulingBookingRepository {
       emitBookingStatusEvent(userId, result.data as unknown as Record<string, unknown>, 'cancelled');
     }
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * AND THE PACKAGE'S SESSIONS, WHICH THE BOOKING ROW CANNOT SPEAK FOR.
+     *
+     * Everything above writes `scheduling_bookings`. For an ordinary booking
+     * that IS the appointment, so stamping `meeting_status` there releases the
+     * hour and the job is done.
+     *
+     * A package is one booking with N rows in `scheduling_meetings`, and the
+     * hours live on those rows: `busyMeetings` reads that table and nothing
+     * else, and so does the `scheduling_meetings_no_overlap` constraint. So
+     * stopping a package left all six sessions with `meeting_status = NULL`,
+     * still holding six hours in the owner's diary for work that is off. They
+     * would have gone on blocking new bookings indefinitely, and nothing would
+     * ever have cleared them: 20261075 is a ONE-OFF backfill, not a trigger,
+     * and there is no cascade from the booking to its meetings anywhere.
+     *
+     * Not yet visible in live data only because no package has been stopped
+     * since packages became meetings.
+     *
+     * ── THE SAME GUARD AS THE BOOKING'S OWN ──────────────────────────────────
+     * `meeting_status IS NULL` only. A session already marked `held`,
+     * `no_show` or `moved` keeps its answer: those sessions DID happen, or
+     * were already resolved, and stopping the work afterwards does not
+     * un-happen them. It is the rule the booking update above applies to
+     * itself through `attendanceRecorded`, and the rule 20261075's backfill
+     * applied to the rows it fixed.
+     *
+     * Non-fatal, and after the booking write rather than before: the job being
+     * cancelled is the fact that matters, and a session left holding an hour
+     * is visible and fixable where a thrown error would leave the owner
+     * believing nothing was cancelled at all.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (result.data) {
+      const { data: sessions, error: sessionsError } = await this.supabase
+        .from('scheduling_meetings')
+        .update({
+          meeting_status: 'cancelled',
+          outcome_by: (structured?.cancelledBy ?? 'owner') as MeetingOutcomeActor,
+          outcome_at: new Date().toISOString(),
+        })
+        .eq('booking_id', id)
+        .eq('user_id', userId)
+        .is('meeting_status', null)
+        /* The rows this call actually stamped, so the diary sweep below settles
+           exactly those and never an hour somebody already answered for. */
+        .select('id, start_time, end_time, external_calendar_event_id, calendar_sync_provider');
+
+      if (sessionsError) {
+        logger.error(
+          { err: sessionsError, bookingId: id, userId },
+          'A job was cancelled but its sessions may still be holding their hours'
+        );
+      }
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * AND OUT OF THE DIARY, one entry per session.
+       *
+       * A package's events are recorded on the MEETING rows, so the booking
+       * paths that remove "the" calendar event find nothing and leave all six
+       * standing. The hours are free everywhere this platform decides from, and
+       * the owner's own calendar says otherwise.
+       *
+       * The rule is `settleSessionDiaryEntry`'s, not this method's, and it is
+       * the same rule one cancelled session gets: an hour still ahead has its
+       * entry deleted, because it is genuinely bookable again; an hour already
+       * past keeps its entry, labelled, because nothing can be booked into it
+       * and deleting would erase the owner's own record of the day.
+       *
+       * Sequential rather than parallel: each one is an API call to the
+       * owner's calendar provider, and six at once is how a rate limit turns
+       * one cancellation into five stale entries.
+       *
+       * Never fatal, and last: the booking is cancelled and the hours are free
+       * before this runs.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      if (sessions?.length) {
+        try {
+          const { settleSessionDiaryEntry } = await import(
+            '@/lib/scheduling/settleSessionDiaryEntry'
+          );
+
+          const withEvents = sessions.filter(row => row.external_calendar_event_id);
+
+          if (withEvents.length && result.data) {
+            const { data: service } = result.data.service_id
+              ? await schedulingServiceRepository.findById(
+                  String(result.data.service_id),
+                  userId
+                )
+              : { data: null };
+
+            if (service) {
+              for (const row of withEvents) {
+                await settleSessionDiaryEntry({
+                  booking: result.data as SchedulingBooking,
+                  service,
+                  userId,
+                  meeting: {
+                    id: String(row.id),
+                    external_calendar_event_id: row.external_calendar_event_id as string,
+                    calendar_sync_provider: row.calendar_sync_provider as never,
+                    start_time: row.start_time as string | null,
+                    end_time: row.end_time as string | null,
+                  },
+                  outcome: 'cancelled',
+                });
+              }
+            }
+          }
+        } catch (err) {
+          logger.error(
+            { err, bookingId: id, userId },
+            "A job was cancelled but its sessions' diary entries were not settled"
+          );
+        }
+      }
+    }
+
     return result;
   }
 
@@ -1695,19 +3019,155 @@ export class SchedulingBookingRepository {
    */
   async complete(
     id: string,
-    userId: string
+    userId: string,
+    /**
+     * Who recorded it.
+     *
+     * Defaults to `owner` because the drawer's buttons are the dominant path
+     * and a human pressing one is the dominant case. The two paths where no
+     * person is involved pass `system` explicitly:
+     * `LeadResponseDispatchService`, which completes a booking when a lead
+     * replies, and the plugin executor acting for an agent. Blaming the owner
+     * for either would make the journey say something untrue.
+     */
+    by: MeetingOutcomeActor = 'owner'
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
-    return this.update(id, userId, { status: 'completed' });
+    /*
+     * THE MEETING ONLY. THE JOB IS NOT TOUCHED.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * "The meeting took place" is a fact about an APPOINTMENT. It was also
+     * writing `status = 'completed'`, which is a fact about the JOB — and on a
+     * quoted service those are weeks apart: the consultation happened, and the
+     * quote, the agreement and the money have not.
+     *
+     * That overload is what this whole change exists to end. Marking a
+     * consultation held closed the booking, took Cancel away, settled the row
+     * for every reader of `SETTLED_BOOKING_STATUSES`, and left the owner with a
+     * job the platform believed was finished before it had been priced.
+     *
+     * Only `cancelBooking` writes `status` now. Held and no-show write here.
+     *
+     * `holdsSlot` and `attendanceRecorded` were moved onto this column in the
+     * same change, so the calendar still frees a missed slot and the buttons
+     * still hide once an outcome is recorded.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const result = await this.update(id, userId, { meeting_status: 'held', outcome_by: by, outcome_at: new Date().toISOString() });
+
+    /*
+     * THE EVENT STILL HAS TO FIRE, AND IT STOPPED.
+     *
+     * `update()` emits `booking.completed` only when its conditional status
+     * write claims the transition — that is what stops concurrent callers
+     * emitting twice. No status write now means no event, and the metrics that
+     * count delivered work read nothing but events.
+     *
+     * The column and the event answer different questions, and both are true:
+     * `meeting_status` is the appointment's outcome, the event is the record
+     * that it happened. `cancel()` solved this the same way for the same
+     * reason — see the note above it.
+     */
+    if (result.data) {
+      emitBookingStatusEvent(userId, result.data as unknown as Record<string, unknown>, 'completed');
+    }
+
+    return result;
   }
 
   /**
    * Mark booking as no-show
    */
+  /**
+   * The APPOINTMENT is off. The job carries on.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS NOT `cancel()`
+   *
+   * `cancel()` ends the work: it writes `status: 'cancelled'`, stops the
+   * proposal, cancels the payment stages and emails the client. That is the
+   * right action when the job is off.
+   *
+   * This is the other case, and it has no other home: the owner and the client
+   * agree to proceed WITHOUT meeting. The site visit is called off and the
+   * quote still gets written. Before this, an owner in that position could only
+   * cancel the whole job or leave an appointment nobody would attend sitting
+   * there as an unanswered question.
+   *
+   * So: the outcome only. `status` is untouched, no proposal is stopped, no
+   * money moves, and `journeyReadiness`, `quoteGate` and the badges all read
+   * the job as alive — which it is.
+   *
+   * TWO CONSEQUENCES WORTH NAMING. `holdsSlot` excludes `cancelled`, so the
+   * hour goes back on sale immediately, which is the point. And `quoteGate`
+   * returns `open` for a cancelled meeting rather than asking what happened at
+   * it, because nobody is going to answer that.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async cancelMeeting(
+    id: string,
+    userId: string,
+    by: MeetingOutcomeActor = 'owner',
+    /**
+     * Is the quote still coming (20261083)?
+     *
+     * Kept, not merely used to pick an email sentence. An owner who answers no
+     * has a booking still sitting open as live work, and nothing reminded them
+     * because nothing remembered. `undefined` writes nothing, so a caller that
+     * never asked leaves the column NULL rather than claiming an answer.
+     */
+    proposalContinues?: boolean
+  ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
+    const result = await this.update(id, userId, {
+      meeting_status: 'cancelled',
+      outcome_by: by,
+      outcome_at: new Date().toISOString(),
+      ...(proposalContinues === undefined ? {} : { proposal_continues: proposalContinues }),
+    } as SchedulingBookingUpdate);
+
+    if (result.data) {
+      logger.info({ bookingId: id, userId, by }, 'Meeting cancelled; the job continues');
+    }
+
+    return result;
+  }
+
   async markNoShow(
     id: string,
-    userId: string
+    userId: string,
+    /**
+     * Who recorded it.
+     *
+     * Defaults to `owner` because the drawer's buttons are the dominant path
+     * and a human pressing one is the dominant case. The two paths where no
+     * person is involved pass `system` explicitly:
+     * `LeadResponseDispatchService`, which completes a booking when a lead
+     * replies, and the plugin executor acting for an agent. Blaming the owner
+     * for either would make the journey say something untrue.
+     */
+    by: MeetingOutcomeActor = 'owner'
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
-    return this.update(id, userId, { status: 'no_show' });
+    /*
+     * The meeting only, for the reason given on `complete()` above — and on a
+     * quoted job this one mattered most. `no_show` is in
+     * `SETTLED_BOOKING_STATUSES`, so a client missing a site visit settled the
+     * whole job, while `quoteGate` was simultaneously reporting it alive and
+     * still worth pricing. The two could not both be true.
+     */
+    const result = await this.update(id, userId, { meeting_status: 'no_show', outcome_by: by, outcome_at: new Date().toISOString() });
+
+    /*
+     * `retention.no_show_rate` is computed by COUNTING `booking.no_show`
+     * events, and `RetNoShowSpikeDetector` watches that metric. Without this
+     * the rate reads zero forever and the spike can never fire — while the
+     * confirmation dialog goes on promising the owner that this "נספרת בשיעור
+     * אי-ההגעות". See `complete()` above for why the emit lives here now.
+     */
+    if (result.data) {
+      emitBookingStatusEvent(userId, result.data as unknown as Record<string, unknown>, 'no_show');
+    }
+
+    return result;
   }
 
   /**

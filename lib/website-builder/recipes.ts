@@ -48,23 +48,43 @@ export type RecipeId = 'gallery_led' | 'proof_led' | 'story_led' | 'offer_led' |
  * header and no footer at all, which is a gap in them rather than a decision —
  * `buildBlocks` has always emitted one.
  */
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHERE `newsletter` SITS, AND WHY NOT ON A LANDING PAGE.
+ *
+ * Between the closing call to action and the footer, on every homepage recipe.
+ * It is the page's SECOND ask: the visitor has just been asked to book and
+ * either did or did not, and the one thing worth asking of somebody who did
+ * not is permission to write to them later. Above the footer because it is
+ * still content — a footer closes the page by definition.
+ *
+ * Deliberately absent from `landing`. A landing page is one offer, and every
+ * element that is not that offer is a place to leave; a second, smaller ask
+ * directly under the first competes with the thing the page was built to sell.
+ *
+ * Nothing here INSTALLS a section — `orderByRecipe` only orders the blocks it
+ * is given, and skips a name no block matches. A page generated for a business
+ * with marketing capture switched off simply has no newsletter block for this
+ * entry to place.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export const RECIPES: Record<RecipeId, readonly BlockType[]> = {
   /** The work is the argument, so it comes before the words. */
   gallery_led: [
     'header', 'hero', 'gallery', 'services', 'about', 'process',
-    'testimonials', 'faq', 'contact_form', 'cta', 'footer',
+    'testimonials', 'faq', 'contact_form', 'cta', 'newsletter', 'footer',
   ],
 
   /** Credentials before warmth. Never a gallery — these clients want judgement. */
   proof_led: [
     'header', 'hero', 'stats', 'services', 'about', 'features', 'process',
-    'faq', 'contact_form', 'cta', 'footer',
+    'faq', 'contact_form', 'cta', 'newsletter', 'footer',
   ],
 
   /** Who you are, then what you offer. The order every therapist template uses. */
   story_led: [
     'header', 'hero', 'about', 'services', 'process', 'features',
-    'testimonials', 'faq', 'booking_widget', 'contact_form', 'cta', 'footer',
+    'testimonials', 'faq', 'booking_widget', 'contact_form', 'cta', 'newsletter', 'footer',
   ],
 
   /*
@@ -83,7 +103,7 @@ export const RECIPES: Record<RecipeId, readonly BlockType[]> = {
    */
   offer_led: [
     'header', 'hero', 'stats', 'services', 'testimonials', 'process',
-    'faq', 'booking_widget', 'contact_form', 'cta', 'footer',
+    'faq', 'booking_widget', 'contact_form', 'cta', 'newsletter', 'footer',
   ],
 
   /**

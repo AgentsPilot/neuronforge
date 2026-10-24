@@ -15,6 +15,8 @@ import {
   emailTone,
   formatCurrency,
   formatEmailDate,
+  emailSessionRows,
+  type EmailSessionLine,
   type BrandingData
 } from './base-template';
 import { emailTranslations } from './translations';
@@ -102,6 +104,30 @@ export interface BookingConfirmationData {
    * ───────────────────────────────────────────────────────────────────────────
    */
   hasSchedule?: boolean;
+  /**
+   * This confirmation is a session ADDED to a package already running.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It reused the plain confirmation, which is accurate about the hour and
+   * silent about everything that makes it different: a client holding six
+   * sessions received a mail indistinguishable from one confirming a
+   * standalone appointment.
+   *
+   * `chargedAmount` is the owner's own answer about the money — present only
+   * when they added it charged, so the client reads it from the same mail that
+   * tells them the date rather than from an invoice arriving later against a
+   * package they had already paid for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  addedSession?: { chargedAmount?: string | null };
+  /**
+   * Every session of this package, for the client to see where each stands.
+   *
+   * Set only for a package: the email that changes one session shows all of
+   * them, because the client has no other record of a block they paid for.
+   */
+  sessionLines?: EmailSessionLine[];
+
   /**
    * A PACKAGE: every meeting it bought, in the order they were sold.
    *
@@ -335,8 +361,31 @@ export function generateBookingConfirmationEmail(
   const dueNowPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
   const amountDueNow = data.plan ? (dueNowPeriod?.amount ?? 0) : data.price;
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN ADDED SESSION IS NOT A NEW ORDER, SO IT OWES NOTHING TO BE CONFIRMED.
+   *
+   * The block below is the client's payment SCHEDULE, and the notice under it
+   * says "pay X to confirm your order". Both are right when this email
+   * confirms something just bought.
+   *
+   * Neither is true of a seventh session added to a package. The order was
+   * placed when the quote was accepted, the session is already confirmed, and
+   * the money is billed one session at a time as each is held — so the client
+   * was shown a schedule they had already agreed to, with a figure demanded to
+   * confirm something that needed no confirming.
+   *
+   * It was wrong on its own terms too: the schedule printed seven periods and
+   * a total of 0.00, against a plan that has eight stages and totals 800.04.
+   * The purchase carries no `payment_plan_id` at all, so what was rendered
+   * described nothing in the database.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const hasPendingPayment =
-    data.paymentStatus === 'pending' && Boolean(amountDueNow) && (amountDueNow as number) > 0;
+    !data.addedSession &&
+    data.paymentStatus === 'pending' &&
+    Boolean(amountDueNow) &&
+    (amountDueNow as number) > 0;
   const t = emailTranslations.bookingConfirmation;
   const tIntake = emailTranslations.intake;
 
@@ -357,12 +406,25 @@ export function generateBookingConfirmationEmail(
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
-      ${data.hasSchedule === false ? t.unscheduledGreeting[locale] : t.greeting[locale]}
+      ${
+        data.addedSession
+          ? t.addedSessionGreeting[locale]
+          : data.hasSchedule === false
+            ? t.unscheduledGreeting[locale]
+            : t.greeting[locale]
+      }
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
-      ${data.hasSchedule === false
-        ? t.unscheduledIntro[locale](data.clientName, data.branding.businessName)
-        : t.intro[locale](data.clientName, data.branding.businessName)}
+      ${
+        data.addedSession
+          ? t.addedSessionIntro[locale](data.clientName, data.serviceName) +
+            (data.addedSession.chargedAmount
+              ? ` ${t.addedSessionCharged[locale](data.addedSession.chargedAmount)}`
+              : '')
+          : data.hasSchedule === false
+            ? t.unscheduledIntro[locale](data.clientName, data.branding.businessName)
+            : t.intro[locale](data.clientName, data.branding.businessName)
+      }
     </p>
 
     <!-- Appointment Details Card -->
@@ -382,7 +444,21 @@ export function generateBookingConfirmationEmail(
              * a column of times whose dates live elsewhere is the shape that
              * gets misread.
              */
-            ...(data.sessions?.length
+            /*
+             * ──────────────────────────────────────────────────────────────
+             * ONE LIST, IN ONE SHAPE.
+             *
+             * This is the older date-only list, numbered rows inside the
+             * details table. `sessionLines` is the same sessions with what
+             * happened to each and what it cost, in its own table — so when
+             * that is present this would print the identical dates a second
+             * time, in a different shape, directly above it.
+             *
+             * Kept for a caller that has dates and nothing else; stood down
+             * wherever the fuller table is being drawn.
+             * ──────────────────────────────────────────────────────────────
+             */
+            ...(data.sessions?.length && !data.sessionLines?.length
               ? data.sessions.map((session, index) =>
                   emailDetailRow(
                     `${index + 1}.`,
@@ -401,7 +477,7 @@ export function generateBookingConfirmationEmail(
             data.price && data.price > 0 ? emailDetailRow(t.priceLabel[locale], formatCurrency(data.price, data.currency || 'USD'), brandingWithLocale) : ''
           ].filter(Boolean), brandingWithLocale)}
 
-          ${emailPlanSchedule({
+          ${data.addedSession ? '' : emailPlanSchedule({
             periods: planPeriods,
             totalAmount: data.plan?.totalAmount ?? 0,
             currency: data.currency || 'USD',
@@ -423,6 +499,33 @@ export function generateBookingConfirmationEmail(
     ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(amountDueNow as number, data.currency || 'USD')), 'warning', brandingWithLocale)}
     ${data.paymentUrl ? emailButton(t.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
     ` : ''}
+
+    <!-- Every session of the package, and where each stands. -->
+    ${
+      data.sessionLines?.length
+        ? `<p style="margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${t.sessionListTitle[locale]}</p>
+           ${emailSessionRows(data.sessionLines, data.timezone, locale, brandingWithLocale, {
+             states: {
+               upcoming: t.sessionUpcoming[locale],
+               held: t.sessionHeld[locale],
+               missed: t.sessionMissed[locale],
+               cancelled: t.sessionCancelled[locale],
+             },
+             money: {
+               paid: t.sessionPaid[locale],
+               due: t.sessionDue[locale],
+               refunded: t.sessionRefunded[locale],
+               partly_refunded: t.sessionPartlyRefunded[locale],
+             },
+             columns: {
+               when: t.sessionColWhen[locale],
+               state: t.sessionColState[locale],
+               payment: t.sessionColPayment[locale],
+             },
+             zoneNote: t.sessionZoneNote[locale],
+           })}`
+        : ''
+    }
 
     ${data.hasSchedule === false ? '' : `
     <!-- Add to Calendar. Omitted with no schedule: there is no time to add,
@@ -485,7 +588,9 @@ export function generateBookingConfirmationEmail(
   `;
 
   return {
-    subject: (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
+    subject: data.addedSession
+      ? t.addedSessionSubject[locale](dateStr)
+      : (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
     icsContent: generateICSContent(data, icsOptions)
   };
@@ -495,6 +600,14 @@ export function generateBookingConfirmationEmail(
  * Generate booking cancellation email
  */
 export function generateBookingCancellationEmail(data: {
+  /**
+   * Every session of this package, for the client to see where each stands.
+   *
+   * Set only for a package: the email that changes one session shows all of
+   * them, because the client has no other record of a block they paid for.
+   */
+  sessionLines?: EmailSessionLine[];
+
   clientName: string;
   serviceName: string;
   dateTime: Date;
@@ -514,6 +627,29 @@ export function generateBookingCancellationEmail(data: {
    * struck through, so the client can see exactly which dates are gone.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * THE MEETING IS OFF, THE JOB IS NOT.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Set when only the appointment was cancelled and the work continues — the
+   * owner and client agreeing to proceed without meeting, which the platform
+   * records separately from calling the job off.
+   *
+   * It changes three things, and each matters:
+   *
+   *   · the SUBJECT names the date, because `Appointment cancelled - <service>`
+   *     is what a client gets when everything stops;
+   *   · it adds the sentence saying what is NOT cancelled, chosen by where the
+   *     quote stands, since one wording is wrong in two of the three states;
+   *   · it OMITS the money notice entirely. Cancelling a meeting does not move
+   *     the money — stopping the JOB is what does, and that is a different
+   *     button — so reporting what is held or refunded would describe a change
+   *     that did not happen.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  meetingOnly?: {
+    continuation: 'quote_coming' | 'quote_stands' | 'quote_accepted' | 'no_quote';
+  };
   sessions?: Date[];
   /**
    * The meetings of that block that ALREADY TOOK PLACE.
@@ -580,6 +716,9 @@ export function generateBookingCancellationEmail(data: {
   const locale = data.locale || 'en';
   const formattedDate = formatEmailDate(data.dateTime, data.timezone, { locale });
   const t = emailTranslations.bookingCancellation;
+  /* The session-list labels live with the confirmation's, since the list is
+     the same list whichever email carries it. */
+  const tConfirm = emailTranslations.bookingConfirmation;
   const tIntake = emailTranslations.intake;
 
   // Set locale on branding for RTL support
@@ -635,8 +774,16 @@ export function generateBookingCancellationEmail(data: {
   const refunded = data.refundedAmount ?? 0;
   const held = data.amountHeld ?? 0;
 
-  const moneyNotice =
-    paid <= 0 && held <= 0 && refunded <= 0
+  /*
+   * ── NO MONEY LINE WHEN ONLY THE MEETING IS OFF ──────────────────────────
+   * Cancelling a meeting leaves the money exactly where it was: stopping the
+   * JOB is the button that touches it. Every branch below reports a state of
+   * the money, so rendering any of them here would answer a question nobody
+   * asked and imply something moved.
+   */
+  const moneyNotice = data.meetingOnly
+    ? ''
+    : paid <= 0 && held <= 0 && refunded <= 0
       ? // Never collected. Worth saying: on a cancelled order carrying a price,
         // silence reads as a bill still owed.
         emailNoticeBox(t.notPaid[locale], 'info', brandingWithLocale)
@@ -664,10 +811,20 @@ export function generateBookingCancellationEmail(data: {
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
-      ${data.hasSchedule === false ? t.unscheduledGreeting[locale] : t.greeting[locale]}
+      ${
+        data.meetingOnly
+          ? t.meetingOnlyGreeting[locale]
+          : data.hasSchedule === false
+            ? t.unscheduledGreeting[locale]
+            : t.greeting[locale]
+      }
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
-      ${(data.hasSchedule === false ? t.unscheduledIntro : t.intro)[locale](data.clientName)}
+      ${
+        data.meetingOnly
+          ? t.meetingOnlyIntro[locale](data.clientName)
+          : (data.hasSchedule === false ? t.unscheduledIntro : t.intro)[locale](data.clientName)
+      }
     </p>
 
     <!-- What was cancelled -->
@@ -687,7 +844,7 @@ export function generateBookingCancellationEmail(data: {
              * delivered and paid for, and the client is owed an accurate
              * record of that as much as of the cancellation.
              */
-            data.heldSessions?.length
+            data.heldSessions?.length && !data.sessionLines?.length
               ? `<p style="margin: 0 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${t.sessionsHeldTitle[locale]}</p>
                  ${emailDetailsTable(
                    data.heldSessions.map((session, index) =>
@@ -708,7 +865,21 @@ export function generateBookingCancellationEmail(data: {
              * A block lists its dates instead of its one date — numbered, so
              * the client can see at a glance how many are gone.
              */
-            ...(data.sessions?.length
+            /*
+             * ──────────────────────────────────────────────────────────────
+             * ONE LIST, IN ONE SHAPE.
+             *
+             * This is the older date-only list, numbered rows inside the
+             * details table. `sessionLines` is the same sessions with what
+             * happened to each and what it cost, in its own table — so when
+             * that is present this would print the identical dates a second
+             * time, in a different shape, directly above it.
+             *
+             * Kept for a caller that has dates and nothing else; stood down
+             * wherever the fuller table is being drawn.
+             * ──────────────────────────────────────────────────────────────
+             */
+            ...(data.sessions?.length && !data.sessionLines?.length
               ? data.sessions.map((session, index) =>
                   emailDetailRow(
                     `${index + 1}.`,
@@ -719,8 +890,27 @@ export function generateBookingCancellationEmail(data: {
               : []),
             // No date or time when none was booked: they would describe the
             // moment of purchase as an appointment that had been struck out.
-            data.hasSchedule === false || data.sessions?.length ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
-            data.hasSchedule !== false && timeStr && !data.sessions?.length ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            /*
+             * ──────────────────────────────────────────────────────────────
+             * A CALLED-OFF SESSION HAS AN HOUR, EVEN WHEN ITS SERVICE HAS NONE.
+             *
+             * `hasSchedule` is read off the SERVICE, and a package service is
+             * bought rather than booked into an hour — so this row was
+             * suppressed and the client received "the meeting below will not
+             * take place" with nothing below it. No date, no time, nothing
+             * naming which of their sessions was off.
+             *
+             * `meetingOnly` means exactly one appointment is being called off,
+             * and the caller passes its hour as `sessionStart`. That is a
+             * schedule whatever the service says.
+             * ──────────────────────────────────────────────────────────────
+             */
+            (data.hasSchedule === false && !data.meetingOnly) || data.sessions?.length
+              ? ''
+              : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
+            (data.hasSchedule !== false || data.meetingOnly) && timeStr && !data.sessions?.length
+              ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale)
+              : '',
             data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location, brandingWithLocale) : '',
             /*
              * The price, as the confirmation shows it.
@@ -748,7 +938,71 @@ export function generateBookingCancellationEmail(data: {
 
     ${moneyNotice}
 
-    ${data.bookAgainUrl ? `
+    <!-- Every session of the package, and where each stands. -->
+    ${
+      data.sessionLines?.length
+        ? `<p style="margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${tConfirm.sessionListTitle[locale]}</p>
+           ${emailSessionRows(data.sessionLines, data.timezone, locale, brandingWithLocale, {
+             states: {
+               upcoming: tConfirm.sessionUpcoming[locale],
+               held: tConfirm.sessionHeld[locale],
+               missed: tConfirm.sessionMissed[locale],
+               cancelled: tConfirm.sessionCancelled[locale],
+             },
+             money: {
+               paid: tConfirm.sessionPaid[locale],
+               due: tConfirm.sessionDue[locale],
+               refunded: tConfirm.sessionRefunded[locale],
+               partly_refunded: tConfirm.sessionPartlyRefunded[locale],
+             },
+             columns: {
+               when: tConfirm.sessionColWhen[locale],
+               state: tConfirm.sessionColState[locale],
+               payment: tConfirm.sessionColPayment[locale],
+             },
+             zoneNote: tConfirm.sessionZoneNote[locale],
+           })}`
+        : ''
+    }
+
+
+    ${
+      /*
+       * ── WHAT IS *NOT* CANCELLED ────────────────────────────────────────
+       * The sentence this whole variant exists for. A client reading that an
+       * appointment is off assumes the thing it was for is off too, and on a
+       * quoted job that is wrong: the quote is coming, or already with them,
+       * or already accepted.
+       *
+       * Placed where the money notice would be, which is the spot a reader
+       * goes to for "so where does that leave me".
+       */
+      data.meetingOnly
+        ? emailNoticeBox(
+            data.meetingOnly.continuation === 'no_quote'
+              ? t.noQuoteFollowing[locale]
+              : data.meetingOnly.continuation === 'quote_accepted'
+                ? t.quoteAccepted[locale]
+                : data.meetingOnly.continuation === 'quote_stands'
+                  ? t.quoteStands[locale]
+                  : t.quoteComing[locale],
+            /* Not a success tone when nothing is coming. */
+            data.meetingOnly.continuation === 'no_quote' ? 'warning' : 'info',
+            brandingWithLocale
+          )
+        : ''
+    }
+
+    ${data.meetingOnly && bookAgainHref ? `
+    <!-- Another time, offered and not urged: the meeting was dropped on
+         purpose, so this is a door left open rather than an instruction. -->
+    <p style="margin: 0 0 12px; font-size: 15px; color: ${c.inkMuted};">
+      ${t.chooseAnotherTime[locale]}
+    </p>
+    ${emailButton(t.chooseAnotherTimeButton[locale], bookAgainHref, { branding: brandingWithLocale })}
+    ` : ''}
+
+    ${!data.meetingOnly && bookAgainHref ? `
     <!--
       Book again, in the language of what was actually cancelled.
 
@@ -781,7 +1035,9 @@ export function generateBookingCancellationEmail(data: {
   `;
 
   return {
-    subject: (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
+    subject: data.meetingOnly
+      ? t.meetingOnlySubject[locale](dateStr)
+      : (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
   };
 }
@@ -801,6 +1057,18 @@ export function generateMissedAppointmentEmail(data: {
   dateTime: Date;
   timezone: string;
   bookAgainUrl?: string;
+  /**
+   * Every session of this package, with the missed one marked as the subject.
+   *
+   * This email was the only one of the five that showed no list, and it is the
+   * one where it matters most: a missed session is billed unless the owner
+   * waives it, so this mail can be the first the client hears that the hour
+   * they did not attend is now due. The row says so beside the date instead of
+   * an invoice turning up unexplained.
+   *
+   * Absent for an ordinary booking, and then nothing below changes.
+   */
+  sessionLines?: EmailSessionLine[];
   branding: BrandingData;
   locale?: Locale;
 }): {
@@ -811,6 +1079,9 @@ export function generateMissedAppointmentEmail(data: {
   const formattedDate = formatEmailDate(data.dateTime, data.timezone, { locale });
   const t = emailTranslations.missedAppointment;
   const tIntake = emailTranslations.intake;
+  /* The session table's own words, shared with the four emails that already
+     print one, so a client never meets two vocabularies for one list. */
+  const tConfirm = emailTranslations.bookingConfirmation;
 
   const brandingWithLocale = { ...data.branding, locale };
   const c = emailPalette(brandingWithLocale);
@@ -850,6 +1121,44 @@ export function generateMissedAppointmentEmail(data: {
       </tr>
     </table>
 
+    ${
+      /*
+       * ── EVERY SESSION, AND WHAT THIS ONE NOW COSTS ──────────────────────
+       * The missed email was the one of five that showed no session list, and
+       * it is the one where the client most needs it: a missed session is
+       * BILLED unless the owner waives it, so this mail may be the first they
+       * hear that the hour they did not attend is now due.
+       *
+       * The row for this session reads missed, with its own payment state
+       * beside it, and the other sessions stand where they stood. Nothing is
+       * asserted in prose, which is what keeps it honest whichever way the
+       * owner decided.
+       */
+      data.sessionLines?.length
+        ? `<p style="margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${tConfirm.sessionListTitle[locale]}</p>
+           ${emailSessionRows(data.sessionLines, data.timezone, locale, brandingWithLocale, {
+             states: {
+               upcoming: tConfirm.sessionUpcoming[locale],
+               held: tConfirm.sessionHeld[locale],
+               missed: tConfirm.sessionMissed[locale],
+               cancelled: tConfirm.sessionCancelled[locale],
+             },
+             money: {
+               paid: tConfirm.sessionPaid[locale],
+               due: tConfirm.sessionDue[locale],
+               refunded: tConfirm.sessionRefunded[locale],
+               partly_refunded: tConfirm.sessionPartlyRefunded[locale],
+             },
+             columns: {
+               when: tConfirm.sessionColWhen[locale],
+               state: tConfirm.sessionColState[locale],
+               payment: tConfirm.sessionColPayment[locale],
+             },
+             zoneNote: tConfirm.sessionZoneNote[locale],
+           })}`
+        : ''
+    }
+
     ${data.bookAgainUrl ? `
     <!-- A way back in -->
     <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted};">
@@ -874,6 +1183,14 @@ export function generateMissedAppointmentEmail(data: {
  * Generate booking rescheduled email
  */
 export function generateBookingRescheduledEmail(data: {
+  /**
+   * Every session of this package, for the client to see where each stands.
+   *
+   * Set only for a package: the email that changes one session shows all of
+   * them, because the client has no other record of a block they paid for.
+   */
+  sessionLines?: EmailSessionLine[];
+
   clientName: string;
   clientEmail: string;
   serviceName: string;
@@ -965,8 +1282,17 @@ export function generateBookingRescheduledEmail(data: {
   const dueNowPeriod = planPeriods.find(p => p.status !== 'paid' && p.status !== 'cancelled');
   const amountDueNow = data.plan ? (dueNowPeriod?.amount ?? 0) : data.price;
 
+  /*
+   * A moved session owes nothing new. The notice below asks the client to pay
+   * "to confirm the order" — true of a booking being made, and false of an
+   * appointment being moved inside a package that is already paid for by
+   * stage. `sessionLines` is only ever set for a package session.
+   */
   const hasPendingPayment =
-    data.paymentStatus === 'pending' && Boolean(amountDueNow) && (amountDueNow as number) > 0;
+    !data.sessionLines?.length &&
+    data.paymentStatus === 'pending' &&
+    Boolean(amountDueNow) &&
+    (amountDueNow as number) > 0;
 
   const content = `
     <!-- Greeting -->
@@ -1034,6 +1360,34 @@ export function generateBookingRescheduledEmail(data: {
     ${emailNoticeBox(tConfirm.paymentRequired[locale](formatCurrency(amountDueNow as number, data.currency || 'USD')), 'warning', brandingWithLocale)}
     ${data.paymentUrl ? emailButton(tConfirm.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
     ` : ''}
+
+    <!-- Every session of the package, and where each stands. -->
+    ${
+      data.sessionLines?.length
+        ? `<p style="margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">${tConfirm.sessionListTitle[locale]}</p>
+           ${emailSessionRows(data.sessionLines, data.timezone, locale, brandingWithLocale, {
+             states: {
+               upcoming: tConfirm.sessionUpcoming[locale],
+               held: tConfirm.sessionHeld[locale],
+               missed: tConfirm.sessionMissed[locale],
+               cancelled: tConfirm.sessionCancelled[locale],
+             },
+             money: {
+               paid: tConfirm.sessionPaid[locale],
+               due: tConfirm.sessionDue[locale],
+               refunded: tConfirm.sessionRefunded[locale],
+               partly_refunded: tConfirm.sessionPartlyRefunded[locale],
+             },
+             columns: {
+               when: tConfirm.sessionColWhen[locale],
+               state: tConfirm.sessionColState[locale],
+               payment: tConfirm.sessionColPayment[locale],
+             },
+             zoneNote: tConfirm.sessionZoneNote[locale],
+           })}`
+        : ''
+    }
+
 
     <!-- Add to Calendar -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">

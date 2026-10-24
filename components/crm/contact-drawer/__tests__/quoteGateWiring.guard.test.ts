@@ -49,6 +49,40 @@ describe('the drawer asks the gate', () => {
     expect(drawer).not.toContain('const jobClosed = isCancelled');
     expect(drawer).toContain("const jobClosed = gate === 'closed'");
   });
+
+  it('hands the gate the job and the meeting SEPARATELY', () => {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE BUG THIS PINS
+     *
+     * The gate was given `bookingStatus` and nothing else, and inferred both
+     * answers from it. It cannot: cancelling a booking whose meeting was
+     * already marked PRESERVES `completed`, because overwriting it would erase
+     * the fact the meeting happened, so the cancellation goes to
+     * `cancel_reason` / `cancelled_by` instead.
+     *
+     * The gate's `closed` branch was therefore unreachable for every held
+     * booking, and the create-quote button survived the cancellation. Three
+     * production rows reproduce it: `status = 'completed'`,
+     * `meeting_status = 'held'`, `cancel_reason` set.
+     *
+     * Passing either one without the other puts it straight back, so both are
+     * pinned here rather than in the gate's own tests — this is the wiring.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    expect(drawer).toContain('calledOff: jobCalledOff(booking)');
+    expect(drawer).toContain('meetingStatus: booking.meeting_status');
+  });
+
+  it('takes `calledOff` from the shared predicate, never re-derived here', () => {
+    /*
+     * One definition of "is the job off". `jobIsOver` and `quoteGate` disagreed
+     * for months because each assembled its own, and that is exactly how the
+     * reported bug survived a fix to its sibling.
+     */
+    expect(drawer).toContain("from '@/lib/business-os/bookingStatus'");
+    expect(drawer).not.toMatch(/calledOff:\s*booking\.status === 'cancelled'/);
+  });
 });
 
 describe('the strip renders the two new states', () => {

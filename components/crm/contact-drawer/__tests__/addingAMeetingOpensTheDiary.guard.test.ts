@@ -55,7 +55,21 @@ describe('the link opens the dialog', () => {
     // A package's meeting inherits the container's service, so the hours the
     // dialog offers must be that service's.
     expect(drawer).toMatch(/prefilledServiceId=\{addMeetingTo\?\.serviceId\}/);
-    expect(dialog).toMatch(/activeServices\.find\(item => item\.id === prefilledServiceId\)/);
+    /*
+     * Both of the dialog's writers resolve it through `defaultServiceFor`, and
+     * that helper answers ONLY where the caller named one — so "whichever is
+     * first" is no longer reachable from either. Asserted as a count: a third
+     * writer, or one of these two quietly going back to `activeServices[0]`,
+     * is the way this property gets lost.
+     */
+    expect(dialog.match(/defaultServiceFor\(services, prefilledServiceId\)/g)).toHaveLength(2);
+
+    /* Comments stripped for the negative: the code explains what it replaced,
+       and naming the old expression must not read as still doing it. */
+    const code = dialog.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+    expect(code).toContain('defaultServiceFor');
+    expect(code).not.toMatch(/activeServices\[0\]/);
   });
 });
 
@@ -68,7 +82,10 @@ describe('the dialog chooses an hour and writes nothing', () => {
      */
     const submit = dialog.slice(dialog.indexOf('const handleSubmit = async'));
     const pick = submit.indexOf('if (onPickSlot) {');
-    const post = submit.indexOf("const url = booking ?");
+    /* The URL is now chosen between three — a session's reschedule endpoint,
+       a booking, a new booking — so the marker is the choice, not its old
+       shape. */
+    const post = submit.indexOf('const url = rescheduleMeetingId');
 
     expect(pick).toBeGreaterThan(-1);
     expect(post).toBeGreaterThan(pick);
@@ -207,14 +224,32 @@ describe('the date field is readable in the dark', () => {
 });
 
 describe('the suggestions follow the series too', () => {
-  it('offers the series\' own next dates, not today and tomorrow', () => {
+  it('opens on the series\' own next date, not today and tomorrow', () => {
     /*
-     * The quick-pick chips are the next six free slots from today, which is
-     * right for an appointment and wrong for a seventh session of a
-     * fortnightly course: today is not a candidate, and clicking it breaks
-     * the rhythm the client is planning around.
+     * ───────────────────────────────────────────────────────────────────────
+     * The guarantee is unchanged; where it is delivered is not.
+     *
+     * It used to be a row of "בחירה מהירה" chips carrying the series' own
+     * remaining dates, because the dialog could not open on one. It can now —
+     * `prefilledStartLocal` lands the picker on the next date at the same
+     * hour — so the chips repeated a choice already made, and rendered before
+     * the slots had loaded, which made the dialog appear in one shape and
+     * rearrange itself into another a second later.
+     *
+     * So the drawer passes none, and the date it opens on is the series'.
+     * ───────────────────────────────────────────────────────────────────────
      */
-    expect(drawer).toMatch(/seriesSlots=\{addMeetingTo\?\.upcoming\}/);
+    expect(drawer).not.toMatch(/seriesSlots=/);
+    expect(drawer).toMatch(/prefilledStartLocal=\{addMeetingTo\?\.nextLocal/);
+  });
+
+  it('and the chips, if ever handed over again, are still the series\'', () => {
+    /*
+     * The block is left intact rather than torn out: it is a real feature for
+     * a caller holding dates the slot endpoint cannot know. What must not come
+     * back is the generic "next six free slots from today", which is right for
+     * an appointment and wrong for a seventh session of a fortnightly course.
+     */
     expect(dialog).toMatch(/seriesSlots\?\.length\s*\?\s*seriesPicks/);
   });
 

@@ -9,6 +9,14 @@ import { publicSiteUrl } from '@/lib/utils/origins';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+/* Readiness, for LOGGING what a published page cannot yet honour. The only
+   thing this route refuses on is an unpublished service, and that sentence is
+   written here rather than composed — which is why `describeJourneyGaps` is no
+   longer imported. See the gate below for the three rules this has held. */
+import {
+  journeyGaps,
+  isBlockingGap,
+} from '@/lib/business-os/journeyReadiness';
 import { WebsitePageRepository, WebsitePageInsert, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import { adoptBusinessTemplate, adoptBusinessTheme, getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { resolveBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
@@ -396,6 +404,83 @@ export async function POST(request: NextRequest) {
       },
       designId
     );
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * ONE GATE, AND IT IS "IS THERE ANYTHING TO SELL".
+     *
+     * This route has now held three different rules, and the middle one was
+     * wrong in each direction, so the reasoning is worth keeping.
+     *
+     * It began refusing on any blocking gap — the same check the website
+     * publish used. That made the platform decide what kind of page an owner
+     * was allowed to publish: a landing page can be a free consultation, a
+     * registration for a lecture, or an invitation ending in a contact form,
+     * and none of those owes anybody invoice details.
+     *
+     * It then refused on nothing at all, which went too far the other way. A
+     * landing page is not a website: a website can be a presence and a contact
+     * form with no catalogue behind it, while a landing page is BUILT around
+     * one service and is an empty argument without it.
+     *
+     * So the gate is the catalogue and only the catalogue. Specifically NOT
+     * the price: a service at zero is a real service — booked against a time,
+     * needing hours and reminders, raising no invoice — and it is the most
+     * likely subject of a landing page there is. Free is a thing to sell.
+     *
+     * Hours and invoice details stay out of it. They are still enforced where
+     * the promise is actually made: the public route drops a service with a
+     * blocking gap, so the page resolves `serviceUnavailable` and its button
+     * does not offer what cannot be honoured, and `booking/create` refuses
+     * underneath that regardless.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    if (validated.shouldPublish) {
+      try {
+        const { data: pageService } = await supabaseServer
+          .from('scheduling_services')
+          .select('service_name, status, is_active, is_scheduled, collection, price, sale_mode')
+          .eq('id', validated.serviceId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        /*
+         * Both halves of bookable, the `BOOKABLE` rule every public surface
+         * uses: the Power toggle AND the draft/published status. A page whose
+         * one service is a draft advertises something nobody can reach.
+         */
+        const published = pageService?.status === 'active' && pageService?.is_active === true;
+
+        if (!published) {
+          requestLogger.warn(
+            { userId: user.id, serviceId: validated.serviceId, status: pageService?.status },
+            'Landing page publish refused: its service is not published'
+          );
+          return NextResponse.json(
+            {
+              success: false,
+              code: 'catalogue',
+              error: 'This page sells a service that is not published yet. Publish the service, then publish the page.',
+              gaps: [{ kind: 'catalogue', missing: [] }],
+            },
+            { status: 400 }
+          );
+        }
+
+        const blocking = (await journeyGaps(user.id, [pageService])).filter(isBlockingGap);
+        if (blocking.length > 0) {
+          requestLogger.info(
+            { userId: user.id, serviceId: validated.serviceId, gaps: blocking.map(g => g.kind) },
+            'Publishing a landing page whose service is not ready; its booking button will not offer it'
+          );
+        }
+      } catch (error) {
+        requestLogger.warn(
+          { err: error, userId: user.id, serviceId: validated.serviceId },
+          'Readiness check failed; publishing anyway'
+        );
+      }
+    }
 
     // Create the landing page
     const pageData: WebsitePageInsert = {

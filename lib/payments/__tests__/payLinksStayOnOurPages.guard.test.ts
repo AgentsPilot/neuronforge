@@ -138,7 +138,10 @@ describe('the portal opens on the card fields when sent there', () => {
      * rather than in a branch of its own.
      */
     expect(page).toMatch(/get\('pay'\) === '1' \? 'pay' : params\.get\('task'\)/);
-    expect(page).toMatch(/setTask\(\{ kind: wanted as/);
+    /* The task now also carries which SESSION of a package it is about, so
+       the call spans several lines — the guarantee is that `wanted`, read from
+       the URL, is what opens the card, not the shape of the literal. */
+    expect(page).toMatch(/setTask\(\{[\s\S]{0,160}kind: wanted as/);
   });
 
   it('only while there is something to pay', () => {

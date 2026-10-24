@@ -21,7 +21,7 @@ import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 const logger = createLogger({ service: 'WebsiteBlockEnrichmentService' });
 
 // Block content types
-export interface ServiceBlockContent {
+export type ServiceBlockContent = {
   title?: string;
   subtitle?: string;
   services: Array<{
@@ -33,7 +33,7 @@ export interface ServiceBlockContent {
   }>;
 }
 
-export interface AboutBlockContent {
+export type AboutBlockContent = {
   title?: string;
   about_text?: string;
   image?: string;
@@ -44,7 +44,7 @@ export interface AboutBlockContent {
   }>;
 }
 
-export interface StatsBlockContent {
+export type StatsBlockContent = {
   title?: string;
   subtitle?: string;
   stats: Array<{
@@ -54,7 +54,7 @@ export interface StatsBlockContent {
   }>;
 }
 
-export interface TestimonialsBlockContent {
+export type TestimonialsBlockContent = {
   title?: string;
   subtitle?: string;
   testimonials: Array<{
@@ -67,7 +67,7 @@ export interface TestimonialsBlockContent {
   }>;
 }
 
-export interface HeroBlockContent {
+export type HeroBlockContent = {
   headline?: string;
   subheadline?: string;
   cta_text?: string;
@@ -75,7 +75,7 @@ export interface HeroBlockContent {
   image?: string;
 }
 
-export interface ContactFormBlockContent {
+export type ContactFormBlockContent = {
   title?: string;
   subtitle?: string;
   fields?: Array<{
@@ -92,7 +92,7 @@ export interface ContactFormBlockContent {
   business_hours?: string;
 }
 
-export interface PricingBlockContent {
+export type PricingBlockContent = {
   title?: string;
   subtitle?: string;
   plans: Array<{
@@ -107,7 +107,7 @@ export interface PricingBlockContent {
   }>;
 }
 
-export interface ProcessBlockContent {
+export type ProcessBlockContent = {
   title?: string;
   subtitle?: string;
   steps: Array<{
@@ -493,12 +493,22 @@ export class WebsiteBlockEnrichmentService {
       const contactsResult = await this.contactRepo.count(userId, { stage: 'client' });
       const clientCount = contactsResult.data || 0;
 
-      // Get total bookings count
+      /*
+       * Appointments actually SERVED — this is a number printed on the
+       * business's own website, so it has to be one they can stand behind.
+       *
+       * Read off `meeting_status`, not `status`. `complete()` writes
+       * `meeting_status: 'held'` and leaves `status` alone, so the old filter
+       * stopped counting every meeting held from that point on: a growing
+       * business would have watched its public "clients served" figure stall.
+       * The backfill gave every historical `completed` row a `held`, so no
+       * past appointment is lost by the change.
+       */
       const { count: bookingsCount, error: bookingsError } = await this.supabase
         .from('scheduling_bookings')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .eq('status', 'completed');
+        .eq('meeting_status', 'held');
 
       if (bookingsError) {
         throw bookingsError;
@@ -921,7 +931,16 @@ export class WebsiteBlockEnrichmentService {
     return {
       content: { ...templateContent, cta_button: { ...cta, link: '#contact' } },
       enriched: true,
-      source: 'profile',
+      /*
+       * `generated`, not `profile`. `profile` is not one of the four values
+       * `EnrichmentResult.source` allows, and it is not what happened either:
+       * nothing here reads the business profile. The new link is worked out
+       * from the button's own label, by the rule above.
+       *
+       * It matters beyond the type error because this value is returned to the
+       * client by `app/api/website/pages/[id]/enrich/route.ts`.
+       */
+      source: 'generated',
       enrichedFields: ['cta_button.link'],
     };
   }
@@ -1254,7 +1273,9 @@ export class WebsiteBlockEnrichmentService {
         .from('scheduling_bookings')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .eq('status', 'completed');
+        /* Appointments actually SERVED — `meeting_status`, not `status`. See the
+           stats block above for why the old filter undercounts. */
+        .eq('meeting_status', 'held');
 
       return {
         hasServices: (servicesResult.data?.length || 0) > 0,

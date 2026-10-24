@@ -175,11 +175,12 @@ export const he = {
     'crm.tab_tasks': 'משימות',
     'crm.tab_subscribers': 'נרשמים לדיוור',
     'crm.subscribers.title': 'נרשמים לדיוור',
-    'crm.subscribers.empty': 'אף אחד עדיין לא נרשם. הרשמות מתיבת הדיוור באתר יופיעו כאן.',
+    'crm.subscribers.empty': 'אף אחד עדיין לא אישר קבלת דיוור. כל מי שמסמן את תיבת ההסכמה בהזמנה, בפנייה או בהרשמה לניוזלטר יופיע כאן.',
     'crm.subscribers.status_pending': 'ממתין לאישור',
     'crm.subscribers.status_confirmed': 'אושר',
     'crm.subscribers.status_unsubscribed': 'הסיר הרשמה',
     'crm.subscribers.status_promoted': 'נמצא ב-CRM',
+    'crm.subscribers.status_contact': 'איש קשר',
     'crm.subscribers.promote': 'העברה לפייפליין',
     'crm.subscribers.promoting': '...מעביר',
     'crm.subscribers.subscribed_on': 'נרשם',
@@ -450,7 +451,7 @@ export const he = {
     'crm.booking.step.fulfillment': 'אספקת השירות',
     'crm.booking.step.booking_completed': 'הזמנה הושלמה',
     'crm.booking.step.booking_cancelled': 'הזמנה בוטלה',
-    'crm.booking.step.booked': 'הזמנה נקבעה',
+    'crm.booking.step.booked': 'ההזמנה נוצרה',
     'crm.booking.step.payment': 'תשלום',
     'crm.booking.step.paid': 'שולם',
     'crm.booking.step.free': 'חינם',
@@ -466,7 +467,7 @@ export const he = {
     'crm.stage.confirm_title': 'לחייב על השלב הזה?',
     'crm.stage.confirm_body': 'סימון "{stage}" כהושלם ישלח ל{name} חשבונית על {amount}. החשבונית נשלחת מיד ולא ניתן לבטל את השליחה.',
     'crm.stage.confirm_action': 'סימון ושליחת חשבונית',
-    'crm.stage.invoiced': 'השלב חויב — החשבונית בדרך',
+    'crm.stage.invoiced': 'השלב חויב. החשבונית בדרך',
     'crm.stage.already_done': 'השלב הזה כבר חויב',
     'crm.stage.error': 'לא הצלחנו לחייב את השלב. נסו שוב.',
     'crm.booking.package.add_meeting': 'הוספת פגישה נוספת',
@@ -475,8 +476,98 @@ export const he = {
     'crm.booking.package.charge_it': 'לחייב כמו השאר',
     'crm.booking.package.add_failed': 'לא הצלחנו להוסיף את הפגישה.',
     'crm.booking.step.package': 'הפגישות',
+    'crm.booking.package.col_when': 'מועד',
+    'crm.booking.package.col_state': 'סטטוס',
+    'crm.booking.package.col_payment': 'תשלום',
+    'crm.booking.package.left_to_collect': 'נותר לגבייה',
+    'crm.booking.package.sessions_off': '{count} בוטלו',
+    'crm.booking.package.already_refunded': 'הוחזרו {amount}',
+    'crm.booking.package.already_collected': 'נגבו {amount}',
     'crm.booking.package.meetings': '{count} הפגישות בחבילה',
     'crm.booking.quoted.meeting_held': 'הפגישה התקיימה',
+
+    /* INSTRUCTIONS, NOT STATES.
+       The strip used the `crm.booking.status.*` keys, so its buttons read
+       "בוטלה" — "it was cancelled" — which describes a state the card is
+       already in rather than asking for one. Reported as "they are not buttons
+       but like a title", and corrected by the owner directly: "בוטלה need to be
+       בטל הזמנה". Each label also names its own subject, which is what tells an
+       owner whether a control reaches the MEETING or the BOOKING. */
+    /* THE NEXT STEP. One line the owner reads at the top of a booking card,
+       and the buttons beside it. Written as instructions, never as states: the
+       card already shows what IS, and this says what to DO. Shown only when the
+       move is the owner's, so none of these ever describes waiting. */
+    'crm.next.mark_meeting': 'הפגישה עברה. מה קרה?',
+    'crm.next.missed': 'הלקוח לא הגיע. הצע מועד חדש',
+    'crm.next.send_intake': 'שלח את טופס ההכנה לפני הפגישה',
+    'crm.next.create_quote': 'הצעד הבא: שליחת הצעת מחיר',
+    'crm.next.quote_refused': 'ההצעה נדחתה. אפשר לשלוח הצעה חדשה',
+    'crm.next.send_invoice': 'הצעד הבא: גביית תשלום',
+    'crm.next.bill_next_stage': 'הגיע הזמן לחייב את השלב הבא',
+    'crm.next.fallback': 'ממתין לך',
+
+    /* SHORT forms, for the header badge. The banner below it already carries
+       the full instruction, and when both showed `labelKey` the same sentence
+       appeared twice in a row — once as the badge, once as the prompt. The
+       badge names the STATE, the banner asks for the ACTION. */
+    'crm.next.badge.mark_meeting': 'ממתין לסימון הפגישה',
+    'crm.next.badge.missed': 'הלקוח לא הגיע',
+    'crm.next.badge.create_quote': 'ממתין להצעת מחיר',
+    'crm.next.badge.quote_refused': 'ההצעה נדחתה',
+    'crm.next.badge.send_invoice': 'ממתין לגבייה',
+    /* A state, not an instruction: without it the badge fell back to the full
+       sentence and said "למסור ללקוח ולסמן שסופק" twice, stacked.
+       אספקה, not מסירה: the journey node is אספקת השירות and the button is
+       סמן שסופק, so a third root here would give the owner three words for
+       one thing. */
+    'crm.next.badge.deliver': 'ממתין לאספקה',
+    /* Stopped part way and never handed over: a state of its own, because the
+       owner has a decision to take rather than a task to finish. */
+    'crm.next.badge.plan_stopped_undelivered': 'הופסק, טרם סופק',
+    'crm.next.badge.bill_next_stage': 'שלב ממתין לחיוב',
+    'crm.next.badge.send_intake': 'השאלון טרם נשלח',
+
+    /* The states where nothing is asked of the owner. Not shown in the banner;
+       read by the header badge, which is why they are worded as facts. */
+    'crm.next.meeting_ahead': 'הפגישה עוד לפנינו',
+    'crm.next.client_moved_meeting': 'הלקוח שינה את מועד הפגישה',
+    'crm.next.client_cancelled_meeting': 'הלקוח ביטל את הפגישה',
+    'crm.next.close_the_booking': 'אמרת שלא תישלח הצעת מחיר. כדאי לסגור את ההזמנה',
+    'crm.next.badge.close_the_booking': 'ממתין לסגירת ההזמנה',
+    'crm.next.badge.client_moved_meeting': 'הלקוח שינה את המועד',
+    'crm.next.badge.client_cancelled_meeting': 'הלקוח ביטל את הפגישה',
+    'crm.next.intake_sent': 'הטופס נשלח, ממתין ללקוח',
+    'crm.next.quote_with_client': 'ההצעה אצל הלקוח',
+    'crm.next.awaiting_payment': 'ממתין לתשלום',
+    'crm.next.plan_running': 'תוכנית התשלומים רצה',
+    'crm.next.package_running': 'החבילה בעיצומה',
+    'crm.next.called_off': 'העבודה בוטלה',
+    'crm.next.done': 'הכול הושלם',
+    'crm.next.deliver': 'למסור ללקוח ולסמן שסופק',
+    'crm.next.plan_stopped_undelivered':
+      'תוכנית התשלומים הופסקה והשירות טרם סופק. אפשר לספק אותו ולסמן, או לסגור את ההזמנה',
+    'crm.next.quote_stopped': 'העבודה הופסקה. ההזמנה עדיין פתוחה',
+    'crm.next.notice.money_in_hand': 'כבר נגבה כסף על העבודה הזו. החזירו אותו אם הוא מגיע ללקוח',
+    'crm.next.notice.dismiss': 'הסתרה',
+    'crm.next.badge.quote_stopped': 'הופסק',
+    'crm.next.unknown': '',
+
+    'crm.next.action.mark_held': 'סמן שהתקיימה',
+    'crm.next.action.mark_delivered': 'סמן שסופק',
+    'crm.next.action.mark_no_show': 'סמן שלא הגיע',
+    'crm.next.action.reschedule': 'הצע מועד חדש',
+    'crm.next.action.new_meeting': 'קבע פגישה חדשה',
+    'crm.next.action.cancel_booking': 'בטל הזמנה',
+    'crm.next.action.send_intake': 'שלח טופס',
+    'crm.next.action.create_quote': 'צור הצעת מחיר',
+    'crm.next.action.remind_quote': 'שלח תזכורת',
+    'crm.next.action.send_invoice': 'שלח חשבונית',
+    'crm.next.action.bill_next_stage': 'חייב את השלב',
+    'crm.next.action.remind_payment': 'שלח תזכורת',
+
+    'crm.booking.action.mark_held': 'סמן שהתקיימה',
+    'crm.booking.action.mark_no_show': 'סמן שלא הגיע',
+    'crm.booking.action.cancel_booking': 'בטל הזמנה',
     'crm.booking.quoted.awaiting_quote': 'ממתין להצעת מחיר',
     'crm.booking.quoted.not_marked': 'טרם סומנה',
     'crm.booking.quoted.meeting_missed': 'לא הגיע',
@@ -484,11 +575,11 @@ export const he = {
     'crm.booking.quoted.declined': 'ההצעה נדחתה',
     'crm.booking.quoted.won_unpaid': 'זכינו — ממתין לתשלום',
     'crm.booking.quoted.lost': 'לא יצא לפועל',
-    'crm.proposal.closed': 'נסגר — לא יצא לפועל',
+    'crm.proposal.closed': 'נסגר. לא יצא לפועל',
     'crm.booking.step.proposal': 'הצעת מחיר',
-    'crm.booking.step.intake': 'טופס לקוח',
+    'crm.booking.step.intake': 'שאלון לקוח',
     'crm.booking.step.form': 'טופס',
-    'crm.booking.step.session': 'תאריך הפגישה',
+    'crm.booking.step.session': 'הפגישה',
     'crm.booking.step.appointment': 'תור',
     'crm.booking.step.completed': 'הושלם',
     'crm.booking.step.done': 'בוצע',
@@ -498,7 +589,9 @@ export const he = {
     // Booking timeline steps (products)
     'crm.booking.step.ordered': 'הוזמן',
     'crm.booking.step.confirmed': 'אושר',
-    'crm.booking.step.confirmation': 'אישור',
+    'crm.booking.step.confirmation': 'אישור הזמנה נשלח',
+    'crm.journey.cancellation_mail': 'נשלחה ללקוח הודעה על הביטול',
+    'crm.journey.cancellation_mail_none': 'לא נשלחה ללקוח הודעה על הביטול',
     'crm.booking.email_sent': 'מייל נשלח',
     'crm.booking.step.delivery': 'משלוח',
     'crm.booking.step.shipped': 'נשלח',
@@ -545,6 +638,11 @@ export const he = {
     // Payment management
     'crm.payment.manage': 'נהל תשלום',
     'crm.payment.request_cancelled': 'דרישת התשלום בוטלה',
+    /* On a plan the bare sentence is ambiguous: it reads as the WHOLE payment
+       being off while a later period is still due. These name which. */
+    'crm.payment.request_cancelled_one': 'דרישת תשלום {payments} בוטלה',
+    'crm.payment.request_cancelled_many': 'דרישות התשלום {payments} בוטלו',
+    'crm.payment.request_cancelled_all': 'כל דרישות התשלום בוטלו',
     'crm.payment.amount': 'סכום',
     'crm.payment.status': 'סטטוס',
     'crm.payment.service': 'שירות',
@@ -578,7 +676,7 @@ export const he = {
     'crm.payment.delete_booking_warning': 'פעולה זו תמחק את רשומת ההזמנה לצמיתות',
     'crm.payment.no_refund_available': 'החזר לא זמין - לא נמצאה עסקת תשלום',
     'crm.payment.manual_payment': 'תשלום ידני',
-    'crm.payment.manual_refund_note': 'תשלום זה סומן כשולם ידנית. ההחזר יעדכן רק את הסטטוס.',
+    'crm.payment.manual_refund_note': 'הכסף התקבל מחוץ למערכת, ולכן ההחזר נרשם כאן בלבד: את הכסף יש להעביר ללקוח בעצמך.',
     'crm.payment.free_service': 'זהו שירות חינם - לא נדרש תשלום',
     'crm.payment.details': 'פרטי תשלום',
     'crm.payment.actions': 'פעולות',
@@ -602,8 +700,99 @@ export const he = {
     'crm.booking.cancel_message': '{name} יקבל הודעה שהפגישה בוטלה, והמועד יתפנה.',
     'crm.booking.set_outcome': 'עדכון סטטוס',
     'crm.booking.status_updated': 'ההזמנה עודכנה',
+
+    /* The toast after the meeting-held button. 'ההזמנה עודכנה' described
+       the row that changed rather than what the owner just recorded — and
+       on a quoted job the booking is NOT completed: the consultation is, and
+       the work has barely started. */
+    'crm.booking.meeting_marked_held': 'הפגישה סומנה כהתקיימה',
+    'crm.booking.no_show_marked': 'סומן שהלקוח לא הגיע',
+    'crm.booking.cancelled_done': 'ההזמנה בוטלה',
     'crm.journey.awaiting_outcome': 'ממתין לעדכון',
+    /* Who recorded an outcome. `by_system` is an automation, with no person
+       behind it, so it must not read as the owner having decided. */
+    'crm.journey.by_client': 'עודכן על ידי הלקוח',
+    /* An unmarked attempt that is no longer the current one: it was moved, so
+       nobody is going to say what happened at it. */
+    'crm.journey.superseded': 'נדחתה למועד אחר',
+    /* A repeat of mail the client already had, not a new one. */
+    'crm.journey.mail_resent': 'נשלח שוב',
+    /* ── THE MEETING CHAIN READS AS SENTENCES ──────────────────────────────
+       The rail had facts without grammar: a state, a bare time and an icon,
+       which the reader had to assemble. Each line now has a verb and a
+       subject, so "who" and "what" need no decoding. */
+    'crm.journey.attempt_current': 'המועד הנוכחי',
+    'crm.journey.attempt': 'מועד',
+    'crm.journey.attempt_ordinal.1': 'מועד ראשון',
+    'crm.journey.attempt_ordinal.2': 'מועד שני',
+    'crm.journey.attempt_ordinal.3': 'מועד שלישי',
+    'crm.journey.attempt_ordinal.4': 'מועד רביעי',
+    'crm.journey.attempt_ordinal.5': 'מועד חמישי',
+    'crm.journey.attempt_ordinal.6': 'מועד שישי',
+    /* The move itself, which the flat list never showed. */
+    'crm.journey.you_moved': 'שינית את המועד',
+    'crm.journey.client_moved': 'הלקוח שינה את המועד',
+    /* Nobody recorded a side. Every attempt written before `moved_by`
+       (20261082) looks like this, and the move is still a fact. */
+    'crm.journey.time_moved': 'המועד שונה',
+    'crm.journey.auto_moved': 'המועד שונה אוטומטית',
+    /* Outcomes, in the first person where the owner recorded them. */
+    'crm.journey.you_marked_held': 'סימנת שהפגישה התקיימה',
+    'crm.journey.you_marked_no_show': 'סימנת שהלקוח לא הגיע',
+    'crm.journey.you_cancelled_meeting': 'ביטלת את הפגישה',
+    'crm.journey.you_cancelled_meeting_and_quote': 'ביטלת את הפגישה, ללא המשך להצעת מחיר',
+    'crm.journey.client_cancelled_meeting': 'הלקוח ביטל את הפגישה',
+    'crm.journey.auto_marked': 'עודכן אוטומטית',
+    /* Mail: the verb says whose doing it was. */
+    'crm.journey.mail_to_client': 'נשלח ללקוח',
+    /*
+     * WHAT a message was, for the contact drawer's journey.
+     *
+     * The rail used to echo the raw subject, which on one booking repeated the
+     * service name on every row: it is one booking, so it is one service
+     * throughout. These name the message instead. Recorded by the sender
+     * (20261081), never guessed from subject text, which is written for the
+     * CLIENT and so may not even be in this language.
+     *
+     * A kind with no label here falls back to the subject, so adding a sender
+     * before its label is safe.
+     */
+    'crm.journey.mail_kind.booking_confirmed': 'אישור הזמנה',
+    'crm.journey.mail_kind.booking_rescheduled': 'הודעה על המועד החדש',
+    'crm.journey.mail_kind.booking_cancelled': 'הודעה על ביטול ההזמנה',
+    'crm.journey.mail_kind.meeting_cancelled': 'הודעה על ביטול הפגישה בלבד',
+    'crm.journey.mail_kind.missed_appointment': 'הודעה על פגישה שלא התקיימה',
+    'crm.journey.mail_kind.meeting_reminder': 'תזכורת לפגישה',
+    'crm.journey.mail_kind.meeting_reminder_owner': 'תזכורת לפגישה, אליך',
+    'crm.journey.mail_kind.payment_receipt': 'קבלה על תשלום',
+    'crm.journey.mail_kind.payment_request_cancelled': 'ביטול דרישת תשלום',
+    'crm.journey.mail_kind.refund_confirmed': 'אישור החזר כספי',
+    'crm.journey.mail_kind.intake_requested': 'בקשה למילוי שאלון',
+    'crm.journey.mail_kind.intake_received': 'אישור קבלת השאלון',
+    'crm.journey.mail_kind.quote_request': 'אישור קבלת הבקשה להצעת מחיר',
+    'crm.journey.mail_kind.booking_recovery': 'תזכורת להשלמת ההזמנה',
+    'crm.journey.mail_kind.contact_welcome': 'הודעת פתיחה',
+    'crm.journey.mail_kind.contact_returning': 'הודעה ללקוח חוזר',
+    'crm.journey.mail_resent_by_you': 'שלחת שוב ללקוח',
+    /* The collapsed summary. */
+    'crm.journey.changes_count': 'שינויי מועד',
+    'crm.journey.mails_count': 'הודעות ללקוח',
+    'crm.journey.show_history': 'הצג את מה שקרה',
+    'crm.journey.hide_history': 'הסתר',
+    /* ── CLOSING THE MEETING IS ABSORBED, NOT DEMANDED ─────────────────────
+       Owners quote from the van and rarely tick the appointment first, so
+       gating the quote behind it would block the commonest sequence. Offered
+       as part of sending instead: one press, both facts. */
+    'proposal.also_mark_held': 'סמן גם שהפגישה התקיימה',
+    'proposal.also_mark_held_hint': 'הפגישה עברה ועדיין לא סומנה',
+    /* The APPOINTMENT is off, the work carries on. Named for its own subject,
+       so it cannot be mistaken for the footer's "בטל הזמנה". */
+    'crm.booking.action.cancel_meeting': 'ביטול פגישה',
+    'crm.booking.action.cancel_meeting_hint': 'הפגישה מבוטלת, העבודה ממשיכה',
+    'crm.journey.by_you': 'עודכן על ידך',
+    'crm.journey.by_system': 'עודכן אוטומטית',
     'crm.journey.not_yet_held': 'טרם התקיימה',
+    'crm.journey.scheduled_ahead': 'מתוכננת',
     'crm.journey.held': 'התקיימה',
     'crm.journey.wait_days': '{count} ימים עד הפגישה',
     'crm.journey.charged': 'חויב',
@@ -612,6 +801,13 @@ export const he = {
     'crm.journey.upcoming': 'עתידי',
     'crm.journey.undated': 'השעה לא נרשמה',
     'crm.booking.resend_confirmation_title': 'שליחת האישור מחדש',
+    'crm.booking.resend_title': 'שליחת ההודעה מחדש',
+    'crm.booking.meeting_cancelled_done': 'הפגישה בוטלה והלקוח עודכן. העבודה ממשיכה',
+    'crm.booking.meeting_cancelled_no_quote': 'הפגישה בוטלה. ללקוח נכתב שלא תישלח הצעת מחיר',
+    'crm.booking.resent_done': 'נשלח שוב ללקוח: {what}',
+    'crm.booking.resend_message': 'לשלוח שוב ל{name} {what}?',
+    'crm.booking.resend_this_message': 'את ההודעה הזאת',
+    'crm.booking.resend_note': 'ההודעה נבנית מחדש לפי מצב ההזמנה עכשיו, כך שהפרטים יהיו מעודכנים.',
     'crm.booking.resend_confirmation_message': 'לשלוח שוב את אישור הפגישה ל{name}? הוא יקבל את הפרטים והזמנה ליומן.',
     'crm.booking.confirmation_sent': 'האישור נשלח',
     'crm.journey.resend': 'שלח שוב',
@@ -1122,9 +1318,60 @@ export const he = {
     'scheduling.booking.phone': 'טלפון',
     'scheduling.booking.phone_placeholder': '050-123-4567',
     'scheduling.booking.time_section': 'תאריך ושעה',
+    'scheduling.slots.suggestions': 'הצעות',
+    'scheduling.slots.reason.client_usual_hour': 'השעה ש{client} בחר ב־{count} הפגישות הקודמות',
+    'scheduling.slots.reason.soonest': 'ההזדמנות הקרובה ביותר שמתאימה לשירות הזה',
+    'scheduling.slots.mark.no_waste': 'ללא בזבוז',
+    'scheduling.slots.cost.closes_window': 'סוגר חלון',
+    'scheduling.slots.cost.strands': 'משאיר {minutes} דק׳',
+    'scheduling.slots.cost.closes_day': 'סוגר את היום',
+    'scheduling.slots.cost.taken': 'תפוס',
+    'scheduling.slots.cost.selected': 'נבחר',
+    'scheduling.slots.band.morning': 'בוקר',
+    'scheduling.slots.band.afternoon': 'אחר הצהריים',
+    'scheduling.slots.band.evening': 'ערב',
+    'scheduling.slots.day.free': '{count} פנויים',
+    'scheduling.slots.day.full': 'מלא',
+    'scheduling.slots.day.closed': 'סגור',
+    'scheduling.slots.day.empty': 'יום פנוי',
+    'scheduling.slots.selected_day': 'היום שנבחר',
+    'scheduling.slots.other_time': 'שעה אחרת…',
+    'scheduling.slots.none_this_week': 'אין שעות פנויות בשבוע הזה',
+    'scheduling.slots.next_free': 'הפנוי הבא: {date}',
+    'scheduling.slots.warn.no_24h_reminder': 'פחות מ־24 שעות מראש: תזכורת 24 השעות לא תצא. רק תזכורת השעתיים.',
+    'scheduling.slots.warn.intake_lead_time': 'טופס לקוח יישלח עם אישור ההזמנה. יישארו ללקוח {hours} שעות למלא אותו.',
+    'scheduling.slots.warn.intake_lead_time_soon': 'טופס לקוח יישלח עם אישור ההזמנה. תישאר ללקוח פחות משעה למלא אותו.',
+    'scheduling.slots.legend.selected': 'נבחר',
+    'scheduling.slots.legend.taken': 'תפוס',
+    'scheduling.slots.no_hours_configured': 'לא הוגדרו שעות עבודה, ולכן אין שעות להציע. אפשר להגדיר אותן בהגדרות התיאום.',
+    'scheduling.slots.reason.client_usual_hour_nearest': 'הכי קרוב לשעה ש{client} בוחר בדרך כלל',
+    'scheduling.slots.reason.closes_window': 'סוגר את החלון בין {gap}, לא נשאר חור',
+    'scheduling.slots.day.untouched': 'יום ריק',
+    'scheduling.slots.day.untouched_hint': 'ביום הזה עדיין אין אף פגישה. קביעת פגישה בו תהפוך יום פנוי ליום עבודה, גם אם זו הפגישה היחידה בו.',
+    'scheduling.slots.week_previous': 'השבוע הקודם',
+    'scheduling.slots.week_next': 'השבוע הבא',
+    'scheduling.slots.mark.habit': 'הרגל הלקוח',
+    'scheduling.slots.mark.opens_day': 'פותח יום',
+    'scheduling.slots.the_client': 'הלקוח',
+    'scheduling.slots.reason.next_day': 'השעה הראשונה הפנויה ביום שאחרי',
+    'scheduling.slots.opens_day_caveat': 'פותחת יום חדש ביומן ריק',
+    'scheduling.slots.mark.soonest': 'הכי קרוב',
+    'scheduling.slots.mark.next_day': 'היום שאחרי',
+    'scheduling.slots.legend.open': 'פנוי',
+    'scheduling.slots.legend.pick': 'נבחר',
+    'scheduling.slots.legend.booked': 'תפוס',
+    'scheduling.slots.legend.gone': 'לא ניתן להזמנה',
+    'scheduling.slots.loading': 'בודק מה פנוי…',
     'scheduling.booking.start_time': 'שעת התחלה',
     'scheduling.booking.end_time': 'שעת סיום',
     'scheduling.booking.notes_section': 'הערות',
+    /* The collapsing steps. `step_change` reopens an answered one. */
+    'scheduling.booking.step_details': 'פרטים',
+    'scheduling.booking.exact_time_section': 'שעה מדויקת',
+    'scheduling.booking.step_change': 'שינוי',
+    'scheduling.booking.details_notes_added': 'הערות נוספו',
+    'scheduling.booking.details_intake_will_send': 'טופס לקוח יישלח',
+    'scheduling.booking.details_nothing_added': 'ללא הערות',
     'scheduling.booking.notes_placeholder': 'מידע נוסף...',
     'scheduling.booking.send_intake_form': 'שלח טופס לקוח',
     'scheduling.booking.send_intake_form_description': 'שליחת טופס לאיסוף פרטי הלקוח לפני הפגישה',
@@ -1203,6 +1450,7 @@ export const he = {
     'scheduling.booking.save_failed': 'שמירת ההזמנה נכשלה. נא לנסות שוב.',
     'scheduling.booking.time_slot_overlap': 'משבצת זמן זו חופפת להזמנה קיימת בשעה {time}',
     'scheduling.booking.save_changes': 'שמור שינויים',
+    'scheduling.booking.create_meeting': 'צור פגישה',
     'scheduling.booking.create_booking': 'צור הזמנה',
     'scheduling.booking.search_client_placeholder': 'חפש לקוחות קיימים...',
     'scheduling.booking.no_clients_found': 'לא נמצאו לקוחות',
@@ -1378,6 +1626,7 @@ export const he = {
     'payments.section.other': 'לא משויך לפגישה',
     'common.actions': 'פעולות',
     'payments.awaiting_collection': 'עוד לגבייה',
+    'payments.search.any_amount': 'כל סכום',
     'payments.search.over': 'מעל',
     'payments.search.under': 'עד',
     'payments.search.try': 'נסו',
@@ -1390,6 +1639,7 @@ export const he = {
     'payments.search.as_text': 'כטקסט',
     'payments.search.add_filter': 'הוספת סינון',
     'payments.search.group_amount': 'סכום',
+    'payments.search.group_status': 'סטטוס',
     'payments.search.group_period': 'תקופה',
     'payments.search.upper_amount': 'סכום עליון',
     'payments.open_in_crm': 'פתיחה ב‑CRM',
@@ -1414,6 +1664,12 @@ export const he = {
     'payments.ledger.state': 'מצב',
     'payments.ledger.amount': 'סכום',
     'payments.toggle_detail': 'הצגת הפירוט',
+    'payments.view.all': 'כל הכסף',
+    'payments.filter.method.label': 'איך נגבה',
+    'payments.filter.method.any': 'כל האמצעים',
+    'payments.filter.method.invoice': 'חשבוניות',
+    'payments.filter.method.direct': 'ישיר',
+    'payments.filter.method.plan': 'תשלומים',
     'payments.view.orders': 'הזמנות',
     'payments.view.standalone': 'חשבוניות ללא הזמנה',
     'payments.view.no_orders': 'אין הזמנות בתצוגה הזו',
@@ -1651,6 +1907,7 @@ export const he = {
     'payments.refund.notify_contact': 'שלח הודעה לאיש קשר',
     'payments.refund.delete_booking_label': 'לבטל גם את ההזמנה',
     'payments.refund.delete_booking_desc': 'משחרר את הזמן ומודיע ללקוח שבוטל. ההזמנה נשארת ברישום.',
+    'payments.refund.delete_order_desc': 'מבטל את ההזמנה ומודיע ללקוח. ההזמנה נשארת ברישום.',
     'payments.refund.invalid_amount': 'אנא הזן סכום תקין בין 0 ל-{amount}',
     'payments.refund.warning_full': 'לא ניתן לבטל החזרים. {amount} יוחזר לאמצעי התשלום המקורי.',
     'payments.refund.plan_not_stopped': 'ההחזר בוצע, אך לא ניתן היה לעצור את תוכנית התשלומים — הלקוח עדיין יחויב.',
@@ -1751,7 +2008,7 @@ export const he = {
     'cancel.by_client': 'בוטל על ידי הלקוח',
     'cancel.hide_note_label': 'להשאיר את ההערה פנימית, לא לשלוח ללקוח',
     'crm.booking.cancel_confirm': 'בטל את הפגישה',
-    'crm.booking.cancel_reason_label': 'למה הפגישה מבוטלת?',
+    'crm.booking.cancel_reason_label': 'למה ההזמנה מבוטלת?',
     'payments.refund.cancel_reason_label': 'למה זה מבוטל?',
     'cancel.choose_reason': 'בחר סיבה',
     'crm.booking.cancel_note_placeholder': 'משהו ששווה לזכור (לא חובה)',
@@ -2327,6 +2584,23 @@ export const he = {
     'config.intake.state_draft': 'טיוטה — הלקוחות שלכם עדיין לא מקבלים את זה',
     'setup.intake.review': 'עברו על טופס הקליטה ופרסמו אותו',
     'scheduling.booking.intake_not_published': 'טופס הקליטה שלכם נכתב אבל עדיין לא פורסם — פרסמו אותו בהגדרות ← טפסי לקוח.',
+    /*
+     * Cancelling the APPOINTMENT while the job carries on.
+     *
+     * The toggle is the one thing the email cannot work out for itself: "no
+     * proposal exists" reads as *not yet written* and as *never going to be*
+     * in exactly the same data, and the client gets an opposite message in the
+     * two cases. The hints say which message, because that is what the owner
+     * is choosing between.
+     */
+    'scheduling.cancel_meeting.title': 'ביטול הפגישה',
+    'scheduling.cancel_meeting.dismiss': 'חזרה',
+    'scheduling.cancel_meeting.confirm': 'הפגישה תבוטל ונשלח ללקוח הודעה על כך.',
+    'scheduling.cancel_meeting.confirm_named': 'הפגישה עם {name} תבוטל ונשלח ללקוח הודעה על כך.',
+    'scheduling.cancel_meeting.proposal_label': 'האם הצעת המחיר ממשיכה?',
+    'scheduling.cancel_meeting.proposal_on_hint': 'ללקוח ייכתב שהצעת המחיר בדרך אליו ושאין צורך להיפגש לפני כן.',
+    'scheduling.cancel_meeting.proposal_off_hint': 'ללקוח ייכתב שלא תישלח הצעת מחיר. ההזמנה עצמה תישאר פתוחה, וכדאי לסגור אותה.',
+    'scheduling.cancel_meeting.confirm_action': 'ביטול הפגישה',
     'scheduling.no_show.title': 'סימון כאי-הגעה',
     'scheduling.slot.position': '{position} מתוך {total} בשעה הזו',
     'scheduling.no_show.confirm': 'הפעולה מתעדת שהלקוח לא הגיע. היא מופיעה בהיסטוריה שלו ונספרת בשיעור אי-ההגעות.',
@@ -2334,6 +2608,8 @@ export const he = {
     'scheduling.no_show.confirm_action': 'סימון כאי-הגעה',
     'scheduling.no_show.notify_label': 'הזמנה לקבוע מועד חדש',
     'scheduling.no_show.notify_description': 'שולח מייל קצר עם קישור לבחירת מועד אחר. הוא לא מזכיר פגישה שהוחמצה ולא מטיל אשמה. השאירו כבוי אם תעדיפו לדבר קודם.',
+    'scheduling.no_show.charge_label': 'לחייב עבור הפגישה הזו',
+    'scheduling.no_show.charge_description': 'השעה נשמרה ואף אחד לא הגיע, ולכן היא מחויבת כמו פגישה שהתקיימה. כבו כדי לוותר: הפגישה נשארת מסומנת כפגישה שהוחמצה, והתשלום עבורה יוסר מהתוכנית.',
     'scheduling.booking.intake_open_settings': 'פתחו את הגדרות הקליטה',
     'scheduling.booking.time_already_booked': 'כבר יש לכם הזמנה בשעה הזו.',
     'scheduling.booking.business_clock_hint': 'כל השעות כאן הן לפי שעון העסק, לא משנה איפה אתם נמצאים.',
@@ -2364,6 +2640,12 @@ export const he = {
     // it is not the change that is unpublished, it is the service.
     'config.services.paused_publish_prompt': 'השירות מושהה עד הפרסום — כרגע לקוחות לא יכולים להזמין אותו.',
     'config.services.publish_failed': 'לא הצלחנו לפרסם את השירות. נסו שוב.',
+    'config.services.publish_needs_duration': 'השירות הזה תופס זמן ביומן, אז צריך למלא משך לפני שאפשר לפרסם אותו.',
+    'config.services.publish_needs_price': 'על השירות הזה משלמים, אז צריך למלא מחיר לפני שאפשר לפרסם אותו.',
+    'config.services.site_has_no_services': 'האתר שלך עדיין לא מציג את השירותים. הוא נבנה לפני שהיו לך, אז החלק הזה לא נוצר.',
+    'config.services.add_services_section': 'הוסיפו אותו לאתר שלי',
+    'config.services.not_now': 'לא עכשיו',
+    'config.services.publish_needs_processor': 'את השירות הזה משלמים בכרטיס, אז צריך לחבר חשבון תשלומים לפני שאפשר לפרסם אותו. אפשר לחבר, או לחייב בחשבונית במקום.',
     'config.intake.load_failed': 'לא הצלחנו לטעון את טופס הקליטה. נסו שוב.',
     'setup.intake.review_why': 'כתבנו אחד לפי מה שאתם עושים. אף אחד לא מקבל אותו עד שתפרסמו.',
     'config.intake.state_published': 'פורסם — הזמנות חדשות מקבלות את הטופס הזה',
@@ -2417,6 +2699,7 @@ export const he = {
     'ledger.export_failed': 'לא ניתן היה ליצור את הקובץ. נסו שוב.',
     'payments.export.nothing': 'אין עדיין מה לייצא',
     'gap.fix.invoicing': 'להשלמת פרטי החשבונית',
+    'gap.fix.catalogue': 'פרסמו שירות',
     'settings.security.delete_blocked': 'לא ניתן למחוק את החשבון כל עוד יש כסף פתוח:',
     'settings.security.blocker.unpaid_invoices': 'חשבוניות שלא שולמו',
     'settings.security.blocker.active_payment_plans': 'תוכניות תשלום פעילות',
@@ -2625,6 +2908,7 @@ export const he = {
     'automation.chase_invoices_hint': 'התזכורות שנשלחות אחרי שחשבונית מאחרת, כברירת מחדל אחרי 3, 7 ו-14 ימים. לפני מועד התשלום נשלחת גם תזכורת אחת מקדימה, בהגדרה נפרדת. שתי תזכורות על אותה חשבונית לא נשלחות בהפרש של פחות משלושה ימים, והכול נפסק ברגע שהיא משולמת.',
     'automation.chase_intake': 'תזכורת ללקוחות על הטופס',
     'automation.chase_intake_hint': 'תזכורת אחת כשטופס לא הוחזר והפגישה עדיין רחוקה מספיק כדי שיהיה טעם לבקש.',
+    'gaps.session_number': 'מפגש {n}',
     'gaps.card_title': 'מחכה לך',
     'gaps.lead.urgent': '\u05e2\u05d5\u05dc\u05d4 \u05dc\u05da \u05db\u05e1\u05e3 \u05e2\u05db\u05e9\u05d9\u05d5',
     'gaps.lead.next': '\u05de\u05db\u05d0\u05df \u05de\u05ea\u05d7\u05d9\u05dc\u05d9\u05dd',
@@ -4138,16 +4422,17 @@ export const he = {
     'crm.proposal.hist.withdrawn': 'בוטלה',
     'crm.proposal.hist.stopped': 'נעצרה באמצע',
     'crm.proposal.hist.superseded': 'הוחלפה',
-    'crm.proposal.viewed': 'הלקוח פתח את ההצעה — ממתינים לתשובה',
+    'crm.proposal.viewed': 'הלקוח פתח את ההצעה. ממתינים לתשובה',
     'crm.proposal.accepted': 'ההצעה אושרה',
     'crm.proposal.declined': 'ההצעה נדחתה',
     'crm.proposal.expired': 'ההצעה פגה ללא תשובה',
-    'crm.proposal.after_meeting': 'ההצעה תישלח אחרי הפגישה —',
+    'crm.proposal.after_meeting': 'ההצעה תישלח אחרי הפגישה:',
     'crm.proposal.ask_happened': 'האם הפגישה התקיימה? אפשר לסמן למעלה, או לשלוח הצעה בכל זאת.',
     'crm.proposal.after_missed': 'הלקוח לא הגיע. אפשר לקבוע מועד חדש, או לשלוח הצעה בכל זאת.',
     'crm.proposal.book_new_meeting': 'קביעת מועד חדש',
-    'crm.proposal.waiting_on_you': 'הלקוח ביקש מחיר — ממתין לכם',
-    'crm.proposal.waiting_on_client': 'נשלח — ממתינים לתשובת הלקוח',
+    'crm.proposal.waiting_on_you': 'עדיין לא נשלחה הצעת מחיר. התור שלך',
+    'crm.proposal.not_continuing': 'אמרת שלא תישלח הצעת מחיר',
+    'crm.proposal.waiting_on_client': 'נשלח. ממתינים לתשובת הלקוח',
     'proposal.package_first': 'הפגישה הראשונה',
     'proposal.package_how_many': 'כמה ובאיזה אורך',
     'proposal.package_repeats': 'חוזר',
@@ -4169,7 +4454,7 @@ export const he = {
     'proposal.package_dates_lost': '{count} מהפגישות האלה לא ייקבעו. העבר אותן לשעה פנויה לפני שליחת ההצעה.',
     'proposal.package_dates_warned': '{count} מהפגישות האלה נופלות ביום סגור או מחוץ לשעות הפעילות. הן ייקבעו בכל זאת.',
     'proposal.package_date_taken': 'יש כבר פגישה בשעה הזו, ולכן הפגישה הזו לא תיווצר.',
-    'proposal.package_date_outside': 'מחוץ לשעות הפעילות של השירות ({start}–{end}).',
+    'proposal.package_date_outside': 'מחוץ לשעות הפעילות שלך ({start}–{end}).',
     'proposal.package_date_past': 'השעה הזו כבר עברה.',
     'proposal.package_count': '{count} פגישות של {minutes} דקות. הלקוח רואה את כל התאריכים לפני האישור.',
     'proposal.attach_document': 'צירוף הצעת המחיר המלאה',

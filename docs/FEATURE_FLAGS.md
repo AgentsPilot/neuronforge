@@ -48,6 +48,7 @@ Feature flag functions are defined in:
 
 | Flag | Environment Variable | Scope | Default | Active Routes |
 |------|---------------------|-------|---------|---------------|
+| **TEMPORARY** — Early session outcome | `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME` | Client | `false` | CRM drawer, package session rows |
 | V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
 | V6 Review Mode | `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | Client | `true` | `/v2/agents/new`, `/test-plugins-v2` |
 | Move to Calibration After Creation | `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` | Client | `false` | `/v2/agents/new` |
@@ -923,3 +924,39 @@ console.log('Feature Flags:', getFeatureFlags());
 4. **Add console logging** - Log flag values during development for debugging
 5. **Write tests** - Test all valid/invalid input combinations
 6. **Clean up old flags** - Remove flags for features that are fully rolled out
+
+---
+
+## Temporary: `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME`
+
+> **Added**: 2026-10-20 · **Remove when**: the package money path has been
+> walked end to end (held → invoice → refund).
+
+Lets a package session be marked **held** or **missed** before its hour, so the
+money path can be exercised without waiting weeks for a session to come due.
+
+**What it changes.** One thing: the clock test in
+`components/crm/contact-drawer/MeetingRowActions.tsx`. That file withholds both
+outcomes until `isMeetingPastDue`, because a meeting still ahead cannot have
+been held any more than it can have been missed. The flag makes `awaiting` true
+regardless, and both controls hang off it — the primary "mark held" button and
+the no-show item behind the `⋯`.
+
+**What it does not change.** The server never checked the clock:
+`setMeetingOutcome` records what the owner says. So everything downstream is the
+real path — the real stage, the real invoice, the real email to the client.
+
+**Why it must not reach production.** With it on, a stray tap on a session three
+weeks out bills a client for work nobody has done, which is the accident the
+gate exists to prevent.
+
+**To remove it**, in this order:
+
+| # | Delete |
+|---|---|
+| 1 | `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME` from `.env.local` |
+| 2 | the `|| (isEarlySessionOutcomeEnabled() && …)` clause in `MeetingRowActions.tsx`, and its import |
+| 3 | `isEarlySessionOutcomeEnabled()` from `lib/utils/featureFlags.ts` |
+| 4 | the guard `temporaryEarlyOutcomeFlag.guard.test.ts`, this row and this section |
+
+Nothing else reads it — the guard in step 4 is what keeps that true.

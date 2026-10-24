@@ -12,6 +12,7 @@ import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
 import { MIN_PER_SEGMENT } from '../../patterns/segmentRate';
 import { createLogger } from '@/lib/logger';
+import { MEETING_HOLDS_SLOT_FILTER } from '@/lib/business-os/bookingStatus';
 
 const logger = createLogger({ module: 'OpsServicePerformanceDetector' });
 
@@ -109,7 +110,16 @@ export class OpsServicePerformanceDetector extends BaseDetector {
       .select('service_id, payment_amount, status')
       .eq('user_id', userId)
       .gte('created_at', thirtyDaysAgo.toISOString())
-      .in('status', ['confirmed', 'completed']);
+      .in('status', ['confirmed', 'completed'])
+      /*
+       * And the meeting was not missed or called off.
+       *
+       * The status pair means "not cancelled", and it excluded a no-show too
+       * until `markNoShow()` stopped writing `status`. Without this a missed
+       * appointment counts towards a service's performance, which would make a
+       * service look better the more clients fail to turn up for it.
+       */
+      .or(MEETING_HOLDS_SLOT_FILTER);
 
     if (bookingsError) {
       throw bookingsError;

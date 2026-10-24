@@ -316,19 +316,39 @@ export class CRMContactRepository {
     userId: string
   ): Promise<CRMContactRepositoryResult<CRMContact>> {
     try {
+      /*
+       * ── OLDEST FIRST, ONE ROW ───────────────────────────────────────────
+       *
+       * This used `.single()`, and PostgREST answers PGRST116 for MORE than
+       * one row as well as for none. The branch below reads that as "no
+       * contact" either way — so on a tenant that already has two rows for one
+       * address, every caller was told there was none and created a third.
+       * Duplicates bred duplicates, and the helper reported success each time.
+       *
+       * `limit(1)` after an order is what the three hand-written copies in the
+       * public booking flow already do, with a comment saying why. This is the
+       * shared one catching up.
+       *
+       * Oldest rather than newest: the first row is the one other records
+       * reference, so returning it keeps a caller from attaching new work to a
+       * duplicate.
+       */
       const { data, error } = await this.supabase
         .from('crm_contacts')
         .select('*')
         .eq('email', email)
         .eq('user_id', userId)
-        .single();
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
       if (error) {
-        // Not found is not an error in this case
-        if (error.code === 'PGRST116') {
-          return { data: null, error: null };
-        }
         throw error;
+      }
+
+      if (!data) {
+        // Not found is not an error in this case
+        return { data: null, error: null };
       }
 
       return { data, error: null };
@@ -915,11 +935,18 @@ export class CRMContactRepository {
   async listBasic(
     userId: string,
     options: { ids?: string[]; stage?: string; search?: string; limit?: number } = {}
-  ): Promise<CRMContactRepositoryResult<Pick<CRMContact, 'id' | 'first_name' | 'last_name' | 'email' | 'phone' | 'stage'>[]>> {
+  ): Promise<CRMContactRepositoryResult<Pick<CRMContact, 'id' | 'first_name' | 'last_name' | 'email' | 'phone' | 'stage' | 'source'>[]>> {
     try {
+      /*
+       * `source` is here because the mailable-audience list shows where each
+       * person came from, and it is a scalar column like the rest — no join,
+       * no subquery, so the "lightweight" promise above still holds. Added
+       * rather than given its own method: a second near-identical select is
+       * how two readers of one table drift apart.
+       */
       let query = this.supabase
         .from('crm_contacts')
-        .select('id, first_name, last_name, email, phone, stage')
+        .select('id, first_name, last_name, email, phone, stage, source')
         .eq('user_id', userId);
 
       if (options.ids) {

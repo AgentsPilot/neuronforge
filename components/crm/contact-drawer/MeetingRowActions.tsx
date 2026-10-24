@@ -34,6 +34,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { isEarlySessionOutcomeEnabled } from '@/lib/utils/featureFlags';
 import { CalendarClock, CheckCheck, MoreHorizontal, RotateCcw, UserX, XCircle } from 'lucide-react';
 
 import { shouldOpenUpward } from './menuPlacement';
@@ -43,12 +44,38 @@ import { isMeetingPastDue } from '@/lib/business-os/quoteGate';
 interface MeetingRowActionsProps {
   /** `scheduling_bookings.status` for this one meeting. */
   status: string;
+  /**
+   * `scheduling_bookings.meeting_status` for this one meeting.
+   *
+   * The three marks live here now. Without it this row kept offering "mark
+   * done", "no show" and "cancel" for a meeting the owner had already marked,
+   * because `complete()` leaves `status` at `confirmed`.
+   */
+  meetingStatus?: string | null;
   /** The meeting's own start, which decides whether it can have an outcome. */
   startTime: string | null;
   /** Records an outcome. Absent in a read-only drawer. */
   onSetStatus?: (status: 'completed' | 'no_show' | 'cancelled') => void;
   /** Opens the reschedule flow. */
   onReschedule?: () => void;
+  /**
+   * The JOB this appointment belongs to has been called off.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Distinct from the row's own state, and it has to be. A missed session is
+   * deliberately still movable — somebody did not turn up and the obvious next
+   * move is another time — so `no_show` is absent from `calledOff` below, by
+   * design.
+   *
+   * But once the whole package is off, moving one of its hours is offering an
+   * appointment that cannot happen. The row still reads לא הגיע, which is true,
+   * and only this says the work around it has stopped.
+   *
+   * Defaults to false, so every caller that does not know stays exactly as it
+   * was.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bookingCancelled?: boolean;
   /**
    * Returns the money taken for THIS meeting.
    *
@@ -79,9 +106,11 @@ interface MeetingRowActionsProps {
 
 export function MeetingRowActions({
   status,
+  meetingStatus,
   startTime,
   onSetStatus,
   onReschedule,
+  bookingCancelled = false,
   onRefund,
   refundable,
   t,
@@ -113,14 +142,37 @@ export function MeetingRowActions({
   }, [open]);
 
   /** The owner has already said what happened. */
-  const settled = status === 'completed' || status === 'cancelled' || status === 'no_show';
+  const settled =
+    meetingStatus != null ||
+    status === 'completed' ||
+    status === 'cancelled' ||
+    status === 'no_show';
 
   /*
    * Its time has passed and nobody has said what happened — the same rule the
    * badge and the session card use, so a row offering "mark done" and a badge
    * saying "awaiting an outcome" can never disagree about one booking.
    */
-  const awaiting = isMeetingPastDue({ status, startTime: startTime ? new Date(startTime) : null });
+  const awaiting =
+    isMeetingPastDue({
+      status,
+      meetingStatus,
+      startTime: startTime ? new Date(startTime) : null,
+    }) ||
+    /*
+     * TEMPORARY, FOR TESTING — `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME`.
+     *
+     * Marking a session held is what raises and emails its invoice, and the
+     * refund it then allows is the next link in the same chain. Neither can be
+     * exercised until a session's hour has passed, which on a six-week package
+     * is weeks away — so the money path could not be walked at all.
+     *
+     * It opens the control and nothing else: the server never checked the
+     * clock, so everything downstream is the real path. Off in production, for
+     * the reason the gate exists — a stray tap on a session three weeks out
+     * bills a client for work nobody has done.
+     */
+    (isEarlySessionOutcomeEnabled() && meetingStatus == null && !settled);
 
   type Item = {
     key: string;
@@ -148,7 +200,12 @@ export function MeetingRowActions({
   if (!settled && onSetStatus) {
     items.push({
       key: 'cancelled',
-      label: t('crm.booking.status.cancelled') || 'Cancel',
+      /*
+       * The ACTION, not the state. `status.cancelled` is "בוטלה" — the word a
+       * row carries once it HAS been called off — and a menu item reading it
+       * says the thing has already happened rather than offering to do it.
+       */
+      label: t('crm.booking.action.cancel_meeting') || 'Cancel meeting',
       icon: XCircle,
       run: () => onSetStatus('cancelled'),
       danger: true,
@@ -175,13 +232,23 @@ export function MeetingRowActions({
   }
 
   /*
-   * A meeting can be moved until it has HAPPENED.
+   * A meeting can be moved until it has HAPPENED or been CALLED OFF.
    *
    * ───────────────────────────────────────────────────────────────────────────
    * It used to be offered whatever the state, on the reasoning that rebooking
-   * is how a mistaken outcome gets corrected. That holds for a meeting called
-   * off or missed — the client reschedules, which is the ordinary flow — and
-   * not for one already held.
+   * is how a mistaken outcome gets corrected. That was narrowed once, to
+   * exclude a meeting already held, and again to exclude one called off.
+   *
+   * The two settled outcomes are not the same thing, and the owner's decision
+   * is what separates them:
+   *
+   *   · MISSED — the client did not turn up, nobody decided anything, and the
+   *     ordinary next move is another attempt at that session. Still movable.
+   *
+   *   · CALLED OFF — the owner decided this hour is not happening. Offering to
+   *     move it invites undoing a decision through a control that says
+   *     something else, and the row has just told the client it is off. A
+   *     session that should come back is a new one, deliberately.
    *
    * On a package billed per meeting, marking one held is what RAISES AND EMAILS
    * ITS INVOICE. Moving the date afterwards leaves the booking and the invoice
@@ -193,7 +260,11 @@ export function MeetingRowActions({
    * what that need actually wants, and the package adds one of those.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  if (onReschedule && status !== 'completed') {
+  const held = status === 'completed' || meetingStatus === 'held';
+  const calledOff =
+    status === 'cancelled' || meetingStatus === 'cancelled' || bookingCancelled;
+
+  if (onReschedule && !held && !calledOff) {
     items.push({
       key: 'reschedule',
       label: t('crm.booking.reschedule') || 'Reschedule',
@@ -216,15 +287,33 @@ export function MeetingRowActions({
           name actions. `crm.stage.mark_done` is the imperative the payment
           stages already use for the same gesture. */}
       {showsPrimary && (
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * AN ICON, BECAUSE IT SHARES A ROW WITH A TABLE'S COLUMNS.
+         *
+         * The words were "סימון כהושלם", and a label that long in the actions
+         * cell pushed the column wide on the rows that had one and left it
+         * narrow on the rows that did not — so the table's right edge stepped
+         * in and out down the list and the rows that could be marked were
+         * visibly taller than the rest.
+         *
+         * The same square as the ⋯ beside it, so every row is one height and
+         * the column is one width whatever a row can do. The words move to
+         * the tooltip and the accessible name, which is where a control with
+         * an obvious icon keeps them.
+         * ───────────────────────────────────────────────────────────────────
+         */
         <button
           type="button"
           onClick={event => {
             event.stopPropagation();
             onSetStatus?.('completed');
           }}
-          className="rounded-full px-2 py-0.5 text-[11.5px] font-medium text-green-700 transition-colors hover:bg-green-500/10 dark:text-green-400"
+          title={t('crm.stage.mark_done') || 'Mark done'}
+          aria-label={t('crm.stage.mark_done') || 'Mark done'}
+          className="flex h-6 w-6 items-center justify-center rounded text-green-700 transition-colors hover:bg-green-500/10 dark:text-green-400"
         >
-          {t('crm.stage.mark_done') || 'Mark done'}
+          <CheckCheck className="h-3.5 w-3.5" />
         </button>
       )}
 

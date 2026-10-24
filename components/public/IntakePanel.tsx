@@ -67,17 +67,90 @@ interface IntakePanelProps {
  * the same POST of answers alone.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE TWO SHELLS ARE DECLARED HERE, AND THAT IS LOAD-BEARING.
+ *
+ * They used to be built INSIDE `IntakePanel`:
+ *
+ *     const Shell = embedded ? ({children}) => <div>…</div> : ({children}) => …
+ *
+ * which creates a NEW function identity on every render. React compares
+ * element types by identity, so every keystroke — each one sets `responses`
+ * and re-renders — looked like `<Shell>` being replaced by a different
+ * component. It unmounted the whole form and mounted a fresh one.
+ *
+ * The visible effect was that the field being typed into lost focus after a
+ * single character, and the page jumped as the browser landed on a newly
+ * mounted document. The form was literally being rebuilt between keystrokes.
+ *
+ * Declared at module scope they are two stable references, so choosing between
+ * them changes which shell renders and nothing else.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** Embedded in the portal, which is already a card: no second border. */
+function PlainShell({ children }: { children: React.ReactNode }) {
+  return <div>{children}</div>;
+}
+
+
+/**
+ * One stored answer, as the client should read it back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The five types in use store five different shapes: text as a string, a
+ * yes/no as a BOOLEAN, a multi-choice as an array, a file question as a list of
+ * uploads, and a skipped question as nothing at all.
+ *
+ * `false` is the trap. A client who answered "no" stored `false`, and every
+ * ordinary emptiness check — `!value`, `|| ''`, a truthy filter — throws that
+ * answer away, so the one question they said no to would silently vanish from
+ * their own summary. It is checked for explicitly, before anything else looks
+ * at truthiness.
+ *
+ * Returns null for genuinely unanswered, which the caller drops: a blank row
+ * reads as an answer that failed to load rather than a question nobody filled.
+ */
+function formatSubmittedAnswer(
+  value: unknown,
+  t: (key: string) => string
+): string | null {
+  if (typeof value === 'boolean') return value ? t('yes') : t('no');
+  if (value === null || value === undefined || value === '') return null;
+
+  if (Array.isArray(value)) {
+    const parts = value
+      .map(item => {
+        if (typeof item === 'string') return item;
+        /* An upload, stored as an object. Its name is the only part a client
+           recognises; the url and size are machinery. */
+        if (item && typeof item === 'object') {
+          const file = item as { name?: string; fileName?: string; url?: string };
+          return file.name ?? file.fileName ?? file.url ?? '';
+        }
+        return String(item);
+      })
+      .filter(Boolean);
+
+    return parts.length ? parts.join(', ') : null;
+  }
+
+  if (typeof value === 'object') {
+    const file = value as { name?: string; fileName?: string };
+    return file.name ?? file.fileName ?? null;
+  }
+
+  return String(value);
+}
+
+/** Standalone at `/intake`, where nothing surrounds it. */
+function CardShell({ children }: { children: React.ReactNode }) {
+  return <PublicCard className="p-5">{children}</PublicCard>;
+}
+
 export function IntakePanel({ token, embedded = false }: IntakePanelProps) {
-  /*
-   * Embedded, this draws NO card. The portal's intake card is already a card,
-   * and nesting one inside it gave a border inside a border inside the page.
-   * Standalone, at `/intake`, there is nothing around it and it draws its own.
-   */
-  const Shell = embedded
-    ? ({ children }: { children: React.ReactNode }) => <div>{children}</div>
-    : ({ children }: { children: React.ReactNode }) => (
-        <PublicCard className="p-5">{children}</PublicCard>
-      );
+  const Shell = embedded ? PlainShell : CardShell;
 
   const brand = useOptionalPublicBrand();
 
@@ -91,6 +164,17 @@ export function IntakePanel({ token, embedded = false }: IntakePanelProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [alreadyCompleted, setAlreadyCompleted] = useState(false);
+  /*
+   * What they sent, so "you have already filled this in" can show it.
+   *
+   * Named for the submission rather than `answered`, which is taken below by
+   * the progress count on the live form — two different things, and one
+   * shadowing the other in the same component is how the wrong one gets read.
+   */
+  const [submittedAnswers, setSubmittedAnswers] = useState<{
+    questions: Array<{ id: string; label?: string; type?: string }>;
+    responses: Record<string, unknown>;
+  } | null>(null);
   const [hasNoIntake, setHasNoIntake] = useState(false);
 
   const locale = brand?.locale ?? 'en';
@@ -109,6 +193,9 @@ export function IntakePanel({ token, embedded = false }: IntakePanelProps) {
           if (data.alreadyCompleted) {
             setAlreadyCompleted(true);
             setBooking(data.booking);
+            /* Null on a submission stored before the questions travelled with
+               the answers; the card then says what it always said. */
+            setSubmittedAnswers(data.answered ?? null);
           } else if (!data.hasIntake) {
             setHasNoIntake(true);
             setBooking(data.booking);
@@ -253,6 +340,46 @@ export function IntakePanel({ token, embedded = false }: IntakePanelProps) {
         {/* The appointment, only where it is not already on the screen. */}
         {!embedded && booking && (
           <AppointmentCard booking={booking} brand={brand} variant="summary" />
+        )}
+
+        {/*
+          ── WHAT THEY SENT ────────────────────────────────────────────────
+          Only on the already-completed card: a client who has JUST submitted
+          is reading "thank you" and does not need their own answers read back
+          at them, and the no-form card has nothing to show.
+
+          Rendered from the snapshot stored with the submission, so a form
+          edited or republished since still reads correctly.
+          ──────────────────────────────────────────────────────────────────
+        */}
+        {alreadyCompleted && submittedAnswers && submittedAnswers.questions.length > 0 && (
+          <dl className="mt-4 flex flex-col text-start">
+            {submittedAnswers.questions.map(question => {
+              const raw = submittedAnswers.responses[question.id];
+              const shown = formatSubmittedAnswer(raw, t);
+              /* A question they skipped stays off the list: an empty row reads
+                 as an answer that failed to load. */
+              if (shown === null) return null;
+
+              return (
+                <div
+                  key={question.id}
+                  className="border-t py-2.5 first:border-t-0"
+                  style={{ borderColor: 'var(--ap-border)' }}
+                >
+                  <dt className="text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                    <bdi>{question.label ?? ''}</bdi>
+                  </dt>
+                  <dd
+                    className="mt-0.5 whitespace-pre-wrap text-sm"
+                    style={{ color: 'var(--ap-text)' }}
+                  >
+                    <bdi>{shown}</bdi>
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
         )}
       </StatusCard>
     );

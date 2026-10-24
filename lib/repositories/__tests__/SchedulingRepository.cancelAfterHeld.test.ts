@@ -50,7 +50,14 @@ jest.mock('@/lib/business-os/insight/events/recordEvent', () => ({
 const USER = 'user-1';
 const BOOKING = 'booking-1';
 
-type Current = { status: string; cancelled_by?: string | null; cancel_reason?: string | null };
+type Current = {
+  status: string;
+  /* The meeting's own answer, which `cancel()` must not overwrite once one
+     exists — see "a meeting already called off". */
+  meeting_status?: string | null;
+  cancelled_by?: string | null;
+  cancel_reason?: string | null;
+};
 
 /**
  * A Supabase double. The FIRST `from()` answers `cancel()`'s status pre-read;
@@ -72,16 +79,26 @@ function mockSupabase(current: Current | null, claimed = true) {
     return b;
   };
 
-  const writeBuilder = () => {
+  /*
+   * `table` so only the BOOKING's own writes are recorded. `cancel()` also
+   * sweeps `scheduling_meetings`, narrowing it in SQL with
+   * `.is('meeting_status', null)` so an hour somebody already answered for is
+   * never touched. This double does not evaluate filters, so recording that
+   * sweep too would fail "a held meeting is not rewritten to cancelled" on a
+   * statement that, in the database, never matches the held row.
+   */
+  const writeBuilder = (table?: string) => {
     const entry = { payload: {} as Record<string, unknown>, conditional: false };
     const row = { id: BOOKING, contact_id: 'contact-1', payment_amount: 400, service_id: 'svc-1' };
     const b: Record<string, unknown> = {};
     b.update = jest.fn((payload: Record<string, unknown>) => {
       entry.payload = payload;
-      writes.push(entry);
+      if (table === undefined || table === 'scheduling_bookings') writes.push(entry);
       return b;
     });
     b.eq = jest.fn(() => b);
+    /* The meetings sweep's own filter; the chain breaks without it. */
+    b.is = jest.fn(() => b);
     b.neq = jest.fn(() => {
       entry.conditional = true;
       return b;
@@ -97,9 +114,9 @@ function mockSupabase(current: Current | null, claimed = true) {
 
   let call = 0;
   const client = {
-    from: jest.fn(() => {
+    from: jest.fn((table: string) => {
       call += 1;
-      return call === 1 ? readBuilder() : writeBuilder();
+      return call === 1 ? readBuilder() : writeBuilder(table);
     }),
   } as unknown as SupabaseClient;
 
@@ -109,6 +126,55 @@ function mockSupabase(current: Current | null, claimed = true) {
 const emitted = () => (recordBusinessEvent as jest.Mock).mock.calls.map(c => c[1].eventType);
 
 beforeEach(() => jest.clearAllMocks());
+
+describe('a meeting already called off', () => {
+  /*
+   * Stopping the JOB afterwards is a second, later event. It writes the
+   * booking's own cancellation fields, and it must leave the MEETING's answer
+   * alone: `outcome_by` and `outcome_at` record who called the appointment off
+   * and when, and restamping them puts the moment the work stopped onto the
+   * appointment's row.
+   *
+   * Measured on a real booking: the meeting was called off at 01:55 and the
+   * job stopped later, after which the journey read "you cancelled the meeting"
+   * at the LATER time. The half hour in which the appointment was off and the
+   * work was not had disappeared.
+   */
+  it('keeps the moment its own cancellation was recorded', async () => {
+    const { repo, writes } = mockSupabase({ status: 'confirmed', meeting_status: 'cancelled' });
+
+    await repo.cancel(BOOKING, USER, 'Not going ahead', {
+      code: 'client_unresponsive',
+      cancelledBy: 'owner',
+    });
+
+    const payload = writes[0].payload;
+    /* The JOB still stops — this is not the `held` guard, which also withholds
+       the status. */
+    expect(payload.status).toBe('cancelled');
+    expect(payload.cancelled_by).toBe('owner');
+    /* But the meeting's answer is not restamped. */
+    expect(payload).not.toHaveProperty('outcome_at');
+    expect(payload).not.toHaveProperty('outcome_by');
+  });
+
+  it('while a meeting nobody answered for still gets one', async () => {
+    /* The ordinary case, and the reason the stamp exists at all: an
+       appointment with no outcome is called off by the job going off, and
+       somebody has to be recorded as having done it. */
+    const { repo, writes } = mockSupabase({ status: 'confirmed', meeting_status: null });
+
+    await repo.cancel(BOOKING, USER, 'Not going ahead', {
+      code: 'client_unresponsive',
+      cancelledBy: 'client',
+    });
+
+    const payload = writes[0].payload;
+    expect(payload.meeting_status).toBe('cancelled');
+    expect(payload.outcome_by).toBe('client');
+    expect(payload.outcome_at).toEqual(expect.any(String));
+  });
+});
 
 describe('a meeting that was held', () => {
   it('is not rewritten to cancelled', async () => {

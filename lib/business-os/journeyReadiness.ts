@@ -44,9 +44,38 @@ export interface JourneyReadinessService {
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
   price?: number | null;
+  /**
+   * How the service is sold. `proposal` is the one that needs saying.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A quoted service carries `price: null` and `collection: null` DELIBERATELY
+   * — the amount and the method belong to the quote that has not been written
+   * yet. Both of those are exactly what the invoicing filter below tests, so a
+   * quoted service matched neither and was treated as needing nothing.
+   *
+   * It needs the same things. Accepting a proposal calls `raiseInvoice`
+   * (`ProposalAcceptanceService`), so the end of a quote is an invoice like any
+   * other — usually the largest one the business sends. Without this field the
+   * check cannot tell a quote from a free service, and a business could publish
+   * a quoted service, win the work, and have no way to bill for it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  sale_mode?: 'direct' | 'proposal' | null;
 }
 
-export type JourneyGapKind = 'hours' | 'timezone' | 'processor' | 'invoicing';
+/*
+ * The kinds live in `./journeyGapKinds`, which imports nothing.
+ *
+ * They were declared here, and that was fine while only the TYPE was wanted —
+ * a type import is erased at build. A client component needing the VALUE then
+ * dragged this module's `supabaseServer` into the browser bundle. Re-exported
+ * so existing importers of this file keep working.
+ */
+export {
+  JOURNEY_GAP_KINDS,
+  isJourneyGapKind,
+  type JourneyGapKind,
+} from '@/lib/business-os/journeyGapKinds';
 
 export interface JourneyGap {
   kind: JourneyGapKind;
@@ -116,7 +145,25 @@ export interface JourneyGap {
  * USD. There is nothing for a currency gate to protect.
  */
 export function isBlockingGap(gap: JourneyGap): boolean {
-  return gap.kind === 'hours' || gap.kind === 'timezone' || gap.kind === 'invoicing';
+  return gap.kind === 'hours'
+    || gap.kind === 'timezone'
+    || gap.kind === 'invoicing'
+    /*
+     * NOTHING TO BOOK blocks a link whose only purpose is booking.
+     *
+     * `journeyGaps` treats an empty service list as ready, and for a WEBSITE
+     * that is right — "a page with no services is a brochure, which is
+     * allowed". A booking smart link is not a brochure: it is a door with
+     * nothing behind it, and the client meets the dead end.
+     *
+     * It is also how a link goes live on an unready business. The check reads
+     * only PUBLISHED services, so a link created while everything is still
+     * draft sees an empty catalogue, finds no gaps, and activates — and
+     * nothing re-asks when a service is published later. On the reporting
+     * account a booking link was live with every invoice field empty, for
+     * exactly this reason.
+     */
+    || gap.kind === 'catalogue';
 }
 
 /** A service asks the client to pick a time. */
@@ -251,10 +298,26 @@ export async function journeyGaps(
    * uses for its "business details" and "invoice details" rows, so the gate and
    * the chain cannot disagree about whether they are filled in.
    */
+  /*
+   * A QUOTE ENDS IN AN INVOICE TOO, AND WAS THE ONE KIND THAT ESCAPED.
+   *
+   * The two tests below are `price > 0` and a collection method, and a quoted
+   * service has NEITHER by design — the amount and the method are named in the
+   * quote, not on the service. So it matched nothing and needed nothing, while
+   * `ProposalAcceptanceService` raises an invoice the moment the client
+   * accepts. A business could publish a quoted service, win the job, and have
+   * no company name, tax id, address or payment method to bill it with.
+   *
+   * No price test for a quote, deliberately: there is no price to test, and
+   * waiting for one would exempt it for ever.
+   */
   const invoiced = services.filter(
     service =>
-      (service.price || 0) > 0 &&
-      (service.collection === 'invoice' || (collectsOnline(service.collection) && !processorReady))
+      service.sale_mode === 'proposal'
+      || (
+        (service.price || 0) > 0 &&
+        (service.collection === 'invoice' || (collectsOnline(service.collection) && !processorReady))
+      )
   );
 
   if (invoiced.length > 0) {
@@ -425,6 +488,12 @@ export function describeJourneyGap(gap: JourneyGap): string {
       return `${base} Still needed: ${fields.map(FIELD_LABELS).join(', ')}.`;
     }
 
+    case 'catalogue':
+      /* Names the actual remedy. "Not ready" would send an owner hunting
+         through settings for a gap that is not in settings at all: the
+         services exist, they simply have not been published yet. */
+      return 'This link takes bookings, but none of your services are published yet.';
+
     default:
       // Says what will happen, not just what is missing — because something
       // sensible does happen: the card step is skipped and the client is
@@ -484,9 +553,30 @@ export async function journeyGapsForSmartLink(
     return [];
   }
 
+  const services = data || [];
+
+  /*
+   * AN EMPTY CATALOGUE IS NOT A READY ONE, HERE.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The query above reads only PUBLISHED services, and `journeyGaps` answers
+   * "ready" for an empty list — correct for a website, where a page with no
+   * services is a brochure. A booking link with nothing behind it is not a
+   * brochure; it is a door onto a dead end.
+   *
+   * It is also the hole that put a live booking link on a business with every
+   * invoice field empty: the link was created while the services were still
+   * draft, so the catalogue read as empty, no gaps were found, and it
+   * activated. Publishing the service later never re-asked.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (services.length === 0) {
+    return [{ kind: 'catalogue', services: [] }];
+  }
+
   return journeyGaps(
     userId,
-    (data || []).map(s => ({
+    services.map(s => ({
       name: s.service_name,
       is_scheduled: s.is_scheduled,
       collection: s.collection,

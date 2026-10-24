@@ -17,6 +17,7 @@
  */
 
 import { addressRulesFor } from '@/lib/geo/addressFormat';
+import { formatAddressOneLine } from '@/lib/geo/address';
 
 describe('countries whose addresses carry no administrative area', () => {
   it.each(['IL', 'GB', 'FR', 'DE', 'NL', 'BE', 'DK', 'NO'])('%s shows no state field', async country => {
@@ -104,5 +105,82 @@ describe('anything unknown degrades rather than throwing', () => {
     // `lib-address` throws CountryMissingError for an unknown country; a
     // settings form must not fall over because of a stale value in a column.
     await expect(addressRulesFor('QQ')).resolves.toBeDefined();
+  });
+});
+
+/**
+ * The same place is never named twice.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Address autocomplete does not always put one place in one field. Live on the
+ * contact panel of a published site:
+ *
+ *   city  = "Tel Mond, Central District"
+ *   state = "Tel Mond, Central District"
+ *
+ * which read "Narkis 59, Tel Mond, Central District, Tel Mond, Central
+ * District, 6543, Israel" — the business's own address, stuttering, on the page
+ * a client reads before getting in touch.
+ *
+ * The comparison is by comma-separated NAME, not by substring, and that is the
+ * whole care in it: "Kansas" is a substring of "Kansas City" and a real,
+ * different place, so a substring test would delete a state that belongs there.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('an address never says the same place twice', () => {
+  it('drops a state that repeats the city verbatim', () => {
+    expect(
+      formatAddressOneLine({
+        line1: 'Narkis 59',
+        city: 'Tel Mond, Central District',
+        state: 'Tel Mond, Central District',
+        postal_code: '6543',
+        country: 'Israel',
+      } as never)
+    ).toBe('Narkis 59, Tel Mond, Central District, 6543, Israel');
+  });
+
+  it('keeps the fuller of the two, whichever field holds it', () => {
+    const fuller = 'A 1, Tel Mond, Central District, 1, Israel';
+
+    expect(
+      formatAddressOneLine({
+        line1: 'A 1', city: 'Tel Mond', state: 'Tel Mond, Central District',
+        postal_code: '1', country: 'IL',
+      } as never)
+    ).toBe(fuller);
+
+    expect(
+      formatAddressOneLine({
+        line1: 'A 1', city: 'Tel Mond, Central District', state: 'Tel Mond',
+        postal_code: '1', country: 'IL',
+      } as never)
+    ).toBe(fuller);
+  });
+
+  it('never deletes a state that merely shares letters with its city', () => {
+    /* The regression a substring test would cause. Both are real and both stay. */
+    expect(
+      formatAddressOneLine({
+        line1: '1 Main St', city: 'Kansas City', state: 'Kansas',
+        postal_code: '66101', country: 'US',
+      } as never)
+    ).toBe('1 Main St, Kansas City, Kansas, 66101, United States');
+
+    expect(
+      formatAddressOneLine({
+        line1: '2 High St', city: 'York', state: 'New York',
+        postal_code: '10001', country: 'US',
+      } as never)
+    ).toBe('2 High St, York, New York, 10001, United States');
+  });
+
+  it('leaves an ordinary address exactly as it was', () => {
+    expect(
+      formatAddressOneLine({
+        line1: '14 Venus Drive', line2: 'Apt 4', city: 'Closter', state: 'NJ',
+        postal_code: '07624', country: 'US',
+      } as never)
+    ).toBe('14 Venus Drive, Apt 4, Closter, NJ, 07624, United States');
   });
 });

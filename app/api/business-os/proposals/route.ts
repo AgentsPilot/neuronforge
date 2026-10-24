@@ -175,7 +175,10 @@ export async function GET(request: NextRequest) {
     if (planIds.length > 0) {
       const { data: stages } = await supabaseServer
         .from('payment_plan_installments')
-        .select('id, payment_plan_id, installment_number, amount, currency, status, label, trigger, due_date, invoice_id, completed_at, paid_at')
+        /* `meeting_id` so a package's session rows can each show their own
+           money. Six stages share the container's `booking_id` now, so that
+           column can no longer say which session a stage belongs to. */
+        .select('id, payment_plan_id, meeting_id, installment_number, amount, currency, status, label, trigger, due_date, invoice_id, completed_at, paid_at')
         .eq('user_id', user.id)
         .in('payment_plan_id', planIds)
         .order('installment_number', { ascending: true });

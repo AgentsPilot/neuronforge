@@ -13,16 +13,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
+import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { shouldTakePayment } from '@/lib/business-os/clientJourney';
+import { openAttempt } from '@/lib/scheduling/abandonedBookings';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
@@ -39,7 +41,7 @@ import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepositor
  * exists, and the in-flight email was left racing an aborted request.
  */
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
-import { buildAttributionFromRequest, type LeadSourceMetadata } from '@/lib/utils/attribution';
+import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { z } from 'zod';
 import { ConsentInputSchema } from '@/lib/validation/consent';
@@ -48,6 +50,11 @@ import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/bu
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+/* The same readiness the owner's booking route and the website publish gate
+   ask. One definition of "can this business honour this service", never a
+   second opinion per surface. */
+import { journeyGaps, isBlockingGap } from '@/lib/business-os/journeyReadiness';
+import { sessionIdFromUrl } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
@@ -65,6 +72,9 @@ const BookingSchema = z.object({
   session_id: z.string().max(128).optional(),
   /** The public page the visitor booked from, e.g. /c/abc123/book. */
   page_url: z.string().max(2048).optional(),
+  /* The language the booking page was rendering in, so an abandoned-booking
+     email is written in it rather than in the business's own. */
+  locale: z.string().max(10).optional(),
   // Transform empty strings to undefined so they're treated as "not provided"
   subdomain: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   // userCode is an alternative to subdomain for standalone booking pages (/c/[userCode]/book)
@@ -106,6 +116,24 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
+    /*
+     * ── THE CLICK THAT BROUGHT THEM, FROM THE PAGE THEY WERE ON ───────────
+     *
+     * `session_id` has to be sent by the browser, because `_sid` lives in the
+     * PAGE's address and an API route reading its own URL finds nothing. The
+     * live widget never sent it — the same omission as `page_url` — so on a
+     * smart link the attempt stored no session and `markConversion` below
+     * never fired: the click was recorded, the booking it produced was not.
+     *
+     * Taken from `page_url` rather than asking the browser a second time. It
+     * already carries `_sid`, the helper that reads it is the one attribution
+     * uses, and a value derived from what was sent cannot be forgotten by the
+     * next caller.
+     */
+    const sessionId =
+      data.session_id ?? sessionIdFromUrl(data.page_url, new URL(request.url).origin) ?? null;
+
+
     // Extract attribution data from request (UTM params, referrer, etc.)
     const attribution = buildAttributionFromRequest(request, {
       /*
@@ -119,7 +147,7 @@ export async function POST(request: NextRequest) {
        */
       pageUrl: data.page_url,
       captureChannel: 'booking',
-      sessionId: data.session_id,
+      sessionId: sessionId ?? undefined,
       generateSessionId: true
     });
 
@@ -247,10 +275,90 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!service.is_active) {
+    /*
+     * BOOKABLE IS BOTH FLAGS, AND THIS SURFACE ONLY CHECKED ONE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `SchedulingServiceRepository.BOOKABLE` is `{ is_active: true, status:
+     * 'active' }`, and its own comment says it exists "so the next surface
+     * cannot pick one and forget the other". This route forgot `status`.
+     *
+     * Three public routes read the catalogue through `listBookable` and honour
+     * both — the availability endpoint, the services block and the public site.
+     * This is the route that actually TAKES the booking, and it accepted a
+     * DRAFT service that none of those three would have offered. Editing a
+     * service reverts it to draft, so any service mid-edit was publicly
+     * bookable while absent from every list.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (!service.is_active || service.status !== 'active') {
+      requestLogger.warn(
+        { serviceId: data.service_id, isActive: service.is_active, status: service.status },
+        'Booking refused: the service is not published'
+      );
       return NextResponse.json(
         { success: false, error: 'This service is currently unavailable' },
         { status: 400 }
+      );
+    }
+
+    /*
+     * AND THE BUSINESS HAS TO BE ABLE TO HONOUR IT.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The owner's own booking route has gated on this for some time
+     * (`app/api/scheduling/bookings/route.ts`), on the reasoning that a
+     * client-side gate is a convenience and the route is the authority. The
+     * PUBLIC route — the one a client actually uses — never asked at all.
+     *
+     * So a client could book an invoiced service from a business with no
+     * invoice company name, no tax id, no address and no payment instructions,
+     * and be sent an invoice built from none of them. That is the reported
+     * failure, and it is the one surface where the client, not the owner, pays
+     * for the omission.
+     *
+     * `isBlockingGap` keeps the card processor OUT of this: a service sold by
+     * card with no Stripe falls back to an invoice and is perfectly valid. What
+     * blocks is hours, timezone and invoicing — the three a client-facing
+     * promise cannot be kept without.
+     *
+     * FAILS OPEN, exactly as the owner's route does: `journeyGaps` reaches the
+     * database three times, and an outage there must not stop a business taking
+     * work. Only a gap positively found refuses.
+     *
+     * The message names nothing. Which fields a business has not filled in is
+     * the OWNER's information; a client gets "unavailable" and the owner gets
+     * the detail on their own dashboard.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    try {
+      const blocking = (
+        await journeyGaps(ownerId, [
+          {
+            name: service.service_name,
+            is_scheduled: service.is_scheduled,
+            collection: service.collection,
+            price: service.price,
+            /* A quote ends in an invoice too — see `JourneyReadinessService.sale_mode`. */
+            sale_mode: service.sale_mode,
+          },
+        ])
+      ).filter(isBlockingGap);
+
+      if (blocking.length > 0) {
+        requestLogger.warn(
+          { ownerId, serviceId: data.service_id, gaps: blocking.map(g => g.kind) },
+          'Public booking refused: the business cannot honour this service yet'
+        );
+        return NextResponse.json(
+          { success: false, error: 'This service is currently unavailable' },
+          { status: 400 }
+        );
+      }
+    } catch (error) {
+      requestLogger.error(
+        { err: error, ownerId, serviceId: data.service_id },
+        'Readiness check failed; allowing the booking rather than losing it'
       );
     }
 
@@ -297,18 +405,20 @@ export async function POST(request: NextRequest) {
       startTime = new Date(wallClockToInstant(data.start_time!, bookingTimezone));
       endTime = new Date(startTime.getTime() + (service.duration_minutes || 0) * 60 * 1000);
 
-      // Check for conflicts (only for scheduled bookings)
-      const { data: conflicts } = await supabaseServer
-        .from('scheduling_bookings')
-        .select('id')
-        .eq('user_id', ownerId)
-        // A booking that will not happen does not hold its slot — that is
-      // `cancelled` AND `no_show`, which this asked as "not cancelled" and so
-      // kept a no-show's time shut. See `SLOT_HOLDING_STATUSES`.
-      .in('status', SLOT_HOLDING_STATUSES)
-        .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
+      /*
+       * Check for conflicts (only for scheduled bookings).
+       *
+       * `busyMeetings` is bounded by the appointment's own span, so the window
+       * IS the overlap test — anything it returns collides by definition.
+       */
+      const conflicts = await busyMeetings(
+        supabaseServer,
+        ownerId,
+        startTime.toISOString(),
+        endTime.toISOString()
+      );
 
-      if (conflicts && conflicts.length > 0) {
+      if (conflicts.length > 0) {
         return NextResponse.json(
           { success: false, error: 'This time slot is no longer available' },
           { status: 409 }
@@ -388,24 +498,112 @@ export async function POST(request: NextRequest) {
       price: service.price,
       collection: service.collection,
       processorReady: capability.canCollect,
+      /* A quoted service takes no money here — see `shouldTakePayment`. Its
+         price is the starting figure for a quote, not an agreed amount, and
+         the journey the client walked has no payment step in it. */
+      saleMode: service.sale_mode,
     });
 
-    // Get user's pipeline stages to determine appropriate stages
-    const { data: pipelineStages } = await supabaseServer
-      .from('crm_pipeline_stages')
-      .select('stage_key, position')
-      .eq('user_id', ownerId)
-      .order('position', { ascending: true });
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A SERVICE THAT TAKES MONEY WRITES NOTHING YET.
+     *
+     * Everything above this line is a CHECK — the service is bookable, the
+     * business can honour it, the slot is free, the day is not a holiday. Every
+     * write is below it: the contact, the consent, the booking.
+     *
+     * For a card payment the client now leaves to pay, and may never come back.
+     * Writing the booking here is what left a `pending` row holding the slot
+     * against every other client, permanently: `pending` is in
+     * `SLOT_HOLDING_STATUSES`, `scheduling_bookings_no_overlap` enforces it in
+     * the database, no cron releases it, and `checkout.session.expired` is
+     * handled only for the platform's own billing.
+     *
+     * So the journey is recorded instead. `abandoned_bookings` holds what they
+     * typed and blocks nothing — no availability check reads it. The booking,
+     * and the contact, are created by `finalize` once the payment has actually
+     * succeeded.
+     *
+     * AN EARLY RETURN rather than a condition threaded through the four hundred
+     * lines below. Those lines are fifteen recorded production bugs deep, and
+     * every one of them is about writing the right thing in the right order for
+     * a booking that is being made NOW. Interleaving a second meaning through
+     * them is how the sixteenth gets written; returning before any of them run
+     * leaves every other service type on exactly the code it ran yesterday.
+     *
+     * The six paths that take no money at this point — free, invoice-collected,
+     * card with no processor connected, quote request, product, package — fall
+     * straight through. For them this route IS the last stage of the journey,
+     * so there is no window in which to abandon anything.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (requiresPayment) {
+      const attemptId = await openAttempt({
+        userId: ownerId,
+        serviceId: data.service_id,
+        firstName: clientFirstName,
+        lastName: clientLastName,
+        email: data.email,
+        phone: data.phone ?? null,
+        startTime: startTime ? startTime.toISOString() : null,
+        endTime: endTime ? endTime.toISOString() : null,
+        timezone: bookingTimezone,
+        source: 'website',
+        sessionId,
+        /* Where they were, for the rebook button. Not rebuilt from the service:
+           a page reached by custom domain, landing page or smart link cannot be
+           reconstructed from the service id alone. */
+        pageUrl: data.page_url ?? null,
+        locale: data.locale ?? null,
+      });
 
-    // First stage for leads (paid services that need payment first)
-    const firstStage = pipelineStages?.[0]?.stage_key || 'lead';
+      requestLogger.info(
+        { attemptId, serviceId: data.service_id, hasSlot: Boolean(startTime) },
+        'Payment required — recorded the attempt, booking deferred to finalize'
+      );
+
+      return NextResponse.json({
+        success: true,
+        requires_payment: true,
+        /*
+         * No `booking` key, deliberately.
+         *
+         * The client used to read `data.booking.id` here and carry it to the
+         * payment step. There is no booking to carry any more, and returning an
+         * attempt id under that name would have `finalize` look up a booking
+         * that does not exist — failing AFTER the client had paid. The absence
+         * is what makes an un-updated caller fail loudly and immediately.
+         */
+        attempt_id: attemptId,
+        service: {
+          id: service.id,
+          name: service.service_name,
+          price: service.price,
+          currency: service.currency,
+        },
+      });
+    }
+
+    /*
+     * The start of this owner's board, resolved in the repository that owns the
+     * table. This was an inline read ending `|| 'lead'` — one of eight copies,
+     * and a stage many pipelines do not contain.
+     */
+    const { data: resolvedFirstStage } =
+      await crmPipelineStagesRepository.firstStageKey(ownerId);
+
+    /*
+     * Kept as a string here, unlike the other call sites: it is compared below
+     * as well as inserted, and `crm_contacts.stage` is `DEFAULT 'lead'` anyway.
+     */
+    const firstStage = resolvedFirstStage ?? 'lead';
 
     /*
      * A new contact starts at the beginning. Always.
      *
      * This route used to decide the client stage itself — free service, so they
      * are a client now — which is how a quote request produced a client. It no
-     * longer decides at all: `promote_contact_on_confirmed_booking` moves them
+     * longer decides at all: `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)` moves them
      * the moment the booking below is written `confirmed`, which for a free
      * service is immediately and for a quote request is not at all.
      *
@@ -809,9 +1007,9 @@ export async function POST(request: NextRequest) {
      * Non-blocking and never fatal: the booking is made, and a business must
      * not lose one because attribution failed.
      */
-    if (data.session_id) {
+    if (sessionId) {
       smartLinkRepository
-        .markConversion(data.session_id, 'booking')
+        .markConversion(sessionId, 'booking')
         .catch(err => requestLogger.warn({ err }, 'Could not mark the smart-link conversion'));
     }
 

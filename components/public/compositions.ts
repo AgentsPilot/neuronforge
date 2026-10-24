@@ -465,7 +465,33 @@ function skeleton(s: string): string {
      * text-align would silently break the column.
      */
     ${s} .apc-footer-tag { max-width: 38ch; text-align: start; }
-    ${s} .apc-footer-links { display: flex; flex-wrap: wrap; gap: 18px; }
+    /*
+     * The menu is a COLUMN, like everything else standing beside it.
+     *
+     * NOTE FOR ANYONE EDITING THESE COMMENTS: no backticks in here. Every rule
+     * in this file lives inside a template literal, so a backtick ends the
+     * string and the build fails on the next word with "Expected ';'". The
+     * JSDoc blocks outside the literals are free to use them; these are not.
+     *
+     * It was the one group in the footer row laid out horizontally — a flex
+     * strip of links while apc-footer-who, apc-footer-contact and
+     * apc-footer-hours were all grids stacking downwards. Three links running
+     * side by side next to three stacked columns reads as a mistake rather
+     * than as a choice, and in Hebrew it was the widest thing in the row, so
+     * it pushed the groups either side of it out of alignment.
+     *
+     * justify-items: start rather than inherited alignment, for the reason
+     * apc-footer-who states above: the row is laid out against the writing
+     * direction, so one rule puts the links flush left in English and flush
+     * right in Hebrew without either knowing which it is in.
+     *
+     * A wider gap than the 4px its sibling columns use, and deliberately: a
+     * link is a target, and stacked targets 4px apart are a mis-tap. Close
+     * enough to still read as the same family of column.
+     */
+    ${s} .apc-footer-links {
+      display: grid; gap: 8px; align-content: start; justify-items: start;
+    }
 
     /*
      * The social row: marks, not words.

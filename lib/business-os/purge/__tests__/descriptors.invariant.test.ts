@@ -871,7 +871,13 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // +1 data export DE-8a (2026-10-17): business_os_data_exports, the export jobs (purge).
     // +1 finance slice 8.1 (2026-10-17): business_os_finance_snapshots (never, global).
     // +1 data export DE-10b.1 (2026-10-18): business_os_deletion_receipts (never, global).
-    expect(baseline.count).toBe(159);
+    // +1 abandoned bookings (2026-10-16): abandoned_bookings (reset) — the record of
+    // somebody who gave their details and did not finish, which replaced the `pending`
+    // booking that used to hold the slot for ever.
+    // +1 scheduling meetings (2026-10-17): scheduling_meetings (reset), from 20261073.
+    //   Both arrived on a branch cut before DE-7 and are classified `include`
+    //   (section `bookings`) by analogy with `scheduling_bookings`.
+    expect(baseline.count).toBe(161);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {
