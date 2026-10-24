@@ -34,7 +34,7 @@ import { en } from '@/lib/business-os/translations/en';
 import { he } from '@/lib/business-os/translations/he';
 import { es } from '@/lib/business-os/translations/es';
 
-const READY = { enabled: true, available: true, blockers: [], willKeepBilling: false, exportFacts: { lastReadyAt: null, downloaded: false } };
+const READY = { enabled: true as const, available: true as const, blockers: [], willKeepBilling: false, exportFacts: { lastReadyAt: null, downloaded: false } };
 
 jest.setTimeout(30000);
 
