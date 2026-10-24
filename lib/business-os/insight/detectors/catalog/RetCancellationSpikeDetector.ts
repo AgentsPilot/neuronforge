@@ -121,7 +121,13 @@ export class RetCancellationSpikeDetector extends BaseDetector {
       .from('scheduling_bookings')
       .select('payment_amount')
       .eq('user_id', userId)
-      .eq('status', 'completed')
+      /*
+       * The average is of meetings that HAPPENED — `meeting_status`, not
+       * `status`, since `complete()` no longer writes the latter. A cancelled
+       * booking must not be in this sample either way: it is the baseline the
+       * cancellations are being valued against.
+       */
+      .eq('meeting_status', 'held')
       .not('payment_amount', 'is', null)
       .limit(50);
 

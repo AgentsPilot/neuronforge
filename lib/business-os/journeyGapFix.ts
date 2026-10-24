@@ -34,7 +34,7 @@
 import type { JourneyGapKind } from '@/lib/business-os/journeyReadiness';
 
 /** A tab of the Business OS configuration dialog. */
-export type GapFixTab = 'availability' | 'business' | 'payments' | 'invoice';
+export type GapFixTab = 'services' | 'availability' | 'business' | 'payments' | 'invoice';
 
 interface GapFixLabel {
   /** Translation key, looked up first. */
@@ -85,5 +85,27 @@ export function gapFixAction(kind: JourneyGapKind): GapFix {
 
     case 'invoicing':
       return { target: 'dialog', tab: 'invoice', key: 'gap.fix.invoicing', fallback: 'Complete invoice details' };
+
+    /*
+     * NOTHING PUBLISHED TO BOOK. The fix is the services tab, not availability.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     * This case was missing, and the switch has no default — so
+     * `gapFixAction('catalogue')` returned UNDEFINED and the button fell
+     * through to the caller's own default label, "Set working hours". An owner
+     * whose hours were already set was sent to fix them, for a gap about
+     * services they had not published.
+     *
+     * That is the exact failure the module's own header describes — "the tab
+     * and the sentence pointing at different things" — and it arrived the usual
+     * way: a new gap kind added to `JourneyGapKind` without the mapping that
+     * has to move with it.
+     *
+     * `services` was not in `GapFixTab` either, though the configuration dialog
+     * has had the tab all along (`ConfigTab` in `ConfigurationDialogProvider`).
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    case 'catalogue':
+      return { target: 'dialog', tab: 'services', key: 'gap.fix.catalogue', fallback: 'Publish a service' };
   }
 }

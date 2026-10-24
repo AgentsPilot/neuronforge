@@ -110,6 +110,40 @@ export interface SendEmailBase {
    */
   unsubscribeUrl?: string;
   /**
+   * Ask the reader's mail client to mark this one as urgent.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT EMAIL ACTUALLY SUPPORTS, WHICH IS LESS THAN IT SOUNDS
+   *
+   * There is no "alert" or "notification" category a sender can set. What
+   * exists is a priority flag, declared through three headers that no standard
+   * ever agreed on and every client reads anyway:
+   *
+   *     Importance: High          RFC 2156, the only one with a specification
+   *     X-Priority: 1 (Highest)   Eudora's, which Outlook adopted
+   *     X-MSMail-Priority: High   Microsoft's own
+   *
+   * All three are sent together because each client reads a different one.
+   * Outlook shows a red exclamation and sorts by it, Apple Mail surfaces it in
+   * the message view, and several mobile clients show a marker in the list.
+   *
+   * GMAIL IGNORES ALL THREE for display. It decides importance itself and
+   * offers no header a sender can set, so for a Gmail reader the subject line
+   * is the whole of the signal. That is why the chase's subject leads with
+   * "Overdue:" and names the amount; this is the part that works everywhere
+   * else, not a replacement for it.
+   *
+   * USED SPARINGLY, deliberately. A sender who flags everything urgent is
+   * teaching clients and filters to discount the flag, and spam scoring does
+   * look at high priority on bulk-looking mail. Reserved for a message about
+   * money that is already late.
+   *
+   * NOT `Precedence: bulk`, which is the opposite request: it tells a client
+   * this is automated traffic worth deprioritising, and some sort it away.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  urgent?: boolean;
+  /**
    * The business this email is sent on behalf of.
    *
    * Every booking email passed this already and the transport ignored it — it
@@ -253,6 +287,33 @@ function unsubscribeHeaders(p: SendEmailParams): Record<string, string> {
   return { 'List-Unsubscribe': `<${url}>` };
 }
 
+/**
+ * The priority trio, when a send asks for it. See `urgent` on `SendEmailBase`.
+ *
+ * Three headers rather than one because no two mail clients read the same one,
+ * and they must agree: a message claiming High importance and normal priority
+ * is a signal filters treat as forged rather than urgent.
+ */
+function priorityHeaders(p: SendEmailParams): Record<string, string> {
+  if (!p.urgent) return {};
+  return {
+    Importance: 'High',
+    'X-Priority': '1 (Highest)',
+    'X-MSMail-Priority': 'High',
+  };
+}
+
+/**
+ * Every header this message adds, from one place.
+ *
+ * The three transports each build their own payload and each needs the same
+ * map. Composed here rather than at the three call sites, which is how the
+ * unsubscribe header came to be in all three and stayed consistent.
+ */
+function messageHeaders(p: SendEmailParams): Record<string, string> {
+  return { ...unsubscribeHeaders(p), ...priorityHeaders(p) };
+}
+
 const EMAIL_SHAPED = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+/g;
 
 /** `dana@example.com` → `d•••@example.com`. */
@@ -326,8 +387,8 @@ async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
     ...(p.replyTo ? { reply_to: p.replyTo } : {}),
   };
 
-  const unsub = unsubscribeHeaders(p);
-  if (Object.keys(unsub).length > 0) body.headers = unsub;
+  const extra = messageHeaders(p);
+  if (Object.keys(extra).length > 0) body.headers = extra;
 
   // Add attachments if present (Resend format)
   // Resend expects: { filename, content (base64 string), type (optional mime type) }
@@ -382,7 +443,25 @@ async function sendViaResend(p: SendEmailParams): Promise<string | undefined> {
  * Send via SMTP using nodemailer.
  * Supports any SMTP server (Gmail, Outlook, SendGrid, custom, etc.)
  */
-async function sendViaSMTP(p: SendEmailParams): Promise<void> {
+/**
+ * Returns the relay's own answer rather than discarding it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `sendMail` RESOLVING IS NOT "IT WAS SENT"
+ *
+ * nodemailer resolves as long as the relay accepted the TRANSACTION. A
+ * recipient it refused comes back in `info.rejected` on that same resolved
+ * response — so discarding the response meant a refused address was recorded
+ * as `status: 'sent'`, with no error anywhere and nothing for anyone to look
+ * at later.
+ *
+ * `info.messageId` is also the only key that could ever tie an SMTP send to a
+ * bounce or delivery notification, and it was being thrown away — the exact
+ * omission the `providerMessageId` note on `SendEmailResult` records for the
+ * Resend path.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function sendViaSMTP(p: SendEmailParams): Promise<nodemailer.SentMessageInfo> {
   const port = parseInt(process.env.SMTP_PORT || '587', 10);
   const secure = process.env.SMTP_SECURE === 'true' || port === 465;
 
@@ -408,7 +487,7 @@ async function sendViaSMTP(p: SendEmailParams): Promise<void> {
     html: p.html,
     text: resolveText(p),
     // Same header as the Resend path, from the same builder.
-    headers: unsubscribeHeaders(p),
+    headers: messageHeaders(p),
   };
 
   // Add attachments if present (nodemailer format)
@@ -428,7 +507,7 @@ async function sendViaSMTP(p: SendEmailParams): Promise<void> {
     }));
   }
 
-  await transporter.sendMail(mailOptions);
+  return transporter.sendMail(mailOptions);
 }
 
 async function sendViaGmail(p: SendEmailParams): Promise<void> {
@@ -455,8 +534,8 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
     subject: p.subject,
     html: p.html,
     text: resolveText(p), // D9: multipart/alternative — nodemailer builds both parts
-    // Same header as the other two transports, from the same builder.
-    headers: unsubscribeHeaders(p),
+    // Same headers as the other two transports, from the same builder.
+    headers: messageHeaders(p),
   };
 
   // Add attachments if present (nodemailer format)
@@ -644,9 +723,33 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   // 2. SMTP (universal - works with any email provider)
   if (smtpConfigured()) {
     try {
-      await sendViaSMTP(p);
-      logger.info({ to: recipientsForLog(p), provider: 'smtp', host: process.env.SMTP_HOST }, 'Email sent');
-      return { sent: true, provider: 'smtp' };
+      const info = await sendViaSMTP(p);
+
+      /*
+       * A refused recipient is not a send. The relay reports it on a RESOLVED
+       * response, so without this the row reads `sent` for mail that never
+       * left — and falling through lets the next transport actually try.
+       */
+      const rejected: string[] = Array.isArray(info?.rejected)
+        ? info.rejected.map(String)
+        : [];
+      if (rejected.length > 0) {
+        throw new Error(
+          `relay refused ${rejected.length} recipient(s): ${info?.response ?? 'no response text'}`
+        );
+      }
+
+      logger.info(
+        {
+          to: recipientsForLog(p),
+          provider: 'smtp',
+          host: process.env.SMTP_HOST,
+          messageId: info?.messageId,
+          accepted: Array.isArray(info?.accepted) ? info.accepted.length : undefined,
+        },
+        'Email sent'
+      );
+      return { sent: true, provider: 'smtp', providerMessageId: info?.messageId };
     } catch (err: any) {
       const message = errorTextForLog(p, String(err?.message ?? err));
       errors.push(`smtp: ${message}`);

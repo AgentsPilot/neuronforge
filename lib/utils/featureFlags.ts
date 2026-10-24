@@ -277,3 +277,39 @@ export function getFeatureFlags() {
     isBusinessOsCreditHistoryEnabled: isBusinessOsCreditHistoryEnabled(),
   };
 }
+
+/**
+ * TEMPORARY, FOR TESTING: let a package session be marked held before its hour.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT EXISTS
+ *
+ * Marking a session held is what RAISES AND EMAILS ITS INVOICE, and the refund
+ * it then allows is the next link in the same chain. Neither can be exercised
+ * until a session's hour has actually passed — the earliest on a six-week
+ * package is weeks out — so the whole money path was untestable without
+ * waiting or rewriting dates in the database by hand.
+ *
+ * WHAT IT CHANGES, AND WHAT IT DOES NOT
+ *
+ * The clock gate is in the UI only: `MeetingRowActions` withholds both
+ * outcomes until `isMeetingPastDue`, because a meeting still ahead cannot have
+ * been held any more than it can have been missed. The SERVER never checks the
+ * time — `setMeetingOutcome` records what the owner says — so this opens the
+ * control and changes nothing else. Everything downstream is the real path:
+ * the real stage, the real invoice, the real email.
+ *
+ * WHICH IS ALSO WHY IT MUST NOT REACH PRODUCTION. With it on, a stray tap on a
+ * session three weeks out bills a client for work nobody has done — the exact
+ * accident the gate was added to prevent. Off, absent, or any value but
+ * `true`, and the gate behaves as it always has.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function isEarlySessionOutcomeEnabled(): boolean {
+  const flag = process.env.NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME;
+  clientLogger.debug(
+    { flag: 'NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME', value: flag ?? null },
+    'Feature flag evaluated'
+  );
+  return parseBooleanFlag(flag);
+}

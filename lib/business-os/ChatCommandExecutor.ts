@@ -17,6 +17,7 @@ import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import type { CRMTaskListOptions } from '@/lib/repositories/CRMTaskRepository';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
+import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
 
 const logger = createLogger({ module: 'ChatCommandExecutor' });
 
@@ -2513,12 +2514,30 @@ async function getAvailableTimeSlots(
       businessInstant(shiftBusinessDateKey(dayKey, 1), '00:00', timezone).getTime() - 1
     );
 
-    const { data: existingBookings } = await schedulingBookingRepository.list(userId, {
-      status: ['confirmed', 'completed'],
-      startDate: startOfDay.toISOString(),
-      endDate: endOfDay.toISOString(),
-      limit: 500, // a single day won't exceed this; preserves the original no-limit read
-    });
+    /*
+     * ── THE SAME DEFINITION OF BUSY AS EVERY OTHER SURFACE ──────────────────
+     *
+     * This read bookings and differed from the booking page in four ways, each
+     * of which made the chat offer an hour the page refused, or refuse one the
+     * page offered:
+     *
+     *   · `['confirmed','completed']` omitted `pending`, so a quote request
+     *     holding its slot did not count;
+     *   · it ignored `meeting_status`, so a cancelled meeting's hour stayed
+     *     shut;
+     *   · `list()` windows by CONTAINMENT on `start_time`, so an appointment
+     *     running into the day from the night before was invisible;
+     *   · `limit: 500` was a cap on correctness.
+     *
+     * `busyMeetings` answers all four, and is what the public page, the owner's
+     * calendar and `checkOverlap` already use.
+     */
+    const busy = await busyMeetings(
+      supabaseServer,
+      userId,
+      startOfDay.toISOString(),
+      endOfDay.toISOString()
+    );
 
     // Generate time slots (every 30 minutes)
     const slots: string[] = [];
@@ -2542,11 +2561,7 @@ async function getAvailableTimeSlots(
         }
 
         // Check for conflicts with existing bookings
-        const hasConflict = existingBookings?.some(booking => {
-          const bookingStart = new Date(booking.start_time);
-          const bookingEnd = new Date(booking.end_time);
-          return slotStart < bookingEnd && slotEnd > bookingStart;
-        });
+        const hasConflict = overlapsBusy(slotStart, slotEnd, busy);
 
         if (!hasConflict) {
           // Format time for display

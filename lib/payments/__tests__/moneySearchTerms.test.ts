@@ -208,6 +208,111 @@ describe('relative phrases', () => {
   });
 });
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE WORDS THE ADVISOR USES.
+ *
+ * The card reports "₪510 of invoices open" and this search could not be asked
+ * either half of that. Amounts and periods were parseable; the state and the
+ * collection method — the two things the sentence is actually about — fell
+ * through to text, where "open" was matched against client names and matched
+ * nothing.
+ *
+ * Both are applied through their own controls, so what is asserted here is the
+ * READING: the right word becomes the right term, carrying the value those
+ * controls take, in every language an owner might type.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('states and collection methods', () => {
+  it.each([
+    ['open', 'unpaid'],
+    ['unpaid', 'unpaid'],
+    ['outstanding', 'unpaid'],
+    ['owed', 'unpaid'],
+    ['overdue', 'overdue'],
+    ['late', 'overdue'],
+    ['paid', 'paid'],
+    ['collected', 'paid'],
+    ['refunded', 'refunded'],
+    ['draft', 'draft'],
+    ['cancelled', 'cancelled'],
+  ])('reads %j as the %s state', (word, value) => {
+    expect(only(word, 'status').value).toBe(value);
+  });
+
+  it.each([
+    ['invoice', 'invoice'],
+    ['invoices', 'invoice'],
+    ['bill', 'invoice'],
+    ['card', 'direct'],
+    ['direct', 'direct'],
+    ['plan', 'plan'],
+    ['installments', 'plan'],
+  ])('reads %j as the %s method', (word, value) => {
+    expect(only(word, 'method').value).toBe(value);
+  });
+
+  it.each([
+    ['\u05e4\u05ea\u05d5\u05d7', 'status', 'unpaid'],
+    ['\u05d1\u05d0\u05d9\u05d7\u05d5\u05e8', 'status', 'overdue'],
+    ['\u05e9\u05d5\u05dc\u05dd', 'status', 'paid'],
+    ['\u05d7\u05e9\u05d1\u05d5\u05e0\u05d9\u05d5\u05ea', 'method', 'invoice'],
+    ['pendiente', 'status', 'unpaid'],
+    ['vencido', 'status', 'overdue'],
+    ['facturas', 'method', 'invoice'],
+    ['tarjeta', 'method', 'direct'],
+  ])('reads %j, because an owner types their own language', (word, kind, value) => {
+    const term = only(word, kind as 'status' | 'method');
+    expect((term as { value: string }).value).toBe(value);
+  });
+
+  it('reads the advisor\'s own sentence as both halves at once', () => {
+    // The question this whole change exists for.
+    const terms = parse('open invoices');
+
+    expect(terms.map(t => t.kind)).toEqual(['status', 'method']);
+    expect((terms[0] as { value: string }).value).toBe('unpaid');
+    expect((terms[1] as { value: string }).value).toBe('invoice');
+  });
+
+  it('keeps the word out of the text haystack', () => {
+    /*
+     * The point of recognising it even though the filtering happens elsewhere.
+     * Left as text, "open" would be matched against client names and service
+     * titles — so "open" found a client called Openheimer and nothing else.
+     */
+    expect(kinds('open')).not.toContain('text');
+  });
+
+  it('says back the word that was typed, not the value behind it', () => {
+    /* The chip reads `raw`. An owner who typed "owed" should see "owed": a
+       chip reading "Outstanding" looks like the search understood something
+       else. */
+    expect(only('owed', 'status').raw).toBe('owed');
+    expect(only('Facturas', 'method').raw).toBe('Facturas');
+  });
+
+  it('is applied by its control, not by the matcher', () => {
+    /*
+     * `matchesTerms` must ignore both kinds. They travel as explicit query
+     * parameters, and matching them here too would be a second source of truth
+     * for one narrowing — type "open" with the Collected tile active and the
+     * list would empty, correctly and incomprehensibly.
+     */
+    const item = { amount: 100, day: '2026-10-14', haystack: 'anything at all' };
+
+    expect(matchesTerms(parse('open'), item)).toBe(true);
+    expect(matchesTerms(parse('invoices'), item)).toBe(true);
+    expect(matchesTerms(parse('open invoices'), item)).toBe(true);
+  });
+
+  it('does not steal a word that already meant something', () => {
+    // A month still wins, and a bare number is still not an amount.
+    expect(kinds('october')).toEqual(['period']);
+    expect(kinds('28')).toEqual(['text']);
+  });
+});
+
 describe('text, and mixtures', () => {
   it('keeps unrecognised words as ONE phrase', () => {
     /*
@@ -389,6 +494,7 @@ describe('the languages the product speaks', () => {
 
 import {
   relativePeriods,
+  statusFilters,
   monthCompletions,
   periodCompletions,
   type SearchLanguage,
@@ -399,6 +505,37 @@ const LANGUAGES: SearchLanguage[] = ['en', 'es', 'he'];
 describe('the picker cannot offer a dead token', () => {
   for (const language of LANGUAGES) {
     describe(language, () => {
+      it('every offered state parses to exactly one state', () => {
+        /*
+         * The picker showed an amount box and six period pills while the
+         * parser had read the state words for some time — so "open", the one
+         * question the advisor card asks out loud, could only be found by an
+         * owner who had already guessed it was typeable.
+         *
+         * Offering one the reader cannot read is the failure this whole block
+         * exists for: a chip appears and filters nothing.
+         */
+        const offers = statusFilters(language);
+        expect(offers.length).toBeGreaterThan(0);
+
+        for (const { token } of offers) {
+          expect({ token, terms: parse(token) }).toMatchObject({
+            terms: [{ kind: 'status' }],
+          });
+        }
+      });
+
+      it('offers one spelling per state, not every alias that parses', () => {
+        /* `open`, `unpaid`, `outstanding` and `owed` all read as the same
+           state. Four pills doing one thing is noise — the same reason
+           `CANONICAL_MONTHS` exists beside `MONTHS`. */
+        const values = statusFilters(language).map(
+          offer => (parse(offer.token)[0] as { value: string }).value
+        );
+
+        expect(new Set(values).size).toBe(values.length);
+      });
+
       it('every relative span parses to exactly one period', () => {
         const offers = relativePeriods(language);
         expect(offers.length).toBeGreaterThan(0);

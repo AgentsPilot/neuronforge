@@ -12,6 +12,8 @@ import {
 } from '@/lib/services/BookingLifecycleService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { z } from 'zod';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -74,8 +76,50 @@ const LOCAL_OR_ZONED_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?
 
 const rescheduleSchema = z.object({
   newStartTime: z.string().regex(LOCAL_OR_ZONED_DATETIME, 'Invalid start time'),
-  newEndTime: z.string().regex(LOCAL_OR_ZONED_DATETIME, 'Invalid end time')
+  newEndTime: z.string().regex(LOCAL_OR_ZONED_DATETIME, 'Invalid end time'),
+  /**
+   * The SESSION being moved, for a package.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A package is one booking with N meetings, so a session has no booking of
+   * its own and therefore no token of its own. The token still names the
+   * PURCHASE — a booking this client has provably been given a link to — and
+   * this says which of its sessions.
+   *
+   * That is not a second way in. The meeting is checked to belong to the
+   * booking the token names, so holding a link to one package can only move
+   * that package's own hours. A client holding no link can do nothing either
+   * way.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  meetingId: z.string().uuid().optional()
 });
+
+/**
+ * The session a portal request is about, checked against the token's booking.
+ *
+ * Returns `null` when no session was named, which is every ordinary booking.
+ * Throws nothing: an id that is not this booking's comes back as `notMine`, so
+ * the caller answers 404 rather than leaking that it exists.
+ */
+async function sessionOf(
+  meetingId: string | undefined,
+  bookingId: string,
+  userId: string
+): Promise<{ session: Record<string, unknown> | null; notMine: boolean }> {
+  if (!meetingId) return { session: null, notMine: false };
+
+  const { data } = await supabaseServer
+    .from('scheduling_meetings')
+    .select('id, booking_id, start_time, end_time, timezone, meeting_status, session_number')
+    .eq('id', meetingId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (!data || String(data.booking_id) !== bookingId) return { session: null, notMine: true };
+
+  return { session: data as Record<string, unknown>, notMine: false };
+}
 
 // GET /api/book/manage/[token]/reschedule
 // Returns available slots for rescheduling
@@ -135,6 +179,7 @@ export async function GET(
         contact_id,
         start_time,
         status,
+        meeting_status,
         contact:crm_contacts(email),
         service:scheduling_services(
           duration_minutes,
@@ -164,7 +209,28 @@ export async function GET(
     }
 
     // Check if booking can be rescheduled
-    const startTime = new Date(booking.start_time);
+    /*
+     * The SESSION, when the page named one. Checked to belong to the booking
+     * the token names — see `sessionOf`.
+     */
+    const { session, notMine } = await sessionOf(
+      new URL(request.url).searchParams.get('meeting_id') ?? undefined,
+      bookingId,
+      booking.user_id as string
+    );
+
+    if (notMine) {
+      return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
+    }
+
+    /*
+     * The session's clock where there is one: a purchase has none, so the
+     * notice window would be measured against an invalid date and the page
+     * would offer to move an hour that starts in ten minutes.
+     */
+    const startTime = new Date(
+      session ? String(session.start_time) : (booking.start_time as string)
+    );
     const now = new Date();
     const hoursUntilBooking = (startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
 
@@ -172,6 +238,35 @@ export async function GET(
       return NextResponse.json(
         { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
         { status: 400 }
+      );
+    }
+
+    /*
+     * ── AND THE APPOINTMENT IS STILL OPEN ────────────────────────────────
+     *
+     * `status` stopped answering this when held and no-show began writing
+     * `meeting_status` and leaving the job alone. Without it a meeting the
+     * owner had already recorded as having taken place could still be moved
+     * or called off from the client's own link.
+     *
+     * Checked HERE as well as on the page that draws the buttons: hiding a
+     * control is a courtesy, refusing the write is the guard. A page left open
+     * across the owner marking the meeting would otherwise still post.
+     *
+     * `no_show` passes deliberately — a missed appointment is unresolved, and
+     * the client picking another time is the right next move.
+     */
+    if (booking.meeting_status === 'held' || booking.meeting_status === 'cancelled') {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'already_settled',
+          error:
+            booking.meeting_status === 'held'
+              ? 'That meeting has already taken place.'
+              : 'That meeting has already been cancelled.',
+        },
+        { status: 409 }
       );
     }
 
@@ -237,7 +332,9 @@ export async function GET(
       bookingId: booking.id,
       serviceId: booking.service_id,
       userId: booking.user_id,
-      currentStartTime: booking.start_time,
+      /* The session's own time where the page is open on one. */
+      currentStartTime: session ? session.start_time : booking.start_time,
+      meetingId: session ? session.id : null,
       serviceConfig: {
         durationMinutes: service?.duration_minutes || 60,
         advanceBookingDays: service?.advance_booking_days || 30,
@@ -316,6 +413,7 @@ export async function POST(
         contact_id,
         start_time,
         status,
+        meeting_status,
         timezone,
         contact:crm_contacts(email, first_name, last_name),
         service:scheduling_services(min_notice_hours, service_name)
@@ -343,15 +441,76 @@ export async function POST(
     // Use alias to avoid conflict with earlier 'booking' variable
     const booking = bookingData;
 
-    // Validate booking can be rescheduled
-    const currentStartTime = new Date(booking.start_time);
+    /*
+     * The SESSION, when the client named one. Checked to belong to the booking
+     * the token names, so a link to one package cannot reach another's hours.
+     */
+    const { session, notMine } = await sessionOf(
+      validated.meetingId,
+      bookingId,
+      booking.user_id as string
+    );
+
+    if (notMine) {
+      return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
+    }
+
+    /*
+     * Validate what can be rescheduled. The clock is the SESSION's where there
+     * is one: the purchase carries none, so the notice window would otherwise
+     * be measured against an invalid date and let a client move an hour that
+     * starts in ten minutes.
+     */
+    const currentStartTime = new Date(
+      session ? String(session.start_time) : (booking.start_time as string)
+    );
     const now = new Date();
     const hoursUntilBooking = (currentStartTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    /*
+     * A session with an outcome already on record is not moved — the row says
+     * what happened at an hour, and rewriting it would lose that.
+     */
+    if (session && session.meeting_status !== null) {
+      return NextResponse.json(
+        { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
+        { status: 400 }
+      );
+    }
 
     if (booking.status !== 'confirmed') {
       return NextResponse.json(
         { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
         { status: 400 }
+      );
+    }
+
+    /*
+     * ── AND THE APPOINTMENT IS STILL OPEN ────────────────────────────────
+     *
+     * `status` stopped answering this when held and no-show began writing
+     * `meeting_status` and leaving the job alone. Without it a meeting the
+     * owner had already recorded as having taken place could still be moved
+     * or called off from the client's own link.
+     *
+     * Checked HERE as well as on the page that draws the buttons: hiding a
+     * control is a courtesy, refusing the write is the guard. A page left open
+     * across the owner marking the meeting would otherwise still post.
+     *
+     * `no_show` passes deliberately — a missed appointment is unresolved, and
+     * the client picking another time is the right next move.
+     */
+    if (booking.meeting_status === 'held' || booking.meeting_status === 'cancelled') {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'already_settled',
+          error:
+            booking.meeting_status === 'held'
+              ? 'That meeting has already taken place.'
+              : 'That meeting has already been cancelled.',
+        },
+        { status: 409 }
       );
     }
 
@@ -474,11 +633,85 @@ export async function POST(
      * service's notice window are this surface's alone.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A SESSION MOVES ITSELF, NOT ITS PURCHASE.
+     *
+     * `rescheduleBooking` changes a BOOKING's clock. The purchase has none, so
+     * for a package that would move nothing and tell the client it had.
+     *
+     * `moveMeeting` writes a second attempt at this session and releases the
+     * hour the old one held, in one transaction — see `move_meeting`
+     * (20261087). `movedBy: 'client'` because this surface IS the client: the
+     * journey used to tell the owner they had made every move themselves.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (session) {
+      const moved = await schedulingBookingRepository.moveMeeting(
+        String(session.id),
+        booking.user_id as string,
+        newStartInstant,
+        newEndInstant,
+        'client'
+      );
+
+      if (isSlotTakenError(moved.error)) {
+        return NextResponse.json(
+          { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
+          { status: 409 }
+        );
+      }
+
+      if (moved.error || !moved.data) {
+        requestLogger.error({ err: moved.error, meetingId: session.id }, 'Could not move the session');
+        return NextResponse.json(
+          { success: false, code: 'move_failed', error: 'Failed to reschedule' },
+          { status: 500 }
+        );
+      }
+
+      /*
+       * The client already knows — they chose the time — so this mail is the
+       * OWNER's record of it on the journey, which is where "the client changed
+       * the time" is read from. Named with the session's hours, the purchase
+       * having none. Never fatal.
+       */
+      try {
+        const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
+        await BookingEmailService.sendRescheduledEmail(
+          bookingId,
+          booking.user_id as string,
+          currentStartTime,
+          { sessionStart: newStartInstant, sessionEnd: newEndInstant }
+        );
+      } catch (err) {
+        requestLogger.error({ err, meetingId: session.id }, "A moved session's notice threw");
+      }
+
+      requestLogger.info(
+        { bookingId, meetingId: session.id, newAttempt: moved.data.id, to: newStartInstant },
+        'Client moved one session of a package'
+      );
+
+      return NextResponse.json({
+        success: true,
+        meetingId: moved.data.id,
+        newStartTime: newStartInstant,
+        newEndTime: newEndInstant,
+      });
+    }
+
     const rescheduled = await rescheduleBooking({
       bookingId,
       userId: booking.user_id,
       startTime: newStartInstant,
       endTime: newEndInstant,
+      /*
+       * This surface IS the client (20261082). The journey labelled every move
+       * "you changed the time", so an owner opening the card after a client
+       * rebooked themselves was told they had done it.
+       */
+      movedBy: 'client',
       request,
       logger: requestLogger,
     });

@@ -145,7 +145,22 @@ describe('SchedulingPluginExecutor — reschedule_booking', () => {
   it('reschedules when free and within availability (no config)', async () => {
     bookingRepo.findById.mockResolvedValueOnce(ok(booking));
     await run('reschedule_booking', { id: 'b1', new_start_time: '2026-08-11T09:00:00Z' });
-    expect(bookingRepo.update).toHaveBeenCalledWith('b1', 'u1', expect.objectContaining({ start_time: expect.any(String), end_time: expect.any(String) }));
+    /*
+     * The fourth argument is who moved it (`moved_by`, 20261082). An agent
+     * rescheduling is `'system'`, and that is a real answer rather than a
+     * missing one: the contact drawer then says the time was changed
+     * automatically instead of telling the owner they did it.
+     *
+     * Pinned rather than relaxed to `expect.anything()` — the actor being
+     * wrong is exactly the bug this column was added to fix, and a test that
+     * accepts any value would have accepted the bug.
+     */
+    expect(bookingRepo.update).toHaveBeenCalledWith(
+      'b1',
+      'u1',
+      expect.objectContaining({ start_time: expect.any(String), end_time: expect.any(String) }),
+      'system'
+    );
   });
 
   it('throws conflict when the new time overlaps', async () => {

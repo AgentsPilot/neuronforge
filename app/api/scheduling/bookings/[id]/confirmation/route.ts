@@ -86,6 +86,15 @@ export async function POST(
 
     const result = await BookingEmailService.sendBookingConfirmation(bookingId, user.id, {
       /*
+       * This IS a resend, and saying so is the only way the journey can tell.
+       *
+       * Without it the rail showed the repeat exactly like an original, so the
+       * card read as a confirmation going out during that attempt when nothing
+       * new had been agreed — the owner had simply sent the client their
+       * details again.
+       */
+      isResend: true,
+      /*
        * No invoice with it.
        *
        * A resend is about the appointment, not about asking for money again —

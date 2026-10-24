@@ -59,6 +59,25 @@ const intake = (over: Partial<Appointment> = {}, language = 'he') => {
   return buildJourneySteps(data, language, true, 'UTC').find(s => s.key === 'intake');
 };
 
+/**
+ * What the owner actually READS for this step.
+ *
+ * The state word moved onto the node title and the dates stayed beneath it, so
+ * the sentence lives in two fields: `metadata.state` and `details`. Both are on
+ * screen together, one above the other.
+ *
+ * Asserting on `details` alone was asserting on half a sentence — which is why
+ * every expectation below went from passing to receiving `''` without a single
+ * line of the behaviour changing. Joined in render order so these keep testing
+ * what the owner sees rather than where it is stored.
+ */
+const intakeLine = (over: Partial<Appointment> = {}, language = 'he') => {
+  const step = intake(over, language);
+  if (!step) return '';
+  const state = String((step.metadata as { state?: unknown } | undefined)?.state ?? '');
+  return [state, step.details].filter(Boolean).join(' \u00b7 ');
+};
+
 describe('the card is never empty', () => {
   it('every state carries a line', () => {
     /*
@@ -78,14 +97,14 @@ describe('the card is never empty', () => {
     ];
 
     for (const state of states) {
-      expect(intake(state)?.details).toBeTruthy();
+      expect(intakeLine(state)).toBeTruthy();
     }
   });
 });
 
 describe('never asked', () => {
   it('says so while there is still a point in asking', () => {
-    expect(intake({})?.details).toBe('טרם נשלח');
+    expect(intakeLine({})).toBe('טרם נשלח');
   });
 
   it('drops the "yet" once the booking is cancelled', () => {
@@ -93,17 +112,17 @@ describe('never asked', () => {
      * "Not sent YET" on a cancelled job implies an action the owner should
      * still take. There is nothing left to send.
      */
-    expect(intake({ status: 'cancelled' })?.details).toBe('לא נשלח');
+    expect(intakeLine({ status: 'cancelled' })).toBe('לא נשלח');
   });
 
   it('and once it is over', () => {
-    expect(intake({ status: 'completed' })?.details).toBe('לא נשלח');
+    expect(intakeLine({ status: 'completed' })).toBe('לא נשלח');
   });
 });
 
 describe('asked and waiting', () => {
   it('names the day it went out', () => {
-    const details = intake({ intake_sent_at: SENT })?.details ?? '';
+    const details = intakeLine({ intake_sent_at: SENT });
 
     expect(details).toContain('נשלח, ממתין למילוי');
     /* The date matters as much as the word: "sent" with no "when" cannot tell
@@ -112,7 +131,7 @@ describe('asked and waiting', () => {
   });
 
   it('names both days once the client has been chased', () => {
-    const details = intake({ intake_sent_at: SENT, intake_reminded_at: CHASED })?.details ?? '';
+    const details = intakeLine({ intake_sent_at: SENT, intake_reminded_at: CHASED });
 
     expect(details).toContain('נשלח, ממתין למילוי');
     expect(details).toContain('נשלחה תזכורת');
@@ -130,28 +149,28 @@ describe('a booking that ended without the form coming back', () => {
    * will never be filled in. The journey kept reporting the chase.
    */
   it('stops saying the owner is waiting, once cancelled', () => {
-    const details = intake({ status: 'cancelled', intake_sent_at: SENT })?.details ?? '';
+    const details = intakeLine({ status: 'cancelled', intake_sent_at: SENT });
 
     expect(details).toContain('נשלח, לא מולא');
     expect(details).not.toContain('ממתין למילוי');
   });
 
   it('and once the booking is completed', () => {
-    const details = intake({ status: 'completed', intake_sent_at: SENT })?.details ?? '';
+    const details = intakeLine({ status: 'completed', intake_sent_at: SENT });
 
     expect(details).toContain('נשלח, לא מולא');
     expect(details).not.toContain('ממתין למילוי');
   });
 
   it('keeps the date it went out, which is the record of having asked', () => {
-    expect(intake({ status: 'cancelled', intake_sent_at: SENT })?.details).toContain('14');
+    expect(intakeLine({ status: 'cancelled', intake_sent_at: SENT })).toContain('14');
   });
 
   it('does not claim a chase that is no longer the point', () => {
     /* Reminded is part of the live chase story. Once the booking is off, what
        matters is that it was asked and never came back. */
     const details =
-      intake({ status: 'cancelled', intake_sent_at: SENT, intake_reminded_at: CHASED })?.details ?? '';
+      intakeLine({ status: 'cancelled', intake_sent_at: SENT, intake_reminded_at: CHASED });
 
     expect(details).toContain('נשלח, לא מולא');
     expect(details).not.toContain('ממתין למילוי');
@@ -162,22 +181,22 @@ describe('a booking that ended without the form coming back', () => {
      * The client did fill it in before the job was called off. That happened,
      * and saying "never completed" about it would be false.
      */
-    const details = intake({
+    const details = intakeLine({
       status: 'cancelled',
       intake_sent_at: SENT,
       intake_completed_at: ANSWERED,
       intake_responses: { responses: { q1: 'yes' } },
-    })?.details ?? '';
+    });
 
     expect(details).toContain('מולא');
     expect(details).not.toContain('לא מולא');
   });
 
   it('English and Spanish too', () => {
-    expect(intake({ status: 'cancelled', intake_sent_at: SENT }, 'en')?.details).toContain(
+    expect(intakeLine({ status: 'cancelled', intake_sent_at: SENT }, 'en')).toContain(
       'Sent, never completed'
     );
-    expect(intake({ status: 'cancelled', intake_sent_at: SENT }, 'es')?.details).toContain(
+    expect(intakeLine({ status: 'cancelled', intake_sent_at: SENT }, 'es')).toContain(
       'Enviado, sin completar'
     );
   });
@@ -192,7 +211,7 @@ describe('answered', () => {
   };
 
   it('outranks sent and reminded', () => {
-    const details = intake(answered)?.details ?? '';
+    const details = intakeLine(answered);
 
     expect(details).toContain('מולא');
     expect(details).not.toContain('ממתין למילוי');
@@ -207,7 +226,7 @@ describe('answered', () => {
      * `intake_responses: {}` means the form was sent, not returned —
      * `hasIntake` counts the response KEYS for exactly this reason.
      */
-    const details = intake({ intake_sent_at: SENT, intake_responses: { responses: {} } })?.details ?? '';
+    const details = intakeLine({ intake_sent_at: SENT, intake_responses: { responses: {} } });
 
     expect(details).toContain('ממתין למילוי');
     expect(details).not.toContain('מולא');
@@ -247,17 +266,17 @@ describe('the step files under the day it happened', () => {
 
 describe('the other languages', () => {
   it('English', () => {
-    expect(intake({}, 'en')?.details).toBe('Not sent yet');
-    expect(intake({ status: 'cancelled' }, 'en')?.details).toBe('Never sent');
-    expect(intake({ intake_sent_at: SENT }, 'en')?.details).toContain('Sent, awaiting a reply');
+    expect(intakeLine({}, 'en')).toBe('Not sent yet');
+    expect(intakeLine({ status: 'cancelled' }, 'en')).toBe('Never sent');
+    expect(intakeLine({ intake_sent_at: SENT }, 'en')).toContain('Sent, awaiting a reply');
   });
 
   it('Spanish', () => {
-    expect(intake({}, 'es')?.details).toBe('Aún no enviado');
+    expect(intakeLine({}, 'es')).toBe('Aún no enviado');
   });
 
   it('an unknown language falls back to English rather than rendering nothing', () => {
-    expect(intake({}, 'fr')?.details).toBe('Not sent yet');
+    expect(intakeLine({}, 'fr')).toBe('Not sent yet');
   });
 });
 

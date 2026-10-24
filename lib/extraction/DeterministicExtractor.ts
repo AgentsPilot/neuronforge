@@ -22,6 +22,18 @@ import type { OutputSchema } from './types';
 
 const logger = createLogger({ module: 'DeterministicExtractor', service: 'extraction' });
 
+/**
+ * Largest spreadsheet we hand to SheetJS, in decoded bytes.
+ *
+ * The workbook can come from an outside sender (a Gmail attachment step), and
+ * nothing upstream caps it. Parsing runs on the request's event loop, so an
+ * unbounded file is unbounded memory and CPU in a shared process.
+ * See docs/workplans/sheetjs-cve-remediation-workplan.md.
+ */
+export const MAX_SPREADSHEET_BYTES = 10 * 1024 * 1024;
+
+export const SPREADSHEET_TOO_LARGE_ERROR = 'Spreadsheet exceeds 10 MB limit';
+
 export interface DeterministicExtractionInput {
   content: string; // Base64 encoded content
   mimeType: string;
@@ -352,6 +364,20 @@ export class DeterministicExtractor {
     input: DeterministicExtractionInput,
     extractionInput: ExtractionInput
   ): Promise<ExtractionInput> {
+    const isSpreadsheet = input.mimeType.includes('spreadsheet') || input.mimeType.includes('excel');
+
+    // Checked on the base64 length, before decoding or loading SheetJS.
+    if (isSpreadsheet) {
+      const bytes = Buffer.byteLength(input.content, 'base64');
+      if (bytes > MAX_SPREADSHEET_BYTES) {
+        logger.warn(
+          { mimeType: input.mimeType, bytes, limit: MAX_SPREADSHEET_BYTES },
+          'DeterministicExtractor: spreadsheet over size limit, not parsed'
+        );
+        throw new Error(SPREADSHEET_TOO_LARGE_ERROR);
+      }
+    }
+
     const buffer = Buffer.from(input.content, 'base64');
 
     if (input.mimeType === 'text/csv') {
@@ -359,7 +385,7 @@ export class DeterministicExtractor {
       const csvText = buffer.toString('utf-8');
       extractionInput.text = csvText;
       extractionInput.structuredData = this.parseCsv(csvText);
-    } else if (input.mimeType.includes('spreadsheet') || input.mimeType.includes('excel')) {
+    } else if (isSpreadsheet) {
       // Parse Excel
       const xlsx = await import('xlsx');
       const workbook = xlsx.read(buffer, { type: 'buffer' });

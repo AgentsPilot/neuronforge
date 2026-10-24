@@ -1,6 +1,6 @@
 # Business OS Test Page — Scope & Functionality
 
-> **Last Updated**: 2026-10-12
+> **Last Updated**: 2026-10-20
 
 **Location:** `app/test-business-os/page.tsx`
 **Route:** `/test-business-os`
@@ -18,7 +18,7 @@ The Business OS Test Page is a multi-tabbed harness for exercising Business OS A
 
 Because every `/api/business-os/*` (and `/api/onboarding/*`) route authenticates via `getUser()`, this page acts as whoever you are currently authenticated as, and the current-user panel shows exactly which account that is. This removes the "typed userId vs. session user" mismatch that the Form Tester on `/test-plugins-v2` has to manage.
 
-This document describes the page as it exists today: the shared chrome, the Account Setup helper, and six tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing**, **Test credits**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
+This document describes the page as it exists today: the shared chrome, the Account Setup helper, and seven tabs (**Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing**, **Test credits**, **Upgrade modal**). It grows **one section per feature tab** as tabs are added. The Danger Zone tab is not yet documented here (follow-up F-5).
 
 ## Table of Contents
 
@@ -34,6 +34,7 @@ This document describes the page as it exists today: the shared chrome, the Acco
   - [Tab: LLM Usage](#tab-llm-usage)
   - [Tab: Billing](#tab-billing)
   - [Tab: Test credits](#tab-test-credits)
+  - [Tab: Upgrade modal](#tab-upgrade-modal)
   - [Tab: Danger Zone, Remove a test account](#tab-danger-zone-remove-a-test-account)
 - [Adding a New Tab](#adding-a-new-tab)
 - [Technical Architecture](#technical-architecture)
@@ -102,7 +103,7 @@ A convenience helper to bootstrap the prerequisites most Business OS features ne
 
 Feature tabs are added over time; each will be documented here as its own subsection following the same structure as the Test Plugins V2 doc (**Purpose / Features / API Endpoints Used / Use Cases**).
 
-The tabs today are **Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing** and **Test credits**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
+The tabs today are **Overview**, **Modules**, **Danger Zone**, **LLM Usage**, **Billing**, **Test credits** and **Upgrade modal**. Danger Zone (business data reset and purge preview) is not yet documented in this file (follow-up F-5).
 
 ### Tab: Overview
 
@@ -316,6 +317,28 @@ One `BOS_TEST_CREDITS_TAKEN` audit entry (warning, entity `business_os_credit_pe
 - Take more than is left: the account shows over plan.
 - Pick your own account: refused; test from a separate test account.
 
+### Tab: Upgrade modal
+
+**Purpose (TEST ONLY):** open the real plan comparison window from a Business OS page other than Settings, as a future locked action would (upgrade modal UM-2, [workplan](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM2_WORKPLAN.md)). This harness sits **outside** the Business OS layout (it has no language, theme or capabilities provider), so the tab is only instructions and a plain link to the demo page **inside** the layout, `/business-os/upgrade-modal-demo`. That page uses the real `UpgradeModalProvider`, the real lazy loader, the real stacking and the real payment hold: the evidence go-live row 20 (c) needs. Remove the page, its switch and this tab at the latest when UM-F2 wires a real caller.
+
+**Features (on the demo page):**
+- One line of what the server offers the signed-in account (choose, upgrade, ends free access), from one `my-plan` read on mount.
+- **Open: settings**, **Open: founding_partner**, and **Open: locked_feature** with a plan picked from a list filled from this account's own `plans` (no plan id is typed anywhere).
+- Every button calls `useUpgradeModal().openUpgradeModal(...)`; the window reads the plan itself.
+
+**Not admin-gated, deliberately:** the trial and Founding Partner test accounts the run needs are not admins, and the page can do nothing Settings → Plan cannot already do for the same signed-in account. Sign-in and the payment hold apply as on every Business OS page.
+
+**Prerequisite (developer's `.env.local` only, never Vercel):** `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=true`. Off (the default), the page answers **404**.
+
+**API Endpoints Used:** `GET /api/business-os/entitlements/my-plan` (the page's read, and the window's one read per open); inside the window, the existing plan checkout and upgrade routes, unchanged.
+
+**Use cases:**
+- Each context on a trial account: `settings` and `founding_partner` read "Choose the plan that fits your business"; `locked_feature` reads "This needs {plan}" with a lock and that column marked "Needed for this".
+- A Founding Partner **without** an end date: `founding_partner` reads "Compare our plans" with no button anywhere; `locked_feature` on the top plan adds "{plan} can't be bought from your account right now."
+- A Founding Partner **with** an end date: `founding_partner` reads "Keep everything you have" with Choose buttons.
+- An Essentials owner: upgrade from the window; it stays open and says "Upgrading…", then "You're on {plan}" (row 20 (c)).
+- A checkout from the window closes it and returns to Settings → Your plan on "Payment processing".
+
 ### Tab: Danger Zone, Remove a test account
 
 **Purpose:** removes one **test** account completely, login included, so the email can sign up again, without pasting SQL (test-account cleanup slice 2, [requirement](/docs/requirements/TEST_ACCOUNT_CLEANUP_DANGER_ZONE_REQUIREMENT.md)). Platform admins only: the section renders inside the Danger Zone only after the `admin_users` access check, and renders nothing if its own probe answers 401 / 403. Unlike the rest of the page it targets the account named by the email, not the session user. **There is no undo.**
@@ -440,3 +463,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-10-11 | Test credits tab (slice TC-1, TEST ONLY) | Added the **Tab: Test credits** section: admin-only take-plan-credits on any account behind `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED`, the reused business picker, position before/after, the confirm step with company name and account id, and where a test charge shows (credit report `test_harness`, Finance health credits not USD, owner history "Other activity", AI Activity "Not an AI action"). New component `components/test-business-os/TestCreditsPanel.tsx`. |
 | 2026-10-11 | Harness buttons styled (TC-1 follow-up) | Every action button on the harness (Overview, Modules, Billing, LLM Usage, Test credits, Session panel, shared viewer and logs) now takes one shared look from `components/test-business-os/harnessButton.ts`: border, background, rounded corners, pointer, hover shade, dimmed disabled state; destructive actions (Yes, take credits, Clear Debug Logs, Sign out) are red. Tabs and the Danger Zone panel keep their own styling. No behaviour change. |
 | 2026-10-12 | `stripe listen` command updated for Stripe CLI 1.53 | Stripe CLI 1.53 refuses a bare `stripe listen --forward-to …`. Every command now passes an explicit `--events` list (the events the webhook route and its Business OS plan and boost handlers handle), with `--all-snapshot` noted as the alternative and the `whsec_` → `STRIPE_WEBHOOK_SECRET` step spelled out. |
+| 2026-10-20 | Upgrade modal tab (UM-2, TEST ONLY) | Added the **Tab: Upgrade modal** section: instructions and a plain link to `/business-os/upgrade-modal-demo`, a test page inside the Business OS layout (this harness is outside it) that opens the real plan comparison window with each context through `useUpgradeModal()`. Behind the server switch `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` (404 when off, developer `.env.local` only). Not admin-gated, reason recorded. Use cases per account state. |

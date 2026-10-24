@@ -45,7 +45,7 @@ jest.mock('@stripe/react-stripe-js', () => ({
 
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
 import type { PlanPayload } from '@/components/business-os/settings/planPayloadTypes';
-import { UpgradeModal } from '@/components/business-os/settings/UpgradeModal';
+import { UpgradeModal, type UpgradeModalFlow } from '@/components/business-os/settings/UpgradeModal';
 
 import { LOWER, TOP, TRIAL, payingRow, payloadFor } from './upgradeModalPayloads';
 
@@ -56,6 +56,16 @@ const COPY = translations.en;
 const fill = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (slot, name: string) => values[name] ?? slot);
 const nameOf = (payload: PlanPayload, planId: string) => payload.plans!.find((plan) => plan.planId === planId)!.name;
 const SLOW = 20_000;
+
+/** `PlanSection`'s flow instance as the modal receives it (UM-1b): everything may start. */
+const FLOW: UpgradeModalFlow = {
+  checkoutAllowed: true,
+  upgradeAllowed: true,
+  paymentsConfigured: true,
+  onCheckoutComplete: () => {},
+  onUpgrading: () => {},
+  onUpgradeCheckAgain: async () => {},
+};
 
 function buttonNames(modal: HTMLElement) {
   return within(modal)
@@ -104,7 +114,7 @@ async function openAndClose() {
 describe('QA: more account states', () => {
   it('Essentials, cancelling: the "will not renew" ending in the status strip; ribbon only if the server offers the upgrade', async () => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER, { cancelAtPeriodEnd: true }) });
-    render(<UpgradeModal open onOpenChange={() => {}} plan={payload} />);
+    render(<UpgradeModal open onOpenChange={() => {}} plan={payload} flow={FLOW} />);
     const modal = screen.getByTestId('plan-compare-modal');
     const status = screen.getByTestId('plan-compare-status');
     expect(status).toHaveTextContent(nameOf(payload, LOWER));
@@ -112,15 +122,23 @@ describe('QA: more account states', () => {
     const offered = (payload.purchase?.upgrade?.tiers ?? []).includes(TOP);
     expect(within(modal).queryAllByText(COPY['upgrade_modal.recommended'])).toHaveLength(offered ? 1 : 0);
     expect(within(screen.getByTestId(`plan-compare-col-${LOWER}`)).getByText(COPY['upgrade_modal.your_plan'])).toBeInTheDocument();
-    expect(buttonNames(modal)).toEqual(['Close', COPY['upgrade_modal.back_to_plan']].sort());
+    // UM-1b: an "Upgrade to" pair exactly when the server offers the upgrade.
+    const upgradeName = fill(COPY['plan.upgrade.button'], { plan: nameOf(payload, TOP) });
+    expect(buttonNames(modal)).toEqual(['Close', COPY['upgrade_modal.back_to_plan'], ...(offered ? [upgradeName, upgradeName] : [])].sort());
   });
 
   it('paused subscription: renders the server table, no dead button', async () => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER, { subscriptionStatus: 'paused' }) });
-    render(<UpgradeModal open onOpenChange={() => {}} plan={payload} />);
+    render(<UpgradeModal open onOpenChange={() => {}} plan={payload} flow={FLOW} />);
     const modal = screen.getByTestId('plan-compare-modal');
     expect(screen.getByRole('table', { name: COPY['upgrade_modal.plans_label'] })).toBeInTheDocument();
-    expect(buttonNames(modal)).toEqual(['Close', COPY['upgrade_modal.back_to_plan']].sort());
+    // UM-1b: a column button only where the server offers that plan.
+    const offered = new Set(payload.purchase?.upgrade?.tiers ?? []);
+    const extra = Array.from(offered).flatMap((tier) => {
+      const name = fill(COPY['plan.upgrade.button'], { plan: nameOf(payload, tier) });
+      return [name, name];
+    });
+    expect(buttonNames(modal)).toEqual(['Close', COPY['upgrade_modal.back_to_plan'], ...extra].sort());
   });
 
   it('payment failed: B3 stays in the drawer while the modal is open, and never inside the modal', async () => {
@@ -159,47 +177,56 @@ describe('QA: more account states', () => {
 });
 
 describe('QA: keyboard', () => {
-  it('Enter opens; Tab stays on the two buttons; Escape closes and focus returns to "Compare plans"', async () => {
-    await showSection([await payloadFor({ billingRow: payingRow(LOWER) })]);
+  it('Enter opens; focus starts on the title (SA Q-6); Tab cycles the column buttons, Back and X in DOM order; Escape returns focus to "See plans"', async () => {
+    const payload = await payloadFor({ billingRow: payingRow(LOWER) });
+    await showSection([payload]);
     const opener = screen.getByTestId('plan-compare-open');
     opener.focus();
     await userEvent.keyboard('{Enter}');
     const dialog = await screen.findByRole('dialog');
     const back = within(dialog).getByRole('button', { name: COPY['upgrade_modal.back_to_plan'] });
     const close = within(dialog).getByRole('button', { name: 'Close' });
-    // Focus lands inside the modal on open.
-    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
-    const seen = new Set<Element | null>();
-    for (let i = 0; i < 6; i += 1) {
+    const header = within(dialog).getByTestId(`plan-compare-action-${TOP}-header`);
+    const footer = within(dialog).getByTestId(`plan-compare-action-${TOP}-footer`);
+    // UM-1b SA Q-6: focus lands on the title, never on a money button.
+    await waitFor(() => expect(within(dialog).getByTestId('plan-compare-title')).toHaveFocus());
+    const order: Array<Element | null> = [];
+    for (let i = 0; i < 8; i += 1) {
       await userEvent.tab();
-      seen.add(document.activeElement);
+      order.push(document.activeElement);
       expect(dialog.contains(document.activeElement)).toBe(true);
     }
-    // Only the two buttons are tabbable (the "Current plan" labels are not).
-    expect(seen).toEqual(new Set([back, close]));
+    // Visual and focus order agree (UM-1a Q-8): header button, footer button, Back, X, then around.
+    expect(order.slice(0, 4)).toEqual([header, footer, back, close]);
+    // The "Current plan" labels are never tabbable.
+    expect(new Set(order)).toEqual(new Set([header, footer, back, close]));
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await waitFor(() => expect(opener).toHaveFocus());
   }, SLOW);
 });
 
-describe('QA: money behaviour unchanged after the modal (C-1)', () => {
-  it('Essentials: after open / close, the drawer\'s "Upgrade to …" still posts the preview', async () => {
+describe('QA: the money requests are unchanged, now from the modal (UM-1b §13; was C-1 "drawer after open / close")', () => {
+  it('Essentials: after open / close, the modal\'s "Upgrade to …" still posts the preview', async () => {
     const payload = await payloadFor({ billingRow: payingRow(LOWER) });
     await showSection([payload]);
     await openAndClose();
-    const upgrade = screen.getByRole('button', { name: fill(COPY['plan.upgrade.button'], { plan: nameOf(payload, TOP) }) });
+    await userEvent.click(screen.getByTestId('plan-compare-open'));
+    const upgrade = await screen.findByTestId(`plan-compare-action-${TOP}-header`);
+    expect(upgrade).toHaveAccessibleName(fill(COPY['plan.upgrade.button'], { plan: nameOf(payload, TOP) }));
     await userEvent.click(upgrade);
     await waitFor(() => expect(server.posts).toHaveLength(1));
     expect(server.posts[0].url).toMatch(/\/preview$/);
     expect(server.posts[0].body).toMatchObject({ tier: TOP });
   }, SLOW);
 
-  it('Trial: after open / close, the drawer\'s "Choose …" still posts the checkout', async () => {
+  it('Trial: after open / close, the modal\'s "Choose …" still posts the checkout', async () => {
     const payload = await payloadFor({ planId: TRIAL });
     await showSection([payload]);
     await openAndClose();
-    const choose = screen.getByRole('button', { name: fill(COPY['plan.choose.button'], { plan: nameOf(payload, LOWER) }) });
+    await userEvent.click(screen.getByTestId('plan-compare-open'));
+    const choose = await screen.findByTestId(`plan-compare-action-${LOWER}-footer`);
+    expect(choose).toHaveAccessibleName(fill(COPY['plan.choose.button'], { plan: nameOf(payload, LOWER) }));
     await userEvent.click(choose);
     await waitFor(() => expect(server.posts).toHaveLength(1));
     expect(server.posts[0].body).toEqual({ tier: LOWER, returnTo: 'settings_plan' });
@@ -210,7 +237,7 @@ describe('QA: screen-reader cell text in he / es', () => {
   it.each(['he', 'es'] as const)('%s: every cell reads "{plan}: {state}" in the reader\'s language', async (language) => {
     mockLang.language = language;
     const payload = await payloadFor({ billingRow: payingRow(LOWER), language });
-    render(<UpgradeModal open onOpenChange={() => {}} plan={payload} />);
+    render(<UpgradeModal open onOpenChange={() => {}} plan={payload} flow={FLOW} />);
     const L = translations[language];
     const cells = screen.getAllByTestId('plan-compare-cell');
     const expected = payload.comparison!.sections.flatMap((section) => section.rows).flatMap((row) => row.cells);

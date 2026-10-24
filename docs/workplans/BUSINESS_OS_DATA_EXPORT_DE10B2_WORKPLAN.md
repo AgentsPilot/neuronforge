@@ -418,6 +418,24 @@ Counts are in the SA hand-off message. Pre-existing failures, not caused by this
 | E-1 other states | Off, loading, error and unexpected shape render exactly today's text and markup. The header and warning markup moved verbatim from `app/business-os/settings/page.tsx` into `ErasureDialogBody`. `delete_dialog_title` was added to `FALLBACK_COPY` (byte-identical to `en`) because it now resolves through the shared `tr` |
 | E-1 tests | `DangerZonePanel.selfDelete.test.tsx` was rewritten as per-host render tests. Settings dialog: off, ready, failed check. Boxed panel: off with reopen, ready with close, blockers, unexpected shape. They check the heading text, the warning shown exactly once, the accessible name and description, and one fetch per open. The QA keyboard harness and the settings page test mock now use `ErasureDialogBody` |
 
+### 11.6 Refresh onto `origin/main` (Dev, 2026-10-24)
+
+`git fetch origin` then `git merge origin/main` (`d65c6c60`, 49 commits) into the slice commit `9f9285da`. No rebase, no stash, no force-push. Not pushed.
+
+| Item | Result |
+|---|---|
+| Conflicts | One file, `docs/FEATURE_FLAGS.md` (3 hunks). Both sides kept: header `Last Updated` 2026-10-21 and `Version` 1.13.0; this slice's Change History row renumbered 1.12.0 → 1.13.0 above main's `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` 1.12.0 row; both flag sections kept, self-delete first, each with its own closing fence and `---` |
+| Auto-merged, both sides edited | `app/business-os/settings/page.tsx` (main: plan pop-up UM-D3, scroll helper, `min-h-full`; none near the delete dialog), `lib/notifications/emailTransport.ts` (main: `urgent` priority headers; the E-2 domain fix is unchanged), `lib/utils/featureFlags.ts` (main added other readers; `isAccountSelfDeleteEnabled` unchanged), `lib/business-os/translations/{en,he,es}.ts` (24 `settings.account_delete.*` lines each, no key main also added) |
+| Not touched by main | `DangerZonePanel.tsx`, `middleware.ts`, `PlatformChrome.tsx`, `no-deletion-paths` guard, `user-emails` and `token-usage/drill-down` routes, the DE-10b requirement and this workplan |
+| Cleanup function (20261081) | Main regenerated it: `scheduling_meetings` and `abandoned_bookings` join the plan and tenancy lists, and the version stamp is `2bd40a46795e4555` (= `CLEANUP_FUNCTION_VERSION` on main and prod). The `guard_rows` ids are unchanged, so the blocker copy still maps every guard id (`blockerCopy.test.ts` green). The self-delete does not read the version stamp |
+| New migrations 20261080 … 20261091 | Meetings, email kind, refunds, Stripe attempts. None adds a deletion guard, a route under the self-delete or a column the self-delete reads |
+| Type-check | Whole-project `tsc` still runs out of memory. Scoped `tsc` over the slice files: **0 TS1117** (main removed the old duplicate keys). Everything else reported is in untouched transitive imports, plus one pre-existing slice item: `DeleteAccountDrawer.qa.keyboard.test.tsx` line 189, TS2322 (`enabled: boolean` not `true`; Jest passes, it does not type-check) |
+| Jest, touched suites | 136 suites, 2617 / 2618 tests. The 1 failure is `lib/utils/__tests__/oneAddressPolicy.guard.test.ts` (new on main, Windows backslash paths; fails the same on the main checkout) |
+| Jest, guard sweep | 200 suites, 4653 / 4659. Failures: `supabaseFetch` (dev ceiling), `publicEndpointsAreThrottled` × 3 Windows paths, and `bookingNextStep.test.ts` × 2 (new on main, the blank-line scan misses on CRLF; fails the same on the main checkout). `upgradeModal.guard` (j) was not hit in this run |
+| Named guards + account-deletion | `dictionariesStayInStep`, `admin-authz-surface`, `no-deletion-paths`, `tailwind-css-escape`, `lib/business-os/account-deletion`: 14 suites, 309 / 309. Account-deletion and cleanup suites: 58 suites, 1267 / 1267 |
+| `npm run test:bos-entitlements` | 306 suites, 9219 / 9219 |
+| `npm run lint:hooks` | Clean |
+
 ## SA Review Notes
 
 *(SA to populate.)*
@@ -445,6 +463,7 @@ Counts are in the SA hand-off message. Pre-existing failures, not caused by this
 | 2026-10-21 | SA addendum: QA B-1 and E-1 ruled | B-1: the refusal row goes on the session user (userId = actorId = entityId), amending O2-4 / C2-10 for refusals; test through the real `buildLogEntry`. E-1: the host heading and warning follow the switch, with one pre-check per open. Both required before merge |
 | 2026-10-21 | QA pre-merge pass | Every pre-merge item exercised (Jest + a local dev server on dummy Supabase settings, no live DB). Only the 3 known pre-existing suites fail. 3 QA test files added (27 tests). One Medium bug (B-1: the refused-attempt audit row gets the platform admin as `user_id`, not NULL). Post-deploy prod checklist written. See § QA Report — 2026-10-21 (pre-merge) |
 | 2026-10-21 | QA re-test of B-1 and E-1 | Both fixed and verified through the real `buildLogEntry` and per-host render tests. 2 more QA test files (16 tests). Only the 3 known pre-existing suites fail. Post-deploy N-2 amended. Ready for SA re-review of the fix diff, then commit. See § QA re-test — 2026-10-21 |
+| 2026-10-24 | Refreshed onto `origin/main` (Dev) | Merged `d65c6c60` (49 commits). One conflict, `docs/FEATURE_FLAGS.md`, both sides kept. No behaviour change to the self-delete. See §11.6 |
 
 ---
 

@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { SLOT_HOLDING_STATUSES } from '@/lib/business-os/bookingStatus';
+import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { getUser } from '@/lib/auth';
 import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { createLogger } from '@/lib/logger';
@@ -80,7 +80,20 @@ function generateTimeSlots(
   durationMinutes: number,
   existingBookings: { start_time: string; end_time: string }[],
   externalEvents: { start_time: string; end_time: string }[],
-  timezone: string = 'UTC'
+  timezone: string = 'UTC',
+  /*
+   * The gap the business keeps BETWEEN appointments — `buffer_minutes`.
+   *
+   * The column has existed since the first scheduling migration, defaults to
+   * 15 and is editable in the service modal, and nothing in any booking path
+   * read it: this page offered clients hours flush against the owner's
+   * existing meetings. Applied by widening what is taken, so an hour can
+   * neither end against the next meeting nor start against the last.
+   *
+   * The working day's own edges are deliberately NOT widened: closing time is
+   * not an appointment, so the last slot may run right up to it.
+   */
+  bufferMinutes: number = 0
 ): AvailableSlot[] {
   const slots: AvailableSlot[] = [];
 
@@ -142,8 +155,8 @@ function generateTimeSlots(
       const overlapsBooking = existingBookings.some(booking => {
         const s = businessClock(new Date(booking.start_time), timezone);
         const e = businessClock(new Date(booking.end_time), timezone);
-        const bookingStartMins = s.hour * 60 + s.minute;
-        const bookingEndMins = e.hour * 60 + e.minute;
+        const bookingStartMins = s.hour * 60 + s.minute - bufferMinutes;
+        const bookingEndMins = e.hour * 60 + e.minute + bufferMinutes;
         return slotStartMins < bookingEndMins && slotEndMins > bookingStartMins;
       });
 
@@ -152,8 +165,8 @@ function generateTimeSlots(
       const overlapsExternal = externalEvents.some(event => {
         const s = businessClock(new Date(event.start_time), timezone);
         const e = businessClock(new Date(event.end_time), timezone);
-        const eventStartMins = s.hour * 60 + s.minute;
-        const eventEndMins = e.hour * 60 + e.minute;
+        const eventStartMins = s.hour * 60 + s.minute - bufferMinutes;
+        const eventEndMins = e.hour * 60 + e.minute + bufferMinutes;
         return slotStartMins < eventEndMins && slotEndMins > eventStartMins;
       });
 
@@ -437,17 +450,25 @@ export async function GET(request: NextRequest) {
      * nothing in the logs to explain it.
      *
      * `no_show` is NOT here: the owner has decided that meeting is not
-     * happening, so its time goes back on sale. `SLOT_HOLDING_STATUSES` is the
-     * single answer to "does this booking still occupy its slot", shared with
-     * the three conflict checks that used to ask it their own way.
+     * happening, so its time goes back on sale.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * NOW ASKED OF THE APPOINTMENTS THEMSELVES
+     *
+     * `busyMeetings` is the one answer to "does this still occupy its slot",
+     * shared with the conflict checks that each used to ask it their own way.
+     * Two things improve by routing through it.
+     *
+     * The `limit: 500` is gone. It was a silent cap on a correctness question:
+     * a busy diary's 501st appointment read as free time.
+     *
+     * And the window is now an OVERLAP rather than a containment — the same
+     * semantics the external-calendar read below is commented as getting right,
+     * and which this did not. An appointment starting before `dayStart` and
+     * running into the morning was invisible, so its hours were back on sale.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    const { data: existingBookings } = await schedulingBookingRepository.list(ownerId, {
-      status: [...SLOT_HOLDING_STATUSES],
-      startDate: dayStart,
-      endDate: dayEnd,
-      limit: 500,
-    });
+    const existingBookings = await busyMeetings(supabaseServer, ownerId, dayStart, dayEnd);
 
     // Get external calendar events overlapping this day via the repository. getBusySlots uses
     // proper overlap semantics (start < dayEnd AND end > dayStart), so multi-hour/all-day events
@@ -478,7 +499,10 @@ export async function GET(request: NextRequest) {
       service.duration_minutes,
       existingBookings || [],
       externalEvents,
-      timezone
+      timezone,
+      /* The gap between appointments, read at last — see `generateTimeSlots`.
+         The owner's own grid applies the same rule, so the two agree. */
+      service.buffer_minutes ?? 0
     );
 
     requestLogger.info(

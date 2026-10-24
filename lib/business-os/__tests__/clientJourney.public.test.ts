@@ -88,6 +88,61 @@ describe('shouldTakePayment reads the service, not the business', () => {
   it('never charges for a free service', () => {
     expect(shouldTakePayment({ price: 0, collection: 'online', processorReady: true })).toBe(false);
   });
+
+  it('and a QUOTED service never takes money here, whatever its price says', () => {
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * The bug this exists for, and it cost a real booking.
+     *
+     * A package sold by proposal, priced at 100, collection never set. The
+     * journey ends at `request` and has no payment step — but this gate said
+     * true, because it looked at price and collection and never at HOW the
+     * service is sold. The public route asks this gate.
+     *
+     * So the client walked a journey with no payment step, finished it, and
+     * the route decided money was coming: it recorded the attempt and returned
+     * without writing anything. No booking, no contact, no email. The owner
+     * saw nothing in their list and the client got no confirmation.
+     *
+     * A price on a quoted service is the starting figure for a quote, not an
+     * agreed amount.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    expect(
+      shouldTakePayment({ price: 100, collection: null, processorReady: true, saleMode: 'proposal' })
+    ).toBe(false);
+
+    /* Even when everything else points at a card. */
+    expect(
+      shouldTakePayment({ price: 500, collection: 'online', processorReady: true, saleMode: 'proposal' })
+    ).toBe(false);
+
+    /* And a direct one is unchanged. */
+    expect(
+      shouldTakePayment({ price: 500, collection: 'online', processorReady: true, saleMode: 'direct' })
+    ).toBe(true);
+  });
+
+  it('so the gate and the journey can never disagree about one service', () => {
+    /*
+     * The two were separate opinions on the same question: `journeySteps`
+     * excluded payment for a quoted service, `shouldTakePayment` did not.
+     * Asserted together, because the gap between them is where the booking
+     * fell.
+     */
+    for (const saleMode of ['direct', 'proposal'] as const) {
+      for (const collection of [null, 'online', 'invoice'] as const) {
+        for (const price of [0, 100]) {
+          const service = { is_scheduled: false, collection, price, sale_mode: saleMode };
+          const steps = journeySteps(service, { processorReady: true });
+
+          expect(
+            shouldTakePayment({ price, collection, processorReady: true, saleMode })
+          ).toBe(steps.includes('payment'));
+        }
+      }
+    }
+  });
 });
 
 /**

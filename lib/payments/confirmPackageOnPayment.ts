@@ -101,7 +101,70 @@ export async function confirmPackageOnPayment(
     return { containerId, confirmed: [] };
   }
 
-  const confirmed = (children ?? []).map(child => child.id as string);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * TWO SHAPES, AND BOTH HAVE TO WORK.
+   *
+   * A package used to be a container plus one CHILD BOOKING per date. It is now
+   * one booking with N rows in `scheduling_meetings`, and the dates sold before
+   * the change still exist in the old shape — a client can pay next week for a
+   * package accepted last month.
+   *
+   * So the children are tried first and, finding none, the meetings are read
+   * instead. Nothing has to be migrated for a payment to land correctly, which
+   * is the whole reason this is a fallback rather than a replacement.
+   *
+   * WHAT "CONFIRMED" MEANS IN THE NEW SHAPE
+   *
+   * There is no per-session status to move: the sessions are meetings, and a
+   * meeting's row carries what HAPPENED at it, not whether the job is paid for.
+   * The one status is the container's, which the block below sets — so for a
+   * package of meetings, confirming is a single-row update and the list here is
+   * what the email and the calendar need, not a set of rows that changed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const usingChildren = (children ?? []).length > 0;
+
+  let sessionRows = (children ?? []) as Array<Record<string, unknown>>;
+
+  if (!usingChildren) {
+    const { data: meetingRows, error: meetingsError } = await client
+      .from('scheduling_meetings')
+      .select('id, start_time, end_time, session_number, occurrence_number, meeting_status')
+      .eq('booking_id', containerId)
+      .eq('user_id', userId)
+      /*
+       * Only what is still to happen. A session the owner cancelled or marked
+       * between acceptance and payment must not be resurrected by a payment
+       * arriving late, and a superseded attempt must not be announced as a
+       * date — it is an hour that was given back. This is the same intent the
+       * `status = 'pending'` filter carries on the children above.
+       */
+      .is('meeting_status', null)
+      .order('session_number', { ascending: true })
+      .order('occurrence_number', { ascending: true });
+
+    if (meetingsError) {
+      logger.error(
+        { err: meetingsError, invoiceId, containerId },
+        'A package was paid for but its sessions could not be read'
+      );
+      return { containerId, confirmed: [] };
+    }
+
+    /*
+     * One row per session: the LATEST attempt at each, which is the time the
+     * client actually holds. Ordered above, so the last one seen per session
+     * wins.
+     */
+    const bySession = new Map<string, Record<string, unknown>>();
+    for (const row of meetingRows ?? []) {
+      bySession.set(String(row.session_number ?? row.id), row as Record<string, unknown>);
+    }
+    sessionRows = [...bySession.values()];
+  }
+
+  const confirmed = sessionRows.map(row => String(row.id));
 
   /*
    * The container follows its meetings.
@@ -142,9 +205,15 @@ export async function confirmPackageOnPayment(
    * is why there is one of them and not six. See `sendBookingConfirmation`.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  const meetings = (children ?? [])
+  const meetings = sessionRows
     .slice()
-    .sort((a, b) => Number(a.occurrence_number ?? 0) - Number(b.occurrence_number ?? 0));
+    .sort(
+      (a, b) =>
+        /* Sessions in the order sold; attempts fall back to the old key, which
+           is the only number a child booking has. */
+        Number(a.session_number ?? a.occurrence_number ?? 0) -
+        Number(b.session_number ?? b.occurrence_number ?? 0)
+    );
 
   const sessions = meetings
     .filter(m => m.start_time && m.end_time)
@@ -153,7 +222,17 @@ export async function confirmPackageOnPayment(
   try {
     const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
     const email = await BookingEmailService.sendBookingConfirmation(
-      meetings[0].id as string,
+      /*
+       * The booking the email is ABOUT. In the old shape that was the first
+       * child, which carried a clock of its own; in the new one the sessions
+       * have no booking and the purchase is the only one there is.
+       *
+       * `sessions` above is what the email prints either way, and the
+       * confirmation takes its headline time from the first of them when the
+       * booking has none — see `sendBookingConfirmation`. Without that it
+       * announced an Invalid Date to the client.
+       */
+      usingChildren ? String(meetings[0].id) : containerId,
       userId,
       { sessions, skipInvoice: true }
     );
@@ -177,13 +256,39 @@ export async function confirmPackageOnPayment(
       '@/lib/repositories/SchedulingRepository'
     );
 
+    /*
+     * The job the sync describes. Re-read rather than reusing the update's
+     * rows: it needs the client's name and email, which `findById` normalises
+     * onto the booking from the joined contact.
+     *
+     * In the new shape that is read ONCE, for the container, and each session
+     * borrows it with its own hours put in — the client, the service and the
+     * title are the same for all six, and only the clock differs.
+     */
+    const { data: container } = usingChildren
+      ? { data: null }
+      : await schedulingBookingRepository.findById(containerId, userId);
+
     for (const meeting of meetings) {
-      /*
-       * Re-read rather than reuse the update's rows: the sync needs the client's
-       * name and email, which `findById` normalises onto the booking from the
-       * joined contact, and the update above selected four columns.
-       */
-      const { data: booking } = await schedulingBookingRepository.findById(meeting.id as string, userId);
+      const { data: booking } = usingChildren
+        ? await schedulingBookingRepository.findById(String(meeting.id), userId)
+        : {
+            data: container
+              ? {
+                  ...container,
+                  start_time: String(meeting.start_time),
+                  end_time: String(meeting.end_time),
+                  /*
+                   * Not the container's. Borrowing it would make the sync
+                   * believe this session's event already existed and update
+                   * that one event six times over, leaving one entry in the
+                   * diary for six appointments.
+                   */
+                  external_calendar_event_id: null,
+                }
+              : null,
+          };
+
       if (!booking?.start_time) continue;
 
       const { data: service } = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -191,7 +296,14 @@ export async function confirmPackageOnPayment(
 
       // `CalendarSyncService` is the singleton INSTANCE, not the class — the
       // same spelling `createBooking` uses.
-      await CalendarSyncService.syncBookingToCalendar(booking, service, userId);
+      await CalendarSyncService.syncBookingToCalendar(
+        booking,
+        service,
+        userId,
+        /* Record the event on the SESSION, so six of them do not overwrite one
+           column and get re-created on the next sync. */
+        usingChildren ? null : String(meeting.id)
+      );
     }
   } catch (err) {
     // Never fatal: the appointments exist, and the owner's own calendar is a

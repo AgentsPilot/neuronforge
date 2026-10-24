@@ -61,9 +61,67 @@ export function formatAddressLines(
   if (clean(address.line1)) lines.push(clean(address.line1));
   if (clean(address.line2)) lines.push(clean(address.line2));
 
-  const cityLine = [clean(address.city), clean(address.state), clean(address.postal_code)]
-    .filter(Boolean)
-    .join(', ');
+  /*
+   * ── THE SAME PLACE IS NOT NAMED TWICE ─────────────────────────────────────
+   *
+   * `city` and `state` are separate fields and are usually separate places, so
+   * this joined them. Address autocomplete does not always agree: observed in
+   * production, one business has
+   *
+   *   city  = "Tel Mond, Central District"
+   *   state = "Tel Mond, Central District"
+   *
+   * — the geocoder put the same composite string in both — and the contact
+   * panel read "Narkis 59, Tel Mond, Central District, Tel Mond, Central
+   * District, 6543, Israel".
+   *
+   * A later part is dropped when an earlier one already SAYS it: equal, or
+   * contained in it. Containment rather than equality because the pair is just
+   * as often `city: "Tel Mond"` with `state: "Tel Mond, Central District"`.
+   *
+   * Narrow on purpose. "Closter" + "NJ" keeps both, because neither contains
+   * the other, and a postcode is never a substring of a town name. Nothing is
+   * reordered and nothing is reformatted: a part is either printed as the owner
+   * has it, or it is a repetition of one already printed.
+   * ──────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * Compared as COMMA-SEPARATED NAMES, never as raw text. A substring test
+   * reads "Kansas" as already said by "Kansas City" and drops a real state;
+   * comparing whole names does not, because "kansas" is not one of the names
+   * in "Kansas City".
+   */
+  const namesOf = (part: string) =>
+    part
+      .split(',')
+      .map(name => name.trim().toLowerCase())
+      .filter(Boolean);
+
+  const kept: string[] = [];
+  for (const part of [clean(address.city), clean(address.state), clean(address.postal_code)]) {
+    if (!part) continue;
+
+    const names = namesOf(part);
+    const index = kept.findIndex(seen => {
+      const seenNames = namesOf(seen);
+      return (
+        names.every(name => seenNames.includes(name)) ||
+        seenNames.every(name => names.includes(name))
+      );
+    });
+
+    if (index === -1) {
+      kept.push(part);
+      continue;
+    }
+
+    /* One says everything the other does, and more: keep the fuller of the two
+       — `city: "Tel Mond"` with `state: "Tel Mond, Central District"` should
+       read as the district, not drop it. */
+    if (names.length > namesOf(kept[index]).length) kept[index] = part;
+  }
+
+  const cityLine = kept.join(', ');
   if (cityLine) lines.push(cityLine);
 
   // The one part that is stored as a code and shown as a name.

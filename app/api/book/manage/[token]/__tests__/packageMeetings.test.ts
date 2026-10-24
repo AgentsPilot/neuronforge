@@ -49,11 +49,20 @@ jest.mock('@/lib/branding/publicBranding', () => ({
 /** The booking the token names, and the package rows behind it. */
 let booking: Record<string, unknown> | null = null;
 let siblings: Array<Record<string, unknown>> = [];
+/**
+ * The package's sessions in the NEW shape: rows in `scheduling_meetings` on the
+ * one booking, rather than child bookings.
+ *
+ * Empty by default, so the suites below go on describing the old shape — which
+ * a client whose package was sold before the split still has, and can still
+ * open their link on.
+ */
+let sessionRows: Array<Record<string, unknown>> = [];
 const childFilters: Array<[string, unknown]> = [];
 
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
-    from: () => ({
+    from: (table: string) => ({
       select: () => {
         const chain: Record<string, unknown> = {
           eq: (column: string, value: unknown) => {
@@ -83,13 +92,25 @@ jest.mock('@/lib/supabaseServer', () => ({
            * Promise — undefined — which threw inside the route and emptied every
            * assertion in this file.
            */
-          order: () =>
-            Object.assign(Promise.resolve({ data: siblings, error: null }), {
+          /*
+           * Thenable, chainable, AND orderable twice.
+           *
+           * The sessions read orders by `session_number` and then by
+           * `occurrence_number` — two calls — because the current attempt at
+           * each session is the last one in that order. A single-use `order`
+           * made the second call read off a Promise, which is undefined, and
+           * the whole helper returned nothing.
+           */
+          order: function orderable(): unknown {
+            const rows = table === 'scheduling_meetings' ? sessionRows : siblings;
+            return Object.assign(Promise.resolve({ data: rows, error: null }), {
+              order: orderable,
               limit: () => ({
                 // No quote on a package meeting; the portal simply finds none.
                 maybeSingle: async () => ({ data: null, error: null }),
               }),
-            }),
+            });
+          },
           single: async () => ({ data: booking, error: booking ? null : new Error('not found') }),
         };
         return chain;
@@ -115,6 +136,7 @@ function request() {
 beforeEach(() => {
   jest.clearAllMocks();
   childFilters.length = 0;
+  sessionRows = [];
   mockVerify.mockReturnValue({ bookingId: 'm1', email: EMAIL });
 
   booking = {
@@ -290,5 +312,127 @@ describe('an ordinary booking', () => {
     expect(body.meetings).toEqual([]);
     // And its own two actions are untouched.
     expect(body.booking.canCancel).toBe(true);
+  });
+});
+
+describe('a package whose sessions are MEETINGS', () => {
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * The shape the package moved to: one booking, N rows in
+   * `scheduling_meetings`. The child-booking query finds nothing, so without
+   * this the client opened their link and saw a purchase with no dates on it
+   * at all — the exact shape of "I booked it and it is not there".
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  beforeEach(() => {
+    siblings = [];
+    sessionRows = [
+      { id: 'sm-1', start_time: inHours(72), end_time: inHours(73), meeting_status: null, session_number: 1, occurrence_number: 1 },
+      { id: 'sm-2', start_time: inHours(96), end_time: inHours(97), meeting_status: null, session_number: 2, occurrence_number: 1 },
+    ];
+  });
+
+  it('lists every session the client holds', async () => {
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings).toHaveLength(2);
+    expect(body.meetings.map((m: { occurrenceNumber: number }) => m.occurrenceNumber)).toEqual([1, 2]);
+  });
+
+  it('shows the hour the client holds, not one that was given back', async () => {
+    /*
+     * A moved session leaves its old attempt behind, stamped `moved`. Listing
+     * it would tell the client to turn up at a time nobody is expecting them,
+     * and ranking it as current would contradict the attempt that replaced it.
+     */
+    /* Computed ONCE: `inHours` reads the clock, so calling it again in the
+       assertion produces a string milliseconds apart from this one. */
+    const movedTo = inHours(120);
+
+    sessionRows = [
+      { id: 'sm-1a', start_time: inHours(72), end_time: inHours(73), meeting_status: 'moved', session_number: 1, occurrence_number: 1 },
+      { id: 'sm-1b', start_time: movedTo, end_time: inHours(121), meeting_status: null, session_number: 1, occurrence_number: 2 },
+    ];
+
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings).toHaveLength(1);
+    expect(body.meetings[0].id).toBe('sm-1b');
+    expect(body.meetings[0].startTime).toBe(movedTo);
+  });
+
+  it('can be moved, by the same rule as every other row', async () => {
+    /*
+     * These were all `canModify: false` while a session could not be moved at
+     * all — the reschedule route took a BOOKING id and a session has none. It
+     * takes `meetingId` now, so the three real conditions apply: standing,
+     * dated, and outside the notice window.
+     */
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings.every((m: { canModify: boolean }) => m.canModify === true)).toBe(true);
+    expect(body.meetings.every((m: { tooSoon: boolean }) => m.tooSoon === false)).toBe(true);
+  });
+
+  it('refuses the one inside the notice window, and says why', async () => {
+    /* Same window the route enforces, so the page never offers a change that
+       is about to be refused. */
+    sessionRows = [
+      { id: 'sm-soon', start_time: inHours(2), end_time: inHours(3), meeting_status: null, session_number: 1, occurrence_number: 1 },
+    ];
+
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings[0].canModify).toBe(false);
+    expect(body.meetings[0].tooSoon).toBe(true);
+  });
+
+  it('carries the PURCHASE\'s token and names the session', async () => {
+    /*
+     * A session has no token of its own, there being no booking behind it. The
+     * token names the purchase — which this request has proved the caller
+     * holds a link to — and `meetingId` says which hour. The route refuses a
+     * meeting that is not that booking's, so one package's link reaches only
+     * its own sessions.
+     */
+    const body = await (await GET(...request())).json();
+
+    /* The CONTAINER's, which `m1` points at — not this row's own id. */
+    expect(body.meetings[0].token).toBe('token-for-container-1');
+    expect(body.meetings[0].meetingId).toBe('sm-1');
+  });
+
+  it('offers nothing on a session that already happened', async () => {
+    sessionRows = [
+      { id: 'sm-held', start_time: inHours(-48), end_time: inHours(-47), meeting_status: 'held', session_number: 1, occurrence_number: 1 },
+    ];
+
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings[0].canModify).toBe(false);
+    expect(body.meetings[0].tooSoon).toBe(false);
+  });
+
+  it('says a called-off session is off', async () => {
+    sessionRows = [
+      { id: 'sm-1', start_time: inHours(72), end_time: inHours(73), meeting_status: 'cancelled', session_number: 1, occurrence_number: 1 },
+    ];
+
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings[0].status).toBe('cancelled');
+  });
+
+  it('still lists child bookings where that is the shape', async () => {
+    /* A package sold before the split, whose client can open their link today. */
+    sessionRows = [];
+    siblings = [
+      { id: 'm1', start_time: inHours(72), end_time: inHours(73), status: 'confirmed', occurrence_number: 1 },
+    ];
+
+    const body = await (await GET(...request())).json();
+
+    expect(body.meetings).toHaveLength(1);
+    expect(body.meetings[0].token).toBe('token-for-m1');
   });
 });

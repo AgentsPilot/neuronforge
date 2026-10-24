@@ -53,6 +53,7 @@ const TABS = [
   { id: 'llm-usage', label: 'LLM Usage' },
   { id: 'billing', label: 'Billing' },
   { id: 'test-credits', label: 'Test credits' },
+  { id: 'upgrade-modal', label: 'Upgrade modal' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -487,6 +488,28 @@ export default function TestBusinessOSPage() {
             onLog={addDebugLog}
             onResponse={setLastResponse}
           />
+        </div>
+      )}
+
+      {/* Tab: Upgrade modal — TEST ONLY (upgrade modal UM-2, workplan §7). A
+          plain link to the demo page inside the Business OS layout, which this
+          harness is outside of (no language or theme provider here). The page
+          answers 404 unless BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED is set. */}
+      {activeTab === 'upgrade-modal' && (
+        <div style={panelStyle}>
+          <h2 style={{ marginTop: 0 }}>Upgrade modal — open it from another page (test only)</h2>
+          <p>
+            The demo page opens the real plan comparison window through the Business OS layout&apos;s provider, as any
+            page would: <strong>settings</strong>, <strong>founding_partner</strong>, and <strong>locked_feature</strong> with a
+            plan picked from this account&apos;s own plans.
+          </p>
+          <p>
+            It answers <strong>404</strong> unless <code>BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=true</code> is set in your{' '}
+            <code>.env.local</code> (never on Vercel). It acts on the signed-in account only.
+          </p>
+          <a href="/business-os/upgrade-modal-demo" className={harnessButton('primary', 'md')} data-testid="harness-upgrade-modal-demo-link">
+            Open the upgrade modal demo
+          </a>
         </div>
       )}
 

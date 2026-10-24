@@ -31,8 +31,16 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    /**
+     * The screen-reader name of the built-in close X, so a translated dialog can
+     * name it in the reader's language (upgrade modal UM-3, SA Q-1). Optional and
+     * default-inert: every caller that does not pass it still gets "Close".
+     * Destructured below so it never reaches the DOM as an unknown attribute.
+     */
+    closeLabel?: string
+  }
+>(({ className, children, closeLabel = "Close", ...props }, ref) => {
   // Check if flex is specified in className to avoid grid conflict
   const hasFlex = className?.includes('flex');
   return (
@@ -100,7 +108,7 @@ const DialogContent = React.forwardRef<
       {children}
       <DialogPrimitive.Close className="absolute end-4 top-4 rounded-sm opacity-70 text-[var(--v2-text-muted,var(--foreground))] ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none z-10">
         <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
+        <span className="sr-only">{closeLabel}</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>

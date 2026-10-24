@@ -11,6 +11,7 @@ import { EXPORT_LIMITS } from '../limits';
 import { runZipExport, sectionColumns, type ZipExportDeps, type ZipExportLogger } from '../zipExport';
 import type { ExportFileSource, FileInventory, PlannedFile } from '../fileManifest';
 import { isAllowedEntryName } from '../zipEntries';
+import * as zipWriter from '../zipWriter';
 import type { DataExportJob } from '@/lib/repositories/types';
 
 jest.mock('@/lib/logger', () => {
@@ -500,5 +501,72 @@ describe('DE-10a (SA-4, T-20): a newer export replaces only older ready exports 
     const input = source.slice(source.indexOf('export interface ZipExportInput'), source.indexOf('export interface ZipExportReady'));
     expect(input).not.toMatch(/kind/i);
     expect(source).toContain('deps.jobs.expireOtherReady(userId, jobId, readyJob.requested_by_kind)');
+  });
+});
+
+describe('C-10 (SA-C10-7, SA-C10-8, SA-C10-10): speed at the ceiling', () => {
+  it('data.json has no indentation and parses to the payload (format_version 2)', async () => {
+    const h = harness();
+    await run(h);
+    const text = new TextDecoder().decode(unzipSync(uploadedZip(h))['data.json']);
+    expect(text).not.toContain('\n');
+    const data = JSON.parse(text);
+    expect(data.export_metadata.format_version).toBe(2);
+    expect(text).toBe(JSON.stringify(data));
+  });
+
+  it('the budget spent between zip entries: timeout, nothing uploaded, markFailed once', async () => {
+    const h = harness();
+    const spy = jest.spyOn(zipWriter, 'buildZip').mockImplementationOnce((entries, opts) => {
+      opts.beforeEntry?.(entries[0]);
+      h.clock.now = START + EXPORT_LIMITS.BUILD_MS_CEILING + 1;
+      opts.beforeEntry?.(entries[1]);
+      throw new Error('unreachable: the hook throws first');
+    });
+    try {
+      expect(await run(h)).toMatchObject({ kind: 'failed', reason: 'timeout' });
+      expect(h.storage.upload).not.toHaveBeenCalled();
+      expect(h.jobs.markFailed).toHaveBeenCalledTimes(1);
+      expect(h.jobs.markFailed.mock.calls[0][2]).toBe('timeout');
+      const event = h.log.warn.mock.calls.find((c) => (c[0] as { event?: string }).event === 'data_export_timeout');
+      expect(Object.keys((event?.[0] as { stepMs: object }).stepMs)).toEqual(['inventory', 'read', 'download', 'build', 'zip']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a zip error that is not the budget settles as error, not timeout', async () => {
+    const h = harness();
+    const spy = jest.spyOn(zipWriter, 'buildZip').mockImplementationOnce(() => {
+      throw new Error('fflate failure');
+    });
+    try {
+      expect(await run(h)).toMatchObject({ kind: 'failed', reason: 'error' });
+      expect(h.storage.upload).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('the ready event carries stepMs for every step and textBytes, and no content', async () => {
+    const h = harness();
+    await run(h);
+    const event = h.log.info.mock.calls.find((c) => (c[0] as { event?: string }).event === 'data_export_ready')?.[0] as Record<string, unknown>;
+    expect(Object.keys(event.stepMs as object)).toEqual(['inventory', 'read', 'download', 'build', 'zip', 'upload']);
+    for (const ms of Object.values(event.stepMs as Record<string, unknown>)) expect(typeof ms).toBe('number');
+    expect(typeof event.textBytes).toBe('number');
+    expect(event.textBytes as number).toBeGreaterThan(0);
+    const text = JSON.stringify(event);
+    expect(text).not.toContain(BUSINESS);
+    expect(text).not.toContain('owner@example.com');
+  });
+
+  it('the refusal event carries the steps reached so far', async () => {
+    await withLimit('ZIP_BYTES_CEILING', 100, async () => {
+      const h = harness();
+      await run(h);
+      const event = h.log.warn.mock.calls.find((c) => (c[0] as { event?: string }).event === 'data_export_over_ceiling')?.[0] as Record<string, unknown>;
+      expect(Object.keys(event.stepMs as object)).toEqual(['inventory', 'read', 'download', 'build', 'zip']);
+    });
   });
 });

@@ -18,6 +18,7 @@ import { schedulingServiceRepository } from '@/lib/repositories/SchedulingReposi
 import { windowsForDate, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { busyMeetings, overlapsBusy } from '@/lib/scheduling/busyMeetings';
 
 const logger = createLogger({ module: 'ConversionBookingAvailabilityAPI' });
 
@@ -251,13 +252,29 @@ async function calculateAvailableSlots(
   const endDate = new Date(startDate);
   endDate.setDate(endDate.getDate() + daysAhead);
 
-  const { data: existingBookings } = await supabaseServer
-    .from('scheduling_bookings')
-    .select('start_time, end_time')
-    .eq('user_id', userId)
-    .neq('status', 'cancelled')
-    .gte('start_time', startDate)
-    .lt('start_time', endDate.toISOString());
+  /*
+   * ── THE SHARED DEFINITION OF A TAKEN HOUR ───────────────────────────────
+   *
+   * This had its own query, and it disagreed with every other availability
+   * surface in three ways:
+   *
+   *   · `.neq('status','cancelled')` — so a MISSED appointment went on
+   *     blocking its hour for ever, which is the exact bug the meeting
+   *     outcomes were separated from the job's status to fix;
+   *   · it read `scheduling_bookings`, not `scheduling_meetings`, so it saw a
+   *     different set of rows from the public booking page;
+   *   · it windowed by CONTAINMENT on `start_time` alone, so an appointment
+   *     starting before the range and running into it was invisible.
+   *
+   * A smart link is one of the ways a client reaches the booking page, and it
+   * was offering a different set of hours from the page itself.
+   */
+  const busy = await busyMeetings(
+    supabaseServer,
+    userId,
+    startDate,
+    endDate.toISOString()
+  );
 
   // Generate slots for each day
   for (let i = 0; i < daysAhead; i++) {
@@ -304,15 +321,10 @@ async function calculateAvailableSlots(
         const isPast = currentTime < now;
 
         // Check for conflicts with existing bookings
-        const hasConflict = (existingBookings || []).some(booking => {
-          const bookingStart = new Date(booking.start_time);
-          const bookingEnd = new Date(booking.end_time);
-          return (
-            (currentTime >= bookingStart && currentTime < bookingEnd) ||
-            (slotEnd > bookingStart && slotEnd <= bookingEnd) ||
-            (currentTime <= bookingStart && slotEnd >= bookingEnd)
-          );
-        });
+        /* Half-open, so back-to-back appointments are bookable. The three
+           hand-written comparisons this replaces treated an end that equalled
+           a start as a clash. */
+        const hasConflict = overlapsBusy(currentTime, slotEnd, busy);
 
         slots.push({
           start: currentTime.toISOString(),

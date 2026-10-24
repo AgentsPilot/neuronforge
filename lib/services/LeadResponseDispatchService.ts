@@ -382,9 +382,12 @@ async function completeMeeting(
     }
   }
 
+  /* `system`: a lead replying auto-completes this. No person pressed anything,
+     and recording the owner would attribute a decision they did not make. */
   const { data, error } = await schedulingBookingRepository.complete(
     booking.id,
-    row.user_id
+    row.user_id,
+    'system'
   );
 
   if (error) {

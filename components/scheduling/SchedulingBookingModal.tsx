@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { BookingStatus } from '@/lib/business-os/bookingStatus';
+import { holdsSlot } from '@/lib/business-os/bookingStatus';
 import {
   toBusinessLocalInput,
   fromBusinessLocalInput,
@@ -14,7 +15,23 @@ import {
 } from '@/lib/scheduling/businessTime';
 import { windowsForDate, type TimeOffEntry } from '@/lib/scheduling/availabilityWindows';
 import { closedDayVerdict, type ClosedDayVerdict } from '@/lib/scheduling/closedDay';
+import { defaultServiceFor } from '@/lib/scheduling/defaultService';
 import { JourneyGapNotice } from '@/components/business-os/setup/JourneyGapNotice';
+/*
+ * THE DIALOG AS A SEQUENCE OF QUESTIONS — see `BookingStep`.
+ *
+ * Every section below used to render open, always, in one scroll: the client
+ * block alone is nearly five hundred lines and stayed expanded whether or not
+ * anybody was choosing a client. The sections keep their own markup; only the
+ * frame around them is new, so each one's history of fixes stays intact.
+ */
+import { BookingStep } from '@/components/scheduling/BookingStep';
+import { BookingTimeStep } from '@/components/scheduling/BookingTimeStep';
+import {
+  planBookingSteps,
+  bookingFooterSummary,
+  type BookingStepKey,
+} from '@/lib/scheduling/bookingSteps';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -78,6 +95,22 @@ interface PrefilledContact {
 
 interface SchedulingBookingModalProps {
   booking?: SchedulingBooking;
+  /**
+   * The SESSION being moved, when this dialog is open on one.
+   *
+   * A package's session has no booking of its own, so saving posts to
+   * `/api/scheduling/meetings/[id]/reschedule` instead of putting a booking.
+   * Absent for every ordinary booking.
+   */
+  rescheduleMeetingId?: string | null;
+  /**
+   * How long one session of this package runs.
+   *
+   * A package service keeps no `duration_minutes` of its own, so the length
+   * comes from the quote that sold the sessions. Needed by the slot strip,
+   * which otherwise asks for slots of zero minutes and finds none.
+   */
+  sessionMinutes?: number | null;
   services: SchedulingService[];
   isOpen: boolean;
   onClose: () => void;
@@ -99,6 +132,26 @@ interface SchedulingBookingModalProps {
   timezone?: string;
   prefilledDateTime?: PrefilledDateTime;
   prefilledContact?: PrefilledContact; // Skip contact search when provided
+  /**
+   * Whether the footer offers the booking's STATUS actions — mark held, mark
+   * no-show, cancel, delete.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * They are the old way of recording what happened to a meeting, and the
+   * journey in the contact drawer is the new one: the meeting stage carries
+   * held / no-show / reschedule, and the card's footer carries Cancel.
+   *
+   * Opened to CHANGE A TIME, this modal is a date picker. Four status controls
+   * in its footer offer an owner who came to move an appointment the chance to
+   * mark it held instead — the same decisions, in a second place, under
+   * different words, with none of the journey's guards around them.
+   *
+   * Still true where the modal IS the booking screen: opened from the header's
+   * calendar button there is no journey underneath it, and these are the only
+   * way to reach those actions. Hence a prop rather than a deletion.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  showStatusActions?: boolean;
   existingBookings?: SchedulingBooking[]; // For filtering out booked slots
   /**
    * The caller is still fetching the services.
@@ -164,7 +217,23 @@ interface SchedulingBookingModalProps {
    * and only this dialog is in a position to ask at the same moment as the
    * date. Absent everywhere else, and nothing renders.
    */
-  extraToggle?: { label: string; checked: boolean; onChange: (next: boolean) => void };
+  extraToggle?: {
+    label: string;
+    checked: boolean;
+    onChange: (next: boolean) => void;
+    /**
+     * Draw the eye to it, because missing it costs money.
+     *
+     * On a package billed per session every other session is charged, so an
+     * unticked box means "give this one away" — a decision, not a default.
+     * It was missed, and the only way back was to cancel the session and add
+     * it again, which the client sees as two emails about one hour.
+     *
+     * Settles the moment it is touched: an attention cue that keeps pulsing
+     * after it has been read is just noise.
+     */
+    attention?: boolean;
+  };
 }
 
 // Source options for new clients (use existing CRM source keys)
@@ -220,84 +289,6 @@ function parseDateTimeLocal(local: string, timezone: string): Date {
 }
 
 // Get default times based on user availability
-function getDefaultTimes(availability: WeeklyAvailability | undefined, serviceDurationMinutes: number, timezone: string): { start: string; end: string } {
-  const zone = timezone;
-  const now = new Date();
-  /*
-   * The weekday WHERE THE BUSINESS IS, read off the same clock as the date
-   * below.
-   *
-   * `now.getDay()` is the browser's. It was paired with a `dateKey` built from
-   * `businessDateKey(now, zone)`, so the two could name different days: the
-   * loop looked up Wednesday's opening hours and stamped them onto Thursday's
-   * date. Silent, and only for a reader whose zone differs from the business's
-   * across midnight — which is precisely the case this whole change exists for.
-   */
-  const today = new Date(`${businessDateKey(now, zone)}T00:00:00Z`).getUTCDay();
-
-  // Try to find availability for today or the next available day
-  for (let i = 0; i < 7; i++) {
-    const dayIndex = (today + i) % 7;
-    const dayKey = DAY_KEYS[dayIndex];
-    const daySlots = availability?.[dayKey] || [];
-
-    if (daySlots.length > 0) {
-      const slot = daySlots[0];
-      // The business's calendar date for this offset, and the window's opening
-      // hour on the business's clock. `setHours` here wrote the browser's.
-      const dateKey = shiftBusinessDateKey(businessDateKey(now, zone), i);
-      const targetDate = businessInstant(dateKey, slot.start, zone);
-
-      // If it's today and the start time has passed, try to find a slot that works
-      if (i === 0 && targetDate < now) {
-        /*
-         * Now, rounded up to the next half hour — on the epoch, not with
-         * `setMinutes`/`setHours`, which read and write the BROWSER's clock and
-         * whose rollover also moved the date near midnight.
-         */
-        const HALF_HOUR = 30 * 60 * 1000;
-        const roundedNow = new Date(Math.ceil(now.getTime() / HALF_HOUR) * HALF_HOUR);
-
-        const slotEnd = businessInstant(dateKey, slot.end, zone);
-
-        // Check if there's still time in today's slot
-        if (roundedNow < slotEnd) {
-          const endTime = new Date(roundedNow.getTime() + serviceDurationMinutes * 60 * 1000);
-          // Make sure end time doesn't exceed slot end
-          if (endTime <= slotEnd) {
-            return {
-              start: formatDateTimeLocal(roundedNow, zone),
-              end: formatDateTimeLocal(endTime, zone)
-            };
-          }
-        }
-        // Today's slot is not available, continue to next day
-        continue;
-      }
-
-      // Return the start of the available slot
-      const endTime = new Date(targetDate.getTime() + serviceDurationMinutes * 60 * 1000);
-      return {
-        start: formatDateTimeLocal(targetDate, zone),
-        end: formatDateTimeLocal(endTime, zone)
-      };
-    }
-  }
-
-  /*
-   * Fallback: nine tomorrow, on the BUSINESS's calendar.
-   *
-   * `setDate`/`setHours` built that on the browser's, which near midnight is a
-   * different day and, for an owner away from the business, a different hour.
-   */
-  const tomorrow = businessInstant(shiftBusinessDateKey(businessDateKey(now, zone), 1), '09:00', zone);
-  const endTime = new Date(tomorrow.getTime() + serviceDurationMinutes * 60 * 1000);
-
-  return {
-    start: formatDateTimeLocal(tomorrow, zone),
-    end: formatDateTimeLocal(endTime, zone)
-  };
-}
 
 /**
  * The opening window for a given day.
@@ -372,7 +363,9 @@ function isSlotBooked(
     if (excludeBookingId && booking.id === excludeBookingId) return false;
 
     // Skip cancelled and no_show bookings - those time slots are available
-    if (booking.status === 'cancelled' || booking.status === 'no_show') return false;
+    /* See `holdsSlot`: a missed or called-off meeting frees its time even
+       though the job's status is untouched. */
+    if (!holdsSlot(booking)) return false;
 
     const bookingStart = new Date(booking.start_time);
     const bookingEnd = new Date(booking.end_time);
@@ -511,6 +504,8 @@ export function getNextAvailableSlots(
 
 export function SchedulingBookingModal({
   booking,
+  rescheduleMeetingId,
+  sessionMinutes,
   services,
   servicesLoading = false,
   isOpen,
@@ -524,6 +519,7 @@ export function SchedulingBookingModal({
   prefilledStartLocal,
   seriesSlots,
   extraToggle,
+  showStatusActions = true,
   existingBookings = [],
   timezone
 }: SchedulingBookingModalProps) {
@@ -673,6 +669,34 @@ export function SchedulingBookingModal({
   const phoneCountry: Country | undefined =
     chosenPhoneCountry ?? phoneLib?.phoneFieldCountry(phoneSeed);
   const [sendIntakeForm, setSendIntakeForm] = useState(false);
+
+  /*
+   * Which step the owner reopened, if any — see `planBookingSteps`. Null means
+   * "whichever is next", which is what an empty dialog wants.
+   */
+  const [openedStep, setOpenedStep] = useState<BookingStepKey | null>(null);
+
+
+  /*
+   * The last set of DEFAULTS the initialising effect wrote, and the form as it
+   * stands — the pair that lets a re-run tell "nobody has touched this" from
+   * "the owner is halfway through filling it in". See the effect itself.
+   *
+   * Refs rather than deps on purpose: the form cannot be a dependency of the
+   * effect that writes it, and the defaults are a comparison, not a trigger.
+   */
+  const lastDefaultsRef = useRef<typeof formData | null>(null);
+  const formRef = useRef(formData);
+  formRef.current = formData;
+
+  /*
+   * Whether the dialog was open on the previous run of the initialising
+   * effect, so it can tell "the owner just opened me" from "some data
+   * arrived". Every caller keeps this component mounted and toggles `isOpen`,
+   * which is why opening is not the same event as mounting.
+   */
+  const wasOpenRef = useRef(false);
+
 
   // Intake form configuration status
   const [intakeConfigured, setIntakeConfigured] = useState<boolean | null>(null); // null = loading
@@ -856,10 +880,46 @@ export function SchedulingBookingModal({
   }, [isOpen, refreshIntakeSettings]);
 
   useEffect(() => {
-    // Clear form errors when modal opens/closes or booking changes
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A DIALOG THAT OPENS IS A DIALOG THAT STARTS AGAIN.
+     *
+     * Every caller keeps this component MOUNTED and toggles `isOpen`, so
+     * closing it does not unmount anything: the form state survives. And
+     * `isOpen` was not among this effect's dependencies, so reopening did not
+     * re-run it either. An owner who half-filled a booking, thought better of
+     * it and closed the dialog found all of it still there the next time —
+     * sometimes against a different client, since the drawer reuses the same
+     * instance.
+     *
+     * The comment here used to say "when modal opens/closes", which is what it
+     * was for and not what it did.
+     *
+     * `justOpened` also overrides the edited-since guard below. That guard
+     * exists so late-arriving services cannot wipe a form being filled in;
+     * a fresh open is the opposite case, and the one time wiping is right.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const justOpened = isOpen && !wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+
+    /* Nothing to initialise while it is shut, and nothing to clear either —
+       the next open does both. */
+    if (!isOpen) return;
+
+    // Clear form errors when the modal opens or the booking changes
     setFormErrors({});
     setDeleteError(null);
     setShowDeleteConfirm(false);
+
+    /*
+     * And which step is open, which is the same kind of state.
+     *
+     * Reopening the service step on one booking and then opening the dialog on
+     * ANOTHER would leave that one showing step 1 expanded — asking a question
+     * about a different appointment. Same for the typed-time fields.
+     */
+    setOpenedStep(null);
 
     if (booking) {
       // Use formatDateTimeLocal to convert UTC times to local datetime-local format
@@ -889,11 +949,49 @@ export function SchedulingBookingModal({
        */
       setSendIntakeForm(false);
     } else {
-      // Get first active service for defaults
-      const activeServices = services.filter(s => s.status === 'active');
-      /* The caller's service where it named one — see `prefilledServiceId`. */
-      const defaultService =
-        activeServices.find(item => item.id === prefilledServiceId) ?? activeServices[0];
+      /*
+       * ───────────────────────────────────────────────────────────────────
+       * A RE-RUN MAY ONLY REPLACE DEFAULTS NOBODY HAS CHANGED.
+       *
+       * This effect lists `services` and `availability` among its deps, and
+       * both arrive AFTER the dialog opens: the CRM drawer fires six requests
+       * when it opens and the modal can be up before they land. Each arrival
+       * is a new array identity, so the effect re-ran and performed a full
+       * reset — which is the reported fault. Picking a service and watching it
+       * snap back to the default, or typing a client's email and losing it,
+       * were the same bug: late data resetting a form being filled in.
+       *
+       * The deps are still right. What was wrong is that a re-run overwrote
+       * the owner's own answers as well as the defaults, so a re-run now
+       * happens only while the form still holds exactly what this effect last
+       * wrote. One changed character and late data is ignored.
+       * ───────────────────────────────────────────────────────────────────
+       */
+      const written = lastDefaultsRef.current;
+      const edited =
+        !justOpened &&
+        written !== null &&
+        (Object.keys(written) as Array<keyof typeof written>).some(
+          key => formRef.current[key] !== written[key]
+        );
+
+      if (edited) return;
+
+      /*
+       * ONLY a service the caller named — see `defaultServiceFor`.
+       *
+       * This was `activeServices[0]`, the first row of an alphabetical list,
+       * and that is a guess presented as an answer. It was at least a visible
+       * guess while the picker was expanded; collapsed to a summary line it
+       * reads as a decision the owner made, carrying a price and a duration
+       * belonging to whichever service sorted first.
+       *
+       * With none named the field stays empty, Save stays disabled, and step 1
+       * asks the question — which is what it is for.
+       */
+      const defaultService = defaultServiceFor(services, prefilledServiceId);
+      /* 60 only to size the DEFAULT end time while no service is chosen. The
+         real duration arrives with the choice, via `handleServiceChange`. */
       const serviceDuration = defaultService?.duration_minutes || 60;
 
       let startTime: string;
@@ -928,42 +1026,45 @@ export function SchedulingBookingModal({
         // Format as local time for datetime-local input (YYYY-MM-DDTHH:MM)
         startTime = formatDateTimeLocal(startDate, zone);
         endTime = formatDateTimeLocal(endDate, zone);
+      } else if (!needsSchedule) {
+        /*
+         * Nothing to ask and nothing to seed: a product has no date step at
+         * all, so the fields stay empty rather than carrying an hour the
+         * journey never reaches.
+         */
+        startTime = '';
+        endTime = '';
       } else {
         /*
-         * The first slot that is actually FREE, not the first the calendar allows.
+         * NO HOUR UNTIL SOMEBODY CHOOSES ONE.
          *
-         * `getDefaultTimes` reads the weekly availability and nothing else, so it
-         * proposed the opening of the next working day whether or not somebody
-         * was already booked into it. The owner opened the dialog and was handed
-         * a time they had sold — and the quick-pick row underneath, which does
-         * consult the bookings, disagreed with the field above it.
+         * ───────────────────────────────────────────────────────────────────
+         * This filled the field with the next free slot, and that default was
+         * doing real damage once the steps collapse: an answered step shows a
+         * line instead of a form, so the owner was handed "Monday 19 Oct ·
+         * 11:30" as a decision they had supposedly made, with the grid that
+         * would have explained it closed behind it.
          *
-         * `getNextAvailableSlots` is that same filter, already written and
-         * already correct: it skips existing bookings (ignoring cancelled and
-         * no-show) and external busy time. Taking its first result means one
-         * definition of "free" rather than two that drift.
+         * Two things were invisible as a result, and both are machinery rather
+         * than advice: a meeting less than 24 hours out never gets its 24-hour
+         * reminder, and a client form emailed on confirmation has only the
+         * hours until the meeting to come back. Those warnings live in the
+         * hour step, so an hour nobody opened is an hour booked without them.
          *
-         * It falls back to `getDefaultTimes` when there is no availability
-         * configured at all, which is the case that function exists for.
+         * The suggestion itself is not lost — it is the top-ranked slot in the
+         * grid, where it reads as an offer and carries what it costs.
+         *
+         * A caller that genuinely names an hour (a clicked calendar cell, a
+         * package's next date) is handled above and keeps its value.
+         * ───────────────────────────────────────────────────────────────────
          */
-        // Nothing computed against the placeholder: see `zoneReady`.
-        const [firstFree] = zoneReady
-          ? getNextAvailableSlots(availability, serviceDuration, zone, 1, existingBookings, externalBusySlots, timeOff)
-          : [];
-
-        if (firstFree) {
-          startTime = formatDateTimeLocal(firstFree.start, zone);
-          endTime = formatDateTimeLocal(firstFree.end, zone);
-        } else {
-          const defaultTimes = getDefaultTimes(availability, serviceDuration, zone);
-          startTime = defaultTimes.start;
-          endTime = defaultTimes.end;
-        }
+        startTime = '';
+        endTime = '';
       }
 
       // If prefilled contact provided, use it
       if (prefilledContact) {
-        setFormData({
+        const defaults = {
           service_id: defaultService?.id || '',
           contact_id: prefilledContact.id,
           client_first_name: prefilledContact.first_name,
@@ -973,8 +1074,10 @@ export function SchedulingBookingModal({
           start_time: startTime,
           end_time: endTime,
           notes: '',
-          status: 'confirmed'
-        });
+          status: 'confirmed' as const
+        };
+        lastDefaultsRef.current = defaults;
+        setFormData(defaults);
         setShowClientSearch(false); // Hide search when contact is prefilled
         setSelectedContact({
           id: prefilledContact.id,
@@ -984,7 +1087,7 @@ export function SchedulingBookingModal({
           phone: prefilledContact.phone
         });
       } else {
-        setFormData({
+        const defaults = {
           service_id: defaultService?.id || '',
           contact_id: null,
           client_first_name: '',
@@ -994,8 +1097,10 @@ export function SchedulingBookingModal({
           start_time: startTime,
           end_time: endTime,
           notes: '',
-          status: 'confirmed'
-        });
+          status: 'confirmed' as const
+        };
+        lastDefaultsRef.current = defaults;
+        setFormData(defaults);
         setShowClientSearch(true);
         setSelectedContact(null);
       }
@@ -1020,7 +1125,7 @@ export function SchedulingBookingModal({
      * Re-running is safe: it only replaces the DEFAULT, and the zone resolves
      * once, immediately after open, well before anyone has typed.
      */
-  }, [booking, services, availability, prefilledDateTime, prefilledContact, prefilledServiceId, prefilledStartLocal, zone, zoneReady]);
+  }, [isOpen, booking, services, availability, prefilledDateTime, prefilledContact, prefilledServiceId, prefilledStartLocal, zone, zoneReady]);
 
   /*
    * Does THIS service's client journey include picking a time?
@@ -1047,16 +1152,106 @@ export function SchedulingBookingModal({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const selectedService = services.find(s => s.id === formData.service_id);
-  const needsSchedule = selectedService
-    ? journeySteps(selectedService).includes('datetime')
-    : true;
 
-  // Handle late-loading services: if service_id is empty but services just loaded, set the default
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * EXCEPT WHEN THE THING BEING TIMED IS A SESSION, NOT THE PURCHASE.
+   *
+   * The rule above asks the SERVICE's client journey, and for a package that
+   * answer is correctly "no time": an ADHD course is bought, not booked into an
+   * hour, and `is_scheduled` is false on it.
+   *
+   * But a package's SESSIONS each have an hour, and this dialog is how both of
+   * them are chosen. Asked of the service alone it hid the picker in exactly
+   * the two places whose only job is to pick a time:
+   *
+   *   · moving one session — the dialog opened with no time fields at all, so
+   *     there was nothing to change;
+   *   · adding a seventh session — same, on a flow whose entire purpose is to
+   *     name an hour.
+   *
+   * Both say so when they open this dialog, so neither has to be inferred from
+   * the service: `rescheduleMeetingId` names the session being moved, and
+   * `onPickSlot` means the caller wants an hour and nothing else. Either one
+   * makes the question "does this need a time" already answered — yes.
+   *
+   * The purchase itself is untouched: opening the course from the drawer still
+   * asks for no date, which is the bug the rule above exists for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const timingAMeeting = Boolean(rescheduleMeetingId) || Boolean(onPickSlot);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * HOW LONG A SESSION RUNS, WHEN THE SERVICE CANNOT SAY.
+   *
+   * Every free slot is built from a duration, and a package service keeps
+   * none: it is bought rather than booked into an hour, so `duration_minutes`
+   * is null on it. The picker therefore opened and reported a week with no
+   * free hours in it — not "this week is full", but zero-minute slots, of
+   * which there are never any.
+   *
+   * The session itself knows. A move has the hour it is moving, and an added
+   * one is told by the caller what the package's sessions run for.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const sessionLengthMinutes =
+    sessionMinutes ??
+    (rescheduleMeetingId && booking?.start_time && booking?.end_time
+      ? Math.max(
+          5,
+          Math.round(
+            (new Date(booking.end_time).getTime() - new Date(booking.start_time).getTime()) / 60_000
+          )
+        )
+      : undefined);
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AND NOTHING ELSE ON THE DIALOG IS EDITABLE WHILE ONE IS BEING TIMED.
+   *
+   * Every step carries a "change" link, which is right when this dialog is
+   * editing a booking: the service, the client and the notes are all its own.
+   *
+   * They are not this session's. A package's service and client belong to the
+   * PURCHASE and are shared by all six sessions, and the one thing being asked
+   * for here is an hour. Worse than untidy: the link worked. An owner could
+   * reopen the client step, change it, press save, and the move endpoint —
+   * which reads a start and an end and nothing else — would write the new time
+   * and silently discard the rest. A control that appears to work and does
+   * nothing is the kind of thing nobody reports, they just stop trusting the
+   * screen.
+   *
+   * The time step keeps its link, being the only thing a move can change.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+  const needsSchedule =
+    timingAMeeting ||
+    (selectedService ? journeySteps(selectedService).includes('datetime') : true);
+
+  /*
+   * Late-loading services: resolve the one the CALLER named, nothing else.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dialog can be open before its services arrive — the CRM drawer fires
+   * six requests when it opens, and "new session" does not wait for them. A
+   * caller that named a service needs that name resolved once the list lands.
+   *
+   * It must NOT fill in a default of its own. This read `activeServices[0]`
+   * when nothing was named, so it was the second writer of the same guess: the
+   * owner would see the picker empty, then watch the first service appear in
+   * it a moment later, with no idea which of the two was the answer. Both
+   * places now ask `defaultServiceFor`, which answers only where the caller
+   * did.
+   *
+   * Still guarded on an empty `service_id`, which is what makes it safe to
+   * re-run: a service the owner chose is never replaced.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   useEffect(() => {
     if (!booking && !formData.service_id && services.length > 0) {
-      const activeServices = services.filter(s => s.status === 'active');
-      const defaultService =
-        activeServices.find(item => item.id === prefilledServiceId) ?? activeServices[0];
+      const defaultService = defaultServiceFor(services, prefilledServiceId);
       if (defaultService) {
         const serviceDuration = defaultService.duration_minutes || 60;
         // Update service_id and recalculate end time based on service duration
@@ -1071,7 +1266,7 @@ export function SchedulingBookingModal({
         });
       }
     }
-  }, [booking, services, formData.service_id]);
+  }, [booking, services, formData.service_id, prefilledServiceId, zone]);
 
   // Fetch external calendar busy slots
   useEffect(() => {
@@ -1499,8 +1694,25 @@ export function SchedulingBookingModal({
         return;
       }
 
-      const url = booking ? `/api/scheduling/bookings/${booking.id}` : '/api/scheduling/bookings';
-      const method = booking ? 'PUT' : 'POST';
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * A PACKAGE SESSION IS MOVED AT ITS OWN ENDPOINT.
+       *
+       * A package is one booking with N meetings, so a session has no booking
+       * to PUT: the booking is the purchase and carries no clock. Moving one
+       * writes a second ATTEMPT at that session and releases the hour the old
+       * one held, which `/meetings/[id]/reschedule` does in one transaction.
+       *
+       * `rescheduleMeetingId` is absent for every ordinary booking, which is
+       * the common case and reaches the same two lines it always did.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const url = rescheduleMeetingId
+        ? `/api/scheduling/meetings/${rescheduleMeetingId}/reschedule`
+        : booking
+          ? `/api/scheduling/bookings/${booking.id}`
+          : '/api/scheduling/bookings';
+      const method = rescheduleMeetingId ? 'POST' : booking ? 'PUT' : 'POST';
 
       // Build request body
       const requestBody: Record<string, any> = {
@@ -1563,7 +1775,7 @@ export function SchedulingBookingModal({
 
       // If editing a no-show booking with new time, auto-confirm it (rescheduling)
       // Only where there IS a time: a course has none to have changed.
-      if (needsSchedule && booking && booking.status === 'no_show') {
+      if (needsSchedule && booking && (booking.meeting_status === 'no_show' || booking.status === 'no_show')) {
         const originalStart = new Date(booking.start_time).getTime();
         /* `booking.start_time` is a stored instant; `formData.start_time` is the
            business's wall clock. Reading the second one in the browser's zone
@@ -1752,6 +1964,155 @@ export function SchedulingBookingModal({
 
   const statusStyle = STATUS_COLORS[booking?.status || 'pending'];
 
+  /* ───────────────────────────────────────────────────────────────────────────
+     WHAT EACH ANSWERED STEP SAYS.
+
+     Formatted here rather than in `planBookingSteps` because every one of
+     these has a source that has been read from the wrong place before: the
+     price belongs to the SERVICE's currency, not the business default, and
+     the hour belongs to the BUSINESS's zone, not the owner's browser.
+     ─────────────────────────────────────────────────────────────────────── */
+
+  const serviceSummary = (() => {
+    if (!selectedService) return null;
+
+    const symbol =
+      selectedService.currency === 'ILS' ? '₪'
+        : selectedService.currency === 'EUR' ? '€'
+        : selectedService.currency === 'GBP' ? '£'
+        : '$';
+
+    return [
+      selectedService.service_name,
+      selectedService.duration_minutes != null
+        ? `${selectedService.duration_minutes} ${t('scheduling.service.minutes')}`
+        : null,
+      selectedService.price != null && selectedService.price > 0
+        ? `${symbol}${selectedService.price}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  })();
+
+  const clientSummary = (() => {
+    const name = `${formData.client_first_name || ''} ${formData.client_last_name || ''}`.trim();
+    if (!name) return null;
+
+    /* The email is how they are reached, so it belongs on the line that
+       replaces the form — an owner checking a collapsed step is usually
+       checking they picked the right person, not the right spelling. */
+    return [name, formData.client_email || null].filter(Boolean).join(' · ');
+  })();
+
+  const whenSummary = (() => {
+    /*
+     * No hour is answered before the service is.
+     *
+     * The dialog seeds a start time on open so the grid has somewhere to
+     * start, and with the service no longer defaulted that seed was collapsing
+     * step 3 to "Date and time · Thursday 20 Nov · 10:00" while step 1 was
+     * still asking which service this is — an hour presented as decided, whose
+     * length had been guessed at sixty minutes.
+     *
+     * `formData.service_id` rather than `selectedService`: while EDITING, the
+     * service list can arrive after the booking does, and asking whether the
+     * row is in the list yet would open this step and shut it again.
+     */
+    if (!formData.service_id) return null;
+    if (!needsSchedule || !formData.start_time || !zoneReady) return null;
+
+    const start = parseDateTimeLocal(formData.start_time, zone);
+    if (Number.isNaN(start.getTime())) return null;
+
+    const locale = LOCALE_MAP[language] || 'en-US';
+    const day = start.toLocaleDateString(locale, {
+      timeZone: zone,
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short',
+    });
+    const hour = start.toLocaleTimeString(locale, {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: language !== 'he',
+    });
+
+    return `${day} · ${hour}`;
+  })();
+
+  const detailsSummary = (() => {
+    const parts = [
+      formData.notes?.trim() ? t('scheduling.booking.details_notes_added') : null,
+      sendIntakeForm ? t('scheduling.booking.details_intake_will_send') : null,
+    ].filter(Boolean);
+
+    return parts.length > 0 ? parts.join(' · ') : null;
+  })();
+
+  const stepFacts = {
+    service: serviceSummary,
+    client: clientSummary,
+    when: whenSummary,
+    details: detailsSummary,
+    needsSchedule,
+    /* A completed or cancelled booking is read, not filled. */
+    settled: isSettled,
+    /*
+     * What the dialog is refusing, so the step holding the message cannot
+     * close over it. `serviceGaps` belongs here as well as the field errors:
+     * it disables Save on its own, and collapsed it would leave the owner with
+     * a dead button and nothing to read.
+     */
+    errors: {
+      service: Boolean(formErrors.service_id) || serviceGaps.length > 0,
+      client: Boolean(formErrors.client_first_name || formErrors.client_email),
+      when: Boolean(formErrors.start_time || formErrors.end_time),
+    },
+  };
+
+  const stepPlan = planBookingSteps(
+    stepFacts,
+    /*
+     * ───────────────────────────────────────────────────────────────────────────
+     * THE ORDINARY RULE, EVEN WHEN A SLOT IS BEING PICKED.
+     *
+     * This forced the hour step open for `onPickSlot`, on the reasoning that
+     * the dialog "defaults a start time" — so every step read as answered and
+     * the one question being asked would have opened collapsed.
+     *
+     * That default is no longer a default. The dialog now opens on the hour
+     * the SERIES says comes next, at the same time as the others: an answer,
+     * not a guess, and one the owner usually accepts. Forcing the picker open
+     * put a week of slots in front of a decision already made.
+     *
+     * Collapsed with its "change" link, like every other answered step.
+     *
+     * Still forced open where nothing HAS answered it — a package with no
+     * rhythm to read, so no date could be suggested. Then the hour really is
+     * the one open question, and the picker is what the dialog is for.
+     * ───────────────────────────────────────────────────────────────────────────
+     */
+    openedStep ?? (onPickSlot && !prefilledStartLocal ? 'when' : null)
+  );
+
+  const stepOf = (key: BookingStepKey) =>
+    stepPlan.find(step => step.key === key) ?? {
+      key,
+      index: 0,
+      state: 'pending' as const,
+      summary: null,
+    };
+
+  /* Offered on an answered step, except where the answer is not the owner's to
+     change: a settled booking, or a slot being picked for a package whose
+     service and client came with it. */
+  const reopen = (key: BookingStepKey) =>
+    isSettled || (onPickSlot && key !== 'when')
+      ? undefined
+      : () => setOpenedStep(key);
+
   return (
     <Dialog
       open={isOpen}
@@ -1815,13 +2176,20 @@ export function SchedulingBookingModal({
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
+          {/* No padding and no `space-y` of its own: each step draws its own
+              inset and the hairline under it, so the rows meet edge to edge
+              the way the mockup has them rather than floating as cards. */}
+          <div className="flex-1 overflow-y-auto">
           {/* Service Selection */}
+          <BookingStep
+            index={stepOf('service').index}
+            label={t('scheduling.booking.service_section')}
+            state={stepOf('service').state}
+            summary={stepOf('service').summary}
+            onEdit={timingAMeeting ? undefined : reopen('service')}
+            editLabel={t('scheduling.booking.step_change')}
+          >
           <div className="space-y-3 sm:space-y-4">
-            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              {t('scheduling.booking.service_section')}
-            </h3>
             <div>
               <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                 {t('scheduling.booking.service')} <span className="text-red-500">*</span>
@@ -1888,6 +2256,10 @@ export function SchedulingBookingModal({
                     })()}
                   </SelectValue>
                 </SelectTrigger>
+{/* The cap lives in `components/ui/select.tsx` now: this dropdown
+                    was capped at its call site while the wrapper stayed
+                    unbounded, and the same bug then arrived in the
+                    cancellation-reason list. */}
                 <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)] p-1">
                   {/* `rtl:` variants, like every other row in this dropdown —
                       the spinner belongs on the side the text starts from, and
@@ -1973,13 +2345,18 @@ export function SchedulingBookingModal({
               </div>
             )}
           </div>
+          </BookingStep>
 
           {/* Client Info Section */}
+          <BookingStep
+            index={stepOf('client').index}
+            label={t('scheduling.booking.client_info')}
+            state={stepOf('client').state}
+            summary={stepOf('client').summary}
+            onEdit={timingAMeeting ? undefined : reopen('client')}
+            editLabel={t('scheduling.booking.step_change')}
+          >
           <div className="space-y-3 sm:space-y-4">
-            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              {t('scheduling.booking.client_info')}
-            </h3>
 
             {/* ────────────────────────────────────────────────────────────────
                 WHICH KIND OF CLIENT, ASKED OUT LOUD.
@@ -2345,6 +2722,7 @@ export function SchedulingBookingModal({
               </>
             )}
           </div>
+          </BookingStep>
 
           {/*
             The whole scheduling region, only when the journey has a date step.
@@ -2360,9 +2738,103 @@ export function SchedulingBookingModal({
             unaffected: a course still has all of those.
           */}
           {needsSchedule && (
-          <>
+          <BookingStep
+            index={stepOf('when').index}
+            label={t('scheduling.booking.time_section')}
+            state={stepOf('when').state}
+            summary={stepOf('when').summary}
+            onEdit={reopen('when')}
+            editLabel={t('scheduling.booking.step_change')}
+            /* The business's clock, named in the heading rather than beside
+               each field — an owner in Israel running a New York business had
+               no way to know that 10:00 meant 10:00 in New York. Shown only
+               when their own clock differs, so the ordinary case gains no
+               furniture. */
+            note={showsViewerTime ? <span dir="ltr">{zone}</span> : isSettled ? `(${t('scheduling.booking.time_locked')})` : undefined}
+          >
+          {/*
+            THE SLOT GRID, WHICH KNOWS WHAT AN HOUR COSTS.
+
+            Six chips of the next free hours is what this had, and it answered
+            the wrong question: which hours are free, not which hour to give
+            away. The grid ranks them — the one that wastes nothing, the one
+            that closes a window, the one that strands half an hour nobody can
+            sell — and it reads the same `slotIntelligence` rules the client's
+            own booking page does, so the two cannot drift apart again.
+
+            It is the only way to pick an hour here: the two typed
+            `datetime-local` fields that used to sit below it are gone, and
+            with them the off-hours booking they allowed.
+          */}
+          {/* `!isSettled` as well as the collapsed step above it: a settled
+              booking's hour always has a summary to collapse to, so this is
+              belt and braces rather than the load-bearing guard — and it is
+              the one that does not depend on a summary existing. */}
+          {formData.service_id && !isSettled && (
+            <BookingTimeStep
+              serviceId={formData.service_id}
+              durationMinutes={sessionLengthMinutes}
+              contactId={formData.contact_id || null}
+              value={
+                formData.start_time && zoneReady
+                  ? parseDateTimeLocal(formData.start_time, zone).toISOString()
+                  : null
+              }
+              onChange={startIso => {
+                if (!startIso) {
+                  handleStartTimeChange('');
+                  return;
+                }
+                /* Back onto the business's wall clock, which is the only form
+                   the rest of this dialog and the validator understand. */
+                handleStartTimeChange(formatDateTimeLocal(new Date(startIso), zone));
+              }}
+              /*
+               * WHETHER A FORM IS COMING, NOT WHETHER THE TOGGLE IS ON.
+               *
+               * This read `sendIntakeForm`, which starts OFF and is switched
+               * on in the step BELOW this one — so the lead-time warning was
+               * absent at the only moment it could change the decision, and
+               * present only once the hour step had collapsed over it.
+               *
+               * `intakeConfigured` is the business-level fact: a published
+               * form that is enabled, which is emailed once the booking is
+               * confirmed. That is what makes "the client has N hours to
+               * return it" true, whatever this dialog's toggle says.
+               */
+              requiresIntake={intakeConfigured === true || sendIntakeForm}
+              /* The name on the row about the hour they usually choose. */
+              clientName={formData.client_first_name || undefined}
+              /* Editing: its own hour must not read as taken, and the week
+                 must open on the appointment rather than on today. */
+              editingBookingId={booking?.id ?? null}
+            />
+          )}
+
+          {/* ───────────────────────────────────────────────────────────────
+              THE OLD CONTROLS, KEPT AND MOVED BEHIND A REQUEST.
+
+              The grid above answers the ordinary question. These answer the
+              two it cannot: an hour deliberately outside the business's
+              working hours, and an end time that is not start + duration.
+              Both are real, so they are hidden rather than removed — reached
+              from "שעה אחרת…" in the grid.
+
+              Always shown for a settled booking, which has no grid at all:
+              there the two fields are how its hour is READ.
+              ─────────────────────────────────────────────────────────────── */}
           {/* Quick Pick Available Slots - Show for both new and editing bookings */}
-          {availability && (
+          {/*
+            SHOWN ALSO WHEN THE CALLER NAMED THE DATES — see `seriesSlots`.
+
+            For a recurring package these chips are not "the next six free
+            hours", which is what the grid above works out for itself: they are
+            the SERIES' own remaining dates, handed in by the drawer. Nothing
+            in the slot endpoint knows them, so gating these behind "exact
+            time" would have hidden the one set of dates that is not a
+            suggestion but a schedule.
+          */}
+          {Boolean(seriesSlots?.length) && availability && (
             (() => {
               const serviceDuration = services.find(s => s.id === formData.service_id)?.duration_minutes || 60;
               // Not offered until the zone is known: a chip labelled from the
@@ -2473,182 +2945,33 @@ export function SchedulingBookingModal({
             })()
           )}
 
-          {/* Availability Info for Selected Day - Show for both new and editing bookings */}
-          {formData.start_time && availability && (
-            <div className="p-3 bg-[#14B8A6]/10 border border-[#14B8A6]/30" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-              <div className="flex items-center gap-2 text-sm">
-                <Clock className="h-4 w-4 text-[#14B8A6]" />
-                <span className="font-medium text-[#0D9488]">{t('scheduling.booking.available_hours')}:</span>
-                {(() => {
-                  /* Which day's opening hours to show. Read in the browser's
-                     zone, a time near midnight resolved to the neighbouring
-                     day and the panel quoted the wrong day's hours. */
-                  const selectedDate = parseDateTimeLocal(formData.start_time, zone);
-                  const dayAvailability = getAvailabilityForDay(selectedDate, availability, zone);
-                  if (dayAvailability) {
-                    return (
-                      <span className="text-[var(--v2-text-primary)]" dir="ltr">
-                        {formatTimeDisplay(dayAvailability.start)} - {formatTimeDisplay(dayAvailability.end)}
-                      </span>
-                    );
-                  }
-                  return <span className="text-[var(--v2-text-muted)]">{t('scheduling.booking.no_availability')}</span>;
-                })()}
-              </div>
-            </div>
+          {/*
+            THE TWO TYPED `datetime-local` FIELDS WERE HERE, AND ARE GONE.
+
+            Removed on request, and the grid above is what makes removing
+            them safe: every hour it offers is one the working hours allow
+            and nothing already holds, so the three warnings these fields
+            needed — this day is closed, that hour is taken, your own clock
+            reads differently — are now unreachable rather than unsaid.
+
+            What went with them is the deliberate off-hours booking and a
+            hand-set end time. If either is wanted back, it belongs in the
+            GRID as something offered, not as a second way to answer a
+            question the grid has already asked.
+          */}
+          </BookingStep>
           )}
 
-          {/* Time Section */}
-          <div className="space-y-3 sm:space-y-4">
-            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              {t('scheduling.booking.time_section')}
-              {/*
-                WHICH CLOCK THESE HOURS ARE ON.
-                Nothing said so, and an owner in Israel running a New York
-                business had no way to know that typing 10:00 meant 10:00 in New
-                York. Shown only when their own clock differs, so the ordinary
-                case gains no furniture.
-              */}
-              {showsViewerTime && (
-                <span
-                  className="text-xs font-normal text-[var(--v2-text-muted)] normal-case"
-                  title={t('scheduling.booking.business_clock_hint')}
-                  dir="ltr"
-                >
-                  ({zone})
-                </span>
-              )}
-              {/* Show indicator when time editing is disabled (only for completed/cancelled) */}
-              {isSettled && (
-                <span className="text-xs font-normal text-[var(--v2-text-muted)] normal-case">
-                  ({t('scheduling.booking.time_locked')})
-                </span>
-              )}
-            </h3>
-
-            {/*
-              `min-w-0` on the cells, not just one column on a phone.
-
-              The row already stacked below `sm`, which is why this looked
-              right in a narrow viewport and wrong on a real handset: a
-              `datetime-local` control has a wide INTRINSIC width — it reserves
-              room for the whole date, the time, the separators and the picker —
-              and a grid item will not shrink below that unless it is allowed
-              to. The track was already `minmax(0, 1fr)` and could shrink; the
-              DIV inside it could not, so the field burst out of its own column
-              and ran to both screen edges while every other control on the
-              dialog stayed inset.
-            */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <div className="min-w-0">
-                <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
-                  {t('scheduling.booking.start_time')} <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="datetime-local"
-                  value={formData.start_time}
-                  onChange={(e) => handleStartTimeChange(e.target.value)}
-                  min={!booking ? formatDateTimeLocal(new Date(), zone) : undefined}
-                  disabled={isSettled}
-                  className={`datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50 ${
-                    formErrors.start_time
-                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
-                      : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
-                />
-                {formErrors.start_time ? (
-                  <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    {formErrors.start_time}
-                  </p>
-                ) : closedDay.closed ? (
-                  /*
-                   * Said BEFORE Save, which is the whole fix: the server now
-                   * refuses this with `closed_day`, but an owner who only
-                   * finds out after filling the form has already decided.
-                   *
-                   * Named, not generic — 'Sukkot' tells them which closure
-                   * this is, where "you are closed" sends them hunting through
-                   * the settings dialog.
-                   */
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3 shrink-0" />
-                    <span>
-                      {closedDay.kind === 'all_day'
-                        ? t('scheduling.closed_on', { date: formData.start_time.slice(0, 10) })
-                        : t('scheduling.closed_hours', {
-                            start: closedDay.hours.start,
-                            end: closedDay.hours.end,
-                            date: formData.start_time.slice(0, 10),
-                          })}
-                      {closedDay.reason ? ` · ${closedDay.reason}` : ''}
-                    </span>
-                  </p>
-                ) : timeAlreadyBooked ? (
-                  /*
-                   * Said before Save, not after.
-                   *
-                   * The server refuses an overlap with a 409, so this was never
-                   * a way to double-book — but the owner only found out once
-                   * they had filled the whole form. It also covers the case the
-                   * default cannot: the bookings list arrives from a secondary
-                   * fetch, so a dialog opened quickly may have chosen its
-                   * default before there was anything to check against.
-                   */
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    {t('scheduling.booking.time_already_booked')}
-                  </p>
-                ) : viewerTimeFor(formData.start_time) ? (
-                  /* The same instant on the owner's own clock. Display only:
-                     the booking is counted on the business's zone either way. */
-                  <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
-                    {t('scheduling.booking.your_time', {
-                      time: viewerTimeFor(formData.start_time) as string,
-                    })}
-                  </p>
-                ) : null}
-              </div>
-              <div className="min-w-0">
-                <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
-                  {t('scheduling.booking.end_time')} <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="datetime-local"
-                  value={formData.end_time}
-                  onChange={(e) => {
-                    setFormData(prev => ({ ...prev, end_time: e.target.value }));
-                    setFormErrors(prev => ({ ...prev, end_time: '' }));
-                  }}
-                  min={formData.start_time || (!booking ? formatDateTimeLocal(new Date(), zone) : undefined)}
-                  disabled={isSettled}
-                  className={`datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50 ${
-                    formErrors.end_time
-                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
-                      : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
-                />
-                {formErrors.end_time ? (
-                  <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    {formErrors.end_time}
-                  </p>
-                ) : viewerTimeFor(formData.end_time) ? (
-                  <p className="mt-1 text-xs text-[var(--v2-text-muted)]">
-                    {t('scheduling.booking.your_time', {
-                      time: viewerTimeFor(formData.end_time) as string,
-                    })}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          </>
-          )}
-
+          {/* Notes and the intake toggle are ONE step: both are things the
+              owner adds to a booking that is otherwise already decided. */}
+          <BookingStep
+            index={stepOf('details').index}
+            label={t('scheduling.booking.step_details')}
+            state={stepOf('details').state}
+            summary={stepOf('details').summary}
+            onEdit={timingAMeeting ? undefined : reopen('details')}
+            editLabel={t('scheduling.booking.step_change')}
+          >
           {/* Notes Section */}
           <div className="space-y-3 sm:space-y-4">
             <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
@@ -2778,6 +3101,7 @@ export function SchedulingBookingModal({
                 </button>
               </div>
           )}
+          </BookingStep>
 
           </div>
 
@@ -2788,6 +3112,19 @@ export function SchedulingBookingModal({
               <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm rounded-lg">
                 {formErrors.submit}
               </div>
+            )}
+            {/*
+              WHERE THE BOOKING STANDS, BESIDE THE BUTTON THAT COMMITS IT.
+
+              With the steps collapsed, the facts are spread up the dialog and
+              the one being confirmed is whichever step is open. This is the
+              whole appointment on one line, next to Save — so pressing it is
+              answering a question you can still see.
+            */}
+            {!showDeleteConfirm && bookingFooterSummary(stepFacts) && (
+              <p className="mb-3 truncate text-[13px] text-[var(--v2-text-secondary)]">
+                {bookingFooterSummary(stepFacts)}
+              </p>
             )}
             {/* Delete confirmation overlay — becomes the refusal when the
                 delete is blocked, so the answer replaces the question in place
@@ -2842,7 +3179,7 @@ export function SchedulingBookingModal({
               <div className="flex items-center justify-between gap-3">
                 {/* Left side - Quick actions for existing bookings */}
                 <div className="flex items-center gap-2">
-                  {booking && booking.status === 'confirmed' && (
+                  {booking && showStatusActions && booking.status === 'confirmed' && (
                     <>
                       <button
                         type="button"
@@ -2879,7 +3216,7 @@ export function SchedulingBookingModal({
                       </button>
                     </>
                   )}
-                  {booking && (
+                  {booking && showStatusActions && (
                     <button
                       type="button"
                       onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
@@ -2923,7 +3260,27 @@ export function SchedulingBookingModal({
                     />
                     <label
                       htmlFor="booking-extra-toggle"
-                      className="cursor-pointer text-sm text-[var(--v2-text-secondary)]"
+                      className={`cursor-pointer text-sm ${
+                        extraToggle.attention && !extraToggle.checked
+                          ? 'booking-toggle-attention font-medium'
+                          : 'text-[var(--v2-text-secondary)]'
+                      }`}
+                      style={
+                        extraToggle.attention && !extraToggle.checked
+                          ? /*
+                             * Amber, the same one this card already uses for
+                             * an overdue figure — money that needs an answer,
+                             * not an error. Red would say something is wrong;
+                             * nothing is, until the dialog is saved with the
+                             * question unanswered.
+                             *
+                             * Inline rather than a token class so the colour
+                             * and the pulse are switched by one condition and
+                             * cannot drift apart.
+                             */
+                            { color: '#D97706' }
+                          : undefined
+                      }
                     >
                       {extraToggle.label}
                     </label>
@@ -2950,6 +3307,11 @@ export function SchedulingBookingModal({
                        contact with only a phone number has neither a first
                        name nor an email — which would have left this button
                        permanently dead. */
+                    /* And the hour, now that it is no longer pre-filled: a
+                       booking with a date step and no hour is refused by the
+                       validator anyway, and a button you can press for an
+                       answer the dialog already knows is wrong is a round trip
+                       for nothing. */
                     disabled={
                       onPickSlot
                         ? loading || !formData.start_time
@@ -2957,6 +3319,7 @@ export function SchedulingBookingModal({
                           !formData.service_id ||
                           !formData.client_first_name ||
                           !formData.client_email ||
+                          (needsSchedule && !formData.start_time) ||
                           serviceGaps.length > 0
                     }
                     className="px-4 py-2 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2977,7 +3340,21 @@ export function SchedulingBookingModal({
                         ? t('scheduling.closed_book_anyway')
                         : booking
                           ? t('scheduling.booking.save_changes')
-                          : t('scheduling.booking.create_booking')}
+                          : /*
+                             * ADDING A SESSION CREATES A MEETING, NOT AN ORDER.
+                             *
+                             * "צור הזמנה" is right when this dialog sells
+                             * something: a booking is an order, and the client
+                             * is agreeing to it. A seventh session of a package
+                             * is neither — the order was placed when the quote
+                             * was accepted, and this adds an hour to it.
+                             *
+                             * `onPickSlot` is exactly that caller: it wants an
+                             * hour and writes no booking at all.
+                             */
+                            onPickSlot
+                            ? t('scheduling.booking.create_meeting')
+                            : t('scheduling.booking.create_booking')}
                   </button>
                 </div>
               </div>
@@ -3016,6 +3393,41 @@ export function SchedulingBookingModal({
           }
 
           /* Datetime input dark mode styling for scheduling */
+          /*
+           * ───────────────────────────────────────────────────────────────
+           * THE CHARGE QUESTION, WHILE IT IS STILL UNANSWERED.
+           *
+           * On a package billed per session, leaving this off gives the
+           * session away — so it is a decision, not a default, and it was
+           * being missed. The only way back was to cancel the session and add
+           * it again, which the client sees as two emails about one hour.
+           *
+           * It keeps pulsing until it is answered, by the owner's own
+           * instruction — the question is worth money and this dialog is
+           * saved in a hurry. The class is dropped the moment the switch is
+           * turned on, so the movement stops when it has done its job rather
+           * than on a timer.
+           *
+           * prefers-reduced-motion gets the emphasis without the movement —
+           * the point is to be noticed, and for some people movement is the
+           * one thing that makes a screen unusable.
+           * ───────────────────────────────────────────────────────────────
+           */
+          .booking-toggle-attention {
+            animation: bookingTogglePulse 1.1s ease-in-out infinite;
+          }
+
+          @keyframes bookingTogglePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+          }
+
+          @media (prefers-reduced-motion: reduce) {
+            .booking-toggle-attention {
+              animation: none;
+            }
+          }
+
           .datetime-input-scheduling {
             color-scheme: light;
           }

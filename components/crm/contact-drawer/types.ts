@@ -1,7 +1,7 @@
 // Shared types for CRM Contact Drawer components
 
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
-import type { BookingStatus } from '@/lib/business-os/bookingStatus';
+import type { BookingStatus, MeetingStatus } from '@/lib/business-os/bookingStatus';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
@@ -37,7 +37,114 @@ export interface IntakeResponses {
   template_key?: string;
 }
 
+/**
+ * One arranged appointment, as the journey draws it.
+ *
+ * Mirrors `SchedulingMeetingAttempt` from the repository rather than importing
+ * it: this file is the drawer's own contract and is imported by client
+ * components, and the repository module is server-side only (CLAUDE.md rule 1).
+ */
+/** One mail sent about a specific attempt, as the journey lists it. */
+export interface AttemptEmail {
+  id: string;
+  subject: string;
+  /** When it went out. `sent_at` where the provider confirmed it. */
+  at: string | null;
+  status: EmailSendStatus;
+  /**
+   * A REPEAT of mail the client already had — the owner pressing "send again".
+   *
+   * Recorded on the row (20261079), never derived: every reschedule notice
+   * shares one subject, so "this subject appeared before" would label the
+   * second genuine notice a resend of the first.
+   */
+  isResend?: boolean;
+  /**
+   * WHAT the message was (20261081) — a confirmation, a reschedule notice, a
+   * reminder — as its sender declared it.
+   *
+   * The journey names the kind instead of echoing `subject`, which on one
+   * booking repeats the service name on every row and tells the owner nothing:
+   * it is the same booking throughout, so it is the same service throughout.
+   *
+   * Null for rows predating the column, which render by subject exactly as they
+   * did before. A string rather than the sender's union, because the column is
+   * TEXT with no CHECK and an unrecognised value must degrade, not crash.
+   */
+  kind?: string | null;
+}
+
+export interface MeetingAttempt {
+  id: string;
+  booking_id: string;
+  /**
+   * Who recorded the outcome: the owner, the client, or an automation.
+   *
+   * NULL on every row predating 20261078, which were deliberately not
+   * backfilled — the owner's drawer is not the only writer, so assuming them
+   * would have put a guess in a column the journey presents as a record.
+   */
+  outcome_by?: 'owner' | 'client' | 'system' | null;
+  /**
+   * WHEN the outcome was recorded (20261080).
+   *
+   * Lets the rail place the outcome among this attempt's emails in order, so
+   * a mail sent while the appointment was still ahead sits ABOVE the line
+   * saying it was missed, and one sent because it was missed sits below.
+   * Without it the node showed a single final state over mail spanning the
+   * whole of its life, and nothing said which belonged to which.
+   */
+  outcome_at?: string | null;
+  /**
+   * The mail sent about THIS attempt, oldest first.
+   *
+   * Matched on `email_sends.meeting_id`, which exists from 20261077 — so it is
+   * the recorded link, not a guess. Empty for attempts whose mail predates the
+   * column, and for attempts nothing was sent about.
+   *
+   * Attached by the drawer rather than the API: the emails are already fetched
+   * for the confirmation step, so pairing them here costs no extra request.
+   */
+  emails?: AttemptEmail[];
+  start_time: string;
+  end_time: string;
+  timezone: string | null;
+  /** `held` | `no_show` | `cancelled`, or null while nobody has said. */
+  meeting_status: MeetingStatus | null;
+  /**
+   * Who caused this attempt to exist (20261082), for one a move created.
+   *
+   * Null on attempt #1 — the booking put it there, not a move — and on every
+   * row predating the column. The journey then says the time was changed
+   * without naming a side, rather than repeating the assumption that produced
+   * the bug: every move was labelled the owner's, including a client's own
+   * reschedule from the public portal.
+   */
+  moved_by?: 'owner' | 'client' | 'system' | null;
+  /**
+   * Which SESSION of a package this is (20261086), or null on an ordinary
+   * booking, which has one appointment.
+   *
+   * What separates two readings of the same list: on an ordinary booking the
+   * attempts are tries at ONE hour, and here each numbered session is a
+   * different hour. Read the wrong way, a package of six draws as six attempts
+   * at one date.
+   */
+  session_number?: number | null;
+  /** 1 for the first arrangement, incrementing for each later attempt. */
+  occurrence_number: number;
+  created_at: string | null;
+}
+
 export interface Appointment {
+  /**
+   * The owner's answer when the meeting was cancelled (20261083): is the quote
+   * still coming?
+   *
+   * NULL means nobody was asked, which is NOT the same as yes. Only `false`
+   * changes the journey, where it asks whether the booking should be closed.
+   */
+  proposal_continues?: boolean | null;
   id: string;
   service_id: string;
   client_first_name: string;
@@ -48,6 +155,45 @@ export interface Appointment {
   end_time: string | null;    // null for product purchases (no time slot)
   timezone?: string;
   status: BookingStatus;
+  /**
+   * How this booking came to exist: `quote_request`, `website`, `manual`,
+   * `proposal`.
+   *
+   * The journey's opening step is the only place it is shown, and it is the one
+   * fact on that row that appears nowhere else on the card — the service name
+   * is the card's title and the client is the drawer's subject. Undeclared, it
+   * read as `undefined` and the row showed the client's name alone.
+   */
+  booking_source?: string | null;
+  /**
+   * What happened at the APPOINTMENT, independent of the job above.
+   *
+   * `null` means nobody has said yet, which is the ordinary state of a past
+   * meeting. Its own column since 20261072, so the two facts no longer have to
+   * overwrite each other — a consultation can be held and its job cancelled.
+   */
+  meeting_status?: MeetingStatus;
+  /**
+   * Every appointment that was arranged for this booking, oldest first.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY A BOOKING CAN HAVE MORE THAN ONE
+   *
+   * `meeting_status` above describes the CURRENT attempt. A booking rescheduled
+   * after somebody said what happened — a no-show that was moved, a
+   * consultation held and then booked again — gets a new row rather than
+   * having its time overwritten, so the missed appointment keeps both its
+   * outcome and the day it was actually for.
+   *
+   * Absent or length ≤ 1 for every booking that has never been rescheduled
+   * after an outcome, which is the overwhelming majority. The journey draws its
+   * single meeting node for those, exactly as before; the rows only appear
+   * where there is genuinely more than one attempt to show.
+   *
+   * Supplied only when the fetch asks for it (`include_attempts=true`), since
+   * it costs a second query and nothing but the journey reads it.
+   */
+  attempts?: MeetingAttempt[];
   payment_status?: 'pending' | 'paid' | 'refunded';  // Payment status from booking
   payment_id?: string;        // Transaction ID for refunds
   notes?: string;
@@ -71,6 +217,15 @@ export interface Appointment {
    * ───────────────────────────────────────────────────────────────────────────
    */
   parent_booking_id?: string | null;
+  /**
+   * The MEETING this row stands for, when it is a package session.
+   *
+   * A package is one booking with N meetings, so a session has no booking of
+   * its own and its outcome is recorded against the meeting — which is a
+   * different endpoint from a booking's. Present only on the view-model rows
+   * the drawer builds for a package's sessions; absent on every real booking.
+   */
+  meeting_id?: string | null;
   occurrence_number?: number | null;
   cancelled_by?: 'client' | 'owner' | 'system' | null;
   cancellation_reason?: string | null;
@@ -124,6 +279,20 @@ export interface ContactEmail {
   id: string;
   subject: string;
   to_email: string;
+  /**
+   * The booking and the APPOINTMENT this mail was about (20261077).
+   *
+   * Already on the wire — the emails route selects the whole row — so, as with
+   * `delivered_at` below, only this type was hiding them.
+   *
+   * `meeting_id` is what lets the journey file a confirmation under the
+   * appointment it confirmed and a reschedule request under the one that was
+   * missed, instead of stacking every mail on the first attempt. Null on the
+   * 704 rows that predate the columns, where the journey falls back to matching
+   * by time and service name.
+   */
+  booking_id?: string | null;
+  meeting_id?: string | null;
   /*
    * From the shared roster, not a local union. The inline version omitted
    * `'complained'` — a value the delivery webhook writes — which is why nothing
@@ -180,6 +349,14 @@ export interface SessionPaymentPlan {
    */
   stages?: Array<{
     id: string;
+    /**
+     * The SESSION this stage bills, for a package billed per meeting.
+     *
+     * A package is one booking with N meetings, so N stages share one
+     * `booking_id` and it can no longer say which session a stage belongs to.
+     * Null on every ordinary stage, which bills a job rather than an hour.
+     */
+    meetingId?: string | null;
     label: string | null;
     amount: number;
     status: string;
@@ -247,6 +424,20 @@ export interface SessionPayment {
    * booking would look untouched.
    */
   refundedAmount?: number;
+  /**
+   * The money was recorded by hand, never taken by a processor.
+   *
+   * True only when every settled charge on the booking carries
+   * `processor_type: 'manual'` — cash, a bank transfer, a cheque. It decides
+   * one thing: whether refunding here can actually move money, or whether the
+   * owner has to return it themselves and this only records that they did.
+   *
+   * It was previously guessed at from the ABSENCE of `scheduling_bookings
+   * .payment_id`, a legacy single-payment column that is null on 74 of this
+   * account's 81 paid bookings — so the warning appeared on card payments,
+   * which is every instalment sale and every plan.
+   */
+  isManual?: boolean;
   /**
    * What was actually invoiced, when there is an invoice.
    *

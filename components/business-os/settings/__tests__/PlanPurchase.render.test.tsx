@@ -183,6 +183,24 @@ const fill = (template: string, values: Record<string, string>) => template.repl
 const moneyButtons = () => screen.queryAllByRole('button').filter((button) => button.getAttribute('data-testid') !== 'plan-compare-open');
 
 /**
+ * Upgrade modal UM-1b (workplan §13): Choose / Pay for live in the plan
+ * comparison modal now, two buttons per offered column (header and footer) for
+ * one flow. These open it and find them; the island's test ids are unchanged.
+ */
+async function openPlans() {
+  if (!screen.queryByTestId('plan-compare-modal')) await userEvent.click(screen.getByTestId('plan-compare-open'));
+  return screen.getByTestId('plan-compare-modal');
+}
+const columnButton = (planId: string, where: 'header' | 'footer' = 'header') => screen.getByTestId(`plan-compare-action-${planId}-${where}`);
+/** Every Choose / Pay for button on screen (drawer or modal). */
+const chooseButtons = () => screen.queryAllByRole('button', { name: /^(Choose|Pay for) / });
+/** Open the modal and press the first plan's Choose (was `getAllByRole('button')[0]` in the drawer). */
+async function pressFirstChoose(payload: PlanPayload) {
+  await openPlans();
+  await userEvent.click(columnButton(payload.plans![0].planId));
+}
+
+/**
  * The Choose button's label for a plan row (P-7b.1b, SA Q-7): the plan in force,
  * when it is a tier with no billing record (admin-assigned), reads "Pay for".
  */
@@ -193,18 +211,27 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
   it('an Essentials account with nothing paid: every offered plan, its price excluding tax, and a Choose button', async () => {
     const payload = await payloadFor();
     await show(payload);
-
-    const list = within(screen.getByRole('list', { name: COPY['plan.choose.heading'] }));
-    // Non-vacuity: the server offers more than one tier, and the list names them all.
+    // Non-vacuity: the server offers more than one tier.
     expect(payload.purchase?.offer).toEqual({ kind: 'choose', tiers: [...buyableTiers()] });
     expect(payload.plans!.length).toBeGreaterThan(1);
-    for (const plan of payload.plans!) {
-      expect(list.getByText(fill(COPY['plan.choose.price_ex_tax'], { amount: `$${plan.monthlyPriceUsd}` }))).toBeInTheDocument();
-      expect(list.getByRole('button', { name: chooseLabel(payload, plan) })).toBeInTheDocument();
-    }
-    // The section's "Available to choose." line is not repeated: the list is the action.
+    // C-12: no Choose in the drawer any more; its one button says there are plans to see.
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toHaveTextContent(COPY['upgrade_modal.open_see_plans']);
+    // The section's "Available to choose." line is not repeated: the modal is the action.
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
+
+    await openPlans();
+    for (const plan of payload.plans!) {
+      expect(within(screen.getByTestId(`plan-compare-col-${plan.planId}`)).getByText(`$${plan.monthlyPriceUsd}`)).toBeInTheDocument();
+      for (const where of ['header', 'footer'] as const) expect(columnButton(plan.planId, where)).toHaveAccessibleName(chooseLabel(payload, plan));
+    }
     // A tier account is ending no free access.
+    expect(screen.queryByTestId('plan-compare-ends-free-access')).not.toBeInTheDocument();
+
+    // "excluding tax" travels with the price where the owner pays (M-8): the flow heading.
+    const [first] = payload.plans!;
+    await userEvent.click(columnButton(first.planId, 'footer'));
+    expect(screen.getByTestId('plan-compare-flow-heading')).toHaveTextContent(fill(COPY['plan.choose.price_ex_tax'], { amount: `$${first.monthlyPriceUsd}` }));
     expect(screen.queryByTestId('plan-purchase-ends-free-access')).not.toBeInTheDocument();
   });
 
@@ -213,27 +240,38 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     const [first, ...rest] = config.tierOrder;
     const payload = await payloadFor({ buyable: [first] });
     await show(payload);
+    await openPlans();
 
-    const firstRow = within(screen.getByTestId(`plan-choice-${first}`));
-    expect(firstRow.getByRole('button')).toBeInTheDocument();
+    // UM-1b SA Q-1: while choosing, a shown plan the server does not offer reads "Coming soon".
+    expect(columnButton(first)).toBeInTheDocument();
     expect(rest.length).toBeGreaterThan(0);
     for (const tier of rest) {
-      const row = within(screen.getByTestId(`plan-choice-${tier}`));
-      expect(row.queryByRole('button')).not.toBeInTheDocument();
-      expect(row.getByText(COPY['plan.next.coming_soon'])).toBeInTheDocument();
+      const column = within(screen.getByTestId(`plan-compare-col-${tier}`));
+      expect(column.queryByRole('button')).not.toBeInTheDocument();
+      expect(column.getByText(COPY['plan.next.coming_soon'])).toBeInTheDocument();
+      expect(screen.queryByTestId(`plan-compare-action-${tier}-footer`)).not.toBeInTheDocument();
     }
   });
 
   it('a live trial is told buying ends it today (BQ-P2 wording)', async () => {
-    await show(await payloadFor({ planId: 'trial' }));
+    const payload = await payloadFor({ planId: 'trial' });
+    await show(payload);
+    await openPlans();
+    expect(screen.getByTestId('plan-compare-ends-free-access')).toHaveTextContent(COPY['plan.choose.trial_ends_today']);
+    // And beside the checkout itself, once a plan is chosen.
+    await userEvent.click(columnButton(payload.plans![0].planId));
     expect(screen.getByTestId('plan-purchase-ends-free-access')).toHaveTextContent(COPY['plan.choose.trial_ends_today']);
   });
 
   it('a Founding Partner WITH an end date may buy, and is told it ends their free access today (Q-3)', async () => {
     const future = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-    await show(await payloadFor({ planId: 'champion', cohortExpiresAt: future }));
+    const payload = await payloadFor({ planId: 'champion', cohortExpiresAt: future });
+    await show(payload);
+    await openPlans();
+    expect(screen.getByTestId('plan-compare-ends-free-access')).toHaveTextContent(COPY['plan.choose.free_access_ends_today']);
+    expect(chooseButtons().length).toBeGreaterThan(0);
+    await userEvent.click(columnButton(payload.plans![0].planId));
     expect(screen.getByTestId('plan-purchase-ends-free-access')).toHaveTextContent(COPY['plan.choose.free_access_ends_today']);
-    expect(moneyButtons().length).toBeGreaterThan(0);
   });
 
   it('BQ-P10: an open-ended Founding Partner sees no Choose at all', async () => {
@@ -241,10 +279,13 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(payload.purchase?.offer).toEqual({ kind: 'none', reason: 'free_access_no_end_date' });
     await show(payload);
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
-    expect(moneyButtons()).toEqual([]);
-    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
     // The existing sentence already says what will happen.
     expect(screen.getByText(COPY['plan.changes.no_end_date'])).toBeInTheDocument();
+    expect(moneyButtons()).toEqual([]);
+    expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
+    // UM-1b §13: and no Choose / Pay for in the modal, where they live now.
+    await openPlans();
+    expect(chooseButtons()).toEqual([]);
   });
 
   it('a paying account: no Choose, "Renews on <date>", and the plan above as information only', async () => {
@@ -254,6 +295,9 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
     expect(moneyButtons()).toEqual([]);
     expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
+    // UM-1b §13: and no Choose / Pay for in the modal, where they live now.
+    await openPlans();
+    expect(chooseButtons()).toEqual([]);
     expect(screen.getByText(/^Renews on \w+ \d+, \d{4}\.$/)).toBeInTheDocument();
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
@@ -309,6 +353,9 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
     expect(moneyButtons()).toEqual([]);
     expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
+    // UM-1b §13: and no Choose / Pay for in the modal, where they live now.
+    await openPlans();
+    expect(chooseButtons()).toEqual([]);
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
 
@@ -320,26 +367,29 @@ describe('the Choose list renders only what the server offers (M-5)', () => {
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
     expect(moneyButtons()).toEqual([]);
     expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
+    // UM-1b §13: and no Choose / Pay for in the modal, where they live now.
+    await openPlans();
+    expect(chooseButtons()).toEqual([]);
     expect(screen.queryByText(COPY['plan.next.available'])).not.toBeInTheDocument();
   });
 
   it('M-2: no usable publishable key → one "not set up" line and no POST', async () => {
     stripe.promise = null;
     await show(await payloadFor());
-    expect(screen.getAllByText(COPY['plan.choose.not_configured'])).toHaveLength(1);
     expect(moneyButtons()).toEqual([]);
     expect(screen.getByTestId('plan-compare-open')).toBeInTheDocument();
+    // UM-1b §13 / SA W-3: in the modal, one "not set up" line for the whole table and no Choose.
+    await openPlans();
+    expect(screen.getAllByText(COPY['plan.choose.not_configured'])).toHaveLength(1);
+    expect(chooseButtons()).toEqual([]);
     expect(server.posts).toEqual([]);
   });
 
-  it('W-4 (upgrade modal UM-1a): "Compare plans" is the LAST button, so the index-based Choose clicks below still hit Choose', async () => {
+  it('UM-1b (replaces UM-1a W-4): the drawer has one button, "See plans"; the Choose presses below are by column, not by index', async () => {
     const payload = await payloadFor();
     await show(payload);
-    const buttons = screen.getAllByRole('button');
-    // Non-vacuity: Choose buttons are on screen too.
-    expect(buttons.length).toBeGreaterThan(1);
-    expect(buttons[buttons.length - 1]).toBe(screen.getByTestId('plan-compare-open'));
-    expect(buttons[0]).toHaveAccessibleName(chooseLabel(payload, payload.plans![0]));
+    expect(screen.getAllByRole('button')).toEqual([screen.getByTestId('plan-compare-open')]);
+    expect(screen.getByTestId('plan-compare-open')).toHaveTextContent(COPY['upgrade_modal.open_see_plans']);
   });
 });
 
@@ -349,7 +399,8 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
     await show(payload);
     const [first, second] = payload.plans!;
 
-    await userEvent.click(screen.getByRole('button', { name: chooseLabel(payload, first) }));
+    await openPlans();
+    await userEvent.click(columnButton(first.planId));
 
     await waitFor(() => expect(screen.getByTestId('fake-checkout')).toBeInTheDocument());
     expect(server.posts).toEqual([{ tier: first.planId, returnTo: 'settings_plan' }]);
@@ -380,14 +431,19 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
       });
     }) as unknown as typeof fetch;
 
-    await userEvent.click(screen.getByRole('button', { name: chooseLabel(payload, first) }));
+    await openPlans();
+    await userEvent.click(columnButton(first.planId));
     await waitFor(() => expect(server.posts).toHaveLength(1));
 
-    // The first row reads "starting"; every other row's button is there but disabled.
+    // The chosen plan reads "starting". UM-1b §13 (stronger than "disabled"): the
+    // table is gone, so no other plan's button, and not this column's footer
+    // twin either, can start a second session.
     expect(within(screen.getByTestId(`plan-choice-${first.planId}`)).getByRole('button')).toHaveTextContent(COPY['plan.choose.starting']);
     for (const plan of others) {
-      expect(screen.getByRole('button', { name: chooseLabel(payload, plan) })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: chooseLabel(payload, plan) })).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`plan-choice-${plan.planId}`)).not.toBeInTheDocument();
     }
+    expect(screen.queryByTestId(`plan-compare-action-${first.planId}-footer`)).not.toBeInTheDocument();
     expect(screen.queryByTestId('fake-checkout')).not.toBeInTheDocument();
 
     // Let the first answer land: its frame opens, and only one POST was ever made.
@@ -401,10 +457,14 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
   it('on completion: the return marker goes on the URL and the section says "Payment processing", never success', async () => {
     const payload = await payloadFor();
     await show(payload);
-    await userEvent.click(screen.getAllByRole('button')[0]);
-    await waitFor(() => expect(stripe.completes).toHaveLength(1));
+    await pressFirstChoose(payload);
+    // The fake provider records `onComplete` on every render, and the modal re-renders once
+    // the frame opens (SA Q-8 guard), so the latest one is Stripe's current callback.
+    await waitFor(() => expect(stripe.completes.length).toBeGreaterThan(0));
 
-    act(() => stripe.completes[0]());
+    act(() => stripe.completes[stripe.completes.length - 1]());
+    // UM-1b hand-off (C-3): the modal closes; the drawer says "Payment processing".
+    await waitFor(() => expect(screen.queryByTestId('plan-compare-modal')).not.toBeInTheDocument());
 
     expect(router.replace).toHaveBeenCalledWith(`/business-os/settings?section=plan&checkout=${SESSION}`, { scroll: false });
     expect(screen.getByTestId('plan-purchase-processing')).toHaveTextContent(COPY['plan.purchase.processing']);
@@ -423,13 +483,14 @@ describe('the checkout (P-5a.2 component, returnTo settings_plan)', () => {
 
   it.each(REFUSALS)('a refused start (%s) shows the localized line, never the server\'s English', async (code, status, key) => {
     server.checkout = { status, body: { success: false, code, error: 'SERVER ENGLISH MUST NOT SHOW' } };
-    await show(await payloadFor());
-    await userEvent.click(screen.getAllByRole('button')[0]);
+    const payload = await payloadFor();
+    await show(payload);
+    await pressFirstChoose(payload);
 
     expect(await screen.findByTestId('plan-purchase-refused')).toHaveTextContent(COPY[key]);
     expect(document.body.textContent).not.toContain('SERVER ENGLISH MUST NOT SHOW');
-    // The buttons come back, so the owner can try again.
-    expect(moneyButtons().length).toBeGreaterThan(0);
+    // The button comes back (inside the flow), so the owner can try again.
+    expect(screen.getByTestId(`plan-choose-${payload.plans![0].planId}-start`)).toBeEnabled();
   });
 
   it('a 401 with no code reads "signed out"; an unknown code reads the generic line', async () => {
@@ -505,9 +566,11 @@ describe('the return from checkout (M-6): success only from the server re-read',
   });
 
   it('a malformed marker is ignored: no processing, Choose as usual', async () => {
-    await show(await payloadFor(), { checkoutMarker: 'not-a-session' });
+    const payload = await payloadFor();
+    await show(payload, { checkoutMarker: 'not-a-session' });
     expect(screen.queryByTestId('plan-purchase-processing')).not.toBeInTheDocument();
-    expect(screen.getByTestId('plan-purchase')).toBeInTheDocument();
+    await openPlans();
+    expect(columnButton(payload.plans![0].planId)).toBeInTheDocument();
   });
 
   it('a stale marker on an account already paying shows the server\'s answer at once, with no re-read', async () => {
@@ -521,9 +584,13 @@ describe('Hebrew and Spanish (M-7): right to left, and no English', () => {
   const ENGLISH = [/excluding tax/i, /Choose/, /a month/i, /Buying ends/i, /Payment processing/i];
 
   it.each(['he', 'es'] as const)('%s: the Choose list and the trial line are translated', async (language) => {
-    await show(await payloadFor({ planId: 'trial', language }), {}, language);
+    const payload = await payloadFor({ planId: 'trial', language });
+    await show(payload, {}, language);
     const dictionary = translations[language];
-    expect(screen.getByRole('list', { name: dictionary['plan.choose.heading'] })).toBeInTheDocument();
+    await openPlans();
+    for (const plan of payload.plans!) expect(columnButton(plan.planId)).toHaveAccessibleName(fill(dictionary['plan.choose.button'], { plan: plan.name }));
+    expect(screen.getByTestId('plan-compare-ends-free-access')).toHaveTextContent(dictionary['plan.choose.trial_ends_today']);
+    await userEvent.click(columnButton(payload.plans![0].planId));
     expect(screen.getByTestId('plan-purchase-ends-free-access')).toHaveTextContent(dictionary['plan.choose.trial_ends_today']);
     const text = document.body.textContent ?? '';
     expect(ENGLISH.filter((phrase) => phrase.test(text)).map(String)).toEqual([]);
@@ -533,8 +600,9 @@ describe('Hebrew and Spanish (M-7): right to left, and no English', () => {
 
   it.each(['he', 'es'] as const)('%s: a refusal reads in the owner\'s language', async (language) => {
     server.checkout = { status: 409, body: { success: false, code: 'checkout_processing', error: 'Your payment is being processed.' } };
-    await show(await payloadFor({ language }), {}, language);
-    await userEvent.click(screen.getAllByRole('button')[0]);
+    const payload = await payloadFor({ language });
+    await show(payload, {}, language);
+    await pressFirstChoose(payload);
     expect(await screen.findByTestId('plan-purchase-refused')).toHaveTextContent(translations[language]['plan.refusal.checkout_processing']);
     expect(document.body.textContent).not.toContain('Your payment is being processed.');
   });

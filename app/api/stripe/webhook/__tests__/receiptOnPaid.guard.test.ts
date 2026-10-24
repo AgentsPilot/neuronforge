@@ -57,7 +57,18 @@ describe('settling a Stripe-paid invoice', () => {
     // Stripe retries a failed delivery, which would re-enter a handler that has
     // already recorded the payment.
     const receiptBlock = handler.slice(handler.indexOf('THE RECEIPT'));
-    expect(receiptBlock).toContain('void (async () => {');
+    /*
+     * AWAITED NOW, NOT FIRED AND FORGOTTEN — and that is the fix, not a
+     * regression. `void (async () => …)()` starts work after the response,
+     * which a serverless host freezes at response time: three invoices
+     * settled through this handler on 19 Oct wrote their transaction, their
+     * invoice row and their audit entry, and sent no email. A client paid
+     * ₪4,750 and heard nothing.
+     *
+     * The invariant this test is named for is unchanged and still pinned
+     * below: the try/catch swallows a mail failure and returns normally, so
+     * Stripe never retries into a handler that has already done its work.
+     */
     expect(receiptBlock).toContain('catch (receiptError)');
   });
 

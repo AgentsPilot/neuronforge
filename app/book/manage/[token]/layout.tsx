@@ -149,8 +149,21 @@ async function portalContextFor(token: string): Promise<PortalContext> {
     const { data: others } = booking.contact_id
       ? await supabaseServer
           .from("scheduling_bookings")
+          /*
+           * `meeting_status` is named here, and that omission was the bug.
+           *
+           * The outcome of an appointment moved to this column: `complete()`
+           * writes `meeting_status: 'held'` and leaves `status` at `confirmed`.
+           * Without it `held` below was always false, so a client never saw a
+           * meeting they had attended ticked — and a meeting marked `no_show`
+           * still read as "coming up" on their own page.
+           *
+           * PostgREST rejects the WHOLE select for one unknown name and the
+           * error arrives as an empty result, so a column that is read must be
+           * named here or the portal shows the client nothing at all.
+           */
           .select(
-            "id, start_time, status, parent_booking_id, occurrence_number, service:scheduling_services(service_name)",
+            "id, start_time, status, meeting_status, parent_booking_id, occurrence_number, service:scheduling_services(service_name)",
           )
           .eq("contact_id", booking.contact_id)
           .eq("user_id", booking.user_id)
@@ -209,7 +222,11 @@ async function portalContextFor(token: string): Promise<PortalContext> {
            * coming up, so it is listed as past and simply not ticked.
            */
           status: row.status as string,
-          held: row.status === "completed",
+          /* The outcome, for the row's own label. */
+          meetingStatus: (row.meeting_status as string | null) ?? null,
+          held:
+            row.meeting_status === "held" ||
+            (row.meeting_status == null && row.status === "completed"),
           /*
            * Only something still standing can be "coming up". A cancelled
            * booking next week is not an appointment the client has, and
@@ -218,7 +235,13 @@ async function portalContextFor(token: string): Promise<PortalContext> {
           upcoming: Boolean(
             startTime &&
             new Date(startTime).getTime() > now &&
-            (row.status === "confirmed" || row.status === "pending"),
+            (row.status === "confirmed" || row.status === "pending") &&
+            /*
+             * And nobody has settled it. A meeting marked missed or called off
+             * is not an appointment the client still has, and listing it at the
+             * top as "coming up" would tell them to turn up for it.
+             */
+            row.meeting_status == null,
           ),
           /*
            * Its own signed link.

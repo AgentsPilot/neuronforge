@@ -64,11 +64,16 @@ export interface AcceptanceResult {
     container: string;
     created: number;
     /**
-     * The meetings, in the order they were sold.
+     * The meeting ids — rows in `scheduling_meetings` — in the order sold.
      *
      * Needed by the per-session money: stage *i* is bound to meeting *i*
-     * through `payment_plan_installments.booking_id`, which is what lets
-     * marking a meeting as held bill the right stage.
+     * through `payment_plan_installments.meeting_id`, which is what lets
+     * marking a session as held bill the right stage.
+     *
+     * These were CHILD BOOKING ids until the package became one booking with N
+     * meetings. The binding moved to `meeting_id` in the same change, because
+     * six stages now share one `booking_id` and it can no longer tell them
+     * apart.
      */
     meetings: string[];
     clashed: string[];
@@ -197,7 +202,8 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
    * ───────────────────────────────────────────────────────────────────────────
    */
   const perSession = Boolean(proposal.sessions?.bill_per_session) && Boolean(pkg?.meetings?.length);
-  const sessionBookings = perSession ? (pkg?.meetings ?? []) : [];
+  /** The MEETING ids, in the order sold — stage *i* bills session *i*. */
+  const sessionMeetings = perSession ? (pkg?.meetings ?? []) : [];
 
   /*
    * The first stage is due after the agreed terms, and the cadence steps from
@@ -220,12 +226,28 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
      * from the proposal, and the booking they bill knew nothing about them.
      */
     /*
-     * For a per-session package this is THE MEETING this stage bills, not the
-     * consultation the quote came out of — see the note above. Falls back to the
-     * proposal's own booking when the stage has no meeting of its own, which is
-     * every ordinary quote and any stage beyond the meetings that exist.
+     * For a per-session package this is the CONTAINER — the purchase — and the
+     * session it bills is named by `meeting_id` below.
+     *
+     * It used to be the child booking for that one date, which worked only
+     * while each session had a booking of its own. Now that a package is one
+     * booking with N meetings, every stage shares this id, and the column goes
+     * back to meaning what it says everywhere else: the job the money belongs
+     * to. That is the question "what does this booking still owe" asks, and it
+     * is now answerable in one place instead of six.
      */
-    booking_id: perSession ? (sessionBookings[index] ?? proposal.booking_id) : proposal.booking_id,
+    booking_id: perSession ? (pkg?.container ?? proposal.booking_id) : proposal.booking_id,
+    /*
+     * WHICH session. Without it six stages share one `booking_id` and a lookup
+     * keyed on the booking finds all six — billing the wrong one, or the same
+     * one twice. `billSessionOnCompletion` keys on this first and falls back to
+     * the booking for every stage written before it existed.
+     *
+     * Null beyond the meetings that exist: a date lost to a clash leaves its
+     * stage bound to the job, which is still owed and still visible, rather
+     * than to a session nobody has.
+     */
+    meeting_id: perSession ? (sessionMeetings[index] ?? null) : null,
     installment_number: index + 1,
     amount: amounts[index],
     currency: proposal.currency,
@@ -586,21 +608,47 @@ async function createPackageMeetings(
   /** The ids, in the order sold — `occurrence_number` order by construction. */
   const meetings: string[] = [];
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE BOOKING, N MEETINGS — not a container plus N child bookings.
+   *
+   * Each date used to be its own row in `scheduling_bookings`, pointed at the
+   * container by `parent_booking_id`. Six sessions were therefore SEVEN
+   * bookings, and every reader had to know that six of them were not
+   * purchases: the money route summed them, the drawer grouped them back
+   * together, and "what has this client bought" counted wrong unless it
+   * filtered.
+   *
+   * Nothing about the product changes. The slots are held by the same rows
+   * that always held them — `busyMeetings` reads this table and has never
+   * consulted the bookings table — and the exclusion constraint that protects
+   * them arrived with 20261085, which had to come first precisely because a
+   * container carries no time and the bookings constraint therefore skips it.
+   *
+   * `occurrence_number` is which SESSION, counted from the order sold. On an
+   * ordinary booking the same column counts attempts at one appointment; see
+   * `createMeeting` for why that ambiguity is the caller's to resolve.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   for (const [index, date] of plan.dates.entries()) {
     const start = new Date(date);
     const end = new Date(start.getTime() + plan.durationMinutes * 60 * 1000);
 
-    const child = await schedulingBookingRepository.create({
+    const session = await schedulingBookingRepository.createMeeting({
       user_id: proposal.user_id,
-      service_id: proposal.service_id,
-      contact_id: proposal.contact_id,
+      booking_id: containerId,
       start_time: start.toISOString(),
       end_time: end.toISOString(),
       timezone,
-      status,
-      booking_source: 'proposal',
-      parent_booking_id: containerId,
-      occurrence_number: index + 1,
+      /* Which session of the package. */
+      session_number: index + 1,
+      /*
+       * And the FIRST attempt at it. Not `index + 1`: that column counts
+       * attempts, so numbering the sessions with it would make session 2 look
+       * like session 1 moved — which 20261085 reads as "session 1 gave its
+       * hour back", putting a booked hour back on sale. See 20261086.
+       */
+      occurrence_number: 1,
     });
 
     /*
@@ -612,7 +660,7 @@ async function createPackageMeetings(
      * agreed and paid for nothing; creating five of six and naming the sixth is
      * the answer the owner can act on.
      */
-    if (isSlotTakenError(child.error)) {
+    if (isSlotTakenError(session.error)) {
       clashed.push(date);
       logger.warn(
         { proposalId: proposal.id, date },
@@ -621,13 +669,13 @@ async function createPackageMeetings(
       continue;
     }
 
-    if (child.error || !child.data) {
+    if (session.error || !session.data) {
       clashed.push(date);
-      logger.error({ err: child.error, proposalId: proposal.id, date }, 'A package meeting failed');
+      logger.error({ err: session.error, proposalId: proposal.id, date }, 'A package meeting failed');
       continue;
     }
 
-    meetings.push(child.data.id);
+    meetings.push(session.data.id);
   }
 
   logger.info(

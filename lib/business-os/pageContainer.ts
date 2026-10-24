@@ -19,6 +19,49 @@
 export const PAGE_CONTAINER = 'max-w-7xl mx-auto px-4 sm:px-6';
 
 /**
+ * The element that scrolls on every Business OS screen.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The whole DOCUMENT used to scroll, with the header and tab bar held in place
+ * by `position: sticky`. That works, and it puts the scrollbar beside the
+ * chrome: the track starts at the very top of the window, above a header that
+ * never moves, so the thumb's position describes a page taller than the part
+ * anyone can scroll.
+ *
+ * The chrome sits OUTSIDE the scrolling element now and the body scrolls
+ * inside it, so the track begins under the tabs — beside the only thing that
+ * actually moves.
+ *
+ * Exported because two screens scroll to a section of themselves (the
+ * dashboard's channels card, a settings section reached from a link), and
+ * `window.scrollTo` moves a window that no longer scrolls.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const BUSINESS_OS_SCROLL_ID = 'business-os-scroll';
+
+/**
+ * Bring an element into view inside that scroller.
+ *
+ * No offset for the chrome: it is not overlapping the content any more, so the
+ * twelve pixels are breathing room rather than a correction. Falls back to the
+ * element's own `scrollIntoView` if the scroller is not on the page — a page
+ * rendered outside the Business OS layout still lands somewhere sensible.
+ */
+export function scrollIntoBusinessOsView(target: HTMLElement, gap = 12): void {
+  const scroller = document.getElementById(BUSINESS_OS_SCROLL_ID);
+
+  if (!scroller) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  const top =
+    target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+
+  scroller.scrollTo({ top: Math.max(top - gap, 0), behavior: 'smooth' });
+}
+
+/**
  * The grid every client-facing page lays its cards out on.
  *
  * Four tracks on a desktop, two on a tablet, one on a phone. Cards ask for

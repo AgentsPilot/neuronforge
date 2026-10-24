@@ -149,10 +149,27 @@ describe('the booking a gap was raised from', () => {
     join(__dirname, '..', '..', '..', '..', 'app', 'business-os', 'crm', 'page.tsx'),
     'utf8'
   );
-  const bookingsTab = readFileSync(
+  /*
+   * Comments stripped before matching.
+   *
+   * These assertions look for two things NEAR each other, and a comment
+   * explaining the code between them pushed one out of the window — the test
+   * failed while the wiring it guards was intact and three lines apart in the
+   * code. A source guard that a comment can break is guarding the comments.
+   */
+  const bookingsTabSource = readFileSync(
     join(__dirname, '..', '..', '..', 'crm', 'contact-drawer', 'BookingsTab.tsx'),
     'utf8'
   );
+  const bookingsTab = bookingsTabSource
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+
+  it('reads the code, not its own explanation', () => {
+    /* Contiguous on one line in the source: the comment wraps after "from". */
+    expect(bookingsTabSource).toContain('A CARD OPENS ITSELF WHEN THE BALL');
+    expect(bookingsTab).not.toContain('A CARD OPENS ITSELF WHEN THE BALL');
+  });
 
   it('is named in the link the card pushes', () => {
     expect(openBookingBody()).toMatch(/booking=/);

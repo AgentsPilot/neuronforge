@@ -190,8 +190,21 @@ async function show(payload: PlanPayload | Array<PlanPayload | 'fail'>, language
 }
 
 const planName = (payload: PlanPayload, tier: string) => payload.plans!.find((plan) => plan.planId === tier)!.name;
-const upgradeButton = (payload: PlanPayload, language: Lang = 'en') =>
-  screen.getByRole('button', { name: fill(translations[language]['plan.upgrade.button'], { plan: planName(payload, TOP) }) });
+/**
+ * "Upgrade to <top>" (upgrade modal UM-1b, workplan §13): the islands live in the
+ * plan comparison modal now, so the press is the TOP column's header button
+ * (opening the modal first). Once a flow is open the table is gone, and the
+ * island's OWN button (back after a decline, a refusal or "not confirmed") is
+ * the one by that name inside the flow area.
+ */
+async function upgradeButton(payload: PlanPayload, language: Lang = 'en'): Promise<HTMLElement> {
+  if (!screen.queryByTestId('plan-compare-modal')) await userEvent.click(screen.getByTestId('plan-compare-open'));
+  const flow = screen.queryByTestId('plan-compare-flow');
+  if (flow) return within(flow).getByRole('button', { name: fill(translations[language]['plan.upgrade.button'], { plan: planName(payload, TOP) }) });
+  const button = screen.getByTestId(`plan-compare-action-${TOP}-header`);
+  expect(button).toHaveAccessibleName(fill(translations[language]['plan.upgrade.button'], { plan: planName(payload, TOP) }));
+  return button;
+}
 const confirmPosts = () => server.posts.filter((p) => !p.path.endsWith('/preview'));
 
 /** Fake timers: step the bounded re-read until `done()` holds (at most a few intervals). */
@@ -215,7 +228,7 @@ async function rereadUntilSlow() {
 }
 
 async function toQuote(payload: PlanPayload) {
-  await userEvent.click(upgradeButton(payload));
+  await userEvent.click(await upgradeButton(payload));
   await screen.findByTestId('plan-upgrade-quote');
 }
 
@@ -224,7 +237,7 @@ describe('the button renders only what the server offers (U-2)', () => {
     const payload = await payloadFor({ billingRow: payingRow() });
     expect(payload.purchase?.upgrade).toEqual({ tiers: [TOP] });
     await show(payload);
-    expect(upgradeButton(payload)).toBeInTheDocument();
+    expect(await upgradeButton(payload)).toBeInTheDocument();
     expect(screen.queryByTestId('plan-purchase')).not.toBeInTheDocument();
     expect(server.posts).toEqual([]);
   });
@@ -240,6 +253,10 @@ describe('the button renders only what the server offers (U-2)', () => {
     expect(payload.purchase?.upgrade ?? null).toBeNull();
     await show(payload);
     expect(screen.queryByTestId('plan-upgrade')).not.toBeInTheDocument();
+    // UM-1b §13: and no "Upgrade to …" in the modal either (where the button lives now).
+    const open = screen.queryByTestId('plan-compare-open');
+    if (open) await userEvent.click(open);
+    expect(screen.queryByRole('button', { name: /^Upgrade to / })).not.toBeInTheDocument();
   });
 });
 
@@ -298,7 +315,7 @@ describe('the preview (F7, V-12, E-5)', () => {
     await show(payload);
     await toQuote(payload);
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.cancel'] }));
-    expect(upgradeButton(payload)).toBeInTheDocument();
+    expect(await upgradeButton(payload)).toBeInTheDocument();
     expect(confirmPosts()).toEqual([]);
   });
 });
@@ -355,8 +372,11 @@ describe('the confirm, and success only from the server re-read (U-5, V-4)', () 
     expect(before.purchase?.upgrade).toEqual({ tiers: [TOP] });
     // Every re-read answers the same: the plan in force is already the target, but our record still offers it.
     await show(before);
-    // The note above the button (SA Q-5).
-    expect(screen.getByTestId('plan-upgrade-own-plan-note')).toHaveTextContent(fill(COPY['plan.upgrade.own_plan_note'], { plan: planName(before, TOP) }));
+    // The note beside the button (SA Q-5): since UM-1b the modal's footer, while the table is shown (§13).
+    await userEvent.click(screen.getByTestId('plan-compare-open'));
+    expect(screen.getByTestId('plan-compare-own-plan-note')).toHaveTextContent(fill(COPY['plan.upgrade.own_plan_note'], { plan: planName(before, TOP) }));
+    // The button sits on the CURRENT column: the server offers its own plan as the upgrade.
+    expect(within(screen.getByTestId(`plan-compare-col-${TOP}`)).getByText(COPY['upgrade_modal.your_plan'])).toBeInTheDocument();
     await toQuote(before);
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     await screen.findByTestId('plan-upgrade-upgrading');
@@ -450,7 +470,7 @@ describe('3-D Secure in place (E-1b, V-1)', () => {
     await toQuote(payload);
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     expect(await screen.findByTestId('plan-upgrade-not-confirmed')).toHaveTextContent(fill(COPY['plan.upgrade.not_confirmed'], { plan: payload.name! }));
-    expect(upgradeButton(payload)).toBeInTheDocument();
+    expect(await upgradeButton(payload)).toBeInTheDocument();
     expect(screen.queryByTestId('plan-upgrade-upgrading')).not.toBeInTheDocument();
   });
 
@@ -502,7 +522,7 @@ describe('3-D Secure in place (E-1b, V-1)', () => {
 
     // The pending update is still at Stripe: the preview now answers awaiting (Q-2).
     server.preview = refusal('upgrade_awaiting_confirmation', { amountDueMinor: 3387, prorationDate: PRORATION + 120 });
-    await userEvent.click(upgradeButton(payload));
+    await userEvent.click(await upgradeButton(payload));
     expect(await screen.findByTestId('plan-upgrade-awaiting')).toHaveTextContent(COPY['plan.upgrade.awaiting_confirmation']);
     expect(screen.queryByTestId('plan-upgrade-not-confirmed')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
@@ -519,7 +539,7 @@ describe('3-D Secure in place (E-1b, V-1)', () => {
     server.confirms = [outcome({ outcome: 'action_required', clientSecret: SECRET })];
     const payload = await payloadFor({ billingRow: payingRow() });
     await show(payload);
-    await userEvent.click(upgradeButton(payload));
+    await userEvent.click(await upgradeButton(payload));
     expect(await screen.findByTestId('plan-upgrade-awaiting')).toHaveTextContent(COPY['plan.upgrade.awaiting_confirmation']);
     expect(screen.getByTestId('plan-upgrade-due')).toHaveTextContent('$33.87');
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
@@ -550,7 +570,7 @@ describe('declined, unknown and refusals (Q-6, V-3, V-2)', () => {
     expect(declined).toHaveTextContent(fill(COPY['plan.upgrade.declined'], { plan: payload.name! }));
     expect(declined).toHaveTextContent(/You can try again after October 14(,| at) 09:05 AM\./);
     // The next press is refused with the same time (upgrade_pending): the button is back.
-    expect(upgradeButton(payload)).toBeInTheDocument();
+    expect(await upgradeButton(payload)).toBeInTheDocument();
   });
 
   it.each([
@@ -596,7 +616,7 @@ describe('declined, unknown and refusals (Q-6, V-3, V-2)', () => {
     mockLang.timezone = 'Asia/Jerusalem';
     const payload = await payloadFor({ billingRow: payingRow() });
     await show(payload);
-    await userEvent.click(upgradeButton(payload));
+    await userEvent.click(await upgradeButton(payload));
     expect(await screen.findByTestId('plan-upgrade-refused')).toHaveTextContent(/after October 14(,| at) 12:05 PM\.$/);
   });
 
@@ -608,7 +628,7 @@ describe('declined, unknown and refusals (Q-6, V-3, V-2)', () => {
     const payload = await payloadFor({ billingRow: payingRow() });
     await show(payload);
     if (step === 'preview') {
-      await userEvent.click(upgradeButton(payload));
+      await userEvent.click(await upgradeButton(payload));
     } else {
       await toQuote(payload);
       await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
@@ -638,7 +658,7 @@ describe('declined, unknown and refusals (Q-6, V-3, V-2)', () => {
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     expect(await screen.findByTestId('plan-upgrade-refused')).toHaveTextContent(COPY[key]);
     expect(document.body.textContent).not.toContain('SERVER ENGLISH MUST NOT SHOW');
-    expect(upgradeButton(payload)).toBeInTheDocument();
+    expect(await upgradeButton(payload)).toBeInTheDocument();
   });
 
   it('every refusal code the routes can send has a line in all three languages; 401 reads signed out', () => {
@@ -660,16 +680,27 @@ describe('Q-7: an admin-assigned plan with no billing record is offered its own 
     const payload = await payloadFor({ billingRow: null });
     expect(payload.kind).toBe('tier');
     await show(payload);
-    const own = within(screen.getByTestId(`plan-choice-${LOWER}`));
-    expect(own.getByRole('button', { name: fill(COPY['plan.choose.button_own'], { plan: planName(payload, LOWER) }) })).toBeInTheDocument();
+    // UM-1b §13: the columns carry the buttons; the note is the modal footer's in the table view,
+    // and the island's own (unchanged id) once that plan's checkout is open.
+    await userEvent.click(screen.getByTestId('plan-compare-open'));
+    for (const where of ['header', 'footer']) {
+      expect(screen.getByTestId(`plan-compare-action-${LOWER}-${where}`)).toHaveAccessibleName(fill(COPY['plan.choose.button_own'], { plan: planName(payload, LOWER) }));
+      expect(screen.getByTestId(`plan-compare-action-${TOP}-${where}`)).toHaveAccessibleName(fill(COPY['plan.choose.button'], { plan: planName(payload, TOP) }));
+    }
+    expect(screen.getByTestId('plan-compare-own-plan-note')).toHaveTextContent(fill(COPY['plan.choose.own_plan_note'], { plan: planName(payload, LOWER) }));
+    await userEvent.click(screen.getByTestId(`plan-compare-action-${LOWER}-header`));
+    const own = within(await screen.findByTestId(`plan-choice-${LOWER}`));
     expect(own.getByTestId('plan-choice-own-plan-note')).toHaveTextContent(fill(COPY['plan.choose.own_plan_note'], { plan: planName(payload, LOWER) }));
-    const other = within(screen.getByTestId(`plan-choice-${TOP}`));
-    expect(other.getByRole('button', { name: fill(COPY['plan.choose.button'], { plan: planName(payload, TOP) }) })).toBeInTheDocument();
-    expect(other.queryByTestId('plan-choice-own-plan-note')).not.toBeInTheDocument();
+    // One flow: the other plan's row is not mounted (C-12).
+    expect(screen.queryByTestId(`plan-choice-${TOP}`)).not.toBeInTheDocument();
   });
 
   it('a trial (a cohort, not a tier) sees no "Pay for" anywhere', async () => {
-    await show(await payloadFor({ planId: 'trial' }));
+    const payload = await payloadFor({ planId: 'trial' });
+    await show(payload);
+    await userEvent.click(screen.getByTestId('plan-compare-open'));
+    expect(screen.queryByTestId('plan-compare-own-plan-note')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: fill(COPY['plan.choose.button_own'], { plan: planName(payload, LOWER) }) })).not.toBeInTheDocument();
     expect(screen.queryByTestId('plan-choice-own-plan-note')).not.toBeInTheDocument();
   });
 });
@@ -680,7 +711,7 @@ describe('Hebrew and Spanish (G-5 drafts): right to left, and no English', () =>
   it.each(['he', 'es'] as const)('%s: the button, the quote and the island direction', async (language) => {
     const payload = await payloadFor({ billingRow: payingRow(), language });
     await show(payload, language);
-    await userEvent.click(upgradeButton(payload, language));
+    await userEvent.click(await upgradeButton(payload, language));
     await screen.findByTestId('plan-upgrade-quote');
     const dictionary = translations[language];
     expect(screen.getByTestId('plan-upgrade-due')).toHaveTextContent(fill(dictionary['plan.upgrade.due_now'], { amount: '$33.87' }));
@@ -694,7 +725,7 @@ describe('Hebrew and Spanish (G-5 drafts): right to left, and no English', () =>
     server.preview = refusal('subscription_cancelling');
     const payload = await payloadFor({ billingRow: payingRow(), language });
     await show(payload, language);
-    await userEvent.click(upgradeButton(payload, language));
+    await userEvent.click(await upgradeButton(payload, language));
     expect(await screen.findByTestId('plan-upgrade-refused')).toHaveTextContent(translations[language]['plan.upgrade.refusal.cancelling']);
   });
 });

@@ -1,34 +1,48 @@
+/**
+ * The owner's Stripe Connect account, as this platform knows it.
+ *
+ * GET only. It reads the stored record so the UI can show whether the business
+ * can take card payments; it is called from the configuration dialog, the
+ * invoice surfaces, the service modal and the website editor.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THERE IS NO POST AND NO PUT, AND THAT IS THE FIX (FX-1).
+ *
+ * Both existed and neither had a single caller — every one of the seven call
+ * sites fetches this path bare, which is a GET. What they did have was a
+ * schema that accepted Stripe's OWN verdict from the browser:
+ *
+ *     charges_enabled, payouts_enabled, details_submitted, onboarding_completed
+ *
+ * So a signed-in owner, or anyone holding their session, could PUT
+ * `charges_enabled: true` and make this platform believe Stripe had approved an
+ * account it had never seen. No money moves wrongly — a real charge is still
+ * refused by Stripe — but the app shows "Connected", switches payment features
+ * on, and stops asking the owner to finish setup.
+ *
+ * POST was the worse of the two and was not in the original report: it took
+ * `stripe_account_id` from the caller as well, so the record could be pointed
+ * at an arbitrary Stripe account while claiming it was ready to charge.
+ *
+ * Removed rather than tightened, on the precedent of the DELETE on
+ * `/api/website/upload`: a handler with no caller is not hardened, it is
+ * deleted. Next.js answers 405.
+ *
+ * WHERE THESE FIELDS COME FROM INSTEAD. Stripe, always — `refresh-status`
+ * retrieves the account, and the four creation routes (`create-account`,
+ * `create-account-custom`, `create-minimal`, `callback`) write the record only
+ * after Stripe has answered. Stripe is the sole source of truth for Connect
+ * status; nothing a browser says may set it.
+ *
+ * @module app/api/payments/stripe-connect
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
-import { z } from 'zod';
 
 const logger = createLogger({ module: 'StripeConnectAPI' });
-const auditTrail = AuditTrailService.getInstance();
-
-const CreateStripeAccountSchema = z.object({
-  stripe_account_id: z.string(),
-  stripe_account_type: z.enum(['standard', 'express', 'custom']).default('express'),
-  charges_enabled: z.boolean().default(false),
-  payouts_enabled: z.boolean().default(false),
-  details_submitted: z.boolean().default(false),
-  onboarding_completed: z.boolean().default(false),
-  country: z.string().optional(),
-  currency: z.string().default('USD'),
-  business_type: z.enum(['individual', 'company']).optional(),
-});
-
-const UpdateStripeAccountSchema = z.object({
-  charges_enabled: z.boolean().optional(),
-  payouts_enabled: z.boolean().optional(),
-  details_submitted: z.boolean().optional(),
-  onboarding_completed: z.boolean().optional(),
-  country: z.string().optional(),
-  currency: z.string().optional(),
-  business_type: z.enum(['individual', 'company']).optional(),
-});
 
 // GET /api/payments/stripe-connect - Get user's Stripe Connect account
 export async function GET(request: NextRequest) {
@@ -72,128 +86,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, data });
 
   } catch (error) {
-    requestLogger.error({ err: error }, 'Request failed');
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-// POST /api/payments/stripe-connect - Create Stripe Connect account record
-export async function POST(request: NextRequest) {
-  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
-  const requestLogger = logger.child({ correlationId });
-
-  try {
-    const user = await getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const body = await request.json();
-    const validated = CreateStripeAccountSchema.parse(body);
-
-    requestLogger.info({ userId: user.id, stripeAccountId: validated.stripe_account_id }, 'Creating Stripe Connect account record');
-
-    const { data, error } = await stripeConnectRepository.create({
-      user_id: user.id,
-      ...validated
-    });
-
-    if (error) {
-      requestLogger.error({ err: error }, 'Failed to create Stripe Connect account');
-      return NextResponse.json(
-        { success: false, error: 'Failed to save Stripe account' },
-        { status: 500 }
-      );
-    }
-
-    // Audit log (non-blocking)
-    auditTrail.log({
-      action: 'STRIPE_CONNECT_ACCOUNT_CREATED',
-      entityType: 'stripe_connect_account',
-      entityId: data!.id,
-      userId: user.id,
-      resourceName: validated.stripe_account_id,
-      severity: 'info',
-      request
-    }).catch(err => requestLogger.error({ err }, 'Audit failed'));
-
-    return NextResponse.json({ success: true, data }, { status: 201 });
-
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      requestLogger.warn({ errors: error.errors }, 'Validation failed');
-      return NextResponse.json(
-        { success: false, error: 'Invalid input', details: error.errors },
-        { status: 400 }
-      );
-    }
-
-    requestLogger.error({ err: error }, 'Request failed');
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
-
-// PUT /api/payments/stripe-connect - Update Stripe Connect account
-export async function PUT(request: NextRequest) {
-  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
-  const requestLogger = logger.child({ correlationId });
-
-  try {
-    const user = await getUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const body = await request.json();
-    const validated = UpdateStripeAccountSchema.parse(body);
-
-    requestLogger.info({ userId: user.id }, 'Updating Stripe Connect account');
-
-    const { data, error } = await stripeConnectRepository.update(user.id, validated);
-
-    if (error) {
-      requestLogger.error({ err: error }, 'Failed to update Stripe Connect account');
-      return NextResponse.json(
-        { success: false, error: 'Failed to update Stripe account' },
-        { status: 500 }
-      );
-    }
-
-    // Audit log (non-blocking)
-    auditTrail.log({
-      action: 'STRIPE_CONNECT_ACCOUNT_UPDATED',
-      entityType: 'stripe_connect_account',
-      entityId: data!.id,
-      userId: user.id,
-      resourceName: data!.stripe_account_id,
-      changes: validated,
-      severity: 'info',
-      request
-    }).catch(err => requestLogger.error({ err }, 'Audit failed'));
-
-    return NextResponse.json({ success: true, data });
-
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      requestLogger.warn({ errors: error.errors }, 'Validation failed');
-      return NextResponse.json(
-        { success: false, error: 'Invalid input', details: error.errors },
-        { status: 400 }
-      );
-    }
-
     requestLogger.error({ err: error }, 'Request failed');
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
