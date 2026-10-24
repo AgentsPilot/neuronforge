@@ -803,8 +803,9 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
     // (finance 4b.1: the reversal events link reviewed for G-18) and its rollback, which restores
     // 20261075: same again. 20261081 (data export DE-10b.1: the anonymise modes; it keeps the charge
     // tables and blanks two text columns, no charge function, column or grant changes) and its
-    // rollback, which restores 20261077: same again. Taken from the generator's constants, so this
-    // file does not spell the next version's name (R-7).
+    // rollback, which restores 20261077: same again. 20261092 (the meeting and abandoned-booking
+    // links reviewed for G-18) and its rollback, which restores 20261081: same again. Taken from the
+    // generator's constants, so this file does not spell the next version's name (R-7).
     const testAccountCleanup = [
       join(ROOT, ...CLEANUP_MIGRATION_FILE.split('/')),
       join(ROOT, ...CLEANUP_ROLLBACK_FILE.split('/')),
@@ -821,6 +822,8 @@ describe('L8: the charge path is pinned to 20261015 (T11a.4, OP-7, W11a-5)', () 
       join(SQL_SCRIPTS_DIR, '20261075_operator_test_account_cleanup_data_exports_rollback.sql'),
       join(MIGRATIONS_DIR, '20261077_operator_test_account_cleanup_boost_reversal_events.sql'),
       join(SQL_SCRIPTS_DIR, '20261077_operator_test_account_cleanup_boost_reversal_events_rollback.sql'),
+      join(MIGRATIONS_DIR, '20261081_operator_account_cleanup_anonymise.sql'),
+      join(SQL_SCRIPTS_DIR, '20261081_operator_account_cleanup_anonymise_rollback.sql'),
     ];
     const allowed = new Set(
       [CHARGES_MIGRATION, CHARGES_ROLLBACK, ...indexOnly, ...testAccountCleanup].map((file) => relative(ROOT, file))

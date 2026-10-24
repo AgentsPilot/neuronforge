@@ -18,7 +18,7 @@
  */
 
 import { createHash } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ACTOR_FOREIGN_KEYS,
@@ -33,6 +33,7 @@ import {
   CLOSED_EMAIL_DOMAIN,
   KEEP_SET,
   PREVIOUS_FUNCTION_SIGNATURE,
+  RETIRED_FUNCTION_SIGNATURE,
   RECEIPT_COLUMNS,
   RECEIPT_INPUT_KEYS,
   RECEIPTS_TABLE,
@@ -505,12 +506,12 @@ describe('audit row (SA TQ-5, C-7)', () => {
     // operator_sql: the pasted file never sets an actor or a source, so user_id = actor_id = NULL.
     expect(deleteSql).not.toMatch(/set_config\('cleanup\.(actor_id|source)'/);
     // The rollback restores the previous function (PREVIOUS_FUNCTION_MIGRATION). Since
-    // 20261075 (data export DE-8a) that names the admin too; since DE-10b.1's 20261081 the
-    // previous function is finance 4b.1's 20261077. The 20261046 shape (user_id NULL) is gone from it.
+    // 20261075 (data export DE-8a) that names the admin too; since 20261092 the previous
+    // function is DE-10b.1's 20261081. The 20261046 shape (user_id NULL) is gone from it.
     expect(rollbackSql).toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL,
     ${ACTOR}, ${ACTOR},`);
     expect(rollbackSql).not.toContain(`'${AUDIT_ACTION}', 'user', v_user_id::text, NULL, NULL, ${ACTOR},`);
-    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261077_operator_test_account_cleanup_boost_reversal_events');
+    expect(PREVIOUS_FUNCTION_MIGRATION).toBe('20261081_operator_account_cleanup_anonymise');
   });
 });
 
@@ -607,8 +608,8 @@ describe('the secret-gated function (SA re-ruling R-2 to R-4, R-6)', () => {
 
   /** The trigger-events label, the only TRUNCATE the function may contain. */
   const TRUNCATE_LABEL = "CASE WHEN (trg.tgtype::integer & 32) <> 0 THEN 'TRUNCATE' END";
-  /** The one DROP 20261081 may hold: the old 6-argument signature, before the CREATE (SA §D). */
-  const DROP_OLD = `DROP FUNCTION IF EXISTS ${PREVIOUS_FUNCTION_SIGNATURE};`;
+  /** The one DROP the migration may hold: the retired 6-argument signature, before the CREATE (SA §D). */
+  const DROP_OLD = `DROP FUNCTION IF EXISTS ${RETIRED_FUNCTION_SIGNATURE};`;
   const withoutTruncateLabel = (sql: string) => sql.split(TRUNCATE_LABEL).join('').split(DROP_OLD).join('');
   const FORBIDDEN_DDL = /CREATE (SCHEMA|TABLE)|ALTER TABLE|DROP |TRUNCATE|DELETE FROM operator_private/i;
 
@@ -636,7 +637,7 @@ ${planted}`)).toMatch(FORBIDDEN_DDL);
     expect(migrationSql.indexOf('DO $order_guard$')).toBeGreaterThan(0);
     expect(migrationSql.indexOf('$order_guard$;')).toBeLessThan(migrationSql.indexOf('CREATE OR REPLACE FUNCTION'));
     expect(guard).toContain(
-      `IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR (pg_catalog.to_regprocedure('${PREVIOUS_FUNCTION_SIGNATURE}') IS NULL AND pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}') IS NULL) THEN\n    RAISE EXCEPTION 'Apply ${INITIAL_FUNCTION_MIGRATION} first  Nothing was applied';`
+      `IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR (pg_catalog.to_regprocedure('${RETIRED_FUNCTION_SIGNATURE}') IS NULL AND pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}') IS NULL) THEN\n    RAISE EXCEPTION 'Apply ${INITIAL_FUNCTION_MIGRATION} first  Nothing was applied';`
     );
     for (const required of FUNCTION_REQUIRED_TABLES) {
       expect(guard).toContain(
@@ -721,8 +722,8 @@ ${planted}`)).toMatch(FORBIDDEN_DDL);
     // It restores an older stamp, never the one this build pins.
     expect(restored).not.toContain(`'${CLEANUP_FUNCTION_VERSION}'`);
     expect(restored).toMatch(/jsonb_build_object\('version', '[0-9a-f]{16}', 'mode'/);
-    // W-3: the 8-argument function is dropped FIRST, so CREATE OR REPLACE of the 6-argument one
-    // cannot leave both overloads live. That drop is the only one.
+    // W-3: this function is dropped FIRST, so CREATE OR REPLACE of the previous one cannot leave
+    // two overloads live (20261081 restored 6 arguments over 8; 20261092 restores 8 over 8). That drop is the only one.
     const dropNew = `DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};`;
     expect(rollbackSql.split(dropNew).length - 1).toBe(1);
     expect(rollbackSql.indexOf(dropNew)).toBeLessThan(rollbackSql.indexOf('CREATE OR REPLACE FUNCTION'));
@@ -766,22 +767,78 @@ describe('applied history: a function migration is never edited once applied', (
     // the user 2026-10-18; TL confirmed stamp b78b4579fc6631f8 live (DE-10b.1 pre-check row 1, CR-1).
     ['supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql', 'b147d83eb21fe0424026d444a41ec7483d833b0de001882d8ce00a81124ff5aa'],
     ['supabase/SQL Scripts/20261077_operator_test_account_cleanup_boost_reversal_events_rollback.sql', '5304e26d92a95dcbc792c52a18ef3377cdb81938e1c601ade0db6cb07abf5d47'],
+    // Data export DE-10b.1, as main holds it after c21a4b0f regenerated it IN PLACE (stamp 2bd40a46795e4555).
+    // Applied to prod by the user 2026-10-23, then overwritten the same day by the hand-made bridge (this
+    // plan with that stamp). 20261092 replaces it, and its rollback restores these bytes. Never regenerate it.
+    ['supabase/migrations/20261081_operator_account_cleanup_anonymise.sql', 'e08f76aa400e964de6fa980f24507e82c4b72fb53aedbff483e6da6cf0e5c5e1'],
+    ['supabase/SQL Scripts/20261081_operator_account_cleanup_anonymise_rollback.sql', 'd7ecfbeecc64c29b589655a172a4e1bdd11b068c1773e55cb350be1776c3918d'],
   ];
 
-  /** Nothing pending: 20261077 moved to APPLIED after the DE-10b.1 pre-check passed on prod (CR-1). */
+  /** Nothing pending: 20261081 is applied (2026-10-23), so it sits in APPLIED directly. */
   const PENDING_PREVIOUS: ReadonlyArray<[string, string]> = [];
 
-  it.each([...APPLIED, ...PENDING_PREVIOUS])('%s is byte-identical to what was applied', (file, sha256) => {
+  /**
+   * G-a (SA code review 2026-10-24, C-2): the generator's own target, self-pinned. A cleanup
+   * migration is applied to prod before its PR merges (migration-gated, manual merge), so a target
+   * on main is applied history. Pinning its bytes here is what would have caught c21a4b0f, which
+   * regenerated the CURRENT target (20261081) in place. Only this slot may name MIGRATION_FILE and
+   * ROLLBACK_FILE. On the next bump: move this pair to APPLIED, then pin the new target here once
+   * its bytes are final. If a pin fails, put the change in a NEW dated FUNCTION_MIGRATION.
+   */
+  const APPLIED_TARGET: ReadonlyArray<[string, string]> = [
+    [MIGRATION_FILE, 'e858e9ae1bc1e1e2a3f934cf563e2fecfadc5a682a43a9bfdec229ab3feec088'],
+    [ROLLBACK_FILE, 'f86ef4e22c0bf2b625c771033f047a2a5e6cfc53f51ba42386f5c51ced16b43f'],
+  ];
+
+  it.each([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET])('%s is byte-identical to what was applied', (file, sha256) => {
     expect(createHash('sha256').update(readSql(file)).digest('hex')).toBe(sha256);
   });
 
   it('the generator writes a newer file than every applied one, and rolls back to the previous', () => {
     const applied = [...APPLIED, ...PENDING_PREVIOUS].map(([file]) => file);
+    // The target may be pinned only through its own slot (G-a), never as older history.
     expect(applied).not.toContain(MIGRATION_FILE);
     expect(applied).not.toContain(ROLLBACK_FILE);
+    expect(APPLIED_TARGET.map(([file]) => file)).toEqual([MIGRATION_FILE, ROLLBACK_FILE]);
     expect(applied).toContain(PREVIOUS_MIGRATION_FILE);
     // Dated names sort by date: the new file must be later than the one it replaces.
     expect(MIGRATION_FILE > PREVIOUS_MIGRATION_FILE).toBe(true);
+    for (const file of applied.filter((name) => name.startsWith('supabase/migrations/'))) {
+      expect([file, MIGRATION_FILE > file]).toEqual([file, true]);
+    }
+  });
+
+  /** The first line every generated function migration starts with. */
+  const GENERATED_MARKER = 'GENERATED by scripts/generate-test-account-cleanup-sql.ts';
+
+  /** Generated function migrations and their rollbacks, found by CONTENT, not by name (G-b). */
+  function generatedCleanupFiles(): string[] {
+    const firstLine = (file: string) => readSql(file).split('\n', 1)[0];
+    const migrations = readdirSync(join(REPO, 'supabase', 'migrations'))
+      .filter((name) => name.endsWith('.sql'))
+      .map((name) => `supabase/migrations/${name}`)
+      .filter((file) => firstLine(file).startsWith('-- ') && firstLine(file).includes(GENERATED_MARKER));
+    const generated = new Set(migrations);
+    const rollbacks = readdirSync(join(REPO, 'supabase', 'SQL Scripts'))
+      .filter((name) => name.endsWith('_rollback.sql'))
+      .map((name) => `supabase/SQL Scripts/${name}`)
+      .filter((file) => {
+        const match = /^-- Rollback of (supabase\/migrations\/\S+\.sql)\./.exec(firstLine(file));
+        return match !== null && generated.has(match[1]);
+      });
+    return [...migrations, ...rollbacks].sort();
+  }
+
+  it('G-b: every generated function migration and its rollback on disk is pinned (APPLIED or APPLIED_TARGET)', () => {
+    // Matched by the first-line marker: 20261081 (operator_account_cleanup) already broke the
+    // operator_test_account_cleanup name pattern, so a filename glob would miss the next one too.
+    const pinned = new Set([...APPLIED, ...PENDING_PREVIOUS, ...APPLIED_TARGET].map(([file]) => file));
+    const found = generatedCleanupFiles();
+    // Every version from 20261041 on, each with its rollback.
+    expect(found.length).toBeGreaterThanOrEqual(18);
+    expect(found).toContain(MIGRATION_FILE);
+    expect(found).toContain(ROLLBACK_FILE);
+    expect(found.filter((file) => !pinned.has(file))).toEqual([]);
   });
 });
 
@@ -790,8 +847,8 @@ describe('paste safety of the migration and rollback (SA C-6, R-1)', () => {
   const SQL: ReadonlyArray<[string, string, number, number]> = [
     // The hard delete and the anonymise each write one audit row; the receipt is inserted once, after both (W-9).
     [MIGRATION_FILE, migrationSql, 2, 1],
-    // The restored previous function carries the same single audit insert, and no receipt.
-    [ROLLBACK_FILE, rollbackSql, 1, 0],
+    // The restored previous function is 20261081's: the same two audit inserts and one receipt.
+    [ROLLBACK_FILE, rollbackSql, 2, 1],
   ];
 
   it.each(SQL)('%s has "into" only as the audit and receipt INSERT INTO keywords (W-9)', (_file, sql, audits, receipts) => {
@@ -945,9 +1002,8 @@ describe('finance 4b.1: the reversal events link (PF-11, SA-Q66, SA-W105, SA-W10
     for (const sql of [checkSql, deleteSql, migrationSql]) expect(sql).not.toContain('public.business_os_boost_reversal_events');
   });
 
-  it('20261077 is the previous function (DE-10b.1 chains on it), and check 24 pins its stamp', () => {
-    expect(PREVIOUS_MIGRATION_FILE).toBe('supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql');
-    expect(readSql(PREVIOUS_MIGRATION_FILE)).toContain("'version', 'b78b4579fc6631f8'");
+  it('20261077 is applied history (DE-10b.1 chained on it), and check 24 pins its stamp', () => {
+    expect(readSql('supabase/migrations/20261077_operator_test_account_cleanup_boost_reversal_events.sql')).toContain("'version', 'b78b4579fc6631f8'");
     const check24 = readSql('scripts/check-bos-boost-reversal-events-migration.sql');
     expect(check24).toContain("position('b78b4579fc6631f8' in p.prosrc) > 0");
     const check23 = readSql('scripts/precheck-bos-boost-reversal-events.sql');
@@ -1369,5 +1425,101 @@ describe('DE-10b.1: the anonymise audit row (O-8, F-2, TQ-19)', () => {
     expect(migrationSql).toContain("IF (p_receipt ->> 'origin') = 'owner' AND p_actor IS NOT NULL THEN");
     const details = block.slice(block.indexOf("jsonb_build_object('source'"), block.indexOf(`'${ANONYMISE_AUDIT_SEVERITY}', ARRAY[`));
     expect(details).not.toMatch(/email|reason|note|fingerprint/i);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 20261092: the links of abandoned_bookings and scheduling_meetings (G-18)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('20261092: the meeting and abandoned-booking links are reviewed (G-18)', () => {
+  /** The eight links c21a4b0f left out. TL verified each on prod; every one is owned by its row user_id. */
+  const MEETING_LINKS: ReadonlyArray<readonly [string, string, string]> = [
+    ['abandoned_bookings', 'abandoned_bookings_booking_id_fkey', 'user_id'],
+    ['abandoned_bookings', 'abandoned_bookings_business_fk', 'user_id'],
+    ['abandoned_bookings', 'abandoned_bookings_service_id_fkey', 'user_id'],
+    ['email_sends', 'email_sends_booking_id_fkey', 'user_id'],
+    ['email_sends', 'email_sends_meeting_id_fkey', 'user_id'],
+    ['payment_plan_installments', 'payment_plan_installments_meeting_id_fkey', 'user_id'],
+    ['scheduling_meetings', 'scheduling_meetings_booking_id_fkey', 'user_id'],
+    ['scheduling_meetings', 'scheduling_meetings_business_fk', 'user_id'],
+  ];
+  /** The stamp of 20261081 as applied, and of the 2026-10-23 bridge that kept it. */
+  const APPLIED_81_STAMP = '2bd40a46795e4555';
+
+  it.each(MEETING_LINKS)('%s.%s is reviewed, owned by %s', (table, constraint, owner) => {
+    expect(INBOUND_FOREIGN_KEYS).toContainEqual([table, constraint, owner]);
+    for (const sql of [checkSql, deleteSql, migrationSql]) expect(sql).toContain(`'${constraint}'`);
+  });
+
+  it('both tables are in the plan this fix completes', () => {
+    expect(position('abandoned_bookings')).toBeGreaterThanOrEqual(0);
+    expect(position('scheduling_meetings')).toBeGreaterThanOrEqual(0);
+  });
+
+  it('chains on 20261081 as applied: its stamp, without the links, and the rollback restores exactly that', () => {
+    expect(PREVIOUS_MIGRATION_FILE).toBe('supabase/migrations/20261081_operator_account_cleanup_anonymise.sql');
+    expect(previousMigrationSql).toContain(`'version', '${APPLIED_81_STAMP}'`);
+    for (const [, constraint] of MEETING_LINKS) {
+      expect([constraint, previousMigrationSql.includes(`'${constraint}'`)]).toEqual([constraint, false]);
+    }
+    expect(rollbackSql).toContain(`'version', '${APPLIED_81_STAMP}'`);
+    // A new stamp: the deployed build must change with the function, and the bridge stamp never returns from here.
+    expect(CLEANUP_FUNCTION_VERSION).not.toBe(APPLIED_81_STAMP);
+    expect(migrationSql).not.toContain(APPLIED_81_STAMP);
+  });
+
+  it('keeps the 8-argument signature, and still drops only the retired 6-argument one', () => {
+    expect(PREVIOUS_FUNCTION_SIGNATURE).toBe(FUNCTION_SIGNATURE);
+    expect(RETIRED_FUNCTION_SIGNATURE).toBe('public.operator_test_account_cleanup(text, text, text, text, uuid, text)');
+    expect(migrationSql.match(/^DROP FUNCTION .*$/gm)).toEqual([`DROP FUNCTION IF EXISTS ${RETIRED_FUNCTION_SIGNATURE};`]);
+    expect(rollbackSql.match(/^DROP FUNCTION .*$/gm)).toEqual([`DROP FUNCTION IF EXISTS ${FUNCTION_SIGNATURE};`]);
+  });
+
+  const PRECHECK_92 = readSql('scripts/precheck-test-account-cleanup-meeting-links.sql');
+  const CHECKER_92 = readSql('scripts/check-test-account-cleanup-meeting-links-migration.sql');
+
+  it('the pre-check requires the 20261081 stamp live and this stamp absent; the checker requires this build stamp', () => {
+    // C-3: absent, so the NOT EXISTS form exactly. A bare position() match would pass inside EXISTS too.
+    expect(PRECHECK_92).toContain(
+      `NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0)`
+    );
+    expect(PRECHECK_92).not.toMatch(new RegExp(`(?<!NOT )EXISTS \\(SELECT 1 FROM pg_catalog\\.pg_proc AS p WHERE p\\.oid = \\(SELECT fn\\.oid FROM fn\\) AND position\\('${CLEANUP_FUNCTION_VERSION}'`));
+    expect(PRECHECK_92).toContain(
+      `  SELECT 2, 'its body holds the 20261081 stamp 2bd40a46795e4555, the one the deployed build pins',\n    EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${APPLIED_81_STAMP}' in p.prosrc) > 0)`
+    );
+    expect(CHECKER_92).toContain(`AND position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0)
+  UNION ALL`);
+    expect(CHECKER_92).toContain(`NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc AS p WHERE p.oid = (SELECT fn.oid FROM fn) AND position('${APPLIED_81_STAMP}' in p.prosrc) > 0)`);
+    for (const sql of [PRECHECK_92, CHECKER_92]) {
+      expect(sql).toContain(`pg_catalog.to_regprocedure('${FUNCTION_SIGNATURE}')`);
+      expect(sql).toContain(`pg_catalog.to_regprocedure('${RETIRED_FUNCTION_SIGNATURE}') IS NULL`);
+      for (const [, constraint] of MEETING_LINKS) expect(sql).toContain(`'${constraint}'`);
+    }
+  });
+
+  it('the checker information row carries the md5 of the committed function body (SA optional)', () => {
+    const tag = '$operator_cleanup$';
+    const start = migrationSql.indexOf(tag) + tag.length;
+    const body = migrationSql.slice(start, migrationSql.indexOf(tag, start));
+    const md5 = createHash('md5').update(body).digest('hex');
+    expect(CHECKER_92).toContain(`AND pg_catalog.md5(p.prosrc) = '${md5}')`);
+    expect(CHECKER_92).toContain(`'information only. md5 of the body is ${md5}, the committed 20261092 body'`);
+  });
+
+  it.each([
+    ['pre-check', PRECHECK_92],
+    ['checker', CHECKER_92],
+  ])('the %s is read-only and paste-safe', (_name, sql) => {
+    expect(sql).not.toMatch(/^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|TRUNCATE|DO|BEGIN)\b/im);
+    expect(sql).not.toMatch(/\bset_config\(/i);
+    expect(sql.match(/\binto\b/gi)).toBeNull();
+    expect(scan(sql).unterminated).toBe(false);
+    for (const token of scan(sql).tokens) {
+      if (token.kind === 'comment') expect(token.text).not.toMatch(/[;']/);
+      else expect(token.text).not.toMatch(/;|--/);
+    }
+    expect(sql.trimEnd().endsWith('ORDER BY checks.ord;')).toBe(true);
+    expect(sql.split(';').length - 1).toBe(1);
   });
 });
