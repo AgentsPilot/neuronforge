@@ -14,7 +14,7 @@
 
 **Branch:** `feature/admin-money-mk9-paying-trial` (worktree `neuronforge-finance-m9`, from origin/main `3a70e98a`)
 **Date:** 2026-10-25
-**Status:** Code Complete (uncommitted), with MK-10 folded in. origin/main `e0d64fb2` (MK-8 #510 merged) is in this branch: it fast-forwarded, and the four overlapping files were re-applied by hand (no stash, no stacking). SA-CR-MK9 C-1 and C-2 are fixed.
+**Status:** Code Approved (SA-CR-MK9, C-1 and C-2 fixed), QA passed, TL approved; committed `c9b1fc20`, PR [#513](https://github.com/AgentsPilot/neuronforge/pull/513) opened 2026-10-26, auto-merge on. MK-10 folded in. origin/main `e0d64fb2` (MK-8 #510 merged) is in this branch: it fast-forwarded, and the four overlapping files were re-applied by hand (no stash, no stacking). SA-CR-MK9 C-1 and C-2 are fixed.
 **Path:** Full cycle. No migration, **no new read** and no new repository method (SA-Q-MK9-1, option 1).
 
 ## Overview
@@ -840,7 +840,11 @@ All counts match Dev's.
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk9-paying-trial` (on main `e0d64fb2`, which had not moved at commit time; no merge needed)
+- **Commit:** `c9b1fc20` feat(finance): paying breakdown, trial-to-paid and row open on Finance (MK-9, MK-10)
+- **Pins:** AC-145 `333407516ae0d081…` (ruled); no pin file changed
+- **PR:** [#513](https://github.com/AgentsPilot/neuronforge/pull/513), auto-merge on (merge commit, via the merge queue)
+- **Owed by the user:** a production run of `scripts/check-bos-finance-paying-comped.sql` and `scripts/check-bos-finance-trials.sql` (informational, does not gate the merge)
 
 ---
 

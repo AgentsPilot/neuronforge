@@ -38,6 +38,6 @@ MK-10 is folded in from the user's comment of 2026-10-25, quoted verbatim: "have
 - **Owed by the user:** a production run of the two SQL checks.
 - **After merge:** Page 1 is complete, and the user reviews it before Page 2 starts.
 
-### Status: APPROVED FOR COMMIT — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk9-paying-trial — commit `c9b1fc20`, PR #513 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)
