@@ -877,7 +877,9 @@ describe('AD-1a SC-8 — the tables the SchemaReconciler found on prod are class
     // +1 scheduling meetings (2026-10-17): scheduling_meetings (reset), from 20261073.
     //   Both arrived on a branch cut before DE-7 and are classified `include`
     //   (section `bookings`) by analogy with `scheduling_bookings`.
-    expect(baseline.count).toBe(161);
+    // +1 account deletion lifecycle DL-1a (2026-10-25): business_os_account_closures (never, user_id),
+    //   the deletion request, which a business Reset or Purge must not cancel (SA O-2).
+    expect(baseline.count).toBe(162);
   });
 
   it('insight_actions is a user_id-scoped LEAF with full-row snapshot (SA-1(a))', () => {

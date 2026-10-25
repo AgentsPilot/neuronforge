@@ -241,6 +241,10 @@ export const USER_OWNED_TABLES: Record<string, string> = {
     'An export request belongs to the person; it survives a Reset (an owner may export, then ' +
     'start over); Purge and account deletion remove it. Not business-owned: an agent-platform ' +
     'user with no business_profiles row can export too.',
+  // Account deletion lifecycle DL-1a (XC-1, migration 20261093).
+  business_os_account_closures:
+    'A deletion request belongs to the account, not to a business: a business Reset or Purge ' +
+    'must not cancel it. Keyed to auth.users; the account deletion itself removes it.',
   profiles: 'Account level.',
   plugin_connections: 'Account level — the user\'s own third-party credentials.',
   admin_users: 'Platform authorization.',

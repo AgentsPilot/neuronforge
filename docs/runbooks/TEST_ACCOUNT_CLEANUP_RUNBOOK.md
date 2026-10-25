@@ -1,6 +1,6 @@
 # Test Account Cleanup Runbook
 
-> **Last Updated**: 2026-10-24
+> **Last Updated**: 2026-10-25
 
 ## Overview
 
@@ -108,6 +108,7 @@ When the cleanup plan changes after 20261041 was applied, the change ships as a 
 | `20261046_operator_test_account_cleanup_notnull_order.sql` | `scheduling_bookings` removed before `crm_contacts` (its `contact_id` is NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod), and G-19 refuses any plan that removes such a parent first. 20261044 is the unrelated SECURITY DEFINER lockdown | `20261043_operator_test_account_cleanup_insight_links.sql` |
 | `20261047_operator_test_account_cleanup_audit_actor.sql` | The `BUSINESS_TEST_ACCOUNT_REMOVED` audit row names the admin who ran the delete as `user_id` as well as `actor_id`, so /admin/audit-trail shows who did it. The pasted file has no signed-in admin and still writes both as NULL | `20261046_operator_test_account_cleanup_notnull_order.sql` |
 | `20261092_operator_test_account_cleanup_meeting_links.sql` | The eight links of `abandoned_bookings` and `scheduling_meetings` reviewed for G-18 (stamp `ec34d5604055abfe`). Pre-check `scripts/precheck-test-account-cleanup-meeting-links.sql`, checker `scripts/check-test-account-cleanup-meeting-links-migration.sql`. Its rollback restores the committed 20261081, which lacks the links, so G-18 refuses again (fails closed). See `docs/workplans/TEST_ACCOUNT_CLEANUP_MEETINGS_FK_FIX_WORKPLAN.md` | `20261081_operator_account_cleanup_anonymise.sql` (live stamp `2bd40a46795e4555`) |
+| `20261094_operator_test_account_cleanup_account_closures.sql` | `business_os_account_closures` (account deletion lifecycle DL-1a, created by `20261093_business_os_account_closures.sql`) joins step B, removed in the hard delete and in the anonymise (stamp `792d801e13101316`). Pre-check `scripts/precheck-account-closures.sql` (both files), checkers `scripts/check-account-closures-migration.sql` (after 20261093) and `scripts/check-test-account-cleanup-account-closures-migration.sql` (after 20261094). **From the 20261093 apply until the 20261094 build is live, every check and delete refuses on G-10** (the live function has not reviewed the new link to the login), so 20261093, 20261094 and the merge run in one sitting. Its rollback restores 20261092; a full restore is that rollback, then the 20261093 rollback, then the PR revert. See `docs/workplans/BUSINESS_OS_DELETION_DL1A_WORKPLAN.md` | `20261092_operator_test_account_cleanup_meeting_links.sql` (live stamp `ec34d5604055abfe`) |
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 
@@ -248,7 +249,7 @@ Between steps 3 and 5 every admin check and delete answers 503 `function_out_of_
 
 Accounts already closed are **not** restored by a rollback. Nothing can restore them, by design (UD-6).
 
-Since 20261092, the newest rollback is `supabase/SQL Scripts/20261092_operator_test_account_cleanup_meeting_links_rollback.sql`. It restores 20261081, so roll back one version at a time, newest first.
+Since 20261094, the newest rollback is `supabase/SQL Scripts/20261094_operator_test_account_cleanup_account_closures_rollback.sql`. It restores 20261092, so roll back one version at a time, newest first. While the table of 20261093 exists, the restored 20261092 refuses every check and delete on G-10, so follow it with `supabase/SQL Scripts/20261093_business_os_account_closures_rollback.sql` (it refuses while any closure row exists).
 
 **The DE-10b.1 checker is point-in-time.** Row 11 of `scripts/check-de10b-deletion-receipts-migration.sql` expects the 20261081 stamp `2bd40a46795e4555`. Once a later cleanup version (20261092 on) is live, that row reads FAIL by design. It is not a fault. Use the checker of the version you applied.
 
@@ -290,6 +291,7 @@ The hard check's `kept` row says a redeemed invite "holds only the pseudonymous 
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-25 | 20261094 (DL-1a) | `business_os_account_closures` in step B of both modes; the 20261093 + 20261094 one-sitting apply (G-10 pause, SA F-A); the newest rollback and the full restore order |
 | 2026-10-24 | 20261092, immutability rule | An applied migration file never changes (`c21a4b0f` regenerated 20261081 in place; G-18 then refused every delete). 20261092 row in 6.1.1, the newest rollback, and the DE-10b.1 checker noted as point-in-time (SA code review 2026-10-24) |
 | 2026-10-18 | Section 7, DE-10b.1 | Close and anonymise (modes `anonymise_check` / `anonymise`, migration 20261081), the deletion receipt (20261080), the required reason, the fingerprint key and its loss warning, the apply order and the rollback. G-2a, G-20 to G-22. W-12 note on the hard check's kept row |
 | 2026-10-09 | AU-1, `/admin/users` | The same panel runs from each expanded business row on `/admin/users`, email locked, tag = email, any account; every other guard applies. "Never frees the email" now applies to the AD-2/AD-3 purge path only. See TEST_ACCOUNT_CLEANUP_ADMIN_USERS_AMENDMENT.md |

@@ -1526,6 +1526,9 @@ const EXCLUDED: PurgeDescriptor[] = [
   // Data export DE-10b.1 (SA Review 2 §E, migration 20261080): the deletion receipt.
   never('business_os_deletion_receipts', G, exclude(EXPORT_REASON.PLATFORM),
     'One row per committed account deletion, inserted only by the cleanup function inside its own transaction. No user_id, no owner_user_id and no foreign key, so no cascade, purge, audit erasure or archiving reaches it: the proof of an erasure must outlive the account. Holds a keyed fingerprint of the email, never the email. Never purged by a business purge; retention is its own release-3 sweep.'),
+  // Account deletion lifecycle DL-1a (XC-1, SA O-2, migration 20261093): the deletion request itself.
+  never('business_os_account_closures', U, exclude('the deletion request itself: process state shown in the app', 'dates, a language code and guard codes, never the typed statement'),
+    'One row per deletion request of the account (stages A to D). `never` on purpose: a business Reset or Purge must not cancel a pending deletion request, or the banner, the lock and the stored GDPR request time would vanish while the plan stays set not to renew. Keyed to auth.users (ON DELETE CASCADE), no inbound foreign key, no trigger. Removed by step B of the test-account cleanup in both modes (the hard delete and the anonymise): at stage E the engine deletes it with the account.'),
   never('bos_cron_run_recording', G, exclude(EXPORT_REASON.PLATFORM),
     'One row: when the cron run record was installed. Platform monitoring baseline, no user_id; never purged.'),
 
