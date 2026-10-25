@@ -72,9 +72,11 @@ const settle = () =>
 beforeEach(() => jest.clearAllMocks());
 
 describe('openers appear only with the drawer mounted (tables on their own are unchanged)', () => {
-  it('the Accounts row: no quick look without the provider; with it, one in the existing last cell (no new column)', () => {
+  // Money MK-10 (ruled test edit): the opener is the Businesses page's own: `row-open`, "Open details for …",
+  // in a narrow last column with an sr-only "Details" header.
+  it('the Accounts row: no opener without the provider; with it, the Businesses Open button in a new narrow last column', () => {
     const { unmount } = render(<AccountEconomicsTable rows={[econRow()]} deleted={null} window={WINDOW} />);
-    expect(screen.queryByTestId(`econ-quick-look-${A}`)).toBeNull();
+    expect(screen.queryByTestId('row-open')).toBeNull();
     const headersBefore = screen.getAllByRole('columnheader').length;
     unmount();
     render(
@@ -82,8 +84,9 @@ describe('openers appear only with the drawer mounted (tables on their own are u
         <AccountEconomicsTable rows={[econRow()]} deleted={null} window={WINDOW} />
       </BusinessDrawerProvider>
     );
-    expect(screen.getByTestId(`econ-quick-look-${A}`)).toHaveAttribute('aria-label', 'Quick look at Acme Dental');
-    expect(screen.getAllByRole('columnheader')).toHaveLength(headersBefore);
+    expect(within(screen.getByTestId(`econ-row-${A}`)).getByTestId('row-open')).toHaveAttribute('aria-label', 'Open details for Acme Dental');
+    expect(screen.getAllByRole('columnheader')).toHaveLength(headersBefore + 1);
+    expect(screen.getAllByRole('columnheader')[headersBefore]).toHaveTextContent('Details');
   });
 
   it('a platform row or a row with no plan row has no quick look (not a business)', () => {
@@ -96,19 +99,20 @@ describe('openers appear only with the drawer mounted (tables on their own are u
         />
       </BusinessDrawerProvider>
     );
-    expect(screen.queryAllByTestId(/^econ-quick-look-/)).toHaveLength(0);
+    expect(screen.queryAllByTestId('row-open')).toHaveLength(0);
   });
 
   it('the Subscriptions table: no opener column without onQuickLook; with it, a named narrow last column', () => {
     const { unmount } = render(<SubscriptionsTable rows={[subRow()]} />);
-    expect(screen.queryByTestId('subscription-quick-look')).toBeNull();
+    expect(screen.queryByTestId('row-open')).toBeNull();
     expect(screen.getAllByRole('columnheader')).toHaveLength(8);
     unmount();
     render(<SubscriptionsTable rows={[subRow(), subRow({ accountId: null })]} onQuickLook={jest.fn()} />);
     expect(screen.getAllByRole('columnheader')).toHaveLength(9);
     expect(screen.getAllByRole('columnheader')[8]).toHaveTextContent('Details');
     // A detached row (deleted account) has no business to look at.
-    expect(screen.getAllByTestId('subscription-quick-look')).toHaveLength(1);
+    expect(screen.getAllByTestId('row-open')).toHaveLength(1);
+    expect(screen.getByTestId('row-open')).toHaveAttribute('aria-label', 'Open details for Acme Dental');
   });
 });
 
@@ -121,7 +125,7 @@ describe('the business drawer reads only on open', () => {
       </BusinessDrawerProvider>
     );
     expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId(`econ-quick-look-${A}`));
+    fireEvent.click(within(screen.getByTestId(`econ-row-${A}`)).getByTestId('row-open'));
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(`/api/admin/business-os/finance?preset=this_month&accountId=${A}`);
@@ -145,7 +149,7 @@ describe('the business drawer reads only on open', () => {
         <AccountEconomicsTable rows={[econRow()]} deleted={null} window={WINDOW} />
       </BusinessDrawerProvider>
     );
-    expect(screen.queryByTestId(`econ-quick-look-${A}`)).toBeNull();
+    expect(screen.queryByTestId('row-open')).toBeNull();
   });
 });
 
@@ -182,7 +186,7 @@ describe('the plan drawer', () => {
     expect(within(body).queryByTestId('plan-drawer-status-ended')).toBeNull();
     expect(within(body).getByTestId('plan-drawer-showing')).toHaveTextContent('Showing 1 of 3 accounts');
     expect(within(body).getAllByTestId('subscription-row')).toHaveLength(1);
-    expect(within(body).queryByTestId('subscription-quick-look')).toBeNull();
+    expect(within(body).queryByTestId('row-open')).toBeNull();
     // Read-only: no button in the body.
     expect(within(body).queryAllByRole('button')).toHaveLength(0);
   });
@@ -201,5 +205,77 @@ describe('formatOwnCurrency (USD-4)', () => {
     expect(formatOwnCurrency(9, 'EUR')).toBe('€9.00');
     expect(formatOwnCurrency(9, 'NOTACODE')).toBe('NOTACODE 9.00');
     expect(formatOwnCurrency(9, null)).toMatch(/9\.00/);
+  });
+});
+
+// ── Money MK-10 (MK10-R1 to R5): the Accounts and Subscriptions rows open like the Businesses rows ──
+describe('Money MK-10: Accounts and Subscriptions rows (D-17)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('Accounts: a row click opens once; the "Open" full-view link inside does not open the drawer; the button opens once', async () => {
+    serve({ success: false, error: 'Could not read this business.' }, 500);
+    render(
+      <BusinessDrawerProvider window={WINDOW}>
+        <AccountEconomicsTable rows={[econRow()]} deleted={null} window={WINDOW} />
+      </BusinessDrawerProvider>
+    );
+    const row = screen.getByTestId(`econ-row-${A}`);
+    expect(row.className).toContain('cursor-pointer');
+    // The full-view link is a control: its click is its own (no drawer read).
+    const link = screen.getByTestId(`econ-open-${A}`);
+    link.addEventListener('click', (event) => event.preventDefault());
+    fireEvent.click(link);
+    await settle();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // A plain cell click opens, once.
+    fireEvent.click(row.querySelector('th') as Element);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('Accounts: the button opens once (not twice through the row), and focus returns to it on close', async () => {
+    serve({ success: false, error: 'Could not read this business.' }, 500);
+    render(
+      <BusinessDrawerProvider window={WINDOW}>
+        <AccountEconomicsTable rows={[econRow()]} deleted={null} window={WINDOW} />
+      </BusinessDrawerProvider>
+    );
+    const button = within(screen.getByTestId(`econ-row-${A}`)).getByTestId('row-open');
+    fireEvent.click(button);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId(`econ-row-${A}`).className).toContain('bg-slate-700/20');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await settle();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('Subscriptions: a row click opens through the row button; the business link inside does not; the button opens once', () => {
+    const onQuickLook = jest.fn();
+    render(<SubscriptionsTable rows={[subRow()]} onQuickLook={onQuickLook} openAccountId={A} />);
+    const row = screen.getByTestId('subscription-row');
+    expect(row.className).toContain('bg-slate-700/20');
+    const button = within(row).getByTestId('row-open');
+    const link = within(row).getByTestId('subscription-business-link');
+    link.addEventListener('click', (event) => event.preventDefault());
+    fireEvent.click(link);
+    expect(onQuickLook).not.toHaveBeenCalled();
+    fireEvent.click(row.querySelector('td:nth-child(3)') as Element);
+    expect(onQuickLook).toHaveBeenCalledTimes(1);
+    expect(onQuickLook.mock.calls[0][1]).toBe(button);
+    fireEvent.click(button);
+    expect(onQuickLook).toHaveBeenCalledTimes(2);
+  });
+
+  it('Subscriptions: a text selection does not open; without onQuickLook the row has no click or pointer', () => {
+    const onQuickLook = jest.fn();
+    const { unmount } = render(<SubscriptionsTable rows={[subRow()]} onQuickLook={onQuickLook} />);
+    const cell = screen.getByTestId('subscription-row').querySelector('td:nth-child(3)') as Element;
+    jest.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false, anchorNode: cell.firstChild, focusNode: cell.firstChild } as unknown as Selection);
+    fireEvent.click(cell);
+    expect(onQuickLook).not.toHaveBeenCalled();
+    unmount();
+    render(<SubscriptionsTable rows={[subRow()]} />);
+    expect(screen.getByTestId('subscription-row').className).not.toContain('cursor-pointer');
   });
 });

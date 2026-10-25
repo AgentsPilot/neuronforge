@@ -2857,3 +2857,84 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
     expect(Object.keys(wired.converted ?? {}).sort()).toEqual(['firstPlanPayments', 'signupSources']);
   });
 });
+
+// ── Money MK-9 (SA-WP-MK9): F-K5's breakdown through the builder ──
+describe('Money MK-9: payingBreakdown through the builder', () => {
+  // NOW is 2026-11-09; the window is this month (2026-11-01 to 2026-11-10).
+  const TRIAL = Object.keys(config.cohorts).find((id) => stateForCohort(id) === 'trial') as string;
+  const C = '33333333-3333-4333-8333-333333333333';
+  const D = '44444444-4444-4444-8444-444444444444';
+  const trialPlan = (user: string, endsAt: string) =>
+    plan(user, { cohort: TRIAL, tier: null, trial_started_at: '2026-10-20T00:00:00.000Z', trial_ends_at: endsAt });
+
+  function breakdownDeps(firstPayments: Array<{ accountId: string; paidAt: string }> | 'fail' | 'absent' = []) {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(
+      () =>
+        ok([
+          plan(A, { tier: TIER, cohort: null, tier_expires_at: '2026-12-31T00:00:00.000Z' }), // comped: no billing row
+          plan(B, { tier: TIER, cohort: null }), // paying (B is active in the default billing rows)
+          trialPlan(C, '2026-11-03T00:00:00.000Z'), // ended in the window
+          trialPlan(D, '2026-11-20T00:00:00.000Z'), // still running
+          plan(PLATFORM, { cohort: TRIAL, trial_started_at: '2026-10-20T00:00:00.000Z', trial_ends_at: '2026-11-03T00:00:00.000Z' }), // never counted
+        ]) as never
+    );
+    if (firstPayments === 'absent') return { deps, converted: undefined };
+    const converted = {
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() =>
+        firstPayments === 'fail' ? ({ data: null, error: new Error('boom') } as never) : ok(firstPayments)
+      ),
+      signupSources: jest.fn(() => ok([])),
+    };
+    return { deps: { ...deps, converted }, converted };
+  }
+
+  it('all businesses: Comped split, trials ended / running, paid from the SAME first-payment read as Converted (one call)', async () => {
+    const { deps, converted } = breakdownDeps([{ accountId: C, paidAt: '2026-11-01T00:00:00.000Z' }]);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(converted?.firstPlanPayments).toHaveBeenCalledTimes(1);
+    expect(result.payload.payingBreakdown).toEqual({
+      comped: { total: 1, assignedNoSubscription: 1, endedOrNotPaying: 0 },
+      trials: { status: 'ok', endedInWindow: 1, stillRunning: 1, paid: 1, paidBeforeEnd: 1, rate: null, minimumForRate: 10 },
+    });
+    expect(result.counts.payingBreakdown).toEqual({
+      comped: 1, assignedNoSubscription: 1, endedOrNotPaying: 0, trialsStatus: 'ok', trialsEnded: 1, trialsPaid: 1, rateShown: false,
+    });
+  });
+
+  it('failure path: the first-payment read fails → Paid Unknown (null), never 0; the comped split and trial counts intact', async () => {
+    const { deps } = breakdownDeps('fail');
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.payingBreakdown?.trials).toEqual(
+      expect.objectContaining({ status: 'ok', endedInWindow: 1, stillRunning: 1, paid: null, paidBeforeEnd: null, rate: null })
+    );
+    expect(result.payload.payingBreakdown?.comped).toEqual({ total: 1, assignedNoSubscription: 1, endedOrNotPaying: 0 });
+  });
+
+  it('without the first-payment wiring, Paid is Unknown too (never 0)', async () => {
+    const { deps } = breakdownDeps('absent');
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.payingBreakdown?.trials.paid).toBeNull();
+  });
+
+  it('the paying read failed: Comped split null ("Could not check"); Paid Unknown (the first-payment read did not run)', async () => {
+    const { deps, converted } = breakdownDeps([]);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.payingBreakdown?.comped).toBeNull();
+    expect(result.payload.payingBreakdown?.trials.paid).toBeNull();
+    expect(converted?.firstPlanPayments).not.toHaveBeenCalled();
+  });
+
+  it('a business picked: no breakdown key (one account is not a rate)', async () => {
+    const { deps } = breakdownDeps([]);
+    const { result } = await run(deps as never, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload).not.toHaveProperty('payingBreakdown');
+    expect(result.counts).not.toHaveProperty('payingBreakdown');
+  });
+});
