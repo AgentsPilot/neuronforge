@@ -83,8 +83,9 @@
 // `.eq('user_id')`-scoped: a sync is a PLATFORM event (`shared` audience, no
 // tenant dimension), and the user id on it is the acting admin, not an owner.
 // It requires an admin read context, selects only
-// `ADMIN_EXCHANGE_RATE_SYNC_COLUMNS` (the time and the feed's rate date: no
-// `details` blob, no actor, no hash, no email, no ip), returns at most one
+// `ADMIN_EXCHANGE_RATE_SYNC_COLUMNS` (the time, the feed's rate date and the
+// acting admin's id: no `details` blob, no hash, no email, no ip), returns at
+// most one
 // row, and its only caller is `app/api/admin/exchange-rates/route.ts` (the
 // plain GET), behind `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
 // Live audit only: an archived entry is not read, so the page says "No sync on
@@ -307,8 +308,12 @@ export interface AdminPricingSyncRun {
 /**
  * Slice 1e (SQ-51): the only columns the latest-sync read selects. `rate_date`
  * is a PostgREST JSON path alias, so no `details` blob leaves the database.
+ * Slice 1f (SA §13.9 SQ-53): `checked_by` is `actor_id`, the acting admin's id
+ * (the "who did it" column; `user_id` is only the scope field). So: the time,
+ * the feed's rate date and the acting admin's id; no `details` blob, no hash,
+ * no email, no ip.
  */
-export const ADMIN_EXCHANGE_RATE_SYNC_COLUMNS = 'created_at, rate_date:details->>rateDate';
+export const ADMIN_EXCHANGE_RATE_SYNC_COLUMNS = 'created_at, rate_date:details->>rateDate, checked_by:actor_id';
 
 /** Slice 1e: the entity the exchange rate audit entries are written under. */
 export const EXCHANGE_RATE_ENTITY_TYPE = 'exchange_rate';
@@ -329,6 +334,8 @@ export interface AdminExchangeRateSyncRun {
   checkedAt: string;
   /** The ECB rate date that sync brought (`YYYY-MM-DD`). */
   rateDate: string;
+  /** The admin who ran it (`actor_id`, slice 1f); null when the entry has no actor (an old or system entry). */
+  checkedBy: string | null;
 }
 
 export interface AdminCappedRows<R> {
@@ -823,7 +830,7 @@ export class AuditTrailRepository {
         .order('created_at', { ascending: false })
         .limit(1);
       if (error) throw error;
-      const rows = (data ?? []) as unknown as Array<{ created_at: unknown; rate_date: unknown }>;
+      const rows = (data ?? []) as unknown as Array<{ created_at: unknown; rate_date: unknown; checked_by: unknown }>;
 
       this.logger.info(
         { correlationId: context.correlationId, adminId: context.adminId, method: 'findLatestAdminExchangeRateSync', rows: rows.length },
@@ -834,7 +841,12 @@ export class AuditTrailRepository {
       if (typeof row.created_at !== 'string' || typeof row.rate_date !== 'string' || !isCalendarDate(row.rate_date)) {
         throw new Error('The latest exchange rate sync entry has no readable time or rate date');
       }
-      return { data: { checkedAt: row.created_at, rateDate: row.rate_date }, error: null };
+      // Slice 1f (SQ-53): a missing actor is "Unknown user", not an error; any other type is unreadable.
+      const checkedBy = row.checked_by ?? null;
+      if (checkedBy !== null && typeof checkedBy !== 'string') {
+        throw new Error('The latest exchange rate sync entry has an unreadable actor');
+      }
+      return { data: { checkedAt: row.created_at, rateDate: row.rate_date, checkedBy }, error: null };
     } catch (error) {
       this.logger.warn(
         { err: error, correlationId: context?.correlationId, method: 'findLatestAdminExchangeRateSync' },

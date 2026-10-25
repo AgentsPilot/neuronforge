@@ -370,13 +370,23 @@ export function labelHistory(
   records: readonly ExchangeRateHistoryRecord[],
   lookup: EditorLookup
 ): ExchangeRateHistoryWire[] {
-  return records.map((record) => {
-    if (!record.changedBy) return { ...record, changedByLabel: UNKNOWN_USER_LABEL };
-    if (lookup.status === 'failed') return { ...record, changedByLabel: null };
-    const name = lookup.names.get(record.changedBy)?.trim();
-    const email = lookup.emails.get(record.changedBy)?.trim();
-    return { ...record, changedByLabel: name || email || UNKNOWN_USER_LABEL };
-  });
+  return records.map((record) => ({ ...record, changedByLabel: editorLabel(record.changedBy, lookup) }));
+}
+
+/**
+ * The one label rule for ONE admin id (slice 1f, SA §13.9 SQ-54): the history
+ * rows, "Last rate change", the "Rates last checked" sync actor and the viewer
+ * all go through it, so one admin reads the same in every place. No id →
+ * "Unknown user" (nothing was looked up, so nothing failed); a failed lookup →
+ * null (the page shows the short id); otherwise the trimmed name, else the
+ * admin email, else "Unknown user".
+ */
+export function editorLabel(id: string | null, lookup: EditorLookup): string | null {
+  if (!id) return UNKNOWN_USER_LABEL;
+  if (lookup.status === 'failed') return null;
+  const name = lookup.names.get(id)?.trim();
+  const email = lookup.emails.get(id)?.trim();
+  return name || email || UNKNOWN_USER_LABEL;
 }
 
 export interface ExchangeRatePatchResult {

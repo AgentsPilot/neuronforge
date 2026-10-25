@@ -23,6 +23,7 @@ import {
   exchangeRatesQuerySchema,
   historyEditorIds,
   labelHistory,
+  editorLabel,
   type ExchangeRateHistoryRecord,
   KPI_RATE_DECIMALS,
   roundRateForDisplay,
@@ -411,5 +412,34 @@ describe('PATCH body, slice 1e: expectedRate and origin on the rate branch', () 
   it('rateOriginSchema is exported and strict', () => {
     expect(rateOriginSchema.safeParse(ORIGIN).success).toBe(true);
     expect(rateOriginSchema.safeParse({ ...ORIGIN, extra: 1 }).success).toBe(false);
+  });
+});
+
+// ── Slice 1f (SA §13.9 SQ-54): the one label rule for one admin id ──────────
+
+describe('editorLabel (slice 1f, SQ-54)', () => {
+  const ANNA = 'aaaaaaaa-1111-4111-8111-111111111111';
+  const ok = (names: Array<[string, string]>, emails: Array<[string, string]>) =>
+    ({ status: 'ok', names: new Map(names), emails: new Map(emails) }) as const;
+
+  it('no id: "Unknown user", whatever the lookup (nothing was looked up)', () => {
+    expect(editorLabel(null, ok([], []))).toBe(UNKNOWN_USER_LABEL);
+    expect(editorLabel(null, { status: 'failed' })).toBe(UNKNOWN_USER_LABEL);
+  });
+
+  it('a failed lookup: null, so the page shows the short id', () => {
+    expect(editorLabel(ANNA, { status: 'failed' })).toBeNull();
+  });
+
+  it('the trimmed name first', () => {
+    expect(editorLabel(ANNA, ok([[ANNA, '  Anna Admin  ']], [[ANNA, 'anna@example.com']]))).toBe('Anna Admin');
+  });
+
+  it('a blank name falls back to the email', () => {
+    expect(editorLabel(ANNA, ok([[ANNA, '   ']], [[ANNA, 'anna@example.com']]))).toBe('anna@example.com');
+  });
+
+  it('neither a name nor an email: "Unknown user"', () => {
+    expect(editorLabel(ANNA, ok([], []))).toBe(UNKNOWN_USER_LABEL);
   });
 });

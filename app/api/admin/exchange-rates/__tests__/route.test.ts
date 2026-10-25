@@ -9,6 +9,11 @@
  * SQ-51 (3)), forced edits: `AuditTrailRepository` is mocked and the plain
  * exact body carries `lastSync`; `describe('slice 1e: lastSync')` adds the
  * ok / none / unavailable cases and pins that `?currency=` never reads it.
+ * Slice 1f (SA §13.9 SQ-54, SQ-55, SQ-57), forced edits: the sync fixture
+ * carries its actor, the plain body carries `viewer` and the checker fields,
+ * and the caller is now always in the one lookup; `describe('slice 1f: who ran
+ * the last check')` adds the actor and viewer cases, and the SA-1c-7 log test
+ * covers the sync actor's and the caller's name and email.
  */
 
 import * as fs from 'fs';
@@ -107,6 +112,14 @@ const ANNA_NAME = 'Anna Admin';
 const ANNA_EMAIL = 'anna.private@example.com';
 const FORMER_EMAIL = 'former.admin@example.com';
 
+// Slice 1f: an admin who ran a sync but edited no rate, and a caller distinct from everyone.
+const SYNCER = 'dddddddd-4444-4444-8444-444444444444';
+const SYNCER_NAME = 'Sam Syncer';
+const SYNCER_EMAIL = 'sam.private@example.com';
+const VIEWER_USER = { id: 'eeeeeeee-5555-4555-8555-555555555555', email: 'viewer.session@example.com' };
+const VIEWER_NAME = 'Vera Viewer';
+const VIEWER_EMAIL = 'vera.private@example.com';
+
 const RATE = {
   id: 'r1',
   currency_code: 'ILS',
@@ -143,9 +156,15 @@ const LAST_CHANGE_WIRE = {
   changeReason: null,
 };
 
-/** Slice 1e: the newest successful sync, as the repository maps it. */
-const LAST_SYNC = { checkedAt: '2026-10-19T09:14:03.123+00:00', rateDate: '2026-10-16' };
-const LAST_SYNC_WIRE = { status: 'ok', checkedAt: LAST_SYNC.checkedAt, rateDate: LAST_SYNC.rateDate };
+/** Slice 1e: the newest successful sync, as the repository maps it (slice 1f: with its actor). */
+const LAST_SYNC = { checkedAt: '2026-10-19T09:14:03.123+00:00', rateDate: '2026-10-16', checkedBy: ADMIN.id };
+const LAST_SYNC_WIRE = {
+  status: 'ok',
+  checkedAt: LAST_SYNC.checkedAt,
+  rateDate: LAST_SYNC.rateDate,
+  checkedBy: ADMIN.id,
+  checkedByLabel: ANNA_NAME,
+};
 
 const url = (query = '') => `http://localhost/api/admin/exchange-rates${query}`;
 const get = (query = '') => new NextRequest(url(query));
@@ -216,8 +235,10 @@ describe('GET /api/admin/exchange-rates', () => {
         lastChange: LAST_CHANGE_WIRE,
         nameLookup: 'ok',
         readAt: NOW.toISOString(),
-        // Slice 1e (SQ-51, forced edit).
+        // Slice 1e (SQ-51, forced edit); slice 1f: the checker fields.
         lastSync: LAST_SYNC_WIRE,
+        // Slice 1f (SQ-55 (a'), forced edit): the session's admin, labelled by the same lookup.
+        viewer: { userId: ADMIN.id, label: ANNA_NAME },
       },
     });
   });
@@ -414,24 +435,28 @@ describe('"Changed by" labels (SQ-13, SA Q-1)', () => {
     expect(findEmailsByUserIds).toHaveBeenCalledWith([ADMIN.id]);
   });
 
-  it('only null editors: no lookup at all, nameLookup ok', async () => {
+  it('only null editors: only the caller is looked up, nameLookup ok (slice 1f, forced edit)', async () => {
     listRecentHistory.mockResolvedValue({ data: [historyRow('h1', null)], error: null });
     // Slice 1d: lastChange's editor is looked up too, so it has none here either (DV-1).
     findLatestChange.mockResolvedValue({ data: historyRow('h1', null), error: null });
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: null }, error: null });
     expect(await labelsOf()).toEqual({ nameLookup: 'ok', labels: [UNKNOWN_USER_LABEL] });
-    expect(findAdminNamesByIds).not.toHaveBeenCalled();
-    expect(findEmailsByUserIds).not.toHaveBeenCalled();
+    // Slice 1f (SQ-54): the caller is always in the plain read's one lookup.
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id]);
+    expect(findEmailsByUserIds).toHaveBeenCalledWith([ADMIN.id]);
   });
 
-  it('the ids looked up come from the history rows, de-duplicated, never from the request', async () => {
+  it('the ids looked up come from the history rows, the sync actor and the caller, de-duplicated, never from the request', async () => {
     listRecentHistory.mockResolvedValue({
       data: [historyRow('h1', ADMIN.id), historyRow('h2', ADMIN.id), historyRow('h3', FORMER)],
       error: null,
     });
+    // Slice 1f (forced edit): a distinct sync actor joins the one lookup; the caller (ADMIN) is already in it.
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: SYNCER }, error: null });
     await labelsOf();
     expect(findAdminNamesByIds).toHaveBeenCalledTimes(1);
-    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, FORMER]);
-    expect(findEmailsByUserIds).toHaveBeenCalledWith([ADMIN.id, FORMER]);
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, FORMER, SYNCER]);
+    expect(findEmailsByUserIds).toHaveBeenCalledWith([ADMIN.id, FORMER, SYNCER]);
   });
 
   // RK-2: each source, returned error and thrown. All or nothing; a null editor keeps "Unknown user" (SA Q-1).
@@ -480,28 +505,57 @@ describe('"Changed by" labels (SQ-13, SA Q-1)', () => {
 
   it('SA-1c-7: no name and no email reaches any log line, on success or failure', async () => {
     listRecentHistory.mockResolvedValue({ data: [historyRow('h1', ADMIN.id), historyRow('h2', FORMER)], error: null });
+    // Slice 1f (SQ-57): the sync actor and the caller, each with a name and an email of their own.
+    getUser.mockResolvedValue(VIEWER_USER);
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: SYNCER }, error: null });
+    findAdminNamesByIds.mockResolvedValue({
+      data: [
+        { id: ADMIN.id, full_name: ANNA_NAME },
+        { id: SYNCER, full_name: SYNCER_NAME },
+        { id: VIEWER_USER.id, full_name: VIEWER_NAME },
+      ],
+      error: null,
+    });
     findEmailsByUserIds.mockResolvedValue({
       data: [
         { user_id: ADMIN.id, email: ANNA_EMAIL },
         { user_id: FORMER, email: FORMER_EMAIL },
+        { user_id: SYNCER, email: SYNCER_EMAIL },
+        { user_id: VIEWER_USER.id, email: VIEWER_EMAIL },
       ],
       error: null,
     });
-    await GET(get());
+    const named = (await (await GET(get())).json()).data;
+    // The labels did resolve, so their absence from the logs below means something.
+    expect(named.lastSync.checkedByLabel).toBe(SYNCER_NAME);
+    expect(named.viewer.label).toBe(VIEWER_NAME);
     await GET(get('?currency=ILS'));
     findAdminNamesByIds.mockRejectedValue(new Error('profiles exploded'));
     await GET(get());
     expect(logCalls.length).toBeGreaterThan(0);
     const logged = JSON.stringify(logCalls, (_key, value) => (value instanceof Error ? value.message : value));
-    for (const secret of [ANNA_NAME, ANNA_EMAIL, FORMER_EMAIL]) {
+    for (const secret of [ANNA_NAME, ANNA_EMAIL, FORMER_EMAIL, SYNCER_NAME, SYNCER_EMAIL, VIEWER_NAME, VIEWER_EMAIL]) {
       expect(logged).not.toContain(secret);
     }
+    // SQ-57: `checkedBy` is never added to a log line.
+    expect(logged).not.toContain('checkedBy');
   });
 
   it('only changedByLabel and nameLookup are added: the exact keys of a row and of each payload', async () => {
     const plain = await (await GET(get())).json();
-    // Slice 1e (SQ-51, forced edit): the plain read gains `lastSync`; the per-currency keys below are unchanged.
-    expect(Object.keys(plain.data).sort()).toEqual(['history', 'lastChange', 'lastSync', 'nameLookup', 'rates', 'readAt']);
+    // Slice 1e (SQ-51, forced edit): the plain read gains `lastSync`; slice 1f: and `viewer`. The per-currency keys below are unchanged.
+    expect(Object.keys(plain.data).sort()).toEqual([
+      'history',
+      'lastChange',
+      'lastSync',
+      'nameLookup',
+      'rates',
+      'readAt',
+      'viewer',
+    ]);
+    // Slice 1f (SQ-54): the `ok` state gains exactly the two checker keys; the viewer has two keys.
+    expect(Object.keys(plain.data.lastSync).sort()).toEqual(['checkedAt', 'checkedBy', 'checkedByLabel', 'rateDate', 'status']);
+    expect(Object.keys(plain.data.viewer).sort()).toEqual(['label', 'userId']);
     expect(Object.keys(plain.data.history[0]).sort()).toEqual([
       'changeReason',
       'changedAt',
@@ -607,13 +661,16 @@ describe('the history window (slice 1d, SQ-26 to SQ-31)', () => {
     expect(body.data.lastChange).toEqual(LAST_CHANGE_WIRE);
   });
 
-  it('no history at all: lastChange is null and nothing is looked up', async () => {
+  it('no history at all: lastChange is null and only the caller is looked up (slice 1f, forced edit)', async () => {
     listRecentHistory.mockResolvedValue({ data: [], error: null });
     findLatestChange.mockResolvedValue({ data: null, error: null });
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: null, error: null });
     const body = await (await GET(get())).json();
     expect(body.data.lastChange).toBeNull();
     expect(body.data.nameLookup).toBe('ok');
-    expect(findAdminNamesByIds).not.toHaveBeenCalled();
+    expect(findAdminNamesByIds).toHaveBeenCalledTimes(1);
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id]);
+    expect(body.data.viewer).toEqual({ userId: ADMIN.id, label: ANNA_NAME });
   });
 
   it('a failed lookup nulls the lastChange label too (all or nothing across both lists)', async () => {
@@ -806,5 +863,99 @@ describe('slice 1e: lastSync (SA §13.8 SQ-51 (3))', () => {
   it('a bad query: the audit is not read', async () => {
     await GET(get('?foo=1'));
     expect(findLatestAdminExchangeRateSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('slice 1f: who ran the last check (SA §13.9 SQ-53 to SQ-55)', () => {
+  it('a sync actor in no history row is named through the same single call to each source', async () => {
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: SYNCER }, error: null });
+    findAdminNamesByIds.mockResolvedValue({
+      data: [
+        { id: ADMIN.id, full_name: ANNA_NAME },
+        { id: SYNCER, full_name: SYNCER_NAME },
+      ],
+      error: null,
+    });
+    const body = await (await GET(get())).json();
+    expect(body.data.lastSync).toEqual({ ...LAST_SYNC_WIRE, checkedBy: SYNCER, checkedByLabel: SYNCER_NAME });
+    expect(body.data.lastChange.changedByLabel).toBe(ANNA_NAME);
+    expect(findAdminNamesByIds).toHaveBeenCalledTimes(1);
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, SYNCER]);
+    expect(findEmailsByUserIds).toHaveBeenCalledTimes(1);
+    expect(findEmailsByUserIds).toHaveBeenCalledWith([ADMIN.id, SYNCER]);
+  });
+
+  it('a sync actor who is also a history editor is looked up once, and reads the same in both places', async () => {
+    listRecentHistory.mockResolvedValue({ data: [historyRow('h1', ADMIN.id), historyRow('h2', FORMER)], error: null });
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: FORMER }, error: null });
+    findEmailsByUserIds.mockResolvedValue({
+      data: [
+        { user_id: ADMIN.id, email: ANNA_EMAIL },
+        { user_id: FORMER, email: FORMER_EMAIL },
+      ],
+      error: null,
+    });
+    const body = await (await GET(get())).json();
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, FORMER]);
+    expect(body.data.history[1].changedByLabel).toBe(FORMER_EMAIL);
+    expect(body.data.lastSync.checkedByLabel).toBe(FORMER_EMAIL);
+  });
+
+  it('a failed lookup nulls the lastSync label, the viewer label, every history label and lastChange together; still 200', async () => {
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: SYNCER }, error: null });
+    findEmailsByUserIds.mockRejectedValue(new Error('admins exploded'));
+    const res = await GET(get());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.nameLookup).toBe('failed');
+    expect(body.data.history.map((row: { changedByLabel: unknown }) => row.changedByLabel)).toEqual([null]);
+    expect(body.data.lastChange.changedByLabel).toBeNull();
+    expect(body.data.lastSync).toEqual({ ...LAST_SYNC_WIRE, checkedBy: SYNCER, checkedByLabel: null });
+    expect(body.data.viewer).toEqual({ userId: ADMIN.id, label: null });
+  });
+
+  it.each([
+    ['none', () => findLatestAdminExchangeRateSync.mockResolvedValue({ data: null, error: null }), { status: 'none' }],
+    [
+      'unavailable',
+      () => findLatestAdminExchangeRateSync.mockResolvedValue({ data: null, error: new Error('audit down') }),
+      { status: 'unavailable' },
+    ],
+  ])('lastSync %s still gets a viewer', async (_label, arrange, lastSync) => {
+    arrange();
+    const body = await (await GET(get())).json();
+    expect(body.data.lastSync).toEqual(lastSync);
+    expect(body.data.viewer).toEqual({ userId: ADMIN.id, label: ANNA_NAME });
+  });
+
+  it('a null actor: "Unknown user", and nothing is looked up for it', async () => {
+    getUser.mockResolvedValue(VIEWER_USER);
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: { ...LAST_SYNC, checkedBy: null }, error: null });
+    const body = await (await GET(get())).json();
+    expect(body.data.lastSync).toEqual({ ...LAST_SYNC_WIRE, checkedBy: null, checkedByLabel: UNKNOWN_USER_LABEL });
+    // The history editor (ADMIN) and the caller only.
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, VIEWER_USER.id]);
+  });
+
+  it('the viewer is the session admin, labelled by the same lookup', async () => {
+    getUser.mockResolvedValue(VIEWER_USER);
+    findAdminNamesByIds.mockResolvedValue({
+      data: [
+        { id: ADMIN.id, full_name: ANNA_NAME },
+        { id: VIEWER_USER.id, full_name: VIEWER_NAME },
+      ],
+      error: null,
+    });
+    const body = await (await GET(get())).json();
+    expect(body.data.viewer).toEqual({ userId: VIEWER_USER.id, label: VIEWER_NAME });
+    expect(findAdminNamesByIds).toHaveBeenCalledTimes(1);
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id, VIEWER_USER.id]);
+  });
+
+  it('?currency= never sends a viewer, and never looks the caller up', async () => {
+    getUser.mockResolvedValue(VIEWER_USER);
+    const body = await (await GET(get('?currency=ILS'))).json();
+    expect(body.data).not.toHaveProperty('viewer');
+    expect(findAdminNamesByIds).toHaveBeenCalledWith([ADMIN.id]);
   });
 });

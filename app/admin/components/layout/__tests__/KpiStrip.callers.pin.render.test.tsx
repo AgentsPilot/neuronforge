@@ -38,6 +38,7 @@
  * Amended 2026-10-20 (user request): the Last rate change tile rounds each rate to 3 decimals, so the three Exchange rates cases that show a rate are re-hashed; no other case or hash touched.
  * Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed.
  * Amended 2026-10-25 by Exchange rates 1e (SA §13.8 SQ-51 (7)): a third tile, "Rates last checked", so the five ExchangeRatesKpis cases are re-hashed (loading has 3 placeholders; the four payload cases pass `lastSync` ok, names kept) and two cases are appended (none, unavailable); no other case or hash touched.
+ * Amended 2026-10-25 by Exchange rates 1f (SA §13.9 SQ-57): `FX_LAST_SYNC_OK` gains its checker (Anna Admin), so the four payload cases that draw it are re-hashed (two tiles, no history, name lookup failed, old rate null); loading, last sync none and last sync unavailable keep their hashes; two cases are appended (checker label failed, no checker); no other case or hash touched.
  */
 
 import React from 'react';
@@ -220,7 +221,16 @@ const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: []
 const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], lastChange: { ...FX_CHANGE, changedByLabel: null }, nameLookup: 'failed' };
 const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }], lastChange: { ...FX_CHANGE, oldRate: null } };
 // Exchange rates 1e (SQ-51 (7)): the "Rates last checked" tile's three states.
-const FX_LAST_SYNC_OK: LastRateSyncWire = { status: 'ok', checkedAt: '2026-10-25T09:14:03.000Z', rateDate: '2026-10-23' };
+// Exchange rates 1f (SQ-57): the `ok` state names who ran it (the fixture admin).
+const FX_LAST_SYNC_OK: LastRateSyncWire = {
+  status: 'ok',
+  checkedAt: '2026-10-25T09:14:03.000Z',
+  rateDate: '2026-10-23',
+  checkedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
+  checkedByLabel: 'Anna Admin',
+};
+const FX_LAST_SYNC_LABEL_FAILED: LastRateSyncWire = { ...FX_LAST_SYNC_OK, checkedByLabel: null };
+const FX_LAST_SYNC_NO_CHECKER: LastRateSyncWire = { ...FX_LAST_SYNC_OK, checkedBy: null, checkedByLabel: 'Unknown user' };
 const FX_LAST_SYNC_NONE: LastRateSyncWire = { status: 'none' };
 const FX_LAST_SYNC_UNAVAILABLE: LastRateSyncWire = { status: 'unavailable' };
 
@@ -306,6 +316,8 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 ExchangeRatesKpis old rate null', () => <ExchangeRatesKpis payload={FX_PAYLOAD_OLD_RATE_NULL} loading={false} lastSync={FX_LAST_SYNC_OK} />],
   ['A2 ExchangeRatesKpis last sync none', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_NONE} />],
   ['A2 ExchangeRatesKpis last sync unavailable', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_UNAVAILABLE} />],
+  ['A2 ExchangeRatesKpis last sync checker label failed', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_LABEL_FAILED} />],
+  ['A2 ExchangeRatesKpis last sync no checker', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_NO_CHECKER} />],
   // ── A3 (Money MK-5): the Finance strip's shapes, each with its leading / lagging indicator ──
   ['A3 Finance anchor lagging with status and detail', () => <KpiTile testId="tile-fk3_ai_cost" label="Charged AI cost this month" value="At least $12.50" sub="This month vs last month, UTC · Same days last month: $10.00" status="amber" detail="A lower bound" indicator={{ kind: 'lagging', definition: 'What it costs us.' }} href="#ai-cost" />],
   ['A3 Finance anchor leading with sub and detail', () => <KpiTile testId="tile-fk2_mrr" label="MRR now" value="$49.00" sub="Monthly, at list price, today" detail="Stripe test mode" indicator={{ kind: 'leading', definition: 'The monthly price.' }} href="#revenue-mrr" />],
@@ -367,13 +379,17 @@ const EXPECTED: Record<string, string> = {
   // Exchange rates 1a (SQ-7), recorded on first render.
   // Exchange rates 1c.1 (SQ-15): re-pinned and appended, recorded on first render.
   // Exchange rates 1e (SQ-51 (7), 2026-10-25): the five re-hashed for the third tile, two appended.
+  // Exchange rates 1f (SQ-57, 2026-10-25): two tiles, no history, name lookup failed and old rate null
+  // re-hashed for "by {who} · ECB rates of …"; loading, none and unavailable unchanged; two appended.
   'A2 ExchangeRatesKpis loading': 'aa4935d00b1352556b02c0083ab94de58a9ae2e7587678635659c6e46403ea8f',
-  'A2 ExchangeRatesKpis two tiles': '932e504c55866e22589238c4b769f5095adac145a4287ddbc5453acde51053c5',
-  'A2 ExchangeRatesKpis no history': '486416d27266baab1ff8022ce92cb64a10f92409137fd1abbb9cc57043b47726',
-  'A2 ExchangeRatesKpis name lookup failed': 'e6872b2c5651a00352ae15390ee85cf02e23acebc4a3a0e5027483d5e9e06d9d',
-  'A2 ExchangeRatesKpis old rate null': '11e5e00f77e77d259cfb6f67966d9f61fb48b8496fd91ae552ab4354d7065413',
+  'A2 ExchangeRatesKpis two tiles': '806e7a9d76cc04f8d17a6eedde469a4d9ebc66eee3b3fa918d42233debe5178a',
+  'A2 ExchangeRatesKpis no history': '006b781ffb9f917c6be027f67d024677cfbf88c4d160734236d9c306ba55054d',
+  'A2 ExchangeRatesKpis name lookup failed': '406405e8d9294093607e3ce35bed3b6e73c81641b5de9aa47283afa5a24af11c',
+  'A2 ExchangeRatesKpis old rate null': '4c6d30593ce5ad2fd56f126fbd8ccdde4405830aadd64e30a0b9bdc17b119b4d',
   'A2 ExchangeRatesKpis last sync none': 'f64686d1fffe169e2803a5a20e695fb5961b90bfd820332ac39357c7538e56cd',
   'A2 ExchangeRatesKpis last sync unavailable': '118ffdf4174a67801aac84cb7b0ad2b56ac031281453dcfb10bc694997f985e3',
+  'A2 ExchangeRatesKpis last sync checker label failed': '6533379681b22a1d0b30c84eeddb1c1704d228096f0c1890421393852202b868',
+  'A2 ExchangeRatesKpis last sync no checker': '471653ff167baa07d34f48c2939b27d6b95ce054bfade7fed3666e9c916f9163',
   // A3 (Money MK-5): recorded at MK-5's handover.
   'A3 Finance anchor lagging with status and detail': '34166a30ada773fc7c5e7ca8dd90fb66b989d022bfc3b3eefaa1dbaf6fe83358',
   'A3 Finance anchor leading with sub and detail': '33106345987463ab9685bc4fed4a427e5e2e752a216cffdd7562707b82356a71',

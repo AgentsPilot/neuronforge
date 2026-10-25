@@ -22,6 +22,11 @@
  * Slice 1e (SA §13.7, §13.8): forced edits only to the `payload()` fixture
  * (it gains `lastSync`) and to the tile list (a third tile). The sync,
  * Accept and D-10 cases are the `slice 1e` describes at the end.
+ *
+ * Slice 1f (SA §13.9 SQ-55, SQ-56): forced edit to the `payload()` fixture
+ * (its `ok` lastSync gains the checker fields, and it gains `viewer`), which
+ * `syncPagePayload()` spreads. The "by {who}" cases are `describe('slice 1f')`
+ * at the end.
  */
 
 import '@testing-library/jest-dom';
@@ -101,7 +106,16 @@ function payload(): ExchangeRatesReadPayload {
     nameLookup: 'ok',
     readAt: READ_AT,
     // Slice 1e (SQ-51, forced edit): the newest successful sync, from the audit.
-    lastSync: { status: 'ok', checkedAt: '2026-10-16T08:00:00.000Z', rateDate: '2026-10-15' },
+    // Slice 1f (SQ-54, forced edit): and who ran it, labelled by the server.
+    lastSync: {
+      status: 'ok',
+      checkedAt: '2026-10-16T08:00:00.000Z',
+      rateDate: '2026-10-15',
+      checkedBy: 'aaaaaaaa-1111-4111-8111-111111111111',
+      checkedByLabel: 'Anna Admin',
+    },
+    // Slice 1f (SQ-55 (a'), forced edit): the signed-in admin of the page, not the one who ran the stored sync.
+    viewer: { userId: 'eeeeeeee-5555-4555-8555-555555555555', label: 'Vera Viewer' },
   };
 }
 
@@ -1564,5 +1578,77 @@ describe('slice 1e.2: a 409 on Accept re-reads the list (QA edge 1)', () => {
     expect(await screen.findByTestId('row-error-ILS')).toHaveTextContent('Invalid input');
     await new Promise((r) => setTimeout(r, 0));
     expect(plainGets(calls)).toHaveLength(readsBefore);
+  });
+});
+
+// ── Slice 1f (D-11, SA §13.9 SQ-55, SQ-56): who ran the last check ──────────
+
+describe('slice 1f: the "Rates last checked" tile names who ran it', () => {
+  const ANNA_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
+  const VERA_ID = 'eeeeeeee-5555-4555-8555-555555555555';
+  const tile = () => screen.getByTestId('kpi-rates-last-checked');
+  const withLastSync = (lastSync: Partial<Extract<ExchangeRatesReadPayload['lastSync'], { status: 'ok' }>>) => {
+    const base = syncPagePayload();
+    return { ...base, lastSync: { ...(base.lastSync as Extract<ExchangeRatesReadPayload['lastSync'], { status: 'ok' }>), ...lastSync } };
+  };
+
+  it('after a reload: "by {name} · ECB rates of {rateDate}"', async () => {
+    await renderSyncPage();
+    expect(tile()).toHaveTextContent('2026-10-16 08:00 UTC');
+    expect(tile()).toHaveTextContent('by Anna Admin · ECB rates of 2026-10-15');
+  });
+
+  it('a failed name lookup shows the short id, never "Unknown user"', async () => {
+    await renderSyncPage({ get: () => ok(withLastSync({ checkedByLabel: null })) });
+    expect(tile()).toHaveTextContent(`by ${ANNA_ID.slice(0, 8)}… · ECB rates of 2026-10-15`);
+    expect(tile()).not.toHaveTextContent(UNKNOWN_USER_LABEL);
+  });
+
+  it('no actor on the entry: "Unknown user"', async () => {
+    await renderSyncPage({ get: () => ok(withLastSync({ checkedBy: null, checkedByLabel: UNKNOWN_USER_LABEL })) });
+    expect(tile()).toHaveTextContent('by Unknown user · ECB rates of 2026-10-15');
+  });
+
+  it('an answer from before 1f (no checker fields): "Unknown user", the rest as before', async () => {
+    const older = syncPagePayload();
+    const preOneF: Record<string, unknown> = { ...older.lastSync };
+    delete preOneF.checkedBy;
+    delete preOneF.checkedByLabel;
+    await renderSyncPage({ get: () => ok({ ...older, lastSync: preOneF }) });
+    expect(tile()).toHaveTextContent('2026-10-16 08:00 UTC');
+    expect(tile()).toHaveTextContent('by Unknown user · ECB rates of 2026-10-15');
+  });
+
+  it('after a sync: the viewer\'s label, with no second GET', async () => {
+    const calls = await renderSyncPage();
+    const readsBefore = plainGets(calls).length;
+    await syncNow();
+    expect(tile()).toHaveTextContent('2026-10-25 09:14 UTC');
+    expect(tile()).toHaveTextContent('by Vera Viewer · ECB rates of 2026-10-23');
+    expect(plainGets(calls)).toHaveLength(readsBefore);
+  });
+
+  it('after a sync, a later re-read carrying an older lastSync by another admin does not replace the visit\'s name', async () => {
+    const calls = await renderSyncPage();
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the exchange rates' }));
+    await waitFor(() => expect(plainGets(calls)).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false'));
+    expect(tile()).toHaveTextContent('by Vera Viewer · ECB rates of 2026-10-23');
+    expect(tile()).not.toHaveTextContent('Anna Admin');
+  });
+
+  it('after a sync, a viewer whose label failed shows the viewer\'s short id', async () => {
+    await renderSyncPage({ get: () => ok({ ...syncPagePayload(), viewer: { userId: VERA_ID, label: null } }) });
+    await syncNow();
+    expect(tile()).toHaveTextContent(`by ${VERA_ID.slice(0, 8)}… · ECB rates of 2026-10-23`);
+  });
+
+  it('after a sync, an answer from before 1f (no viewer): "Unknown user"', async () => {
+    const older: Record<string, unknown> = { ...syncPagePayload() };
+    delete older.viewer;
+    await renderSyncPage({ get: () => ok(older) });
+    await syncNow();
+    expect(tile()).toHaveTextContent('by Unknown user · ECB rates of 2026-10-23');
   });
 });
