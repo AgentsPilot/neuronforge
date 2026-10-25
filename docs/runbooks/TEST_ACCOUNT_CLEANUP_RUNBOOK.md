@@ -1,6 +1,6 @@
 # Test Account Cleanup Runbook
 
-> **Last Updated**: 2026-10-18
+> **Last Updated**: 2026-10-24
 
 ## Overview
 
@@ -99,12 +99,15 @@ Paste `supabase/migrations/20261041_operator_test_account_cleanup.sql` into the 
 
 When the cleanup plan changes after 20261041 was applied, the change ships as a NEW dated migration that replaces only the function (`CREATE OR REPLACE`). The schema, the secret table and the stored hash stay, so 6.2 to 6.4 are not repeated. The generator constant `FUNCTION_MIGRATION` names the newest one; the applied files are never edited (a test pins their bytes).
 
+> **An applied migration file never changes.** A changed plan always goes in a new dated file, even a one-line fix. `c21a4b0f` regenerated the applied 20261081 in place, so prod and the repository disagreed, and G-18 refused every delete until 20261092 fixed it. The drift test now pins the generator's own target (`APPLIED_TARGET`) as well as every generated version and rollback it finds on disk. A regeneration in place therefore fails CI.
+
 | Version | Adds | Apply after |
 |---|---|---|
 | `20261042_operator_test_account_cleanup_billing_events.sql` | `business_os_billing_events` (plan payments P-3b.1): guard G-5 counts its live rows, and the plan removes its rows | `20261041_operator_test_account_cleanup.sql` **and** `20261027_business_os_billing_events.sql` |
 | `20261043_operator_test_account_cleanup_insight_links.sql` | `insight_hypotheses` and `insight_measurements` classified and their links reviewed (G-18 no longer blocks every account), cheaper G-18 and survivor scans, trigger events in the check, `serverMs` on every answer | `20261042_operator_test_account_cleanup_billing_events.sql` |
 | `20261046_operator_test_account_cleanup_notnull_order.sql` | `scheduling_bookings` removed before `crm_contacts` (its `contact_id` is NOT NULL with ON DELETE SET NULL, so the old order failed with 23502 on prod), and G-19 refuses any plan that removes such a parent first. 20261044 is the unrelated SECURITY DEFINER lockdown | `20261043_operator_test_account_cleanup_insight_links.sql` |
 | `20261047_operator_test_account_cleanup_audit_actor.sql` | The `BUSINESS_TEST_ACCOUNT_REMOVED` audit row names the admin who ran the delete as `user_id` as well as `actor_id`, so /admin/audit-trail shows who did it. The pasted file has no signed-in admin and still writes both as NULL | `20261046_operator_test_account_cleanup_notnull_order.sql` |
+| `20261092_operator_test_account_cleanup_meeting_links.sql` | The eight links of `abandoned_bookings` and `scheduling_meetings` reviewed for G-18 (stamp `ec34d5604055abfe`). Pre-check `scripts/precheck-test-account-cleanup-meeting-links.sql`, checker `scripts/check-test-account-cleanup-meeting-links-migration.sql`. Its rollback restores the committed 20261081, which lacks the links, so G-18 refuses again (fails closed). See `docs/workplans/TEST_ACCOUNT_CLEANUP_MEETINGS_FK_FIX_WORKPLAN.md` | `20261081_operator_account_cleanup_anonymise.sql` (live stamp `2bd40a46795e4555`) |
 
 The migration checks this itself: it refuses, and applies nothing, with `Apply <migration> first` until both are in place.
 
@@ -245,6 +248,10 @@ Between steps 3 and 5 every admin check and delete answers 503 `function_out_of_
 
 Accounts already closed are **not** restored by a rollback. Nothing can restore them, by design (UD-6).
 
+Since 20261092, the newest rollback is `supabase/SQL Scripts/20261092_operator_test_account_cleanup_meeting_links_rollback.sql`. It restores 20261081, so roll back one version at a time, newest first.
+
+**The DE-10b.1 checker is point-in-time.** Row 11 of `scripts/check-de10b-deletion-receipts-migration.sql` expects the 20261081 stamp `2bd40a46795e4555`. Once a later cleanup version (20261092 on) is live, that row reads FAIL by design. It is not a fault. Use the checker of the version you applied.
+
 ### 7.4 A correction to the "kept" note of the hard check (SA W-12)
 
 The hard check's `kept` row says a redeemed invite "holds only the pseudonymous id". It also holds the invitee's email. For a test account this is low risk. The anonymise mode blanks that email (O-4). The pasted files keep the old wording so their bytes stay unchanged in DE-10b.1; correct it the next time the hard plan changes.
@@ -283,6 +290,7 @@ The hard check's `kept` row says a redeemed invite "holds only the pseudonymous 
 
 | Date | Change | Details |
 |---|---|---|
+| 2026-10-24 | 20261092, immutability rule | An applied migration file never changes (`c21a4b0f` regenerated 20261081 in place; G-18 then refused every delete). 20261092 row in 6.1.1, the newest rollback, and the DE-10b.1 checker noted as point-in-time (SA code review 2026-10-24) |
 | 2026-10-18 | Section 7, DE-10b.1 | Close and anonymise (modes `anonymise_check` / `anonymise`, migration 20261081), the deletion receipt (20261080), the required reason, the fingerprint key and its loss warning, the apply order and the rollback. G-2a, G-20 to G-22. W-12 note on the hard check's kept row |
 | 2026-10-09 | AU-1, `/admin/users` | The same panel runs from each expanded business row on `/admin/users`, email locked, tag = email, any account; every other guard applies. "Never frees the email" now applies to the AD-2/AD-3 purge path only. See TEST_ACCOUNT_CLEANUP_ADMIN_USERS_AMENDMENT.md |
 | 2026-10-08 | Section 6.1.1, 20261047 | The admin page delete writes the admin as `user_id` and `actor_id` on its audit row (AD-2 convention); the pasted file still writes NULL |
