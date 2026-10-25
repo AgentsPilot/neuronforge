@@ -164,12 +164,12 @@ describe('GET /api/business-os/usage', () => {
       success: true,
       data: {
         period: { kind: 'monthly', resetsOn: '2026-10-14T09:31:07.123Z' },
-        allowance: { amount: 32250, per: 'month' },
+        allowance: { amount: 5000, per: 'month' }, // Autopilot's row since the 2026-10-25 re-size (D4)
         used: 63,
         usedByOwner: 41,
         usedAutomatic: 22,
         extraCredits: 0,
-        remaining: 32187,
+        remaining: 4937,
       },
     });
     // The period key went from the anchor to the function and on to the ledger untouched.
@@ -282,7 +282,7 @@ describe('extra credits (slice 11d)', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data).toMatchObject({ used: 63, extraCredits: 150, remaining: 32187 });
+    expect(body.data).toMatchObject({ used: 63, extraCredits: 150, remaining: 4937 });
     expect(JSON.stringify(body)).not.toContain(LOT);
     // Both lot reads on the caller's RLS client, scoped to the caller.
     const lotQueries = state.queries.filter((q) => q.table.startsWith('business_os_credit_lot'));

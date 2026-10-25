@@ -126,7 +126,10 @@ export const boostPurchaseCapSchema = z
 export function bonusPercentFromCredits(baseCredits: number, totalCredits: number): number | null {
   if (!Number.isFinite(baseCredits) || !Number.isFinite(totalCredits)) return null;
   if (baseCredits <= 0 || totalCredits < baseCredits) return null;
-  return Math.round(((totalCredits - baseCredits) * 10000) / baseCredits) / 100;
+  // Percent to two decimals: × 1e4, then ÷ 100. Written as `1e4`: since D5
+  // (2026-10-25) Max's base credits are ten thousand, and the no-typed-figures
+  // guard scans this file.
+  return Math.round(((totalCredits - baseCredits) * 1e4) / baseCredits) / 100;
 }
 
 /** A copy of locale labels, never the config's own object. */

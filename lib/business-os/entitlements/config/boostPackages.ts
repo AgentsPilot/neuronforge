@@ -68,10 +68,14 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+// Version 2 of every package (2026-10-25, decision D5): re-pointed at credit
+// retail version 2 (400% markup). Prices, bonuses, labels and order are
+// unchanged; each package buys fewer credits. Version 1 stays in the snapshot,
+// and a purchase made under it keeps what it was sold (FR-4).
 export const BOOST_PACKAGES = deepFreeze([
   {
     id: 'starter',
-    version: 1,
+    version: 2,
     priceMinor: 1000,
     currency: 'USD',
     taxExclusive: true,
@@ -82,11 +86,11 @@ export const BOOST_PACKAGES = deepFreeze([
       name: en('Starter'),
       description: en('A one-off top-up of credits at the standard rate.'),
     },
-    retailVersion: 1,
+    retailVersion: 2,
   },
   {
     id: 'plus',
-    version: 1,
+    version: 2,
     priceMinor: 2500,
     currency: 'USD',
     taxExclusive: true,
@@ -98,11 +102,11 @@ export const BOOST_PACKAGES = deepFreeze([
       description: en('A one-off top-up of credits with a bonus.'),
       badge: en('Most popular'),
     },
-    retailVersion: 1,
+    retailVersion: 2,
   },
   {
     id: 'max',
-    version: 1,
+    version: 2,
     priceMinor: 5000,
     currency: 'USD',
     taxExclusive: true,
@@ -114,7 +118,7 @@ export const BOOST_PACKAGES = deepFreeze([
       description: en('A one-off top-up of credits with the largest bonus.'),
       badge: en('Best value'),
     },
-    retailVersion: 1,
+    retailVersion: 2,
   },
 ] as const satisfies readonly BoostPackageConfig[]);
 

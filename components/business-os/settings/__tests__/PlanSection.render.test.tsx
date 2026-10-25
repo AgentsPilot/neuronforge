@@ -225,7 +225,7 @@ describe('a paying customer on Essentials', () => {
     // accessible name — since R2-1 gave the lists visible headings. Asserted on
     // the heading, which is the element a sighted reader actually sees.
     expect(screen.getByRole('heading', { name: /What Autopilot would add/i })).toBeInTheDocument();
-    expect(screen.getByText(/19,750 per month becomes 32,250 per month/)).toBeInTheDocument();
+    expect(screen.getByText(/2,000 per month becomes 5,000 per month/)).toBeInTheDocument();
   });
 
   it('with no purchase view in the payload: Autopilot is "Available to choose." and there is nothing to click', async () => {
@@ -292,10 +292,11 @@ describe('the credit allowance is shown with its number, under its own heading (
   it.each([
     // The line is the value alone: the heading already says "Credits" (user
     // decision, 2026-10-02 — no "Credits" over "Credits (…)").
-    ['champion', '32,250 per month', CREDIT_EXPLANATION.en.monthly],
-    ['pro', '32,250 per month', CREDIT_EXPLANATION.en.monthly],
-    ['basic', '19,750 per month', CREDIT_EXPLANATION.en.monthly],
-    ['trial', '2,000 in total', CREDIT_EXPLANATION.en.trial],
+    // The 2026-10-25 re-size (decision D4).
+    ['champion', '5,000 per month', CREDIT_EXPLANATION.en.monthly],
+    ['pro', '5,000 per month', CREDIT_EXPLANATION.en.monthly],
+    ['basic', '2,000 per month', CREDIT_EXPLANATION.en.monthly],
+    ['trial', '1,000 in total', CREDIT_EXPLANATION.en.trial],
   ])('%s: a first "Credits" row reads %s, with the sentence under it', async (planId, line, sentence) => {
     await renderFor(planId);
 
@@ -391,7 +392,7 @@ describe('a cross-unit difference is shown as a CHANGE, not a gain (SA R2-1, QA-
     await renderFor('trial');
 
     expect(
-      screen.getByText(/from 2,000 in total to 19,750 per month, which is different rather than larger/)
+      screen.getByText(/from 1,000 in total to 2,000 per month, which is different rather than larger/)
     ).toBeInTheDocument();
   });
 

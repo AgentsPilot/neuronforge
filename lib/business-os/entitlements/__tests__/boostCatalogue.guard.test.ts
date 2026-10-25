@@ -72,11 +72,14 @@ describe('no credit figure or base rate is typed in product code (T-B9, SA C-1)'
   const figures = bannedFigures();
 
   it('the banned list is real: the rate and the Option A credits', () => {
-    expect(figures).toEqual(expect.arrayContaining([500, 5000, 12500, 13750, 25000, 28750]));
+    // Retail version 2 (decision D5, 2026-10-25): 200 per $1; Starter 2,000,
+    // Plus 5,000 + 500, Max 10,000 + 1,500. Version 1's figures (500 per $1,
+    // 5,000 / 13,750 / 28,750) are no longer derived, so no longer scanned for.
+    expect(figures).toEqual(expect.arrayContaining([200, 2000, 5000, 500, 5500, 10000, 1500, 11500]));
   });
 
   it('catches every way a figure could be typed (planted)', () => {
-    for (const planted of ['const RATE = 500;', 'baseCredits: 5000,', "label: '13,750 credits'", 'total = 28_750', '25 000']) {
+    for (const planted of ['const RATE = 200;', 'baseCredits: 2000,', "label: '5,500 credits'", 'total = 11_500', '10 000']) {
       expect(findFigures(planted, figures).length).toBeGreaterThan(0);
     }
   });
@@ -85,8 +88,8 @@ describe('no credit figure or base rate is typed in product code (T-B9, SA C-1)'
     expect(findFigures('priceMinor: 5000,', figures)).toEqual([]);
     expect(findFigures('amountMinor: 15000,', figures)).toEqual([]);
     expect(findFigures('baseCredits: 5000,', figures)).toEqual(['5000']);
-    expect(findFigures('priceMinor: 5000, totalCredits: 28750', figures)).toEqual(['28750']);
-    expect(findFigures('// 500 credits per dollar\nconst x = 1;', figures)).toEqual([]);
+    expect(findFigures('priceMinor: 5000, totalCredits: 11500', figures)).toEqual(['11500']);
+    expect(findFigures('// 200 credits per dollar\nconst x = 1;', figures)).toEqual([]);
     expect(findFigures('const x = 15000; const y = 1e-9; const z = 2026;', figures)).toEqual([]);
   });
 
@@ -125,6 +128,10 @@ const RELEASED: Readonly<Record<string, string>> = {
   'starter@1': '63ebcbc272529d2e',
   'plus@1': 'cc2cb9d83252f317',
   'max@1': '130f4d9780c7e035',
+  // Credits re-size, 2026-10-25 (decision D5): retail version 2, same prices and bonuses.
+  'starter@2': 'bcae417f6cc5c42b',
+  'plus@2': '2e026363e3c2236d',
+  'max@2': '2e37ff2229cabaec',
 };
 
 /** JSON with sorted keys at every level, so the fingerprint ignores key order. */
@@ -200,12 +207,16 @@ describe('the released package snapshot (T-B12, SA C-4, FR-4)', () => {
   it('negative controls: an edit without a bump, an edited record and a removed record are all caught (T-F18)', () => {
     const shipped = resolvedShipped();
     const editedConfig = shipped.map((pkg) => (pkg.id === 'plus' ? { ...pkg, bonusPercent: 12 } : pkg));
-    expect(configDrift(editedConfig, SNAPSHOT)).toEqual(['plus@1']);
+    // The shipped config is version 2 since the 2026-10-25 re-size (D5).
+    expect(configDrift(editedConfig, SNAPSHOT)).toEqual(['plus@2']);
 
-    const editedSnapshot = SNAPSHOT.map((record) => (record.id === 'max' ? { ...record, totalCredits: 1 } : record));
+    // Aimed at a version-1 record: a superseded release is protected exactly like the current one.
+    const editedSnapshot = SNAPSHOT.map((record) =>
+      record.id === 'max' && record.version === 1 ? { ...record, totalCredits: 1 } : record
+    );
     expect(snapshotViolations(RELEASED, editedSnapshot)).toEqual(['max@1']);
 
-    const removed = SNAPSHOT.filter((record) => record.id !== 'starter');
+    const removed = SNAPSHOT.filter((record) => !(record.id === 'starter' && record.version === 1));
     expect(snapshotViolations(RELEASED, removed)).toEqual(['starter@1']);
   });
 });

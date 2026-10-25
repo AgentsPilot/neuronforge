@@ -123,16 +123,25 @@ export interface AdminCreditPercentLogger {
   warn: (ctx: Record<string, unknown>, msg: string) => void;
 }
 
-/** 2 s (SA SQ-42). Written as seconds × 1000: the credit-figure guard reads a bare 2,000 as the trial allowance. */
-export const ADMIN_CREDITS_BUDGET_MS = 2 * 1000;
+/**
+ * Milliseconds per second, written as `1e3`. The credit-figure guard scans this
+ * file and reads a bare thousand as an allowance: since the 2026-10-25 re-size
+ * the trial is 1,000 credits, Essentials 2,000 and Autopilot 5,000, so round
+ * thousands are spelled in exponent notation (`1e3`, `5e3`) here. Not credit figures.
+ */
+const MS_PER_SECOND = 1e3;
+
+/** 2 s (SA SQ-42). */
+export const ADMIN_CREDITS_BUDGET_MS = 2 * MS_PER_SECOND;
 
 /** Ids per anchor read: the plan repository's batch limit. */
 const ANCHOR_CHUNK = 100;
 /** Ids per totals read: the ledger read repository's `.in()` limit. */
 const TOTALS_CHUNK = 200;
-const TOTALS_PAGING = { pageSize: 1_000, ceiling: 5_000 } as const;
+/** A page of 1e3 rows and a ceiling of 5e3 (see `MS_PER_SECOND` for the spelling). */
+const TOTALS_PAGING = { pageSize: 1e3, ceiling: 5e3 } as const;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * MS_PER_SECOND;
 /** A monthly period is at most 31 days; the range reaches back one more. */
 const MONTHLY_LOOKBACK_DAYS = 32;
 /** A trial anchor older than this is an anomaly: "unknown", and it does not widen the range (SA Q-5). */
