@@ -1,6 +1,6 @@
 # Requirement: Business OS Credits Boost (on-demand top-up)
 
-> **Last Updated**: 2026-10-09
+> **Last Updated**: 2026-10-25
 
 **Created by:** BA
 **Date:** 2026-09-27
@@ -10,7 +10,7 @@
 
 ## Overview
 
-A Business OS owner can press **Top up**, choose one of three boost packages (Starter, Plus, Max), pay through Stripe, and have their Business OS **credit** balance increased by the package amount plus any bonus. The purchase is recorded in the Business OS credit ledger and shown in the owner's history, and Stripe sends a receipt. Boost credits are the same Business OS credits that plans include (1 credit = $0.001 of our measured AI cost, sold at 500 credits per $1). They are separate from the AgentsPilot agent-platform balance, and they never unlock a feature. Prices are in **USD only** and exclude tax. This is not a port of the AgentsPilot boost: it reuses that system's proven payment plumbing, and each hazard found in the AgentsPilot implementation (discovery §4) has an explicit requirement that prevents it.
+A Business OS owner can press **Top up**, choose one of three boost packages (Starter, Plus, Max), pay through Stripe, and have their Business OS **credit** balance increased by the package amount plus any bonus. The purchase is recorded in the Business OS credit ledger and shown in the owner's history, and Stripe sends a receipt. Boost credits are the same Business OS credits that plans include (1 credit = $0.001 of our measured AI cost, sold at **200 credits per $1** since the 2026-10-25 re-size, decision D5; 500 per $1 before it). They are separate from the AgentsPilot agent-platform balance, and they never unlock a feature. Prices are in **USD only** and exclude tax. This is not a port of the AgentsPilot boost: it reuses that system's proven payment plumbing, and each hazard found in the AgentsPilot implementation (discovery §4) has an explicit requirement that prevents it.
 
 ---
 
@@ -45,7 +45,8 @@ The Q numbers refer to discovery §7.
 |---|---|---|
 | Q1 | A boost buys the unit Business OS actually meters. **Resolved by the credit deduction work:** that unit is the **Business OS credit** (capability `credits.allowance`, unit `credit`, customer label "Credits"). 1 credit = $0.001 of measured provider cost. | 2026-09-27, resolved 2026-09-30 |
 | Q2 / Q3 | **Fixed packages only in v1.** A custom amount comes later. The numbers are adjustable. | 2026-09-27 |
-| Q4 | Packages: **"Option A"**: **Starter $10** (5,000 credits, no bonus), **Plus $25** ("Most popular", +10%, 13,750 credits), **Max $50** ("Best value", +15%, 28,750 credits) (§8). The bonus is measured against the standard rate of 500 credits per $1. The aim is to push buyers to Plus and Max with a visible 5-point bonus step. The user **accepts Max dipping below the 70% markup target**. Packages start **in configuration** and must be able to move to a table without a rewrite. | Round 3, 2026-09-30 |
+| Q4 | Packages: **"Option A"**: **Starter $10** (5,000 credits, no bonus), **Plus $25** ("Most popular", +10%, 13,750 credits), **Max $50** ("Best value", +15%, 28,750 credits) (§8). The bonus is measured against the standard rate of 500 credits per $1. The aim is to push buyers to Plus and Max with a visible 5-point bonus step. The user **accepts Max dipping below the 70% markup target**. Packages start **in configuration** and must be able to move to a table without a rewrite. *(Credit figures superseded 2026-10-25 by D5, the row below; prices and bonuses stand.)* | Round 3, 2026-09-30 |
+| D5 | **Credits re-size: keep the prices, fewer credits.** The boost markup changes from 100% to **400%** (the customer pays 5× our cost), i.e. **200 credits per $1** (was 500). Prices ($10 / $25 / $50) and bonuses (0 / 10 / 15%) unchanged: **Starter $10 → 2,000 credits** (one Essentials month), **Plus $25 → 5,000 + 10% = 5,500** (one Autopilot month plus the bonus), **Max $50 → 10,000 + 15% = 11,500** (~2.3 Autopilot months). Why: at 500 per $1 the smallest boost was 2.5 Essentials months and a top-up undercut the plan's own credits; lowering the prices instead ($4 / $10 / $20) would let Stripe's fixed $0.30 fee eat ~8% of the smallest sale. Gross margin on cost 80% before Stripe fees. No Stripe change is needed (`boostCheckoutSession.ts` builds `price_data` per purchase from `priceMinor`). The $150 purchase cap is unchanged. **Credits already bought keep what they bought** (lots are untouched). Made with D4 (plan allowances re-sized on measured usage) and D6 (existing accounts topped up by admin grant): [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md) §2a | User, 2026-10-25 |
 | Q5 | The boost balance is **separate** from the AgentsPilot balance. | 2026-09-27 |
 | Q6 | **Every tier and cohort can buy**: trial, champion, basic, pro. | 2026-09-27 |
 | Q7 | v1 is **on-demand purchase by the owner**. Rules about when to prompt come later. | 2026-09-27 |
@@ -75,6 +76,7 @@ The Q numbers refer to discovery §7.
 | C-5 | **TK-5** (reuse plan): whether to retire the AgentsPilot boost checkout. | **Retire it for now**, without destructive deletion (FR-40). | User, Q14 |
 | C-6 | **Pricing doc D3**: the generous plan allowance "will not drive boost purchases". | Unchanged, and relevant: boosts are expected to matter mainly for **trial** accounts (2,000 one-off credits) and image-heavy use (§8.3). | [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md) §5 |
 | C-7 | **Pricing doc D1** (100% markup on plans) | Boosts sell at the same base rate (500 credits per $1). **The Plus and Max bonuses deliberately lower the effective markup**, to 74% and 68% after the Stripe fee (§8.2). The user accepted Max below a 70% target. | User, round 3 |
+| C-8 | **Q4 credit figures, C-6 and C-7** (2026-10-25) | **D5:** boosts no longer sell at the plan rate. The markup is 400% (200 credits per $1); the packages are 2,000 / 5,500 / 11,500 credits at unchanged prices. C-6's premise is gone: with plan allowances re-sized on measured usage (pricing doc D4: Essentials 2,000, Autopilot 5,000 a month, trial 1,000 in total), a boost is the way past a heavy month for any plan. C-7's markups are recomputed in §8.2 | User, 2026-10-25 |
 
 ---
 
@@ -266,12 +268,24 @@ The conversion already exists. It is defined in [BUSINESS_OS_CREDIT_PRICING.md](
 | Rule | Value | Source |
 |---|---|---|
 | Credit value | **1 credit = $0.001** of measured provider cost (version 1, `derived`) | §1; `lib/business-os/entitlements/config/creditValue.ts` |
-| Markup | **100%**: the owner pays **2×** our AI cost | §2, decision **D1**. In code: the versioned, append-only `lib/business-os/entitlements/config/creditRetail.ts`, added in boost slice 1 (T-3a, F-3) |
-| **Base rate** (the standard plan rate) | **$0.002 per credit = 500 credits per $1** = credit value × (1 + markup) | Computed from `creditValue.ts` and `creditRetail.ts`, never typed (T-3a). It is the same rate the plans use: Essentials' $39.50 allowance value ÷ 19,750 credits = $0.002 (§3) |
+| Markup | **400%** since 2026-10-25: the owner pays **5×** our AI cost (decision **D5**, retail version 2). *Before: 100%, 2× (D1, retail version 1).* | Pricing doc §2a, **D5** (§2, D1, for version 1). In code: the versioned, append-only `lib/business-os/entitlements/config/creditRetail.ts`, added in boost slice 1 (T-3a, F-3) |
+| **Base rate** | **$0.005 per credit = 200 credits per $1** = credit value × (1 + markup), since retail version 2. *Before: $0.002 per credit = 500 per $1.* | Computed from `creditValue.ts` and `creditRetail.ts`, never typed (T-3a). *Until 2026-10-25 it was also the rate the plans were derived at (Essentials' $39.50 allowance value ÷ 19,750 credits = $0.002); since D4 the plan allowances are sized on measured usage and no longer derive from a rate (pricing doc §3).* |
 
 The markup lives in what a dollar buys, never in the credit value itself (pricing doc §1: "the credit itself carries no markup"), so the ledger stays an honest record of cost. **The bonus % is measured against this base rate**, and that is what the UI displays (FR-42). If the credit value or the markup changes (pricing doc §6.3), the base rate follows. FR-2's validation then flags any package whose credits no longer match.
 
-### 8.2 The packages ("Option A", user-approved 2026-09-30)
+### 8.2 The packages ("Option A", user-approved 2026-09-30; credits re-sized 2026-10-25, D5)
+
+**Current: package version 2, retail version 2 (D5, 2026-10-25).**
+
+| Package | Price (excl. tax) | Base credits (price × 200) | Bonus shown | Total credits | Markup over AI cost after Stripe fee |
+|---|---|---|---|---|---|
+| **Starter** | $10 | 2,000 | none | **2,000** (one Essentials month) | 371% |
+| **Plus** — badge "Most popular" | $25 | 5,000 | +10% | **5,500** (one Autopilot month plus the bonus) | 336% |
+| **Max** — badge "Best value" | $50 | 10,000 | +15% | **11,500** (~2.3 Autopilot months) | 320% |
+
+The same formula as below, fee assumed at 2.9% + $0.30: Starter $9.41 net ÷ $2.00 cost; Plus $23.98 ÷ $5.50; Max $48.25 ÷ $11.50. Before the fee the markups are 400% / 355% / 335%, and the gross margin on cost is **80%** on Starter (78% Plus, 77% Max). Version 1 of each package stays in `boostPackages.snapshot.json`; a purchase made under it keeps the credits it was sold (FR-4).
+
+**History: package version 1, retail version 1 (2026-09-30 to 2026-10-25).**
 
 | Package | Price (excl. tax) | Base credits (price × 500) | Bonus shown | Total credits | Markup over AI cost after Stripe fee |
 |---|---|---|---|---|---|
@@ -279,7 +293,7 @@ The markup lives in what a dollar buys, never in the credit value itself (pricin
 | **Plus** — badge "Most popular" | $25 | 12,500 | +10% | **13,750** | 74% |
 | **Max** — badge "Best value" | $50 | 25,000 | +15% | **28,750** | 68% |
 
-**How the markup column is computed.** (price − Stripe fee) ÷ (total credits × $0.001) − 1, with the fee **assumed** at 2.9% + $0.30:
+**How the markup column is computed** (version 1 figures shown). (price − Stripe fee) ÷ (total credits × $0.001) − 1, with the fee **assumed** at 2.9% + $0.30:
 
 | Package | Stripe fee (assumed) | Net | AI cost if every credit is used | Markup |
 |---|---|---|---|---|
@@ -292,6 +306,18 @@ The markup lives in what a dollar buys, never in the credit value itself (pricin
 Package names per locale ("Starter", "Plus", "Max") and the badges ("Most popular", "Best value") are drafts in English. Hebrew and Spanish need native review, as for the credit diary labels.
 
 ### 8.3 Sanity check
+
+**Re-checked 2026-10-25 for D5** (the rows below that follow are the 2026-09-30 check, kept as history):
+
+| Check | Finding | Verdict |
+|---|---|---|
+| Profitable? | 371% / 336% / 320% after the assumed Stripe fee, even if every credit is used | ✅ |
+| Bonus rises with size? | 200 → 220 → 230 credits per dollar; the 0 / +10 / +15% step is unchanged | ✅ |
+| Relative to plans | A plan fee is no longer a purchase of credits (pricing doc D4), so there is no plan rate to undercut. Starter equals one Essentials month of credits, Plus one Autopilot month plus 10% | ✅ |
+| Will anyone need them? | Allowances are now ≈ 3× a modelled heavy month (Essentials 2,000, Autopilot 5,000, trial 1,000 in total); a heavy month, image-heavy use (~43–54 credits per image on the current model) or a busy trial can meet them | ✅ Boosts are the release valve |
+| Cap vs packages | $150 per 30 days allows three Max packs (34,500 credits) | ✅ |
+
+**The 2026-09-30 check (version 1):**
 
 | Check | Finding | Verdict |
 |---|---|---|
@@ -359,7 +385,7 @@ Boosts are **domain B**. Everything the product built for currency so far is **d
 ## 11. Acceptance criteria
 
 - [ ] An owner on each of trial, champion, basic and pro can open Top up, choose each of Starter, Plus and Max, and complete payment in Stripe test mode.
-- [ ] After a successful test payment for **Plus**, exactly one `business_os_credit_lots` row (`source = 'boost_purchase'`) adds **13,750** credits (12,500 base + 1,250 bonus), with the credit value version, key `boost:<session id>` and an empty expiry, and the linked `business_os_boost_purchases` row holds the package id and version, the price and the Stripe reference. The card's "Extra credits" figure has increased by 13,750.
+- [ ] After a successful test payment for **Plus**, exactly one `business_os_credit_lots` row (`source = 'boost_purchase'`) adds **13,750** credits (12,500 base + 1,250 bonus; **5,500** = 5,000 + 500 for package version 2 since D5, 2026-10-25), with the credit value version, key `boost:<session id>` and an empty expiry, and the linked `business_os_boost_purchases` row holds the package id and version, the price and the Stripe reference. The card's "Extra credits" figure has increased by 13,750 (5,500 for package version 2).
 - [ ] The catalogue fails validation if a package's base credits do not equal price × the base rate, or its total credits do not equal base × (1 + bonus %).
 - [ ] The bonus shown in the picker, the badges and the history is **computed** from the catalogue and the base rate (Starter none, Plus +10%, Max +15%). Changing the base rate in a test either changes the shown bonus or fails validation; no hand-typed bonus text exists.
 - [ ] Replaying the same Stripe event, or re-processing the same payment, does not add a second entry.
@@ -397,7 +423,7 @@ Boosts are **domain B**. Everything the product built for currency so far is **d
 | P-2 | What happens to boost lots on cancel, downgrade, grace or pause (Q10) | Parked. There is no downgrade support today | Boost lots are kept. Purchase is allowed in any lifecycle state while the account has a plan row. |
 | P-3 | Refund policy (Q11) | Parked. There are no refunds today | FR-35 to FR-37 ensure refunds and disputes are flagged, not silent. |
 | P-4 | Enforcing expiry and reminders before expiry (Q9) | Low priority. Field modelled only | No lot expires in v1. |
-| P-5 | Custom amount (Q2) | Later | At the base rate (500 credits per $1), no bonus unless decided |
+| P-5 | Custom amount (Q2) | Later | At the base rate (200 credits per $1 since D5, 2026-10-25; it was 500), no bonus unless decided |
 | P-6 | Multi-currency prices (with plans, OI-1) | Later | USD only |
 
 ---
@@ -870,3 +896,4 @@ This section was requested as "§18.7". §18.7 already holds the user questions,
 | 2026-10-10 | Slice 6b — QA follow-ups applied | The "run billing reconcile now" button no longer reports a run that did not happen as "0 examined": it says the run could not happen and that the nightly run will try again. A reason for a limit change is counted the way the database counts it (two emoji are two characters). On a top-up whose credits are all used or expired, the admin view now says "Nothing left to take back" instead of pointing to the Credits block. No business decision changed |
 | 2026-10-10 | Slice 6b — QA re-check PASS | The fixes work. If the reconcile hits an internal error, the admin now sees "could not run" instead of a reassuring "0 examined", and a partial list failure is said out loud. A reason is counted the way the database counts it, so emoji no longer slip through the dialog only to fail on save. A purchase whose credits are already used up or expired says "Nothing left to take back" instead of pointing at the Credits block. Verified with mocks only. Ready for the user to review the changes |
 | 2026-10-11 | Slice 6b — committed, PR #289 open | The user approved the commit on 2026-10-11 after seeing the diff (SA code review approved; QA re-check PASS). Committed on `feature/bos-credits-boost-slice-6b` and opened as [PR #289](https://github.com/AgentsPilot/neuronforge/pull/289) to `main`. Admin actions: the spending-limit override within the BQ-1 ceiling ($1 to $1,500 per 30 days), take back credits on a purchase, and the reconcile button. No new admin handler, no migration, no owner-facing change. With 6b merged, all planned boost slices are complete; the go-live checklist and the optional 6c remain |
+| 2026-10-25 | **Credits re-size: decision D5 (user)** | Boost markup 100% → **400%**, so **200 credits per $1** (was 500); prices and bonuses unchanged: **Starter $10 → 2,000, Plus $25 → 5,500, Max $50 → 11,500** credits. Recorded as decision D5 in §1, change C-8 in §2, §8.1 (markup and base rate), §8.2 (the current version 2 table, markups 371% / 336% / 320% after the assumed fee; version 1 kept as history), §8.3 (re-check), the AC figure and P-5. In code on `feature/business-os-credits-resize`: credit retail version 2 appended, every package re-versioned to 2 and appended to the snapshot. No Stripe change (inline `price_data`); cap unchanged; credits already bought untouched. Made with D4 / D6 (plan allowances and existing accounts): [BUSINESS_OS_CREDIT_PRICING.md](/docs/architecture/BUSINESS_OS_CREDIT_PRICING.md) §2a |
