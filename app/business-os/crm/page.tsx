@@ -10,10 +10,12 @@ import { CRMTaskList } from '@/components/crm/CRMTaskList';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { CRMTaskModal } from '@/components/crm/CRMTaskModal';
 import { CRMContactDrawerV2 } from '@/components/crm/contact-drawer';
-import { Plus, Search, Users, Download, LayoutGrid, List, CheckSquare, Mail } from 'lucide-react';
+import { Plus, Search, Users, LayoutGrid, List, CheckSquare, Mail } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { ContactSearchField } from '@/components/crm/ContactSearchField';
+import { ContactsExportButton } from '@/components/crm/ContactsExportButton';
+import { buildContactsCsvFile } from '@/lib/crm/contactsCsv';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
@@ -22,6 +24,27 @@ import { usePhoneLibSettled } from '@/components/crm/usePhoneLib';
 const logger = createLogger({ module: 'CRMPage' });
 
 type ViewMode = 'pipeline' | 'contacts' | 'subscribers' | 'tasks';
+
+/**
+ * The contacts export's columns, in file order. The headers are read from this
+ * (`crm.export.<key>`) and the phone's position is derived from it, so moving a
+ * column cannot leave the phone exception pointing at the wrong cell. The row
+ * builder in `handleExportCSV` lists its cells in this same order.
+ */
+const EXPORT_COLUMNS = [
+  'first_name',
+  'last_name',
+  'email',
+  'phone',
+  'stage',
+  'source',
+  'tags',
+  'created_at',
+] as const;
+const PHONE_COLUMN = EXPORT_COLUMNS.indexOf('phone');
+
+/** The views whose rows are `contacts` — the only ones Export can honestly count. */
+const EXPORTABLE_VIEWS: readonly ViewMode[] = ['pipeline', 'contacts'];
 
 /**
  * The drawer's collapsible sections, as `CRMContactDrawerV2.initialSection`
@@ -592,68 +615,37 @@ export default function CRMPage() {
   const handleExportCSV = () => {
     if (contacts.length === 0) return;
 
-    // Define CSV headers
-    const headers = [
-      t('crm.export.first_name'),
-      t('crm.export.last_name'),
-      t('crm.export.email'),
-      t('crm.export.phone'),
-      t('crm.export.stage'),
-      t('crm.export.source'),
-      t('crm.export.tags'),
-      t('crm.export.created_at')
-    ];
+    // Headers in EXPORT_COLUMNS order; the row below follows the same order.
+    const headers = EXPORT_COLUMNS.map(key => t(`crm.export.${key}`));
 
     /*
-     * A PHONE NUMBER IS TEXT, and a spreadsheet does not agree.
+     * The rows as the owner reads them; `buildContactsCsvFile` neutralises
+     * every text cell (names arrive from the public forms) and keeps the phone
+     * as spreadsheet text — see `lib/crm/contactsCsv` for that one exception.
      *
-     * ───────────────────────────────────────────────────────────────────────
-     * CSV quoting is syntax, not type: Excel reads `"0543254785"` as the
-     * NUMBER 543254785 and the leading zero is gone — an Israeli mobile
-     * arriving in an export one digit short. `="..."` is the one form Excel,
-     * Google Sheets and Numbers all read back as text.
-     *
-     * The value itself is left exactly as stored. Six of the twelve phones on
-     * this platform carry no country code, and this account holds both +972
-     * and +1 numbers, so there is no country to apply that would not be a
-     * guess — and a wrong country code on an exported list is worse than a
-     * bare national number, because it looks dialable.
-     * ───────────────────────────────────────────────────────────────────────
+     * Exactly `contacts`, the rows on screen — the same array the button's
+     * count reads, so the label and the file cannot disagree (LX-1).
      */
-    const asText = (value: string) => (value ? `="${value.replace(/"/g, '""')}"` : '');
-
-    // Map contacts to CSV rows
     const rows = contacts.map(contact => [
       contact.first_name || '',
       contact.last_name || '',
       contact.email || '',
-      asText(contact.phone || ''),
+      contact.phone || '',
       /* The words the owner configured, not the key the column holds.
          `family_enrolled` is an implementation detail of this product; the
          person reading the export has never seen it. */
       stageOptions.find(option => option.value === contact.stage)?.label ?? contact.stage ?? '',
       sourceLabel(contact.source),
       (contact.tags || []).join('; '),
+      /* Browser-local date, as before. Known limitation: not the business's
+         `user_preferences.timezone`; left for the full per-list export. */
       contact.created_at ? new Date(contact.created_at).toLocaleDateString() : ''
     ]);
 
-    // Create CSV content
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row =>
-        row
-          .map(cell => {
-            const text = String(cell);
-            /* Already a formula-quoted cell — quoting it again would ship the
-               `="..."` to the reader as literal characters. */
-            return text.startsWith('="') ? text : `"${text.replace(/"/g, '""')}"`;
-          })
-          .join(',')
-      )
-    ].join('\n');
+    const csvContent = buildContactsCsvFile(headers, rows, PHONE_COLUMN);
 
-    // Create and trigger download
-    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Create and trigger download. The builder already carries the BOM.
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `contacts_${new Date().toISOString().split('T')[0]}.csv`;
@@ -717,17 +709,13 @@ export default function CRMPage() {
               className="hidden w-64 md:block lg:w-80"
             />
 
-            {/* Export CSV Button */}
-            <button
-              onClick={handleExportCSV}
-              disabled={contacts.length === 0}
-              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('crm.export.tooltip')}
-            >
-              <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span className="hidden sm:inline">{t('crm.export.button')}</span>
-            </button>
+            {/* Export CSV Button — names how many rows it exports (LX-1) */}
+            {/* Only where the rows on screen ARE `contacts`. Subscribers and
+                Tasks show other lists, so a count read from `contacts` there
+                would name rows the owner is not looking at. */}
+            {EXPORTABLE_VIEWS.includes(viewMode) && (
+              <ContactsExportButton count={contacts.length} onExport={handleExportCSV} t={t} />
+            )}
 
             {/* View Mode Tabs */}
             <div

@@ -18,7 +18,7 @@
       "anomaly": "no_plan_row"
     },
     "anomaly": "no_plan_row",
-    "matrixVersion": 2,
+    "matrixVersion": 3,
     "capabilities": {
       "crm.core": {
         "value": false,

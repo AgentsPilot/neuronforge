@@ -262,9 +262,10 @@ describe('R-3: the locale output, pinned as an owner reads it', () => {
   it('en', async () => {
     await openWith(okReply(payload()));
     expect(rows()).toEqual([
-      ['$10', '5,000 credits', ''],
-      ['$25', '13,750 credits', 'Includes a +10% bonus (1,250 credits)'],
-      ['$50', '28,750 credits', 'Includes a +15% bonus (3,750 credits)'],
+      // Package version 2 (decision D5, 2026-10-25): 200 credits per $1.
+      ['$10', '2,000 credits', ''],
+      ['$25', '5,500 credits', 'Includes a +10% bonus (500 credits)'],
+      ['$50', '11,500 credits', 'Includes a +15% bonus (1,500 credits)'],
     ]);
   });
 
@@ -272,9 +273,9 @@ describe('R-3: the locale output, pinned as an owner reads it', () => {
     mockLang.language = 'he';
     await openWith(okReply(payload()));
     expect(rows()).toEqual([
-      ['10 $', '5,000 קרדיטים', ''],
-      ['25 $', '13,750 קרדיטים', 'כולל בונוס של 10% (1,250 קרדיטים)'],
-      ['50 $', '28,750 קרדיטים', 'כולל בונוס של 15% (3,750 קרדיטים)'],
+      ['10 $', '2,000 קרדיטים', ''],
+      ['25 $', '5,500 קרדיטים', 'כולל בונוס של 10% (500 קרדיטים)'],
+      ['50 $', '11,500 קרדיטים', 'כולל בונוס של 15% (1,500 קרדיטים)'],
     ]);
     expect(screen.getAllByTestId('boost-package-tax')[0]).toHaveTextContent('לא כולל מס');
   });
@@ -283,9 +284,9 @@ describe('R-3: the locale output, pinned as an owner reads it', () => {
     mockLang.language = 'es';
     await openWith(okReply(payload()));
     expect(rows()).toEqual([
-      ['10 US$', '5000 créditos', ''],
-      ['25 US$', '13.750 créditos', 'Incluye un bono del +10 % (1250 créditos)'],
-      ['50 US$', '28.750 créditos', 'Incluye un bono del +15 % (3750 créditos)'],
+      ['10 US$', '2000 créditos', ''],
+      ['25 US$', '5500 créditos', 'Incluye un bono del +10 % (500 créditos)'],
+      ['50 US$', '11.500 créditos', 'Incluye un bono del +15 % (1500 créditos)'],
     ]);
   });
 });

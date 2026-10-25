@@ -62,12 +62,13 @@ describe('the shipped catalogue (happy path)', () => {
         bonusPercent,
       }))
     ).toEqual([
-      { id: 'starter', priceMinor: 1000, baseCredits: 5000, bonusCredits: 0, totalCredits: 5000, bonusPercent: 0 },
-      { id: 'plus', priceMinor: 2500, baseCredits: 12500, bonusCredits: 1250, totalCredits: 13750, bonusPercent: 10 },
-      { id: 'max', priceMinor: 5000, baseCredits: 25000, bonusCredits: 3750, totalCredits: 28750, bonusPercent: 15 },
+      // Package version 2, retail version 2 (decision D5, 2026-10-25): 200 credits per $1.
+      { id: 'starter', priceMinor: 1000, baseCredits: 2000, bonusCredits: 0, totalCredits: 2000, bonusPercent: 0 },
+      { id: 'plus', priceMinor: 2500, baseCredits: 5000, bonusCredits: 500, totalCredits: 5500, bonusPercent: 10 },
+      { id: 'max', priceMinor: 5000, baseCredits: 10000, bonusCredits: 1500, totalCredits: 11500, bonusPercent: 15 },
     ]);
     for (const pkg of packages) {
-      expect(pkg).toMatchObject({ currency: 'USD', taxExclusive: true, active: true, retailVersion: 1 });
+      expect(pkg).toMatchObject({ currency: 'USD', taxExclusive: true, active: true, retailVersion: 2, version: 2 });
       expect(pkg.creditValueVersion).toBe(currentCreditValue().version);
     }
     expect(packages.map((pkg) => pkg.labels.badge?.en ?? null)).toEqual([null, 'Most popular', 'Best value']);
@@ -126,26 +127,27 @@ describe('the shipped catalogue (happy path)', () => {
 });
 
 describe('a changed base rate never passes unnoticed (acceptance criterion)', () => {
-  const RATE_V2 = retailRateFor(
-    { version: 2, markup: 1.5, creditValueVersion: currentCreditValue().version, decidedOn: '2026-10-04', derivation: 'planted' },
+  // A planted NEXT markup entry (the shipped one is version 2 since D5).
+  const RATE_NEXT = retailRateFor(
+    { version: 3, markup: 1.5, creditValueVersion: currentCreditValue().version, decidedOn: '2026-10-04', derivation: 'planted' },
     currentCreditValue()
   );
 
-  it('packages still priced on retail v1 fail validation (T-F3)', () => {
-    const issues = issuesOf(BOOST_PACKAGES, RATE_V2);
+  it('packages still priced on the current retail version fail validation once a new one is appended (T-F3)', () => {
+    const issues = issuesOf(BOOST_PACKAGES, RATE_NEXT);
     expect(issues).toHaveLength(3);
-    for (const issue of issues) expect(issue).toMatch(/retail version 1, current is 2/);
+    for (const issue of issues) expect(issue).toMatch(/retail version 2, current is 3/);
   });
 
   it('re-pointed packages resolve to different credits, so the snapshot guard flags them (T-F4)', () => {
-    const repointed = shipped().map((pkg) => ({ ...pkg, retailVersion: 2 }));
-    const result = validateBoostCatalogue(repointed, RATE_V2, CAP);
+    const repointed = shipped().map((pkg) => ({ ...pkg, retailVersion: 3 }));
+    const result = validateBoostCatalogue(repointed, RATE_NEXT, CAP);
     if (!result.ok) throw new Error(result.issues.join('\n'));
     expect(result.packages.map((pkg) => pkg.totalCredits)).toEqual([4000, 11000, 23000]);
     // Same (id, version) as the released snapshot but different credits: the
     // snapshot test (boostCatalogue.guard.test.ts) refuses this until each
     // version is bumped.
-    expect(result.packages.every((pkg) => pkg.version === 1)).toBe(true);
+    expect(result.packages.every((pkg) => pkg.version === 2)).toBe(true);
   });
 });
 
@@ -290,7 +292,7 @@ describe('the catalogue cannot be changed by a caller (SA CR-1)', () => {
     }).toThrow(TypeError);
 
     const again = await source.getActive('plus');
-    expect(again).toMatchObject({ priceMinor: 2500, totalCredits: 13750, bonusPercent: 10 });
+    expect(again).toMatchObject({ priceMinor: 2500, totalCredits: 5500, bonusPercent: 10 });
     expect(again?.labels.name.en).toBe('Plus');
     const listed = await source.listActive();
     expect(listed.find((pkg) => pkg.id === 'plus')?.priceMinor).toBe(2500);
@@ -330,25 +332,25 @@ describe('QA follow-ups (R-1 to R-7)', () => {
   it('R-2: a bonus of 50% resolves; 51% is refused', () => {
     const ok = validateBoostCatalogue(withPackage(2, { bonusPercent: 50 }), RATE, CAP);
     if (!ok.ok) throw new Error(ok.issues.join('\n'));
-    expect(ok.packages.find((pkg) => pkg.id === 'max')).toMatchObject({ baseCredits: 25000, totalCredits: 37500, bonusPercent: 50 });
+    expect(ok.packages.find((pkg) => pkg.id === 'max')).toMatchObject({ baseCredits: 10000, totalCredits: 15000, bonusPercent: 50 });
     expect(issuesOf(withPackage(2, { bonusPercent: 51 })).join('\n')).toMatch(/package\[2\]: bonusPercent/);
   });
 
-  it('R-3: odd prices — $9.99 resolves at 0% and is refused at 10%; $0.01 gives 5, and 6 at 20%', () => {
+  it('R-3: odd prices — $9.99 resolves at 0% and is refused at 10%; $0.01 gives 2, and 3 at 50% (200 per $1, D5)', () => {
     const at999 = validateBoostCatalogue(withPackage(0, { priceMinor: 999 }), RATE, CAP);
     if (!at999.ok) throw new Error(at999.issues.join('\n'));
-    expect(at999.packages.find((pkg) => pkg.id === 'starter')).toMatchObject({ baseCredits: 4995, totalCredits: 4995, bonusPercent: 0 });
+    expect(at999.packages.find((pkg) => pkg.id === 'starter')).toMatchObject({ baseCredits: 1998, totalCredits: 1998, bonusPercent: 0 });
     expect(issuesOf(withPackage(0, { priceMinor: 999, bonusPercent: 10 })).join('\n')).toMatch(
       /bonus does not give a whole number of credits/
     );
 
-    const atOneCent = validateBoostCatalogue(withPackage(0, { priceMinor: 1, bonusPercent: 20 }), RATE, CAP);
+    const atOneCent = validateBoostCatalogue(withPackage(0, { priceMinor: 1, bonusPercent: 50 }), RATE, CAP);
     if (!atOneCent.ok) throw new Error(atOneCent.issues.join('\n'));
     expect(atOneCent.packages.find((pkg) => pkg.id === 'starter')).toMatchObject({
-      baseCredits: 5,
+      baseCredits: 2,
       bonusCredits: 1,
-      totalCredits: 6,
-      bonusPercent: 20,
+      totalCredits: 3,
+      bonusPercent: 50,
     });
     expect(issuesOf(withPackage(0, { priceMinor: 1, bonusPercent: 10 })).join('\n')).toMatch(
       /bonus does not give a whole number of credits/
