@@ -3,6 +3,10 @@
  * the admin page (requirement ADMIN_EXCHANGE_RATES_REQUIREMENT.md, §13 SQ-3,
  * SQ-5 as amended by SA O-1, SA-R8, FR-8).
  *
+ * Slice 1e (SA §13.8 SQ-52) changes this file for the PATCH alone: the
+ * optional `expectedRate` and `origin` keys. The sync contract lives in
+ * `rateSyncRules.ts`, which imports from here, never the other way round.
+ *
  * Pure: no I/O, no React, no server-only import, so the `'use client'` page may
  * import it. Nothing here converts money (D-5): a rate is only validated,
  * compared with another rate, and shown.
@@ -142,11 +146,47 @@ export const rateStringSchema = z
   .regex(RATE_PATTERN, 'Use up to 6 digits, optionally a point and up to 6 decimals')
   .refine((rate) => /[1-9]/.test(rate), 'The rate must be greater than 0');
 
-/** One change per request, the field named in the body (SQ-3). Unknown keys are refused. */
-export const patchBodySchema = z.discriminatedUnion('field', [
-  z.object({ field: z.literal('rate'), rate: rateStringSchema }).strict(),
-  z.object({ field: z.literal('enabled'), isEnabled: z.boolean() }).strict(),
-]);
+/**
+ * Where an accepted rate came from (slice 1e, SA §13.7 SQ-43): page-reported,
+ * kept in the audit for the record only. It never changes validation, the
+ * value saved or the answer. Strict: an unknown key, a bad date or another
+ * source is refused.
+ */
+export const rateOriginSchema = z
+  .object({
+    kind: z.literal('sync'),
+    source: z.literal('ecb'),
+    rateDate: z.string().refine(isRealDate, 'Use a real date, YYYY-MM-DD'),
+  })
+  .strict();
+
+export type RateOrigin = z.infer<typeof rateOriginSchema>;
+
+/**
+ * One change per request, the field named in the body (SQ-3). Unknown keys are
+ * refused on both branches. Slice 1e adds two OPTIONAL keys to the `rate`
+ * branch only: `expectedRate`, the rate the sync compared against (a different
+ * stored rate is a 409, SQ-44), and `origin` (SQ-43). `origin` requires
+ * `expectedRate` (SA §13.8 SQ-50 (2)), so an accept is never recorded against
+ * a base that had changed. Without either key a body is exactly as before.
+ */
+export const patchBodySchema = z
+  .discriminatedUnion('field', [
+    z
+      .object({
+        field: z.literal('rate'),
+        rate: rateStringSchema,
+        expectedRate: rateStringSchema.optional(),
+        origin: rateOriginSchema.optional(),
+      })
+      .strict(),
+    z.object({ field: z.literal('enabled'), isEnabled: z.boolean() }).strict(),
+  ])
+  .superRefine((body, ctx) => {
+    if (body.field === 'rate' && body.origin !== undefined && body.expectedRate === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'origin requires expectedRate', path: ['expectedRate'] });
+    }
+  });
 
 export type ExchangeRatePatchBody = z.infer<typeof patchBodySchema>;
 

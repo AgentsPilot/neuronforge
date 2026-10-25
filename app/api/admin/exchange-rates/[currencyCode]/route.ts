@@ -11,7 +11,8 @@
  *   then a strict discriminated union: unknown keys refused, so no
  *   `updated_by` can be smuggled in) → 400 base currency (USD: the rate is
  *   fixed at 1 and it cannot be disabled; pure, before any read) → pre-read
- *   (500 / 404 unknown code) → ONE update carrying the change,
+ *   (500 / 404 unknown code) → 409 a stale `expectedRate` (slice 1e) → ONE
+ *   update carrying the change,
  *   `last_updated_at` and `updated_by` = the admin from `requireAdmin` (SA-R7)
  *   → audit with logAndFlush (WC-7) → 200.
  *
@@ -19,6 +20,26 @@
  * (SA-R7): the date refreshes, the database trigger writes no history row,
  * and the audit records oldValue equal to newValue. The answer says
  * `unchanged: true`.
+ *
+ * Accepting a synced suggestion (slice 1e, SA §13.7 SQ-43 / SQ-44, §13.8
+ * SQ-50): the `rate` body may carry two optional keys.
+ *   { "field": "rate", "rate": "3.121505", "expectedRate": "3.09",
+ *     "origin": { "kind": "sync", "source": "ecb", "rateDate": "2026-10-23" } }
+ *   - `expectedRate` is the rate the sync compared against. After the
+ *     pre-read, a stored rate that is not the same number → 409
+ *     `{ code: 'rate_changed' }` "This rate changed since you synced. Sync
+ *     again.", with NO write and NO audit. (The sub-second gap between the
+ *     pre-read and the update is accepted, SQ-44.)
+ *   - `origin` requires `expectedRate` (400 otherwise). With it, the save is
+ *     audited as `EXCHANGE_RATE_SUGGESTION_ACCEPTED` INSTEAD of
+ *     `EXCHANGE_RATE_UPDATED` (one save, one entry), with details
+ *     `{ currencyCode, field, oldValue, newValue, unchanged, origin, gap }`: a
+ *     superset of the sibling's. `gap` is computed HERE from the pre-read and
+ *     the stored value, never taken from the page; `origin` is page-reported
+ *     and kept for the record only. "Confirm (no change)" is the same event
+ *     with `unchanged: true`.
+ *   - Without either key the request and its audit are exactly as before: a
+ *     manual edit still writes `EXCHANGE_RATE_UPDATED`.
  *
  * The currency code comes ONLY from the path. Logs carry the code and field,
  * never an email or a body. Nothing here converts money (D-5).
@@ -38,7 +59,8 @@ import {
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
 import { logAndFlush } from '@/lib/audit/boundedAuditFlush';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { createLogger } from '@/lib/logger';
+import { rateGap, type RateGap } from '@/lib/admin/exchangeRates/rateMath';
+import { createLogger, type Logger } from '@/lib/logger';
 import { exchangeRatesRepository, toExchangeRateWire } from '@/lib/repositories/ExchangeRatesRepository';
 
 export const runtime = 'nodejs';
@@ -56,6 +78,20 @@ function fail(status: number, error: string, details?: unknown) {
     { success: false, error, details: process.env.NODE_ENV === 'development' ? details : undefined },
     { status }
   );
+}
+
+/**
+ * The server's own gap for the accept entry (SQ-50 (1)). The stored rates are
+ * always above 0 (the column's CHECK), so this cannot fail in practice; if it
+ * ever did, the saved change must still stand, so the entry carries null.
+ */
+function acceptedGap(oldValue: string, newValue: string, requestLogger: Logger, currencyCode: string): RateGap | null {
+  try {
+    return rateGap(oldValue, newValue);
+  } catch (err) {
+    requestLogger.warn({ err, currencyCode }, 'Accepted exchange rate gap could not be computed');
+    return null;
+  }
 }
 
 export async function PATCH(request: NextRequest, context: { params: { currencyCode: string } }) {
@@ -108,6 +144,16 @@ export async function PATCH(request: NextRequest, context: { params: { currencyC
     }
     const previous = before.data;
 
+    // SQ-44: an accept made against a base that has since changed is refused,
+    // before any write and with no audit. A manual edit never sends expectedRate.
+    if (change.field === 'rate' && change.expectedRate !== undefined && !sameRate(previous.rate_to_usd, change.expectedRate)) {
+      requestLogger.info({ currencyCode, field: change.field }, 'Exchange rate accept refused: the rate changed since the sync');
+      return NextResponse.json(
+        { success: false, error: 'This rate changed since you synced. Sync again.', code: 'rate_changed' },
+        { status: 409 }
+      );
+    }
+
     const after =
       change.field === 'rate'
         ? await exchangeRatesRepository.updateRate(currencyCode, change.rate, adminId)
@@ -131,23 +177,38 @@ export async function PATCH(request: NextRequest, context: { params: { currencyC
         ? sameRate(previous.rate_to_usd, updated.rate_to_usd)
         : previous.is_enabled === updated.is_enabled;
 
+    // SQ-50: an accepted suggestion is its own event; anything else is exactly as before.
+    const accepted = change.field === 'rate' && change.origin !== undefined ? change.origin : null;
     await logAndFlush(
       {
-        action:
-          change.field === 'rate' ? AUDIT_EVENTS.EXCHANGE_RATE_UPDATED : AUDIT_EVENTS.EXCHANGE_RATE_ENABLED_CHANGED,
+        action: accepted
+          ? AUDIT_EVENTS.EXCHANGE_RATE_SUGGESTION_ACCEPTED
+          : change.field === 'rate'
+            ? AUDIT_EVENTS.EXCHANGE_RATE_UPDATED
+            : AUDIT_EVENTS.EXCHANGE_RATE_ENABLED_CHANGED,
         entityType: 'exchange_rate',
         entityId: currencyCode,
         userId: adminId,
         actorId: adminId,
         severity: 'info',
-        details: { currencyCode, field: change.field, oldValue, newValue },
+        details: accepted
+          ? {
+              currencyCode,
+              field: change.field,
+              oldValue,
+              newValue,
+              unchanged,
+              origin: accepted,
+              gap: acceptedGap(previous.rate_to_usd, updated.rate_to_usd, requestLogger, currencyCode),
+            }
+          : { currencyCode, field: change.field, oldValue, newValue },
         request,
       },
       requestLogger,
       { reason: 'exchange rate change', continues: 'the saved change stands' }
     );
 
-    requestLogger.info({ currencyCode, field: change.field, unchanged }, 'Exchange rate changed');
+    requestLogger.info({ currencyCode, field: change.field, unchanged, accepted: accepted !== null }, 'Exchange rate changed');
     const result: ExchangeRatePatchResult = { rate: toExchangeRateWire(updated), unchanged };
     return NextResponse.json({ success: true, data: result });
   } catch (error) {

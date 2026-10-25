@@ -472,3 +472,121 @@ describe('QA probes', () => {
     expect(JSON.stringify(body)).not.toContain('socket');
   });
 });
+
+// ── Slice 1e (SA §13.7 SQ-43 / SQ-44, §13.8 SQ-50): additions only ──────────
+
+describe('slice 1e: accepting a synced suggestion', () => {
+  const ORIGIN = { kind: 'sync', source: 'ecb', rateDate: '2026-10-23' };
+  const stored = (rate: string) =>
+    findByCode.mockImplementation(async (code: string) => ({ data: row({ currency_code: code, rate_to_usd: rate }), error: null }));
+  const audits = () => auditLog.mock.calls.map((call) => call[0] as { action: string; details: Record<string, unknown> });
+
+  it('expectedRate equal to the stored rate (3.09 vs 3.090000) → 200 and one update', async () => {
+    stored('3.090000');
+    const res = await patch('ILS', { field: 'rate', rate: '3.121505', expectedRate: '3.09' });
+    expect(res.status).toBe(200);
+    expect(updateRate).toHaveBeenCalledWith('ILS', '3.121505', ADMIN.id);
+  });
+
+  it('expectedRate different → 409 rate_changed, no update, no audit', async () => {
+    stored('3.100000');
+    const res = await patch('ILS', { field: 'rate', rate: '3.121505', expectedRate: '3.09', origin: ORIGIN });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      success: false,
+      error: 'This rate changed since you synced. Sync again.',
+      code: 'rate_changed',
+    });
+    expect(updateRate).not.toHaveBeenCalled();
+    expect(auditLog).not.toHaveBeenCalled();
+    expect(order).toEqual(['findByCode']);
+  });
+
+  it('an accept writes exactly one EXCHANGE_RATE_SUGGESTION_ACCEPTED entry and no EXCHANGE_RATE_UPDATED', async () => {
+    stored('3.090000');
+    const res = await patch('ILS', { field: 'rate', rate: '3.121505', expectedRate: '3.090000', origin: ORIGIN });
+    expect(res.status).toBe(200);
+    expect(audits().map((entry) => entry.action)).toEqual(['EXCHANGE_RATE_SUGGESTION_ACCEPTED']);
+    expect(audits()[0]).toMatchObject({
+      entityType: 'exchange_rate',
+      entityId: 'ILS',
+      userId: ADMIN.id,
+      actorId: ADMIN.id,
+      severity: 'info',
+    });
+    // SQ-50 (1): a superset of the sibling's keys; the gap is the server's own (3.09 → 3.121505).
+    expect(audits()[0].details).toEqual({
+      currencyCode: 'ILS',
+      field: 'rate',
+      oldValue: '3.090000',
+      newValue: '3.121505',
+      unchanged: false,
+      origin: ORIGIN,
+      gap: { gapAbsolute: '+0.031505', gapPercent: '+1.02%', direction: 'up' },
+    });
+    expect(order).toEqual(['findByCode', 'updateRate', 'audit.log', 'audit.flush']);
+  });
+
+  it('newValue and the gap come from the STORED value, not the string the page sent', async () => {
+    stored('3.090000');
+    updateRate.mockImplementation(async (code: string) => ({
+      data: row({ currency_code: code, rate_to_usd: '3.121505', last_updated_at: '2026-10-25T09:20:00+00:00' }),
+      error: null,
+    }));
+    await patch('ILS', { field: 'rate', rate: '3.12150', expectedRate: '3.09', origin: ORIGIN });
+    const last = audits()[audits().length - 1];
+    expect(last.details.newValue).toBe('3.121505');
+    expect(last.details.gap).toEqual({ gapAbsolute: '+0.031505', gapPercent: '+1.02%', direction: 'up' });
+  });
+
+  it('a confirm (no change) is the same event with unchanged true and direction none', async () => {
+    stored('3.121505');
+    const res = await patch('ILS', { field: 'rate', rate: '3.121505', expectedRate: '3.121505', origin: ORIGIN });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.unchanged).toBe(true);
+    expect(audits().map((entry) => entry.action)).toEqual(['EXCHANGE_RATE_SUGGESTION_ACCEPTED']);
+    expect(audits()[0].details).toMatchObject({
+      unchanged: true,
+      gap: { gapAbsolute: '0.000000', gapPercent: '0.00%', direction: 'none' },
+    });
+  });
+
+  it('a manual edit still writes EXCHANGE_RATE_UPDATED with exactly the old details', async () => {
+    const res = await patch('ILS', { field: 'rate', rate: '3.71' });
+    expect(res.status).toBe(200);
+    expect(audits().map((entry) => entry.action)).toEqual(['EXCHANGE_RATE_UPDATED']);
+    expect(audits()[0].details).toEqual({ currencyCode: 'ILS', field: 'rate', oldValue: '3.650000', newValue: '3.71' });
+  });
+
+  it('expectedRate without origin is stale-checked and audited as EXCHANGE_RATE_UPDATED', async () => {
+    const res = await patch('ILS', { field: 'rate', rate: '3.71', expectedRate: '3.65' });
+    expect(res.status).toBe(200);
+    expect(audits().map((entry) => entry.action)).toEqual(['EXCHANGE_RATE_UPDATED']);
+  });
+
+  it.each([
+    ['origin without expectedRate', { field: 'rate', rate: '3.1', origin: ORIGIN }],
+    ['origin on the enabled branch', { field: 'enabled', isEnabled: true, origin: ORIGIN }],
+    ['expectedRate on the enabled branch', { field: 'enabled', isEnabled: true, expectedRate: '3.65' }],
+    ['origin from another source', { field: 'rate', rate: '3.1', expectedRate: '3.65', origin: { ...ORIGIN, source: 'frankfurter' } }],
+    ['origin with a bad date', { field: 'rate', rate: '3.1', expectedRate: '3.65', origin: { ...ORIGIN, rateDate: '2026-13-01' } }],
+  ])('%s → 400, nothing read, written or audited', async (_name, body) => {
+    const res = await patch('ILS', body);
+    expect(res.status).toBe(400);
+    expect(order).toEqual([]);
+    expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it('a 404 with origin writes no entry', async () => {
+    findByCode.mockResolvedValue({ data: null, error: null });
+    const res = await patch('ILS', { field: 'rate', rate: '3.1', expectedRate: '3.65', origin: ORIGIN });
+    expect(res.status).toBe(404);
+    expect(auditLog).not.toHaveBeenCalled();
+  });
+
+  it('USD with origin is still the base-currency 400, before any read', async () => {
+    const res = await patch('USD', { field: 'rate', rate: '1', expectedRate: '1', origin: ORIGIN });
+    expect(res.status).toBe(400);
+    expect(order).toEqual([]);
+  });
+});
