@@ -871,6 +871,8 @@ export const he = {
     // CSV Export
     'crm.export.button': 'ייצוא',
     'crm.export.tooltip': 'ייצוא אנשי קשר ל-CSV',
+    'crm.export.button_shown': 'ייצוא {count} המוצגים',
+    'crm.export.tooltip_shown': 'מייצא את {count} אנשי הקשר שמוצגים כעת במסך, לא את כל הרשימה',
     'crm.export.first_name': 'שם פרטי',
     'crm.export.last_name': 'שם משפחה',
     'crm.export.email': 'אימייל',
@@ -1631,6 +1633,7 @@ export const he = {
     'payments.search.under': 'עד',
     'payments.search.try': 'נסו',
     'payments.export.failed': 'לא הצלחנו להפיק את הייצוא',
+    'payments.export.cut': 'הקובץ כולל רק {count} רשומות — לא את כל ההזמנות.',
     'payments.export.working': 'מכינים…',
     'common.add': 'הוספה',
     'common.remove': 'הסרה',

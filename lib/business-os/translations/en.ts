@@ -2189,6 +2189,8 @@ export const en = {
     // CSV Export
     'crm.export.button': 'Export',
     'crm.export.tooltip': 'Export contacts to CSV',
+    'crm.export.button_shown': 'Export {count} shown',
+    'crm.export.tooltip_shown': 'Exports the {count} contacts shown on screen now, not your whole list',
     'crm.export.first_name': 'First Name',
     'crm.export.last_name': 'Last Name',
     'crm.export.email': 'Email',
@@ -3378,6 +3380,7 @@ export const en = {
     'payments.search.under': 'under',
     'payments.search.try': 'Try',
     'payments.export.failed': 'Could not build the export',
+    'payments.export.cut': 'This file holds only {count} records — not every order.',
     'payments.export.working': 'Preparing…',
     'common.add': 'Add',
     'common.remove': 'Remove',

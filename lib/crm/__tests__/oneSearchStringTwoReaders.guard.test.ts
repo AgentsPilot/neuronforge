@@ -16,6 +16,9 @@
 import fs from 'fs';
 import path from 'path';
 
+import { phoneCsvField } from '@/lib/crm/contactsCsv';
+import { toCsv } from '@/lib/payments/csv';
+
 const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf8');
 
 const field = read('components/crm/ContactSearchField.tsx');
@@ -209,44 +212,44 @@ describe('the exported file says what a person can read', () => {
     expect(page).toMatch(/const sourceLabel = useMemo/);
   });
 
+  /*
+   * The CSV rules moved to `lib/crm/contactsCsv` in LX-1, so every text cell
+   * also passes the shared formula rule (`lib/payments/csv`). The page now only
+   * names which column is the phone.
+   */
   it('writes the phone as text a spreadsheet cannot renumber', () => {
-    expect(page).toMatch(/const asText = \(value: string\)/);
-    expect(page).toMatch(/asText\(contact\.phone \|\| ''\)/);
+    expect(page).toMatch(/buildContactsCsvFile\(headers, rows, PHONE_COLUMN\)/);
+    expect(page).toMatch(/const PHONE_COLUMN = EXPORT_COLUMNS\.indexOf\('phone'\);/);
   });
 
-  it('does not quote an already-quoted cell twice', () => {
-    // `"=""0543..."""` reaches the reader as literal characters.
-    expect(page).toMatch(/text\.startsWith\('="'\) \? text :/);
+  it('builds no CSV by hand, so nothing is quoted twice', () => {
+    // `"=""0543..."""` would reach the reader as literal characters.
+    expect(page).not.toMatch(/const asText = /);
+    expect(page).not.toMatch(/headers\.join\(','\)/);
   });
 });
 
 describe('the CSV escaping rule itself', () => {
-  /** The page's rule, restated — the two lines that decide every cell. */
-  const asText = (value: string) => (value ? `="${value.replace(/"/g, '""')}"` : '');
-  const cell = (value: string) => {
-    const text = String(value);
-    return text.startsWith('="') ? text : `"${text.replace(/"/g, '""')}"`;
-  };
-
   it('keeps a leading zero, which is the whole point', () => {
     // Plain quoting loses it in Excel; this is what a reader gets back.
-    expect(cell(asText('0543254785'))).toBe('="0543254785"');
+    expect(phoneCsvField('0543254785')).toBe('="0543254785"');
   });
 
   it('keeps a plus, so an international number stays dialable', () => {
-    expect(cell(asText('+972543254785'))).toBe('="+972543254785"');
+    expect(phoneCsvField('+972543254785')).toBe('="+972543254785"');
   });
 
   it('leaves an empty phone empty rather than printing =""', () => {
-    expect(cell(asText(''))).toBe('""');
+    expect(phoneCsvField('')).toBe('""');
   });
 
   it('still escapes an ordinary cell the ordinary way', () => {
-    expect(cell('Dana "Dee" Cohen')).toBe('"Dana ""Dee"" Cohen"');
+    expect(toCsv([['Dana "Dee" Cohen']])).toBe('"Dana ""Dee"" Cohen"');
   });
 
-  it('escapes a quote inside a phone, absurd as that is', () => {
-    // It costs one `replace` to not produce a broken file for a junk value.
-    expect(cell(asText('05"4'))).toBe('="05""4"');
+  it('a quote inside a phone is not phone-shaped, so it is an ordinary cell', () => {
+    // It used to become `="05""4"`. The formula form is now only for digits
+    // and phone punctuation; anything else is quoted, neutralised text.
+    expect(phoneCsvField('05"4')).toBe('"05""4"');
   });
 });
