@@ -15,6 +15,9 @@
  *     AiPriceProposalRepository.findAppliedLinesByIds
  *     AiPriceApplyRepository.findBatchesByIds
  *   (their read shapes are pinned in priceHistoryReads.test.ts)
+ *   Admin Exchange Rates slice 1e (SA §13.8 SQ-51), the "Rates last checked" tile:
+ *     AuditTrailRepository.findLatestAdminExchangeRateSync (its read shape is
+ *     pinned in AuditTrailRepository.latestExchangeRateSync.test.ts)
  *
  * Two things are pinned: what each reads (columns, scoping, no filter-string
  * search), and WHO may call it — only `app/api/admin/**`, behind requireAdmin.
@@ -502,6 +505,8 @@ const ADMIN_METHODS = [
   'listAdminPricingSyncRuns',
   'findAppliedLinesByIds',
   'findBatchesByIds',
+  // Admin Exchange Rates slice 1e (SA §13.8 SQ-51): the plain exchange-rates GET only.
+  'findLatestAdminExchangeRateSync',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
