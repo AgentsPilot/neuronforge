@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { isLatePeriod } from '@/lib/payments/moneyItems';
 import { CLIENT_STAGE_TYPES, ACTIVE_PIPELINE_TYPES } from '@/lib/crm/StageTypeUtils';
 import { publicSiteUrl } from '@/lib/utils/origins';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
@@ -329,6 +330,9 @@ interface CapabilityStats {
     invoices_paid_30d: number;
     invoices_overdue: number;
     invoices_overdue_amount: number;
+    /** Of `invoices_overdue`: how many are invoices, and how many plan stages. */
+    invoices_overdue_invoice_count: number;
+    invoices_overdue_plan_count: number;
     average_invoice_amount: number;
   };
   email_automation: {
@@ -826,12 +830,24 @@ export async function GET(request: NextRequest) {
         .select('status, amount')
         .eq('user_id', user.id)
         .gte('created_at', periodStart),
-      // Payments: overdue invoices
+      /*
+       * Payments: invoices that are LATE.
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * Every unsettled invoice, filtered below — not `.eq('status','overdue')`.
+       *
+       * That status is written by a CRON, the overdue sweep, so between an
+       * invoice falling due and the next sweep it is late in fact and `sent` in
+       * the column. Reading the status alone makes this tile a report about the
+       * scheduler rather than about the money, and it disagreed with the orders
+       * page, which has always gone by the due date (`isLateEntry`).
+       * ───────────────────────────────────────────────────────────────────────
+       */
       supabaseServer
         .from('payment_invoices')
-        .select('amount, status')
+        .select('amount, status, due_date')
         .eq('user_id', user.id)
-        .eq('status', 'overdue'),
+        .in('status', ['pending', 'sent', 'overdue']),
       // Website: form submissions in 30 days
       supabaseServer
         .from('crm_contacts')
@@ -930,7 +946,20 @@ export async function GET(request: NextRequest) {
         .from('payment_invoices')
         .select('id, service_id, booking_id, amount, status')
         .eq('user_id', user.id)
-        .in('status', ['pending', 'sent', 'overdue', 'paid'])
+        /*
+         * `partially_refunded` belongs with `paid` here, and omitting it would
+         * have DROPPED revenue this query already counts.
+         *
+         * Until 20261088 a partly refunded invoice read `paid` — two triggers
+         * raced and this one won — so these rows have been inside this filter
+         * all along. Settling the race gives them their real status, and
+         * without this line the service they were sold against would quietly
+         * lose that revenue the day the migration ran.
+         *
+         * The same fix is already on the two revenue queries above, with the
+         * same reasoning spelled out at each.
+         */
+        .in('status', ['pending', 'sent', 'overdue', 'paid', 'partially_refunded'])
         .gte('created_at', periodStart),
       // Service names for those rows. Names live only on the service row, so a
       // deleted service leaves its revenue attributed but unnamed.
@@ -1360,9 +1389,39 @@ export async function GET(request: NextRequest) {
     });
     const averageInvoiceAmount = paidInvoiceCount > 0 ? totalInvoiceAmount / paidInvoiceCount : 0;
 
-    // Calculate overdue invoices count and amount
-    const overdueInvoices = overdueInvoicesData?.length || 0;
-    const overdueInvoicesAmount = (overdueInvoicesData || []).reduce((sum: number, inv: { amount: number }) => sum + (inv.amount || 0), 0);
+    /*
+     * WHAT IS ACTUALLY LATE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * The same rule the orders page applies, and for the same reason the
+     * installment block below already gives: the two screens must not disagree
+     * about one debt. They did. A live account showed
+     *
+     *     reports   תשלומים באיחור   ₪1,600   (5 invoices)
+     *     orders    באיחור           ₪2,800
+     *
+     * and the whole ₪1,200 gap was plan periods past their due date with no
+     * invoice raised — money the client owes and nobody is chasing, reported
+     * here as not existing.
+     *
+     * `isLateEntry` is not reused directly: it takes an already-mapped
+     * `MoneyStatus`, and mapping a raw invoice row needs its transactions too.
+     * The RULE is reproduced, which is what has to match.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const todayKey = new Date().toISOString().slice(0, 10);
+
+    const lateInvoices = (overdueInvoicesData || []).filter(
+      (inv: { status?: string | null; due_date?: string | null }) =>
+        inv.status === 'overdue' ||
+        (Boolean(inv.due_date) && String(inv.due_date).slice(0, 10) < todayKey)
+    );
+
+    const overdueInvoices = lateInvoices.length;
+    const overdueInvoicesAmount = lateInvoices.reduce(
+      (sum: number, inv: { amount: number }) => sum + (inv.amount || 0),
+      0
+    );
 
     // Calculate pending invoices total amount (what clients owe)
     const pendingInvoicesAmount = (pendingInvoicesData || []).reduce((sum: number, inv: { amount: number }) => sum + (inv.amount || 0), 0);
@@ -1385,7 +1444,9 @@ export async function GET(request: NextRequest) {
      */
     const { data: unpaidInstallments, error: installmentError } = await supabaseServer
       .from('payment_plan_installments')
-      .select('amount')
+      // `due_date` so the late half below can tell an overdue stage from one
+      // that is simply still ahead. Both figures read these same rows.
+      .select('amount, due_date')
       .eq('user_id', user.id)
       .in('status', ['pending', 'overdue'])
       /*
@@ -1416,6 +1477,29 @@ export async function GET(request: NextRequest) {
       0
     );
     const planPendingCount = unpaidInstallments?.length || 0;
+
+    /*
+     * The half of that debt which is already LATE.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `isLatePeriod` from `moneyItems` — the orders page's own predicate, not a
+     * second opinion about the same rows. A period carries no overdue status
+     * (no cron stamps them), so its due date is the only thing that can say.
+     *
+     * Scoped exactly like `planOwedAmount` above: `invoice_id IS NULL`, so a
+     * billed stage is left to its invoice and counted once. Without that these
+     * would double every stage that had been invoiced and not paid.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const latePlanPeriods = (unpaidInstallments || []).filter(
+      (row: { due_date?: string | null }) => isLatePeriod({ dueDate: row.due_date ?? null })
+    );
+
+    const planLateAmount = latePlanPeriods.reduce(
+      (sum: number, row: { amount: number }) => sum + (Number(row.amount) || 0),
+      0
+    );
+    const planLateCount = latePlanPeriods.length;
 
     /**
      * Potential money lost: billed or agreed, then called off.
@@ -2306,8 +2390,17 @@ export async function GET(request: NextRequest) {
         lost_potential_count: lostPotentialCount,
         invoices_sent_30d: invoiceCounts.sent,
         invoices_paid_30d: invoiceCounts.paid,
-        invoices_overdue: overdueInvoices || 0,
-        invoices_overdue_amount: overdueInvoicesAmount || 0,
+        /*
+         * Invoices AND plan periods, because both are money the client owes
+         * past its date. The orders page has always counted both; this tile
+         * counted only the first and read ₪1,200 light on a live account.
+         */
+        invoices_overdue: (overdueInvoices || 0) + planLateCount,
+        invoices_overdue_amount: (overdueInvoicesAmount || 0) + planLateAmount,
+        /* The split, so the tile can say what the number is made of rather
+           than calling three plan stages "invoices". */
+        invoices_overdue_invoice_count: overdueInvoices || 0,
+        invoices_overdue_plan_count: planLateCount,
         average_invoice_amount: averageInvoiceAmount,
       },
       email_automation: {

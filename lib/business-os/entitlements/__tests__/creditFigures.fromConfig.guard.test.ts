@@ -30,8 +30,25 @@ import { BOOST_PACKAGES, BOOST_PURCHASE_CAP_DEFAULT } from '@/lib/business-os/en
 import { currentRetailRate } from '@/lib/business-os/entitlements/retailRate';
 import { dictionarySource } from '@/tests/helpers/dictionarySource';
 
-/** The user's list (2026-10-01): Essentials, Autopilot / Founding Partner, trial. */
-const USER_LISTED = [19750, 32250, 2000];
+/**
+ * The user's list, current since the 2026-10-25 re-size (decision D4):
+ * Essentials, Autopilot / Founding Partner, trial. (2026-10-01 it was 19,750 /
+ * 32,250 / 2,000.)
+ */
+const USER_LISTED = [2000, 5000, 1000];
+
+/**
+ * Figures the 2026-10-25 re-size retired. Still banned: a surface still
+ * printing one is exactly the stale second copy of the price list this guard
+ * exists to catch.
+ *   - the plan allowances 19,750 and 32,250 (2,000, the old trial total, is
+ *     current again as Essentials);
+ *   - the boost version 1 credits: Plus 12,500 base / 13,750 total and Max
+ *     25,000 base / 28,750 total. Starter's 5,000 is current again (Plus's
+ *     base, Autopilot's allowance). The version 1 bonuses (1,250 and 3,750)
+ *     are not listed: SA scoped this list to the bases and totals.
+ */
+const RETIRED = [19750, 32250, 12500, 13750, 25000, 28750];
 
 const config = readCodeConfig();
 const NOW = new Date('2026-10-01T00:00:00.000Z');
@@ -70,7 +87,9 @@ function stripMinorAmounts(source: string): string {
 }
 
 const WORDED_ONLY = [...new Set(BOOST_CONFIGURED.filter((n) => BOOST_PRICE_MINOR.has(n)))];
-const FIGURES = [...new Set([...USER_LISTED, ...CONFIGURED, ...BOOST_CONFIGURED.filter((n) => !BOOST_PRICE_MINOR.has(n))])];
+const FIGURES = [
+  ...new Set([...USER_LISTED, ...RETIRED, ...CONFIGURED, ...BOOST_CONFIGURED.filter((n) => !BOOST_PRICE_MINOR.has(n))]),
+];
 
 /** A credits word right after the figure, in the three product languages. */
 const CREDIT_WORD = '[\\s\\u00a0\\u202f]*(?:credits?|créditos?|קרדיטים|קרדיט)';
@@ -239,8 +258,13 @@ describe('credit figures come only from configuration (user requirement, 2026-10
       expect(findFigures(stripMinorAmounts(`{ priceMinor: ${n}, currency: 'USD' }`))).toEqual([]);
       expect(findFigures(stripMinorAmounts(`{ amountMinor: ${n} }`))).toEqual([]);
       expect(findFigures(stripMinorAmounts(`'usage.boost.credits': '${typed} קרדיטים',`))).toContain(String(n));
-      // A bare collision number (a paging ceiling) is not a credit figure.
-      expect(findFigures(stripMinorAmounts(`const PAGING = { ceiling: ${n} };`))).toEqual([]);
+      // A bare collision number (a paging ceiling) is not a credit figure —
+      // unless it is also a PLAN allowance, which is caught bare everywhere.
+      // Since the 2026-10-25 re-size, Plus's base credits equal Max's price in
+      // cents AND Autopilot's allowance, so the bare case is now caught (stricter).
+      const bare = findFigures(stripMinorAmounts(`const PAGING = { ceiling: ${n} };`));
+      if (FIGURES.includes(n)) expect(bare).toContain(String(n));
+      else expect(bare).toEqual([]);
     }
   });
 

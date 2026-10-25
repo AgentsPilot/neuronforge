@@ -931,7 +931,10 @@ export function SchedulingCalendarView({
                        * The cursor says so too — a pointer over something that
                        * does not respond is the part that reads as broken.
                        */
-                      const isRecord = booking.status === 'completed';
+                      /* `meeting_status` is where the outcome lives; without it a
+                         held meeting stayed clickable and editable. */
+                      const isRecord =
+                        booking.meeting_status === 'held' || booking.status === 'completed';
                       const height = getBookingHeight(booking.start_time, booking.end_time);
                       const service = getServiceDetails(booking.service_id);
                       const isHovered = hoveredBooking === booking.id;
@@ -1188,7 +1191,9 @@ export function SchedulingCalendarView({
                 const service = getServiceDetails(booking.service_id);
                 /* Same rule as the grid above: a completed meeting is a record,
                    and a record does not open an editor. */
-                const isRecord = booking.status === 'completed';
+                /* Same as the week view above. */
+                const isRecord =
+                  booking.meeting_status === 'held' || booking.status === 'completed';
 
                 return (
                   <div

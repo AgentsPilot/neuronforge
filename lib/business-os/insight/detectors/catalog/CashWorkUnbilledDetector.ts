@@ -141,7 +141,17 @@ export class CashWorkUnbilledDetector extends BaseDetector {
         contact:crm_contacts(first_name, last_name, email)
       `)
       .eq('user_id', userId)
-      .eq('status', 'completed')
+      /*
+       * Work DONE and not yet billed, so the question is whether the meeting
+       * happened — `meeting_status`, not `status`.
+       *
+       * `complete()` no longer writes `status: 'completed'`; it writes
+       * `meeting_status: 'held'`. Against the old filter this detector stopped
+       * seeing newly-held meetings, which means unbilled work silently stopped
+       * being chased — the one thing it exists to do. The backfill gave every
+       * historical `completed` row a `held`, so this covers both.
+       */
+      .eq('meeting_status', 'held')
       .gte('start_time', lookbackFrom)
       .lt('start_time', graceCutoff)
       .order('start_time', { ascending: false });

@@ -81,6 +81,20 @@ export class IntakeReminderService {
       .from('scheduling_bookings')
       .select('id, user_id, start_time, service:scheduling_services(sale_mode, is_scheduled)')
       .eq('status', 'confirmed')
+      /*
+       * And nobody has said what happened at the appointment yet.
+       *
+       * `status = 'confirmed'` used to carry this on its own, because an
+       * outcome overwrote it. It no longer does — `markNoShow()` writes
+       * `meeting_status` and leaves the status alone — so without this line the
+       * reminder chases a client to fill in a preparation form for a meeting
+       * they have already missed, or that was held days ago.
+       *
+       * `.is(null)` rather than excluding the settled values: in SQL
+       * `NULL NOT IN (…)` is NULL, not true, so a NOT IN would drop every
+       * unmarked booking and the reminder would never send at all.
+       */
+      .is('meeting_status', null)
       .is('intake_completed_at', null)
       .is('intake_reminded_at', null)
       .not('intake_sent_at', 'is', null)

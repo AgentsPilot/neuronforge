@@ -119,11 +119,13 @@ export class SchedulingPluginExecutor extends BasePluginExecutor {
 
       case 'complete_booking':
         this.requireParam(params.id, 'id');
-        return this.unwrap(await schedulingBookingRepository.complete(params.id, userId));
+        /* `system`: an agent recorded this, not the owner in person. */
+        return this.unwrap(await schedulingBookingRepository.complete(params.id, userId, 'system'));
 
       case 'mark_no_show':
         this.requireParam(params.id, 'id');
-        return this.unwrap(await schedulingBookingRepository.markNoShow(params.id, userId));
+        /* As above — an agent, not a person. */
+        return this.unwrap(await schedulingBookingRepository.markNoShow(params.id, userId, 'system'));
 
       case 'reschedule_booking':
         this.requireParam(params.id, 'id');
@@ -183,10 +185,21 @@ export class SchedulingPluginExecutor extends BasePluginExecutor {
     }
 
     return this.unwrap(
-      await schedulingBookingRepository.update(bookingId, userId, {
-        start_time: newStart.toISOString(),
-        end_time: newEnd.toISOString(),
-      })
+      await schedulingBookingRepository.update(
+        bookingId,
+        userId,
+        {
+          start_time: newStart.toISOString(),
+          end_time: newEnd.toISOString(),
+        },
+        /*
+         * An agent moved it, not a person (20261082). `'system'` is its own
+         * answer rather than a missing one: the journey then says the time was
+         * changed automatically, which is what happened, instead of putting it
+         * on the owner.
+         */
+        'system'
+      )
     );
   }
 

@@ -201,6 +201,60 @@ export class MarketingConsentRepository {
   }
 
   /**
+   * Everyone this business may email, whoever they are.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THE AUDIENCE IS READ FROM HERE AND NOT FROM A ROSTER
+   *
+   * `business_subscribers` is a roster of NEWSLETTER signups who were not
+   * already contacts — that is its whole scope, and only the two newsletter
+   * forms write to it. Consent, though, is given in four other places: a
+   * tickbox inside the booking flow, the same tickbox on the contact form, the
+   * owner entering it in the CRM drawer, and the double opt-in link.
+   *
+   * So the roster answers "who signed up to the newsletter and is nobody else
+   * to us yet", and the owner's question is "who may I write to". On a live
+   * account those gave nine and zero. This table is the authority on the
+   * second question — it is already what `countMailable` counts and what every
+   * send checks — so the list is built from it.
+   *
+   * `contact_id` comes back because most of these people ARE contacts, and the
+   * caller needs it to put a name to the address.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  async listConsented(
+    userId: string,
+    channel: ConsentChannel = 'email'
+  ): Promise<
+    MarketingConsentResult<
+      Pick<MarketingConsentState, 'email_normalized' | 'contact_id' | 'decided_at'>[]
+    >
+  > {
+    try {
+      const { data, error } = await this.supabase
+        .from('marketing_consent_state')
+        .select('email_normalized, contact_id, decided_at')
+        .eq('user_id', userId)
+        .eq('channel', channel)
+        .eq('consented', true)
+        .order('decided_at', { ascending: false });
+
+      if (error) throw error;
+
+      return {
+        data: (data ?? []) as Pick<
+          MarketingConsentState,
+          'email_normalized' | 'contact_id' | 'decided_at'
+        >[],
+        error: null,
+      };
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Failed to list the consented audience');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * The same question for a list, in one round trip.
    *
    * This is what the bulk-send preview calls, so that the number the owner

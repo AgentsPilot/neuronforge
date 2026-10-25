@@ -124,9 +124,16 @@ const cashFlow: MeasureFn = async (supabase, userId, current, previous) => {
 const retention: MeasureFn = async (supabase, userId, current, previous) => {
   const { data, error } = await supabase
     .from('scheduling_bookings')
-    .select('contact_id, status, start_time')
+    .select('contact_id, status, meeting_status, start_time')
     .eq('user_id', userId)
-    .eq('status', 'completed')
+    /*
+     * "Came back" means they turned up more than once, so this counts meetings
+     * that HAPPENED — `meeting_status`, not `status`. `complete()` no longer
+     * writes `status: 'completed'`, so the old filter would show retention
+     * falling for every owner who marks a meeting held from now on, which is a
+     * health score moving on an artefact rather than on the business.
+     */
+    .eq('meeting_status', 'held')
     .gte('start_time', previous.from);
 
   if (error) throw error;

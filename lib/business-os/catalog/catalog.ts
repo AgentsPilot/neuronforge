@@ -535,7 +535,29 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         // `refunded` is a real, reachable status that was never declared: a
         // refunded invoice was invisible to any status filter and rendered its
         // raw value with no label.
-        enumValues: ['draft', 'sent', 'paid', 'overdue', 'cancelled', 'refunded'],
+        //
+        // `partially_refunded` is the same omission one refund later, and it
+        // was hidden by a second bug: two triggers raced and the invoice always
+        // ended up reading `paid`, so the value never appeared in the data for
+        // anyone to notice it was undeclared. 20261088 settled the race, and
+        // this is the half that keeps the chat able to see the result.
+        //
+        // NOTE on `writable` above: the two refund values are DERIVED. 20260828d
+        // puts it plainly — `refund_status` is the authoritative field and
+        // `status` is a projection of it, so a direct write of either refund
+        // value is undone the next time a refund event touches the row. They are
+        // declared here to be read and filtered on, not to be set. The same has
+        // been true of `refunded` since it was declared; there is no per-value
+        // write restriction in the catalog to express it, so it is written down.
+        enumValues: [
+          'draft',
+          'sent',
+          'paid',
+          'overdue',
+          'cancelled',
+          'refunded',
+          'partially_refunded',
+        ],
         enumLabels: {
           draft: { en: 'draft', he: 'טיוטה', es: 'borrador' },
           sent: { en: 'sent', he: 'נשלחה', es: 'enviada' },
@@ -543,10 +565,16 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           overdue: { en: 'overdue', he: 'באיחור', es: 'vencida' },
           cancelled: { en: 'cancelled', he: 'בוטלה', es: 'anulada' },
           refunded: { en: 'refunded', he: 'הוחזרה', es: 'reembolsada' },
+          partially_refunded: {
+            en: 'partly refunded',
+            he: 'הוחזרה חלקית',
+            es: 'reembolsada en parte',
+          },
         },
         semanticTerms: {
-          // Deliberately excludes `refunded`: money that was paid and returned
-          // is not money still owed.
+          // Deliberately excludes `refunded` AND `partially_refunded`: money
+          // that was paid and returned is not money still owed, and the part of
+          // it that was kept is not owed either.
           unpaid: ['sent', 'overdue'],
         },
         /*

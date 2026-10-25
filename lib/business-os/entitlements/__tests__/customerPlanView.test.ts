@@ -229,8 +229,9 @@ describe('a trial (Test Flight)', () => {
     expect(changed.map((entry) => entry.capability)).toContain('credits.allowance');
 
     const creditChange = changed.find((entry) => entry.capability === 'credits.allowance')!;
-    expect(creditChange.from).toBe('2,000 in total');
-    expect(creditChange.to).toBe('19,750 per month');
+    // Since the 2026-10-25 re-size (D4): 1,000 in total → 2,000 per month.
+    expect(creditChange.from).toBe('1,000 in total');
+    expect(creditChange.to).toBe('2,000 per month');
 
     // And NOT in `improves`, which is the list that asserts a direction.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('credits.allowance');
@@ -274,7 +275,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     // allowance.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual(['credits.allowance']);
     const credits = view.nextPlanUp!.improves[0];
-    expect(`${credits.from} → ${credits.to}`).toBe('19,750 per month → 32,250 per month');
+    expect(`${credits.from} → ${credits.to}`).toBe('2,000 per month → 5,000 per month');
     expect(capabilityIdsOf(view.nextPlanUp?.adds)).toContain('chat.access');
     expect(capabilityIdsOf(view.nextPlanUp?.adds).length).toBeGreaterThanOrEqual(9);
     // And the nine arrive as ONE row, which is the point of grouping them.
@@ -812,7 +813,7 @@ describe('the included list is grouped by category', () => {
     const rows = viewFor('basic').included;
     const summaries = rows.map((row) => row.summary).join(' | ');
 
-    expect(summaries).toMatch(/Credits \(19,750 per month\)/);
+    expect(summaries).toMatch(/Credits \(2,000 per month\)/);
     expect(summaries).not.toMatch(/\(yes\)/);
     // And a value that already carries brackets is not wrapped in more of them:
     // "Email volume (10,000 per month (alerts, never blocks))" was the first thing
@@ -1187,9 +1188,78 @@ describe('comparison: the plans side by side (upgrade modal UM-0, C-19)', () => 
       config,
     });
     expect(expected).not.toBeNull();
+    // LF-2: the TIER columns are the same for every account; a cohort account's
+    // own column (`current`, `row.current`) is the one addition, and is its own.
+    const tiersOnly = (comparison: CustomerPlanComparison | null) =>
+      comparison && {
+        planIds: comparison.planIds,
+        sections: comparison.sections.map((section) => ({ ...section, rows: section.rows.map(({ current: _own, ...row }) => row) })),
+      };
     for (const view of [viewFor('trial'), viewFor('champion'), dated, viewFor('pro')]) {
-      expect(view.comparison).toEqual(expected);
+      expect(tiersOnly(view.comparison)).toEqual(tiersOnly(expected));
     }
+    expect(viewFor('pro').comparison).toEqual(expected);
+  });
+
+  describe("LF-2 (2026-10-20): a cohort account's own plan is its own first column", () => {
+    const cohortViews = () => [
+      ['trial', viewFor('trial')],
+      ['champion', viewFor('champion')],
+    ] as const;
+
+    it('a tier account gets no own column: its plan is already one of planIds', () => {
+      for (const tier of shownTiers) {
+        const comparison = viewFor(tier).comparison!;
+        expect(comparison.current).toBeNull();
+        for (const row of rowsOf(comparison)) expect(row.current).toBeNull();
+      }
+    });
+
+    it('a cohort account gets `current` = its plan id, and a cell on EVERY row', () => {
+      for (const [cohort, view] of cohortViews()) {
+        expect(view.kind).toBe('cohort');
+        expect(view.comparison!.current).toEqual({ planId: cohort });
+        // The own plan never enters the tier columns.
+        expect(view.comparison!.planIds).not.toContain(cohort);
+        for (const row of rowsOf(view.comparison)) {
+          expect(row.current).not.toBeNull();
+          expect(row.current!.planId).toBe(cohort);
+          expect(row.current!.highlight).toBe(false);
+        }
+      }
+    });
+
+    it("the own cells come from the ACCOUNT's resolution, not from a tier", () => {
+      // The trial previews the lower tier but has its own (one-off) credits; the
+      // Founding Partner has chat, which the lower tier lacks.
+      const trial = viewFor('trial').comparison;
+      expect(rowIn(trial, 'credits').current!.value).not.toBe(cellOf(trial, 'credits', lowTier).value);
+      const champion = viewFor('champion').comparison;
+      expect(rowIn(champion, 'chat').current!.included).toBe(true);
+      expect(cellOf(champion, 'chat', lowTier).included).toBe(false);
+    });
+
+    it('a dated Founding Partner gets the same own column as an open-ended one', () => {
+      const dated = buildCustomerPlanView({
+        resolution: resolveEntitlements({
+          config,
+          account: { ...previewAccountFor(config, 'champion', NOW), cohortExpiresAt: '2026-12-01T00:00:00.000Z' },
+          overrides: [],
+          addons: [],
+          now: NOW,
+        }),
+        unavailable: false,
+        now: NOW,
+        config,
+      });
+      expect(dated.comparison).toEqual(viewFor('champion').comparison);
+    });
+
+    it('buildPlanComparison with no `current` is unchanged (own column null everywhere)', () => {
+      const comparison = buildPlanComparison({ config, locale: 'en', now: NOW });
+      expect(comparison.current).toBeNull();
+      expect(comparison).toEqual(viewFor('basic').comparison);
+    });
   });
 
   it('shows the plans AS DEFINED: an override on the account does not change its column', () => {

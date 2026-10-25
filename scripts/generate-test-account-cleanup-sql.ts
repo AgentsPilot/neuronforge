@@ -144,10 +144,37 @@ export const INITIAL_FUNCTION_MIGRATION = '20261041_operator_test_account_cleanu
  * unchanged, and now writes a receipt too. Two new parameters, p_subject and
  * p_receipt: the migration drops the 6-argument signature, so no old overload
  * stays callable.
+ * 20261092: the eight links into and out of abandoned_bookings and
+ * scheduling_meetings reviewed for G-18 (INBOUND_FOREIGN_KEYS). Both tables
+ * joined the plan in c21a4b0f, which regenerated the ALREADY APPLIED 20261081
+ * in place (stamp 2bd40a46795e4555) without their links, so G-18 refused every
+ * check and delete on prod. 20261081 is restored to its applied bytes and
+ * pinned; this file carries the fix. On 2026-10-23 prod got a hand-made bridge
+ * (this plan with the 20261081 stamp swapped in), so the live body is neither
+ * file. The rollback restores 20261081 as committed, see
+ * docs/workplans/TEST_ACCOUNT_CLEANUP_MEETINGS_FK_FIX_WORKPLAN.md.
  */
-export const FUNCTION_MIGRATION = '20261081_operator_account_cleanup_anonymise';
+export const FUNCTION_MIGRATION = '20261092_operator_test_account_cleanup_meeting_links';
 /** The applied migration whose function the rollback restores, byte for byte. */
-export const PREVIOUS_FUNCTION_MIGRATION = '20261077_operator_test_account_cleanup_boost_reversal_events';
+export const PREVIOUS_FUNCTION_MIGRATION = '20261081_operator_account_cleanup_anonymise';
+/**
+ * What this migration changes, for its header (comment lines, no semicolons or
+ * apostrophes: the file must stay paste-safe). Rewritten with each new
+ * FUNCTION_MIGRATION; the applied files keep their own.
+ */
+export const FUNCTION_MIGRATION_PURPOSE: ReadonlyArray<string> = [
+  'Reviews for G-18 the eight links to and from abandoned_bookings and scheduling_meetings, which joined the plan without them',
+  'Without them G-18 refuses every check and delete. Nothing else in the plan changes. Same 8 argument signature as 20261081',
+];
+/**
+ * What running this migration's rollback means beyond restoring the previous
+ * function, for the rollback header (same paste-safe rules). Rewritten with
+ * each new FUNCTION_MIGRATION.
+ */
+export const ROLLBACK_CONSEQUENCE: ReadonlyArray<string> = [
+  'The restored 20261081 function lacks the eight reviewed links, so G-18 refuses every check and delete again until this file is reapplied',
+  'That fails closed. It removes nothing. It is NOT the hand made bridge of 2026-10-23, which carried the same stamp with the links',
+];
 export const MIGRATION_FILE = `supabase/migrations/${FUNCTION_MIGRATION}.sql`;
 export const ROLLBACK_FILE = `supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql`;
 export const PREVIOUS_MIGRATION_FILE = `supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql`;
@@ -181,8 +208,14 @@ export const VERSION_FILE = 'lib/business-os/test-account-cleanup/cleanupFunctio
 export const FUNCTION_NAME = 'public.operator_test_account_cleanup';
 /** The 8-argument signature of 20261081 (DE-10b.1): p_subject and p_receipt added, both DEFAULT NULL. */
 export const FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text, uuid, jsonb)`;
-/** The 6-argument signature every version up to 20261077 had. 20261081 drops it; its rollback restores it. */
-export const PREVIOUS_FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text)`;
+/**
+ * The 6-argument signature every version up to 20261077 had. 20261081 dropped
+ * it. Every later migration still drops it if present (a no-op on prod), so no
+ * old overload can stay callable whichever version a database starts from.
+ */
+export const RETIRED_FUNCTION_SIGNATURE = `${FUNCTION_NAME}(text, text, text, text, uuid, text)`;
+/** The signature of PREVIOUS_FUNCTION_MIGRATION's function: what the rollback restores and grants. */
+export const PREVIOUS_FUNCTION_SIGNATURE = FUNCTION_SIGNATURE;
 /** The table the delete and the anonymise insert their receipt in (migration 20261080). */
 export const RECEIPTS_TABLE = 'public.business_os_deletion_receipts';
 /** The audit event the anonymise writes inside its transaction (O-8). Must equal the registry. */
@@ -400,6 +433,9 @@ export const EXTRA_REVIEWED_TRIGGERS: ReadonlyArray<{ table: string; trigger: st
  * PARENT_OWNED_REASONS). `shared_agent_imports` is owned by its importer.
  */
 export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, string | null]> = [
+  ['abandoned_bookings', 'abandoned_bookings_booking_id_fkey', 'user_id'],
+  ['abandoned_bookings', 'abandoned_bookings_business_fk', 'user_id'],
+  ['abandoned_bookings', 'abandoned_bookings_service_id_fkey', 'user_id'],
   ['advisor_reports', 'advisor_reports_org_id_fkey', 'user_id'],
   ['agent_configurations', 'agent_configurations_agent_id_fkey', 'user_id'],
   ['agent_executions', 'agent_executions_agent_id_fkey', 'user_id'],
@@ -460,9 +496,11 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['data_decision_requests', 'fk_data_decision_requests_execution', 'user_id'],
   ['derived_metrics', 'derived_metrics_business_fk', 'user_id'],
   ['email_campaigns', 'email_campaigns_business_fk', 'user_id'],
+  ['email_sends', 'email_sends_booking_id_fkey', 'user_id'],
   ['email_sends', 'email_sends_business_fk', 'user_id'],
   ['email_sends', 'email_sends_campaign_id_fkey', 'user_id'],
   ['email_sends', 'email_sends_contact_id_fkey', 'user_id'],
+  ['email_sends', 'email_sends_meeting_id_fkey', 'user_id'],
   ['email_sends', 'email_sends_sequence_id_fkey', 'user_id'],
   ['email_sends', 'email_sends_sequence_step_id_fkey', 'user_id'],
   ['email_sequence_enrollments', 'email_sequence_enrollments_business_fk', 'user_id'],
@@ -528,6 +566,7 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['payment_plan_installments', 'payment_plan_installments_business_fk', 'user_id'],
   ['payment_plan_installments', 'payment_plan_installments_contact_id_fkey', 'user_id'],
   ['payment_plan_installments', 'payment_plan_installments_invoice_id_fkey', 'user_id'],
+  ['payment_plan_installments', 'payment_plan_installments_meeting_id_fkey', 'user_id'],
   ['payment_plan_installments', 'payment_plan_installments_payment_plan_id_fkey', 'user_id'],
   ['payment_plan_installments', 'payment_plan_installments_proposal_id_fkey', 'user_id'],
   ['payment_plan_installments', 'payment_plan_installments_subscription_id_fkey', 'user_id'],
@@ -573,6 +612,8 @@ export const INBOUND_FOREIGN_KEYS: ReadonlyArray<readonly [string, string, strin
   ['scheduling_bookings', 'scheduling_bookings_parent_booking_id_fkey', 'user_id'],
   ['scheduling_bookings', 'scheduling_bookings_payment_plan_id_fkey', 'user_id'],
   ['scheduling_bookings', 'scheduling_bookings_service_id_fkey', 'user_id'],
+  ['scheduling_meetings', 'scheduling_meetings_booking_id_fkey', 'user_id'],
+  ['scheduling_meetings', 'scheduling_meetings_business_fk', 'user_id'],
   ['scheduling_services', 'scheduling_services_business_fk', 'user_id'],
   ['shadow_failure_snapshots', 'shadow_failure_snapshots_agent_id_fkey', 'user_id'],
   ['shared_agent_imports', 'shared_agent_imports_created_agent_id_fkey', 'imported_by_user_id'],
@@ -2167,8 +2208,8 @@ GRANT EXECUTE ON FUNCTION ${signature} TO service_role;`;
  * The migration (R-1 to R-4): CREATE OR REPLACE of the function, on top of the
  * schema, secret table and function the initial migration created. It never
  * touches the schema or the secret table, so the stored hash survives and no
- * setup step is repeated. 20261081 first drops the 6-argument signature, so
- * the 8-argument one is the only overload (SA §D). Comments stay at the top,
+ * setup step is repeated. It first drops the retired 6-argument signature if
+ * present (20261081 did, SA §D), so the 8-argument one is the only overload. Comments stay at the top,
  * without semicolons or apostrophes, so the file is as paste-safe as the
  * operator files.
  */
@@ -2179,12 +2220,12 @@ export function renderMigrationSql(): string {
   END IF;`
   ).join('\n');
   const requiredNames = FUNCTION_REQUIRED_TABLES.map((required) => required.migration).join(' and ');
+  const purposeLines = FUNCTION_MIGRATION_PURPOSE.map((line) => `-- ${line}`).join(String.fromCharCode(10));
   return `-- ${FUNCTION_MIGRATION}. GENERATED by scripts/generate-test-account-cleanup-sql.ts. Never edit by hand, and never edit once applied
 -- A changed plan goes in a new dated file (generator constant FUNCTION_MIGRATION).
 -- Replaces the function public.operator_test_account_cleanup with the current plan. The schema operator_private and its secret table stay as they are
--- Data export DE-10b.1. Adds the modes anonymise_check and anonymise and the parameters p_subject and p_receipt. Drops the 6 argument signature first
--- The anonymise closes and anonymises the login in place, keeps our billing with its personal columns blanked, and deletes the rest of the account
--- The delete and the anonymise write the deletion receipt last, inside their transaction
+${purposeLines}
+-- Drops the retired 6 argument signature first if it is still there
 -- Apply order. First ${INITIAL_FUNCTION_MIGRATION}${requiredNames ? ` and ${requiredNames}` : ''}, then this file. It refuses otherwise and applies nothing
 -- The app pins the version stamp this function returns. Until the deployed build and this function agree, the Danger Zone check and delete refuse
 -- Rollback supabase/SQL Scripts/${FUNCTION_MIGRATION}_rollback.sql drops this signature and restores the function of ${PREVIOUS_FUNCTION_MIGRATION}
@@ -2209,14 +2250,14 @@ $create_guard$;
 
 DO $order_guard$
 BEGIN
-  IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR (pg_catalog.to_regprocedure(${lit(PREVIOUS_FUNCTION_SIGNATURE)}) IS NULL AND pg_catalog.to_regprocedure(${lit(FUNCTION_SIGNATURE)}) IS NULL) THEN
+  IF pg_catalog.to_regclass('operator_private.secrets') IS NULL OR (pg_catalog.to_regprocedure(${lit(RETIRED_FUNCTION_SIGNATURE)}) IS NULL AND pg_catalog.to_regprocedure(${lit(FUNCTION_SIGNATURE)}) IS NULL) THEN
     RAISE EXCEPTION ${lit(`Apply ${INITIAL_FUNCTION_MIGRATION} first  Nothing was applied`)};
   END IF;
 ${requiredChecks}
 END
 $order_guard$;
 
-DROP FUNCTION IF EXISTS ${PREVIOUS_FUNCTION_SIGNATURE};
+DROP FUNCTION IF EXISTS ${RETIRED_FUNCTION_SIGNATURE};
 
 ${renderFunctionSql(cleanupFunctionVersion())};
 
@@ -2251,9 +2292,10 @@ export function previousFunctionSql(previousMigrationSql: string): string {
 
 export function renderRollbackSql(previousMigrationSql = readFileSync(join(__dirname, '..', ...PREVIOUS_MIGRATION_FILE.split('/')), 'utf8')): string {
   return `-- Rollback of supabase/migrations/${FUNCTION_MIGRATION}.sql. GENERATED, never edit by hand.
--- Drops the 8 argument function first, so no two overloads stay live (SA W-3)
--- Then restores the function exactly as supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql created it, with its 6 argument grants. Keeps the schema, the secret table and the stored hash
+-- Drops this function first, so no two overloads stay live (SA W-3)
+-- Then restores the function exactly as supabase/migrations/${PREVIOUS_FUNCTION_MIGRATION}.sql created it, with its grants. Keeps the schema, the secret table and the stored hash
 -- Then redeploy an app build that pins the version stamp of ${PREVIOUS_FUNCTION_MIGRATION}, or the Danger Zone check and delete refuse
+${ROLLBACK_CONSEQUENCE.map((line) => `-- ${line}`).join(String.fromCharCode(10))}
 -- Closed accounts and receipts already made stay as they are. Nothing can restore them
 -- The receipt table of 20261080 stays. Its own rollback refuses once any receipt exists
 -- To remove the whole feature instead, also run supabase/SQL Scripts/${INITIAL_FUNCTION_MIGRATION}_rollback.sql afterwards

@@ -413,6 +413,14 @@ export interface CustomerPlanView {
 export interface CustomerPlanComparison {
   /** The columns: exactly `plans.map(p => p.planId)`, same order (tierOrder, shown only). */
   planIds: string[];
+  /**
+   * Live-test fix LF-2 (2026-10-20): the account's OWN plan when it is not a
+   * shown tier (a trial, a Founding Partner), shown as its own first column,
+   * marked "Your plan". Its cells are `row.current`. `null` for a tier account,
+   * whose own plan is already one of `planIds`. The name and "Free" are the
+   * payload's own `name` / `free`, so they are not repeated here.
+   */
+  current: { planId: string } | null;
   /** Non-empty sections only, in `SECTION_PRESENTATION` order. */
   sections: CustomerPlanComparisonSection[];
 }
@@ -432,6 +440,12 @@ export interface CustomerPlanComparisonRow {
   label: string;
   /** One per `planIds` entry, same order. */
   cells: CustomerPlanComparisonCell[];
+  /**
+   * LF-2: the account's own plan's cell for this row, from its RESOLVED
+   * entitlements (what it really has), when `comparison.current` is set; `null`
+   * otherwise. Never highlighted: the highlight compares the plans on sale.
+   */
+  current: CustomerPlanComparisonCell | null;
 }
 
 export interface CustomerPlanComparisonCell {
@@ -871,6 +885,14 @@ function comparisonLabel(labels: Partial<Record<Locale, string>> | undefined, lo
  * next-plan-up preview uses — so a trial, a Founding Partner and a paying owner
  * are all shown the same table.
  *
+ * ── The account's own column (live-test fix LF-2, 2026-10-20) ───────────────
+ * The one exception, and it is explicit: `current`, passed ONLY for an account
+ * whose plan is not a tier (a cohort), adds that plan as a separate first
+ * column (`comparison.current`, `row.current`), read from the account's own
+ * resolution, because "Your plan" has to say what the account really has. It
+ * never feeds a tier column or the highlight, so the plans as defined stay the
+ * same for every viewer. A row also survives when only the own plan grants it.
+ *
  * ── Rows ────────────────────────────────────────────────────────────────────
  * From `PLAN_COMPARISON_ROWS` (server config, UM-D2). A row's `not_built`
  * members are dropped first (nobody has them); a row survives only if some
@@ -894,6 +916,12 @@ export function buildPlanComparison(input: {
   now: Date;
   /** Default `PLAN_COMPARISON_ROWS`; injectable so fixture rows can be tested (SA Q-4). */
   rows?: ReadonlyArray<PlanComparisonRowConfig>;
+  /**
+   * LF-2: the account's own plan, ONLY when it is not a tier (a cohort: trial,
+   * Founding Partner). Becomes `comparison.current` and each row's `current`
+   * cell, read from this resolution. The tier columns never read it (C-17).
+   */
+  current?: { planId: string; resolution: EntitlementResolution };
 }): CustomerPlanComparison {
   const { config, locale, now } = input;
   const rowsConfig = input.rows ?? PLAN_COMPARISON_ROWS;
@@ -914,11 +942,24 @@ export function buildPlanComparison(input: {
     };
   });
 
+  // LF-2: the account's own column, read from ITS resolution and kept apart from
+  // `columns`, so it can never feed a tier's cell or the highlight below.
+  const own = input.current
+    ? {
+        planId: input.current.planId,
+        resolution: input.current.resolution,
+        described: new Map(describePlanCapabilities(input.current.resolution, catalog, locale).map((row) => [row.capability, row])),
+      }
+    : null;
+
   const isVisible = (capability: string) =>
     catalog[capability] !== undefined && !isHiddenFromCustomer(capability, catalog[capability]);
-  const grants = (column: (typeof columns)[number], capability: string) =>
+  const grants = (column: { described: Map<string, { granting: boolean }> }, capability: string) =>
     column.described.get(capability)?.granting === true;
-  const grantedBySome = (capability: string) => columns.some((column) => grants(column, capability));
+  // A row survives when a shown plan grants it, or the account's own plan does
+  // (LF-2): "Your plan" must not hide something the account has.
+  const grantedBySome = (capability: string) =>
+    columns.some((column) => grants(column, capability)) || (own !== null && grants(own, capability));
 
   // Configured rows first, in config order; fallback rows after them, in catalog order.
   const candidates: Array<{ row: string; label: string; members: string[] }> = [];
@@ -948,7 +989,7 @@ export function buildPlanComparison(input: {
       ? AMOUNT_SECTION
       : (comparisonSectionForCategory(catalog[candidate.members[0]].category) ?? catalog[candidate.members[0]].category);
 
-    const cells: CustomerPlanComparisonCell[] = columns.map((column) => {
+    const cellFor = (column: NonNullable<typeof own>): CustomerPlanComparisonCell => {
       const included = candidate.members.every((capability) => grants(column, capability));
       const value =
         isAmountRow && included
@@ -966,7 +1007,8 @@ export function buildPlanComparison(input: {
               .join(' · ')
           : null;
       return { planId: column.planId, included, value, highlight: false };
-    });
+    };
+    const cells: CustomerPlanComparisonCell[] = columns.map(cellFor);
 
     // Highlight: one member only, two or more columns, and one column strictly
     // above every other in the same unit. Equal, unlike units or unrankable → none.
@@ -984,7 +1026,7 @@ export function buildPlanComparison(input: {
     }
 
     const bucket = buckets.get(section);
-    const row = { row: candidate.row, label: candidate.label, cells };
+    const row = { row: candidate.row, label: candidate.label, cells, current: own ? cellFor(own) : null };
     if (bucket) bucket.push(row);
     else buckets.set(section, [row]);
   }
@@ -1001,6 +1043,7 @@ export function buildPlanComparison(input: {
 
   return {
     planIds: columns.map((column) => column.planId),
+    current: own ? { planId: own.planId } : null,
     sections: ordered.map((entry) => ({
       section: entry.section,
       labelKey: entry.labelKey,
@@ -1159,8 +1202,10 @@ export function buildCustomerPlanView(input: {
         : null,
     plans: shownPlanChoices(config, locale),
     // The plans as defined, side by side: built from config, not from `resolution`,
-    // so it is the same table whatever this account is on (UM-0, C-17).
-    comparison: buildPlanComparison({ config, locale, now }),
+    // so the tier columns are the same whatever this account is on (UM-0, C-17).
+    // LF-2: a cohort account (trial, Founding Partner) also gets its OWN plan as a
+    // first column, from its resolution; a tier account's plan is already a column.
+    comparison: buildPlanComparison({ config, locale, now, current: isTier ? undefined : { planId, resolution } }),
     problem: null,
   };
 }

@@ -32,6 +32,9 @@ const LAZY_MODULE = 'components/business-os/lazyDialogs.tsx';
 const HEAVY_MODULES = [
   'components/business-os/ConfigurationDialog',
   'components/business-os/SchedulingDialog',
+  // Upgrade modal UM-2 (workplan §4.5): the window opened from anywhere. `UpgradeModal.tsx`
+  // itself stays static in Settings (SA Q-7), so it is deliberately not listed.
+  'components/business-os/settings/StandaloneUpgradeModal',
 ];
 
 /** Every non-test .ts/.tsx file under the scanned directories. */
@@ -119,7 +122,8 @@ describe('PERF-1: configuration and scheduling dialogs load lazily', () => {
     const code = stripComments(fs.readFileSync(path.join(ROOT, LAZY_MODULE), 'utf8'));
     expect(code).toContain("import('@/components/business-os/ConfigurationDialog')");
     expect(code).toContain("import('@/components/business-os/SchedulingDialog')");
-    expect(code.match(/createLazyDialog</g)?.length).toBe(2);
+    expect(code).toContain("import('@/components/business-os/settings/StandaloneUpgradeModal')");
+    expect(code.match(/createLazyDialog</g)?.length).toBe(3);
     expect(code).not.toContain('next/dynamic');
     expect(code).not.toMatch(/\.catch\(/);
   });
@@ -132,6 +136,7 @@ describe('PERF-1: configuration and scheduling dialogs load lazily', () => {
     ['app/business-os/website/page.tsx', 'LazyConfigurationDialog'],
     ['components/business-os/WebsiteSetupWizard.tsx', 'LazyConfigurationDialog'],
     ['app/onboarding-build/page.tsx', 'LazyConfigurationDialog'],
+    ['components/business-os/settings/UpgradeModalProvider.tsx', 'LazyUpgradeModal'],
   ])('%s renders %s', (file, component) => {
     const code = stripComments(fs.readFileSync(path.join(ROOT, file), 'utf8'));
     expect(code).toContain(`<${component}`);

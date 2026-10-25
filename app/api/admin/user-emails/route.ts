@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
+import { adminAccountLabel } from '@/lib/business-os/account-deletion/closedAccount';
 
 const logger = createLogger({ module: 'UserEmailsAdminAPI' });
 
@@ -63,7 +64,8 @@ export async function POST(request: NextRequest) {
 
     authData.users.forEach(user => {
       if (userIds.includes(user.id)) {
-        userEmailMap[user.id] = user.email || 'N/A';
+        // DE-10b.2: a closed account reads "Deleted account {ref}", never its placeholder address.
+        userEmailMap[user.id] = adminAccountLabel(user.email) ?? 'N/A';
       }
     });
 

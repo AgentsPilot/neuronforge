@@ -113,6 +113,47 @@ export function buildAdminReceipt(facts: AdminReceiptFacts): DeletionReceiptBase
   });
 }
 
+export interface OwnerReceiptFacts {
+  emailFingerprint: string;
+  fingerprintKeyVersion: number;
+  /** The language whose statement matched on the SERVER (SA V-5), not the UI language from the body. */
+  statementLanguage: 'en' | 'he' | 'es';
+  /** Exactly what the customer typed, at most 500 characters. */
+  statementText: string;
+  ownerLastExportReadyAt: string | null;
+  ownerExportDownloadedAt: string | null;
+  adminExportExisted: boolean | null;
+  requestedAt: Date;
+  correlationId: string | null;
+}
+
+/**
+ * The receipt of a self-delete (data export DE-10b.2): origin owner, executor
+ * self-service, no admin, no reason. It records the typed statement and what
+ * our records show about exports, side by side (requirement §3.2: a person
+ * who never exported is not blocked, the receipt shows both). Throws a
+ * ZodError on a value the table would refuse.
+ */
+export function buildOwnerReceipt(facts: OwnerReceiptFacts): DeletionReceiptBase {
+  return deletionReceiptBaseSchema.parse({
+    email_fingerprint: facts.emailFingerprint,
+    fingerprint_key_version: facts.fingerprintKeyVersion,
+    origin: 'owner',
+    executor_kind: 'self_service',
+    executor_admin_email: null,
+    reason_category: null,
+    reason_note: null,
+    statement_language: facts.statementLanguage,
+    statement_text: facts.statementText,
+    owner_last_export_ready_at: toIso(facts.ownerLastExportReadyAt),
+    owner_export_downloaded_at: toIso(facts.ownerExportDownloadedAt),
+    admin_export_existed: facts.adminExportExisted,
+    requested_at: facts.requestedAt.toISOString(),
+    retain_until: computeRetainUntil(facts.requestedAt).toISOString(),
+    correlation_id: facts.correlationId ? facts.correlationId.slice(0, 200) : null,
+  });
+}
+
 /** The receipt as the function reads it, with the storage step's file count. */
 export function withFilesRemoved(base: DeletionReceiptBase, filesRemoved: number): DeletionReceiptInput {
   return { ...base, files_removed: Math.max(0, Math.trunc(filesRemoved)) };

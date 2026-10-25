@@ -52,6 +52,41 @@ interface RefundModalProps {
    * because a prop was not threaded.
    */
   bookingStatus?: string;
+  /**
+   * The OUTCOME, which is where "this is over" actually lives.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `bookingStatus` alone cannot answer it. Marking a booking complete writes
+   * `meeting_status: 'held'` and deliberately leaves `status` at `confirmed` —
+   * that separation is the point of the outcome column — so a course handed
+   * over an hour ago still reads `confirmed` and sailed through the
+   * cancellable check below.
+   *
+   * Which is the exact thing the comment there warns against: the toggle posts
+   * `cancel_booking`, and a client who paid and received the service would have
+   * been emailed that their order was cancelled.
+   *
+   * Undefined keeps the old behaviour, so a caller that has not been updated
+   * loses nothing.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bookingMeetingStatus?: string | null;
+  /**
+   * This booking has no appointment: a course, a training block, anything the
+   * client buys without an hour to attend.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Only the toggle's description reads it, and only to stop promising
+   * something that cannot happen. "משחרר את הזמן" — frees the slot — is the
+   * first thing the owner is told about cancelling, and a product has no slot
+   * to free, so the sentence describes a different service than the one in
+   * front of them.
+   *
+   * Undefined keeps the appointment wording, which is right for every caller
+   * that has not been told otherwise.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bookingUnscheduled?: boolean;
   isRTL?: boolean;
 }
 
@@ -110,6 +145,8 @@ export function RefundModal({
   bookingId,
   showDeleteBookingOption = false,
   bookingStatus,
+  bookingMeetingStatus,
+  bookingUnscheduled,
   isRTL = false
 }: RefundModalProps) {
   const { t, language } = useLanguage();
@@ -405,9 +442,17 @@ export function RefundModal({
    * ───────────────────────────────────────────────────────────────────────────
    */
   const CANCELLABLE_BOOKING_STATUSES = ['pending', 'confirmed'];
+  /*
+   * An outcome recorded on the MEETING is terminal too, and it is the one that
+   * gets recorded nowadays. See `bookingMeetingStatus`: the three values here
+   * are the same three the paragraph above calls terminal, read off the column
+   * that actually carries them.
+   */
+  const SETTLED_MEETING_STATUSES = ['held', 'no_show', 'cancelled'];
   const canOfferDelete =
     showDeleteBookingOption &&
-    (bookingStatus === undefined || CANCELLABLE_BOOKING_STATUSES.includes(bookingStatus));
+    (bookingStatus === undefined || CANCELLABLE_BOOKING_STATUSES.includes(bookingStatus)) &&
+    !SETTLED_MEETING_STATUSES.includes(String(bookingMeetingStatus ?? ''));
 
   /*
    * A hidden switch must not still be armed.
@@ -1043,7 +1088,10 @@ export function RefundModal({
                 description={
                   livePlan
                     ? t('payments.refund.delete_stops_plan')
-                    : t('payments.refund.delete_booking_desc')
+                    : bookingUnscheduled
+                      ? /* No hour to free, so the sentence does not claim one. */
+                        t('payments.refund.delete_order_desc')
+                      : t('payments.refund.delete_booking_desc')
                 }
               />
             )}

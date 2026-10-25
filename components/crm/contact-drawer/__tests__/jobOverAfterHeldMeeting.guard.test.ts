@@ -132,9 +132,14 @@ describe('jobIsOver', () => {
      * The reported bug. Without this argument the strip reappears on a stopped
      * job and offers Cancel again.
      */
-    const call = code.slice(code.indexOf('!jobIsOver({'), code.indexOf('!jobIsOver({') + 220);
+    /* Bounded by the call's own closing brace rather than a character count,
+       which went stale the moment `meeting_status` was added to the argument. */
+    const from = code.indexOf('!jobIsOver({');
+    const call = code.slice(from, code.indexOf('})', from) + 2);
 
     expect(call).toContain('calledOff: jobCalledOff');
+    /* And the outcome column, without which a simple job never ends. */
+    expect(call).toContain('meeting_status: booking.meeting_status');
   });
 
   it('still ends a quoted job only on cancellation or payment', () => {
@@ -189,15 +194,25 @@ describe('the call sites that were reading the status', () => {
 });
 
 describe('attendance is still asked of the appointment', () => {
-  it('attendanceRecorded is unchanged and still status-only', () => {
+  it('attendanceRecorded asks the APPOINTMENT, never the job', () => {
     /*
      * The other half of the split. The two attendance buttons hide once
-     * attendance is recorded, and that IS the booking's own status — conflating
-     * it with the job's state is the bug this whole pair exists to avoid.
+     * attendance is recorded, and that is a fact about the APPOINTMENT —
+     * conflating it with the job's state is the bug this whole pair exists to
+     * avoid, and `not.toContain('calledOff')` is what still enforces that.
+     *
+     * What changed is only WHERE the appointment's answer lives. It was the
+     * booking's own status; it is `meeting_status` now, with the old values
+     * kept for rows written before the column existed. A guard demanding
+     * "status-only" was pinning the storage rather than the rule.
      */
     const fn = code.slice(code.indexOf('function attendanceRecorded'), code.indexOf('function AddPackageMeeting'));
 
-    expect(fn).toContain("status === 'completed' || status === 'cancelled' || status === 'no_show'");
+    expect(fn).toContain('meeting_status');
+    /* The legacy branch stays, or every pre-split row reads as unmarked. */
+    expect(fn).toContain("status === 'completed'");
+    expect(fn).toContain("status === 'no_show'");
+    /* The job's state must still play no part in it. */
     expect(fn).not.toContain('calledOff');
   });
 });

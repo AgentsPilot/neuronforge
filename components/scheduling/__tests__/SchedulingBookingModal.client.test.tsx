@@ -97,6 +97,15 @@ async function openNewBooking() {
       isOpen
       onClose={jest.fn()}
       onBookingUpdated={jest.fn()}
+      /*
+       * Named, so the dialog is past its first question.
+       *
+       * A new booking no longer starts on a service — the first row of an
+       * alphabetical list is a guess, and collapsed to a summary line it reads
+       * as the owner's own decision. These tests are about the CLIENT
+       * question, so they open where the real callers that name a service do.
+       */
+      prefilledServiceId={SERVICE.id}
     />
   );
   await settle();

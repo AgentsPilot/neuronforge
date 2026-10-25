@@ -14,6 +14,7 @@
  */
 
 import type { PlanCheckoutRefusalCode } from '@/lib/business-os/billing/planCheckout';
+import type { EndsFreeAccessOnPurchaseWire } from '@/lib/business-os/billing/planPurchaseTypes';
 
 export const PLAN_PURCHASE_REFUSAL_KEYS: Readonly<Record<PlanCheckoutRefusalCode | 'not_available' | 'invalid_input', string>> = {
   not_available: 'plan.refusal.not_open',
@@ -64,3 +65,13 @@ export const SETTINGS_PLAN_PATH = '/business-os/settings?section=plan';
 export function settingsPlanReturnPath(sessionId: string): string {
   return `${SETTINGS_PLAN_PATH}&checkout=${encodeURIComponent(sessionId)}`;
 }
+
+/**
+ * The sentence beside an offer when buying ends free access (plan payments W-7),
+ * by the server's `endsFreeAccessOnPurchase`. One map for the Choose island and
+ * the plan comparison modal (upgrade modal UM-1a D-4, moved here in UM-1b).
+ */
+export const ENDS_FREE_ACCESS_KEYS: Readonly<Record<Exclude<EndsFreeAccessOnPurchaseWire, null>, string>> = {
+  trial: 'plan.choose.trial_ends_today',
+  free_access: 'plan.choose.free_access_ends_today',
+};

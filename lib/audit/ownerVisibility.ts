@@ -45,6 +45,7 @@ export const AUDIT_ENTITY_OWNER_VISIBILITY = {
   system: 'owner',
   scheduling_service: 'owner',
   scheduling_booking: 'owner',
+  scheduling_meeting: 'owner',
   payment_invoice: 'owner',
   payment_transaction: 'owner',
   payment_plan_subscription: 'owner',

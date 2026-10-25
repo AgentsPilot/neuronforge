@@ -13,6 +13,14 @@ export interface PortalMeeting {
   startTime: string | null;
   /** `confirmed` | `pending` | `completed` | `cancelled` | `no_show`. */
   status: string;
+  /**
+   * `held` | `no_show` | `cancelled`, or null where nobody has said yet.
+   *
+   * The job's `status` answers whether the WORK is on; this answers what
+   * happened at the appointment. Reading the former for the latter is why a
+   * missed meeting showed the client no label at all.
+   */
+  meetingStatus?: string | null;
   /** Marked held by the business, rather than merely in the past. */
   held: boolean;
   upcoming: boolean;
@@ -20,6 +28,22 @@ export interface PortalMeeting {
   isCurrent: boolean;
   /** Its own signed link into this portal, or null when none could be minted. */
   token: string | null;
+  /**
+   * Whether this appointment can still be moved: standing, dated, and outside
+   * the business's notice window. Computed by the portal route against the
+   * same rule the reschedule route enforces, so a row never offers a change
+   * that is about to be refused.
+   */
+  canModify?: boolean;
+  /**
+   * The SESSION this row is, for a package.
+   *
+   * A package is one booking with N meetings, so a session has no portal of
+   * its own to link to: the row opens the PURCHASE's portal with the session
+   * named, and the reschedule panel there moves that hour. Absent for a row
+   * that is its own booking, which opens its own portal as it always did.
+   */
+  meetingId?: string | null;
   /**
    * How many meetings this row stands for.
    *
@@ -121,10 +145,10 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
    * is the first thing they are looking for.
    */
   const describe = (meeting: PortalMeeting) => {
-    if (meeting.status === 'cancelled') {
+    if (meeting.meetingStatus === 'cancelled' || meeting.status === 'cancelled') {
       return { label: t('cancelled'), Icon: X, spent: true };
     }
-    if (meeting.status === 'no_show') {
+    if (meeting.meetingStatus === 'no_show' || meeting.status === 'no_show') {
       // The business's word for this is "no-show". That is a judgement, and not
       // one to put in front of the client; what is true for both is that it did
       // not happen.
@@ -256,10 +280,21 @@ export function PortalMeetings({ brand, meetings, timeZone }: PortalMeetingsProp
            * appointment — which is the only way a client can cancel or move one
            * they did not arrive on.
            */
-          return meeting.token ? (
+          /*
+           * A session opens the purchase's portal with `?session=`, because it
+           * has no portal of its own — there is no booking behind it. Straight
+           * to the reschedule card, which is the one thing a client comes to a
+           * session row to do; `canModify` decides whether it is offered at
+           * all, the same rule the route enforces.
+           */
+          const href = meeting.meetingId
+            ? `/book/manage/${meeting.token}?task=reschedule&session=${encodeURIComponent(meeting.meetingId)}`
+            : `/book/manage/${meeting.token}`;
+
+          return meeting.token && (!meeting.meetingId || meeting.canModify) ? (
             <li key={meeting.id} style={rowStyle}>
               <a
-                href={`/book/manage/${meeting.token}`}
+                href={href}
                 className="-mx-2 flex items-center gap-2.5 rounded-lg px-2 py-2.5 text-sm transition-opacity hover:opacity-70"
               >
                 {body}

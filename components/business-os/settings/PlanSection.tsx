@@ -17,7 +17,14 @@
  * `server-only`, so importing them into this file is a build error rather than a
  * review finding.
  *
- * BUYING (plan payments P-4.2)
+ * BUYING (plan payments P-4.2; since upgrade modal UM-1b, inside the modal)
+ *
+ * Choose and Upgrade no longer render here: the plan comparison window
+ * (`UpgradeModal`, opened by "See plans") mounts the `PlanPurchase` /
+ * `PlanUpgrade` islands, never this section (C-12: one Stripe Embedded Checkout
+ * per page). It shares THIS section's `usePlanFlow` instance and closes when a
+ * checkout completes or an upgrade goes through, so the lines below ("Payment
+ * processing", "Upgrading…", "You're on …") still appear here (C-3).
  *
  * The Choose list lives in `PlanPurchase`, and it too renders only what the
  * server sent: `purchase.offer` is the same predicate the checkout refuses on,
@@ -77,13 +84,12 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { isCheckoutReturnMarker } from '@/lib/business-os/billing/checkoutReturnMarker';
 import { createLogger } from '@/lib/logger';
 
-import { PlanPurchase } from './PlanPurchase';
 import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerReads';
 import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
-import { CategoryRowText, Notice, fill, priceLine, renderSentence } from './planText';
-import { PlanUpgrade } from './PlanUpgrade';
-import { SETTINGS_PLAN_PATH } from './planPurchaseCopy';
+import { CategoryRowText, Notice, PlanBillingNotices, PlanIncludedList, fill, priceLine, renderSentence } from './planText';
+import { PlanFlowStatus } from './PlanFlowStatus';
 import { UpgradeModal } from './UpgradeModal';
+import { useUpgradeModalInlineHost } from './UpgradeModalProvider';
 import { upgradeModalView } from './upgradeModalView';
 import { planFrom, usePlanFlow } from './usePlanFlow';
 
@@ -145,10 +151,12 @@ export function PlanSection({
     succeeded,
     checkoutProcessing,
     upgradeSucceeded,
-    upgradeWatching,
     upgradeProcessing,
     processing,
     exhausted,
+    checkoutAllowed,
+    upgradeAllowed,
+    paymentsConfigured,
     onCheckoutComplete,
     onUpgrading,
     onUpgradeCheckAgain,
@@ -156,7 +164,7 @@ export function PlanSection({
   /** C-b (B-1): the first read is fixed once per mount, StrictMode included. */
   const firstStarted = useRef(false);
   const firstRead = useRef<FirstRead | null>(null);
-  /** Upgrade modal UM-1a: the view-only plan comparison, opened from the end of this section. */
+  /** Upgrade modal: the plan comparison window (UM-1a), where Choose and Upgrade live since UM-1b. */
   const [compareOpen, setCompareOpen] = useState(false);
 
   /*
@@ -241,6 +249,14 @@ export function PlanSection({
     // Re-fetched on a language change, so the names follow the interface.
   }, [language]);
 
+  /*
+   * UM-SA2 (upgrade modal UM-2, workplan §4.3): while this section is mounted
+   * (the plan drawer is open) it hosts its own window, so the layout's
+   * `openUpgradeModal` refuses rather than portal a second one over the drawer.
+   * Declared AFTER the `[language]` effect, so P-G8 still holds.
+   */
+  useUpgradeModalInlineHost();
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-2 text-sm text-[var(--v2-text-muted)]" aria-busy="true">
@@ -261,6 +277,8 @@ export function PlanSection({
     return <Notice>{sentence(plan.problem) ?? t('plan.problem.unavailable')}</Notice>;
   }
 
+  const compare = upgradeModalView(plan);
+
   return (
     <div className="space-y-5" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* What you are on */}
@@ -275,59 +293,15 @@ export function PlanSection({
         {sentence(plan.endsWhen) && (
           <p className="text-xs text-[var(--v2-text-muted)] mt-1">{sentence(plan.endsWhen)}</p>
         )}
-        {/* P-6a.2 (workplan §5.7): what the owner can do about a failed renewal.
-            No "Update card" button until P-7a (SA Q-6): Stripe's email has the link. */}
-        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'payment_failed' && (
-          <p className="text-xs text-[var(--v2-text-muted)] mt-1" data-testid="plan-update-card-email">
-            {t('plan.update_card_email')}
-          </p>
-        )}
-        {plan.kind === 'tier' && plan.purchase?.billing?.state === 'action_required' && (
-          <a
-            href={plan.purchase.billing.confirmUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block mt-1 text-sm text-[var(--v2-primary)] underline"
-            data-testid="plan-confirm-payment"
-          >
-            {t('billing.notice.confirm_payment')}
-          </a>
-        )}
+        {/* P-6a.2 (workplan §5.7): B3 / B4, shared with the Settings pop-up (UM-D3). */}
+        <PlanBillingNotices plan={plan} t={t} />
       </div>
 
-      {/* After checkout (M-6): the server's answer, or "processing" until it comes. */}
-      {marker !== null && succeeded && plan.name && (
-        <p role="status" className="text-sm text-[var(--v2-text-primary)]" data-testid="plan-purchase-done">
-          {fill(t('plan.purchase.done'), { plan: plan.name })}
-        </p>
-      )}
-      {upgradeSucceeded && plan.name && (
-        <p role="status" className="text-sm text-[var(--v2-text-primary)]" data-testid="plan-upgrade-done">
-          {fill(t('plan.upgrade.done'), { plan: plan.name })}
-        </p>
-      )}
-      {upgradeProcessing && !checkoutProcessing && !exhausted && (
-        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-upgrade-upgrading">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>{t('plan.upgrade.upgrading')}</span>
-        </p>
-      )}
-      {checkoutProcessing && !exhausted && (
-        <p role="status" className="flex items-center gap-2 text-sm text-[var(--v2-text-muted)]" data-testid="plan-purchase-processing">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>{t('plan.purchase.processing')}</span>
-        </p>
-      )}
-      {processing && exhausted && (
-        <div className="space-y-1" data-testid="plan-purchase-slow">
-          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.purchase.slow')}</p>
-          {/* Without the marker: Choose shows again if nothing is live, so a stale
-              or bookmarked marker cannot trap the owner here. */}
-          <a href={SETTINGS_PLAN_PATH} className="text-sm text-[var(--v2-primary)] underline" data-testid="plan-purchase-check-again">
-            {t('plan.purchase.check_again')}
-          </a>
-        </div>
-      )}
+      {/* B5 / B6, one rendering shared with the standalone window (UM-2 §5.3). */}
+      <PlanFlowStatus
+        flow={{ marker, succeeded, upgradeSucceeded, upgradeProcessing, checkoutProcessing, processing, exhausted }}
+        planName={plan.name}
+      />
 
       {/* Free plans only: what happens when free is not free. Written now so the
           change is something the customer has already read once. */}
@@ -338,21 +312,7 @@ export function PlanSection({
         <h4 className="text-xs uppercase tracking-wide text-[var(--v2-text-muted)] mb-2">
           {t('plan.includes')}
         </h4>
-        {plan.included.length === 0 ? (
-          <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.features_unavailable')}</p>
-        ) : (
-          // Named so a screen reader says which list this is, and so a test can
-          // scope to it: an unnamed second list two elements down carries similar
-          // numbers, and a positional query silently followed it.
-          <ul className="space-y-2" aria-label={t('plan.includes')}>
-            {plan.included.map((row) => (
-              <li key={row.category} className="flex items-start gap-2">
-                <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-primary)]" />
-                <CategoryRowText row={row} t={t} noteTestId={`plan-category-note-${row.category}`} />
-              </li>
-            ))}
-          </ul>
-        )}
+        <PlanIncludedList plan={plan} t={t} noteTestIdPrefix="plan-category-note-" />
       </div>
 
       {/* The plan above, as information. Its own footer no longer says
@@ -364,54 +324,33 @@ export function PlanSection({
           unknown) offers nothing either, so it must not bring the line back. */}
       {plan.nextPlanUp && <NextPlanUp upgrade={plan.nextPlanUp} purchaseKnown={plan.purchase !== undefined} />}
 
-      {/* Upgrading (P-7b.1b): only what the server offers, and not while a change is landing. */}
-      {marker === null && !upgradeWatching && !upgradeSucceeded && (plan.purchase?.upgrade?.tiers.length ?? 0) > 0 && (plan.plans?.length ?? 0) > 0 && (
-        <PlanUpgrade
-          plans={plan.plans ?? []}
-          tiers={plan.purchase?.upgrade?.tiers ?? []}
-          currentPlan={{ planId: plan.planId, name: plan.name, isTier: plan.kind === 'tier' }}
-          onUpgrading={onUpgrading}
-          onCheckAgain={onUpgradeCheckAgain}
-        />
-      )}
-
-      {/* Buying (P-4.2): only what the server offers, and not while a payment is landing. */}
-      {marker === null && plan.purchase?.offer.kind === 'choose' && (plan.plans?.length ?? 0) > 0 && (
-        <PlanPurchase
-          plans={plan.plans ?? []}
-          tiers={plan.purchase.offer.tiers}
-          endsFreeAccess={plan.purchase.endsFreeAccessOnPurchase}
-          onComplete={onCheckoutComplete}
-          // SA Q-7: the plan in force, when it is a tier, labels its own row "Pay for".
-          currentTierId={plan.kind === 'tier' ? plan.planId : null}
-        />
-      )}
-
-      {/* Upgrade modal UM-1a: "Compare plans", VIEW ONLY (C-1). Last in the
-          section on purpose: the purchase tests click `getAllByRole('button')[0]`
-          for Choose (SA W-4), and under B9 is where it lands once UM-1b moves the
-          islands into the modal. Not while a payment or upgrade is landing (SA
-          Q-3: the flow's own `processing`, no new predicate), and only when the
-          server sent a comparison (C-21): the UI never builds a table itself. */}
-      {(plan.plans?.length ?? 0) > 0 && !processing && upgradeModalView(plan).available && (
+      {/* Upgrade modal: "See plans" when the server offers something (any
+          column has a button, an admin-assigned "Pay for" included), "Compare
+          plans" otherwise (§5.1, UM-1b §8.2). Last in the section, under B9.
+          Not while a payment or upgrade is landing (SA Q-3: the flow's own
+          `processing`), and only when the server sent a comparison (C-21): the
+          UI never builds a table itself. */}
+      {(plan.plans?.length ?? 0) > 0 && !processing && compare.available && (
         <>
           <button
             type="button"
             onClick={() => setCompareOpen(true)}
             aria-haspopup="dialog"
             data-testid="plan-compare-open"
-            // W-5: the label sits on SOLID --v2-primary-dark; the gradient is a
-            // decorative layer at the end edge, kept clear of the text by `pe-10`.
-            className="relative inline-flex items-center gap-2 overflow-hidden ps-4 pe-10 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary-dark)] rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
+            // LF-1 (live test 2026-10-20): the app's own primary button, on the admin
+            // theme's --v2-primary like every other one; no gradient, no darker shade
+            // (the theme provider does not set it, so it fell back to the default indigo).
+            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[var(--v2-primary)] hover:opacity-90 rounded-[var(--v2-radius-button)] shadow-[var(--v2-shadow-button)] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--v2-primary)]"
           >
-            <span
-              aria-hidden="true"
-              className={`pointer-events-none absolute inset-y-0 end-0 w-8 from-transparent to-[var(--v2-secondary)] ${isRTL ? 'bg-gradient-to-l' : 'bg-gradient-to-r'}`}
-            />
-            <Sparkles aria-hidden="true" className="relative w-4 h-4 shrink-0" />
-            <span className="relative">{t('upgrade_modal.open_compare')}</span>
+            <Sparkles aria-hidden="true" className="w-4 h-4 shrink-0" />
+            <span>{t(compare.hasActions ? 'upgrade_modal.open_see_plans' : 'upgrade_modal.open_compare')}</span>
           </button>
-          <UpgradeModal open={compareOpen} onOpenChange={setCompareOpen} plan={plan} />
+          <UpgradeModal
+            open={compareOpen}
+            onOpenChange={setCompareOpen}
+            plan={plan}
+            flow={{ checkoutAllowed, upgradeAllowed, paymentsConfigured, onCheckoutComplete, onUpgrading, onUpgradeCheckAgain }}
+          />
         </>
       )}
     </div>

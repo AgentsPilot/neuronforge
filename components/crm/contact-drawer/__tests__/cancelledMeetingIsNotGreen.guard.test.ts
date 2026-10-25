@@ -56,8 +56,15 @@ describe('the comment stripping works', () => {
 });
 
 describe('the colour asks whether it was HELD', () => {
-  it('green only for a completed meeting', () => {
-    expect(code).toContain("const meetingHeld = booking.status === 'completed';");
+  it('green only for a meeting that was HELD', () => {
+    /*
+     * Read off `meeting_status`, not `status`. The dot asks "did the meeting
+     * happen", and that fact moved columns: `complete()` writes
+     * `meeting_status: 'held'` and leaves `status` at `confirmed`, so pinning
+     * the old expression meant this guard was protecting a line that had
+     * stopped being true — the dot stayed grey for every meeting marked held.
+     */
+    expect(code).toMatch(/const meetingHeld =[\s\S]{0,160}meeting_status === 'held'/);
     expect(dot).toContain('meetingHeld');
     expect(dot).toContain('#22C58B');
   });
@@ -72,18 +79,30 @@ describe('the colour asks whether it was HELD', () => {
   });
 
   it('meetingSettled is still used elsewhere, so this was a fix not a deletion', () => {
-    expect(code).toContain('const meetingSettled = attendanceRecorded(booking.status);');
+    /*
+     * `attendanceRecorded` takes the BOOKING now, not a bare status — it has to
+     * see `meeting_status` to answer at all. Asserting the call rather than the
+     * exact expression, so a change to how the row is passed does not read as
+     * the behaviour being deleted.
+     */
+    expect(code).toMatch(/const meetingSettled = attendanceRecorded\(booking\)/);
     expect(code.match(/meetingSettled/g)!.length).toBeGreaterThan(1);
   });
 });
 
 describe('a cancelled or missed meeting reads as such', () => {
   it('covers both ways a meeting fails to happen', () => {
-    const decl = code.slice(
-      code.indexOf('const meetingCalledOff ='),
-      code.indexOf('const meetingCalledOff =') + 160
-    );
+    /* The window grew when the declaration did: it now reads `meeting_status`
+       first and keeps the old statuses as the legacy branch. A fixed-width
+       slice is the wrong tool for a growing expression, so it is bounded by the
+       NEXT declaration instead. */
+    const from = code.indexOf('const meetingCalledOff =');
+    const decl = code.slice(from, code.indexOf(';', from) + 1);
 
+    /* Both ways the appointment fails, on the column that now records them. */
+    expect(decl).toContain("meeting_status === 'no_show'");
+    expect(decl).toContain("meeting_status === 'cancelled'");
+    /* And the pre-split rows still read correctly. */
     expect(decl).toContain("booking.status === 'cancelled'");
     expect(decl).toContain("booking.status === 'no_show'");
   });

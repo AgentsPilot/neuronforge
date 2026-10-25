@@ -65,6 +65,9 @@ const OTHER_ACCOUNT = '22222222-2222-4222-8222-222222222222';
 const CUSTOMER = 'cus_A1';
 const SUB_1 = 'sub_S1';
 const SUB_2 = 'sub_S2';
+/* The instant `deps.now` hands the implementation. The world fake shares it
+   so the two never disagree about whether a plan is still in force. */
+const FROZEN_NOW_MS = Date.parse('2026-10-15T09:00:00.000Z');
 const PERIOD_1_END = new Date(1792592000 * 1000).toISOString(); // the fixture line's period end
 const ANCHOR = 1_790_000_000;
 const ANCHOR_ISO = new Date(ANCHOR * 1000).toISOString();
@@ -183,7 +186,19 @@ class FakeWorld {
     if (!plan) return { status: 'plan_row_missing' };
 
     const tierBefore = plan.tier;
-    const inForce = plan.tier !== null && (plan.tierExpiresAt === null || Date.parse(plan.tierExpiresAt) > Date.now());
+    /*
+     * THE SAME CLOCK THE IMPLEMENTATION IS GIVEN, not the wall clock.
+     *
+     * `deps.now` is pinned to 2026-10-15 for every test here, but this fake read
+     * `Date.now()`. The first period ends 2026-10-21T14:13:20Z, so once real
+     * time passed that the plan read as expired, `inForce` went false, and a
+     * RENEWAL stopped being grandfathered: C6-2b failed on a `plan_version` the
+     * clause exists to keep. Nothing in the code changed — the date did, which
+     * is why it passed on main until 2026-10-20 and fails for everyone after.
+     */
+    const inForce =
+      plan.tier !== null &&
+      (plan.tierExpiresAt === null || Date.parse(plan.tierExpiresAt) > FROZEN_NOW_MS);
     const newest =
       replacement ||
       row.currentPeriodEnd === null ||

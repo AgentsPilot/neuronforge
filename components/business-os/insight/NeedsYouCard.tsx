@@ -53,6 +53,8 @@ export interface GapItemView {
    * for `bill_stage` is a payment stage. Only the navigating actions read this.
    */
   bookingId?: string | null;
+  /** Which session of a package. See `GapItem.sessionNumber`. */
+  sessionNumber?: number | null;
   /**
    * What is held on it, where money is involved.
    *
@@ -868,6 +870,28 @@ export function NeedsYouCard({ gaps, onChanged }: NeedsYouCardProps) {
                             <span className="font-medium">{item.name}</span>
                             {item.note && (
                               <span className="text-[var(--v2-text-muted)]"> · {item.note}</span>
+                            )}
+                            {/*
+                              * WHICH session, where the row is one of several.
+                              *
+                              * A package bills per meeting, so its stages share
+                              * a client, a job and an amount — five rows
+                              * identical to the character, with nothing saying
+                              * which one had just been billed.
+                              *
+                              * Said HERE rather than folded into `note` because
+                              * the gaps run server-side with no language
+                              * resolved: the number travels, the sentence is
+                              * built in the reader's own words.
+                              */}
+                            {typeof item.sessionNumber === 'number' && (
+                              <span className="text-[var(--v2-text-muted)]">
+                                {' · '}
+                                {(t('gaps.session_number') || 'Session {n}').replace(
+                                  '{n}',
+                                  String(item.sessionNumber)
+                                )}
+                              </span>
                             )}
                           </span>
                           {/*

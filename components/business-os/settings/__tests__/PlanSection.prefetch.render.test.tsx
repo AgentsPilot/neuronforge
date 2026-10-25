@@ -116,6 +116,9 @@ function paying(name: string): PlanPayload {
       endsFreeAccessOnPurchase: null,
       upgrade: { tiers: [TOP] },
     },
+    // Upgrade modal UM-1b: the "Upgrade to" button lives in the plan comparison modal,
+    // which opens only on a server comparison (C-21); no rows are needed here.
+    comparison: { planIds: [LOW, TOP], sections: [] },
   });
 }
 
@@ -397,7 +400,9 @@ describe('success only from a server read after the action (M-6, U-5)', () => {
       respond({ success: false, error: 'Internal server error' }, 500)
     );
     const upgradeLabel = COPY['plan.upgrade.button'].replace('{plan}', TOP_NAME);
-    await userEvent.click(screen.getByRole('button', { name: upgradeLabel }));
+    // UM-1b §13: the button is the TOP column's, in the plan comparison modal (header first in the DOM).
+    await userEvent.click(screen.getByTestId('plan-compare-open'));
+    await userEvent.click(screen.getAllByRole('button', { name: upgradeLabel })[0]);
     await screen.findByTestId('plan-upgrade-quote');
     await userEvent.click(screen.getByRole('button', { name: COPY['plan.upgrade.confirm'] }));
     const unknown = await screen.findByTestId('plan-upgrade-unknown');
@@ -406,7 +411,8 @@ describe('success only from a server read after the action (M-6, U-5)', () => {
     planReplies.push(respond(planBody(paying(FRESH))));
     await userEvent.click(within(unknown).getByRole('button', { name: COPY['plan.purchase.check_again'] }));
     await waitFor(() => expect(planGets()).toBe(1));
-    await screen.findByText(FRESH);
+    // The modal stays open ("Could not confirm", still offered): FRESH shows in the drawer and the modal.
+    await waitFor(() => expect(screen.getAllByText(FRESH).length).toBeGreaterThan(0));
     await settle();
     expect(planGets()).toBe(1);
   });

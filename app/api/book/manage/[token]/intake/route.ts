@@ -134,12 +134,44 @@ export async function GET(
       userId: booking.user_id
     }, 'Business data for intake form');
 
-    // Check if intake already completed
+    /*
+     * ── ALREADY ANSWERED: SHOW THEM WHAT THEY SENT ──────────────────────────
+     *
+     * This returned the date and nothing else, so a client following their own
+     * "view answers" link got "you have already filled this in" and no way to
+     * see a single word of it. The one thing they came for was the one thing
+     * withheld — and it is their own writing, about their own child in the case
+     * that reported this.
+     *
+     * Nothing has to be fetched to fix it. The submission stores a SNAPSHOT of
+     * the questions beside the answers, precisely so a form edited or
+     * republished later still renders readably. So the answered form is handed
+     * back exactly as it was submitted.
+     *
+     * READ-ONLY by construction: these are the recorded answers, not the live
+     * form, and POST refuses a second submission on `intake_completed_at`
+     * independently of anything sent here.
+     * ────────────────────────────────────────────────────────────────────────
+     */
     if (booking.intake_completed_at) {
+      const submitted = (booking.intake_responses ?? null) as {
+        questions?: Array<Record<string, unknown>>;
+        responses?: Record<string, unknown>;
+      } | null;
+
       return NextResponse.json({
         success: true,
         alreadyCompleted: true,
         completedAt: booking.intake_completed_at,
+        /*
+         * Only when both halves are present. A booking completed before the
+         * snapshot was stored has answers nobody can label, and a list of bare
+         * values is worse than the sentence it replaces.
+         */
+        answered:
+          submitted?.questions?.length && submitted?.responses
+            ? { questions: submitted.questions, responses: submitted.responses }
+            : null,
         booking: {
           id: booking.id,
           clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),

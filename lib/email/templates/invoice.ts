@@ -8,11 +8,16 @@ import {
   emailButton,
   emailPalette,
   emailTone,
+  emailDetailsTable,
+  emailDetailRow,
+  emailPlanSchedule,
   formatCurrency,
   formatEmailDate,
-  type BrandingData
+  type BrandingData,
+  type EmailPlanPeriod
 } from './base-template';
 import { emailTranslations } from './translations';
+import { escapeHtml } from '@/lib/email/escapeHtml';
 
 export interface InvoiceLineItem {
   description: string;
@@ -327,5 +332,161 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       ? t.subjectFor[locale](noun, data.branding.businessName, data.invoiceNumber)
       : t.subject[locale](data.branding.businessName, data.invoiceNumber),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
+  };
+}
+
+/**
+ * Tell the client a payment request has been withdrawn.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EMAIL HAS TO EXIST
+ *
+ * Voiding an invoice was entirely silent. The client kept the original invoice
+ * in their inbox, the hosted payment page stopped working, and nobody told
+ * them why — so the best case was a confused reply and the worst was a client
+ * who paid it days earlier from the copy they already had.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT IT SAYS, AND WHAT IT DELIBERATELY DOES NOT
+ *
+ * ONE REQUEST, NOT THE WHOLE AGREEMENT. `generateQuoteStoppedEmail` ends the
+ * work and accounts for every penny across the job. This ends a single demand
+ * while the plan continues, so the client needs the opposite reassurance:
+ * nothing is owed on THIS one, and here is exactly what is still coming.
+ *
+ * THE SCHEDULE IS THE SHARED ONE. `emailPlanSchedule` draws it in the
+ * confirmation and the receipt too, so the client sees the same list they have
+ * seen before, with the cancelled row struck through and every remaining row
+ * where they left it. A bespoke list here would be a second thing to keep in
+ * step with the first.
+ *
+ * NO PAY BUTTON, ANYWHERE. Obvious, and worth stating: this email exists
+ * because a payment link should no longer be used.
+ *
+ * IT ASSUMES THE CANCELLATION MAY HAVE CROSSED A PAYMENT. A client who paid an
+ * hour ago is told to reply rather than to ignore it, because "disregard this"
+ * to somebody who has already paid is how a refund becomes a dispute.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface PaymentRequestCancelledEmailData {
+  invoiceNumber: string;
+  amount: number;
+  currency: string;
+  clientFirstName?: string | null;
+  /**
+   * Every period of the plan this request belonged to, cancelled ones included.
+   *
+   * Absent for a one-off invoice, and then no schedule is drawn: a single
+   * cancelled request has no schedule to show, and an empty table under
+   * "your payment schedule" reads as something that failed to load.
+   */
+  periods?: EmailPlanPeriod[];
+  planTotal?: number | null;
+  branding: BrandingData;
+  locale?: Locale;
+}
+
+export function generatePaymentRequestCancelledEmail(
+  data: PaymentRequestCancelledEmailData
+): { subject: string; html: string } {
+  const locale = data.locale || 'en';
+  const t = emailTranslations.paymentRequestCancelled;
+  const brandingWithLocale = { ...data.branding, locale };
+  const c = emailPalette(brandingWithLocale);
+  const money = (n: number) => formatCurrency(n, data.currency);
+
+  const greeting = data.clientFirstName
+    ? t.greeting[locale].replace('{name}', escapeHtml(data.clientFirstName))
+    : t.greetingPlain[locale];
+
+  const periods = data.periods ?? [];
+
+  /*
+   * What is genuinely still coming: not paid, not cancelled. This is the figure
+   * the client actually wants, and deriving it here rather than taking it from
+   * the caller keeps it in step with the list drawn directly below it.
+   */
+  const remaining = periods.filter(
+    p => p.status !== 'paid' && p.status !== 'cancelled' && p.status !== 'refunded'
+  );
+  const remainingTotal = remaining.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const nextDue = remaining.map(p => p.dueDate).filter(Boolean).sort()[0] ?? null;
+
+  const intlLocale = locale === 'he' ? 'he-IL' : locale === 'es' ? 'es-ES' : 'en-US';
+  const nextDueText = nextDue
+    ? new Date(`${nextDue}T00:00:00Z`).toLocaleDateString(intlLocale, {
+        timeZone: 'UTC',
+        day: 'numeric',
+        month: 'long',
+      })
+    : '';
+
+  /*
+   * Singular and plural as separate sentences, per language. Hebrew does not
+   * pluralise the way English does and "1 תשלומים" is wrong in a way a client
+   * notices — the same reasoning the stopped-quote email records.
+   */
+  const remainingLine = remaining.length === 0
+    ? t.nothingRemaining[locale]
+    : (remaining.length === 1 ? t.remainingOne : t.remainingMany)[locale]
+        .replace('{count}', String(remaining.length))
+        .replace('{amount}', money(remainingTotal))
+        .replace('{date}', nextDueText);
+
+  const content = `
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
+      ${greeting}
+    </h2>
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
+      ${t.intro[locale].replace('{amount}', money(data.amount))}
+    </p>
+
+    ${emailDetailsTable(
+      [
+        emailDetailRow(t.invoiceLabel[locale], escapeHtml(data.invoiceNumber), brandingWithLocale),
+        emailDetailRow(t.amountLabel[locale], money(data.amount), brandingWithLocale),
+      ],
+      brandingWithLocale
+    )}
+
+    ${periods.length
+      ? emailPlanSchedule({
+          periods,
+          totalAmount: Number(data.planTotal ?? 0),
+          currency: data.currency,
+          branding: brandingWithLocale,
+          labels: {
+            title: t.scheduleTitle[locale],
+            paid: t.schedulePaid[locale],
+            highlight: t.scheduleDue[locale],
+            cancelled: t.scheduleCancelled[locale],
+            total: t.scheduleTotal[locale],
+            refunded: t.scheduleRefunded[locale],
+          },
+          /* The next one genuinely due, so the client's eye lands on what is
+             coming rather than on what has just been withdrawn. */
+          highlightNumber: remaining[0]?.number,
+        })
+      : ''}
+
+    <h3 style="margin: 24px 0 8px; font-size: 16px; font-weight: 600; color: ${c.ink};">
+      ${t.remainingHeading[locale]}
+    </h3>
+    <p style="margin: 0 0 16px; font-size: 15px; color: ${c.ink};">
+      ${remainingLine}
+    </p>
+
+    <p style="margin: 16px 0 0; font-size: 14px; color: ${c.inkMuted};">
+      ${t.alreadyPaid[locale]}
+    </p>
+
+    <p style="margin: 16px 0 0; font-size: 14px; color: ${c.inkMuted};">
+      ${t.questions[locale]}
+    </p>
+  `;
+
+  return {
+    subject: t.subject[locale].replace('{invoiceNumber}', data.invoiceNumber),
+    html: wrapInBrandedTemplate(content, brandingWithLocale),
   };
 }

@@ -29,6 +29,13 @@
  *                  `upgrade_awaiting_confirmation` (Q-2) offers the confirm again;
  *                  `upgrade_processing` / `not_an_upgrade` go to the re-read
  *
+ * IN THE PLAN COMPARISON MODAL (upgrade modal UM-1b; SA Q-2, Q-5, W-4): with
+ * `startTier` it shows only that tier and asks for the preview once on mount
+ * (the column button was the owner's press). `onLockChange` reports whether the
+ * window may close (`busy` during Confirm and 3-D Secure, `unsure` on "Could not
+ * confirm"), and `onCancel` fires only from the quote's "Not now". Without
+ * those props it behaves exactly as before.
+ *
  * SUCCESS IS NEVER CLAIMED HERE: only `PlanSection`'s re-read of my-plan can
  * say "You're on <plan>" (U-5).
  *
@@ -40,7 +47,7 @@
  * only), so no server code reaches the browser bundle (W-6, CLAUDE.md rule 1).
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -63,7 +70,8 @@ import {
 
 const logger = createLogger({ module: 'BusinessOsPlanUpgrade' });
 
-const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60';
+// LF-1 (live test 2026-10-20): the app's own primary button, on the admin theme's --v2-primary.
+const PRIMARY_BUTTON = 'rounded bg-[var(--v2-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60';
 const SECONDARY_BUTTON = 'rounded border border-[var(--v2-border)] px-3 py-1.5 text-xs text-[var(--v2-text-primary)] disabled:opacity-60';
 
 /** The preview's 200 body, as the route sends it. */
@@ -138,12 +146,18 @@ export function classifyNextAction(result: NextActionResult): 'upgrading' | 'not
 const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const stringOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
+/** What the island tells its host about closing (SA Q-5): only `busy` locks it. */
+export type PlanUpgradeLock = 'none' | 'busy' | 'unsure';
+
 export function PlanUpgrade({
   plans,
   tiers,
   currentPlan,
   onUpgrading,
   onCheckAgain,
+  startTier,
+  onLockChange,
+  onCancel,
 }: {
   plans: readonly PlanChoice[];
   /** The tiers the server offers (`purchase.upgrade.tiers`). */
@@ -154,6 +168,12 @@ export function PlanUpgrade({
   onUpgrading: (tier: string) => void;
   /** One server re-read (V-3 "Check again"). */
   onCheckAgain: (tier: string) => Promise<void>;
+  /** UM-1b: the tier the owner chose with a column button; only it is shown, and its preview is asked for once on mount. */
+  startTier?: string;
+  /** UM-1b: `busy` (Confirm, 3-D Secure), `unsure` ("Could not confirm") or `none`; `none` again on unmount. */
+  onLockChange?: (lock: PlanUpgradeLock) => void;
+  /** UM-1b (W-4): the owner pressed "Not now" on the quote. Never called on a success or refusal path. */
+  onCancel?: () => void;
 }) {
   const { t, language, timezone } = useLanguage();
   // M-2: without a usable publishable key the confirm is never posted (3-D Secure could not be completed).
@@ -163,9 +183,30 @@ export function PlanUpgrade({
   const inFlight = useRef(false);
 
   const offered = tiers.flatMap((tier) => {
+    if (startTier !== undefined && tier !== startTier) return [];
     const plan = plans.find((candidate) => candidate.planId === tier);
     return plan ? [plan] : [];
   });
+
+  // SA Q-5: one value derived from the phase, reported from one effect keyed on it.
+  const lock: PlanUpgradeLock =
+    phase.kind === 'confirming' || phase.kind === 'authenticating' ? 'busy' : phase.kind === 'unknown' ? 'unsure' : 'none';
+  useEffect(() => {
+    onLockChange?.(lock);
+    return () => onLockChange?.('none');
+  }, [lock, onLockChange]);
+
+  /** UM-1b (SA Q-2): the mount-time start tier, asked for once; StrictMode's second run asks nothing. */
+  const startOnMount = useRef(startTier);
+  const started = useRef(false);
+  const startable = startOnMount.current !== undefined && offered.some((plan) => plan.planId === startOnMount.current);
+  useEffect(() => {
+    if (!startable || started.current || startOnMount.current === undefined) return;
+    started.current = true;
+    void preview(startOnMount.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only: one preview per mount (SA Q-2)
+  }, []);
+
   if (offered.length === 0) return null;
 
   const stillOn = currentPlan.name ?? '';
@@ -331,7 +372,7 @@ export function PlanUpgrade({
 
     if (phase.kind === 'previewing') {
       return (
-        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-previewing">
+        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-previewing">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>{t('plan.upgrade.previewing')}</span>
         </p>
@@ -340,7 +381,7 @@ export function PlanUpgrade({
 
     if (phase.kind === 'authenticating') {
       return (
-        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-authenticating">
+        <p role="status" className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-authenticating">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>{t('plan.upgrade.upgrading')}</span>
         </p>
@@ -365,13 +406,13 @@ export function PlanUpgrade({
             </p>
           ) : null}
           {view.kind === 'quoted' && renewsOn ? (
-            <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-then">
+            <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-then">
               {fillTemplate(t('plan.upgrade.then'), { date: renewsOn, price: formatMonthlyUsdMinor(view.quote.monthlyPriceMinor) })}
             </p>
           ) : null}
-          <p className="text-xs text-[var(--v2-text-muted)]">{fillTemplate(t('plan.upgrade.immediate'), { plan: planName })}</p>
+          <p className="text-xs text-[var(--v2-text-secondary)]">{fillTemplate(t('plan.upgrade.immediate'), { plan: planName })}</p>
           {!stripeReady ? (
-            <p role="alert" className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-not-configured">
+            <p role="alert" className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-not-configured">
               {t('plan.choose.not_configured')}
             </p>
           ) : null}
@@ -388,7 +429,15 @@ export function PlanUpgrade({
                 {t('plan.upgrade.confirm')}
               </button>
             ) : null}
-            <button type="button" className={SECONDARY_BUTTON} disabled={busy} onClick={() => setPhase({ kind: 'idle' })}>
+            <button
+              type="button"
+              className={SECONDARY_BUTTON}
+              disabled={busy}
+              onClick={() => {
+                setPhase({ kind: 'idle' });
+                onCancel?.();
+              }}
+            >
               {t('plan.upgrade.cancel')}
             </button>
           </div>
@@ -400,15 +449,15 @@ export function PlanUpgrade({
       const time = phase.retryAfter ? formatAccountTime(phase.retryAfter, language, timezone) : null;
       return (
         <div role="alert" className="space-y-1" data-testid="plan-upgrade-declined">
-          <p className="text-sm text-red-700">{fillTemplate(t('plan.upgrade.declined'), { plan: stillOn })}</p>
-          {time ? <p className="text-xs text-[var(--v2-text-muted)]">{fillTemplate(t('plan.upgrade.retry_after'), { time })}</p> : null}
+          <p className="text-sm text-[var(--v2-error-text)]">{fillTemplate(t('plan.upgrade.declined'), { plan: stillOn })}</p>
+          {time ? <p className="text-xs text-[var(--v2-text-secondary)]">{fillTemplate(t('plan.upgrade.retry_after'), { time })}</p> : null}
         </div>
       );
     }
 
     if (phase.kind === 'not_confirmed') {
       return (
-        <p role="alert" className="text-sm text-red-700" data-testid="plan-upgrade-not-confirmed">
+        <p role="alert" className="text-sm text-[var(--v2-error-text)]" data-testid="plan-upgrade-not-confirmed">
           {fillTemplate(t('plan.upgrade.not_confirmed'), { plan: stillOn })}
         </p>
       );
@@ -450,7 +499,7 @@ export function PlanUpgrade({
 
     if (phase.kind === 'refused') {
       return (
-        <p role="alert" className="text-sm text-red-700" data-testid="plan-upgrade-refused">
+        <p role="alert" className="text-sm text-[var(--v2-error-text)]" data-testid="plan-upgrade-refused">
           {phase.message}
         </p>
       );
@@ -470,7 +519,7 @@ export function PlanUpgrade({
           return (
             <li key={plan.planId} className="space-y-2" data-testid={`plan-upgrade-${plan.planId}`}>
               {ownPlan && showButton ? (
-                <p className="text-xs text-[var(--v2-text-muted)]" data-testid="plan-upgrade-own-plan-note">
+                <p className="text-xs text-[var(--v2-text-secondary)]" data-testid="plan-upgrade-own-plan-note">
                   {fillTemplate(t('plan.upgrade.own_plan_note'), { plan: plan.name })}
                 </p>
               ) : null}

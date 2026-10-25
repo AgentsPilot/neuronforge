@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { z } from 'zod';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
@@ -177,13 +178,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'Thank you for subscribing.' });
     }
 
-    // Get user's first pipeline stage (or fallback to 'lead')
-    const { data: pipelineStages } = await supabaseServer
-      .from('crm_pipeline_stages')
-      .select('stage_key')
-      .eq('user_id', ownerId)
-      .order('position', { ascending: true })
-      .limit(1);
+    /*
+     * The start of this owner's board, resolved in the repository that owns the
+     * table. This was an inline read ending `|| 'lead'` — one of eight copies,
+     * and a stage many pipelines do not contain.
+     */
+    const { data: resolvedFirstStage } =
+      await crmPipelineStagesRepository.firstStageKey(ownerId);
 
     /*
      * A newsletter signup does NOT arrive here any more.
@@ -193,7 +194,7 @@ export async function POST(request: NextRequest) {
      * for enquiries again: everything below treats the sender as somebody
      * waiting for a reply, which is exactly what a subscriber is not.
      */
-    const initialStage = pipelineStages?.[0]?.stage_key || 'lead';
+    const initialStage = resolvedFirstStage;
 
     requestLogger.debug({ initialStage, ownerId }, 'Resolved pipeline stage for new contact');
 
@@ -257,7 +258,7 @@ export async function POST(request: NextRequest) {
           // A subscriber is not an enquiry, and the owner should be able to
           // tell them apart without reading the message text.
           source: data.source ?? 'website_form',
-          stage: initialStage,  // Use user's first pipeline stage
+          ...(initialStage ? { stage: initialStage } : {}),
           source_metadata: attribution as unknown as Record<string, unknown>,  // Store full attribution data
           custom_fields: {
             first_website_message: data.message,

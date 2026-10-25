@@ -186,6 +186,51 @@ export function takesAppointments(shape: BusinessShape): boolean | null {
 }
 
 /**
+ * Does this business sell anything THROUGH the platform?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * No is a real answer, not an unfinished setup. A business can use the platform
+ * as its presence and its CRM — a website, a contact form, and every enquiry
+ * landing in one place — and never put a catalogue in it. The onboarding chat
+ * offers that as a choice, and nothing downstream was listening.
+ *
+ * What it cost: the setup checklist asks for services, working hours and a card
+ * processor unconditionally, so that business was told forever to finish three
+ * things it had declined, with no action available that would ever clear them.
+ * A checklist that cannot be completed is one people stop reading, which costs
+ * the items that DO matter.
+ *
+ * HOW IT IS READ. A catalogue shows up in the shape as appointments or as money
+ * moving. Neither, on a business that has said how it wants to be found, means
+ * there is nothing to sell. The presence answer is required because that is
+ * what separates a decision from an empty account: both are silent about
+ * services, and only one of them has been asked.
+ *
+ * TRUE RATHER THAN NULL WHEN UNDECIDED, which is the one place this departs
+ * from the rest of the graph. Everything else answers `null` for "not asked
+ * yet" and is drawn as a ghost. That reasoning inverts here, because `services`
+ * is the step that ANSWERS this question: ghosting it until we know whether the
+ * business sells anything means never showing the step that would tell us. So
+ * the step stands until the shape says plainly that it should not.
+ *
+ * The ambiguous case is a business whose only service is free and not booked
+ * against a time: it reads the same as selling nothing. Harmless, because it
+ * HAS a service, so the step is already complete and a complete step is not
+ * shown as outstanding work either way.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function sellsAnything(shape: BusinessShape): boolean {
+  const books = takesAppointments(shape);
+  const money = moneyMoves(shape);
+
+  if (books !== false || money !== false) return true;
+
+  // Both answered, both no. Only a stored presence makes that a decision
+  // rather than an account nobody has filled in yet.
+  return !(shape.presence === 'website_only' || shape.presence === 'none');
+}
+
+/**
  * Whether a step applies to this business at all, and whether it is compulsory.
  *
  * `null` from either means "cannot tell yet" — the chat draws a ghost, and the
@@ -270,7 +315,14 @@ export interface GraphNode {
  */
 export const SETUP_STEPS: GraphNode[] = [
   // Nothing to sell, book or invoice without these.
-  { id: 'services', requires: [], owner: 'platform', mandatory: 'always' },
+  /*
+   * The catalogue — unless the business has said it has none. A website and a
+   * contact form feeding the CRM is a supported shape, and asking it forever
+   * to "add your services" is asking it to stop being what it chose to be.
+   * `sellsAnything` returns null wherever that has not been settled, which
+   * leaves the step showing.
+   */
+  { id: 'services', requires: [], owner: 'platform', applies: sellsAnything, mandatory: 'always' },
   // The form attaches to a service booking.
   { id: 'intake', requires: ['services'], owner: 'platform', mandatory: 'optional', belongsTo: 'services' },
 

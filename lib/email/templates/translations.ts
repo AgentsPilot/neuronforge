@@ -418,6 +418,79 @@ export const emailTranslations = {
   // BOOKING CONFIRMATION EMAIL
   // ==========================================
   bookingConfirmation: {
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A SESSION ADDED TO A BLOCK THE CLIENT ALREADY BOUGHT.
+     *
+     * An added session reused the plain confirmation — "הפגישה שלך אושרה" —
+     * which is accurate about the hour and silent about everything that makes
+     * it different. A client holding six sessions received a mail
+     * indistinguishable from the one that confirms a standalone appointment,
+     * with no sign that this is a seventh added to their block.
+     *
+     * And when the owner adds it CHARGED, a stage of its own is created. The
+     * client was told nothing about that either, so the invoice arrived as a
+     * surprise against a package they had already paid for by instalment.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE WHOLE BLOCK, IN THE EMAIL THAT CHANGED ONE OF IT.
+     *
+     * A client told their meeting moved, or was called off, or that one was
+     * added, has no way to see what that leaves them with — the email is their
+     * only record of a package they paid for. These label the list that
+     * answers it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    /* The table's own column heads, and the zone said once beneath it. */
+    sessionColWhen: { en: 'When', es: 'Cuándo', he: 'מועד' },
+    sessionColState: { en: 'State', es: 'Estado', he: 'סטטוס' },
+    sessionColPayment: { en: 'Payment', es: 'Pago', he: 'תשלום' },
+    sessionZoneNote: {
+      en: (zone: string) => `All times shown in ${zone}.`,
+      es: (zone: string) => `Todas las horas en ${zone}.`,
+      he: (zone: string) => `כל השעות לפי ${zone}.`
+    },
+    sessionListTitle: {
+      en: 'Your sessions',
+      es: 'Tus sesiones',
+      he: 'הפגישות שלך'
+    },
+    sessionUpcoming: { en: 'Upcoming', es: 'Próxima', he: 'עתידית' },
+    sessionHeld: { en: 'Held', es: 'Realizada', he: 'התקיימה' },
+    sessionMissed: { en: 'Missed', es: 'No asistió', he: 'לא הגיע/ה' },
+    sessionCancelled: { en: 'Cancelled', es: 'Cancelada', he: 'בוטלה' },
+    sessionPaid: { en: 'paid', es: 'pagado', he: 'שולם' },
+    sessionDue: { en: 'due', es: 'pendiente', he: 'לתשלום' },
+    sessionRefunded: { en: 'refunded', es: 'devuelto', he: 'הוחזר' },
+    /* Part of it came back; the client is owed the difference. */
+    sessionPartlyRefunded: { en: 'refunded', es: 'devuelto', he: 'הוחזר' },
+    addedSessionSubject: {
+      en: (dateStr: string) => `A session has been added to your package · ${dateStr}`,
+      es: (dateStr: string) => `Se ha añadido una sesión a tu paquete · ${dateStr}`,
+      he: (dateStr: string) => `נוספה פגישה לחבילה שלך · ${dateStr}`
+    },
+    addedSessionGreeting: {
+      en: 'A session has been added to your package',
+      es: 'Se ha añadido una sesión a tu paquete',
+      he: 'נוספה פגישה לחבילה שלך'
+    },
+    addedSessionIntro: {
+      en: (clientName: string, serviceName: string) =>
+        `Hi ${clientName}, we have added a session to ${serviceName}.`,
+      es: (clientName: string, serviceName: string) =>
+        `Hola ${clientName}, hemos añadido una sesión a ${serviceName}.`,
+      he: (clientName: string, serviceName: string) =>
+        `שלום ${clientName}, הוספנו פגישה ל${serviceName}.`
+    },
+    /* Said plainly, and only when it is true: the owner's answer about the
+       money, not an inference from the plan. */
+    addedSessionCharged: {
+      en: (amount: string) => `This session is charged separately, ${amount}.`,
+      es: (amount: string) => `Esta sesión se cobra por separado, ${amount}.`,
+      he: (amount: string) => `הפגישה הזו תחויב בנפרד, ${amount}.`
+    },
     subject: {
       en: (serviceName: string) => `Your appointment is confirmed - ${serviceName}`,
       es: (serviceName: string) => `Tu cita está confirmada - ${serviceName}`,
@@ -612,6 +685,57 @@ export const emailTranslations = {
     }
   },
 
+  /*
+   * The client gave their details, was sent to pay, and never finished.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * ONE MESSAGE, AND IT DOES NOT SELL
+   *
+   * They did not fail at anything — a tab closed, a phone slept, a card was
+   * somewhere else. So this says their time is still there and gives them the
+   * way back, and does not ask why or press them.
+   *
+   * Sent at most once per attempt, enforced by `recovery_email_sent_at`.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  bookingRecovery: {
+    subject: {
+      en: (serviceName: string) => `Your booking for ${serviceName} is not finished`,
+      es: (serviceName: string) => `Tu reserva de ${serviceName} está sin terminar`,
+      he: (serviceName: string) => `ההזמנה שלך ל${serviceName} לא הושלמה`
+    },
+    greeting: {
+      en: 'Nearly there',
+      es: 'Casi está',
+      he: 'כמעט סיימת'
+    },
+    intro: {
+      en: (clientName: string) =>
+        `Hello ${clientName}, you picked a time and did not get to the end. Nothing has been charged.`,
+      es: (clientName: string) =>
+        `Hola ${clientName}, elegiste un horario y no llegaste al final. No se ha cobrado nada.`,
+      he: (clientName: string) =>
+        `שלום ${clientName}, בחרת מועד ולא הגעת לסוף. לא חויבת בכלום.`
+    },
+    /* Honest about what it is: the hour was never held for them, because
+       holding it would have kept it from everyone else. */
+    stillFree: {
+      en: 'The time below was still free when we wrote to you. It is first come, first served.',
+      es: 'El horario de abajo seguía libre cuando te escribimos. Es por orden de llegada.',
+      he: 'המועד שלמטה היה עדיין פנוי כששלחנו את ההודעה. הוא נתפס לפי סדר ההרשמה.'
+    },
+    button: {
+      en: 'Finish booking',
+      es: 'Terminar la reserva',
+      he: 'להשלמת ההזמנה'
+    },
+    noTime: {
+      en: 'Pick a time that suits you.',
+      es: 'Elige el horario que te venga bien.',
+      he: 'אפשר לבחור מועד שמתאים לך.'
+    }
+  },
+
   bookingCancellation: {
     /*
      * A PACKAGE cancelled part-way through.
@@ -652,23 +776,119 @@ export const emailTranslations = {
       he: (amount: string, businessName: string) =>
         `<strong>${amount} עדיין מוחזקים עבור ההזמנה הזאת.</strong> ${businessName} ייצור איתך קשר בנוגע לכך.`
     },
+    /*
+     * ── THE BOOKING, NOT THE APPOINTMENT ────────────────────────────────────
+     *
+     * This read "Appointment cancelled" / "הפגישה בוטלה", which was the whole
+     * truth while a cancellation could only mean one thing. It cannot any
+     * more: a meeting can now be called off while the work continues, and that
+     * message is the one that should say "the meeting".
+     *
+     * Two cancellations with the same subject line is how a client reads "your
+     * quote is still coming" as "everything is off", or the reverse. This one
+     * ends the booking, so it says so.
+     */
     subject: {
-      en: (serviceName: string) => `Appointment cancelled - ${serviceName}`,
-      es: (serviceName: string) => `Cita cancelada - ${serviceName}`,
-      he: (serviceName: string) => `הפגישה בוטלה - ${serviceName}`
+      en: (serviceName: string) => `Booking cancelled - ${serviceName}`,
+      es: (serviceName: string) => `Reserva cancelada - ${serviceName}`,
+      he: (serviceName: string) => `ההזמנה בוטלה - ${serviceName}`
+    },
+
+    /*
+     * ── THE MEETING IS OFF, THE WORK IS NOT ──────────────────────────────────
+     *
+     * A separate wording, and the subject is the reason. `Appointment
+     * cancelled - <service>` is what a client receives when the whole job
+     * stops, so reusing it here would tell somebody whose quote is still
+     * coming that everything is over. Naming the DATE is what makes it read as
+     * one appointment rather than the lot.
+     *
+     * The money is deliberately absent from this whole group. Cancelling a
+     * meeting does not move the money — that mechanism is separate and
+     * untouched — so a line about what is held or refunded would report a
+     * change that did not happen.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    meetingOnlySubject: {
+      en: (dateStr: string) => `The meeting on ${dateStr} is cancelled`,
+      es: (dateStr: string) => `La reunión del ${dateStr} queda cancelada`,
+      /* `ב-${dateStr}` produced "הפגישה ב-יום רביעי", which no Hebrew speaker
+         writes. The date is appended instead of governed by a preposition, so
+         the sentence stands on its own however the date is formatted. */
+      he: (dateStr: string) => `הפגישה בוטלה · ${dateStr}`
+    },
+    meetingOnlyIntro: {
+      en: (clientName: string) =>
+        `Hello ${clientName}, the meeting below will not go ahead.`,
+      es: (clientName: string) =>
+        `Hola ${clientName}, la reunión de abajo no se llevará a cabo.`,
+      he: (clientName: string) => `שלום ${clientName}, הפגישה שלמטה לא תתקיים.`
+    },
+    /* The sentence the whole email exists for: what is NOT cancelled. One per
+       state of the quote, because a single wording is wrong in two of them. */
+    quoteComing: {
+      en: 'Your quote is still on its way. We do not need to meet first.',
+      es: 'Tu presupuesto sigue en camino. No hace falta que nos reunamos antes.',
+      he: 'הצעת המחיר עדיין בדרך אליך. אין צורך להיפגש לפני כן.'
+    },
+    quoteStands: {
+      en: 'The quote you already have still stands. Nothing about it changes.',
+      es: 'El presupuesto que ya tienes sigue vigente. No cambia nada.',
+      he: 'הצעת המחיר שכבר קיבלת עומדת בעינה. שום דבר בה לא משתנה.'
+    },
+    quoteAccepted: {
+      en: 'The work goes ahead exactly as agreed.',
+      es: 'El trabajo continúa exactamente según lo acordado.',
+      he: 'העבודה ממשיכה בדיוק כפי שסוכם.'
+    },
+    /* The owner said the quote is NOT coming. Stated plainly and without an
+       apology or a reason: the reason is theirs to give, and a template
+       inventing one would put words in their mouth. */
+    noQuoteFollowing: {
+      en: 'A quote will not follow. If anything changes, we will be in touch.',
+      es: 'No habrá presupuesto. Si algo cambia, te avisaremos.',
+      he: 'לא תישלח הצעת מחיר. אם משהו ישתנה, ניצור קשר.'
+    },
+    chooseAnotherTime: {
+      en: 'If you would still like to meet, you can choose another time.',
+      es: 'Si aún quieres que nos reunamos, puedes elegir otro horario.',
+      he: 'אם בכל זאת תרצו להיפגש, אפשר לבחור מועד אחר.'
+    },
+    chooseAnotherTimeButton: {
+      en: 'Choose another time',
+      es: 'Elegir otro horario',
+      he: 'בחירת מועד אחר'
     },
     greeting: {
-      en: 'Appointment Cancelled',
-      es: 'Cita Cancelada',
+      en: 'Booking cancelled',
+      es: 'Reserva cancelada',
+      he: 'ההזמנה בוטלה'
+    },
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE HEADING WHEN ONE APPOINTMENT IS OFF AND THE WORK IS NOT.
+     *
+     * `intro` already had a meeting-only form and this did not, so the email
+     * opened "ההזמנה בוטלה" — your ORDER is cancelled — directly above "הפגישה
+     * שלמטה לא תתקיים" and "העבודה ממשיכה בדיוק כפי שסוכם". The first line a
+     * client reads said the opposite of the next two.
+     *
+     * For a package that reading is not merely clumsy, it is false: five of
+     * their six sessions are untouched and already paid for by stage.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    meetingOnlyGreeting: {
+      en: 'Appointment cancelled',
+      es: 'Cita cancelada',
       he: 'הפגישה בוטלה'
     },
     intro: {
       en: (clientName: string) =>
-        `Hi ${clientName}, your appointment has been cancelled.`,
+        `Hi ${clientName}, your booking has been cancelled.`,
       es: (clientName: string) =>
-        `Hola ${clientName}, tu cita ha sido cancelada.`,
+        `Hola ${clientName}, tu reserva ha sido cancelada.`,
       he: (clientName: string) =>
-        `שלום ${clientName}, הפגישה שלך בוטלה.`
+        `שלום ${clientName}, ההזמנה שלך בוטלה.`
     },
     /*
      * The same email when nothing was scheduled — an order rather than an
@@ -1291,6 +1511,86 @@ export const emailTranslations = {
       he: 'לכל שאלה בנושא, אפשר פשוט להשיב למייל הזה.',
     },
   },
+  /**
+   * One payment request, withdrawn.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NOT `quoteStopped`, although it is next to it. That one ends the WORK and
+   * accounts for everything paid across a whole job. This ends a single demand
+   * while the agreement continues — on a two-period plan the second period is
+   * still coming — so the client needs the opposite reassurance: nothing is
+   * owed on THIS one, and here is what remains.
+   *
+   * The thing it must prevent is a client who holds an invoice, hears nothing,
+   * and pays it from their inbox days later.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  paymentRequestCancelled: {
+    subject: {
+      en: 'Cancelled: {invoiceNumber}',
+      es: 'Cancelada: {invoiceNumber}',
+      he: 'בוטלה: {invoiceNumber}',
+    },
+    greeting: { en: 'Hello {name},', es: 'Hola {name},', he: 'שלום {name},' },
+    greetingPlain: { en: 'Hello,', es: 'Hola,', he: 'שלום,' },
+    intro: {
+      en: 'We have cancelled the payment request we sent you for {amount}. You do not need to pay it, and the payment link will no longer work.',
+      es: 'Hemos cancelado la solicitud de pago que te enviamos por {amount}. No necesitas pagarla y el enlace de pago ya no funcionará.',
+      he: 'ביטלנו את דרישת התשלום ששלחנו לכם על {amount}. אין צורך לשלם אותה, וקישור התשלום כבר לא יעבוד.',
+    },
+    /* The number, so a client holding several can tell which one. */
+    invoiceLabel: { en: 'Cancelled request', es: 'Solicitud cancelada', he: 'הדרישה שבוטלה' },
+    amountLabel: { en: 'Amount', es: 'Importe', he: 'סכום' },
+    /*
+     * ── IF THEY ALREADY PAID IT ───────────────────────────────────────────
+     * A cancellation can cross a payment in the post. Saying "ignore it" to
+     * somebody who paid an hour ago is how a refund request becomes a dispute.
+     */
+    alreadyPaid: {
+      en: 'If you have already paid this in the last day or two, there is nothing you need to do: reply to this email and we will confirm and return it.',
+      es: 'Si ya lo pagaste en los últimos días, no tienes que hacer nada: responde a este correo y lo confirmaremos y te lo devolveremos.',
+      he: 'אם כבר שילמתם בימים האחרונים, אין מה לעשות: השיבו למייל הזה ונאשר ונחזיר את הכסף.',
+    },
+    /* What is still coming, when the agreement continues. */
+    remainingHeading: {
+      en: 'What is still scheduled',
+      es: 'Lo que sigue programado',
+      he: 'מה עוד מתוכנן',
+    },
+    remainingOne: {
+      en: '{count} payment of {amount} is still scheduled, due {date}.',
+      es: 'Queda {count} pago de {amount}, con vencimiento el {date}.',
+      he: 'נותר תשלום אחד על {amount}, לתשלום עד {date}.',
+    },
+    remainingMany: {
+      en: '{count} payments totalling {amount} are still scheduled. The next is due {date}.',
+      es: 'Quedan {count} pagos por un total de {amount}. El próximo vence el {date}.',
+      he: 'נותרו {count} תשלומים בסך {amount}. הקרוב לתשלום עד {date}.',
+    },
+    /* Nothing else is coming, and silence here reads as "more will follow". */
+    nothingRemaining: {
+      en: 'There are no other payments scheduled, so there is nothing further to pay.',
+      es: 'No hay otros pagos programados, así que no queda nada por pagar.',
+      he: 'אין תשלומים נוספים מתוכננים, ולא נותר דבר לשלם.',
+    },
+    questions: {
+      en: 'If you have any questions about this, just reply to this email.',
+      es: 'Si tienes alguna duda, responde a este correo.',
+      he: 'לכל שאלה בנושא, אפשר פשוט להשיב למייל הזה.',
+    },
+    /* Labels for the shared schedule, so this email lists the plan the same
+       way the confirmation and the receipt do. */
+    scheduleTitle: {
+      en: 'Your payment schedule',
+      es: 'Tu calendario de pagos',
+      he: 'לוח התשלומים שלכם',
+    },
+    schedulePaid: { en: 'paid', es: 'pagado', he: 'שולם' },
+    scheduleDue: { en: 'due next', es: 'siguiente', he: 'הבא לתשלום' },
+    scheduleCancelled: { en: 'cancelled', es: 'cancelado', he: 'בוטל' },
+    scheduleTotal: { en: 'Total', es: 'Total', he: 'סה"כ' },
+    scheduleRefunded: { en: 'refunded', es: 'reembolsado', he: 'הוחזר' },
+  },
   proposal: {
     /*
      * A PACKAGE's meetings. The email listed their amounts with no dates, so a
@@ -1845,10 +2145,40 @@ export const emailTranslations = {
   // Hebrew client sent "It was due on יום ראשון, 27 בספטמבר 2026".
   // ==========================================
   chaseInvoice: {
-    subject: {
-      en: (invoiceNumber: string, businessName: string) => `Invoice ${invoiceNumber} from ${businessName}`,
-      es: (invoiceNumber: string, businessName: string) => `Factura ${invoiceNumber} de ${businessName}`,
-      he: (invoiceNumber: string, businessName: string) => `חשבונית ${invoiceNumber} מ-${businessName}`
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A CHASE HAS TO LOOK DIFFERENT FROM THE INVOICE IT IS CHASING.
+     *
+     * This read `Invoice ${number} from ${business}` — character for character
+     * the subject the ORIGINAL invoice email already used. In the client's
+     * inbox the two were indistinguishable, and because mail clients thread on
+     * the subject, the chase arrived folded under the message the client had
+     * already read and dismissed. The one half of the email they see before
+     * deciding whether to open it said nothing had changed.
+     *
+     * It also never said the thing that would make them open it. The body
+     * knows the invoice is a day past due; the subject did not mention it.
+     *
+     * So the state leads, and the amount follows it: an unopened subject line
+     * now carries both facts a client needs to act. The business name is
+     * dropped because the From header is already their name, and a subject
+     * read on a phone has about forty characters before it is cut.
+     *
+     * `Invoice`, `Factura` and `חשבונית` keep their capitals and their place
+     * beside the number: that pairing is what `chaseInvoiceLocale` pins, and a
+     * client scanning for a document number should find it where it always was.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    subjectOverdue: {
+      en: (invoiceNumber: string, money: string) => `Overdue: Invoice ${invoiceNumber} for ${money}`,
+      es: (invoiceNumber: string, money: string) => `Vencida: Factura ${invoiceNumber} por ${money}`,
+      he: (invoiceNumber: string, money: string) => `באיחור: חשבונית ${invoiceNumber} על סך ${money}`
+    },
+    /* Not late yet, so it states the fact without the alarm. */
+    subjectDue: {
+      en: (invoiceNumber: string, money: string) => `Reminder: Invoice ${invoiceNumber} for ${money}`,
+      es: (invoiceNumber: string, money: string) => `Recordatorio: Factura ${invoiceNumber} por ${money}`,
+      he: (invoiceNumber: string, money: string) => `תזכורת: חשבונית ${invoiceNumber} על סך ${money}`
     },
     openingFriendly: {
       en: (clientName: string) => `Hi ${clientName}, I hope you're well.`,

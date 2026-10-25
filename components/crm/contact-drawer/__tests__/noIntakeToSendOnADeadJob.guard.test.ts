@@ -136,6 +136,10 @@ describe('it agrees with the server', () => {
     expect(statuses).toContain(
       "export const SETTLED_BOOKING_STATUSES = ['cancelled', 'completed', 'no_show'] as const;"
     );
-    expect(code).toContain('const meetingSettled = attendanceRecorded(booking.status);');
+    /* `attendanceRecorded` takes the BOOKING now — it has to see
+       `meeting_status` to answer at all, since `complete()` stopped writing
+       `status`. The rule is unchanged: the client is not asked for a form once
+       the appointment has been settled. */
+    expect(code).toMatch(/const meetingSettled = attendanceRecorded\(booking\)/);
   });
 });

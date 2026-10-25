@@ -258,6 +258,15 @@ async function chaseInvoice(action: InsightAction, ctx: Context): Promise<Outcom
     // Was missing, so this went out branded "NeuronForge" with no reply path
     // back to the business that is actually owed the money.
     ownerUserId: action.user_id,
+    /*
+     * Flagged urgent only once the money is actually late, which is the same
+     * line the subject branches on. A chase sent before the due date is a
+     * courtesy and must not arrive with a red exclamation on it — and a sender
+     * who marks everything urgent teaches every client and filter to ignore
+     * the flag. See `urgent` on `SendEmailBase` for what the three headers
+     * buy, and which client ignores them.
+     */
+    urgent: daysOverdue > 0,
   });
   return outcomeFromSend(sendResult);
 }

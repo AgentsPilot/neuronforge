@@ -36,6 +36,7 @@ import { RetCancellationSpikeDetector } from './catalog/RetCancellationSpikeDete
 import { ConvPipelineStuckDetector } from './catalog/ConvPipelineStuckDetector';
 import { ConvFollowupOverdueDetector } from './catalog/ConvFollowupOverdueDetector';
 import { ConvSourceUnderperformDetector } from './catalog/ConvSourceUnderperformDetector';
+import { ConvAbandonedBookingsDetector } from './catalog/ConvAbandonedBookingsDetector';
 import { CrmEngagementDecayDetector } from './catalog/CrmEngagementDecayDetector';
 
 // Phase 3: Booking/Operations Detectors
@@ -144,6 +145,14 @@ export class DetectorEngine {
       new ConvPipelineStuckDetector(supabase),
       new ConvFollowupOverdueDetector(supabase),
       new ConvSourceUnderperformDetector(supabase),
+      /*
+       * Clients who reached the card and did not finish.
+       *
+       * The other conversion detectors all measure CONTACTS, and an abandoned
+       * card attempt deliberately creates none — so this subset was invisible
+       * to every one of them.
+       */
+      new ConvAbandonedBookingsDetector(supabase),
       new CrmEngagementDecayDetector(supabase),
 
       // Phase 3: Booking/Operations

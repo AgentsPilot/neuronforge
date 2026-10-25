@@ -45,6 +45,7 @@ import type { ComponentProps, ComponentType } from 'react';
 // (guarded by `components/business-os/__tests__/lazyDialogs.guard.test.ts`).
 import type { ConfigurationDialog as ConfigurationDialogComponent } from '@/components/business-os/ConfigurationDialog';
 import type { SchedulingDialog as SchedulingDialogComponent } from '@/components/business-os/SchedulingDialog';
+import type { StandaloneUpgradeModalProps } from '@/components/business-os/settings/StandaloneUpgradeModal';
 import { createLazyDialog } from '@/components/business-os/lazyDialogLoader';
 
 type ConfigurationDialogProps = ComponentProps<typeof ConfigurationDialogComponent>;
@@ -63,5 +64,18 @@ export const LazySchedulingDialog = createLazyDialog<SchedulingDialogProps>(
   () =>
     import('@/components/business-os/SchedulingDialog').then(
       (mod): ComponentType<SchedulingDialogProps> => mod.SchedulingDialog
+    )
+);
+
+/*
+ * Upgrade modal UM-2 (workplan §4.5): the plan comparison window opened from
+ * anywhere, rendered closed by `UpgradeModalProvider` in the Business OS layout.
+ * Settings keeps its own static `UpgradeModal` (it loads with the drawer only).
+ */
+export const LazyUpgradeModal = createLazyDialog<StandaloneUpgradeModalProps>(
+  'UpgradeModal',
+  () =>
+    import('@/components/business-os/settings/StandaloneUpgradeModal').then(
+      (mod): ComponentType<StandaloneUpgradeModalProps> => mod.StandaloneUpgradeModal
     )
 );

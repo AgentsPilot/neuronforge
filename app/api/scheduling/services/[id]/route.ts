@@ -20,6 +20,13 @@ import { z } from 'zod';
 import { updateServiceSchema } from '@/lib/validation/schedulingService';
 import { bustSitesForUser } from '@/lib/website-builder/siteCache';
 import { syncServicePaymentPlan } from '@/lib/payments/syncServicePaymentPlan';
+/*
+ * Service role, deliberately: the capability is read for the authenticated
+ * owner's id, passed explicitly below. CLAUDE.md rule 4 — the scope is the
+ * argument, not an RLS session.
+ */
+import { supabaseServer } from '@/lib/supabaseServer';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 // One schema for create and update, so the two cannot drift apart again.
 
 const logger = createLogger({ module: 'SchedulingServiceAPI' });
@@ -103,6 +110,80 @@ export async function PUT(
     const body = await request.json();
     const validated = updateServiceSchema.parse(body);
     requestLogger.info({ userId: user.id, serviceId, updates: Object.keys(validated) }, 'Updating scheduling service');
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * CHOOSING CARD NEEDS A PROCESSOR THAT CAN TAKE ONE.
+     *
+     * The same refusal the publish route makes, at the moment the choice is
+     * made, so the owner is told while they are looking at the control rather
+     * than later when they try to go live.
+     *
+     * ONLY WHEN THIS SAVE *CHANGES* THE ANSWER TO CARD.
+     *
+     * The first version tested the incoming value alone — `validated.collection
+     * === 'online'` — on the reasoning that it meant "this save is choosing
+     * card". It does not. `saveRowEdit` rebuilds the whole payload from the
+     * row's current values on every save, so a service already on card resends
+     * `collection: 'online'` when the owner edits its NAME.
+     *
+     * The effect was a frozen row, and three separate things had to agree for
+     * it to be wrong:
+     *
+     *   - a live card service on an account with no processor is a SUPPORTED
+     *     state. `processor` is deliberately non-blocking, the public booking
+     *     route trades on it, and `serviceMoneyLine` tells the owner outright
+     *     that the money will arrive by invoice until Stripe is connected;
+     *   - this gate refused every edit to such a row, the correction included;
+     *   - and saving writes `status: 'draft'`, so the publish gate would then
+     *     refuse to put it back on sale.
+     *
+     * Together: a trading service that could not be edited, and could not be
+     * recovered except by switching it to invoice.
+     *
+     * Comparing with the stored row restores what was intended all along —
+     * gate the DECISION, not its echo. Choosing card today is refused and
+     * pointed at Stripe; a row that was already on card is left alone, and
+     * every edit to it, including the one that fixes it, goes through.
+     *
+     * Publishing is deliberately NOT softened the same way: it refuses for an
+     * existing card row too, exactly as the invoicing gate already refuses to
+     * publish a service whose invoice details are missing. Going live is a new
+     * promise whoever made it first.
+     *
+     * A free or quoted service never reaches this: free stores a null
+     * collection, and a quote settles its amount in the proposal.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const choosingCard =
+      validated.collection === 'online'
+      && validated.sale_mode !== 'proposal'
+      && (validated.price === undefined || validated.price === null || Number(validated.price) > 0);
+
+    if (choosingCard) {
+      const existing = await schedulingServiceRepository.findById(serviceId, user.id);
+      // Already on card: this save is not the decision, so it is not gated.
+      const alreadyOnCard = existing.data?.collection === 'online';
+
+      const capability = alreadyOnCard
+        ? { canCollect: true }
+        : await resolvePaymentCollectionCapability(supabaseServer, user.id);
+
+      if (!capability.canCollect) {
+        requestLogger.warn(
+          { userId: user.id, serviceId },
+          'Save refused: card was chosen with no connected processor'
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'processor_required',
+            error: 'Card payments need a connected payment account. Connect one, or bill this service by invoice.',
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     // 3. Update service
     //

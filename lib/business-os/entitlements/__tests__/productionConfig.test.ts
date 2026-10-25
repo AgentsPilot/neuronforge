@@ -35,11 +35,50 @@ describe('the shipped configuration', () => {
     // reads, so it is part of the decision rather than a formatting choice.
     expect(config.tierOrder).toEqual(['basic', 'pro']);
     expect(Object.keys(config.matrix.tiers).sort()).toEqual(['basic', 'pro']);
-    // Nothing has been taken away from anyone yet.
-    expect(config.matrix.removals).toEqual([]);
-    // Version 2 (slice 5, SA SQ-19): the first matrix whose allowance is in
-    // credits. A raise and a rename, no removal.
-    expect(config.matrix.version).toBe(2);
+    // Version 2 (slice 5, SA SQ-19) was the first matrix whose allowance is in
+    // credits: a raise and a rename, no removal. Version 3 (the 2026-10-25
+    // re-size, decisions D4–D6) LOWERS both credit allowances, so it carries the
+    // first removals: what each tier had, with no grandfathering (D6).
+    expect(config.matrix.version).toBe(3);
+    expect(config.matrix.removals).toEqual([
+      {
+        version: 3,
+        tier: 'basic',
+        capability: 'credits.allowance',
+        previousValue: { perMonth: 19750 },
+        grandfatherUntil: '2026-10-25T00:00:00.000Z',
+      },
+      {
+        version: 3,
+        tier: 'pro',
+        capability: 'credits.allowance',
+        previousValue: { perMonth: 32250 },
+        grandfatherUntil: '2026-10-25T00:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('the re-size grandfathers nobody after its release (D6, 2026-10-25)', () => {
+    // An account sold at matrix v2 is still resolved at the old value only while
+    // `now < grandfatherUntil` (resolver Layer 1a). The instant is the decision
+    // date, before the release, so from deploy on every account reads the new
+    // allowance; existing accounts get one expiring admin grant instead
+    // (docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §6.4).
+    const config = readCodeConfig();
+    const allowanceAt = (tier: string, at: string) =>
+      resolveEntitlements({
+        config,
+        account: tierAccount(tier, { planVersion: 2 }),
+        overrides: [],
+        addons: [],
+        now: new Date(at),
+      }).values['credits.allowance']?.value;
+
+    expect(allowanceAt('basic', '2026-10-25T00:00:00.000Z')).toEqual({ perMonth: 2000 });
+    expect(allowanceAt('pro', '2026-10-26T12:00:00.000Z')).toEqual({ perMonth: 5000 });
+    // Non-vacuity: the removal entries really are read — before the instant, the
+    // old value would still apply.
+    expect(allowanceAt('pro', '2026-10-24T23:59:59.000Z')).toEqual({ perMonth: 32250 });
   });
 
   it('gives every tier a customer-facing name and a price', () => {
@@ -82,7 +121,7 @@ describe('the shipped configuration', () => {
     }
   });
 
-  it('ships every plan ACTIVE except trial (inactive since 2026-09-30)', () => {
+  it('ships all four plans ACTIVE (trial re-activated 2026-10-25)', () => {
     // FYI only today — `planActive.noEffect.test.ts` holds that it changes
     // nothing. Pinned here anyway, so marking a plan inactive shows up in a diff
     // as the decision it is.
@@ -92,7 +131,8 @@ describe('the shipped configuration', () => {
       expect(config.matrix.presentation[tier].active).toBe(true);
     }
     expect(config.cohorts.champion.active).toBe(true);
-    expect(config.cohorts.trial.active).toBe(false);
+    // Inactive from 2026-09-30; re-activated by the user on 2026-10-25 (FYI only).
+    expect(config.cohorts.trial.active).toBe(true);
   });
 
   it('differs between the paid tiers ONLY by chat and credits', () => {
@@ -139,16 +179,17 @@ describe('the shipped configuration', () => {
   it('carries the credit allowances the user set', () => {
     const config = getEntitlementConfig(new CodeTierMatrixSource());
 
-    // D1–D3 (2026-09-30): (fee × 50% ÷ 2) ÷ $0.001. Numbers and reasons:
+    // D4 (2026-10-25): ≈ 3× a modelled heavy month, on measured usage (was
+    // 19,750 / 32,250 under D1–D3). Numbers and reasons:
     // docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
-    expect((config.matrix.tiers.basic as Record<string, unknown>)['credits.allowance']).toEqual({ perMonth: 19750 });
-    expect((config.matrix.tiers.pro as Record<string, unknown>)['credits.allowance']).toEqual({ perMonth: 32250 });
+    expect((config.matrix.tiers.basic as Record<string, unknown>)['credits.allowance']).toEqual({ perMonth: 2000 });
+    expect((config.matrix.tiers.pro as Record<string, unknown>)['credits.allowance']).toEqual({ perMonth: 5000 });
     // PARITY since 2026-09-27 (the user's decision): champions read Autopilot's
-    // row, so they get 32,250 with no number of their own.
-    expect(config.cohorts.champion.values['credits.allowance']).toEqual({ perMonth: 32250 });
-    // BD-16 (user, 2026-09-30): a one-off TOTAL, not a rate — using it up is one
-    // of the two ways a trial ends (D-2, FR-27).
-    expect(config.cohorts.trial.values['credits.allowance']).toEqual({ total: 2000 });
+    // row, so they get 5,000 with no number of their own.
+    expect(config.cohorts.champion.values['credits.allowance']).toEqual({ perMonth: 5000 });
+    // BD-16 (user, 2026-09-30), re-sized by D4 (2026-10-25, was 2,000): a one-off
+    // TOTAL, not a rate — using it up is one of the two ways a trial ends (D-2, FR-27).
+    expect(config.cohorts.trial.values['credits.allowance']).toEqual({ total: 1000 });
   });
 
   it('a champion gets the INHERITED allowance, not a copy of it', () => {

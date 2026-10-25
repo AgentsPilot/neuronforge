@@ -1,7 +1,7 @@
 # Feature Flags
 
-> **Last Updated**: 2026-10-18
-> **Version**: 1.11.0
+> **Last Updated**: 2026-10-21
+> **Version**: 1.13.0
 
 This document describes the feature flag system used in NeuronForge for gradual rollouts, A/B testing, and feature toggling.
 
@@ -11,6 +11,8 @@ This document describes the feature flag system used in NeuronForge for gradual 
 
 | Date | Version | Author | Changes |
 |------|---------|--------|---------|
+| 2026-10-21 | 1.13.0 | Dev | Added `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` (data export DE-10b.2): the customer self-delete's off switch. Server-only, **default off**, on only for the exact string `true`. While off the Danger Zone is unchanged (`GET /api/business-os/account/deletion-check` answers `{ enabled: false }`) and `POST /api/business-os/account/delete` answers 404. Reader `isAccountSelfDeleteEnabled()`. |
+| 2026-10-20 | 1.12.0 | Dev | Added `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` (upgrade modal UM-2, TEST ONLY): server-only, default off. While off `/business-os/upgrade-modal-demo` answers 404. Developer `.env.local` only, never Vercel. |
 | 2026-10-18 | 1.11.0 | Dev | Listed `DELETION_RECEIPT_FINGERPRINT_KEY` (data export DE-10b.1). **An env secret, not a flag**, listed here because operators look here. Server-only. Missing or under 32 characters: every admin delete answers 503 `not_configured`. Set in Vercel Production and Preview before the deploy, and keep a copy: losing it makes old receipts unsearchable. |
 | 2026-10-11 | 1.10.0 | Dev | Added `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` (test harness slice TC-1, TEST ONLY): server-only, default off. While off `POST /api/admin/business-os/test/take-credits` answers 404 `not_enabled`. Developer `.env.local` only, never Vercel. |
 | 2026-10-07 | 1.9.0 | Dev | Added `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` (plan payments P-3a): server-only, default off. While off `POST /api/business-os/billing/plan/checkout` answers 404 and reads nothing. Turn on only where `BUSINESS_OS_PLAN_PRICES_ENABLED` is on (otherwise the route refuses every checkout, 503 with an alert), and never in production before P-3b. |
@@ -47,6 +49,7 @@ Feature flag functions are defined in:
 
 | Flag | Environment Variable | Scope | Default | Active Routes |
 |------|---------------------|-------|---------|---------------|
+| **TEMPORARY** — Early session outcome | `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME` | Client | `false` | CRM drawer, package session rows |
 | V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
 | V6 Review Mode | `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | Client | `true` | `/v2/agents/new`, `/test-plugins-v2` |
 | Move to Calibration After Creation | `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` | Client | `false` | `/v2/agents/new` |
@@ -61,6 +64,7 @@ Feature flag functions are defined in:
 | **Business OS: plan price recognition** | `BUSINESS_OS_PLAN_PRICES_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/stripe/webhook` (plan price catalog in the Business OS router) |
 | **Business OS: plan checkout** | `BUSINESS_OS_PLAN_CHECKOUT_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/business-os/billing/plan/checkout` (refuses unless the price switch is also on) |
 | **Business OS: test harness credit tools (TEST ONLY)** | `BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED` | **Server only** | `false` (unset = off) | `POST /api/admin/business-os/test/take-credits` ("Test credits" tab on `/test-business-os`) |
+| **Business OS: upgrade modal demo page (TEST ONLY)** | `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED` | **Server only** | `false` (unset = off) | `/business-os/upgrade-modal-demo` (linked from the "Upgrade modal" tab on `/test-business-os`) |
 
 ---
 
@@ -367,6 +371,49 @@ database.
 ```bash
 # .env.local — on only while testing low / zero / over-plan credit states
 BUSINESS_OS_TEST_CREDIT_TOOLS_ENABLED=false
+```
+
+---
+
+### Business OS: customer self-delete — `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED`
+
+Data export DE-10b.2 ([workplan](/docs/workplans/BUSINESS_OS_DATA_EXPORT_DE10B2_WORKPLAN.md)). **Default: off. Server-only.** Reader:
+`isAccountSelfDeleteEnabled()` in `lib/utils/featureFlags.ts`, read on every request. On **only** for the exact string `true` (`1`, `TRUE`, blank and anything else are off), because it gates an irreversible erasure.
+
+| State | What happens |
+|---|---|
+| Off (default) | `GET /api/business-os/account/deletion-check` answers `200 { enabled: false }` before reading the session, so Settings → Danger Zone keeps today's body (Download my data + Contact us). `POST /api/business-os/account/delete` answers **404** before reading anything |
+| On | The Danger Zone shows the self-delete steps (warning, plain-word blockers, the typed statement). A matching statement closes and anonymises the signed-in user's own account with the DE-10b.1 `anonymise` mode |
+
+Self-delete also needs `TEST_CLEANUP_SECRET` and `DELETION_RECEIPT_FINGERPRINT_KEY` on the same deployment; without either, the drawer says "not available right now" and the delete answers 503. The cleanup secret is Production-only, so on Preview the feature always reads "not available". Rollback: unset it and redeploy.
+
+```bash
+# Vercel Production only, for the QA window and after the user decides to keep it on
+BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED=true
+```
+
+---
+
+### Business OS: upgrade modal demo page — `BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED`
+
+Upgrade modal UM-2 ([workplan](/docs/workplans/BUSINESS_OS_UPGRADE_MODAL_UM2_WORKPLAN.md) §7, SA X-1). **TEST ONLY. Default: off. Server-only.** Reader:
+`isUpgradeModalDemoEnabled()` in `lib/business-os/upgradeModalDemoFlag.ts`
+(`parseBooleanFlag`; imports nothing else), read on every request.
+
+| State | What `/business-os/upgrade-modal-demo` does |
+|---|---|
+| Off (default) | Answers **404** (`notFound()` before anything renders) |
+| On | Renders buttons that open the plan comparison window with each context (`settings`, `founding_partner`, `locked_feature`) for the signed-in account |
+
+Set it **only in a developer's `.env.local`, never on Vercel**. A "not production"
+check is deliberately not used: the developer environment points at the one live
+database. No `NEXT_PUBLIC_` variant exists (pinned by
+`app/business-os/upgrade-modal-demo/__tests__/upgradeModalDemo.guard.test.ts`).
+Remove it with the demo, at the latest when UM-F2 wires a real caller.
+
+```bash
+# .env.local — on only for the end-of-stream upgrade modal run
+BUSINESS_OS_UPGRADE_MODAL_DEMO_ENABLED=false
 ```
 
 ---
@@ -897,3 +944,39 @@ console.log('Feature Flags:', getFeatureFlags());
 4. **Add console logging** - Log flag values during development for debugging
 5. **Write tests** - Test all valid/invalid input combinations
 6. **Clean up old flags** - Remove flags for features that are fully rolled out
+
+---
+
+## Temporary: `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME`
+
+> **Added**: 2026-10-20 · **Remove when**: the package money path has been
+> walked end to end (held → invoice → refund).
+
+Lets a package session be marked **held** or **missed** before its hour, so the
+money path can be exercised without waiting weeks for a session to come due.
+
+**What it changes.** One thing: the clock test in
+`components/crm/contact-drawer/MeetingRowActions.tsx`. That file withholds both
+outcomes until `isMeetingPastDue`, because a meeting still ahead cannot have
+been held any more than it can have been missed. The flag makes `awaiting` true
+regardless, and both controls hang off it — the primary "mark held" button and
+the no-show item behind the `⋯`.
+
+**What it does not change.** The server never checked the clock:
+`setMeetingOutcome` records what the owner says. So everything downstream is the
+real path — the real stage, the real invoice, the real email to the client.
+
+**Why it must not reach production.** With it on, a stray tap on a session three
+weeks out bills a client for work nobody has done, which is the accident the
+gate exists to prevent.
+
+**To remove it**, in this order:
+
+| # | Delete |
+|---|---|
+| 1 | `NEXT_PUBLIC_ALLOW_EARLY_SESSION_OUTCOME` from `.env.local` |
+| 2 | the `|| (isEarlySessionOutcomeEnabled() && …)` clause in `MeetingRowActions.tsx`, and its import |
+| 3 | `isEarlySessionOutcomeEnabled()` from `lib/utils/featureFlags.ts` |
+| 4 | the guard `temporaryEarlyOutcomeFlag.guard.test.ts`, this row and this section |
+
+Nothing else reads it — the guard in step 4 is what keeps that true.

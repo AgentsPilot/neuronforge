@@ -59,6 +59,7 @@ import {
 import { handleBoostWebhookEvent } from '@/lib/business-os/boost/boostWebhookDeps';
 import { handlePlanBillingEvent } from '@/lib/business-os/billing/planBillingHandler';
 import Stripe from 'stripe';
+import { loadAttempt, materialiseAttempt } from '@/lib/scheduling/materialiseAttempt';
 
 // Disable body parsing for webhook signature verification
 export const runtime = 'nodejs';
@@ -1414,6 +1415,43 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
     }
 
     const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId, log);
+
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE OTHER HALF OF THE RACE.
+     *
+     * `finalize` links the money to the booking the moment it creates one, but
+     * it can only link rows that exist — and on a card journey it runs about a
+     * second BEFORE this handler writes them. Observed: booking created
+     * 16:20:59, subscription row written 16:21:00. So the common case fell
+     * through to the reconcile pass, and the owner's card read "₪0 collected"
+     * for up to a quarter of an hour over money the client had paid.
+     *
+     * So both sides try, and whoever is last wins: `finalize` links if the rows
+     * are already here, and this links if the booking is already there. The
+     * link itself is idempotent, so when they overlap the second one writes
+     * nothing.
+     *
+     * The attempt is read from Stripe's own metadata, and only acted on once it
+     * names a booking — before that there is nothing to link to, and the
+     * reconcile pass remains the backstop for anything both sides miss.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const attemptId = subscriptionMetadataFromInvoice(invoice).attempt_id;
+
+    if (attemptId) {
+      /*
+       * One call, and the two reads it needs live in the payments module.
+       * A `route.ts` holding its own queries is what CLAUDE.md rule 1 and
+       * `routerPlacement.guard` forbid: this file routes events, and the
+       * money join has exactly one home.
+       */
+      const { linkPaymentsForConvertedAttempt } = await import(
+        '@/lib/payments/linkPaymentsToBooking'
+      );
+    
+      await linkPaymentsForConvertedAttempt(attemptId);
+    }
     // A period belongs to its plan, not to a platform invoice. Returning here
     // stops the ordinary invoice path treating it as an unmatched Stripe
     // invoice and doing nothing with it twice.
@@ -1775,11 +1813,32 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
    * before the money moved and then silence, with no record of what left their
    * account. Verified on INV-00018: settled at 18:25:57, zero emails after it.
    *
-   * Non-blocking and last, so a mail failure cannot fail a webhook Stripe would
-   * then retry into a handler that has already done its work.
+   * AWAITED, not fired and forgotten.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * It was `void (async () => …)()`, on the reasoning below: last and
+   * non-blocking, so a mail failure could not fail a webhook Stripe would then
+   * retry into a handler that has already done its work. The reasoning is
+   * sound; the mechanism was not. Work started after the response is work
+   * nobody is waiting for, and it is the first thing lost when the request
+   * ends — the invocation is frozen at response time on a serverless host, and
+   * on a local dev server a pending microtask dies with the next restart.
+   *
+   * It lost every receipt it was ever asked to send. Three invoices settled
+   * through this handler on 19 Oct — INV1611-00075, INV1611-00076 and INV-00040
+   * — each wrote its transaction, its invoice row and its audit entry, and none
+   * produced an email. The Stripe CLI recorded why: every delivery that day
+   * timed out ("context deadline exceeded while awaiting headers") and was
+   * dropped 30s in, so the continuation after the response was never
+   * scheduled. A client paid ₪4,750 and heard nothing.
+   *
+   * The `try/catch` below is what actually keeps a mail failure from failing
+   * the webhook — it swallows and logs, and returns normally — so awaiting
+   * costs a second and a half and cannot turn a bad send into a 500 that
+   * Stripe would retry.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  void (async () => {
+  await (async () => {
     try {
       const { data: receiptInvoice } = await paymentInvoiceRepository.readFieldsUnscoped(
         platformInvoice.id,
@@ -2063,6 +2122,60 @@ async function handleConnectCheckoutCompleted(
       );
     } else {
       log.info({ bookingId }, 'Booking payment status updated');
+    }
+
+    return;
+  }
+
+  /*
+   * ── THE CLIENT WHO PAID AND CLOSED THE TAB ──────────────────────────────
+   *
+   * A card journey carries no `booking_id` — by design, because a booking
+   * created before the money holds a slot for someone who may never pay. It
+   * carries `attempt_id`, which `website/checkout` has always put in this
+   * session's metadata with a comment calling it "the only signal that
+   * survives a closed tab".
+   *
+   * Nothing read it. So a client who paid and closed the tab before the
+   * redirect landed was charged, and no booking and no contact were ever
+   * created; the attempt sat at `started` for ever and nothing surfaced it.
+   * The browser coming back was the sole mechanism, and a browser is not an
+   * event you get to rely on.
+   *
+   * Idempotent: `materialiseAttempt` returns the existing booking when the
+   * attempt already has one, so the ordinary case — webhook and redirect both
+   * arriving — creates one booking and not two, whichever wins.
+   */
+  const attemptId = session.metadata?.attempt_id;
+
+  if (attemptId && session.payment_status === 'paid') {
+    const attempt = await loadAttempt(attemptId);
+
+    if (!attempt) {
+      log.warn({ sessionId: session.id, attemptId }, 'Paid session names an attempt that does not exist');
+      return;
+    }
+
+    const made = await materialiseAttempt(attempt);
+
+    if (made.ok) {
+      log.info(
+        { sessionId: session.id, attemptId, bookingId: made.bookingId, alreadyDone: made.alreadyDone },
+        made.alreadyDone
+          ? 'The attempt was already finished by the browser returning'
+          : 'Created the booking from the webhook; the client never came back'
+      );
+    } else {
+      /*
+       * Money is held and there is no booking. `slot_taken` means somebody
+       * else finished first while this client was paying — the one case this
+       * design cannot prevent, only report. Logged at error so it reaches the
+       * owner's queue rather than disappearing.
+       */
+      log.error(
+        { sessionId: session.id, attemptId, reason: made.reason },
+        'Paid session could not be turned into a booking; a refund is owed'
+      );
     }
 
     return;

@@ -52,7 +52,17 @@ export const BUSINESS_OWNED_TABLES = [
   'contact_documents',
   // Scheduling
   'scheduling_bookings',
+  /* The appointments themselves (20261073). Already removed transitively —
+     `booking_id` is ON DELETE CASCADE — but it carries its own `user_id`, so it
+     gets its own constraint rather than relying on the parent's: a table whose
+     tenant column has no foreign key is one schema change away from outliving
+     the business it belongs to. */
+  'scheduling_meetings',
   'scheduling_services',
+  /* Somebody who gave their details on a booking page and did not finish.
+     Business-owned like any booking: it is their prospect, on their page,
+     and it goes with them on a reset or an export. */
+  'abandoned_bookings',
   'scheduling_availability_exceptions',
   'external_calendar_events',
   // Payments

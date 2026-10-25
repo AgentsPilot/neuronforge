@@ -35,6 +35,8 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { PlanSection } from '@/components/business-os/settings/PlanSection';
+import { SettingsPlanModal } from '@/components/business-os/settings/SettingsPlanModal';
+import { usePlanSurface } from '@/components/business-os/settings/usePlanSurface';
 import { SettingsDrawer } from '@/components/business-os/settings/SettingsDrawer';
 import { ChangePasswordDrawer } from '@/components/business-os/settings/ChangePasswordDrawer';
 import { useLinkOpenedDrawer } from '@/components/business-os/settings/useLinkOpenedDrawer';
@@ -43,7 +45,7 @@ import { MarketingConsentDrawer } from '@/components/business-os/settings/Market
 import { startMarketingDrawerReads } from '@/components/business-os/settings/marketingDrawerReads';
 import { startPlanDrawerRead } from '@/components/business-os/settings/planDrawerReads';
 import { DRAWER_PREFETCH_MAX_AGE_MS, useDrawerPrefetch } from '@/components/business-os/settings/useDrawerPrefetch';
-import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
+import { ErasureDialogBody } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { createLogger } from '@/lib/logger';
@@ -52,14 +54,13 @@ import { cn } from '@/lib/utils';
 const logger = createLogger({ module: 'BusinessOSSettings' });
 
 import AvatarUpload from '@/components/ui/AvatarUpload';
-import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { PAGE_CONTAINER, scrollIntoBusinessOsView } from '@/lib/business-os/pageContainer';
 
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
 
@@ -78,13 +79,15 @@ function scrollToSection(section: string): ReturnType<typeof setTimeout> {
     const target = document.getElementById(`settings-section-${section}`);
     if (!target) return;
 
-    // Offset by the sticky header, which would otherwise cover the section
-    // heading the reader was sent here to find.
-    const header = document.querySelector('.sticky');
-    const headerHeight = header ? header.getBoundingClientRect().height : 0;
-    const top = target.getBoundingClientRect().top + window.scrollY - headerHeight - 12;
-
-    window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+    /*
+     * The page body scrolls, not the window — see `BUSINESS_OS_SCROLL_ID`.
+     *
+     * This measured `.sticky` and subtracted its height, because the header
+     * used to float over the document and cover whatever it scrolled to. The
+     * header sits outside the scrolling element now, so there is nothing to
+     * correct for and nothing for `window.scrollTo` to move.
+     */
+    scrollIntoBusinessOsView(target);
   }, 100);
 }
 
@@ -195,6 +198,20 @@ function BusinessOSSettingsContent() {
     paused: planDrawer.open,
     maxAgeMs: DRAWER_PREFETCH_MAX_AGE_MS,
     warmOnIdle: true,
+  });
+
+  /*
+   * Upgrade modal UM-D3: which surface the plan open shows. `planDrawer` stays
+   * the one open state; the decider adds the comparison pop-up (the server
+   * offers something, or a checkout return) or the drawer (nothing offered, or
+   * a read slower than 2 s or failed). It takes the warm set above once per
+   * open and hands the same read to whichever surface opens (R-8). The rule
+   * itself is `planSurfaceFor`, never this page or the deep-link branch.
+   */
+  const planSurface = usePlanSurface({
+    open: planDrawer.open,
+    checkoutMarker: searchParams?.get('checkout') ?? null,
+    takePrefetched: planPrefetch.take,
   });
 
   // Delete account dialog state
@@ -706,7 +723,7 @@ function BusinessOSSettingsContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+      <div className="min-h-full bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center space-y-4">
             <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: 'var(--v2-primary)', borderTopColor: 'transparent' }}></div>
@@ -718,7 +735,7 @@ function BusinessOSSettingsContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="min-h-full bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
 
       {/* Main Content with max-width like CRM page */}
       <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
@@ -1028,6 +1045,7 @@ function BusinessOSSettingsContent() {
               type="button"
               aria-haspopup="dialog"
               aria-expanded={planDrawer.open}
+              aria-busy={planSurface.surface === 'pending' || undefined}
               onPointerEnter={planPrefetch.warm}
               onFocus={planPrefetch.warm}
               onPointerDown={planPrefetch.warm}
@@ -1038,10 +1056,15 @@ function BusinessOSSettingsContent() {
                 <CreditCard className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 <span className="text-sm text-[var(--v2-text-primary)]">{t('plan.section_title')}</span>
               </div>
-              <ChevronRight className={rowChevron()} aria-hidden="true" />
+              {/* UM-D3 R-4: while the first read decides the surface (at most 2 s). */}
+              {planSurface.surface === 'pending' ? (
+                <Loader2 className="w-4 h-4 animate-spin text-[var(--v2-text-muted)]" aria-hidden="true" data-testid="settings-plan-row-pending" />
+              ) : (
+                <ChevronRight className={rowChevron()} aria-hidden="true" />
+              )}
             </button>
             <SettingsDrawer
-              open={planDrawer.open}
+              open={planDrawer.open && planSurface.surface === 'drawer'}
               onOpenChange={planDrawer.onOpenChange}
               title={t('plan.section_title')}
               isRTL={isRTL}
@@ -1051,8 +1074,16 @@ function BusinessOSSettingsContent() {
             >
               {/* P-4.2: the checkout return marker (display only; the section
                   pattern-checks it and only the server re-read shows a plan). */}
-              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} takePrefetched={planPrefetch.take} />
+              <PlanSection checkoutMarker={searchParams?.get('checkout') ?? null} takePrefetched={planSurface.takeForDrawer} />
             </SettingsDrawer>
+            {/* UM-D3: the pop-up, never mounted with the drawer (R-3). Its footer reads "Close". */}
+            <SettingsPlanModal
+              open={planDrawer.open && planSurface.surface === 'modal'}
+              onClose={() => planDrawer.onOpenChange(false)}
+              firstRead={planSurface.modalFirstRead}
+              checkoutMarker={searchParams?.get('checkout') ?? null}
+              returnFocusRef={planRowRef}
+            />
           </div>
 
           {/* Slice 5a: renders nothing unless the server says this account may invite friends. */}
@@ -1247,31 +1278,14 @@ function BusinessOSSettingsContent() {
         }
       }}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <Trash2 className="w-5 h-5" />
-              {t('settings.security.delete_dialog_title')}
-            </DialogTitle>
-            <DialogDescription className="pt-2">
-              {t('settings.security.erasure_request_title')}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            {/* Warning Box */}
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-              <p className="text-sm text-red-700 dark:text-red-400 font-medium">
-                {t('settings.security.delete_warning')}
-              </p>
-            </div>
-
-            {/*
-              Shared with /v2/settings — one copy of the copy, and one place the
-              erasure contact address lives. See components/business-os/purge/
-              DangerZonePanel.tsx.
-            */}
-            <ErasureRequestContent />
-          </div>
+          {/*
+            Header, warning and body, shared with /v2/settings: one copy of the
+            copy and one place the erasure contact lives. It mounts with the
+            dialog, so the self-delete pre-check runs once per open and the
+            header follows it (data export DE-10b.2, QA E-1). See
+            components/business-os/purge/DangerZonePanel.tsx.
+          */}
+          <ErasureDialogBody />
 
           <DialogFooter className="gap-2 sm:gap-0">
             <button
