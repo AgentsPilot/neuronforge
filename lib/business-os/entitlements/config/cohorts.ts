@@ -47,9 +47,11 @@ const CHAMPION_BASE_TIER = 'pro' as const;
 
 /**
  * Test Flight's one-off credit total — BD-16, decided by the user on 2026-09-30
- * (revision-log row in docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §7).
+ * at 2,000; re-sized to 1,000 by decision D4 on 2026-10-25 (the floor that
+ * `trialAllowance.invariant.test.ts` allows). Revision-log rows in
+ * docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §7.
  */
-const TRIAL_CREDIT_TOTAL = 2000;
+const TRIAL_CREDIT_TOTAL = 1000;
 
 /**
  * A cohort's configuration, with the explicit values this catalog demands.
@@ -70,8 +72,9 @@ export type CohortConfig = CohortConfigShape<CohortExplicitValues>;
  * the catalog fails the build until someone decides what champions get.
  *
  * The 14 / 7 / 30-day durations further down are the user's decisions (D-2,
- * D-4), and so is the credit allowance (D1–D3 and BD-16, 2026-09-30; numbers and
- * reasons in docs/architecture/BUSINESS_OS_CREDIT_PRICING.md). The `email.volume`
+ * D-4), and so is the credit allowance (D1–D3 and BD-16, 2026-09-30, re-sized
+ * by D4 on 2026-10-25; numbers and reasons in
+ * docs/architecture/BUSINESS_OS_CREDIT_PRICING.md). The `email.volume`
  * ceilings are still a named FIRST PASS (OI-2), invented to make the config
  * valid and marked so they cannot quietly become policy.
  */
@@ -163,8 +166,8 @@ export const COHORTS = {
     // Tiers card and read by nothing else. Open question before it does
     // anything: what should inactive DO — stop new assignments? hide the plan
     // from customers? affect accounts already on it?
-    // Marked inactive by the user 2026-09-30 (FYI only).
-    active: false,
+    // Re-activated by the user 2026-10-25 (FYI only).
+    active: true,
     // Beta capabilities are included on top of the tier row. Setting this to []
     // keeps beta for champions only — one value, no code.
     includeLifecycle: ['beta'],

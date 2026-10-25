@@ -61,6 +61,14 @@ export const CREDIT_RETAIL_HISTORY = deepFreeze([
     derivation:
       'Decision D1 (user, 2026-09-30): 100% markup, the owner pays twice our measured AI cost. Recorded in code by credits boost slice 1 (SA F-3). Numbers and revision log: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md.',
   },
+  {
+    version: 2,
+    markup: 4,
+    creditValueVersion: 1,
+    decidedOn: '2026-10-25',
+    derivation:
+      'Decision D5 (user, 2026-10-25, the credits re-size): 400% markup, the owner pays five times our measured AI cost for a boost. Prices and bonuses kept, so each package buys fewer credits; credits already bought are untouched. Credit value unchanged (version 1). Numbers, data and revision log: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md section 2a.',
+  },
 ] as const satisfies readonly CreditRetailVersion[]);
 
 /** The markup new sales are priced at: the last entry. */
