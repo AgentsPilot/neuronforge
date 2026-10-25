@@ -3,7 +3,8 @@
 /**
  * The Exchange rates KPI strip (Admin Exchange Rates slice 1c.1, FR-20 to
  * FR-22, SA-1c-2 / SA-1c-3; replaces slice 1a's one "Stale rates" tile, SQ-7,
- * per the user's page review D-7). Two tiles, in this order:
+ * per the user's page review D-7; the third tile since slice 1e). Three tiles,
+ * in this order:
  *
  *   Enabled currencies  "N of X": N = rows whose `isEnabled` is true (a null in
  *                       the database already reads as false, SA §10 ruling 1),
@@ -18,7 +19,16 @@
  *                       switches are not rate changes and never show here
  *                       (SQ-14). "No changes yet" when there is no history.
  *
- * Both tiles count the WHOLE plain-GET payload, never a filtered view and
+ *   Rates last checked  (slice 1e, D-10 point 3, SA §13.8 SQ-51 (6)) the
+ *                       newest successful rate sync: its time (UTC) and
+ *                       "ECB rates of {rateDate}". "No sync on record" when
+ *                       the live audit holds none (archiving can remove an old
+ *                       one, so never "Never"); the shared "Could not check"
+ *                       status when the audit trail could not be read. Fed by
+ *                       the `lastSync` prop: the view passes the visit's own
+ *                       sync answer ahead of the GET's value.
+ *
+ * The first two tiles count the WHOLE plain-GET payload, never a filtered view and
  * never the one-currency history read (SA-1c-2). The tile never reads the
  * windowed `payload.history`. There is no Stale tile; each
  * row still carries its Stale chip (FR-8). No link target, no fetch here.
@@ -31,6 +41,7 @@ import {
   type ExchangeRateHistoryWire,
   type ExchangeRatesPayload,
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import type { LastRateSyncWire } from '@/lib/admin/exchangeRates/rateSyncRules';
 
 import { changedByText } from './changedByText';
 
@@ -39,6 +50,18 @@ export interface ExchangeRatesKpisProps {
   payload: ExchangeRatesPayload | null;
   /** A read is in flight. */
   loading: boolean;
+  /** Slice 1e (SQ-51 (6)): the "Rates last checked" tile's value. */
+  lastSync: LastRateSyncWire;
+}
+
+/** The third tile (SQ-51 (6)): one shape per `lastSync` state. */
+function lastCheckedTile(lastSync: LastRateSyncWire) {
+  const common = { testId: 'kpi-rates-last-checked', label: 'Rates last checked' } as const;
+  if (lastSync.status === 'ok') {
+    return <KpiTile {...common} value={formatUtc(lastSync.checkedAt)} sub={`ECB rates of ${lastSync.rateDate}`} />;
+  }
+  if (lastSync.status === 'none') return <KpiTile {...common} value="No sync on record" />;
+  return <KpiTile {...common} status="unavailable" sub="The audit trail could not be read" />;
 }
 
 /**
@@ -53,8 +76,8 @@ function rateChangeText(row: ExchangeRateHistoryWire): string {
     : `${row.currencyCode} ${roundRateForDisplay(row.oldRate)} → ${newRate}`;
 }
 
-export function ExchangeRatesKpis({ payload, loading }: ExchangeRatesKpisProps) {
-  if (!payload) return loading ? <KpiStrip loading placeholderCount={2} /> : null;
+export function ExchangeRatesKpis({ payload, loading, lastSync }: ExchangeRatesKpisProps) {
+  if (!payload) return loading ? <KpiStrip loading placeholderCount={3} /> : null;
 
   const enabled = payload.rates.filter((rate) => rate.isEnabled === true).length;
   const last = payload.lastChange;
@@ -72,6 +95,7 @@ export function ExchangeRatesKpis({ payload, loading }: ExchangeRatesKpisProps) 
         value={last ? rateChangeText(last) : 'No changes yet'}
         sub={last ? `by ${changedByText(last)}, ${formatUtc(last.changedAt)}` : null}
       />
+      {lastCheckedTile(lastSync)}
     </KpiStrip>
   );
 }

@@ -18,6 +18,10 @@
  * carry the history window as `from` / `to`, so URLs are matched by path and
  * query keys; captions name the period; the fixtures carry `lastChange`; and
  * `describe('slice 1d')` covers the Window control.
+ *
+ * Slice 1e (SA §13.7, §13.8): forced edits only to the `payload()` fixture
+ * (it gains `lastSync`) and to the tile list (a third tile). The sync,
+ * Accept and D-10 cases are the `slice 1e` describes at the end.
  */
 
 import '@testing-library/jest-dom';
@@ -33,6 +37,11 @@ import {
   type ExchangeRateWire,
   type ExchangeRatesPayload,
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import {
+  ECB_SOURCE_PAGE_URL,
+  type ExchangeRateSyncPayload,
+  type ExchangeRatesReadPayload,
+} from '@/lib/admin/exchangeRates/rateSyncRules';
 
 // The view's client logger, so a test can prove a retired request logs nothing (SA C-2).
 const mockClientWarn = jest.fn();
@@ -68,7 +77,7 @@ function rate(code: string, overrides: Partial<ExchangeRateWire> = {}): Exchange
   };
 }
 
-function payload(): ExchangeRatesPayload {
+function payload(): ExchangeRatesReadPayload {
   const newest: ExchangeRateHistoryWire = {
     id: 'h1',
     currencyCode: 'ILS',
@@ -91,6 +100,8 @@ function payload(): ExchangeRatesPayload {
     lastChange: { ...newest },
     nameLookup: 'ok',
     readAt: READ_AT,
+    // Slice 1e (SQ-51, forced edit): the newest successful sync, from the audit.
+    lastSync: { status: 'ok', checkedAt: '2026-10-16T08:00:00.000Z', rateDate: '2026-10-15' },
   };
 }
 
@@ -399,10 +410,15 @@ function deferred<T>() {
 }
 
 describe('the KPI strip (FR-20 to FR-22, SA-1c-2)', () => {
-  it('exactly two tiles: Enabled currencies "N of X" with USD counted, and the Last rate change', async () => {
+  // Slice 1e (SQ-51 (6), forced edit): the third tile, "Rates last checked", after the two.
+  it('three tiles: Enabled currencies "N of X" with USD counted, the Last rate change, and Rates last checked', async () => {
     await renderPage();
     const tiles = screen.getAllByTestId(/^kpi-(?!.*-(box|indicator)$)/);
-    expect(tiles.map((tile) => tile.getAttribute('data-testid'))).toEqual(['kpi-enabled-currencies', 'kpi-last-rate-change']);
+    expect(tiles.map((tile) => tile.getAttribute('data-testid'))).toEqual([
+      'kpi-enabled-currencies',
+      'kpi-last-rate-change',
+      'kpi-rates-last-checked',
+    ]);
     // EUR, ILS, USD enabled; JPY not: 3 of 4.
     const enabled = screen.getByTestId('kpi-enabled-currencies');
     expect(enabled).toHaveTextContent('Enabled currencies');
@@ -1000,5 +1016,553 @@ describe('QA probes (slice 1d)', () => {
     render(<ExchangeRatesView />);
     await late(() => first.resolve({ status: 500, body: { success: false, error: 'Failed to read exchange rates' } }));
     expect(mockClientWarn).toHaveBeenCalledWith(expect.objectContaining({ status: 500 }), 'Exchange rates read failed');
+  });
+});
+
+// ── Slice 1e (SA §13.7 SA-1e-1 / SA-1e-2, §13.8 SQ-49 / SQ-51): additions only ──
+
+const SYNC_URL = '/api/admin/exchange-rates/sync';
+const FETCHED_AT = '2026-10-25T09:14:03.000Z';
+
+/**
+ * A page that covers every §5.7.5 row state: EUR (gap down), GBP (equal),
+ * ILS (gap up), CHF (not in the feed), XAU (no usable rate), SEK (enabled,
+ * missing from the answer: "switched on after the sync"), JPY (disabled), USD.
+ */
+function syncPagePayload(): ExchangeRatesReadPayload {
+  const base = payload();
+  return {
+    ...base,
+    rates: [
+      rate('CHF', { rateToUsd: '0.900000' }),
+      rate('EUR', { rateToUsd: '0.920000' }),
+      rate('GBP', { rateToUsd: '0.748039' }),
+      rate('ILS', { rateToUsd: '3.090000' }),
+      rate('JPY', { isEnabled: false, rateToUsd: '150.000000' }),
+      rate('SEK', { rateToUsd: '10.000000' }),
+      rate('USD', { rateToUsd: '1.000000', lastUpdatedAt: FRESH }),
+      rate('XAU', { rateToUsd: '1.000000' }),
+    ],
+  };
+}
+
+function syncAnswer(overrides: Partial<ExchangeRateSyncPayload> = {}): ExchangeRateSyncPayload {
+  return {
+    source: 'ECB',
+    outcome: 'ok',
+    rateDate: '2026-10-23',
+    fetchedAt: FETCHED_AT,
+    suggestions: [
+      { currencyCode: 'CHF', currentRate: '0.900000', status: 'not_in_feed', suggestedRate: null, gapAbsolute: null, gapPercent: null, direction: null },
+      { currencyCode: 'EUR', currentRate: '0.920000', status: 'suggested', suggestedRate: '0.893416', gapAbsolute: '-0.026584', gapPercent: '-2.89%', direction: 'down' },
+      { currencyCode: 'GBP', currentRate: '0.748039', status: 'suggested', suggestedRate: '0.748039', gapAbsolute: '0.000000', gapPercent: '0.00%', direction: 'none' },
+      { currencyCode: 'ILS', currentRate: '3.090000', status: 'suggested', suggestedRate: '3.121505', gapAbsolute: '+0.031505', gapPercent: '+1.02%', direction: 'up' },
+      { currencyCode: 'XAU', currentRate: '1.000000', status: 'no_usable_rate', suggestedRate: null, gapAbsolute: null, gapPercent: null, direction: null },
+    ],
+    ...overrides,
+  };
+}
+
+type SyncCall = Call & { rawBody: unknown; headers: unknown };
+type Reply = Answer | Error | Promise<Answer>;
+
+/** Plain GET, `?currency=`, PATCH and the sync POST, each answered by its own function; every call recorded. */
+function stubSync(
+  options: {
+    get?: () => Reply;
+    patch?: (call: Call) => Reply;
+    sync?: () => Reply;
+    currency?: CurrencyAnswer;
+  } = {}
+) {
+  const calls: SyncCall[] = [];
+  global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    const call: SyncCall = {
+      url,
+      method,
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      rawBody: init?.body,
+      headers: init?.headers,
+    };
+    calls.push(call);
+    let answer: Answer | Error;
+    if (method === 'POST') answer = await (options.sync ?? (() => ok(syncAnswer())))();
+    else if (method === 'PATCH') answer = await (options.patch ?? (() => ok(null)))(call);
+    else {
+      const code = new URL(url, 'http://localhost').searchParams.get('currency');
+      answer = code ? await (options.currency ?? defaultCurrency)(code, call) : await (options.get ?? (() => ok(syncPagePayload())))();
+    }
+    if (answer instanceof Error) throw answer;
+    const settled = answer;
+    return { ok: settled.status >= 200 && settled.status < 300, status: settled.status, json: async () => settled.body };
+  }) as unknown as typeof fetch;
+  return calls;
+}
+
+async function renderSyncPage(options: Parameters<typeof stubSync>[0] = {}) {
+  const calls = stubSync(options);
+  const view = render(<ExchangeRatesView />);
+  await screen.findByTestId('exchange-rates-content');
+  return Object.assign(calls, { unmount: view.unmount });
+}
+
+const syncButton = () => screen.getByTestId('sync-rates');
+const syncPosts = (calls: SyncCall[]) => calls.filter((call) => call.method === 'POST');
+
+async function syncNow() {
+  fireEvent.click(syncButton());
+  await waitFor(() => expect(syncButton()).not.toHaveAttribute('aria-busy', 'true'));
+}
+
+const headerNames = () =>
+  within(screen.getByRole('table', { name: 'Exchange rates' }))
+    .getAllByRole('columnheader')
+    .map((th) => th.textContent);
+
+const TODAY_HEADERS = ['Currency', 'Symbol', 'Rate to USD', 'Enabled', 'Last updated', 'Status', 'Actions'];
+
+describe('slice 1e.1: sync, Suggested rate, Gap', () => {
+  it('before a sync the header row is exactly today\'s, and no suggestion cell exists', async () => {
+    await renderSyncPage();
+    expect(headerNames()).toEqual(TODAY_HEADERS);
+    expect(screen.queryByTestId('suggested-ILS')).toBeNull();
+    expect(screen.queryByTestId('rate-sync-line')).toBeNull();
+  });
+
+  it('the button is disabled with no plain read yet', async () => {
+    const first = deferred<Answer>();
+    stubSync({ get: () => first.promise });
+    render(<ExchangeRatesView />);
+    expect(syncButton()).toBeDisabled();
+    await late(() => first.resolve(ok(syncPagePayload())));
+    await waitFor(() => expect(syncButton()).toBeEnabled());
+  });
+
+  it('the button is disabled and aria-busy while a sync runs', async () => {
+    const answer = deferred<Answer>();
+    await renderSyncPage({ sync: () => answer.promise });
+    fireEvent.click(syncButton());
+    expect(syncButton()).toBeDisabled();
+    expect(syncButton()).toHaveAttribute('aria-busy', 'true');
+    expect(syncButton()).toHaveTextContent('Syncing…');
+    await late(() => answer.resolve(ok(syncAnswer())));
+    expect(syncButton()).toBeEnabled();
+    expect(syncButton()).toHaveAttribute('aria-busy', 'false');
+  });
+
+  it('POSTs {} to the exact URL with a JSON content type', async () => {
+    const calls = await renderSyncPage();
+    await syncNow();
+    expect(syncPosts(calls)).toHaveLength(1);
+    expect(syncPosts(calls)[0]).toMatchObject({ url: SYNC_URL, rawBody: '{}', headers: { 'content-type': 'application/json' } });
+  });
+
+  it('after a sync: the two columns after "Rate to USD", the status line and every §5.7.5 row state', async () => {
+    await renderSyncPage();
+    await syncNow();
+    showAll();
+    expect(headerNames()).toEqual(['Currency', 'Symbol', 'Rate to USD', 'Suggested rate', 'Gap', 'Enabled', 'Last updated', 'Status', 'Actions']);
+    expect(screen.getByTestId('rate-sync-line')).toHaveTextContent('Source: ECB · rates of 2026-10-23 · fetched 09:14 UTC');
+
+    expect(screen.getByTestId('suggested-USD')).toHaveTextContent('Base, always 1');
+    expect(screen.getByTestId('suggested-JPY')).toHaveTextContent('Not synced (disabled)');
+    expect(screen.getByTestId('suggested-SEK')).toHaveTextContent('Sync again to get a rate');
+    expect(screen.getByTestId('suggested-CHF')).toHaveTextContent('No public rate');
+    expect(screen.getByTestId('suggested-XAU')).toHaveTextContent('No usable rate');
+
+    expect(screen.getByTestId('suggested-rate-ILS')).toHaveTextContent('3.121505');
+    expect(screen.getByTestId('suggested-ILS')).toHaveTextContent('ECB · rates of 2026-10-23 · fetched 09:14 UTC');
+    expect(screen.getByTestId('gap-ILS')).toHaveTextContent('+0.031505 (+1.02%)');
+    expect(screen.getByTestId('suggested-rate-EUR')).toHaveTextContent('0.893416');
+    expect(screen.getByTestId('gap-EUR')).toHaveTextContent('-0.026584 (-2.89%)');
+    for (const code of ['USD', 'JPY', 'SEK', 'CHF', 'XAU']) expect(screen.getByTestId(`gap-${code}`)).toHaveTextContent('—');
+  });
+
+  it('red, green and no colour, each in words; red and green with an icon', async () => {
+    await renderSyncPage();
+    await syncNow();
+    const up = screen.getByTestId('gap-chip-ILS');
+    expect(up).toHaveAttribute('data-tone', 'danger');
+    expect(up).toHaveTextContent('Rate up: currency weaker, we are behind');
+    expect(up.querySelector('svg')).not.toBeNull();
+    const down = screen.getByTestId('gap-chip-EUR');
+    expect(down).toHaveAttribute('data-tone', 'ok');
+    expect(down).toHaveTextContent('Rate down: currency stronger, in our favour');
+    expect(down.querySelector('svg')).not.toBeNull();
+    const none = screen.getByTestId('gap-chip-GBP');
+    expect(none).toHaveAttribute('data-tone', 'neutral');
+    expect(none).toHaveTextContent('No change');
+    expect(screen.getByTestId('gap-GBP')).not.toHaveTextContent('%');
+  });
+
+  it('"No public rate" never shows as 1', async () => {
+    await renderSyncPage();
+    await syncNow();
+    for (const testId of ['suggested-CHF', 'gap-CHF']) {
+      expect(screen.getByTestId(testId).textContent).not.toMatch(/(^|[^0-9.])1(\.0+)?([^0-9]|$)/);
+    }
+  });
+
+  it('SA-1e-1: a manual edit to another value shows "Rate changed since the sync", no colour, no Accept', async () => {
+    const saved = rate('ILS', { rateToUsd: '3.200000', lastUpdatedAt: READ_AT });
+    let current = syncPagePayload();
+    await renderSyncPage({
+      get: () => ok(current),
+      patch: () => {
+        current = { ...current, rates: current.rates.map((r) => (r.currencyCode === 'ILS' ? saved : r)) };
+        return ok({ rate: saved, unchanged: false });
+      },
+    });
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit rate for ILS' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rate to USD for ILS' }), { target: { value: '3.2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByTestId('rate-value-ILS')).toHaveTextContent('3.200000'));
+    expect(screen.getByTestId('gap-changed-ILS')).toHaveTextContent('Rate changed since the sync. Sync again.');
+    expect(screen.queryByTestId('gap-chip-ILS')).toBeNull();
+    expect(screen.queryByTestId('accept-ILS')).toBeNull();
+  });
+
+  it('SA-1e-1: a manual edit to the suggested value shows "Accepted", no Accept', async () => {
+    const saved = rate('ILS', { rateToUsd: '3.121505', lastUpdatedAt: READ_AT });
+    let current = syncPagePayload();
+    await renderSyncPage({
+      get: () => ok(current),
+      patch: () => {
+        current = { ...current, rates: current.rates.map((r) => (r.currencyCode === 'ILS' ? saved : r)) };
+        return ok({ rate: saved, unchanged: false });
+      },
+    });
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit rate for ILS' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rate to USD for ILS' }), { target: { value: '3.121505' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByTestId('rate-value-ILS')).toHaveTextContent('3.121505'));
+    expect(screen.getByTestId('gap-chip-ILS')).toHaveTextContent('Accepted');
+    expect(screen.queryByTestId('accept-ILS')).toBeNull();
+  });
+
+  it.each([
+    ['timeout', 'The ECB did not answer in time. No rate was changed. Try again in a moment.'],
+    ['network_error', 'The ECB could not be reached. No rate was changed. Try again in a moment.'],
+    ['blocked', 'The ECB refused the request. No rate was changed.'],
+    ['layout_changed', 'The ECB file was not in the expected format, so no rate was read. No rate was changed.'],
+    ['too_large', 'The ECB answer was larger than expected and was not read. No rate was changed.'],
+    ['http_503', 'The ECB answered with HTTP status 503. No rate was changed.'],
+  ] as const)('a %s answer shows its sentence, adds no column, and the table still edits', async (outcome, sentence) => {
+    await renderSyncPage({ sync: () => ok(syncAnswer({ outcome, rateDate: null, suggestions: [] })) });
+    await syncNow();
+    expect(screen.getByTestId('rate-sync-notice')).toHaveTextContent(sentence);
+    expect(headerNames()).toEqual(TODAY_HEADERS);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit rate for ILS' }));
+    expect(screen.getByRole('textbox', { name: 'Rate to USD for ILS' })).toBeEnabled();
+  });
+
+  it('a refused sync (500) shows the server\'s words; a network failure shows the shared sentence', async () => {
+    let attempt = 0;
+    await renderSyncPage({
+      sync: () => {
+        attempt += 1;
+        return attempt === 1
+          ? { status: 500, body: { success: false, error: 'Failed to sync exchange rates' } }
+          : new TypeError('Failed to fetch');
+      },
+    });
+    await syncNow();
+    expect(screen.getByTestId('rate-sync-notice')).toHaveTextContent('Failed to sync exchange rates');
+    await syncNow();
+    expect(screen.getByTestId('rate-sync-notice')).toHaveTextContent(ADMIN_NETWORK_ERROR);
+  });
+
+  it('a failed sync after a good one keeps the columns of the good one', async () => {
+    let attempt = 0;
+    await renderSyncPage({
+      sync: () => {
+        attempt += 1;
+        return ok(attempt === 1 ? syncAnswer() : syncAnswer({ outcome: 'timeout', rateDate: null, suggestions: [] }));
+      },
+    });
+    await syncNow();
+    await syncNow();
+    expect(screen.getByTestId('rate-sync-notice')).toHaveTextContent('did not answer in time');
+    expect(screen.getByTestId('suggested-rate-ILS')).toHaveTextContent('3.121505');
+  });
+
+  it('suggestions survive Refresh, a save and a Show change', async () => {
+    const saved = rate('EUR', { rateToUsd: '0.920000', lastUpdatedAt: READ_AT });
+    await renderSyncPage({ patch: () => ok({ rate: saved, unchanged: true }) });
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the exchange rates' }));
+    await waitFor(() => expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByTestId('suggested-rate-ILS')).toHaveTextContent('3.121505');
+    showAll();
+    expect(screen.getByTestId('suggested-rate-ILS')).toHaveTextContent('3.121505');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit rate for EUR' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rate to USD for EUR' })).toBeNull());
+    expect(screen.getByTestId('suggested-rate-ILS')).toHaveTextContent('3.121505');
+  });
+
+  it('unmount mid-sync writes no state and logs nothing', async () => {
+    const answer = deferred<Answer>();
+    const errors = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const calls = await renderSyncPage({ sync: () => answer.promise });
+    fireEvent.click(syncButton());
+    await waitFor(() => expect(syncPosts(calls)).toHaveLength(1));
+    calls.unmount();
+    mockClientWarn.mockClear();
+    await late(() => answer.resolve({ status: 500, body: { success: false, error: 'Failed to sync exchange rates' } }));
+    expect(mockClientWarn).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('the control: the same held 500 while mounted is logged (the unmount probe is not vacuous)', async () => {
+    const answer = deferred<Answer>();
+    await renderSyncPage({ sync: () => answer.promise });
+    fireEvent.click(syncButton());
+    mockClientWarn.mockClear();
+    await late(() => answer.resolve({ status: 500, body: { success: false, error: 'Failed to sync exchange rates' } }));
+    expect(mockClientWarn).toHaveBeenCalledWith(expect.objectContaining({ status: 500 }), 'Exchange rate sync refused');
+  });
+
+  it('the new columns and lines show no amount and no total (D-5)', async () => {
+    await renderSyncPage();
+    await syncNow();
+    const synced = [
+      ...screen.getAllByTestId(/^(suggested|gap)-[A-Z]{3}$/),
+      screen.getByTestId('rate-sync'),
+      screen.getByTestId('kpi-rates-last-checked'),
+    ];
+    expect(synced.length).toBeGreaterThan(10);
+    for (const element of synced) expect(element.textContent).not.toMatch(/[$₪€£]|total|USD [0-9]/i);
+  });
+});
+
+describe('slice 1e.2: Accept suggestion', () => {
+  it('appears only in state (2): never for USD, disabled, not in feed, not usable, not synced or rate changed', async () => {
+    await renderSyncPage();
+    await syncNow();
+    showAll();
+    expect(screen.getByRole('button', { name: 'Accept suggested ILS rate 3.121505' })).toHaveTextContent('Accept suggestion');
+    expect(screen.getByRole('button', { name: 'Accept suggested EUR rate 0.893416' })).toBeInTheDocument();
+    for (const code of ['USD', 'JPY', 'CHF', 'XAU', 'SEK']) expect(screen.queryByTestId(`accept-${code}`)).toBeNull();
+  });
+
+  it('"Confirm (no change)" for an equal suggestion', async () => {
+    await renderSyncPage();
+    await syncNow();
+    const confirm = screen.getByRole('button', { name: 'Confirm (no change) for GBP rate 0.748039' });
+    expect(confirm).toHaveTextContent('Confirm (no change)');
+  });
+
+  it('sends the exact PATCH body; afterwards "Accepted", no Stale chip, and the history re-read runs', async () => {
+    const saved = rate('ILS', { rateToUsd: '3.121505', lastUpdatedAt: READ_AT });
+    let current = syncPagePayload();
+    const calls = await renderSyncPage({
+      get: () => ok(current),
+      patch: () => {
+        current = { ...current, rates: current.rates.map((r) => (r.currencyCode === 'ILS' ? saved : r)) };
+        return ok({ rate: saved, unchanged: false });
+      },
+    });
+    await syncNow();
+    expect(screen.getByTestId('stale-ILS')).toBeInTheDocument();
+    const readsBefore = plainGets(calls).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggested ILS rate 3.121505' }));
+    await waitFor(() => expect(screen.getByTestId('gap-chip-ILS')).toHaveTextContent('Accepted'));
+    expect(calls.filter((c) => c.method === 'PATCH').map(({ url, body }) => ({ url, body }))).toEqual([
+      {
+        url: '/api/admin/exchange-rates/ILS',
+        body: {
+          field: 'rate',
+          rate: '3.121505',
+          expectedRate: '3.090000',
+          origin: { kind: 'sync', source: 'ecb', rateDate: '2026-10-23' },
+        },
+      },
+    ]);
+    expect(screen.getByTestId('rate-value-ILS')).toHaveTextContent('3.121505');
+    expect(screen.queryByTestId('stale-ILS')).toBeNull();
+    await waitFor(() => expect(plainGets(calls).length).toBe(readsBefore + 1));
+    expect(screen.queryByTestId('accept-ILS')).toBeNull();
+  });
+
+  it('a confirm: same PATCH shape with the equal value, then "Accepted"', async () => {
+    const saved = rate('GBP', { rateToUsd: '0.748039', lastUpdatedAt: READ_AT });
+    const calls = await renderSyncPage({ patch: () => ok({ rate: saved, unchanged: true }) });
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm (no change) for GBP rate 0.748039' }));
+    await waitFor(() => expect(screen.getByTestId('gap-chip-GBP')).toHaveTextContent('Accepted'));
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+      field: 'rate',
+      rate: '0.748039',
+      expectedRate: '0.748039',
+      origin: { kind: 'sync', source: 'ecb', rateDate: '2026-10-23' },
+    });
+  });
+
+  it('a 409 shows the server\'s sentence in the row and the stored rate stays', async () => {
+    await renderSyncPage({
+      patch: () => ({
+        status: 409,
+        body: { success: false, error: 'This rate changed since you synced. Sync again.', code: 'rate_changed' },
+      }),
+    });
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggested ILS rate 3.121505' }));
+    expect(await screen.findByTestId('row-error-ILS')).toHaveTextContent('This rate changed since you synced. Sync again.');
+    expect(screen.getByTestId('rate-value-ILS')).toHaveTextContent('3.090000');
+    expect(screen.queryByText('Accepted')).toBeNull();
+  });
+
+  it('there is no "Accept all" control', async () => {
+    await renderSyncPage();
+    await syncNow();
+    expect(screen.queryByRole('button', { name: /accept all/i })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/accept all/i);
+  });
+
+  it('a new sync clears the accepted set', async () => {
+    const saved = rate('GBP', { rateToUsd: '0.748039', lastUpdatedAt: READ_AT });
+    await renderSyncPage({ patch: () => ok({ rate: saved, unchanged: true }) });
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm (no change) for GBP rate 0.748039' }));
+    await waitFor(() => expect(screen.getByTestId('gap-chip-GBP')).toHaveTextContent('Accepted'));
+    await syncNow();
+    expect(screen.getByTestId('gap-chip-GBP')).toHaveTextContent('No change');
+    expect(screen.getByRole('button', { name: 'Confirm (no change) for GBP rate 0.748039' })).toBeInTheDocument();
+  });
+
+  it('nothing is ever saved without a click on a row', async () => {
+    const calls = await renderSyncPage();
+    await syncNow();
+    expect(calls.filter((c) => c.method === 'PATCH')).toEqual([]);
+  });
+});
+
+describe('slice 1e, D-10: the source line and the "Rates last checked" tile', () => {
+  it('the source line is there before and after a sync, linking to the ECB page in a new tab', async () => {
+    await renderSyncPage();
+    const check = () => {
+      const line = screen.getByTestId('rate-sync-source');
+      expect(line).toHaveTextContent(
+        'Source: European Central Bank (euro foreign exchange reference rates) (opens in a new tab). Published by the ECB for information only.'
+      );
+      const link = screen.getByRole('link', { name: 'European Central Bank (euro foreign exchange reference rates) (opens in a new tab)' });
+      expect(link).toHaveAttribute('href', ECB_SOURCE_PAGE_URL);
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+      expect(link.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+      // Exactly one link to it (the source guard allows the constant only as this href, DV-1).
+      expect(document.querySelectorAll(`a[href="${ECB_SOURCE_PAGE_URL}"]`)).toHaveLength(1);
+    };
+    check();
+    await syncNow();
+    check();
+  });
+
+  it('the tile, ok: the UTC time and the ECB rate date', async () => {
+    await renderSyncPage();
+    const tile = screen.getByTestId('kpi-rates-last-checked');
+    expect(tile).toHaveTextContent('Rates last checked');
+    expect(tile).toHaveTextContent('2026-10-16 08:00 UTC');
+    expect(tile).toHaveTextContent('ECB rates of 2026-10-15');
+  });
+
+  it('the tile, none: "No sync on record", never "Never"', async () => {
+    await renderSyncPage({ get: () => ok({ ...syncPagePayload(), lastSync: { status: 'none' } }) });
+    const tile = screen.getByTestId('kpi-rates-last-checked');
+    expect(tile).toHaveTextContent('No sync on record');
+    expect(tile).not.toHaveTextContent('Never');
+  });
+
+  it('the tile, unavailable: "Could not check", with the reason', async () => {
+    await renderSyncPage({ get: () => ok({ ...syncPagePayload(), lastSync: { status: 'unavailable' } }) });
+    const tile = screen.getByTestId('kpi-rates-last-checked');
+    expect(tile).toHaveTextContent('Could not check');
+    expect(tile).toHaveTextContent('The audit trail could not be read');
+    expect(tile).not.toHaveTextContent('No sync on record');
+  });
+
+  it('an answer without lastSync reads "Could not check", never "No sync on record"', async () => {
+    const older: Record<string, unknown> = { ...syncPagePayload() };
+    delete older.lastSync;
+    await renderSyncPage({ get: () => ok(older) });
+    expect(screen.getByTestId('kpi-rates-last-checked')).toHaveTextContent('Could not check');
+  });
+
+  it('a successful sync updates the tile from its own answer, with no extra GET', async () => {
+    const calls = await renderSyncPage();
+    const readsBefore = plainGets(calls).length;
+    await syncNow();
+    const tile = screen.getByTestId('kpi-rates-last-checked');
+    expect(tile).toHaveTextContent('2026-10-25 09:14 UTC');
+    expect(tile).toHaveTextContent('ECB rates of 2026-10-23');
+    expect(plainGets(calls)).toHaveLength(readsBefore);
+  });
+
+  it('a failed sync leaves the tile as it was', async () => {
+    await renderSyncPage({ sync: () => ok(syncAnswer({ outcome: 'timeout', rateDate: null, suggestions: [] })) });
+    await syncNow();
+    expect(screen.getByTestId('kpi-rates-last-checked')).toHaveTextContent('2026-10-16 08:00 UTC');
+  });
+
+  it('a later re-read does not move the tile back (its GET still holds the older sync)', async () => {
+    await renderSyncPage();
+    await syncNow();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh the exchange rates' }));
+    await waitFor(() => expect(screen.getByTestId('exchange-rates-content')).toHaveAttribute('aria-busy', 'false'));
+    expect(screen.getByTestId('kpi-rates-last-checked')).toHaveTextContent('2026-10-25 09:14 UTC');
+  });
+
+  it('the loading strip shows three placeholders', async () => {
+    const first = deferred<Answer>();
+    stubSync({ get: () => first.promise });
+    render(<ExchangeRatesView />);
+    expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(3);
+    await late(() => first.resolve(ok(syncPagePayload())));
+  });
+});
+
+// ── QA edge 1 (SA code review round): a 409 on Accept re-reads the plain list ──
+
+describe('slice 1e.2: a 409 on Accept re-reads the list (QA edge 1)', () => {
+  it('the row then shows the new stored rate and "Rate changed since the sync", with no stale Accept', async () => {
+    let reads = 0;
+    const moved = syncPagePayload();
+    moved.rates = moved.rates.map((r) => (r.currencyCode === 'ILS' ? { ...r, rateToUsd: '3.100000', lastUpdatedAt: READ_AT } : r));
+    const calls = await renderSyncPage({
+      get: () => {
+        reads += 1;
+        return ok(reads === 1 ? syncPagePayload() : moved);
+      },
+      patch: () => ({
+        status: 409,
+        body: { success: false, error: 'This rate changed since you synced. Sync again.', code: 'rate_changed' },
+      }),
+    });
+    await syncNow();
+    const readsBefore = plainGets(calls).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggested ILS rate 3.121505' }));
+    expect(await screen.findByTestId('row-error-ILS')).toHaveTextContent('This rate changed since you synced. Sync again.');
+    await waitFor(() => expect(screen.getByTestId('rate-value-ILS')).toHaveTextContent('3.100000'));
+    expect(plainGets(calls)).toHaveLength(readsBefore + 1);
+    expect(screen.getByTestId('gap-changed-ILS')).toHaveTextContent('Rate changed since the sync. Sync again.');
+    expect(screen.queryByTestId('accept-ILS')).toBeNull();
+    // No new fetch kind: only plain GETs, the one PATCH and the one sync POST.
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+    expect(syncPosts(calls)).toHaveLength(1);
+  });
+
+  it('a refusal that is not a 409 does not re-read', async () => {
+    const calls = await renderSyncPage({ patch: () => ({ status: 400, body: { success: false, error: 'Invalid input' } }) });
+    await syncNow();
+    const readsBefore = plainGets(calls).length;
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggested ILS rate 3.121505' }));
+    expect(await screen.findByTestId('row-error-ILS')).toHaveTextContent('Invalid input');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(plainGets(calls)).toHaveLength(readsBefore);
   });
 });

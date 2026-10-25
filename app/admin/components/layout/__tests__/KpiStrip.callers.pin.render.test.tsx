@@ -37,6 +37,7 @@
  * Amended by Exchange rates 1c.1 (SQ-15): the strip's own tiles changed, so "loading" is re-hashed, the two stale cases are removed, four cases are appended; no other case or hash touched.
  * Amended 2026-10-20 (user request): the Last rate change tile rounds each rate to 3 decimals, so the three Exchange rates cases that show a rate are re-hashed; no other case or hash touched.
  * Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed.
+ * Amended 2026-10-25 by Exchange rates 1e (SA §13.8 SQ-51 (7)): a third tile, "Rates last checked", so the five ExchangeRatesKpis cases are re-hashed (loading has 3 placeholders; the four payload cases pass `lastSync` ok, names kept) and two cases are appended (none, unavailable); no other case or hash touched.
  */
 
 import React from 'react';
@@ -68,6 +69,7 @@ import type { ComparisonRow } from '@/lib/ai/pricing-research/comparisonModel';
 import { KPI_WORDS } from '@/app/admin/system-config/priceReviewCopy';
 import { ExchangeRatesKpis } from '@/app/admin/exchange-rates/components/ExchangeRatesKpis';
 import type { ExchangeRateHistoryWire, ExchangeRatesPayload, ExchangeRateWire } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import type { LastRateSyncWire } from '@/lib/admin/exchangeRates/rateSyncRules';
 
 /** Generous: the merge queue runs suites in parallel (the F-4 amendment lesson). */
 const CASE_TIMEOUT_MS = 30_000;
@@ -217,6 +219,10 @@ const FX_PAYLOAD: ExchangeRatesPayload = {
 const FX_PAYLOAD_NO_HISTORY: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [], lastChange: null };
 const FX_PAYLOAD_LOOKUP_FAILED: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, changedByLabel: null }], lastChange: { ...FX_CHANGE, changedByLabel: null }, nameLookup: 'failed' };
 const FX_PAYLOAD_OLD_RATE_NULL: ExchangeRatesPayload = { ...FX_PAYLOAD, history: [{ ...FX_CHANGE, oldRate: null }], lastChange: { ...FX_CHANGE, oldRate: null } };
+// Exchange rates 1e (SQ-51 (7)): the "Rates last checked" tile's three states.
+const FX_LAST_SYNC_OK: LastRateSyncWire = { status: 'ok', checkedAt: '2026-10-25T09:14:03.000Z', rateDate: '2026-10-23' };
+const FX_LAST_SYNC_NONE: LastRateSyncWire = { status: 'none' };
+const FX_LAST_SYNC_UNAVAILABLE: LastRateSyncWire = { status: 'unavailable' };
 
 const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   // ── A1: the shared matrix ─────────────────────────────────────────────────
@@ -293,11 +299,13 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 Model pricing reading', () => <PriceStrip rows={[PLAIN_ROW]} status={undefined} />],
   ['A2 Model pricing unavailable', () => <PriceStrip rows={[RED_ROW, PLAIN_ROW]} status={null} />],
   ['A2 Model pricing recent', () => <PriceStrip rows={[]} status={CHECK_RECENT} />],
-  ['A2 ExchangeRatesKpis loading', () => <ExchangeRatesKpis payload={null} loading />],
-  ['A2 ExchangeRatesKpis two tiles', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} />],
-  ['A2 ExchangeRatesKpis no history', () => <ExchangeRatesKpis payload={FX_PAYLOAD_NO_HISTORY} loading={false} />],
-  ['A2 ExchangeRatesKpis name lookup failed', () => <ExchangeRatesKpis payload={FX_PAYLOAD_LOOKUP_FAILED} loading={false} />],
-  ['A2 ExchangeRatesKpis old rate null', () => <ExchangeRatesKpis payload={FX_PAYLOAD_OLD_RATE_NULL} loading={false} />],
+  ['A2 ExchangeRatesKpis loading', () => <ExchangeRatesKpis payload={null} loading lastSync={FX_LAST_SYNC_OK} />],
+  ['A2 ExchangeRatesKpis two tiles', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_OK} />],
+  ['A2 ExchangeRatesKpis no history', () => <ExchangeRatesKpis payload={FX_PAYLOAD_NO_HISTORY} loading={false} lastSync={FX_LAST_SYNC_OK} />],
+  ['A2 ExchangeRatesKpis name lookup failed', () => <ExchangeRatesKpis payload={FX_PAYLOAD_LOOKUP_FAILED} loading={false} lastSync={FX_LAST_SYNC_OK} />],
+  ['A2 ExchangeRatesKpis old rate null', () => <ExchangeRatesKpis payload={FX_PAYLOAD_OLD_RATE_NULL} loading={false} lastSync={FX_LAST_SYNC_OK} />],
+  ['A2 ExchangeRatesKpis last sync none', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_NONE} />],
+  ['A2 ExchangeRatesKpis last sync unavailable', () => <ExchangeRatesKpis payload={FX_PAYLOAD} loading={false} lastSync={FX_LAST_SYNC_UNAVAILABLE} />],
   // ── A3 (Money MK-5): the Finance strip's shapes, each with its leading / lagging indicator ──
   ['A3 Finance anchor lagging with status and detail', () => <KpiTile testId="tile-fk3_ai_cost" label="Charged AI cost this month" value="At least $12.50" sub="This month vs last month, UTC · Same days last month: $10.00" status="amber" detail="A lower bound" indicator={{ kind: 'lagging', definition: 'What it costs us.' }} href="#ai-cost" />],
   ['A3 Finance anchor leading with sub and detail', () => <KpiTile testId="tile-fk2_mrr" label="MRR now" value="$49.00" sub="Monthly, at list price, today" detail="Stripe test mode" indicator={{ kind: 'leading', definition: 'The monthly price.' }} href="#revenue-mrr" />],
@@ -358,11 +366,14 @@ const EXPECTED: Record<string, string> = {
   'A2 Model pricing recent': 'afe7ca77c2df6fd75c6ada7728e07c3ebab76fc9568676ab4eba0918fed331fd',
   // Exchange rates 1a (SQ-7), recorded on first render.
   // Exchange rates 1c.1 (SQ-15): re-pinned and appended, recorded on first render.
-  'A2 ExchangeRatesKpis loading': '44f2c4c7e279333661f67ce75a2323827f1a5efee1a3f0036cb67c33f15af37a',
-  'A2 ExchangeRatesKpis two tiles': 'c8c91a66a03ef480f8d7f2da2e38ea8f968ced1ecf78db6f7ea4dcb6828e1003',
-  'A2 ExchangeRatesKpis no history': '5dd32e13b5638e7b8120ae4f02f0a3643065e7956527cc6a64aececfce23e20b',
-  'A2 ExchangeRatesKpis name lookup failed': '08fb74e3076ed710ff6c70f751056dcf31618aaefe8179b02e29e9a7e697f152',
-  'A2 ExchangeRatesKpis old rate null': '347c6fdbb9303d5aedb97fae58151a487a91ed35acd254b7f26ebcdac5274666',
+  // Exchange rates 1e (SQ-51 (7), 2026-10-25): the five re-hashed for the third tile, two appended.
+  'A2 ExchangeRatesKpis loading': 'aa4935d00b1352556b02c0083ab94de58a9ae2e7587678635659c6e46403ea8f',
+  'A2 ExchangeRatesKpis two tiles': '932e504c55866e22589238c4b769f5095adac145a4287ddbc5453acde51053c5',
+  'A2 ExchangeRatesKpis no history': '486416d27266baab1ff8022ce92cb64a10f92409137fd1abbb9cc57043b47726',
+  'A2 ExchangeRatesKpis name lookup failed': 'e6872b2c5651a00352ae15390ee85cf02e23acebc4a3a0e5027483d5e9e06d9d',
+  'A2 ExchangeRatesKpis old rate null': '11e5e00f77e77d259cfb6f67966d9f61fb48b8496fd91ae552ab4354d7065413',
+  'A2 ExchangeRatesKpis last sync none': 'f64686d1fffe169e2803a5a20e695fb5961b90bfd820332ac39357c7538e56cd',
+  'A2 ExchangeRatesKpis last sync unavailable': '118ffdf4174a67801aac84cb7b0ad2b56ac031281453dcfb10bc694997f985e3',
   // A3 (Money MK-5): recorded at MK-5's handover.
   'A3 Finance anchor lagging with status and detail': '34166a30ada773fc7c5e7ca8dd90fb66b989d022bfc3b3eefaa1dbaf6fe83358',
   'A3 Finance anchor leading with sub and detail': '33106345987463ab9685bc4fed4a427e5e2e752a216cffdd7562707b82356a71',

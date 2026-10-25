@@ -5,7 +5,10 @@
  * query parse, the per-currency read and the "Changed by" labels. Slice 1d
  * (SQ-26 to SQ-31, SA-1d-3, SA-1d-7 (b), SA-1d-9): the history window reaching
  * the repository as half-open instants, the This month default, the all-time
- * `lastChange` and its label, and the window's 400s.
+ * `lastChange` and its label, and the window's 400s. Slice 1e (SA §13.8
+ * SQ-51 (3)), forced edits: `AuditTrailRepository` is mocked and the plain
+ * exact body carries `lastSync`; `describe('slice 1e: lastSync')` adds the
+ * ok / none / unavailable cases and pins that `?currency=` never reads it.
  */
 
 import * as fs from 'fs';
@@ -74,6 +77,14 @@ jest.mock('@/lib/repositories/AdminUserRepository', () => ({
   adminUserRepository: { findEmailsByUserIds: (ids: readonly string[]) => findEmailsByUserIds(ids) },
 }));
 
+// Slice 1e (SQ-51, forced edit): the plain read also reads the newest successful sync.
+const findLatestAdminExchangeRateSync = jest.fn();
+jest.mock('@/lib/repositories/AuditTrailRepository', () => ({
+  auditTrailRepository: {
+    findLatestAdminExchangeRateSync: (...args: unknown[]) => findLatestAdminExchangeRateSync(...args),
+  },
+}));
+
 // The real repository module is loaded for its mappers; its default client must not be built.
 jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 
@@ -132,6 +143,10 @@ const LAST_CHANGE_WIRE = {
   changeReason: null,
 };
 
+/** Slice 1e: the newest successful sync, as the repository maps it. */
+const LAST_SYNC = { checkedAt: '2026-10-19T09:14:03.123+00:00', rateDate: '2026-10-16' };
+const LAST_SYNC_WIRE = { status: 'ok', checkedAt: LAST_SYNC.checkedAt, rateDate: LAST_SYNC.rateDate };
+
 const url = (query = '') => `http://localhost/api/admin/exchange-rates${query}`;
 const get = (query = '') => new NextRequest(url(query));
 
@@ -149,6 +164,7 @@ beforeEach(() => {
   findLatestChange.mockResolvedValue({ data: HISTORY, error: null });
   findAdminNamesByIds.mockResolvedValue({ data: [{ id: ADMIN.id, full_name: ANNA_NAME }], error: null });
   findEmailsByUserIds.mockResolvedValue({ data: [{ user_id: ADMIN.id, email: ANNA_EMAIL }], error: null });
+  findLatestAdminExchangeRateSync.mockResolvedValue({ data: LAST_SYNC, error: null });
 });
 
 afterEach(() => {
@@ -200,6 +216,8 @@ describe('GET /api/admin/exchange-rates', () => {
         lastChange: LAST_CHANGE_WIRE,
         nameLookup: 'ok',
         readAt: NOW.toISOString(),
+        // Slice 1e (SQ-51, forced edit).
+        lastSync: LAST_SYNC_WIRE,
       },
     });
   });
@@ -482,7 +500,8 @@ describe('"Changed by" labels (SQ-13, SA Q-1)', () => {
 
   it('only changedByLabel and nameLookup are added: the exact keys of a row and of each payload', async () => {
     const plain = await (await GET(get())).json();
-    expect(Object.keys(plain.data).sort()).toEqual(['history', 'lastChange', 'nameLookup', 'rates', 'readAt']);
+    // Slice 1e (SQ-51, forced edit): the plain read gains `lastSync`; the per-currency keys below are unchanged.
+    expect(Object.keys(plain.data).sort()).toEqual(['history', 'lastChange', 'lastSync', 'nameLookup', 'rates', 'readAt']);
     expect(Object.keys(plain.data.history[0]).sort()).toEqual([
       'changeReason',
       'changedAt',
@@ -724,5 +743,68 @@ describe('QA probes (slice 1d)', () => {
     const res = await GET(get('?currency=EUR&from=2026-09-30&to=2026-09-01'));
     expect(res.status).toBe(400);
     noRead();
+  });
+});
+
+describe('slice 1e: lastSync (SA §13.8 SQ-51 (3))', () => {
+  it('ok: the newest successful sync, read with the admin context', async () => {
+    const res = await GET(get());
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.lastSync).toEqual(LAST_SYNC_WIRE);
+    expect(findLatestAdminExchangeRateSync).toHaveBeenCalledTimes(1);
+    expect(findLatestAdminExchangeRateSync).toHaveBeenCalledWith({ correlationId: expect.any(String), adminId: ADMIN.id });
+  });
+
+  it('none: no successful sync on record', async () => {
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: null, error: null });
+    const body = await (await GET(get())).json();
+    expect(body.data.lastSync).toEqual({ status: 'none' });
+  });
+
+  it('a returned error → unavailable, still 200, the rest intact, a warn naming lastSync', async () => {
+    findLatestAdminExchangeRateSync.mockResolvedValue({ data: null, error: new Error('audit down') });
+    const res = await GET(get());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.lastSync).toEqual({ status: 'unavailable' });
+    expect(body.data.rates).toHaveLength(1);
+    expect(body.data.lastChange).toEqual(LAST_CHANGE_WIRE);
+    expect(logCalls).toContainEqual(['warn', expect.objectContaining({ failed: 'lastSync' }), expect.any(String)]);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it('a throw → unavailable, still 200', async () => {
+    findLatestAdminExchangeRateSync.mockRejectedValue(new Error('boom'));
+    const res = await GET(get());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.lastSync).toEqual({ status: 'unavailable' });
+    expect(body.data.history).toHaveLength(1);
+  });
+
+  it('runs with the other plain reads, and a rates failure is still the one 500', async () => {
+    listAll.mockResolvedValue({ data: null, error: new Error('rates down') });
+    const res = await GET(get());
+    expect(res.status).toBe(500);
+  });
+
+  it('?currency= never reads it and never sends it', async () => {
+    const body = await (await GET(get('?currency=ILS'))).json();
+    expect(findLatestAdminExchangeRateSync).not.toHaveBeenCalled();
+    expect(body.data).not.toHaveProperty('lastSync');
+  });
+
+  it.each([
+    ['signed out', () => getUser.mockResolvedValue(null)],
+    ['not an admin', () => isAdmin.mockResolvedValue(false)],
+  ])('%s: the audit is not read', async (_label, arrange) => {
+    arrange();
+    await GET(get());
+    expect(findLatestAdminExchangeRateSync).not.toHaveBeenCalled();
+  });
+
+  it('a bad query: the audit is not read', async () => {
+    await GET(get('?foo=1'));
+    expect(findLatestAdminExchangeRateSync).not.toHaveBeenCalled();
   });
 });
