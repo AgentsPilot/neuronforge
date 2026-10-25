@@ -34,6 +34,6 @@ No payload key changed, no pin moved, and the page still makes one request on lo
 - **When a drawer is added, list every row on the page that should open it** (CR-2).
 - **Next:** MK-9, the last Page 1 slice.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk8-finance-drawers — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk8-finance-drawers — commit `68f22190`, main merged `b187d774`, PR #510 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

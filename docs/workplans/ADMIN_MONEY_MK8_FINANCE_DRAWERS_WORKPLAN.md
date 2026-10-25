@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-8; §3 drawer column (Finance); §3.4 USD-1 to USD-6; §8; Q-7 (accepted); SA-RR-MK SA-5 ("Reuse `useDrawerResource`… no new shared export") and the pins table (MK-8: "AC-145 only if a payload key is added"); FIN NG-1 (read-only), BD-23 (actions stay in Businesses)
 **Branch:** `feature/admin-money-mk8-finance-drawers` (from main `ff4a676f`; MK-7 #491 and Exchange rates #492 merged)
 **Date:** 2026-10-21
-**Status:** Code Complete
+**Status:** Code Approved (SA-CR-MK8), QA passed; committed `68f22190`, PR [#510](https://github.com/AgentsPilot/neuronforge/pull/510) opened 2026-10-25, auto-merge on
 **Path:** Full cycle. It adds one read-only admin route (the plan drawer) and no migration.
 
 ## Overview
@@ -358,7 +358,11 @@ Each opens the same `BusinessDrawer` (one read on open, the same key). **Revenue
 
 ## Commit Info
 
-[RM will populate this section]
+- **Branch:** `feature/admin-money-mk8-finance-drawers` (from main `ff4a676f`)
+- **Commit:** `68f22190` feat(finance): business and plan drawers on Finance (MK-8)
+- **Merge:** origin/main (`3a70e98a`, through #507) merged in `b187d774`, no conflicts, no file changed on both sides
+- **Note:** the first push (2026-10-21) was refused with HTTP 403 (GitHub account suspended); pushed on 2026-10-25 once access was restored
+- **PR:** [#510](https://github.com/AgentsPilot/neuronforge/pull/510), auto-merge on (merge commit, via the merge queue)
 
 ---
 
