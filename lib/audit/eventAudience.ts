@@ -140,6 +140,9 @@ export const AUDIT_EVENT_AUDIENCE = {
   // Admin Exchange Rates slice 1a (SA O-6): platform admin/system events.
   [AUDIT_EVENTS.EXCHANGE_RATE_UPDATED]: 'shared',
   [AUDIT_EVENTS.EXCHANGE_RATE_ENABLED_CHANGED]: 'shared',
+  // Admin Exchange Rates slice 1e (SQ-47, SQ-50): platform admin events, as their siblings.
+  [AUDIT_EVENTS.EXCHANGE_RATE_SYNC_RUN]: 'shared',
+  [AUDIT_EVENTS.EXCHANGE_RATE_SUGGESTION_ACCEPTED]: 'shared',
   [AUDIT_EVENTS.BOS_ENTITLEMENT_PLAN_ROW_ENSURED]: 'bos',
   [AUDIT_EVENTS.BOS_ENTITLEMENT_COHORT_SET]: 'bos',
   [AUDIT_EVENTS.BOS_ENTITLEMENT_EXPIRY_SET]: 'bos',
