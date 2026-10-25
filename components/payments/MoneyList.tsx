@@ -15,6 +15,7 @@ import { toCsvFile } from '@/lib/payments/csv';
 import { parseMoneySearch } from '@/lib/payments/moneySearchTerms';
 import { MoneyDetailDrawer } from './MoneyDetailDrawer';
 import { RefundModal } from './RefundModal';
+import { MoneyCapNotice, exportWasCut } from './MoneyCapNotice';
 
 const logger = createLogger({ module: 'MoneyList' });
 
@@ -201,6 +202,12 @@ export function MoneyList({
    */
   const [summaryCount, setSummaryCount] = useState(0);
   const [truncated, setTruncated] = useState(false);
+  /**
+   * How many rows the LAST export wrote, when that was fewer than the filter
+   * matched — null otherwise. The file still downloads; this says it is short
+   * (LX-1). Cleared by the next load, i.e. any change to what is on screen.
+   */
+  const [exportCutAt, setExportCutAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<MoneyFilter>('all');
@@ -359,6 +366,7 @@ export function MoneyList({
       setTotal(result.data.total);
       setSummaryCount(result.data.summaryCount ?? result.data.total);
       setTruncated(result.data.truncated);
+      setExportCutAt(null);
     } catch (err) {
       // Said on screen, not only in the console. A money list that silently
       // renders empty reads as "you have no money", which is a lie.
@@ -558,6 +566,10 @@ export function MoneyList({
      * ─────────────────────────────────────────────────────────────────────────
      */
     let chosen: MoneyItem[];
+    /* Whether the route's answer held fewer rows than the filter matched —
+       a source read hit its cap (`truncated`), or the match ran past
+       EXPORT_CAP. A hand-picked set is exactly what was picked. */
+    let isCut = false;
 
     if (selected.size > 0) {
       chosen = items.filter(i => selected.has(i.key));
@@ -570,6 +582,7 @@ export function MoneyList({
         if (!result.success) throw new Error(result.error || 'Failed to load');
 
         chosen = result.data.items as MoneyItem[];
+        isCut = exportWasCut(result.data, chosen.length);
       } catch (err) {
         logger.error({ err }, 'Could not build the export');
         /* Said out loud. A download that silently does not happen reads as a
@@ -582,6 +595,8 @@ export function MoneyList({
     // Belt and braces for the button state below: a file containing nothing but
     // column headings is indistinguishable from a failed download.
     if (chosen.length === 0) return;
+
+    setExportCutAt(isCut ? chosen.length : null);
 
     const rows: (string | number | null)[][] = [
       [
@@ -817,10 +832,19 @@ export function MoneyList({
       {/* The cap was reached, so the totals above are partial. Silently showing
           a shorter list would make them look complete. */}
       {truncated && (
-        <div className="mb-3 flex items-center gap-2 px-3 py-2 text-[11.5px] text-amber-700 bg-amber-50 dark:bg-amber-900/20" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          {t('payments.truncated') || 'Showing the most recent records only — totals are partial.'}
-        </div>
+        <MoneyCapNotice
+          testId="money-truncated"
+          text={t('payments.truncated') || 'Showing the most recent records only — totals are partial.'}
+        />
+      )}
+
+      {/* The export that just downloaded is short of what the filter matched.
+          Said here rather than left for the owner to discover by counting. */}
+      {exportCutAt !== null && (
+        <MoneyCapNotice
+          testId="money-export-cut"
+          text={t('payments.export.cut', { count: exportCutAt })}
+        />
       )}
 
       {/* Selection is a MODE, entered deliberately — the alternative, a checkbox

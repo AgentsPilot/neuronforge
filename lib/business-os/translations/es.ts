@@ -2094,6 +2094,8 @@ export const es = {
     // CSV Export
     'crm.export.button': 'Exportar',
     'crm.export.tooltip': 'Exportar contactos a CSV',
+    'crm.export.button_shown': 'Exportar {count} mostrados',
+    'crm.export.tooltip_shown': 'Exporta los {count} contactos que se ven en pantalla, no toda tu lista',
     'crm.export.first_name': 'Nombre',
     'crm.export.last_name': 'Apellido',
     'crm.export.email': 'Correo',
@@ -3197,6 +3199,7 @@ export const es = {
     'payments.search.under': 'menos de',
     'payments.search.try': 'Prueba',
     'payments.export.failed': 'No se pudo generar la exportación',
+    'payments.export.cut': 'Este archivo contiene solo {count} registros — no todos los pedidos.',
     'payments.export.working': 'Preparando…',
     'common.add': 'Añadir',
     'common.remove': 'Quitar',
