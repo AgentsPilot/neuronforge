@@ -3193,7 +3193,7 @@ describe('Money MK-8: the business drawer and the plan drawer on the page', () =
     openPlansTab();
     const fetchMock = serveAll();
     render(<FinanceView />);
-    fireEvent.click(await screen.findByTestId('subscription-quick-look'));
+    fireEvent.click(within(await screen.findByTestId('subscription-row')).getByTestId('row-open'));
     const drawer = await screen.findByTestId('business-drawer');
     const body = await within(drawer).findByTestId('business-drawer-body');
     expect(urlsOf(fetchMock)).toEqual([
@@ -3252,19 +3252,20 @@ describe('Money MK-8 CR-2: more rows open the business drawer', () => {
     expect(urlsOf(fetchMock)).toEqual(['/api/admin/business-os/finance?preset=this_month']);
     // AI cost top accounts: Acme has one, the platform row none.
     const top = screen.getByTestId('ai-top');
-    expect(within(top).getByTestId(`ai-top-quick-look-${A}`)).toHaveAttribute('aria-label', 'Quick look at Acme Dental');
-    expect(within(top).queryByTestId('ai-top-quick-look-00000000-0000-0000-0000-000000000000')).toBeNull();
-    expect(within(top).getAllByRole('columnheader')).toHaveLength(3);
+    // Money MK-10 (ruled test edit): the Businesses page's Open button, in a narrow last column (one more header).
+    expect(within(screen.getByTestId(`ai-top-row-${A}`)).getByTestId('row-open')).toHaveAttribute('aria-label', 'Open details for Acme Dental');
+    expect(within(screen.getByTestId('ai-top-row-00000000-0000-0000-0000-000000000000')).queryByTestId('row-open')).toBeNull();
+    expect(within(top).getAllByRole('columnheader')).toHaveLength(4);
     // Credits rows and Client payments rows.
-    expect(screen.getByTestId(`credits-quick-look-${A}`)).toBeInTheDocument();
-    expect(screen.getByTestId(`takings-quick-look-${A}-USD`)).toBeInTheDocument();
-    expect(screen.queryByTestId('takings-quick-look-00000000-0000-0000-0000-000000000000-USD')).toBeNull();
+    expect(within(screen.getByTestId(`credits-row-${A}`)).getByTestId('row-open')).toBeInTheDocument();
+    expect(within(screen.getByTestId(`takings-row-${A}-USD`)).getByTestId('row-open')).toBeInTheDocument();
+    expect(within(screen.getByTestId('takings-row-00000000-0000-0000-0000-000000000000-USD')).queryByTestId('row-open')).toBeNull();
   });
 
   it.each([
-    ['the AI cost top accounts', `ai-top-quick-look-${A}`],
-    ['the Credits rows', `credits-quick-look-${A}`],
-    ['the Client payments rows', `takings-quick-look-${A}-USD`],
+    ['the AI cost top accounts', `ai-top-row-${A}`],
+    ['the Credits rows', `credits-row-${A}`],
+    ['the Client payments rows', `takings-row-${A}-USD`],
   ])('%s: the opener opens the same business drawer with exactly one more request', async (_where, testId) => {
     const fetchMock = serveFinance();
     render(<FinanceView />);
@@ -3282,6 +3283,128 @@ describe('Money MK-8 CR-2: more rows open the business drawer', () => {
     serveFinance();
     render(<FinanceView />);
     await screen.findByTestId('account-header');
-    expect(screen.queryAllByTestId(/quick-look/)).toHaveLength(0);
+    expect(screen.queryAllByTestId('row-open')).toHaveLength(0);
+  });
+});
+
+// ── Money MK-9 (§12, SA-WP-MK9): F-K5's breakdown first on Plans & subscriptions ──
+describe('Money MK-9: the Paying accounts breakdown on the page', () => {
+  const SUBS_ROUTE_9 = '/api/admin/business-os/billing/subscriptions';
+  const BREAKDOWN = {
+    comped: { total: 6, assignedNoSubscription: 4, endedOrNotPaying: 2 },
+    trials: { status: 'ok' as const, endedInWindow: 12, stillRunning: 7, paid: 5, paidBeforeEnd: 3, rate: { paid: 5, base: 12, percent: 42 }, minimumForRate: 10 },
+  };
+  function serveBoth9(finance: unknown): jest.Mock {
+    const subs = { success: true, data: { generatedAt: '2026-10-25T09:00:00.000Z', mode: 'test', status: null, totals: null, rows: [], matching: 0 } };
+    const fetchMock = jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => (String(url).startsWith(SUBS_ROUTE_9) ? subs : finance),
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return fetchMock;
+  }
+
+  it('first on the Plans tab, above Plan mix; F-K5 unchanged (no sixth tile); no new request', async () => {
+    mockSearch = 'tab=plans';
+    window.history.replaceState(null, '', '/admin/finance?tab=plans');
+    const fetchMock = serveBoth9({
+      success: true,
+      data: payload({ paying: { scope: 'all', status: 'ok', paying: 9, accounts: 50 }, payingBreakdown: BREAKDOWN }),
+    });
+    render(<FinanceView />);
+    const section = await screen.findByTestId('section-paying-breakdown');
+    const panel = screen.getByTestId('finance-panel-plans');
+    expect(panel.contains(section)).toBe(true);
+    const planMix = within(panel).getByTestId('section-accounts');
+    expect(section.compareDocumentPosition(planMix) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(section).getByTestId('paying-breakdown-paying')).toHaveTextContent('Paying: 9 of 50 accounts');
+    expect(screen.getByTestId('kpi-strip').querySelectorAll('[data-testid^="tile-"][data-status]')).toHaveLength(5);
+    await within(panel).findByTestId('plans-subscriptions-empty');
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls).toEqual(['/api/admin/business-os/finance?preset=this_month', SUBS_ROUTE_9]);
+  });
+
+  it('not on the Overview, and absent without the key (fixtures before MK-9 unchanged)', async () => {
+    serve({ success: true, data: payload({ payingBreakdown: BREAKDOWN }) });
+    const { unmount } = render(<FinanceView />);
+    await screen.findByTestId('section-revenue');
+    expect(screen.queryByTestId('section-paying-breakdown')).toBeNull();
+    unmount();
+    mockSearch = 'tab=plans';
+    window.history.replaceState(null, '', '/admin/finance?tab=plans');
+    serveBoth9({ success: true, data: payload() });
+    render(<FinanceView />);
+    await screen.findByTestId('finance-panel-plans');
+    expect(screen.queryByTestId('section-paying-breakdown')).toBeNull();
+  });
+});
+
+// ── Money MK-10 (user comment 2026-10-25; SA-Q-MK10-1, MK10-R1 to R5): rows open like the Businesses rows ──
+describe('Money MK-10: the Overview rows open like the Businesses rows (D-17)', () => {
+  function serveFinance10(): jest.Mock {
+    const fetchMock = jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: String(url).includes('accountId=') ? payload({ accountId: A }) : payload() }),
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom has no fetch; standard test stub
+    (global as any).fetch = fetchMock;
+    return fetchMock;
+  }
+  const drawerCalls = (fetchMock: jest.Mock) => fetchMock.mock.calls.map((call) => String(call[0])).filter((u) => u.includes('accountId='));
+
+  afterEach(() => jest.restoreAllMocks());
+
+  describe.each([
+    ['AI cost top accounts', `ai-top-row-${A}`],
+    ['Credits', `credits-row-${A}`],
+    ['Client payments', `takings-row-${A}-USD`],
+  ])('%s', (_table, rowId) => {
+    it('a click on the row opens the drawer: one request; the row is hover, pointer and highlighted while open; no ARIA on the row', async () => {
+      const fetchMock = serveFinance10();
+      render(<FinanceView />);
+      const row = await screen.findByTestId(rowId);
+      expect(row.className).toContain('cursor-pointer');
+      expect(row.className).toContain('hover:bg-slate-700/30');
+      expect(row).not.toHaveAttribute('tabindex');
+      expect(row).not.toHaveAttribute('role');
+      fireEvent.click(row.querySelector('th') as Element);
+      await within(await screen.findByTestId('business-drawer')).findByTestId('business-drawer-body');
+      expect(drawerCalls(fetchMock)).toHaveLength(1);
+      expect(screen.getByTestId(rowId).className).toContain('bg-slate-700/20');
+    });
+
+    it('the Open button opens ONCE (the row adds no second open), and it is the Businesses button', async () => {
+      const fetchMock = serveFinance10();
+      render(<FinanceView />);
+      const button = within(await screen.findByTestId(rowId)).getByTestId('row-open');
+      expect(button).toHaveAttribute('aria-label', 'Open details for Acme Dental');
+      fireEvent.click(button);
+      await within(await screen.findByTestId('business-drawer')).findByTestId('business-drawer-body');
+      expect(drawerCalls(fetchMock)).toHaveLength(1);
+    });
+
+    it('a click while text is selected in the row does not open', async () => {
+      const fetchMock = serveFinance10();
+      render(<FinanceView />);
+      const row = await screen.findByTestId(rowId);
+      const cell = row.querySelector('th') as Element;
+      jest.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false, anchorNode: cell.firstChild, focusNode: cell.firstChild } as unknown as Selection);
+      fireEvent.click(cell);
+      expect(screen.queryByTestId('business-drawer-body')).toBeNull();
+      expect(drawerCalls(fetchMock)).toHaveLength(0);
+    });
+  });
+
+  it('a platform row has no Open button and its click opens nothing', async () => {
+    const fetchMock = serveFinance10();
+    render(<FinanceView />);
+    const row = await screen.findByTestId('takings-row-00000000-0000-0000-0000-000000000000-USD');
+    expect(within(row).queryByTestId('row-open')).toBeNull();
+    expect(row.className).not.toContain('cursor-pointer');
+    fireEvent.click(row.querySelector('th') as Element);
+    expect(drawerCalls(fetchMock)).toHaveLength(0);
   });
 });

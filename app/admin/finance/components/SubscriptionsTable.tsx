@@ -14,6 +14,7 @@ import Link from 'next/link';
 
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
+import { ROW_OPEN_TEST_ID, rowOpenTarget } from '@/app/admin/components/layout/rowOpenClick';
 import {
   ADMIN_TABLE,
   ADMIN_TABLE_WRAP,
@@ -34,6 +35,7 @@ import type { SubscriptionRow } from '@/lib/admin/billing/subscriptionsTypes';
 
 import { NO_ACCOUNT, NO_NAME, NONE, STATUS_LABEL, STATUS_TONE } from '../plansCopy';
 import { BUSINESS_DRAWER } from '../financeCopy';
+import { openableRowClass } from './BusinessDrawer';
 
 const LINK_CLASS = 'text-blue-300 underline hover:text-blue-200';
 
@@ -72,10 +74,13 @@ function Renewal({ row }: { row: SubscriptionRow }) {
 export function SubscriptionsTable({
   rows,
   onQuickLook,
+  openAccountId = null,
 }: {
   rows: readonly SubscriptionRow[];
   /** Money MK-8: open the business drawer for a row (an account, never a detached row). */
   onQuickLook?: (row: SubscriptionRow & { accountId: string }, opener: HTMLButtonElement) => void;
+  /** Money MK-10: the account the drawer shows now, for the open-row highlight. */
+  openAccountId?: string | null;
 }) {
   return (
     <div className={ADMIN_TABLE_WRAP}>
@@ -100,7 +105,20 @@ export function SubscriptionsTable({
         </thead>
         <tbody className={ADMIN_TBODY}>
           {rows.map((row, index) => (
-            <tr key={row.accountId ?? `detached-${index}`} data-testid="subscription-row">
+            <tr
+              key={row.accountId ?? `detached-${index}`}
+              data-testid="subscription-row"
+              // Money MK-10 (D-17): a row click opens through the row's Open button; a detached row has none.
+              {...(onQuickLook && row.accountId !== null
+                ? {
+                    className: openableRowClass(openAccountId === row.accountId),
+                    onClick: (event: React.MouseEvent<HTMLTableRowElement>) => {
+                      const button = rowOpenTarget(event);
+                      if (button) onQuickLook({ ...row, accountId: row.accountId as string }, button);
+                    },
+                  }
+                : {})}
+            >
               <td className={ADMIN_TD}>
                 <Business row={row} />
               </td>
@@ -139,9 +157,9 @@ export function SubscriptionsTable({
                 <td className={ADMIN_TD_OPEN}>
                   {row.accountId !== null && (
                     <OpenRowButton
-                      label={BUSINESS_DRAWER.quickLook(row.businessName ?? NO_NAME)}
+                      label={BUSINESS_DRAWER.openDetails(row.businessName ?? NO_NAME)}
                       onOpen={(button) => onQuickLook({ ...row, accountId: row.accountId as string }, button)}
-                      testId="subscription-quick-look"
+                      testId={ROW_OPEN_TEST_ID}
                     />
                   )}
                 </td>

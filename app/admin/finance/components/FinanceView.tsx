@@ -112,6 +112,7 @@ import {
 } from './FinanceKpiStrip';
 import { PlansSubscriptions } from './PlansSubscriptions';
 import { ConvertedThisMonthSection } from './ConvertedThisMonthSection';
+import { PayingBreakdownSection } from './PayingBreakdownSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
 // Relative on purpose: the alias path would spell the page route the G-4 guard (redundantPages) refuses (DV-1, SQ-18).
@@ -376,6 +377,8 @@ export function FinanceView() {
               <FinanceTabPanel id="plans">
                 {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
                 <div className="space-y-4">
+                  {/* Money MK-9 (§12): F-K5's breakdown, first on its tab, from the same payload (AC-173). */}
+                  {data.payingBreakdown && <PayingBreakdownSection breakdown={data.payingBreakdown} paying={data.paying} onRetry={reload} />}
                   <AccountsByPlanSection
                     accounts={data.accounts}
                     windowLabel={windowLabel}

@@ -33,7 +33,7 @@ import type { SubscriptionPlanName, SubscriptionStatus, SubscriptionsPayload } f
 import { SubscriptionsTable } from './SubscriptionsTable';
 import { money, mrrParts } from '../plansMoney';
 import { PLAN_DRAWER } from '../financeCopy';
-import { useBusinessQuickLook } from './BusinessDrawer';
+import { useBusinessQuickLook, useOpenBusinessAccountId } from './BusinessDrawer';
 import { PlanDrawer } from './PlanDrawer';
 import {
   EMPTY_ALL,
@@ -77,6 +77,7 @@ export function PlansSubscriptions({
   const [planOpen, setPlanOpen] = useState<SubscriptionPlanName | null>(null);
   const planOpenerRef = useRef<HTMLElement | null>(null);
   const openBusiness = useBusinessQuickLook();
+  const openAccountId = useOpenBusinessAccountId();
 
   const load = useCallback(async () => {
     readSeq.current += 1;
@@ -225,6 +226,7 @@ export function PlansSubscriptions({
             </p>
             <SubscriptionsTable
               rows={data.rows}
+              openAccountId={openAccountId}
               onQuickLook={
                 openBusiness
                   ? (row, opener) =>

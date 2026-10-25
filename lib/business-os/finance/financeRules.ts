@@ -325,3 +325,10 @@ export function colourFarOverAllowanceTile(
     { onRuleError: options.onRuleError, lowerBoundHeadline: accountsNotReadHeadline(measured?.unknownAccounts ?? 0) }
   );
 }
+
+/**
+ * Money MK-9 (S5B-FR-13, SA-Q116): the trial-to-paid rate is shown only from
+ * this many trials ended in the window (the §8.5 minimum cohort). Data: a
+ * change here changes the page with no code change.
+ */
+export const FINANCE_TRIAL_TO_PAID = { minimumTrials: 10 } as const;

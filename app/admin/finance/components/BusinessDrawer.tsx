@@ -26,12 +26,13 @@
  * on demand. "Open full view" goes to today's picked-business page.
  */
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { AdminDrawer, DrawerField, DrawerFields, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminError, AdminLoading } from '@/app/admin/components/layout/AdminStates';
 import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
-import { formatShortId } from '@/app/admin/components/layout/adminTable';
+import { ADMIN_TD_OPEN, ADMIN_TH_OPEN, formatShortId } from '@/app/admin/components/layout/adminTable';
+import { ROW_OPEN_TEST_ID, rowOpenTarget } from '@/app/admin/components/layout/rowOpenClick';
 import { useDrawerResource } from '@/app/admin/components/layout/useDrawerResource';
 import type { FinancePayload } from '@/lib/business-os/finance/financeTypes';
 import { PlanBillingBlock } from '@/app/admin/users/components/PlanBillingBlock';
@@ -54,44 +55,86 @@ export interface BusinessDrawerTarget {
 
 type OpenBusiness = (target: BusinessDrawerTarget, opener: HTMLElement) => void;
 
-const BusinessDrawerContext = createContext<OpenBusiness | null>(null);
+/** The page's one drawer: how to open it, and which account it shows now (the open-row highlight). */
+interface BusinessDrawerState {
+  open: OpenBusiness;
+  openAccountId: string | null;
+}
+
+const BusinessDrawerContext = createContext<BusinessDrawerState | null>(null);
 
 /** The opener for a row, or null when no drawer is mounted (the table then renders as before). */
 export function useBusinessQuickLook(): OpenBusiness | null {
-  return useContext(BusinessDrawerContext);
+  return useContext(BusinessDrawerContext)?.open ?? null;
+}
+
+/** MK-10: the account the drawer shows now, or null (closed, or no drawer mounted). */
+export function useOpenBusinessAccountId(): string | null {
+  return useContext(BusinessDrawerContext)?.openAccountId ?? null;
+}
+
+/** The Businesses page's row classes (D-17): hover and pointer, and the open row highlighted. */
+export function openableRowClass(isOpen: boolean): string {
+  return `hover:bg-slate-700/30 transition-colors cursor-pointer ${isOpen ? 'bg-slate-700/20' : ''}`;
+}
+
+/** MK-10: the narrow Open column's header, exactly the Businesses page's (LF-8). */
+export function BusinessOpenHeader() {
+  return (
+    <th scope="col" className={ADMIN_TH_OPEN}>
+      <span className="sr-only">Details</span>
+    </th>
+  );
 }
 
 /**
- * SA-CR-MK8 CR-2: a row's quick look, inside the row's business cell (no new
- * column, so each table's columns are unchanged; the icon adds no text). Only
- * for a real business: never the platform account, a deleted account or a
- * business that could not be identified, and only when the drawer is mounted.
+ * Money MK-10 (user comment 2026-10-25; SA-Q-MK10-1, MK10-R1 to R3): a Finance
+ * row opens like a Businesses row. The row's ONLY opener is the shared
+ * `OpenRowButton` in the narrow last column, labelled "Open details for …" with
+ * test id `row-open`, as on the Businesses page. A click anywhere else on the
+ * row is a mouse extra through the shared `rowOpenTarget` (D-17): never on a
+ * control or a link inside the row, never while selecting text, and always
+ * through that row's button, so focus returns to it and the row click and the
+ * button share ONE open (one request). The row gets no tabIndex, role or ARIA.
+ *
+ * Returns null when no drawer is mounted (a table rendered on its own is
+ * unchanged). For a row that is not a business (`target` null: the platform
+ * account, a deleted or unidentified account) the cell is empty and the row
+ * has no click.
  */
-export function BusinessQuickLook({
-  accountId,
-  name,
-  nameStatus,
-  label,
-  testId,
-}: {
-  accountId: string | null;
-  name: string | null;
-  nameStatus: string;
-  /** The row's business text, for the opener's accessible name. */
-  label: string;
-  testId: string;
-}) {
-  const openBusiness = useBusinessQuickLook();
-  if (!openBusiness || accountId === null || nameStatus === 'platform' || nameStatus === 'unknown_business') return null;
-  return (
-    <span className="ml-2 inline-block align-middle">
-      <OpenRowButton
-        label={BUSINESS_DRAWER.quickLook(label)}
-        onOpen={(button) => openBusiness({ accountId, name: { name: nameStatus === 'found' ? name : null, platform: false } }, button)}
-        testId={testId}
-      />
-    </span>
-  );
+export function useBusinessRowOpen(): {
+  header: ReactNode;
+  rowProps: (target: BusinessDrawerTarget | null) => { className?: string; onClick?: (event: MouseEvent<HTMLTableRowElement>) => void };
+  cell: (target: BusinessDrawerTarget | null, label: string) => ReactNode;
+} | null {
+  const state = useContext(BusinessDrawerContext);
+  if (!state) return null;
+  return {
+    header: <BusinessOpenHeader />,
+    rowProps: (target) =>
+      target === null
+        ? {}
+        : {
+            className: openableRowClass(state.openAccountId === target.accountId),
+            onClick: (event) => {
+              const button = rowOpenTarget(event);
+              if (button) state.open(target, button);
+            },
+          },
+    cell: (target, label) => (
+      <td className={ADMIN_TD_OPEN}>
+        {target !== null && (
+          <OpenRowButton label={BUSINESS_DRAWER.openDetails(label)} onOpen={(button) => state.open(target, button)} testId={ROW_OPEN_TEST_ID} />
+        )}
+      </td>
+    ),
+  };
+}
+
+/** The drawer target of a row, or null when the row is not a business (platform, deleted, unidentified). */
+export function businessTargetOf(row: { accountId: string | null; name: string | null; nameStatus: string }): BusinessDrawerTarget | null {
+  if (row.accountId === null || row.nameStatus === 'platform' || row.nameStatus === 'unknown_business') return null;
+  return { accountId: row.accountId, name: { name: row.nameStatus === 'found' ? row.name : null, platform: false } };
 }
 
 function titleOf(target: BusinessDrawerTarget): string {
@@ -181,7 +224,7 @@ export function BusinessDrawerProvider({ window, children }: { window: DrawerWin
     openerRef.current = opener;
     setTarget(next);
   }, []);
-  const value = useMemo(() => open, [open]);
+  const value = useMemo(() => ({ open, openAccountId: target?.accountId ?? null }), [open, target]);
 
   return (
     <BusinessDrawerContext.Provider value={window === null ? null : value}>

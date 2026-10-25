@@ -145,6 +145,8 @@ const EXPECTED_SOURCES = [
   'adminWindow.ts',
   'readAdminResponse.ts',
   'readJsonBody.ts',
+  // Money MK-10 (SA-Q-MK10-1, option A): the shared D-17 row click; pure, no fetch.
+  'rowOpenClick.ts',
   'useAdminFilters.ts',
   'useDrawerResource.ts',
 ].map((name) => `${LAYOUT_DIR}/${name}`);
