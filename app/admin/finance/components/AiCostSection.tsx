@@ -60,6 +60,7 @@ import { atLeast, formatCount, formatCredits, formatUsd } from '../financeFormat
 import { section3AnalyticsHref } from '../financeLinks';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
+import { BusinessQuickLook } from './BusinessDrawer';
 import { RecordedCostLines } from './RecordedCostLines';
 
 function nameOf(account: FinanceTopAccount): string {
@@ -177,7 +178,11 @@ export function AiCostSection({
                   <tbody className={ADMIN_TBODY}>
                     {f.topAccounts.map((a) => (
                       <tr key={a.accountId}>
-                        <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(a)}</th>
+                        <th scope="row" className={`${ADMIN_TD} font-normal`}>
+                          {nameOf(a)}
+                          {/* SA-CR-MK8 CR-2: the business drawer, inside the cell (columns unchanged). */}
+                          <BusinessQuickLook accountId={a.accountId} name={a.name} nameStatus={a.nameStatus} label={nameOf(a)} testId={`ai-top-quick-look-${a.accountId}`} />
+                        </th>
                         <td className={ADMIN_TD_NUM}>{usd(a.costUsd)}</td>
                         <td className={ADMIN_TD_NUM}>{formatCredits(a.credits)}</td>
                       </tr>

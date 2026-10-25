@@ -89,6 +89,7 @@ import { atLeast, formatMoney } from '../financeFormat';
 import { BlockKpi } from './BlockKpi';
 import { FinanceSection } from './FinanceSection';
 import { ClientPaymentProblems } from './PaymentProblemsSection';
+import { BusinessQuickLook } from './BusinessDrawer';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
 const NOTE = 'text-[11px] text-slate-400';
@@ -335,7 +336,17 @@ function TakingsBody({ f }: { f: FinanceTakingsFigures }) {
               <tbody className={ADMIN_TBODY}>
                 {f.rows.map((row) => (
                   <tr key={`${row.accountId ?? 'unknown'}:${row.currency ?? 'unknown'}`} data-testid={`takings-row-${row.accountId ?? 'unknown'}-${row.currency ?? 'unknown'}`}>
-                    <th scope="row" className={`${ADMIN_TD} font-normal`}>{businessName(row)}</th>
+                    <th scope="row" className={`${ADMIN_TD} font-normal`}>
+                      {businessName(row)}
+                      {/* SA-CR-MK8 CR-2: the business drawer, inside the cell (columns unchanged). */}
+                      <BusinessQuickLook
+                        accountId={row.accountId}
+                        name={row.name}
+                        nameStatus={row.nameStatus}
+                        label={businessName(row)}
+                        testId={`takings-quick-look-${row.accountId ?? 'unknown'}-${row.currency ?? 'unknown'}`}
+                      />
+                    </th>
                     <td className={ADMIN_TD}>{currencyLabel(row.currency)}</td>
                     <td className={ADMIN_TD_NUM}>{count(row.payments)}</td>
                     <td className={ADMIN_TD_NUM} data-money="gross">{gross(row.gross, row.currency, row.unreadablePayments)}</td>

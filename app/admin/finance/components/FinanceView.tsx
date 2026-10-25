@@ -100,6 +100,7 @@ import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
 import { HistoryAllBusinessesLine } from './HistoryBlock';
 import { FinanceHistoryProvider, HistoryTrend } from './HistoryTrends';
+import { BusinessDrawerProvider } from './BusinessDrawer';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import {
@@ -343,6 +344,8 @@ export function FinanceView() {
         {(onRatesTab || (data && !error)) && (
           // Money MK-7: the one shared, lazy history read for the trends under Plan mix and Credits (E-85).
           <FinanceHistoryProvider query={query}>
+          {/* Money MK-8: the read-only business drawer, its read only on open (AC-173), in the page's window. */}
+          <BusinessDrawerProvider window={data && query.accountId === null ? { preset: data.window.preset, from: data.window.from, to: data.window.to } : null}>
           <div className="space-y-4">
             {!onRatesTab && data && data.accountId !== null && (
               <>
@@ -436,6 +439,7 @@ export function FinanceView() {
               </OverviewBody>
             )}
           </div>
+          </BusinessDrawerProvider>
           </FinanceHistoryProvider>
         )}
       </div>
