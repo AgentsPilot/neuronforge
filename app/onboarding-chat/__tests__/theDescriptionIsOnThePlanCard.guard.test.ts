@@ -36,8 +36,18 @@ const code = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 describe('the description reaches the card at all', () => {
   it('the manager composes it before the preview step', () => {
-    // Not the raw story: the composed text, written from the Q/A pairs.
-    expect(manager).toMatch(/collectedData\.businessDescription = await this\.writeDescription\(/);
+    /*
+     * Not the raw story: the composed text, written from the Q/A pairs.
+     *
+     * Asserted as two facts rather than one statement. It used to pin the
+     * literal `businessDescription = await this.writeDescription(`, which
+     * broke the moment the writer was moved into a `Promise.all` beside the
+     * configuration inference so the two share one wait. The INTENT is that
+     * the composed text is written onto the state before the preview, and
+     * that is what these two lines say.
+     */
+    expect(manager).toMatch(/this\.writeDescription\(/);
+    expect(manager).toMatch(/collectedData\.businessDescription = written;/);
   });
 
   it('the route sends it in the preview payload', () => {

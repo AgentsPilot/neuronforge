@@ -3157,9 +3157,47 @@ export function BookingsTab({
                                    * too. The two are finally distinguishable.
                                    * ───────────────────────────────────────────────────────
                                    */
+                                  /*
+                                   * ── A REFUND ALONE DOES NOT CLOSE AN APPOINTMENT ──────
+                                   *
+                                   * `moneyReturned` stood here on its own, and it hid every
+                                   * meeting control the moment money went back: mark held,
+                                   * no-show, cancel meeting, edit session. All four read
+                                   * `meetingAnswerable`.
+                                   *
+                                   * The case it was added for is real and is kept — booking
+                                   * 64834a57, held and completed and then refunded, must not
+                                   * still offer "mark as no-show", because editing the
+                                   * attendance of finished work whose money has gone back is
+                                   * rewriting a closed record.
+                                   *
+                                   * But a refund says something about the MONEY, and on its
+                                   * own it says nothing about the hour. Measured 2026-10-25:
+                                   * a booking refunded in full while its meeting sat
+                                   * unresolved the following day lost every control, so the
+                                   * appointment stayed in the diary, the client still held an
+                                   * invitation, and the owner had no way to call it off or
+                                   * move it. Refunding became a trap.
+                                   *
+                                   * So the refund closes the job only once the APPOINTMENT is
+                                   * answered too. Resolved — held, missed or called off — and
+                                   * refunded is a finished job. Refunded with the hour still
+                                   * open is a live appointment that has been paid back, and
+                                   * the owner needs it more than ever.
+                                   *
+                                   * `status === 'completed'` keeps its own line above, so the
+                                   * legacy rows that case was reported on are caught whatever
+                                   * their meeting_status says.
+                                   * ───────────────────────────────────────────────────────
+                                   */
+                                  const meetingResolved =
+                                    booking.meeting_status === 'held' ||
+                                    booking.meeting_status === 'no_show' ||
+                                    booking.meeting_status === 'cancelled';
+
                                   const jobFinished =
                                     booking.status === 'completed' ||
-                                    moneyReturned ||
+                                    (moneyReturned && meetingResolved) ||
                                     (isQuoted && Boolean(quotePaid));
 
                                   const meetingAnswerable =
@@ -6013,7 +6051,33 @@ export function BookingsTab({
                                           )}
 
                                           {isPaymentStep &&
-                                            (payment?.status === 'refunded' || refunded > 0) && (
+                                            (payment?.status === 'refunded' || refunded > 0) &&
+                                            /*
+                                              ── ONLY WHEN IT SAYS SOMETHING THE ROWS DO NOT ──
+                                              The payment box above now carries a dated refund
+                                              line of its own ("Refunded · 25 Oct"), beneath the
+                                              dated payment line, and the totals strip beside it
+                                              already reads "Refunded ₪150 · You keep ₪0". On a
+                                              FULL refund this pill then repeated a word stated
+                                              twice directly above it — three ways of saying the
+                                              same thing, stacked.
+
+                                              Two cases still earn it:
+
+                                                PARTIAL — "Partially refunded" is a fact the
+                                                  rows leave to be inferred from two figures,
+                                                  and the inference is the one an owner most
+                                                  needs not to get wrong.
+
+                                                NO DATE — the refund line renders only when a
+                                                  `refundedAt` exists, and it is not guaranteed:
+                                                  a refund recorded by hand, or one whose ledger
+                                                  row predates the column, has none. Without the
+                                                  pill the card would then say nothing at all
+                                                  about money that went back, which is how the
+                                                  dated line came to be added in the first place.
+                                            */
+                                            (payment?.status !== 'refunded' || !payment?.refundedAt) && (
                                               <span
                                                 className={`px-2.5 py-0.5 rounded-full text-[11.5px] font-medium ${
                                                   payment?.status === 'refunded'

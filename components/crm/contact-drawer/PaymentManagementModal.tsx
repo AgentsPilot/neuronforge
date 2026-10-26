@@ -17,13 +17,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   CreditCard, Check, RotateCcw, Loader2, AlertTriangle,
-  CheckCircle2, Clock, XCircle, DollarSign, User, ArrowLeft, Trash2, Undo2, Ban
+  CheckCircle2, Clock, XCircle, DollarSign, User, ArrowLeft, Trash2, Undo2, Ban, Wallet
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import type { SessionCardData } from './types';
 import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
 import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
-import { REFUND_CLASS } from '@/components/payments/refundTone';
+import { REFUND_CLASS, REFUND_HEX, refundExtent } from '@/components/payments/refundTone';
 
 const logger = createLogger({ module: 'PaymentManagementModal' });
 
@@ -671,10 +671,24 @@ export function PaymentManagementModal({
         bookingId={booking.booking.id}
         originalAmount={payment.amount}
         currency={payment.currency}
-        // `SessionPayment` carries no refunded figure — only `refundedAt`. The
-        // modal asks the server for the true remaining amount anyway, which is
-        // what makes that omission safe rather than another over-offer.
-        alreadyRefunded={0}
+        /*
+         * WHAT HAS ALREADY GONE BACK.
+         *
+         * This passed a hard `0`, and the note here explained that
+         * `SessionPayment` carries no refunded figure — only `refundedAt`. It
+         * does carry one (`refundedAmount`, set from the booking's
+         * `refunded_total`, which sums the invoice and every transaction), so
+         * the reason had simply gone stale.
+         *
+         * The server still decides: it recomputes the remaining amount and
+         * refuses an over-refund, which is what kept `0` safe. But safe is not
+         * the same as honest — with `0` the form opened offering the GROSS
+         * charge on a payment already partly returned, and the owner met the
+         * correction only after asking for too much. ₪150 offered on a payment
+         * with ₪75 left is the same over-offer this dialog's details rows now
+         * exist to prevent.
+         */
+        alreadyRefunded={Number(payment.refundedAmount ?? 0)}
         contactName={contactName}
         isRTL={isRTL}
         // This modal is opened from a booking, so deleting it afterwards is a
@@ -1117,6 +1131,69 @@ export function PaymentManagementModal({
                         </span>
                       </div>
                     </div>
+
+                    {/*
+                      ── WHAT CAME BACK, AND WHAT IS STILL HERE ──────────────
+                      This dialog showed the gross charge, a status word and the
+                      client, and nothing else — so a payment partly returned
+                      read "₪150 · Paid" with the refund invisible. Not merely
+                      incomplete: `Paid` is the correct status for a partial
+                      refund (the booking still holds money), so the one screen
+                      an owner opens to see a payment's history actively
+                      implied nothing had been returned.
+
+                      Measured 2026-10-25: transaction 01957ad5, ₪150 charged,
+                      ₪75 returned at 22:21, dialog showed "₪150 · שולם".
+
+                      Two rows rather than one. "Refunded ₪75" alone still
+                      leaves the owner subtracting to find what they keep, and
+                      that figure is the one they are actually looking for —
+                      the same pair, in the same words, the journey strip uses
+                      (`Refunded · You keep`), so the card and this dialog
+                      cannot describe one payment two ways.
+
+                      Shown for a FULL refund too: "You keep ₪0" is a fact
+                      worth stating plainly over money that has gone.
+                    */}
+                    {Number(payment.refundedAmount ?? 0) > 0 && (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
+                            <RotateCcw className="h-4 w-4" />
+                            {t('crm.journey.returned') || 'Refunded'}
+                            {payment.refundedAt && (
+                              <span className="text-xs text-[var(--v2-text-muted)]">
+                                · {stageDate(payment.refundedAt)}
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className="text-sm font-semibold tabular-nums"
+                            style={{
+                              color:
+                                REFUND_HEX[
+                                  refundExtent(Number(payment.refundedAmount), payment.amount)
+                                ],
+                            }}
+                          >
+                            {formatCurrency(Number(payment.refundedAmount), payment.currency)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
+                            <Wallet className="h-4 w-4" />
+                            {t('crm.journey.kept') || 'You keep'}
+                          </div>
+                          <span className="text-sm font-semibold tabular-nums text-[var(--v2-text-primary)]">
+                            {formatCurrency(
+                              Math.max(0, payment.amount - Number(payment.refundedAmount)),
+                              payment.currency
+                            )}
+                          </span>
+                        </div>
+                      </>
+                    )}
 
                     {contactName && (
                       <div className="flex items-center justify-between">

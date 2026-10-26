@@ -3515,8 +3515,15 @@ export function CRMContactDrawerV2({
           refunded_amount?: number | string | null;
           refunded_at?: string | null;
         };
-        /* Joined by the repository and, until now, never read here. */
-        payments?: Array<{ id: string; status: string; paid_at?: string | null }>;
+        /* Joined by the repository and, until now, never read here.
+           `refunded_at` sits on the same row and is what dates a refund taken
+           against a card payment that never had an invoice. */
+        payments?: Array<{
+          id: string;
+          status: string;
+          paid_at?: string | null;
+          refunded_at?: string | null;
+        }>;
       };
       const invoiceData = bookingWithInvoice.invoice;
 
@@ -3537,6 +3544,34 @@ export function CRMContactDrawerV2({
       const paidAtFromRecords =
         invoiceData?.paid_at ||
         bookingWithInvoice.payments?.find(pay => transactionMoneyArrived(pay.status) && pay.paid_at)?.paid_at ||
+        undefined;
+
+      /*
+       * AND WHEN IT WENT BACK — from whichever record holds that, too.
+       *
+       * The same gap as `paid_at` above, left behind when that one was closed.
+       * The refunded AMOUNT is read from `refunded_total`, which counts both
+       * ways money attaches to a booking; the refunded DATE was read from
+       * `invoice.refunded_at` alone. A booking paid by card through website
+       * checkout raises no invoice, so the figure was known and the date was
+       * not.
+       *
+       * That is not a cosmetic gap. The journey renders its refund line only
+       * when BOTH are present (`refunded > 0 && payment.refundedAt`), so the
+       * refund collapsed to a bare "returned" badge with no second row and no
+       * date — the money came back and the card could not say when.
+       *
+       * Latest wins, for a booking returned in more than one go, and the
+       * invoice still comes first where both exist: it is the document the
+       * client was actually sent.
+       */
+      const refundedAtFromRecords =
+        invoiceData?.refunded_at ||
+        (bookingWithInvoice.payments ?? [])
+          .map(pay => pay.refunded_at)
+          .filter((at): at is string => Boolean(at))
+          .sort()
+          .pop() ||
         undefined;
 
       /*
@@ -3592,7 +3627,9 @@ export function CRMContactDrawerV2({
          * receipt has no refund to show and renders the charge alone.
          */
         refundedAmount: Number(bookingWithInvoice.refunded_total ?? 0) || undefined,
-        refundedAt: invoiceData?.refunded_at || undefined,
+        /* From the transaction as well as the invoice — see
+           `refundedAtFromRecords`. The amount above already counts both. */
+        refundedAt: refundedAtFromRecords,
         invoicedAmount: Number(invoiceData?.amount ?? 0) || undefined,
         // Invoice data for resend functionality and due date display
         invoiceId: invoiceData?.id,
@@ -4146,6 +4183,20 @@ export function CRMContactDrawerV2({
             bookingMoney.payments?.find(pay => transactionMoneyArrived(pay.status) && pay.paid_at)?.paid_at ||
             undefined;
 
+          /* And the refund's date, by the same rule. This builder is the twin
+             of the one above and the two have drifted before, which is exactly
+             what the note there warns about: the refunded AMOUNT already counts
+             both ways money attaches, so reading the DATE off the invoice alone
+             left a card refund dateless and its journey line unrendered. */
+          const refundedAtFromRecords =
+            invoiceData?.refunded_at ||
+            (bookingMoney.payments ?? [])
+              .map(pay => (pay as { refunded_at?: string | null }).refunded_at)
+              .filter((at): at is string => Boolean(at))
+              .sort()
+              .pop() ||
+            undefined;
+
           // Same rule as the primary path: the quote decides, not the service —
           // and a package's session is not a job a quote is still owed for.
           const quotedMoney = quotedPayment(
@@ -4238,8 +4289,8 @@ export function CRMContactDrawerV2({
                   .refunded_total ?? 0
               ) || undefined,
             // When the money went back, so the receipt can date the line the way
-            // a statement does.
-            refundedAt: invoiceData?.refunded_at || undefined,
+            // a statement does. From the transaction as well as the invoice.
+            refundedAt: refundedAtFromRecords,
             // What was billed, which is what the receipt should foot from.
             invoicedAmount: Number(invoiceData?.amount ?? 0) || undefined,
             // Invoice data for resend functionality and due date display

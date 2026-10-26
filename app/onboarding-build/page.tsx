@@ -6,6 +6,7 @@ import {
   Building2,
   Users,
   Calendar,
+  Check,
   CreditCard,
   Globe,
   CheckCircle2,
@@ -14,17 +15,21 @@ import {
   ArrowRight,
   AlertCircle,
   ClipboardList,
+  FileText,
   X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
-import { V2Logo } from '@/components/v2/V2Header';
+import { Logo } from '@/components/brand/Logo';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SetupFactCard, SetupFactDeck } from '@/components/business-os/setup/SetupFactCard';
-import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { LazyConfigurationDialog } from '@/components/business-os/lazyDialogs';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
+import { InboxChannelCard } from '@/components/business-os/leads/InboxChannelCard';
+import { InboxChannelSetupDialog } from '@/components/business-os/leads/InboxChannelSetupDialog';
+import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
+import { ownerTasks } from '@/lib/business-os/onboarding/ownerTasks';
 import { cn } from '@/lib/utils';
 import { createLogger } from '@/lib/logger';
 
@@ -93,6 +98,16 @@ interface PreviewData {
      * `undefined` and the services step vanished from the plan.
      */
     service_count?: number;
+    /**
+     * The two answers the owner gave about HOW they sell, business-wide.
+     *
+     * Undeclared until now, for the same reason and with the same cost as
+     * `service_count` above: the object carries them, the type did not, so
+     * they read as `undefined` here. That is what made the owner-only cards
+     * below impossible to produce — see the comment on `wantsHours`.
+     */
+    sells_scheduled?: boolean;
+    collection_method?: 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none' | null;
     /** Clients fill in a form before their appointment. */
     needs_intake?: boolean;
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
@@ -125,6 +140,8 @@ interface BuildStep {
    * screen announcing it.
    */
   yours?: boolean;
+  /** Owner tasks that must be finished before this one can be. */
+  dependsOn?: string[];
 }
 
 // Loading component for Suspense fallback
@@ -171,11 +188,139 @@ function OnboardingBuildContent() {
    * one here keeps the user on the screen that is telling them why it matters.
    */
   const [settled, setSettled] = useState<Record<string, boolean>>({});
-  const [openStep, setOpenStep] = useState<'availability' | 'stripe' | 'bank' | 'intake' | null>(null);
+
+  /**
+   * Proof that a card's work is DONE, asked directly.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This was a map from card to `journeyGaps` kind, and it was wrong in the
+   * one direction that matters. Asked without naming services, that endpoint
+   * filters `is_active = true`; a catalogue of DRAFTS matches nothing,
+   * `journeyGaps` short-circuits on an empty list, and the answer comes back
+   * "ready" with no gaps at all. The route's own comment says it outright:
+   * "we found nothing to check" must not read as "nothing is wrong".
+   *
+   * So an account fresh out of onboarding — every service a draft, which is
+   * all of them — reported no gaps, and the re-check concluded that hours and
+   * a catalogue were finished and kept both cards hidden. Reported as "services
+   * and availability still missing", with bank and intake showing beside them
+   * only because those two had never been opened and so were never settled.
+   *
+   * Each entry now asks for POSITIVE evidence instead. `null` means the work
+   * cannot be verified from here, and an unverifiable card is never settled by
+   * this path: it waits for the owner to finish it or to leave.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const PROOF_OF_DONE: Record<string, (() => Promise<boolean>) | undefined> = {
+    availability: async () => {
+      const response = await fetch('/api/scheduling/availability');
+      if (!response.ok) return false;
+      const body = await response.json();
+      const hours = body?.availability;
+      /* An object with at least one day carrying a window. */
+      return !!hours && Object.values(hours).some(
+        (day: unknown) =>
+          Array.isArray(day) ? day.length > 0 : !!(day as { enabled?: boolean })?.enabled
+      );
+    },
+    services: async () => {
+      /*
+       * ONE PUBLISHED SERVICE IS ENOUGH.
+       *
+       * This asked for every service to carry a length and a price. That is
+       * the wrong bar for this screen: onboarding drafts three rows from a
+       * count, and a business may well want to open with one of them and
+       * leave the others for later. Holding the card up until all three are
+       * finished turns a reasonable choice into an outstanding chore.
+       *
+       * Published, not merely filled in, because publishing is the moment the
+       * service passes the gate: a row with a price and no working hours
+       * behind it is not something a client can buy. So the card goes when
+       * there is something real to sell, and not before.
+       */
+      const response = await fetch('/api/scheduling/services');
+      if (!response.ok) return false;
+      const body = await response.json();
+      const rows = body?.services ?? body?.data ?? [];
+      if (!Array.isArray(rows) || rows.length === 0) return false;
+
+      return rows.some((row: { status?: string | null }) => row?.status === 'active');
+    },
+    /*
+     * AN INVOICE NEEDS FOUR THINGS, and this card used to check none of them.
+     *
+     * It was the only card that settled on a button press rather than on the
+     * work being done, so an owner who filled in their bank name and account
+     * and left the tax ID blank watched it disappear, then met the publish
+     * gate refusing them over a field whose card was gone.
+     *
+     * The same four the gate itself asks for, via `missingInvoiceFields`: a
+     * company name, a tax ID and an address are what make an invoice a legal
+     * document, and a payment method is how the client is told where to send
+     * the money. Kept in the same order as that function so the two read as
+     * the one rule they are.
+     */
+    bank: async () => {
+      const response = await fetch('/api/business-os/invoice-settings');
+      if (!response.ok) return false;
+
+      const body = await response.json();
+      const invoice = body?.data ?? body;
+      const has = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+
+      const address = invoice?.invoice_address;
+      const addressOk = !!address && (has(address.street) || has(address.line1) || has(address.city));
+
+      const payable =
+        (has(invoice?.invoice_bank_name) && has(invoice?.invoice_bank_account))
+        || has(invoice?.invoice_payment_instructions);
+
+      return (
+        has(invoice?.invoice_company_name)
+        && has(invoice?.invoice_tax_id)
+        && addressOk
+        && payable
+      );
+    },
+    /* Stripe settles from the wizard's own completion, and intake leaves no
+       trace to check: reading a form is not observable. */
+    stripe: undefined,
+    intake: undefined,
+  };
+  const [openStep, setOpenStep] = useState<'availability' | 'stripe' | 'bank' | 'intake' | 'services' | null>(null);
   /** Needed to mount the invoice settings in place rather than navigating to them. */
   const [userId, setUserId] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [buildSteps, setBuildSteps] = useState<BuildStep[]>([]);
+
+  /*
+   * The mailbox lead channel, for the offer at the end of the build.
+   *
+   * Fetched by this page rather than by the card, because the setup dialog
+   * needs the same answer — its first screen offers the mailboxes this owner
+   * has actually connected — and one read cannot disagree with itself.
+   *
+   * Only once the build is complete: before then this screen is a progress
+   * view, and a request whose answer is not drawn until the end has no reason
+   * to compete with the build for the network.
+   */
+  const [inboxChannel, setInboxChannel] = useState<InboxChannelStatus | null>(null);
+  const [inboxSetupOpen, setInboxSetupOpen] = useState(false);
+
+  const refreshInboxChannel = useCallback(async () => {
+    try {
+      const response = await fetch('/api/business-os/leads/inbox/status', { cache: 'no-store' });
+      const body = await response.json();
+      if (body?.success) setInboxChannel(body.data as InboxChannelStatus);
+    } catch {
+      /* The card renders nothing without a status, which is the right
+         behaviour for "we could not ask". */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (buildComplete) void refreshInboxChannel();
+  }, [buildComplete, refreshInboxChannel]);
 
   // Ref to prevent double build calls in StrictMode
   const buildStartedRef = React.useRef(false);
@@ -239,13 +384,40 @@ function OnboardingBuildContent() {
     }
 
     if (hasPayments) {
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * IT SAID "INVOICE NUMBERING / READY TO INVOICE". NEITHER WAS TRUE.
+       *
+       * Reported by an owner looking at this screen: "how is the invoice
+       * ready?". It was not, twice over.
+       *
+       * Nothing is NUMBERED. The build route writes no invoice settings at
+       * all — it sets `collection` on each service and grants the payments
+       * capability, and that is the whole of it. There is no numbering row to
+       * create here.
+       *
+       * And it is not READY. `journeyReadiness` counts missing bank details as
+       * a real gap, and this very screen says so two cards further down: "Your
+       * bank details. Needs you." A card claiming the invoice is ready, beside
+       * a card saying it cannot go out, is the screen arguing with itself.
+       *
+       * Same failure as "Your site is published" before it, which
+       * `theChatTellsTheTruth` was written for: the expensive direction for a
+       * false claim, because an owner told a thing is done has no reason to go
+       * and finish it.
+       *
+       * What IS true is that invoicing is switched on for this account, so
+       * that is what it now says. What is still needed is on the bank card,
+       * where it belongs, said once.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       steps.push({
         id: 'payments',
-        label: selectedLanguage === 'he' ? 'מספור חשבוניות' : selectedLanguage === 'es' ? 'Numeración de facturas' : 'Invoice numbering',
+        label: selectedLanguage === 'he' ? 'חיוב' : selectedLanguage === 'es' ? 'Facturación' : 'Invoicing',
         status: 'pending',
         icon: <CreditCard className="w-4 h-4" />,
         color: '#22C58B',
-        result: selectedLanguage === 'he' ? 'מוכן להוציא חשבוניות' : selectedLanguage === 'es' ? 'Listo para facturar' : 'Ready to invoice',
+        result: selectedLanguage === 'he' ? 'הופעל' : selectedLanguage === 'es' ? 'Activada' : 'Switched on',
       });
     }
 
@@ -282,75 +454,79 @@ function OnboardingBuildContent() {
     // takes a card for a session and invoices for a programme owes both, and a
     // consultancy that invoices for everything owes neither a processor nor an
     // explanation of why it was asked for one.
-    const services = data.services || [];
-    const priced = services.filter(service => (service.price || 0) > 0);
-    const wantsHours = services.some(service => service.is_scheduled !== false);
-    const collectsOnline = priced.some(service => service.collection === 'online');
-    const invoicesSome = priced.some(service => service.collection !== 'online');
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE CATALOGUE FIRST, THEN THE ANSWER. NEVER THE PRICE.
+     *
+     * All three of these were read off `priced` — the services filtered to
+     * `price > 0`. The interview does not ask for prices and says so twice in
+     * this file already (see `plannedServices` above), so `priced` is empty on
+     * every ordinary conversation, all three were false, and NO owner card was
+     * ever produced. The screen then congratulated the owner with "System
+     * Ready!" and sent them to a dashboard listing the setup it had just
+     * decided they did not need.
+     *
+     * The per-service read stays and stays FIRST — a practice that takes a
+     * card for a session and invoices for a programme owes both, and that is
+     * the whole reason this was written off the services rather than off one
+     * business-wide answer. What is added is the fallback for the ordinary
+     * case, where the catalogue does not exist yet because the build is about
+     * to create it from a count.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    /*
+     * ONE LIST, SHARED WITH THE PLAN SCREEN.
+     *
+     * These four were worked out here and the plan screen kept its own two, so
+     * the plan promised "1 needs you" where this screen then showed three. The
+     * conditions and the words now live in `lib/business-os/onboarding/
+     * ownerTasks`; what stays here is the rendering, because this draws steps
+     * whose `result` is a sentence while the plan draws cards with a separate
+     * note line.
+     */
+    const icons: Record<string, React.ReactNode> = {
+      services: <FileText className="w-4 h-4" />,
+      availability: <Calendar className="w-4 h-4" />,
+      intake: <ClipboardList className="w-4 h-4" />,
+      stripe: <CreditCard className="w-4 h-4" />,
+      bank: <Building2 className="w-4 h-4" />,
+    };
 
-    // Hours are the platform's kind of work, but only this person knows when
-    // they work — and a booking link with no hours behind it is the single
-    // most common way a business arrives at the dashboard unable to trade.
-    if (wantsHours) {
-      steps.push({
-        id: 'availability',
-        label: selectedLanguage === 'he' ? 'שעות הפעילות שלך' : selectedLanguage === 'es' ? 'Tu horario' : 'Your working hours',
-        status: 'pending',
-        icon: <Calendar className="w-4 h-4" />,
-        yours: true,
-        result: selectedLanguage === 'he'
-          ? 'רק את/ה יודע/ת מתי את/ה עובד/ת. בלי זה אין מה להזמין. בערך 2 דקות.'
-          : selectedLanguage === 'es'
-            ? 'Solo tú sabes cuándo trabajas. Sin esto no hay nada que reservar. Unos 2 minutos.'
-            : 'Only you know when you work. Without it there is nothing to book. About 2 minutes.',
-      });
-    }
+    const howLong = (minutes: number) =>
+      selectedLanguage === 'he'
+        ? `בערך ${minutes} דקות.`
+        : selectedLanguage === 'es'
+          ? `Unos ${minutes} minutos.`
+          : `About ${minutes} minutes.`;
 
-    if (collectsOnline) {
+    for (const task of ownerTasks(
+      {
+        services: data.services,
+        /*
+         * `plannedServices`, not `service_count` alone.
+         *
+         * The count lives in whichever of THREE places knows it, and this
+         * passed only one of them. On an account whose catalogue sits in
+         * `configuration.services`, `hasServices` came out false and took two
+         * cards with it: the services card, and the working hours, which are
+         * only owed when there is something to book. Reported as "services and
+         * availability still missing".
+         */
+        serviceCount: plannedServices,
+        sellsScheduled: data.configuration?.sells_scheduled,
+        collectionMethod: data.configuration?.collection_method,
+        needsIntake: data.configuration?.needs_intake,
+      },
+      selectedLanguage as 'en' | 'he' | 'es'
+    )) {
       steps.push({
-        id: 'stripe',
-        label: selectedLanguage === 'he' ? 'חיבור תשלומים' : selectedLanguage === 'es' ? 'Conectar pagos' : 'Connect payments',
+        id: task.key,
+        label: task.title,
         status: 'pending',
-        icon: <CreditCard className="w-4 h-4" />,
+        icon: icons[task.key],
         yours: true,
-        result: selectedLanguage === 'he'
-          ? 'דורש אותך — סטרייפ מבקשת תעודת זהות וחשבון בנק. בערך 5 דקות.'
-          : selectedLanguage === 'es'
-            ? 'Te necesita — Stripe pide tu identificación y una cuenta bancaria. Unos 5 minutos.'
-            : 'Needs you — Stripe asks for your ID and a bank account. About 5 minutes.',
-      });
-    }
-
-    // The one piece of configuration whose content only the business can
-    // supply. We can create the form; what it asks their clients is theirs,
-    // and guessing would put invented questions in front of real people.
-    if ((data.configuration as any)?.needs_intake) {
-      steps.push({
-        id: 'intake',
-        label: selectedLanguage === 'he' ? 'טופס הפנייה שלך' : selectedLanguage === 'es' ? 'Tu formulario de admisión' : 'Your intake form',
-        status: 'pending',
-        icon: <ClipboardList className="w-4 h-4" />,
-        yours: true,
-        result: selectedLanguage === 'he'
-          ? 'בחר תבנית או הרכב את השאלות — רק את/ה יודע/ת מה צריך לדעת על לקוח לפני הפגישה. בערך 3 דקות.'
-          : selectedLanguage === 'es'
-            ? 'Elige una plantilla o arma las preguntas — solo tú sabes qué necesitas saber antes de la cita. Unos 3 minutos.'
-            : 'Pick a template or build the questions — only you know what you need to know before an appointment. About 3 minutes.',
-      });
-    }
-
-    if (invoicesSome) {
-      steps.push({
-        id: 'bank',
-        label: selectedLanguage === 'he' ? 'פרטי הבנק שלך' : selectedLanguage === 'es' ? 'Tus datos bancarios' : 'Your bank details',
-        status: 'pending',
-        icon: <Building2 className="w-4 h-4" />,
-        yours: true,
-        result: selectedLanguage === 'he'
-          ? 'דורש אותך — זה מה שמופיע בחשבונית כדי שהלקוח ידע לאן להעביר. בערך 2 דקות.'
-          : selectedLanguage === 'es'
-            ? 'Te necesita — es lo que aparece en la factura para que tu cliente sepa dónde transferir. Unos 2 minutos.'
-            : 'Needs you — it goes on the invoice so your client knows where to send it. About 2 minutes.',
+        result: `${task.body} ${howLong(task.minutes)}`,
+        dependsOn: task.dependsOn,
       });
     }
 
@@ -612,7 +788,233 @@ function OnboardingBuildContent() {
   };
 
   /** Mandatory work this business still owes, in the order the build named it. */
+  /**
+   * Ask the server what is actually done, and make the cards agree.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * BOTH DIRECTIONS, which the first version of this deliberately refused.
+   *
+   * It only ever dropped FALSE claims: a card settled by the old
+   * settle-on-close bug, whose work turned out not to be done. It never
+   * settled a card whose work WAS done, on the reasoning that a missing
+   * signal must not be read as completion.
+   *
+   * That reasoning holds for `intake`, which has no proof at all and is
+   * therefore never touched here. It does not hold for the others, whose
+   * proofs are positive evidence: working hours either exist or they do not,
+   * and reading them is as sound an answer to "is this finished" as to "is
+   * this unfinished".
+   *
+   * One direction left this screen contradicting the gate it is supposed to
+   * prepare the owner for. The cards come from the PLAN — what the chat was
+   * told — and disappear only on a settle recorded in sessionStorage. Clear
+   * that cache, or open the build in another tab, and every card returns,
+   * including the ones whose work was finished days ago. Reported as working
+   * hours showing outstanding on a business that had set them.
+   *
+   * Still never settles what it cannot verify: a task with no proof keeps
+   * whatever state it had.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (!buildComplete) return;
+
+    /* Every verifiable task, settled or not: the answer decides which way. */
+    const verifiable = Object.keys(PROOF_OF_DONE).filter(id => PROOF_OF_DONE[id]);
+    if (verifiable.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const done: string[] = [];
+      const notDone: string[] = [];
+
+      for (const id of verifiable) {
+        try {
+          (await PROOF_OF_DONE[id]!() ? done : notDone).push(id);
+        } catch (error) {
+          /* Unverifiable is neither: leave this card exactly as it was. */
+          logger.warn({ err: error, step: id }, 'Could not verify a card against the server');
+        }
+      }
+
+      if (cancelled) return;
+
+      setSettled(prev => {
+        const next = { ...prev };
+        let changed = false;
+
+        for (const id of done) {
+          if (!next[id]) { next[id] = true; changed = true; }
+        }
+        for (const id of notDone) {
+          if (next[id]) { delete next[id]; changed = true; }
+        }
+
+        if (!changed) return prev;
+        logger.info({ done, notDone }, 'Reconciled the owner cards with the server');
+        sessionStorage.setItem('onboarding_build_settled', JSON.stringify(next));
+        return next;
+      });
+    })();
+
+    return () => { cancelled = true; };
+    /* Once the build is finished; `settled` changes below are its own writes. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildComplete]);
+
   const outstanding = buildSteps.filter(step => step.yours && !settled[step.id]);
+
+  /**
+   * The build as a spine: what was finished, and where it branches out to you.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Each owner task hangs off the built step it COMPLETES, so the reason for a
+   * piece of work is never more than a line away from the work.
+   *
+   *   services    the catalogue it finishes
+   *   bank        the invoicing it makes sendable
+   *   stripe      the same, for a card
+   *
+   * `availability` and `intake` have no built step to hang from, and are not
+   * given a fabricated one: the build writes no "scheduling" or "intake" card,
+   * and inventing a line saying it did would be the kind of claim this screen
+   * has already been wrong about twice. They take a row of their own, between
+   * the steps they sit between in the client's order.
+   *
+   * Nothing here decides WHAT is owed. `outstanding` does that, from
+   * `ownerTasks`, exactly as before; this only decides where each one is drawn.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const SPINE = (() => {
+    const built = buildSteps.filter(step => !step.yours);
+    const owed = (id: string) => outstanding.filter(step => step.id === id);
+
+    /*
+     * FINISHED WORK STAYS ON THE SPINE, in green.
+     *
+     * A settled task used to leave `outstanding` and take its whole row with
+     * it: `availability` has no built step behind it, so once the hours were
+     * set the row had neither a fact nor a branch and was filtered away. The
+     * owner configured something and watched a step vanish from the flow.
+     *
+     * Reported as "I configured the availability and it hid the card but it
+     * shall show it as green in its node", which is right twice over. A flow
+     * that loses a step stops being a flow, and the one moment somebody has
+     * earned a tick is the worst moment to take the line away.
+     */
+    const finished = (id: string) =>
+      buildSteps.filter(step => step.yours && step.id === id && settled[step.id]);
+
+    const at = (builtId: string, ...taskIds: string[]) => ({
+      key: builtId,
+      built: built.find(step => step.id === builtId) ?? null,
+      branches: taskIds.flatMap(owed),
+      done: taskIds.flatMap(finished),
+    });
+
+    const alone = (taskId: string) => ({
+      key: taskId,
+      built: null as BuildStep | null,
+      branches: owed(taskId),
+      done: finished(taskId),
+    });
+
+    return [
+      at('profile'),
+      at('pipeline'),
+      at('services', 'services'),
+      alone('availability'),
+      at('payments', 'bank', 'stripe'),
+      alone('intake'),
+      at('website'),
+      /* A row with neither a fact to report nor work to offer is not a row. */
+    ].filter(row => row.built || row.branches.length > 0 || row.done.length > 0);
+  })();
+
+  /**
+   * Which rows are holding another row up, so the spine can draw the link.
+   *
+   * Read off `dependsOn`, which `ownerTasks` already fills: the services task
+   * names the hours and the bank details it waits for. A row is a BLOCKER when
+   * one of its own branches is named by somebody else, and WAITING when one of
+   * its branches names somebody. The animation runs between the two.
+   *
+   * Only among work that is still owed. A dependency already finished is not a
+   * link worth drawing, and `outstanding` has dropped it by the time we get
+   * here.
+   */
+  const blockedBy = new Set(
+    outstanding.flatMap(step => (step.dependsOn ?? []).filter(id =>
+      outstanding.some(other => other.id === id)
+    ))
+  );
+  const rowBlocks = (row: { branches: BuildStep[] }) =>
+    row.branches.some(step => blockedBy.has(step.id));
+  const rowWaits = (row: { branches: BuildStep[] }) =>
+    row.branches.some(step => (step.dependsOn ?? []).some(id => blockedBy.has(id)));
+
+  /**
+   * The two ends of the dependency, as row indices.
+   *
+   * Earliest to latest among the rows involved, whichever end the blocker is
+   * on. The first version ran from the blocker DOWN to the waiter, assuming a
+   * dependency always sits above what needs it; here it is the other way
+   * round, "Finish your services" sits with the catalogue and waits on rows
+   * below it, so the range came out backwards and nothing drew at all.
+   */
+  const linkEnds = (() => {
+    const involved = SPINE
+      .map((row, index) => (rowBlocks(row) || rowWaits(row) ? index : -1))
+      .filter(index => index !== -1);
+    if (involved.length < 2) return null;
+    return { first: Math.min(...involved), last: Math.max(...involved) };
+  })();
+
+  /**
+   * Where those two ends actually are on screen, measured rather than guessed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The link was drawn as a straight segment lying on the spine, which made it
+   * indistinguishable from the spine: a line from A to B that follows the same
+   * path as the thing it is drawn over says nothing. A link has to LEAVE the
+   * line and come back, and a curve cannot be positioned without knowing how
+   * tall the rows between its ends happen to be.
+   *
+   * Rows are as tall as their cards, and the cards hold sentences that wrap
+   * differently per language and per width, so the only honest source for that
+   * is the DOM. Measured after layout, and again on resize.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const spineRef = React.useRef<HTMLDivElement>(null);
+  const [linkSpan, setLinkSpan] = useState<{ top: number; height: number } | null>(null);
+
+  React.useLayoutEffect(() => {
+    if (!linkEnds) { setLinkSpan(null); return; }
+
+    const measure = () => {
+      const host = spineRef.current;
+      if (!host) return;
+
+      const from = host.querySelector<HTMLElement>(`[data-spine-node="${linkEnds.first}"]`);
+      const to = host.querySelector<HTMLElement>(`[data-spine-node="${linkEnds.last}"]`);
+      if (!from || !to) { setLinkSpan(null); return; }
+
+      const base = host.getBoundingClientRect().top;
+      const a = from.getBoundingClientRect();
+      const b = to.getBoundingClientRect();
+      const top = a.top - base + a.height / 2;
+      const height = (b.top - base + b.height / 2) - top;
+
+      setLinkSpan(height > 8 ? { top, height } : null);
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+    /* Re-measured whenever the rows could have changed shape. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkEnds?.first, linkEnds?.last, outstanding.length, settled, selectedLanguage]);
 
   /**
    * What stopping here costs, named for the first thing outstanding.
@@ -650,8 +1052,23 @@ function OnboardingBuildContent() {
         : 'Invoices will go out without your details, so clients will not know where to send the money.';
   })();
 
+  /*
+   * Every id the owner-task list can produce must be openable here.
+   *
+   * `services` was added to that list and not to this one, so its card had a
+   * button that did nothing: the owner pressed "Fill in details" on "Finish
+   * your services" and the screen sat there. A card naming work the platform
+   * cannot route to is worse than no card, because it reads as broken rather
+   * than as unfinished.
+   *
+   * Guarded by `OWNER_TASK_KEYS` rather than a hand-written list, so the next
+   * task added to the shared module fails a test here instead of going quiet
+   * on the screen.
+   */
   const openOwnerStep = (id: string) => {
-    if (id === 'availability' || id === 'stripe' || id === 'bank' || id === 'intake') setOpenStep(id);
+    if (id === 'availability' || id === 'stripe' || id === 'bank' || id === 'intake' || id === 'services') {
+      setOpenStep(id);
+    }
   };
 
   /** Marks a step done and closes whatever was open for it. */
@@ -663,9 +1080,93 @@ function OnboardingBuildContent() {
    * offering — there is nothing to offer a business that is already set up to
    * be paid that way.
    */
+  /*
+   * NOT GATED ON A PRICE. The sixth time this gate has been found here.
+   *
+   * It read `(service.price || 0) > 0 && collection === 'online'`, and the
+   * interview collects no prices at all, so it was ALWAYS FALSE. What it
+   * decides is whether the bank panel still offers to connect a processor,
+   * and `!collectsOnlineSome` meant that offer was shown to every business
+   * including ones already set up to take cards.
+   *
+   * Harmless-looking in isolation, which is exactly why it keeps being
+   * written: "does this business take money" reads like a price question
+   * right up until you notice nobody is asked for one. The collection is the
+   * answer, on its own.
+   */
   const collectsOnlineSome = (previewData?.services || []).some(
-    service => (service.price || 0) > 0 && service.collection === 'online'
+    service => service.collection === 'online'
   );
+
+  /**
+   * Close a dialog, and settle the card only if the work is actually done.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Reported: "I opened the availability, didn't wait for a sec and closed the
+   * dialog, the card got disappeared." It had `settleOwnerStep` as its
+   * `onClose`, so shutting a dialog counted as finishing the work.
+   *
+   * Making close mean close fixed that and introduced the opposite complaint:
+   * a card the owner HAD finished stayed on screen. Neither guess is good
+   * enough, so this asks.
+   *
+   * `journey-readiness` is the same function the publish gate uses, so a card
+   * disappears exactly when the thing it was asking for stops blocking the
+   * business. That is a far better test than "did a dialog close", and it is
+   * the test that was already refusing the owner at the other end.
+   *
+   *   hours      availability     catalogue   services
+   *   processor  stripe           invoicing   bank
+   *
+   * INTAKE IS NOT IN THAT LIST, and cannot be: its work is READING a form the
+   * platform already generated and switched on, which leaves no trace to check
+   * for. It stays until the owner leaves for the dashboard. Better a card that
+   * outstays its welcome than one that claims a form was read when nobody read
+   * it, which is the mistake this whole change is undoing.
+   *
+   * A failed check settles nothing. The cost of being wrong is asymmetric: an
+   * extra card is a moment's annoyance, a missing one is a business that
+   * cannot take a booking and was told it was finished.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+
+  /**
+   * Settle a card if its work is now done, WITHOUT closing it otherwise.
+   *
+   * For the save-in-place path: pressing Save on a complete form should take
+   * the card away, and pressing it on an incomplete one should leave the
+   * dialog open so the missing field can be filled. `closeOwnerStep` always
+   * closes, which is right for a close button and wrong for this.
+   */
+  const verifyOwnerStep = async (id: string) => {
+    const proof = PROOF_OF_DONE[id];
+    if (!proof) return;
+    try {
+      if (await proof()) {
+        settleOwnerStep(id);
+        logger.info({ step: id }, 'Owner step settled after a save that completed it');
+      }
+    } catch (error) {
+      logger.warn({ err: error, step: id }, 'Could not verify a step after saving it');
+    }
+  };
+
+  const closeOwnerStep = async (id: string) => {
+    setOpenStep(null);
+
+    const proof = PROOF_OF_DONE[id];
+    if (!proof) return;
+
+    try {
+      if (await proof()) {
+        settleOwnerStep(id);
+        logger.info({ step: id }, 'Owner step settled because the work is done');
+      }
+    } catch (error) {
+      /* Never settle on our own failure to check. */
+      logger.warn({ err: error, step: id }, 'Could not verify a step after closing it');
+    }
+  };
 
   const settleOwnerStep = (id: string) => {
     setSettled(prev => {
@@ -715,11 +1216,44 @@ function OnboardingBuildContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+    /*
+     * The chrome does not scroll, as in Business OS and as on the chat page
+     * beside this one. See `app/onboarding-chat/page.tsx` for the full
+     * reasoning: a 100dvh flex column with `shrink-0` chrome over a `flex-1
+     * overflow-y-auto` body, copied from `app/business-os/layout.tsx` rather
+     * than built with `position: sticky`.
+     */
+    <div
+      className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--v2-bg)]"
+      dir={isRTL ? 'rtl' : 'ltr'}
+    >
       {/* Header */}
-      <div className="border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4">
-          <V2Logo />
+      <div className="relative z-50 shrink-0 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
+        <div dir="ltr" className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+          {/* THE SAME LOGO THE CHAT BEFORE IT SHOWS, and the platform's.
+              This was `V2Logo` — `/images/AgentPilot_Logo.png`, the old square
+              mark from a name the product no longer carries — while the chat
+              one click earlier had already moved to the wordmark in
+              `components/brand/Logo`, which `BusinessOSHeader` also uses. So
+              the brand changed between the two screens of one flow. See the
+              fuller note at the chat page's header, including why it is not a
+              link: `V2Logo` wrapped one to `/v2/dashboard`, a legacy screen
+              with no route back, and there is nowhere useful to go from a
+              build that is still running. */}
+          <Logo placement="header" priority />
+          {/* Whose account this is.
+              The chat header one screen earlier already carries this, under a
+              comment that says why: it is true of every screen from here on,
+              not a line belonging to one of them. This screen is "from here
+              on", and the name simply vanished on arriving at it. */}
+          {previewData?.businessProfile?.company_name && (
+            <span
+              dir={isRTL ? 'rtl' : 'ltr'}
+              className="text-sm font-semibold text-[var(--v2-text-primary)] truncate min-w-0"
+            >
+              {previewData.businessProfile.company_name}
+            </span>
+          )}
         </div>
       </div>
 
@@ -730,6 +1264,10 @@ function OnboardingBuildContent() {
           a queue rather than as the plan filling in. Three across keeps the
           whole thing on one screen, which is the only way the user can watch
           it happen. */}
+      {/* The scroller is the outer div and runs full width, so its scrollbar
+          sits at the edge of the window rather than inside the centred
+          column. The inner div keeps the measure it always had. */}
+      <div className="flex-1 overflow-y-auto">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
         <div className="relative">
           {/* Compact Card */}
@@ -767,7 +1305,7 @@ function OnboardingBuildContent() {
                         : selectedLanguage === 'es'
                           ? `Construí todo lo que pude. ${outstanding.length === 1 ? 'Queda una cosa que solo tú puedes hacer.' : `Quedan ${outstanding.length} cosas que solo tú puedes hacer.`}`
                           : `I built everything I could. ${outstanding.length === 1 ? 'One thing is left that only you can do.' : `${outstanding.length} things are left that only you can do.`}`)
-                    : (selectedLanguage === 'he' ? 'הכל מוכן — אפשר להתחיל.' : selectedLanguage === 'es' ? 'Todo listo — puedes empezar.' : 'All set — you can start.')
+                    : (selectedLanguage === 'he' ? 'הכל מוכן. אפשר להתחיל.' : selectedLanguage === 'es' ? 'Todo listo. Puedes empezar.' : 'All set. You can start.')
                   : buildError
                   ? buildError
                   : (selectedLanguage === 'he' ? 'רק עוד רגע...' : selectedLanguage === 'es' ? 'Solo un momento...' : 'Just a moment...')}
@@ -847,11 +1385,57 @@ function OnboardingBuildContent() {
                 log, which threw away the screen the user had just studied.
                 These are the same facts in the same order, each reporting what
                 actually happened rather than the word "completed". */}
+            {/*
+                ALSO AFTER A REFRESH, not only while the build runs.
+                ──────────────────────────────────────────────────────────────
+                This was `isBuilding && !buildError`, and `isBuilding` goes
+                false the moment the build finishes. On a reload the restore
+                path sets `buildComplete` and never sets `isBuilding`, so every
+                card reporting what WAS built vanished: the profile, the client
+                journey, the services, the invoicing, the website. Reported as
+                "refresh of the page make these disappear".
+
+                The build can be over in either of two ways and the screen has
+                to survive both: finishing in front of the owner, and being
+                found already finished when the page is opened again.
+                ──────────────────────────────────────────────────────────────
+            */}
+            {/* While it runs. Once it is finished the spine below takes over,
+                which is what survives a refresh. */}
             {isBuilding && !buildError && (
               <SetupFactDeck>
-                {buildSteps.map(step => (
+                {/*
+                    WHAT THE PLATFORM BUILT, and only that.
+                    ──────────────────────────────────────────────────────────
+                    This mapped every step, owner ones included, which was
+                    harmless while the deck only showed DURING the build: the
+                    owner's section had not appeared yet. Making the deck
+                    survive a refresh put both on screen at once, so "Your
+                    working hours", "Your bank details", "Your intake form"
+                    and "Finish your services" each appeared twice, a few
+                    hundred pixels apart, once as a fact and once as a button.
+
+                    The two halves answer different questions. This one is
+                    "what did you do for me"; the section below is "what is
+                    left for me to do". A card cannot belong to both.
+                */}
+                {buildSteps.filter(step => !step.yours).map(step => (
                   <SetupFactCard
-                    key={step.id}
+                    /*
+                     * COMPOSITE, because two steps legitimately share an id.
+                     *
+                     * `services` is pushed twice on purpose: once as the
+                     * platform's own work ("3 services created as drafts") and
+                     * once as the owner's ("Finish your services"). They are
+                     * the same subject at two stages, and both belong in this
+                     * deck, so the id cannot be the key.
+                     *
+                     * React warned "Encountered two children with the same
+                     * key, `services`" and warned that children may be
+                     * duplicated or omitted. The id itself stays as it is: it
+                     * is what `openOwnerStep` and `PROOF_OF_DONE` route on.
+                     */
+                    key={`${step.yours ? 'yours' : 'built'}-${step.id}`}
                     color={step.color || '#4F6EF7'}
                     icon={step.icon}
                     title={step.label}
@@ -871,7 +1455,7 @@ function OnboardingBuildContent() {
                       step.status === 'in_progress'
                         ? (selectedLanguage === 'he' ? 'בונה…' : selectedLanguage === 'es' ? 'Construyendo…' : 'Building…')
                         : step.status === 'error'
-                          ? (selectedLanguage === 'he' ? 'לא הצלחנו — אפשר לנסות שוב אחר כך' : selectedLanguage === 'es' ? 'No se pudo — puedes reintentarlo luego' : 'Could not finish — you can retry later')
+                          ? (selectedLanguage === 'he' ? 'לא הצלחנו. אפשר לנסות שוב אחר כך' : selectedLanguage === 'es' ? 'No se pudo. Puedes reintentarlo luego' : 'Could not finish. You can retry later')
                           : step.status === 'pending' && !step.yours
                             ? (selectedLanguage === 'he' ? 'ממתין' : selectedLanguage === 'es' ? 'En espera' : 'Waiting')
                             : undefined
@@ -898,9 +1482,27 @@ function OnboardingBuildContent() {
                     }}
                   />
                 </div>
+                {/*
+                    IT SAID "5 / 5 steps" UNDER EIGHT CARDS.
+                    ────────────────────────────────────────────────────────────
+                    Reported as "what is 5/5 means in the bottom?", and the
+                    honest answer was buried in a filter: it counts the steps
+                    the PLATFORM does, deliberately excluding the `yours` ones,
+                    so the bar cannot sit permanently short through no fault of
+                    the owner's. Good reasoning, invisible from the screen —
+                    eight cards above a counter that stops at five reads like
+                    three of them failed.
+
+                    So the count now names what it is counting. The owner cards
+                    are not behind in a race; they are a different kind of
+                    thing, and the heading beneath this already says so.
+                */}
                 <p className="text-center text-xs text-[var(--v2-text-muted)] mt-2">
-                  {buildSteps.filter(s => !s.yours && s.status === 'completed').length} / {buildSteps.filter(s => !s.yours).length}{' '}
-                  {selectedLanguage === 'he' ? 'שלבים' : selectedLanguage === 'es' ? 'pasos' : 'steps'}
+                  {selectedLanguage === 'he'
+                    ? `${buildSteps.filter(s => !s.yours && s.status === 'completed').length} מתוך ${buildSteps.filter(s => !s.yours).length} דברים שאני מקים עבורך`
+                    : selectedLanguage === 'es'
+                      ? `${buildSteps.filter(s => !s.yours && s.status === 'completed').length} de ${buildSteps.filter(s => !s.yours).length} cosas que monto por ti`
+                      : `${buildSteps.filter(s => !s.yours && s.status === 'completed').length} of ${buildSteps.filter(s => !s.yours).length} things I set up for you`}
                 </p>
               </div>
             )}
@@ -915,78 +1517,327 @@ function OnboardingBuildContent() {
               <div className="mt-5">
                 {outstanding.length > 0 ? (
                   <>
-                    {/* What the client will walk through, as it stands right
-                        now. A dashed step is one that will not happen yet, and
-                        each card below is the reason. This is the whole idea:
-                        the consequence sits beside the setting. */}
-                    {(previewData?.services || []).length > 0 && (
-                      <div className="mb-4 p-3 rounded-[12px] bg-[var(--v2-bg)] border border-[var(--v2-border)]">
-                        <span className="block text-[10.5px] font-semibold tracking-wide text-[var(--v2-text-muted)] mb-2.5">
-                          {outstanding.length > 0 ? t('journey.label.pending') : t('journey.label')}
-                        </span>
-                        <div className="flex flex-col gap-2.5">
-                          {(previewData?.services || []).map((service, idx) => (
-                            <div key={idx} className="flex flex-col gap-1">
-                              <span className="text-[11px] text-[var(--v2-text-muted)]">{service.service_name}</span>
-                              <ClientJourneyStrip
-                                compact
-                                intakeEnabled={(previewData?.configuration as any)?.needs_intake === true}
-                                service={{
-                                  scheduled: service.is_scheduled !== false,
-                                  collection: service.collection ?? 'invoice',
-                                  price: service.price,
-                                }}
-                                hoursReady={!!settled['availability'] || !outstanding.some(step => step.id === 'availability')}
-                                processorReady={!!settled['stripe'] || !outstanding.some(step => step.id === 'stripe')}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    {/*
+                        THE CLIENT JOURNEY STRIP WAS HERE, and was removed on
+                        2026-10-24 at the owner's request: "this card displayed
+                        in the previous stage so we do not really need it
+                        again".
 
-                    <div className="flex flex-col gap-2.5 mb-4">
-                      {outstanding.map(step => (
-                        <div
-                          key={step.id}
-                          className="rounded-[14px] border p-3.5 flex flex-col gap-2"
+                        It drew, per service, the path a client walks and
+                        dashed the steps that cannot happen yet. Worth keeping
+                        in mind if it is ever reinstated: it is not actually on
+                        the plan screen before this one. What made it redundant
+                        is the SPINE below, which arrived in the same change and
+                        answers the same question — what is missing, and what it
+                        costs — against the build rather than against each
+                        service.
+
+                        Two displays of one fact is what this screen has just
+                        spent a day removing, so the one that says it once wins.
+                        The strip still lives where its own comment says it
+                        belongs, beside the setting being changed: the services
+                        editor, the service modal, the publish dialog and the
+                        website wizards.
+                    */}
+
+                    {/*
+                        THREE TO A ROW, not a column of full-width bars.
+                        ──────────────────────────────────────────────────────
+                        Stacked, five outstanding cards pushed the "I'll do
+                        this later" button and the cost sentence beneath it off
+                        the fold, so the screen's own way out was the thing you
+                        had to scroll to find.
+
+                        `items-stretch` with the action row pinned by `mt-auto`
+                        so the buttons line up across a row whatever length the
+                        sentences are: three cards of different heights with
+                        their buttons at three different levels reads as three
+                        unrelated things.
+                    */}
+                    {/*
+                        ──────────────────────────────────────────────────────
+                        THE BUILD AS A SPINE, WITH BRANCHES WHERE IT STOPPED.
+
+                        What the platform finished is a LINE. Where it could go
+                        no further, the line branches out to the owner with the
+                        one control that continues it.
+
+                        This replaces two separate displays that said the same
+                        thing twice: a deck of cards reporting finished work,
+                        and a grid of orange cards reporting what was left. Nine
+                        cards of equal weight, no order, and the reason for each
+                        piece of work a screen-length away from the work itself.
+
+                        Every handler, dialog and condition below is the one
+                        that was there before. `outstanding` still decides what
+                        needs doing, `openOwnerStep` still routes, `dependsOn`
+                        still names what a task waits for. Only the drawing
+                        changed.
+                        ──────────────────────────────────────────────────────
+                    */}
+                    <div ref={spineRef} className="mb-4 ps-5 relative">
+                      {/*
+                          THE DEPENDENCY, DRAWN RATHER THAN ONLY SAID.
+                          ────────────────────────────────────────────────────
+                          "Publishing waits for your working hours and your
+                          bank details" is a sentence at the bottom of one
+                          branch, naming two others a screen apart. The eye has
+                          to do the joining.
+
+                          So the spine between them flows. A travelling dash
+                          runs from each blocker down to the branch that is
+                          waiting, and the blockers' nodes pulse in the same
+                          rhythm, which is what makes the two read as one
+                          relationship rather than two decorations.
+
+                          The dashes run DOWN the spine, which is reading
+                          order. They do not claim a direction of dependency:
+                          the blocked task can sit above its blockers as easily
+                          as below, and here it does.
+                      */}
+                      <style>{`
+                        /*
+                         * A DASHED STROKE THAT TRAVELS, WITH ROOM BETWEEN DASHES.
+                         *
+                         * Three things were wrong before, in turn, and each is
+                         * worth keeping written down.
+                         *
+                         * It did not move at all. A lone "to" keyframe setting
+                         * background-position-y asks the browser to interpolate
+                         * from the computed start, and with no
+                         * background-position on the rule that start is the
+                         * initial "0% 0%". A percentage-to-length tween is the
+                         * kind of thing engines quietly decline, and it did.
+                         *
+                         * Then it moved and looked wrong: a 6px dash with an
+                         * 8px gap on a 2px line reads as angled, because the
+                         * marks are close enough to be taken as one jagged
+                         * edge. The gap is now more than twice the dash.
+                         *
+                         * Then it was straight, lying along the spine, which
+                         * made it indistinguishable from the spine. It is a
+                         * stroke on a curve now, so the dash travels the path
+                         * rather than a rectangle: stroke-dashoffset, not
+                         * background-position.
+                         */
+                        @keyframes spine-flow {
+                          from { stroke-dashoffset: 20; }
+                          to   { stroke-dashoffset: 0; }
+                        }
+                        .spine-link {
+                          stroke-dasharray: 6 14;
+                          animation: spine-flow 1.1s linear infinite;
+                        }
+                        .spine-node-blocking { animation: spine-node-pulse 1.8s ease-in-out infinite; }
+                        @media (prefers-reduced-motion: reduce) {
+                          /* The dashed line stays, which is what carries the
+                             meaning. Only the travel stops. */
+                          .spine-link { animation: none; }
+                          .spine-node-blocking { animation: none; }
+                        }
+                      `}</style>
+
+                      {/* The spine itself, behind the rows. */}
+                      <div
+                        className="absolute top-2 bottom-2 w-[2px]"
+                        style={{ insetInlineStart: '5px', background: 'var(--v2-border)' }}
+                      />
+
+                      {/*
+                          THE DEPENDENCY, AS A CURVE THAT LEAVES THE SPINE.
+                          ──────────────────────────────────────────────────────
+                          Drawn once over the whole run rather than as a segment
+                          per row, because a link that follows the same path as
+                          the spine it lies on says nothing: it reads as the
+                          spine. This bows out into the gap between the line and
+                          the cards, so it is visibly a connection BETWEEN two
+                          nodes rather than a stretch of the line itself.
+
+                          Positioned from measurement. Rows are as tall as their
+                          cards and the cards hold sentences that wrap
+                          differently per language, so where the two ends sit is
+                          not something that can be guessed in CSS.
+                      */}
+                      {linkSpan && (
+                        <svg
+                          aria-hidden
+                          className="absolute pointer-events-none overflow-visible"
                           style={{
-                            background: 'rgba(194, 65, 12, 0.05)',
-                            borderColor: 'rgba(194, 65, 12, 0.4)',
+                            insetInlineStart: '1px',
+                            top: `${linkSpan.top}px`,
+                            width: '10px',
+                            height: `${linkSpan.height}px`,
                           }}
+                          viewBox={`0 0 10 ${linkSpan.height}`}
+                          preserveAspectRatio="none"
                         >
-                          <div className="flex items-center gap-2.5">
-                            <span
-                              className="w-[27px] h-[27px] rounded-[9px] grid place-items-center flex-shrink-0"
-                              style={{ background: 'rgba(194, 65, 12, 0.12)', color: '#C2410C' }}
+                          {/*
+                              A CUBIC, not a quadratic. One control point
+                              gives a single shallow belly that barely leaves
+                              the spine; two, held at a quarter and
+                              three-quarters of the run, hold the curve out for
+                              most of its length and make the departure and the
+                              return the only steep parts. That is what reads
+                              as a deliberate detour rather than a bent line.
+                              `preserveAspectRatio="none"` keeps the vertical
+                              scale honest while the 10px width stays 10px, so
+                              the bow is the same depth on a short run and a
+                              long one.
+
+                              Bows AWAY from the cards, into the margin, so the
+                              curve never passes under the text it is linking
+                              and the cards keep a clean edge. `overflow-visible`
+                              on the svg is what lets it draw outside its own
+                              10px box to get there.
+
+                              SVG coordinates do not mirror with `dir`, so RTL
+                              is handled by flipping the control point's sign:
+                              the spine sits on the right there, so its margin
+                              is the positive direction rather than the
+                              negative one.
+                              because the spine sits on the opposite edge there
+                              and a curve bowing the same way would cross the
+                              text. `overflow-visible` is what lets it draw
+                              outside its own box to reach the margin.
+                          */}
+                          <path
+                            d={`M 5 0 C ${isRTL ? 23 : -13} ${linkSpan.height * 0.25} ${isRTL ? 23 : -13} ${linkSpan.height * 0.75} 5 ${linkSpan.height}`}
+                            fill="none"
+                            stroke="#C2410C"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            vectorEffect="non-scaling-stroke"
+                            className="spine-link"
+                          />
+                        </svg>
+                      )}
+
+                      {SPINE.map((row, index) => (
+                        <div key={row.key} className="relative py-2">
+                          {/* The node on the spine: green where we finished,
+                              orange where it is waiting for the owner, and
+                              pulsing where somebody else is waiting on it. */}
+                          <span
+                            data-spine-node={index}
+                            className={cn(
+                              'absolute w-[9px] h-[9px] rounded-full',
+                              rowBlocks(row) && 'spine-node-blocking'
+                            )}
+                            style={{
+                              insetInlineStart: '-18px',
+                              /*
+                               * Beside whatever the row actually starts with.
+                               *
+                               * Every node sat at 15px, which is the height of
+                               * a line of text. A row that HAS no line of text
+                               * — the intake form, and the hours before they
+                               * were set, neither of which the build reports —
+                               * put its node in empty space above its card,
+                               * attached to nothing. Measured against the
+                               * card's own title instead, it reads as the
+                               * card's node rather than as a stray dot.
+                               */
+                              top: row.built || row.done.length ? '15px' : '27px',
+                              /* Orange only while something on this row is
+                                 still owed. A row whose task is finished goes
+                                 green like any other completed step. */
+                              background: row.branches.length ? '#C2410C' : '#22C58B',
+                              boxShadow: '0 0 0 2px var(--v2-bg)',
+                            }}
+                          />
+
+                          {row.built && (
+                            <p className="text-[12.5px] m-0 text-[var(--v2-text-muted)]">
+                              <span className="text-[var(--v2-text-secondary)] font-medium">
+                                {row.built.label}
+                              </span>
+                              {row.built.result ? ` · ${row.built.result}` : ''}
+                            </p>
+                          )}
+
+                          {/* What the owner has finished since arriving here.
+                              Drawn like a built line rather than like a card,
+                              because that is what it now is: a thing that is
+                              done. The tick is the only difference, and it is
+                              theirs rather than ours. */}
+                          {row.done.map(step => (
+                            <p
+                              key={step.id}
+                              className="text-[12.5px] m-0 text-[var(--v2-text-muted)] flex items-center gap-1.5"
                             >
-                              {step.icon}
-                            </span>
-                            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)] m-0">
-                              {step.label}
-                            </h4>
-                          </div>
-                          <p className="text-[12.5px] leading-snug text-[var(--v2-text-secondary)] m-0">
-                            {step.result}
-                          </p>
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <span className="text-[11px]" style={{ color: '#C2410C' }}>
-                              {selectedLanguage === 'he' ? 'דורש אותך' : selectedLanguage === 'es' ? 'Te necesita' : 'Needs you'}
-                            </span>
-                            <button
-                              onClick={() => openOwnerStep(step.id)}
-                              className="px-3 py-1.5 text-xs font-semibold text-white rounded-lg"
-                              style={{ background: '#C2410C' }}
-                            >
-                              {step.id === 'availability'
-                                ? (selectedLanguage === 'he' ? 'הגדר שעות' : selectedLanguage === 'es' ? 'Definir horario' : 'Set hours')
-                                : step.id === 'intake'
-                                  ? (selectedLanguage === 'he' ? 'בחר טופס' : selectedLanguage === 'es' ? 'Elegir formulario' : 'Choose a form')
-                                : step.id === 'stripe'
-                                  ? (selectedLanguage === 'he' ? 'חבר את סטרייפ' : selectedLanguage === 'es' ? 'Conectar Stripe' : 'Connect Stripe')
-                                  : (selectedLanguage === 'he' ? 'מלא פרטים' : selectedLanguage === 'es' ? 'Completar datos' : 'Fill in details')}
-                            </button>
-                          </div>
+                              <Check className="w-3 h-3 flex-shrink-0" style={{ color: '#22C58B' }} />
+                              <span className="text-[var(--v2-text-secondary)] font-medium">
+                                {step.label}
+                              </span>
+                              <span>
+                                {selectedLanguage === 'he' ? '· הוגדר' : selectedLanguage === 'es' ? '· listo' : '· done'}
+                              </span>
+                            </p>
+                          ))}
+
+                          {row.branches.map(step => {
+                            const waitingOn = (step.dependsOn ?? []).filter(id =>
+                              outstanding.some(other => other.id === id)
+                            );
+                            const names = waitingOn
+                              .map(id => outstanding.find(other => other.id === id)?.label ?? id)
+                              .join(selectedLanguage === 'he' ? ' ו' : selectedLanguage === 'es' ? ' y ' : ' and ');
+
+                            return (
+                              <div
+                                key={step.id}
+                                /* A grid, not a wrapping flex row. The
+                                   button sat wherever the sentence left it:
+                                   on the end of the last line for a short
+                                   one, dropped onto its own line for a long
+                                   one, so no two cards agreed on where the
+                                   control was. A fixed second column puts
+                                   every button on the same edge whatever the
+                                   text does, and `items-start` keeps it level
+                                   with the title rather than floating in the
+                                   middle of a three-line card. */
+                                className="mt-1.5 rounded-[10px] p-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3"
+                                style={{
+                                  background: 'rgba(194, 65, 12, 0.05)',
+                                  border: '1.5px solid rgba(194, 65, 12, 0.45)',
+                                }}
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span style={{ color: '#C2410C' }}>{step.icon}</span>
+                                    <h4 className="text-[13px] font-semibold text-[var(--v2-text-primary)] m-0">
+                                      {step.label}
+                                    </h4>
+                                  </div>
+                                  <p className="text-[12px] leading-snug text-[var(--v2-text-secondary)] m-0 mt-1">
+                                    {step.result}
+                                  </p>
+                                  {names && (
+                                    <p className="text-[11.5px] leading-snug m-0 mt-1" style={{ color: '#C2410C' }}>
+                                      {selectedLanguage === 'he'
+                                        ? `אפשר למלא עכשיו, אבל הפרסום ימתין ל${names}.`
+                                        : selectedLanguage === 'es'
+                                          ? `Puedes completarlo ahora, pero publicar esperará a ${names}.`
+                                          : `You can fill this in now, but publishing waits for ${names}.`}
+                                    </p>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => openOwnerStep(step.id)}
+                                  className="px-3 py-1.5 text-[12px] font-semibold text-white rounded-lg whitespace-nowrap flex-shrink-0"
+                                  style={{ background: '#C2410C' }}
+                                >
+                                  {step.id === 'availability'
+                                    ? (selectedLanguage === 'he' ? 'הגדר שעות' : selectedLanguage === 'es' ? 'Definir horario' : 'Set hours')
+                                    : step.id === 'intake'
+                                      ? (selectedLanguage === 'he' ? 'בחר טופס' : selectedLanguage === 'es' ? 'Elegir formulario' : 'Choose a form')
+                                      : step.id === 'stripe'
+                                        ? (selectedLanguage === 'he' ? 'חבר את סטרייפ' : selectedLanguage === 'es' ? 'Conectar Stripe' : 'Connect Stripe')
+                                        : (selectedLanguage === 'he' ? 'מלא פרטים' : selectedLanguage === 'es' ? 'Completar datos' : 'Fill in details')}
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
                       ))}
                     </div>
@@ -994,9 +1845,24 @@ function OnboardingBuildContent() {
                     {/* The consequence of stopping here, said plainly. The
                         platform states the cost and then respects the choice,
                         which is the opposite of both nagging and deciding. */}
+                    {/*
+                        THE WAY OUT IS NOT THE FAINTEST THING ON THE SCREEN.
+                        ──────────────────────────────────────────────────────
+                        It was muted text in a hairline box, under four orange
+                        cards with filled orange buttons, below the fold. The
+                        platform states the cost and then respects the choice
+                        — but a choice drawn as an afterthought is not being
+                        respected, it is being discouraged.
+
+                        Still secondary to the work above it, which is right:
+                        bordered rather than filled, so it reads as the
+                        alternative and not as the next step. What changed is
+                        that it is now legible at a glance, which is the least
+                        an escape hatch owes anybody.
+                    */}
                     <button
                       onClick={leaveForDashboard}
-                      className="w-full px-4 py-2.5 text-sm text-[var(--v2-text-secondary)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface)] transition-all"
+                      className="w-full px-4 py-3 text-[14px] font-semibold text-[var(--v2-text-primary)] border-2 border-[var(--v2-border)] rounded-xl hover:border-[var(--v2-text-muted)] hover:bg-[var(--v2-surface)] transition-all"
                     >
                       {selectedLanguage === 'he' ? 'אעשה את זה מאוחר יותר' : selectedLanguage === 'es' ? 'Lo haré más tarde' : "I'll do this later"}
                     </button>
@@ -1024,6 +1890,31 @@ function OnboardingBuildContent() {
               </div>
             )}
 
+            {/*
+                LEADS FROM A SITE THEY ALREADY HAVE.
+                ──────────────────────────────────────────────────────────────
+                Offered here, and nowhere earlier, because this is the moment
+                a business that kept its own website has just been given
+                everything except the one thing that connects the two: their
+                form still emails them, and the platform still knows nothing
+                about the people who filled it in.
+
+                It draws itself only for an owner with a mailbox connected —
+                `InboxChannelCard` returns null otherwise — so a business with
+                no mail account sees nothing at all rather than an offer it
+                cannot take. It never blocks anything: the build is complete
+                and the way to the dashboard is directly below.
+            */}
+            {buildComplete && (
+              <div className="mt-5">
+                <InboxChannelCard
+                  size="row"
+                  status={inboxChannel}
+                  onSetUp={() => setInboxSetupOpen(true)}
+                />
+              </div>
+            )}
+
             {/* Error State - Compact */}
             {buildError && (
               <div className="mt-5 space-y-2">
@@ -1045,6 +1936,8 @@ function OnboardingBuildContent() {
           </div>
         </div>
       </div>
+      {/* closes the scroller opened above */}
+      </div>
 
       {/* The work only the owner can do, opened where they are.
           These are the dialogs the dashboard uses — self-contained, fetching
@@ -1058,12 +1951,54 @@ function OnboardingBuildContent() {
           frame, exactly as when the dialog shipped with the page. */}
       <LazyConfigurationDialog isOpen={false} onClose={() => undefined} />
 
+      {/* The same four-screen setup the dashboard opens, mounted here so the
+          offer above does not send anybody to another page to take it. */}
+      <InboxChannelSetupDialog
+        open={inboxSetupOpen}
+        onOpenChange={setInboxSetupOpen}
+        status={inboxChannel}
+        onEnabled={setInboxChannel}
+        onStatusChanged={setInboxChannel}
+      />
+
+      {/*
+          CLOSING IS NOT FINISHING.
+          ──────────────────────────────────────────────────────────────────────
+          These three passed `settleOwnerStep` as their `onClose`, so opening a
+          card and shutting it again marked the work done and took the card off
+          the screen. An owner who opened their working hours, looked, and
+          closed without setting any had the reminder removed for them.
+
+          The two cards that were not wired this way show what right looks
+          like: Stripe settles on `onComplete` and merely closes on
+          `onCancel`, and the bank panel settles on its own Done button. A
+          dialog's close button means "not now", and the platform has a
+          separate, explicit way to say "later" for the whole screen, which is
+          the "I'll do this later" button below the cards.
+
+          So these now only close. A card stays until the owner either
+          finishes the work or leaves for the dashboard, which is where they
+          can finish it in their own time.
+          ──────────────────────────────────────────────────────────────────────
+      */}
+      {/* The same dialog the dashboard uses, opened on its services tab.
+          Prices and durations are what the drafts are missing, and this is
+          where they are typed everywhere else in the product. */}
+      {openStep === 'services' && (
+        <LazyConfigurationDialog
+          isOpen
+          initialTab="services"
+          visibleTabs={['services']}
+          onClose={() => closeOwnerStep('services')}
+        />
+      )}
+
       {openStep === 'availability' && (
         <LazyConfigurationDialog
           isOpen
           initialTab="availability"
           visibleTabs={['availability']}
-          onClose={() => settleOwnerStep('availability')}
+          onClose={() => closeOwnerStep('availability')}
         />
       )}
 
@@ -1072,7 +2007,7 @@ function OnboardingBuildContent() {
           isOpen
           initialTab="intake"
           visibleTabs={['intake']}
-          onClose={() => settleOwnerStep('intake')}
+          onClose={() => closeOwnerStep('intake')}
         />
       )}
 
@@ -1135,7 +2070,7 @@ function OnboardingBuildContent() {
                 </p>
               </div>
               <button
-                onClick={() => setOpenStep(null)}
+                onClick={() => closeOwnerStep('stripe')}
                 className="flex-shrink-0 p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
                 aria-label={selectedLanguage === 'he' ? 'סגור' : selectedLanguage === 'es' ? 'Cerrar' : 'Close'}
               >
@@ -1148,7 +2083,7 @@ function OnboardingBuildContent() {
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <StripeConnectWizard
                 onComplete={() => settleOwnerStep('stripe')}
-                onCancel={() => setOpenStep(null)}
+                onCancel={() => closeOwnerStep('stripe')}
               />
             </div>
           </div>
@@ -1178,7 +2113,7 @@ function OnboardingBuildContent() {
                 {selectedLanguage === 'he' ? 'פרטי החברה והבנק' : selectedLanguage === 'es' ? 'Datos de empresa y banco' : 'Company and bank details'}
               </h3>
               <button
-                onClick={() => setOpenStep(null)}
+                onClick={() => closeOwnerStep('bank')}
                 className="p-0.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
                 aria-label={selectedLanguage === 'he' ? 'סגור' : selectedLanguage === 'es' ? 'Cerrar' : 'Close'}
               >
@@ -1186,7 +2121,43 @@ function OnboardingBuildContent() {
               </button>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto px-4">
+            {/*
+                THE PANEL'S TITLE, PINNED, WITHOUT THE COLLAPSE CONTROL.
+                ──────────────────────────────────────────────────────────────
+                The section draws its own accordion header when `chrome` is on,
+                and that header came with a chevron: a control offering to
+                collapse the only thing this dialog exists to show, under a
+                second title a few pixels below the dialog's own.
+
+                Turning `chrome` off removed the chevron and the title with it,
+                and the title was worth keeping. So it is drawn here instead,
+                OUTSIDE the scroller, which is the other half of the same fix:
+                the heading stays put and the form scrolls beneath it, rather
+                than the heading sliding away and the scrollbar starting above
+                the words it belongs to.
+
+                Same translation keys the section uses, so the two cannot drift
+                into saying different things about one panel.
+            */}
+            <div className="flex-shrink-0 px-4 pb-2 flex items-center gap-2.5">
+              <FileText className="w-4 h-4 flex-shrink-0 text-[var(--v2-text-muted)]" />
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-[var(--v2-text-primary)] m-0 leading-tight">
+                  {t('settings.invoice.title') || 'Invoice Settings'}
+                </p>
+                <p className="text-[11.5px] text-[var(--v2-text-muted)] m-0 leading-snug">
+                  {t('settings.invoice.subtitle') || 'Set how your invoices look and what they say'}
+                </p>
+              </div>
+            </div>
+
+            {/* `pb-4` because the panel's own Save sits at the very bottom of
+                this scroller and the footer below has a top border: with no
+                room between them the button touched the rule and read as
+                overlapping it. Padding inside the scroller rather than a
+                margin on the footer, so the gap scrolls with the content
+                instead of eating height from the fixed part. */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
               {/* No processor here.
                   This step exists BECAUSE the business invoices — it is the
                   bank details that go on the invoice so a client knows where to
@@ -1194,7 +2165,35 @@ function OnboardingBuildContent() {
                   the opposite arrangement, and this screen already carries its
                   own Stripe step for the businesses that take cards. Two doors
                   to the same place, one of them in the wrong room. */}
-              <InvoiceSettingsSection userId={userId} expanded onToggle={() => {}} showProcessor={false} />
+              <InvoiceSettingsSection
+                userId={userId}
+                /*
+                 * NO ACCORDION HEADER INSIDE A DIALOG THAT ALREADY HAS A TITLE.
+                 *
+                 * `chrome` defaults to true, so this drew "Invoice Settings /
+                 * Set how your invoices look and what they say" with a collapse
+                 * chevron, directly beneath the dialog's own "Company and bank
+                 * details". Two titles for one panel, and a control that
+                 * offered to hide the only thing the dialog exists to show.
+                 *
+                 * The prop's own comment says exactly this about the settings
+                 * tab, which was the other caller that had already hit it: "a
+                 * header here would be a second title for the same thing, and
+                 * the collapse control would hide content the tab exists to
+                 * show." A dialog is the same situation.
+                 *
+                 * `expanded` and `onToggle` are ignored once chrome is off, and
+                 * are kept only because the props are not optional.
+                 */
+                chrome={false}
+                expanded
+                onToggle={() => {}}
+                showProcessor={false}
+                /* A save that completes the details takes the card away. One
+                   that does not leaves the dialog open on the missing field,
+                   rather than closing on work that is not finished. */
+                onSaved={() => { void verifyOwnerStep('bank'); }}
+              />
             </div>
 
             <div className="flex-shrink-0 border-t border-[var(--v2-border)] px-4 pb-4 pt-3 space-y-3">
@@ -1225,13 +2224,27 @@ function OnboardingBuildContent() {
                 </div>
               )}
 
-              <button
-                onClick={() => settleOwnerStep('bank')}
-                className="w-full px-4 py-2.5 text-sm font-semibold text-white rounded-lg"
-                style={{ background: '#C2410C' }}
-              >
-                {selectedLanguage === 'he' ? 'סיימתי' : selectedLanguage === 'es' ? 'Listo' : 'Done'}
-              </button>
+              {/*
+                  THE "DONE" BUTTON WAS HERE, and it was the worst control on
+                  the screen.
+                  ──────────────────────────────────────────────────────────────
+                  The panel above has its own Save, which writes. This was a
+                  second button, wider and brighter, which did not: it only
+                  marked the card settled. So the dialog offered two buttons
+                  that looked like the same promise, and the louder one threw
+                  the work away.
+
+                  Reported exactly that way: "I typed the tax ID and then on
+                  done button not saved, it first didn't save it and the card
+                  was gone again. The save and done together can mislead."
+
+                  Both halves of that are right, and removing this fixes both.
+                  There is now ONE button that commits, the panel's own Save,
+                  and the X closes. The card settles when a save leaves the
+                  invoice details complete, which `onSaved` below reports and
+                  `PROOF_OF_DONE.bank` checks against the same four fields the
+                  publish gate asks for.
+              */}
             </div>
           </div>
         </div>

@@ -11,9 +11,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
+import { captureEnquiry } from '@/lib/business-os/leads/captureEnquiry';
 import { z } from 'zod';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
@@ -41,7 +40,26 @@ const ContactFormSchema = z.object({
    * `first_name` is nullable; an unnamed contact is honest.
    */
   name: z.string().max(200).optional(),
-  email: z.string().email('Invalid email address'),
+  /*
+   * TRIMMED AND LOWERCASED BEFORE IT IS VALIDATED, NOT AFTER.
+   *
+   * `z.string().email()` REJECTS a stray space: " a@b.com" is invalid to Zod
+   * and the route answered 400 "Invalid email address" over a perfectly good
+   * address. The public booking form made that routine — it tested
+   * `clientEmail.trim()` and then submitted `clientEmail` — so a visitor whose
+   * keyboard or paste left a trailing space was told their own email was wrong,
+   * with nothing to act on because it looks correct on screen.
+   *
+   * Lowercased for the other half: a domain is case-insensitive by spec and
+   * every real provider treats the local part that way too, while the contact
+   * lookups match with `=`. `Offir.Omer@…` therefore missed the existing
+   * `offir.omer@…` row and created a SECOND contact, with its own bookings and
+   * its own money hanging off it.
+   *
+   * At the boundary rather than the call sites: everything downstream — the
+   * lookup, the insert, the email that gets sent — then works from one spelling.
+   */
+  email: z.string().trim().toLowerCase().email('Invalid email address'),
   phone: z.string().optional(),
   message: z.string().min(1, 'Message is required').max(5000),
   service_interest: z.string().optional(),
@@ -179,143 +197,32 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * The start of this owner's board, resolved in the repository that owns the
-     * table. This was an inline read ending `|| 'lead'` — one of eight copies,
-     * and a stage many pipelines do not contain.
-     */
-    const { data: resolvedFirstStage } =
-      await crmPipelineStagesRepository.firstStageKey(ownerId);
-
-    /*
-     * A newsletter signup does NOT arrive here any more.
+     * ───────────────────────────────────────────────────────────────────────
+     * THE ROW THIS BECOMES IS NOT THIS ROUTE'S RULE ANY MORE.
      *
-     * It posts to `/api/public/newsletter/subscribe`, which writes
-     * `business_subscribers` and creates no contact at all. This endpoint is
-     * for enquiries again: everything below treats the sender as somebody
-     * waiting for a reply, which is exactly what a subscriber is not.
+     * Stage resolution, find-or-create by address, which of
+     * `first_website_message` / `last_website_message` gets written, and the
+     * note in the owner's own language all moved to `captureEnquiry`. They
+     * were inline here because this form was the only caller; it is not any
+     * more, and the one thing that must hold is that an enquiry read out of a
+     * mailbox becomes the SAME row as one typed into this form.
+     *
+     * Everything below — consent, the owner's alert, the greeting — stays,
+     * because none of it is part of "which row does this become".
+     * ───────────────────────────────────────────────────────────────────────
      */
-    const initialStage = resolvedFirstStage;
-
-    requestLogger.debug({ initialStage, ownerId }, 'Resolved pipeline stage for new contact');
-
-    // Check if contact already exists
-    const { data: existingContact } = await supabaseServer
-      .from('crm_contacts')
-      .select('id, custom_fields')
-      .eq('user_id', ownerId)
-      .eq('email', data.email)
-      .single();
-
-    let contactId: string;
-    let isNewContact = false;
-
-    if (existingContact) {
-      // Update existing contact
-      const updatedCustomFields = {
-        ...(existingContact.custom_fields || {}),
-        last_website_message: data.message,
-        last_website_contact: new Date().toISOString(),
-        service_interest: data.service_interest || existingContact.custom_fields?.service_interest
-      };
-
-      const { error: updateError } = await supabaseServer
-        .from('crm_contacts')
-        .update({
-          phone: data.phone || existingContact.custom_fields?.phone,
-          custom_fields: updatedCustomFields,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', existingContact.id);
-
-      if (updateError) {
-        requestLogger.error({ err: updateError }, 'Failed to update contact');
-        throw updateError;
-      }
-
-      contactId = existingContact.id;
-      requestLogger.info({ contactId }, 'Contact updated');
-    } else {
-      /*
-       * Parse the name into first and last — and leave BOTH null when there is
-       * none. A newsletter signup gives an address and nothing else, and the
-       * column is nullable precisely so an unnamed contact can be stored as
-       * one. The CRM shows the address; the owner sees what they actually have.
-       */
-      const trimmedName = data.name?.trim();
-      const nameParts = trimmedName ? trimmedName.split(/\s+/) : [];
-      const firstName = nameParts[0] ?? null;
-      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
-
-      // Create new contact with attribution
-      const { data: newContact, error: createError } = await supabaseServer
-        .from('crm_contacts')
-        .insert({
-          user_id: ownerId,
-          first_name: firstName,
-          last_name: lastName,
-          email: data.email,
-          phone: data.phone || null,
-          // A subscriber is not an enquiry, and the owner should be able to
-          // tell them apart without reading the message text.
-          source: data.source ?? 'website_form',
-          ...(initialStage ? { stage: initialStage } : {}),
-          source_metadata: attribution as unknown as Record<string, unknown>,  // Store full attribution data
-          custom_fields: {
-            first_website_message: data.message,
-            service_interest: data.service_interest,
-            referral_source: data.referral_source,
-            page_url: data.page_url
-          }
-        })
-        .select('id')
-        .single();
-
-      if (createError || !newContact) {
-        requestLogger.error({ err: createError }, 'Failed to create contact');
-        throw createError || new Error('Failed to create contact');
-      }
-
-      contactId = newContact.id;
-      isNewContact = true;
-      requestLogger.info({ contactId }, 'New contact created');
-    }
-
-    // Create activity/note for the message
-    // Build description with context
-    let activityDescription = data.message;
-    if (data.service_interest) {
-      activityDescription += `\n\nService Interest: ${data.service_interest}`;
-    }
-    if (data.referral_source) {
-      activityDescription += `\nReferral Source: ${data.referral_source}`;
-    }
-
-    const { data: ownerProfile } = await supabaseServer
-      .from('business_profiles')
-      .select('language')
-      .eq('user_id', ownerId)
-      .maybeSingle();
-    const ownerLocale = ownerProfile?.language || 'en';
-
-    const { error: activityError } = await supabaseServer
-      .from('crm_activities')
-      .insert({
-        user_id: ownerId,
-        contact_id: contactId,
-        activity_type: 'note',
-        // The business's language, not English: this is its own history.
-        title: activitySentence('website_contact_form', {}, ownerLocale),
-        description: activityDescription,
-        activity_date: new Date().toISOString(),
-        auto_logged: true,
-        source_capability: 'website'
-      });
-
-    if (activityError) {
-      requestLogger.error({ err: activityError }, 'Failed to create activity');
-    } else {
-      requestLogger.info({ contactId }, 'Activity created for contact form submission');
-    }
+    const { contactId, isNewContact } = await captureEnquiry({
+      ownerId,
+      email: data.email,
+      name: data.name,
+      phone: data.phone,
+      message: data.message,
+      serviceInterest: data.service_interest,
+      referralSource: data.referral_source,
+      pageUrl: data.page_url,
+      source: data.source ?? 'website_form',
+      attribution: attribution as unknown as Record<string, unknown>,
+    });
 
     // Send appropriate email based on whether contact is new or returning (non-blocking)
     /*

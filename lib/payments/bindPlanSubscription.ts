@@ -93,6 +93,17 @@ export interface BindPlanSubscriptionInput {
    * plan for the (vetted) service.
    */
   paymentPlanId?: string | null;
+  /**
+   * The booking attempt, read from the same Stripe metadata as the fields
+   * above and mirrored onto our own subscription row.
+   *
+   * On a smart link the client pays first, so `bookingId` here is null and the
+   * sale has to be attached once the booking exists. The only key for that was
+   * Stripe's SEARCH API, which is eventually consistent — a subscription half a
+   * second old is not in the index, so the plan's money stayed attached to
+   * nothing. Recorded locally, the same link is an equality match.
+   */
+  attemptId?: string | null;
 }
 
 export interface BindPlanSubscriptionResult {
@@ -122,6 +133,7 @@ export async function bindPlanSubscription({
   planCount,
   planFrequency,
   paymentPlanId,
+  attemptId,
 }: BindPlanSubscriptionInput): Promise<BindPlanSubscriptionResult> {
   // Already bound? Then this is a redelivered event or a second surface racing
   // the first, and doing any of the below again would double-charge attention:
@@ -302,6 +314,10 @@ export async function bindPlanSubscription({
     currency,
     frequency: planFrequency,
     stripeConnectAccountId: connectAccountId,
+    /* So a plan sold before its booking existed can be attached afterwards by
+       a local match, rather than by Stripe's eventually-consistent search.
+       See `attemptId` on CreatePlanSubscriptionInput. */
+    attemptId,
   });
 
   if (!created.data) {

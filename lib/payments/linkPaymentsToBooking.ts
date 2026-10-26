@@ -57,6 +57,13 @@ export interface LinkPaymentsInput {
   /** Stamped alongside, because the insight layer groups money by client. */
   contactId: string | null;
   userId: string;
+  /**
+   * The payment intent the client's browser returned with, when the caller has
+   * one. A second LOCAL key for the sale — see `findLocalByPaymentIntent`.
+   * Optional: the booking widget sends only an attempt, and a plan's later
+   * periods have no browser behind them at all.
+   */
+  paymentIntentId?: string | null;
 }
 
 export interface LinkPaymentsResult {
@@ -73,6 +80,78 @@ const NOTHING: LinkPaymentsResult = {
   installments: 0,
   planId: null,
 };
+
+/**
+ * The plan this attempt sold, from our own rows.
+ *
+ * Returns the same shape `findInStripe` does, so the caller cannot tell which
+ * source answered and the subscription branch below is reached either way.
+ *
+ * Scoped by `user_id` as well as the attempt: the service role bypasses RLS,
+ * and an attempt id arriving from the wrong tenant must find nothing rather
+ * than another business's plan.
+ */
+async function findLocalSubscription(
+  attemptId: string,
+  userId: string
+): Promise<{ kind: 'subscription'; id: string } | null> {
+  const { data } = await supabaseServer
+    .from('payment_plan_subscriptions')
+    .select('stripe_subscription_id')
+    .eq('user_id', userId)
+    .eq('metadata->>attempt_id', attemptId)
+    .not('stripe_subscription_id', 'is', null)
+    .limit(1);
+
+  const id = data?.[0]?.stripe_subscription_id as string | undefined;
+  return id ? { kind: 'subscription', id } : null;
+}
+
+/**
+ * The sale, found from the payment intent the browser came back with.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A SECOND LOCAL KEY, on purpose.
+ *
+ * `findLocalSubscription` above reads an attempt this platform records as it
+ * writes the subscription. On a run measured 2026-10-25 that attempt did NOT
+ * arrive — subscription 25f1cf19 was written with `metadata: {}` even though
+ * Stripe's own copy carried `attempt_id: 7c8ed344…` and the compiled route
+ * contained the plumbing. Why it was empty is not yet established, so it is not
+ * the only thing standing between a client's money and their booking.
+ *
+ * This key uses rows that were verified present on that same booking: the
+ * webhook writes the first period's charge with
+ * `metadata.subscription_id` naming the Stripe subscription, and the
+ * subscription row carries that id in a column. Two local reads, both equality
+ * matches on ids this platform wrote itself.
+ *
+ * STILL NOT INFERENCE. The payment intent is the one the client's browser was
+ * returned with, and `stripe_payment_intent_id` is unique — so this resolves to
+ * that client's own money or to nothing.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function findLocalByPaymentIntent(
+  paymentIntentId: string,
+  userId: string
+): Promise<{ kind: 'subscription' | 'payment_intent'; id: string } | null> {
+  const { data } = await supabaseServer
+    .from('payment_transactions')
+    .select('metadata')
+    .eq('user_id', userId)
+    .eq('stripe_payment_intent_id', paymentIntentId)
+    .limit(1);
+
+  if (!data?.length) return null;
+
+  const subscriptionId = (data[0].metadata as { subscription_id?: string } | null)?.subscription_id;
+
+  /* A plan's charge names its subscription; a one-off names nothing, and the
+     payment intent is then the whole sale. */
+  return subscriptionId
+    ? { kind: 'subscription', id: subscriptionId }
+    : { kind: 'payment_intent', id: paymentIntentId };
+}
 
 /** What Stripe holds for this attempt, if anything. */
 async function findInStripe(
@@ -133,6 +212,57 @@ async function findInStripe(
  * booking exists, and `booking-money-reconcile` is behind both.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Wait for the webhook's transaction row before trying to stamp it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * MEASURED, from a client who paid on a smart link and was refunded minutes
+ * later. The two writes land within a sixth of a second of each other and in
+ * the wrong order:
+ *
+ *   15:36:56.474   the booking row, written here
+ *   15:36:56.591   the transaction row, written by the Stripe webhook
+ *
+ * The stamp below is `.is('booking_id', null)` against a row that did not
+ * exist yet, so it updated nothing and returned quietly. The payment stayed
+ * unlinked, and everything downstream that finds a booking's money by
+ * `booking_id` found none: the refund left the booking reading "paid", and the
+ * client was never emailed, because `notifyRefund` resolves the recipient
+ * through exactly that link.
+ *
+ * The subscription path already waited like this. The one-off charge path,
+ * which is what a single appointment uses, did not.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function waitForLocalTransaction(
+  stripePaymentIntentId: string,
+  userId: string
+): Promise<boolean> {
+  const ATTEMPTS = 6;
+  const GAP_MS = 500;
+
+  for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+    const { data } = await supabaseServer
+      .from('payment_transactions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('stripe_payment_intent_id', stripePaymentIntentId)
+      .limit(1);
+
+    if (data?.length) return true;
+
+    if (attempt < ATTEMPTS - 1) {
+      await new Promise(resolve => setTimeout(resolve, GAP_MS));
+    }
+  }
+
+  /* Not fatal. A payment that never produces a local row is a different fault
+     from this one, and `reconcileBookingMoney` — behind the
+     `booking-money-reconcile` cron, every fifteen minutes — is what catches it.
+     It calls this same function, so the wait applies there too. */
+  return false;
+}
+
 async function waitForLocalSubscription(
   stripeSubscriptionId: string,
   userId: string
@@ -161,18 +291,56 @@ async function waitForLocalSubscription(
 export async function linkPaymentsToBooking(
   input: LinkPaymentsInput
 ): Promise<LinkPaymentsResult> {
-  const { attemptId, bookingId, contactId, userId } = input;
+  const { attemptId, bookingId, contactId, userId, paymentIntentId } = input;
 
   if (!attemptId || !bookingId) return NOTHING;
 
   try {
-    const found = await findInStripe(attemptId, userId);
+    /*
+     * ── OUR OWN ROWS FIRST, THEN STRIPE ───────────────────────────────────────
+     *
+     * `findInStripe` asks Stripe's SEARCH API, and Stripe documents that search
+     * as eventually consistent. Measured 2026-10-25: a plan subscription
+     * created 0.51 seconds before its booking was invisible to
+     * `metadata['attempt_id']:'…'` at link time and returned by the identical
+     * query minutes later. The sale was therefore never attached — the booking
+     * read `paid` with no payment against it, the Manage-payment dialog listed
+     * no money, and a refund offered ₪0 over ₪250 the client had paid.
+     *
+     * The same account's other plan survived only by luck: it reached the
+     * booking 8.93 seconds later, which was enough for the index.
+     *
+     * `bindPlanSubscription` now records the attempt on the subscription row as
+     * it writes it, so the sale can be found by an equality match on data this
+     * platform owns, with no index to wait for. Stripe stays the fallback for
+     * the case this cannot answer — a row the webhook has not written yet.
+     *
+     * STILL NOT INFERENCE. `metadata.attempt_id` is this attempt's own id,
+     * written by the route that created the subscription; it is the same
+     * identity the Stripe search matches on, read from a faster place.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const found =
+      (await findLocalSubscription(attemptId, userId))
+      ?? (paymentIntentId ? await findLocalByPaymentIntent(paymentIntentId, userId) : null)
+      ?? (await findInStripe(attemptId, userId));
     if (!found) return NOTHING;
 
     const stamp = { booking_id: bookingId, contact_id: contactId };
 
     /* A one-off card payment: one charge, nothing else to attach. */
     if (found.kind === 'payment_intent') {
+      /* The webhook writes that row, and on a smart link it can land AFTER
+         this booking does. See `waitForLocalTransaction`. */
+      const arrived = await waitForLocalTransaction(found.id, userId);
+      if (!arrived) {
+        logger.warn(
+          { attemptId, bookingId, paymentIntentId: found.id },
+          'Paid booking has no local transaction yet; leaving it for reconciliation'
+        );
+        return NOTHING;
+      }
+
       const charge = await supabaseServer
         .from('payment_transactions')
         .update(stamp)
@@ -185,6 +353,20 @@ export async function linkPaymentsToBooking(
 
       if (result.transactions) {
         logger.info({ attemptId, bookingId, ...result }, 'Linked the payment to its booking');
+
+        /*
+         * AND BRING THE BOOKING UP TO DATE WITH IT.
+         *
+         * Linking alone is not enough once anything has already happened to
+         * that money. A payment refunded BEFORE it was linked left its booking
+         * reading "paid" for ever, because the sync that would have corrected
+         * it runs at refund time and had no booking to find. Settling the
+         * state here closes that window.
+         */
+        const { syncBookingPaymentState } = await import('@/lib/payments/syncBookingPaymentState');
+        await syncBookingPaymentState(bookingId, userId).catch(err =>
+          logger.error({ err, bookingId }, 'Linked the payment but could not settle the booking state')
+        );
       }
 
       return result;
@@ -259,6 +441,24 @@ export async function linkPaymentsToBooking(
 
     if (result.subscriptions + result.installments + result.transactions > 0) {
       logger.info({ attemptId, bookingId, ...result }, 'Linked the money to its booking');
+
+      /*
+       * SETTLE HERE TOO, for exactly the reason the charge path does.
+       *
+       * The one-off path above gained this when a client paid on a smart link
+       * and was refunded before the link existed: the booking read "paid" for
+       * ever, because the sync that corrects it runs at REFUND time and had no
+       * booking to find then.
+       *
+       * An instalment sale has the same window and a wider one — the
+       * subscription row can be later than a charge row, and the reconcile pass
+       * may link it fifteen minutes after the refund. Settling only the charge
+       * path would have left that half of the catalogue still lying.
+       */
+      const { syncBookingPaymentState } = await import('@/lib/payments/syncBookingPaymentState');
+      await syncBookingPaymentState(bookingId, userId).catch(err =>
+        logger.error({ err, bookingId }, 'Linked the money but could not settle the booking state')
+      );
     }
 
     return result;

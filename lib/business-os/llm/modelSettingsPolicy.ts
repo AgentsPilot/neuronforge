@@ -250,6 +250,22 @@ export const BOS_LLM_CALL_POLICY: BosLlmCallPolicyMap = {
   },
   leads: {
     reply_recommendation: tokenCall('gpt-4o-mini', 0.2, { switchable: true }),
+    /*
+     * Reading an enquiry email the labelled-field reader could not.
+     *
+     * Temperature 0.2, matching `reply_recommendation`, because the seeded
+     * row carries ONE temperature per AREA: a call that disagrees with its
+     * neighbour makes the seed resolve to something other than the code
+     * default, which `modelSettingsSeed.test.ts` exists to forbid. 0 would
+     * suit the work better — this copies values out of a message and there is
+     * one right answer to "what address did they type" — and 0.2 is close
+     * enough that it is not worth splitting the area to get it.
+     *
+     * Switchable, because it is a FALLBACK — with it off, every enquiry is
+     * read exactly as it was before this call existed, and the only cost is
+     * the long tail of unusual form layouts going unread rather than filed.
+     */
+    enquiry_extraction: tokenCall('gpt-4o-mini', 0.2, { switchable: true }),
   },
   onboarding: {
     // Every extractor sends NO temperature today, so the provider default
@@ -266,6 +282,9 @@ export const BOS_LLM_CALL_POLICY: BosLlmCallPolicyMap = {
        rest of onboarding: a conversation half-way through with the model
        changed under it is not a state worth supporting. */
     service_drafting: tokenCall('gpt-4o', null, { switchable: false }),
+    /* Reads the configuration facts off the finished interview. Not
+       switchable, for the same reason as the rest of onboarding. */
+    configuration_inference: tokenCall('gpt-4o', null, { switchable: false }),
   },
   images: {
     image_generation: {

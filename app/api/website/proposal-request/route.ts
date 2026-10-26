@@ -42,6 +42,7 @@ import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOf
 import { closedDayVerdict } from '@/lib/scheduling/closedDay';
 import { businessDateKey, businessHhmm, safeTimezone } from '@/lib/scheduling/businessTime';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ module: 'ProposalRequestAPI' });
 
@@ -51,7 +52,10 @@ const ProposalRequestSchema = z
     userCode: z.string().optional(),
     service_id: z.string().uuid(),
     name: z.string().min(1, 'Name is required').max(200),
-    email: z.string().email('A valid email is required').max(200),
+    /* Normalised before validation — see the note on the contact form route:
+     a stray space made Zod reject a valid address, and mixed case created a
+     second contact because the lookups match with `=`. */
+    email: z.string().trim().toLowerCase().email('A valid email is required').max(200),
     phone: z.string().max(50).optional(),
     /** Anything the client wants the quote to account for. */
     note: z.string().max(2000).optional(),
@@ -234,7 +238,13 @@ export async function POST(request: NextRequest) {
       .from('crm_contacts')
       .select('id')
       .eq('user_id', ownerId)
-      .eq('email', email)
+      /* `ilike`, not `eq`: an address stored before this route started
+         normalising is whatever the visitor typed, so a case-sensitive match
+         misses it and a SECOND contact is created for the same person. The
+         insert side is normalised now; this is what finds the rows that
+         predate it. No wildcards in the value, so it stays an equality match
+         in everything but case. */
+      .ilike('email', emailLikePattern(email))
       .maybeSingle();
 
     let contactId: string;

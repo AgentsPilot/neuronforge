@@ -385,6 +385,11 @@ describe('Layer 1.5 areas (FR-2, FR-6, AC-5)', () => {
       /* Names the placeholder services once the count is known, so the build
          stops writing rows called "Service 1". One call per conversation. */
       'service_drafting',
+      /* Reads what the business needs in order to sell off the finished
+         interview, so the setup questions stop being asked of everyone
+         regardless of what they just said. One call per conversation, made
+         alongside the description writer so it costs no extra wait. */
+      'configuration_inference',
     ]);
     expect(BOS_LLM_CALLS.images).toEqual(['image_generation']);
     expect(bosFeature('onboarding')).toBe('business-os-onboarding');

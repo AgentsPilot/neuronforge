@@ -361,6 +361,20 @@
         "granting": false,
         "display": "no"
       },
+      "leads.inbox_channel": {
+        "value": true,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": true,
+            "note": "tier basic"
+          }
+        ],
+        "granting": true,
+        "display": "yes"
+      },
       "insights.checks": {
         "value": true,
         "decidedBy": "basis",

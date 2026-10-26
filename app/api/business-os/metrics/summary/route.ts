@@ -6,6 +6,7 @@
  * - Active clients count
  */
 
+import { buildClientStageFilter } from '@/lib/crm/StageTypeUtils';
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -106,12 +107,22 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .in('status', ['sent', 'overdue']),
 
-      // Active clients
-      supabaseServer
-        .from('crm_contacts')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('stage', 'client'),
+      /*
+       * Active clients, by whatever this business calls that stage.
+       *
+       * This asked for the key 'client'. Pipelines are per business — one runs
+       * פנייה → ייעוץ ראשוני → לקוח → הושלם — so the dashboard reported zero
+       * clients to a business full of them. `buildClientStageFilter` is the
+       * resolver the insight layer already uses; it reads `stage_type` and
+       * falls back to known key names only when a board has none.
+       */
+      buildClientStageFilter(supabaseServer, user.id).then(stages =>
+        supabaseServer
+          .from('crm_contacts')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .in('stage', stages)
+      ),
 
       // The business's own currency, to label invoices written before
       // `payment_invoices.currency` was populated. Nullable by design: NULL

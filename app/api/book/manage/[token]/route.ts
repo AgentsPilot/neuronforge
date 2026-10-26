@@ -547,7 +547,44 @@ export async function GET(
       owing.reduce((sum, invoice) => sum + Number(invoice.amount ?? 0), 0) +
       unbilled.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
 
-    const paidTotal = settled.reduce((sum, invoice) => sum + Number(invoice.amount ?? 0), 0);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * MONEY PAID BY CARD, WITH NO INVOICE BEHIND IT.
+     *
+     * This route read `payment_invoices` and `payment_plan_installments` and
+     * nothing else, so a booking sold through website checkout — where the
+     * client pays on the spot and no invoice is ever raised — had no money in
+     * the portal at all. `state` still resolved to 'paid', because it falls
+     * back to `booking.payment_status`, so the client's own page read
+     * "paid · 0 ILS" over a card payment that had gone through.
+     *
+     * Live case: booking 0a35468e, ₪150 succeeded on transaction 9c31e502,
+     * `payment_invoices` empty.
+     *
+     * `invoice_id IS NULL` is what stops this double counting: a transaction
+     * that settled an invoice is already in `settled` above, under that
+     * invoice's own amount. Only the direct ones are added here — the same
+     * dedupe rule `unbilled` uses for stages, and the same three-links-to-a
+     * -booking problem `RefundService` solves for refunding.
+     *
+     * Refunds come along for the ride. `refunded_amount` is maintained on the
+     * transaction by the refund ledger exactly as it is on an invoice, so a
+     * card payment that was partly returned now reports that too, instead of
+     * the portal going quiet about it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const { data: directPayments } = await supabaseServer
+      .from('payment_transactions')
+      .select('id, amount, currency, status, refunded_amount, refunded_at, invoice_id')
+      .in('booking_id', moneyIds)
+      .eq('user_id', booking.user_id)
+      .in('status', ['succeeded', 'refunded']);
+
+    const directCard = (directPayments ?? []).filter(row => !row.invoice_id);
+
+    const paidTotal =
+      settled.reduce((sum, invoice) => sum + Number(invoice.amount ?? 0), 0) +
+      directCard.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
 
     /*
      * WHAT CAME BACK, which the portal was silent about.
@@ -566,15 +603,20 @@ export async function GET(
      * second event and reads as one.
      * ───────────────────────────────────────────────────────────────────────────
      */
-    const refundedTotal = (invoices ?? []).reduce(
-      (sum, invoice) => sum + Number((invoice as { refunded_amount?: number }).refunded_amount ?? 0),
-      0
-    );
+    const refundedTotal =
+      (invoices ?? []).reduce(
+        (sum, invoice) => sum + Number((invoice as { refunded_amount?: number }).refunded_amount ?? 0),
+        0
+      ) +
+      /* And against a direct card payment, which has no invoice to carry it. */
+      directCard.reduce((sum, row) => sum + Number(row.refunded_amount ?? 0), 0);
 
     /* The most recent, for a job returned in more than one go. */
     const refundedAt =
-      (invoices ?? [])
-        .map(invoice => (invoice as { refunded_at?: string | null }).refunded_at)
+      [
+        ...(invoices ?? []).map(invoice => (invoice as { refunded_at?: string | null }).refunded_at),
+        ...directCard.map(row => row.refunded_at as string | null),
+      ]
         .filter((at): at is string => Boolean(at))
         .sort()
         .pop() ?? null;
@@ -689,6 +731,10 @@ export async function GET(
       (owing[0]?.currency as string) ||
       (settled[0]?.currency as string) ||
       (unbilled[0]?.currency as string) ||
+      /* The card payment's own currency. Without this a checkout-paid booking
+         fell through to the service's, and showed an amount labelled in the
+         wrong one whenever a client was priced outside the business default. */
+      (directCard[0]?.currency as string) ||
       ((service as { currency?: string | null } | null)?.currency ?? null);
 
     /*

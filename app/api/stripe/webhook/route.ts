@@ -1269,6 +1269,10 @@ async function handleConnectPlanSubscriptionCreated(
       planCount: Number(planMeta.plan_count),
       planFrequency: (planMeta.plan_frequency || 'monthly') as PlanFrequency,
       paymentPlanId: planMeta.payment_plan_id || null,
+      /* The attempt, so the plan can be attached to its booking locally once
+         that booking exists — Stripe's search index is too young to answer
+         at that moment. See `attemptId` on BindPlanSubscriptionInput. */
+      attemptId: planMeta.attempt_id || null,
     });
   } catch (bindError) {
     // Rethrown for the same reason as the invoice path: Stripe retries, and a
@@ -1398,6 +1402,8 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
             planCount: Number(planMeta.plan_count),
             planFrequency: (planMeta.plan_frequency || 'monthly') as PlanFrequency,
             paymentPlanId: planMeta.payment_plan_id || null,
+            /* Same reason as the subscription-created path. */
+            attemptId: planMeta.attempt_id || null,
           });
         } catch (bindError) {
           // Loud, and deliberately rethrown: an unbounded subscription charges a
@@ -1941,6 +1947,9 @@ async function handleConnectCheckoutCompleted(
           planCurrency: session.metadata?.plan_currency || 'USD',
           planCount: Number(session.metadata.plan_count),
           planFrequency: (session.metadata?.plan_frequency || 'monthly') as PlanFrequency,
+          /* Same reason as the other two bind sites. A checkout session carries
+             the attempt in its own metadata, set by `website/checkout`. */
+          attemptId: session.metadata?.attempt_id || null,
         });
       } else {
         log.error(
@@ -2055,10 +2064,21 @@ async function handleConnectCheckoutCompleted(
      * Payment is not the relationship: a business billing by invoice has
      * clients who have not paid, and a free intro call is not a client at all.
      *
-     * A booking being CONFIRMED is the rule, and it lives in one place — the
-     * `promote_contact_on_confirmed_booking` trigger. What this path owes it is
-     * the confirmation itself, below: a booking held pending because money was
-     * owed is confirmed once that money arrives.
+     * MONEY ARRIVING is the rule, and it lives in one place — the
+     * `promote_contact_on_payment` trigger, which fires on the
+     * `payment_transactions` row written just above: `succeeded`, amount above
+     * zero, and the business's own client stage resolved by `stage_type`.
+     *
+     * This named `promote_contact_on_confirmed_booking`, which migration
+     * 20260920 DROPPED and replaced — because confirmation is not payment. A
+     * free consultation is confirmed and owes nothing, and its zero-amount row
+     * is bookkeeping rather than a sale; promoting on confirmation made a
+     * client of someone who had not bought anything.
+     *
+     * So this path owes the pipeline nothing directly: the transaction it
+     * already wrote is what moves them. What it still owes is the confirmation
+     * itself, below — a booking held pending because money was owed is
+     * confirmed once that money arrives.
      */
 
     // Update linked booking's payment_status if invoice has a booking_id

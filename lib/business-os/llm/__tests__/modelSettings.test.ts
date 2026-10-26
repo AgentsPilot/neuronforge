@@ -704,12 +704,22 @@ describe('change log: labels only, never content (T1-12, FR-17)', () => {
     await resolveBosLlmSettings('leads', 'reply_recommendation');
 
     // The rejected MODEL NAME is logged — it is a platform label, and DEC-7
-    // requires naming the value that was refused. That is the only line the
+    // requires naming the value that was refused. Those are the only lines the
     // sentinel may appear in: the unknown top-level key is reported by its KEY
     // name (`note`), never by the value stored under it.
+    //
+    // ONE LINE PER CALL IN THE AREA, not one line. The model here is set at
+    // AREA level, so every call in `leads` refuses it and says so; the count
+    // was only ever 1 because the area happened to hold a single call, and
+    // `enquiry_extraction` joining it on 2026-10-25 made that incidental
+    // number wrong. What the guard is actually for is that each such line
+    // carries a platform label and nothing else, which is now asserted of
+    // every one of them.
     const withSentinel = logged.filter((line) => JSON.stringify(line).includes(SENTINEL));
-    expect(withSentinel).toHaveLength(1);
-    expect(withSentinel[0].fields).toMatchObject({ field: 'model', reason: 'unpriced_model' });
+    expect(withSentinel.length).toBeGreaterThan(0);
+    for (const line of withSentinel) {
+      expect(line.fields).toMatchObject({ field: 'model', reason: 'unpriced_model' });
+    }
     expect(
       issuesLogged('warn').find((line) => line.fields.reason === 'unknown_field')?.fields.value
     ).toBe('note');

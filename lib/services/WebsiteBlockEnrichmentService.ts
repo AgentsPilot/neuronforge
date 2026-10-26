@@ -8,6 +8,7 @@
  * 2. Manual "Sync with Business Data" action
  */
 
+import { buildClientStageFilter } from '@/lib/crm/StageTypeUtils';
 import { createLogger } from '@/lib/logger';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SchedulingServiceRepository, SchedulingService } from '@/lib/repositories/SchedulingRepository';
@@ -489,8 +490,16 @@ export class WebsiteBlockEnrichmentService {
     language: WebsiteLanguage = 'en'
   ): Promise<EnrichmentResult<StatsBlockContent>> {
     try {
-      // Get client count
-      const contactsResult = await this.contactRepo.count(userId, { stage: 'client' });
+      /*
+       * Clients, by whatever this business calls that stage.
+       *
+       * This asked for the key 'client'. The pipeline is defined per business —
+       * one runs פנייה → ייעוץ ראשוני → לקוח → הושלם — so the count came back
+       * ZERO and the number was printed on the owner's public website. A stat
+       * block reading "0 clients" is worse than no stat block.
+       */
+      const clientStages = await buildClientStageFilter(this.supabase, userId);
+      const contactsResult = await this.contactRepo.count(userId, { stage: clientStages });
       const clientCount = contactsResult.data || 0;
 
       /*
@@ -1266,7 +1275,11 @@ export class WebsiteBlockEnrichmentService {
       const [servicesResult, profileResult, contactsResult] = await Promise.all([
         this.serviceRepo.listAll(userId, true),
         this.profileRepo.findByUserId(userId),
-        this.contactRepo.count(userId, { stage: 'client' })
+        /* The business's own client stage, not the key 'client' — see the
+           stats block above for what guessing it printed. */
+        buildClientStageFilter(this.supabase, userId).then(stages =>
+          this.contactRepo.count(userId, { stage: stages })
+        )
       ]);
 
       const { count: bookingsCount } = await this.supabase

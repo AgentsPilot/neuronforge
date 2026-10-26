@@ -1,0 +1,275 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search mailbox for unread website enquiry emails using the configured mail_query. Fetch full body text and subject for each match.",
+    "plugin": "google-mail",
+    "output_variable": "enquiry_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              },
+              "reply_to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Reply-To header — usually the person who filled in the form"
+              },
+              "cc": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Cc header"
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.mail_query}}",
+      "max_results": 100,
+      "include_attachments": false,
+      "content_level": "full"
+    },
+    "name": "Search mailbox for unread website enquiry emails using the configured mail_query. Fetch full body text and subject for each match.",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "scatter_gather",
+    "description": "Loop over enquiry_emails",
+    "scatter": {
+      "input": "{{enquiry_emails.emails}}",
+      "steps": [
+        {
+          "step_id": "step3",
+          "type": "action",
+          "description": "File the enquiry email in the CRM using the platform's capture_enquiry mechanism. Pass the raw email body, subject, and the enquiry_template so the CRM can deterministically parse the sender's name, email and message. This uses the same path as the website contact form, so the platform's unanswered-enquiry follow-up can see it.",
+          "plugin": "crm",
+          "output_variable": "filing_result",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "is_new_contact": {
+                "type": "boolean",
+                "source": "plugin"
+              },
+              "filed": {
+                "type": "boolean",
+                "source": "plugin"
+              },
+              "reason": {
+                "type": "string",
+                "source": "plugin"
+              }
+            }
+          },
+          "id": "step3",
+          "params": {
+            "source": "website_form",
+            "raw_body": "{{current_email.body}}",
+            "subject": "{{current_email.subject}}",
+            "template": "{{input.enquiry_template}}",
+            "reply_to": "{{current_email.reply_to}}",
+            "cc": "{{current_email.cc}}",
+            "from": "{{current_email.from}}",
+            "to": "{{current_email.to}}",
+            "via": "google-mail"
+          },
+          "name": "File the enquiry email in the CRM using the platform's capture_enquiry mechanism. Pass the raw email body, subject, and the enquiry_template so the CRM can deterministically parse the sender's name, email and message. This uses the same path as the website contact form, so the platform's unanswered-enquiry follow-up can see it.",
+          "action": "capture_enquiry"
+        },
+        {
+          "step_id": "step4",
+          "type": "conditional",
+          "description": "Conditional: node_3",
+          "condition": {
+            "conditionType": "simple",
+            "field": "filing_result.filed",
+            "operator": "equals",
+            "value": true
+          },
+          "steps": [
+            {
+              "step_id": "step5",
+              "type": "action",
+              "description": "Mark the enquiry email as read so it will not be processed again on the next run.",
+              "plugin": "google-mail",
+              "output_variable": "mark_read_result",
+              "output_schema": {
+                "type": "object",
+                "source": "plugin",
+                "description": "Result of the email modification",
+                "properties": {
+                  "message_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "The modified message ID",
+                    "required": true
+                  },
+                  "labels_added": {
+                    "type": "array",
+                    "source": "plugin",
+                    "description": "Labels that were added",
+                    "items": {
+                      "type": "string",
+                      "source": "plugin"
+                    },
+                    "required": true
+                  },
+                  "labels_removed": {
+                    "type": "array",
+                    "source": "plugin",
+                    "description": "Labels that were removed",
+                    "items": {
+                      "type": "string",
+                      "source": "plugin"
+                    },
+                    "required": true
+                  }
+                }
+              },
+              "id": "step5",
+              "params": {
+                "message_id": "{{current_email.id}}",
+                "mark_read": true
+              },
+              "name": "Mark the enquiry email as read so it will not be processed again on the next run.",
+              "action": "modify_email"
+            }
+          ],
+          "id": "step4",
+          "name": "Conditional: node_3"
+        }
+      ],
+      "itemVariable": "current_email"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "processing_results",
+    "id": "step2",
+    "name": "Loop over enquiry_emails"
+  }
+]

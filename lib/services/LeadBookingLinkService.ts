@@ -77,6 +77,21 @@ export interface SendBookingLinkOptions {
    * one-line change at the caller if that is ever the decision.
    */
   trigger: 'owner' | 'automated';
+  /**
+   * One sentence to open with, acknowledging what this person actually wrote.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Written when the enquiry ARRIVED, by the same model call that chose which
+   * link to send (`LeadReplyRecommender`), and carried here on the queued row.
+   * Not written at send time: one enquiry, one model call, one audit entry.
+   *
+   * Optional, and absent is the normal case — the model was off, it had
+   * nothing specific to acknowledge, or the sentence failed its safety check.
+   * The email then reads exactly as it has always read. Nothing about this
+   * send depends on it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  opening?: string;
 }
 
 function normaliseLocale(value: unknown): Locale | null {
@@ -191,6 +206,8 @@ export async function sendBookingLink(
     // Quoted work ends at a request, so the copy must not promise a booking.
     isQuote: isQuoted(service?.sale_mode),
     reminder: options.reminder,
+    /* Empty or absent renders nothing at all; see the template. */
+    personalLine: options.opening,
     branding,
     locale,
   });

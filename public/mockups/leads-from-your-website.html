@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>לידים מהאתר שלך - מוקאפ Business OS</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ────────────────────────────────────────────────────────────────────────
+     The real V2 tokens, copied from app/v2/globals-v2.css. Nothing invented:
+     if a colour or a radius is not in that file, it is not used here.
+     ──────────────────────────────────────────────────────────────────────── */
+  :root{
+    --v2-bg:#F5F5F7; --v2-surface:#FFFFFF; --v2-surface-hover:#F9FAFB;
+    --v2-border:#E5E7EB;
+    --v2-primary:#6366F1; --v2-primary-dark:#4F46E5; --v2-accent:#4F6EF7;
+    --v2-text-primary:#1F2937; --v2-text-secondary:#6B7280; --v2-text-muted:#9CA3AF;
+    --v2-success:#10B981; --v2-success-bg:#ECFDF5; --v2-success-border:#BBF7D0;
+    --v2-success-text:#065F46; --v2-success-icon:#059669;
+    --v2-warning:#F59E0B;
+    --v2-status-warning-bg:#FFFBEB; --v2-status-warning-border:#FDE68A;
+    --v2-status-warning-text:#92400E;
+    --v2-radius-button:12px; --v2-radius-card:16px; --v2-radius-panel:24px;
+    --v2-shadow-card:0 2px 16px rgba(0,0,0,0.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --v2-bg:#0F172A; --v2-surface:#1E293B; --v2-surface-hover:#334155;
+      --v2-border:#475569;
+      --v2-text-primary:#F1F5F9; --v2-text-secondary:#CBD5E1; --v2-text-muted:#94A3B8;
+      --v2-status-warning-bg:#1E293B; --v2-status-warning-border:#B45309;
+      --v2-status-warning-text:#FCD34D;
+      --v2-success-bg:#1E293B; --v2-success-border:#15803D; --v2-success-text:#86EFAC;
+    }
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--v2-bg);color:var(--v2-text-primary);
+       font-family:Heebo,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       line-height:1.5;padding:32px 16px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:20px;font-weight:700;margin:0 0 4px}
+  .lede{color:var(--v2-text-secondary);font-size:14px;margin:0 0 8px}
+  .tokens{color:var(--v2-text-muted);font-size:12px;margin:0 0 30px}
+
+  /* A screen section, labelled the way the other mockups in this folder label
+     theirs ("מסך 1: …"). */
+  .screen{margin:0 0 32px}
+  .screen > h2{font-size:14px;font-weight:600;color:var(--v2-text-primary);margin:0 0 3px}
+  .screen > .reuse{font-size:12px;color:var(--v2-text-muted);margin:0 0 12px}
+  .screen > .reuse b{color:var(--v2-text-secondary);font-weight:500}
+
+  .stage{background:var(--v2-bg);border:1px solid var(--v2-border);
+         border-radius:var(--v2-radius-panel);padding:18px}
+
+  .card{background:var(--v2-surface);border:1px solid var(--v2-border);
+        border-radius:var(--v2-radius-card);box-shadow:var(--v2-shadow-card);
+        padding:16px;margin-bottom:12px}
+  .card:last-child{margin-bottom:0}
+  .card.is-new{border-color:var(--v2-accent)}
+
+  .row{display:flex;align-items:flex-start;gap:12px}
+  .grow{flex:1;min-width:0}
+  .h{font-size:16px;font-weight:600;color:var(--v2-text-primary);
+     display:flex;align-items:center;gap:8px}
+  .p{font-size:14px;color:var(--v2-text-secondary);margin-top:4px}
+  .xs{font-size:12px;color:var(--v2-text-muted);margin-top:8px}
+  .xs .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+           background:var(--v2-success);margin-inline-end:6px;vertical-align:middle}
+  .xs .dot.off{background:var(--v2-text-muted)}
+
+  /* Buttons: 12px radius per --v2-radius-button. Not pills. */
+  .btn{font:inherit;font-size:14px;font-weight:500;cursor:pointer;
+       padding:8px 16px;border-radius:var(--v2-radius-button);
+       border:1px solid var(--v2-border);background:var(--v2-surface);
+       color:var(--v2-text-primary);white-space:nowrap}
+  .btn:hover{background:var(--v2-surface-hover)}
+  .btn.primary{background:var(--v2-primary);border-color:var(--v2-primary);color:#fff}
+  .btn.primary:hover{background:var(--v2-primary-dark)}
+  .btn.quiet{border-color:transparent;background:transparent;color:var(--v2-text-secondary)}
+
+  /* Toggle: h-6 w-11, p-0.5, knob h-5 w-5 — the shape used in
+     WebsiteSetupWizard.tsx. */
+  .sw{width:44px;height:24px;border-radius:9999px;padding:2px;flex-shrink:0;
+      background:var(--v2-success);display:flex;align-items:center}
+  .sw i{display:block;width:20px;height:20px;border-radius:9999px;background:#fff;
+        box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .sw.off{background:var(--v2-border);justify-content:flex-end}
+
+  .step{font-size:12px;font-weight:600;color:var(--v2-text-muted)}
+  .ask{font-size:16px;font-weight:600;margin:12px 0 4px}
+  .hint{font-size:14px;color:var(--v2-text-secondary);margin:0 0 14px}
+
+  /* Inner panel: p-3, --v2-bg ground, rounded-lg — the wizard's idiom. */
+  .inner{background:var(--v2-bg);border:1px solid var(--v2-border);
+         border-radius:8px;padding:12px 14px;margin-bottom:12px}
+  .k{font-size:12px;color:var(--v2-text-muted);font-weight:500}
+  .v{font-size:14px;font-weight:600;color:var(--v2-text-primary);margin-top:2px}
+  .v.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+
+  .opts{display:flex;gap:10px;flex-wrap:wrap}
+  .opt{flex:1;min-width:190px;border:1px solid var(--v2-border);
+       border-radius:var(--v2-radius-card);padding:14px;text-align:center;
+       background:var(--v2-surface)}
+  .opt.sel{border-color:var(--v2-success);background:var(--v2-success-bg)}
+  .opt .nm{font-size:14px;font-weight:600}
+  .opt .st{font-size:12px;color:var(--v2-text-secondary);margin-top:3px}
+
+  .list{border:1px solid var(--v2-border);border-radius:8px;overflow:hidden;
+        background:var(--v2-surface)}
+  .mail{display:flex;gap:10px;padding:11px 13px;border-bottom:1px solid var(--v2-border)}
+  .mail:last-child{border-bottom:0}
+  .mail.sel{background:var(--v2-surface-hover)}
+  .rad{width:16px;height:16px;border-radius:9999px;border:2px solid var(--v2-border);
+       flex-shrink:0;margin-top:3px;background:var(--v2-surface)}
+  .mail.sel .rad{border:5px solid var(--v2-accent)}
+  .mfrom{font-size:12px;color:var(--v2-text-muted);display:flex;
+         justify-content:space-between;gap:10px}
+  .msubj{font-size:14px;font-weight:500;margin-top:2px}
+
+  .fields{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:14px}
+  .fields .fk{color:var(--v2-text-muted);font-size:12px;font-weight:500;padding-top:2px}
+
+  .lead{display:flex;justify-content:space-between;gap:12px;padding:9px 0;
+        border-bottom:1px solid var(--v2-border);font-size:14px}
+  .lead:last-of-type{border-bottom:0}
+  .lead .em{color:var(--v2-text-muted);font-size:12px}
+
+  .warn{background:var(--v2-status-warning-bg);
+        border:1px solid var(--v2-status-warning-border);
+        border-radius:var(--v2-radius-button);padding:12px 14px;margin-top:14px;
+        display:flex;gap:12px;align-items:center}
+  .warn .t{font-size:14px;font-weight:600;color:var(--v2-status-warning-text)}
+  .warn .d{font-size:12px;color:var(--v2-status-warning-text);opacity:.85;margin-top:2px}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:8px;
+        margin-top:16px;padding-top:14px;border-top:1px solid var(--v2-border)}
+  .note{font-size:12px;color:var(--v2-text-muted);margin-top:10px}
+
+  .flow{display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:12px;
+        color:var(--v2-text-muted)}
+  .chip{background:var(--v2-surface);border:1px solid var(--v2-border);
+        border-radius:9999px;padding:5px 11px;color:var(--v2-text-secondary)}
+  .chip.ai{border-color:var(--v2-accent);color:var(--v2-accent);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>לידים מהאתר שלך</h1>
+  <p class="lede">לעסק שכבר יש לו אתר ורוצה להשאיר אותו. הטופס שלו ממשיך לשלוח מייל,
+    ואנחנו הופכים את המייל לליד ולמענה.</p>
+  <p class="tokens">בנוי על הטוקנים של <code>app/v2/globals-v2.css</code> - Heebo,
+    <code>--v2-radius-card</code> 16px, <code>--v2-radius-button</code> 12px,
+    <code>--v2-primary</code> #6366F1. תומך גם במצב כהה.</p>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מסך 1 - הכרטיס, לפני ההגדרה</h2>
+    <p class="reuse">נוסף לכרטיסי האוטומציות הקיימים, ישירות מעל
+      <b>"מענה לפניות"</b> - כי הוא מה שמזין אותו.
+      <b>OPERATIONAL_AUTOMATIONS</b> · <b>InsightAdvisorCard</b></p>
+    <div class="stage">
+      <div class="card is-new">
+        <div class="row">
+          <div class="grow">
+            <div class="h">✉ לידים מהאתר שלך</div>
+            <div class="p">האתר שלך שולח לך מייל כשמישהו ממלא את טופס יצירת הקשר.
+              נתייק אותם כלידים ונשיב עם קישור לקביעת פגישה.</div>
+            <div class="xs"><span class="dot off"></span>לא מחובר</div>
+          </div>
+          <button class="btn primary">הגדרה</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div class="grow">
+            <div class="h">↩ מענה לפניות</div>
+            <div class="p">שליחת קישור לקביעת פגישה 15 דקות אחרי פנייה,
+              אם לא השבתם בעצמכם</div>
+          </div>
+          <div class="sw"><i></i></div>
+        </div>
+        <div class="row" style="margin-top:12px;padding-top:12px;
+             border-top:1px solid var(--v2-border)">
+          <div class="grow"><div class="p" style="margin:0">הודיעו לי כשמישהו פונה</div></div>
+          <div class="sw"><i></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מסך 2 - חיבור תיבת הדואר</h2>
+    <p class="reuse">אין חיבור חדש: אותו OAuth של התוספים שכבר קיים.
+      <b>plugin_connections</b> · <b>google-mail</b> / <b>outlook</b></p>
+    <div class="stage">
+      <div class="card">
+        <div class="step">שלב 1 מתוך 4</div>
+        <div class="ask">לאיזו תיבת דואר האתר שולח את הפניות?</div>
+        <div class="opts">
+          <div class="opt sel">
+            <div class="nm">Gmail</div>
+            <div class="st">offir@… מחובר</div>
+          </div>
+          <div class="opt">
+            <div class="nm">Outlook</div>
+            <div class="st">חיבור</div>
+          </div>
+        </div>
+        <p class="note">נקרא רק הודעות שתואמות לפנייה שתבחרו במסך הבא.
+          שום דבר אחר בתיבה לא נפתח.</p>
+        <div class="foot"><span></span><button class="btn primary">הבא</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מסך 3 - בחירת פנייה אחת. כאן נגמרת ההגדרה</h2>
+    <p class="reuse">הרשימה נקראת דרך <b>search_emails</b> של תוסף הדואר -
+      אותה פעולה שהסוכן ישתמש בה אחר כך.</p>
+    <div class="stage">
+      <div class="card">
+        <div class="step">שלב 2 מתוך 4</div>
+        <div class="ask">בחרו פנייה אחת מהאתר שלכם</div>
+        <p class="hint">נזהה את כל השאר לפיה. זו כל ההגדרה.</p>
+        <div class="list">
+          <div class="mail">
+            <div class="rad"></div>
+            <div class="grow">
+              <div class="mfrom"><span>forms@my-clinic.co.il</span><span>ב׳ 09:14</span></div>
+              <div class="msubj">New inquiry from your website</div>
+            </div>
+          </div>
+          <div class="mail sel">
+            <div class="rad"></div>
+            <div class="grow">
+              <div class="mfrom"><span>forms@my-clinic.co.il</span><span>א׳ 17:02</span></div>
+              <div class="msubj">New inquiry from your website</div>
+            </div>
+          </div>
+          <div class="mail">
+            <div class="rad"></div>
+            <div class="grow">
+              <div class="mfrom"><span>newsletter@mailchimp.com</span><span>א׳ 08:00</span></div>
+              <div class="msubj">Your campaign report</div>
+            </div>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="btn quiet">חזרה</button>
+          <button class="btn primary">הבא</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מסך 4 - מה למדנו, במילים שלהם</h2>
+    <p class="reuse">שני הערכים האלה הם היחידים שמשתנים בין עסק לעסק.
+      הם נכנסים ל-<b>IntentContract</b> המוכן, ושאר התוכנית קבועה.</p>
+    <div class="stage">
+      <div class="card">
+        <div class="step">שלב 3 מתוך 4</div>
+        <div class="ask">הנה מה שנחפש</div>
+        <div class="inner">
+          <div class="k">מיילים מאת</div>
+          <div class="v mono">forms@my-clinic.co.il</div>
+          <div class="k" style="margin-top:10px">שהנושא שלהם מתחיל ב-</div>
+          <div class="v mono">New inquiry from your website</div>
+        </div>
+        <div class="ask" style="font-size:14px">ומה שנקרא מכל פנייה</div>
+        <div class="inner">
+          <div class="fields">
+            <div class="fk">שם</div><div>Sarah Cohen</div>
+            <div class="fk">אימייל</div><div>sarah@example.com</div>
+            <div class="fk">הודעה</div><div>I would like to schedule an initial consultation.</div>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="btn">בחרו מייל אחר</button>
+          <span style="display:flex;gap:8px">
+            <button class="btn quiet">חזרה</button>
+            <button class="btn primary">הבא</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מסך 5 - להראות את העבודה, ורק אז להפעיל</h2>
+    <p class="reuse">התראת המצב משתמשת בטוקני האזהרה הקיימים
+      (<b>--v2-status-warning-*</b>) ומצביעה על המתג שכבר קיים בכרטיס שמעליו.</p>
+    <div class="stage">
+      <div class="card">
+        <div class="step">שלב 4 מתוך 4</div>
+        <div class="ask">מ-7 הימים האחרונים היו נוספים 3 לידים</div>
+        <div class="inner" style="padding:4px 14px">
+          <div class="lead"><span>Sarah Cohen</span><span class="em">sarah@example.com · א׳ 17:02</span></div>
+          <div class="lead"><span>Dana Levi</span><span class="em">dana@example.com · ו׳ 11:40</span></div>
+          <div class="lead"><span>Yossi Ben-Ami</span><span class="em">yossi@example.com · ה׳ 08:15</span></div>
+        </div>
+        <p class="hint" style="margin:0">כל אחד מהם היה מקבל מענה עם קישור לקביעת
+          פגישה כ-15 דקות אחר כך.</p>
+        <div class="warn">
+          <div class="grow">
+            <div class="t">"מענה לפניות" כבוי, אז אף אחד לא היה מקבל מענה</div>
+            <div class="d">זה המצב היחיד שבו הכול עובד ושום דבר לא מגיע ללקוח.</div>
+          </div>
+          <button class="btn">הפעלה</button>
+        </div>
+        <div class="foot">
+          <button class="btn quiet">חזרה</button>
+          <button class="btn primary">מתחילים</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מסך 6 - הכרטיס, אחרי ההפעלה</h2>
+    <p class="reuse">אותו כרטיס מהמסך הראשון, עם מצב ומתג - כמו כל אוטומציה אחרת.</p>
+    <div class="stage">
+      <div class="card">
+        <div class="row">
+          <div class="grow">
+            <div class="h">✉ לידים מהאתר שלך</div>
+            <div class="p">עוקב אחרי <strong>forms@my-clinic.co.il</strong></div>
+            <div class="xs"><span class="dot"></span>3 לידים השבוע · נבדק לפני 4 דקות</div>
+            <div style="margin-top:12px">
+              <button class="btn">שינוי המיילים שנקראים</button>
+            </div>
+          </div>
+          <div class="sw"><i></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <section class="screen">
+    <h2>מה רץ מאחורי הקלעים</h2>
+    <p class="reuse">הכל קיים היום חוץ מהאשף עצמו. הסוכן לא שולח כלום.</p>
+    <div class="stage">
+      <div class="card">
+        <div class="k" style="margin-bottom:8px">הסוכן, בכל הרצה</div>
+        <div class="flow">
+          <span class="chip">search_emails</span>
+          <span>←</span>
+          <span class="chip ai">AI · קריאת תוכן הטופס</span>
+          <span>←</span>
+          <span class="chip">list_contacts (לפי אימייל)</span>
+          <span>←</span>
+          <span class="chip">create_contact · source: website_form</span>
+          <span>←</span>
+          <span class="chip">modify_email · סימון כטופל</span>
+        </div>
+
+        <div class="k" style="margin:16px 0 8px">והפלטפורמה, 15 דקות אחר כך</div>
+        <div class="flow">
+          <span class="chip">enquiry_unanswered</span>
+          <span>←</span>
+          <span class="chip">reply_to_enquiries</span>
+          <span>←</span>
+          <span class="chip">sendBookingLink</span>
+          <span>+</span>
+          <span class="chip ai">AI · משפט פתיחה אישי</span>
+          <span>←</span>
+          <span class="chip">קישור חכם</span>
+        </div>
+
+        <p class="note">בניית הסוכן דטרמיניסטית לחלוטין - בלי פרומפט ובלי LLM.
+          שתי קריאות המודל היחידות מסומנות למעלה, ושתיהן בזמן ריצה.
+          בדיקת המוכנות, ההגנה מפני כפילות, המיתוג והשפה - כולם כבר ב-sendBookingLink.</p>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

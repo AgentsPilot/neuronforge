@@ -2,20 +2,81 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bot, Loader2, Send, User, Sparkles, Check, Plus, Trash2, X, Building2, Users, Calendar, CreditCard, Globe, Share2, XCircle, Lock, FileText } from 'lucide-react';
+import { Bot, Loader2, Send, User, Sparkles, Check, Plus, Trash2, X, Building2, Users, Calendar, ClipboardList, CreditCard, Globe, Share2, XCircle, Lock, FileText } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { SessionHandler } from '@/components/SessionHandler';
-import { V2Logo } from '@/components/v2/V2Header';
+import { Logo } from '@/components/brand/Logo';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SetupFactCard, SetupFactDeck } from '@/components/business-os/setup/SetupFactCard';
 import { currencySymbol, currencyForLanguage, currencyFromText } from '@/lib/business-os/currency';
 import { ServicePaymentOptions } from '@/components/scheduling/ServicePaymentOptions';
 import { ServiceCurrencySelect, getCurrencySymbol } from '@/components/scheduling/ServiceCurrencySelect';
+import { ownerTasks } from '@/lib/business-os/onboarding/ownerTasks';
 import { cn } from '@/lib/utils';
 import { clientLogger } from '@/lib/logger/client';
 
 const logger = clientLogger.child({ module: 'OnboardingChatPage' });
+
+/**
+ * The two voices of the interview, as a tint of the surface beneath them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The bubble and the avatar beside it are ONE object visually, so they share
+ * one definition here rather than repeating a `color-mix` in two places that
+ * can drift apart. Change a number once and the pair moves together.
+ *
+ * Tints, never literals. `--v2-primary` is overridden per business — indigo by
+ * default, orange on some — so a fixed rgba would be correct for exactly one
+ * tenant. Mixing with `--v2-surface` also keeps each honest in both themes:
+ * the same percentage lands on white in light mode and on #1E293B in dark,
+ * instead of one pale colour glowing on a dark page.
+ *
+ * WHY 34 AGAINST 9. The assistant is the quieter half: it asks, and its words
+ * should sit on the page rather than shout from it. The person's own answers
+ * are what they scan back through, so that side carries more of the brand.
+ * They were first brought to 14 and 9, which made the two bubbles the same
+ * object in two barely different shades and lost the sense of a dialogue
+ * altogether. Contrast does not bound these numbers — the text clears AA on
+ * every theme-and-brand pair well past 50% — staying quieter than a solid fill
+ * does.
+ *
+ * Where `color-mix` is unsupported the declarations are dropped and the plain
+ * surface classes beneath still paint: quieter than intended, never broken.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const VOICE_TINT = {
+  assistant: {
+    background: 'color-mix(in srgb, var(--v2-secondary) 9%, var(--v2-surface))',
+    borderColor: 'color-mix(in srgb, var(--v2-secondary) 30%, var(--v2-border))',
+  },
+  user: {
+    background: 'color-mix(in srgb, var(--v2-primary) 34%, var(--v2-surface))',
+    borderColor: 'color-mix(in srgb, var(--v2-primary) 55%, var(--v2-border))',
+  },
+} as const;
+
+/**
+ * The platform orange, for a button that moves the owner forward.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `#F97316` with `#EA580C` beneath it is what every primary action in Business
+ * OS is painted with — the dashboard, the chat command panel, the preview
+ * panel. This page used `--v2-primary` for all of its buttons, which is the
+ * indigo, so the onboarding looked like a different product from the one it
+ * was setting up.
+ *
+ * A RAW HEX, matching the hundred-odd other uses of it. It is not a token,
+ * which it should be: a brand colour spelled out in a hundred files is one
+ * find-and-replace away from a rebrand that misses a few. Introducing
+ * `--v2-brand` is a design-system change and wants SA review rather than being
+ * slipped in under a button fix, so this at least keeps the page down to one
+ * definition instead of adding more scattered copies.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const ORANGE_BUTTON =
+  'text-white bg-[#F97316] border border-[#EA580C] hover:bg-[#EA580C] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316] focus-visible:ring-offset-1';
 
 interface ServiceInput {
   name: string;
@@ -292,6 +353,21 @@ export default function OnboardingChatPage() {
 
   // Multi-select state for Q4 (digital tools selection)
   const [multiSelectChoices, setMultiSelectChoices] = useState<Set<string>>(new Set());
+
+  /**
+   * The single-select option the owner has just pressed.
+   *
+   * A single-select chip sent its answer and showed nothing: `isSending` only
+   * dimmed every option equally, so the chip that was actually chosen looked
+   * the same as the ones that were not, for as long as the model took to
+   * answer. On the deepening step that is two model calls — long enough to
+   * press a second chip, which sends a second answer to a question that has
+   * already moved on.
+   *
+   * Cleared when the next question arrives, keyed by the message count so a
+   * stale selection cannot survive into the question after it.
+   */
+  const [pressedChoice, setPressedChoice] = useState<{ option: string; atMessage: number } | null>(null);
 
   // Pipeline stages editor state
   const [showPipelineEditor, setShowPipelineEditor] = useState(false);
@@ -829,7 +905,14 @@ export default function OnboardingChatPage() {
               : `${installments} ${frequency.en} payments`
         );
       }
-      return parts.join(' - ');
+      /*
+       * A middot, not a hyphen. This line is sent through `sendMessage`, so
+       * it appears in the thread as the owner's OWN message: "Weekly coaching
+       * - 60 min - $80" was theirs to read. The rest of the product separates
+       * facts on one line with "·" ("about 2 minutes · after setup"), and a
+       * hyphen between a duration and a price reads like a range or a minus.
+       */
+      return parts.join(' · ');
     }).join('\n');
 
     // Reset form and close modal. Not a dismissal: the services were sent, and
@@ -997,7 +1080,7 @@ export default function OnboardingChatPage() {
    * link edits that decision and nothing else. The conversation stays for what
    * no card covers.
    */
-  const [planEditor, setPlanEditor] = useState<'services' | 'presence' | null>(null);
+  const [planEditor, setPlanEditor] = useState<'services' | 'presence' | 'collection' | null>(null);
   /** A working copy, so closing without saving leaves the plan as it was. */
   const [draftServices, setDraftServices] = useState<NonNullable<PreviewData['services']>>([]);
   /** Which draft row has its payment options open, if any. */
@@ -1076,8 +1159,14 @@ export default function OnboardingChatPage() {
 
     // Whether a processor is needed follows from the services, so it is
     // recomputed here rather than left at whatever the extraction guessed.
+    /*
+     * NOT GATED ON A PRICE. This editor is names-only — it says so on its face,
+     * "prices, durations and how you take payment are set later" — so
+     * `price > 0` was never true here and a processor was never wanted,
+     * whatever the owner had answered one screen earlier.
+     */
     const wantsProcessor = kept.some(
-      service => (service.price || 0) > 0 && (service.collection ?? 'invoice') === 'online'
+      service => (service.collection ?? 'invoice') === 'online'
     );
 
     setPreviewData({
@@ -1113,12 +1202,22 @@ export default function OnboardingChatPage() {
              * method to describe — it is settled on the proposal. Same rule as
              * the settings dialog, which is the other place this is decided.
              */
+            /*
+             * THE PRICE TEST HERE WAS DESTRUCTIVE, not merely dead.
+             *
+             * Every service arrives at this editor with no price, because the
+             * interview collects none and this editor edits names. So
+             * `price > 0` was false for all of them and this wrote
+             * `collection: null` over the answer the owner gave two questions
+             * earlier: opening the service names and saving them, changing
+             * nothing, silently erased how the whole business gets paid.
+             *
+             * A quote still clears it, which is the real rule this was reaching
+             * for: there is no collection method to record on a proposal
+             * because it is settled on the proposal itself.
+             */
             collection:
-              service.sale_mode === 'proposal'
-                ? null
-                : (service.price || 0) > 0
-                  ? (service.collection ?? 'invoice')
-                  : null,
+              service.sale_mode === 'proposal' ? null : (service.collection ?? 'invoice'),
           })),
         }
         : previewData.configuration,
@@ -1131,6 +1230,67 @@ export default function OnboardingChatPage() {
     setPreviewData({
       ...previewData,
       configuration: { ...previewData.configuration, online_presence_mode: mode },
+    });
+    setPlanEditor(null);
+  };
+
+  /**
+   * How money arrives, changed from the plan screen.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS BACK.
+   *
+   * A chooser lived here and was deliberately removed, under the reasoning
+   * that collection "moved onto each service, so its chooser is gone rather
+   * than left to overwrite three per-service answers with one". Sound at the
+   * time. But the services editor on this screen was LATER stripped to names
+   * only — its own copy now reads "Prices, durations and how you take payment
+   * are set later, in the services screen" — and nobody updated the money
+   * card, whose Change link still opened it.
+   *
+   * So an owner pressing Change on "How you get paid" got a dialog titled
+   * "What you sell" that told them payment is set somewhere else. Reported as
+   * exactly that. Between the two edits, the plan screen lost any way to
+   * change the one answer it was showing.
+   *
+   * The original objection does not apply here. On this screen every service's
+   * collection was just stamped from this single answer, moments ago, by
+   * `draftServices` — there are no distinct per-service answers to overwrite
+   * yet. Restamping them is what answering the chat question again would have
+   * done. Per-service divergence is real and belongs to the services screen,
+   * after the build, where each row is edited against its own price.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const setCollectionMethod = (
+    method: NonNullable<NonNullable<PreviewData['configuration']>['collection_method']>
+  ) => {
+    if (!previewData?.configuration) return;
+
+    /*
+     * `payment_mode` is a projection of this, not a second opinion — the same
+     * rule `computePaymentMode` follows. Left untouched it would say
+     * "invoicing" under a card now reading "pays by card", and the build
+     * reads the mode rather than the method.
+     */
+    const paymentMode =
+      method === 'card_online' || method === 'mixed'
+        ? 'upfront'
+        : method === 'none'
+          ? 'none'
+          : 'invoicing';
+
+    setPreviewData({
+      ...previewData,
+      configuration: {
+        ...previewData.configuration,
+        collection_method: method,
+        payment_mode: paymentMode,
+      },
+      /* The card reads services first, so they have to agree or it lies. */
+      services: (previewData.services || []).map(service => ({
+        ...service,
+        collection: method === 'none' ? null : method === 'card_online' ? 'online' : 'invoice',
+      })),
     });
     setPlanEditor(null);
   };
@@ -1169,23 +1329,58 @@ export default function OnboardingChatPage() {
    * what a client walks through.
    */
   const collectionShape = (() => {
-    const priced = (previewData?.services || []).filter(service => (service.price || 0) > 0);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * NOT FROM PRICES. THE CHAT NEVER ASKS FOR ONE.
+     *
+     * This filtered to `price > 0` first, so `priced` was ALWAYS EMPTY: the
+     * interview collects a count, whether clients book, and how money arrives,
+     * and leaves every price to the services editor. Every branch below then
+     * fell through to the last one, and an owner who had just answered "I
+     * collect the money myself: invoice, transfer or cash" was told on the
+     * plan screen that NOTHING IS CHARGED.
+     *
+     * The fifth site with this same gate. The others were the build page's
+     * owner cards, `computePaymentMode`, the per-service `collection`, and the
+     * `payments` capability. A price gate reads as a reasonable test for "does
+     * this business take money" right up until you notice nobody is asked.
+     *
+     * Services still win where they say anything, for the reason the original
+     * comment gives and which still holds: this account can have one free
+     * service, one invoiced and one taking a card, and no single business-wide
+     * answer describes that. What is new is the fallback — the answer the
+     * owner actually gave — for the plan screen, which is shown BEFORE any
+     * service row has a collection set on it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const stated = (previewData?.services || []).filter(service => !!service.collection);
+
+    if (stated.length) {
+      return {
+        online: stated.some(service => service.collection === 'online'),
+        invoiced: stated.some(service => service.collection !== 'online'),
+        takesMoney: true,
+      };
+    }
+
+    const method = previewData?.configuration?.collection_method;
     return {
-      online: priced.some(service => service.collection === 'online'),
-      invoiced: priced.some(service => service.collection !== 'online'),
-      anyPriced: priced.length > 0,
+      online: method === 'card_online' || method === 'mixed',
+      invoiced: method === 'invoice' || method === 'in_person' || method === 'mixed',
+      /* 'none' is the one answer that means the plan may say nothing is charged. */
+      takesMoney: !!method && method !== 'none',
     };
   })();
 
   const collectionSummary = (() => {
-    const { online, invoiced, anyPriced } = collectionShape;
+    const { online, invoiced, takesMoney } = collectionShape;
 
     if (online && invoiced) {
       return selectedLanguage === 'he'
-        ? 'חלק מהשירותים נגבים בכרטיס בזמן ההזמנה, וחלק בחשבונית אחרי — לפי מה שהגדרת לכל שירות.'
+        ? 'חלק מהשירותים נגבים בכרטיס בזמן ההזמנה, וחלק בחשבונית אחרי, לפי מה שהגדרת לכל שירות.'
         : selectedLanguage === 'es'
-          ? 'Algunos servicios se cobran con tarjeta al reservar y otros por factura — según lo que definiste en cada uno.'
-          : 'Some services are paid by card at booking and some are invoiced after — per what you set on each one.';
+          ? 'Algunos servicios se cobran con tarjeta al reservar y otros por factura, según lo que definiste en cada uno.'
+          : 'Some services are paid by card at booking and some are invoiced after, per what you set on each one.';
     }
     if (online) {
       return selectedLanguage === 'he'
@@ -1196,12 +1391,19 @@ export default function OnboardingChatPage() {
     }
     if (invoiced) {
       return selectedLanguage === 'he'
-        ? 'אתה שולח חשבונית והם מעבירים. בלי מנפיק תשלומים — פרטי הבנק שלך יופיעו בחשבונית.'
+        ? 'אתה שולח חשבונית והם מעבירים. בלי מנפיק תשלומים: פרטי הבנק שלך יופיעו בחשבונית.'
         : selectedLanguage === 'es'
-          ? 'Tú facturas y ellos transfieren. Sin procesador — tus datos bancarios van en la factura.'
-          : 'You invoice, they transfer. No card processor — your bank details go on the invoice.';
+          ? 'Tú facturas y ellos transfieren. Sin procesador: tus datos bancarios van en la factura.'
+          : 'You invoice, they transfer. No card processor: your bank details go on the invoice.';
     }
-    if (anyPriced) {
+    /*
+     * Takes money, and we cannot say how. Reachable now rather than dead: it
+     * needed a priced service, and nothing is priced at this point. Both
+     * `invoice` and `in_person` resolve to the invoiced branch above, so what
+     * reaches here is a business that sells something with no collection
+     * recorded either way.
+     */
+    if (takesMoney) {
       return selectedLanguage === 'he'
         ? 'משלמים לך ישירות. אין מה להגדיר.'
         : selectedLanguage === 'es'
@@ -1287,37 +1489,62 @@ export default function OnboardingChatPage() {
    * discovered from a client's confused email.
    */
   const yoursCards = (() => {
-    const cards: Array<{ key: string; icon: React.ReactNode; title: string; value: string; note: string }> = [];
+    /*
+     * ONE LIST, SHARED WITH THE BUILD SCREEN.
+     *
+     * This screen kept its own and knew two of the five, so the plan said
+     * "1 needs you" where the build one click later showed three. The
+     * conditions and the words now live in `lib/business-os/onboarding/
+     * ownerTasks`, which both screens read; what stays here is the rendering,
+     * because this draws cards with a note and the build draws steps with a
+     * result line.
+     */
+    const tasks = ownerTasks(
+      {
+        services: previewData?.services,
+        /*
+         * Whichever of the three knows the count. The build screen reads all
+         * three and this read one; on an account whose catalogue sits in
+         * `configuration.services`, the plan would have shown neither the
+         * services card nor the working hours, which are only owed when there
+         * is something to book.
+         */
+        serviceCount: Math.max(
+          previewData?.services?.length || 0,
+          previewData?.configuration?.services?.length || 0,
+          previewData?.configuration?.service_count || 0
+        ),
+        sellsScheduled: previewData?.configuration?.sells_scheduled,
+        collectionMethod: previewData?.configuration?.collection_method,
+        needsIntake: previewData?.configuration?.needs_intake,
+      },
+      selectedLanguage as 'en' | 'he' | 'es'
+    );
 
-    if (collectionShape.online) {
-      cards.push({
-        key: 'stripe',
-        icon: <CreditCard className="w-3.5 h-3.5" />,
-        title: selectedLanguage === 'he' ? 'חיבור תשלומים' : selectedLanguage === 'es' ? 'Conectar pagos' : 'Connect payments',
-        value: selectedLanguage === 'he'
-          ? 'סטרייפ מבקשת תעודת זהות וחשבון בנק, אז את זה רק אתה יכול לעשות.'
-          : selectedLanguage === 'es'
-            ? 'Stripe pide tu identificación y una cuenta bancaria, así que esto solo lo puedes hacer tú.'
-            : 'Stripe asks for your ID and a bank account, so this one only you can do.',
-        note: selectedLanguage === 'he' ? 'בערך 5 דקות · אחרי ההקמה' : selectedLanguage === 'es' ? 'unos 5 minutos · después' : 'about 5 minutes · after setup',
-      });
-    }
+    const icons: Record<string, React.ReactNode> = {
+      services: <FileText className="w-3.5 h-3.5" />,
+      availability: <Calendar className="w-3.5 h-3.5" />,
+      intake: <ClipboardList className="w-3.5 h-3.5" />,
+      stripe: <CreditCard className="w-3.5 h-3.5" />,
+      bank: <Building2 className="w-3.5 h-3.5" />,
+    };
 
-    if (collectionShape.invoiced) {
-      cards.push({
-        key: 'bank',
-        icon: <Building2 className="w-3.5 h-3.5" />,
-        title: selectedLanguage === 'he' ? 'פרטי הבנק שלך' : selectedLanguage === 'es' ? 'Tus datos bancarios' : 'Your bank details',
-        value: selectedLanguage === 'he'
-          ? 'הם מופיעים בכל חשבונית — משם הלקוח יודע לאן להעביר. אף אחד לא יכול להקליד אותם חוץ ממך.'
-          : selectedLanguage === 'es'
-            ? 'Van en cada factura — es donde tu cliente aprende a dónde enviar el dinero. Nadie puede escribirlos salvo tú.'
-            : 'They go on every invoice — it is where your client learns to send the money. Nobody can type them but you.',
-        note: selectedLanguage === 'he' ? 'בערך 2 דקות · אחרי ההקמה' : selectedLanguage === 'es' ? 'unos 2 minutos · después' : 'about 2 minutes · after setup',
-      });
-    }
+    /* "about 2 minutes · after setup" — this screen's phrasing for `minutes`,
+       which the build screen renders as a sentence instead. */
+    const note = (minutes: number) =>
+      selectedLanguage === 'he'
+        ? `בערך ${minutes} דקות · אחרי ההקמה`
+        : selectedLanguage === 'es'
+          ? `unos ${minutes} minutos · después`
+          : `about ${minutes} minutes · after setup`;
 
-    return cards;
+    return tasks.map(task => ({
+      key: task.key,
+      icon: icons[task.key],
+      title: task.title,
+      value: task.body,
+      note: note(task.minutes),
+    }));
   })();
 
   const handleBuild = async () => {
@@ -1355,7 +1582,35 @@ export default function OnboardingChatPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE CHROME DOES NOT SCROLL, exactly as in Business OS.
+     *
+     * This was `min-h-screen`, so the header scrolled away with the document
+     * and an owner halfway down the plan had no logo, no business name and no
+     * sense of which product they were in.
+     *
+     * Copied from `app/business-os/layout.tsx` rather than invented: a
+     * `100dvh` flex column, `overflow-hidden`, with `shrink-0` chrome above a
+     * `flex-1 min-h-0` body. The platform makes that body the scroller; here
+     * it is only a SIZED REGION and each screen scrolls inside it, because the
+     * conversation has a scroller of its own and two nested ones broke the
+     * auto-scroll. See the comment on the body itself. NOT `position: sticky`, which is what
+     * this would have been built with — `BusinessOSHeader` carries a comment
+     * recording that it used to be sticky and no longer needs to be, because
+     * out of the scroller entirely it simply does not move, the scrollbar runs
+     * beside the body rather than past the header, and nobody has to hardcode
+     * the header's height into an offset.
+     *
+     * `100dvh` and not `100vh`: on a phone `vh` is the viewport measured with
+     * the address bar collapsed, which is taller than what you can see, so the
+     * bottom of the page sits under the browser chrome with no way to reach it.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    <div
+      className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[var(--v2-bg)]"
+      dir={isRTL ? 'rtl' : 'ltr'}
+    >
       {/*
         Mounted HERE, and only here.
 
@@ -1368,7 +1623,9 @@ export default function OnboardingChatPage() {
       <SessionHandler />
 
       {/* Header */}
-      <div className="border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
+      {/* `shrink-0` so a long thread cannot squeeze the chrome, `relative
+          z-50` so anything the header opens sits over the body. */}
+      <div className="relative z-50 shrink-0 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
         {/* Pinned to LTR on purpose.
             Where the logo sits is a layout decision, not a reading direction:
             it belongs on the left in every language, with the account's name
@@ -1376,7 +1633,30 @@ export default function OnboardingChatPage() {
             in Hebrew, which moves the one fixed landmark on the page. The name
             inside still renders in its own direction. */}
         <div dir="ltr" className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
-          <V2Logo />
+          {/* ── THE PLATFORM'S LOGO, AND NOT A LINK ──────────────────────
+              ─────────────────────────────────────────────────────────────
+              This was `V2Logo`, which renders `/images/AgentPilot_Logo.png`
+              — the old square mark, from the name the product no longer
+              carries. The platform's logo is the wordmark in
+              `components/brand/Logo`, which `BusinessOSHeader` already
+              uses, so the first screen a new owner sees was the one screen
+              showing a different brand.
+
+              `placement="header"` is the same call the main header makes,
+              so the two line up at the same height rather than agreeing by
+              coincidence. The theme swap is CSS inside the component, which
+              matters here: this header sits on `--v2-surface`.
+
+              NOT WRAPPED IN A LINK, which `V2Logo` was. Its destination is
+              `/v2/dashboard`, the legacy agent platform — a screen with no
+              route back, as `BusinessOSHeader` records. There is also
+              nowhere useful to go from here: onboarding is the one thing
+              this page is for, and middleware sends an owner who has not
+              finished it straight back. A logo that bounces you to where
+              you already are reads as broken. It is a landmark, which is
+              what the comment above already calls it.
+              ───────────────────────────────────────────────────────────── */}
+          <Logo placement="header" priority />
           {/* Whose account this is, once they have said.
               In the header rather than on the plan: it is true of every screen
               from here on, not a line belonging to one of them. */}
@@ -1391,8 +1671,79 @@ export default function OnboardingChatPage() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      {/* Main Content
+          ──────────────────────────────────────────────────────────────────
+          Two elements where there was one. The scroller is the OUTER div and
+          runs the full width, so its scrollbar sits at the edge of the window
+          the way the platform's does, rather than inside the centred column.
+          The inner div keeps the measure and the padding it always had. */}
+      {/*
+          ──────────────────────────────────────────────────────────────────────
+          ONE SCROLLER PER SCREEN, AND IT IS NEVER THIS ONE.
+
+          This div was `overflow-y-auto`, which gave the chat screen TWO nested
+          scrollers: this one and the message list inside the card. Everything
+          reported followed from that.
+
+            two scrollbars   the message list reaches its height and this one
+                             starts taking the overflow, so both are live
+            jumping          the composing indicator changes the height of
+                             content inside a scroller that is itself inside a
+                             scroller, and both adjust
+            no auto-scroll   the one that matters. The effect calls `scrollTo`
+                             on the MESSAGE LIST, and once the overflow has
+                             moved out here that list has `scrollHeight ===
+                             clientHeight`, so the call does nothing at all and
+                             every new question has to be scrolled to by hand.
+
+          So this is a SIZED REGION, not a scroller: `flex-1 min-h-0` below the
+          frozen header, and each screen owns its own scrolling inside it. The
+          conversation never grows, and its message list is the only thing that
+          moves. The plan screen, which is genuinely taller than the window,
+          carries its own `overflow-y-auto` on the block below.
+
+          `min-h-0` on both: without it a flex item refuses to shrink below its
+          content, which is precisely how the overflow escapes to an ancestor
+          and the whole problem starts again.
+          ──────────────────────────────────────────────────────────────────────
+      */}
+      {/*
+          WHICH ELEMENT SCROLLS DEPENDS ON WHICH SCREEN IS UP, and that is not
+          a hedge: the two screens want opposite things.
+
+            PLAN         the page scrolls. The scrollbar belongs at the edge of
+                         the WINDOW, which means the scrolling element has to
+                         be this full-width wrapper. Giving the plan block its
+                         own scroller put the bar at the edge of the centred
+                         column instead, floating in the middle of the screen
+                         beside the cards, which is what was reported.
+
+            CONVERSATION nothing here scrolls. The message list inside the card
+                         is the scroller, and it has to be the only one: two
+                         nested scrollers is what broke the auto-scroll, since
+                         the effect calls `scrollTo` on that list and the call
+                         does nothing once the overflow has moved to an
+                         ancestor.
+
+          Which side the bar lands on is the browser's to decide from `dir`,
+          inherited from the root — left for Hebrew, right otherwise. Nothing
+          here needs to know.
+      */}
+      <div
+        className={cn(
+          'flex w-full flex-1 min-h-0 flex-col',
+          showPlanScreen ? 'overflow-y-auto' : 'overflow-hidden'
+        )}
+      >
+      {/* `flex-1 min-h-0` only for the conversation, which has to be given a
+          height to fill. On the plan it would let the column shrink below its
+          own content, so it grows naturally instead and the wrapper scrolls. */}
+      <div
+        className={cn(
+          'flex w-full max-w-4xl mx-auto flex-col px-4 sm:px-6 py-6 sm:py-8',
+          !showPlanScreen && 'flex-1 min-h-0'
+        )}
+      >
         {/* The conversation fills whatever is left after the panel below it,
             rather than a fixed height tuned to the chrome above.
             `calc(100vh - 280px)` was measured against a progress bar that no
@@ -1403,6 +1754,9 @@ export default function OnboardingChatPage() {
             Rendered instead of the conversation, so the thing the user is
             deciding on has the page to itself. */}
         {showPlanScreen && previewData && (
+          /* NOT a scroller. The wrapper above takes that job while the plan is
+             up, so the scrollbar sits at the window edge rather than at the
+             edge of this column. */
           <div dir={isRTL ? 'rtl' : 'ltr'}>
                 {/* The business, as the heading of its own plan.
                     This was a sentence with `**asterisks**` around the name,
@@ -1765,10 +2119,18 @@ export default function OnboardingChatPage() {
                         icon={<CreditCard className="w-3.5 h-3.5" />}
                         title={selectedLanguage === 'he' ? 'איך מקבלים תשלום' : selectedLanguage === 'es' ? 'Cómo cobras' : 'How you get paid'}
                         value={collectionSummary}
-                        // Opens the services, because that is where the answer
-                        // lives now. A business-wide chooser here would offer
-                        // to overwrite per-service answers with one of them.
-                        onChange={openServicesEditor}
+                        /*
+                         * Its own chooser, not the services dialog.
+                         *
+                         * This opened `openServicesEditor`, which was right
+                         * while that editor carried a per-service collection
+                         * control. It was later cut back to names only and
+                         * says so on its face, so Change on "How you get
+                         * paid" led to a dialog titled "What you sell" that
+                         * told the owner payment is set elsewhere. See
+                         * `setCollectionMethod`.
+                         */
+                        onChange={() => setPlanEditor('collection')}
                         changeLabel={changeLabel}
                       />
 
@@ -1834,23 +2196,42 @@ export default function OnboardingChatPage() {
         )}
 
         <div
-          className={cn('flex flex-col gap-4', showPlanScreen && 'hidden')}
           /*
-           * `dvh`, not `vh`, and a min-height that fits a phone.
+           * ───────────────────────────────────────────────────────────────────
+           * THE CONVERSATION IS SIZED AND NEVER GROWS.
            *
-           * `100vh` on mobile is the viewport with the browser chrome HIDDEN,
-           * so the column was taller than what you can actually see; the page
-           * then scrolled, and every new message moved the window as well as
-           * the list. `dvh` is the visible height and follows the toolbar as it
-           * shows and hides.
+           * `flex-1` takes exactly what is left under the frozen header;
+           * `min-h-0` lets it be smaller than its own content so the MESSAGE
+           * LIST inside becomes the overflow container. That is what makes the
+           * list the single scroller on this screen, and what makes the
+           * auto-scroll effect work: it calls `scrollTo` on the list, which
+           * only does anything while the list is the element that overflows.
            *
-           * `560px` was also above the usable height of a small phone once the
-           * header is subtracted, which forced the same window scroll from the
-           * other direction. The floor only exists to stop the thread
-           * collapsing to nothing on a short window.
+           * TWO THINGS DELIBERATELY REMOVED, both of which pushed the overflow
+           * up to an ancestor and produced a second scrollbar:
+           *
+           *   height: calc(100dvh - 150px)
+           *     The viewport less a guess at the chrome above it. Every such
+           *     guess is wrong the moment the header changes, and this one
+           *     already was: the header and padding come to about 120px, so
+           *     the thread sat short and the window scrolled to make it up.
+           *     An earlier `calc(100vh - 280px)` was measured against a
+           *     progress bar that no longer exists. Freezing the header is
+           *     what lets the number go.
+           *
+           *   minHeight: 420px
+           *     A floor against the thread collapsing on a short window, and
+           *     the direct cause of the doubled scrollbar: 420px against a
+           *     shorter space is overflow, and overflow here escapes to an
+           *     ancestor. It is not needed to keep the composer reachable
+           *     either — the list shrinks and the composer is `shrink-0`
+           *     beneath it, so on a short window you get a small thread with
+           *     its own scroll rather than a tall one the page has to scroll.
+           * ───────────────────────────────────────────────────────────────────
            */
-          style={{ height: 'calc(100dvh - 150px)', minHeight: '420px' }}
+          className={cn('flex flex-1 min-h-0 flex-col gap-4', showPlanScreen && 'hidden')}
         >
+
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg shadow-lg flex-1 min-h-0">
           <div className="flex flex-col h-full">
             {/* Messages Area */}
@@ -1892,10 +2273,17 @@ export default function OnboardingChatPage() {
                       plan screen, so nothing new enters the palette.
                   */}
                   {message.role === 'assistant' && (
+                    /*
+                     * The avatar wears the same tint as the bubble it belongs
+                     * to. Left solid, the two chips stayed the loudest marks
+                     * on a page whose bubbles had just been quietened, so the
+                     * eye went to the icons rather than to the words.
+                     */
                     <div
-                      className="w-8 h-8 bg-[var(--v2-secondary)] flex items-center justify-center flex-shrink-0 rounded-lg"
+                      className="w-8 h-8 border bg-[var(--v2-surface)] border-[var(--v2-border)] flex items-center justify-center flex-shrink-0 rounded-lg"
+                      style={VOICE_TINT.assistant}
                     >
-                      <Bot className="h-4 w-4 text-white" />
+                      <Bot className="h-4 w-4 text-[var(--v2-text-primary)]" />
                     </div>
                   )}
 
@@ -1904,40 +2292,22 @@ export default function OnboardingChatPage() {
                     <div
                       className={cn(
                         'px-4 py-3 rounded-lg',
-                        message.role === 'user'
-                          ? 'bg-[var(--v2-primary)] text-white'
-                          : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)]',
+                        /*
+                         * One base for both voices now. The side, the avatar
+                         * and the hue of the tint below are what tell them
+                         * apart — not one being filled and the other drawn.
+                         * These classes are also the no-`color-mix` fallback.
+                         */
+                        'border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)]',
                         isRTL ? 'text-right' : 'text-left'
                       )}
                       /*
-                       * The assistant's bubble, tinted violet.
-                       * ─────────────────────────────────────────────────────
-                       * It used to be plain `--v2-surface` with the default
-                       * border, which is exactly what every card on this page
-                       * is made of — so the assistant's own words read as page
-                       * furniture rather than as somebody speaking.
-                       *
-                       * Mixed with the SURFACE token rather than written as an
-                       * rgba literal, so it follows the theme: the same 9% of
-                       * violet lands on white in light mode and on #1E293B in
-                       * dark, instead of a fixed pale tint glowing on a dark
-                       * background.
-                       *
-                       * In a browser without `color-mix` the declaration is
-                       * dropped and the class above still paints the plain
-                       * surface, which is the old appearance rather than a
-                       * broken one.
+                       * Both voices, from the one definition at the top of
+                       * this file — the same object the avatar beside this
+                       * bubble is painted with, so a bubble and its icon can
+                       * never disagree.
                        */
-                      style={
-                        message.role === 'assistant'
-                          ? {
-                              background:
-                                'color-mix(in srgb, var(--v2-secondary) 9%, var(--v2-surface))',
-                              borderColor:
-                                'color-mix(in srgb, var(--v2-secondary) 30%, var(--v2-border))',
-                            }
-                          : undefined
-                      }
+                      style={VOICE_TINT[message.role === 'user' ? 'user' : 'assistant']}
                     >
                       <p className="text-sm whitespace-pre-wrap leading-relaxed">
                         {message.content}
@@ -1950,9 +2320,10 @@ export default function OnboardingChatPage() {
                   {/* User Avatar */}
                   {message.role === 'user' && (
                     <div
-                      className="w-8 h-8 bg-[var(--v2-primary)] flex items-center justify-center flex-shrink-0 rounded-lg"
+                      className="w-8 h-8 border bg-[var(--v2-surface)] border-[var(--v2-border)] flex items-center justify-center flex-shrink-0 rounded-lg"
+                      style={VOICE_TINT.user}
                     >
-                      <User className="h-4 w-4 text-white" />
+                      <User className="h-4 w-4 text-[var(--v2-text-primary)]" />
                     </div>
                   )}
                 </div>
@@ -1965,6 +2336,62 @@ export default function OnboardingChatPage() {
                 if (lastMessage.role !== 'assistant' || !lastMessage.suggestions || showPreview) {
                   return null;
                 }
+                /*
+                 * ───────────────────────────────────────────────────────────
+                 * THE CHIPS, AS THE PLATFORM ALREADY DRAWS THEM.
+                 *
+                 * `CHIP_BASE` and `CHIP_ON`/`CHIP_OFF` below are the refund
+                 * reason chips from `components/payments/RefundModal.tsx`,
+                 * which is the pattern this product already uses for "pick
+                 * from the usual answers". Two things it gets right that the
+                 * rows here did not:
+                 *
+                 *   SELECTED IS AN INVERSION, not a tint. A chosen option was
+                 *   a 10% wash of the accent with an accent border — one step
+                 *   from the hover state of an unchosen one, and on a
+                 *   multi-select that is the whole question: an owner could
+                 *   not tell what they had ticked, or that ticking several was
+                 *   allowed at all.
+                 *
+                 *   SELECTED INK, NOT SELECTED ACCENT. The fill is
+                 *   `--v2-text-primary`, so a chosen chip never competes with
+                 *   the Continue button, which is the accent. Choosing is not
+                 *   the same act as proceeding and should not look like it.
+                 *
+                 * WHAT IS DELIBERATELY NOT COPIED: the refund chips wrap, and
+                 * these only wrap when every label is SHORT. The reason the
+                 * rows exist is in the comment below, and it still holds —
+                 * these answers carry their consequence in the label ("I
+                 * collect the money myself: invoice, transfer or cash"), and
+                 * wrapped they read as a paragraph of buttons. So the layout
+                 * follows the labels: pills for "English / עברית / Español",
+                 * rows for a sentence. That is the same rule the old comment
+                 * was reaching for, now applied per question instead of
+                 * assumed for all of them.
+                 * ───────────────────────────────────────────────────────────
+                 */
+                const CHIP_BASE =
+                  'transition-colors disabled:opacity-40 disabled:cursor-not-allowed ' +
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--v2-primary)] focus-visible:ring-offset-1';
+                const CHIP_ON = 'bg-[var(--v2-text-primary)] text-[var(--v2-bg)] border border-[var(--v2-text-primary)]';
+                const CHIP_OFF =
+                  'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] ' +
+                  'hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]';
+
+                /*
+                 * Short enough to sit side by side. Measured against the
+                 * longest label rather than each one, so a question never
+                 * splits into some pills and some rows — which reads as two
+                 * kinds of answer to one question.
+                 */
+                const longest = Math.max(...lastMessage.suggestions.map(option => option.length));
+                const asPills = longest <= 28;
+                const shape = asPills
+                  ? 'inline-flex items-center gap-2 px-3.5 py-2 text-[13px] font-medium'
+                  : cn('flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium', isRTL ? 'text-right' : 'text-left');
+                const layout = asPills ? 'flex flex-wrap gap-2' : 'flex flex-col gap-2';
+                const radius = asPills ? '999px' : '0.5rem';
+
                 return (
                   <div className={cn('mt-4', isRTL ? 'text-right' : 'text-left')}>
                     {lastMessage.multiSelect ? (
@@ -1977,7 +2404,7 @@ export default function OnboardingChatPage() {
                             list of choices — and the answers now carry their
                             consequence in the label ("— בלי סליקה"), which
                             makes them far too long to sit side by side. */}
-                        <div className="flex flex-col gap-2">
+                        <div className={layout}>
                           {(() => {
                             // "Not now" and the rest cannot both be true, and
                             // the rule is worth showing rather than enforcing
@@ -2042,24 +2469,41 @@ export default function OnboardingChatPage() {
                                   });
                                 }}
                                 disabled={isSending}
+                                aria-pressed={isSelected}
+                                style={{ borderRadius: radius }}
                                 className={cn(
-                                  // Identical to the single-select options —
-                                  // same padding, radius and border — because
-                                  // they are the same kind of thing. A shadow
-                                  // and a scale on the chosen one made picking
-                                  // an answer look like a different mechanism
-                                  // in a different question.
-                                  'w-full px-4 py-2.5 text-sm font-medium rounded-lg border transition-all disabled:opacity-50 flex items-center gap-2',
-                                  isRTL ? 'text-right' : 'text-left',
-                                  isSelected
-                                    // The same tint-and-border the service
-                                    // settings use for a chosen option, and
-                                    // one step further than the hover state a
-                                    // single-select chip already shows.
-                                    ? 'bg-[var(--v2-primary)]/10 text-[var(--v2-primary)] border-[var(--v2-primary)]'
-                                    : 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-primary)]/5'
+                                  // Still identical to the single-select
+                                  // options, which was always right: they are
+                                  // the same kind of thing, and a shadow or a
+                                  // scale on the chosen one made picking an
+                                  // answer look like a different mechanism.
+                                  // What changed is that BOTH now invert when
+                                  // chosen instead of taking a 10% wash.
+                                  CHIP_BASE,
+                                  shape,
+                                  isSelected ? CHIP_ON : CHIP_OFF
                                 )}
                               >
+                                {/*
+                                    THE TICK IS WHAT SAYS "PICK AS MANY AS YOU
+                                    LIKE". Nothing did: the only difference
+                                    between this question and a single-select
+                                    one was that an answer did not send, which
+                                    an owner discovers by waiting. A box that
+                                    fills is the one convention everybody
+                                    already reads, and it costs a 14px square.
+                                */}
+                                <span
+                                  aria-hidden
+                                  className={cn(
+                                    'inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-[3px] border',
+                                    isSelected
+                                      ? 'border-[var(--v2-bg)] bg-[var(--v2-bg)]/15'
+                                      : 'border-[var(--v2-text-muted)]'
+                                  )}
+                                >
+                                  {isSelected && <Check className="h-[10px] w-[10px]" strokeWidth={3} />}
+                                </span>
                                 {icon}
                                 {suggestion}
                               </button>
@@ -2098,8 +2542,24 @@ export default function OnboardingChatPage() {
                               // pill with a shadow read as a different kind of
                               // thing entirely, which is how it ends up looking
                               // like an advert rather than the next step.
-                              'w-full px-4 py-2.5 text-sm font-semibold rounded-lg border border-[var(--v2-primary)] transition-all disabled:opacity-50',
-                              'bg-[var(--v2-primary)] text-white hover:opacity-90',
+                              'w-full px-4 py-2.5 text-sm font-semibold rounded-lg transition-all disabled:opacity-50',
+                              /*
+                               * THE PLATFORM ORANGE, which this page did not
+                               * use anywhere: every button here was
+                               * `--v2-primary`, the indigo, while every
+                               * primary action in Business OS is #F97316. So
+                               * onboarding looked like a different product
+                               * from the one it was setting up.
+                               *
+                               * It also resolves the collision the chips
+                               * created. Selecting is ink, proceeding is
+                               * orange: two different acts, two different
+                               * colours, and neither competing with the
+                               * other. That was already the argument for
+                               * giving a chosen chip the ink fill rather than
+                               * the accent — this is the other half of it.
+                               */
+                              ORANGE_BUTTON,
                               'flex items-center gap-2',
                               'justify-center'
                             )}
@@ -2118,21 +2578,43 @@ export default function OnboardingChatPage() {
                         )}
                       </div>
                     ) : (
-                      // Single-select buttons (original behavior)
-                      <div className="flex flex-col gap-2">
-                        {lastMessage.suggestions.map((suggestion, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => handleSuggestionClick(suggestion)}
-                            disabled={isSending}
-                            className={cn(
-                              'w-full px-4 py-2.5 text-sm font-medium bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-primary)]/5 rounded-lg transition-all disabled:opacity-50',
-                              isRTL ? 'text-right' : 'text-left'
-                            )}
-                          >
-                            {suggestion}
-                          </button>
-                        ))}
+                      <div className={layout}>
+                        {lastMessage.suggestions.map((suggestion, idx) => {
+                          /*
+                           * The pressed one INVERTS and the rest fade, for the
+                           * wait the owner is about to have.
+                           *
+                           * Pressing a chip used to change nothing: `isSending`
+                           * dimmed all of them equally, so the answer that was
+                           * chosen looked exactly like the ones that were not,
+                           * for as long as the model took. The chip that was
+                           * pressed is the one piece of information the screen
+                           * has at that moment and it was the one thing not
+                           * shown.
+                           *
+                           * Scoped to this message, so the inversion cannot
+                           * survive into the next question: `atMessage` pins it
+                           * to the thread length it was pressed at.
+                           */
+                          const isPressed =
+                            pressedChoice?.option === suggestion
+                            && pressedChoice.atMessage === messages.length;
+
+                          return (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setPressedChoice({ option: suggestion, atMessage: messages.length });
+                                handleSuggestionClick(suggestion);
+                              }}
+                              disabled={isSending}
+                              style={{ borderRadius: radius }}
+                              className={cn(CHIP_BASE, shape, isPressed ? CHIP_ON : CHIP_OFF)}
+                            >
+                              {suggestion}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -2161,16 +2643,20 @@ export default function OnboardingChatPage() {
               */}
               {isSending && (
                 <div className="flex gap-3 flex-row justify-start" aria-live="polite">
-                  <div className="w-8 h-8 bg-[var(--v2-secondary)] flex items-center justify-center flex-shrink-0 rounded-lg">
-                    <Bot className="h-4 w-4 text-white" />
+                  {/* The assistant is about to speak, so it wears exactly what
+                      it speaks in — the same chip and the same tint as a real
+                      message, or the page changes colour the moment one
+                      arrives. */}
+                  <div
+                    className="w-8 h-8 border bg-[var(--v2-surface)] border-[var(--v2-border)] flex items-center justify-center flex-shrink-0 rounded-lg"
+                    style={VOICE_TINT.assistant}
+                  >
+                    <Bot className="h-4 w-4 text-[var(--v2-text-primary)]" />
                   </div>
 
                   <div
                     className="px-4 py-3 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]"
-                    style={{
-                      background: 'color-mix(in srgb, var(--v2-secondary) 9%, var(--v2-surface))',
-                      borderColor: 'color-mix(in srgb, var(--v2-secondary) 30%, var(--v2-border))',
-                    }}
+                    style={VOICE_TINT.assistant}
                   >
                     <span className="sr-only">
                       {selectedLanguage === 'he'
@@ -2578,7 +3064,12 @@ export default function OnboardingChatPage() {
 
             {/* Input Area - hide when services form is shown */}
             {!showServicesForm && (
-              <div className="px-6 py-4 border-t border-[var(--v2-border)]">
+              /* `shrink-0` stated rather than relied on. A flex item will not
+                 shrink below its own content anyway, so this held by accident;
+                 the composer staying reachable on a short window is the reason
+                 the thread no longer carries a 420px floor, and a behaviour
+                 that load-bearing should not be implicit. */
+              <div className="shrink-0 px-6 py-4 border-t border-[var(--v2-border)]">
                 <div className={cn('flex gap-2', isRTL && 'flex-row-reverse')}>
                   <input
                     ref={inputRef}
@@ -2962,9 +3453,121 @@ export default function OnboardingChatPage() {
     services editor, beside the price they divide.
 */}
 
-{/* Only presence is still a business-wide question. How money is collected
-    moved onto each service, so its chooser is gone rather than left to
-    overwrite three per-service answers with one. */}
+{/*
+    THE SAME THREE ANSWERS THE CHAT OFFERED, in the same words.
+
+    Not a new vocabulary: the owner picked one of these a minute ago, and a
+    dialog that renamed them would read as a different question about the same
+    thing. The wording is the chip wording from `payment_collection_options`.
+
+    On why a business-wide chooser is right on THIS screen when it would be
+    wrong later, see `setCollectionMethod`.
+*/}
+{planEditor === 'collection' && (() => {
+  const method = previewData?.configuration?.collection_method;
+
+  const options: Array<{ key: string; title: string; body: string; selected: boolean; apply: () => void }> = [
+    {
+      key: 'card_online',
+      title: selectedLanguage === 'he'
+        ? 'הלקוח משלם אונליין בכרטיס'
+        : selectedLanguage === 'es'
+          ? 'El cliente paga online con tarjeta'
+          : 'The client pays online by card',
+      body: selectedLanguage === 'he'
+        ? 'נחבר סליקה. סטרייפ תבקש תעודת זהות וחשבון בנק.'
+        : selectedLanguage === 'es'
+          ? 'Conectamos el cobro. Stripe pedirá tu identificación y una cuenta bancaria.'
+          : 'We connect a processor. Stripe will ask for your ID and a bank account.',
+      selected: method === 'card_online' || method === 'mixed',
+      apply: () => setCollectionMethod('card_online'),
+    },
+    {
+      key: 'invoice',
+      title: selectedLanguage === 'he'
+        ? 'אני גובה בעצמי: חשבונית, העברה או מזומן'
+        : selectedLanguage === 'es'
+          ? 'Yo cobro: factura, transferencia o efectivo'
+          : 'I collect the money myself: invoice, transfer or cash',
+      body: selectedLanguage === 'he'
+        ? 'בלי סליקה. פרטי הבנק שלך מופיעים על החשבונית.'
+        : selectedLanguage === 'es'
+          ? 'Sin procesador. Tus datos bancarios van en la factura.'
+          : 'No processor. Your bank details go on the invoice.',
+      selected: method === 'invoice' || method === 'in_person',
+      apply: () => setCollectionMethod('invoice'),
+    },
+    {
+      key: 'none',
+      title: selectedLanguage === 'he'
+        ? 'מה שאני מוכר לא בתשלום'
+        : selectedLanguage === 'es'
+          ? 'Nada de lo que vendo se paga'
+          : 'Nothing I sell is paid for',
+      body: selectedLanguage === 'he'
+        ? 'לא נגדיר גבייה בכלל.'
+        : selectedLanguage === 'es'
+          ? 'No configuramos ningún cobro.'
+          : 'We set up no collection at all.',
+      selected: method === 'none',
+      apply: () => setCollectionMethod('none'),
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden" dir={isRTL ? 'rtl' : 'ltr'}>
+        <div className="flex items-center justify-between p-4 border-b border-[var(--v2-border)]">
+          <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+            {selectedLanguage === 'he' ? 'איך מקבלים תשלום' : selectedLanguage === 'es' ? 'Cómo cobras' : 'How you get paid'}
+          </h3>
+          <button onClick={() => setPlanEditor(null)} className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 flex flex-col gap-2">
+          {options.map(option => (
+            <button
+              key={option.key}
+              onClick={option.apply}
+              className={cn(
+                'w-full p-3 rounded-xl border transition-colors',
+                isRTL ? 'text-right' : 'text-left',
+                option.selected
+                  ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
+                  : 'border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)]'
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{option.title}</span>
+                {option.selected && <Check className="w-4 h-4 text-[var(--v2-primary)] flex-shrink-0" />}
+              </span>
+              <span className="block text-[12px] text-[var(--v2-text-muted)] mt-1 leading-relaxed">
+                {option.body}
+              </span>
+            </button>
+          ))}
+
+          {/*
+              Said once, here, because this is the screen where an owner is
+              most likely to want a mixed catalogue and cannot have one yet.
+              Better than letting them hunt for it.
+          */}
+          <p className="text-[11px] text-[var(--v2-text-muted)] m-0 mt-1 leading-relaxed">
+            {selectedLanguage === 'he'
+              ? 'אפשר לשנות את זה לכל שירות בנפרד אחר כך, במסך השירותים.'
+              : selectedLanguage === 'es'
+                ? 'Puedes cambiarlo servicio por servicio después, en la pantalla de servicios.'
+                : 'You can set this per service later, in the services screen.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+})()}
+
+{/* Presence is the other business-wide question on this screen. */}
 {planEditor === 'presence' && (() => {
   const options: Array<{ key: string; title: string; body: string; selected: boolean; apply: () => void }> = [
       {
@@ -3029,6 +3632,8 @@ export default function OnboardingChatPage() {
   );
 })()}
 
+      </div>
+      {/* closes the scroller opened beside "Main Content" */}
       </div>
     </div>
   );
