@@ -23,8 +23,13 @@ export const PRICE_APPLY_URL = '/api/admin/model-pricing/apply';
 export const PRICE_DISMISS_URL = '/api/admin/model-pricing/dismiss';
 export const MARGIN_REVIEW_URL_PREFIX = '/api/admin/model-pricing/apply-batches/';
 
-/** Where the margin prompt sends the admin (MP-FR-14): the Costs and credits tab. */
-export const CREDIT_PRICING_VIEW_URL = '/admin/business-os-llm?tab=costs';
+/**
+ * Where the margin prompt sends the admin (MP-FR-14): the cost report, now the
+ * AI cost page's Summary & checks tab (Money MK-3a, QA L-1). Pointed there
+ * directly: no in-app link may rely on the old `tab=costs` redirect (SA-6).
+ * The link carries no window or business, so there are no params to map.
+ */
+export const CREDIT_PRICING_VIEW_URL = '/admin/ai-cost?tab=checks';
 
 /** UF-3: "Provider price change — source <url> (checked <date>)". Editable; never sent unless the admin confirms. */
 export function prefilledReason(sourceUrl: string, checkedOn: string): string {

@@ -655,7 +655,9 @@ describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () 
   it('G-5: walks the costs folder, both readers and the new bar and strip included', () => {
     for (const fetcher of COSTS_FETCHERS) expect(costsFiles).toContain(fetcher);
     expect(costsFiles).toContain(`${COSTS_DIR}CostsFilterBar.tsx`);
-    expect(costsFiles).toContain(`${COSTS_DIR}CostsKpis.tsx`);
+    // Money MK-3a (ruled): the strip is `AiCostKpis` (A-K1 to A-K5); `CostsKpis` is deleted.
+    expect(costsFiles).toContain(`${COSTS_DIR}AiCostKpis.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}RecordedSection.tsx`);
     expect(costsFiles).toContain(`${COSTS_DIR}CostsSections.tsx`);
   });
 

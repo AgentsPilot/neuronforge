@@ -9,7 +9,9 @@
  *     7d, 30d and This month (both resolve a preset through the same
  *     `resolveAdminWindow` Finance uses), and `range=custom&from&to` for custom.
  *     Charge checks (`/admin/finance/charges`) took over the Business OS AI
- *     "Costs & credits" tab in Money M-5, so its links carry no `tab`.
+ *     "Costs & credits" tab in Money M-5; since Money MK-3a it is the AI cost
+ *     page's Summary & checks tab, `/admin/ai-cost?tab=checks` (SA-6: no
+ *     internal link relies on the redirect from the old address).
  *   - AI calls & usage: `range=today` / `range=this_month` are equal presets
  *     there; its 7d and 30d are ROLLING (`period=N`), not Finance's whole UTC
  *     days, so 7d, 30d and custom go out as `range=custom` with the payload's
@@ -90,8 +92,14 @@ function analyticsWindow(params: URLSearchParams, window: FinanceLinkWindow): vo
   }
 }
 
-/** The page that runs the cost report and the Leak check (Money M-5, R-3, R-4). */
-const CHARGE_CHECKS_PATH = '/admin/finance/charges';
+/**
+ * The page that runs the cost report and the Leak check (Money M-5, R-3, R-4):
+ * since Money MK-3a the AI cost page, on its Summary & checks tab.
+ */
+const AI_COST_PATH = '/admin/ai-cost';
+const CHECKS_TAB = 'checks';
+/** The AI cost page's anchor for the recorded block and the Leak check (MK-3a, A-K3's target). */
+const LEAK_ANCHOR = '#costs-leak';
 
 export function activityHref(accountId: string, window: FinanceLinkWindow): string {
   const params = new URLSearchParams();
@@ -101,12 +109,26 @@ export function activityHref(accountId: string, window: FinanceLinkWindow): stri
   return `/admin/business-os-llm?${params.toString()}`;
 }
 
-/** Charge checks for this business on the same window, in that page's own keys; no `tab` (M-5 R-3). */
+/** AI cost, Summary & checks, for this business on the same window, in that page's own keys (MK-3a). */
 export function costsHref(accountId: string, window: FinanceLinkWindow): string {
   const params = new URLSearchParams();
+  params.set('tab', CHECKS_TAB);
   wholeDayWindow(params, window);
   params.set('account', accountId);
-  return `${CHARGE_CHECKS_PATH}?${params.toString()}`;
+  return `${AI_COST_PATH}?${params.toString()}`;
+}
+
+/**
+ * Money MK-3a (C-7): Section 3's "Recorded above charged" line → the AI cost
+ * page's recorded block and Leak check, on the same window, and the business
+ * when one is picked. Same keys as `costsHref`.
+ */
+export function aiCostRecordedHref(accountId: string | null, window: FinanceLinkWindow): string {
+  const params = new URLSearchParams();
+  params.set('tab', CHECKS_TAB);
+  wholeDayWindow(params, window);
+  if (accountId !== null) params.set('account', accountId);
+  return `${AI_COST_PATH}?${params.toString()}${LEAK_ANCHOR}`;
 }
 
 /** An AI calls & usage address (F-5: typed, so the K-1 tile can take it as a cross-page link). */
@@ -151,17 +173,18 @@ export function k1AnalyticsHref(accountId: string | null): AnalyticsHref {
 }
 
 /**
- * Money M-4 (M4-FR-1, SA-W99): Section 3's "Leak check" link, to the page that
- * runs the Leak check: Charge checks since Money M-5 (R-4; before, the Business
- * OS AI "Costs & credits" tab). No window travels (the Leak check takes at most
- * 7 days); the business does, in that page's own `account` key, when one is
- * picked. Literal keys, so this file still imports only the wire types.
+ * Money M-4 (M4-FR-1, SA-W99): a "Leak check" link, to the page that runs the
+ * Leak check: Charge checks since Money M-5 (R-4), the AI cost page's Summary
+ * & checks tab since Money MK-3a, at the Leak check's anchor. No window travels
+ * (the Leak check takes at most 7 days); the business does, in that page's own
+ * `account` key, when one is picked. Literal keys, so this file still imports
+ * only the wire types.
  */
 export function leakCheckHref(accountId: string | null): string {
-  if (accountId === null) return CHARGE_CHECKS_PATH;
   const params = new URLSearchParams();
-  params.set('account', accountId);
-  return `${CHARGE_CHECKS_PATH}?${params.toString()}`;
+  params.set('tab', CHECKS_TAB);
+  if (accountId !== null) params.set('account', accountId);
+  return `${AI_COST_PATH}?${params.toString()}${LEAK_ANCHOR}`;
 }
 
 /**

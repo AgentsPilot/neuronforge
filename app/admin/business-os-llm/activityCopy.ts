@@ -98,7 +98,7 @@ export const ACTIVITY_ERROR_FALLBACK = 'Could not read the AI activity';
 /** SA-B1-5: the picker can offer a platform account; the route refuses it with 409. */
 export const PLATFORM_ACCOUNT_ERROR =
   'That is a platform account, not a business, so it has no rows in this list. ' +
-  'Platform AI calls are counted by the Leak check on Charge checks.';
+  'Platform AI calls are counted by the Leak check on AI cost.';
 
 export const NAMES_FAILED = 'Business names could not be read; accounts are shown by id.';
 export const ADJUSTMENTS_FAILED =

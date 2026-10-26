@@ -7,6 +7,10 @@
  *
  * Money M-5: the report moved to its own page, Charge checks; the last block
  * covers both pages. One case was deleted there (named in the block).
+ *
+ * Money MK-3a (ruled): Charge checks became the AI cost page; the page case
+ * mounts it, under its h1 "AI cost" with the legend; the fixture gains
+ * `recorded`.
  */
 
 import '@testing-library/jest-dom';
@@ -15,10 +19,10 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { CostsTab } from '../components/costs/CostsTab';
 import BusinessOsLlmSettingsPage from '../page';
-import ChargeChecksPage from '@/app/admin/finance/charges/page';
+import AiCostPage from '@/app/admin/ai-cost/page';
+import { AI_COST_LEGEND, AI_COST_TITLE } from '@/app/admin/ai-cost/aiCostCopy';
 import { ACTIVITY_TAB_LABEL } from '../activityCopy';
 import {
-  CHARGE_CHECKS_TITLE,
   COSTS_EMPTY,
   COSTS_INCOMPLETE,
   NET_INCLUDING_CORRECTIONS,
@@ -105,6 +109,8 @@ function report(over: Partial<CostReportPayload> = {}): CostReportPayload {
       deleted: { costUsd: 0.0005, credits: 0.5, rows: 1 },
       unreadableAmounts: 0,
     },
+    // MK-3a: the window's recorded AI cost.
+    recorded: { status: 'ok', recordedUsd: 0.0092, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.0027 }, chargedAboveUsd: null },
     ...over,
   };
 }
@@ -351,7 +357,7 @@ describe('controls', () => {
   });
 });
 
-describe('the pages: Business OS AI has two tabs, Settings first; the report is on Charge checks (Money M-5)', () => {
+describe('the pages: Business OS AI has two tabs, Settings first; the report is on the AI cost page (Money M-5, MK-3a)', () => {
   function stubBoth() {
     return stubReport((url) =>
       url.includes('/credits/report')
@@ -375,10 +381,14 @@ describe('the pages: Business OS AI has two tabs, Settings first; the report is 
     expect(document.getElementById('bos-llm-panel-costs')).toBeNull();
   });
 
-  it('Charge checks mounts the report under its own h1, with no tabs', async () => {
+  // MK-3a (ruled): the page is AI cost, with its legend; its Calls tab (and the tab list) come in MK-3b.
+  it('the AI cost page mounts the report under its own h1 and the legend, with no tabs yet', async () => {
     const fetchMock = stubBoth();
-    render(<ChargeChecksPage />);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(CHARGE_CHECKS_TITLE);
+    render(<AiCostPage />);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(AI_COST_TITLE);
+    const legend = screen.getByTestId('ai-cost-legend');
+    expect(legend).toHaveTextContent(`${AI_COST_LEGEND.charged.term} ${AI_COST_LEGEND.charged.text}`);
+    expect(legend).toHaveTextContent(`${AI_COST_LEGEND.recorded.term} ${AI_COST_LEGEND.recorded.text}`);
     expect(await screen.findByTestId('costs-periods')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/credits/report'))).toBe(true);
     expect(screen.queryAllByRole('tab')).toHaveLength(0);

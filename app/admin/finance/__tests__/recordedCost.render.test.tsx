@@ -1,34 +1,33 @@
 /**
  * @jest-environment jsdom
  *
- * Money M-4 (OV-5, T9-B): Section 3's recorded block and the one renderer of
- * "Recorded above charged". Every state in words (M4-FR-3), the Leak check
- * link (SA-W99), the block outside Section 3's figures guard (SA-W98), the
- * notice on a failed read (AC-161), the deleted-accounts sentence with all
- * businesses only (R4-4), the stated distortions (R4-10), and no element
- * showing the sum of the two measures (AC-154, R4-11).
+ * Money M-4 (OV-5, T9-B): Section 3's recorded AI cost and the one renderer of
+ * "Recorded above charged".
+ *
+ * Money MK-3a (C-7, ruled update): the full recorded block (the recorded
+ * figure, its source, the notices, the deleted-accounts sentence and the
+ * stated distortions) moved to the AI cost page; its cases moved with it, to
+ * `app/admin/business-os-llm/__tests__/recordedSection.render.test.tsx`.
+ * Finance keeps ONE line, "Recorded above charged", which links to the AI cost
+ * page's recorded block and Leak check on the same window. What this file
+ * still proves on Finance: the line's value in every state (M4-FR-3), its link,
+ * that it sits outside Section 3's figures guard (SA-W98), that it is absent
+ * on the Accounts tab, that it is never the sum of the two measures (AC-154),
+ * and that the moved block's parts are gone from Finance.
  */
 
 import '@testing-library/jest-dom';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 
 import type { FinanceAiCostSection, FinanceRecordedAiCost, FinanceWindowInfo } from '@/lib/business-os/finance/financeTypes';
 import { AiCostSection } from '../components/AiCostSection';
-import { RecordedAboveValue, RecordedCostLines } from '../components/RecordedCostLines';
+import { RecordedAboveValue } from '../components/RecordedCostLines';
 import {
-  ABOVE_LABEL,
-  ABOVE_LEAK_LINK,
   ABOVE_NONE,
   ABOVE_NOT_AVAILABLE,
-  ABOVE_SOURCE,
+  ACCOUNT_RECORDED_ABOVE,
   aboveChargedAboveLine,
-  RECORDED_CAPTION,
-  RECORDED_DELETED_NOTE,
-  RECORDED_DISTORTIONS,
-  RECORDED_LABEL,
-  RECORDED_NOTICE,
-  RECORDED_NOTICE_PLAIN,
-  RECORDED_SOURCE,
+  RECORDED_ON_AI_COST_LINK,
   RECORDED_UNKNOWN,
 } from '../financeCopy';
 
@@ -54,49 +53,45 @@ function aiCost(extra: Partial<FinanceAiCostSection> = {}): FinanceAiCostSection
   };
 }
 
+const FAILED: FinanceRecordedAiCost = { status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null };
+
 const renderSection = (section: FinanceAiCostSection, accountId: string | null = null) =>
   render(<AiCostSection aiCost={section} accountId={accountId} window={WINDOW} windowLabel="This month" onRetry={() => undefined} />);
 
 afterEach(cleanup);
 
-describe('the block (M4-FR-1)', () => {
-  it('both lines beside the charged total, with their labels, sub-labels and caption; no element is their sum (AC-154)', () => {
+describe('MK-3a (C-7): Section 3 keeps one line, "Recorded above charged"', () => {
+  it('the line under the charged total, with its label and value; no element is the sum of the two (AC-154)', () => {
     renderSection(aiCost());
-    const block = screen.getByTestId('ai-recorded');
-    expect(within(block).getByText(RECORDED_CAPTION)).toBeInTheDocument();
-    expect(within(block).getByText(RECORDED_LABEL)).toBeInTheDocument();
-    expect(within(block).getByText(RECORDED_SOURCE)).toBeInTheDocument();
-    expect(within(block).getByText(ABOVE_LABEL)).toBeInTheDocument();
-    expect(block).toHaveTextContent(ABOVE_SOURCE);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('$1.94');
+    const line = screen.getByTestId('ai-recorded');
+    expect(line).toHaveTextContent(ACCOUNT_RECORDED_ABOVE);
     expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent('$0.33');
     expect(screen.getByTestId('ai-total')).toHaveTextContent('$1.61');
-    // Directly under the charged total, before the breakdown tables.
-    expect(screen.getByTestId('ai-total').compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId('ai-total').compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(document.body.textContent).not.toContain('3.55');
   });
 
-  it('SA-W99 / M-5 R-4: the Leak check link opens Charge checks; with a business picked it carries the account; never a window', () => {
-    renderSection(aiCost());
-    const link = screen.getByTestId('ai-recorded-leak-link');
-    expect(link).toHaveTextContent(ABOVE_LEAK_LINK);
-    expect(link).toHaveAttribute('href', '/admin/finance/charges');
+  it('the moved block is gone from Finance: no recorded figure, notice, deleted sentence or distortions', () => {
+    renderSection(aiCost({ recorded: FAILED }));
+    for (const id of ['ai-recorded-total', 'ai-recorded-notice', 'ai-recorded-deleted-note', 'ai-recorded-distortions', 'ai-recorded-leak-link']) {
+      expect({ id, present: screen.queryByTestId(id) !== null }).toEqual({ id, present: false });
+    }
+    // The recorded figure itself ($1.94 in the default fixture) is shown on the AI cost page, not here.
     cleanup();
-    renderSection(aiCost(), A);
-    expect(screen.getByTestId('ai-recorded-leak-link')).toHaveAttribute('href', `/admin/finance/charges?account=${A}`);
-    // The existing AI calls & usage link stays and keeps the window.
-    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toContain('range=this_month');
+    renderSection(aiCost());
+    expect(document.body.textContent).not.toContain('1.94');
   });
 
-  it('R4-4: the deleted-accounts sentence with all businesses only; R4-10: the stated distortions, one each', () => {
+  it('the link opens the AI cost page at the recorded block and Leak check, on the same window, with the business when picked', () => {
     renderSection(aiCost());
-    expect(screen.getByTestId('ai-recorded-deleted-note')).toHaveTextContent(RECORDED_DELETED_NOTE);
-    const items = within(screen.getByTestId('ai-recorded-distortions')).getAllByRole('listitem');
-    expect(items.map((li) => li.textContent)).toEqual([...RECORDED_DISTORTIONS]);
-    expect(RECORDED_DISTORTIONS[RECORDED_DISTORTIONS.length - 1]).toBe("Recorded above charged is not 'not charged' call by call; the Leak check matches calls.");
+    const link = screen.getByTestId('ai-recorded-link');
+    expect(link).toHaveTextContent(RECORDED_ON_AI_COST_LINK);
+    expect(link).toHaveAttribute('href', '/admin/ai-cost?tab=checks&range=this_month#costs-leak');
     cleanup();
     renderSection(aiCost(), A);
-    expect(screen.queryByTestId('ai-recorded-deleted-note')).toBeNull();
+    expect(screen.getByTestId('ai-recorded-link')).toHaveAttribute('href', `/admin/ai-cost?tab=checks&range=this_month&account=${A}#costs-leak`);
+    // The existing AI calls & usage link stays and keeps the window.
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toContain('range=this_month');
   });
 
   it('absent when the payload has no recorded key (the Accounts tab), in every Section 3 state', () => {
@@ -117,44 +112,11 @@ describe('the block (M4-FR-1)', () => {
   });
 });
 
-describe('the states (M4-FR-3)', () => {
-  it('AC-160 / AC-168: "At least" on the recorded figure, Unknown on the difference', () => {
-    render(<RecordedCostLines recorded={recorded({ status: 'partial', recordedExact: false, aboveCharged: { state: 'unknown', usd: null } })} accountId={null} chargedShown />);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('At least $1.94');
-    expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(RECORDED_UNKNOWN);
-    expect(screen.queryByTestId('ai-recorded-notice')).toBeNull();
-  });
-
-  it('AC-161: a failed read → both Unknown with the notice; never 0', () => {
-    render(<RecordedCostLines recorded={{ status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null }} accountId={null} chargedShown />);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent(RECORDED_UNKNOWN);
-    expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(RECORDED_UNKNOWN);
-    expect(screen.getByTestId('ai-recorded-notice')).toHaveTextContent(RECORDED_NOTICE);
-    for (const id of ['ai-recorded-total', 'ai-recorded-above']) expect(screen.getByTestId(id).textContent).not.toMatch(/\d/);
-  });
-});
-
-describe('fix round 1: the failure notice names "the charged figures above" only when they rendered', () => {
-  const FAILED: FinanceRecordedAiCost = { status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null };
-
-  it('the charged figures rendered → the notice says they are unaffected', () => {
+describe('the value in every state (M4-FR-3)', () => {
+  it('AC-168: Unknown on the difference; a failed read never shows a 0', () => {
     renderSection(aiCost({ recorded: FAILED }));
-    expect(screen.getByTestId('ai-total')).toBeInTheDocument();
-    expect(screen.getByTestId('ai-recorded-notice').textContent).toBe(RECORDED_NOTICE);
-  });
-
-  it('the charged read also failed → the plain notice, with no reference to figures above', () => {
-    renderSection(aiCost({ status: 'unknown', figures: null, recorded: FAILED }));
-    expect(screen.queryByTestId('ai-total')).toBeNull();
-    const notice = screen.getByTestId('ai-recorded-notice');
-    expect(notice.textContent).toBe(RECORDED_NOTICE_PLAIN);
-    expect(notice.textContent).not.toMatch(/above|unaffected/);
-  });
-
-  it('a window entirely before the cut-over (no charged figure shown) → the plain notice too', () => {
-    renderSection(aiCost({ coverage: 'entirely_before_cutover', recorded: FAILED }));
-    expect(screen.queryByTestId('ai-total')).toBeNull();
-    expect(screen.getByTestId('ai-recorded-notice').textContent).toBe(RECORDED_NOTICE_PLAIN);
+    expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(RECORDED_UNKNOWN);
+    expect(screen.getByTestId('ai-recorded-above').textContent).not.toMatch(/\d/);
   });
 
   it('R4-6: "None", and the charged-above line only when charged is strictly above', () => {
@@ -173,20 +135,18 @@ describe('fix round 1: the failure notice names "the charged figures above" only
   });
 });
 
-describe('SA-W98: the block is outside Section 3’s figures guard', () => {
-  it('a window entirely before the cut-over: no charged figure, but the recorded block shows with "Not available"', () => {
+describe('SA-W98: the line is outside Section 3’s figures guard', () => {
+  it('a window entirely before the cut-over: no charged figure, but the line shows with "Not available"', () => {
     renderSection(aiCost({ coverage: 'entirely_before_cutover', recorded: recorded({ aboveCharged: { state: 'not_available', usd: null } }) }));
     expect(screen.queryByTestId('ai-total')).toBeNull();
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('$1.94');
     expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(ABOVE_NOT_AVAILABLE);
   });
 
-  it('Section 3 could not load (figures null): the recorded block still shows, the difference Unknown', () => {
+  it('Section 3 could not load (figures null): the line still shows, the difference Unknown', () => {
     renderSection(aiCost({ status: 'unknown', figures: null, recorded: recorded({ status: 'partial', aboveCharged: { state: 'unknown', usd: null } }) }));
     expect(screen.queryByTestId('ai-total')).toBeNull();
     expect(screen.getByTestId('section-ai-cost')).toHaveTextContent('Could not load this section');
     expect(screen.getAllByTestId('ai-recorded')).toHaveLength(1);
-    expect(screen.getByTestId('ai-recorded-total')).toHaveTextContent('$1.94');
     expect(screen.getByTestId('ai-recorded-above')).toHaveTextContent(RECORDED_UNKNOWN);
   });
 });

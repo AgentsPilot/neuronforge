@@ -50,10 +50,11 @@ function datesOfParsed(value: ReturnType<typeof ACTIVITY_FILTER_SPEC.window.pars
 }
 
 // Money M-5 (R-3): Costs & credits became its own page, Charge checks, so
-// each link names its target path, and only Activity still carries a `tab`.
+// each link names its target path. Money MK-3a (ruled): Charge checks is the
+// AI cost page's Summary & checks tab, so that link carries `tab=checks` too.
 describe.each([
   ['Activity', activityHref, ACTIVITY_FILTER_SPEC, '/admin/business-os-llm?', 'activity'],
-  ['Charge checks', costsHref, COSTS_FILTER_SPEC, '/admin/finance/charges?', null],
+  ['AI cost, Summary & checks', costsHref, COSTS_FILTER_SPEC, '/admin/ai-cost?', 'checks'],
 ] as const)('%s link', (_name, hrefOf, spec, prefix, tab) => {
   it.each(PRESETS)('window %s: the target parses the same dates and the account; nothing else is sent', (preset) => {
     const window = windowFor(preset);
@@ -163,10 +164,11 @@ describe('slice 6a: accountViewHref, an Accounts row → the one-account view on
 // Money M-4 (SA-W99, T8-B): a separate import, so the lines above stay unedited.
 import { leakCheckHref } from '../financeLinks';
 
-describe('Money M-4: leakCheckHref, the page that runs the Leak check (SA-W99; Charge checks since M-5, R-4)', () => {
-  it('no business picked: Charge checks only; no window and no account', () => {
+// Money MK-3a (ruled): the Leak check is on the AI cost page's Summary & checks tab, at its anchor.
+describe('Money M-4: leakCheckHref, the page that runs the Leak check (SA-W99; the AI cost page since MK-3a)', () => {
+  it('no business picked: the Summary & checks tab at the Leak check; no window and no account', () => {
     const href = leakCheckHref(null);
-    expect(href).toBe('/admin/finance/charges');
+    expect(href).toBe('/admin/ai-cost?tab=checks#costs-leak');
     const get = getter(paramsOf(href));
     expect(COSTS_FILTER_SPEC.account.parse(get)).toBeUndefined();
     expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
@@ -174,12 +176,12 @@ describe('Money M-4: leakCheckHref, the page that runs the Leak check (SA-W99; C
 
   it('a business picked: the page’s own `account` key, which the Costs spec parses back; still no window key', () => {
     const href = leakCheckHref(A);
-    expect(href).toBe(`/admin/finance/charges?account=${A}`);
+    expect(href).toBe(`/admin/ai-cost?tab=checks&account=${A}#costs-leak`);
     const params = paramsOf(href);
     const get = getter(params);
     expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
     expect(COSTS_FILTER_SPEC.window.parse(get)).toBeUndefined();
-    expect([...params.keys()]).toEqual(['account']);
+    expect([...params.keys()]).toEqual(['tab', 'account']);
     for (const value of params.values()) expect(value).toMatch(/^[a-z0-9_-]+$/);
   });
 });
@@ -225,13 +227,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 describe('Money M-5: financeLinks.ts sends nothing to the old Costs & credits tab (AC-193)', () => {
-  it('no link built here names tab=costs, and both Costs links point at Charge checks', () => {
+  // Money MK-3a (ruled): the Costs links point at the AI cost page's Summary & checks tab, never at
+  // the old Charge checks address (which only redirects now, SA-6).
+  it('no link built here names tab=costs or the old Charge checks address; the Costs links name tab=checks', () => {
     const source = fs.readFileSync(path.join(process.cwd(), 'app/admin/finance/financeLinks.ts'), 'utf8');
     expect(source).not.toMatch(/'costs'/);
     expect(source).not.toContain('tab=costs');
-    for (const preset of PRESETS) expect(paramsOf(costsHref(A, windowFor(preset))).has('tab')).toBe(false);
-    expect(leakCheckHref(null)).not.toContain('tab=');
-    expect(leakCheckHref(A)).not.toContain('tab=');
+    expect(source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')).not.toContain('/admin/finance/charges');
+    for (const preset of PRESETS) expect(paramsOf(costsHref(A, windowFor(preset))).get('tab')).toBe('checks');
+    expect(paramsOf(leakCheckHref(null)).get('tab')).toBe('checks');
+    expect(paramsOf(leakCheckHref(A)).get('tab')).toBe('checks');
   });
 });
 
@@ -275,10 +280,42 @@ describe('DF-6: since-start links out', () => {
   it('Businesses, K-1 and the Leak check links are unchanged', () => {
     expect(businessesHref(A)).toBe(`/admin/users?status=all&account=${A}`);
     expect(k1Df6(A)).toBe(`/admin/analytics?range=this_month&account=${A}`);
-    expect(leakDf6(A)).toBe(`/admin/finance/charges?account=${A}`);
+    // Money MK-3a (ruled): the Leak check link moved to the AI cost page; still no window.
+    expect(leakDf6(A)).toBe(`/admin/ai-cost?tab=checks&account=${A}#costs-leak`);
   });
 
   it('SA-W-DF6-7 (recorded, unreachable): accountViewHref would write a request the finance route accepts', () => {
     expect(accountViewHrefDf6(A, FITS)).toBe(`/admin/finance?preset=since_start&accountId=${A}`);
+  });
+});
+
+// ── Money MK-3a (C-7): Section 3's one line → the AI cost page's recorded block and Leak check ──
+import { aiCostRecordedHref } from '../financeLinks';
+
+describe('Money MK-3a: aiCostRecordedHref (C-7)', () => {
+  it.each(PRESETS)('window %s with a business: Summary & checks, the same dates, the account, the Leak check anchor', (preset) => {
+    const window = windowFor(preset);
+    const href = aiCostRecordedHref(A, window);
+    expect(href.startsWith('/admin/ai-cost?tab=checks&')).toBe(true);
+    expect(href.endsWith('#costs-leak')).toBe(true);
+    const params = paramsOf(href);
+    const get = getter(params);
+    expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
+    expect(datesOfParsed(COSTS_FILTER_SPEC.window.parse(get))).toEqual({ from: window.from, to: window.to });
+    // The same keys as the account summary's Costs link.
+    expect(href.split('#')[0]).toBe(costsHref(A, window));
+  });
+
+  it('no business: the window only', () => {
+    const window = windowFor('this_month');
+    const params = paramsOf(aiCostRecordedHref(null, window));
+    expect(params.has('account')).toBe(false);
+    expect([...params.keys()]).toEqual(['tab', 'range']);
+  });
+
+  it('a since-start window too long for the target: no window, so the page opens on its default', () => {
+    const params = paramsOf(aiCostRecordedHref(A, { preset: 'since_start', from: '2026-09-29', to: '2026-12-30' }));
+    for (const key of ['range', 'from', 'to']) expect(params.get(key)).toBeNull();
+    expect(params.get('account')).toBe(A);
   });
 });

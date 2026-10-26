@@ -15,6 +15,10 @@
  * `alsoWhenUnknown` instead. It is absent when the payload has no
  * `aiCost.recorded` (the Accounts tab).
  *
+ * Money MK-3a (C-7): the block moved to the AI cost page; what stays here is
+ * one line, "Recorded above charged", linking there (`RecordedAboveLine`), in
+ * the same place and under the same rules.
+ *
  * Money M-1 (CR G-8, SA-W56): that link carries the window, and the business
  * when one is picked (`section3AnalyticsHref`).
  */
@@ -61,7 +65,7 @@ import { section3AnalyticsHref } from '../financeLinks';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
 import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
-import { RecordedCostLines } from './RecordedCostLines';
+import { RecordedAboveLine } from './RecordedCostLines';
 
 function nameOf(account: FinanceTopAccount): string {
   switch (account.nameStatus) {
@@ -95,10 +99,9 @@ export function AiCostSection({
   const opener = useBusinessRowOpen();
   const usd = (v: number) => atLeast(formatUsd(v), f?.exact ?? true);
   const entirelyBefore = aiCost.coverage === 'entirely_before_cutover';
-  // Fix round 1: the failure notice names "the charged figures above" only when they rendered.
-  const chargedShown = aiCost.status !== 'unknown' && f !== null && !entirelyBefore;
+  // MK-3a (C-7): one line, linking to the AI cost page's recorded block and Leak check.
   const recordedBlock = aiCost.recorded ? (
-    <RecordedCostLines recorded={aiCost.recorded} accountId={accountId} chargedShown={chargedShown} />
+    <RecordedAboveLine recorded={aiCost.recorded} accountId={accountId} window={window} />
   ) : null;
 
   return (

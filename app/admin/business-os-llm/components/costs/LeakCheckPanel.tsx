@@ -26,12 +26,23 @@
  * The account table is on the shared table classes (F-71, F-72) and its
  * statuses are `StatusChip`s (Q-5); the four verdict boxes stay as they are:
  * they are results of the run, not page states (Q-7).
+ *
+ * Money MK-3 (§4.2, §5, SA-Q-MK3-5): the block KPI "Businesses with uncharged
+ * calls" heads the panel, on the shared `BlockKpi` with its leading pill. It
+ * is counted from this run's own result (no read): findings with at least one
+ * uncharged call; platform accounts are reported apart and never counted.
+ * "At least n" when the run did not see every business (an incomplete or
+ * unchecked account, accounts left, the deadline, a failed listing) and found
+ * at least one; Unknown with the chip "Not every business was checked" when
+ * such a run found none (QA B-1); "Could not check" after a failed run (QA
+ * B-2); "Not run yet" before a run.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Clock, Play, RefreshCw } from 'lucide-react';
 
 import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
+import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
 import { AdminError, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import {
@@ -63,6 +74,13 @@ import {
   LEAK_FOUND,
   LEAK_INTRO,
   LEAK_KNOWN_PATHS_TITLE,
+  LEAK_KPI_AT_LEAST,
+  LEAK_KPI_COULD_NOT_CHECK,
+  LEAK_KPI_DEFINITION,
+  LEAK_KPI_LABEL,
+  LEAK_KPI_NOT_ALL_CHECKED,
+  LEAK_KPI_NOT_RUN,
+  LEAK_KPI_UNKNOWN,
   LEAK_LISTING_FAILED,
   LEAK_NOT_RUN,
   LEAK_PARTIAL,
@@ -81,6 +99,31 @@ import {
 import type { LeakAccountFindingWire, LeakCheckPayload, LeakGroupExampleWire } from '../../leakTypes';
 
 const LEAK_URL = '/api/admin/business-os/credits/leak-check';
+
+/**
+ * MK-3: the block KPI's value and chip. A count of findings with an uncharged
+ * call; "At least n" whenever the run may have missed a business and found at
+ * least one. A run that may have missed businesses and found none says
+ * Unknown with a chip, never "At least 0", which reads as "none" (QA B-1). A
+ * failed run says "Could not check", not "Not run yet" (QA B-2). Exported for
+ * its test.
+ */
+export function unchargedBusinessesKpi(
+  result: LeakCheckPayload | null,
+  failed: boolean
+): { value: string; chip: { tone: StatusTone; label: string } | null } {
+  if (!result) return { value: failed ? LEAK_KPI_COULD_NOT_CHECK : LEAK_KPI_NOT_RUN, chip: null };
+  const found = result.accounts.filter((finding) => finding.counts.uncharged > 0).length;
+  const complete =
+    result.accountsIncomplete === 0 &&
+    result.accountsNotChecked === 0 &&
+    result.accountsRemaining === 0 &&
+    !result.deadlineReached &&
+    !result.listingFailed;
+  if (complete) return { value: formatCount(found), chip: null };
+  if (found === 0) return { value: LEAK_KPI_UNKNOWN, chip: { tone: 'warn', label: LEAK_KPI_NOT_ALL_CHECKED } };
+  return { value: LEAK_KPI_AT_LEAST(formatCount(found)), chip: null };
+}
 
 /** Kept words: the panel's fallback when the route gives no reason of its own. */
 const LEAK_ERROR_FALLBACK = 'Could not run the leak check';
@@ -392,12 +435,22 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
     []
   );
 
+  const kpi = unchargedBusinessesKpi(result, error !== null);
+
   return (
     <section className="space-y-3 rounded-xl border border-slate-700 bg-slate-800/30 p-4" data-testid="leak-panel">
       <div>
         <h3 className="text-sm font-semibold text-slate-100">{LEAK_TITLE}</h3>
         <p className="mt-1 max-w-3xl text-xs text-slate-400">{LEAK_INTRO}</p>
       </div>
+
+      <BlockKpi
+        label={LEAK_KPI_LABEL}
+        value={kpi.value}
+        chip={kpi.chip}
+        indicator={{ kind: 'leading', definition: LEAK_KPI_DEFINITION }}
+        testId="leak-kpi-uncharged"
+      />
 
       <div className="flex flex-wrap items-end gap-3">
         <label>
