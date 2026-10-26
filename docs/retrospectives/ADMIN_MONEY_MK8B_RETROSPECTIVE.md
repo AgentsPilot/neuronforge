@@ -38,6 +38,6 @@ Both drawers are read-only and read only when opened. Each opening makes one req
 - **Shared row-opening helpers now live in the layout folder.** New drawers should use them.
 - **Page 2 is complete once this merges.**
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk8b-ai-cost-drawers — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk8b-ai-cost-drawers — commit `f0bea2b0`, PR #520 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

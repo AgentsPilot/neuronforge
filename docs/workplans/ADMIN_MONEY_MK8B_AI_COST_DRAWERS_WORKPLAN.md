@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §12 MK-8 row (the Page 2 half); §4.2 drawer column (AI cost → Summary & checks); §8 ("drawers have no buttons except 'Run leak check' (a read)"); Q-7 (accepted); SA-RR-MK SA-5 ("Reuse `useDrawerResource`… no new shared export") and the pins table (MK-8: "AC-145 only if a payload key is added"); FIN NG-1, BD-23; MK-10 user decision 2026-10-25 (rows open like the Businesses rows). Predecessor: [ADMIN_MONEY_MK8_FINANCE_DRAWERS_WORKPLAN.md](/docs/workplans/ADMIN_MONEY_MK8_FINANCE_DRAWERS_WORKPLAN.md) ("The AI cost business drawer and the billing-period drawer are Page 2")
 **Branch:** `feature/admin-money-mk8b-ai-cost-drawers` (from `origin/main` `35c97b4f`, MK-3a #517 merged; worktree `neuronforge-finance-mk8b`). **MK-3b (`feature/admin-money-mk3b-calls-tab`, local commit `5ccb0bd3`) must merge first; origin/main is merged into this branch before any code is written (Step 0).**
 **Date:** 2026-10-26
-**Status:** SA Approved with conditions (SA-WP-MK8B, 2026-10-26; C-1 to C-6 folded in below; all seven SA-Q defaults approved). **Code Complete (Dev, 2026-10-26), uncommitted**, built on MK-3b's branch (`5ccb0bd3` + `095699ef`, fast-forwarded on the coordinator's instruction before #518 merged); awaiting SA code review. Not pushed: origin/main is merged in after #518 merges
+**Status:** SA Approved with conditions (SA-WP-MK8B, 2026-10-26; C-1 to C-6 folded in below; all seven SA-Q defaults approved). **Code Complete (Dev, 2026-10-26), uncommitted**, built on MK-3b's branch (`5ccb0bd3` + `095699ef`, fast-forwarded on the coordinator's instruction before #518 merged); SA-CR-MK8B Code Approved, QA passed (B-1 fixed), TL approved; **committed `f0bea2b0` on main `f683d49f` (#518 merged), PR [#520](https://github.com/AgentsPilot/neuronforge/pull/520) opened 2026-10-26, auto-merge on**
 **Path:** Full cycle. No new route, no new repository method, no payload key and no migration. It is full cycle because it moves two tiny row-open pieces into the shared layout folder (SA-Q-MK8B-1, a shared export under LAY R-7) and because it changes money-page tables.
 
 ## Overview
@@ -793,7 +793,11 @@ Scope as set out above: the fix, its tests, the re-runs and the pins.
 
 ## Commit Info
 
-_RM populates this section._
+- **Branch:** `feature/admin-money-mk8b-ai-cost-drawers` (on main `f683d49f`, the #518 merge, which had not moved at commit time; no merge needed)
+- **Commit:** `f0bea2b0` feat(admin): AI cost drawers, billing period and business (MK-8b)
+- **Deletions:** none. The diff has no line-ending churn (`--numstat` equals `--numstat --ignore-cr-at-eol`)
+- **Pins:** all byte-identical: A `a130d560`, C `e57f2675` / `64a565e9`, AC-145 `33340751…`, T-12 `c2891a35`, B, D, AC-173
+- **PR:** [#520](https://github.com/AgentsPilot/neuronforge/pull/520), auto-merge on (merge commit, via the merge queue)
 
 ---
 
