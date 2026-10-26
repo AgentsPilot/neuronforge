@@ -30,10 +30,12 @@
  */
 
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { busyMeetings } from '@/lib/scheduling/busyMeetings';
 import { convertAttempt } from '@/lib/scheduling/abandonedBookings';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ module: 'MaterialiseAttempt' });
 
@@ -105,9 +107,11 @@ export async function loadAttempt(
  * Mirrors what `create` does for the paths that write a contact: find by email,
  * fill in only the fields that are missing, and NEVER move an existing
  * contact's stage. A new contact gets no stage from here at all — the
- * `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)` trigger moves them when the booking
- * below is written `confirmed`. That is one rule in one place, and it is why a
- * quote request stopped producing a client.
+ * `promote_contact_on_payment` trigger moves them when money actually arrives
+ * — a `payment_transactions` row, `succeeded`, above zero — and not when the
+ * booking below is written `confirmed`. That was the dropped
+ * `promote_contact_on_confirmed_booking` (20260920). One rule in one place,
+ * and it is why a quote request stopped producing a client.
  *
  * A failure is logged and returns null: the booking is worth more than the
  * contact record, and the money has already been taken.
@@ -120,7 +124,13 @@ async function resolveContact(attempt: AttemptRow): Promise<string | null> {
       .from('crm_contacts')
       .select('id, first_name, last_name, phone')
       .eq('user_id', attempt.user_id)
-      .eq('email', attempt.email)
+      /* `ilike`, not `eq`: an address stored before this route started
+         normalising is whatever the visitor typed, so a case-sensitive match
+         misses it and a SECOND contact is created for the same person. The
+         insert side is normalised now; this is what finds the rows that
+         predate it. No wildcards in the value, so it stays an equality match
+         in everything but case. */
+      .ilike('email', emailLikePattern(attempt.email))
       .order('created_at', { ascending: true })
       .limit(1);
 
@@ -139,6 +149,25 @@ async function resolveContact(attempt: AttemptRow): Promise<string | null> {
       return found.id;
     }
 
+    /*
+     * THE START OF THIS OWNER'S BOARD, NAMED EXPLICITLY.
+     *
+     * This insert omitted `stage` deliberately, to let
+     * `promote_contact_on_payment` decide. Omitting it does not leave the
+     * column empty: `crm_contacts.stage` is `NOT NULL DEFAULT 'lead'`
+     * (20260722_create_crm_tables.sql), so every contact created here landed on
+     * the literal 'lead' — a key many pipelines do not contain. This business's
+     * stages are inquiry > initial_consultation > family_enrolled > completed,
+     * so its clients sat on a stage the board has no column for, and
+     * `advance_contact_stage` could not move them either: it resolves
+     * `current_type` by joining the stage key to the pipeline, and 'lead'
+     * matches no row, so every later promotion was refused too.
+     *
+     * Resolved through the repository that owns the table, as
+     * `website/booking/create` and `/confirm` both already do.
+     */
+    const { data: firstStage } = await crmPipelineStagesRepository.firstStageKey(attempt.user_id);
+
     const { data: created, error } = await supabaseServer
       .from('crm_contacts')
       .insert({
@@ -148,6 +177,9 @@ async function resolveContact(attempt: AttemptRow): Promise<string | null> {
         email: attempt.email,
         phone: attempt.phone,
         source: 'website_booking',
+        /* Only when it resolved. A board with no stages at all has no first
+           stage to name, and the column default is then the honest answer. */
+        ...(firstStage ? { stage: firstStage } : {}),
       })
       .select('id')
       .single();

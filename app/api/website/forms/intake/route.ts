@@ -46,7 +46,26 @@ const IntakeFormBaseSchema = z.object({
   template: z.enum(['general', 'therapist', 'coach', 'consultant', 'fitness']),
   booking_id: z.string().uuid().optional(),
   name: z.string().min(1, 'Name is required').max(200),
-  email: z.string().email('Invalid email address'),
+  /*
+   * TRIMMED AND LOWERCASED BEFORE IT IS VALIDATED, NOT AFTER.
+   *
+   * `z.string().email()` REJECTS a stray space: " a@b.com" is invalid to Zod
+   * and the route answered 400 "Invalid email address" over a perfectly good
+   * address. The public booking form made that routine — it tested
+   * `clientEmail.trim()` and then submitted `clientEmail` — so a visitor whose
+   * keyboard or paste left a trailing space was told their own email was wrong,
+   * with nothing to act on because it looks correct on screen.
+   *
+   * Lowercased for the other half: a domain is case-insensitive by spec and
+   * every real provider treats the local part that way too, while the contact
+   * lookups match with `=`. `Offir.Omer@…` therefore missed the existing
+   * `offir.omer@…` row and created a SECOND contact, with its own bookings and
+   * its own money hanging off it.
+   *
+   * At the boundary rather than the call sites: everything downstream — the
+   * lookup, the insert, the email that gets sent — then works from one spelling.
+   */
+  email: z.string().trim().toLowerCase().email('Invalid email address'),
   phone: z.string().optional(),
   date_of_birth: z.string().optional(),
   emergency_contact: z.object({
@@ -189,11 +208,16 @@ export async function POST(request: NextRequest) {
     //
     // The feature branch computed an `intakeStage` from the tenant's own
     // `crm_pipeline_stages` ('intake' > 'qualified' > 'discovery' > second stage) and
-    // wrote it on both the create and the update path. main does not: a new contact is
-    // created as 'lead' and an existing contact's stage is never touched, because
-    // pipeline vocabulary is per-tenant and completing an intake is not a promotion
-    // event. main's guard tests lock both behaviours (route.test.ts:
-    // `expect(insert.stage).toBe('lead')` and `expect(patch).not.toHaveProperty('stage')`).
+    // wrote it on both the create and the update path. This route does not: it names NO
+    // stage on create, so `CRMContactRepository.create` resolves this business's own
+    // first stage, and an existing contact's stage is never touched, because pipeline
+    // vocabulary is per-tenant and completing an intake is not a promotion event. The
+    // guard tests lock both behaviours (route.test.ts: 'names no stage, leaving each
+    // business its own first stage', and `expect(patch).not.toHaveProperty('stage')`).
+    //
+    // Those tests used to assert the literal `stage: 'lead'`, and this comment still
+    // cited that as the authority long after the literal was removed below — which is
+    // why it is spelled out here rather than left as a quoted expectation to drift again.
     //
     // main's behaviour is kept for now. The branch's stage lookup was REMOVED rather
     // than left computed-but-unused: it is an extra query on a public unauthenticated
@@ -278,7 +302,12 @@ export async function POST(request: NextRequest) {
         // Branch feature, re-expressed through the repository rather than a raw
         // insert. Column exists: 20260824_add_conversion_layer.sql.
         source_metadata: attribution as unknown as Record<string, unknown>,
-        stage: 'lead',
+        /*
+         * No stage named here. It was the literal 'lead' — a word many
+         * pipelines do not contain, which put the contact on a stage the
+         * owner's board has no column for. Omitting it lets the repository
+         * resolve this business's own first stage; see `create` there.
+         */
         custom_fields: {
           intake_data: intakeData,
           intake_submitted_at: new Date().toISOString(),

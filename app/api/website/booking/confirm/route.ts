@@ -21,6 +21,7 @@ import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { z } from 'zod';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ module: 'WebsiteBookingConfirmAPI' });
 
@@ -29,7 +30,26 @@ const ConfirmBookingSchema = z.object({
   service_id: z.string().uuid('Invalid service ID'),
   start_time: z.string().min(1, 'Start time is required'),
   name: z.string().min(1, 'Name is required').max(200),
-  email: z.string().email('Invalid email address'),
+  /*
+   * TRIMMED AND LOWERCASED BEFORE IT IS VALIDATED, NOT AFTER.
+   *
+   * `z.string().email()` REJECTS a stray space: " a@b.com" is invalid to Zod
+   * and the route answered 400 "Invalid email address" over a perfectly good
+   * address. The public booking form made that routine — it tested
+   * `clientEmail.trim()` and then submitted `clientEmail` — so a visitor whose
+   * keyboard or paste left a trailing space was told their own email was wrong,
+   * with nothing to act on because it looks correct on screen.
+   *
+   * Lowercased for the other half: a domain is case-insensitive by spec and
+   * every real provider treats the local part that way too, while the contact
+   * lookups match with `=`. `Offir.Omer@…` therefore missed the existing
+   * `offir.omer@…` row and created a SECOND contact, with its own bookings and
+   * its own money hanging off it.
+   *
+   * At the boundary rather than the call sites: everything downstream — the
+   * lookup, the insert, the email that gets sent — then works from one spelling.
+   */
+  email: z.string().trim().toLowerCase().email('Invalid email address'),
   phone: z.string().optional(),
   notes: z.string().max(2000).optional(),
   timezone: z.string().optional().default('UTC'),
@@ -180,17 +200,25 @@ export async function POST(request: NextRequest) {
       await crmPipelineStagesRepository.firstStageKey(ownerId);
 
     /*
-     * A new contact starts at the beginning; the booking promotes them.
+     * A new contact starts at the beginning; the money promotes them.
      *
      * This guessed the client stage from English keys and fell back to the
      * literal `'client'` — a key a Hebrew pipeline does not contain, so the
      * contact was written with a stage matching no column on the board. It is
-     * not this route's decision any more: the booking below is written
-     * `confirmed`, and `promote_contact_on_confirmed_booking` moves them.
+     * not this route's decision any more.
+     *
+     * WHAT MOVES THEM, NAMED CORRECTLY: `promote_contact_on_payment`, which
+     * fires on a `payment_transactions` row that is `succeeded` with an amount
+     * above zero, and resolves this business's own client stage by
+     * `stage_type`. The comment here used to name
+     * `promote_contact_on_confirmed_booking` — a trigger DROPPED in migration
+     * 20260920, which replaced it precisely because confirmation is not
+     * payment: a booking held for a free consultation is confirmed and owes
+     * nothing, and a zero-amount row is bookkeeping rather than a sale.
      */
-    const activeClientStage = resolvedFirstStage;
+    const startingStage = resolvedFirstStage;
 
-    requestLogger.debug({ startingStage: activeClientStage }, 'Starting stage for a new contact');
+    requestLogger.debug({ startingStage }, 'Starting stage for a new contact');
 
     // Create/update CRM contact
     let contactId: string | null = null;
@@ -200,7 +228,13 @@ export async function POST(request: NextRequest) {
       .from('crm_contacts')
       .select('id, first_name, last_name, phone')
       .eq('user_id', ownerId)
-      .eq('email', data.email)
+      /* `ilike`, not `eq`: an address stored before this route started
+         normalising is whatever the visitor typed, so a case-sensitive match
+         misses it and a SECOND contact is created for the same person. The
+         insert side is normalised now; this is what finds the rows that
+         predate it. No wildcards in the value, so it stays an equality match
+         in everything but case. */
+      .ilike('email', emailLikePattern(data.email))
       .order('created_at', { ascending: true })
       .limit(1);
 
@@ -237,9 +271,9 @@ export async function POST(request: NextRequest) {
           email: data.email,
           phone: data.phone || null,
           source: 'website_booking',
-          // The first stage. The trigger promotes them when the booking below
-          // is confirmed, which is the only rule that decides this now.
-          ...(activeClientStage ? { stage: activeClientStage } : {})
+          // The start of this owner's board. Money moves them on, not this
+          // route — see the note where `startingStage` is resolved.
+          ...(startingStage ? { stage: startingStage } : {})
         })
         .select('id')
         .single();

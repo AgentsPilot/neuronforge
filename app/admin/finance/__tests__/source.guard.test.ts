@@ -318,14 +318,15 @@ describe('Money M-4 source guards (the recorded block and the summary line)', ()
     expect(READS_STATE.test('<RecordedAboveValue recorded={aiCost.recorded} testId="x" />')).toBe(false);
   });
 
-  it('AC-158: RecordedAboveValue is defined only in RecordedCostLines.tsx; the summary renders it and reads no state of its own; Section 3 renders the block', () => {
+  it('AC-158: RecordedAboveValue is defined only in RecordedCostLines.tsx; the summary renders it and reads no state of its own; Section 3 renders the one line (MK-3a)', () => {
     expect(files.filter((file) => DEFINES_RENDERER.test(codeOf(file))).map(rel)).toEqual([rel(LINES)]);
     // The copy module defines the words; every other page file only renders through RecordedAboveValue.
     for (const file of files.filter((f) => f !== LINES && f !== path.join(DIR, 'financeCopy.ts'))) {
       expect({ file: rel(file), readsState: READS_STATE.test(codeOf(file)) }).toEqual({ file: rel(file), readsState: false });
     }
     expect(codeOf(SUMMARY)).toMatch(/<RecordedAboveValue recorded=\{aiCost\.recorded\}/);
-    expect(codeOf(SECTION3)).toMatch(/<RecordedCostLines recorded=\{aiCost\.recorded\} accountId=\{accountId\} chargedShown=\{chargedShown\} \/>/);
+    // Money MK-3a (C-7, ruled): the block moved to the AI cost page; Section 3 renders its one line.
+    expect(codeOf(SECTION3)).toMatch(/<RecordedAboveLine recorded=\{aiCost\.recorded\} accountId=\{accountId\} window=\{window\} \/>/);
   });
 
   it('SA-W98: Section 3 hands the block to the frame’s unknown slot too, so it shows when the charged read failed', () => {

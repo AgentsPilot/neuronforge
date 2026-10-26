@@ -1,7 +1,9 @@
 /**
  * The admin page re-declares the cost report's payload (its source guard
  * forbids `@/lib/` imports). These type-level assertions stop that
- * duplication from rotting.
+ * duplication from rotting. Money MK-2 (RU-9): the route sends
+ * `CreditReportResponse` (the report plus `chargedInWindow`), so that is the
+ * server side compared here.
  *
  * ── What enforces them is `npm run typecheck:bos-llm` — NOT Jest ─────────
  * `lib/business-os/credits/` is in that gate's SCOPED_DIRS (slice 4a), so the
@@ -11,15 +13,15 @@
  */
 
 import type { CostReportPayload } from '@/app/admin/business-os-llm/costTypes';
-import type { CreditReport } from '../creditReportTypes';
+import type { CreditReportResponse } from '../creditReportTypes';
 
 /** Fails to compile if `Actual` is not assignable to `Expected`. */
 type Satisfies<Expected, Actual extends Expected> = Actual;
 
 /** Everything the server sends, the client can hold. */
-type ServerSatisfiesClient = Satisfies<CostReportPayload, CreditReport>;
+type ServerSatisfiesClient = Satisfies<CostReportPayload, CreditReportResponse>;
 /** And the other way: a client field the server never sends would be dead UI. */
-type ClientSatisfiesServer = Satisfies<CreditReport, CostReportPayload>;
+type ClientSatisfiesServer = Satisfies<CreditReportResponse, CostReportPayload>;
 
 describe('the Costs & credits payload types match what the route sends', () => {
   it('is assignable in both directions (checked by typecheck:bos-llm)', () => {

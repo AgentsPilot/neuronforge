@@ -26,6 +26,19 @@ const taskRepo = {
 const activityRepo = { create: jest.fn(), getForContact: jest.fn() };
 const stagesRepo = { list: jest.fn() };
 
+/*
+ * The one function an enquiry must go through, mocked so these tests can say
+ * WHAT was asked of it without a database. The point of `capture_enquiry` is
+ * that it delegates here rather than re-implementing the row shape, so that is
+ * exactly what the tests below assert.
+ */
+const captureEnquiry = jest.fn();
+const captureEnquiryFromEmail = jest.fn();
+jest.mock('@/lib/business-os/leads/captureEnquiry', () => ({
+  captureEnquiry: (...args: unknown[]) => captureEnquiry(...args),
+  captureEnquiryFromEmail: (...args: unknown[]) => captureEnquiryFromEmail(...args),
+}));
+
 jest.mock('@/lib/repositories/CRMContactRepository', () => ({ crmContactRepository: contactRepo }));
 jest.mock('@/lib/repositories/CRMTaskRepository', () => ({ crmTaskRepository: taskRepo }));
 jest.mock('@/lib/repositories/CRMActivityRepository', () => ({ crmActivityRepository: activityRepo }));
@@ -83,6 +96,126 @@ describe('CRMPluginExecutor — dispatch + user_id scoping', () => {
   it('list_pipeline_stages → stages.list(userId)', async () => {
     await run('list_pipeline_stages', {});
     expect(stagesRepo.list).toHaveBeenCalledWith('u1');
+  });
+});
+
+describe('CRMPluginExecutor — capture_enquiry', () => {
+  beforeEach(() => {
+    captureEnquiry.mockResolvedValue({ contactId: 'c1', isNewContact: true });
+  });
+
+  it('files the enquiry through the same function the website form calls', async () => {
+    /*
+     * Not `crmContactRepository.create`. An enquiry is three decisions — the
+     * owner's first pipeline stage, find-or-create by address, and which of
+     * first/last_website_message is written — and a second implementation of
+     * them is how the mailbox channel would drift away from the form.
+     */
+    await run('capture_enquiry', { email: 'sarah@x.com', message: 'Can I book?' });
+
+    expect(captureEnquiry).toHaveBeenCalledTimes(1);
+    expect(contactRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('takes the business from the connection and never from the caller', async () => {
+    /* The enquirer is named by the caller; the business never is. A parameter
+       claiming another owner must not reach the write. */
+    await run(
+      'capture_enquiry',
+      { email: 'sarah@x.com', message: 'Hello', ownerId: 'someone-else', user_id: 'someone-else' },
+      { user_id: 'u1' }
+    );
+
+    expect(captureEnquiry.mock.calls[0][0]).toMatchObject({ ownerId: 'u1' });
+  });
+
+  it('leaves source and activity_key unset when the caller does not send them', async () => {
+    /*
+     * So the defaults in `captureEnquiry` apply — `website_form`, which is what
+     * puts the contact inside FORM_SOURCES and therefore in front of the chase.
+     * Passing `undefined` explicitly would defeat a `= 'website_form'` default.
+     */
+    await run('capture_enquiry', { email: 'sarah@x.com', message: 'Hello' });
+
+    const input = captureEnquiry.mock.calls[0][0];
+    expect('source' in input).toBe(false);
+    expect('activityKey' in input).toBe(false);
+  });
+
+  it('passes a caller-supplied source and activity key through', async () => {
+    await run('capture_enquiry', {
+      email: 'sarah@x.com',
+      message: 'Hello',
+      source: 'conversion_page',
+      activity_key: 'mailbox_enquiry',
+    });
+
+    expect(captureEnquiry.mock.calls[0][0]).toMatchObject({
+      source: 'conversion_page',
+      activityKey: 'mailbox_enquiry',
+    });
+  });
+
+  it('returns the contact and whether they were already known', async () => {
+    captureEnquiry.mockResolvedValue({ contactId: 'c9', isNewContact: false });
+
+    const result = await run('capture_enquiry', { email: 'sarah@x.com', message: 'Again' });
+
+    expect(result).toEqual({ contact_id: 'c9', is_new_contact: false });
+  });
+
+  it('hands a raw email to the reader rather than demanding parsed fields', async () => {
+    /*
+     * The mailbox agent has a message, not fields. The executor's job is to
+     * route that to the reader with the business resolved server-side; whether
+     * the reading is correct is `enquiryTemplate`'s own test.
+     */
+    captureEnquiryFromEmail.mockResolvedValue({ filed: true, contactId: 'c1', isNewContact: true });
+
+    const result = await run('capture_enquiry', {
+      subject: 'New inquiry from your website',
+      raw_body: 'Name: Sarah Cohen\nEmail: sarah@example.com\nMessage: Hello.',
+      template: { subjectPrefix: 'New inquiry', labels: ['Name', 'Email', 'Message'] },
+      activity_key: 'mailbox_enquiry',
+    });
+
+    expect(captureEnquiry).not.toHaveBeenCalled();
+    expect(captureEnquiryFromEmail.mock.calls[0][0]).toMatchObject({
+      ownerId: 'u1',
+      subject: 'New inquiry from your website',
+      activityKey: 'mailbox_enquiry',
+    });
+    expect(result).toMatchObject({ filed: true, contact_id: 'c1', is_new_contact: true });
+  });
+
+  it('reports "nothing filed" instead of throwing, so the agent can leave it unread', async () => {
+    /*
+     * A message we cannot read is not a fault. A throw would look like one,
+     * and a silent success would lose the enquiry — the agent needs to know
+     * precisely so it does NOT mark that message as read.
+     */
+    captureEnquiryFromEmail.mockResolvedValue({ filed: false, reason: 'no_address' });
+
+    const result = await run('capture_enquiry', { subject: 'Out of office', raw_body: 'Away until Monday.' });
+
+    expect(result).toEqual({ filed: false, reason: 'no_address' });
+  });
+
+  it('takes the raw path on html alone, since some forms send only that', async () => {
+    captureEnquiryFromEmail.mockResolvedValue({ filed: true, contactId: 'c2', isNewContact: false });
+
+    await run('capture_enquiry', { raw_html: '<table><tr><td>Email:</td><td>a@x.com</td></tr></table>' });
+
+    expect(captureEnquiryFromEmail).toHaveBeenCalledTimes(1);
+    expect(captureEnquiry).not.toHaveBeenCalled();
+  });
+
+  it('refuses without an address or a message', async () => {
+    /* Without the address the enquirer cannot be found or answered, and an
+       enquiry with no message is not one. */
+    await expect(run('capture_enquiry', { message: 'Hello' })).rejects.toThrow();
+    await expect(run('capture_enquiry', { email: 'sarah@x.com' })).rejects.toThrow();
+    expect(captureEnquiry).not.toHaveBeenCalled();
   });
 });
 

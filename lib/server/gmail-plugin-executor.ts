@@ -1129,6 +1129,22 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       subject: getHeader('Subject'),
       from: getHeader('From'),
       to: getHeader('To'),
+      /*
+       * REPLY-TO AND CC, which were not returned at all.
+       *
+       * On a notification email the `From` is the SYSTEM that sent it —
+       * `info@`, `support@`, `forms@`, a WordPress host — and the human it is
+       * about is somewhere else. Most form plugins set `Reply-To` to the
+       * person who filled the form in, precisely so that hitting reply reaches
+       * them; some CC them instead.
+       *
+       * Without these, anything reading mail had the body as its only source
+       * for who wrote in, and a form that states the address only in its
+       * headers was unreadable. They are two header lookups from data already
+       * fetched, so there is no request cost.
+       */
+      reply_to: getHeader('Reply-To'),
+      cc: getHeader('Cc'),
       date: getHeader('Date'),
       snippet: email.snippet || '', // Gmail always returns snippet regardless of format
       labels: email.labelIds || [],
@@ -1222,17 +1238,38 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
    */
   private convertBase64UrlToBase64(base64url: string): string {
     // Replace URL-safe characters with standard base64 characters
-    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
     // Add padding if necessary (base64 must be multiple of 4)
     const padding = '='.repeat((4 - base64.length % 4) % 4);
     return base64 + padding;
   }
 
-  // Decode base64url (Gmail's encoding) to text string
+  /**
+   * Decode base64url (Gmail's encoding) to text.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * UTF-8, NOT `atob`.
+   *
+   * `atob` yields a "binary string" — one character per BYTE — so every
+   * non-ASCII character arrives as the individual bytes of its UTF-8 encoding,
+   * each rendered as a separate Latin-1 character. A Hebrew body came back as
+   * `×××©×× ××¦×¨ ×××ª× ×§×©×¨` instead of `שלום, נוצר איש קשר`, and the same
+   * applies to Spanish accents, French, Arabic, emoji and smart quotes.
+   *
+   * This corrupts every agent that reads mail in any language but English, not
+   * only the mailbox lead channel that found it: the text is what reaches the
+   * LLM steps, the CRM, and anything matching on content. ASCII survived
+   * unharmed, which is why it went unnoticed.
+   *
+   * `Buffer.from(…, 'base64')` keeps the bytes and `toString('utf8')` decodes
+   * them properly. Mail that is genuinely not UTF-8 degrades to the same
+   * replacement characters it would have anyway, rather than to mojibake.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   private decodeBase64Url(data: string): string {
     try {
       const base64 = this.convertBase64UrlToBase64(data);
-      return atob(base64);
+      return Buffer.from(base64, 'base64').toString('utf8');
     } catch (error) {
       this.logger.warn({ err: error }, 'Failed to decode base64url');
       return '';

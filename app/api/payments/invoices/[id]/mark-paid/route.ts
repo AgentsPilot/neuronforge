@@ -185,10 +185,19 @@ export async function POST(
      * Money arriving by hand is still money arriving.
      *
      * This used to promote the contact directly. It no longer decides that:
-     * payment is not the relationship, and "a booking was confirmed" is the one
-     * rule, held by `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)`. What this path owes
-     * is the confirmation — a booking held pending because money was owed is
-     * confirmed once the money is recorded, however it arrived.
+     * the one rule is `promote_contact_on_payment`, which fires on the
+     * `payment_transactions` row this path records and resolves the business's
+     * own client stage by `stage_type`.
+     *
+     * An earlier version of this note said "payment is not the relationship,
+     * and a booking was confirmed is the one rule" — true of
+     * `promote_contact_on_confirmed_booking`, which was DROPPED in 20260920
+     * for the opposite reason: confirmation is free to come by, and money is
+     * the evidence that someone bought something.
+     *
+     * What this path still owes is the confirmation itself — a booking held
+     * pending because money was owed is confirmed once the money is recorded,
+     * however it arrived.
      *
      * Scoped to `pending`, so a cancelled or completed booking is never
      * resurrected by a late settlement. Non-blocking: the payment is recorded

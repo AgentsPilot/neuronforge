@@ -1052,7 +1052,16 @@ export async function GET(request: NextRequest) {
           supabaseServer
             .from('business_profiles')
             .select(
-              'company_name, vertical, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions'
+              /*
+               * `invoice_document_type` and `invoice_prices_include_tax` are
+               * not decoration here: `missingInvoiceFields` resolves which
+               * document this business issues before deciding whether a tax ID
+               * is owed. Without them every row reads as a receipt, and a
+               * business that genuinely issues tax invoices would be told on
+               * the dashboard that its invoicing was complete while the
+               * publish gate, which selects everything, refused it.
+               */
+              'company_name, vertical, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions, invoice_document_type, invoice_prices_include_tax'
             )
             .eq('user_id', user.id)
             .maybeSingle(),

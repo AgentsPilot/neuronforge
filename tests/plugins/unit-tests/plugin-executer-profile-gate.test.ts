@@ -30,9 +30,20 @@ jest.mock('@/lib/logger', () => {
   return { createLogger: () => make(), logger: make() };
 });
 
-// The registry imports this class statically; the mock replaces it there, so a
-// constructor call count of 0 proves the gate stopped before construction.
-jest.mock('@/lib/server/gmail-plugin-executor', () => ({ GmailPluginExecutor: jest.fn() }));
+/*
+ * The registry imports this class statically; the mock replaces it there, so a
+ * constructor call count of 0 proves the gate stopped before construction.
+ *
+ * SLACK, not Gmail. This suite used `google-mail` as its out-of-profile
+ * example, and on 2026-10-25 Gmail JOINED the business_os profile — the mailbox
+ * lead channel reads a business's own enquiry mail — so the plugin standing in
+ * for "registered but not enabled here" was suddenly enabled, and three tests
+ * failed for a reason that had nothing to do with the gate they cover.
+ *
+ * Slack is registered in `all`, absent from `business_os`, and nothing in
+ * Business OS has a reason to want it, so it is a stable stand-in.
+ */
+jest.mock('@/lib/server/slack-plugin-executor', () => ({ SlackPluginExecutor: jest.fn() }));
 
 // In-profile control: a stub CRM executor, so the positive path proves the gate
 // lets a business_os plugin through to construction and execution.
@@ -43,16 +54,16 @@ jest.mock('@/lib/server/crm-plugin-executor', () => ({
   })),
 }));
 
-import { GmailPluginExecutor } from '@/lib/server/gmail-plugin-executor';
+import { SlackPluginExecutor } from '@/lib/server/slack-plugin-executor';
 import { CRMPluginExecutor } from '@/lib/server/crm-plugin-executor';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { getPluginProfile } from '@/lib/server/plugin-profile';
 import { createMockUserConnections } from '../common/mock-user-connections';
 
-const GmailCtor = GmailPluginExecutor as unknown as jest.Mock;
+const OutOfProfileCtor = SlackPluginExecutor as unknown as jest.Mock;
 const CrmCtor = CRMPluginExecutor as unknown as jest.Mock;
-const NOT_ENABLED = "Plugin 'google-mail' is not enabled in the 'business_os' plugin profile";
+const NOT_ENABLED = "Plugin 'slack' is not enabled in the 'business_os' plugin profile";
 
 let executer: PluginExecuterV2;
 
@@ -65,15 +76,15 @@ beforeAll(async () => {
 
 beforeEach(() => {
   Object.values(mockLog).forEach(fn => fn.mockClear());
-  GmailCtor.mockClear();
+  OutOfProfileCtor.mockClear();
 });
 
 describe('[smoke] plugin executer profile gate', () => {
   it('resolves to plugin_not_enabled for a registered plugin outside the profile', async () => {
-    const result = await executer.execute('user-1', 'google-mail', 'send_email', {});
+    const result = await executer.execute('user-1', 'slack', 'send_message', {});
 
     expect(result).toEqual({ success: false, error: 'plugin_not_enabled', message: NOT_ENABLED });
-    expect(GmailCtor).not.toHaveBeenCalled();
+    expect(OutOfProfileCtor).not.toHaveBeenCalled();
   });
 
   it('lets an in-profile plugin through to construction and execution', async () => {
@@ -98,11 +109,11 @@ describe('[smoke] plugin executer profile gate', () => {
 
 describe('[full] plugin executer profile gate', () => {
   it('logs one warn with the owner and no execution line', async () => {
-    await executer.execute('user-1', 'google-mail', 'send_email', {});
+    await executer.execute('user-1', 'slack', 'send_message', {});
 
     expect(mockLog.warn).toHaveBeenCalledTimes(1);
     expect(mockLog.warn).toHaveBeenCalledWith(
-      { userId: 'user-1', pluginKey: 'google-mail', profile: 'business_os', actionName: 'send_email' },
+      { userId: 'user-1', pluginKey: 'slack', profile: 'business_os', actionName: 'send_message' },
       'Plugin not enabled in active profile'
     );
     expect(mockLog.error).not.toHaveBeenCalled();
@@ -124,11 +135,11 @@ describe('[full] plugin executer profile gate', () => {
   });
 
   it('rejects fetchDynamicOptions for a plugin outside the profile without constructing it', async () => {
-    await expect(executer.fetchDynamicOptions('google-mail', 'listLabels', {}, {})).rejects.toThrow(NOT_ENABLED);
+    await expect(executer.fetchDynamicOptions('slack', 'listChannels', {}, {})).rejects.toThrow(NOT_ENABLED);
 
-    expect(GmailCtor).not.toHaveBeenCalled();
+    expect(OutOfProfileCtor).not.toHaveBeenCalled();
     expect(mockLog.warn).toHaveBeenCalledWith(
-      { pluginKey: 'google-mail', profile: 'business_os' },
+      { pluginKey: 'slack', profile: 'business_os' },
       'Plugin not enabled in active profile'
     );
   });

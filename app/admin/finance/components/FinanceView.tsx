@@ -100,6 +100,7 @@ import { AccountsByPlanSection } from './AccountsByPlanSection';
 import { AiCostSection } from './AiCostSection';
 import { HistoryAllBusinessesLine } from './HistoryBlock';
 import { FinanceHistoryProvider, HistoryTrend } from './HistoryTrends';
+import { BusinessDrawerProvider } from './BusinessDrawer';
 import { CreditsSection } from './CreditsSection';
 import { FinanceFilterBar } from './FinanceFilterBar';
 import {
@@ -111,6 +112,7 @@ import {
 } from './FinanceKpiStrip';
 import { PlansSubscriptions } from './PlansSubscriptions';
 import { ConvertedThisMonthSection } from './ConvertedThisMonthSection';
+import { PayingBreakdownSection } from './PayingBreakdownSection';
 import { RevenuePanel } from './RevenuePanel';
 import { TakingsSection } from './TakingsSection';
 // Relative on purpose: the alias path would spell the page route the G-4 guard (redundantPages) refuses (DV-1, SQ-18).
@@ -343,6 +345,8 @@ export function FinanceView() {
         {(onRatesTab || (data && !error)) && (
           // Money MK-7: the one shared, lazy history read for the trends under Plan mix and Credits (E-85).
           <FinanceHistoryProvider query={query}>
+          {/* Money MK-8: the read-only business drawer, its read only on open (AC-173), in the page's window. */}
+          <BusinessDrawerProvider window={data && query.accountId === null ? { preset: data.window.preset, from: data.window.from, to: data.window.to } : null}>
           <div className="space-y-4">
             {!onRatesTab && data && data.accountId !== null && (
               <>
@@ -373,6 +377,8 @@ export function FinanceView() {
               <FinanceTabPanel id="plans">
                 {/* Money MK-4 (§3.2): Plan mix on top, then the subscriptions, read only now that the tab is open. */}
                 <div className="space-y-4">
+                  {/* Money MK-9 (§12): F-K5's breakdown, first on its tab, from the same payload (AC-173). */}
+                  {data.payingBreakdown && <PayingBreakdownSection breakdown={data.payingBreakdown} paying={data.paying} onRetry={reload} />}
                   <AccountsByPlanSection
                     accounts={data.accounts}
                     windowLabel={windowLabel}
@@ -436,6 +442,7 @@ export function FinanceView() {
               </OverviewBody>
             )}
           </div>
+          </BusinessDrawerProvider>
           </FinanceHistoryProvider>
         )}
       </div>

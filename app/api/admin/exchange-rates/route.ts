@@ -1,15 +1,18 @@
 /**
  * GET /api/admin/exchange-rates — the admin Exchange rates page's one read
  * (Admin Exchange Rates slice 1a, SA-R4; slice 1c.1, SQ-12 / SQ-13; slice 1d,
- * SQ-26 to SQ-31).
+ * SQ-26 to SQ-31; slice 1e, SA §13.8 SQ-51).
  *
  *   GET /api/admin/exchange-rates[?from=&to=]    every currency in `exchange_rates`,
  *                                                the newest HISTORY_LIMIT (10) rows of
  *                                                `exchange_rate_history` INSIDE the
  *                                                window, `lastChange` (the newest row
  *                                                of all time, whatever the window),
- *                                                `nameLookup` and the server clock
- *                                                (`readAt`)
+ *                                                `nameLookup`, the server clock
+ *                                                (`readAt`), `lastSync` (the newest
+ *                                                successful rate sync, slice 1e, and
+ *                                                who ran it, slice 1f) and `viewer`
+ *                                                (the signed-in admin, slice 1f)
  *   GET /api/admin/exchange-rates?currency=XXX[&from=&to=]
  *                                                that currency's newest HISTORY_LIMIT
  *                                                rows inside the window only
@@ -31,15 +34,20 @@
  * → 404, and no history is read. The history limit is a fixed constant:
  * nothing from the request reaches it.
  *
- * "Changed by" labels (SQ-13, SA Q-1; slice 1d, SQ-31): the editor ids come
- * only from the history rows this route read (the windowed rows plus
- * `lastChange`), never from the request. ONE lookup covers both lists, so they
- * can never disagree. Each id is turned into the admin's name
+ * "Changed by" labels (SQ-13, SA Q-1; slice 1d, SQ-31; slice 1f, SA §13.9
+ * SQ-54, SQ-55): the ids come only from what this route read (the windowed
+ * history rows plus `lastChange`; on the plain read also the last sync's
+ * actor from its audit entry and the caller's id from the session gate),
+ * never from the request. ONE lookup covers them all, so one admin reads the
+ * same in every place and a failure is all or nothing. On the plain read the
+ * caller is always in it, so the lookup always runs there. The caller comes
+ * back as `viewer`, so the page can name the admin of a sync it just ran
+ * without a new request (SQ-55 (a')). Each id is turned into the admin's name
  * (`profiles.full_name`), else their admin email (deactivated admins
  * included), else "Unknown user". Both lookups run in parallel; ANY failure,
  * returned or thrown, from either source → still 200, `nameLookup: 'failed'`
- * and no label for any looked-up editor in either list (never a half-resolved
- * list). The two repository calls stay in this file: the caller guard in
+ * and no label for any looked-up id anywhere (never a half-resolved
+ * answer). The two repository calls stay in this file: the caller guard in
  * `lib/repositories/__tests__/adminReadMethods.guard.test.ts` allows them only
  * under `app/api/admin/**` (SA-1c-6). Logs carry counts, the currency code,
  * the window dates (debug) and `nameLookup` only: never a name or an email
@@ -55,6 +63,15 @@
  * 'currency'`). Internal error text is returned only in development. A plain
  * read: no audit row.
  *
+ * THE ONE EXCEPTION (slice 1e, SQ-51 (3)): `lastSync`, the "Rates last checked"
+ * tile, is the fourth member of the plain read's `Promise.all` (no added
+ * latency), read from the audit trail through
+ * `AuditTrailRepository.findLatestAdminExchangeRateSync` (its only caller,
+ * pinned by adminReadMethods.guard.test.ts). Its failure, returned or thrown,
+ * is `{ status: 'unavailable' }` with a warn naming `failed: 'lastSync'`, and
+ * NEVER a 500: the rates page works without the tile. The `?currency=` read
+ * never reads it.
+ *
  * @module app/api/admin/exchange-rates
  */
 
@@ -63,18 +80,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import {
   defaultHistoryWindowDates,
+  editorLabel,
   exchangeRatesQuerySchema,
   historyEditorIds,
   historyWindowBounds,
   labelHistory,
   type EditorLookup,
   type ExchangeRateHistoryPayload,
-  type ExchangeRateHistoryRecord,
-  type ExchangeRatesPayload,
   type NameLookupStatus,
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import {
+  labelLastSync,
+  type ExchangeRatesReadPayload,
+  type LastRateSyncRecord,
+} from '@/lib/admin/exchangeRates/rateSyncRules';
 import { createLogger, type Logger } from '@/lib/logger';
 import { adminUserRepository } from '@/lib/repositories/AdminUserRepository';
+import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
 import {
   exchangeRatesRepository,
   toExchangeRateHistoryRecord,
@@ -115,17 +137,17 @@ function badQuery(details?: unknown) {
 type LookupSource = 'names' | 'emails';
 
 /**
- * Resolve the editors of `records` once (SQ-13; slice 1d, SQ-31): the caller
- * passes every row it will send (the windowed rows plus `lastChange`), then
- * labels each list with `labelHistory` and the same lookup, so the lists are
+ * Resolve every admin id of the answer once (SQ-13; slice 1d, SQ-31; slice 1f,
+ * SQ-54): the caller passes the distinct ids of everything it will send (the
+ * history editors, the `lastChange` editor and, on the plain read, the sync
+ * actor and the caller), then labels each with the same lookup, so they are
  * all-or-nothing together. Module-private on purpose: a Next.js `route.ts`
  * may export only handlers and route config. Never throws; logs counts only.
  */
 async function resolveLookup(
-  records: readonly ExchangeRateHistoryRecord[],
+  ids: readonly string[],
   requestLogger: Logger
 ): Promise<{ lookup: EditorLookup; nameLookup: NameLookupStatus }> {
-  const ids = historyEditorIds(records);
   if (ids.length === 0) {
     return { lookup: { status: 'ok', names: new Map(), emails: new Map() }, nameLookup: 'ok' };
   }
@@ -183,6 +205,29 @@ async function resolveLookup(
   return { lookup: { status: 'ok', names: nameMap, emails: emailMap }, nameLookup: 'ok' };
 }
 
+/**
+ * The "Rates last checked" tile's value (SQ-51 (3)), with the actor still
+ * unlabelled (slice 1f, SQ-54: `labelLastSync` labels it with the one lookup).
+ * A returned error and a thrown error are the same failure: `unavailable`,
+ * logged as a warn, never a 500. Module-private on purpose (a `route.ts` may
+ * export only handlers).
+ */
+async function settleLastSync(adminId: string, correlationId: string, requestLogger: Logger): Promise<LastRateSyncRecord> {
+  try {
+    const result = await auditTrailRepository.findLatestAdminExchangeRateSync({ correlationId, adminId });
+    if (result.error) {
+      requestLogger.warn({ err: result.error, failed: 'lastSync' }, 'Last rate sync read failed; the tile shows unavailable');
+      return { status: 'unavailable' };
+    }
+    return result.data
+      ? { status: 'ok', checkedAt: result.data.checkedAt, rateDate: result.data.rateDate, checkedBy: result.data.checkedBy }
+      : { status: 'none' };
+  } catch (err) {
+    requestLogger.warn({ err, failed: 'lastSync' }, 'Last rate sync read failed; the tile shows unavailable');
+    return { status: 'unavailable' };
+  }
+}
+
 export async function GET(request: NextRequest) {
   // Admin gate. Nothing above this line may touch the database.
   const gate = await requireAdmin(logger.child({ route: 'admin-exchange-rates', method: 'GET' }));
@@ -234,7 +279,7 @@ export async function GET(request: NextRequest) {
       }
 
       const records = history.data.map(toExchangeRateHistoryRecord);
-      const { lookup, nameLookup } = await resolveLookup(records, requestLogger);
+      const { lookup, nameLookup } = await resolveLookup(historyEditorIds(records), requestLogger);
       const payload: ExchangeRateHistoryPayload = {
         currencyCode,
         history: labelHistory(records, lookup),
@@ -244,10 +289,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, data: payload });
     }
 
-    const [rates, history, latest] = await Promise.all([
+    const [rates, history, latest, lastSyncRecord] = await Promise.all([
       exchangeRatesRepository.listAll(),
       exchangeRatesRepository.listRecentHistory(bounds),
       exchangeRatesRepository.findLatestChange(),
+      // Slice 1e (SQ-51 (3)): never rejects, never a 500.
+      settleLastSync(gate.user.id, correlationId, requestLogger),
     ]);
 
     if (rates.error || !rates.data) {
@@ -265,17 +312,27 @@ export async function GET(request: NextRequest) {
 
     const records = history.data.map(toExchangeRateHistoryRecord);
     const latestRecord = latest.data ? toExchangeRateHistoryRecord(latest.data) : null;
-    // One lookup over both lists (SQ-31): the same editor is labelled the same in both.
-    const { lookup, nameLookup } = await resolveLookup(
-      latestRecord ? [...records, latestRecord] : records,
-      requestLogger
-    );
-    const payload: ExchangeRatesPayload = {
+    const allRecords = latestRecord ? [...records, latestRecord] : records;
+    // One lookup over every id of the answer (SQ-31; slice 1f, SQ-54, SQ-55): the
+    // history editors, the "Last rate change" editor, the sync actor and the
+    // caller. The same admin is labelled the same everywhere.
+    const ids = [
+      ...new Set([
+        ...historyEditorIds(allRecords),
+        ...(lastSyncRecord.status === 'ok' && lastSyncRecord.checkedBy ? [lastSyncRecord.checkedBy] : []),
+        gate.user.id,
+      ]),
+    ];
+    const { lookup, nameLookup } = await resolveLookup(ids, requestLogger);
+    const payload: ExchangeRatesReadPayload = {
       rates: rates.data.map(toExchangeRateWire),
       history: labelHistory(records, lookup),
       lastChange: latestRecord ? labelHistory([latestRecord], lookup)[0] : null,
       nameLookup,
       readAt: new Date().toISOString(),
+      lastSync: labelLastSync(lastSyncRecord, lookup),
+      // SQ-55 (a'): the session's admin, never an id from the request.
+      viewer: { userId: gate.user.id, label: editorLabel(gate.user.id, lookup) },
     };
     return NextResponse.json({ success: true, data: payload });
   } catch (error) {

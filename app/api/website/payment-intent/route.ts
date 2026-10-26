@@ -36,7 +36,9 @@ const PaymentIntentSchema = z.object({
    */
   currency: z.enum(['USD', 'EUR', 'GBP', 'ILS']).optional(),
   description: z.string().min(1).max(500),
-  customer_email: z.string().email().optional(),
+  /* Normalised like every other public email — this one reaches Stripe as the
+     receipt address, so a stray space there is a receipt nobody receives. */
+  customer_email: z.string().trim().toLowerCase().email().optional(),
   booking_id: z.string().uuid().optional(),
   /*
    * A card journey has no booking yet.

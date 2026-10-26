@@ -1935,10 +1935,37 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             {!isNew && service && (
               <>
                 {isDraft && (
+                  /*
+                   * ───────────────────────────────────────────────────────────
+                   * NOT WHILE THERE ARE UNSAVED EDITS.
+                   *
+                   * `handlePublish` POSTs the service id and nothing else, so
+                   * it publishes WHAT IS ON THE SERVER. Typing a price and
+                   * then pressing Publish, which sat enabled and teal an inch
+                   * from Save, put the old row in front of clients and left
+                   * the new one unsaved.
+                   *
+                   * Worst immediately after onboarding, which is where most
+                   * people meet this list: the chat creates every service as a
+                   * draft with NO price and NO duration, so the first thing an
+                   * owner does here is type one, and the row they would have
+                   * published is the empty one.
+                   *
+                   * `isRowDirty` already existed and the Save button beside
+                   * this one already used it. Publish simply never asked.
+                   * Disabled rather than save-then-publish, because publishing
+                   * is deliberately a separate act from saving: a draft is
+                   * meant to be savable without going live.
+                   * ───────────────────────────────────────────────────────────
+                   */
                   <button
                     onClick={(e) => handlePublish(service.id, e)}
-                    disabled={publishingId === service.id}
-                    title={t('scheduling.service.publish')}
+                    disabled={publishingId === service.id || (!isNew && isRowDirty)}
+                    title={
+                      !isNew && isRowDirty
+                        ? t('scheduling.service.publish_save_first')
+                        : t('scheduling.service.publish')
+                    }
                     className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 ${recentlyEditedId === service.id ? 'publish-pulse' : ''}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >

@@ -2108,7 +2108,7 @@ export class SchedulingBookingRepository {
             phone
           ),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at, processor_type)
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, refunded_at, status, invoice_id, paid_at, processor_type)
         `)
         .eq('id', id)
         .eq('user_id', userId)
@@ -2298,7 +2298,7 @@ export class SchedulingBookingRepository {
           contact:crm_contacts(first_name, last_name, email, phone),
           service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode, is_scheduled),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
-          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id, paid_at, processor_type),
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, refunded_at, status, invoice_id, paid_at, processor_type),
           planPeriods:payment_plan_installments!payment_plan_installments_booking_id_fkey(id, installment_number, amount, currency, status, trigger, due_date, paid_at, invoice_id, transaction_id, label)
         `)
         .eq('user_id', userId);

@@ -975,6 +975,9 @@ export async function POST(request: NextRequest) {
         const seed = seeded[index];
         const suggestion = !seed ? generated[index - seeded.length] : undefined;
 
+        /* See the note on `duration_minutes` below. */
+        const rowScheduled = seed?.is_scheduled ?? scheduled;
+
         // A price of null is "on request" and must survive as null — `|| 0`
         // here would publish paid work as free, the mistake the branch below
         // records at length.
@@ -987,17 +990,49 @@ export async function POST(request: NextRequest) {
              so reading it alone meant a service the owner described in their
              own words was stored with no description at all. */
           description: seed?.description ?? suggestion?.description ?? undefined,
-          duration_minutes: scheduled
+          /*
+           * ───────────────────────────────────────────────────────────────
+           * THIS SERVICE'S OWN ANSWER, then the business-wide one.
+           *
+           * `scheduled` alone was stamped on every row, so the per-service
+           * judgement the chat now makes was discarded the moment the rows
+           * were written and a mixed catalogue became impossible again one
+           * layer further down. A business selling a recorded course beside
+           * booked sessions is the case this exists for.
+           *
+           * `??`, never `||`: a seeded `false` is this service's answer and
+           * must outrank the default, which is exactly what `||` would throw
+           * away.
+           * ───────────────────────────────────────────────────────────────
+           */
+          duration_minutes: rowScheduled
             ? seed?.duration_minutes ?? suggestion?.duration_minutes ?? null
             : null,
           buffer_minutes: seed?.buffer_minutes ?? suggestion?.buffer_minutes ?? undefined,
           price,
           currency: serviceCurrency(seed?.currency),
-          is_scheduled: scheduled,
+          is_scheduled: rowScheduled,
           sale_mode: seed?.sale_mode || 'direct',
-          // Only a priced service is collected at all — the same rule the two
-          // branches below apply.
-          collection: (price || 0) > 0 ? collection : null,
+          /*
+           * The answer they gave, whether or not a price exists yet.
+           *
+           * This read `(price || 0) > 0 ? collection : null`, and on this
+           * branch `price` is always null — the interview asks for a count,
+           * not a catalogue, and the owner sets prices in the editor. So every
+           * drafted row was written with `collection: null` and the money
+           * answer survived only on the profile.
+           *
+           * It also contradicted the manager, which stamps these same rows
+           * unconditionally and says why: "A placeholder may be missing a
+           * price and a length, which the owner sets. It may not be missing
+           * the answers they already gave."
+           *
+           * The two branches below keep the price rule, deliberately: they
+           * carry a catalogue the owner typed, where a priced row and a free
+           * one are a real distinction rather than an artefact of when the
+           * question is asked.
+           */
+          collection,
           ...(seed?.payment_plan && seed.payment_plan.installment_count >= 2
             ? {
                 payment_type: 'installments' as const,
@@ -1320,6 +1355,44 @@ export async function POST(request: NextRequest) {
               groupId: buildGroupId,
             });
             markGenerationResult(h, intake);
+
+            /*
+             * ───────────────────────────────────────────────────────────────
+             * AND SWITCH IT ON, which nothing has ever done.
+             *
+             * The draft above was the whole of it: no code anywhere wrote
+             * `user_intake_settings`, and `resolveIntake` reads
+             * `is_enabled ?? false`. With no row the answer is false FOREVER,
+             * so `intakeBlockReason` returned 'disabled' and the form reached
+             * nobody. The owner said their clients fill something in first,
+             * read the draft, published it, and no client ever saw it. No
+             * later screen asks the question again, so nothing corrected it.
+             *
+             * ONLY ON SUCCESS. `is_enabled: true` with no form behind it is a
+             * column claiming work that did not happen; the readiness card
+             * would then ask them to publish a form that does not exist.
+             *
+             * ONLY `is_enabled`. `send_after_booking` is the owner's own
+             * choice and has its own screen; defaulting it here would decide
+             * something they were never asked.
+             *
+             * Non-blocking and non-fatal like everything else in this block,
+             * and carrying NO audit entry of its own: the build emits exactly
+             * one, listing every area, and `route.audit.test.ts` is named for
+             * that guarantee.
+             * ───────────────────────────────────────────────────────────────
+             */
+            if (intake.success) {
+              const { intakeRepository } = await import('@/lib/repositories/IntakeRepository');
+              const enabled = await intakeRepository.upsertSettings(user.id, { is_enabled: true });
+
+              if (enabled.error) {
+                requestLogger.error(
+                  { err: enabled.error, userId: user.id },
+                  'Intake draft written but the feature could not be switched on'
+                );
+              }
+            }
 
             requestLogger.info(
               {

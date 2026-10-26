@@ -140,6 +140,7 @@ import { todayUtc } from '@/app/admin/components/adminWindowPresets';
 import { CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
 import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
 import { missingOriginalIds, sumCostUsd, summariseAiCost } from './aiCost';
+import { CHARGED_LEDGER_READ, EMPTY_CHARGED_READ, readChargedLedger, readChargedWindow } from './chargedAiCost';
 import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCreditPositionsPass } from '@/lib/business-os/credits/adminCreditPercent';
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
 import { buildTakings } from './takings';
@@ -173,13 +174,16 @@ import {
   type FinanceRuleSet,
 } from './financeRules';
 import { isEmptySpan, k1Spans, type FinanceSpan, type ResolvedFinanceWindow } from './financeWindow';
-import { classifyAccounts, tierLabelForGroup, type ClassifyInput } from './planGroups';
+import { classifyAccounts, isTrialRow, tierLabelForGroup, trialEndOf, type ClassifyInput } from './planGroups';
+import { compedSplit, trialsToPaid } from './payingBreakdown';
+import { FINANCE_TRIAL_TO_PAID } from './financeRules';
 import { CONVERTED_SHOWN_LIMIT, convertedThisMonth, currentUtcMonth } from './convertedThisMonth';
 import type {
   FinanceAccountEconomicsSection,
   FinanceAccountMargin,
   FinanceConverted,
   FinanceConvertedRow,
+  FinancePayingBreakdown,
   FinancePaying,
   FinanceSignupSource,
   FinanceAccountsSection,
@@ -206,8 +210,9 @@ type RepoResult<T> = { data: T | null; error: Error | null };
 const TABLE_ROWS_SHOWN = 200;
 
 export const FINANCE_LIMITS = {
-  LEDGER_PAGE_SIZE: 1000,
-  LEDGER_CEILING: 20_000,
+  /** MK-2: R-a's paging lives with the shared read (`chargedAiCost.ts`); the values are unchanged. */
+  LEDGER_PAGE_SIZE: CHARGED_LEDGER_READ.pageSize,
+  LEDGER_CEILING: CHARGED_LEDGER_READ.ceiling,
   /** The shadow report's own page size and cap (SA-Q3). */
   PLAN_PAGE_SIZE: 500,
   PLAN_CEILING: 20_000,
@@ -377,6 +382,8 @@ export interface FinanceHealthInput {
 export type FinanceGroupFilterKind = 'all' | 'trial' | 'founding_partner' | 'comped' | 'tier' | 'unknown_held' | 'tier_set' | 'other';
 
 /** Counts only, for the route's one info line (SA-Q11). Never a figure or a name. */
+type FinanceTrialsToPaidStatus = FinancePayingBreakdown['trials']['status'];
+
 export interface FinanceHealthCounts {
   accounts: number | null;
   plansCapped: boolean;
@@ -477,6 +484,19 @@ export interface FinanceHealthCounts {
    * `stampDiffers`: shown rows whose lineage first-payment stamp is missing or
    * not in this month (the G-1 cross-check, logged only).
    */
+  /**
+   * Money MK-9: F-K5's breakdown. Counts and a status only, never an id or a
+   * date. Absent with a business picked.
+   */
+  payingBreakdown?: {
+    comped: number | null;
+    assignedNoSubscription: number | null;
+    endedOrNotPaying: number | null;
+    trialsStatus: FinanceTrialsToPaidStatus;
+    trialsEnded: number | null;
+    trialsPaid: number | null;
+    rateShown: boolean;
+  };
   converted?: {
     scope: 'all' | 'one';
     status: FinanceConverted['status'];
@@ -551,11 +571,7 @@ export interface PlanWalk {
   capped: boolean;
 }
 
-const ledgerOpts = { pageSize: FINANCE_LIMITS.LEDGER_PAGE_SIZE, ceiling: FINANCE_LIMITS.LEDGER_CEILING };
-const EMPTY_LEDGER: RepoResult<CreditLedgerPagedResult<CreditLedgerRow>> = {
-  data: { rows: [], reachedCeiling: false },
-  error: null,
-};
+const EMPTY_LEDGER: RepoResult<CreditLedgerPagedResult<CreditLedgerRow>> = EMPTY_CHARGED_READ;
 
 /**
  * The all-accounts plan walk (SA-Q3): keyset, stop on a short page, capped with `>=`.
@@ -621,12 +637,8 @@ export async function buildFinanceHealth(
   }
 
   // ── 2. Every independent read, at once, each settled ──────────────────────
-  const readLedger = (range: CreditPeriodStartRange) =>
-    settle(() =>
-      accountId !== null
-        ? deps.ledger.listRowsForAccountCreatedInRange(accountId, range, ledgerOpts)
-        : deps.ledger.listRowsOfAllAccountsCreatedInRange(range, ledgerOpts)
-    );
+  // MK-2 (SA-1): the ONE charged-cost read, shared with Charge checks (`chargedAiCost.ts`).
+  const readLedger = (range: CreditPeriodStartRange) => readChargedLedger(deps.ledger, accountId, range);
   const readSpan = (span: FinanceSpan) => (isEmptySpan(span) ? Promise.resolve(EMPTY_LEDGER) : readLedger(span));
 
   const clamp = cutoverClamp(window.start, window.end);
@@ -716,7 +728,8 @@ export async function buildFinanceHealth(
         })
       : settle(() => deps.finance.listBillingStatusesAllAccounts()),
     accountId !== null ? Promise.resolve(NOT_CALLED_REVENUE) : settle<FinanceRevenueCounts>(() => deps.finance.countRevenueRows()),
-    clamp.readFrom === null ? Promise.resolve(EMPTY_LEDGER) : readLedger({ from: clamp.readFrom, to: window.end }),
+    // Section 3's window read, clamped to the cut-over: the same call Charge checks' cost tile makes (MK-2).
+    readChargedWindow(deps.ledger, accountId, window).result,
     readSpan(spans.current),
     spans.previousBeforeCutover ? Promise.resolve(null) : readSpan(spans.previous),
     settle<FinanceLot[]>(() => (accountId !== null ? deps.lots.forAccount(accountId) : deps.lots.allAccounts())),
@@ -814,8 +827,9 @@ export async function buildFinanceHealth(
   if (reminderRead !== null && !reminderRead.ok) failed('reminders', reminderRead.error ?? null);
 
   // ── 3. Section 1 ──────────────────────────────────────────────────────────
-  // Test and real billing rows count together (BD-14); one row per account
-  // (BD-16): two rows make the read itself fail, so they never reach here.
+  // The paying read is narrowed to one billing mode by the wiring (Finance R4,
+  // BD-37), so this file never names it; one row per account (BD-16): two rows
+  // make the read itself fail, so they never reach here.
   const { payingIds, paidTierHints } = payingSetOf(payingResult.data);
   const classified = plansResult.data
     ? classifyAccounts({ rows: plansResult.data.rows, payingIds, paidTierHints, window, now, config: deps.config })
@@ -849,6 +863,8 @@ export async function buildFinanceHealth(
   // exactly those ids (or the picked one), after the walk that names them.
   let converted: FinanceConverted | undefined;
   let convertedCounts: FinanceHealthCounts['converted'];
+  // MK-9 (SA-Q-MK9-1, option 1): trial-to-paid counts the SAME first payments; null when missing.
+  let firstPaymentsAll: ReadonlyArray<{ accountId: string; paidAt: string }> | null = null;
   if (deps.converted) {
     const month = currentUtcMonth(now);
     // MK5B-FU-1: every plan-row account is asked about, so the requests grow with the accounts (rework past 1,000).
@@ -858,6 +874,7 @@ export async function buildFinanceHealth(
       ? await settle(() => (deps.converted as NonNullable<FinanceHealthDeps['converted']>).firstPlanPayments(askIds))
       : null;
     if (firstRead?.error) failed('first_plan_payments', firstRead.error);
+    if (accountId === null && firstRead?.data) firstPaymentsAll = firstRead.data;
     const base = { asked: canRead ? askIds.length : null, found: firstRead?.data ? firstRead.data.length : null };
     const result =
       canRead && firstRead?.data
@@ -1495,6 +1512,29 @@ export async function buildFinanceHealth(
     prev: FinanceTile['previous'] = null
   ): FinanceTile => ({ id, status: colour.status, headline: colour.headline, value, previous: prev });
 
+  // ── Money MK-9: F-K5's breakdown (S5B-FR-8 to FR-16; all businesses only) ──
+  // No new read: the classifier's groups, the paying rows, the plan walk and the
+  // first payments Converted this month already counted (SA-Q-MK9-1, option 1).
+  let payingBreakdown: FinancePayingBreakdown | undefined;
+  if (accountId === null) {
+    const trials = planRows
+      ? planRows.filter(isTrialRow).map((row) => ({ accountId: row.user_id, endsAt: trialEndOf(row, deps.config, now) }))
+      : null;
+    payingBreakdown = {
+      comped: classified
+        ? compedSplit({ groupByAccount: classified.groupByAccount, statusRows: payingResult.data, isPaying: isPayingBillingRow })
+        : null,
+      trials: trialsToPaid({
+        trials,
+        capped: plansResult.data?.capped ?? false,
+        firstPayments: firstPaymentsAll,
+        window: { start: window.start, end: window.end },
+        now,
+        minimumTrials: FINANCE_TRIAL_TO_PAID.minimumTrials,
+      }),
+    };
+  }
+
   const figures = aiCost.figures;
   const payload: FinancePayload = {
     generatedAt: now.toISOString(),
@@ -1523,6 +1563,8 @@ export async function buildFinanceHealth(
     paying,
     // Money MK-5b: present only when the wiring supplies the first-payment read.
     ...(converted ? { converted } : {}),
+    // Money MK-9: all businesses only.
+    ...(payingBreakdown ? { payingBreakdown } : {}),
     ...(platformMargin ? { platformMargin } : {}),
     // Slice 6a (SA-W74): optional keys, ABSENT (not null) when not built, so the Overview payload is unchanged.
     ...(accountEconomics ? { accountEconomics } : {}),
@@ -1551,6 +1593,19 @@ export async function buildFinanceHealth(
       topAccounts: topAccounts.length,
       namesFound,
       ...(convertedCounts ? { converted: convertedCounts } : {}),
+      ...(payingBreakdown
+        ? {
+            payingBreakdown: {
+              comped: payingBreakdown.comped?.total ?? null,
+              assignedNoSubscription: payingBreakdown.comped?.assignedNoSubscription ?? null,
+              endedOrNotPaying: payingBreakdown.comped?.endedOrNotPaying ?? null,
+              trialsStatus: payingBreakdown.trials.status,
+              trialsEnded: payingBreakdown.trials.endedInWindow,
+              trialsPaid: payingBreakdown.trials.paid,
+              rateShown: payingBreakdown.trials.rate !== null,
+            },
+          }
+        : {}),
       creditAccounts: positionsPass ? positionsPass.byUserId.size : null,
       creditsPass: positionsPass ? positionsPass.outcome : 'skipped',
       creditPositions,

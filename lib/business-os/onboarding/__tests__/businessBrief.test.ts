@@ -328,6 +328,93 @@ describe('the same field is never put to the owner twice', () => {
  * reads like a good interview question and returns "professional".
  * ─────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Every question asks exactly one thing.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE MEASURED FAILURE
+ *
+ * `audience` asked "Think of someone you worked with recently: who were they,
+ * and what did they come to you for?" and was answered, by the owner of this
+ * platform, with an age range and a referral source. Neither half of the
+ * question. His verdict: "if I answered wrong everyone will do the same."
+ *
+ * An owner answers the half they can answer. The other half is not refused, it
+ * is simply never noticed, so the field is recorded as answered and the
+ * question is spent. Two of the six were written this way, and the model that
+ * phrases the real question follows these examples closely, so the fault was
+ * inherited rather than invented.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('every question asks exactly one thing', () => {
+  it('never joins two interrogatives with a comma', () => {
+    /*
+     * The exact shape of both offenders. `delivery` is deliberately NOT caught:
+     * its second clause follows a COLON and narrows the ask rather than adding
+     * a subject to it.
+     */
+    for (const field of BRIEF_FIELDS) {
+      expect([field.key, field.example]).not.toMatchObject([
+        field.key,
+        expect.stringMatching(/,\s*(and|or)\s+(what|who|whom|when|where|why|how|which)\b/i),
+      ]);
+    }
+  });
+
+  it('never joins them without a comma either', () => {
+    /*
+     * For a rewrite that drops the comma and keeps the second ask.
+     *
+     * The AUXILIARY is what makes this safe: without it, `audience`'s own
+     * replacement — "the last person who came to you" — would false-fire on a
+     * relative pronoun. Do NOT simplify this to counting wh-words; that was
+     * tried and it flags a question that is perfectly fine.
+     */
+    for (const field of BRIEF_FIELDS) {
+      expect([field.key, field.example]).not.toMatchObject([
+        field.key,
+        expect.stringMatching(
+          /\b(and|or)\s+(what|who|whom|when|where|why|how|which)\s+(do|did|are|is|was|were|have|has|would|will)\b/i
+        ),
+      ]);
+    }
+  });
+
+  it('asks once, so it carries one question mark', () => {
+    /* Stronger than the `/\?$/` assertions elsewhere in this file, which allow
+       "Who were they? And what did they want?" */
+    for (const field of BRIEF_FIELDS) {
+      expect([field.key, (field.example.match(/\?/g) ?? []).length]).toEqual([field.key, 1]);
+    }
+  });
+
+  it('tells the model the rule, rather than leaving it to copy the samples', () => {
+    /*
+     * The samples are never shown to an owner — they set the register for the
+     * picker, which writes the real question. This file already states the
+     * principle for the memory rule: a model obeys a rule more reliably than
+     * it imitates a sample. The same applies here, so the rule is in the
+     * prompt as well as in the examples above.
+     */
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const manager = fs.readFileSync(
+      path.join(process.cwd(), 'lib/services/OnboardingConversationManager.ts'),
+      'utf8'
+    );
+
+    /*
+     * The RULE, not its wording. The prompt was shortened from 73 lines to 49
+     * when its measured evidence moved into a comment block, and five guards
+     * here failed on phrases that had only been reworded. A guard that pins
+     * prose blocks every future edit while catching nothing extra.
+     */
+    expect(manager).toMatch(/- ONE ask\b/);
+    expect(manager).toMatch(/Never join two with "and" or a comma/);
+    expect(manager).toMatch(/Never join two with "and" or a comma/);
+  });
+});
+
 describe('the questions ask for a memory, not an opinion', () => {
   it('never offers options to choose from', () => {
     // "are they A, B, or C" is what produced "all kind".
@@ -363,8 +450,18 @@ describe('the questions ask for a memory, not an opinion', () => {
   });
 
   it('asks the objection as something somebody actually said', () => {
+    /*
+     * The same verb set its sibling above accepts.
+     *
+     * This read /asked|said/ — past tense only — while the differentiators
+     * guard one test up accepts (told|tell|said|say). Nothing justified the
+     * difference: what both are protecting is that the answer be a REPORTED
+     * UTTERANCE rather than the owner's own reading, and tense has no bearing
+     * on that. The narrower pattern rejected "What did the last client SAY
+     * they were worried about?", which is exactly what the field asks for.
+     */
     const objections = BRIEF_FIELDS.find(field => field.key === 'objections')!;
-    expect(objections.example).toMatch(/asked|said/i);
+    expect(objections.example).toMatch(/\b(asked|ask|said|say|told|tell)\b/i);
   });
 
   it('asks for one specific client rather than a demographic', () => {
@@ -388,15 +485,15 @@ describe('the picker is told the rules, not left to infer them', () => {
 
   it('forbids a menu explicitly', () => {
     // A model obeys a rule more reliably than it imitates a sample.
-    expect(prompt).toMatch(/NEVER offer options to choose from/);
+    expect(prompt).toMatch(/NEVER offer options/);
   });
 
   it('forbids asking the owner to characterise themselves', () => {
-    expect(prompt).toMatch(/NEVER ask the owner to characterise themselves/);
+    expect(prompt).toMatch(/never ask them to characterise themselves/i);
   });
 
   it('asks for recall over reasoning', () => {
-    expect(prompt).toMatch(/Ask for something the owner can REMEMBER/);
+    expect(prompt).toMatch(/Ask for what they can REMEMBER/);
   });
 
   it('forbids presupposing the shape of the work', () => {

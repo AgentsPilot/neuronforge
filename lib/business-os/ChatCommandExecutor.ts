@@ -2739,7 +2739,10 @@ async function executeContactAdd(
         last_name: lastName || undefined,
         email: entities.email,
         phone: entities.phone || undefined,
-        stage: entities.stage || 'lead',
+        /* What the owner asked for, or this business's own first stage —
+           resolved by the repository rather than defaulted to a word that is
+           not on every board. */
+        ...(entities.stage ? { stage: entities.stage } : {}),
         notes: entities.notes || undefined,
         // `company` is not a first-class crm_contacts column — store it in the JSONB custom_fields bag.
         custom_fields: entities.company ? { company: entities.company } : undefined,

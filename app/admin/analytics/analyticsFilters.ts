@@ -13,8 +13,17 @@
  * refuse with a 400 is ignored on arrival (U-4), and a value it accepts is
  * never dropped (SA S-2).
  *
- * The route is unchanged: it still receives `breakdownBy`, `user`, `period`,
+ * The route is unchanged: it still receives `breakdownBy`, `user`,
  * `dateFrom` and `dateTo`, in the page's historical param order.
+ *
+ * Money MK-3b (KPI restructure review §4, SA-Q-MK3-3): AI calls & usage is
+ * now the AI cost page's Calls tab (`/admin/ai-cost?tab=calls`). Its window is
+ * the page's: This month by default; Today, 7 days, 30 days, This month,
+ * Custom and 90 days, where 7, 30 and 90 days are WHOLE UTC days, as on
+ * Finance and Summary & checks, so the strip and the Calls total cover the
+ * same days. The rolling `period=N` is no longer sent, and "24 hours" is gone:
+ * a `range=24h` link falls back to This month (U-4). A linked window (the
+ * Health tile's exact instants) is kept and sent verbatim, as before.
  */
 
 import { textFilter, type AdminFilterField, type AdminFilterSpec } from '@/app/admin/components/layout/useAdminFilters';
@@ -36,7 +45,7 @@ import {
 export interface AnalyticsFilters {
   /** Default 'bos' (user decision, 2026-09-25). */
   scope: Scope;
-  /** Default 30 days. */
+  /** Default This month (MK-3b; was 30 days). */
   window: AdminWindowValue;
   /** One account; request param `user`. '' = every account. */
   account: string;
@@ -71,12 +80,14 @@ export type DrillField =
   | 'agent'
   | 'execution';
 
-export const ANALYTICS_PATH = '/admin/analytics';
+/** MK-3b: the Calls tab's page; the page's spec adds `tab=calls` to every real link. */
+export const ANALYTICS_PATH = '/admin/ai-cost';
 
-export const ANALYTICS_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: '30d' };
+/** MK-3b (C-6, Q-5): the AI cost page's default, This month (was 30 days). */
+export const ANALYTICS_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
 
-/** The two windows this page offered beyond the standard five (D-2 (b)). */
-export const ANALYTICS_WINDOW_EXTRAS: readonly AdminWindowExtra[] = ['24h', '90d'];
+/** MK-3b (SA-Q-MK3-3): 90 days only, as Summary & checks; "24 hours" is gone (D-2 (b)). */
+export const ANALYTICS_WINDOW_EXTRAS: readonly AdminWindowExtra[] = ['90d'];
 
 const BREAKDOWN_DIMENSIONS: readonly BreakdownDimension[] = [
   'provider',
@@ -181,19 +192,19 @@ export const ANALYTICS_FILTER_SPEC: AdminFilterSpec<AnalyticsFilters> = {
   execution: textFilter({ key: 'execution', defaultValue: '', isValid: isExecutionValue }),
 };
 
-/** The rolling server windows: `period=N` (Q-13; F-94 stays as recorded). */
-const ROLLING_PERIOD_DAYS: Readonly<Record<string, number>> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
-
 /**
  * The route's query, in the page's historical param order: breakdownBy, scope,
  * provider, model, activity, request_type, feature, component, endpoint, user,
  * agent, execution, category, then the window.
  *
- * 24 hours, 7 days, 30 days and 90 days stay the route's rolling `period=N`.
- * Today, This month and a custom range go out as explicit UTC instants: from at
- * 00:00:00.000Z, to at 23:59:59.999999Z (L-1c SA S-1), so the custom range is
- * whole UTC days on both sides (F-54; it used to mix UTC and local time).
- * Linked bounds are sent verbatim, as they always were.
+ * Every preset, 90 days and a custom range go out as explicit UTC instants:
+ * from at 00:00:00.000Z, to at 23:59:59.999Z, whole UTC days on both sides
+ * (F-54). MK-3b QA E-1: the end is the last MILLISECOND of the day (it was
+ * …23:59:59.999999Z, L-1c SA S-1), the same end the strip's A-K2 and Finance
+ * read (the half-open window less 1 ms, SA-Q52), so a call stamped in the
+ * day's last millisecond is counted on both or on neither. MK-3b (SA-Q-MK3-3): 7, 30 and 90 days are whole days
+ * too now, no longer the route's rolling `period=N`. Linked bounds are sent
+ * verbatim, as they always were.
  *
  * Callers pass the scope-normalised filters (`normaliseForScope`), so a
  * combination the route refuses in Business OS scope is never sent.
@@ -217,14 +228,8 @@ export function analyticsRequestParams(filters: AnalyticsFilters, now: Date): UR
     case 'none':
       break;
     case 'extra':
-      params.set('period', String(ROLLING_PERIOD_DAYS[value.extra]));
-      break;
     case 'preset': {
-      const rolling = ROLLING_PERIOD_DAYS[value.preset];
-      if (rolling !== undefined) {
-        params.set('period', String(rolling));
-        break;
-      }
+      // MK-3b: whole UTC days for every preset and 90 days (no rolling `period=N`).
       const resolved = resolveWindow(value, now);
       if (resolved.kind === 'dates') setWholeDays(params, resolved.from, resolved.to);
       break;
@@ -242,7 +247,8 @@ export function analyticsRequestParams(filters: AnalyticsFilters, now: Date): UR
 
 function setWholeDays(params: URLSearchParams, from: string | null, to: string | null): void {
   if (from !== null) params.set('dateFrom', `${from}T00:00:00.000Z`);
-  if (to !== null) params.set('dateTo', `${to}T23:59:59.999999Z`);
+  // MK-3b QA E-1: …59.999Z, A-K2's and Finance's inclusive end (never …59.999999Z).
+  if (to !== null) params.set('dateTo', `${to}T23:59:59.999Z`);
 }
 
 /**

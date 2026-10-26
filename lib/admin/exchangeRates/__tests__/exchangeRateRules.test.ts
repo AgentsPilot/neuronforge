@@ -16,12 +16,14 @@ import {
   isStale,
   normaliseRate,
   patchBodySchema,
+  rateOriginSchema,
   rateStringSchema,
   sameRate,
   UNKNOWN_USER_LABEL,
   exchangeRatesQuerySchema,
   historyEditorIds,
   labelHistory,
+  editorLabel,
   type ExchangeRateHistoryRecord,
   KPI_RATE_DECIMALS,
   roundRateForDisplay,
@@ -362,5 +364,82 @@ describe('defaultHistoryWindowDates (slice 1d, SQ-26)', () => {
     expect(defaultHistoryWindowDates(new Date('2026-10-20T15:30:00.000Z'))).toEqual({ from: '2026-10-01', to: '2026-10-20' });
     expect(defaultHistoryWindowDates(new Date('2026-10-01T00:00:00.000Z'))).toEqual({ from: '2026-10-01', to: '2026-10-01' });
     expect(defaultHistoryWindowDates(new Date('2026-10-31T23:59:59.999Z'))).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+  });
+});
+
+// ── Slice 1e (SA §13.7 SQ-43 / SQ-44, §13.8 SQ-50 (2)): additions only ──────
+
+describe('PATCH body, slice 1e: expectedRate and origin on the rate branch', () => {
+  const ORIGIN = { kind: 'sync', source: 'ecb', rateDate: '2026-10-23' };
+
+  it('accepts both keys on the rate branch', () => {
+    const parsed = patchBodySchema.safeParse({ field: 'rate', rate: '3.121505', expectedRate: '3.09', origin: ORIGIN });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({ field: 'rate', rate: '3.121505', expectedRate: '3.09', origin: ORIGIN });
+  });
+
+  it('accepts expectedRate alone', () => {
+    expect(patchBodySchema.safeParse({ field: 'rate', rate: '3.1', expectedRate: '3.09' }).success).toBe(true);
+  });
+
+  it('refuses origin without expectedRate (SQ-50 (2))', () => {
+    expect(patchBodySchema.safeParse({ field: 'rate', rate: '3.1', origin: ORIGIN }).success).toBe(false);
+  });
+
+  it.each([
+    ['expectedRate', { field: 'enabled', isEnabled: true, expectedRate: '3.09' }],
+    ['origin', { field: 'enabled', isEnabled: true, origin: ORIGIN }],
+  ])('refuses %s on the enabled branch', (_name, body) => {
+    expect(patchBodySchema.safeParse(body).success).toBe(false);
+  });
+
+  it.each([
+    ['an unknown key in origin', { ...ORIGIN, note: 'x' }],
+    ['a bad date', { ...ORIGIN, rateDate: '2026-02-30' }],
+    ['a date in another form', { ...ORIGIN, rateDate: '23/10/2026' }],
+    ['another source', { ...ORIGIN, source: 'frankfurter' }],
+    ['another kind', { ...ORIGIN, kind: 'manual' }],
+    ['a missing rate date', { kind: 'sync', source: 'ecb' }],
+    ['not an object', 'ecb'],
+  ])('refuses origin with %s', (_name, origin) => {
+    expect(patchBodySchema.safeParse({ field: 'rate', rate: '3.1', expectedRate: '3.09', origin }).success).toBe(false);
+  });
+
+  it.each(['0', '-1', '1.1234567', '', 3.09])('refuses expectedRate %j (same rules as a rate)', (expectedRate) => {
+    expect(patchBodySchema.safeParse({ field: 'rate', rate: '3.1', expectedRate }).success).toBe(false);
+  });
+
+  it('rateOriginSchema is exported and strict', () => {
+    expect(rateOriginSchema.safeParse(ORIGIN).success).toBe(true);
+    expect(rateOriginSchema.safeParse({ ...ORIGIN, extra: 1 }).success).toBe(false);
+  });
+});
+
+// ── Slice 1f (SA §13.9 SQ-54): the one label rule for one admin id ──────────
+
+describe('editorLabel (slice 1f, SQ-54)', () => {
+  const ANNA = 'aaaaaaaa-1111-4111-8111-111111111111';
+  const ok = (names: Array<[string, string]>, emails: Array<[string, string]>) =>
+    ({ status: 'ok', names: new Map(names), emails: new Map(emails) }) as const;
+
+  it('no id: "Unknown user", whatever the lookup (nothing was looked up)', () => {
+    expect(editorLabel(null, ok([], []))).toBe(UNKNOWN_USER_LABEL);
+    expect(editorLabel(null, { status: 'failed' })).toBe(UNKNOWN_USER_LABEL);
+  });
+
+  it('a failed lookup: null, so the page shows the short id', () => {
+    expect(editorLabel(ANNA, { status: 'failed' })).toBeNull();
+  });
+
+  it('the trimmed name first', () => {
+    expect(editorLabel(ANNA, ok([[ANNA, '  Anna Admin  ']], [[ANNA, 'anna@example.com']]))).toBe('Anna Admin');
+  });
+
+  it('a blank name falls back to the email', () => {
+    expect(editorLabel(ANNA, ok([[ANNA, '   ']], [[ANNA, 'anna@example.com']]))).toBe('anna@example.com');
+  });
+
+  it('neither a name nor an email: "Unknown user"', () => {
+    expect(editorLabel(ANNA, ok([], []))).toBe(UNKNOWN_USER_LABEL);
   });
 });

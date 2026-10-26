@@ -76,6 +76,21 @@
 // by adminReadMethods.guard.test.ts). Live audit only: archived entries are not
 // read (SA O-4), and the history says "in the live audit trail".
 //
+// THE SIXTH ADMIN EXCEPTION (Admin Exchange Rates slice 1e, SA §13.8 SQ-51):
+// `findLatestAdminExchangeRateSync` reads the newest successful
+// `EXCHANGE_RATE_SYNC_RUN` entry (entity `exchange_rate`, `details.outcome`
+// `ok`) for the Exchange rates "Rates last checked" tile. It is NOT
+// `.eq('user_id')`-scoped: a sync is a PLATFORM event (`shared` audience, no
+// tenant dimension), and the user id on it is the acting admin, not an owner.
+// It requires an admin read context, selects only
+// `ADMIN_EXCHANGE_RATE_SYNC_COLUMNS` (the time, the feed's rate date and the
+// acting admin's id: no `details` blob, no hash, no email, no ip), returns at
+// most one
+// row, and its only caller is `app/api/admin/exchange-rates/route.ts` (the
+// plain GET), behind `requireAdmin` (pinned by adminReadMethods.guard.test.ts).
+// Live audit only: an archived entry is not read, so the page says "No sync on
+// record", never "Never".
+//
 // THE SERVER-SIDE EXISTENCE CHECK (credits boost slice 4b.2, SA CR-1):
 // `hasFindingEntry` answers one yes / no: does this account already hold a
 // `BOS_BOOST_FLAGGED` entry with this reason on this purchase? It is scoped
@@ -288,6 +303,39 @@ export interface AdminPricingSyncRun {
   user_id: string | null;
   created_at: string;
   details: unknown;
+}
+
+/**
+ * Slice 1e (SQ-51): the only columns the latest-sync read selects. `rate_date`
+ * is a PostgREST JSON path alias, so no `details` blob leaves the database.
+ * Slice 1f (SA §13.9 SQ-53): `checked_by` is `actor_id`, the acting admin's id
+ * (the "who did it" column; `user_id` is only the scope field). So: the time,
+ * the feed's rate date and the acting admin's id; no `details` blob, no hash,
+ * no email, no ip.
+ */
+export const ADMIN_EXCHANGE_RATE_SYNC_COLUMNS = 'created_at, rate_date:details->>rateDate, checked_by:actor_id';
+
+/** Slice 1e: the entity the exchange rate audit entries are written under. */
+export const EXCHANGE_RATE_ENTITY_TYPE = 'exchange_rate';
+
+/**
+ * A real calendar date `YYYY-MM-DD` (UTC round trip). Kept here rather than
+ * importing the admin page's `isRealDate`, so this repository takes nothing
+ * from `app/`; the rule is the same.
+ */
+function isCalendarDate(value: string): boolean {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value)) return false;
+  const ms = Date.parse(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === value;
+}
+
+export interface AdminExchangeRateSyncRun {
+  /** When the sync ran (the entry's time). */
+  checkedAt: string;
+  /** The ECB rate date that sync brought (`YYYY-MM-DD`). */
+  rateDate: string;
+  /** The admin who ran it (`actor_id`, slice 1f); null when the entry has no actor (an old or system entry). */
+  checkedBy: string | null;
 }
 
 export interface AdminCappedRows<R> {
@@ -757,6 +805,52 @@ export class AuditTrailRepository {
       this.logger.warn(
         { err: error, correlationId: context?.correlationId, method: 'listAdminPricingSyncRuns' },
         'Admin pricing Sync runs read failed'
+      );
+      return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * ADMIN ONLY — see the header (the sixth exception, slice 1e). The newest
+   * successful exchange rate sync, or null when the live audit holds none.
+   * Refuses a missing admin context before any query; a row whose rate date is
+   * not a real date is an error, not a row. Never throws.
+   */
+  async findLatestAdminExchangeRateSync(context: AdminAuditReadContext): Promise<RepositoryResult<AdminExchangeRateSyncRun | null>> {
+    try {
+      if (!context?.correlationId || !context?.adminId) {
+        throw new Error('An admin read context (correlationId, adminId) is required');
+      }
+      const { data, error } = await this.supabase
+        .from('audit_trail')
+        .select(ADMIN_EXCHANGE_RATE_SYNC_COLUMNS)
+        .eq('action', AUDIT_EVENTS.EXCHANGE_RATE_SYNC_RUN)
+        .eq('entity_type', EXCHANGE_RATE_ENTITY_TYPE)
+        .eq('details->>outcome', 'ok')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const rows = (data ?? []) as unknown as Array<{ created_at: unknown; rate_date: unknown; checked_by: unknown }>;
+
+      this.logger.info(
+        { correlationId: context.correlationId, adminId: context.adminId, method: 'findLatestAdminExchangeRateSync', rows: rows.length },
+        'Admin exchange rate sync read'
+      );
+      const row = rows[0];
+      if (!row) return { data: null, error: null };
+      if (typeof row.created_at !== 'string' || typeof row.rate_date !== 'string' || !isCalendarDate(row.rate_date)) {
+        throw new Error('The latest exchange rate sync entry has no readable time or rate date');
+      }
+      // Slice 1f (SQ-53): a missing actor is "Unknown user", not an error; any other type is unreadable.
+      const checkedBy = row.checked_by ?? null;
+      if (checkedBy !== null && typeof checkedBy !== 'string') {
+        throw new Error('The latest exchange rate sync entry has an unreadable actor');
+      }
+      return { data: { checkedAt: row.created_at, rateDate: row.rate_date, checkedBy }, error: null };
+    } catch (error) {
+      this.logger.warn(
+        { err: error, correlationId: context?.correlationId, method: 'findLatestAdminExchangeRateSync' },
+        'Admin exchange rate sync read failed'
       );
       return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
     }

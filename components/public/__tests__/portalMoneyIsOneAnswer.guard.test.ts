@@ -170,7 +170,7 @@ describe('the portal reports a partial refund', () => {
     'utf8'
   );
 
-  it('sums what came back across the booking’s invoices', () => {
+  it('sums what came back across the booking’s invoices AND its direct card payments', () => {
     /*
      * `state` reaches 'refunded' only when `booking.payment_status` does, and
      * that takes a FULL refund. A client refunded ₪2,250 of ₪9,000 opened their
@@ -179,8 +179,21 @@ describe('the portal reports a partial refund', () => {
      *
      * Summed from the invoices because a job billed in stages carries the refund
      * on whichever stage was returned.
+     *
+     * AND FROM THE TRANSACTIONS, which is the half this pinned shut. A booking
+     * sold through website checkout raises no invoice at all, so `invoices` is
+     * empty and the client's portal reported nothing over a card payment that
+     * had been refunded — the same silence this guard exists to prevent, by the
+     * other route. `directCard` is those payments, filtered to the ones with no
+     * `invoice_id` so an invoice-settling transaction is never counted twice.
+     *
+     * Matched on the two reducers rather than one literal line: the expression
+     * now spans several, and pinning its exact shape is what made a correct
+     * addition read as a regression.
      */
-    expect(route).toMatch(/const refundedTotal = \(invoices \?\? \[\]\)\.reduce/);
+    expect(route).toMatch(/const refundedTotal =/);
+    expect(route).toMatch(/\(invoices \?\? \[\]\)\.reduce/);
+    expect(route).toMatch(/directCard\.reduce/);
     expect(route).toMatch(/refunded_amount, refunded_at/);
   });
 

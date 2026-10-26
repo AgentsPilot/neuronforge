@@ -575,8 +575,18 @@ export function BookingModal({
                 )}
               </div>
 
-              {/* Scrollable Content */}
-              <div ref={contentRef} className="flex-1 overflow-auto px-8 py-6 md:px-12 md:py-8">
+              {/*
+                Scrollable Content.
+
+                `ap-scroll-y`, not `overflow-auto`: this box scrolls DOWN, and
+                `auto` made it scroll sideways too. Focusing a field — by click
+                as much as by keyboard — lets the browser nudge every scrollable
+                ancestor to bring that field into view, and in RTL the nudge
+                pushes the panel right and shears the input's right-hand border
+                and icon off under the frame. Reported on the details step,
+                where the focus border makes the missing edge obvious.
+              */}
+              <div ref={contentRef} className="flex-1 ap-scroll-y px-8 py-6 md:px-12 md:py-8">
                 <ProcessFlowSection
                   content={{
                     flow: effectiveFlow,

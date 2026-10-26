@@ -601,3 +601,70 @@ describe('an unpriced placeholder from onboarding', () => {
     }
   });
 });
+
+/**
+ * Publish puts the SAVED row in front of clients, so it waits for the save.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Reported from the services tab: "why is the publish button shown before the
+ * change saved".
+ *
+ * `handlePublish` POSTs the service id and nothing else, so what goes live is
+ * whatever the server already holds. The button sat enabled and teal an inch
+ * from Save, so typing a price and pressing Publish put the OLD row in front
+ * of clients and left the new one unsaved.
+ *
+ * Worst immediately after onboarding, which is where most owners meet this
+ * list: the chat creates every service as a draft with no price and no
+ * duration, so the first thing anyone does here is type one, and the row they
+ * would have published is the empty one.
+ *
+ * `isRowDirty` already existed and Save already used it. Publish never asked.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('publishing a draft that has just been edited', () => {
+  const DRAFT = { ...SERVICE, status: 'draft' as const };
+
+  const publishButton = () =>
+    screen.getAllByRole('button').find(button => /publish/i.test(button.textContent || ''));
+
+  it('offers Publish on an untouched draft', async () => {
+    await openEditor({ service: DRAFT });
+
+    const publish = publishButton();
+    expect(publish).toBeDefined();
+    expect(publish).not.toBeDisabled();
+  });
+
+  it('stops offering it the moment something is typed', async () => {
+    await openEditor({ service: DRAFT });
+
+    /* The field an owner fills first on a draft from onboarding. */
+    const price = screen.getAllByDisplayValue('300')[0];
+    fireEvent.change(price, { target: { value: '450' } });
+    await settle();
+
+    expect(publishButton()).toBeDisabled();
+  });
+
+  it('says why, rather than going quiet', async () => {
+    /*
+     * A disabled button with no explanation reads as broken. The title names
+     * the consequence, which is the part an owner cannot guess: Publish would
+     * have shown the OLD version.
+     */
+    await openEditor({ service: DRAFT });
+
+    const price = screen.getAllByDisplayValue('300')[0];
+    fireEvent.change(price, { target: { value: '450' } });
+    await settle();
+
+    expect(publishButton()?.getAttribute('title')).toMatch(/save/i);
+  });
+
+  it('never offers Publish on a service that is already live', async () => {
+    /* Unchanged behaviour, asserted so the new condition cannot widen it. */
+    await openEditor({ service: SERVICE });
+    expect(publishButton()).toBeUndefined();
+  });
+});

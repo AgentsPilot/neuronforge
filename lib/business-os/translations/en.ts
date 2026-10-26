@@ -2906,6 +2906,7 @@ export const en = {
     'scheduling.service.days_short': 'd',
     'scheduling.service.draft': 'Draft',
     'scheduling.service.publish': 'Publish Service',
+    'scheduling.service.publish_save_first': 'Save your changes first, or Publish will put the old version in front of clients.',
     'scheduling.service.edit': 'Edit',
     'scheduling.service.activate': 'Activate Service',
     'scheduling.service.deactivate': 'Deactivate Service',
@@ -4367,6 +4368,7 @@ export const en = {
     'settings.invoice.payment_terms_immediate': 'Due on receipt — payment is expected as soon as the invoice arrives.',
     'settings.invoice.payment_terms_hint': 'Applies to invoices raised automatically — an accepted quote, a billed milestone. You still choose per invoice when creating one by hand.',
     'settings.invoice.tax_id': 'Tax ID / VAT Number',
+    'settings.invoice.tax_id_required': 'Required for a tax invoice',
     'settings.invoice.tax_id_placeholder': 'XX-XXXXXXX',
     'settings.invoice.address': 'Business Address',
     'settings.invoice.address_line1': 'Street address',
@@ -4815,4 +4817,69 @@ export const en = {
     'lead_capture.open': 'Open link',
     'lead_capture.create_custom': '+ Create custom link for campaigns',
     'lead_capture.help_text': 'Share these links on your website, social media, or email signature. Leads are automatically added to your CRM.',
+
+    /*
+     * LEADS FROM A WEBSITE THE BUSINESS KEEPS ITSELF.
+     *
+     * Their form already emails them; the platform reads that mailbox, files
+     * each sender as a lead, and the existing chase replies with a booking
+     * link. These are the card, the four setup screens and the two readiness
+     * rows.
+     *
+     * Every one of these keys MUST exist in all three dictionaries. `t()`
+     * returns the key itself when a translation is missing, so a gap here
+     * renders `leads.inbox.title` on the screen rather than falling back to
+     * English.
+     */
+    'leads.inbox.title': 'Leads from your website',
+    'leads.inbox.blurb': 'Your website emails you when someone fills in your contact form. We file them as leads and reply with a link to book.',
+    'leads.inbox.not_connected': 'Not connected',
+    'leads.inbox.paused': 'Paused',
+    'leads.inbox.watching': 'Watching',
+    'leads.inbox.set_up': 'Set up',
+    'leads.inbox.resume': 'Resume',
+    'leads.inbox.change': 'Change which emails',
+    'leads.inbox.problem.replies_off': 'Leads are being filed, but “Reply to enquiries” is off, so nobody is being answered.',
+    'leads.inbox.problem.mailbox_disconnected': 'The mailbox it reads is no longer connected, so nothing is arriving.',
+    'leads.inbox.problem.never_run': 'It has not run yet. The first check happens shortly.',
+    'leads.inbox.problem.fix': 'Turn it on',
+    'leads.inbox.step': 'Step {n} of 4',
+    'leads.inbox.which_mailbox': 'Which mailbox does your website send enquiries to?',
+    'leads.inbox.only_matching': 'We only read messages that match the enquiry you pick next. Nothing else is opened.',
+    'leads.inbox.pick': 'Point at one enquiry from your website',
+    'leads.inbox.pick_hint': 'We recognise the rest from it. That is the whole setup.',
+    'leads.inbox.learned': 'Here is what we will watch for',
+    'leads.inbox.will_read': 'And what we will read from each one',
+    'leads.inbox.from': 'Emails from',
+    'leads.inbox.subject_starts': 'with a subject starting',
+    'leads.inbox.field_name': 'Name',
+    'leads.inbox.field_email': 'Email',
+    'leads.inbox.field_phone': 'Phone',
+    'leads.inbox.any_subject': 'any subject',
+    'leads.inbox.what_happens': 'From now on, every enquiry becomes a lead',
+    'leads.inbox.what_happens_hint': 'We file the person who wrote in as a contact, and about fifteen minutes later they get your booking link — unless you have replied yourself by then.',
+    'leads.inbox.would_add_one': 'Their recent mail holds 1 enquiry like this:',
+    'leads.inbox.and_more': 'and {n} more',
+    'leads.inbox.would_add': 'Their recent mail holds {n} enquiries like this:',
+    'leads.inbox.could_not_read': '{n} we could not read. Those stay unread for you.',
+    'leads.inbox.start': 'Start now',
+    'leads.inbox.different': 'Pick a different email',
+    'leads.inbox.tile.connect': 'Connect',
+    'leads.inbox.tile.connecting': 'Connecting…',
+    'leads.inbox.tile.connect_failed': 'That mailbox could not be connected. Try again.',
+    'leads.inbox.tile.connect_cancelled': 'The sign-in window closed before it finished.',
+    'leads.inbox.tile.connected': 'Connected',
+    'leads.inbox.tile.already': 'Already set up',
+    'leads.inbox.tile.set_up_change': 'Set up · change',
+    'leads.inbox.reading': 'Reading your recent mail…',
+    'leads.inbox.newer': 'Newer',
+    'leads.inbox.older': 'Older',
+    'leads.inbox.page_of': '{n} of {total}',
+    'leads.inbox.no_mail': 'No recent messages in that mailbox.',
+    'leads.inbox.no_mailbox': 'Connect the mailbox your website sends enquiries to, then pick one of its emails.',
+    'leads.inbox.learned_from_one': 'Learned from one message only, so check the rule above carefully.',
+    'leads.inbox.readiness.replies_off_title': 'Website leads are not being answered',
+    'leads.inbox.readiness.replies_off_desc': 'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.',
+    'leads.inbox.readiness.connect_title': 'Leads from your own website',
+    'leads.inbox.readiness.connect_desc': 'Your website emails you when somebody fills in your contact form. We can file them as leads and reply with a link to book.',
 };

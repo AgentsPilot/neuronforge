@@ -105,12 +105,49 @@ describe('#17 · a duplicate transaction means the webhook won the race', () => 
     expect(code).toContain("const isDuplicate = paymentError?.code === '23505';");
   });
 
+  /*
+   * Sliced to the END OF THE BRANCH, not a character count.
+   *
+   * These read `indexOf(...) + 400` and `+ 600`. The branch then grew — it has
+   * to attach the adopted row to the booking, see the test below — and the
+   * assertions fell outside the window, so the guard failed over a change it
+   * was never meant to be sensitive to. A count is a guess about length; the
+   * `else if` is where the branch actually ends.
+   */
+  const duplicateBranch = () =>
+    code.slice(code.indexOf('if (isDuplicate)'), code.indexOf('} else if (paymentError)'));
+
   it('adopts the row the webhook already wrote', () => {
-    const branch = code.slice(code.indexOf('if (isDuplicate)'), code.indexOf('if (isDuplicate)') + 400);
+    const branch = duplicateBranch();
 
     expect(branch).toContain("from('payment_transactions')");
     expect(branch).toContain("eq('stripe_payment_intent_id', data.payment_intent_id)");
     expect(branch).toContain('paymentTransactionId = existing?.id ?? null;');
+  });
+
+  it('attaches that row to this booking, not merely reads its id', () => {
+    /*
+     * THE HALF THAT WAS MISSING, and it cost the same client twice.
+     *
+     * Adopting the id left `payment_transactions.booking_id` NULL whenever the
+     * webhook won the race — which on a smart link it usually does, because the
+     * client pays before the booking is written, so the webhook's row cannot
+     * carry a booking id even in its metadata.
+     *
+     * A payment attached in one direction only (`booking.payment_id` set, the
+     * transaction not) is invisible to everything that finds a booking's money
+     * by `booking_id`: the refund trigger leaves the booking reading `paid`,
+     * the client is never emailed, and their portal totals nothing.
+     *
+     * `.is('booking_id', null)` is required with it: a row the webhook DID
+     * link must never be moved to another booking.
+     */
+    const branch = duplicateBranch();
+
+    expect(branch).toContain('booking_id: booking.id');
+    expect(branch).toContain("is('booking_id', null)");
+    /* Scoped to the owner, like every other write on this service-role path. */
+    expect(branch).toContain("eq('user_id', ownerId)");
   });
 
   it('continues finalising rather than returning', () => {
@@ -119,7 +156,7 @@ describe('#17 · a duplicate transaction means the webhook won the race', () => 
      * counted twice. What was wrong was reading that as "the payment is not
      * recorded" and abandoning the confirmation.
      */
-    const branch = code.slice(code.indexOf('if (isDuplicate)'), code.indexOf('if (isDuplicate)') + 600);
+    const branch = duplicateBranch();
 
     expect(branch).not.toMatch(/return NextResponse\.json\(\s*\{\s*success:\s*false/);
   });

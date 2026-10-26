@@ -360,6 +360,20 @@
         "granting": false,
         "display": "no"
       },
+      "leads.inbox_channel": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
       "insights.checks": {
         "value": false,
         "decidedBy": "basis",

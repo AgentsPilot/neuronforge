@@ -12,6 +12,8 @@
  */
 
 /** Fields from `business_profiles` that the settings form writes. */
+import { resolveDocumentType } from '@/lib/payments/documentType';
+
 export interface BusinessProfileFields {
   company_name?: string | null;
   vertical?: string | null;
@@ -57,6 +59,14 @@ export type ProfileField =
 export interface InvoiceFields {
   invoice_company_name?: string | null;
   invoice_tax_id?: string | null;
+  /**
+   * Which document this business issues, and the setting the automatic choice
+   * is derived from. Both already live on the same row and are written by the
+   * same panel; they are declared here because `missingInvoiceFields` now has
+   * to know which document it is checking for.
+   */
+  invoice_document_type?: string | null;
+  invoice_prices_include_tax?: boolean | null;
   invoice_address?: InvoiceAddress | null;
   invoice_bank_name?: string | null;
   invoice_bank_account?: string | null;
@@ -192,12 +202,42 @@ function hasPaymentMethod(invoice: InvoiceFields | null | undefined): boolean {
   return hasBank || hasValue(invoice?.invoice_payment_instructions);
 }
 
-/** What the invoice details are still missing. */
+/**
+ * What the invoice details are still missing.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE TAX ID DEPENDS ON WHICH DOCUMENT THEY ISSUE.
+ *
+ * This asked every business for one, and the platform has never believed that.
+ * `defaultDocumentType` decides what to call a business's documents and says
+ * so outright: "Tax without a number is an ordinary invoice; neither is a
+ * receipt, which is what a service business collecting on the spot is really
+ * sending." A tax ID is what makes a tax invoice a tax invoice, not a
+ * precondition for billing anybody.
+ *
+ * So two halves of one system disagreed, and the half with no idea about
+ * document types was the one holding the gate. Reported by an owner with no
+ * tax ID: the publish gate refused their invoiced services, and the only
+ * answers available to them were to invent a number or to leave.
+ *
+ * The document type is READ FROM THE SAME ROW rather than taken as an
+ * argument, so every existing caller keeps working and none of them can pass
+ * a different answer than the invoice itself will use. `resolveDocumentType`
+ * is the one place that decides: their explicit choice, or the derived
+ * default when they have not made one.
+ *
+ * A receipt and an invoice still need the other three. A company name, an
+ * address and a way to be paid are what let a client know who billed them and
+ * where the money goes, and no document is usable without those.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 export function missingInvoiceFields(invoice: InvoiceFields | null | undefined): InvoiceField[] {
   const missing: InvoiceField[] = [];
 
   if (!hasValue(invoice?.invoice_company_name)) missing.push('company_name');
-  if (!hasValue(invoice?.invoice_tax_id)) missing.push('tax_id');
+  if (resolveDocumentType(invoice) === 'tax_invoice' && !hasValue(invoice?.invoice_tax_id)) {
+    missing.push('tax_id');
+  }
   if (!hasUsableAddress(invoice?.invoice_address)) missing.push('address');
   if (!hasPaymentMethod(invoice)) missing.push('payment_method');
 

@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, X, AlertCircle, RefreshCw, Globe, Link2, FileText, MoreHorizontal } from 'lucide-react';
+import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
+/* The leaf module, by VALUE: `inboxChannel` imports `supabaseServer`. */
+import {
+  PROVIDER_NAMES,
+  SUPPORTED_PROVIDERS,
+  type InboxProvider,
+} from '@/lib/business-os/leads/inboxProviders';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useChannelConnect } from '@/hooks/useChannelConnect';
 import { PluginIcon } from '@/components/PluginIcon';
@@ -150,6 +157,25 @@ const COPY: Record<string, Record<string, string>> = {
   /** The summary line that replaced the subtitle once something is live. */
   activeCount: { en: 'active', es: 'activos', he: 'פעילים' },
   addableCount: { en: 'can be added', es: 'para añadir', he: 'אפשר להוסיף' },
+  /* A lead channel, not a marketing one — see the note where it is offered. */
+  surfaceInboxLeads: {
+    en: 'Website emails · connect',
+    es: 'Correos del sitio · conectar',
+    he: 'מיילים מהאתר · חיבור',
+  },
+  inboxChange: { en: 'Change', es: 'Cambiar', he: 'שינוי' },
+  inboxPause: { en: 'Pause', es: 'Pausar', he: 'השהייה' },
+  inboxResume: { en: 'Resume', es: 'Reanudar', he: 'הפעלה' },
+  inboxLeadsCount: {
+    en: '{n} leads in 30 days',
+    es: '{n} prospectos en 30 días',
+    he: '{n} לידים ב-30 יום',
+  },
+  inboxLeadsTitle: {
+    en: 'File the enquiries your own website emails you',
+    es: 'Registra las consultas que te envía tu web',
+    he: 'תיוק הפניות שהאתר שלך שולח אליך',
+  },
   addTitle: { en: 'Add a channel', es: 'Añadir un canal', he: 'אפשר להוסיף' },
   reconnect: { en: 'Reconnect', es: 'Reconectar', he: 'התחבר מחדש' },
   manage: { en: 'Manage', es: 'Gestionar', he: 'ניהול' },
@@ -351,6 +377,7 @@ export function ChannelsCard({
   owned,
   onAction,
   onReady,
+  inboxChannel,
 }: {
   onChanged?: () => void;
   /** Drop the card chrome when this sits inside a shared card. */
@@ -377,6 +404,14 @@ export function ChannelsCard({
   };
   /** Publish a site, create a link — the dashboard owns what those do. */
   onAction?: (action: string) => void;
+  /**
+   * The mailbox lead channel, when the surface already knows it.
+   *
+   * Passed in rather than fetched here: this card renders nothing while it
+   * loads, and a second independent fetch would make the chip appear a beat
+   * after the others. Omit it and the chip simply is not offered.
+   */
+  inboxChannel?: InboxChannelStatus | null;
   /**
    * Fired once the connections have loaded and this column has something to
    * draw.
@@ -578,6 +613,12 @@ export function ChannelsCard({
     state: 'live' | 'alert' | 'paused';
     connection?: ConnectionRow;
     action?: { label: string; run: () => void };
+    /**
+     * A mailbox lead channel, which has no `connection` row: it IS an agent.
+     * Carried so the row can offer the two things an owner needs on it —
+     * change which emails it reads, and stop it without losing the setup.
+     */
+    inbox?: { provider: InboxProvider; running: boolean };
   };
 
   const liveRows: LiveRow[] = [];
@@ -658,6 +699,48 @@ export function ChannelsCard({
     });
   }
 
+  /*
+   * ─────────────────────────────────────────────────────────────────────────
+   * A RUNNING MAILBOX CHANNEL IS A CONNECTED SOURCE.
+   *
+   * It was only ever an "add this" chip, and the chip is gated on there being
+   * a mailbox left to set up — so the moment an owner finished setting one up
+   * it vanished from this card entirely. A channel quietly reading their mail
+   * and filing leads was invisible in the one place that answers "where do my
+   * clients come from", which is what this card is FOR.
+   *
+   * One row per mailbox, because they are independent: Gmail can be working
+   * while Outlook's token has expired, and that must be visible here rather
+   * than averaged into a single healthy-looking line.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  for (const channel of inboxChannel?.channels ?? []) {
+    const broken = channel.problems.includes('mailbox_disconnected');
+    liveRows.push({
+      id: `inbox:${channel.provider}`,
+      icon: (
+        <Mark tint="#4F6EF7">
+          <PluginIcon pluginId={channel.provider} className="w-[15px] h-[15px]" alt="" />
+        </Mark>
+      ),
+      name: t('inboxLeadsTitle'),
+      /* What it BROUGHT comes first once there is anything to report: this
+         card answers "where do my clients come from", and the mailbox it
+         watches is detail beside that. Zero leads falls back to the rule, so
+         a channel that has just been switched on says what it is doing
+         rather than announcing a nought. */
+      meta: broken
+        ? `${PROVIDER_NAMES[channel.provider]} · ${t('connectError.not_connected')}`
+        : channel.leads > 0
+          ? `${PROVIDER_NAMES[channel.provider]} · ${t('inboxLeadsCount').replace('{n}', String(channel.leads))}`
+          : channel.watching
+            ? `${PROVIDER_NAMES[channel.provider]} · ${channel.watching}`
+            : PROVIDER_NAMES[channel.provider],
+      state: broken ? 'alert' : channel.state === 'running' ? 'live' : 'paused',
+      inbox: { provider: channel.provider, running: channel.state === 'running' },
+    });
+  }
+
   // Whatever needs the reader now goes first. That is the whole of option B's
   // idea, without a heading of its own — one row at the top rather than a
   // third group that is empty most days.
@@ -724,6 +807,73 @@ export function ChannelsCard({
       label: short[language] || short.en,
       title: labels[language] || labels.en,
       run: () => connect.connect(provider),
+    });
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE MAILBOX, WHICH IS A LEAD CHANNEL RATHER THAN A MARKETING ONE.
+   *
+   * Everything above this line reports TRAFFIC — a Facebook page, a Google
+   * listing, an Analytics property. The mailbox reports nothing; it brings
+   * PEOPLE in, from a website the business hosts itself and will not replace.
+   *
+   * It belongs here anyway, and the owner's own words settle it: "the email is
+   * sort of a plugin connection". From where they stand, connecting their
+   * mailbox is the same act as connecting their Facebook page — an account
+   * they own, handed to the platform to work with. Filing it two screens away
+   * because our internals classify it differently would be the product
+   * explaining its own architecture to somebody who did not ask.
+   *
+   * Offered the way the website and smart-link chips are: an icon rather than a
+   * provider logo, and the parent opens what follows. `ChannelsCard` knows
+   * about connections, not about setup wizards.
+   *
+   * Shown only when there is a mailbox to connect. A business with neither
+   * Gmail nor Outlook connected cannot act on this chip, and a chip that
+   * cannot be acted on is a dead end with our name on it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /*
+   * `connectable` ALONE, not "nothing is set up yet".
+   *
+   * It holds connected mailboxes with no channel, so it is already the exact
+   * answer to "is there anything left to offer". Pairing it with
+   * `state === 'not_connected'` meant a business that had set up Gmail and
+   * still had Outlook connected was never offered the second one: the account
+   * read as `running`, so the chip vanished with half the work undone.
+   */
+  /*
+   * OFFERED WHENEVER A MAILBOX IS STILL UNSET UP — connected or not.
+   *
+   * This asked for `connectable`, which holds mailboxes already CONNECTED and
+   * without a channel. Outlook that had never been connected was therefore
+   * never offered, and an owner who takes enquiries at an Outlook address had
+   * no way in: the chip was the entry point and it required the thing it was
+   * supposed to help them set up.
+   *
+   * Setup's first screen signs a mailbox in itself now, so the chip can
+   * honestly offer any provider that has no channel yet.
+   */
+  const unsetUp =
+    inboxChannel &&
+    SUPPORTED_PROVIDERS.some(p => !inboxChannel.channels.some(c => c.provider === p));
+
+  if (unsetUp) {
+    addable.push({
+      key: 'inbox-enquiries',
+      /*
+       * The real brand marks of the mailboxes still to set up, like every
+       * other chip in this row — a generic envelope said "email" where the
+       * neighbouring chips say which service. With Gmail already running the
+       * chip shows Outlook alone, which is exactly what pressing it offers.
+       */
+      logos: SUPPORTED_PROVIDERS.filter(
+        p => !inboxChannel?.channels.some(c => c.provider === p)
+      ),
+      label: t('surfaceInboxLeads'),
+      title: t('inboxLeadsTitle'),
+      run: () => onAction?.('connect_inbox_channel'),
     });
   }
 
@@ -883,6 +1033,43 @@ export function ChannelsCard({
                 >
                   {t('reconnect')}
                 </button>
+              )}
+
+              {/*
+                A MAILBOX CHANNEL'S TWO CONTROLS, ON THE ROW.
+                ────────────────────────────────────────────────────────────
+                Not behind the manage menu, which exists for `connection`
+                rows and this is not one — the channel is an agent, so none
+                of that menu's actions (reconnect, remove the account) mean
+                anything here.
+
+                "Change" re-runs setup, which is how a form that was rebuilt
+                gets re-measured: the wizard re-points the SAME agent, so the
+                mailbox and its history survive.
+
+                Pause is a decision, not a fault, so it is quiet and its
+                label says what the press will DO rather than what the state
+                is.
+              */}
+              {row.inbox && (
+                <>
+                  <button
+                    onClick={() => onAction?.('connect_inbox_channel')}
+                    className="flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] whitespace-nowrap"
+                  >
+                    {t('inboxChange')}
+                  </button>
+                  <button
+                    onClick={() => onAction?.(
+                      row.inbox!.running
+                        ? `pause_inbox_channel:${row.inbox!.provider}`
+                        : `resume_inbox_channel:${row.inbox!.provider}`
+                    )}
+                    className="flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] whitespace-nowrap"
+                  >
+                    {row.inbox.running ? t('inboxPause') : t('inboxResume')}
+                  </button>
+                </>
               )}
 
               {row.connection && (

@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
 import { ChannelsCard } from './ChannelsCard';
 import { ChannelSourcesSection, type ChannelRow, type VisitSurface } from './ChannelSourcesSection';
 
@@ -72,9 +73,16 @@ interface ChannelsOverviewCardProps {
    * booking link ended up unable to see that link.
    */
   offerConnections?: boolean;
+  /**
+   * The mailbox lead channel, passed straight to the connections column.
+   *
+   * Read once by the page rather than by this card: readiness needs the same
+   * answer, and two reads of one question are two answers waiting to differ.
+   */
+  inboxChannel?: InboxChannelStatus | null;
 }
 
-export function ChannelsOverviewCard({ performance, onChanged, owned, onAction, offerConnections = false }: ChannelsOverviewCardProps) {
+export function ChannelsOverviewCard({ performance, onChanged, owned, onAction, offerConnections = false, inboxChannel }: ChannelsOverviewCardProps) {
   const { isRTL, t } = useLanguage();
 
   /*
@@ -201,6 +209,7 @@ export function ChannelsOverviewCard({ performance, onChanged, owned, onAction, 
               onChanged={onChanged}
               owned={owned}
               onAction={onAction}
+              inboxChannel={inboxChannel}
               onReady={handleConnectionsReady}
             />
           </div>

@@ -28,6 +28,7 @@ import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectStatus } from '@/components/payments/StripeConnectStatus';
 import {
   defaultDocumentType,
+  resolveDocumentType,
   type DocumentType,
 } from '@/lib/payments/documentType';
 import { createLogger } from '@/lib/logger';
@@ -103,6 +104,18 @@ interface InvoiceSettingsSectionProps {
    * red notice about a step they declined.
    */
   onConnectProcessor?: () => void;
+  /**
+   * Fired after the settings have actually been written.
+   *
+   * Added for the onboarding build screen, which had no way to know. It drew
+   * its own "Done" button beneath this panel, so the screen offered two
+   * buttons: a Save that writes and a Done that does not. An owner typed their
+   * tax ID, pressed the larger of the two, and lost both the edit and the card
+   * that would have let them try again.
+   *
+   * The caller decides what a save means. This only reports that one happened.
+   */
+  onSaved?: () => void;
 }
 
 export function InvoiceSettingsSection({
@@ -112,6 +125,7 @@ export function InvoiceSettingsSection({
   onToggle,
   showProcessor = true,
   onConnectProcessor,
+  onSaved,
 }: InvoiceSettingsSectionProps) {
   // Without the accordion there is nothing to collapse, so the panel is open.
   const expanded = chrome ? expandedProp === true : true;
@@ -170,6 +184,18 @@ export function InvoiceSettingsSection({
    * forever. Legacy free text does NOT satisfy it — picking from the list is
    * what turns "Israel" into something the rest of the platform can read.
    */
+  /*
+   * Whether this business owes a tax ID at all, by the same rule the readiness
+   * check applies: only a tax invoice carries one. Derived from the live form
+   * values rather than from what is saved, so the mark follows the document
+   * picker as it is changed rather than after a reload.
+   */
+  const taxIdRequired = resolveDocumentType({
+    invoice_document_type: settings.invoice_document_type || null,
+    invoice_prices_include_tax: settings.invoice_prices_include_tax,
+    invoice_tax_id: settings.invoice_tax_id,
+  }) === 'tax_invoice';
+
   const countryMissing = !legacyCountryToCode(settings.invoice_address?.country);
 
   const termsMissing =
@@ -277,6 +303,9 @@ export function InvoiceSettingsSection({
 
       if (response.ok) {
         setSuccessMessage(t('settings.invoice.saved') || 'Invoice settings saved');
+        /* After the write, never before: a caller acting on this is entitled
+           to assume the values are on the server. */
+        onSaved?.();
         /* The address may have become a new entry in the book — a fork, or the
            first one this business has saved. Refetch so the picker shows it
            without a page reload. */
@@ -545,8 +574,33 @@ export function InvoiceSettingsSection({
 
                 {/* Tax ID */}
                 <div>
+                  {/*
+                      REQUIRED ONLY FOR A TAX INVOICE, and the asterisk says so
+                      rather than the owner finding out from the publish gate.
+                      ──────────────────────────────────────────────────────────
+                      `missingInvoiceFields` asks for this when, and only when,
+                      the document resolves to `tax_invoice`: a tax ID is what
+                      makes that document what it is, and a receipt does not
+                      carry one. An owner issuing receipts used to be refused
+                      over a field they had no reason to have, with nothing on
+                      the form saying whether it mattered.
+
+                      Read from the same `resolveDocumentType` the check uses,
+                      so the mark and the rule cannot disagree. The picker that
+                      decides it sits a few fields above this one, and changing
+                      it turns the asterisk on and off as it should.
+                  */}
                   <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
                     {t('settings.invoice.tax_id') || 'Tax ID / VAT Number'}
+                    {taxIdRequired && (
+                      <span
+                        title={t('settings.invoice.tax_id_required') || 'Required for a tax invoice'}
+                        className="ms-0.5"
+                        style={{ color: '#B42318' }}
+                      >
+                        *
+                      </span>
+                    )}
                   </label>
                   <input
                     type="text"

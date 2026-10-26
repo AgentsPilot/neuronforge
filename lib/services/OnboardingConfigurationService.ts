@@ -787,9 +787,50 @@ export class OnboardingConfigurationService {
   }
 
   /**
-   * Compute payment mode based on extracted data
+   * How money reaches this business, as a mode.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A PROJECTION OF `collection_method`, NOT A SECOND OPINION.
+   *
+   * This opened on `services.some(s => s.price > 0)`. The interview does not
+   * ask for prices — `draftServices` never returns one and a guard test pins
+   * that — so the test was false for every account built through the chat and
+   * every one of them stored `payment_mode: 'none'`. An owner who tapped "the
+   * client pays online by card" was recorded as taking no payments at all.
+   *
+   * `computeCollectionMethod` below already resolves this properly, from the
+   * answer the owner actually gave. There is no reason for two methods to
+   * reach their own verdicts about the same money; this one now reads that
+   * answer and translates it.
+   *
+   * INSTALMENTS FIRST, because a plan is money moving on a schedule whoever
+   * collects it — the same argument `needsInvoicePaperwork` makes in
+   * `setupGraph`. A business billing a programme monthly is on a plan even if
+   * every instalment arrives as a bank transfer.
+   *
+   * The price-based read survives as the LAST branch, for callers that predate
+   * the collection question and carry no `collection_method` at all. Their
+   * behaviour is unchanged, which is the whole reason it is kept.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   private computePaymentMode(data: ExtractedData): PaymentMode {
+    if (data.services?.some(s => s.payment_plan && s.payment_plan.installment_count >= 2)) {
+      return 'installments';
+    }
+
+    /* Nothing to sell, nothing to collect. First, as in its sibling. */
+    if (this.sellsNothing(data)) {
+      return 'none';
+    }
+
+    switch (data.collection_method) {
+      case 'none': return 'none';
+      case 'card_online':
+      case 'mixed': return 'upfront';
+      case 'invoice':
+      case 'in_person': return 'invoicing';
+    }
+
     // Check if all services are free
     const hasPaidServices = data.services?.some(s => s.price && s.price > 0);
 
@@ -975,18 +1016,46 @@ export class OnboardingConfigurationService {
     // matched only the first branch, so invoicing was never switched on for
     // the half of its catalogue that needs it — and the user was later asked
     // to configure invoices for a capability nothing had enabled.
-    const pricedServices = (data.services || []).filter(s => s.price && s.price > 0);
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * THE SAME FIX THE SCHEDULING BLOCK ABOVE ALREADY HAD.
+     *
+     * This gated everything on `price > 0`, which the comment forty lines up
+     * describes as "a workable proxy only while the catalogue was either typed
+     * by the owner or empty". The chat now collects a COUNT and no prices, so
+     * the filter was empty every time and `payments` was never added at all —
+     * nor any of its blocks. Scheduling was moved off that proxy and onto the
+     * answer the rows carry; payments is the same bug, unfixed until now.
+     *
+     * The ANSWER decides the capability; the ROWS decide its blocks, falling
+     * back to the business-wide word where they say nothing. That is exactly
+     * the precedence `needs_stripe_connect` already uses, and it is why a
+     * drafted row with no price still contributes what the owner told us.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    const sellableServices = data.services || [];
+    const businessWide = data.collection_method;
+    const takesMoney =
+      !this.sellsNothing(data) && businessWide !== 'none' &&
+      (Boolean(businessWide) || sellableServices.some(s => s.price && s.price > 0));
 
-    if (pricedServices.length > 0) {
+    if (takesMoney) {
       addCapability('payments', 'You have paid services');
 
-      if (pricedServices.some(s => s.collection === 'online')) {
+      const says = (want: 'online' | 'invoice') =>
+        sellableServices.some(s => s.collection === want) ||
+        (!sellableServices.some(s => s.collection) &&
+          (want === 'online'
+            ? businessWide === 'card_online' || businessWide === 'mixed'
+            : businessWide === 'invoice' || businessWide === 'in_person' || businessWide === 'mixed'));
+
+      if (says('online')) {
         addBlock('payments', 'online_payments');
       }
-      if (pricedServices.some(s => s.collection === 'invoice')) {
+      if (says('invoice')) {
         addBlock('payments', 'invoicing');
       }
-      if (pricedServices.some(s => s.payment_plan && s.payment_plan.installment_count >= 2)) {
+      if (sellableServices.some(s => s.payment_plan && s.payment_plan.installment_count >= 2)) {
         addBlock('payments', 'installments');
       }
     }

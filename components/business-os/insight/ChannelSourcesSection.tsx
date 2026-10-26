@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Mail, Link2, HelpCircle, Music2, Briefcase, Play } from 'lucide-react';
+import { Mail, Link2, HelpCircle, Music2, Briefcase, Play, Hourglass } from 'lucide-react';
 import { PluginIcon } from '@/components/PluginIcon';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { Channel } from '@/lib/business-os/channel-insights/channelFromReferrer';
@@ -101,6 +101,7 @@ const CHANNEL_ICONS: Partial<Record<Channel, typeof Mail>> = {
   youtube: Play,
   email: Mail,
   referral: Link2,
+  inbox: Mail,
   direct: HelpCircle,
   linkedin: Briefcase,
 };
@@ -137,6 +138,7 @@ const CHANNEL_COLORS: Record<Channel, string> = {
   qr: '#64748B',
   email: '#8B5CF6',
   referral: '#64748B',
+  inbox: '#4F6EF7',
   direct: '#94A3B8',
 };
 
@@ -155,6 +157,7 @@ export const CHANNEL_LABELS: Record<Channel, Record<string, string>> = {
   youtube: { en: 'YouTube', es: 'YouTube', he: 'יוטיוב' },
   email: { en: 'Email', es: 'Correo', he: 'אימייל' },
   qr: { en: 'QR / print', es: 'QR / impreso', he: 'QR / דפוס' },
+  inbox: { en: 'Your website form', es: 'Formulario de tu web', he: 'הטופס באתר שלך' },
   referral: { en: 'Other sites', es: 'Otros sitios', he: 'אתרים אחרים' },
   direct: { en: 'Direct / unknown', es: 'Directo / desconocido', he: 'ישיר / לא ידוע' },
 };
@@ -557,7 +560,20 @@ export function ChannelSourcesSection({
                         : tile.reach !== null
                         ? `${formatCompact(tile.reach)} ${t('reach').toLowerCase()}`
                         : tile.awaitingData
-                          ? '⏳'
+                          ? (
+                              /* A lucide glyph, not the `⏳` emoji that was
+                                 here: every other mark in this card is a
+                                 lucide icon, and an emoji renders in whatever
+                                 the operating system feels like — a different
+                                 shape, weight and colour on each platform,
+                                 inside a card whose icons are otherwise
+                                 tinted to one palette. */
+                              <Hourglass
+                                className="w-3 h-3 inline-block align-middle"
+                                style={{ color: 'var(--v2-text-muted)' }}
+                                aria-hidden
+                              />
+                            )
                           : ' '}
                     </div>
                   ) : (

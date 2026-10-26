@@ -219,16 +219,52 @@ describe('the booking that gets created is a finished one', () => {
 
   it('never moves an existing contact\'s stage', () => {
     /*
-     * Entry #8 of the recorded bugs, carried over: the route must not decide a
-     * contact's stage. `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)` moves them when
-     * the booking is written `confirmed`.
+     * Entry #8 of the recorded bugs, carried over: a contact who is already on
+     * this board stays where the owner put them. `promote_contact_on_payment`
+     * moves them when money arrives — a `payment_transactions` row, succeeded,
+     * above zero — not this function.
+     *
+     * SCOPED TO THE EXISTING-CONTACT BRANCH. This asserted that the whole
+     * function contained no 'stage' at all, which forbade naming one when
+     * CREATING a contact too — and that is why every new contact landed on the
+     * column default, the literal 'lead', a key many pipelines do not contain.
+     * The rule was never "say nothing about stages"; it was "do not move
+     * somebody who already has one".
      */
     const contact = materialise.slice(
       materialise.indexOf('async function resolveContact'),
       materialise.indexOf('async function slotStillFree')
     );
 
-    expect(contact).not.toContain('stage');
+    const existingContactBranch = contact.slice(
+      contact.indexOf('if (found) {'),
+      contact.indexOf('return found.id;')
+    );
+
+    expect(existingContactBranch).not.toContain('stage');
+  });
+
+  it('starts a new contact at the owner\'s own first stage', () => {
+    /*
+     * The other half, and the reason the branch above had to be narrowed.
+     *
+     * Omitting `stage` does NOT leave it unset: the column is
+     * `NOT NULL DEFAULT 'lead'` (20260722_create_crm_tables.sql). So "let the
+     * trigger decide" wrote 'lead' for real, and a board of
+     * inquiry > initial_consultation > family_enrolled had its clients parked
+     * on a column that does not exist. `advance_contact_stage` then could not
+     * move them either — it resolves `current_type` by joining the stage key
+     * to the pipeline, and 'lead' joins to nothing.
+     */
+    const contact = materialise.slice(
+      materialise.indexOf('async function resolveContact'),
+      materialise.indexOf('async function slotStillFree')
+    );
+
+    expect(contact).toContain('firstStageKey(attempt.user_id)');
+    /* Resolved per owner, never a literal. */
+    expect(contact).not.toContain("stage: 'lead'");
+    expect(contact).not.toContain("stage: 'client'");
   });
 });
 

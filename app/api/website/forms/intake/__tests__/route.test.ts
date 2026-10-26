@@ -109,7 +109,7 @@ describe('POST /api/website/forms/intake', () => {
   });
 
   // T1 — new contact, real column names only
-  it('creates a new contact with first_name/last_name/stage and no phantom columns', async () => {
+  it('creates a new contact with first_name/last_name and no phantom columns', async () => {
     const res = await POST(makeRequest(VALID_BODY));
 
     expect(res.status).toBe(200);
@@ -123,12 +123,31 @@ describe('POST /api/website/forms/intake', () => {
       first_name: 'Ada',
       last_name: 'Lovelace',
       email: 'ada@example.com',
-      stage: 'lead',
       source: 'website_intake',
     });
     expect(insert).not.toHaveProperty('name');
     expect(insert).not.toHaveProperty('status');
     expect(insert.custom_fields.intake_data).toMatchObject({ template: 'coach' });
+  });
+
+  /*
+   * THE ROUTE NAMES NO STAGE, ON PURPOSE.
+   *
+   * This asserted `stage: 'lead'`. That literal was removed from the route
+   * because 'lead' is a word many boards do not contain, so it put the contact
+   * on a stage the owner's board has no column for. The entry stage is now
+   * resolved per business by `CRMContactRepository.create`, through
+   * `firstStageFor`, which falls back to 'lead' only when the board has no
+   * stages at all.
+   *
+   * Pinned as an absence rather than deleted: a stage reappearing here is the
+   * regression, and it would otherwise go unnoticed until a board rendered a
+   * contact nowhere.
+   */
+  it('names no stage, leaving each business its own first stage', async () => {
+    await POST(makeRequest(VALID_BODY));
+
+    expect(createContact.mock.calls[0][0]).not.toHaveProperty('stage');
   });
 
   // Documents a tracked contract defect (workplan §1) — NOT the behaviour we want.
@@ -316,7 +335,10 @@ describe('POST /api/website/forms/intake', () => {
     expect(insert.user_id).toBe(OWNER_ID);
     expect(insert).not.toHaveProperty('id');
     expect(insert).not.toHaveProperty('status');
-    expect(insert.stage).toBe('lead');
+    /* The injected 'client' must not reach the insert. This asserted the route's
+       own literal 'lead' instead; with that literal gone the absence is the
+       stronger statement of the same requirement. */
+    expect(insert).not.toHaveProperty('stage');
     expect(JSON.stringify(insert)).not.toContain(ATTACKER);
 
     expect(linkIntakeContact).toHaveBeenCalledWith(BOOKING_ID, OWNER_ID, CONTACT_ID);

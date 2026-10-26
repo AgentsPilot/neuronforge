@@ -397,6 +397,15 @@ export const AUDIT_EVENTS = {
   // historised by the database trigger; the toggle is recorded only here.
   EXCHANGE_RATE_UPDATED: 'EXCHANGE_RATE_UPDATED',
   EXCHANGE_RATE_ENABLED_CHANGED: 'EXCHANGE_RATE_ENABLED_CHANGED',
+  // Admin Exchange Rates slice 1e (SA §13.7 SQ-47): one entry per "Sync rates"
+  // click that passed the admin gate and the body check, success or source
+  // failure alike. It records what the ECB feed said; NOTHING is applied.
+  EXCHANGE_RATE_SYNC_RUN: 'EXCHANGE_RATE_SYNC_RUN',
+  // Admin Exchange Rates slice 1e (SA §13.8 SQ-50): an admin accepted (or
+  // confirmed) a synced suggestion. Written INSTEAD of EXCHANGE_RATE_UPDATED
+  // when the rate save carries `origin`; its details are a superset of that
+  // event's (oldValue / newValue / unchanged, plus origin and the server gap).
+  EXCHANGE_RATE_SUGGESTION_ACCEPTED: 'EXCHANGE_RATE_SUGGESTION_ACCEPTED',
 
   // ==========================================
   // BUSINESS OS PLAN BILLING (owner-initiated, server-written)
@@ -1239,6 +1248,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Currency switched on or off by an admin',
+  },
+  // Admin Exchange Rates slice 1e (SQ-47, SQ-50): info; nothing converts money (D-5, SQ-42).
+  [AUDIT_EVENTS.EXCHANGE_RATE_SYNC_RUN]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Public exchange rates read for review (nothing applied)',
+  },
+  [AUDIT_EVENTS.EXCHANGE_RATE_SUGGESTION_ACCEPTED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Suggested exchange rate accepted by an admin',
   },
   // Slice 5a: a champion's friend invites (FR-28 to FR-32, F5a-13).
   [AUDIT_EVENTS.BOS_FRIEND_INVITE_CREATED]: {

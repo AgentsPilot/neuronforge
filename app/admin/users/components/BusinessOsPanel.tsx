@@ -395,11 +395,12 @@ export function BusinessOsPanel({ user, allProducts, onCreditsChanged }: Props) 
                   )}
                 </>
               )}
+              {/* Money MK-3b: the AI cost page's Calls tab, straight (never through the redirect). */}
               <Link
-                href={`/admin/analytics?scope=bos&user=${encodeURIComponent(accountId)}`}
+                href={`/admin/ai-cost?tab=calls&scope=bos&user=${encodeURIComponent(accountId)}`}
                 className={`inline-block ${LINK_CLASS}`}
               >
-                Open in AI calls & usage
+                Open in AI cost: Calls
               </Link>
             </div>
 

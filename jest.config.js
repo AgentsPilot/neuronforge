@@ -26,6 +26,15 @@ const config = {
      * broken for weeks while the Node-only suite stayed green.
      */
     '^lib-address/lite$': '<rootDir>/node_modules/lib-address/dist/entry-lite.cjs',
+    /*
+     * Same ESM-in-node_modules gap, with no CJS build to point at: uuid v13
+     * ships `export` in every entry point. Mapped to a shim that calls
+     * `crypto.randomUUID()`, which IS an RFC-4122 v4 — see __mocks__/uuid.js.
+     *
+     * Without this, every test that transitively reaches uuid fails to parse.
+     * That silently disabled three cases of the cron run-record guard.
+     */
+    '^uuid$': '<rootDir>/__mocks__/uuid.js',
   },
   collectCoverageFrom: [
     'lib/**/*.{ts,tsx}',

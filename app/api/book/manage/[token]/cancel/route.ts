@@ -8,6 +8,11 @@ import { createLogger } from '@/lib/logger';
 import { cancelBooking, clientCancellationReason } from '@/lib/services/BookingLifecycleService';
 import { CLIENT_CANCEL_REASONS } from '@/lib/business-os/cancellationReasons';
 import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
+/* The meeting-only path: the same repository method and the same email variant
+   the OWNER's `bookings/[id]/meeting-cancel` route has always used, so the two
+   surfaces cannot end an appointment two different ways. */
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 
@@ -105,6 +110,13 @@ export async function POST(
      * reschedule route applies. Both said "24 hours" whatever the business had
      * configured.
      */
+    /*
+     * `payment_plan_id` and `parent_booking_id` are read for the branch below:
+     * the first is a sale still being paid for in periods, the second means
+     * this row is one session of a package. Either way the purchase outlives
+     * this hour. (Kept out of the select string itself — PostgREST has no
+     * comment syntax and supabase-js parses that string for its types.)
+     */
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
@@ -115,6 +127,8 @@ export async function POST(
         status,
         meeting_status,
         timezone,
+        payment_plan_id,
+        parent_booking_id,
         contact:crm_contacts(email, first_name, last_name),
         service:scheduling_services(min_notice_hours, service_name)
       `)
@@ -216,6 +230,105 @@ export async function POST(
      * anybody's.
      * ─────────────────────────────────────────────────────────────────────────
      */
+    /*
+     * ── CALLING OFF THE HOUR IS NOT ALWAYS CALLING OFF THE PURCHASE ──────────
+     *
+     * This route ended the whole booking, whatever the client had bought. On a
+     * single appointment that is right: the booking IS the hour. On a sale
+     * still being paid for it is not, and it produced the worst pairing
+     * available — the client lost the appointment AND the plan carried on
+     * charging, because stopping a payment arrangement is deliberately the
+     * owner's decision (see `planLive` in BookingLifecycleService).
+     *
+     * Measured 2026-10-25: a client cancelled one session of a two-period plan;
+     * the booking went to `cancelled` and ₪250 was still due the following
+     * week.
+     *
+     * Every scheduling platform draws the line the same way — Mindbody returns
+     * the session to the client's pricing option and leaves the package
+     * standing; Acuity cancels appointments one at a time and leaves the
+     * refund to policy. The session goes back; the purchase does not.
+     *
+     * So: a sale that outlives the hour loses the HOUR — the same
+     * `cancelMeeting` the owner's own "cancel meeting" button has always used,
+     * recorded as the client's doing. The slot is freed either way
+     * (`holdsSlot` is false for `meeting_status: 'cancelled'`), the booking
+     * stays live so the session can be rearranged, and the plan is untouched,
+     * exactly as it is on every other path.
+     *
+     * Everything above this line — the token, the owner match, the `confirmed`
+     * check, the already-answered check and the service's notice window — is
+     * unchanged and guards both branches.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const purchaseOutlivesTheHour =
+      Boolean(booking.payment_plan_id) || Boolean(booking.parent_booking_id);
+
+    if (purchaseOutlivesTheHour) {
+      const meeting = await schedulingBookingRepository.cancelMeeting(
+        bookingId,
+        booking.user_id,
+        /* The record of WHO, the same way the owner's route stamps `owner`. */
+        'client'
+      );
+
+      if (meeting.error || !meeting.data) {
+        requestLogger.error({ err: meeting.error, bookingId }, 'Failed to cancel the meeting');
+        return NextResponse.json(
+          { success: false, code: 'cancel_failed', error: 'Failed to cancel booking' },
+          { status: 500 }
+        );
+      }
+
+      requestLogger.info(
+        { bookingId, reason, planId: booking.payment_plan_id, parentBookingId: booking.parent_booking_id },
+        'Meeting cancelled by client; the purchase continues'
+      );
+
+      /*
+       * The `meetingOnly` mail: it names the DATE rather than the service and
+       * carries no money line, because none moved. Same variant the owner's
+       * route sends, and it logs as `meeting_cancelled` rather than
+       * `booking_cancelled` so the two stay distinguishable.
+       *
+       * `proposalContinues: true` — this branch is reached for a sale already
+       * made, never for a quote awaiting an answer, so there is nothing to
+       * tell the client is off.
+       */
+      BookingEmailService.sendCancellationEmail(bookingId, booking.user_id, reason, {
+        meetingOnly: { proposalContinues: true },
+      }).catch(err =>
+        requestLogger.warn({ err, bookingId }, 'Meeting cancellation email failed (non-blocking)')
+      );
+
+      const meetingService = Array.isArray(booking.service) ? booking.service[0] : booking.service;
+      notifyOwnerOfLead({
+        ownerId: booking.user_id,
+        contactId: booking.contact_id,
+        kind: 'cancelled',
+        contactName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' ') || 'Client',
+        contactEmail: contact?.email,
+        serviceName: meetingService?.service_name,
+        startTime: booking.start_time,
+        timezone: booking.timezone,
+        reason,
+        /* No money moved and no plan was stopped, so neither is reported here.
+           The owner's alert for this one is about an hour that is now free. */
+      }).catch(err => requestLogger.warn({ err, bookingId }, 'Owner alert failed (non-blocking)'));
+
+      return NextResponse.json({
+        success: true,
+        message: 'Meeting cancelled successfully',
+        /* So the portal can say which of the two happened rather than guess. */
+        scope: 'meeting' as const,
+        booking: {
+          id: meeting.data.id,
+          status: meeting.data.status,
+          meetingStatus: 'cancelled',
+        },
+      });
+    }
+
     const cancellation = await cancelBooking({
       bookingId,
       userId: booking.user_id,
@@ -290,6 +403,9 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: 'Booking cancelled successfully',
+      /* The counterpart of `scope: 'meeting'` above, so the portal states what
+         actually happened instead of assuming one of the two. */
+      scope: 'booking' as const,
       booking: {
         id: updatedBooking.id,
         status: updatedBooking.status

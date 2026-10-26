@@ -30,12 +30,35 @@ export type Channel =
    */
   | 'qr'
   | 'referral'
+  /**
+   * An enquiry read out of the business's own mailbox.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * The one channel that is NOT resolved from a referrer, and cannot be: the
+   * lead arrived as an email their website sent them, so there was never a
+   * page view and never a referrer to read. `resolveChannel` therefore never
+   * returns this — it is set from the contact's own
+   * `source_metadata.via`, upstream of referrer resolution.
+   *
+   * It needs its own row because without one these land in `direct`, beside
+   * people who typed the address in. An owner looking at "where do my clients
+   * come from" then cannot see that their website form produced anything at
+   * all, which is the one question this card exists to answer.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  | 'inbox'
   | 'direct';
 
 export interface ChannelAttribution {
   channel: Channel;
   /** How we worked it out — surfaced in the UI so a user can judge the number. */
-  basis: 'utm' | 'referrer' | 'none';
+  /**
+   * How the channel was decided. `tag` means WE recorded it at the moment the
+   * lead was filed — the mailbox channel, which has no referrer to read — so
+   * it is known rather than inferred, and the card must not caption it as a
+   * guess.
+   */
+  basis: 'utm' | 'referrer' | 'tag' | 'none';
   /** The raw signal, for display in a details view. */
   detail?: string;
 }
@@ -220,6 +243,9 @@ export const CHANNEL_ORDER: Channel[] = [
   'youtube',
   'email',
   'qr',
+  /* Before `referral` and `direct`: it is a named source, and those two are
+     the "everything else" rows that belong at the end. */
+  'inbox',
   'referral',
   'direct',
 ];

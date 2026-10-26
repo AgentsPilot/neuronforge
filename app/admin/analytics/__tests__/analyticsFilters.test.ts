@@ -161,9 +161,10 @@ describe('the narrowed window (SA Q-4; the ported parseLinkedWindow cases)', () 
     expect(parse('from=2026-09-25T08:00:00.000Z&to=2026-09-25T10:00:00%2B03:00')).toBeUndefined();
   });
 
-  it('presets and the two extras pass; any other extra does not', () => {
+  // Money MK-3b (ruled, SA-Q-MK3-3): "24 hours" is gone; a range=24h link falls back to the default (U-4).
+  it('presets and 90 days pass; 24 hours and any other extra do not', () => {
     for (const preset of ['today', '7d', '30d', 'this_month']) expect(parse(`range=${preset}`)).toEqual({ kind: 'preset', preset });
-    expect(parse('range=24h')).toEqual({ kind: 'extra', extra: '24h' });
+    expect(parse('range=24h')).toBeUndefined();
     expect(parse('range=90d')).toEqual({ kind: 'extra', extra: '90d' });
     expect(parse('range=week')).toBeUndefined();
     expect(narrowAnalyticsWindow(undefined)).toBeUndefined();
@@ -205,45 +206,53 @@ describe('analyticsRequestParams (§3.5, Q-13, F-54)', () => {
       'agent',
       'execution',
       'category',
-      'period',
+      // Money MK-3b: the default window (This month) is whole UTC days, sent as the two bounds.
+      'dateFrom',
+      'dateTo',
     ]);
     expect(params.get('breakdownBy')).toBe('agent');
     expect(params.get('user')).toBe(UUID);
     expect(params.get('request_type')).toBe('completion');
   });
 
-  it('the defaults: breakdownBy and scope always, period=30, nothing else', () => {
-    expect(request({}).toString()).toBe('breakdownBy=provider&scope=bos&period=30');
+  // Money MK-3b (ruled, C-6 / Q-5): the default is This month, whole UTC days (was period=30).
+  it('the defaults: breakdownBy and scope always, This month as whole UTC days, nothing else', () => {
+    expect(request({}).toString()).toBe(
+      // MK-3b QA E-1 (ruled): the day ends at its last millisecond, A-K2's end.
+      'breakdownBy=provider&scope=bos&dateFrom=2026-10-01T00%3A00%3A00.000Z&dateTo=2026-10-11T23%3A59%3A59.999Z'
+    );
   });
 
   it('category all is not sent', () => {
     expect(request({ scope: 'all', category: 'all' }).has('category')).toBe(false);
   });
 
+  // Money MK-3b (ruled, SA-Q-MK3-3): 7, 30 and 90 days are whole UTC days, as on Finance and Summary &
+  // checks, so the strip and the Calls total cover the same days; never the rolling period=N any more.
   it.each<[AdminWindowValue, string]>([
-    [{ kind: 'extra', extra: '24h' }, '1'],
-    [{ kind: 'preset', preset: '7d' }, '7'],
-    [{ kind: 'preset', preset: '30d' }, '30'],
-    [{ kind: 'extra', extra: '90d' }, '90'],
-  ])('%j stays the rolling server period=%s (Q-13, F-94)', (window, period) => {
+    [{ kind: 'preset', preset: '7d' }, '2026-10-05'],
+    [{ kind: 'preset', preset: '30d' }, '2026-09-12'],
+    [{ kind: 'extra', extra: '90d' }, '2026-07-14'],
+  ])('%j is whole UTC days from %s to today, never period=N', (window, from) => {
     const params = request({ window });
-    expect(params.get('period')).toBe(period);
-    expect(params.has('dateFrom')).toBe(false);
-    expect(params.has('dateTo')).toBe(false);
+    expect(params.has('period')).toBe(false);
+    expect(params.get('dateFrom')).toBe(`${from}T00:00:00.000Z`);
+    expect(params.get('dateTo')).toBe('2026-10-11T23:59:59.999Z');
   });
 
-  it.each(['today', 'this_month'] as const)('%s sends its explicit UTC bounds, end of day with microseconds', (preset) => {
+  // MK-3b QA E-1 (ruled): the end is the day's last millisecond (was microseconds), A-K2's and Finance's end.
+  it.each(['today', 'this_month'] as const)('%s sends its explicit UTC bounds, end of day at its last millisecond', (preset) => {
     const { from, to } = resolveAdminWindow(preset, NOW);
     const params = request({ window: { kind: 'preset', preset } });
     expect(params.get('dateFrom')).toBe(`${from}T00:00:00.000Z`);
-    expect(params.get('dateTo')).toBe(`${to}T23:59:59.999999Z`);
+    expect(params.get('dateTo')).toBe(`${to}T23:59:59.999Z`);
     expect(params.has('period')).toBe(false);
   });
 
   it('F-54: a custom range is whole UTC days on both sides, whatever the local timezone', () => {
     const params = request({ window: { kind: 'custom', from: '2026-09-25', to: '2026-09-26' } });
     expect(params.get('dateFrom')).toBe('2026-09-25T00:00:00.000Z');
-    expect(params.get('dateTo')).toBe('2026-09-26T23:59:59.999999Z');
+    expect(params.get('dateTo')).toBe('2026-09-26T23:59:59.999Z');
     expect(params.has('period')).toBe(false);
   });
 

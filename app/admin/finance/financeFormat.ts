@@ -65,3 +65,25 @@ export function formatCount(value: number): string {
 export function atLeast(text: string, exact: boolean): string {
   return exact ? text : `${AT_LEAST} ${text}`;
 }
+
+/**
+ * Money MK-8 (USD-4, Q-10): one business's own money in ITS OWN currency sign,
+ * for the business drawer's client payments ("₪230.30", "$12.50"). One
+ * business has one currency to show, so nothing is mixed; it is never added to
+ * anything. An unreadable or unknown code falls back to `formatMoney` (its
+ * code beside the amount), never a guessed sign.
+ */
+export function formatOwnCurrency(amount: number, currency: string | null): string {
+  if (currency === null || !Number.isFinite(amount)) return formatMoney(amount, currency);
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency.trim().toUpperCase(),
+      currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return formatMoney(amount, currency);
+  }
+}

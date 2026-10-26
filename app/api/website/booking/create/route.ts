@@ -55,6 +55,7 @@ import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageReposito
    second opinion per surface. */
 import { journeyGaps, isBlockingGap } from '@/lib/business-os/journeyReadiness';
 import { sessionIdFromUrl } from '@/lib/utils/attribution';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
@@ -84,7 +85,26 @@ const BookingSchema = z.object({
   // Transform empty strings to undefined so they're treated as "not provided"
   start_time: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   name: z.string().min(1, 'Name is required').max(200),
-  email: z.string().email('Invalid email address'),
+  /*
+   * TRIMMED AND LOWERCASED BEFORE IT IS VALIDATED, NOT AFTER.
+   *
+   * `z.string().email()` REJECTS a stray space: " a@b.com" is invalid to Zod
+   * and the route answered 400 "Invalid email address" over a perfectly good
+   * address. The public booking form made that routine — it tested
+   * `clientEmail.trim()` and then submitted `clientEmail` — so a visitor whose
+   * keyboard or paste left a trailing space was told their own email was wrong,
+   * with nothing to act on because it looks correct on screen.
+   *
+   * Lowercased for the other half: a domain is case-insensitive by spec and
+   * every real provider treats the local part that way too, while the contact
+   * lookups match with `=`. `Offir.Omer@…` therefore missed the existing
+   * `offir.omer@…` row and created a SECOND contact, with its own bookings and
+   * its own money hanging off it.
+   *
+   * At the boundary rather than the call sites: everything downstream — the
+   * lookup, the insert, the email that gets sent — then works from one spelling.
+   */
+  email: z.string().trim().toLowerCase().email('Invalid email address'),
   phone: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   notes: z.string().max(2000).optional().transform(val => val && val.trim() ? val : undefined),
   timezone: z.string().optional().default('UTC'),
@@ -94,7 +114,8 @@ const BookingSchema = z.object({
    * can fail the booking.
    */
   consent: ConsentInputSchema
-  // Removed skip_contact - we now always create contact first, using stage to differentiate lead vs active_client
+  // Removed skip_contact - a contact is always created first, at the start of
+  // the owner's board. What moves them on is money, decided in the database.
 });
 
 export async function POST(request: NextRequest) {
@@ -603,9 +624,17 @@ export async function POST(request: NextRequest) {
      *
      * This route used to decide the client stage itself — free service, so they
      * are a client now — which is how a quote request produced a client. It no
-     * longer decides at all: `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)` moves them
-     * the moment the booking below is written `confirmed`, which for a free
-     * service is immediately and for a quote request is not at all.
+     * longer decides at all: `promote_contact_on_payment` moves them when a
+     * `payment_transactions` row lands `succeeded` for more than zero — which
+     * for a paid service is on payment, for a FREE one is never (its
+     * zero-amount row is bookkeeping, not a sale), and for a quote request is
+     * not until the accepted quote's invoice is settled.
+     *
+     * Named carefully: a mechanical rename once swapped this trigger's name in
+     * and left the old sentence — "the moment the booking is written
+     * confirmed" — beside it. That was the DROPPED
+     * `promote_contact_on_confirmed_booking` (20260920), and confirmation is
+     * not payment: a free consultation is confirmed and owes nothing.
      *
      * One rule, in one place, reached by every path that confirms a booking.
      */
@@ -633,7 +662,13 @@ export async function POST(request: NextRequest) {
       .from('crm_contacts')
       .select('id, first_name, last_name, phone, stage')
       .eq('user_id', ownerId)
-      .eq('email', data.email)
+      /* `ilike`, not `eq`: an address stored before this route started
+         normalising is whatever the visitor typed, so a case-sensitive match
+         misses it and a SECOND contact is created for the same person. The
+         insert side is normalised now; this is what finds the rows that
+         predate it. No wildcards in the value, so it stays an equality match
+         in everything but case. */
+      .ilike('email', emailLikePattern(data.email))
       .order('created_at', { ascending: true })
       .limit(1);
 
@@ -652,11 +687,23 @@ export async function POST(request: NextRequest) {
       if (!existingContact.phone && data.phone) {
         updates.phone = data.phone;
       }
-      // Don't downgrade stage - if they were already active_client, keep them there
-      // Only upgrade lead to active_client for free services
-      if (existingContact.stage === 'lead' && contactStage === 'active_client') {
-        updates.stage = 'active_client';
-      }
+      /*
+       * The stage of an EXISTING contact is not this route's to change.
+       *
+       * This read `if (existingContact.stage === 'lead' && contactStage ===
+       * 'active_client')`, from when the route decided the stage itself. It
+       * stopped deciding — `contactStage` is the pipeline's first stage now —
+       * so the condition could only fire on a board that literally begins at
+       * `active_client`, which none does. Dead, under a comment describing
+       * behaviour that had been removed.
+       *
+       * Moving a contact forward belongs to the database, where it happens
+       * once for every path: `promote_contact_on_payment` resolves this
+       * business's own client stage by `stage_type` when money actually
+       * arrives, and a free booking writes a zero-amount row it deliberately
+       * ignores — so an unpaid booking leaves them where they are, which is
+       * the first stage, which is correct. They are not a customer yet.
+       */
       if (Object.keys(updates).length > 0) {
         await supabaseServer
           .from('crm_contacts')
@@ -675,7 +722,7 @@ export async function POST(request: NextRequest) {
           email: data.email,
           phone: data.phone || null,
           source: 'website_booking',
-          stage: contactStage,  // 'lead' for paid services, 'active_client' for free
+          stage: contactStage,  // The start of this owner's board; the trigger moves them on.
           source_metadata: attribution as unknown as Record<string, unknown>  // Store full attribution data
         })
         .select('id')
