@@ -29,6 +29,7 @@ import {
 } from '@/app/admin/components/layout/adminTable';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
+import { useAiCostRowOpen } from '@/app/admin/ai-cost/components/aiCostRowOpen';
 
 import {
   BREAKDOWN_NOTE,
@@ -93,7 +94,11 @@ function FiguresCells({ f }: { f: CostPeriodFigures }) {
   );
 }
 
-function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: CostPeriodFigures | null }) {
+/**
+ * A period's check as a chip: "matches its rows", "mismatch" or "not checked".
+ * Exported (Money MK-8b) so the billing-period drawer shows the same chip.
+ */
+export function PeriodCheckChip({ matches }: { matches: boolean | null }) {
   if (matches === true) {
     return (
       <StatusChip tone="ok" testId="period-check-ok">
@@ -103,10 +108,24 @@ function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: C
   }
   if (matches === false) {
     return (
+      <StatusChip tone="danger" testId="period-check-mismatch">
+        mismatch
+      </StatusChip>
+    );
+  }
+  return (
+    <StatusChip tone="unknown" testId="period-check-skipped">
+      not checked
+    </StatusChip>
+  );
+}
+
+function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: CostPeriodFigures | null }) {
+  if (matches === true) return <PeriodCheckChip matches={true} />;
+  if (matches === false) {
+    return (
       <div className="space-y-1">
-        <StatusChip tone="danger" testId="period-check-mismatch">
-          mismatch
-        </StatusChip>
+        <PeriodCheckChip matches={false} />
         {fromRows && (
           <p className="text-[11px] text-red-300">
             rows: {formatCredits(fromRows.creditsTotal)} credits, {formatUsd(fromRows.costUsd)},{' '}
@@ -116,11 +135,7 @@ function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: C
       </div>
     );
   }
-  return (
-    <StatusChip tone="unknown" testId="period-check-skipped">
-      not checked
-    </StatusChip>
-  );
+  return <PeriodCheckChip matches={null} />;
 }
 
 /**
@@ -159,7 +174,15 @@ export function ChargedInWindowSection({ report }: { report: CostReportPayload }
   );
 }
 
+/**
+ * Money MK-8b: on the AI cost page with every business shown, each period row
+ * opens the billing-period drawer the Businesses way (MK-10): a narrow
+ * "Details" column with the row's Open button, and a mouse-only row click.
+ * Without the page's drawer provider (a standalone render, a business picked,
+ * inside a drawer) the table keeps today's columns (SA-WP-MK8B C-6).
+ */
 export function PeriodsSection({ report }: { report: CostReportPayload }) {
+  const opener = useAiCostRowOpen();
   return (
     <SectionShell title="Per account and billing period" testId="costs-periods">
       <p data-testid="costs-whole-periods" className="text-xs text-slate-400">
@@ -187,11 +210,16 @@ export function PeriodsSection({ report }: { report: CostReportPayload }) {
               <th scope="col" className={ADMIN_TH_NUM}>Charges</th>
               <th scope="col" className={ADMIN_TH_NUM}>Fallback</th>
               <th scope="col" className={ADMIN_TH}>Check</th>
+              {opener?.header}
             </tr>
           </thead>
           <tbody className={ADMIN_TBODY}>
             {report.periods.map((p) => (
-              <tr key={`${p.accountId}|${p.periodStart}`} data-testid="period-row">
+              <tr
+                key={`${p.accountId}|${p.periodStart}`}
+                data-testid="period-row"
+                {...opener?.rowProps({ kind: 'period', accountId: p.accountId, name: p.companyName, periodStart: p.periodStart })}
+              >
                 <td className={ADMIN_TD} title={p.accountId}>
                   {accountLabel(p.companyName, p.accountId)}
                 </td>
@@ -206,6 +234,7 @@ export function PeriodsSection({ report }: { report: CostReportPayload }) {
                 <td className={ADMIN_TD}>
                   <CheckCell matches={p.matches} fromRows={p.fromRows} />
                 </td>
+                {opener?.cell({ kind: 'period', accountId: p.accountId, name: p.companyName, periodStart: p.periodStart })}
               </tr>
             ))}
           </tbody>
@@ -216,6 +245,8 @@ export function PeriodsSection({ report }: { report: CostReportPayload }) {
               </td>
               <FiguresCells f={report.grandTotal.stored} />
               <td />
+              {/* The Total row opens nothing; its empty cell keeps the Details column aligned. */}
+              {opener && <td />}
             </tr>
           </tfoot>
         </table>

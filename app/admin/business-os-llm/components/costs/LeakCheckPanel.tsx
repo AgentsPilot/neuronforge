@@ -36,6 +36,15 @@
  * at least one; Unknown with the chip "Not every business was checked" when
  * such a run found none (QA B-1); "Could not check" after a failed run (QA
  * B-2); "Not run yet" before a run.
+ *
+ * Money MK-8b (§4.2, MK-10): on the AI cost page with every business shown,
+ * each result row opens the AI cost business drawer the Businesses way (a
+ * narrow "Details" column with the row's Open button, and a mouse-only row
+ * click); the examples row and the platform line open nothing. Inside that
+ * drawer the panel runs for one business with `variant="drawer"`: the same
+ * controls and result, without the block KPI (a count over businesses, not one
+ * business's figure; SA-Q-MK8B-5), and with no openers (the drawer mounts no
+ * provider for its content).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -58,6 +67,7 @@ import {
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
 import { readJsonBody } from '@/app/admin/components/layout/readJsonBody';
 import { StatusChip, type StatusTone } from '@/app/admin/components/layout/StatusChip';
+import { useAiCostRowOpen, type AiCostRowOpen } from '@/app/admin/ai-cost/components/aiCostRowOpen';
 
 import { COSTS_PLATFORM_ACCOUNT } from '../../costCopy';
 import { formatCount, formatDay, formatUsd, utcDateDaysAgo } from '../../costFormat';
@@ -133,6 +143,8 @@ export interface LeakCheckPanelProps {
   accountId: string;
   /** Its business name, for the scope line. */
   accountLabel: string | null;
+  /** MK-8b: `drawer` inside the AI cost business drawer drops the block KPI. Default `page`. */
+  variant?: 'page' | 'drawer';
 }
 
 /**
@@ -172,7 +184,8 @@ function ExampleList({ title, items }: { title: string; items: LeakGroupExampleW
   );
 }
 
-function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
+function AccountRow({ finding, opener }: { finding: LeakAccountFindingWire; opener: AiCostRowOpen | null }) {
+  const target = { kind: 'business' as const, accountId: finding.accountId, name: finding.companyName };
   const c = finding.counts;
   // QA4b-E1: an account can be listed only for these, with every column at zero.
   const note = LEAK_ROW_NOTE(c);
@@ -184,7 +197,7 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
     0;
   return (
     <>
-      <tr data-testid={`leak-account-${finding.accountId}`}>
+      <tr data-testid={`leak-account-${finding.accountId}`} {...opener?.rowProps(target)}>
         <td className={`${ADMIN_TD} text-slate-200`}>{finding.companyName ?? finding.accountId}</td>
         <td className={ADMIN_TD}>
           <StatusChip tone={STATUS_TONE[finding.status]} testId="leak-status">
@@ -213,10 +226,11 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
         </td>
         <td className={ADMIN_TD_NUM}>{formatCount(c.knownPathCalls)}</td>
         <td className={ADMIN_TD_NUM}>{formatUsd(finding.usd.totalUncharged)}</td>
+        {opener?.cell(target)}
       </tr>
       {hasExamples && (
         <tr>
-          <td colSpan={9} className={ADMIN_TD}>
+          <td colSpan={opener ? 10 : 9} className={ADMIN_TD}>
             <details className="rounded border border-slate-800 bg-slate-900/40 p-2">
               <summary className="cursor-pointer text-[11px] text-slate-400">{LEAK_EXAMPLES_TITLE}</summary>
               <div className="mt-2 space-y-2">
@@ -234,6 +248,7 @@ function AccountRow({ finding }: { finding: LeakAccountFindingWire }) {
 }
 
 function Result({ result }: { result: LeakCheckPayload }) {
+  const opener = useAiCostRowOpen();
   const partial =
     result.accountsIncomplete > 0 || result.accountsNotChecked > 0 || result.accountsRemaining > 0 || result.listingFailed;
   // CR4b-N2 / QA4b-E2: the settle clamp can pull the end back to the start
@@ -329,11 +344,12 @@ function Result({ result }: { result: LeakCheckPayload }) {
                   <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.pending}</th>
                   <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.known}</th>
                   <th scope="col" className={ADMIN_TH_NUM}>{LEAK_COLUMNS.usd}</th>
+                  {opener?.header}
                 </tr>
               </thead>
               <tbody className={ADMIN_TBODY}>
                 {result.accounts.map((finding) => (
-                  <AccountRow key={finding.accountId} finding={finding} />
+                  <AccountRow key={finding.accountId} finding={finding} opener={opener} />
                 ))}
               </tbody>
             </table>
@@ -374,7 +390,7 @@ function Result({ result }: { result: LeakCheckPayload }) {
   );
 }
 
-export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps) {
+export function LeakCheckPanel({ accountId, accountLabel, variant = 'page' }: LeakCheckPanelProps) {
   const yesterday = utcDateDaysAgo(1);
   const [from, setFrom] = useState(yesterday);
   const [to, setTo] = useState(yesterday);
@@ -444,13 +460,15 @@ export function LeakCheckPanel({ accountId, accountLabel }: LeakCheckPanelProps)
         <p className="mt-1 max-w-3xl text-xs text-slate-400">{LEAK_INTRO}</p>
       </div>
 
-      <BlockKpi
-        label={LEAK_KPI_LABEL}
-        value={kpi.value}
-        chip={kpi.chip}
-        indicator={{ kind: 'leading', definition: LEAK_KPI_DEFINITION }}
-        testId="leak-kpi-uncharged"
-      />
+      {variant === 'page' && (
+        <BlockKpi
+          label={LEAK_KPI_LABEL}
+          value={kpi.value}
+          chip={kpi.chip}
+          indicator={{ kind: 'leading', definition: LEAK_KPI_DEFINITION }}
+          testId="leak-kpi-uncharged"
+        />
+      )}
 
       <div className="flex flex-wrap items-end gap-3">
         <label>

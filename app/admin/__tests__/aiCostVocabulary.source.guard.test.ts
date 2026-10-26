@@ -80,6 +80,9 @@ const FILES = [
   'app/admin/ai-cost/aiCostCopy.ts',
   'app/admin/business-os-llm/components/costs/AiCostKpis.tsx',
   'app/admin/business-os-llm/components/costs/RecordedSection.tsx',
+  // Money MK-8b (ruled): the AI cost drawers and their words.
+  'app/admin/ai-cost/components/AiCostDrawers.tsx',
+  'app/admin/ai-cost/aiCostDrawerCopy.ts',
 ] as const;
 type GuardedFile = (typeof FILES)[number];
 
@@ -186,9 +189,10 @@ const TEXTS = new Map<GuardedFile, string[]>(
 const textsOf = (f: GuardedFile) => TEXTS.get(f)!;
 
 describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
-  it('scans the thirteen §11F.4 files, the Part B block, three M-5 files and the four MK-3a files', () => {
-    expect(FILES).toHaveLength(21);
-    expect(new Set(FILES).size).toBe(21);
+  // Money MK-8b (ruled): 21 → 23, the two drawer files.
+  it('scans the thirteen §11F.4 files, the Part B block, three M-5 files, the four MK-3a files and the two MK-8b files', () => {
+    expect(FILES).toHaveLength(23);
+    expect(new Set(FILES).size).toBe(23);
   });
 
   // The number of visible texts each file had when the guard was written. A
@@ -222,6 +226,9 @@ describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
     'app/admin/ai-cost/aiCostCopy.ts': 6,
     'app/admin/business-os-llm/components/costs/AiCostKpis.tsx': 22,
     'app/admin/business-os-llm/components/costs/RecordedSection.tsx': 7,
+    // Money MK-8b, measured with this file's own scanner.
+    'app/admin/ai-cost/components/AiCostDrawers.tsx': 22,
+    'app/admin/ai-cost/aiCostDrawerCopy.ts': 31,
   };
   it.each(FILES)('%s has at least its pinned number of visible texts', (f) => {
     expect(textsOf(f).length).toBeGreaterThanOrEqual(MIN_TEXTS[f]);
