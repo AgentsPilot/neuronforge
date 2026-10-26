@@ -88,6 +88,7 @@ import { readMyPlan, type PlanDrawerRead, type PlanRead } from './planDrawerRead
 import type { PlanPayload, PlanSentence, PlanUpgradeView } from './planPayloadTypes';
 import { CategoryRowText, Notice, PlanBillingNotices, PlanIncludedList, fill, priceLine, renderSentence } from './planText';
 import { PlanFlowStatus } from './PlanFlowStatus';
+import { PlanManage } from './PlanManage';
 import { UpgradeModal } from './UpgradeModal';
 import { useUpgradeModalInlineHost } from './UpgradeModalProvider';
 import { upgradeModalView } from './upgradeModalView';
@@ -257,6 +258,19 @@ export function PlanSection({
    */
   useUpgradeModalInlineHost();
 
+  /** P-7a.1: one fresh my-plan read after a cancel / reactivate answer. A failed read keeps what is shown. */
+  const rereadAfterManage = () => {
+    void (async () => {
+      const answer = await readMyPlan();
+      if (answer.kind !== 'answered') {
+        logger.warn({ err: answer.err }, 'Could not re-read the plan after a cancel / reactivate');
+        return;
+      }
+      const data = planFrom(answer.body);
+      if (data) setPlan(data);
+    })();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-2 text-sm text-[var(--v2-text-muted)]" aria-busy="true">
@@ -295,6 +309,10 @@ export function PlanSection({
         )}
         {/* P-6a.2 (workplan §5.7): B3 / B4, shared with the Settings pop-up (UM-D3). */}
         <PlanBillingNotices plan={plan} t={t} />
+        {/* P-7a.1: Cancel / Reactivate, exactly where `purchase.manage` says. Not
+            while a checkout or upgrade is landing. After an answer, my-plan is
+            read again so "Renews on" / "Ends on" follows the server. */}
+        {!processing && <PlanManage plan={plan} onChanged={rereadAfterManage} />}
       </div>
 
       {/* B5 / B6, one rendering shared with the standalone window (UM-2 §5.3). */}

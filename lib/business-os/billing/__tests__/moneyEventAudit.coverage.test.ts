@@ -37,6 +37,9 @@ const BUILT: ReadonlyArray<{ am7: string; key: keyof typeof AUDIT_EVENTS; emitte
   { am7: 'Payment refused (mismatch)', key: 'BOS_BILLING_PAYMENT_REFUSED', emitter: 'lib/business-os/billing/planPaymentApply.ts' },
   { am7: 'First payment stamped', key: 'BOS_BILLING_FIRST_PAYMENT_STAMPED', emitter: 'lib/business-os/billing/planPaymentApply.ts' },
   { am7: 'Ended', key: 'BOS_BILLING_SUBSCRIPTION_ENDED', emitter: 'lib/business-os/billing/planSubscriptionMirror.ts' },
+  // P-7a.1 (workplan §4.9): the owner's own cancel and reactivate, from Settings → Plan.
+  { am7: 'Cancelled', key: 'BOS_BILLING_SUBSCRIPTION_CANCELLED', emitter: 'app/api/business-os/billing/plan/cancel/route.ts' },
+  { am7: 'Reactivated', key: 'BOS_BILLING_SUBSCRIPTION_REACTIVATED', emitter: 'app/api/business-os/billing/plan/reactivate/route.ts' },
   // "Admin override on a subscribed account": both entries carry `subscribed` (T10, SA Q-7).
   { am7: 'Admin override on a subscribed account (tier)', key: 'BOS_ENTITLEMENT_TIER_ASSIGNED', emitter: 'lib/business-os/entitlements/adminOps.ts' },
   { am7: 'Admin override on a subscribed account (override)', key: 'BOS_ENTITLEMENT_OVERRIDE_ADDED', emitter: 'lib/business-os/entitlements/adminOps.ts' },
@@ -45,8 +48,6 @@ const BUILT: ReadonlyArray<{ am7: string; key: keyof typeof AUDIT_EVENTS; emitte
 /** AM-7 events not built yet, and the slice that owns each. */
 const NOT_BUILT: ReadonlyArray<{ am7: string; owner: string; keyPattern: RegExp }> = [
   { am7: 'Downgrade scheduled', owner: 'P-7b.2', keyPattern: /^BOS_BILLING_.*DOWNGRADE/ },
-  { am7: 'Cancelled', owner: 'P-7a', keyPattern: /^BOS_BILLING_.*CANCEL/ },
-  { am7: 'Reactivated', owner: 'P-7a', keyPattern: /^BOS_BILLING_.*REACTIVAT/ },
   { am7: 'Refund flagged', owner: 'P-6b', keyPattern: /^BOS_BILLING_.*REFUND/ },
   { am7: 'Dispute flagged', owner: 'P-6b', keyPattern: /^BOS_BILLING_.*DISPUTE/ },
 ];

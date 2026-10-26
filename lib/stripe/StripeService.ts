@@ -70,6 +70,19 @@ export interface BusinessOsUpgradeInvoiceFacts {
   confirmationClientSecret: string | null;
 }
 
+/** P-7a.1 (SA C-2): a subscription after a cancel / reactivate write, in the mirror's terms. Unix seconds. */
+export interface BusinessOsCancelFacts {
+  id: string;
+  status: Stripe.Subscription.Status;
+  customerId: string | null;
+  livemode: boolean;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: number | null;
+  endedAt: number | null;
+  /** The latest item period end (clover: the period is on the items). */
+  currentPeriodEnd: number | null;
+}
+
 /** SA U-1: the idempotency key of one upgrade request. Same request, same key. */
 export function businessOsUpgradeIdempotencyKey(subscriptionId: string, priceId: string, prorationDate: number): string {
   return `bos-upgrade:${subscriptionId}:${priceId}:${prorationDate}`;
@@ -572,6 +585,13 @@ export class StripeService {
     customerId: string | null;
     billingCycleAnchor: number;
     cancelAtPeriodEnd: boolean;
+    /**
+     * P-7a.1 (SA C-3, X-2): Stripe's `cancel_at`, unix seconds. Set together
+     * with `cancel_at_period_end`, and ALONE when a cancellation date is set
+     * without the flag (`cancel_at`, as the dashboard may). Optional only so
+     * existing hand-built fakes stay valid; absent reads as null.
+     */
+    cancelAt?: number | null;
     endedAt: number | null;
     livemode: boolean;
     metadata: Stripe.Metadata;
@@ -623,6 +643,7 @@ export class StripeService {
       customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
       billingCycleAnchor: subscription.billing_cycle_anchor,
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      cancelAt: unixOrNull(subscription.cancel_at),
       endedAt: subscription.ended_at ?? null,
       livemode: subscription.livemode,
       metadata: subscription.metadata ?? {},
@@ -630,6 +651,38 @@ export class StripeService {
       items,
       pendingUpdate: pendingUpdateFacts(subscription.pending_update),
       latestInvoiceId: refId(subscription.latest_invoice),
+    };
+  }
+
+  // ── Business OS plan cancel / reactivate (plan payments P-7a.1; SA C-2, TQ-3) ──
+
+  /**
+   * THE cancel / reactivate write: `cancel_at_period_end` on OUR row's
+   * subscription (the caller passes the id from our billing record, never a
+   * request value). Returns the facts the status mirror needs, from the
+   * update's own answer (SA C-2: no second retrieve).
+   *
+   * No idempotency key (SA TQ-3): setting a boolean is idempotent, and a key
+   * would replay a stale answer on cancel → reactivate → cancel within 24 h.
+   * X-2 (2026-10-26, sandbox): `true` also sets `cancel_at` to the period end;
+   * `false` clears both, including a `cancel_at` set without the flag.
+   */
+  async setBusinessOsCancelAtPeriodEnd(subscriptionId: string, cancelAtPeriodEnd: boolean): Promise<BusinessOsCancelFacts> {
+    const subscription = await this.stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: cancelAtPeriodEnd });
+    const customer = subscription.customer;
+    const periodEnds = (subscription.items?.data ?? [])
+      .map((item) => unixOrNull(item.current_period_end))
+      .filter((value): value is number => value !== null);
+    return {
+      id: subscription.id,
+      status: subscription.status,
+      customerId: typeof customer === 'string' ? customer : customer?.id ?? null,
+      livemode: subscription.livemode,
+      cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      cancelAt: unixOrNull(subscription.cancel_at),
+      endedAt: unixOrNull(subscription.ended_at),
+      // On clover the period lives on the items; the latest end is when the plan stops.
+      currentPeriodEnd: periodEnds.length > 0 ? Math.max(...periodEnds) : null,
     };
   }
 

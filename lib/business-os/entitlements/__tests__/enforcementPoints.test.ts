@@ -504,6 +504,16 @@ describe('backward: a gate cannot ship unregistered', () => {
       why: 'Plan payments P-7b.1a (SA V-10, V-11): the upgrade preview route. `TIER_ORDER` builds the body schema (which tier the owner names) and `resolveAccountId` is the account seam for the session account. It quotes what an upgrade would cost (a read at Stripe) and refuses an upgrade SALE through planUpgrade.ts; it grants or withholds no capability and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',
     },
     {
+      file: 'app/api/business-os/billing/plan/cancel/route.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Plan payments P-7a.1 (workplan §4.2, §4.8; SA C-1, TQ-13): the cancel route. `resolveAccountId` is the account seam for the session account (the audit entity id and the `bos_user_id` cross-check). It sets the owner subscription to cancel at the period end through planSubscriptionManage.ts (which imports nothing from this module) and refuses a billing ACTION; it grants or withholds no capability, writes no plan and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
+      file: 'app/api/business-os/billing/plan/reactivate/route.ts',
+      symbols: ['resolveAccountId'],
+      why: 'Plan payments P-7a.1 (workplan §4.2, §4.8; SA C-1, TQ-13): the reactivate route. `resolveAccountId` is the account seam for the session account (the audit entity id and the `bos_user_id` cross-check). It removes a pending cancellation through planSubscriptionManage.ts and refuses a billing ACTION; it grants or withholds no capability, writes no plan and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',
+    },
+    {
       file: 'app/api/business-os/billing/plan/upgrade/route.ts',
       symbols: ['TIER_ORDER', 'resolveAccountId'],
       why: 'Plan payments P-7b.1a (SA V-10, V-11): the upgrade confirm route. `TIER_ORDER` builds the body schema and `resolveAccountId` is the account seam for the session account (the audit entity id). It swaps the price on the owner subscription through planUpgrade.ts and refuses an upgrade SALE; the plan changes later from the webhook. It grants or withholds no capability and calls no `check()` / `decide()`. If it ever does, it moves to ENFORCEMENT_POINTS.',

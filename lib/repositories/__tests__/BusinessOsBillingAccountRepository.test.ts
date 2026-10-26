@@ -848,6 +848,9 @@ describe('source guards', () => {
       // Plan payments P-6a.1: the test-clock route suite fakes the repository
       // module by name. The route itself does not name it (planTestClock.ts does).
       'app/api/admin/business-os/test/plan-test-clock/__tests__/route.test.ts',
+      // Plan payments P-7a.1: the cancel / reactivate routes' integration test
+      // fakes the repository module by name. The routes themselves do not name it.
+      'app/api/business-os/billing/plan/cancel/__tests__/route.test.ts',
       // Plan payments P-3a: the checkout route's integration test fakes the
       // repository module by name. The route itself does not name it.
       'app/api/business-os/billing/plan/checkout/__tests__/route.test.ts',
@@ -903,6 +906,10 @@ describe('source guards', () => {
       // Plan payments P-4.2 (SA W-8): the Settings → Plan purchase view reads
       // the SESSION user's billing row for the current mode (findByUser only).
       'lib/business-os/billing/planPurchaseView.ts',
+      // Plan payments P-7a.1 (workplan §4.2; SA C-2): cancel / reactivate reads
+      // the SESSION user's billing row for the current mode (findByUser) and
+      // mirrors Stripe's answer onto it by CAS (mirrorSubscriptionState).
+      'lib/business-os/billing/planSubscriptionManage.ts',
       'lib/business-os/billing/planSubscriptionMirror.ts',
       // Plan payments P-6a.1 (SA C-5, C-6): the TEST MODE ONLY test clock reads
       // the target account's test-mode row (findByUser) and records or moves its
