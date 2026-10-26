@@ -140,6 +140,7 @@ import { todayUtc } from '@/app/admin/components/adminWindowPresets';
 import { CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
 import { isPayingBillingRow } from '@/lib/business-os/billing/payingSubscriptionStatuses';
 import { missingOriginalIds, sumCostUsd, summariseAiCost } from './aiCost';
+import { CHARGED_LEDGER_READ, EMPTY_CHARGED_READ, readChargedLedger, readChargedWindow } from './chargedAiCost';
 import { readAdminCreditPositions, type AdminCreditPercentDeps, type AdminCreditPositionsPass } from '@/lib/business-os/credits/adminCreditPercent';
 import { buildCreditsSection, type FinanceLot } from './creditsSection';
 import { buildTakings } from './takings';
@@ -209,8 +210,9 @@ type RepoResult<T> = { data: T | null; error: Error | null };
 const TABLE_ROWS_SHOWN = 200;
 
 export const FINANCE_LIMITS = {
-  LEDGER_PAGE_SIZE: 1000,
-  LEDGER_CEILING: 20_000,
+  /** MK-2: R-a's paging lives with the shared read (`chargedAiCost.ts`); the values are unchanged. */
+  LEDGER_PAGE_SIZE: CHARGED_LEDGER_READ.pageSize,
+  LEDGER_CEILING: CHARGED_LEDGER_READ.ceiling,
   /** The shadow report's own page size and cap (SA-Q3). */
   PLAN_PAGE_SIZE: 500,
   PLAN_CEILING: 20_000,
@@ -569,11 +571,7 @@ export interface PlanWalk {
   capped: boolean;
 }
 
-const ledgerOpts = { pageSize: FINANCE_LIMITS.LEDGER_PAGE_SIZE, ceiling: FINANCE_LIMITS.LEDGER_CEILING };
-const EMPTY_LEDGER: RepoResult<CreditLedgerPagedResult<CreditLedgerRow>> = {
-  data: { rows: [], reachedCeiling: false },
-  error: null,
-};
+const EMPTY_LEDGER: RepoResult<CreditLedgerPagedResult<CreditLedgerRow>> = EMPTY_CHARGED_READ;
 
 /**
  * The all-accounts plan walk (SA-Q3): keyset, stop on a short page, capped with `>=`.
@@ -639,12 +637,8 @@ export async function buildFinanceHealth(
   }
 
   // ── 2. Every independent read, at once, each settled ──────────────────────
-  const readLedger = (range: CreditPeriodStartRange) =>
-    settle(() =>
-      accountId !== null
-        ? deps.ledger.listRowsForAccountCreatedInRange(accountId, range, ledgerOpts)
-        : deps.ledger.listRowsOfAllAccountsCreatedInRange(range, ledgerOpts)
-    );
+  // MK-2 (SA-1): the ONE charged-cost read, shared with Charge checks (`chargedAiCost.ts`).
+  const readLedger = (range: CreditPeriodStartRange) => readChargedLedger(deps.ledger, accountId, range);
   const readSpan = (span: FinanceSpan) => (isEmptySpan(span) ? Promise.resolve(EMPTY_LEDGER) : readLedger(span));
 
   const clamp = cutoverClamp(window.start, window.end);
@@ -734,7 +728,8 @@ export async function buildFinanceHealth(
         })
       : settle(() => deps.finance.listBillingStatusesAllAccounts()),
     accountId !== null ? Promise.resolve(NOT_CALLED_REVENUE) : settle<FinanceRevenueCounts>(() => deps.finance.countRevenueRows()),
-    clamp.readFrom === null ? Promise.resolve(EMPTY_LEDGER) : readLedger({ from: clamp.readFrom, to: window.end }),
+    // Section 3's window read, clamped to the cut-over: the same call Charge checks' cost tile makes (MK-2).
+    readChargedWindow(deps.ledger, accountId, window).result,
     readSpan(spans.current),
     spans.previousBeforeCutover ? Promise.resolve(null) : readSpan(spans.previous),
     settle<FinanceLot[]>(() => (accountId !== null ? deps.lots.forAccount(accountId) : deps.lots.allAccounts())),

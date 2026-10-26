@@ -14,8 +14,9 @@
  * always has.
  *
  * The request is unchanged: `from`, `to`, then `accountId` when one is chosen.
- * The default 30 days resolves to today minus 29 to today, exactly what the tab
- * sent before L-9a (`presetQuery(30)`); 7 and 90 days likewise.
+ * Money MK-2 (SA-7, RU-1 to RU-4): the default is This month (the first UTC
+ * day of the month to today), Finance's default, so the cost tile and Finance
+ * show the same figure on arrival. It was 30 days (today minus 29 to today).
  */
 
 import { resolveWindow, type AdminWindowExtra, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
@@ -24,13 +25,13 @@ import { textFilter, type AdminFilterSpec } from '@/app/admin/components/layout/
 import { wholeDateWindowFilter } from './tabWindowFilter';
 
 export interface CostsFilters {
-  /** Default 30 days. Always two whole dates when sent (the route takes both or neither). */
+  /** Default This month (MK-2). Always two whole dates when sent (the route takes both or neither). */
   window: AdminWindowValue;
   /** One business; request param `accountId`. '' = every business. */
   account: string;
 }
 
-export const COSTS_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: '30d' };
+export const COSTS_DEFAULT_WINDOW: AdminWindowValue = { kind: 'preset', preset: 'this_month' };
 
 /** The window this tab offered beyond the standard five (D-2 (b)), after Custom. */
 export const COSTS_WINDOW_EXTRAS: readonly AdminWindowExtra[] = ['90d'];

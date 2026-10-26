@@ -72,6 +72,16 @@ function report(): CostReportPayload {
     fallback: { count: 0, reconciled: 0, items: [] },
     spreads: [],
     unreadableAmounts: 0,
+    chargedInWindow: {
+      status: 'ok',
+      coverage: 'after_cutover',
+      costUsd: 0.0065,
+      credits: 6.5,
+      charges: 5,
+      rows: 6,
+      deleted: { costUsd: 0.0005, credits: 0.5, rows: 1 },
+      unreadableAmounts: 0,
+    },
   };
 }
 

@@ -1072,6 +1072,10 @@ describe('source guards', () => {
         // Finance & business health slice 1a: the CreditLedgerRow TYPE for the
         // pure Section 3 sums; it calls no read method ...
         'lib/business-os/finance/aiCost.ts',
+        // Money MK-2 (SA-1): the shared charged AI cost read and builder: types
+        // only (`Pick<...>`, the row and range types); its reads are injected
+        // (Finance's wiring below), so it calls no read method itself ...
+        'lib/business-os/finance/chargedAiCost.ts',
         // ... the builder: types via Pick<...>; it calls no read method itself ...
         'lib/business-os/finance/financeHealth.ts',
         // ... and its production wiring, which calls three reads: all accounts

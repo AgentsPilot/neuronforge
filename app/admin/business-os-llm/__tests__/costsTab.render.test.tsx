@@ -95,6 +95,16 @@ function report(over: Partial<CostReportPayload> = {}): CostReportPayload {
       { service: 'ai', actionType: 'insight_run', area: 'insights', examples: 12, failed: 0, fallbackExcluded: 1, fewExamples: false, costUsd: { p50: 0.01, p90: 0.02 }, credits: { p50: 10, p90: 20 } },
     ],
     unreadableAmounts: 0,
+    chargedInWindow: {
+      status: 'ok',
+      coverage: 'after_cutover',
+      costUsd: 0.0065,
+      credits: 6.5,
+      charges: 5,
+      rows: 6,
+      deleted: { costUsd: 0.0005, credits: 0.5, rows: 1 },
+      unreadableAmounts: 0,
+    },
     ...over,
   };
 }
@@ -268,7 +278,8 @@ describe('sections', () => {
 });
 
 describe('controls', () => {
-  it('opens on the last 30 days, all accounts', async () => {
+  // Money MK-2 (SA-7, ruled): opens on This month (was the last 30 days).
+  it('opens on This month, all accounts', async () => {
     const fetchMock = stubReport(() => ok(report()));
     render(<CostsTab />);
     await screen.findByTestId('costs-periods');
@@ -276,7 +287,10 @@ describe('controls', () => {
     expect(url.pathname).toBe('/api/admin/business-os/credits/report');
     const from = Date.parse(`${url.searchParams.get('from')}T00:00:00Z`);
     const to = Date.parse(`${url.searchParams.get('to')}T00:00:00Z`);
-    expect((to - from) / 86_400_000).toBe(29);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(url.searchParams.get('from')).toBe(`${today.slice(0, 7)}-01`);
+    expect(url.searchParams.get('to')).toBe(today);
+    expect(to).toBeGreaterThanOrEqual(from);
     expect(url.searchParams.has('accountId')).toBe(false);
   });
 

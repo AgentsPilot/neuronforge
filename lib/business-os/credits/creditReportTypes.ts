@@ -165,3 +165,30 @@ export interface CreditReport {
   /** Ledger amounts that could not be read as numbers (counted as 0). Expected 0. */
   unreadableAmounts: number;
 }
+
+/**
+ * Money MK-2 (SA-RR-MK SA-1): the charged AI cost of charges CREATED in the
+ * window, deleted accounts included. Built by Finance's own read and builder
+ * (`lib/business-os/finance/chargedAiCost.ts`), so it equals Finance's
+ * Section 3 for the same window by construction. NOT the period totals above:
+ * those are whole billing periods and may include charges from before the
+ * window.
+ */
+export interface CreditReportChargedInWindow {
+  /** Finance's rule: `ok` exact; `partial` a ceiling or an unreadable amount ("at least"); `unknown` the read failed. */
+  status: 'ok' | 'partial' | 'unknown';
+  coverage: 'after_cutover' | 'starts_before_cutover' | 'entirely_before_cutover';
+  /** Net USD, charges and corrections; NULL when unknown. */
+  costUsd: number | null;
+  credits: number | null;
+  /** Charge rows (corrections not counted). */
+  charges: number | null;
+  /** Ledger rows counted (charges and corrections). */
+  rows: number | null;
+  /** Accounts deleted since (`user_id` NULL): inside `costUsd`, and on their own line. 0 with an account picked. */
+  deleted: { costUsd: number; credits: number; rows: number } | null;
+  unreadableAmounts: number;
+}
+
+/** What the report route sends: the report, plus the window's charged AI cost (MK-2). */
+export type CreditReportResponse = CreditReport & { chargedInWindow: CreditReportChargedInWindow };

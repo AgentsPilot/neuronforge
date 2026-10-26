@@ -549,7 +549,7 @@ Rough estimates. Each slice is small, reuses existing reads and components, and 
 |---|---|---|
 | MK-0 | None | Shared prop and its own tests only |
 | MK-1, MK-6, MK-7 | None expected (markup and copy only; the payload is unchanged) | UI short path. If Pin B or AC-145 moves, stop and raise it to SA |
-| MK-2 | **Pin C** (Charge checks request literals, default window) | One ruled re-freeze |
+| MK-2 | **Pin C** (Charge checks request literals, default window), **and Pin A's two `CostsKpis` entries** (`A2 CostsKpis`, `A2 CostsKpis no sections`): the cost tile changes by decision (C-6, SA-1). *Added 2026-10-19 (SA-PIN-MK2): the original table missed that `CostsKpis` is a Pin A caller* | One ruled re-freeze each. The Pin A fixture gains `chargedInWindow` only, with before and after hashes in the MK-2 workplan. No fallback that would keep the old hash. Every other Pin A entry stays byte-identical |
 | MK-3 | **Pin C** again (the page moves under `/admin/ai-cost`), and **Pin D only if** a Health tile href lives in the hashed rules or vocabulary shape | One ruled re-freeze each, in MK-3. Prefer keeping hrefs outside Pin D's shape |
 | MK-4 | **AC-173 part B** (route schema: `tab` gains `plans`), **AC-145** (payload gains `mrr` and `stripeMode`) | One ruled re-freeze each. The new tab request literal is pinned in its own test, never added to the AC-173 table |
 | MK-5 with MK-5a | **Pin B** (the strip re-cut, the `$` values and the indicator), **Pin A** (the new Finance KpiTile usage), **AC-145** (paying % fields) | **Fold MK-5a into MK-5**, or land it immediately before in one PR, so Pin B is re-frozen once. MK-3 builds `formatUsdSign` if it lands first, and MK-5 reuses it |

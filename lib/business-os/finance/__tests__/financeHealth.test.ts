@@ -105,6 +105,8 @@ import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../fina
 import { FINANCE_RULES } from '../financeRules';
 // Slice 6a: a separate import, so the lines above stay unedited.
 import type { FinanceAccountsTabQuery } from '../financeTypes';
+// Money MK-2: a separate import, so the lines above stay unedited.
+import { buildChargedAiCostInWindow } from '../chargedAiCost';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -2936,5 +2938,103 @@ describe('Money MK-9: payingBreakdown through the builder', () => {
     if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.payload).not.toHaveProperty('payingBreakdown');
     expect(result.counts).not.toHaveProperty('payingBreakdown');
+  });
+});
+
+// Money MK-2 (SA-1, T-1): Charge checks' cost tile is Finance's charged AI cost
+// for the same window and the same ledger, by construction: the same read, the
+// same clamp, the same builder. Compared field by field with Section 3.
+describe("MK-2: Charge checks' charged AI cost equals Finance's for the same window", () => {
+  const tileFor = (deps: ReturnType<typeof makeDeps>, accountId: string | null, window = WINDOW) =>
+    buildChargedAiCostInWindow({ window: { start: window.start, end: window.end }, accountId }, logger(), {
+      ledger: deps.ledger as unknown as FinanceHealthDeps['ledger'],
+    });
+
+  it('all businesses: the same total, credits, rows and deleted accounts line, both exact', async () => {
+    const deps = makeDeps();
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const finance = result.payload.aiCost;
+    const tile = await tileFor(makeDeps(), null);
+    expect(finance.figures).not.toBeNull();
+    expect(tile.costUsd).toBe(finance.figures?.costUsd);
+    expect(tile.costUsd).toBe(6.5);
+    expect(tile.credits).toBe(finance.figures?.credits);
+    expect(tile.rows).toBe(finance.figures?.rows);
+    expect(tile.charges).toBe(finance.figures?.chargedActions);
+    expect(tile.deleted).toEqual(finance.figures?.deleted);
+    expect(tile.deleted?.costUsd).toBe(2);
+    expect(tile.status).toBe(finance.status);
+    expect(tile.coverage).toBe(finance.coverage);
+  });
+
+  // After MK-5 the strip tile F-K3 is K-1: this month to now, read through the same
+  // shared read (`readChargedLedger`). With This month picked it equals the tile.
+  it('This month: equals the strip tile F-K3 (K-1) as well as Section 3', async () => {
+    const { result } = await run(makeDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(WINDOW.preset).toBe('this_month');
+    const tile = await tileFor(makeDeps(), null);
+    expect(result.payload.tiles.k1.value?.value).toBe(6.5);
+    expect(tile.costUsd).toBe(result.payload.tiles.k1.value?.value);
+    expect(tile.status === 'ok').toBe(result.payload.tiles.k1.value?.exact);
+  });
+
+  it('the read is the same call: R-a with the same range and paging', async () => {
+    const financeDeps = makeDeps();
+    await run(financeDeps);
+    const tileDeps = makeDeps();
+    await tileFor(tileDeps, null);
+    const tileCall = tileDeps.ledger.listRowsOfAllAccountsCreatedInRange.mock.calls[0] as unknown[];
+    expect(tileDeps.ledger.listRowsOfAllAccountsCreatedInRange).toHaveBeenCalledTimes(1);
+    expect(financeDeps.ledger.listRowsOfAllAccountsCreatedInRange.mock.calls).toContainEqual(tileCall);
+  });
+
+  it('one business picked: R-a′ with that id on both sides, equal total, deleted 0', async () => {
+    const financeDeps = makeDeps();
+    const { result } = await run(financeDeps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tileDeps = makeDeps();
+    const tile = await tileFor(tileDeps, A);
+    expect(tile.costUsd).toBe(result.payload.aiCost.figures?.costUsd);
+    expect(tile.costUsd).toBe(3);
+    expect(tile.deleted).toEqual({ costUsd: 0, credits: 0, rows: 0 });
+    expect(tileDeps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect((tileDeps.ledger.listRowsForAccountCreatedInRange.mock.calls as unknown[][])[0][0]).toBe(A);
+  });
+
+  it('at the ledger ceiling both say partial ("at least") with the same lower bound', async () => {
+    const ceiling = () =>
+      makeDeps({
+        ledger: {
+          ...makeDeps().ledger,
+          listRowsOfAllAccountsCreatedInRange: jest.fn(() => ok({ rows: [charge(A, '3'), charge(null, '2')], reachedCeiling: true })),
+        },
+      });
+    const { result } = await run(ceiling());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tile = await tileFor(ceiling(), null);
+    expect(result.payload.aiCost.status).toBe('partial');
+    expect(tile.status).toBe('partial');
+    expect(tile.costUsd).toBe(result.payload.aiCost.figures?.costUsd);
+  });
+
+  it('a failed ledger read: Finance unknown, the tile unknown with no figure', async () => {
+    const failing = () =>
+      makeDeps({ ledger: { ...makeDeps().ledger, listRowsOfAllAccountsCreatedInRange: jest.fn(() => fail()) } });
+    const { result } = await run(failing());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tile = await tileFor(failing(), null);
+    expect(result.payload.aiCost.status).toBe('unknown');
+    expect(tile).toMatchObject({ status: 'unknown', costUsd: null, deleted: null });
+  });
+
+  it('a custom window: the same instants give the same figure', async () => {
+    const custom = resolveFinanceWindow({ preset: 'custom', from: '2026-10-05', to: '2026-11-08' }, NOW);
+    const { result } = await run(makeDeps(), null, logger(), NOW, custom);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tile = await tileFor(makeDeps(), null, custom);
+    expect(tile.costUsd).toBe(result.payload.aiCost.figures?.costUsd);
+    expect(tile.deleted).toEqual(result.payload.aiCost.figures?.deleted);
   });
 });

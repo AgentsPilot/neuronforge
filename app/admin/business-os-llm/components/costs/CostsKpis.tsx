@@ -6,7 +6,7 @@
  * read of its own, and no margin tile (the payload has no credit price).
  *
  *   Credits charged       grandTotal.stored.creditsTotal     anchor #costs-periods
- *   Cost (USD)            grandTotal.stored.costUsd          anchor #costs-periods
+ *   Charged AI cost       chargedInWindow.costUsd            anchor #costs-charged
  *   Charges               grandTotal.stored.charges          anchor #costs-breakdowns
  *   Fallback-priced       fallback.count, "{n} reconciled"   anchor #costs-fallback
  *   Periods not matching  mismatchedPeriods, "of {n} checked" or "Not checked"
@@ -18,6 +18,12 @@
  * (K-5 (ii)). An incomplete report adds "may be incomplete" to every tile's
  * sub-line and turns none amber: the amber notice below already says it.
  *
+ * Money MK-2 (SA-1): the cost tile is charges CREATED in the window, deleted
+ * accounts included, Finance's own computation (equal for the same window).
+ * Its exactness is its own: "at least" at the ledger ceiling or with an
+ * unreadable amount, "Unknown" when its read failed. Credits charged and
+ * Charges still read the stored whole-period totals and say so (D-1).
+ *
  * Anchors are links only while their section is rendered (an empty report or
  * failed totals render no sections); otherwise the tile has no target (K-6).
  */
@@ -28,6 +34,7 @@ import { formatCount, formatCredits, formatUsd } from '../../costFormat';
 import {
   KPI_CHARGES,
   KPI_COST_USD,
+  KPI_AT_LEAST,
   KPI_CREDITS,
   KPI_FALLBACK,
   KPI_MAY_BE_INCOMPLETE,
@@ -36,6 +43,7 @@ import {
   KPI_PERIODS,
   KPI_RECONCILED,
   KPI_UNKNOWN,
+  KPI_WHOLE_PERIODS,
 } from '../../costCopy';
 import type { CostReportPayload } from '../../costTypes';
 
@@ -62,6 +70,8 @@ export function CostsKpis({ report, firstLoad, sectionsShown }: CostsKpisProps) 
   const rowsRead = report.sections.rows === 'ok';
   const incomplete = report.incomplete ? KPI_MAY_BE_INCOMPLETE : null;
   const stored = report.grandTotal.stored;
+  const charged = report.chargedInWindow;
+  const chargedKnown = charged.status !== 'unknown' && charged.costUsd !== null;
 
   const checked = report.periods.filter((period) => period.matches !== null).length;
   const noneChecked = report.periods.length > 0 && checked === 0;
@@ -82,21 +92,21 @@ export function CostsKpis({ report, firstLoad, sectionsShown }: CostsKpisProps) 
         testId="costs-kpi-credits"
         label={KPI_CREDITS}
         value={totalsRead ? formatCredits(stored.creditsTotal) : KPI_UNKNOWN}
-        sub={incomplete}
+        sub={subLine(KPI_WHOLE_PERIODS, incomplete)}
         {...anchor('#costs-periods')}
       />
       <KpiTile
         testId="costs-kpi-cost"
         label={KPI_COST_USD}
-        value={totalsRead ? formatUsd(stored.costUsd) : KPI_UNKNOWN}
-        sub={incomplete}
-        {...anchor('#costs-periods')}
+        value={chargedKnown ? formatUsd(charged.costUsd) : KPI_UNKNOWN}
+        sub={chargedKnown && charged.status === 'partial' ? KPI_AT_LEAST : null}
+        {...anchor('#costs-charged')}
       />
       <KpiTile
         testId="costs-kpi-charges"
         label={KPI_CHARGES}
         value={totalsRead ? formatCount(stored.charges) : KPI_UNKNOWN}
-        sub={incomplete}
+        sub={subLine(KPI_WHOLE_PERIODS, incomplete)}
         {...anchor('#costs-breakdowns')}
       />
       <KpiTile
