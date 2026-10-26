@@ -34,6 +34,6 @@ MK-2 was built before the Page 1 pause and parked uncommitted. It was then re-ap
 - **To re-apply a slice that was parked across many merges, copy its files aside, fast-forward, then re-apply them.** Never use `git stash`.
 - **Follow-up MK2-FU-1 (a QA note, not a defect):** F-K3 counts up to now, while the tile counts up to midnight. A charge made between two page loads can make them differ until both are reloaded.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk2-one-ai-cost — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk2-one-ai-cost — commit `5452be3c`, PR #516 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

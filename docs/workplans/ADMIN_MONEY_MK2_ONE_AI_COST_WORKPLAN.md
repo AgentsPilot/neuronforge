@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §2 ("Approved fix", "How the tile is computed"), §4 (A-K1), §12 MK-2 row, SA-RR-MK (SA-1 as changed, SA-7, pin table row MK-2)
 **Branch:** `feature/admin-money-mk2-one-ai-cost` (from main `0ca7ea6f`; **rebased by hand onto `origin/main` `6e19cbe4` on 2026-10-26**, see §R)
 **Date:** 2026-10-19
-**Status:** Code Complete on `6e19cbe4` (SA-PIN-MK2 applied, re-frozen on the new base); awaiting SA code review. Open for SA: RU-19, Q-R1
+**Status:** Code Approved (SA-CR-MK2), QA passed, TL approved; committed `5452be3c` on `6e19cbe4`, PR [#516](https://github.com/AgentsPilot/neuronforge/pull/516) opened 2026-10-26, auto-merge on. RU-19 and Q-R1 ruled by SA
 **Path:** full cycle (money figure, 4a behaviour, Pin C). The user approved running the MK slices back to back. No migration, no new repository method, no Finance payload change.
 
 ## Overview
@@ -421,6 +421,12 @@ All counts match Dev's re-run on `6e19cbe4`.
 - [ ] Issues found
 
 ## Commit Info
+
+- **Branch:** `feature/admin-money-mk2-one-ai-cost` (on main `6e19cbe4`, which had not moved at commit time; no merge needed)
+- **Commit:** `5452be3c` feat(finance): one charged AI cost figure on Charge checks (MK-2)
+- **Pins:** Pin A (RU-14, RU-15) and the Pin C table (RU-1) moved as ruled; AC-145 `33340751…`, Pin B, Pin D and AC-173 unchanged
+- **Note:** `creditReport.ts` shows one deleted line and no insertion; that is the ruled RU-8 removal of `DEFAULT_WINDOW_DAYS`, not a truncation
+- **PR:** [#516](https://github.com/AgentsPilot/neuronforge/pull/516), auto-merge on (merge commit, via the merge queue)
 
 ---
 
