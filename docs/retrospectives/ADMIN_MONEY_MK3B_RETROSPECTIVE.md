@@ -39,6 +39,6 @@ MK-3b adds the Calls tab and completes the AI cost page; MK-3a merged as #517. I
 - **Use one day-end helper.** Two conventions (microseconds and milliseconds) existed side by side.
 - **Next:** the last Page 2 slice, the AI cost business drawer and the billing-period drawer.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk3b-calls-tab — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk3b-calls-tab — commit `5ccb0bd3`, PR #518 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

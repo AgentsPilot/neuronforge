@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §4 (Page 2), §5 (A-K1 to A-K5, the Leak check block KPI), §3.3 (LL-1 to LL-5), §3.4 (USD-1 to USD-6), §6 items 11 and 23 to 29, §7 C-2, C-3, C-6, C-7, §13 FC-1 / FC-4 / FC-5 / FC-6 / FC-9, §14 point 5, §12 MK-3 row; SA-RR-MK (SA-3, SA-6, SA-9, SA-11, guards, pins table row MK-3); SA-CR-MK2 Q-R1
 **Branch:** `feature/admin-money-mk3-ai-cost-page` (from `origin/main` `6e19cbe4`; worktree `neuronforge-finance-mk3`). **MK-2 must merge first; origin/main is merged into this branch before any code is written (§12 Step 0).**
 **Date:** 2026-10-26
-**Status:** SA Approved with conditions (SA-WP-MK3, 2026-10-26; conditions 1 to 7 folded in below). Build **MK-3a only**, after MK-2 merges and this branch is fast-forwarded to origin/main. **MK-3a Code Approved (SA-CR-MK3A), QA passed (B-1, B-2, L-1 fixed), TL approved; committed `9868bbf6`, PR [#517](https://github.com/AgentsPilot/neuronforge/pull/517) opened 2026-10-26, auto-merge on**; **MK-3b Code Complete** (uncommitted, local branch `feature/admin-money-mk3b-calls-tab`), awaiting SA code review
+**Status:** SA Approved with conditions (SA-WP-MK3, 2026-10-26; conditions 1 to 7 folded in below). Build **MK-3a only**, after MK-2 merges and this branch is fast-forwarded to origin/main. **MK-3a Code Approved (SA-CR-MK3A), QA passed (B-1, B-2, L-1 fixed), TL approved; committed `9868bbf6`, PR [#517](https://github.com/AgentsPilot/neuronforge/pull/517) opened 2026-10-26, auto-merge on**; **MK-3b Code Approved (SA-CR-MK3B, F-1 and F-2 re-checked), QA passed (E-1 fixed), TL approved; committed `5ccb0bd3`, PR [#518](https://github.com/AgentsPilot/neuronforge/pull/518) opened 2026-10-26, auto-merge on**
 **Path:** full cycle (sidebar, redirects, guard pins, a new shared export)
 
 ## Overview
@@ -1172,6 +1172,14 @@ Probe 1, A-K2 against Calls' total:
 - **Deleted (as listed in Files):** `CostsKpis.tsx`, `app/admin/finance/charges/page.tsx`, `chargeChecks.page.render.test.tsx`, `app/admin/finance/components/BlockKpi.tsx` (moved to `app/admin/components/layout/`)
 - **Pins:** Pin A `4e2a93aa`, Pin C file `e57f2675` (ruled); Pin C table `64a565e9`, AC-145 `33340751…`, AC-173, Pin B and Pin D unchanged
 - **PR:** [#517](https://github.com/AgentsPilot/neuronforge/pull/517), auto-merge on (merge commit, via the merge queue)
+
+### MK-3b
+
+- **Branch:** `feature/admin-money-mk3b-calls-tab` (on main `35c97b4f`, the #517 merge, which had not moved at commit time; no merge needed)
+- **Commit:** `5ccb0bd3` feat(admin): AI cost page, Calls tab (MK-3b)
+- **Deleted (as listed in §3.3):** `app/admin/analytics/page.tsx` (its body moved into the Calls tab) and `app/admin/analytics/components/AnalyticsKpis.tsx`
+- **Pins:** Pin A `a130d560` (ruled); Pin C `e57f2675` / `64a565e9`, AC-145 `33340751…`, AC-173, Pin B and Pin D unchanged
+- **PR:** [#518](https://github.com/AgentsPilot/neuronforge/pull/518), auto-merge on (merge commit, via the merge queue)
 
 ---
 
