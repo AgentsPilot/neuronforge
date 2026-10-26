@@ -44,6 +44,6 @@ MK-3a is the first half of the AI cost page. It adds:
   - MK3A-FU-1 (SA Low-2): the two-way type check misses an optional field. This is the existing pattern.
   - MK3A-FU-2 (SA Low-3): the sidebar still uses the old icon.
 
-### Status: APPROVED FOR COMMIT — feature/admin-money-mk3-ai-cost-page — commit pending (RM)
+### Status: COMMITTED — feature/admin-money-mk3-ai-cost-page — commit `9868bbf6`, PR #517 (auto-merge on)
 
 TL approval: APPROVED for RM (commit, PR, auto-merge)

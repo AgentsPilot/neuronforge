@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §4 (Page 2), §5 (A-K1 to A-K5, the Leak check block KPI), §3.3 (LL-1 to LL-5), §3.4 (USD-1 to USD-6), §6 items 11 and 23 to 29, §7 C-2, C-3, C-6, C-7, §13 FC-1 / FC-4 / FC-5 / FC-6 / FC-9, §14 point 5, §12 MK-3 row; SA-RR-MK (SA-3, SA-6, SA-9, SA-11, guards, pins table row MK-3); SA-CR-MK2 Q-R1
 **Branch:** `feature/admin-money-mk3-ai-cost-page` (from `origin/main` `6e19cbe4`; worktree `neuronforge-finance-mk3`). **MK-2 must merge first; origin/main is merged into this branch before any code is written (§12 Step 0).**
 **Date:** 2026-10-26
-**Status:** SA Approved with conditions (SA-WP-MK3, 2026-10-26; conditions 1 to 7 folded in below). Build **MK-3a only**, after MK-2 merges and this branch is fast-forwarded to origin/main. **MK-3a Code Complete** on `f8d32d60` (uncommitted), awaiting SA code review; MK-3b not started
+**Status:** SA Approved with conditions (SA-WP-MK3, 2026-10-26; conditions 1 to 7 folded in below). Build **MK-3a only**, after MK-2 merges and this branch is fast-forwarded to origin/main. **MK-3a Code Approved (SA-CR-MK3A), QA passed (B-1, B-2, L-1 fixed), TL approved; committed `9868bbf6`, PR [#517](https://github.com/AgentsPilot/neuronforge/pull/517) opened 2026-10-26, auto-merge on**; MK-3b not started
 **Path:** full cycle (sidebar, redirects, guard pins, a new shared export)
 
 ## Overview
@@ -891,6 +891,14 @@ The totals equal Dev's three groups exactly (90 / 3,395; 95 / 4,667; 131 / 3,082
 Copy (`leakCopy.ts`: `LEAK_KPI_UNKNOWN`, `LEAK_KPI_NOT_ALL_CHECKED`, `LEAK_KPI_COULD_NOT_CHECK`) passes the vocabulary guard. **Re-run:** the business-os-llm, system-config, admin guards, components (Pin A), finance (Pins B and C, AC-173), AI cost, `lib/admin` (Pin D) and the credits and finance routes (AC-145) suites: 140 suites, 4,985 passed. `test:authz-guard`: 203. `test:bos-entitlements`: 9,264. `lint:hooks`: exit 0. Scoped `tsc` on 51 files: 0 errors, and the canary was caught (`LeakCheckPanel.tsx(513,7)` TS2322), then restored with `cmp` identical. **No pin moved:** Pin A `4e2a93aa`, Pin B `a1b3db0c`, Pin C test `e57f2675` and table `64a565e9`, Pin D `1f7cf07a`, AC-173 `3a1a2dd4` + `b84e0c96`, AC-145 `33340751…2215`.
 
 ## Commit Info
+
+### MK-3a
+
+- **Branch:** `feature/admin-money-mk3-ai-cost-page` (on main `f8d32d60`, which had not moved at commit time; no merge needed)
+- **Commit:** `9868bbf6` feat(admin): AI cost page, Summary & checks (MK-3a)
+- **Deleted (as listed in Files):** `CostsKpis.tsx`, `app/admin/finance/charges/page.tsx`, `chargeChecks.page.render.test.tsx`, `app/admin/finance/components/BlockKpi.tsx` (moved to `app/admin/components/layout/`)
+- **Pins:** Pin A `4e2a93aa`, Pin C file `e57f2675` (ruled); Pin C table `64a565e9`, AC-145 `33340751…`, AC-173, Pin B and Pin D unchanged
+- **PR:** [#517](https://github.com/AgentsPilot/neuronforge/pull/517), auto-merge on (merge commit, via the merge queue)
 
 ---
 
