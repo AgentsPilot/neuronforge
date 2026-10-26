@@ -90,6 +90,7 @@ const basic: TierRow = {
   'marketing.mass_email': false, // (?) B-1 — also not_built: no dispatcher
   'marketing.lead_response': false,
   'marketing.posts': false, // not_built
+  'leads.inbox_channel': false, // not_built
   'insights.checks': false, // (S)
   'insights.channels': false,
   'insights.daily_briefing': false,
@@ -133,6 +134,7 @@ const pro: TierRow = {
   'chat.bulk': true,
   'credits.allowance': { perMonth: 2000 },
   'marketing.posts': false, // sheet: true — not_built
+  'leads.inbox_channel': false, // not_built
   'support.level': 'priority',
   'email.volume': { ceilingPerMonth: 20000 },
   'addon.marketing_analytics': 'unavailable', // sheet: included — not_built (?) B-1

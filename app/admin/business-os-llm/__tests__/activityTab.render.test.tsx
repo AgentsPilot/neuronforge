@@ -439,7 +439,8 @@ describe('the cut-over (AC-B20)', () => {
       'href',
       '/admin/audit-trail?entity_type=ai_action&date_to=2026-09-29T16%3A51'
     );
-    expect(screen.getByTestId('activity-cutover-analytics')).toHaveAttribute('href', '/admin/analytics?scope=bos');
+    // Money MK-3b (ruled): the AI cost page's Calls tab, never through the redirect.
+    expect(screen.getByTestId('activity-cutover-analytics')).toHaveAttribute('href', '/admin/ai-cost?tab=calls&scope=bos');
     expect(screen.getByTestId('activity-table')).toBeInTheDocument();
   });
 

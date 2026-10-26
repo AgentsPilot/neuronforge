@@ -348,6 +348,62 @@ export const CAPABILITIES = {
     sellableAsAddon: false,
     note: 'LeadReplyRecommender + the lead-response cron. The one client-facing send that genuinely uses an LLM today, so it is the one that degrades to template text (D-12).',
   },
+  'leads.inbox_channel': {
+    labels: {
+      en: 'Leads from your own website',
+      he: 'לידים מהאתר שלך',
+      es: 'Prospectos desde tu propia web',
+    },
+    /*
+     * Filed with the website, not with marketing.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * It is the same promise as `website.ai_site`, kept the other way round.
+     * That one is for a business that lets us build its site; this one is for
+     * a business that already has a site it likes and will not replace — its
+     * form keeps emailing them, we read that mailbox, and each enquiry becomes
+     * a lead with the same journey behind it.
+     *
+     * So the two are alternatives a customer chooses between, which is why
+     * they share a category: a plan offering a website but not this serves
+     * only businesses willing to move.
+     *
+     * NOT `marketing.*`. Everything there SENDS. This only brings people in;
+     * the reply it leads to is `marketing.lead_response`, which exists and is
+     * already gated.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    category: 'website_intake',
+    shape: { kind: 'boolean' },
+    /*
+     * `available` since 2026-10-25, when the setup wizard shipped.
+     *
+     * It was `not_built`, which FR-13 never entitles, so registering it early
+     * claimed nothing. The four steps that entry named as the condition for
+     * flipping it are all done: the wizard's four screens, granted in `BASE`,
+     * placed in one row of `planComparison.ts`, snapshot regenerated.
+     *
+     * What makes it genuinely available rather than merely built: one agent per
+     * connected mailbox, Gmail and Outlook each with its own compiled plan, and
+     * `/api/cron/inbox-enquiries` scheduled every five minutes so the agents
+     * actually run — until that cron existed an owner could finish setup and be
+     * told the channel was running while nothing ever read their mail.
+     */
+    lifecycle: 'available',
+    /* The owner connects it and reads its results. What the client eventually
+       receives is the lead_response send, which is gated separately. */
+    audience: 'owner',
+    atLimit: 'none',
+    sellableAsAddon: false,
+    note:
+      'Reads the enquiry emails a business\'s own website form sends it and files each ' +
+      'sender through captureEnquiry, so the row is identical to one typed into our own ' +
+      'form — which is what lets `enquiry_unanswered` and `marketing.lead_response` answer ' +
+      'it. Runs as a per-owner agent tagged `inbox-enquiries` against the google-mail or ' +
+      'outlook plugin they connected — one agent PER mailbox, so a business taking ' +
+      'enquiries at two addresses runs two, each with its own learned template and its ' +
+      'own provider plan. Swept by /api/cron/inbox-enquiries every five minutes.',
+  },
   'marketing.posts': {
     labels: { en: 'Post creation and scheduling', he: 'יצירה ותזמון פוסטים', es: 'Creación y programación de publicaciones' },
     category: 'marketing',

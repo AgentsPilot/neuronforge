@@ -18,7 +18,7 @@
       "anomaly": "no_plan_row"
     },
     "anomaly": "no_plan_row",
-    "matrixVersion": 2,
+    "matrixVersion": 3,
     "capabilities": {
       "crm.core": {
         "value": false,
@@ -347,6 +347,20 @@
         "display": "no"
       },
       "marketing.posts": {
+        "value": false,
+        "decidedBy": "basis",
+        "trace": [
+          {
+            "layer": "basis",
+            "from": null,
+            "to": false,
+            "note": "no basis: no_plan_row"
+          }
+        ],
+        "granting": false,
+        "display": "no"
+      },
+      "leads.inbox_channel": {
         "value": false,
         "decidedBy": "basis",
         "trace": [

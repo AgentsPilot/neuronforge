@@ -260,3 +260,23 @@ export function classifyAccounts(input: ClassifyInput): ClassifiedAccounts {
 export function tierLabelForGroup(config: EntitlementConfig, key: FinanceGroupKey): string | null {
   return key.startsWith('tier:') ? tierLabelOf(config, key.slice('tier:'.length)) : null;
 }
+
+/**
+ * Money MK-9 (S5B-FR-12, CF-6): a trial row is recognised by its cohort, through
+ * the module's one cohort → state function (no cohort literal). Written `!!`,
+ * as `isChampionCohort`, never a comparison with an empty string.
+ */
+export function isTrialRow(row: Pick<BusinessOsAccountPlan, 'cohort'>): boolean {
+  return !!row.cohort && stateForCohort(row.cohort) === 'trial';
+}
+
+/**
+ * Money MK-9 (SA-Q114): a trial's end, also after a tier is in force. The
+ * lifecycle reports trial dates only while the trial branch runs, and a tier
+ * wins over it, so the end is read from a COPY of the row without its tier
+ * (pins honoured). Null when the trial's clock never started.
+ */
+export function trialEndOf(row: BusinessOsAccountPlan, config: EntitlementConfig, now: Date): string | null {
+  const withoutTier: BusinessOsAccountPlan = { ...row, tier: null, tier_expires_at: null };
+  return deriveLifecycle(fromPlanRow(withoutTier), lifecycleInputs(config), now).trial?.endsAt ?? null;
+}

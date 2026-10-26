@@ -434,3 +434,107 @@ describe('the leak check panel on the admin layout standard (L-9b)', () => {
     expect(container.querySelector('[class*="text-slate-500"]')).toBeNull();
   });
 });
+
+// ── Money MK-3a (§4.2, §5, SA-Q-MK3-5, T-6): the Leak check's block KPI ─────────
+// A separate import, so the lines above stay unedited.
+import { unchargedBusinessesKpi } from '../components/costs/LeakCheckPanel';
+import {
+  LEAK_KPI_COULD_NOT_CHECK,
+  LEAK_KPI_DEFINITION,
+  LEAK_KPI_LABEL,
+  LEAK_KPI_NOT_ALL_CHECKED,
+  LEAK_KPI_NOT_RUN,
+  LEAK_KPI_UNKNOWN,
+} from '../leakCopy';
+
+const valueOf = (result: LeakCheckPayload | null, failed = false) => unchargedBusinessesKpi(result, failed).value;
+
+describe('MK-3a: the block KPI "Businesses with uncharged calls"', () => {
+  const box = () => screen.getByTestId('leak-kpi-uncharged-kpi');
+
+  it('heads the panel on the shared BlockKpi with its leading pill; "Not run yet" before a run, and no read on mount', () => {
+    render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    expect(box()).toHaveAttribute('role', 'group');
+    expect(box()).toHaveAttribute('aria-label', `${LEAK_KPI_LABEL}, ${LEAK_KPI_NOT_RUN}`);
+    expect(box()).toHaveTextContent('Leading');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(LEAK_KPI_DEFINITION).toMatch(/never counted/);
+  });
+
+  it('after a run: the count of businesses with an uncharged call', async () => {
+    fetchMock.mockImplementation(() =>
+      respond({
+        success: true,
+        data: payload({
+          accounts: [
+            finding(),
+            finding({ accountId: B, companyName: 'Beta', counts: { ...finding().counts, uncharged: 3 } }),
+            // Undercharged only: charged, so not counted (SA-Q-MK3-5).
+            finding({ accountId: G1, companyName: 'Gamma', status: 'leak', counts: { ...finding().counts, uncharged: 0, undercharged: 2 } }),
+          ],
+        }),
+      })
+    );
+    render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    run();
+    await waitFor(() => expect(screen.getByTestId('leak-kpi-uncharged')).toHaveTextContent('2'));
+    expect(box()).toHaveAttribute('aria-label', `${LEAK_KPI_LABEL}, 2`);
+  });
+
+  it('platform calls are reported apart and never counted as a business', () => {
+    const value = valueOf(payload({ accounts: [], platform: { businessOsCalls: 40, helperLabelCalls: 5, envIgnored: false } }));
+    expect(value).toBe('0');
+  });
+
+  it.each([
+    ['an incomplete account', { accountsIncomplete: 1 }],
+    ['an account that could not be checked', { accountsNotChecked: 1 }],
+    ['accounts left', { accountsRemaining: 3 }],
+    ['the deadline', { deadlineReached: true }],
+    ['a failed listing', { listingFailed: true }],
+  ] as const)('"At least" when the run may have missed a business and found one: %s', (_name, over) => {
+    expect(unchargedBusinessesKpi(payload(over), false)).toEqual({ value: 'At least 1', chip: null });
+  });
+
+  it('exact when the run saw every business', () => {
+    expect(unchargedBusinessesKpi(payload(), false)).toEqual({ value: '1', chip: null });
+    expect(valueOf(null)).toBe(LEAK_KPI_NOT_RUN);
+  });
+
+  // QA B-1: "At least 0" reads as "none found"; a run that may have missed businesses and found none
+  // says Unknown, with a chip in words.
+  it.each([
+    ['a failed listing', { listingFailed: true }],
+    ['the deadline', { deadlineReached: true }],
+    ['accounts left', { accountsRemaining: 30 }],
+  ] as const)('B-1: %s with no findings → Unknown and the chip, never "At least 0"', (_name, over) => {
+    expect(unchargedBusinessesKpi(payload({ ...over, accounts: [] }), false)).toEqual({
+      value: LEAK_KPI_UNKNOWN,
+      chip: { tone: 'warn', label: LEAK_KPI_NOT_ALL_CHECKED },
+    });
+  });
+
+  it('B-1 (render): the box shows Unknown and the chip after such a run', async () => {
+    fetchMock.mockImplementation(() => respond({ success: true, data: payload({ listingFailed: true, accounts: [] }) }));
+    render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    run();
+    await waitFor(() => expect(screen.getByTestId('leak-kpi-uncharged')).toHaveTextContent(LEAK_KPI_UNKNOWN));
+    expect(screen.getByTestId('leak-kpi-uncharged-chip')).toHaveTextContent(LEAK_KPI_NOT_ALL_CHECKED);
+    expect(box()).not.toHaveTextContent('At least 0');
+  });
+
+  it('B-1: a complete run that found none is an exact 0, with no chip', () => {
+    expect(unchargedBusinessesKpi(payload({ accounts: [] }), false)).toEqual({ value: '0', chip: null });
+  });
+
+  // QA B-2: the run was tried and failed, so it is not "Not run yet".
+  it('B-2: after a failed run the box says "Could not check"; before any run, "Not run yet"', async () => {
+    expect(unchargedBusinessesKpi(null, true)).toEqual({ value: LEAK_KPI_COULD_NOT_CHECK, chip: null });
+    fetchMock.mockImplementation(() => respond({ success: false, error: 'The leak check failed' }, 500));
+    render(<LeakCheckPanel accountId="" accountLabel={null} />);
+    expect(box()).toHaveAttribute('aria-label', `${LEAK_KPI_LABEL}, ${LEAK_KPI_NOT_RUN}`);
+    run();
+    await screen.findByTestId('leak-error');
+    expect(box()).toHaveAttribute('aria-label', `${LEAK_KPI_LABEL}, ${LEAK_KPI_COULD_NOT_CHECK}`);
+  });
+});

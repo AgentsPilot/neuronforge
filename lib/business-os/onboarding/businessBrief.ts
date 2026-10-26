@@ -171,7 +171,17 @@ export const BRIEF_FIELDS: BriefField[] = [
     meaning:
       'Who buys this, as a specific recent client rather than a category. ' +
       'A named situation is worth more than a demographic.',
-    example: 'Think of someone you worked with recently: who were they, and what did they come to you for?',
+    /*
+     * ONE ASK. This read "…who were they, and what did they come to you for?"
+     * and was answered, by the owner of this platform, with an age range and a
+     * referral source — neither half of the question. His own verdict: "if I
+     * answered wrong everyone will do the same."
+     *
+     * Naming the need names the person anyway ("a mum whose kid was failing
+     * maths"), so nothing is lost by dropping the first half. The clause before
+     * the colon still pins it to a memory, which is what the whole set is for.
+     */
+    example: 'Think of the last person who came to you: what did they need?',
     earnsItsQuestion:
       'Nothing else in the interview reveals who this is for, and copy written for everyone speaks to no one.',
   },
@@ -195,7 +205,17 @@ export const BRIEF_FIELDS: BriefField[] = [
   {
     key: 'credentials',
     meaning: 'Training, qualifications, years in the trade, notable clients or results.',
-    example: 'How did you come to do this, and what is your background with it?',
+    /*
+     * ONE ASK, for the reason recorded on `audience` above. "How did you come
+     * to do this" and "what is your background" are two questions, and an
+     * owner answers whichever they can — the other is lost without anyone
+     * noticing it was asked.
+     *
+     * Not rewritten as "what training do you have, or what did you do before",
+     * which is the same fault wearing an "or": `meaning` already enumerates
+     * what counts, and that is what the model reads to judge an answer.
+     */
+    example: 'What is your background in this?',
     earnsItsQuestion:
       'A new business has no reviews. Credentials are the only honest proof it can show instead.',
   },
@@ -204,7 +224,33 @@ export const BRIEF_FIELDS: BriefField[] = [
     feedsASection: true,
     meaning:
       'The doubt that has to be answered before somebody will book, as something they actually said.',
-    example: 'What is the last thing someone asked you before they decided to go ahead?',
+    /*
+     * ABOUT THE DOUBT, NOT ABOUT THE DECISION. Measured, on an ADHD coach who
+     * reported these two questions as unclear and near-identical:
+     *
+     *   differentiators  "What have clients told you made them pick you?"
+     *   objections       "What is the last thing someone asked you before
+     *                     they decided to go ahead?"
+     *
+     * Both pointed at the same moment — just before they committed — so to an
+     * owner they are one question asked twice. His answer proves it: he
+     * replied "they got my contact from a friend who I helped", which is how
+     * he was found, and neither a differentiator nor a doubt.
+     *
+     * The two `meaning`s were always distinct. The EXAMPLES were not, and the
+     * model writes from the example. So this one names the WORRY rather than
+     * the decision, which is what the field is for.
+     *
+     * Three things it has to be at once, and the first draft lost one of them:
+     *
+     *   about the doubt   not about why they chose, or it duplicates above
+     *   something SAID    this field's `meaning` asks for a reported
+     *                     utterance, and "what did they hesitate about" asks
+     *                     instead for the owner's reading of a silence
+     *   one client        "what do clients worry about?" returns nothing, as
+     *                     recorded in the question-writing rules
+     */
+    example: 'What did the last client say they were worried about?',
     earnsItsQuestion:
       'The FAQ and the reassurance in the copy exist to answer this; unasked, they answer nothing in particular.',
   },

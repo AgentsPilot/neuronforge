@@ -86,9 +86,10 @@ import {
   TAKINGS_UNKNOWN_CURRENCY,
 } from '../financeCopy';
 import { atLeast, formatMoney } from '../financeFormat';
-import { BlockKpi } from './BlockKpi';
+import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
 import { FinanceSection } from './FinanceSection';
 import { ClientPaymentProblems } from './PaymentProblemsSection';
+import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
 
 const SUBHEAD = 'text-sm font-medium text-slate-200';
 const NOTE = 'text-[11px] text-slate-400';
@@ -148,6 +149,8 @@ export function TakingsSection({
 }
 
 function TakingsBody({ f }: { f: FinanceTakingsFigures }) {
+  // Money MK-10: the rows open like the Businesses rows (D-17), when the drawer is mounted.
+  const opener = useBusinessRowOpen();
   const refundsExact = f.refundsState === 'ok';
   // A net is null because a read stopped at its limit (the ceiling: "a read was cut off"), or because the
   // refunds read FAILED or an amount on its line was unreadable (plain "Unknown", SA-1).
@@ -330,17 +333,23 @@ function TakingsBody({ f }: { f: FinanceTakingsFigures }) {
                   <th scope="col" className={ADMIN_TH_NUM}>{TAKINGS_GROSS}</th>
                   <th scope="col" className={ADMIN_TH_NUM}>{TAKINGS_REFUNDED}</th>
                   <th scope="col" className={ADMIN_TH_NUM}>{TAKINGS_NET_SHORT}</th>
+                  {opener?.header}
                 </tr>
               </thead>
               <tbody className={ADMIN_TBODY}>
                 {f.rows.map((row) => (
-                  <tr key={`${row.accountId ?? 'unknown'}:${row.currency ?? 'unknown'}`} data-testid={`takings-row-${row.accountId ?? 'unknown'}-${row.currency ?? 'unknown'}`}>
+                  <tr
+                    key={`${row.accountId ?? 'unknown'}:${row.currency ?? 'unknown'}`}
+                    data-testid={`takings-row-${row.accountId ?? 'unknown'}-${row.currency ?? 'unknown'}`}
+                    {...opener?.rowProps(businessTargetOf(row))}
+                  >
                     <th scope="row" className={`${ADMIN_TD} font-normal`}>{businessName(row)}</th>
                     <td className={ADMIN_TD}>{currencyLabel(row.currency)}</td>
                     <td className={ADMIN_TD_NUM}>{count(row.payments)}</td>
                     <td className={ADMIN_TD_NUM} data-money="gross">{gross(row.gross, row.currency, row.unreadablePayments)}</td>
                     <td className={ADMIN_TD_NUM} data-money="refunded">{refunded(row.refunded, row.currency)}</td>
                     <td className={ADMIN_TD_NUM} data-money="net">{net(row.net, row.currency)}</td>
+                    {opener?.cell(businessTargetOf(row), businessName(row))}
                   </tr>
                 ))}
               </tbody>

@@ -4,8 +4,8 @@
  */
 
 import { baseCreditsFor, currentRetailRate, retailRateFor, type RetailRate } from '@/lib/business-os/entitlements/retailRate';
-import type { CreditRetailVersion } from '@/lib/business-os/entitlements/config/creditRetail';
-import type { CreditValueVersion } from '@/lib/business-os/entitlements/config/creditValue';
+import { CREDIT_RETAIL_HISTORY, type CreditRetailVersion } from '@/lib/business-os/entitlements/config/creditRetail';
+import { currentCreditValue, type CreditValueVersion } from '@/lib/business-os/entitlements/config/creditValue';
 
 const VALUE_V1: CreditValueVersion = {
   version: 1,
@@ -25,13 +25,20 @@ const retail = (markup: number, creditValueVersion = 1, version = 1): CreditReta
 });
 
 describe('the current rate (T-H1)', () => {
-  it('is 500 credits per US dollar, computed from credit value v1 and retail v1', () => {
-    expect(currentRetailRate()).toEqual({ ok: true, rate: { retailVersion: 1, creditValueVersion: 1, creditsPerUsd: 500 } });
+  it('is 200 credits per US dollar, computed from credit value v1 and retail v2 (decision D5, 2026-10-25)', () => {
+    expect(currentRetailRate()).toEqual({ ok: true, rate: { retailVersion: 2, creditValueVersion: 1, creditsPerUsd: 200 } });
   });
 
-  it('is the rate the plans sell at: Essentials $39.50 of allowance value is 19,750 credits (pricing doc §3)', () => {
+  it('buys one Essentials month for $10 (D5: Starter = 2,000 credits)', () => {
     const result = currentRetailRate();
     if (!result.ok) throw new Error(result.issue);
+    expect(baseCreditsFor(1000, 'USD', result.rate)).toBe(2000);
+  });
+
+  it('retail v1 still computes 500 per dollar: the rate the old Essentials 19,750 was derived at (history, pricing doc §3.1)', () => {
+    const result = retailRateFor(CREDIT_RETAIL_HISTORY[0], currentCreditValue());
+    if (!result.ok) throw new Error(result.issue);
+    expect(result.rate).toEqual({ retailVersion: 1, creditValueVersion: 1, creditsPerUsd: 500 });
     expect(baseCreditsFor(3950, 'USD', result.rate)).toBe(19750);
   });
 });

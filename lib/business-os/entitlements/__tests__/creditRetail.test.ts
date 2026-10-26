@@ -41,7 +41,7 @@ describe('the retail markup history is append-only', () => {
     const edited = JSON.parse(JSON.stringify(CREDIT_RETAIL_HISTORY)) as CreditRetailVersion[];
     edited[0] = { ...edited[0], markup: 0.7 };
     expect(editedEntries(snapshot, edited)).toEqual([1]);
-    expect(editedEntries(snapshot, [])).toEqual([1]);
+    expect(editedEntries(snapshot, [])).toEqual([1, 2]);
   });
 
   it('versions run 1, 2, 3 … with no gap (SA Q-6: no provisional v0)', () => {
@@ -92,6 +92,18 @@ describe('version 1', () => {
   });
 });
 
+describe('version 2', () => {
+  it('is decision D5: 400% markup on credit value v1, decided 2026-10-25 (the credits re-size)', () => {
+    expect(CREDIT_RETAIL_HISTORY[1]).toMatchObject({ version: 2, markup: 4, creditValueVersion: 1, decidedOn: '2026-10-25' });
+    expect(CREDIT_RETAIL_HISTORY[1].derivation).toContain('D5');
+    expect(CREDIT_RETAIL_HISTORY[1].derivation).toContain('docs/architecture/BUSINESS_OS_CREDIT_PRICING.md');
+  });
+
+  it('is the current entry: new boost sales are priced at it', () => {
+    expect(currentCreditRetail().version).toBe(2);
+  });
+});
+
 describe('the history cannot be changed at run time (QA I-1)', () => {
   it('entries and the list are frozen', () => {
     expect(() => {
@@ -100,6 +112,6 @@ describe('the history cannot be changed at run time (QA I-1)', () => {
     expect(() => {
       (CREDIT_RETAIL_HISTORY as unknown as unknown[]).push({});
     }).toThrow(TypeError);
-    expect(currentCreditRetail().markup).toBe(1);
+    expect(currentCreditRetail().markup).toBe(4);
   });
 });

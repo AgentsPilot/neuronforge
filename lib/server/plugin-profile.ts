@@ -55,11 +55,41 @@ export const PLUGIN_PROFILES: Readonly<Record<PluginProfileName, readonly string
     'website',
   ]),
   business_os: Object.freeze([
+    /*
+     * The other half of Google.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * The two vendors are split differently, and that asymmetry is easy to
+     * miss: `outlook` is ONE plugin with five mail actions and five calendar
+     * actions, so it was already loaded for calendar sync and silently
+     * brought mail with it. Google is two plugins, and only the calendar half
+     * was here — so an Outlook business could be read and a Gmail business
+     * could not, for no reason anybody chose.
+     *
+     * Needed by the mailbox lead channel: the agent that reads the enquiry
+     * emails a business's own website form sends it, and files each sender as
+     * a lead. Without it the executor refuses at run time with "not enabled in
+     * the 'business_os' plugin profile", which is this list doing its job.
+     *
+     * This does NOT reopen the set. The profile exists because loading all 28
+     * definitions was heavy; it cut 1288 KB to 705 KB, and this adds 53 KB of
+     * that back — 8%, against `business-os` alone at 66%. The vocabulary
+     * extractor filters by `servicesInvolved` before building the Phase 1
+     * prompt, so a loaded plugin nobody grounds costs nothing per generation.
+     *
+     * FIRST in this list, not beside `outlook` where it reads more naturally.
+     * The profile must be an ordered SUBSEQUENCE of `all` — iteration order,
+     * and therefore LLM-context order, has to be stable across profiles — and
+     * `google-mail` is first in `all`. Added next to `outlook` it broke that
+     * invariant, and `plugin-registry-integrity.test.ts` said so.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    'google-mail',
     'google-calendar', // CalendarSyncService (two-way calendar sync)
     'meta-insights', // channel insights (Facebook Page + Instagram)
     'google-analytics', // channel insights (GA4)
     'google-business-profile', // channel insights (connect / list locations)
-    'outlook', // CalendarSyncService (alternative calendar provider)
+    'outlook', // CalendarSyncService (alternative calendar provider) AND mail: one plugin carries both
     'stripe', // Stripe Connect OAuth definition only; BOS never invokes its executor
     // ---------------------------------------------------------------------
     // INTERIM DUPLICATION - a decision is owed here. Two Business OS plugin

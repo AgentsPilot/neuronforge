@@ -254,14 +254,19 @@ export async function POST(request: NextRequest) {
     /*
      * Nothing to do here any more.
      *
-     * This promoted the contact because they had paid. Payment is not the
-     * relationship — a business billing by invoice has clients who have not
-     * paid, and a free intro call is not a client at all. The rule is now "a
-     * booking was confirmed", enforced by
-     * `promote_contact_on_confirmed_booking` on `scheduling_bookings`, and this
-     * route confirms the booking a few lines below. The promotion happens
-     * there, for every path that confirms a booking rather than only for the
-     * ones that remembered to ask.
+     * This promoted the contact inline, which is how only the paths that
+     * remembered to ask ever promoted anyone.
+     *
+     * The rule now lives in the database: `promote_contact_on_payment` on
+     * `payment_transactions`, firing on a row that is `succeeded` for more
+     * than zero, and resolving the business's own client stage by
+     * `stage_type`. This route records such a row, so the promotion follows
+     * from that and needs nothing here.
+     *
+     * NOT "a booking was confirmed", which an earlier version of this note
+     * claimed and named `promote_contact_on_confirmed_booking` for. That
+     * trigger was DROPPED in 20260920: a free intro call is confirmed and is
+     * not a sale, so confirmation promoted people who had bought nothing.
      */
 
     // Get service name for activity logging
@@ -399,11 +404,64 @@ export async function POST(request: NextRequest) {
       const isDuplicate = paymentError?.code === '23505';
 
       if (isDuplicate) {
-        const { data: existing } = await supabaseServer
+        /*
+         * ADOPTING IT IS NOT ENOUGH — IT HAS TO BE ATTACHED TO THIS BOOKING.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * This read the existing row's id and continued, on the reasoning in
+         * the note above: the webhook "already linked it to the booking via
+         * `metadata.booking_id`".
+         *
+         * That is true only when the booking already existed when the webhook
+         * ran. On a smart link it does NOT: the client pays first and the
+         * booking is written seconds later, so the webhook's row carries
+         * `metadata.booking_id: null` and no `booking_id` column either.
+         * Adopting it left the payment permanently unattached while
+         * `booking.payment_id` pointed at it — a link in one direction only.
+         *
+         * Everything that finds a booking's money by `booking_id` then finds
+         * none: `propagate_refund_to_booking` resolves a NULL target so a
+         * refund leaves the booking reading `paid`, `notifyRefund` resolves
+         * the recipient through the booking so the client is never told, and
+         * the client's own portal totals nothing.
+         *
+         * Live case: transaction 906f586d, ₪150 succeeded at 21:46:45, booking
+         * dbafeb6e written at 21:46:47, `updated_at` never moved off
+         * `created_at`.
+         *
+         * `linkPaymentsToBooking` is the usual repair and could not help here:
+         * it finds the payment through Stripe's SEARCH API, which is
+         * eventually consistent and returns nothing for an object seconds old.
+         * That is why these rows were only ever linked by the 15-minute
+         * reconcile cron, long after the refund had been issued.
+         *
+         * No search is needed. This route was handed the payment intent id by
+         * the browser and has already verified it against Stripe, so the row
+         * is identified exactly and stamped here.
+         *
+         * `.is('booking_id', null)` keeps it idempotent: a row the webhook did
+         * manage to link is never moved to a different booking.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const { data: adopted } = await supabaseServer
           .from('payment_transactions')
-          .select('id')
+          .update({ booking_id: booking.id, contact_id: contactId })
           .eq('stripe_payment_intent_id', data.payment_intent_id)
+          .eq('user_id', ownerId)
+          .is('booking_id', null)
+          .select('id')
           .maybeSingle();
+
+        /* Already linked — by the webhook, or by a retry of this route. Read it
+           so the booking still gets its `payment_id` below either way. */
+        const { data: existing } = adopted
+          ? { data: adopted }
+          : await supabaseServer
+              .from('payment_transactions')
+              .select('id')
+              .eq('stripe_payment_intent_id', data.payment_intent_id)
+              .eq('user_id', ownerId)
+              .maybeSingle();
 
         paymentTransactionId = existing?.id ?? null;
 
@@ -412,8 +470,9 @@ export async function POST(request: NextRequest) {
             bookingId: booking.id,
             paymentIntentId: data.payment_intent_id,
             paymentTransactionId,
+            attached: Boolean(adopted),
           },
-          'The webhook recorded this payment first; adopting its transaction and continuing'
+          'The webhook recorded this payment first; attached its transaction to the booking and continuing'
         );
       } else if (paymentError) {
         // A real insert failure. Still not non-blocking: the booking was about
@@ -488,7 +547,11 @@ export async function POST(request: NextRequest) {
      * could never fire on.
      * ─────────────────────────────────────────────────────────────────────────
      */
-    if (data.attempt_id) {
+    /* `bookingId` as well as the attempt: there is nothing to link money TO
+       until the booking exists, and the parameter is `string` for that reason.
+       It was passed as `string | null` here, which only type-checked because
+       the build ignores these errors. */
+    if (data.attempt_id && bookingId) {
       const { linkPaymentsToBooking } = await import('@/lib/payments/linkPaymentsToBooking');
 
       await linkPaymentsToBooking({
@@ -496,6 +559,18 @@ export async function POST(request: NextRequest) {
         bookingId,
         contactId,
         userId: ownerId,
+        /*
+         * A SECOND LOCAL KEY, when the browser came back with one.
+         *
+         * The note above explains why this block keys off the attempt rather
+         * than the payment intent, and that reasoning still holds — the widget
+         * sends no intent, and an instalment sale's charge sits on the
+         * subscription's invoice. It is passed ALONGSIDE, never instead: on a
+         * plan it resolves the subscription through the charge's own
+         * `metadata.subscription_id`, which is local and needs no Stripe index
+         * to have caught up. See `findLocalByPaymentIntent`.
+         */
+        paymentIntentId: data.payment_intent_id ?? null,
       });
     }
 

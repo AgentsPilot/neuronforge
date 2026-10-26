@@ -641,7 +641,9 @@ describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () 
    * L-9a carried is gone: no file in the folder is exempt.
    */
   const COSTS_DIR = `${ROOT}/components/costs/`;
-  const COSTS_FETCHERS = [`${COSTS_DIR}CostsTab.tsx`, `${COSTS_DIR}LeakCheckPanel.tsx`];
+  // Money MK-3b (ruled, SA-CR-MK3A DV-1): the report read moved to the AI cost page
+  // (`app/admin/ai-cost/useCostReport.ts`); the Leak check panel is the folder's one reader.
+  const COSTS_FETCHERS = [`${COSTS_DIR}LeakCheckPanel.tsx`];
   const JSON_CALL = /\.json\s*\(/;
   const FETCH_CALL = /(^|[^\w.])fetch\s*\(/;
   const costsFiles = allFiles.filter((relative) => relative.startsWith(COSTS_DIR));
@@ -652,10 +654,13 @@ describe('L-9a: the Costs & credits tab on the admin layout standard (G-5)', () 
     expect(FETCH_CALL.test('client.fetch(url)')).toBe(false);
   });
 
-  it('G-5: walks the costs folder, both readers and the new bar and strip included', () => {
+  it('G-5: walks the costs folder, the reader, the tab and the new bar and strip included', () => {
     for (const fetcher of COSTS_FETCHERS) expect(costsFiles).toContain(fetcher);
+    expect(costsFiles).toContain(`${COSTS_DIR}CostsTab.tsx`);
     expect(costsFiles).toContain(`${COSTS_DIR}CostsFilterBar.tsx`);
-    expect(costsFiles).toContain(`${COSTS_DIR}CostsKpis.tsx`);
+    // Money MK-3a (ruled): the strip is `AiCostKpis` (A-K1 to A-K5); `CostsKpis` is deleted.
+    expect(costsFiles).toContain(`${COSTS_DIR}AiCostKpis.tsx`);
+    expect(costsFiles).toContain(`${COSTS_DIR}RecordedSection.tsx`);
     expect(costsFiles).toContain(`${COSTS_DIR}CostsSections.tsx`);
   });
 

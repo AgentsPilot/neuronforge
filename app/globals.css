@@ -235,6 +235,64 @@ html[data-public-surface] .ap-card-2,
 html[data-public-surface] .ap-line,
 [data-ap-site] .ap-line { border-color: var(--ap-border); }
 
+/*
+ * Clip a slide WITHOUT becoming a scroll container.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The booking flow slides each step in on the X axis and clipped the overflow
+ * with `overflow: hidden`. That works visually and has a side effect: an
+ * `overflow: hidden` box is still SCROLLABLE, just without a visible scrollbar.
+ *
+ * So when a phone keyboard opens, the browser scrolls the focused input into
+ * view by scrolling every scrollable ancestor — this box included. Its
+ * `scrollLeft` moves and nothing puts it back, and the panel sits offset inside
+ * its own frame for the rest of the step.
+ *
+ * It shows up in RTL because `scrollLeft` is measured from the other edge
+ * there, so the same nudge pushes the content the opposite way and the RIGHT
+ * side — the start of the line, where the field's border and its icon are —
+ * disappears under the frame. Reported on the details step, where the keyboard
+ * is open over three fields in a row.
+ *
+ * `clip` clips exactly the same and creates NO scroll container, so there is
+ * nothing for the browser to scroll. Declared after `hidden` on purpose: a
+ * browser too old for `clip` ignores that line and keeps the old behaviour
+ * rather than losing the clip altogether and letting the slide bleed across
+ * the page.
+ *
+ * `overflow-y: visible` is the other half, and it is only expressible with
+ * `clip`: `hidden` on one axis forces the other to `auto`. A focus ring on the
+ * top field is no longer shaved off by a box that only ever needed to clip
+ * sideways.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+.ap-clip-x {
+  overflow-x: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+
+/*
+ * Scrolls DOWN the page, never sideways.
+ *
+ * The same trap as `.ap-clip-x`, one level out. The booking dialog's body was
+ * `overflow: auto`, which scrolls on BOTH axes — so focusing a field let the
+ * browser nudge it horizontally as it brought that field into view, and in RTL
+ * that nudge cuts the right-hand edge of the input off under the frame. A mouse
+ * click does it as readily as a keyboard: it is focus that moves the box, not
+ * the keyboard.
+ *
+ * Vertical scrolling is what this box is FOR, so it keeps `auto`. Sideways it
+ * has nothing legitimate to show, so it clips — and `clip`, not `hidden`,
+ * because `hidden` would make it a horizontal scroll container again and we
+ * would be back where we started.
+ */
+.ap-scroll-y {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+
 html[data-public-surface] .ap-divide > * + *,
 [data-ap-site] .ap-divide > * + * { border-color: var(--ap-border); }
 

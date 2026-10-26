@@ -7,6 +7,7 @@ import { resolveGap, gapStateFor, pickLeak, type FunnelWindow } from '@/lib/busi
 import { buildJourney, daysSince } from '@/lib/business-os/insight/journeyTimeline';
 import { getProcess } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { localizeStageLabel } from '@/lib/business-os/stageLabels';
+import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
 import {
   resolveSetup,
   isReadyForClients,
@@ -284,6 +285,15 @@ interface LiveDashboardProps {
   } | null;
   onConfigureClick?: (stepId: string) => void;
   onAction?: (action: string, data?: unknown) => void;
+  /**
+   * The mailbox lead channel, read once by the page.
+   *
+   * Two surfaces on this card need it and must not disagree: the connections
+   * column offers to set it up, and readiness says out loud when it is running
+   * with replies switched off — the one state where every enquiry is filed
+   * correctly and no client ever hears back.
+   */
+  inboxChannel?: InboxChannelStatus | null;
   /*
    * The assistant panel, which lives below this card on the page.
    *
@@ -441,6 +451,7 @@ export function LiveDashboard({
   briefing,
   onConfigureClick,
   onAction,
+  inboxChannel,
   assistantOpen = false,
   onToggleAssistant,
   assistantSlot,
@@ -790,7 +801,67 @@ export function LiveDashboard({
    * onboarding answer "must not decide whether the business can ever change its
    * mind".
    */
-  const readinessItems = setupItems;
+  /*
+   * READINESS, PLUS THE ONE THING THE MAILBOX CHANNEL CAN GET WRONG SILENTLY.
+   *
+   * The row only ever appears for a business this can actually apply to — one
+   * with a mailbox connected, or one already running the channel. A business
+   * with no mail plugin is not being told to go and get one from a readiness
+   * list.
+   *
+   * Two rows, never both:
+   *
+   *  · Running with replies switched off. REQUIRED, because it is the only
+   *    state where the whole chain works and no client hears back: enquiries
+   *    are filed, the CRM looks healthy, and nothing anywhere reports an
+   *    error. Nobody can diagnose that from the outside, so readiness says it.
+   *
+   *  · Mailbox connected, channel not set up. Recommended rather than
+   *    required — a business can take a client end to end without it — so it
+   *    is visible without holding the account back from "all set".
+   */
+  const readinessItems = useMemo(() => {
+    if (!inboxChannel) return setupItems;
+
+    const repliesOff = inboxChannel.problems.includes('replies_off');
+
+    if (inboxChannel.channels.length > 0 && repliesOff) {
+      return [
+        ...setupItems,
+        {
+          id: 'inbox-channel-replies',
+          title: t('leads.inbox.readiness.replies_off_title') || 'Website leads are not being answered',
+          description:
+            t('leads.inbox.readiness.replies_off_desc') ||
+            'Enquiries from your website are being filed, but automatic replies are off, so nobody receives your booking link.',
+          completed: false,
+          required: true,
+          action: 'enable_lead_replies',
+        },
+      ];
+    }
+
+    /* `connectable` alone — it already means "a connected mailbox with no
+       channel", so a business that set up Gmail and still has Outlook
+       connected is offered the second one rather than counted as finished. */
+    if (inboxChannel.connectable.length > 0) {
+      return [
+        ...setupItems,
+        {
+          id: 'inbox-channel',
+          title: t('leads.inbox.readiness.connect_title') || 'Leads from your own website',
+          description:
+            t('leads.inbox.readiness.connect_desc') ||
+            'Your website emails you when somebody fills in your contact form. We can file them as leads and reply with a link to book.',
+          completed: false,
+          required: false,
+          action: 'connect_inbox_channel',
+        },
+      ];
+    }
+
+    return setupItems;
+  }, [setupItems, inboxChannel, t]);
 
   /**
    * The journey, built from what happened rather than from how long it has been.
@@ -2568,6 +2639,7 @@ export function LiveDashboard({
            render a Publish button at a business that has a published site. */
         owned={ownedSurfaces}
         onAction={action => onAction?.(action)}
+        inboxChannel={inboxChannel}
       />
 
       {/*

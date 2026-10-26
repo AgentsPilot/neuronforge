@@ -2,8 +2,9 @@
 //
 // What counts as a PAYING plan subscription on the admin finance & business
 // health page (slice 1a, SA-Q5): the account's billing row has one of
-// these statuses AND has not ended. Mode is not filtered: test and live rows
-// both count (BD-14), and one billing row per account is assumed (BD-16).
+// these statuses AND has not ended. The predicate itself reads no billing mode:
+// its callers hand it rows already narrowed to the current one (Finance R4,
+// BD-37). One billing row per account is assumed (BD-16).
 //
 // Deliberately its own set, not derived from the checkout's "live" statuses or
 // the deletion refusal's: those answer "may we still be charging?" and include

@@ -229,8 +229,9 @@ describe('a trial (Test Flight)', () => {
     expect(changed.map((entry) => entry.capability)).toContain('credits.allowance');
 
     const creditChange = changed.find((entry) => entry.capability === 'credits.allowance')!;
-    expect(creditChange.from).toBe('2,000 in total');
-    expect(creditChange.to).toBe('19,750 per month');
+    // Since the 2026-10-25 re-size (D4): 1,000 in total → 2,000 per month.
+    expect(creditChange.from).toBe('1,000 in total');
+    expect(creditChange.to).toBe('2,000 per month');
 
     // And NOT in `improves`, which is the list that asserts a direction.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability) ?? []).not.toContain('credits.allowance');
@@ -274,7 +275,7 @@ describe('Essentials and Autopilot — the two nobody is on yet', () => {
     // allowance.
     expect(view.nextPlanUp?.improves.map((entry) => entry.capability)).toEqual(['credits.allowance']);
     const credits = view.nextPlanUp!.improves[0];
-    expect(`${credits.from} → ${credits.to}`).toBe('19,750 per month → 32,250 per month');
+    expect(`${credits.from} → ${credits.to}`).toBe('2,000 per month → 5,000 per month');
     expect(capabilityIdsOf(view.nextPlanUp?.adds)).toContain('chat.access');
     expect(capabilityIdsOf(view.nextPlanUp?.adds).length).toBeGreaterThanOrEqual(9);
     // And the nine arrive as ONE row, which is the point of grouping them.
@@ -812,7 +813,7 @@ describe('the included list is grouped by category', () => {
     const rows = viewFor('basic').included;
     const summaries = rows.map((row) => row.summary).join(' | ');
 
-    expect(summaries).toMatch(/Credits \(19,750 per month\)/);
+    expect(summaries).toMatch(/Credits \(2,000 per month\)/);
     expect(summaries).not.toMatch(/\(yes\)/);
     // And a value that already carries brackets is not wrapped in more of them:
     // "Email volume (10,000 per month (alerts, never blocks))" was the first thing
@@ -1347,15 +1348,31 @@ describe('comparison: the plans side by side (upgrade modal UM-0, C-19)', () => 
       expect(ids).not.toContain('payments.multi_currency');
     });
 
-    it('a visible, granted capability in no row becomes its own row, labelled from the catalog, at the end of its section', () => {
+    it('every visible, granted capability in no row becomes its own row, labelled from the catalog, at the end of its section', () => {
+      /*
+       * The dropped `leads` row carries TWO capabilities since 2026-10-25, when
+       * the mailbox lead channel joined `marketing.lead_response` there. Both
+       * are granted and visible, so dropping the row must produce TWO fallback
+       * rows — and the assertion is on the set at the tail rather than on which
+       * of them happens to be last, because their order between themselves is
+       * incidental to the behaviour being covered.
+       */
+      const unplaced = PLAN_COMPARISON_ROWS.find((row) => row.id === 'leads')!.capabilities;
+      expect(unplaced.length).toBeGreaterThan(1);
+
       const rows = PLAN_COMPARISON_ROWS.filter((row) => row.id !== 'leads');
       const comparison = buildPlanComparison({ config, locale: 'en', now: NOW, rows });
       const section = comparison.sections.find((candidate) => candidate.section === 'run_business')!;
-      const last = section.rows[section.rows.length - 1];
-      expect(last.row).toBe('marketing.lead_response');
-      expect(last.label).toBe(catalog['marketing.lead_response'].labels.en);
-      // And the production config places it, so no fallback reaches a customer.
-      expect(rowsOf(viewFor('basic').comparison).map((row) => row.row)).not.toContain('marketing.lead_response');
+
+      const tail = section.rows.slice(-unplaced.length);
+      expect(tail.map((row) => row.row).sort()).toEqual([...unplaced].sort());
+      for (const row of tail) {
+        expect(row.label).toBe(catalog[row.row as keyof typeof catalog].labels.en);
+      }
+
+      // And the production config places them, so no fallback reaches a customer.
+      const shipped = rowsOf(viewFor('basic').comparison).map((row) => row.row);
+      for (const capability of unplaced) expect(shipped).not.toContain(capability);
     });
   });
 

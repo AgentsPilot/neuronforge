@@ -69,7 +69,16 @@ export const BOS_LLM_CALLS = {
     'features_content',
   ],
   intake: ['form_generation', 'question_inference'],
-  leads: ['reply_recommendation'],
+  leads: [
+    'reply_recommendation',
+    /*
+     * Reading an enquiry email the deterministic parser could not. A FALLBACK:
+     * it fires only when the labelled-field reader comes back without an
+     * address or without a name, so a form that labels its fields — which most
+     * do — never reaches it and costs nothing. One call per unreadable message.
+     */
+    'enquiry_extraction',
+  ],
   onboarding: [
     'business_story_extraction',
     'client_workflow_extraction', // can fire twice in one conversation (two steps)
@@ -96,6 +105,25 @@ export const BOS_LLM_CALLS = {
      * the website publishes a catalogue of names nobody chose.
      */
     'service_drafting',
+    /**
+     * What the business needs in order to sell, read off the whole interview.
+     *
+     * ONE call per conversation, made on the turn the follow-up questions end
+     * and alongside the description writer, so it costs no extra wait. It
+     * reads the description, the verbatim question-and-answer pairs and the
+     * first-turn story, and returns the configuration facts each with the
+     * owner's OWN words as evidence.
+     *
+     * Deliberately not folded into `business_story_extraction`, which fires on
+     * the first message — the information-poorest turn, and the reason that
+     * call so often answers `null`. Nor into the description writer, which is
+     * under instructions to write fluent prose: this one must record only what
+     * the words support, and one call cannot hold both orders.
+     *
+     * Never load-bearing. Every fact it declines, or whose quote cannot be
+     * found in the transcript, falls back to the question that is asked today.
+     */
+    'configuration_inference',
   ],
   // OpenAI is the only image provider today (see GeneratedImageService).
   images: ['image_generation'],

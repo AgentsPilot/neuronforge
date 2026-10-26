@@ -86,7 +86,11 @@ describe('[smoke] plugin profile: loader', () => {
     const pm = await buildManager(BUSINESS_OS);
 
     expect(pm.getAllPluginNames().sort()).toEqual([...BUSINESS_OS.pluginKeys].sort());
-    expect(pm.getAllPluginNames()).toHaveLength(11);
+    /* 12 since 2026-10-25, when `google-mail` joined for the mailbox lead
+       channel. The line above already pins the exact SET; this one is here to
+       make a silent addition to the profile a decision somebody states, since
+       the profile exists to keep the load small. */
+    expect(pm.getAllPluginNames()).toHaveLength(12);
     expect(pm.getActiveProfile()).toBe(BUSINESS_OS);
   });
 
@@ -116,7 +120,12 @@ describe('[smoke] plugin profile: loader', () => {
   it('returns not-found for a skipped plugin instead of crashing', async () => {
     const pm = await buildManager(BUSINESS_OS);
 
-    expect(pm.getPluginDefinition('google-mail')).toBeUndefined();
+    /* `google-drive`, not `google-mail`. Gmail joined the business_os profile
+       on 2026-10-25 for the mailbox lead channel, so it stopped being an
+       example of a skipped plugin — and this assertion started failing for a
+       reason that had nothing to do with the behaviour it covers. Drive is the
+       other half of the same vendor and nothing in Business OS loads it. */
+    expect(pm.getPluginDefinition('google-drive')).toBeUndefined();
   });
 });
 
@@ -181,9 +190,9 @@ describe('[full] plugin profile: startup logging', () => {
     expect(fields).toEqual({
       profile: 'business_os',
       loadedPluginKeys: pm.getAllPluginNames(),
-      loadedCount: 11,
+      loadedCount: 12,
       skippedPluginKeys: EXCLUDED,
-      skippedCount: 17,
+      skippedCount: 16,
     });
   });
 
@@ -214,7 +223,9 @@ describe('[full] plugin profile: startup logging', () => {
 describe('[full] plugin profile: connections to skipped plugins', () => {
   it('drops a live connection to a skipped plugin without error', async () => {
     const userConnections = createMockUserConnections();
-    const rows = [createMockConnection('google-mail'), createMockConnection('google-calendar')];
+    /* A skipped plugin beside an in-profile one. `google-drive` since
+       2026-10-25 — see the note on the not-found test above. */
+    const rows = [createMockConnection('google-drive'), createMockConnection('google-calendar')];
     userConnections.getConnectedPlugins.mockResolvedValue(rows);
     userConnections.getAllActivePlugins.mockResolvedValue(rows);
     const pm = await buildManager(BUSINESS_OS, userConnections);
@@ -224,6 +235,6 @@ describe('[full] plugin profile: connections to skipped plugins', () => {
 
     const executable = await pm.getExecutablePlugins('user-1');
     expect(Object.keys(executable)).toContain('google-calendar');
-    expect(Object.keys(executable)).not.toContain('google-mail');
+    expect(Object.keys(executable)).not.toContain('google-drive');
   });
 });

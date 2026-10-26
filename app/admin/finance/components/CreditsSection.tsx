@@ -71,8 +71,9 @@ import {
 } from '../financeCopy';
 import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
-import { BlockKpi } from './BlockKpi';
+import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
 import { FinanceSection } from './FinanceSection';
+import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
 
 function nameOf(row: FinanceCreditRow): string {
   switch (row.nameStatus) {
@@ -136,6 +137,8 @@ export function CreditsSection({
   const hasBought = section.bought !== undefined;
   const bought = section.bought ?? null;
   const count = (value: number | null) => (value === null ? CREDITS_UNKNOWN : formatCount(value));
+  // Money MK-10: the rows open like the Businesses rows (D-17), when the drawer is mounted.
+  const opener = useBusinessRowOpen();
 
   return (
     <FinanceSection
@@ -195,11 +198,12 @@ export function CreditsSection({
                     <th scope="col" className={ADMIN_TH}>{CREDITS_OVER_COLUMN}</th>
                     <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_GIFTED_COLUMN}</th>
                     {hasBought && <th scope="col" className={ADMIN_TH_NUM}>{CREDITS_BOUGHT_COLUMN}</th>}
+                    {opener?.header}
                   </tr>
                 </thead>
                 <tbody className={ADMIN_TBODY}>
                   {f.rows.map((row) => (
-                    <tr key={row.accountId} data-testid={`credits-row-${row.accountId}`}>
+                    <tr key={row.accountId} data-testid={`credits-row-${row.accountId}`} {...opener?.rowProps(businessTargetOf(row))}>
                       <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(row)}</th>
                       <td className={ADMIN_TD}>{row.group ? groupLabel({ key: row.group, tierLabel: row.tierLabel }) : CREDITS_UNKNOWN}</td>
                       {row.kind === 'position' ? (
@@ -217,6 +221,7 @@ export function CreditsSection({
                       )}
                       <td className={ADMIN_TD_NUM}>{credits(row.giftedOutstanding)}</td>
                       {hasBought && <td className={ADMIN_TD_NUM} data-testid="credits-bought-cell">{credits(row.boughtOutstanding ?? null)}</td>}
+                      {opener?.cell(businessTargetOf(row), nameOf(row))}
                     </tr>
                   ))}
                 </tbody>

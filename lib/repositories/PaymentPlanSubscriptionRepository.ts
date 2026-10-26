@@ -80,6 +80,32 @@ export interface CreatePlanSubscriptionInput {
   currency: string;
   frequency: string;
   stripeConnectAccountId: string | null;
+  /**
+   * The booking attempt this plan was sold under, mirrored onto our own row.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * On a smart link the client pays BEFORE the booking exists, so `bookingId`
+   * above is null here and something has to attach the plan afterwards. That
+   * job belongs to `linkPaymentsToBooking`, which finds the sale by asking
+   * Stripe's SEARCH API for `metadata['attempt_id']`.
+   *
+   * Stripe documents that search as eventually consistent, and it is: measured
+   * 2026-10-25, a subscription created 0.51s before the booking was invisible
+   * to search at link time and returned by the identical query minutes later.
+   * So the plan's money — subscription, periods and charges — stayed attached
+   * to nothing, the booking read `paid` with no payment, and a refund offered
+   * ₪0 over ₪250 the client had actually paid.
+   *
+   * The routes that create this row already know the attempt (they put it in
+   * Stripe's own metadata in the same breath), so recording it here makes the
+   * link a local equality match with no index to wait for.
+   *
+   * NOT a replacement for the Stripe search. That still covers the case this
+   * cannot — a row this platform never wrote because the webhook was late.
+   * This covers the one the search cannot: a row we wrote seconds ago.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  attemptId?: string | null;
 }
 
 export interface PlanSubscriptionResult<T> {
@@ -134,6 +160,9 @@ export class PaymentPlanSubscriptionRepository {
           frequency: input.frequency,
           stripe_connect_account_id: input.stripeConnectAccountId,
           status: 'pending',
+          /* The attempt, so a sale made before its booking can still be found
+             without Stripe's search index. See `attemptId` on the input. */
+          metadata: input.attemptId ? { attempt_id: input.attemptId } : {},
         })
         .select()
         .single();

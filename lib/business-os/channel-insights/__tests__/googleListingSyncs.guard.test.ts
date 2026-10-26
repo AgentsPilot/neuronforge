@@ -88,7 +88,28 @@ describe('impressions are reach, and are not visits', () => {
      * do not.
      */
     expect(sync).toMatch(/reach: day\.impressions/);
-    expect(performance).toMatch(/REACH_NOT_REPORTED = new Set<Channel>\(\['facebook'\]\)/);
+
+    /*
+     * MEMBERSHIP, not the set's exact spelling.
+     *
+     * This pinned `new Set<Channel>(['facebook'])` on one line. The set has
+     * since gained `'inbox'` — a mailbox enquiry arrives as an email the
+     * business itself sent, so there is no impression to count and the row
+     * would otherwise sit on `awaitingData` forever, promising a figure that
+     * can never arrive. A correct addition, and the guard failed over the
+     * punctuation of it.
+     *
+     * What matters here is that Google is NOT on the list while the channels
+     * that genuinely cannot report reach ARE, so the one channel that has the
+     * number does not read like the ones that do not.
+     */
+    const reachSet = performance.slice(
+      performance.indexOf('REACH_NOT_REPORTED = new Set<Channel>('),
+      performance.indexOf(']);', performance.indexOf('REACH_NOT_REPORTED'))
+    );
+
+    expect(reachSet).toContain("'facebook'");
+    expect(reachSet).not.toContain("'google'");
   });
 
   it('records no sessions or visitors', () => {

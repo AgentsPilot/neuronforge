@@ -15,6 +15,8 @@ import {
 } from '@/lib/repositories/ChannelMetricsRepository';
 import type { ChannelPlatform } from '@/lib/repositories/ChannelConnectionRepository';
 import { resolveChannel, CHANNEL_ORDER, type Channel } from './channelFromReferrer';
+/* `supabaseServer` is already imported further down — this module had it. */
+import { INBOX_CHANNEL_TAG } from '@/lib/business-os/leads/inboxProviders';
 import {
   resolveVisits,
   describeVisitsCoverage,
@@ -60,7 +62,20 @@ const PLATFORM_TO_CHANNEL: Partial<Record<ChannelPlatform, Channel>> = {
  * first numbers" permanently — an hourglass promising figures that can never
  * arrive.
  */
-const REACH_NOT_REPORTED = new Set<Channel>(['facebook']);
+const REACH_NOT_REPORTED = new Set<Channel>([
+  'facebook',
+  /*
+   * The mailbox channel has no reach and never will — there is nothing to
+   * wait for, which is the same conclusion as Facebook's by a different road.
+   *
+   * Reach counts people who SAW something. An enquiry read out of a mailbox
+   * arrived as an email the business's own website sent them: there was no
+   * impression, no page view, nothing to count. Without this the row was
+   * `awaitingData` — the hourglass this comment warns about, promising
+   * figures that can never arrive, on a channel that is working perfectly.
+   */
+  'inbox',
+]);
 
 export interface ChannelPerformanceRow {
   channel: Channel;
@@ -172,6 +187,32 @@ export class ChannelPerformanceService {
   ) {}
 
   /**
+   * Does this business have a mailbox lead channel at all?
+   *
+   * By TAG, because that is how the channel is identified everywhere else: the
+   * channel IS an agent, and a renamed agent must stay findable. It is
+   * therefore absent from `plugin_connections`, which is why it needs asking
+   * about separately rather than arriving with the other connections.
+   *
+   * Never throws. A card that cannot answer this should show one row fewer,
+   * not fail — the rest of the section is about other channels entirely.
+   */
+  private async hasInboxChannel(userId: string): Promise<boolean> {
+    try {
+      const { count, error } = await supabaseServer
+        .from('agents')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .contains('tags', [INBOX_CHANNEL_TAG])
+        .is('deleted_at', null);
+      if (error) return false;
+      return (count ?? 0) > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * @param since ISO timestamp — leads acquired on or after this moment.
    *              Revenue is counted whenever it landed (cohort model).
    */
@@ -246,6 +287,19 @@ export class ChannelPerformanceService {
       const channel = PLATFORM_TO_CHANNEL[connection.platform as ChannelPlatform];
       if (channel) connectedChannels.add(channel);
     }
+
+    /*
+     * THE MAILBOX CHANNEL COUNTS AS CONNECTED THE MOMENT IT EXISTS.
+     *
+     * It is not in `plugin_connections` — the channel IS an agent, found by
+     * tag — so without this it only ever appeared once it had already produced
+     * a lead. An owner who switches it on and looks straight at this card saw
+     * no row at all, which reads as "it didn't work" rather than "nothing has
+     * come in yet". That is the same reasoning the comment above gives for
+     * every other connected channel, applied to the one that stores its
+     * connection somewhere else.
+     */
+    if (await this.hasInboxChannel(userId)) connectedChannels.add('inbox');
 
     // Does a connected analytics property measure a page we also track? If so
     // its rows supersede ours for the days it covers, rather than being added.
@@ -346,11 +400,26 @@ export class ChannelPerformanceService {
     ].filter((host): host is string => Boolean(host));
 
     for (const contact of contacts ?? []) {
-      const { channel, basis } = resolveChannel(
-        contact.referrer_domain,
-        contact.utm_source,
-        ownHosts
-      );
+      /*
+       * THE MAILBOX CHANNEL IS DECIDED BEFORE THE REFERRER IS READ.
+       *
+       * Its leads arrived as an email the business's own website sent them, so
+       * there is no referrer and no utm to resolve — `resolveChannel` would
+       * answer `direct` for every one of them, and they would sit in the
+       * "direct / unknown" row beside people who typed the address in. The
+       * owner could then run a website form for a month and see nothing on the
+       * card that exists to tell them where their clients come from.
+       *
+       * The marker is written by `captureEnquiry` on `source_metadata.via`,
+       * beside the `source` rather than instead of it, because `source` has to
+       * stay inside FORM_SOURCES for the unanswered-enquiry chase.
+       */
+      const via = (contact.source_metadata as { via?: string } | null)?.via;
+      const resolved =
+        via === 'inbox_channel'
+          ? ({ channel: 'inbox' as Channel, basis: 'tag' as const })
+          : resolveChannel(contact.referrer_domain, contact.utm_source, ownHosts);
+      const { channel, basis } = resolved;
       const bucket = buckets.get(channel) ?? { leads: 0, bookings: 0, revenue: 0, billed: 0, taggedLeads: 0 };
 
       /*
@@ -363,7 +432,11 @@ export class ChannelPerformanceService {
       const acquiredInWindow = new Date(contact.created_at).getTime() >= sinceMs;
       if (acquiredInWindow) {
         bucket.leads += 1;
-        if (basis === 'utm') bucket.taggedLeads += 1;
+        /* `tag` counts as tagged: the mailbox channel is recorded when the
+           lead is filed, so it is known, not inferred. Without this the row
+           would be captioned as an estimate when it is the most certain
+           attribution on the card. */
+        if (basis === 'utm' || basis === 'tag') bucket.taggedLeads += 1;
       }
 
       bucket.bookings += bookingsByContact.get(contact.id) || 0;

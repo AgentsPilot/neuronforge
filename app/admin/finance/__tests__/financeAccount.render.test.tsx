@@ -367,7 +367,9 @@ describe('slice 6a: the summary’s AI margin line (M3-FR-8)', () => {
 // A separate import, so the lines above stay unedited.
 import type { FinanceRecordedAiCost } from '@/lib/business-os/finance/financeTypes';
 import { RecordedAboveValue } from '../components/RecordedCostLines';
-import { ABOVE_NONE, ABOVE_NOT_AVAILABLE, ACCOUNT_AI_COST, ACCOUNT_RECORDED_ABOVE, aboveChargedAboveLine, RECORDED_LABEL, RECORDED_UNKNOWN } from '../financeCopy';
+import { ABOVE_NONE, ABOVE_NOT_AVAILABLE, ACCOUNT_AI_COST, ACCOUNT_RECORDED_ABOVE, aboveChargedAboveLine, RECORDED_UNKNOWN } from '../financeCopy';
+// Money MK-3a (C-7, ruled): the recorded block's label moved to the AI cost page's copy.
+import { RECORDED_LABEL } from '@/app/admin/business-os-llm/costCopy';
 
 describe('Money M-4: the summary’s "Recorded above charged" line (M4-FR-2)', () => {
   const rec = (extra: Partial<FinanceRecordedAiCost> = {}): FinanceRecordedAiCost => ({

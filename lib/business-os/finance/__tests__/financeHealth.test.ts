@@ -105,6 +105,11 @@ import { FINANCE_RULES_INVALID_HEADLINE, K4_INFORMATION_HEADLINE } from '../fina
 import { FINANCE_RULES } from '../financeRules';
 // Slice 6a: a separate import, so the lines above stay unedited.
 import type { FinanceAccountsTabQuery } from '../financeTypes';
+// Money MK-2: a separate import, so the lines above stay unedited.
+import { buildChargedAiCostInWindow } from '../chargedAiCost';
+// Money MK-3: a separate import, so the lines above stay unedited.
+import { buildChargedAiCostInWindowWithUnits, recordedInWindow } from '../chargedAiCost';
+import type { RecordedReadInput } from '../recordedCost';
 
 const config = getEntitlementConfig();
 const TIER = config.tierOrder[0];
@@ -2855,5 +2860,268 @@ describe('Money MK-5b: converted (F-K5b) through the builder', () => {
   it('the production wiring supplies the converted reads by name', () => {
     const wired = financeHealthDeps();
     expect(Object.keys(wired.converted ?? {}).sort()).toEqual(['firstPlanPayments', 'signupSources']);
+  });
+});
+
+// ── Money MK-9 (SA-WP-MK9): F-K5's breakdown through the builder ──
+describe('Money MK-9: payingBreakdown through the builder', () => {
+  // NOW is 2026-11-09; the window is this month (2026-11-01 to 2026-11-10).
+  const TRIAL = Object.keys(config.cohorts).find((id) => stateForCohort(id) === 'trial') as string;
+  const C = '33333333-3333-4333-8333-333333333333';
+  const D = '44444444-4444-4444-8444-444444444444';
+  const trialPlan = (user: string, endsAt: string) =>
+    plan(user, { cohort: TRIAL, tier: null, trial_started_at: '2026-10-20T00:00:00.000Z', trial_ends_at: endsAt });
+
+  function breakdownDeps(firstPayments: Array<{ accountId: string; paidAt: string }> | 'fail' | 'absent' = []) {
+    const deps = makeDeps();
+    deps.plans.pagePlans.mockImplementation(
+      () =>
+        ok([
+          plan(A, { tier: TIER, cohort: null, tier_expires_at: '2026-12-31T00:00:00.000Z' }), // comped: no billing row
+          plan(B, { tier: TIER, cohort: null }), // paying (B is active in the default billing rows)
+          trialPlan(C, '2026-11-03T00:00:00.000Z'), // ended in the window
+          trialPlan(D, '2026-11-20T00:00:00.000Z'), // still running
+          plan(PLATFORM, { cohort: TRIAL, trial_started_at: '2026-10-20T00:00:00.000Z', trial_ends_at: '2026-11-03T00:00:00.000Z' }), // never counted
+        ]) as never
+    );
+    if (firstPayments === 'absent') return { deps, converted: undefined };
+    const converted = {
+      firstPlanPayments: jest.fn<Result<Array<{ accountId: string; paidAt: string }>>, [readonly string[]]>(() =>
+        firstPayments === 'fail' ? ({ data: null, error: new Error('boom') } as never) : ok(firstPayments)
+      ),
+      signupSources: jest.fn(() => ok([])),
+    };
+    return { deps: { ...deps, converted }, converted };
+  }
+
+  it('all businesses: Comped split, trials ended / running, paid from the SAME first-payment read as Converted (one call)', async () => {
+    const { deps, converted } = breakdownDeps([{ accountId: C, paidAt: '2026-11-01T00:00:00.000Z' }]);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(converted?.firstPlanPayments).toHaveBeenCalledTimes(1);
+    expect(result.payload.payingBreakdown).toEqual({
+      comped: { total: 1, assignedNoSubscription: 1, endedOrNotPaying: 0 },
+      trials: { status: 'ok', endedInWindow: 1, stillRunning: 1, paid: 1, paidBeforeEnd: 1, rate: null, minimumForRate: 10 },
+    });
+    expect(result.counts.payingBreakdown).toEqual({
+      comped: 1, assignedNoSubscription: 1, endedOrNotPaying: 0, trialsStatus: 'ok', trialsEnded: 1, trialsPaid: 1, rateShown: false,
+    });
+  });
+
+  it('failure path: the first-payment read fails → Paid Unknown (null), never 0; the comped split and trial counts intact', async () => {
+    const { deps } = breakdownDeps('fail');
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.payingBreakdown?.trials).toEqual(
+      expect.objectContaining({ status: 'ok', endedInWindow: 1, stillRunning: 1, paid: null, paidBeforeEnd: null, rate: null })
+    );
+    expect(result.payload.payingBreakdown?.comped).toEqual({ total: 1, assignedNoSubscription: 1, endedOrNotPaying: 0 });
+  });
+
+  it('without the first-payment wiring, Paid is Unknown too (never 0)', async () => {
+    const { deps } = breakdownDeps('absent');
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.payingBreakdown?.trials.paid).toBeNull();
+  });
+
+  it('the paying read failed: Comped split null ("Could not check"); Paid Unknown (the first-payment read did not run)', async () => {
+    const { deps, converted } = breakdownDeps([]);
+    deps.finance.listBillingStatusesAllAccounts.mockImplementation(() => ({ data: null, error: new Error('boom') }) as never);
+    const { result } = await run(deps as never);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload.payingBreakdown?.comped).toBeNull();
+    expect(result.payload.payingBreakdown?.trials.paid).toBeNull();
+    expect(converted?.firstPlanPayments).not.toHaveBeenCalled();
+  });
+
+  it('a business picked: no breakdown key (one account is not a rate)', async () => {
+    const { deps } = breakdownDeps([]);
+    const { result } = await run(deps as never, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(result.payload).not.toHaveProperty('payingBreakdown');
+    expect(result.counts).not.toHaveProperty('payingBreakdown');
+  });
+});
+
+// Money MK-2 (SA-1, T-1): Charge checks' cost tile is Finance's charged AI cost
+// for the same window and the same ledger, by construction: the same read, the
+// same clamp, the same builder. Compared field by field with Section 3.
+describe("MK-2: Charge checks' charged AI cost equals Finance's for the same window", () => {
+  const tileFor = (deps: ReturnType<typeof makeDeps>, accountId: string | null, window = WINDOW) =>
+    buildChargedAiCostInWindow({ window: { start: window.start, end: window.end }, accountId }, logger(), {
+      ledger: deps.ledger as unknown as FinanceHealthDeps['ledger'],
+    });
+
+  it('all businesses: the same total, credits, rows and deleted accounts line, both exact', async () => {
+    const deps = makeDeps();
+    const { result } = await run(deps);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const finance = result.payload.aiCost;
+    const tile = await tileFor(makeDeps(), null);
+    expect(finance.figures).not.toBeNull();
+    expect(tile.costUsd).toBe(finance.figures?.costUsd);
+    expect(tile.costUsd).toBe(6.5);
+    expect(tile.credits).toBe(finance.figures?.credits);
+    expect(tile.rows).toBe(finance.figures?.rows);
+    expect(tile.charges).toBe(finance.figures?.chargedActions);
+    expect(tile.deleted).toEqual(finance.figures?.deleted);
+    expect(tile.deleted?.costUsd).toBe(2);
+    expect(tile.status).toBe(finance.status);
+    expect(tile.coverage).toBe(finance.coverage);
+  });
+
+  // After MK-5 the strip tile F-K3 is K-1: this month to now, read through the same
+  // shared read (`readChargedLedger`). With This month picked it equals the tile.
+  it('This month: equals the strip tile F-K3 (K-1) as well as Section 3', async () => {
+    const { result } = await run(makeDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    expect(WINDOW.preset).toBe('this_month');
+    const tile = await tileFor(makeDeps(), null);
+    expect(result.payload.tiles.k1.value?.value).toBe(6.5);
+    expect(tile.costUsd).toBe(result.payload.tiles.k1.value?.value);
+    expect(tile.status === 'ok').toBe(result.payload.tiles.k1.value?.exact);
+  });
+
+  it('the read is the same call: R-a with the same range and paging', async () => {
+    const financeDeps = makeDeps();
+    await run(financeDeps);
+    const tileDeps = makeDeps();
+    await tileFor(tileDeps, null);
+    const tileCall = tileDeps.ledger.listRowsOfAllAccountsCreatedInRange.mock.calls[0] as unknown[];
+    expect(tileDeps.ledger.listRowsOfAllAccountsCreatedInRange).toHaveBeenCalledTimes(1);
+    expect(financeDeps.ledger.listRowsOfAllAccountsCreatedInRange.mock.calls).toContainEqual(tileCall);
+  });
+
+  it('one business picked: R-a′ with that id on both sides, equal total, deleted 0', async () => {
+    const financeDeps = makeDeps();
+    const { result } = await run(financeDeps, A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tileDeps = makeDeps();
+    const tile = await tileFor(tileDeps, A);
+    expect(tile.costUsd).toBe(result.payload.aiCost.figures?.costUsd);
+    expect(tile.costUsd).toBe(3);
+    expect(tile.deleted).toEqual({ costUsd: 0, credits: 0, rows: 0 });
+    expect(tileDeps.ledger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect((tileDeps.ledger.listRowsForAccountCreatedInRange.mock.calls as unknown[][])[0][0]).toBe(A);
+  });
+
+  it('at the ledger ceiling both say partial ("at least") with the same lower bound', async () => {
+    const ceiling = () =>
+      makeDeps({
+        ledger: {
+          ...makeDeps().ledger,
+          listRowsOfAllAccountsCreatedInRange: jest.fn(() => ok({ rows: [charge(A, '3'), charge(null, '2')], reachedCeiling: true })),
+        },
+      });
+    const { result } = await run(ceiling());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tile = await tileFor(ceiling(), null);
+    expect(result.payload.aiCost.status).toBe('partial');
+    expect(tile.status).toBe('partial');
+    expect(tile.costUsd).toBe(result.payload.aiCost.figures?.costUsd);
+  });
+
+  it('a failed ledger read: Finance unknown, the tile unknown with no figure', async () => {
+    const failing = () =>
+      makeDeps({ ledger: { ...makeDeps().ledger, listRowsOfAllAccountsCreatedInRange: jest.fn(() => fail()) } });
+    const { result } = await run(failing());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tile = await tileFor(failing(), null);
+    expect(result.payload.aiCost.status).toBe('unknown');
+    expect(tile).toMatchObject({ status: 'unknown', costUsd: null, deleted: null });
+  });
+
+  it('a custom window: the same instants give the same figure', async () => {
+    const custom = resolveFinanceWindow({ preset: 'custom', from: '2026-10-05', to: '2026-11-08' }, NOW);
+    const { result } = await run(makeDeps(), null, logger(), NOW, custom);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const tile = await tileFor(makeDeps(), null, custom);
+    expect(tile.costUsd).toBe(result.payload.aiCost.figures?.costUsd);
+    expect(tile.deleted).toEqual(result.payload.aiCost.figures?.deleted);
+  });
+});
+
+// Money MK-3 (SA-3, T-11): the AI cost page's recorded figure and "Recorded above charged" are
+// Finance's for the same window, by construction: the same usage-log read result, the same charged
+// units of the same window, the same builder. Compared whole with Section 3's `aiCost.recorded`.
+describe("MK-3: the AI cost report's recorded AI cost equals Finance's for the same window", () => {
+  const reportFor = async (deps: ReturnType<typeof makeDeps>, accountId: string | null, read?: RecordedReadInput) => {
+    const charged = await buildChargedAiCostInWindowWithUnits(
+      { window: { start: WINDOW.start, end: WINDOW.end }, accountId },
+      logger(),
+      { ledger: deps.ledger as unknown as FinanceHealthDeps['ledger'] }
+    );
+    const span = { from: WINDOW.start, to: WINDOW.end };
+    let input = read;
+    if (!input) {
+      if (accountId !== null) {
+        const r = await deps.readRecordedForAccount(accountId, span);
+        input = r.data ? { kind: 'account', ...r.data } : { kind: 'failed' };
+      } else {
+        const r = await deps.readRecordedAllAccounts(span, new AbortController().signal);
+        input = r.data ? { kind: 'all_accounts', ...r.data } : { kind: 'failed' };
+      }
+    }
+    return recordedInWindow(charged, input).recorded;
+  };
+
+  it('all businesses: equal, deleted accounts left out of the charged side', async () => {
+    const { result } = await run(makeDeps());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const report = await reportFor(makeDeps(), null);
+    expect(report).toEqual(result.payload.aiCost.recorded);
+    // USD 7 recorded against 4.50 charged (6.50 less the 2.00 deleted bucket).
+    expect(report.aboveCharged).toEqual({ state: 'figure', usd: 2.5 });
+  });
+
+  it('one business picked: equal', async () => {
+    const { result } = await run(makeDeps(), A);
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const report = await reportFor(makeDeps(), A);
+    expect(report).toEqual(result.payload.aiCost.recorded);
+    expect(report.recordedUsd).toBe(3.5);
+  });
+
+  it('a recorded read at its limit: both "at least" and the difference Unknown', async () => {
+    const limited = () => makeDeps({ readRecordedAllAccounts: jest.fn(() => ok({ rows: [{ cost_usd: '1' }], completed: false })) });
+    const { result } = await run(limited());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const report = await reportFor(limited(), null);
+    expect(report).toEqual(result.payload.aiCost.recorded);
+    expect(report).toMatchObject({ recordedExact: false, aboveCharged: { state: 'unknown' } });
+  });
+
+  it('a failed recorded read: both Unknown', async () => {
+    const failing = () => makeDeps({ readRecordedAllAccounts: jest.fn(() => fail()) });
+    const { result } = await run(failing());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const report = await reportFor(failing(), null);
+    expect(report).toEqual(result.payload.aiCost.recorded);
+    expect(report.status).toBe('unknown');
+  });
+
+  it('a failed ledger read: the difference is Unknown on both sides, the recorded figure kept', async () => {
+    const failing = () => makeDeps({ ledger: { ...makeDeps().ledger, listRowsOfAllAccountsCreatedInRange: jest.fn(() => fail()) } });
+    const { result } = await run(failing());
+    if (result.kind !== 'ok') throw new Error('expected ok');
+    const report = await reportFor(failing(), null);
+    expect(report).toEqual(result.payload.aiCost.recorded);
+    expect(report).toMatchObject({ recordedUsd: 7, aboveCharged: { state: 'unknown', usd: null } });
+  });
+
+  it('the charged side keeps buildChargedAiCostInWindow unchanged (MK-2 wire)', async () => {
+    const withUnits = await buildChargedAiCostInWindowWithUnits(
+      { window: { start: WINDOW.start, end: WINDOW.end }, accountId: null },
+      logger(),
+      { ledger: makeDeps().ledger as unknown as FinanceHealthDeps['ledger'] }
+    );
+    const plain = await buildChargedAiCostInWindow(
+      { window: { start: WINDOW.start, end: WINDOW.end }, accountId: null },
+      logger(),
+      { ledger: makeDeps().ledger as unknown as FinanceHealthDeps['ledger'] }
+    );
+    expect(withUnits.charged).toEqual(plain);
+    expect(withUnits.units).not.toBeNull();
   });
 });

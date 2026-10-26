@@ -155,8 +155,11 @@ export async function syncBookingPaymentState(
    * a confirmation.
    *
    * The CRM stage follows from this and is not decided here:
-   * `promote_contact_on_payment (which replaced the dropped promote_contact_on_confirmed_booking, 20260920)` moves the contact when a booking
-   * becomes confirmed, wherever that confirmation comes from.
+   * `promote_contact_on_payment` moves the contact when a
+   * `payment_transactions` row lands `succeeded` for more than zero, wherever
+   * that money comes from — not when a booking becomes confirmed. The trigger
+   * that did THAT was dropped in 20260920, because a free booking is confirmed
+   * and buys nothing.
    * ───────────────────────────────────────────────────────────────────────────
    */
   if (state.status !== 'refunded') {

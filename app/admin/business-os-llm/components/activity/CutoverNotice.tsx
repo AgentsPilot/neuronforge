@@ -21,12 +21,13 @@ import type { ActivityCoverage } from '../../activityTypes';
 
 export function cutoverLinks(accountId: string | null): { audit: string; analytics: string } {
   const audit = new URLSearchParams({ entity_type: 'ai_action', date_to: CUTOVER_AUDIT_DATE_TO });
-  const analytics = new URLSearchParams({ scope: 'bos' });
+  // Money MK-3b: the AI cost page's Calls tab, straight (never through the `/admin/analytics` redirect).
+  const analytics = new URLSearchParams({ tab: 'calls', scope: 'bos' });
   if (accountId) {
     audit.set('user_id', accountId);
     analytics.set('user', accountId);
   }
-  return { audit: `/admin/audit-trail?${audit.toString()}`, analytics: `/admin/analytics?${analytics.toString()}` };
+  return { audit: `/admin/audit-trail?${audit.toString()}`, analytics: `/admin/ai-cost?${analytics.toString()}` };
 }
 
 export function CutoverNotice({ coverage, accountId }: { coverage: ActivityCoverage; accountId: string | null }) {

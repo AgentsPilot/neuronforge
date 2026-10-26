@@ -10,6 +10,15 @@
  */
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://test.supabase.co';
+/*
+ * `SUPABASE_URL`, without the NEXT_PUBLIC_ prefix, is a SEPARATE variable and
+ * the one `lib/supabaseAdmin.ts` reads. It was missing here, so that module
+ * threw at import — "Missing Supabase environment variables. URL: false,
+ * ServiceKey: true" — and took down any test reaching it transitively, which
+ * `lib/pilot` does through the orchestration stack. The prefixed value above
+ * looks like it covers this and does not.
+ */
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.supabase.co';
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'test-anon-key';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key';
 // Stub OpenAI / Anthropic API keys so that transitive imports through

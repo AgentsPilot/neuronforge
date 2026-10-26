@@ -124,10 +124,10 @@
       "output_entity": "email",
       "input_cardinality": null,
       "output_cardinality": "collection",
-      "output_fields": ["id", "subject", "from", "to", "received_at", "body_preview", "has_attachments"],
+      "output_fields": ["id", "subject", "from", "to", "received_at", "body_preview", "has_attachments", "body", "html"],
       "required_params": [],
-      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments"],
-      "must_support": ["full_text_search", "date_filtering", "folder_filtering", "attachment_filter"],
+      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments", "is_unread", "from_address", "subject_prefix", "content_level"],
+      "must_support": ["full_text_search", "date_filtering", "folder_filtering", "attachment_filter", "unread_filtering", "sender_filtering", "subject_prefix_filtering", "full_body_fetch"],
       "parameters": {
         "type": "object",
         "properties": {
@@ -159,6 +159,24 @@
           "has_attachments": {
             "type": "boolean",
             "description": "Filter emails that have attachments"
+          },
+          "is_unread": {
+            "type": "boolean",
+            "description": "Only unread messages when true, only read ones when false. Omit for both. Added for the mailbox lead channel, whose whole idempotency is 'read it while unread, then mark it read'."
+          },
+          "from_address": {
+            "type": "string",
+            "description": "Exact sender address to match, e.g. forms@my-clinic.co.il. An exact filter, not a free-text search."
+          },
+          "subject_prefix": {
+            "type": "string",
+            "description": "Match messages whose subject STARTS WITH this text. Use the stable part of a form email's subject and never the whole of it: a subject that carries the enquirer's name would otherwise match one person and silently miss everybody after them."
+          },
+          "content_level": {
+            "type": "string",
+            "enum": ["metadata", "full"],
+            "default": "metadata",
+            "description": "'metadata' returns the 255-character preview only. 'full' also returns the complete body, as `html` or `body` depending on how the message was sent."
           }
         }
       },
@@ -178,7 +196,9 @@
                 "to": { "type": "array", "items": { "type": "string" }, "description": "Recipient addresses" },
                 "received_at": { "type": "string", "description": "Received timestamp (ISO 8601)" },
                 "body_preview": { "type": "string", "description": "First 255 characters of body" },
-                "has_attachments": { "type": "boolean", "description": "Whether email has attachments" }
+                "has_attachments": { "type": "boolean", "description": "Whether email has attachments" },
+                "body": { "type": "string", "description": "The complete plain-text body. Present only when content_level is 'full' AND the message was sent as text — Graph returns one body, never both forms." },
+                "html": { "type": "string", "description": "The complete HTML body. Present only when content_level is 'full' AND the message was sent as HTML." }
               }
             }
           },

@@ -1,12 +1,13 @@
 {
-  "generated": "2026-10-15",
-  "matrixVersion": 2,
+  "generated": "2026-10-26",
+  "matrixVersion": 3,
   "tiers": {
     "basic": {
       "crm.core": true,
       "crm.documents": true,
       "booking.calendar_sync": true,
       "website.ai_site": true,
+      "leads.inbox_channel": true,
       "website.branding": "unbranded",
       "intake.forms": "ai",
       "intake.reminders": true,
@@ -29,7 +30,7 @@
       "chat.reporting": false,
       "chat.bulk": false,
       "credits.allowance": {
-        "perMonth": 19750
+        "perMonth": 2000
       },
       "email.volume": {
         "ceilingPerMonth": 10000
@@ -59,6 +60,7 @@
       "crm.documents": true,
       "booking.calendar_sync": true,
       "website.ai_site": true,
+      "leads.inbox_channel": true,
       "website.branding": "unbranded",
       "intake.forms": "ai",
       "intake.reminders": true,
@@ -81,7 +83,7 @@
       "chat.reporting": true,
       "chat.bulk": true,
       "credits.allowance": {
-        "perMonth": 32250
+        "perMonth": 5000
       },
       "email.volume": {
         "ceilingPerMonth": 10000
@@ -107,7 +109,26 @@
       "website.custom_domain": "unavailable"
     }
   },
-  "removals": [],
+  "removals": [
+    {
+      "version": 3,
+      "tier": "basic",
+      "capability": "credits.allowance",
+      "previousValue": {
+        "perMonth": 19750
+      },
+      "grandfatherUntil": "2026-10-25T00:00:00.000Z"
+    },
+    {
+      "version": 3,
+      "tier": "pro",
+      "capability": "credits.allowance",
+      "previousValue": {
+        "perMonth": 32250
+      },
+      "grandfatherUntil": "2026-10-25T00:00:00.000Z"
+    }
+  ],
   "histories": {
     "trial": {
       "duration": [

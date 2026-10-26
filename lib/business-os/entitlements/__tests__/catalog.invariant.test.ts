@@ -47,6 +47,18 @@ const REQUIRED_CAPABILITIES = [
   'marketing.mass_email',
   'marketing.lead_response',
   'marketing.posts',
+  /*
+   * Added 2026-10-25, by the owner's decision, for businesses that keep their
+   * own website: their form keeps emailing them, we read that mailbox and file
+   * each enquiry as a lead. It is the mirror of `website.ai_site` — the same
+   * promise to a business that will not move its site — which is why it shares
+   * that category rather than sitting in marketing, where everything sends.
+   *
+   * Listed here, not derived, for the reason at the top of this list: this
+   * file is where a capability's existence is ASSERTED, so adding one is a
+   * deliberate act with a name against it.
+   */
+  'leads.inbox_channel',
   'insights.checks',
   'insights.channels',
   'insights.daily_briefing',
@@ -72,10 +84,11 @@ describe('AC-1 — the catalog covers the requirement', () => {
     expect(present.filter((id) => !required.includes(id as never))).toEqual([]);
   });
 
-  it('is 38 capabilities', () => {
+  it('is 39 capabilities', () => {
     // A guard on the guard: if both lists above were edited together, this still
     // notices the size changed and asks for a deliberate decision.
-    expect(CAPABILITY_IDS).toHaveLength(38);
+    // 38 → 39 on 2026-10-25: `leads.inbox_channel`, above.
+    expect(CAPABILITY_IDS).toHaveLength(39);
   });
 
   it('validates against its own schema', () => {

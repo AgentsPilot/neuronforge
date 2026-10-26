@@ -350,7 +350,8 @@ export const AI_BUSINESS = 'Business';
 export const AI_COST = 'Cost (USD)';
 export const AI_DELETED = 'Deleted accounts';
 export const AI_NO_ROWS = 'No AI actions charged in this window';
-export const AI_LINK = 'AI calls & usage';
+// Money MK-3b: AI calls & usage is the AI cost page's Calls tab.
+export const AI_LINK = 'AI cost: Calls';
 export const AI_LINK_NOTE = 'Every recorded AI call, charged or not:';
 export const AI_UNRESOLVED = 'corrections whose charge could not be found';
 export const AI_UNREADABLE = 'amounts could not be read and count as 0';
@@ -359,31 +360,16 @@ export const AI_UNREADABLE = 'amounts could not be read and count as 0';
 // Two measures, never added (BD-18). "Recorded above charged" is a difference of the two, named
 // as one (E-54); the Leak check keeps its own per-call "Recorded, not charged". The server
 // decides every value and state (M4-FR-11); the page only formats.
-export const RECORDED_CAPTION = 'Beside the charged cost, never added';
-export const RECORDED_LABEL = 'Recorded AI cost (USD)';
-export const RECORDED_SOURCE = 'Usage log: every Business OS AI call, charged or not, priced from the model price table';
-export const ABOVE_LABEL = 'Recorded above charged (USD)';
-export const ABOVE_SOURCE = 'Recorded AI cost minus charged AI cost, for the same window. Which calls: run the';
-export const ABOVE_LEAK_LINK = 'Leak check';
+// Money MK-3a (C-7): the full recorded block (the recorded figure, its source, the notices and the
+// distortion sentences) moved to the AI cost page (`app/admin/business-os-llm/costCopy.ts`).
+// Finance keeps the value words of its one line, "Recorded above charged", and the line's link.
 export const ABOVE_NONE = 'None';
-/** R4-6: charged is above recorded; `usd` is already formatted ("USD 0.33"). */
+/** R4-6: charged is above recorded; `usd` is already formatted ("$0.33"). */
 export const aboveChargedAboveLine = (usd: string) => `Charged is ${usd} above recorded (fallback prices or corrections)`;
 export const ABOVE_NOT_AVAILABLE = 'Not available: AI charging began 29 Sep 2026';
 export const RECORDED_UNKNOWN = 'Unknown';
-/** R4-9: one notice for a failed read and a passed deadline (the log tells them apart, SA-W101). */
-export const RECORDED_NOTICE = 'The recorded AI cost could not be read in time. The charged figures above are unaffected.';
-/** Fix round 1 (SA low follow-up): the same notice when no charged figure is shown above it. */
-export const RECORDED_NOTICE_PLAIN = 'The recorded AI cost could not be read in time.';
-/** R4-4: with no business picked only. */
-export const RECORDED_DELETED_NOTE = 'Deleted accounts are left out: their recorded calls are deleted with the account.';
-/** R4-10 (with E-54's closing sentence): the stated distortions, one sentence each. */
-export const RECORDED_DISTORTIONS: readonly string[] = [
-  'Fallback-priced charges are above their recorded cost, so the difference can be lower than the true uncharged cost.',
-  'A call and its charge can fall either side of a window edge: a charge is written when its action ends, up to 5 minutes later.',
-  'A failed provider call is recorded at $0 in both.',
-  'By design, Recorded above charged includes chat turns outside the call catalog, platform-account calls and cache-served turns at $0.',
-  "Recorded above charged is not 'not charged' call by call; the Leak check matches calls.",
-];
+/** MK-3a (C-7): the one line's link to the AI cost page's recorded block and Leak check. */
+export const RECORDED_ON_AI_COST_LINK = 'Recorded AI cost and the Leak check, on AI cost';
 /** M4-FR-2: the account summary's line, the same value as Section 3's (AC-158). */
 export const ACCOUNT_RECORDED_ABOVE = 'Recorded above charged';
 
@@ -705,8 +691,10 @@ export const accountCreditsNoAllowance = (gifted: string) => `No allowance · gi
 /** M1-FR-7 / SA-W56: every link carries this business and the window. Only the account id travels. */
 export const ACCOUNT_LINKS_TITLE = 'Open this business in';
 export const ACCOUNT_LINK_ACTIVITY = 'Business OS AI Activity';
-export const ACCOUNT_LINK_COSTS = 'Charge checks';
-export const ACCOUNT_LINK_ANALYTICS = 'AI calls & usage';
+// Money MK-3a: Charge checks is now the AI cost page's Summary & checks tab.
+export const ACCOUNT_LINK_COSTS = 'AI cost: Summary & checks';
+// Money MK-3b: the AI cost page's Calls tab (the tab's own label, as Summary & checks above).
+export const ACCOUNT_LINK_ANALYTICS = 'AI cost: Calls';
 export const ACCOUNT_LINK_BUSINESSES = 'Businesses';
 
 // ── The Accounts tab: account economics and AI margin (slice 6a, Money M-3, §11E) ──
@@ -832,4 +820,63 @@ export const HISTORY_COLUMN_LABELS = {
   credit_outstanding_total: 'Outstanding total',
   credit_over_allowance: 'Accounts over allowance',
   credit_far_over_allowance: 'Far over allowance',
+} as const;
+
+// ── Money MK-8: the Finance drawers (read-only quick looks, Q-7) ──
+export const BUSINESS_DRAWER = {
+  /** The drawer title when no name is known (the short id follows it). */
+  titleFallback: 'Business',
+  /** Noun phrase for the shared reading / error sentences. */
+  what: 'this business',
+  /** MK-10: the Open button's accessible name and tooltip, the Businesses page's pattern ("Open details for …"). */
+  openDetails: (name: string) => `Open details for ${name}`,
+  clientPayments: 'Client payments (their money, not ours)',
+  clientPaymentsNote: "In this business's own currency. Never added to our revenue.",
+  clientPaymentsNone: 'No client payments recorded in this window',
+  clientPaymentsUnknown: 'Client payments could not be read.',
+  clientPaymentsLine: (payments: string, gross: string, net: string) => `${payments} payments · gross ${gross} · net ${net}`,
+  overdue: 'Overdue items, as of now',
+  overdueInvoices: 'Overdue invoices',
+  overdueInstalments: 'Overdue instalments',
+  unknown: 'Unknown',
+  openFull: 'Open full view',
+} as const;
+
+export const PLAN_DRAWER = {
+  what: 'this plan',
+  /** The opener's accessible name and tooltip. */
+  open: (plan: string) => `Open plan ${plan}`,
+  mrr: 'MRR',
+  mrrNone: 'None',
+  statuses: 'Accounts by status',
+  accounts: 'Accounts',
+  empty: 'No account on this plan.',
+  showing: (shown: string, total: string) => `Showing ${shown} of ${total} accounts`,
+} as const;
+
+// ── Money MK-9: F-K5's breakdown on Plans & subscriptions (S5B-FR-8 to FR-16) ──
+// No billing-mode word anywhere here (the finance mode guard; MK9-R1).
+export const PAYING_BREAKDOWN = {
+  subtitle: 'What is behind Paying accounts: who pays, why comped accounts do not, and how trials turn into paying accounts. All businesses.',
+  paying: (paying: string, accounts: string) => `Paying: ${paying} of ${accounts} accounts`,
+  payingUnknown: 'Paying: Unknown',
+  compedHeading: 'Comped',
+  compedTotal: (total: string) => `Comped: ${total}`,
+  assigned: 'Assigned, no subscription',
+  endedOrNotPaying: 'Subscription ended or not paying',
+  compedUnknown: 'Comped: Could not check',
+  note: 'Paying means a paid plan subscription that is active or past due now. Comped means a plan in force with no paying subscription.',
+  trialsHeading: 'Trial to paid',
+  endedInWindow: (count: string) => `Trials ended in this window: ${count}`,
+  paid: (count: string) => `Paid: ${count}`,
+  paidBeforeEnd: (count: string) => `of which before the trial ended: ${count}`,
+  paidUnknown: 'Paid: Unknown',
+  rate: (paid: string, base: string, percent: string) => `Rate: ${paid} of ${base} (${percent}%)`,
+  tooFew: (minimum: string) => `Too few trials for a rate (a rate needs at least ${minimum})`,
+  noRateCutOff: 'No rate: not every account could be read',
+  stillRunning: (count: string) => `Still running: ${count}`,
+  trialsUnknown: 'Trials could not be read.',
+  limits: 'Paid means a first plan payment, counted as for Converted this month. Boosts are not a conversion.',
+  cutOff: 'Not every account could be read, so these counts are "at least".',
+  unknown: 'Unknown',
 } as const;

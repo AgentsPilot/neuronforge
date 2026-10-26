@@ -233,8 +233,10 @@ describe('G-6 (slice 1a): Exchange rates reads and writes only through its admin
   // Slice 1c.1 (SQ-12): three LITERAL call sites. The one-currency read is its
   // own call, never folded into the plain read with a variable or a `${query}`
   // suffix (the matcher would accept that; this count and review do not).
-  it('the folder does fetch (the rule is not vacuous): one read, one per-currency read and one write', () => {
-    expect(files.reduce((sum, file) => sum + fetchCount(read(file)), 0)).toBe(3);
+  // Slice 1e (SA §13.7 SQ-48, forced edit): 3 → 4, the fourth is the sync POST to
+  // /api/admin/exchange-rates/sync. Accept reuses the write, so it adds none.
+  it('the folder does fetch (the rule is not vacuous): one read, one per-currency read, one write and the sync POST', () => {
+    expect(files.reduce((sum, file) => sum + fetchCount(read(file)), 0)).toBe(4);
   });
 
   it('logs through the module logger AdminExchangeRates', () => {

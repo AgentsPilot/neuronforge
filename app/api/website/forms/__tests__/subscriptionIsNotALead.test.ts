@@ -23,7 +23,23 @@ const SUBSCRIBE_ROUTE = join(
   __dirname, '..', '..', '..', 'public', 'newsletter', 'subscribe', 'route.ts'
 );
 
+/*
+ * The row an enquiry becomes is no longer decided in the route.
+ *
+ * Stage resolution, find-or-create by address and the first/last message pair
+ * moved to `captureEnquiry`, so that an enquiry read out of a MAILBOX becomes
+ * the same row as one typed into the website form. The rules below did not
+ * change and are still worth pinning; they are simply pinned where they live
+ * now, which is what this guard's own note already said mattered: "what
+ * matters is that this route asks the pipeline, not which statement it uses
+ * to ask".
+ */
+const CAPTURE_ENQUIRY = join(
+  __dirname, '..', '..', '..', '..', '..', 'lib', 'business-os', 'leads', 'captureEnquiry.ts'
+);
+
 const contactSource = readFileSync(CONTACT_ROUTE, 'utf-8');
+const captureSource = readFileSync(CAPTURE_ENQUIRY, 'utf-8');
 const subscribeSource = readFileSync(SUBSCRIBE_ROUTE, 'utf-8');
 
 const lineOf = (source: string, needle: string) => {
@@ -89,7 +105,7 @@ describe('the contact endpoint', () => {
      * follows it there: what matters is that this route asks the pipeline,
      * not which statement it uses to ask.
      */
-    expect(contactSource).toContain('crmPipelineStagesRepository.firstStageKey(');
+    expect(captureSource).toContain('crmPipelineStagesRepository.firstStageKey(');
   });
 
   it('never writes a stage the business may not have', () => {
@@ -100,8 +116,8 @@ describe('the contact endpoint', () => {
      * that default as though it had decided it.
      */
     /* The CODE shape, not the words: prose about the old expression is fine. */
-    expect(contactSource).not.toMatch(/stage_key\s*(\|\||\?\?)\s*'lead'/);
-    expect(contactSource).toContain('...(initialStage ? { stage: initialStage } : {})');
+    expect(captureSource).not.toMatch(/stage_key\s*(\|\||\?\?)\s*'lead'/);
+    expect(captureSource).toContain('...(initialStage ? { stage: initialStage } : {})');
   });
 
   it('still routes a stale bundle’s newsletter post to the subscriber path', () => {
@@ -115,7 +131,9 @@ describe('the contact endpoint', () => {
     const shim = lineOf(contactSource, "if (data.source === 'newsletter')");
     // Before any contact is created, and before anything that treats the sender
     // as somebody waiting for a reply.
-    expect(shim).toBeLessThan(lineOf(contactSource, "from('crm_contacts')"));
+    /* The route no longer touches `crm_contacts` itself, so the thing the shim
+       must precede is the call that files the contact. */
+    expect(shim).toBeLessThan(lineOf(contactSource, 'captureEnquiry({'));
     expect(shim).toBeLessThan(lineOf(contactSource, 'notifyOwnerOfLead({'));
   });
 });

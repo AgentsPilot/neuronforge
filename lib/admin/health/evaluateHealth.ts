@@ -62,8 +62,9 @@ export const NOT_MEASURED_HEADLINE = 'Not measured yet';
 export const UNAVAILABLE_HEADLINE = 'Could not check just now';
 /** The SA C-18 invariant's headline: a lower bound is never clear. */
 export const LOWER_BOUND_HEADLINE = 'Total is a minimum; not all calls counted';
+// Money MK-3b: AI calls & usage is the AI cost page's Calls tab; the words name it so.
 export const OI_P1_NOTE =
-  'AI calls & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.';
+  'The Calls tab of AI cost reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.';
 /** The closing line of a rule list when the tile's figures are always exact. */
 export const OTHERWISE_GREEN = `Otherwise: green, "${GREEN_HEADLINE}".`;
 /**
@@ -406,9 +407,15 @@ function auditLink(filter: { action?: string; severity?: string }, start: Date, 
   return `/admin/audit-trail?${params.toString()}`;
 }
 
+/**
+ * Money MK-3b (KPI restructure review §4 "Health tile", SA-6): the AI cost
+ * page's Calls tab, straight (never through the `/admin/analytics` redirect),
+ * on the tile's own exact instants: the Calls tab keeps a linked window exact
+ * (SA-Q-MK3-3). The window keys are the page's old names, read forever (U-9).
+ */
 function analyticsLink(start: Date, end: Date): string {
-  const params = new URLSearchParams({ scope: 'bos', dateFrom: start.toISOString(), dateTo: end.toISOString() });
-  return `/admin/analytics?${params.toString()}`;
+  const params = new URLSearchParams({ tab: 'calls', scope: 'bos', dateFrom: start.toISOString(), dateTo: end.toISOString() });
+  return `/admin/ai-cost?${params.toString()}`;
 }
 
 // ── Tile assembly ──────────────────────────────────────────────────────────
@@ -659,7 +666,7 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement 
       `${money(current)} (${previousLabel}: ${money(previous)})` + (callsKnown ? ` · ${callsText(calls)}` : ''),
     exact: current.exact && previous.exact,
     href: analyticsLink(start, w.end),
-    linkLabel: `Recorded AI cost, ${windowWords}: ${money(current)}, open in AI calls & usage`,
+    linkLabel: `Recorded AI cost, ${windowWords}: ${money(current)}, open in AI cost: Calls`,
     note: callsKnown && calls.value > COST_ANALYTICS_ROW_CAP ? OI_P1_NOTE : null,
   });
 
@@ -678,7 +685,7 @@ function spendMeasurement(facts: SpendFacts, w: HealthWindows): TileMeasurement 
     footnote:
       'USD: every Business OS AI call in the usage log, charged or not, priced from the model price table; ' +
       'never mixed with a business currency. The charged AI cost is on Finance. ' +
-      'The comparison with the previous period is computed here from one read; AI calls & usage ' +
+      'The comparison with the previous period is computed here from one read; the Calls tab of AI cost ' +
       'computes its own "vs previous period" differently (known issue OI-P2).',
     completeness: 'complete',
   };

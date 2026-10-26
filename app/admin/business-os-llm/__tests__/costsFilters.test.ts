@@ -1,170 +1,39 @@
 /**
  * @jest-environment node
  *
- * The Costs & credits tab's URL contract (Admin Layout Standard L-9a, workplan
- * §2.4, §5.6 U-1 to U-10): each key's parse, invalid values ignored (U-4),
- * linked and one-sided windows ignored (the route takes two whole dates), the
- * projection's order with defaults omitted (U-3), and the route's query
- * unchanged for the default view (SA N-4: parity with the tab's old
- * `presetQuery(30)`).
+ * The Summary & checks bar's values (Admin Layout Standard L-9a; Money MK-2,
+ * MK-3).
+ *
+ * Money MK-3b (SA-CR-MK3B F-2, ruled): the tab's own spec and request builder
+ * are retired; their cases moved, retargeted to the page's one spec and its
+ * report request, to `app/admin/ai-cost/__tests__/aiCostFilters.test.ts`. What
+ * stays here: the bar's default and extra window equal the page spec's, so the
+ * bar can never offer or reset to a window the page does not read.
  */
 
-import type { AdminFilterField } from '@/app/admin/components/layout/useAdminFilters';
-import { windowEquals } from '@/app/admin/components/layout/adminWindow';
-import { utcDateDaysAgo } from '../costFormat';
-import {
-  COSTS_DEFAULT_WINDOW,
-  COSTS_FILTER_SPEC,
-  COSTS_WINDOW_EXTRAS,
-  costsRouteSearch,
-  type CostsFilters,
-} from '../costsFilters';
-import { ACTIVITY_FILTER_SPEC } from '../activityFilters';
+import * as fs from 'fs';
+import * as path from 'path';
 
-const A = '11111111-1111-4111-8111-111111111111';
-const DAY_MS = 86_400_000;
+import { AI_COST_FILTER_SPEC } from '@/app/admin/ai-cost/aiCostFilters';
+import { ANALYTICS_WINDOW_EXTRAS } from '@/app/admin/analytics/analyticsFilters';
+import { COSTS_DEFAULT_WINDOW, COSTS_WINDOW_EXTRAS } from '../costsFilters';
 
-const getter = (query: string) => {
-  const params = new URLSearchParams(query);
-  return (key: string) => params.get(key) || null;
-};
-
-function parseField<K extends keyof CostsFilters>(key: K, query: string): CostsFilters[K] | undefined {
-  const field = COSTS_FILTER_SPEC[key] as AdminFilterField<CostsFilters[K]>;
-  return field.parse(getter(query));
-}
-
-const DEFAULTS: CostsFilters = { window: COSTS_DEFAULT_WINDOW, account: '' };
-
-/** The same projection the hook writes: spec order, defaults omitted. */
-function project(filters: CostsFilters): string {
-  const params = new URLSearchParams();
-  for (const key of Object.keys(COSTS_FILTER_SPEC) as (keyof CostsFilters)[]) {
-    const field = COSTS_FILTER_SPEC[key] as AdminFilterField<CostsFilters[typeof key]>;
-    const equals = field.equals ?? Object.is;
-    if (equals(filters[key], field.defaultValue)) continue;
-    for (const [name, value] of Object.entries(field.serialise(filters[key]))) params.append(name, value);
-  }
-  return params.toString();
-}
-
-const span = (search: string) => {
-  const params = new URLSearchParams(search);
-  return (Date.parse(`${params.get('to')}T00:00:00Z`) - Date.parse(`${params.get('from')}T00:00:00Z`)) / DAY_MS;
-};
-
-describe('the spec', () => {
-  it('owns exactly these keys, in this order; tab is not among them', () => {
-    const keys = Object.values(COSTS_FILTER_SPEC).flatMap((field) => [...field.keys]);
-    expect(keys).toEqual(['range', 'from', 'to', 'account']);
-    expect(keys).not.toContain('tab');
+describe('the bar values equal the page spec (MK-3b)', () => {
+  // Money MK-2 (SA-7, ruled): the default moved from 30 days to This month.
+  it('defaults to This month, the page spec’s default', () => {
+    expect(COSTS_DEFAULT_WINDOW).toEqual({ kind: 'preset', preset: 'this_month' });
+    expect(COSTS_DEFAULT_WINDOW).toEqual(AI_COST_FILTER_SPEC.window.defaultValue);
   });
 
-  it('has no aliases (Costs had no URL before)', () => {
-    for (const field of Object.values(COSTS_FILTER_SPEC)) {
-      expect(Object.keys(field.aliases ?? {})).toEqual([]);
-    }
-  });
-
-  it('defaults to 30 days, every business', () => {
-    const defaults = Object.fromEntries(Object.entries(COSTS_FILTER_SPEC).map(([key, field]) => [key, field.defaultValue]));
-    expect(defaults).toEqual(DEFAULTS);
-  });
-
-  it('lists 90 days after the standard five (D-2 (b))', () => {
+  it('lists 90 days after the standard five (D-2 (b)), the page spec’s only extra; never 24 hours or since_start', () => {
     expect(COSTS_WINDOW_EXTRAS).toEqual(['90d']);
-  });
-
-  it('SA M-1: the window field keeps windowEquals and the window keys (the shared wrapper, SA Q-3)', () => {
-    expect(COSTS_FILTER_SPEC.window.equals).toBe(windowEquals);
-    expect(COSTS_FILTER_SPEC.window.keys).toEqual(['range', 'from', 'to']);
-    // One wrapper for both tabs: the same rule, different defaults.
-    expect(ACTIVITY_FILTER_SPEC.window.equals).toBe(windowEquals);
-    expect(ACTIVITY_FILTER_SPEC.window.parse(getter('range=custom&from=2026-10-01T10:00&to=2026-10-02'))).toBeUndefined();
-  });
-});
-
-describe('parse (U-4: anything invalid is ignored)', () => {
-  it('window: the standard presets, 90 days and a two-sided custom window', () => {
-    expect(parseField('window', 'range=today')).toEqual({ kind: 'preset', preset: 'today' });
-    expect(parseField('window', 'range=7d')).toEqual({ kind: 'preset', preset: '7d' });
-    expect(parseField('window', 'range=this_month')).toEqual({ kind: 'preset', preset: 'this_month' });
-    expect(parseField('window', 'range=90d')).toEqual({ kind: 'extra', extra: '90d' });
-    expect(parseField('window', 'range=custom&from=2026-07-01&to=2026-07-31')).toEqual({
-      kind: 'custom',
-      from: '2026-07-01',
-      to: '2026-07-31',
-    });
-  });
-
-  it.each([
-    ['an extra another page owns', 'range=48h'],
-    ['24 hours (not this tab)', 'range=24h'],
-    ['yesterday (an Activity extra, not a Costs one)', 'range=yesterday'],
-    ['last month (an Activity extra)', 'range=last_month'],
-    ['a minute bound (linked)', 'range=custom&from=2026-10-01T10:00&to=2026-10-02'],
-    ['an instant bound (linked)', 'from=2026-10-01T10:00:00Z&to=2026-10-02T10:00:00Z'],
-    ['a one-sided custom window (to only)', 'to=2026-10-01'],
-    ['a one-sided custom window (from only)', 'from=2026-10-01'],
-    ['from after to', 'from=2026-10-05&to=2026-10-01'],
-    ['not a date', 'from=yesterday&to=today'],
-  ])('window ignores %s', (_name, query) => {
-    expect(parseField('window', query)).toBeUndefined();
-  });
-
-  it('account: a UUID only', () => {
-    expect(parseField('account', `account=${A}`)).toBe(A);
-    expect(parseField('account', 'account=not-a-uuid')).toBeUndefined();
-    expect(parseField('account', 'account=')).toBeUndefined();
-  });
-});
-
-describe('the projection (U-3: defaults omitted, spec order)', () => {
-  it('the defaults project to nothing', () => {
-    expect(project(DEFAULTS)).toBe('');
-  });
-
-  it('window first, then account', () => {
-    expect(project({ window: { kind: 'extra', extra: '90d' }, account: A })).toBe(`range=90d&account=${A}`);
-    expect(project({ window: { kind: 'custom', from: '2026-07-01', to: '2026-07-31' }, account: '' })).toBe(
-      'range=custom&from=2026-07-01&to=2026-07-31',
-    );
-    expect(project({ window: COSTS_DEFAULT_WINDOW, account: A })).toBe(`account=${A}`);
-  });
-});
-
-describe('the route query (unchanged for the same filter values)', () => {
-  const now = new Date('2026-10-12T15:00:00.000Z');
-
-  it('the default equals the tab\'s old presetQuery(30): from, to, no accountId (SA N-4)', () => {
-    const search = costsRouteSearch(DEFAULTS, now);
-    expect([...new URLSearchParams(search).keys()]).toEqual(['from', 'to']);
-    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
-      from: utcDateDaysAgo(29, now),
-      to: utcDateDaysAgo(0, now),
-    });
-    expect(span(search)).toBe(29);
-  });
-
-  it('7 days and 90 days span 6 and 89 days, ending today (UTC)', () => {
-    const seven = costsRouteSearch({ window: { kind: 'preset', preset: '7d' }, account: '' }, now);
-    const ninety = costsRouteSearch({ window: { kind: 'extra', extra: '90d' }, account: '' }, now);
-    expect(span(seven)).toBe(6);
-    expect(span(ninety)).toBe(89);
-    expect(new URLSearchParams(ninety).get('from')).toBe(utcDateDaysAgo(89, now));
-    expect(new URLSearchParams(ninety).get('to')).toBe('2026-10-12');
-  });
-
-  it('a custom window is sent as typed, and the account as accountId', () => {
-    const search = costsRouteSearch({ window: { kind: 'custom', from: '2026-07-01', to: '2026-07-31' }, account: A }, now);
-    expect(search).toBe(`from=2026-07-01&to=2026-07-31&accountId=${A}`);
-  });
-});
-
-// Finance DF-6 (E-76, U-4): Finance's own "Since it started" is not an extra of this page.
-describe('DF-6: range=since_start is ignored here', () => {
-  it('parses to undefined, so the page keeps its default window', () => {
+    expect(COSTS_WINDOW_EXTRAS).toEqual(ANALYTICS_WINDOW_EXTRAS);
+    expect(COSTS_WINDOW_EXTRAS).not.toContain('24h');
     expect(COSTS_WINDOW_EXTRAS).not.toContain('since_start');
-    expect(parseField('window', 'range=since_start')).toBeUndefined();
+  });
+
+  it('F-2: the retired spec and request builder are gone', () => {
+    const code = fs.readFileSync(path.join(process.cwd(), 'app/admin/business-os-llm/costsFilters.ts'), 'utf8');
+    expect(code).not.toMatch(/export const COSTS_FILTER_SPEC|export function costsRouteSearch/);
   });
 });

@@ -116,8 +116,37 @@ export interface CreateAgentInput {
   mode?: string | null;
   schedule_cron?: string | null;
   timezone?: string | null;
+  /**
+   * Added 2026-10-25 (mailbox lead channel). `schedule_cron` alone does NOT
+   * make an agent run: the scheduled runner selects on `mode = 'scheduled'`
+   * AND `schedule_enabled = true`, and skips any row whose `next_run` is null.
+   * An agent created with a cron and none of these three is dormant with
+   * nothing to show why. Type-only — the repository spreads input directly.
+   */
+  schedule_enabled?: boolean | null;
+  next_run?: string | null;
 
-  // Legacy / wider Agent fields (kept for forward-compat — repository spreads input directly)
+  /**
+   * Added 2026-10-25 (mailbox lead channel). The column has existed on `Agent`
+   * since tags shipped; it was simply never typed as creatable. The channel is
+   * found by tag rather than by name — a name is the owner's to change — so
+   * creating one without its tag would make the next setup create a second
+   * agent reading the same mailbox. Type-only.
+   */
+  tags?: string[] | null;
+
+  /**
+   * ⚠️ THERE IS NO `config` COLUMN ON `agents`. Use `agent_config`.
+   *
+   * Kept only because it predates this warning. The repository spreads input
+   * straight into the insert, so passing this makes PostgREST refuse the WHOLE
+   * write with "Could not find the 'config' column of 'agents' in the schema
+   * cache" — a 500 at the last step of an otherwise correct flow, which is
+   * exactly how it was found (2026-10-25, mailbox lead channel).
+   *
+   * The real JSONB column is `agent_config`, and it is shared, so namespace
+   * your keys and merge rather than replace.
+   */
   config?: Record<string, unknown>;
 }
 
@@ -134,6 +163,12 @@ export interface UpdateAgentInput {
   agent_config?: Record<string, unknown> | null;
   schedule_cron?: string | null;
   timezone?: string | null;
+  /* See the note on these two in `CreateAgentInput`: re-pointing an existing
+     agent must be able to restore all three scheduling facts, not just the
+     cron. Type-only — `update` spreads input directly. */
+  mode?: string | null;
+  schedule_enabled?: boolean | null;
+  next_run?: string | null;
   // ROI tracking - hourly rate for this automation
   hourly_rate_usd?: number | null;
 }

@@ -19,6 +19,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
 import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
+import { generateTimeSlots, type TimeSlot } from '@/lib/scheduling/availableSlots';
 import { safeTimezone, businessClock, businessDateKey } from '@/lib/scheduling/businessTime';
 import { z } from 'zod';
 
@@ -43,11 +44,6 @@ const AvailabilityQuerySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
 });
 
-interface TimeSlot {
-  start: string; // HH:mm
-  end: string;   // HH:mm
-}
-
 interface WeeklyAvailability {
   sunday: TimeSlot[];
   monday: TimeSlot[];
@@ -67,129 +63,12 @@ interface AvailableSlot {
 // Days of week mapping
 const DAYS_OF_WEEK = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
-/**
- * Generate time slots for a given day based on availability and service duration
- *
- * Note: Availability times (e.g., "09:00" to "17:00") are in the business owner's timezone.
- * We construct slot times as if they're in UTC for simplicity, then display them
- * with the correct timezone formatting.
+/*
+ * `generateTimeSlots` moved to `lib/scheduling/availableSlots` so the portal's
+ * token route can answer the same question identically. See that file for why:
+ * a client rescheduling their own booking was being asked to sign in as the
+ * business, and got an empty diary instead of an error.
  */
-function generateTimeSlots(
-  date: string,
-  dayAvailability: TimeSlot[],
-  durationMinutes: number,
-  existingBookings: { start_time: string; end_time: string }[],
-  externalEvents: { start_time: string; end_time: string }[],
-  timezone: string = 'UTC',
-  /*
-   * The gap the business keeps BETWEEN appointments — `buffer_minutes`.
-   *
-   * The column has existed since the first scheduling migration, defaults to
-   * 15 and is editable in the service modal, and nothing in any booking path
-   * read it: this page offered clients hours flush against the owner's
-   * existing meetings. Applied by widening what is taken, so an hour can
-   * neither end against the next meeting nor start against the last.
-   *
-   * The working day's own edges are deliberately NOT widened: closing time is
-   * not an appointment, so the last slot may run right up to it.
-   */
-  bufferMinutes: number = 0
-): AvailableSlot[] {
-  const slots: AvailableSlot[] = [];
-
-  // Availability times (e.g., "14:00" to "17:00") are in the business owner's local time.
-  // We generate slots as "date + time" strings that represent wall-clock time,
-  // NOT UTC. The client displays these directly without timezone conversion.
-
-  /*
-   * "Now", and "is the requested date today", both where the BUSINESS is.
-   * Read in the server's zone (UTC on Vercel) these hid slots that were still
-   * bookable for a business behind UTC, and offered slots that had already
-   * passed for one ahead of it.
-   */
-  const now = new Date();
-  const { hour: nowHours, minute: nowMinutes } = businessClock(now, timezone);
-  const todayStr = businessDateKey(now, timezone);
-  const isToday = date === todayStr;
-
-  for (const window of dayAvailability) {
-    // Parse window times (HH:mm format)
-    const [startHour, startMin] = window.start.split(':').map(Number);
-    const [endHour, endMin] = window.end.split(':').map(Number);
-
-    // Convert to minutes for easier math
-    const windowStartMins = startHour * 60 + startMin;
-    const windowEndMins = endHour * 60 + endMin;
-
-    // Generate slots in this window
-    let slotStartMins = windowStartMins;
-
-    while (slotStartMins + durationMinutes <= windowEndMins) {
-      const slotEndMins = slotStartMins + durationMinutes;
-
-      const slotHour = Math.floor(slotStartMins / 60);
-      const slotMinute = slotStartMins % 60;
-      const endSlotHour = Math.floor(slotEndMins / 60);
-      const endSlotMinute = slotEndMins % 60;
-
-      // Format as HH:mm
-      const slotStartStr = `${String(slotHour).padStart(2, '0')}:${String(slotMinute).padStart(2, '0')}`;
-      const slotEndStr = `${String(endSlotHour).padStart(2, '0')}:${String(endSlotMinute).padStart(2, '0')}`;
-
-      // Create datetime strings (these are wall-clock time, not UTC)
-      const startDateTime = `${date}T${slotStartStr}:00`;
-      const endDateTime = `${date}T${slotEndStr}:00`;
-
-      // Check if slot is in the past (for today only)
-      const isPastSlot = isToday && (slotHour < nowHours || (slotHour === nowHours && slotMinute <= nowMinutes));
-
-      // Check if slot overlaps with any existing booking
-      // Note: bookings are stored with timezone info, need to compare carefully
-      /*
-       * A stored booking is an instant; `slotStartMins` is the business's wall
-       * clock. Reading the booking's hours in the server's zone compared two
-       * different clocks, so an existing 14:00 appointment in New York did not
-       * block the 14:00 slot — it blocked 18:00. A client rescheduling could
-       * book straight over an appointment the owner already had.
-       */
-      const overlapsBooking = existingBookings.some(booking => {
-        const s = businessClock(new Date(booking.start_time), timezone);
-        const e = businessClock(new Date(booking.end_time), timezone);
-        const bookingStartMins = s.hour * 60 + s.minute - bufferMinutes;
-        const bookingEndMins = e.hour * 60 + e.minute + bufferMinutes;
-        return slotStartMins < bookingEndMins && slotEndMins > bookingStartMins;
-      });
-
-      // Check if slot overlaps with any external calendar event
-      /* Same for a Google/Outlook event: an instant, read on the business's clock. */
-      const overlapsExternal = externalEvents.some(event => {
-        const s = businessClock(new Date(event.start_time), timezone);
-        const e = businessClock(new Date(event.end_time), timezone);
-        const eventStartMins = s.hour * 60 + s.minute - bufferMinutes;
-        const eventEndMins = e.hour * 60 + e.minute + bufferMinutes;
-        return slotStartMins < eventEndMins && slotEndMins > eventStartMins;
-      });
-
-      // Only add slot if it doesn't overlap with anything and is in the future
-      if (!overlapsBooking && !overlapsExternal && !isPastSlot) {
-        // Format display time (12-hour format)
-        const displayHour = slotHour % 12 || 12;
-        const amPm = slotHour >= 12 ? 'PM' : 'AM';
-
-        slots.push({
-          start_time: startDateTime,
-          end_time: endDateTime,
-          display_time: `${displayHour}:${String(slotMinute).padStart(2, '0')} ${amPm}`
-        });
-      }
-
-      // Move to next slot (30-minute increments)
-      slotStartMins += 30;
-    }
-  }
-
-  return slots;
-}
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -278,11 +157,41 @@ export async function GET(request: NextRequest) {
         }
       }
     } else {
-      // Authenticated access - use current user
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * NO SUBDOMAIN AND NO USER CODE MEANS "THE SIGNED-IN BUSINESS", and that
+       * is a narrow thing to mean.
+       *
+       * This fallback exists for the owner's own screens, which legitimately
+       * ask "what are MY free hours" with no identifier. It is also a trap for
+       * anything public, and it caught the portal's reschedule panel: a client
+       * following their own booking link asked here with a service id and a
+       * date, was answered a bare 401, and the panel rendered that as an empty
+       * diary. The owner testing it was signed in, so it worked for them every
+       * time and the bug read as intermittent for months.
+       *
+       * The behaviour is unchanged for the owner. What changed is that the
+       * refusal now SAYS WHICH QUESTION IT COULD NOT ANSWER, so the next
+       * caller that arrives without an identifier learns that in one glance
+       * instead of from a user report. A public caller wants
+       * `?subdomain=` or `?user_code=`; a client acting on their own booking
+       * wants the token route, which holds their credential.
+       * ───────────────────────────────────────────────────────────────────────
+       */
       const user = await getUser();
       if (!user) {
+        requestLogger.warn(
+          { service_id, date },
+          'Availability asked with no subdomain, no user code and no session: nothing identifies the business'
+        );
         return NextResponse.json(
-          { success: false, error: 'Unauthorized' },
+          {
+            success: false,
+            code: 'no_business_identified',
+            error:
+              'This endpoint needs a subdomain or a user_code to know whose hours to return, '
+              + 'unless the business itself is signed in.',
+          },
           { status: 401 }
         );
       }

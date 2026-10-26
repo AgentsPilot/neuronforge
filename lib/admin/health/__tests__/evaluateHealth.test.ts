@@ -354,7 +354,8 @@ describe('C-18: a lower bound is never clear, whatever the rules say', () => {
     const shown = tileOf(evaluateHealth(inputsFor('bos_ai_spend', { spend7d: ex(1.25) })), 'bos_ai_spend');
     expect(shown.title).toBe('Recorded AI cost (USD)');
     expect(shown.figures.map((f) => f.label)).toEqual(['Recorded AI cost, last 24 h (USD)', 'Recorded AI cost, last 7 days (USD)']);
-    expect(shown.figures[1].linkLabel).toMatch(/^Recorded AI cost, last 7 days: .*, open in AI calls & usage$/);
+    // Money MK-3b (ruled): AI calls & usage is the AI cost page's Calls tab.
+    expect(shown.figures[1].linkLabel).toMatch(/^Recorded AI cost, last 7 days: .*, open in AI cost: Calls$/);
     expect(shown.footnote).toContain(
       'USD: every Business OS AI call in the usage log, charged or not, priced from the model price table; never mixed with a business currency. The charged AI cost is on Finance. '
     );
@@ -582,10 +583,12 @@ describe('figures and links', () => {
     }
   });
 
-  it('the spend tile links to AI calls & usage with the exact ISO window', () => {
+  // Money MK-3b (ruled, §4 "Health tile"): straight to the AI cost page's Calls tab, never through the redirect.
+  it('the spend tile links to the AI cost Calls tab with the exact ISO window', () => {
     const tile = tileOf(evaluateHealth(quietInputs()), 'bos_ai_spend');
     const url = new URL(tile.figures[0].href!, 'http://x');
-    expect(url.pathname).toBe('/admin/analytics');
+    expect(url.pathname).toBe('/admin/ai-cost');
+    expect(url.searchParams.get('tab')).toBe('calls');
     expect(url.searchParams.get('scope')).toBe('bos');
     expect(url.searchParams.get('dateFrom')).toBe('2026-09-25T10:30:00.000Z');
     expect(url.searchParams.get('dateTo')).toBe('2026-09-26T10:30:00.000Z');
@@ -968,12 +971,14 @@ describe('Money M-5 (R-5, SA-Q55, SA-Q64, AC-196): the Recorded AI cost tile lin
     expect(tileOf(evaluateHealth(failedInputs), 'bos_ai_spend').pageLink).toEqual(FINANCE_PAGE_LINK);
   });
 
-  it('its two figure links still open AI calls & usage, each with its own window', () => {
+  // Money MK-3b (ruled): the AI cost page's Calls tab (the old AI calls & usage).
+  it('its two figure links still open the Calls tab, each with its own window', () => {
     const tile = tileOf(evaluateHealth(quietInputs()), 'bos_ai_spend');
     expect(tile.figures).toHaveLength(2);
     const starts = tile.figures.map((figure) => {
       const url = new URL(figure.href!, 'http://x');
-      expect(url.pathname).toBe('/admin/analytics');
+      expect(url.pathname).toBe('/admin/ai-cost');
+      expect(url.searchParams.get('tab')).toBe('calls');
       expect(url.searchParams.get('scope')).toBe('bos');
       return url.searchParams.get('dateFrom');
     });

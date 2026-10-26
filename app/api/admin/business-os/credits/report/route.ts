@@ -13,6 +13,27 @@
  * 409 platform account (pure, no read) → the reads. Nothing from the request
  * reaches the database except the validated dates and account id.
  *
+ * Money MK-2 (SA-RR-MK SA-1): the response also carries `chargedInWindow`,
+ * the charged AI cost of charges CREATED in the window, deleted accounts
+ * included, built by Finance's own ledger read and builder
+ * (`lib/business-os/finance/chargedAiCost.ts`), so the cost tile equals
+ * Finance for the same window by construction. With an account only the
+ * account-scoped read runs, with the validated id. The default window (no
+ * dates) is This month, the page's default.
+ *
+ * Money MK-3 (SA-3, C-7): the response also carries `recorded`, the window's
+ * recorded AI cost (the usage log, Business OS rows) and "Recorded above
+ * charged", for the AI cost page's A-K2 and A-K3 tiles and its recorded block.
+ * The two usage-log reads are Finance's own, bound once in
+ * `app/api/admin/business-os/finance/recordedReads.ts` (this route names no
+ * usage-log reader), run after the 409 like every other read: with an account
+ * only the one-account read, with the validated id; with none only the
+ * all-accounts read. Same 2 s deadline as Finance; a failed or late read makes
+ * `recorded` Unknown and never fails the report. Built by Finance's own
+ * builder against `chargedInWindow`'s units, so it equals Finance's
+ * `aiCost.recorded` for the same window by construction. The log line gains
+ * `recorded`: which read, how it ended, counts and flags, never an amount.
+ *
  * READ-ONLY. No audit entry (the precedent of the shadow report and the
  * account summary); the accountability is one `info` log with the admin id,
  * the window, the account filter, the row count, `incomplete` and the count
@@ -26,7 +47,14 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
-import { buildCreditReport, CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
+import { buildCreditReport, CREDIT_REPORT_LIMITS, windowInstants } from '@/lib/business-os/credits/creditReport';
+import type { CreditReportResponse } from '@/lib/business-os/credits/creditReportTypes';
+import { buildChargedAiCostInWindowWithUnits, recordedInWindow } from '@/lib/business-os/finance/chargedAiCost';
+import { FINANCE_LIMITS } from '@/lib/business-os/finance/financeHealth';
+// MK-3 (SA-Q-MK3-1): Finance's two usage-log reads, bound once; this route names no usage-log reader.
+import { recordedReads, runRecordedRead } from '@/app/api/admin/business-os/finance/recordedReads';
+// Finance's own production wiring of R-a / R-a′, so this route names no new ledger reader (importer guard).
+import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'AdminBosCreditReportAPI' });
@@ -127,15 +155,36 @@ export async function GET(request: NextRequest) {
     }
 
     const today = todayUtcMs(now);
+    // MK-2 (RU-8): no dates means This month (UTC), the page's default.
     const window = parsed.data.from && parsed.data.to
       ? { from: parsed.data.from, to: parsed.data.to }
-      : { from: toDate(today - (CREDIT_REPORT_LIMITS.DEFAULT_WINDOW_DAYS - 1) * DAY_MS), to: toDate(today) };
+      : { from: `${toDate(today).slice(0, 7)}-01`, to: toDate(today) };
 
-    const report = await buildCreditReport({ window, accountId }, requestLogger, {
-      // Admin identity reads are called only from app/api/admin/** (repository guard).
-      findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
-      now: () => now,
-    });
+    // The report (whole billing periods), the window's charged AI cost and its recorded AI cost
+    // (MK-3), in parallel. The recorded read never rejects (`runRecordedRead`).
+    const instants = windowInstants(window);
+    const [report, charged, recordedRun] = await Promise.all([
+      buildCreditReport({ window, accountId }, requestLogger, {
+        // Admin identity reads are called only from app/api/admin/** (repository guard).
+        findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
+        now: () => now,
+      }),
+      buildChargedAiCostInWindowWithUnits({ window: instants, accountId }, requestLogger, {
+        ledger: financeHealthDeps().ledger,
+      }),
+      runRecordedRead(
+        recordedReads({ correlationId, adminId: gate.user.id }),
+        accountId,
+        { from: instants.start, to: instants.end },
+        FINANCE_LIMITS.RECORDED_DEADLINE_MS
+      ),
+    ]);
+    const chargedInWindow = charged.charged;
+    const builtRecorded = recordedInWindow(charged, recordedRun.read);
+    if (recordedRun.outcome !== 'ok') {
+      requestLogger.warn({ read: 'recorded', outcome: recordedRun.outcome }, 'Recorded AI cost read did not complete');
+    }
+    const data: CreditReportResponse = { ...report, chargedInWindow, recorded: builtRecorded.recorded };
 
     // Ids and counts only: never a business name.
     requestLogger.info(
@@ -149,11 +198,20 @@ export async function GET(request: NextRequest) {
         sections: report.sections,
         // Never-silent (D-6): an amount that could not be read counts as 0.
         unreadableAmounts: report.unreadableAmounts,
+        charged: { status: chargedInWindow.status, rows: chargedInWindow.rows },
+        // MK-3: which read, how it ended, counts and flags; never an amount or a difference.
+        recorded: {
+          status: builtRecorded.recorded.status,
+          read: recordedRun.kind,
+          outcome: recordedRun.outcome,
+          ms: recordedRun.ms,
+          ...builtRecorded.counts,
+        },
       },
       'Admin read the Business OS credit cost report'
     );
 
-    return NextResponse.json({ success: true, data: report });
+    return NextResponse.json({ success: true, data });
   } catch (error) {
     requestLogger.error({ err: error }, 'Business OS credit cost report failed');
     return NextResponse.json(

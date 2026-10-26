@@ -165,3 +165,59 @@ export interface CreditReport {
   /** Ledger amounts that could not be read as numbers (counted as 0). Expected 0. */
   unreadableAmounts: number;
 }
+
+/**
+ * Money MK-2 (SA-RR-MK SA-1): the charged AI cost of charges CREATED in the
+ * window, deleted accounts included. Built by Finance's own read and builder
+ * (`lib/business-os/finance/chargedAiCost.ts`), so it equals Finance's
+ * Section 3 for the same window by construction. NOT the period totals above:
+ * those are whole billing periods and may include charges from before the
+ * window.
+ */
+export interface CreditReportChargedInWindow {
+  /** Finance's rule: `ok` exact; `partial` a ceiling or an unreadable amount ("at least"); `unknown` the read failed. */
+  status: 'ok' | 'partial' | 'unknown';
+  coverage: 'after_cutover' | 'starts_before_cutover' | 'entirely_before_cutover';
+  /** Net USD, charges and corrections; NULL when unknown. */
+  costUsd: number | null;
+  credits: number | null;
+  /** Charge rows (corrections not counted). */
+  charges: number | null;
+  /** Ledger rows counted (charges and corrections). */
+  rows: number | null;
+  /** Accounts deleted since (`user_id` NULL): inside `costUsd`, and on their own line. 0 with an account picked. */
+  deleted: { costUsd: number; credits: number; rows: number } | null;
+  unreadableAmounts: number;
+}
+
+/**
+ * Money MK-3 (SA-3, C-7): the window's RECORDED AI cost (the usage log,
+ * Business OS rows) and "Recorded above charged", built by Finance's own
+ * builder (`buildRecordedAiCost`) from the same two usage-log reads Finance
+ * makes, against `chargedInWindow`'s units. Never added to the charged figure
+ * (BD-18): no field holds their sum.
+ *
+ * Declared here, not imported from the finance module, so this module never
+ * imports `lib/business-os/finance` (SA-Q-MK3-12). It is pinned EQUAL to
+ * `FinanceRecordedAiCost` both ways by a type-level test
+ * (`lib/business-os/finance/__tests__/recordedInWindow.wireTypes.test.ts`), so
+ * a field added on either side fails `tsc`.
+ */
+export interface CreditReportRecordedInWindow {
+  /** ok: recorded exact and the difference decided; partial: "at least" or an Unknown difference; unknown: the read failed or passed its deadline. */
+  status: 'ok' | 'partial' | 'unknown';
+  /** Null only when `status` is `unknown`. */
+  recordedUsd: number | null;
+  /** False = "At least". */
+  recordedExact: boolean;
+  /** "Recorded above charged". `usd` only with `figure`, and always > 0. */
+  aboveCharged: { state: 'figure' | 'none' | 'not_available' | 'unknown'; usd: number | null };
+  /** Only when `aboveCharged.state` is `none` and charged is strictly above recorded. */
+  chargedAboveUsd: number | null;
+}
+
+/** What the report route sends: the report, the window's charged AI cost (MK-2) and its recorded AI cost (MK-3). */
+export type CreditReportResponse = CreditReport & {
+  chargedInWindow: CreditReportChargedInWindow;
+  recorded: CreditReportRecordedInWindow;
+};

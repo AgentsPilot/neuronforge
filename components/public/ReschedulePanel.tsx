@@ -143,6 +143,8 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
 
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  /** The lookup itself failed, which is a different thing from a full day. */
+  const [slotsFailed, setSlotsFailed] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
 
   /**
@@ -218,14 +220,43 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
       setSlots([]);
       setSelectedSlot(null);
 
+      setSlotsFailed(false);
+
       try {
+        /*
+         * ───────────────────────────────────────────────────────────────────
+         * THE TOKEN ROUTE, NOT THE ANONYMOUS ONE.
+         *
+         * This asked `website/scheduling/availability` with a service id and a
+         * date and nothing else. That endpoint resolves the business from a
+         * subdomain or a user code and falls back to the SIGNED-IN USER when
+         * given neither, so a client following their own booking link was
+         * answered 401 and this panel showed an empty diary. The owner,
+         * testing while signed in, saw slots every time, which is why it read
+         * as intermittent rather than as broken.
+         *
+         * The token already proves this client may see this booking's options.
+         * ───────────────────────────────────────────────────────────────────
+         */
         const response = await fetch(
-          `/api/website/scheduling/availability?service_id=${config.serviceId}&date=${selectedDate}`
+          `/api/book/manage/${token}/reschedule?date=${encodeURIComponent(selectedDate)}` +
+            (meetingId ? `&meeting_id=${encodeURIComponent(meetingId)}` : '')
         );
         const data = await response.json();
-        if (data.success && data.slots) setSlots(data.slots);
+
+        if (data.success && data.slots) {
+          setSlots(data.slots.slots ?? []);
+        } else {
+          /*
+           * A REFUSAL IS NOT AN EMPTY DIARY, and this used to render them the
+           * same way: the old comment here read "No slots is a legitimate
+           * answer; a failed lookup renders the same way". That is exactly how
+           * a 401 spent months looking like a fully booked week.
+           */
+          setSlotsFailed(true);
+        }
       } catch {
-        // No slots is a legitimate answer; a failed lookup renders the same way.
+        setSlotsFailed(true);
       } finally {
         setLoadingSlots(false);
       }
@@ -729,6 +760,20 @@ export function ReschedulePanel({ token, meetingId, embedded = false, onChanged 
               <div className="py-8">
                 <PublicSpinner label={t('loadingTimes')} />
               </div>
+            ) : slotsFailed ? (
+              /*
+                  "We could not load the times" is a different sentence from
+                  "there are none", and for months this panel said the second
+                  when it meant the first: the lookup was refusing the client
+                  and the diary looked full. Trying again is the right advice
+                  for a failure and useless advice for a booked-out day, so
+                  the two can no longer share a message.
+              */
+              <p className="py-8 text-center text-sm" style={{ color: 'var(--ap-text-muted)' }}>
+                {t('timesCouldNotLoad')}
+                <br />
+                {t('timesTryAgain')}
+              </p>
             ) : slots.length === 0 ? (
               <p className="py-8 text-center text-sm" style={{ color: 'var(--ap-text-muted)' }}>
                 {t('noTimesAvailable')}

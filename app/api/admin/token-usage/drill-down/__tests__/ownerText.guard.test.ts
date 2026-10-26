@@ -12,6 +12,11 @@
  * filters, KPI strip, filter bar), so G-2 and G-3 read EVERY non-test source
  * file under `app/admin/analytics/` (walked, so a file added later is covered
  * before anyone remembers this guard). Strengthening only.
+ *
+ * Money MK-3b (ruled): the page became the AI cost page's Calls tab. Its body
+ * is `components/CallsTab.tsx` (the page file is deleted; `/admin/analytics`
+ * redirects), and its strip `AnalyticsKpis.tsx` became `CallsSummary.tsx`. The
+ * folder walk is unchanged, so every rule still reads every file of the tab.
  */
 
 import fs from 'fs';
@@ -21,7 +26,7 @@ const ROOT = path.resolve(__dirname, '../../../../../..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const ROUTE = 'app/api/admin/token-usage/drill-down/route.ts';
-const PAGE = 'app/admin/analytics/page.tsx';
+const PAGE = 'app/admin/analytics/components/CallsTab.tsx';
 const PAGE_DIR = 'app/admin/analytics';
 
 /** Every non-test .ts / .tsx file under the page folder, as repo-relative forward-slash paths. */
@@ -76,7 +81,7 @@ describe('owner text stays out of the AI cost drill-down', () => {
 
   it('reads the real files (the guard cannot pass on an empty read)', () => {
     expect(route).toContain('export async function GET');
-    expect(page).toContain('export default function AdminCostAnalytics');
+    expect(page).toContain('export function CallsTab(');
   });
 
   it('the walk finds the page and its split files, and no test file (L-2a, L-2b)', () => {
@@ -85,7 +90,7 @@ describe('owner text stays out of the AI cost drill-down', () => {
       'app/admin/analytics/analyticsTypes.ts',
       'app/admin/analytics/analyticsFilters.ts',
       'app/admin/analytics/analyticsCall.ts',
-      'app/admin/analytics/components/AnalyticsKpis.tsx',
+      'app/admin/analytics/components/CallsSummary.tsx',
       'app/admin/analytics/components/AnalyticsFilterBar.tsx',
       'app/admin/analytics/components/AnalyticsTable.tsx',
       'app/admin/analytics/components/AnalyticsCallDetails.tsx',

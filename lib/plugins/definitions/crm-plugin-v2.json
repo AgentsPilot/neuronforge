@@ -9,7 +9,9 @@
     "isSystem": true,
     "visibility": "business_os",
     "provider_family": "internal-bos",
-    "access_strategy": { "type": "db_active" },
+    "access_strategy": {
+      "type": "db_active"
+    },
     "auth_config": {
       "auth_type": "internal",
       "client_id": "internal",
@@ -33,33 +35,91 @@
       "output_entity": "contact",
       "input_cardinality": null,
       "output_cardinality": "single",
-      "output_fields": ["id", "first_name", "last_name", "email", "phone", "stage", "tags", "source", "created_at"],
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "stage",
+        "tags",
+        "source",
+        "created_at"
+      ],
       "parameters": {
         "type": "object",
         "required": [],
         "properties": {
-          "first_name": { "type": "string", "description": "Contact first name." },
-          "last_name": { "type": "string", "description": "Contact last name." },
-          "email": { "type": "string", "description": "Contact email address." },
-          "phone": { "type": "string", "description": "Contact phone number." },
-          "stage": { "type": "string", "description": "Pipeline stage key (defaults to 'lead' when omitted)." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags." },
-          "custom_fields": { "type": "object", "description": "Arbitrary custom key/value fields." },
-          "source": { "type": "string", "description": "Where the contact came from (e.g. 'manual', 'website_form', 'import', 'booking', 'campaign')." }
+          "first_name": {
+            "type": "string",
+            "description": "Contact first name."
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact last name."
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact email address."
+          },
+          "phone": {
+            "type": "string",
+            "description": "Contact phone number."
+          },
+          "stage": {
+            "type": "string",
+            "description": "Pipeline stage key (defaults to 'lead' when omitted)."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Freeform tags."
+          },
+          "custom_fields": {
+            "type": "object",
+            "description": "Arbitrary custom key/value fields."
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the contact came from (e.g. 'manual', 'website_form', 'import', 'booking', 'campaign')."
+          }
         }
       },
       "output_schema": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "first_name": { "type": "string" },
-          "last_name": { "type": "string" },
-          "email": { "type": "string" },
-          "phone": { "type": "string" },
-          "stage": { "type": "string" },
-          "tags": { "type": "array", "items": { "type": "string" } },
-          "source": { "type": "string" },
-          "created_at": { "type": "string" }
+          "id": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
         }
       },
       "output_guidance": {
@@ -67,6 +127,124 @@
         "common_errors": {
           "duplicate": "A contact with this email may already exist. Use list_contacts to find it, then update_contact.",
           "invalid_request": "Contact could not be created. Check the provided fields."
+        }
+      }
+    },
+    "capture_enquiry": {
+      "description": "File an enquiry as a contact, exactly as the website's own contact form files one.",
+      "usage_context": "When an enquiry arrives from somewhere other than the platform's own form - read out of a mailbox, or forwarded from a site the business hosts itself - and should become a lead the business can answer. Prefer this over create_contact for anything that is an ENQUIRY: it resolves the owner's first pipeline stage, updates the person instead of duplicating them if they have written before, records the message on the timeline, and files them under a source the platform's unanswered-enquiry chase can see. create_contact is the plain insert for everything that is not an enquiry. Its capability is `capture`, deliberately distinct from create_contact's `create`: two actions sharing one domain and capability cannot be told apart by the capability binder, and the quiet failure is binding an enquiry to the plain insert. Takes EITHER the parsed fields (email + message), as a web form sends them, OR a raw email (raw_body/raw_html + subject + template), as a mailbox agent sends them. With a raw email it answers filed:false when no address could be read, and the caller must then leave that message unread rather than marking it handled.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "capture",
+      "input_entity": "record",
+      "output_entity": "contact",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "contact_id",
+        "is_new_contact",
+        "filed",
+        "reason"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The enquirer's email address. This is the key they are found by, so an existing contact is updated rather than duplicated."
+          },
+          "message": {
+            "type": "string",
+            "description": "What they wrote. Stored on the contact and on their timeline."
+          },
+          "name": {
+            "type": "string",
+            "description": "Their name as given, unsplit. Omit when the enquiry carries none; the contact is stored without one rather than with a guess."
+          },
+          "phone": {
+            "type": "string",
+            "description": "Their phone number, if the enquiry carries one."
+          },
+          "service_interest": {
+            "type": "string",
+            "description": "Which service they asked about, if the enquiry names one."
+          },
+          "referral_source": {
+            "type": "string",
+            "description": "How they say they found the business, if the enquiry asks."
+          },
+          "page_url": {
+            "type": "string",
+            "description": "The page the enquiry was sent from, where that is known."
+          },
+          "source": {
+            "type": "string",
+            "description": "Defaults to 'website_form'. Only the sources in FORM_SOURCES are visible to the chase that answers unanswered enquiries, so another value files a contact nobody will reply to."
+          },
+          "activity_key": {
+            "type": "string",
+            "description": "Which sentence names the arrival on the timeline. Defaults to the website form's, so a mailbox channel should pass its own to be distinguishable."
+          },
+          "raw_body": {
+            "type": "string",
+            "description": "The whole plain-text body of an enquiry email. Send this INSTEAD of the separate fields when you have a message rather than parsed values: the platform reads the name, address and message out of it using the template learned from this business's own mail. Nothing is filed if no email address is found."
+          },
+          "via": {
+            "type": "string",
+            "description": "Which mailbox this enquiry was read from, e.g. google-mail. Recorded on source_metadata so the channel's own lead count is possible without changing `source`, which the unanswered-enquiry chase keys on."
+          },
+          "to": {
+            "type": "string",
+            "description": "The message's To header. On a form notification this is the business owner, passed so their own address is never filed as the lead."
+          },
+          "reply_to": {
+            "type": "string",
+            "description": "The message's Reply-To header. On a form notification this is usually the person who filled the form in, which makes it the most reliable source for the lead's address."
+          },
+          "cc": {
+            "type": "string",
+            "description": "The message's Cc header. Some form builders copy the enquirer instead of setting Reply-To."
+          },
+          "from": {
+            "type": "string",
+            "description": "The message's From header — the business or its web host. Passed so it can be EXCLUDED from the lead's address, never filed as the lead."
+          },
+          "raw_html": {
+            "type": "string",
+            "description": "The HTML body, when that is all the message has. Used only if raw_body is absent."
+          },
+          "subject": {
+            "type": "string",
+            "description": "The message's subject. Many website forms put the enquirer's name in it, so it is read too."
+          },
+          "template": {
+            "type": "object",
+            "description": "The layout learned from this business's own enquiry emails during setup: which subject prefix is stable and which labels the body uses. Omit it and the message is read on its own, which works but is less certain."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "string"
+          },
+          "is_new_contact": {
+            "type": "boolean"
+          },
+          "filed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "filed:true with the contact, or filed:false when no address could be read from the message",
+        "common_errors": {
+          "validation": "Send either email + message, or raw_body/raw_html. With neither there is nothing to file."
         }
       }
     },
@@ -80,17 +258,34 @@
       "output_entity": "contact",
       "input_cardinality": "single",
       "output_cardinality": "single",
-      "output_fields": ["id", "first_name", "last_name", "email", "phone", "stage", "tags", "source", "created_at"],
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "stage",
+        "tags",
+        "source",
+        "created_at"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Contact id." }
+          "id": {
+            "type": "string",
+            "description": "Contact id."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Contact retrieved",
-        "common_errors": { "not_found": "No contact with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No contact with that id exists for this account."
+        }
       }
     },
     "list_contacts": {
@@ -103,23 +298,74 @@
       "output_entity": "contact",
       "input_cardinality": null,
       "output_cardinality": "collection",
-      "output_fields": ["id", "first_name", "last_name", "email", "phone", "stage", "tags"],
+      "output_fields": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "stage",
+        "tags"
+      ],
       "parameters": {
         "type": "object",
         "required": [],
         "properties": {
-          "stage": { "type": "string", "description": "Filter by pipeline stage key." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter to contacts having any of these tags." },
-          "search": { "type": "string", "description": "Text search across name, email, and phone." },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows to return." },
-          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." },
-          "order_by": { "type": "string", "enum": ["created_at", "updated_at", "first_name", "last_name"], "default": "created_at", "description": "Sort field." },
-          "order_direction": { "type": "string", "enum": ["asc", "desc"], "default": "desc", "description": "Sort direction." }
+          "stage": {
+            "type": "string",
+            "description": "Filter by pipeline stage key."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter to contacts having any of these tags."
+          },
+          "search": {
+            "type": "string",
+            "description": "Text search across name, email, and phone."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Max rows to return."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Pagination offset."
+          },
+          "order_by": {
+            "type": "string",
+            "enum": [
+              "created_at",
+              "updated_at",
+              "first_name",
+              "last_name"
+            ],
+            "default": "created_at",
+            "description": "Sort field."
+          },
+          "order_direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc",
+            "description": "Sort direction."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Contacts listed",
-        "common_errors": { "invalid_request": "Could not list contacts. Check the filter parameters." }
+        "common_errors": {
+          "invalid_request": "Could not list contacts. Check the filter parameters."
+        }
       }
     },
     "count_contacts": {
@@ -136,14 +382,28 @@
         "type": "object",
         "required": [],
         "properties": {
-          "stage": { "type": "string", "description": "Filter by pipeline stage key." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags." },
-          "search": { "type": "string", "description": "Text search across name, email, and phone." }
+          "stage": {
+            "type": "string",
+            "description": "Filter by pipeline stage key."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter by tags."
+          },
+          "search": {
+            "type": "string",
+            "description": "Text search across name, email, and phone."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Contacts counted",
-        "common_errors": { "invalid_request": "Could not count contacts." }
+        "common_errors": {
+          "invalid_request": "Could not count contacts."
+        }
       }
     },
     "update_contact": {
@@ -158,21 +418,52 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Contact id." },
-          "first_name": { "type": "string", "description": "Updated first name." },
-          "last_name": { "type": "string", "description": "Updated last name." },
-          "email": { "type": "string", "description": "Updated email." },
-          "phone": { "type": "string", "description": "Updated phone." },
-          "stage": { "type": "string", "description": "Updated pipeline stage key." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Replacement tags array." },
-          "custom_fields": { "type": "object", "description": "Replacement custom fields." }
+          "id": {
+            "type": "string",
+            "description": "Contact id."
+          },
+          "first_name": {
+            "type": "string",
+            "description": "Updated first name."
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Updated last name."
+          },
+          "email": {
+            "type": "string",
+            "description": "Updated email."
+          },
+          "phone": {
+            "type": "string",
+            "description": "Updated phone."
+          },
+          "stage": {
+            "type": "string",
+            "description": "Updated pipeline stage key."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Replacement tags array."
+          },
+          "custom_fields": {
+            "type": "object",
+            "description": "Replacement custom fields."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Contact updated",
-        "common_errors": { "not_found": "No contact with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No contact with that id exists for this account."
+        }
       }
     },
     "move_stage": {
@@ -187,11 +478,24 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id", "stage"],
+        "required": [
+          "id",
+          "stage"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Contact id." },
-          "stage": { "type": "string", "description": "Target pipeline stage key." },
-          "validate_stage": { "type": "boolean", "default": false, "description": "When true, reject a stage that is not a configured pipeline stage. Off by default to preserve backward-compatible behavior." }
+          "id": {
+            "type": "string",
+            "description": "Contact id."
+          },
+          "stage": {
+            "type": "string",
+            "description": "Target pipeline stage key."
+          },
+          "validate_stage": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, reject a stage that is not a configured pipeline stage. Off by default to preserve backward-compatible behavior."
+          }
         }
       },
       "output_guidance": {
@@ -214,14 +518,21 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Contact id to delete." }
+          "id": {
+            "type": "string",
+            "description": "Contact id to delete."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Contact deleted",
-        "common_errors": { "not_found": "No contact with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No contact with that id exists for this account."
+        }
       }
     },
     "add_task": {
@@ -234,24 +545,76 @@
       "output_entity": "record",
       "input_cardinality": null,
       "output_cardinality": "single",
-      "output_fields": ["id", "title", "priority", "status", "due_date", "contact_id"],
+      "output_fields": [
+        "id",
+        "title",
+        "priority",
+        "status",
+        "due_date",
+        "contact_id"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["title"],
+        "required": [
+          "title"
+        ],
         "properties": {
-          "title": { "type": "string", "description": "Task title." },
-          "description": { "type": "string", "description": "Task details." },
-          "contact_id": { "type": "string", "description": "Optional contact this task relates to." },
-          "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "default": "medium", "description": "Task priority." },
-          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"], "default": "pending", "description": "Initial status." },
-          "due_date": { "type": "string", "description": "Due date (ISO 8601)." },
-          "reminder_at": { "type": "string", "description": "Reminder time (ISO 8601)." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags." }
+          "title": {
+            "type": "string",
+            "description": "Task title."
+          },
+          "description": {
+            "type": "string",
+            "description": "Task details."
+          },
+          "contact_id": {
+            "type": "string",
+            "description": "Optional contact this task relates to."
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "default": "medium",
+            "description": "Task priority."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ],
+            "default": "pending",
+            "description": "Initial status."
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Due date (ISO 8601)."
+          },
+          "reminder_at": {
+            "type": "string",
+            "description": "Reminder time (ISO 8601)."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Freeform tags."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Task created",
-        "common_errors": { "invalid_request": "Task could not be created. Check the provided fields." }
+        "common_errors": {
+          "invalid_request": "Task could not be created. Check the provided fields."
+        }
       }
     },
     "get_task": {
@@ -266,14 +629,21 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Task id." }
+          "id": {
+            "type": "string",
+            "description": "Task id."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Task retrieved",
-        "common_errors": { "not_found": "No task with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No task with that id exists for this account."
+        }
       }
     },
     "list_tasks": {
@@ -290,22 +660,86 @@
         "type": "object",
         "required": [],
         "properties": {
-          "contact_id": { "type": "string", "description": "Filter to a contact's tasks." },
-          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"], "description": "Filter by a single status." },
-          "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "description": "Filter by priority." },
-          "due_before": { "type": "string", "description": "Only tasks due on/before this ISO date." },
-          "due_after": { "type": "string", "description": "Only tasks due on/after this ISO date." },
-          "include_completed": { "type": "boolean", "default": false, "description": "Include completed/cancelled tasks." },
-          "search": { "type": "string", "description": "Text search across title and description." },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." },
-          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." },
-          "order_by": { "type": "string", "enum": ["due_date", "created_at", "priority"], "default": "due_date", "description": "Sort field." },
-          "order_direction": { "type": "string", "enum": ["asc", "desc"], "default": "asc", "description": "Sort direction." }
+          "contact_id": {
+            "type": "string",
+            "description": "Filter to a contact's tasks."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ],
+            "description": "Filter by a single status."
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "description": "Filter by priority."
+          },
+          "due_before": {
+            "type": "string",
+            "description": "Only tasks due on/before this ISO date."
+          },
+          "due_after": {
+            "type": "string",
+            "description": "Only tasks due on/after this ISO date."
+          },
+          "include_completed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include completed/cancelled tasks."
+          },
+          "search": {
+            "type": "string",
+            "description": "Text search across title and description."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Max rows."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Pagination offset."
+          },
+          "order_by": {
+            "type": "string",
+            "enum": [
+              "due_date",
+              "created_at",
+              "priority"
+            ],
+            "default": "due_date",
+            "description": "Sort field."
+          },
+          "order_direction": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "asc",
+            "description": "Sort direction."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Tasks listed",
-        "common_errors": { "invalid_request": "Could not list tasks. Check the filter parameters." }
+        "common_errors": {
+          "invalid_request": "Could not list tasks. Check the filter parameters."
+        }
       }
     },
     "count_tasks": {
@@ -322,12 +756,17 @@
         "type": "object",
         "required": [],
         "properties": {
-          "contact_id": { "type": "string", "description": "Optional contact to scope the counts to." }
+          "contact_id": {
+            "type": "string",
+            "description": "Optional contact to scope the counts to."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Tasks counted",
-        "common_errors": { "invalid_request": "Could not count tasks." }
+        "common_errors": {
+          "invalid_request": "Could not count tasks."
+        }
       }
     },
     "update_task": {
@@ -342,22 +781,68 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Task id." },
-          "title": { "type": "string", "description": "Updated title." },
-          "description": { "type": "string", "description": "Updated description." },
-          "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "description": "Updated priority." },
-          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"], "description": "Updated status." },
-          "due_date": { "type": "string", "description": "Updated due date (ISO 8601)." },
-          "reminder_at": { "type": "string", "description": "Updated reminder (ISO 8601)." },
-          "contact_id": { "type": "string", "description": "Re-link to a different contact." },
-          "tags": { "type": "array", "items": { "type": "string" }, "description": "Replacement tags." }
+          "id": {
+            "type": "string",
+            "description": "Task id."
+          },
+          "title": {
+            "type": "string",
+            "description": "Updated title."
+          },
+          "description": {
+            "type": "string",
+            "description": "Updated description."
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "description": "Updated priority."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ],
+            "description": "Updated status."
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Updated due date (ISO 8601)."
+          },
+          "reminder_at": {
+            "type": "string",
+            "description": "Updated reminder (ISO 8601)."
+          },
+          "contact_id": {
+            "type": "string",
+            "description": "Re-link to a different contact."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Replacement tags."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Task updated",
-        "common_errors": { "not_found": "No task with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No task with that id exists for this account."
+        }
       }
     },
     "complete_task": {
@@ -372,14 +857,21 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Task id to complete." }
+          "id": {
+            "type": "string",
+            "description": "Task id to complete."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Task completed",
-        "common_errors": { "not_found": "No task with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No task with that id exists for this account."
+        }
       }
     },
     "delete_task": {
@@ -394,14 +886,21 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "Task id to delete." }
+          "id": {
+            "type": "string",
+            "description": "Task id to delete."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Task deleted",
-        "common_errors": { "not_found": "No task with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No task with that id exists for this account."
+        }
       }
     },
     "log_activity": {
@@ -416,20 +915,47 @@
       "output_cardinality": "single",
       "parameters": {
         "type": "object",
-        "required": ["contact_id", "activity_type", "title"],
+        "required": [
+          "contact_id",
+          "activity_type",
+          "title"
+        ],
         "properties": {
-          "contact_id": { "type": "string", "description": "Contact this activity belongs to." },
-          "activity_type": { "type": "string", "description": "Activity type (e.g. 'note', 'call', 'meeting')." },
-          "title": { "type": "string", "description": "Short activity title." },
-          "description": { "type": "string", "description": "Activity details." },
-          "source_capability": { "type": "string", "description": "Originating capability (defaults to 'manual')." },
-          "source_entity_id": { "type": "string", "description": "Optional id of a related entity." },
-          "activity_date": { "type": "string", "description": "When the activity occurred (ISO 8601); defaults to now." }
+          "contact_id": {
+            "type": "string",
+            "description": "Contact this activity belongs to."
+          },
+          "activity_type": {
+            "type": "string",
+            "description": "Activity type (e.g. 'note', 'call', 'meeting')."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short activity title."
+          },
+          "description": {
+            "type": "string",
+            "description": "Activity details."
+          },
+          "source_capability": {
+            "type": "string",
+            "description": "Originating capability (defaults to 'manual')."
+          },
+          "source_entity_id": {
+            "type": "string",
+            "description": "Optional id of a related entity."
+          },
+          "activity_date": {
+            "type": "string",
+            "description": "When the activity occurred (ISO 8601); defaults to now."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Activity logged",
-        "common_errors": { "not_found": "No contact with that id exists for this account." }
+        "common_errors": {
+          "not_found": "No contact with that id exists for this account."
+        }
       }
     },
     "list_activities": {
@@ -444,15 +970,28 @@
       "output_cardinality": "collection",
       "parameters": {
         "type": "object",
-        "required": ["contact_id"],
+        "required": [
+          "contact_id"
+        ],
         "properties": {
-          "contact_id": { "type": "string", "description": "Contact whose activities to list." },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." }
+          "contact_id": {
+            "type": "string",
+            "description": "Contact whose activities to list."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Max rows."
+          }
         }
       },
       "output_guidance": {
         "success_description": "Activities listed",
-        "common_errors": { "invalid_request": "Could not list activities." }
+        "common_errors": {
+          "invalid_request": "Could not list activities."
+        }
       }
     },
     "list_pipeline_stages": {
@@ -465,7 +1004,13 @@
       "output_entity": "record",
       "input_cardinality": null,
       "output_cardinality": "collection",
-      "output_fields": ["id", "stage_key", "stage_label", "position", "color"],
+      "output_fields": [
+        "id",
+        "stage_key",
+        "stage_label",
+        "position",
+        "color"
+      ],
       "parameters": {
         "type": "object",
         "required": [],
@@ -473,7 +1018,9 @@
       },
       "output_guidance": {
         "success_description": "Pipeline stages listed",
-        "common_errors": { "invalid_request": "Could not list pipeline stages." }
+        "common_errors": {
+          "invalid_request": "Could not list pipeline stages."
+        }
       }
     }
   }

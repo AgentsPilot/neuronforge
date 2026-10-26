@@ -250,3 +250,35 @@ export function buildSubscriptions(input: SubscriptionsInput): SubscriptionsPayl
     matching: matchingRows.length,
   };
 }
+
+/**
+ * Money MK-8 (KPI restructure review §3, Plans & subscriptions → "Plan drawer:
+ * one plan's accounts, statuses and MRR"). ONE rule: the inputs are narrowed
+ * to one plan and `buildSubscriptions` builds the list, so the drawer and the
+ * Subscriptions list cannot disagree for the same rows.
+ *
+ * The plan's accounts are the billing rows (this mode, with a status) whose
+ * bought plan is `planId`, plus the plan rows on `planId` that have NO billing
+ * row of any plan in this mode ("No Stripe", admin-assigned). An account billed
+ * on another plan is not this plan's, whatever its plan row says (that is the
+ * panel's "tier differs" disagreement). MRR is therefore this plan's only.
+ * The plan id is compared, never written: no tier literal here.
+ */
+export function buildPlanSubscriptions(input: SubscriptionsInput & { planId: string }): SubscriptionsPayload {
+  const { planId, billingRows, planRows } = input;
+  const livemode = input.mode === 'live';
+  // SA-CR-MK8 CR-1: ONE predicate for "billed in this mode", the list's own (`subscribed` in
+  // buildSubscriptions): this mode and a subscription status. A row with no status (a stale
+  // `bought_tier` left on a never-subscribed or cleared row) is no plan's billing, so each
+  // account lands in exactly one plan drawer, and MRR (which counts paying statuses only) agrees.
+  const isBilled = (row: AdminBillingRow) => row.livemode === livemode && row.subscription_status !== null;
+  const billedAnyPlan = new Set(
+    billingRows.filter((row) => isBilled(row) && row.user_id !== null).map((row) => row.user_id as string)
+  );
+  const planBilling = billingRows.filter((row) => isBilled(row) && row.bought_tier === planId);
+  const planAccounts = new Set(planBilling.map((row) => row.user_id).filter((id): id is string => id !== null));
+  const planRowsForPlan = planRows.filter(
+    (row) => planAccounts.has(row.user_id) || (row.tier === planId && !billedAnyPlan.has(row.user_id))
+  );
+  return buildSubscriptions({ ...input, billingRows: planBilling, planRows: planRowsForPlan });
+}

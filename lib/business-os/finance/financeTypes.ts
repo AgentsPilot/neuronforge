@@ -513,6 +513,11 @@ export interface FinancePayload {
    */
   converted?: FinanceConverted;
   /**
+   * Money MK-9 (§12, S5B-FR-8 to FR-16): F-K5's breakdown, the Comped split and
+   * trial-to-paid. All businesses only; absent with a business picked.
+   */
+  payingBreakdown?: FinancePayingBreakdown;
+  /**
    * Money MK-5: F-K4 "AI margin" for all businesses, the Accounts tab's own
    * platform line (`buildPlatformMargin`). Absent with a business picked:
    * F-K4 then reads `accountMargin`.
@@ -1104,4 +1109,37 @@ export interface FinanceBoostProblemsPart {
   status: FinanceSectionStatus;
   /** Null when the read failed. */
   figures: FinanceBoostProblemsFigures | null;
+}
+
+// ── Money MK-9: F-K5's breakdown (paying vs comped, trial-to-paid) ──────────
+
+/** Inside the one Comped group (BD-3): the two parts always add up to `total` (BQ-22). */
+export interface FinanceCompedSplit {
+  total: number;
+  /** No billing row with a subscription status (the Subscriptions list's "No Stripe"). */
+  assignedNoSubscription: number;
+  /** A billing row with a status that is not paying (ended, canceled, unpaid, paused, …). */
+  endedOrNotPaying: number;
+}
+
+/**
+ * Trials that ended in the window and how many paid (BQ-23). `paid` and
+ * `paidBeforeEnd` are null when the first-payment result is missing (never 0).
+ * `partial`: the plan walk was cut off ("at least"); `unknown`: it failed.
+ */
+export interface FinanceTrialsToPaid {
+  status: 'ok' | 'partial' | 'unknown';
+  endedInWindow: number | null;
+  stillRunning: number | null;
+  paid: number | null;
+  paidBeforeEnd: number | null;
+  /** Only from `minimumForRate` trials up, on a complete walk with paid known. */
+  rate: { paid: number; base: number; percent: number } | null;
+  minimumForRate: number;
+}
+
+export interface FinancePayingBreakdown {
+  /** Null when the paying read failed (Comped folds into "Tier set"). */
+  comped: FinanceCompedSplit | null;
+  trials: FinanceTrialsToPaid;
 }
