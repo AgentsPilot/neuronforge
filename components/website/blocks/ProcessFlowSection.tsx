@@ -1363,7 +1363,7 @@ function PaymentStep({ service, bookingId, attemptId, primaryColor, onBack, onCo
               */
               amount: plan ? plan.installmentAmount : service.price,
               currency: plan ? plan.currency : service.currency,
-              customer_email: customerEmail,
+              customer_email: customerEmail.trim(),
               description: plan
                 ? `${service.name} — ${plan.installmentCount > 1 ? `1/${plan.installmentCount}` : ''}`.trim()
                 : service.name,
@@ -2572,7 +2572,13 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
             userCode: isPreview ? undefined : (userCode || undefined),
             service_id: selectedService.id,
             name: clientName,
-            email: clientEmail,
+            /* TRIMMED, because the check above tested `clientEmail.trim()` and this
+             sent the raw value — so a trailing space from a keyboard suggestion
+             or a paste passed here and was refused by the route's Zod schema as
+             "Invalid email address", over an address that looks correct. The
+             routes normalise too; this stops the client validating one value
+             and submitting another. */
+          email: clientEmail.trim(),
             phone: clientPhone || undefined,
             note: clientNotes || undefined,
             /*
@@ -2655,7 +2661,13 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           service_id: selectedService.id,
           start_time: startTimeISO, // Optional - undefined for non-scheduled bookings
           name: clientName,
-          email: clientEmail,
+          /* TRIMMED, because the check above tested `clientEmail.trim()` and this
+             sent the raw value — so a trailing space from a keyboard suggestion
+             or a paste passed here and was refused by the route's Zod schema as
+             "Invalid email address", over an address that looks correct. The
+             routes normalise too; this stops the client validating one value
+             and submitting another. */
+          email: clientEmail.trim(),
           phone: clientPhone || undefined,
           notes: clientNotes || undefined,
           consent: consentPayload(consentCopy, consentGiven),
@@ -2805,7 +2817,13 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           userCode: isPreview ? undefined : (userCode || undefined),
           booking_id: bookingId,
           name: clientName,
-          email: clientEmail,
+          /* TRIMMED, because the check above tested `clientEmail.trim()` and this
+             sent the raw value — so a trailing space from a keyboard suggestion
+             or a paste passed here and was refused by the route's Zod schema as
+             "Invalid email address", over an address that looks correct. The
+             routes normalise too; this stops the client validating one value
+             and submitting another. */
+          email: clientEmail.trim(),
           answers: intakeAnswers
         })
       });
@@ -2988,8 +3006,32 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           className="ap-card rounded-2xl shadow-lg p-6 sm:p-8"
           style={{ borderRadius: theme?.borderRadius || '1rem' }}
         >
-          {/* Slider content */}
-          <div className="relative overflow-hidden">
+          {/*
+            Slider content.
+
+            `ap-clip-x`, not `overflow-hidden`: the slide needs clipping on the
+            X axis and nothing else, and an `overflow: hidden` box is a scroll
+            container — which a phone keyboard then scrolls when it brings the
+            focused field into view, leaving the panel offset inside its own
+            frame. See the rule in globals.css for why that cuts the RIGHT edge
+            specifically in RTL.
+          */}
+          {/*
+            `px-2 -mx-2` is ROOM FOR THE FOCUS RING, and it changes no layout.
+
+            `:focus-visible` on a public page draws `outline: 2px` at
+            `outline-offset: 2px` — four pixels OUTSIDE the field's own box. The
+            fields are `w-full`, so they sit flush against this box's edges, and
+            this box clips. The ring therefore had nowhere to go sideways and
+            both its ends were shaved off, leaving a frame open at the right and
+            the left while the top and bottom survived on the vertical spacing.
+
+            The padding pushes the clip boundary out by eight pixels and the
+            negative margin pulls the box back by the same, so nothing moves and
+            the ring has somewhere to be drawn. The slide still clips: it travels
+            300px, not eight.
+          */}
+          <div className="relative ap-clip-x px-2 -mx-2">
             <AnimatePresence mode="wait" custom={slideDirection}>
               <motion.div
                 key={currentStep}

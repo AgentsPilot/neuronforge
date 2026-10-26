@@ -90,11 +90,35 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
     };
   }
 
+  /**
+   * A single-quoted OData string literal.
+   *
+   * Graph escapes a quote by doubling it, and a sender address or subject
+   * prefix is attacker-reachable text — it comes off a message somebody else
+   * sent. Without this, one apostrophe terminates the literal and the rest of
+   * the value is parsed as filter syntax.
+   */
+  private odataString(value: string): string {
+    return `'${String(value).replace(/'/g, "''")}'`;
+  }
+
   private async searchEmails(connection: any, params: any): Promise<any> {
-    const { query, folder = 'inbox', max_results = 20, from_date, to_date, has_attachments } = params;
+    const {
+      query,
+      folder = 'inbox',
+      max_results = 20,
+      from_date,
+      to_date,
+      has_attachments,
+      // Added 2026-10-25 for the mailbox lead channel — see the note below.
+      is_unread,
+      from_address,
+      subject_prefix,
+      content_level = 'metadata',
+    } = params;
 
     // Build OData filter
-    let filter: string[] = [];
+    const filter: string[] = [];
 
     if (from_date) {
       filter.push(`receivedDateTime ge ${new Date(from_date).toISOString()}`);
@@ -106,6 +130,40 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       filter.push(`hasAttachments eq ${has_attachments}`);
     }
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE THREE THINGS A LEAD CHANNEL NEEDS, AND WHY THEY ARE FILTERS
+     *
+     * Added for the mailbox lead channel, which reads the enquiry emails a
+     * business's own website form sends it. That channel needs to ask for
+     * "unread mail from this sender whose subject starts like this", and
+     * before this it could ask for none of the three:
+     *
+     *   · there was no unread filter at all, so the agent would re-read and
+     *     re-file the same enquiry on every run — the whole idempotency of
+     *     the channel is "unread, then marked read"
+     *   · there was no sender filter except free-text `$search`
+     *   · `$select` named `bodyPreview` and never `body`, so the enquiry's
+     *     own text — the name, address and message — was truncated at ~255
+     *     characters with no way to ask for the rest
+     *
+     * All three are expressed as `$filter`, not `$search`, because Graph
+     * REJECTS a messages request carrying both: the previous code appended
+     * `$search` on top of any date filter, so `from_date` plus a query was
+     * already a guaranteed 400. `$search` is now used only when nothing else
+     * narrows the request.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    if (is_unread !== undefined) {
+      filter.push(`isRead eq ${is_unread ? 'false' : 'true'}`);
+    }
+    if (from_address) {
+      filter.push(`from/emailAddress/address eq ${this.odataString(from_address)}`);
+    }
+    if (subject_prefix) {
+      filter.push(`startswith(subject,${this.odataString(subject_prefix)})`);
+    }
+
     // Build folder path
     const folderMap: Record<string, string> = {
       inbox: 'inbox',
@@ -115,14 +173,38 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
     };
     const folderName = folderMap[folder] || 'inbox';
 
+    /* `body` only when asked for. It is the largest field on a message and
+       most callers want a list, not ten full messages. */
+    const select = [
+      'id',
+      'subject',
+      'from',
+      'toRecipients',
+      'receivedDateTime',
+      'bodyPreview',
+      'hasAttachments',
+      /* The human the notification is ABOUT. See the note in the Gmail
+         executor: `from` is the system that sent it, and most form plugins put
+         the person who filled the form in here. */
+      'replyTo',
+      'ccRecipients',
+      ...(content_level === 'full' ? ['body', 'isRead'] : []),
+    ].join(',');
+
     // Build request URL
-    let url = `/me/mailFolders/${folderName}/messages?$top=${max_results}&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,hasAttachments`;
+    let url = `/me/mailFolders/${folderName}/messages?$top=${max_results}&$select=${select}`;
 
     if (filter.length > 0) {
       url += `&$filter=${filter.join(' and ')}`;
     }
 
-    if (query) {
+    /*
+     * `$search` is mutually exclusive with `$filter` on Graph's message
+     * collection. A caller that passes both gets the filter, which is the
+     * precise one — silently dropping a free-text hint beats a 400 that drops
+     * the whole request.
+     */
+    if (query && filter.length === 0) {
       url += `&$search="${query}"`;
     }
 
@@ -135,7 +217,18 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       to: msg.toRecipients?.map((r: any) => r.emailAddress.address) || [],
       received_at: msg.receivedDateTime,
       body_preview: msg.bodyPreview,
-      has_attachments: msg.hasAttachments
+      has_attachments: msg.hasAttachments,
+      reply_to: (msg.replyTo ?? []).map((r: any) => r.emailAddress?.address).filter(Boolean).join(', '),
+      cc: (msg.ccRecipients ?? []).map((r: any) => r.emailAddress?.address).filter(Boolean).join(', '),
+      /*
+       * Graph returns one body with a `contentType` of 'html' or 'text', never
+       * both. Reported under the matching key so a reader can tell markup from
+       * text rather than having to sniff it — the mistake that made every
+       * learned field label come back as an HTML attribute on the Gmail side.
+       */
+      ...(msg.body?.contentType?.toLowerCase() === 'html'
+        ? { html: msg.body?.content ?? null }
+        : { body: msg.body?.content ?? null }),
     }));
 
     return {

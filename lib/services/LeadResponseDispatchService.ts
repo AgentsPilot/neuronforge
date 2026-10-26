@@ -560,11 +560,28 @@ async function inviteOrChaseLead(
     }
   }
 
+  /*
+   * The sentence the client reads, written when the enquiry arrived.
+   *
+   * On the INVITE only. A chase is a second message about a first one, and
+   * opening it by acknowledging what they wrote two days ago reads as though
+   * nobody noticed they never replied. The chase keeps the wording it has.
+   *
+   * Read defensively: rows queued before this existed carry no `opening`, and
+   * an absent one simply means the invite reads as it always did.
+   */
+  const recommendation = (row.recommendation ?? {}) as { opening?: unknown };
+  const opening =
+    row.kind === 'invite' && typeof recommendation.opening === 'string'
+      ? recommendation.opening
+      : '';
+
   const outcome = await sendBookingLink(row.contact_id, row.user_id, {
     serviceId: row.service_id,
     reminder: row.kind === 'chase',
     // A queue sent this, not a person. Solicitation, so it needs consent.
     trigger: 'automated',
+    ...(opening ? { opening } : {}),
   });
 
   if (!outcome.ok) {

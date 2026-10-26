@@ -131,8 +131,27 @@ describe('full and partial stay distinguishable', () => {
   });
 
   it('the card badge makes the same distinction', () => {
-    const badge = tab.slice(tab.indexOf("payment?.status === 'refunded' || refunded > 0"));
-    expect(badge.slice(0, 900)).toMatch(/REFUND_CLASS\.full[\s\S]{0,200}REFUND_CLASS\.partial/);
+    /*
+     * COMMENTS STRIPPED, AND NO MAGIC WINDOW.
+     *
+     * This read `badge.slice(0, 900)` and required the two classes within 200
+     * characters of each other. Both numbers were guesses about how much prose
+     * would ever sit between them, and a note explaining when the badge is
+     * shown pushed `REFUND_CLASS.full` past 900 — so the guard failed over a
+     * comment while the distinction it protects was untouched.
+     *
+     * The rule is "the badge asks for full or partial, never one colour for
+     * both". That is a fact about the CODE, so the code is what is measured:
+     * comments out, then the badge expression up to its closing `)}`.
+     */
+    const code = tab.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const from = code.indexOf("payment?.status === 'refunded' || refunded > 0");
+    expect(from).toBeGreaterThan(-1);
+
+    const badge = code.slice(from, code.indexOf('</span>', from));
+
+    expect(badge).toContain('REFUND_CLASS.full');
+    expect(badge).toContain('REFUND_CLASS.partial');
   });
 
   it('and the tone itself still means what the rest of this file assumes', () => {

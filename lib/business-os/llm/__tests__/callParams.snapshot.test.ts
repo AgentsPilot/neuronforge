@@ -35,11 +35,11 @@
  * provider was asked for and WHICH `(area, call)` key each site resolved —
  * the two things leg (A) could never see.
  *
- * **`UNWIRED_CALLS` is now empty, and the assertion below says so.** All 22
+ * **`UNWIRED_CALLS` is now empty, and the assertion below says so.** All 23
  * calls are wired. A new call arriving with an `evidence` block would fail that
  * assertion, which is deliberate: leg (A) is not a place to add anything.
  *
- * Legs (B) and (C) still cover ALL twenty-two calls: they are about the
+ * Legs (B) and (C) still cover ALL twenty-three calls: they are about the
  * resolver reproducing the table, not about reading source.
  */
 
@@ -185,6 +185,13 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     // No longer reads `lead_reply_recommender_model`: the seed copied it into
     // the leads area row and the call resolves from there (Step 2).
     reply_recommendation: wired('gpt-4o-mini', 0.2),
+    /*
+     * The enquiry-email reader (2026-10-25). Wired from the start — it has
+     * never read a legacy key — and it shares the area's 0.2, because the
+     * seeded row carries one temperature per AREA and a call that disagrees
+     * would make the seed resolve to something other than the code default.
+     */
+    enquiry_extraction: wired('gpt-4o-mini', 0.2),
   },
   onboarding: {
     business_story_extraction: wired('gpt-4o', null),
@@ -198,6 +205,9 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
        like the rest of onboarding: resolves from the area row, sends no
        temperature. */
     service_drafting: wired('gpt-4o', null),
+    /* Reads the configuration facts off the finished interview. Wired like the
+       rest of onboarding: resolves from the area row, sends no temperature. */
+    configuration_inference: wired('gpt-4o', null),
   },
   images: {
     // Wired in Step 3: the model comes from the `images` area row, and the
@@ -311,7 +321,7 @@ describe('A: every recorded value is still written at its call site', () => {
   /*
    * Empty, and it stays empty (Step 3).
    *
-   * Every one of the 22 calls now takes its parameters from the resolver, so
+   * Every one of the 23 calls now takes its parameters from the resolver, so
    * there is no literal left at any call site for leg (A) to read — and the
    * `it.each` below runs zero cases. This assertion is what makes that a
    * STATEMENT rather than an accident: leg (A) is unsound (it proves text, not

@@ -161,10 +161,10 @@ exports[`T2-S: the request each Step 2 call site puts on the wire (AC-2) leads/r
 [
   [
     {
-      "max_tokens": 200,
+      "max_tokens": 320,
       "messages": [
         {
-          "content": "sha256:00972a9633496fb4bff860b9bfe4d89614631bc942d8f7c960986da008919406 (len 562)",
+          "content": "sha256:73c30a18175d347027491e34628866ba0f6393c8d3475b365f1995f0eec9ce04 (len 1419)",
           "role": "system",
         },
         {

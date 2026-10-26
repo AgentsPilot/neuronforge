@@ -82,6 +82,15 @@ import {
   type BriefField,
   type BusinessBrief,
 } from '@/lib/business-os/onboarding/businessBrief';
+import {
+  CONFIG_FACTS,
+  configFact,
+  configurationSystemPrompt,
+  routeFact,
+  verifyQuote,
+  type ConfigFactKey,
+  type InferredFact,
+} from '@/lib/business-os/onboarding/configurationInference';
 
 const logger = createLogger({ service: 'OnboardingConversationManager' });
 
@@ -314,6 +323,27 @@ export interface OnboardingState {
      * ─────────────────────────────────────────────────────────────────────────
      */
     askedBriefFields?: BriefField['key'][];
+    /**
+     * What the interview concluded about the configuration, with the owner's
+     * own words behind each one. Read once, at the end of the follow-ups.
+     */
+    inferredFacts?: InferredFact[];
+    /**
+     * Facts put to the owner, and what they said.
+     *
+     * A declined fact is never proposed again — the same rule and the same
+     * reasoning as `askedBriefFields` above: a question asked is a question
+     * spent. Without it the chat cannot tell an unanswered offer from a
+     * refused one, which is the failure `InsightAdvisorCard` records having
+     * made: it asked "shall I do this?" about jobs it was already doing.
+     */
+    proposedFacts?: Array<{
+      key: ConfigFactKey;
+      value: unknown;
+      verdict: 'accepted' | 'declined';
+      /** Kept so the plan screen can still show what the conclusion rested on. */
+      quote: string;
+    }>;
     /** Which field the outstanding follow-up is about. */
     pendingBriefField?: BriefField['key'];
     /**
@@ -823,6 +853,45 @@ export class OnboardingConversationManager {
              read THAT back, rather than asking what they just told us. */
         }
 
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * A SENTENCE ABOUT THE WORK IS NOT A NAME.
+         *
+         * Reported from a real run. Asked to confirm "David KPMG", the owner
+         * answered the question he was expecting rather than the one on
+         * screen:
+         *
+         *   > I'm an ADHD coach assisting kids ages 8-18 with their ADHD
+         *     straggling in school and socilialization with their peers
+         *
+         * The branch above reads that as neither yes nor no, so it fell
+         * through to here and stored all 134 characters as the company name —
+         * then read it back for confirmation, which made it look deliberate.
+         * He corrected it, retyped the same description, and confirmed. His
+         * business is now called a paragraph, on every invoice and every email
+         * the platform sends for him.
+         *
+         * The fall-through itself is right: somebody who spots their own typo
+         * retypes the name rather than tapping "no". What was missing is that
+         * it accepted ANYTHING. The question just above it names the stakes —
+         * "it goes on every invoice" — and then the field took a sentence.
+         *
+         * Deliberately asking rather than guessing. We could strip it to the
+         * first few words, or keep the old name silently; both decide for the
+         * owner about the one string that represents them to their clients.
+         * The description is not lost either: the very next question asks for
+         * it, which is the question he was already answering.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        if (this.looksLikeADescription(said)) {
+          updatedState.pendingQuestion = 'name_not_a_name';
+          logger.info(
+            { userId: owner.userId, groupId: owner.groupId, length: said.length },
+            'A description arrived where the business name was asked for; asking again'
+          );
+          break;
+        }
+
         updatedState.collectedData.businessProfile = {
           ...updatedState.collectedData.businessProfile,
           company_name: said,
@@ -1046,7 +1115,17 @@ export class OnboardingConversationManager {
               );
 
         if (next) {
-          updatedState.collectedData.askedBriefFields = [...alreadyAsked, next.field, ...next.skip];
+          /*
+           * Deduplicated, because the model re-declares a dead field every
+           * turn it is still dead. The list grew "credentials, credentials"
+           * and, on one run, `audience` four times over. Harmless to
+           * `fieldsStillToAsk`, which only asks `includes`, but it is the
+           * record of what the interview decided and anyone reading it would
+           * reasonably wonder what four entries meant.
+           */
+          updatedState.collectedData.askedBriefFields = Array.from(
+            new Set([...alreadyAsked, next.field, ...next.skip])
+          );
           updatedState.collectedData.pendingBriefField = next.field;
           updatedState.collectedData.pendingBriefQuestion = next.question;
           updatedState.collectedData.followUpsAsked = asked + 1;
@@ -1057,12 +1136,38 @@ export class OnboardingConversationManager {
         /* Their words, all of them — see `composeDescription`. */
         updatedState.collectedData.pendingBriefField = undefined;
         updatedState.collectedData.pendingBriefQuestion = undefined;
-        updatedState.collectedData.businessDescription = await this.writeDescription(
-          updatedState.collectedData.businessDescription || '',
-          exchanges,
-          updatedState.language,
-          owner
-        );
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * TOGETHER, so the inference costs no extra wait.
+         *
+         * Both read the finished interview and neither needs the other's
+         * answer, so running them in parallel means the owner waits exactly as
+         * long as they do today for the description alone. Sequentially this
+         * would have added a visible pause to the one turn that already has
+         * one.
+         *
+         * `readConfiguration` never throws: a failure returns no facts and the
+         * interview asks every question exactly as it does now.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const [written, inferred] = await Promise.all([
+          this.writeDescription(
+            updatedState.collectedData.businessDescription || '',
+            exchanges,
+            updatedState.language,
+            owner
+          ),
+          this.readConfiguration(
+            updatedState.collectedData.businessDescription || '',
+            exchanges,
+            updatedState.language,
+            owner
+          ),
+        ]);
+
+        updatedState.collectedData.inferredFacts = inferred;
+        updatedState.collectedData.businessDescription = written;
         if (updatedState.collectedData.businessStory) {
           updatedState.collectedData.businessStory.description =
             updatedState.collectedData.businessDescription;
@@ -1208,6 +1313,22 @@ export class OnboardingConversationManager {
             ...updatedState.collectedData.clientWorkflow,
             service_count: count,
           };
+
+          /* What they did with the figure, if one was put to them. Recorded
+             agreed or not, so a correction is never proposed back at them. */
+          const proposedCount = this.proposableFact(updatedState, 'service_count');
+          if (proposedCount && typeof proposedCount.value === 'number') {
+            updatedState.collectedData.proposedFacts = [
+              ...(updatedState.collectedData.proposedFacts || []),
+              {
+                key: 'service_count',
+                value: proposedCount.value,
+                verdict: proposedCount.value === count ? 'accepted' : 'declined',
+                quote: proposedCount.quote,
+              },
+            ];
+          }
+
           logger.info({ count }, 'Read how many services the business sells');
 
           /*
@@ -1279,6 +1400,28 @@ export class OnboardingConversationManager {
             ...updatedState.collectedData.clientWorkflow,
             needs_intake: needsIntake,
           };
+
+          /*
+           * What they did with the conclusion, if one was put to them.
+           *
+           * Recorded whether they agreed or not, for the reason
+           * `askedBriefFields` exists: without it the chat cannot tell an
+           * unanswered offer from a refused one, and a later turn proposes
+           * the same thing again. The quote is kept so the plan screen can
+           * still show what the conclusion rested on.
+           */
+          const proposed = this.proposableFact(updatedState, 'needs_intake');
+          if (proposed && typeof proposed.value === 'boolean') {
+            updatedState.collectedData.proposedFacts = [
+              ...(updatedState.collectedData.proposedFacts || []),
+              {
+                key: 'needs_intake',
+                value: proposed.value,
+                verdict: proposed.value === needsIntake ? 'accepted' : 'declined',
+                quote: proposed.quote,
+              },
+            ];
+          }
           updatedState.pendingQuestion = undefined;
           updatedState.currentStep = this.nextStepAfterServices(updatedState);
           logger.info({ needsIntake }, 'Read whether clients fill in a form first');
@@ -1335,6 +1478,54 @@ export class OnboardingConversationManager {
       case 'client_acquisition':
         // Q4: Extract how clients find them (determines website need)
         const clientAcquisition = await this.extractClientAcquisition(message);
+
+        /*
+         * A CONCLUSION THE CHAT SAID OUT LOUD STANDS UNTIL IT IS REFUSED.
+         *
+         * The website half used to be decided by the tick ALONE, and the
+         * question invites tapping past it. So an owner who had plainly said
+         * they wanted a site, and was told so one line above with their own
+         * words quoted back, got no site for tapping past it. The chat stated
+         * a conclusion and then dropped it, which is the worst of both.
+         *
+         * Honouring it only on an EMPTY answer was the first fix written here,
+         * and it was worse: an owner ticking "connect Facebook" to ADD
+         * insights would have silently cancelled the site they had just been
+         * promised. A chip that adds one thing must never remove another.
+         *
+         * So once the conclusion has been stated, it holds until the owner
+         * refuses it, which is what `website_skip_option` is for: offered
+         * alongside the others in exactly this case, one tap, clearly worded.
+         * No answer cancels something it does not mention.
+         *
+         * Narrow by design. `settledFact` is the `apply` route: a plainly
+         * stated fact whose quote was found in the owner's own words. An
+         * implied one is still only PROPOSED and a guess is still asked, per
+         * `configurationInference`, so neither reaches this. And being wrong
+         * costs a draft nobody published, shown on the plan screen with a
+         * Change link beside it.
+         */
+        if (this.settledFact(updatedState, 'needs_website') === true) {
+          if (this.saysSkipWebsite(message)) {
+            clientAcquisition.needs_website = false;
+            clientAcquisition.acquisition_channels =
+              (clientAcquisition.acquisition_channels ?? []).filter(channel => channel !== 'website');
+            clientAcquisition.primary_channel = clientAcquisition.needs_channel_insights
+              ? 'social_media'
+              : 'referrals';
+            logger.info('The owner refused the website the chat had concluded');
+          } else if (!clientAcquisition.needs_website) {
+            clientAcquisition.needs_website = true;
+            clientAcquisition.wants_more_clients_online = true;
+            clientAcquisition.primary_channel = 'website';
+            clientAcquisition.acquisition_channels = [
+              'website',
+              ...(clientAcquisition.acquisition_channels ?? []).filter(channel => channel !== 'website'),
+            ];
+            logger.info('Kept the website conclusion the chat had already stated');
+          }
+        }
+
         updatedState.collectedData.clientAcquisition = clientAcquisition;
         logger.info({ clientAcquisition }, 'Client acquisition extracted');
 
@@ -1569,18 +1760,114 @@ export class OnboardingConversationManager {
    * ───────────────────────────────────────────────────────────────────────────
    */
   private firstSellingQuestion(state: OnboardingState): string {
-    const booking = state.collectedData.businessStory?.needs_booking;
+    /*
+     * The whole interview now, not just the first message.
+     *
+     * `needs_booking` below comes from the story extraction, which fires on
+     * the opening line — the information-poorest turn, and the reason it so
+     * often answers null. `settledFact` reads the same question off the
+     * finished interview, where the owner has since described how the work
+     * runs, so it answers far more often. The story is kept as the fallback
+     * because it costs nothing and sometimes it is the one that knows.
+     */
+    const settled = this.settledFact(state, 'sells_scheduled');
+    const booking = typeof settled === 'boolean'
+      ? settled
+      : state.collectedData.businessStory?.needs_booking;
 
     if (booking === true || booking === false) {
       state.collectedData.clientWorkflow = {
         ...state.collectedData.clientWorkflow,
         sells_scheduled: booking,
       };
-      logger.info({ sellsScheduled: booking }, 'The story already said whether they book; not asking again');
+      logger.info({ sellsScheduled: booking }, 'The interview already said whether they book; not asking again');
       return 'sell_collection';
     }
 
     return 'sell_scheduled';
+  }
+
+  /**
+   * A fact the interview settled well enough to act on without asking.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Returns a value only where `routeFact` says `apply` — which it will not do
+   * for a fact whose quote could not be found in what the owner actually typed,
+   * whatever confidence the model claimed. Everything else returns undefined
+   * and the question is asked exactly as it is today.
+   *
+   * The transcript is rebuilt from the same two sources the inference read, so
+   * a quote that verified when it was read verifies here too.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * A fact worth putting to the owner, with the words it rests on.
+   *
+   * Returns null unless `routeFact` says `propose`, which covers both a fact
+   * the table never applies silently and one whose quote did not verify. A
+   * fact already declined returns null too, so a refusal is final.
+   */
+  private proposableFact(
+    state: OnboardingState,
+    key: ConfigFactKey
+  ): { value: unknown; quote: string } | null {
+    const fact = state.collectedData.inferredFacts?.find(candidate => candidate.key === key);
+    if (!fact) return null;
+
+    const transcript = [
+      state.collectedData.businessDescription || '',
+      ...(state.collectedData.briefExchanges || []).map(exchange => exchange.answer),
+    ].join('\n');
+
+    const route = routeFact(fact, {
+      quoteVerified: verifyQuote(fact.quote, transcript),
+      declined: (state.collectedData.proposedFacts || [])
+        .filter(proposed => proposed.verdict === 'declined')
+        .map(proposed => proposed.key),
+    });
+
+    return route === 'propose' ? { value: fact.value, quote: fact.quote } : null;
+  }
+
+  /**
+   * The sentence that puts a conclusion to the owner.
+   *
+   * Composed HERE, in code, from a per-language template and their own words.
+   * Not written by a model, for the reason `composeDescription` is a join: no
+   * opportunity to invent, to translate, or to flatter. Half the sentence is
+   * verbatim theirs, and the other half names one consequence.
+   */
+  private proposalSentence(language: Language, quote: string, consequence: string): string {
+    const opening =
+      language === 'he'
+        ? `אמרתם "${quote}", אז ${consequence}`
+        : language === 'es'
+          ? `Dijiste "${quote}", así que ${consequence}`
+          : `You said "${quote}", so ${consequence}`;
+
+    return opening;
+  }
+
+  private settledFact(state: OnboardingState, key: ConfigFactKey): unknown {
+    const facts = state.collectedData.inferredFacts;
+    if (!facts?.length) return undefined;
+
+    const fact = facts.find(candidate => candidate.key === key);
+    if (!fact) return undefined;
+
+    const transcript = [
+      state.collectedData.businessDescription || '',
+      ...(state.collectedData.briefExchanges || []).map(exchange => exchange.answer),
+    ].join('\n');
+
+    const route = routeFact(fact, {
+      quoteVerified: verifyQuote(fact.quote, transcript),
+      declined: (state.collectedData.proposedFacts || [])
+        .filter(proposed => proposed.verdict === 'declined')
+        .map(proposed => proposed.key),
+    });
+
+    return route === 'apply' ? fact.value : undefined;
   }
 
   /**
@@ -1649,6 +1936,109 @@ export class OnboardingConversationManager {
    * empty one stops the build.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * What this business needs in order to sell, read off the finished interview.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Returns facts, never decisions. Each one carries the owner's OWN WORDS as
+   * evidence, and every one of those is checked against the transcript before
+   * it can settle anything — see `configurationInference`, where the routing
+   * table and the reasoning live.
+   *
+   * NEVER LOAD-BEARING. A refusal, a malformed answer, a provider outage: all
+   * of them return an empty list, and the interview then asks every question
+   * exactly as it did before this existed. Nothing here may make a build fail
+   * or a question disappear without an answer behind it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private async readConfiguration(
+    story: string,
+    exchanges: Array<{ field: BriefField['key']; question: string; answer: string }>,
+    language: Language,
+    owner: BosLlmOwner
+  ): Promise<InferredFact[]> {
+    /* Nothing was said beyond the first line. There is nothing to read. */
+    if (!exchanges.length && !story.trim()) return [];
+
+    const factory = getProviderFactory();
+    const context = this.callContext(owner, 'configuration_inference');
+    const settings = await resolveBosLlmSettings('onboarding', 'configuration_inference');
+
+    const system = configurationSystemPrompt();
+
+    /* The same text the quotes are checked against, so a quote that verifies
+       here is a quote the owner can be shown next to the conclusion. */
+    const transcript = [story, ...exchanges.map(exchange => exchange.answer)].join('\n');
+
+    const lines = [
+      `Language: ${language}`,
+      'What the owner wrote about their business:',
+      story || '(nothing)',
+    ];
+
+    exchanges.forEach((exchange, index) => {
+      lines.push('', `Q${index + 1}: ${exchange.question}`, `A${index + 1}: ${exchange.answer}`);
+    });
+
+    try {
+      const { result: response } = await withModelFallback(settings, (model) => factory.complete({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: lines.join('\n') },
+        ],
+        response_format: { type: 'json_object' },
+        ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+      }, context));
+
+      const parsed = JSON.parse(response.content)?.facts;
+      if (!Array.isArray(parsed)) return [];
+
+      const kept: InferredFact[] = [];
+
+      for (const row of parsed) {
+        if (!row || typeof row !== 'object') continue;
+
+        const key = (row as { key?: unknown }).key;
+        const quote = (row as { quote?: unknown }).quote;
+        const confidence = (row as { confidence?: unknown }).confidence;
+        const definition = typeof key === 'string' ? configFact(key) : null;
+
+        /* A key we do not know, or a shape we cannot use. */
+        if (!definition) continue;
+        if (typeof quote !== 'string') continue;
+        if (confidence !== 'stated' && confidence !== 'implied' && confidence !== 'guessed') continue;
+        if (!definition.validate((row as { value?: unknown }).value)) continue;
+
+        kept.push({
+          key: definition.key,
+          value: (row as { value: unknown }).value,
+          confidence,
+          quote: quote.trim(),
+        });
+      }
+
+      /*
+       * Logged by KEY and CONFIDENCE only. The quote is the owner's own words
+       * and belongs nowhere above debug (OI-7/OI-8), and the value can be a
+       * fact about their business.
+       */
+      logger.info(
+        {
+          read: kept.map(fact => `${fact.key}:${fact.confidence}`),
+          verified: kept.filter(fact => verifyQuote(fact.quote, transcript)).length,
+        },
+        'Read the configuration facts off the interview'
+      );
+
+      return kept;
+    } catch (error) {
+      logExtractionFailure(error, 'Reading the configuration facts failed');
+      /* Every question is asked, exactly as before. */
+      return [];
+    }
+  }
+
   private async writeDescription(
     story: string,
     exchanges: Array<{ field: BriefField['key']; question: string; answer: string }>,
@@ -1830,52 +2220,116 @@ export class OnboardingConversationManager {
       'WHAT WE ARE COLLECTING:',
       briefContract(),
       '',
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE RULES BELOW ARE TERSE ON PURPOSE. THEIR EVIDENCE IS HERE.
+       *
+       * Every rule in this prompt is a measured failure from a real interview,
+       * and each one was first written into the prompt WITH its evidence. That
+       * grew it to 73 lines and about 1,270 tokens, sent five or six times per
+       * onboarding, and the rules themselves got harder to find among the
+       * reasoning. The model needs the rule; the next person to touch this
+       * needs the reason. So the reasons live here and the prompt states the
+       * rule once.
+       *
+       * Do not re-inline any of this when a new failure turns up. Add the
+       * case here and one terse line below.
+       *
+       *   FIELD ALREADY ANSWERED, on an ADHD coach
+       *     "I'm a ADHD coach helping adolescence with their day by day"
+       *     > "Think of the last teenager you helped: what did they need from
+       *        your ADHD coaching?"
+       *     He had just named his audience. Everything outstanding is listed
+       *     to the model as missing, because the brief starts EMPTY and
+       *     nothing reads the opening line into it, so "do not ask about it"
+       *     was one advisory line against an explicit list, and it lost on the
+       *     first question. The fix was the MECHANISM: "skip" is durable,
+       *     declining to ask is not, and a field merely passed over is still
+       *     outstanding next turn.
+       *
+       *   OBVIOUS FROM THE TRADE, on a hair salon
+       *     "What do kids end up with after a visit?"  > better hait style
+       *     "Describe what happens when someone books" > they book and come
+       *     Both answers are the question restated: for a haircut the outcome
+       *     IS the haircut. Those fields exist for work the buyer cannot
+       *     picture, which is why a coach still gets asked them.
+       *
+       *   PADDED, on a gym trainer
+       *     example  "What have clients told you made them pick you?"    9 words
+       *     asked    "What have parents or guardians told you made them
+       *               choose you over other gym trainers for their kids?" 18 words
+       *     answered "better with kids". The example plus three qualifiers.
+       *     A word count is the wrong rule — "twelve words is plenty" then
+       *     flagged a good 14-word question that had personalised once. The
+       *     fault is padding, not length.
+       *
+       *   CIRCULAR, on the same ADHD coach
+       *     "What did they need from your ADHD coaching?" can only be
+       *     answered with the service he had just named.
+       *
+       *   NO ANCHOR, on the same coach, and the opposite of padding
+       *     example  "...what happens after someone decides to work with
+       *               you: what comes first?"                           15 words
+       *     asked    "What happens during a session with your clients?"  8 words
+       *     He reported not knowing what to answer, and he was right: "what
+       *     comes first" points at one moment he can recall, while "what
+       *     happens during a session" asks him to summarise his own work.
+       *     The no-padding rule had been read as "be short" and the anchor
+       *     went with the words. The example's SPECIFICITY is load-bearing.
+       *
+       *   SELF-CHARACTERISING                "What makes you different?" > "professional"
+       *   OPTIONS OFFERED                    "beginners, athletes or amateurs?" > "all kind"
+       *   TWO ASKS IN ONE                    "Who were they, and what did they need?" > an age range
+       * ───────────────────────────────────────────────────────────────────────
+       */
       'RULES:',
-      '- Ask about ONE field. Choose the one whose absence would hurt the page most.',
-      '- If the description already answers a field well enough to write from, do NOT ask about it.',
-      '- If nothing is worth asking, return {"field": null}.',
+      '- Ask about ONE field: the one whose absence would hurt the page most.',
       /*
-       * The test that separates a question worth a turn from a question that
-       * returns its own premise. Both failures below are measured, from one
-       * hair salon interview.
+       * THE WORKED EXAMPLE ON THIS RULE IS LOAD-BEARING. Measured: the rule
+       * was once stated with it and the model skipped `audience` correctly;
+       * the example was moved up into the comment block to shorten the prompt
+       * and `audience` was then asked in four runs out of four. Terse is right
+       * for every other rule here. This one keeps its example.
        */
-      '- SKIP ANY FIELD WHOSE ANSWER IS ALREADY OBVIOUS FROM THE TRADE. Before asking,',
-      '  predict the answer. If your prediction is the question restated, the question is',
-      '  worthless and the owner will have to invent something to fill it. A hair salon',
-      '  asked what the client walks away with answers "a better haircut". A salon asked',
-      '  to walk through its process answers "they book and come in". Put every such',
-      '  field in "skip" and never ask it. Judge each field against THIS trade: the same',
-      '  two questions are essential for a coach, a consultant, a course or a programme,',
-      '  where the buyer genuinely cannot picture the work.',
+      '- Everything outstanding is listed to you as missing, INCLUDING what they have',
+      '  just told you. A field their description already answers goes in "skip", not',
+      '  into a question. Declining to ask it is not enough: it comes back next turn.',
+      '  "I am an ADHD coach helping adolescents with their day to day" ANSWERS the',
+      '  audience. Skip it. Asked anyway, it returns the description reworded.',
+      '- Also skip any field whose answer this TRADE makes obvious. Predict the answer',
+      '  first: if the prediction is the question restated, the field is worthless here',
+      '  and the owner will invent something to fill it. Judge per trade, though. A',
+      '  coach, a consultant or a course needs exactly the fields a salon does not.',
       '- Three sharp questions beat six dutiful ones. The budget is a ceiling, not a',
-      '  quota, and an owner inventing an answer is worse than an unanswered field: it',
-      '  becomes a claim on their website that they did not make.',
-      '- For "delivery", ask about the WORK, never about booking or paying. If the work',
-      '  is a single visit with nothing to describe, skip it.',
-      '- Write the question in the owner\'s own language, referring to what they actually said.',
-      '- One sentence. No preamble, no "great!", no explaining why you are asking.',
-      '- NEVER ask about prices, opening hours, service names, or how payment is taken.',
-      '  Those are asked elsewhere and owned by an editor; asking here creates a second answer.',
+      '  quota, and an invented answer becomes a claim on their website.',
+      '- If nothing is left worth asking, return {"field": null}.',
+      '- For "delivery", ask about the WORK, never booking or paying. Skip it when the',
+      '  work is a single visit with nothing to describe.',
+      '- NEVER ask about prices, opening hours, service names or how payment is taken.',
+      '  Those are asked elsewhere; asking here creates a second answer.',
       '',
-      /*
-       * HOW the question is phrased decides whether the answer is usable, and
-       * each of these four is a measured failure rather than a style note. The
-       * examples in the contract above demonstrate them; these state them,
-       * because a model obeys a rule more reliably than it imitates a sample.
-       */
       'HOW TO WRITE THE QUESTION:',
-      '- Ask for something the owner can REMEMBER, not something they have to work out:',
-      '  "what is the last thing a client asked you?" beats "what do clients worry about?".',
-      '- NEVER offer options to choose from. "Are they beginners, athletes, or amateurs?"',
-      '  was asked and answered "all kind" - which is true, and useless. Ask openly.',
-      '- NEVER ask the owner to characterise themselves. "What makes you different?" returns',
-      '  "professional" and "personalised", the very copy this interview exists to prevent.',
-      '  Ask what a CLIENT said or did instead.',
+      '- ONE ask. Never join two with "and" or a comma: the owner answers the half they',
+      '  can and the other half is lost without either of you noticing.',
+      '- ASK FOR ONE MOMENT, NOT A SUMMARY. Keep whatever anchor the example carries:',
+      '  "what comes first", "the last thing they asked", "the last person who came to',
+      '  you". If your question could be answered with an essay, narrow it to a first',
+      '  step, a last time, a single client.',
+      '- Ask for what they can REMEMBER, not what they must work out: "the last thing a',
+      '  client asked you" beats "what do clients worry about".',
+      '- Keep the example\'s own length, six to fifteen words. Do not pad it.',
+      '  Personalise ONCE: their trade or their client, never both, never twice.',
+      '- NEVER name their service inside the question about it. Predict your own',
+      '  question\'s answer: if it is something they have already said, do not ask it.',
+      '- NEVER offer options, and never ask them to characterise themselves. Ask what a',
+      '  CLIENT said or did.',
       '- Assume nothing about the shape of the work: not "after a few months", not "each',
-      '  session", not "every week". A one-off job and a year-long programme both answer this.',
-      '- No dashes of any kind between clauses, em, en or hyphen. Use a comma,',
-      '  a colon or a full stop. A dash joins two half-thoughts without saying',
-      '  how they relate, which is why it reads flat.',
+      '  session", not "every week". A one-off job and a year-long programme both answer.',
+      '- One sentence, in their language, referring to what they actually said. No',
+      '  preamble, no "great!", no explaining why you are asking.',
+      /* Naming all three is the rule. "No dashes" alone was read as "fewer". */
+      '- No dashes of any kind between clauses, em, en or hyphen. Use a comma, a colon',
+      '  or a full stop.',
       '',
       'Return JSON: {"field": "<one of: ' + BRIEF_FIELDS.map(f => f.key).join(', ') +
         '> or null", "question": "<the question>", "skip": ["<fields whose answer this trade makes obvious>"]}',
@@ -2107,7 +2561,31 @@ export class OnboardingConversationManager {
             ...named,
             ...drafted
               .filter(service => !taken.has(service.name.toLowerCase().trim()))
-              .map(service => ({ ...service, is_scheduled: sellsScheduled, collection })),
+              .map(service => ({
+                ...service,
+                /*
+                 * THE SERVICE'S OWN ANSWER FIRST, the business-wide one behind
+                 * it.
+                 *
+                 * This was `is_scheduled: sellsScheduled` flat, so one answer
+                 * was stamped on every row and a mixed catalogue was impossible
+                 * to state. A business selling a recorded course alongside
+                 * booked sessions had both marked the same, and every reader
+                 * downstream that works per service, which is nearly all of
+                 * them, saw a business that only does one of the two.
+                 *
+                 * `??`, not `||`: a drafted `false` is an answer about THIS
+                 * service and must survive. `||` would discard it and fall
+                 * through to the business-wide default, which is the bug
+                 * rewritten in shorter form.
+                 *
+                 * The business-wide answer still decides everything the model
+                 * declined to judge, so a single-service business behaves
+                 * exactly as it did.
+                 */
+                is_scheduled: service.is_scheduled ?? sellsScheduled,
+                collection,
+              })),
           ],
         };
       }
@@ -2147,15 +2625,23 @@ export class OnboardingConversationManager {
       '- No dashes between clauses. Use a comma, a colon or a full stop.',
       '- Write everything in the owner\'s language.',
       '',
+      '- is_scheduled: does a client pick a TIME for this one? true for anything held at',
+      '  an appointed hour, a session, a consultation, a treatment, a class with a start',
+      '  time. false for anything bought and then used whenever they like, a recorded',
+      '  course, a downloadable plan, a product, a membership. Judge each service on its',
+      '  own: a business can perfectly well sell a course AND run sessions, and saying so',
+      '  is the entire point of this field. Omit it when the work genuinely could be',
+      '  either and nothing they said decides it.',
+      '',
       '- duration_minutes: how long ONE of these takes, as a number of minutes, for a',
       '  service a client books a time for. Read it from the work itself: a consultation',
       '  or an assessment is usually 30 to 60, a treatment or a training session 45 to 90,',
       '  a workshop or a full session half a day. A round, ordinary number a person would',
-      '  say out loud. Omit it only for something nobody books a slot for, like a product',
-      '  or a course sold as a whole. This is a FIELD, never words: the rule above still',
+      '  say out loud. Omit it for anything whose is_scheduled is false, which is the same',
+      '  judgement stated once. This is a FIELD, never words: the rule above still',
       '  holds, and no length may appear in the name or the description.',
       '',
-      'Return JSON: {"services": [{"name": "...", "description": "...", "duration_minutes": 60}]}',
+      'Return JSON: {"services": [{"name": "...", "description": "...", "is_scheduled": true, "duration_minutes": 60}]}',
     ].join('\n');
 
     const context_lines = [
@@ -2187,7 +2673,7 @@ export class OnboardingConversationManager {
       if (!Array.isArray(parsed)) return [];
 
       const drafted: ExtractedService[] = parsed
-        .filter((row: unknown): row is { name: string; description?: unknown; duration_minutes?: unknown } =>
+        .filter((row: unknown): row is { name: string; description?: unknown; duration_minutes?: unknown; is_scheduled?: unknown } =>
           !!row && typeof (row as { name?: unknown }).name === 'string'
           && (row as { name: string }).name.trim().length > 0
         )
@@ -2229,6 +2715,27 @@ export class OnboardingConversationManager {
               && row.duration_minutes > 0
               ? Math.round(row.duration_minutes)
               : undefined,
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * WHETHER THIS ONE IS BOOKED, PER SERVICE.
+           *
+           * The interview asks once, for the whole business, and that answer
+           * was stamped identically on every row. So a catalogue holding both a
+           * booked session and a self-paced course could not be expressed: one
+           * answer flattened it, and everything downstream that reads services
+           * individually, which is most of it, had nothing to read.
+           *
+           * The model was ALREADY making this judgement, implicitly, by being
+           * told to omit a duration for "a course sold as a whole". Asking for
+           * it outright makes the same decision legible and usable.
+           *
+           * `undefined`, not `false`, when the model says nothing: the caller
+           * then falls back to the answer the owner actually gave. Coercing a
+           * silence into "not booked" would quietly remove a calendar from a
+           * business that asked for one.
+           * ───────────────────────────────────────────────────────────────────
+           */
+          is_scheduled: typeof row.is_scheduled === 'boolean' ? row.is_scheduled : undefined,
           /* Price is still never invented here: it is the owner's to state, and
              the editor asks for it. Only the length is read. */
         }));
@@ -2957,6 +3464,45 @@ export class OnboardingConversationManager {
    * confirmation. One list, so "לא" means the same thing in both places.
    * ───────────────────────────────────────────────────────────────────────────
    */
+  /**
+   * Is this a sentence about the work rather than what the business is called?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Two tests, both of which the reported case trips, and either alone is
+   * enough. They are deliberately crude: the cost of a false NEGATIVE is a
+   * paragraph on every invoice, and the cost of a false positive is one extra
+   * question on a screen that is already asking questions.
+   *
+   *   LENGTH   Business names are short. The longest plausible real one —
+   *            "Smith & Sons Plumbing and Heating Services Limited" — is 49
+   *            characters and 8 words, so the thresholds sit just above it.
+   *            The reported sentence was 134 characters and 21 words.
+   *
+   *   VOICE    A name does not introduce itself in the first person. "I'm a",
+   *            "I am", "we are", "אני", "somos" are someone answering "what do
+   *            you do", which is the question one turn later and the question
+   *            they were expecting.
+   *
+   * Matched on the start of the text for the voice test, because a name may
+   * legitimately contain "I am" inside it ("Who Am I Studios") while almost
+   * none begins with it.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  private looksLikeADescription(text: string): boolean {
+    const said = text.trim();
+    const words = said.split(/\s+/).filter(Boolean).length;
+
+    if (said.length > 60 || words > 9) return true;
+
+    /* English, Hebrew and Spanish first-person openings. */
+    const firstPerson =
+      /^(i'?m|i am|we'?re|we are|my business|our business)\b/i.test(said)
+      || /^(אני |אנחנו |העסק שלי)/.test(said)
+      || /^(soy |somos |mi negocio)/i.test(said);
+
+    return firstPerson;
+  }
+
   private readNameConfirmation(message: string, language: Language): 'yes' | 'no' | 'renamed' {
     const text = message.trim().toLowerCase();
 
@@ -3168,6 +3714,24 @@ export class OnboardingConversationManager {
   }
 
   /**
+   * Did the owner refuse the website the chat had concluded?
+   *
+   * Matched on ONE distinctive word per language — the verb from
+   * `website_skip_option` — rather than by looking for a negation near
+   * "website". Negation detection across three languages is where this would
+   * go wrong, and it would go wrong in the expensive direction: every option
+   * on this question contains the word "website" in some form, including the
+   * skip itself, so a near-miss reads as the opposite of what was tapped.
+   *
+   * These three words appear in no other option, which is what makes the
+   * check safe. Keep it that way if the copy changes.
+   */
+  private saysSkipWebsite(text: string): boolean {
+    const lower = text.toLowerCase();
+    return lower.includes('skip') || lower.includes('לדלג') || lower.includes('omitir');
+  }
+
+  /**
    * Check if text mentions website
    */
   private mentionsWebsite(text: string): boolean {
@@ -3339,6 +3903,13 @@ export class OnboardingConversationManager {
           return { response: responses.business_name_again_prompt };
         }
 
+        if (state.pendingQuestion === 'name_not_a_name') {
+          /* They answered the question they were expecting rather than the one
+             on screen, so this says which one is on screen, and promises the
+             other is coming rather than discarding what they just typed. */
+          return { response: responses.business_name_not_a_name_prompt };
+        }
+
         return {
           response: responses.business_name_prompt,
         };
@@ -3362,6 +3933,43 @@ export class OnboardingConversationManager {
       case 'service_details':
         // How they sell — the two capability questions, then the count.
         if (state.pendingQuestion === 'sell_scheduled') {
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * A ROUTE WITH NOWHERE TO GO IS A ROUTE THAT DOES NOTHING.
+           *
+           * `sells_scheduled` routes `implied` to `propose`, and until now
+           * nothing rendered a proposal for it — only the count, intake and
+           * website questions had one. So a fact the interview had read,
+           * verified against the owner's own words, and deliberately routed to
+           * `propose` arrived here and was asked as though we knew nothing.
+           *
+           * That is how the gym trainer who wrote "I book a time with them"
+           * was asked whether clients book a time with him. Two things were
+           * wrong at once: the model under-labelled the confidence (see the
+           * `readConfiguration` prompt) and `propose` had no voice here. The
+           * first fix alone would have left the second waiting for the next
+           * owner whose words only imply it.
+           *
+           * Still a question, with the same chips and the same reader. The
+           * difference is that the owner is told what we already understood,
+           * in their words, so confirming is one tap and correcting is honest.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          const scheduling = this.proposableFact(state, 'sells_scheduled');
+
+          if (scheduling && typeof scheduling.value === 'boolean') {
+            return {
+              response: `${this.proposalSentence(
+                state.language,
+                scheduling.quote,
+                scheduling.value
+                  ? responses.scheduled_consequence_yes
+                  : responses.scheduled_consequence_no
+              )}\n\n${responses.sell_scheduled_prompt}`,
+              suggestions: responses.sell_scheduled_options,
+            };
+          }
+
           return {
             response: responses.sell_scheduled_prompt,
             suggestions: responses.sell_scheduled_options,
@@ -3376,6 +3984,31 @@ export class OnboardingConversationManager {
         }
 
         if (state.pendingQuestion === 'service_count') {
+          /*
+           * Proposed where the interview said so, asked otherwise.
+           *
+           * Never APPLIED, whatever the evidence: the figure decides how many
+           * rows land in the owner's catalogue, and a wrong one is cleaned up
+           * by hand, one row at a time. `readServiceCount` makes the same
+           * argument about guessing from prose, which is why it re-asks rather
+           * than inventing a number.
+           *
+           * The chips are untouched, so the reader, the typed-number path and
+           * every stored conversation behave exactly as before.
+           */
+          const counted = this.proposableFact(state, 'service_count');
+
+          if (counted && typeof counted.value === 'number') {
+            return {
+              response: this.proposalSentence(
+                state.language,
+                counted.quote,
+                responses.service_count_consequence.replace('{count}', String(counted.value))
+              ),
+              suggestions: responses.service_count_options,
+            };
+          }
+
           return {
             response: responses.service_count_prompt,
             suggestions: responses.service_count_options,
@@ -3385,6 +4018,42 @@ export class OnboardingConversationManager {
         /* Only reached for a business that books appointments — see the
            `intake` branch in `updateStateFromMessage`. */
         if (state.pendingQuestion === 'intake') {
+          /*
+           * ─────────────────────────────────────────────────────────────────
+           * PUT IT TO THEM, where the interview already answered it.
+           *
+           * The cold question stays for everyone else, and the ANSWERS are
+           * unchanged either way: the same two chips, read by the same
+           * reader, so a typed reply and a stored conversation behave exactly
+           * as before and the guard pinning label-to-matcher identity still
+           * holds.
+           *
+           * What changes is that the owner is shown WHY. "You said 'I send
+           * them a health questionnaire first', so I would put a form before
+           * the first session" is a conclusion they can check. The cold
+           * question is one they have to answer from nothing, about a feature
+           * whose name they have not been told.
+           *
+           * Still a question, never an inference applied over their head:
+           * `CONFIG_FACTS` routes intake to `propose` at every confidence,
+           * because being wrong here puts a form in front of a stranger.
+           * ─────────────────────────────────────────────────────────────────
+           */
+          const proposal = this.proposableFact(state, 'needs_intake');
+
+          if (proposal && typeof proposal.value === 'boolean') {
+            return {
+              response: this.proposalSentence(
+                state.language,
+                proposal.quote,
+                proposal.value
+                  ? responses.intake_consequence_yes
+                  : responses.intake_consequence_no
+              ),
+              suggestions: responses.intake_options,
+            };
+          }
+
           return {
             response: responses.intake_prompt,
             suggestions: responses.intake_options,
@@ -3413,13 +4082,68 @@ export class OnboardingConversationManager {
           suggestions: responses.payment_collection_options,
         };
 
-      case 'client_acquisition':
+      case 'client_acquisition': {
         // Q4: What digital tools do you need? (multi-select)
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE WEBSITE CONCLUSION IS SHOWN, NOT APPLIED. And that is a
+         * deliberate departure from the other facts.
+         *
+         * `needs_website` is the one fact this question does not own outright.
+         * The question has a SECOND half — connect Facebook, Instagram or
+         * Google — which nothing in a business description can answer, so the
+         * question has to be asked whatever we concluded about the website.
+         *
+         * Settling the website half silently while still asking the question
+         * would let the two contradict each other: the owner ticks nothing,
+         * `extractClientAcquisition` reads that as "no website", and the
+         * stored conclusion says otherwise. One of them would win, and which
+         * one would depend on read order.
+         *
+         * So the conclusion is put in front of them instead, with their own
+         * words, and the tick is still theirs. They are told what we think and
+         * asked anyway, which is the honest version of both.
+         * ─────────────────────────────────────────────────────────────────────
+         */
+        const site = this.proposableFact(state, 'needs_website')
+          ?? (this.settledFact(state, 'needs_website') !== undefined
+            ? {
+                value: this.settledFact(state, 'needs_website'),
+                quote: state.collectedData.inferredFacts?.find(f => f.key === 'needs_website')?.quote ?? '',
+              }
+            : null);
+
+        if (site && site.value === true && site.quote) {
+          /*
+           * The refusal has to be ON THE SCREEN, because in this branch the
+           * conclusion now stands unless it is refused (see the
+           * `client_acquisition` case in `processUserMessage`). A conclusion
+           * that holds by default with no visible way to say no is not a
+           * conclusion put to somebody, it is one imposed on them.
+           *
+           * Last, after the things we would build: it is the way out, not an
+           * option competing with them.
+           */
+          return {
+            response: `${this.proposalSentence(
+              state.language,
+              site.quote,
+              responses.website_consequence
+            )}\n\n${responses.client_acquisition_prompt_concluded}`,
+            suggestions: [
+              ...responses.client_acquisition_options,
+              responses.website_skip_option,
+            ],
+            multiSelect: true,
+          };
+        }
+
         return {
           response: responses.client_acquisition_prompt,
           suggestions: responses.client_acquisition_options,
           multiSelect: true,  // Signal to frontend that this is multi-select
         };
+      }
 
       case 'preview':
         // Visual preview card handles the display - just return minimal message
@@ -3479,10 +4203,11 @@ export class OnboardingConversationManager {
     if (language === 'he') {
       return {
         business_name_prompt: 'מעולה! נתחיל מהשם. איך קוראים לעסק שלך?',
-        business_story_prompt: 'תודה! ועכשיו ספרו לי על העסק. מה אתם עושים, ומה הביא אתכם לכאן היום?',
-        business_story_again_prompt: 'סליחה, אני צריך קצת יותר מזה כדי לעבוד איתו. במשפט או שניים: מה אתם עושים, ובשביל מי? משהו כמו "אני מנהל מספרה לילדים" בהחלט מספיק.',
+        business_story_prompt: 'תודה! ועכשיו ספרו לי על העסק. במה אתם עוסקים?',
+        business_story_again_prompt: 'סליחה, אני צריך קצת יותר מזה כדי לעבוד איתו. במשפט או שניים, במה אתם עוסקים? משהו כמו "אני מנהל מספרה לילדים" בהחלט מספיק.',
         name_confirm_prompt: 'נרשם. רק כדי לוודא, "{name}" זה בדיוק איך שתרצו שזה ייכתב? זה יופיע על כל חשבונית וכל מייל שנשלח בשמכם.',
         name_confirm_options: ['כן, זה נכון', 'לא, אני רוצה לתקן'],
+        business_name_not_a_name_prompt: 'זה נשמע כמו מה שאתם עושים, ועל זה אשאל מיד אחר כך. כרגע אני צריך רק את השם: איך קוראים לעסק?',
         business_name_again_prompt: 'אין בעיה. איך זה צריך להיות?',
         client_workflow_prompt: 'תודה! איך אתם עובדים עם לקוחות? יש לכם שירותים עם מחירים קבועים, או שזה יותר מותאם אישית ללקוח?',
         client_workflow_options: ['שירותים עם מחירים קבועים', 'מותאם אישית ללקוח', 'שילוב של שניהם'],
@@ -3500,11 +4225,23 @@ export class OnboardingConversationManager {
           'אני גובה את הכסף בעצמי: חשבונית, העברה, ביט או מזומן',
           'אני לא גובה כסף על מה שאני מוכר',
         ],
-        service_count_prompt: 'כמעט סיימנו. כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות ותוכלו להשלים אותן אחר כך. אפשר גם בלי: אתר וטופס יצירת קשר בלבד.',
+        service_count_prompt: 'כמה דברים שונים אתם מוכרים בערך? אכין אותם כטיוטות להשלמה אחר כך, ואפשר גם בלי.',
         intake_prompt: 'הלקוחות שלכם ממלאים משהו לפני שאתם נפגשים, כמו טופס או הצהרת בריאות?',
         intake_options: ['כן, הם ממלאים טופס לפני', 'לא, הם פשוט קובעים תור'],
+        /* Half a sentence. The other half is the owner's own words, and the
+           two are joined in code by `proposalSentence`. */
+        scheduled_consequence_yes: 'אני מבין שלקוחות קובעים איתך זמן.',
+        scheduled_consequence_no: 'אני מבין שאין צורך בקביעת זמן.',
+        intake_consequence_yes: 'הייתי מבקש מהם למלא טופס קצר לפני הפגישה הראשונה. נכון?',
+        intake_consequence_no: 'נראה לי שהם פשוט קובעים תור בלי למלא כלום. נכון?',
         service_count_options: ['1', '2', '3', '5', 'אין עדיין'],
-        client_acquisition_prompt: 'עכשיו, איך לקוחות ימצאו אותך ויזמינו? סמן כל מה שרלוונטי (או כלום), ואקים את מה שסימנת.',
+        service_count_consequence: 'הייתי מכין {count} שירותים כטיוטה. נכון?',
+        /* See the English copy: the website is offered, not listed. */
+        client_acquisition_prompt: 'דבר אחרון: אני יכול לבנות לך אתר, ולחבר חשבונות שאתה כבר משתמש בהם כדי שתראה מאיפה הלקוחות מגיעים. סמן מה שאתה רוצה.',
+        /* See the English copy. The skip chip must keep the word לדלג. */
+        client_acquisition_prompt_concluded: 'אני אבנה אותו. סמן כל דבר נוסף שתרצה, או בחר לדלג על האתר אם לא הבנתי נכון.',
+        website_skip_option: 'לדלג על האתר בשלב זה',
+        website_consequence: 'אני מניח שתרצו שנבנה לכם אתר.',
         client_acquisition_options: [
           'שאבנה לך אתר מקצועי',
           'לחבר פייסבוק, אינסטגרם או גוגל: לראות מאיפה מגיעים הלקוחות',
@@ -3535,10 +4272,11 @@ export class OnboardingConversationManager {
     if (language === 'es') {
       return {
         business_name_prompt: '¡Genial! Empecemos por el nombre. ¿Cómo se llama tu negocio?',
-        business_story_prompt: '¡Gracias! Ahora cuéntame sobre tu negocio. ¿Qué haces y qué te trajo aquí hoy?',
-        business_story_again_prompt: 'Perdona, necesito un poco más para trabajar con eso. En una o dos frases: ¿qué haces y para quién? Algo como "tengo una peluquería para niños" es suficiente.',
+        business_story_prompt: '¡Gracias! Ahora cuéntame sobre tu negocio. ¿A qué te dedicas?',
+        business_story_again_prompt: 'Perdona, necesito un poco más para trabajar con eso. En una o dos frases, ¿a qué te dedicas? Algo como "tengo una peluquería para niños" es suficiente.',
         name_confirm_prompt: 'Anotado. Solo para confirmar, ¿"{name}" es exactamente como quieres que aparezca? Va en cada factura y cada correo que enviamos por ti.',
         name_confirm_options: ['Sí, es correcto', 'No, quiero corregirlo'],
+        business_name_not_a_name_prompt: 'Eso suena a lo que haces, y te lo pregunto justo después. Ahora solo necesito el nombre: ¿cómo se llama el negocio?',
         business_name_again_prompt: 'Sin problema. ¿Cómo debería ser?',
         client_workflow_prompt: '¡Gracias! ¿Cómo trabajas con tus clientes? ¿Tienes servicios con precios fijos, o es más personalizado por cliente?',
         client_workflow_options: ['Servicios con precios fijos', 'Personalizado por cliente', 'Combinación de ambos'],
@@ -3556,11 +4294,21 @@ export class OnboardingConversationManager {
           'Cobro yo mismo: factura, transferencia o efectivo',
           'No cobro por nada de lo que ofrezco',
         ],
-        service_count_prompt: 'Casi está. ¿Cuántas cosas distintas vendes más o menos? Las dejaré como borradores para que las completes luego. También vale ninguna: solo web y formulario de contacto.',
+        service_count_prompt: '¿Cuántas cosas distintas vendes más o menos? Las dejaré como borradores para completar luego, y ninguna también vale.',
         intake_prompt: '¿Tus clientes rellenan algo antes de verte, como un formulario o una ficha de salud?',
         intake_options: ['Sí, rellenan un formulario antes', 'No, solo reservan'],
+        scheduled_consequence_yes: 'entiendo que tus clientes reservan una hora contigo.',
+        scheduled_consequence_no: 'entiendo que no hace falta reservar hora.',
+        intake_consequence_yes: 'les pediría que rellenaran un formulario breve antes de la primera cita. ¿Es así?',
+        intake_consequence_no: 'diría que simplemente reservan, sin rellenar nada. ¿Es así?',
         service_count_options: ['1', '2', '3', '5', 'Ninguna todavía'],
-        client_acquisition_prompt: 'Ahora, ¿cómo van a encontrarte y reservar tus clientes? Marca lo que corresponda (o nada) y construiré lo que elijas.',
+        service_count_consequence: 'prepararía {count} servicios como borrador. ¿Es así?',
+        /* See the English copy: the website is offered, not listed. */
+        client_acquisition_prompt: 'Una última cosa: puedo construirte una web y conectar las cuentas que ya usas para que veas de dónde vienen tus clientes. Marca lo que quieras.',
+        /* See the English copy. The skip chip must keep the word Omitir. */
+        client_acquisition_prompt_concluded: 'La construyo. Marca cualquier otra cosa que quieras, o elige omitir la web si lo he entendido mal.',
+        website_skip_option: 'Omitir la web por ahora',
+        website_consequence: 'imagino que querrás que te construyamos una web.',
         client_acquisition_options: [
           'Que te construya un sitio web profesional',
           'Conectar Facebook, Instagram o Google: ver de dónde vienen tus clientes',
@@ -3577,14 +4325,14 @@ export class OnboardingConversationManager {
     // English (default)
     return {
       business_name_prompt: "Great! Let's start with the name. What is your business called?",
-      business_story_prompt: "Thanks! Now tell me about the business. What do you do, and what brought you here today?",
+      business_story_prompt: "Thanks! Now tell me about the business. What do you do?",
       /*
        * Names what is missing and shows the shape of an answer, rather than
        * repeating the question. Everything downstream is written from this
        * sentence, which is worth saying out loud: it is the one place in the
        * interview where more detail genuinely pays the owner back.
        */
-      business_story_again_prompt: "Sorry, I need a little more than that to work with. In a sentence or two: what do you do, and who for? Something like \"I run a hair salon for kids\" is plenty.",
+      business_story_again_prompt: "Sorry, I need a little more than that to work with. In a sentence or two, what do you do? Something like \"I run a hair salon for kids\" is plenty.",
       /*
        * Says WHERE the name ends up, which is the only reason to spend a turn
        * reading it back. "Is this correct?" invites a reflexive yes; "it goes
@@ -3592,6 +4340,9 @@ export class OnboardingConversationManager {
        */
       name_confirm_prompt: 'Got it. Just to be sure, is "{name}" exactly how you want it written? It goes on every invoice and email we send for you.',
       name_confirm_options: ["Yes, that's right", 'No, let me fix it'],
+      /* Says which question is on screen, and promises the other one is
+         coming — they were answering it one turn early, not wrongly. */
+      business_name_not_a_name_prompt: "That sounds like what you do, and I ask about that next. For now I just need the name: what is the business called?",
       business_name_again_prompt: 'No problem. What should it be?',
       client_workflow_prompt: "Thanks! How do you typically work with clients? Do you have set services and prices, or is it more custom per client?",
       client_workflow_options: ['Fixed services and prices', 'Custom per client', 'A mix of both'],
@@ -3609,7 +4360,17 @@ export class OnboardingConversationManager {
         'I collect the money myself: invoice, transfer or cash',
         'Nothing I sell is paid for',
       ],
-      service_count_prompt: "Nearly there. Roughly how many different things do you sell? I'll set them up as drafts for you to finish. None is fine too: just a website and a contact form.",
+      /*
+       * Three sentences became one and a half.
+       *
+       * It read "Nearly there. Roughly how many different things do you sell?
+       * I'll set them up as drafts for you to finish. None is fine too: just a
+       * website and a contact form." Two faults: a preamble the chat forbids
+       * in every model-written question, and a PROMISE OF A WEBSITE two
+       * questions before the website is offered — so an owner who then
+       * declined it had been told twice they were getting one.
+       */
+      service_count_prompt: "Roughly how many different things do you sell? I'll add them as drafts to finish later, and none is fine too.",
       /*
        * Phrased as what the CLIENT does, not as a feature name.
        * "Do you need an intake form?" asks the owner to know what we mean by
@@ -3618,6 +4379,15 @@ export class OnboardingConversationManager {
        */
       intake_prompt: "Do your clients fill in anything before you see them, like a form or health details?",
       intake_options: ['Yes, they fill in a form first', 'No, they just book'],
+      /*
+       * Short, and it does not ask. The question follows on the next line with
+       * its own chips, so a consequence that ended in "Right?" would be a
+       * second question stacked on the first.
+       */
+      scheduled_consequence_yes: 'I take it clients book a time with you.',
+      scheduled_consequence_no: 'I take it there is no time to book.',
+      intake_consequence_yes: 'I would put a short form in front of them before the first session. Right?',
+      intake_consequence_no: 'I would say they just book, without filling anything in. Right?',
       /*
        * "None yet" is an offered answer, not just a typed one.
        *
@@ -3628,7 +4398,29 @@ export class OnboardingConversationManager {
        * reads as a mis-tap.
        */
       service_count_options: ['1', '2', '3', '5', 'None yet'],
-      client_acquisition_prompt: "Now, how will clients find you and book? Tick whatever applies (or nothing), and I will build what you choose.",
+      service_count_consequence: 'I would set up {count} services as drafts. Right?',
+      /*
+       * The offer, not a checklist.
+       *
+       * This read "Tick whatever applies (or nothing), and I will build what
+       * you choose." The parenthesis was the most inviting thing in the
+       * sentence, and tapping past it is what the owner was being nudged
+       * towards. The website is the one capability here that we build for
+       * them, so it is phrased as something offered rather than something to
+       * declare. Nothing is forced: the ticks still decide, and ticking
+       * nothing now keeps a conclusion the chat had already stated out loud.
+       */
+      client_acquisition_prompt: "Last thing: I can build you a website, and connect accounts you already use so you can see where clients come from. Tick what you want.",
+      /*
+       * The same question, asked after the chat has ALREADY said it will build
+       * a site. It does not offer the site again: being asked to confirm
+       * something one line after being told it is happening reads as the chat
+       * not listening to itself. It names the way out instead, which is the
+       * one thing the owner cannot work out from the chips alone.
+       */
+      client_acquisition_prompt_concluded: "I will build it. Tick anything else you want, or skip the website if I read that wrong.",
+      website_skip_option: 'Skip the website for now',
+      website_consequence: 'I take it you want a website built.',
       client_acquisition_options: [
         'Build me a professional website',
         'Connect Facebook, Instagram or Google: see where clients come from',

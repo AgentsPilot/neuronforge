@@ -66,7 +66,14 @@ export class ChannelAttributionRepository {
       // PostgREST reject the whole query, which is what emptied this section.
       const { data, error } = await this.supabase
         .from('crm_contacts')
-        .select('id, created_at, referrer_domain, utm_source, utm_medium, utm_campaign')
+        .select(
+          /* `source_metadata` carries the mailbox channel's own marker. Its
+             leads have no referrer and no utm — the enquiry arrived as an
+             email — so without this column they resolve to `direct` and the
+             channel is invisible on the card that asks where clients come
+             from. */
+          'id, created_at, referrer_domain, utm_source, utm_medium, utm_campaign, source_metadata'
+        )
         .eq('user_id', userId)
         .gte('created_at', since);
 

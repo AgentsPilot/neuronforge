@@ -161,8 +161,73 @@ describe('a placeholder still carries the answers the owner gave', () => {
    * decisions, it inverts them.
    * ───────────────────────────────────────────────────────────────────────────
    */
-  it('stamps the scheduling and collection answers onto the generated rows', () => {
-    expect(manager).toMatch(/\.map\(service => \(\{ \.\.\.service, is_scheduled: sellsScheduled, collection \}\)\)/);
+  it('stamps the collection answer onto the generated rows', () => {
+    expect(manager).toMatch(/collection,\s*\}\)\),/);
+  });
+
+  /**
+   * Whether a service is booked is decided PER SERVICE.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This asserted a flat `is_scheduled: sellsScheduled` on every row, which was
+   * the whole fault: the interview asks once for the business and stamped that
+   * one answer everywhere, so a catalogue holding both a booked session and a
+   * self-paced course could not be stated. The owner's own example — "a user
+   * that just sells courses, no meeting, no schedule needed" — is unreachable
+   * beside anything scheduled, and every reader downstream that works per
+   * service, which is nearly all of them, had one answer to read.
+   *
+   * The model already made this judgement implicitly, by being told to omit a
+   * duration for "a course sold as a whole". It is now a field.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('asks the model which services are booked, one by one', () => {
+    expect(manager).toContain('- is_scheduled: does a client pick a TIME for this one?');
+    expect(manager).toMatch(/a business can perfectly well sell a course AND run sessions/);
+    expect(manager).toMatch(/"is_scheduled": true/);
+  });
+
+  it('lets a service answer for itself, and falls back to the business answer', () => {
+    /*
+     * `??` and not `||`. A drafted `false` is an answer about THIS service;
+     * `||` discards it and falls through to the default, which is the same bug
+     * written more briefly.
+     */
+    expect(manager).toMatch(/is_scheduled: service\.is_scheduled \?\? sellsScheduled/);
+    expect(manager).not.toMatch(/is_scheduled: service\.is_scheduled \|\| sellsScheduled/);
+  });
+
+  it('reads a declined judgement as absent, never as "not booked"', () => {
+    /* Coercing silence to false would quietly remove a calendar from a
+       business that asked for one. */
+    expect(manager).toMatch(/is_scheduled: typeof row\.is_scheduled === 'boolean' \? row\.is_scheduled : undefined/);
+  });
+
+  it('carries that answer through the build rather than flattening it again', () => {
+    /* The route stamped its own business-wide `scheduled` on every row, so the
+       per-service answer died one layer below where it was made. */
+    const route = fs.readFileSync(
+      path.join(process.cwd(), 'app/api/onboarding/build/route.ts'),
+      'utf8'
+    );
+
+    expect(route).toMatch(/const rowScheduled = seed\?\.is_scheduled \?\? scheduled;/);
+    expect(route).toMatch(/is_scheduled: rowScheduled,/);
+
+    /*
+     * Deliberately NOT asserting that `is_scheduled: scheduled` appears
+     * nowhere. The legacy `services[]` branch further down writes exactly
+     * that, and it is already correct there: its `scheduled` is a per-service
+     * local, `service.is_scheduled !== false`, computed inside the loop. A
+     * blanket absence check flags working code and invites someone to "fix"
+     * it. What matters is that the DRAFT branch, the one the chat's ordinary
+     * path uses, reads the seed.
+     */
+    const draftBranch = route.slice(
+      route.indexOf('const rowScheduled'),
+      route.indexOf('sale_mode: seed?.sale_mode')
+    );
+    expect(draftBranch).not.toMatch(/is_scheduled: scheduled\b/);
   });
 
   it('keeps the Stripe decision reading an answer that is actually there', () => {

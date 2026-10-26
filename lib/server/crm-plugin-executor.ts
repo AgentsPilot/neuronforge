@@ -70,6 +70,118 @@ export class CRMPluginExecutor extends BasePluginExecutor {
           })
         );
 
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * AN ENQUIRY, NOT A ROW.
+       *
+       * `create_contact` above is a plain insert, and that is the wrong tool
+       * for somebody who has just written in: it does not resolve the owner's
+       * first pipeline stage, it duplicates a person who has enquired before,
+       * and it files no message on the timeline. All three were got wrong
+       * inline at least once before this moved into one function.
+       *
+       * Delegates to the SAME function the website's own contact form calls,
+       * so an enquiry read out of a mailbox becomes a row indistinguishable
+       * from one typed into the form — including on the day one of those
+       * rules changes. That is the whole point of the action existing.
+       *
+       * `user_id` is the server-resolved connection owner, as everywhere else
+       * in this file: the caller names the enquirer, never the business.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      case 'capture_enquiry': {
+        /*
+         * ─────────────────────────────────────────────────────────────────
+         * TWO CALLERS, TWO SHAPES.
+         *
+         * A web form already HAS the fields, so it sends them. A mailbox
+         * agent has a message, so it sends that and the template learned
+         * from the owner's own mail during setup — and our code reads it.
+         *
+         * Deliberately not a model: everything filed here is emailed to the
+         * address found, fifteen minutes later, by the unanswered-enquiry
+         * chase. `parseEnquiry` returns an address only when it appears
+         * verbatim in the message, so a message we cannot read files
+         * nothing and the agent leaves it UNREAD for a person — rather than
+         * a plausible address nobody typed reaching a stranger.
+         * ─────────────────────────────────────────────────────────────────
+         */
+        /*
+         * A REFERENCE THAT DID NOT RESOLVE IS NOT CONTENT.
+         *
+         * Outlook returns ONE body per message — `body` for a text message,
+         * `html` for an HTML one, never both — and the Outlook plan passes both
+         * refs because it cannot know which it will get. So one of the two
+         * arrives as the unsubstituted `{{current_email.html}}`.
+         *
+         * Left alone, that literal becomes the message text: `parseEnquiry`
+         * finds no address in it, files nothing, and the enquiry stays unread
+         * forever. It fails safe but it fails — so an unresolved reference is
+         * read as the absence it actually is.
+         */
+        const resolved = (value: unknown): string | null => {
+          if (typeof value !== 'string') return null;
+          const trimmed = value.trim();
+          if (!trimmed || /^\{\{[^}]*\}\}$/.test(trimmed)) return null;
+          return value;
+        };
+
+        const rawBody = resolved(params.raw_body);
+        const rawHtml = resolved(params.raw_html);
+
+        if (rawBody || rawHtml) {
+          const { captureEnquiryFromEmail } = await import(
+            '@/lib/business-os/leads/captureEnquiry'
+          );
+
+          const outcome = await captureEnquiryFromEmail({
+            ownerId: userId,
+            subject: resolved(params.subject),
+            body: rawBody,
+            html: rawHtml,
+            /* The headers that usually carry the enquirer. `from` is passed so
+               it can be EXCLUDED — it is the business, never the lead. */
+            replyTo: resolved(params.reply_to),
+            cc: resolved(params.cc),
+            from: resolved(params.from),
+            /* The notification was sent TO the owner, so this IS the owner's
+               address: free, already on the message, and what stops the
+               business being filed as its own customer. */
+            owner: resolved(params.to),
+            provider: resolved(params.via),
+            template: params.template ?? null,
+            ...(params.source ? { source: params.source } : {}),
+            ...(params.activity_key ? { activityKey: params.activity_key } : {}),
+          });
+
+          /* Reported, never thrown: "this message was not an enquiry" is an
+             outcome the agent must be able to act on by leaving it unread. */
+          return outcome.filed
+            ? { contact_id: outcome.contactId, is_new_contact: outcome.isNewContact, filed: true }
+            : { filed: false, reason: outcome.reason };
+        }
+
+        this.requireParam(params.email, 'email');
+        this.requireParam(params.message, 'message');
+
+        const { captureEnquiry } = await import('@/lib/business-os/leads/captureEnquiry');
+
+        const captured = await captureEnquiry({
+          ownerId: userId,
+          email: params.email,
+          message: params.message,
+          name: params.name ?? null,
+          phone: params.phone ?? null,
+          serviceInterest: params.service_interest ?? null,
+          referralSource: params.referral_source ?? null,
+          pageUrl: params.page_url ?? null,
+          ...(params.source ? { source: params.source } : {}),
+          ...(params.activity_key ? { activityKey: params.activity_key } : {}),
+        });
+
+        return { contact_id: captured.contactId, is_new_contact: captured.isNewContact };
+      }
+
       case 'get_contact':
         this.requireParam(params.id, 'id');
         return this.unwrap(await crmContactRepository.findById(params.id, userId));

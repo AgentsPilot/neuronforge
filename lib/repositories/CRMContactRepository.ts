@@ -8,6 +8,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { activitySentence } from '@/lib/business-os/activityText';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ service: 'CRMContactRepository' });
 
@@ -81,7 +82,16 @@ export interface CRMContactRepositoryResult<T> {
 }
 
 export interface CRMContactListOptions {
-  stage?: string;
+  /**
+   * One stage key, or several.
+   *
+   * An ARRAY because "the client stage" is not a key — it is whatever this
+   * business calls it, and `buildClientStageFilter` answers that with a list.
+   * Callers that asked `{ stage: 'client' }` counted zero on every board whose
+   * client column is `customer`, `active_client` or `לקוח`, and two of them
+   * printed that zero on the owner's public website.
+   */
+  stage?: string | string[];
   tags?: string[];
   search?: string; // Search in name, email, phone
   /**
@@ -149,6 +159,30 @@ export class CRMContactRepository {
   }
 
   /**
+   * Where this owner's board begins, or null if they have no pipeline yet.
+   *
+   * Swallows its own failure: a contact must still be created if the stages
+   * cannot be read. The caller then falls back to the column's default, which
+   * is the same answer this repository gave unconditionally before.
+   */
+  private async firstStageFor(userId: string): Promise<string | null> {
+    try {
+      const { data, error } = await this.supabase
+        .from('crm_pipeline_stages')
+        .select('stage_key')
+        .eq('user_id', userId)
+        .order('position', { ascending: true })
+        .limit(1);
+
+      if (error) throw error;
+      return (data?.[0]?.stage_key as string | undefined) ?? null;
+    } catch (error) {
+      logger.warn({ err: error, userId }, 'Could not resolve the first pipeline stage for a new contact');
+      return null;
+    }
+  }
+
+  /**
    * Create a new contact
    */
   async create(
@@ -157,11 +191,39 @@ export class CRMContactRepository {
     try {
       logger.info({ userId: contact.user_id }, 'Creating CRM contact');
 
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE BUSINESS'S OWN FIRST STAGE, not the word 'lead'.
+       *
+       * This read `contact.stage || 'lead'`, and that string is where eight
+       * inline copies of the same fallback were consolidated to — so removing
+       * them from the routes moved the problem here rather than fixing it.
+       * Every caller that omits a stage still landed on 'lead'.
+       *
+       * Pipelines are built per business and they do not agree on the word:
+       * `OnboardingConfigurationService` starts some verticals at `inquiry` and
+       * others at `lead`. A contact stamped 'lead' on an `inquiry` board sits
+       * on a stage that board has no column for — so it is not merely
+       * mislabelled, it is INVISIBLE until something promotes it.
+       *
+       * Resolved through the stages repository on this repo's own client, so a
+       * caller holding a user-scoped connection is not silently switched to the
+       * service role. The literal survives only as the last resort, matching
+       * the column's own `NOT NULL DEFAULT 'lead'`.
+       *
+       * Only the ENTRY stage is decided here. Moving a contact onward is the
+       * database's job — `promote_contact_on_payment` resolves the business's
+       * client stage by `stage_type` when money actually arrives, and a free
+       * booking writes a zero-amount row that trigger deliberately ignores.
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      const stage = contact.stage || (await this.firstStageFor(contact.user_id)) || 'lead';
+
       const { data, error } = await this.supabase
         .from('crm_contacts')
         .insert({
           ...contact,
-          stage: contact.stage || 'lead',
+          stage,
           tags: contact.tags || [],
           custom_fields: contact.custom_fields || {}
         })
@@ -336,7 +398,20 @@ export class CRMContactRepository {
       const { data, error } = await this.supabase
         .from('crm_contacts')
         .select('*')
-        .eq('email', email)
+        /*
+         * CASE-INSENSITIVE, AND ESCAPED.
+         *
+         * This matched with `=`, so `Offir.Omer@…` missed the stored
+         * `offir.omer@…` and the caller created a second contact for one
+         * person. Addresses are stored as typed, and a domain is
+         * case-insensitive by specification.
+         *
+         * `emailLikePattern` is not optional decoration: `_` and `%` are LIKE
+         * wildcards and `_` is legal in a local part, so a raw address here
+         * turns this lookup into a search. Measured against the live table,
+         * `eomer3@gmail_com` matched five different contacts.
+         */
+        .ilike('email', emailLikePattern(email))
         .eq('user_id', userId)
         .order('created_at', { ascending: true })
         .limit(1)
@@ -441,7 +516,7 @@ export class CRMContactRepository {
 
       // Filter by stage
       if (stage) {
-        query = query.eq('stage', stage);
+        query = Array.isArray(stage) ? query.in('stage', stage) : query.eq('stage', stage);
       }
 
       // Filter by tags (contains any)
@@ -718,7 +793,7 @@ export class CRMContactRepository {
         .eq('user_id', userId);
 
       if (stage) {
-        query = query.eq('stage', stage);
+        query = Array.isArray(stage) ? query.in('stage', stage) : query.eq('stage', stage);
       }
 
       if (tags && tags.length > 0) {

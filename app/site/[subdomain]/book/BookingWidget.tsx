@@ -734,7 +734,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           amount: selectedService.price,
           currency: selectedService.currency,
           description: `${selectedService.name} - ${formatDate(selectedDate!)} at ${formatTime(selectedSlot!.start)}`,
-          customer_email: email,
+          customer_email: email.trim(),
           booking_id: bookingId,
           attempt_id: attemptId,
           service_id: selectedService.id,

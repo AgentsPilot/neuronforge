@@ -832,6 +832,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X7. the
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "bk-plan-1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_2",
@@ -1130,6 +1131,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X8. a p
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "bk-plan-1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_2",
@@ -3651,6 +3653,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X30. pl
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "bk-plan-1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_2",
@@ -4346,6 +4349,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X34. pl
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "bk-plan-1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_2",
@@ -4748,6 +4752,7 @@ exports[`Stripe webhook, CF-5 PR 0: arms the repository moves will touch X36. pl
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "bk-plan-1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_2",
@@ -9062,6 +9067,7 @@ exports[`Stripe webhook, Connect path characterisation (P-0 baseline) 3. invoice
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "bk-plan-1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_2",
@@ -13161,6 +13167,7 @@ exports[`Stripe webhook, Fix-1b: plan link ids F5-2. trialling plan subscription
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_f5",
@@ -13263,6 +13270,7 @@ exports[`Stripe webhook, Fix-1b: plan link ids F5-3. invoice.paid first plan per
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_f5",
@@ -13388,6 +13396,7 @@ exports[`Stripe webhook, Fix-1b: plan link ids F5-4. plan checkout: bind gets th
     {
       "args": [
         {
+          "attemptId": null,
           "bookingId": "f5f5f5f5-0b0b-4000-8000-0000000000b1",
           "connectAccountId": "acct_owner_a",
           "customerId": "cus_client_f5",

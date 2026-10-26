@@ -16,9 +16,15 @@ import { schedulingBookingRepository } from '@/lib/repositories/SchedulingReposi
 import { isSlotTakenError } from '@/lib/business-os/bookingStatus';
 import { z } from 'zod';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
+import { generateTimeSlots } from '@/lib/scheduling/availableSlots';
+import { windowsForDate } from '@/lib/scheduling/availabilityWindows';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
+import { busyMeetings } from '@/lib/scheduling/busyMeetings';
+import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
+import { schedulingTimeOffRepository } from '@/lib/repositories/SchedulingTimeOffRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
-import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'API', service: 'BookingReschedule' });
 
@@ -293,12 +299,98 @@ export async function GET(
 
     // Read before the notice check, because the notice period is a property of
     // the SERVICE and the check below has to use it.
-    const service = booking.service as {
+    /*
+     * The day being looked at, if any. `YYYY-MM-DD`, validated rather than
+     * interpolated: it reaches a date constructor and a range query.
+     */
+    const requestedDateRaw = new URL(request.url).searchParams.get('date');
+    const requestedDate =
+      requestedDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(requestedDateRaw) ? requestedDateRaw : null;
+
+    /**
+     * What this client could move to on one day.
+     *
+     * The same pipeline the public booking page runs, in the same order and
+     * through the same `generateTimeSlots`, so the two cannot offer different
+     * hours for one business: the owner's weekly windows, less their time off,
+     * less what is already booked, less whatever their external calendar says
+     * is busy.
+     *
+     * Answers an empty list rather than throwing. A day with nothing free and
+     * a business with no hours at all are both legitimately "nothing here",
+     * and the caller is told which by `reason`.
+     */
+    const slotsForDate = async (date: string) => {
+      const { data: profile } = await businessProfileRepository.findByUserId(booking.user_id);
+
+      const rawAvailability = profile?.scheduling_availability;
+      if (!rawAvailability) return { slots: [], reason: 'no_availability_configured' as const };
+
+      const availability =
+        typeof rawAvailability === 'string' ? JSON.parse(rawAvailability) : rawAvailability;
+
+      const { data: ownerPrefs } = await supabaseServer
+        .from('user_preferences')
+        .select('timezone')
+        .eq('user_id', booking.user_id)
+        .maybeSingle();
+      const timezone = safeTimezone(ownerPrefs?.timezone);
+
+      const { data: timeOff } = await schedulingTimeOffRepository.list(booking.user_id, {
+        from: date,
+        to: date,
+      });
+
+      const dayWindows = windowsForDate(availability, date, timeOff ?? []);
+      if (dayWindows.length === 0) return { slots: [], reason: 'closed_that_day' as const };
+
+      const duration = service?.duration_minutes;
+      /* A service sold rather than booked has no slots to offer, and coercing
+         a null length to zero would generate meaningless ones. */
+      if (!duration || duration <= 0) return { slots: [], reason: 'not_time_based' as const };
+
+      const dayStart = date + 'T00:00:00.000Z';
+      const dayEnd = date + 'T23:59:59.999Z';
+
+      const existingBookings = await busyMeetings(supabaseServer, booking.user_id, dayStart, dayEnd);
+      const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(
+        booking.user_id,
+        dayStart,
+        dayEnd
+      );
+      const externalEvents = (busySlots || []).map(slot => ({
+        start_time: slot.start,
+        end_time: slot.end,
+      }));
+
+      return {
+        slots: generateTimeSlots(date, dayWindows, duration, existingBookings, externalEvents, timezone),
+        reason: null,
+      };
+    };
+
+    /*
+     * An embedded resource arrives as a ROW or as an ARRAY of one, depending on
+     * how PostgREST reads the relationship, so it is normalised rather than
+     * asserted. This was `booking.service as {…}`, which type-checked a cast
+     * from an array to an object and left every field `undefined` at runtime —
+     * so `min_notice_hours` below silently fell back to 24 and the notice
+     * period the comment claims to honour was the hardcoded day all over again.
+     *
+     * The same normalisation is used for the POST paths further down; this is
+     * that idiom, not a new one.
+     */
+    type BookedService = {
       duration_minutes: number;
       advance_booking_days: number;
       min_notice_hours: number;
       availability: Record<string, unknown>;
     };
+
+    const embeddedService = booking.service as BookedService | BookedService[] | null;
+    const service = (
+      Array.isArray(embeddedService) ? embeddedService[0] : embeddedService
+    ) as BookedService | undefined;
 
     /*
      * The service's own notice period, not a hardcoded day.
@@ -332,6 +424,28 @@ export async function GET(
       bookingId: booking.id,
       serviceId: booking.service_id,
       userId: booking.user_id,
+      /*
+       * THE SLOTS, ANSWERED HERE RATHER THAN BY THE ANONYMOUS ENDPOINT.
+       *
+       * The panel used to ask `website/scheduling/availability` with a service
+       * id and a date and nothing else. That endpoint resolves the business
+       * from a subdomain or a user code and falls back to the SIGNED-IN USER
+       * when given neither, so a client following their own booking link was
+       * answered 401 and the panel, which renders a refusal and an empty diary
+       * the same way, showed "no times". The owner testing it while signed in
+       * saw slots every time, which is why it looked intermittent.
+       *
+       * The token already proves this client may see this booking's options,
+       * so the question is answered where that proof is. It also steps around
+       * a second trap: that endpoint refuses a service hidden on the website,
+       * which is right for the public page and wrong for somebody who already
+       * holds a booking for it.
+       *
+       * Only when a date is asked for. The panel's first call wants the
+       * configuration, and loading a diary for a day nobody has chosen is work
+       * for nothing.
+       */
+      slots: requestedDate ? await slotsForDate(requestedDate) : undefined,
       /* The session's own time where the page is open on one. */
       currentStartTime: session ? session.start_time : booking.start_time,
       meetingId: session ? session.id : null,

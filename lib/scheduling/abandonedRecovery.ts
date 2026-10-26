@@ -31,6 +31,7 @@ import { recordEmailSend } from '@/lib/notifications/recordEmailSend';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import { generateBookingRecoveryEmail } from '@/lib/email/templates/booking-recovery';
 import type { Locale } from '@/lib/i18n/config';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ module: 'abandonedRecovery' });
 
@@ -127,7 +128,10 @@ export async function sendAbandonedRecoveries(
         .from('crm_contacts')
         .select('id')
         .eq('user_id', attempt.user_id)
-        .eq('email', attempt.email)
+        /* Case-insensitive and escaped, like every other contact lookup — an
+           address stored as the visitor typed it is otherwise missed, and the
+           recovery mail is then filed against no contact at all. */
+        .ilike('email', emailLikePattern(attempt.email))
         .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();

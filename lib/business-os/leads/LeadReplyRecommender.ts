@@ -49,6 +49,30 @@ export interface LeadReplyRecommendation {
   candidate: LeadReplyCandidate;
   /** Why this one, in the business's language. Empty when nothing chose. */
   reason: string;
+  /**
+   * One sentence TO THE CLIENT, acknowledging what they actually asked.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Not `reason`, which is the opposite audience: that one tells the OWNER why
+   * this link was chosen and is shown on their dashboard. This one is read by
+   * the person who wrote in, at the top of the invite, so that a reply to "can
+   * you help with my son's ADHD" does not open with the same words as a reply
+   * to "what do you charge".
+   *
+   * Empty whenever anything at all goes wrong, and empty is a complete answer:
+   * the invite then reads exactly as it reads today. A personal line is an
+   * improvement on an email that already works, and `AnalysisService`'s rule
+   * applies — a layer that improves an answer that already exists must leave
+   * the turn exactly as it would have been without it.
+   *
+   * It carries no link, no price and no commitment. The model is choosing a
+   * link by INDEX a few lines above precisely so it cannot fabricate one;
+   * letting it write a URL in prose would hand back what that design refuses,
+   * which is why `stripUnsafeOpening` below removes anything URL-shaped rather
+   * than trusting the instruction not to produce one.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  opening: string;
   /** Which decided: the model, or the deterministic ladder. */
   source: 'llm' | 'fallback';
   /** For a fallback, what made it one. */
@@ -66,8 +90,38 @@ const RecommendationSchema = z
   .object({
     index: z.number().int().nonnegative(),
     reason: z.string().max(300).default(''),
+    /* Same contract as `reason`: a default, never a requirement. A model that
+       omits it costs the client a nicety, not their reply. */
+    opening: z.string().max(300).default(''),
   })
   .passthrough();
+
+/**
+ * Take back anything the opening sentence was not allowed to contain.
+ *
+ * The instruction says no links and no prices. This does not trust it: the
+ * sentence is built from text a stranger typed, so it is prompt-injection
+ * surface, and the one thing that must never happen is the business's own
+ * email carrying a stranger's URL. Structurally impossible beats unlikely —
+ * the same reason the model picks a link by index and never sees one.
+ *
+ * A sentence that loses something this way is dropped rather than patched:
+ * half a sentence reads worse than the stock copy it falls back to.
+ */
+function stripUnsafeOpening(opening: string): string {
+  const trimmed = opening.trim();
+  if (!trimmed) return '';
+
+  const carriesLink = /https?:\/\/|www\.|<a\s|\[[^\]]*\]\(/i.test(trimmed);
+  const carriesMarkup = /<[a-z/][^>]*>/i.test(trimmed);
+  if (carriesLink || carriesMarkup) return '';
+
+  /* One sentence was the instruction; anything longer is the model ignoring
+     it, and a paragraph above a booking button is not what was designed. */
+  if (trimmed.length > 220) return '';
+
+  return trimmed;
+}
 
 export interface RecommendInput {
   message?: string | null;
@@ -85,7 +139,9 @@ export async function recommendLeadReply(
 ): Promise<LeadReplyRecommendation | null> {
   const fallback = (why: string): LeadReplyRecommendation | null => {
     const candidate = pickFallbackCandidate(candidates, input);
-    return candidate ? { candidate, reason: '', source: 'fallback', fallbackReason: why } : null;
+    return candidate
+      ? { candidate, reason: '', opening: '', source: 'fallback', fallbackReason: why }
+      : null;
   };
 
   if (candidates.length === 0) return null;
@@ -106,7 +162,9 @@ export async function recommendLeadReply(
         {
           model,
           ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
-          max_tokens: 200,
+          /* Two short sentences now — the owner's `reason` and the client's
+             `opening` — plus the JSON around them. */
+          max_tokens: 320,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: systemPrompt(input.language) },
@@ -134,7 +192,12 @@ export async function recommendLeadReply(
     const candidate = candidates[parsed.data.index];
     if (!candidate) return fallback('index_out_of_range');
 
-    return { candidate, reason: parsed.data.reason, source: 'llm' };
+    return {
+      candidate,
+      reason: parsed.data.reason,
+      opening: stripUnsafeOpening(parsed.data.opening),
+      source: 'llm',
+    };
   } catch (err) {
     logger.warn({ err, userId }, 'Recommender failed; falling back');
     return fallback('threw');
@@ -154,7 +217,25 @@ function systemPrompt(language?: string | null): string {
     '- If nothing fits, choose the option that offers everything.',
     `- Write "reason" as one short sentence${language ? ` in ${language}` : ''}.`,
     '',
-    'Answer as JSON: {"index": <number>, "reason": "<one sentence>"}',
+    'You also write ONE sentence that the person themselves will read, at the',
+    'top of the reply. It is called "opening".',
+    '',
+    'Rules for "opening":',
+    '- Write it TO them, not about them. "reason" is for the business owner;',
+    '  "opening" is for the person who wrote in.',
+    '- Acknowledge what they actually asked, in their own terms, so a reply',
+    '  about a child\'s sleep does not open like a reply about pricing.',
+    '- One sentence. No greeting, no sign-off, no list: the email already has',
+    '  those around it.',
+    '- Never state a price, a date, an availability or any promise about what',
+    '  the business will do. You do not know those.',
+    '- Never include a link, a URL or any markup. The booking link is placed by',
+    '  the email itself.',
+    '- If their message is too vague to acknowledge specifically, return an',
+    '  empty string rather than a generic pleasantry.',
+    `${language ? `- Write it in ${language}.` : ''}`,
+    '',
+    'Answer as JSON: {"index": <number>, "reason": "<one sentence>", "opening": "<one sentence or empty>"}',
   ].join('\n');
 }
 

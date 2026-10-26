@@ -438,6 +438,14 @@ async function queueLeadReply(
       label: recommendation.candidate.label,
       kind: recommendation.candidate.kind,
       reason: recommendation.reason,
+      /*
+       * The sentence the CLIENT reads, carried to the send fifteen minutes
+       * from now. It travels on the row rather than being written at send
+       * time because it is part of the same judgement that chose the link:
+       * one enquiry, one model call, one audit entry. Empty is normal and
+       * means the invite reads exactly as it does today.
+       */
+      opening: recommendation.opening,
       source: recommendation.source,
       fallbackReason: recommendation.fallbackReason,
     },

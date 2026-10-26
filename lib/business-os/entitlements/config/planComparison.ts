@@ -102,13 +102,23 @@ export const PLAN_COMPARISON_ROWS: ReadonlyArray<PlanComparisonRowConfig> = [
   },
   {
     // Its own row (user decision, 2026-10-19), rather than folded into intake.
+    //
+    // `leads.inbox_channel` joined it on 2026-10-25 rather than taking a row of
+    // its own or joining `website` above. It is where leads COME FROM for a
+    // business that keeps its own site — their form emails them, we read that
+    // mailbox — and the reply it leads to is `marketing.lead_response`, already
+    // in this row. The two halves of one promise read as one line.
+    //
+    // NOT the `website` row: that sells a site we build, and this exists for
+    // the customer who will not replace theirs. Listing it there would offer
+    // them the thing they declined.
     id: 'leads',
     labels: {
-      en: 'Automatic replies to new leads',
-      he: 'מענה אוטומטי לפניות חדשות',
-      es: 'Respuesta automática a nuevos contactos',
+      en: 'Leads from your own website, answered automatically',
+      he: 'לידים מהאתר שלך, עם מענה אוטומטי',
+      es: 'Prospectos desde tu propia web, con respuesta automática',
     },
-    capabilities: ['marketing.lead_response'],
+    capabilities: ['marketing.lead_response', 'leads.inbox_channel'],
   },
   {
     id: 'insights',

@@ -95,6 +95,15 @@ const BASE: TierRow = {
   'crm.documents': true,
   'booking.calendar_sync': true,
   'website.ai_site': true,
+  /*
+   * The same promise as `website.ai_site`, kept the other way round: for a
+   * business that already has a site it will not replace. They are alternatives
+   * a customer chooses between — which is why they share the `website_intake`
+   * category — so a plan offering one and withholding the other would serve
+   * only businesses willing to move. Granted everywhere, at the same value, on
+   * 2026-10-25 when the channel shipped.
+   */
+  'leads.inbox_channel': true,
   // Both paid plans are unbranded. Branding is not a differentiator here —
   // the differentiators are chat and credits, and nothing else.
   'website.branding': 'unbranded',

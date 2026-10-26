@@ -32,6 +32,7 @@ import {
 } from '../OnboardingConversationManager';
 import { onboardingConfigurationService, type ExtractedData } from '../OnboardingConfigurationService';
 import { moneyMoves, collectsOnline, takesAppointments, shapeFromProfile } from '@/lib/business-os/setup/setupGraph';
+import { shapeFromServices } from '@/lib/business-os/businessShape';
 
 /**
  * Recording, not throwing.
@@ -378,6 +379,84 @@ describe('the answers reach the build', () => {
     expect(configFor({ service_count: 3, collection_method: 'none' }).needs_stripe_connect).toBe(false);
   });
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE MONEY ANSWER REACHES `payment_mode`, WHICH IT NEVER DID.
+   *
+   * `computePaymentMode` opened on `services.some(s => s.price > 0)`. The
+   * interview asks for a count and no prices — `draftServices` never returns
+   * one and a guard test pins that — so the test was false on every ordinary
+   * conversation and EVERY account built through the chat stored `'none'`.
+   * An owner who tapped "the client pays online by card" was recorded as
+   * taking no payments at all.
+   *
+   * Every case below reads `'none'` before the fix, which is what makes them
+   * worth writing: they fail loudly on the old code and cannot pass by luck.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('records how the money arrives, from the answer rather than from a price', () => {
+    expect(configFor({ service_count: 2, collection_method: 'card_online' }).payment_mode).toBe('upfront');
+    expect(configFor({ service_count: 2, collection_method: 'mixed' }).payment_mode).toBe('upfront');
+    expect(configFor({ service_count: 2, collection_method: 'invoice' }).payment_mode).toBe('invoicing');
+    expect(configFor({ service_count: 2, collection_method: 'in_person' }).payment_mode).toBe('invoicing');
+  });
+
+  it('still records none for a business that charges for nothing', () => {
+    /* Both ways of saying it: no catalogue at all, and a catalogue sold free. */
+    expect(configFor({ service_count: 0, collection_method: 'invoice' }).payment_mode).toBe('none');
+    expect(configFor({ service_count: 2, collection_method: 'none' }).payment_mode).toBe('none');
+  });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BLOCKS, NOT THE CAPABILITY LIST — and the distinction is the point.
+   *
+   * WHICH capabilities an account gets is no longer decided here: the list is
+   * unioned with `capabilityKeysFromShape`, and on the chat's path the shape is
+   * built from an empty catalogue, so it cannot tell and deliberately grants
+   * everything rather than cutting the navigation down while setup is still in
+   * progress. Asserting `payments` is absent would therefore be asserting
+   * something the product does not do, and does not want to do.
+   *
+   * The BLOCKS are a different matter. `online_payments` and `invoicing` say
+   * what kind of money this business takes, and they were gated on the same
+   * dead `price > 0` filter — so they were empty for every account, whatever
+   * the owner answered.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('names the kind of money from the answer, not from a price', () => {
+    expect(
+      configFor({ service_count: 2, collection_method: 'card_online' }).building_blocks?.payments
+    ).toContain('online_payments');
+
+    expect(
+      configFor({ service_count: 2, collection_method: 'invoice' }).building_blocks?.payments
+    ).toContain('invoicing');
+
+    /* Both, for a business that said it does both. */
+    const mixed = configFor({ service_count: 2, collection_method: 'mixed' }).building_blocks?.payments;
+    expect(mixed).toContain('online_payments');
+    expect(mixed).toContain('invoicing');
+  });
+
+  it('names no kind of money where none is taken', () => {
+    expect(configFor({ service_count: 2, collection_method: 'none' }).building_blocks?.payments)
+      .toBeUndefined();
+    expect(configFor({ service_count: 0, collection_method: 'invoice' }).building_blocks?.payments)
+      .toBeUndefined();
+  });
+
+  it('lets a real catalogue outrank the business-wide answer for the blocks too', () => {
+    /* The same precedence the rest of this file asserts: rows first, word second. */
+    const config = configFor({
+      collection_method: 'invoice',
+      services: [{ name: 'Session', price: 100, collection: 'online' }],
+    } as Partial<ExtractedData>);
+
+    expect(config.building_blocks?.payments).toContain('online_payments');
+    expect(config.building_blocks?.payments).not.toContain('invoicing');
+  });
+
   it('lets a real catalogue outrank the business-wide answer', () => {
     const config = configFor({
       collection_method: 'invoice',
@@ -538,6 +617,73 @@ describe('a business that sells nothing', () => {
   });
 });
 
+/**
+ * A catalogue may hold a booked session AND a course that is never booked.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The interview asks once, for the whole business, whether clients book a time
+ * — and that one answer used to be stamped on every drafted row. The owner's
+ * own example could not be expressed: "a user that just sells courses, no
+ * meeting, no schedule needed, and it can be sold as card payment or invoice."
+ *
+ * The product is built for a mixed catalogue: `shapeFromServices` counts
+ * scheduled rows, `journeySteps` reads each service's own answer, and the
+ * availability and timezone setup steps apply only where something is booked.
+ * All of that had one answer to read, repeated.
+ *
+ * These assert the OUTCOME rather than the source, because the source already
+ * has guards and the outcome is what the owner sees: whether they are asked to
+ * set working hours.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a catalogue can hold both kinds of service', () => {
+  const shapeOf = (services: Array<{ is_scheduled: boolean; price?: number | null }>) =>
+    shapeFromServices(
+      services.map(service => ({
+        status: 'active',
+        is_scheduled: service.is_scheduled,
+        collection: 'invoice',
+        price: service.price ?? 100,
+        sale_mode: 'direct',
+        payment_type: 'full',
+        installment_count: 1,
+      })) as never,
+      { online_presence_mode: 'full_website' }
+    );
+
+  it('asks for no working hours when nothing is booked', () => {
+    /* The course seller. Today every row carried the business-wide answer, so
+       this business was handed a calendar it has no use for. */
+    const courses = shapeOf([{ is_scheduled: false }, { is_scheduled: false }]);
+
+    expect(takesAppointments(courses)).toBe(false);
+  });
+
+  it('asks for them when one service out of two needs them', () => {
+    /* The mixed catalogue. One booked service is enough: the hours exist for
+       that service, and the course is unaffected by their existing. */
+    const mixed = shapeOf([{ is_scheduled: true }, { is_scheduled: false }]);
+
+    expect(takesAppointments(mixed)).toBe(true);
+  });
+
+  it('still asks for them when everything is booked', () => {
+    expect(takesAppointments(shapeOf([{ is_scheduled: true }]))).toBe(true);
+  });
+
+  it('keeps the money question separate from the booking one', () => {
+    /*
+     * A course is sold by card or by invoice exactly as a session is — which
+     * is why how the money arrives stays a question for the business and is
+     * never inferred from whether something is booked.
+     */
+    const courses = shapeOf([{ is_scheduled: false }]);
+
+    expect(takesAppointments(courses)).toBe(false);
+    expect(moneyMoves(courses)).toBe(true);
+  });
+});
+
 describe('what the two answers actually turn on', () => {
   /** The shape of a business whose services are all still drafts. */
   const draftsOnly = (collection_method: string) =>
@@ -666,5 +812,254 @@ describe('guard: the draft catalogue must not become a journey gap', () => {
     // but it must be a deliberate change, not a surprise.
     expect(source).toContain('if (gaps.length > 0)');
     expect(source).not.toContain('gaps.filter(isBlockingGap)');
+  });
+});
+
+
+/**
+ * The last question, once the chat has concluded the owner wants a website.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The website half used to be decided by the tick ALONE, and the question
+ * invites tapping past it. So an owner who had plainly said they wanted a site
+ * — and was told so, one line above, with their own words quoted back — got no
+ * site for tapping past it.
+ *
+ * Honouring the conclusion only on an EMPTY answer was tried first and was
+ * worse: ticking "connect Facebook" to ADD insights would have cancelled the
+ * site the owner had just been promised. A chip that adds one thing must never
+ * remove another. So the conclusion holds until it is REFUSED, and the refusal
+ * is a chip on the screen.
+ *
+ * The two halves of that bargain are what these tests pin: the conclusion
+ * survives everything except the refusal, and the refusal always works.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a website conclusion the chat has already stated', () => {
+  const SAID = 'I run a small physio clinic and I have nowhere for people to find me online';
+  const QUOTE = 'nowhere for people to find me online';
+
+  const asking = (facts: unknown[]) =>
+    state('', {
+      currentStep: 'client_acquisition',
+      collectedData: { businessDescription: SAID, inferredFacts: facts as never },
+    });
+
+  const stated = (over: Record<string, unknown> = {}) => [
+    { key: 'needs_website', value: true, confidence: 'stated', quote: QUOTE, ...over },
+  ];
+
+  const answer = (message: string, facts: unknown[] = stated()) =>
+    manager()
+      .processUserMessage(OWNER, message, asking(facts))
+      .then(result => result.updatedState.collectedData.clientAcquisition);
+
+  it('survives an owner who taps straight past the question', async () => {
+    expect((await answer(''))?.needs_website).toBe(true);
+  });
+
+  /* The trap the first version of this fix walked into. */
+  it('survives a chip that adds something else', async () => {
+    const result = await answer('Connect Facebook, Instagram or Google: see where clients come from');
+    expect(result?.needs_website).toBe(true);
+    expect(result?.needs_channel_insights).toBe(true);
+    expect(result?.acquisition_channels).toEqual(['website', 'channel_insights']);
+  });
+
+  it('is dropped the moment the owner says to skip it', async () => {
+    const result = await answer('Skip the website for now');
+    expect(result?.needs_website).toBe(false);
+    expect(result?.acquisition_channels).not.toContain('website');
+  });
+
+  it('is dropped by the skip in every language the chat speaks', async () => {
+    for (const skip of ['Skip the website for now', 'לדלג על האתר בשלב זה', 'Omitir la web por ahora']) {
+      expect((await answer(skip))?.needs_website).toBe(false);
+    }
+  });
+
+  /*
+   * A refusal beside an addition. The skip wins over the word "website" that
+   * every option on this question contains, including the skip itself — which
+   * is why the reader matches one distinctive verb rather than hunting for a
+   * negation.
+   */
+  it('is dropped even when the owner skips it and asks for something else', async () => {
+    const result = await answer('Skip the website for now, Connect Facebook, Instagram or Google');
+    expect(result?.needs_website).toBe(false);
+    expect(result?.needs_channel_insights).toBe(true);
+    expect(result?.primary_channel).toBe('social_media');
+  });
+});
+
+/**
+ * And what does NOT get this treatment, which is most of it.
+ *
+ * Only the `apply` route survives an unanswered question: a plainly stated
+ * fact whose quote was found in the owner's own words. A conclusion that was
+ * only ever PROPOSED is a conclusion nobody accepted, and it has no business
+ * holding by default.
+ */
+describe('a website conclusion that was never settled', () => {
+  const SAID = 'I run a small physio clinic and I have nowhere for people to find me online';
+
+  const answer = (facts: unknown[]) =>
+    manager()
+      .processUserMessage(OWNER, '', state('', {
+        currentStep: 'client_acquisition',
+        collectedData: { businessDescription: SAID, inferredFacts: facts as never },
+      }))
+      .then(result => result.updatedState.collectedData.clientAcquisition);
+
+  it('builds nothing when the chat concluded nothing', async () => {
+    expect((await answer([]))?.needs_website).toBe(false);
+  });
+
+  it('builds nothing from a conclusion that was only implied', async () => {
+    const implied = [{
+      key: 'needs_website',
+      value: true,
+      confidence: 'implied',
+      quote: 'nowhere for people to find me online',
+    }];
+    expect((await answer(implied))?.needs_website).toBe(false);
+  });
+
+  it('builds nothing from words the owner never said', async () => {
+    const invented = [{
+      key: 'needs_website',
+      value: true,
+      confidence: 'stated',
+      quote: 'I would really like a beautiful website please',
+    }];
+    expect((await answer(invented))?.needs_website).toBe(false);
+  });
+});
+
+/**
+ * The copy and the reader have to agree, and nothing else checks that.
+ *
+ * `saysSkipWebsite` matches one distinctive verb per language. If the chip is
+ * ever reworded without that verb, the refusal stops working silently and the
+ * owner is given a website they just declined.
+ */
+describe('the skip chip and the reader that reads it', () => {
+  it('offers a skip whose wording the reader can actually recognise', () => {
+    const source = readFileSync(
+      join(__dirname, '..', 'OnboardingConversationManager.ts'),
+      'utf8'
+    );
+
+    const chips = [...source.matchAll(/website_skip_option: '([^']+)'/g)].map(m => m[1]);
+    expect(chips).toHaveLength(3);
+
+    const verbs = source.match(/private saysSkipWebsite[\s\S]*?\n  \}/)![0];
+    for (const chip of chips) {
+      const recognised = [...verbs.matchAll(/includes\('([^']+)'\)/g)]
+        .some(m => chip.toLowerCase().includes(m[1]));
+      expect(recognised).toBe(true);
+    }
+  });
+});
+
+/**
+ * The business name is a name, not whatever was typed into that turn.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Reported from a real run. Asked to confirm "David KPMG", the owner answered
+ * the question he was expecting instead of the one on screen:
+ *
+ *   > I'm an ADHD coach assisting kids ages 8-18 with their ADHD straggling
+ *     in school and socilialization with their peers
+ *
+ * The confirmation reads yes, no, or "they retyped the name", and that third
+ * branch accepted anything. So 134 characters were stored as the company name
+ * and read back for confirmation, which made it look intentional. He said no,
+ * retyped the same description, and confirmed it. His business was then called
+ * a paragraph, on every invoice and every email the platform sends for him.
+ *
+ * The retype branch is right and stays: somebody who spots their own typo
+ * retypes rather than tapping "no". What it needed was to notice when the
+ * thing typed cannot be a name.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('a description typed where the name was asked for', () => {
+  const THE_REPORTED_ANSWER =
+    "I'm an ADHD coach assisting kids ages 8-18 with their ADHD straggling in school "
+    + 'and socilialization with their peers';
+
+  const atConfirm = (name = 'David KPMG') =>
+    state('name_confirm', {
+      currentStep: 'business_name',
+      collectedData: { businessProfile: { company_name: name } },
+    });
+
+  const nameAfter = async (reply: string, from = atConfirm()) => {
+    const result = await manager().processUserMessage(OWNER, reply, from);
+    return {
+      name: result.updatedState.collectedData.businessProfile?.company_name,
+      pending: result.updatedState.pendingQuestion,
+    };
+  };
+
+  it('does not become the business name', async () => {
+    const { name, pending } = await nameAfter(THE_REPORTED_ANSWER);
+    expect(name).toBe('David KPMG');
+    expect(pending).toBe('name_not_a_name');
+  });
+
+  it('asks again rather than guessing a name out of the sentence', async () => {
+    /*
+     * Trimming it to "I'm an ADHD coach" would be a guess about the one string
+     * that represents them to their clients. The owner says what it is.
+     */
+    const { name } = await nameAfter(THE_REPORTED_ANSWER);
+    expect(name).not.toContain('ADHD');
+  });
+
+  it('catches the same thing in Hebrew and Spanish', async () => {
+    for (const said of [
+      'אני מאמן ADHD שעוזר לילדים בבית הספר ובחברה',
+      'Soy un coach de TDAH que ayuda a niños en la escuela y con sus amigos',
+    ]) {
+      const { pending } = await nameAfter(said);
+      expect(pending).toBe('name_not_a_name');
+    }
+  });
+
+  it('still takes a real retyped name, which is what the branch is for', async () => {
+    const { name, pending } = await nameAfter('David KPMG Coaching');
+    expect(name).toBe('David KPMG Coaching');
+    expect(pending).toBe('name_confirm');
+  });
+
+  it('still takes a long but plausible name', async () => {
+    /*
+     * The thresholds sit just above the longest plausible real name, so this
+     * has to pass or the guard is costing legitimate businesses their own.
+     */
+    const { name } = await nameAfter('Smith & Sons Plumbing and Heating Ltd');
+    expect(name).toBe('Smith & Sons Plumbing and Heating Ltd');
+  });
+
+  it('still reads yes and no as themselves', async () => {
+    expect((await nameAfter("Yes, that's right")).pending).toBeUndefined();
+    expect((await nameAfter('No, let me fix it')).pending).toBe('name_again');
+  });
+
+  it('guards the retype after "no" as well, which is the same trap', async () => {
+    /*
+     * The reported run hit this path too: he tapped "no", was asked what it
+     * should be, and typed the description again.
+     */
+    const { name, pending } = await nameAfter(
+      THE_REPORTED_ANSWER,
+      state('name_again', {
+        currentStep: 'business_name',
+        collectedData: { businessProfile: { company_name: 'David KPMG' } },
+      })
+    );
+    expect(name).toBe('David KPMG');
+    expect(pending).toBe('name_not_a_name');
   });
 });

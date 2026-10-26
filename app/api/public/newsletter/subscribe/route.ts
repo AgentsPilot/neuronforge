@@ -23,6 +23,7 @@ import { beginDoubleOptIn } from '@/lib/consent/doubleOptIn';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 import { enrichCaptureAttribution } from '@/lib/business-os/enrichCaptureAttribution';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { emailLikePattern } from '@/lib/utils/emailMatch';
 
 const logger = createLogger({ module: 'PublicNewsletterSubscribeAPI' });
 
@@ -30,7 +31,10 @@ const SubscribeSchema = z
   .object({
     subdomain: z.string().max(100).optional(),
     userCode: z.string().max(100).optional(),
-    email: z.string().email('A valid email is required').max(200),
+    /* Normalised before validation — see the note on the contact form route:
+     a stray space made Zod reject a valid address, and mixed case created a
+     second contact because the lookups match with `=`. */
+    email: z.string().trim().toLowerCase().email('A valid email is required').max(200),
     /** Only where a surface actually collects one. Never derived from the address. */
     name: z.string().max(200).optional(),
     locale: z.string().max(8).optional(),
@@ -112,7 +116,7 @@ export async function POST(request: NextRequest) {
       .from('crm_contacts')
       .select('id')
       .eq('user_id', ownerId)
-      .ilike('email', data.email.trim())
+      .ilike('email', emailLikePattern(data.email))
       .limit(1)
       .maybeSingle();
 

@@ -51,6 +51,21 @@ export interface BookingInviteEmailData {
 
   /** The two-day chase. Same message, one line in front. */
   reminder?: boolean;
+  /**
+   * One sentence acknowledging what this person actually wrote, placed between
+   * the greeting and the standard opener.
+   *
+   * Absent or empty renders NOTHING — not an empty paragraph, not a gap — so
+   * an email without one is byte-identical to the email this template sent
+   * before the field existed. That is the contract: it decorates a message
+   * that already works.
+   *
+   * Escaped like every other value here. It is built from text a stranger
+   * typed, and `LeadReplyRecommender.stripUnsafeOpening` has already refused
+   * anything carrying a link or markup; escaping is the second lock, not the
+   * first.
+   */
+  personalLine?: string | null;
 
   branding: BrandingData;
   locale?: Locale;
@@ -88,10 +103,21 @@ export function generateBookingInviteEmail(data: BookingInviteEmailData): {
     </p>`
     : '';
 
+  /* Rendered only when there is one, so the absent case is unchanged. */
+  const personal = data.personalLine?.trim()
+    ? `
+    <p style="margin: 0 0 14px; font-size: 15px; line-height: 1.55; color: ${
+      data.branding.textColor || '#3A4256'
+    }; direction: ${isRTL ? 'rtl' : 'ltr'};">
+      ${escapeHtml(data.personalLine.trim())}
+    </p>`
+    : '';
+
   const content = `
     <p style="margin: 0 0 12px; font-size: 16px; color: ${data.branding.textColor || '#131A2B'};">
       ${greeting}
     </p>
+    ${personal}
     <p style="margin: 0 0 18px; font-size: 15px; line-height: 1.55; color: ${
       data.branding.textColor || '#3A4256'
     }; direction: ${isRTL ? 'rtl' : 'ltr'};">

@@ -116,7 +116,65 @@ describe('[smoke] invoicing readiness', () => {
     expect(missingInvoiceFields({ ...FULL_INVOICE, invoice_company_name: null })).toEqual([
       'company_name',
     ]);
-    expect(missingInvoiceFields({ ...FULL_INVOICE, invoice_tax_id: null })).toEqual(['tax_id']);
+  });
+
+  /**
+   * THE TAX ID BELONGS TO ONE DOCUMENT, not to billing in general.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * This file asked every business for one, and the platform has never
+   * believed that. `defaultDocumentType` says so outright: "Tax without a
+   * number is an ordinary invoice; neither is a receipt, which is what a
+   * service business collecting on the spot is really sending."
+   *
+   * Two halves of one system disagreed, and the half that knew nothing about
+   * document types was the one holding the publish gate. Reported by an owner
+   * with no tax ID whose invoiced services could not be published, leaving
+   * them a choice between inventing a number and giving up.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  describe('the tax id follows the document', () => {
+    /* `invoice_prices_include_tax` is what moves a business off a receipt. */
+    const TAXED = { ...FULL_INVOICE, invoice_prices_include_tax: true };
+
+    it('asks for one where the document is a tax invoice', () => {
+      expect(
+        missingInvoiceFields({ ...TAXED, invoice_document_type: 'tax_invoice', invoice_tax_id: null })
+      ).toEqual(['tax_id']);
+    });
+
+    it('does not ask a business issuing receipts', () => {
+      expect(
+        missingInvoiceFields({ ...FULL_INVOICE, invoice_document_type: 'receipt', invoice_tax_id: null })
+      ).toEqual([]);
+    });
+
+    it('does not ask a business issuing plain invoices', () => {
+      expect(
+        missingInvoiceFields({ ...TAXED, invoice_document_type: 'invoice', invoice_tax_id: null })
+      ).toEqual([]);
+    });
+
+    it('follows the derived default when they have chosen nothing', () => {
+      /*
+       * Automatic. No tax on prices means a receipt, so no tax ID is owed;
+       * tax on prices without a number is a plain invoice, same answer. The
+       * one combination that asks for it cannot arise from the default, which
+       * only reaches `tax_invoice` when a number is already there.
+       */
+      expect(missingInvoiceFields({ ...FULL_INVOICE, invoice_tax_id: null })).toEqual([]);
+      expect(missingInvoiceFields({ ...TAXED, invoice_tax_id: null })).toEqual([]);
+    });
+
+    it('still asks for everything a document needs whoever is sending it', () => {
+      /* Dropping the tax ID must not drop the other three: a client has to
+         know who billed them and where the money goes. */
+      expect(missingInvoiceFields({ invoice_document_type: 'receipt' })).toEqual([
+        'company_name',
+        'address',
+        'payment_method',
+      ]);
+    });
   });
 
   it('requires street, city and country before an address counts', () => {
@@ -183,10 +241,17 @@ describe('[smoke] invoicing readiness', () => {
   });
 
   it('reports everything missing for an account that never opened the section', () => {
-    // Exactly this account's state — and it has already sent twelve invoices.
+    /*
+     * Exactly this account's state, and it has already sent twelve invoices.
+     *
+     * No `tax_id` in the list any more, and not because the check weakened: an
+     * account that has set nothing has no tax on its prices either, so the
+     * document it issues is a RECEIPT, which does not carry one. The three
+     * that remain are what any document needs. See "the tax id follows the
+     * document" above.
+     */
     expect(missingInvoiceFields({ invoice_address: {} })).toEqual([
       'company_name',
-      'tax_id',
       'address',
       'payment_method',
     ]);

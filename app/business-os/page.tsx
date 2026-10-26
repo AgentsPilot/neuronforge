@@ -15,6 +15,8 @@ import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { CHANNELS_CARD_ID } from '@/components/business-os/insight/ChannelsOverviewCard';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { InboxChannelSetupDialog } from '@/components/business-os/leads/InboxChannelSetupDialog';
+import type { InboxChannelStatus } from '@/lib/business-os/leads/inboxChannel';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PAGE_CONTAINER, scrollIntoBusinessOsView } from '@/lib/business-os/pageContainer';
@@ -154,6 +156,59 @@ function BusinessOSContent() {
   } | undefined>(undefined);
   const [milestoneData, setMilestoneData] = useState<MilestoneData | undefined>(undefined);
   const [channelPerformance, setChannelPerformance] = useState<ChannelPerformance | undefined>(undefined);
+
+  /*
+   * The mailbox lead channel, read ONCE for this whole page.
+   *
+   * Two surfaces need it — the connections column offers to set it up, and
+   * readiness names the state where leads are filed and nobody is answered —
+   * and they are not allowed to disagree, so neither fetches for itself.
+   *
+   * Null until the first answer. The card and the readiness row both render
+   * nothing on null, which is the right behaviour for "not told yet": a
+   * business that HAS this running must not be shown an invitation to set it
+   * up for the second it takes to find out.
+   */
+  const [inboxChannel, setInboxChannel] = useState<InboxChannelStatus | null>(null);
+  const [inboxSetupOpen, setInboxSetupOpen] = useState(false);
+
+  const refreshInboxChannel = useCallback(async () => {
+    try {
+      const response = await fetch('/api/business-os/leads/inbox/status', { cache: 'no-store' });
+      const body = await response.json();
+      if (body?.success) setInboxChannel(body.data as InboxChannelStatus);
+    } catch {
+      /* One card's worth of silence. The status route never throws on its own
+         account, so reaching here means the network did. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshInboxChannel();
+  }, [refreshInboxChannel]);
+
+  /**
+   * Pause or resume one mailbox's channel.
+   *
+   * The route answers with the whole fresh status, so the card re-renders from
+   * the server's view rather than from an optimistic guess that could disagree
+   * with it.
+   */
+  const setInboxChannelRunning = useCallback(async (provider: string, running: boolean) => {
+    try {
+      const response = await fetch('/api/business-os/leads/inbox/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, running }),
+      });
+      const body = await response.json();
+      if (body?.success) setInboxChannel(body.data as InboxChannelStatus);
+    } catch {
+      /* The card keeps showing the state it had, which is still the truth:
+         nothing was written. */
+    }
+  }, []);
+
 
 
 
@@ -776,6 +831,33 @@ function BusinessOSContent() {
     }
   }, [language]);
 
+  /**
+   * Switch automatic replies on, from the one place that says they are off.
+   *
+   * The toggle itself lives on the automations card, and an owner who has just
+   * been told "your website leads are not being answered" should not have to go
+   * and find it. Same registry id, same route that card's own switch uses, so
+   * there is one writer and not two.
+   *
+   * Both reads are refreshed afterwards: the warning is drawn from the channel
+   * status and the switch from the automations list, and leaving either stale
+   * would show the owner a fix that appears not to have worked.
+   */
+  const enableLeadReplies = useCallback(async () => {
+    try {
+      const response = await fetch('/api/business-os/automations/operational', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'reply_to_enquiries', enabled: true }),
+      });
+      if (!response.ok) return;
+      await refreshInboxChannel();
+      await fetchDashboardData();
+    } catch {
+      /* Leaves the warning standing, which is the honest outcome. */
+    }
+  }, [refreshInboxChannel, fetchDashboardData]);
+
   useEffect(() => {
     if (user) {
       fetchDashboardData();
@@ -1340,6 +1422,7 @@ function BusinessOSContent() {
             pipelineStages={pipelineStages}
             milestoneData={milestoneData}
             onConfigureClick={handleQuickSetupClick}
+            inboxChannel={inboxChannel}
             onAction={(action) => {
               // Handle actions from LiveDashboard
               if (action === 'publish_website') {
@@ -1377,6 +1460,23 @@ function BusinessOSContent() {
                 // A business without a website reaches clients through a link,
                 // and the links page is where one is made and copied.
                 router.push('/business-os/website?view=links');
+              } else if (action === 'connect_inbox_channel') {
+                /*
+                 * The wizard, not a navigation.
+                 *
+                 * Setup reads this owner's own mail to learn their form's
+                 * shape, so it has to happen where they are — and it is the
+                 * same dialog the onboarding build page opens, for the same
+                 * reason: one setup, mounted twice.
+                 */
+                setInboxSetupOpen(true);
+              } else if (action === 'enable_lead_replies') {
+                void enableLeadReplies();
+              } else if (action.startsWith('pause_inbox_channel:') || action.startsWith('resume_inbox_channel:')) {
+                /* The provider travels in the action, because a business can
+                   run two channels and pausing one must not touch the other. */
+                const [verb, provider] = action.split(':');
+                void setInboxChannelRunning(provider, verb === 'resume_inbox_channel');
               } else if (action === 'open_website') {
                 router.push('/business-os/website');
               } else if (action === 'sync_calendar') {
@@ -1454,6 +1554,29 @@ function BusinessOSContent() {
         contact={editingContact}
         stages={pipelineStages}
         prefill={contactPrefill}
+      />
+
+      {/*
+        Leads from an existing website — the shared four-screen setup.
+
+        The same component the onboarding build page mounts. It reads this
+        owner's recent mail to learn their form's shape, so it opens here
+        rather than sending them anywhere.
+      */}
+      <InboxChannelSetupDialog
+        open={inboxSetupOpen}
+        onOpenChange={setInboxSetupOpen}
+        status={inboxChannel}
+        onEnabled={status => {
+          setInboxChannel(status);
+          /* The channel is a lead source, so the funnel and the channels card
+             both have a new row to draw. */
+          void fetchDashboardData();
+        }}
+        onFixReplies={enableLeadReplies}
+        /* Connecting a mailbox happens inside the dialog, so this page's copy
+           of the status would otherwise be stale the moment it closed. */
+        onStatusChanged={setInboxChannel}
       />
 
       {/* Scheduling Dialog (popup calendar from chat) */}
