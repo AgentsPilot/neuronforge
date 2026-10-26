@@ -8,7 +8,7 @@
  * comes from the report already read: no read of its own.
  *
  *   A-K1 Charged AI cost         chargedInWindow.costUsd    lagging   #costs-charged
- *   A-K2 Recorded AI cost        recorded.recordedUsd       lagging   AI calls & usage (MK-3b: the Calls tab)
+ *   A-K2 Recorded AI cost        recorded.recordedUsd       lagging   the Calls tab
  *   A-K3 Recorded above charged  recorded.aboveCharged      leading   #costs-leak
  *   A-K4 Billing periods not matching                       leading   #costs-periods (red above 0)
  *   A-K5 Fallback-priced charges, "n reconciled"            leading   #costs-fallback
@@ -29,12 +29,16 @@
  * Charge checks). Anchors are links only while their section is drawn (K-6);
  * the Leak check (A-K3's target) is always drawn.
  *
- * Money MK-3a (SA-WP-MK3 condition 5): A-K2 opens the real AI calls & usage
- * page on the same whole UTC days and business, never an address that relies
- * on a redirect. MK-3b retargets it to the Calls tab with the redirect.
+ * Money MK-3b: the strip is the page's, the same on both tabs (BD-29). On
+ * Summary & checks the four check tiles are anchors (K-6) and A-K2 switches to
+ * the Calls tab; on the Calls tab A-K2 is the current tab and the four check
+ * tiles switch to Summary & checks at their block. Each switch is a same-page
+ * filter tile (Q-14, R-7): a real link to `/admin/ai-cost?tab=…#anchor` whose
+ * plain click applies the tab through the page's one URL hook. No tile links to
+ * another page any more, so none can rely on a redirect.
  */
 
-import { KpiStrip, KpiTile } from '@/app/admin/components/layout/KpiStrip';
+import { KpiStrip, KpiTile, type KpiTileFilter } from '@/app/admin/components/layout/KpiStrip';
 // Finance owns the `$` formatter and the "At least" form (SA-Q-MK3-8: imported, not copied).
 import { atLeast, formatUsdSign } from '@/app/admin/finance/financeFormat';
 
@@ -59,12 +63,18 @@ import {
 } from '../../costCopy';
 import type { CostReportPayload } from '../../costTypes';
 
+export type AiCostKpisTab = 'checks' | 'calls';
+
 export interface AiCostKpisProps {
   report: CostReportPayload | null;
   /** The first read (or the first after an error) is in flight: the K-10 placeholders. */
   firstLoad: boolean;
   /** The report's sections are on screen, so the anchor tiles have somewhere to go. */
   sectionsShown: boolean;
+  /** The tab on screen. */
+  tab: AiCostKpisTab;
+  /** The same-page tile for a tab (and the block to land on): its real link, and the same switch applied. */
+  tabLink: (tab: AiCostKpisTab, anchor: `#${string}` | null) => KpiTileFilter;
 }
 
 const PLACEHOLDERS = 5;
@@ -76,17 +86,6 @@ const dollars = (amount: number) => formatUsdSign({ currency: US_DOLLAR_CODE, am
 /** The parts that are present, joined; null when none is. */
 function subLine(...parts: Array<string | null>): string | null {
   return parts.filter((part): part is string => part !== null).join('; ') || null;
-}
-
-/**
- * A-K2's target while the Calls tab does not exist (MK-3a): AI calls & usage on
- * the report's own whole UTC days, as a custom range (that page's 7d and 30d are
- * rolling), and the business when one is picked. Literal keys, that page's own.
- */
-export function recordedCallsLink(window: { from: string; to: string }, accountId: string | null): `/${string}` {
-  const params = new URLSearchParams({ range: 'custom', from: window.from, to: window.to });
-  if (accountId) params.set('account', accountId);
-  return `/admin/analytics?${params.toString()}`;
 }
 
 function chargedValue(report: CostReportPayload): string {
@@ -116,7 +115,7 @@ function aboveTile(report: CostReportPayload): { value: string; sub: string | nu
   return { value: KPI_UNKNOWN, sub: null };
 }
 
-export function AiCostKpis({ report, firstLoad, sectionsShown }: AiCostKpisProps) {
+export function AiCostKpis({ report, firstLoad, sectionsShown, tab, tabLink }: AiCostKpisProps) {
   if (!report) return firstLoad ? <KpiStrip loading placeholderCount={PLACEHOLDERS} /> : null;
 
   const totalsRead = report.sections.totals !== 'failed';
@@ -131,7 +130,11 @@ export function AiCostKpis({ report, firstLoad, sectionsShown }: AiCostKpisProps
     totalsRead && !noneChecked && checked < report.periods.length ? KPI_OF_CHECKED(formatCount(checked)) : null;
   const periodsRed = totalsRead && !noneChecked && report.mismatchedPeriods > 0;
 
-  const anchor = (target: `#${string}`) => (sectionsShown ? { href: target } : {});
+  // Summary & checks: an anchor while its block is drawn (K-6). Calls: switch to Summary & checks at that block.
+  const anchor = (target: `#${string}`) =>
+    tab === 'calls' ? { filter: tabLink('checks', target) } : sectionsShown ? { href: target } : {};
+  // The recorded block and the Leak check are always drawn on Summary & checks.
+  const leak = tab === 'calls' ? { filter: tabLink('checks', '#costs-leak') } : { href: '#costs-leak' as const };
   const above = aboveTile(report);
 
   return (
@@ -149,7 +152,7 @@ export function AiCostKpis({ report, firstLoad, sectionsShown }: AiCostKpisProps
         value={recordedValue(report)}
         sub={KPI_RECORDED_SCOPE}
         indicator={{ kind: 'lagging', definition: AI_COST_KPI_DEFINITIONS.recorded }}
-        link={recordedCallsLink(report.window, report.accountFilter)}
+        filter={{ ...tabLink('calls', null), current: tab === 'calls' }}
       />
       <KpiTile
         testId="costs-kpi-above"
@@ -157,7 +160,7 @@ export function AiCostKpis({ report, firstLoad, sectionsShown }: AiCostKpisProps
         value={above.value}
         sub={above.sub}
         indicator={{ kind: 'leading', definition: AI_COST_KPI_DEFINITIONS.above }}
-        href="#costs-leak"
+        {...leak}
       />
       <KpiTile
         testId="costs-kpi-periods"

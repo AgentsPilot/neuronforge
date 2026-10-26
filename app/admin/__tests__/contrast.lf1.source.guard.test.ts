@@ -63,7 +63,8 @@ const PAGES: Record<string, string[]> = {
   Finance: walk('app/admin/finance'),
   // Money M-5 (SA-Q63): the report and Leak check on Charge checks; its components stay in this folder.
   // Money MK-3a (ruled): Charge checks became the AI cost page, whose own folder joins the walk.
-  'AI cost': [...walk('app/admin/ai-cost'), ...walk('app/admin/business-os-llm/components/costs')],
+  // Money MK-3b (ruled): the Calls tab (the old AI calls & usage) joins, its chevrons now slate-400.
+  'AI cost': [...walk('app/admin/ai-cost'), ...walk('app/admin/business-os-llm/components/costs'), ...walk('app/admin/analytics')],
 };
 
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
@@ -146,6 +147,8 @@ describe('LF-1 contrast guard: the walk', () => {
         'app/admin/business-os-llm/components/costs/CostsTab.tsx',
         'app/admin/business-os-llm/components/costs/AiCostKpis.tsx',
         'app/admin/business-os-llm/components/costs/RecordedSection.tsx',
+        'app/admin/analytics/components/CallsTab.tsx',
+        'app/admin/analytics/components/CallsSummary.tsx',
         'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
         'app/admin/business-os-llm/components/costs/CostsSections.tsx',
         'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',

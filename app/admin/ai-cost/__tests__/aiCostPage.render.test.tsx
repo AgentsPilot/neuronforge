@@ -97,8 +97,10 @@ describe('MK-3a: the AI cost page (Summary & checks)', () => {
     await waitFor(() => expect(urls(fetchMock).filter((u) => u.split('?')[0] === REPORT_PATH)).toHaveLength(1), WAIT);
     expect(urls(fetchMock).every((u) => u.split('?')[0] === REPORT_PATH)).toBe(true);
     expect(urls(fetchMock).some((u) => u.includes('/token-usage/drill-down'))).toBe(false);
-    // The redirect's tab=checks is kept, untouched.
-    expect(window.location.search).toContain('tab=checks');
+    // MK-3b (ruled): the page's one spec owns `tab`; the redirect's tab=checks is the default, so it is
+    // dropped from the address (U-3), and the Summary & checks tab is the selected one.
+    expect(window.location.search).not.toContain('tab=');
+    expect(screen.getByRole('tab', { name: 'Summary & checks' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('a failed report: the header, the legend and the Leak check stay; no strip, no recorded block', async () => {
