@@ -88,21 +88,22 @@ function subLine(...parts: Array<string | null>): string | null {
   return parts.filter((part): part is string => part !== null).join('; ') || null;
 }
 
-function chargedValue(report: CostReportPayload): string {
+// MK-8b (SA-Q-MK8B-3): this and the next two are exported so the AI cost drawers print exactly what the strip prints.
+export function chargedValue(report: CostReportPayload): string {
   const charged = report.chargedInWindow;
   if (charged.status === 'unknown' || charged.costUsd === null) return KPI_UNKNOWN;
   const text = dollars(charged.costUsd);
   return text === null ? KPI_UNKNOWN : atLeast(text, charged.status === 'ok');
 }
 
-function recordedValue(report: CostReportPayload): string {
+export function recordedValue(report: CostReportPayload): string {
   const recorded = report.recorded;
   if (recorded.recordedUsd === null) return KPI_UNKNOWN;
   const text = dollars(recorded.recordedUsd);
   return text === null ? KPI_UNKNOWN : atLeast(text, recorded.recordedExact);
 }
 
-function aboveTile(report: CostReportPayload): { value: string; sub: string | null } {
+export function aboveTile(report: CostReportPayload): { value: string; sub: string | null } {
   const { aboveCharged, chargedAboveUsd } = report.recorded;
   if (aboveCharged.state === 'figure' && aboveCharged.usd !== null) {
     return { value: dollars(aboveCharged.usd) ?? KPI_UNKNOWN, sub: null };
@@ -115,20 +116,28 @@ function aboveTile(report: CostReportPayload): { value: string; sub: string | nu
   return { value: KPI_UNKNOWN, sub: null };
 }
 
+/**
+ * A-K4's value, its "of n checked" line and its red rule. Exported (MK-8b,
+ * SA-Q-MK8B-3) so the AI cost drawers print exactly what the strip prints.
+ */
+export function periodsTile(report: CostReportPayload): { value: string; sub: string | null; red: boolean } {
+  const totalsRead = report.sections.totals !== 'failed';
+  const checked = report.periods.filter((period) => period.matches !== null).length;
+  const noneChecked = report.periods.length > 0 && checked === 0;
+  return {
+    value: !totalsRead ? KPI_UNKNOWN : noneChecked ? KPI_NOT_CHECKED : formatCount(report.mismatchedPeriods),
+    sub: totalsRead && !noneChecked && checked < report.periods.length ? KPI_OF_CHECKED(formatCount(checked)) : null,
+    red: totalsRead && !noneChecked && report.mismatchedPeriods > 0,
+  };
+}
+
 export function AiCostKpis({ report, firstLoad, sectionsShown, tab, tabLink }: AiCostKpisProps) {
   if (!report) return firstLoad ? <KpiStrip loading placeholderCount={PLACEHOLDERS} /> : null;
 
-  const totalsRead = report.sections.totals !== 'failed';
   // The fallback list comes from the rows read; a rows read that failed or never ran has no count.
   const rowsRead = report.sections.rows === 'ok';
   const incomplete = report.incomplete ? KPI_MAY_BE_INCOMPLETE : null;
-
-  const checked = report.periods.filter((period) => period.matches !== null).length;
-  const noneChecked = report.periods.length > 0 && checked === 0;
-  const periodsValue = !totalsRead ? KPI_UNKNOWN : noneChecked ? KPI_NOT_CHECKED : formatCount(report.mismatchedPeriods);
-  const periodsSub =
-    totalsRead && !noneChecked && checked < report.periods.length ? KPI_OF_CHECKED(formatCount(checked)) : null;
-  const periodsRed = totalsRead && !noneChecked && report.mismatchedPeriods > 0;
+  const { value: periodsValue, sub: periodsSub, red: periodsRed } = periodsTile(report);
 
   // Summary & checks: an anchor while its block is drawn (K-6). Calls: switch to Summary & checks at that block.
   const anchor = (target: `#${string}`) =>

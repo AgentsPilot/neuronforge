@@ -9,7 +9,9 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
+import { OpenRowButton, OpenRowHeader } from '@/app/admin/components/layout/OpenRowButton';
+import { ADMIN_TH_OPEN } from '@/app/admin/components/layout/adminTable';
+import { BusinessOpenHeader } from '@/app/admin/finance/components/BusinessDrawer';
 
 const LABEL = 'Open details for User Login at 2026-10-10 09:00 UTC';
 
@@ -64,5 +66,27 @@ describe('OpenRowButton', () => {
     expect(classes).toContain('focus-visible:ring-purple-500');
     expect(classes.some((cls) => cls.startsWith('focus:'))).toBe(false);
     expect(classes.some((cls) => cls.includes('ring-ring'))).toBe(false);
+  });
+});
+
+describe('OpenRowHeader (moved unchanged from Finance, Money MK-8b SA-Q-MK8B-1)', () => {
+  it('is the narrow Open column header with an sr-only "Details" name', () => {
+    render(
+      <table>
+        <thead>
+          <tr>
+            <OpenRowHeader />
+          </tr>
+        </thead>
+      </table>
+    );
+    const header = screen.getByRole('columnheader', { name: 'Details' });
+    expect(header.getAttribute('scope')).toBe('col');
+    expect(header.className).toBe(ADMIN_TH_OPEN);
+    expect(header.querySelector('span')?.className).toBe('sr-only');
+  });
+
+  it("Finance's name is the shared component itself (a re-export, never a copy)", () => {
+    expect(BusinessOpenHeader).toBe(OpenRowHeader);
   });
 });

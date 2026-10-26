@@ -731,6 +731,7 @@ const MIGRATED_PAGES = [
     // Money MK-3b (ruled): the AI calls & usage entry (L-2a / L-2b) joins it as the Calls tab: its
     // page file is deleted (the old address redirects), `AnalyticsKpis.tsx` is deleted (its figures are
     // `CallsSummary.tsx`), and the tab body is `CallsTab.tsx`. The page's view, tabs, spec and read join.
+    // Money MK-8b (ruled): the two drawers (business, billing period), their row opener, read and words.
     page: '/admin/ai-cost (AI cost)',
     files: [
       'app/admin/ai-cost/page.tsx',
@@ -738,6 +739,10 @@ const MIGRATED_PAGES = [
       'app/admin/ai-cost/components/AiCostTabs.tsx',
       'app/admin/ai-cost/aiCostFilters.ts',
       'app/admin/ai-cost/useCostReport.ts',
+      'app/admin/ai-cost/components/AiCostDrawers.tsx',
+      'app/admin/ai-cost/components/aiCostRowOpen.tsx',
+      'app/admin/ai-cost/aiCostDrawerReads.ts',
+      'app/admin/ai-cost/aiCostDrawerCopy.ts',
       'app/admin/analytics/analyticsTypes.ts',
       'app/admin/analytics/analyticsFilters.ts',
       'app/admin/analytics/analyticsCall.ts',

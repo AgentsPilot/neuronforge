@@ -32,6 +32,13 @@
  * report's own (the platform sentence, the route's reason such as the 92-day
  * cap, or the shared network sentence).
  *
+ * Money MK-8b: Summary & checks sits inside the AI cost drawer provider
+ * (`AiCostDrawers.tsx`). With every business shown and a settled report on
+ * screen, the period check and Leak check rows open their drawers; the
+ * drawer reads only when opened, in the dates of the report on screen, so the
+ * page's load requests are unchanged (T-12). With a business picked the page
+ * is the full view: no openers (SA-Q-MK8B-4).
+ *
  * A client component with no read of its own but the report: the page sits
  * under `app/admin/layout.tsx`, whose `requireAdminPage` runs first, and every
  * read goes to an admin route that runs `requireAdmin` first.
@@ -67,6 +74,7 @@ import {
   type AiCostTab,
 } from '../aiCostFilters';
 import { useCostReport } from '../useCostReport';
+import { AiCostDrawerProvider, type AiCostFullViewHref } from './AiCostDrawers';
 import { AiCostTabPanel, AiCostTabs } from './AiCostTabs';
 
 /** The patch a tab choice writes: leaving Calls resets its own keys. */
@@ -108,6 +116,16 @@ export function AiCostView() {
   );
 
   const covering = filters.window.kind === 'linked' ? reportDates(filters.window, new Date()) : null;
+
+  // MK-8b (SA-WP-MK8B C-3): the drawers open only from a settled report of every business, in its own dates.
+  const drawerWindow =
+    report && !loading && !error && reportAccountOf(filters.account) === null
+      ? { from: report.window.from, to: report.window.to }
+      : null;
+  const fullViewHref = useCallback<AiCostFullViewHref>(
+    (accountId, anchor) => `${AI_COST_PATH}${hrefFor({ ...tabPatch('checks'), account: accountId })}${anchor ?? ''}`,
+    [hrefFor]
+  );
 
   return (
     <div className="space-y-6">
@@ -159,16 +177,18 @@ export function AiCostView() {
 
       <AiCostTabPanel id="checks" hidden={tab !== 'checks'}>
         {tab === 'checks' && (
-          <CostsTab
-            filters={{
-              window: filters.window,
-              account: reportAccountOf(filters.account) ?? '',
-            }}
-            setFilters={setFilters}
-            onClear={clear}
-            canClear={canClear}
-            state={reportState}
-          />
+          <AiCostDrawerProvider window={drawerWindow} pageError={error?.message ?? null} fullViewHref={fullViewHref}>
+            <CostsTab
+              filters={{
+                window: filters.window,
+                account: reportAccountOf(filters.account) ?? '',
+              }}
+              setFilters={setFilters}
+              onClear={clear}
+              canClear={canClear}
+              state={reportState}
+            />
+          </AiCostDrawerProvider>
         )}
       </AiCostTabPanel>
 

@@ -17,6 +17,8 @@
 
 import { ChevronRight } from 'lucide-react';
 
+import { ADMIN_TH_OPEN } from './adminTable';
+
 export interface OpenRowButtonProps {
   /** Full accessible name and tooltip: "Open details for …" (D-2). */
   label: string;
@@ -37,5 +39,19 @@ export function OpenRowButton({ label, onOpen, testId }: OpenRowButtonProps) {
     >
       <ChevronRight className="h-4 w-4" aria-hidden="true" />
     </button>
+  );
+}
+
+/**
+ * The narrow Open column's header (LF-8): no visible word, an sr-only
+ * "Details" so the column still has a name. Moved here unchanged from
+ * Finance's business drawer (Money MK-8b, SA-Q-MK8B-1), so the Businesses-style
+ * Open column is one piece wherever a page uses it.
+ */
+export function OpenRowHeader() {
+  return (
+    <th scope="col" className={ADMIN_TH_OPEN}>
+      <span className="sr-only">Details</span>
+    </th>
   );
 }
