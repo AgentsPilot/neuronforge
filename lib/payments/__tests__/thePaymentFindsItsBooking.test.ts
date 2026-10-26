@@ -85,6 +85,19 @@ jest.mock('@/lib/supabaseServer', () => ({
         filters[`is:${column}`] = value;
         return builder;
       };
+      /*
+       * `.not()` exists because `findLocalSubscription` calls it.
+       *
+       * Without it the chain threw, the linker's own try/catch swallowed the
+       * TypeError, and every test here reported "linked nothing" — which looks
+       * exactly like the bug under test rather than a hole in the fake. A
+       * builder that is missing a method fails the suite in the most
+       * misleading way available.
+       */
+      builder.not = (column: string, operator: string, value: unknown) => {
+        filters[`not:${column}:${operator}`] = value;
+        return builder;
+      };
       builder.in = (column: string, values: unknown[]) => {
         filters[`in:${column}`] = values;
         return builder;
