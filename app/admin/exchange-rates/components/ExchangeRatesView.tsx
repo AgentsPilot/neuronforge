@@ -17,7 +17,7 @@
  *   GET   /api/admin/exchange-rates?from=&to=                 rates, the newest 10
  *                                                             changes in the window,
  *                                                             the all-time lastChange,
- *                                                             readAt, lastSync
+ *                                                             readAt, lastSync, viewer
  *   GET   /api/admin/exchange-rates?currency=<CODE>&from=&to= that currency's newest
  *                                                             10 changes in the window
  *   PATCH /api/admin/exchange-rates/<CODE>                    one rate, or one on/off switch
@@ -38,6 +38,13 @@
  * re-reads; success adds the code to the accepted set, which the next
  * successful sync clears. The "Rates last checked" tile shows the visit's own
  * sync ahead of the GET's `lastSync`, so a later re-read cannot move it back.
+ *
+ * Slice 1f (D-11, SA §13.9 SQ-55 (a')): the tile also names who ran the
+ * check. After a reload the server labels the sync's actor; right after this
+ * visit's own sync the name is the plain GET's `viewer` (the signed-in admin
+ * of the page, who is the admin who posted to `/sync`), kept in `viewerRef`
+ * from the newest successful plain read. No new request, so still four
+ * `fetch(` call sites.
  *
  * The KPIs and the overall history always come from the plain GET; the
  * one-currency read only feeds the history panel (SA-1c-2). That read is
@@ -106,6 +113,7 @@ import {
   type ExchangeRateSyncPayload,
   type ExchangeRatesReadPayload,
   type LastRateSyncWire,
+  type RateViewerWire,
 } from '@/lib/admin/exchangeRates/rateSyncRules';
 import { clientLogger } from '@/lib/logger/client';
 
@@ -247,6 +255,8 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
   const [visitLastSync, setVisitLastSync] = useState<LastRateSyncWire | null>(null);
   // The newest sync; an answer carrying an older number (or after unmount) is dropped.
   const syncRequest = useRef(0);
+  // Slice 1f (SQ-55 (a')): the signed-in admin from the newest successful plain read; names this visit's own sync.
+  const viewerRef = useRef<RateViewerWire | null>(null);
 
   /**
    * One read. After a save (`afterSave`), a failed re-read keeps the data on
@@ -287,6 +297,8 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
       // Every successful plain read releases the held rows (SQ-9).
       setHeld(NO_HELD);
       setPayload(result.data);
+      // `?? null`: an answer from before slice 1f (deploy skew) has no viewer.
+      viewerRef.current = result.data.viewer ?? null;
       setPayloadWindow(readWindow);
     } finally {
       if (isCurrent()) setLoading(false);
@@ -494,7 +506,8 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
         return;
       }
       setSyncView({ answer, accepted: NO_CODES });
-      const checked = lastSyncFromSync(answer);
+      // Slice 1f: the checker is the page's viewer (a ref, so the deps stay empty).
+      const checked = lastSyncFromSync(answer, viewerRef.current);
       if (checked) setVisitLastSync(checked);
       logger.info({ suggestions: answer.suggestions.length }, 'Exchange rates synced');
     } finally {

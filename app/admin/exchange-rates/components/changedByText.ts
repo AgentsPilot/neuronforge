@@ -6,7 +6,8 @@
  * editor's short id, which is what a failed name lookup leaves (never
  * "Unknown user": "we could not look it up" is not "there is nobody").
  *
- * Used by the history table and the Last rate change tile, so the two cannot
+ * Used by the history table, the Last rate change tile and (slice 1f, SA
+ * §13.9 SQ-56) the Rates last checked tile's "by {who}", so the three cannot
  * disagree. Pure; no fetch.
  */
 
