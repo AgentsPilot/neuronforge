@@ -7,7 +7,7 @@
 **Depends on:** P-6a merged (#405, P-6a.2: renewal failure columns, `subscription_ended` row, `planPaymentNotice`, the `/test-business-os` test clock). P-3b.2 mirror (`customer.subscription.updated` already copies `cancel_at_period_end`). P-7b.1 merged (the owner-facing billing-mutation route pattern). P-8a merged (admin Subscriptions list and the Businesses-drawer Plan billing block).
 **Date:** 2026-10-25
 **Branch:** `feature/bos-plan-payments-p7a`, worktree `neuronforge-p7a`, fresh from `origin/main` `10761291` (#509). Confirmed with `git branch --show-current` on 2026-10-25. Highest migration on that main: `20261092`.
-**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Committed, PR #TBD open; merge gate: the user's live demo (do not merge until the user confirms).
+**Status:** SA reviewed 2026-10-25: APPROVED WITH CONDITIONS C-1 to C-12 (SA Review Notes). User decisions 2026-10-26 (§14.1): BQ-3 = A (P-7a.4 in scope), BQ-2 after month ends, BQ-1 yes. **P-7a.1:** SA code review APPROVED WITH FIXES (F-1 applied), QA PASS (no bugs), G-5 (he / es wording) approved by the user 2026-10-26 with the Hebrew fix ("מבטלים…" / "מחדשים…"). Committed, PR #519 open; merge gate: the user's live demo (do not merge until the user confirms).
 
 ## Overview
 
@@ -792,8 +792,8 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 |---|---|
 | Slice | P-7a.1 Cancel and reactivate |
 | Branch | `feature/bos-plan-payments-p7a` |
-| Commit | see PR (feature commit + `origin/main` merge + docs commit) |
-| PR | #TBD (to `main`, merge commit; auto-merge OFF) |
+| Commits | `6e3e5a2a` feat (P-7a.1), `348bfdb6` merge of `origin/main`, plus this docs commit |
+| PR | #519 (to `main`, merge commit; auto-merge OFF) |
 | Migration | None |
 | Merge gate | Live demo owed by the user (§QA "Owed demo steps"); do not merge until the user confirms |
 
@@ -809,4 +809,4 @@ Reviewed in the worktree `neuronforge-p7a`, branch `feature/bos-plan-payments-p7
 | 2026-10-26 | P-7a.1 code complete, uncommitted (Dev) | T0 to T4. X-2 / X-3 on the standard sandbox (cleaned up). 9 deviations for SA in Implementation Notes (P-7a.1). Requested suites 328 / 11 446 and `test:bos-entitlements` 306 / 9 227 passed; Connect harness md5 unchanged; 0 type errors in touched files; no migration, no webhook change |
 | 2026-10-26 | SA code review of P-7a.1 (SA) | APPROVED WITH FIXES. C-1 to C-5, CAS, tenant isolation, entitlements registrations, audit and i18n verified. Deviations 1–9 accepted (5: the BQ-5 sentence binds P-7a.3 before the price switch goes on in production; 4: P-7a.4 decides the immediate path on the fresh status). F-1 applied: `unchanged` shows Stripe's state from the route answer (+2 render tests). SA runs: 154 suites / 6 103 tests, `test:bos-entitlements` 306 / 9 227, Connect md5 unchanged, 7 + 1 mutations all caught, 0 type errors in touched files. Local build stop on missing `.env.local` accepted as environmental |
 | 2026-10-26 | QA of P-7a.1 (QA); TL decision on deviation 6 recorded | PASS, no bugs. Focus 2–8 covered (Jest + 16/16 sandbox checks on a throwaway customer, deleted); focus 1 and the live half of 4 owed as demo. Requested suites 152 / 5 937, `test:bos-entitlements` 306 / 9 227, QA files 2 / 24, Connect md5 unchanged. Edge E-1 (`cancel_at`-only: UI cannot reach Reactivate) added to the C-3 follow-up. "Reactivate your plan to upgrade" DROPPED (TL): §2.1, §5, §11, deviation 6 updated |
-| 2026-10-26 | G-5 approved; committed, PR opened (RM) | User approved the wording with the Hebrew fix (`plan.manage.cancelling` "מבטלים…", `plan.manage.reactivating` "מחדשים…"); he / es draft comments marked approved. Committed on `feature/bos-plan-payments-p7a`, `origin/main` merged in, PR #TBD opened; auto-merge off, live demo owed before merge |
+| 2026-10-26 | G-5 approved; committed, PR opened (RM) | User approved the wording with the Hebrew fix (`plan.manage.cancelling` "מבטלים…", `plan.manage.reactivating` "מחדשים…"); he / es draft comments marked approved. Committed on `feature/bos-plan-payments-p7a`, `origin/main` merged in, PR #519 opened; auto-merge off, live demo owed before merge |
