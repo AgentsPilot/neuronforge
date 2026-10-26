@@ -28,6 +28,22 @@ export const COSTS_PERIOD_RULE = (lookbackDays: number) =>
   `Whole billing periods are shown: every period that started on or before the window’s last day ` +
   `and at most ${lookbackDays} days before its first day. A period’s figures never depend on the window edge.`;
 
+/**
+ * Money MK-2 (SA-1): the period table is whole billing periods and no longer
+ * feeds the cost tile; it says so in these words (§2 "Approved fix").
+ */
+export const COSTS_WHOLE_PERIODS_LABEL = 'Whole billing periods: can include charges from before the window';
+
+/** The cost tile's own block: charges created in the window, Finance's computation. */
+export const CHARGED_IN_WINDOW_TITLE = 'Charged AI cost in this window';
+export const CHARGED_IN_WINDOW_NOTE =
+  'Charges created in the window, deleted accounts included: the same figure Finance shows for the same window. ' +
+  'The billing periods below are whole periods, so their totals can differ.';
+export const CHARGED_DELETED_NONE = 'No charges from deleted accounts';
+export const chargedDeletedLine = (costUsd: string, rows: number) =>
+  `Deleted accounts: ${costUsd} (${rows} ledger ${rows === 1 ? 'row' : 'rows'})`;
+export const CHARGED_READ_FAILED = 'The charged AI cost for this window could not be read. The other sections are unaffected.';
+
 export const NET_INCLUDING_CORRECTIONS = 'net, including corrections';
 
 export const BREAKDOWN_NOTE =
@@ -94,4 +110,8 @@ export const KPI_NOT_CHECKED = 'Not checked';
 /** K-8: a read stopped at its ceiling, so the figure is a lower bound. */
 export const KPI_MAY_BE_INCOMPLETE = 'may be incomplete';
 export const KPI_RECONCILED = (count: string) => `${count} reconciled`;
+/** MK-2: a ceiling or an unreadable amount, so the window figure is a lower bound (Finance's rule). */
+export const KPI_AT_LEAST = 'at least';
+/** MK-2 (D-1): the two tiles still read from the stored period totals say so. */
+export const KPI_WHOLE_PERIODS = 'whole billing periods';
 export const KPI_OF_CHECKED = (count: string) => `of ${count} checked`;

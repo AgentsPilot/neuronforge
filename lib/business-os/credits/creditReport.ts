@@ -69,7 +69,6 @@ import type {
 
 export const CREDIT_REPORT_LIMITS = {
   MAX_WINDOW_DAYS: 92,
-  DEFAULT_WINDOW_DAYS: 30,
   /** A billing period is at most 31 days (anchor + n months, day clamped). */
   PERIOD_LOOKBACK_DAYS: 31,
   PAGE_SIZE: 1000,

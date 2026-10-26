@@ -94,6 +94,16 @@ function report(over: Partial<CostReportPayload> = {}): CostReportPayload {
     },
     spreads: [],
     unreadableAmounts: 0,
+    chargedInWindow: {
+      status: 'ok',
+      coverage: 'after_cutover',
+      costUsd: 0.0065,
+      credits: 6.5,
+      charges: 5,
+      rows: 6,
+      deleted: { costUsd: 0.0005, credits: 0.5, rows: 1 },
+      unreadableAmounts: 0,
+    },
     ...over,
   };
 }
@@ -122,6 +132,11 @@ const spanOf = (url: string) => {
   return (Date.parse(`${params.get('to')}T00:00:00Z`) - Date.parse(`${params.get('from')}T00:00:00Z`)) / DAY_MS;
 };
 const costs = () => document.querySelector('[data-testid="costs-tab"]') as HTMLElement;
+/** Money MK-2 (ruled): the default window is This month, the first UTC day of this month to today. */
+const thisMonth = () => {
+  const today = new Date().toISOString().slice(0, 10);
+  return { from: `${today.slice(0, 7)}-01`, to: today };
+};
 const flush = () => act(async () => {});
 
 function openAt(search: string) {
@@ -135,7 +150,8 @@ beforeEach(() => {
 });
 
 describe('C-1: the bar (§5.5, D-2 (b), SA-R-11, D-15)', () => {
-  it('the windows in order with 30 days pressed, the Business picker, Clear disabled, Refresh named, Read at', async () => {
+  // Money MK-2 (ruled): This month is pressed by default (was 30 days).
+  it('the windows in order with This month pressed, the Business picker, Clear disabled, Refresh named, Read at', async () => {
     stub(() => ok(report()));
     openAt('');
     await within(costs()).findByTestId('costs-periods');
@@ -149,7 +165,8 @@ describe('C-1: the bar (§5.5, D-2 (b), SA-R-11, D-15)', () => {
       'Custom',
       '90 days',
     ]);
-    expect(within(windowGroup).getByRole('button', { name: '30 days' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(windowGroup).getByRole('button', { name: 'This month' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(windowGroup).getByRole('button', { name: '30 days' })).toHaveAttribute('aria-pressed', 'false');
     // From / To only under Custom (they were always shown before L-9a).
     expect(within(bar).queryByLabelText('From (UTC)')).toBeNull();
     expect(within(bar).getByLabelText('Business')).toHaveAttribute('role', 'combobox');
@@ -193,9 +210,11 @@ describe('the URL contract (§5.6)', () => {
     await flush();
     const calls = reportCalls(fetchMock);
     expect(calls).toHaveLength(1);
-    expect(spanOf(calls[0])).toBe(29);
+    // Money MK-2 (ruled): the default read is This month (was a 29-day span).
+    expect({ from: paramsOf(calls[0]).get('from'), to: paramsOf(calls[0]).get('to') }).toEqual(thisMonth());
+    expect(spanOf(calls[0])).toBeLessThanOrEqual(30);
     expect(paramsOf(calls[0]).has('accountId')).toBe(false);
-    expect(within(costs()).getByRole('button', { name: '30 days' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(costs()).getByRole('button', { name: 'This month' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(costs()).getByRole('button', { name: 'Clear' })).toBeDisabled();
     await waitFor(() => expect(window.location.search).toBe(''));
   });
@@ -211,7 +230,8 @@ describe('the URL contract (§5.6)', () => {
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(2));
     expect(spy).toHaveBeenLastCalledWith(null, '', `${PAGE}?range=90d&account=${A}`);
 
-    fireEvent.click(within(costs()).getByRole('button', { name: '30 days' }));
+    // Money MK-2 (ruled): the default preset is now This month, so it is the one omitted.
+    fireEvent.click(within(costs()).getByRole('button', { name: 'This month' }));
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(3));
     expect(window.location.search).toBe(`?account=${A}`);
 
@@ -295,7 +315,8 @@ describe('C-6: Refresh and Try again (§5.10, D-15)', () => {
     openAt('');
     await within(costs()).findByTestId('costs-periods');
     const first = reportCalls(fetchMock)[0];
-    expect(paramsOf(first).get('from')).toBe('2026-10-02');
+    // Money MK-2 (ruled): This month at 2026-10-31 (was 30 days, from 2026-10-02).
+    expect(paramsOf(first).get('from')).toBe('2026-10-01');
     expect(paramsOf(first).get('to')).toBe('2026-10-31');
 
     jest.setSystemTime(new Date('2026-11-01T00:00:30.000Z'));
@@ -511,7 +532,11 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     openAt('');
     await within(costs()).findByTestId('costs-periods');
     expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
-    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.007)}`);
+    // Money MK-2 (SA-1, ruled): the cost tile is chargedInWindow (0.0065), not the stored periods' 0.007.
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.0065)}`);
+    expect(tile('costs-kpi-cost')).not.toHaveTextContent(formatUsd(0.007));
+    expect(tile('costs-kpi-credits')).toHaveTextContent('whole billing periods');
+    expect(tile('costs-kpi-charges')).toHaveTextContent('whole billing periods');
     expect(tile('costs-kpi-charges')).toHaveAttribute('aria-label', 'Charges, 1,234');
     expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced, 2');
     expect(tile('costs-kpi-fallback')).toHaveTextContent('1 reconciled');
@@ -522,11 +547,11 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     for (const testId of TOTALS_TILES) expect(tile(testId)).toHaveAttribute('data-status', 'neutral');
 
     expect(tile('costs-kpi-credits')).toHaveAttribute('href', '#costs-periods');
-    expect(tile('costs-kpi-cost')).toHaveAttribute('href', '#costs-periods');
+    expect(tile('costs-kpi-cost')).toHaveAttribute('href', '#costs-charged');
     expect(tile('costs-kpi-charges')).toHaveAttribute('href', '#costs-breakdowns');
     expect(tile('costs-kpi-fallback')).toHaveAttribute('href', '#costs-fallback');
     expect(periods).toHaveAttribute('href', '#costs-periods');
-    for (const target of ['costs-periods', 'costs-breakdowns', 'costs-fallback']) {
+    for (const target of ['costs-charged', 'costs-periods', 'costs-breakdowns', 'costs-fallback']) {
       expect(document.getElementById(target)).toHaveAttribute('data-testid', target);
     }
   });
@@ -560,11 +585,14 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     expect(reportCalls(fetchMock)).toHaveLength(3);
   });
 
-  it('SA M-1: an incomplete report puts "may be incomplete" on all five tiles, turns none amber, and keeps Periods red', async () => {
+  // Money MK-2 (ruled): the cost tile has its own read and its own exactness, so the period
+  // report's ceiling no longer marks it; the other four tiles keep SA M-1.
+  it('SA M-1: an incomplete report puts "may be incomplete" on the four period tiles, turns none amber, and keeps Periods red', async () => {
     stub(() => ok(report({ incomplete: true, incompleteReasons: ['rows_ceiling'] })));
     openAt('');
     await within(costs()).findByTestId('costs-incomplete');
-    for (const testId of ALL_TILES) {
+    expect(tile('costs-kpi-cost')).not.toHaveTextContent('may be incomplete');
+    for (const testId of ALL_TILES.filter((id) => id !== 'costs-kpi-cost')) {
       const element = tile(testId);
       const sub = document.getElementById(element.getAttribute('aria-describedby') ?? '');
       expect(sub?.textContent).toContain('may be incomplete');
@@ -583,8 +611,10 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     );
     const { unmount } = openAt('');
     await within(costs()).findByTestId('costs-totals-failed');
+    // Money MK-2 (ruled): the cost tile's read is not the totals read, so it keeps its figure.
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.0065)}`);
     for (const testId of ALL_TILES) {
-      expect(tile(testId).getAttribute('aria-label')).toMatch(/, Unknown$/);
+      if (testId !== 'costs-kpi-cost') expect(tile(testId).getAttribute('aria-label')).toMatch(/, Unknown$/);
       expect(tile(testId)).not.toHaveAttribute('href');
       expect(tile(testId)).toHaveAttribute('data-status', 'neutral');
     }
@@ -680,5 +710,59 @@ describe('F-1: the partial-report lines on the shared notice (F-120)', () => {
     );
     expect(within(costs()).getByTestId('costs-unreadable').textContent).toBe(UNREADABLE_AMOUNTS(2));
     expect(within(costs()).queryByRole('alert')).toBeNull();
+  });
+});
+
+// Money MK-2 (SA-1, T-5): the cost tile is charges CREATED in the window (Finance's
+// computation), with its own exactness; deleted accounts have their own line; the
+// period table is labelled as whole billing periods.
+describe('MK-2: one charged AI cost figure', () => {
+  const tile = (testId: string) => within(costs()).getByTestId(testId);
+  const charged = (over: Partial<CostReportPayload['chargedInWindow']>) => ({ ...report().chargedInWindow, ...over });
+
+  it('the block shows the window figure and the deleted accounts line; the period table says whole billing periods', async () => {
+    stub(() => ok(report()));
+    openAt('');
+    const block = await within(costs()).findByTestId('costs-charged');
+    expect(within(block).getByRole('heading', { name: 'Charged AI cost in this window' })).toBeInTheDocument();
+    expect(within(block).getByTestId('costs-charged-total')).toHaveTextContent(`${formatUsd(0.0065)} · 6.5 credits · 5 charges`);
+    expect(within(block).getByTestId('costs-charged-deleted')).toHaveTextContent(`Deleted accounts: ${formatUsd(0.0005)} (1 ledger row)`);
+    expect(within(costs()).getByTestId('costs-whole-periods')).toHaveTextContent(
+      'Whole billing periods: can include charges from before the window'
+    );
+  });
+
+  it('no deleted rows says so; with a business picked there is no deleted line', async () => {
+    const fetchMock = stub((url) =>
+      paramsOf(url).get('accountId') === A
+        ? ok(report({ accountFilter: A, chargedInWindow: charged({ deleted: { costUsd: 0, credits: 0, rows: 0 } }) }))
+        : ok(report({ chargedInWindow: charged({ deleted: { costUsd: 0, credits: 0, rows: 0 } }) }))
+    );
+    const { unmount } = openAt('');
+    expect(await within(costs()).findByTestId('costs-charged-deleted')).toHaveTextContent('No charges from deleted accounts');
+    unmount();
+    openAt(`?account=${A}`);
+    await within(costs()).findByTestId('costs-charged');
+    expect(within(costs()).queryByTestId('costs-charged-deleted')).toBeNull();
+    expect(reportCalls(fetchMock)).toHaveLength(2);
+  });
+
+  it('partial reads "at least" on the tile and the block; unknown reads "Unknown" and the block says the read failed', async () => {
+    const fetchMock = stub((url) =>
+      paramsOf(url).get('accountId') === A
+        ? ok(report({ accountFilter: A, chargedInWindow: charged({ status: 'unknown', costUsd: null, credits: null, charges: null, rows: null, deleted: null }) }))
+        : ok(report({ chargedInWindow: charged({ status: 'partial' }) }))
+    );
+    const { unmount } = openAt('');
+    await within(costs()).findByTestId('costs-charged');
+    expect(tile('costs-kpi-cost')).toHaveTextContent('at least');
+    expect(within(costs()).getByTestId('costs-charged-total')).toHaveTextContent(`at least ${formatUsd(0.0065)}`);
+    unmount();
+    openAt(`?account=${A}`);
+    await within(costs()).findByTestId('costs-charged-failed');
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost (USD), Unknown');
+    // The period figures are another read and still show.
+    expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
+    expect(reportCalls(fetchMock)).toHaveLength(2);
   });
 });

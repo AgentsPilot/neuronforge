@@ -2,7 +2,14 @@
  * Money M-5, AC-188 (SA-WP-M5, M5-R4): the fixed set of Charge checks URL
  * states and the exact requests each one sends. Written and run green on the
  * unchanged tree (98735db9), where the report was the Business OS AI page's
- * Costs & credits tab, before any M-5 edit; never edited after that.
+ * Costs & credits tab, before any M-5 edit.
+ *
+ * RULED RE-FREEZE, Money MK-2 (SA-RR-MK SA-7, pin table row MK-2; workplan
+ * ADMIN_MONEY_MK2_ONE_AI_COST_WORKPLAN.md RU-1 to RU-4): the default window
+ * moved from 30 days to This month, so rows 1, 7, 9 and 10 (the default, and
+ * the two states ignored on arrival) now send `from=2026-10-01` where they
+ * sent `from=2026-09-17`. Every other literal, every leak request and the pin
+ * test file itself are unchanged. Never edited otherwise.
  *
  * The clock is fixed at PIN_NOW, so every window resolves to the same dates on
  * both sides of the move.
@@ -32,7 +39,7 @@ const R = (query: string) => `${REPORT_PATH}?${query}`;
 const L = (query: string) => `${LEAK_PATH}?${query}`;
 
 export const PINNED_CHARGE_REQUESTS: readonly PinnedChargeRequest[] = [
-  { row: 1, state: '', report: R('from=2026-09-17&to=2026-10-16'), leak: L('from=2026-10-15&to=2026-10-15') },
+  { row: 1, state: '', report: R('from=2026-10-01&to=2026-10-16'), leak: L('from=2026-10-15&to=2026-10-15') },
   { row: 2, state: 'range=7d', report: R('from=2026-10-10&to=2026-10-16'), leak: null },
   { row: 3, state: 'range=90d', report: R('from=2026-07-19&to=2026-10-16'), leak: null },
   { row: 4, state: 'range=today', report: R('from=2026-10-16&to=2026-10-16'), leak: null },
@@ -41,13 +48,13 @@ export const PINNED_CHARGE_REQUESTS: readonly PinnedChargeRequest[] = [
   {
     row: 7,
     state: `account=${PIN_ACCOUNT}`,
-    report: R(`from=2026-09-17&to=2026-10-16&accountId=${PIN_ACCOUNT}`),
+    report: R(`from=2026-10-01&to=2026-10-16&accountId=${PIN_ACCOUNT}`),
     leak: L(`from=2026-10-15&to=2026-10-15&accountId=${PIN_ACCOUNT}`),
   },
   { row: 8, state: `range=7d&account=${PIN_ACCOUNT}`, report: R(`from=2026-10-10&to=2026-10-16&accountId=${PIN_ACCOUNT}`), leak: null },
   // Ignored on arrival (U-4): an account that is not a UUID, a one-sided custom window.
-  { row: 9, state: 'account=nope', report: R('from=2026-09-17&to=2026-10-16'), leak: null },
-  { row: 10, state: 'range=custom&from=2026-09-01', report: R('from=2026-09-17&to=2026-10-16'), leak: null },
+  { row: 9, state: 'account=nope', report: R('from=2026-10-01&to=2026-10-16'), leak: null },
+  { row: 10, state: 'range=custom&from=2026-09-01', report: R('from=2026-10-01&to=2026-10-16'), leak: null },
 ];
 
 describe('the AC-188 table (self-check)', () => {

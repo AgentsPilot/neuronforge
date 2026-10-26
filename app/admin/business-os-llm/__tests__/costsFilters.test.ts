@@ -66,7 +66,9 @@ describe('the spec', () => {
     }
   });
 
-  it('defaults to 30 days, every business', () => {
+  // Money MK-2 (SA-7, ruled): the default moved from 30 days to This month.
+  it('defaults to This month, every business', () => {
+    expect(COSTS_DEFAULT_WINDOW).toEqual({ kind: 'preset', preset: 'this_month' });
     const defaults = Object.fromEntries(Object.entries(COSTS_FILTER_SPEC).map(([key, field]) => [key, field.defaultValue]));
     expect(defaults).toEqual(DEFAULTS);
   });
@@ -136,14 +138,20 @@ describe('the projection (U-3: defaults omitted, spec order)', () => {
 describe('the route query (unchanged for the same filter values)', () => {
   const now = new Date('2026-10-12T15:00:00.000Z');
 
-  it('the default equals the tab\'s old presetQuery(30): from, to, no accountId (SA N-4)', () => {
+  // Money MK-2 (SA-7, SA-PIN-MK2, ruled): was "equals presetQuery(30)", today minus 29 to today.
+  it('the default is This month: the first UTC day of the month to today, no accountId', () => {
     const search = costsRouteSearch(DEFAULTS, now);
     expect([...new URLSearchParams(search).keys()]).toEqual(['from', 'to']);
     expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
-      from: utcDateDaysAgo(29, now),
+      from: '2026-10-01',
       to: utcDateDaysAgo(0, now),
     });
-    expect(span(search)).toBe(29);
+    expect(span(search)).toBe(11);
+  });
+
+  it('30 days is still offered and still spans 29 days (no longer the default)', () => {
+    const search = costsRouteSearch({ window: { kind: 'preset', preset: '30d' }, account: '' }, now);
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({ from: utcDateDaysAgo(29, now), to: utcDateDaysAgo(0, now) });
   });
 
   it('7 days and 90 days span 6 and 89 days, ending today (UTC)', () => {

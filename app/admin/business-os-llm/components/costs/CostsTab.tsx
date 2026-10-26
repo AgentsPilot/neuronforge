@@ -57,7 +57,7 @@ import { COSTS_FILTER_SPEC, costsRouteSearch } from '../../costsFilters';
 import type { CostReportPayload } from '../../costTypes';
 import { CostsFilterBar } from './CostsFilterBar';
 import { CostsKpis } from './CostsKpis';
-import { BreakdownsSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
+import { BreakdownsSection, ChargedInWindowSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
 import { LeakCheckPanel } from './LeakCheckPanel';
 
 const REPORT_URL = '/api/admin/business-os/credits/report';
@@ -230,6 +230,7 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
               />
             ) : (
               <>
+                <ChargedInWindowSection report={report} />
                 <PeriodsSection report={report} />
                 <BreakdownsSection report={report} />
                 <FallbackSection report={report} />

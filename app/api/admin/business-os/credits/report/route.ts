@@ -13,6 +13,14 @@
  * 409 platform account (pure, no read) → the reads. Nothing from the request
  * reaches the database except the validated dates and account id.
  *
+ * Money MK-2 (SA-RR-MK SA-1): the response also carries `chargedInWindow`,
+ * the charged AI cost of charges CREATED in the window, deleted accounts
+ * included, built by Finance's own ledger read and builder
+ * (`lib/business-os/finance/chargedAiCost.ts`), so the cost tile equals
+ * Finance for the same window by construction. With an account only the
+ * account-scoped read runs, with the validated id. The default window (no
+ * dates) is This month, the page's default.
+ *
  * READ-ONLY. No audit entry (the precedent of the shadow report and the
  * account summary); the accountability is one `info` log with the admin id,
  * the window, the account filter, the row count, `incomplete` and the count
@@ -26,7 +34,11 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 import { createLogger } from '@/lib/logger';
 import { isPlatformAccount } from '@/lib/business-os/llm/callCatalog';
-import { buildCreditReport, CREDIT_REPORT_LIMITS } from '@/lib/business-os/credits/creditReport';
+import { buildCreditReport, CREDIT_REPORT_LIMITS, windowInstants } from '@/lib/business-os/credits/creditReport';
+import type { CreditReportResponse } from '@/lib/business-os/credits/creditReportTypes';
+import { buildChargedAiCostInWindow } from '@/lib/business-os/finance/chargedAiCost';
+// Finance's own production wiring of R-a / R-a′, so this route names no new ledger reader (importer guard).
+import { financeHealthDeps } from '@/lib/business-os/finance/financeHealthDeps';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'AdminBosCreditReportAPI' });
@@ -127,15 +139,23 @@ export async function GET(request: NextRequest) {
     }
 
     const today = todayUtcMs(now);
+    // MK-2 (RU-8): no dates means This month (UTC), the page's default.
     const window = parsed.data.from && parsed.data.to
       ? { from: parsed.data.from, to: parsed.data.to }
-      : { from: toDate(today - (CREDIT_REPORT_LIMITS.DEFAULT_WINDOW_DAYS - 1) * DAY_MS), to: toDate(today) };
+      : { from: `${toDate(today).slice(0, 7)}-01`, to: toDate(today) };
 
-    const report = await buildCreditReport({ window, accountId }, requestLogger, {
-      // Admin identity reads are called only from app/api/admin/** (repository guard).
-      findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
-      now: () => now,
-    });
+    // The report (whole billing periods) and the window's charged AI cost, in parallel.
+    const [report, chargedInWindow] = await Promise.all([
+      buildCreditReport({ window, accountId }, requestLogger, {
+        // Admin identity reads are called only from app/api/admin/** (repository guard).
+        findNames: (ids) => businessProfileRepository.findAdminIdentitiesByUserIds(ids),
+        now: () => now,
+      }),
+      buildChargedAiCostInWindow({ window: windowInstants(window), accountId }, requestLogger, {
+        ledger: financeHealthDeps().ledger,
+      }),
+    ]);
+    const data: CreditReportResponse = { ...report, chargedInWindow };
 
     // Ids and counts only: never a business name.
     requestLogger.info(
@@ -149,11 +169,12 @@ export async function GET(request: NextRequest) {
         sections: report.sections,
         // Never-silent (D-6): an amount that could not be read counts as 0.
         unreadableAmounts: report.unreadableAmounts,
+        charged: { status: chargedInWindow.status, rows: chargedInWindow.rows },
       },
       'Admin read the Business OS credit cost report'
     );
 
-    return NextResponse.json({ success: true, data: report });
+    return NextResponse.json({ success: true, data });
   } catch (error) {
     requestLogger.error({ err: error }, 'Business OS credit cost report failed');
     return NextResponse.json(

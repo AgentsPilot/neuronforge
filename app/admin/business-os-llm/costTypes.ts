@@ -78,6 +78,18 @@ export interface CostSpreadLine {
   credits: { p50: number | null; p90: number | null };
 }
 
+/** MK-2 (SA-1): the cost tile's figure, the same computation as Finance's charged AI cost. */
+export interface CostChargedInWindow {
+  status: 'ok' | 'partial' | 'unknown';
+  coverage: 'after_cutover' | 'starts_before_cutover' | 'entirely_before_cutover';
+  costUsd: number | null;
+  credits: number | null;
+  charges: number | null;
+  rows: number | null;
+  deleted: { costUsd: number; credits: number; rows: number } | null;
+  unreadableAmounts: number;
+}
+
 export interface CostReportPayload {
   generatedAt: string;
   window: { from: string; to: string; start: string; end: string };
@@ -108,4 +120,6 @@ export interface CostReportPayload {
   fallback: { count: number; reconciled: number; items: CostFallbackItem[] };
   spreads: CostSpreadLine[];
   unreadableAmounts: number;
+  /** MK-2: charges CREATED in the window, deleted accounts included; equals Finance for the same window. */
+  chargedInWindow: CostChargedInWindow;
 }

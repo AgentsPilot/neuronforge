@@ -150,6 +150,7 @@ const COSTS = {
   periods: [{ matches: true }, { matches: false }, { matches: null }],
   mismatchedPeriods: 1,
   fallback: { count: 2, reconciled: 1 },
+  chargedInWindow: { status: 'ok', costUsd: 2.5 },
 } as unknown as CostReportPayload;
 
 const SETTINGS = {
@@ -363,8 +364,8 @@ const EXPECTED: Record<string, string> = {
   'A2 ActivityKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 ActivityKpis': 'a9e127f5ddf66d23d5a85f44a62841b0a294a0ffa26e874a3d2078151878ff58',
   'A2 CostsKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
-  'A2 CostsKpis': 'e22045d420bf86b846dbb75148b11d5db550ac05cca812e1f81bc816973d1248',
-  'A2 CostsKpis no sections': 'e8d692a0abc2ce67f01800166cc086d5fff93aa01b1ce3e11c6cb08d936a2a0a',
+  'A2 CostsKpis': '15439ff546e934a3c7352bf63f184127bbddfcc8977f95ccbd98d169266ef30e',
+  'A2 CostsKpis no sections': '6ee816e2cb93e629a4613a32e456cf75388f9bcd4bee2424cb52796a0f57ede5',
   'A2 SettingsKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 SettingsKpis': '2ba767a09c3960540b554ec09800a4523688e7a53b283281e3bf3029ea36d1e4',
   'A2 SettingsKpis quiet': 'ad762af1dcd97b350361a77614cc443052f145bf0db8afa5921446453fe00e0e',

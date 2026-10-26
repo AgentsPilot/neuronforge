@@ -2,6 +2,10 @@
  * GET /api/admin/business-os/credits/report (credit deduction slice 4a,
  * workplan §4.5, §10.1): 401 / 403 before any read, 400 on every invalid
  * query, 409 on a platform account, 200, 500.
+ *
+ * Money MK-2 (ruled updates RU-6, RU-7): the no-dates default is This month
+ * (was the last 30 days); the ledger mock gains R-a / R-a′ (the window's
+ * charged AI cost, `chargedInWindow`), and every refusal proves neither ran.
  */
 
 import * as fs from 'fs';
@@ -36,8 +40,15 @@ const mockLedger = {
   listTotalsForAccountInRange: jest.fn(),
   listRowsForAccountPeriods: jest.fn(),
   findChargesByActionIds: jest.fn(),
+  // MK-2: Finance's ledger read, for `chargedInWindow`.
+  listRowsOfAllAccountsCreatedInRange: jest.fn(),
+  listRowsForAccountCreatedInRange: jest.fn(),
 };
+// MK-2: the route now also loads `aiActivity` (through Finance's shared read), which needs
+// the repository module's real constants; only the singleton is replaced.
+jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 jest.mock('@/lib/repositories/BusinessOsCreditLedgerReadRepository', () => ({
+  ...jest.requireActual('@/lib/repositories/BusinessOsCreditLedgerReadRepository'),
   businessOsCreditLedgerReadRepository: mockLedger,
 }));
 
@@ -95,6 +106,21 @@ function ledgerWithOnePeriod() {
     error: null,
   });
   mockFindNames.mockResolvedValue({ data: [{ user_id: ACCOUNT, company_name: 'Alpha Studio' }], error: null });
+  // MK-2: charges CREATED in the window: one of the account, one of a deleted account.
+  const created = (user_id: string | null, cost: string) => ({
+    id: `c-${cost}`, kind: 'charge', action_id: null, adjusts_action_id: null, reason_code: null, user_id,
+    period_start: PERIOD, group_id: null, credits: '1.000000', cost_usd: cost, credit_value_version: 0,
+    is_fallback_priced: false, service: 'ai', action_type: 'chat_turn', triggered_by: 'owner', outcome: 'succeeded',
+    created_at: '2026-09-06T00:00:00+00:00',
+  });
+  mockLedger.listRowsOfAllAccountsCreatedInRange.mockResolvedValue({
+    data: { rows: [created(ACCOUNT, '0.0010000000'), created(null, '0.0003000000')], reachedCeiling: false },
+    error: null,
+  });
+  mockLedger.listRowsForAccountCreatedInRange.mockResolvedValue({
+    data: { rows: [created(ACCOUNT, '0.0010000000')], reachedCeiling: false },
+    error: null,
+  });
 }
 
 const noReadHappened = () => {
@@ -102,6 +128,8 @@ const noReadHappened = () => {
   expect(mockLedger.listTotalsForAccountInRange).not.toHaveBeenCalled();
   expect(mockLedger.listRowsForAccountPeriods).not.toHaveBeenCalled();
   expect(mockLedger.findChargesByActionIds).not.toHaveBeenCalled();
+  expect(mockLedger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+  expect(mockLedger.listRowsForAccountCreatedInRange).not.toHaveBeenCalled();
   expect(mockFindNames).not.toHaveBeenCalled();
 };
 
@@ -196,13 +224,15 @@ describe('409: a platform account is refused before any read', () => {
 describe('200: the report', () => {
   beforeEach(asAdmin);
 
-  it('defaults to the last 30 days (UTC) across all accounts', async () => {
+  // MK-2 (RU-6, ruled): was "the last 30 days", from today minus 29.
+  it('defaults to This month (UTC) across all accounts', async () => {
     const res = await call();
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.window.to).toBe(todayUtc());
-    expect(body.data.window.from).toBe(daysFromToday(-29));
+    expect(body.data.window.from).toBe(`${todayUtc().slice(0, 7)}-01`);
+    expect(daysFromToday(0)).toBe(todayUtc());
     expect(body.data.accountFilter).toBeNull();
     expect(mockLedger.listTotalsForPeriodsInRange).toHaveBeenCalledTimes(1);
     expect(body.data.periods).toHaveLength(1);
@@ -230,6 +260,52 @@ describe('200: the report', () => {
       unreadableAmounts: 0,
     });
     expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain('Alpha Studio');
+  });
+
+  it('MK-2: chargedInWindow is Finance\'s read over the window instants, deleted accounts included', async () => {
+    const res = await call('?from=2026-10-01&to=2026-10-10');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(mockLedger.listRowsOfAllAccountsCreatedInRange).toHaveBeenCalledTimes(1);
+    expect(mockLedger.listRowsForAccountCreatedInRange).not.toHaveBeenCalled();
+    const [range, opts] = mockLedger.listRowsOfAllAccountsCreatedInRange.mock.calls[0];
+    // Half-open: the window's first instant to the day after its last date.
+    expect(range.from.toISOString()).toBe('2026-10-01T00:00:00.000Z');
+    expect(range.to.toISOString()).toBe('2026-10-11T00:00:00.000Z');
+    expect(opts).toEqual({ pageSize: 1000, ceiling: 20000 });
+    expect(body.data.chargedInWindow).toMatchObject({
+      status: 'ok',
+      costUsd: 0.0013,
+      charges: 2,
+      rows: 2,
+      deleted: { costUsd: 0.0003, credits: 1, rows: 1 },
+    });
+  });
+
+  it('MK-2: a window entirely before the charging cut-over reads nothing and is an exact 0', async () => {
+    const res = await call('?from=2026-09-01&to=2026-09-10');
+    expect(mockLedger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect((await res.json()).data.chargedInWindow).toMatchObject({ status: 'ok', coverage: 'entirely_before_cutover', costUsd: 0 });
+  });
+
+  it('MK-2: with an account only R-a\u2032 runs, with exactly that id', async () => {
+    const res = await call(`?from=2026-10-01&to=2026-10-10&accountId=${ACCOUNT}`);
+    expect(res.status).toBe(200);
+    expect(mockLedger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
+    expect(mockLedger.listRowsForAccountCreatedInRange).toHaveBeenCalledTimes(1);
+    expect(mockLedger.listRowsForAccountCreatedInRange.mock.calls[0][0]).toBe(ACCOUNT);
+    const body = await res.json();
+    expect(body.data.chargedInWindow).toMatchObject({ status: 'ok', costUsd: 0.001, deleted: { rows: 0 } });
+  });
+
+  it('MK-2: a failed charged read leaves the report 200 and chargedInWindow unknown', async () => {
+    mockLedger.listRowsOfAllAccountsCreatedInRange.mockResolvedValue({ data: null, error: new Error('secret internal detail') });
+    const res = await call('?from=2026-10-01&to=2026-10-10');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.periods).toHaveLength(1);
+    expect(body.data.chargedInWindow).toMatchObject({ status: 'unknown', costUsd: null, deleted: null });
+    expect(JSON.stringify(body)).not.toContain('secret internal detail');
   });
 
   it('a failed read fails its section, not the request', async () => {

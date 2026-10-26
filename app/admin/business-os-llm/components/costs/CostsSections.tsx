@@ -32,11 +32,18 @@ import { StatusChip } from '@/app/admin/components/layout/StatusChip';
 
 import {
   BREAKDOWN_NOTE,
+  CHARGED_DELETED_NONE,
+  CHARGED_IN_WINDOW_NOTE,
+  CHARGED_IN_WINDOW_TITLE,
+  CHARGED_READ_FAILED,
+  COSTS_WHOLE_PERIODS_LABEL,
+  chargedDeletedLine,
   FALLBACK_NOTE,
   NET_INCLUDING_CORRECTIONS,
   NOT_DECLARED_LABEL,
   ORIGINALS_FAILED,
   SECTION_FAILED,
+  KPI_AT_LEAST,
   SPREAD_NOTE,
   UNRESOLVED_LABEL,
 } from '../../costCopy';
@@ -116,9 +123,48 @@ function CheckCell({ matches, fromRows }: { matches: boolean | null; fromRows: C
   );
 }
 
+/**
+ * Money MK-2 (SA-1): the cost tile's own block. Charges CREATED in the window,
+ * deleted accounts included (their own line, all businesses only: with one
+ * business picked there is none by construction). Every figure is from the
+ * payload; nothing is computed here but formatting.
+ */
+export function ChargedInWindowSection({ report }: { report: CostReportPayload }) {
+  const charged = report.chargedInWindow;
+  const known = charged.status !== 'unknown' && charged.costUsd !== null;
+  return (
+    <SectionShell title={CHARGED_IN_WINDOW_TITLE} testId="costs-charged">
+      <p className="text-xs text-slate-400">{CHARGED_IN_WINDOW_NOTE}</p>
+      {!known ? (
+        <p data-testid="costs-charged-failed" className="text-sm text-red-300">
+          {CHARGED_READ_FAILED}
+        </p>
+      ) : (
+        <>
+          <p data-testid="costs-charged-total" className="text-sm text-slate-200">
+            {charged.status === 'partial' && <>{KPI_AT_LEAST} </>}
+            {formatUsd(charged.costUsd)} &middot; {formatCredits(charged.credits)} credits &middot;{' '}
+            {formatCount(charged.charges ?? 0)} charges
+          </p>
+          {report.accountFilter === null && charged.deleted && (
+            <p data-testid="costs-charged-deleted" className="text-sm text-slate-300">
+              {charged.deleted.rows > 0
+                ? chargedDeletedLine(formatUsd(charged.deleted.costUsd), charged.deleted.rows)
+                : CHARGED_DELETED_NONE}
+            </p>
+          )}
+        </>
+      )}
+    </SectionShell>
+  );
+}
+
 export function PeriodsSection({ report }: { report: CostReportPayload }) {
   return (
     <SectionShell title="Per account and billing period" testId="costs-periods">
+      <p data-testid="costs-whole-periods" className="text-xs text-slate-400">
+        {COSTS_WHOLE_PERIODS_LABEL}
+      </p>
       {report.mismatchedPeriods > 0 && (
         <p data-testid="costs-mismatch-summary" className="text-sm text-red-300">
           {report.mismatchedPeriods} period{report.mismatchedPeriods === 1 ? '' : 's'} disagree
