@@ -72,13 +72,14 @@ export const COUNT_LINE_UNKNOWN_CAPPED = (shown: string, sort: ActivitySort) =>
 
 export const CUTOVER_LINE =
   'Charging went live on 29 September 2026 at 16:50 UTC, so this list starts there. ' +
-  'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI calls & usage.';
+  'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI cost: Calls.';
 
 export const CUTOVER_ENTIRELY_BEFORE =
   'This window ends before charging went live, so there are no rows to show here.';
 
 export const CUTOVER_AUDIT_LINK = 'AI action entries in the audit trail';
-export const CUTOVER_ANALYTICS_LINK = 'AI calls & usage (Business OS, recorded)';
+// Money MK-3b: AI calls & usage is the AI cost page's Calls tab.
+export const CUTOVER_ANALYTICS_LINK = 'AI cost: Calls (Business OS, recorded)';
 
 /**
  * Audit-trail `date_to` for "before the cut-over". The audit page's field is a

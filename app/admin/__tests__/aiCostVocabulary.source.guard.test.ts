@@ -36,6 +36,14 @@
  * Charge checks intro and title) are replaced by the AI cost page's purpose
  * and title; W-14, S-8 and S-10 follow the new names. Each change is listed
  * with its before and after in the MK-3 workplan.
+ *
+ * Money MK-3b (ruled): AI calls & usage became the AI cost page's Calls tab.
+ * Its page and strip files left the disk and leave the scan; `CallsTab.tsx`
+ * and `CallsSummary.tsx` take their places (the rows follow them), and the
+ * page's view `AiCostView.tsx` replaces `page.tsx` (which now holds no copy).
+ * The page name "AI calls & usage" became "AI cost: Calls" wherever a link or
+ * a note names it (W-19a, W-19b, W-21c, S-5, S-7, S-11, S-12); W-10 points at
+ * the Summary & checks tab; W-12a names the card "Recorded AI cost, this view".
  */
 
 import fs from 'fs';
@@ -48,8 +56,9 @@ const ROOT = process.cwd();
 const FILES = [
   'app/admin/finance/financeCopy.ts',
   'app/admin/finance/components/AiCostSection.tsx',
-  'app/admin/analytics/page.tsx',
-  'app/admin/analytics/components/AnalyticsKpis.tsx',
+  // Money MK-3b (ruled): the old page and its strip are deleted; the Calls tab and its summary cards replace them.
+  'app/admin/analytics/components/CallsTab.tsx',
+  'app/admin/analytics/components/CallsSummary.tsx',
   'app/admin/business-os-llm/costCopy.ts',
   'app/admin/business-os-llm/leakCopy.ts',
   'app/admin/business-os-llm/activityCopy.ts',
@@ -66,7 +75,8 @@ const FILES = [
   'app/admin/analytics/components/AnalyticsFilterBar.tsx',
   // Money MK-3a (SA-RR-MK guards, ruled): the AI cost page replaces the Charge checks page (deleted).
   // The bare title "AI cost" matches no forbidden phrase, so no ALLOWED entry is needed.
-  'app/admin/ai-cost/page.tsx',
+  // MK-3b (ruled): the page's view holds the header and the legend now; page.tsx holds no copy.
+  'app/admin/ai-cost/components/AiCostView.tsx',
   'app/admin/ai-cost/aiCostCopy.ts',
   'app/admin/business-os-llm/components/costs/AiCostKpis.tsx',
   'app/admin/business-os-llm/components/costs/RecordedSection.tsx',
@@ -190,8 +200,9 @@ describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
     // 28 since F-1: the local TH/TD class-name constants (counted as texts) moved
     // to the shared adminTable constants; no visible copy changed.
     'app/admin/finance/components/AiCostSection.tsx': 27,
-    'app/admin/analytics/page.tsx': 71,
-    'app/admin/analytics/components/AnalyticsKpis.tsx': 33,
+    // Money MK-3b (ruled), measured with this file's own scanner: the Calls tab and its summary cards.
+    'app/admin/analytics/components/CallsTab.tsx': 69,
+    'app/admin/analytics/components/CallsSummary.tsx': 38,
     'app/admin/business-os-llm/costCopy.ts': 44,
     'app/admin/business-os-llm/leakCopy.ts': 62,
     'app/admin/business-os-llm/activityCopy.ts': 142,
@@ -207,7 +218,7 @@ describe('the guard reads real files (non-vacuity, SA-Q51)', () => {
     'lib/cron/bosCronJobs.ts': 580,
     'app/admin/analytics/components/AnalyticsFilterBar.tsx': 50,
     // Money MK-3a, measured with this file's own scanner after the MK-3a edits.
-    'app/admin/ai-cost/page.tsx': 2,
+    'app/admin/ai-cost/components/AiCostView.tsx': 12,
     'app/admin/ai-cost/aiCostCopy.ts': 6,
     'app/admin/business-os-llm/components/costs/AiCostKpis.tsx': 22,
     'app/admin/business-os-llm/components/costs/RecordedSection.tsx': 7,
@@ -273,8 +284,8 @@ describe('planted controls: the scanner finds what it must and skips what it mus
 
 const FIN = 'app/admin/finance/financeCopy.ts';
 const SECTION3 = 'app/admin/finance/components/AiCostSection.tsx';
-const ANALYTICS = 'app/admin/analytics/page.tsx';
-const KPIS = 'app/admin/analytics/components/AnalyticsKpis.tsx';
+const ANALYTICS = 'app/admin/analytics/components/CallsTab.tsx';
+const KPIS = 'app/admin/analytics/components/CallsSummary.tsx';
 const COSTS = 'app/admin/business-os-llm/costCopy.ts';
 const LEAK = 'app/admin/business-os-llm/leakCopy.ts';
 const ACTIVITY = 'app/admin/business-os-llm/activityCopy.ts';
@@ -311,11 +322,11 @@ const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; e
     file: ANALYTICS,
     text:
       'Recorded AI cost, Business OS only: every AI call in the usage log, charged or not, including calls before charging ' +
-      'started on 29 Sep 2026 and legacy-tagged Business OS rows. USD, priced from the model price table. The charged cost is on Finance.',
+      'started on 29 Sep 2026 and legacy-tagged Business OS rows. USD, priced from the model price table. The charged cost is on the Summary & checks tab.',
     exact: true,
   },
   { row: 'W-11', file: ANALYTICS, text: 'Recorded AI cost, both products: every AI call in the usage log. USD, priced from the model price table.', exact: true },
-  { row: 'W-12a', file: KPIS, text: 'Recorded AI cost', exact: true },
+  { row: 'W-12a / MK-3b', file: KPIS, text: 'Recorded AI cost, this view', exact: true },
   { row: 'W-12b', file: KPIS, text: '${}% of recorded cost · ${} tokens · ${}', exact: true },
   // MK-3a (ruled): the Charge checks intro left with its page; the AI cost page's purpose line (§14) replaces it.
   { row: 'W-13 / MK-3a', file: AI_COST_COPY, text: 'What AI usage costs us, did we charge for it, and is the charging correct?', exact: true },
@@ -341,13 +352,14 @@ const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; e
     row: 'W-19a',
     file: ACTIVITY,
     // M-5 S-9: the page's new name.
-    text: 'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI calls & usage.',
+    // MK-3b: AI calls & usage is the AI cost page's Calls tab.
+    text: 'For AI activity before then, see the audit trail’s AI action entries or the recorded AI cost in AI cost: Calls.',
   },
-  { row: 'W-19b / S-9', file: ACTIVITY, text: 'AI calls & usage (Business OS, recorded)', exact: true },
+  { row: 'W-19b / S-9 / MK-3b', file: ACTIVITY, text: 'AI cost: Calls (Business OS, recorded)', exact: true },
   { row: 'W-20', file: HEALTH, text: 'Recorded AI cost (USD)', exact: true },
   { row: 'W-21a', file: HEALTH, text: 'Recorded AI cost, last 24 h (USD)', exact: true },
   { row: 'W-21b', file: HEALTH, text: 'Recorded AI cost, last 7 days (USD)', exact: true },
-  { row: 'W-21c / S-12', file: HEALTH, text: 'Recorded AI cost, ${}: ${}, open in AI calls & usage', exact: true },
+  { row: 'W-21c / S-12 / MK-3b', file: HEALTH, text: 'Recorded AI cost, ${}: ${}, open in AI cost: Calls', exact: true },
   {
     row: 'W-22',
     file: HEALTH,
@@ -377,15 +389,16 @@ const NEW_TEXTS: ReadonlyArray<{ row: string; file: GuardedFile; text: string; e
   { row: 'M4-FR-2 / E-54 summary', file: FIN, text: 'Recorded above charged', exact: true },
   { row: 'R4-5', file: FIN, text: 'Not available: AI charging began 29 Sep 2026', exact: true },
   // Money M-5 (§11H.5 S-5 to S-18; AC-195, AC-199).
-  { row: 'S-5', file: ANALYTICS, text: 'AI calls & usage (detail)', exact: true },
+  // MK-3b (ruled): the Calls tab's header is the page's; the tab label is "Calls".
+  { row: 'S-5 / MK-3b', file: AI_COST_COPY, text: 'Calls', exact: true },
   // MK-3a (ruled): the page's title is AI cost (Q-9, Q-14); Finance's link and Activity's note follow it.
   { row: 'S-6 / MK-3a', file: AI_COST_COPY, text: 'AI cost', exact: true },
-  { row: 'S-7', file: FIN, text: 'AI calls & usage', exact: true },
+  { row: 'S-7 / MK-3b', file: FIN, text: 'AI cost: Calls', exact: true },
   { row: 'S-8 / MK-3a', file: FIN, text: 'AI cost: Summary & checks', exact: true },
   { row: 'S-10 / MK-3a', file: ACTIVITY, text: 'Platform AI calls are counted by the Leak check on AI cost.' },
-  { row: 'S-11', file: PANEL, text: 'Open in AI calls & usage', exact: true },
-  { row: 'S-12 note', file: HEALTH, text: 'AI calls & usage reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.', exact: true },
-  { row: 'S-12 footnote', file: HEALTH, text: 'The comparison with the previous period is computed here from one read; AI calls & usage computes' },
+  { row: 'S-11 / MK-3b', file: PANEL, text: 'Open in AI cost: Calls', exact: true },
+  { row: 'S-12 note / MK-3b', file: HEALTH, text: 'The Calls tab of AI cost reads at most 1,000 calls per period (known issue OI-P1), so it will show less than this.', exact: true },
+  { row: 'S-12 footnote / MK-3b', file: HEALTH, text: 'The comparison with the previous period is computed here from one read; the Calls tab of AI cost computes' },
   { row: 'S-13', file: HEALTH, text: 'Charged AI cost: open Finance', exact: true },
   { row: 'S-14a', file: RULES, text: '24 h recorded AI cost', exact: true },
   { row: 'S-14b', file: RULES, text: 'previous 24 h recorded AI cost', exact: true },

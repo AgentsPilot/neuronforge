@@ -104,6 +104,11 @@
  * is renamed `/admin/ai-cost (AI cost)`, the deleted page and `CostsKpis.tsx`
  * leave it, and the new page, `AiCostKpis.tsx` and `RecordedSection.tsx` join.
  * MK-3b adds the Calls tab's files to the same entry.
+ *
+ * Amended by Money MK-3b (ruled): the AI calls & usage entry is removed and its
+ * files, less the deleted page and `AnalyticsKpis.tsx`, join the AI cost entry
+ * with `CallsTab.tsx`, `CallsSummary.tsx` and the page's view, tabs, spec and
+ * report read. No rule change and no shared source change.
  */
 
 import * as fs from 'fs';
@@ -562,23 +567,6 @@ const MIGRATED_PAGES = [
     files: ['app/admin/audit-trail/page.tsx', 'app/admin/audit-trail/auditTrailFilters.ts'],
   },
   {
-    // L-2a (part a): header, KPI strip, filter bar, states, URL. L-2b (part b):
-    // the table, the call drawer, the run card and the summary cards.
-    page: '/admin/analytics (AI calls & usage (detail))',
-    files: [
-      'app/admin/analytics/page.tsx',
-      'app/admin/analytics/analyticsTypes.ts',
-      'app/admin/analytics/analyticsFilters.ts',
-      'app/admin/analytics/analyticsCall.ts',
-      'app/admin/analytics/components/AnalyticsKpis.tsx',
-      'app/admin/analytics/components/AnalyticsFilterBar.tsx',
-      'app/admin/analytics/components/AnalyticsTable.tsx',
-      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
-      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
-      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
-    ],
-  },
-  {
     // L-3: header with the Runs off badge, KPI strip, Refresh-only bar, states,
     // the run history table and the confirm dialog class.
     page: '/admin/archiving (Archiving)',
@@ -740,9 +728,26 @@ const MIGRATED_PAGES = [
     // (SA-Q59) and are listed here, and only here. Money MK-3a (ruled): Charge
     // checks became the AI cost page's Summary & checks content, so the entry is
     // the AI cost page's, with its strip (A-K1 to A-K5) and the recorded block (C-7).
+    // Money MK-3b (ruled): the AI calls & usage entry (L-2a / L-2b) joins it as the Calls tab: its
+    // page file is deleted (the old address redirects), `AnalyticsKpis.tsx` is deleted (its figures are
+    // `CallsSummary.tsx`), and the tab body is `CallsTab.tsx`. The page's view, tabs, spec and read join.
     page: '/admin/ai-cost (AI cost)',
     files: [
       'app/admin/ai-cost/page.tsx',
+      'app/admin/ai-cost/components/AiCostView.tsx',
+      'app/admin/ai-cost/components/AiCostTabs.tsx',
+      'app/admin/ai-cost/aiCostFilters.ts',
+      'app/admin/ai-cost/useCostReport.ts',
+      'app/admin/analytics/analyticsTypes.ts',
+      'app/admin/analytics/analyticsFilters.ts',
+      'app/admin/analytics/analyticsCall.ts',
+      'app/admin/analytics/components/CallsTab.tsx',
+      'app/admin/analytics/components/CallsSummary.tsx',
+      'app/admin/analytics/components/AnalyticsFilterBar.tsx',
+      'app/admin/analytics/components/AnalyticsTable.tsx',
+      'app/admin/analytics/components/AnalyticsCallDetails.tsx',
+      'app/admin/analytics/components/AnalyticsExecutionCard.tsx',
+      'app/admin/analytics/components/AnalyticsSummaryCards.tsx',
       'app/admin/business-os-llm/costsFilters.ts',
       'app/admin/business-os-llm/components/costs/CostsTab.tsx',
       'app/admin/business-os-llm/components/costs/AiCostKpis.tsx',

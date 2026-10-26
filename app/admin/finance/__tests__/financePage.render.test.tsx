@@ -1782,14 +1782,15 @@ describe('Money M-1 on the page', () => {
     serve({ success: true, data: payload() });
     const first = render(<FinanceView />);
     await screen.findByTestId('kpi-strip');
-    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe('/admin/analytics?range=this_month');
+    // Money MK-3b (ruled): the AI cost page's Calls tab.
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe('/admin/ai-cost?tab=calls&range=this_month');
     first.unmount();
 
     mockSearch = `preset=this_month&accountId=${A}`;
     serve({ success: true, data: payload({ accountId: A }) });
     render(<FinanceView />);
     await screen.findByTestId('account-header');
-    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe(`/admin/analytics?range=this_month&account=${A}`);
+    expect(screen.getByTestId('ai-analytics-link').getAttribute('href')).toBe(`/admin/ai-cost?tab=calls&range=this_month&account=${A}`);
   });
 });
 

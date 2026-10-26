@@ -17,9 +17,17 @@ import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { ADMIN_NETWORK_ERROR } from '@/app/admin/components/layout/readAdminResponse';
-import { CostsTab } from '../components/costs/CostsTab';
 import BusinessOsLlmSettingsPage from '../page';
 import AiCostPage from '@/app/admin/ai-cost/page';
+
+/**
+ * Money MK-3b (ruled, SA-CR-MK3A DV-1): `CostsTab` is presentational now; the report read and the URL
+ * state are the AI cost page's. These cases render the page (Summary & checks is its default tab), so
+ * the same assertions read the same screen through the real read.
+ */
+function CostsTab() {
+  return <AiCostPage />;
+}
 import { AI_COST_LEGEND, AI_COST_TITLE } from '@/app/admin/ai-cost/aiCostCopy';
 import { ACTIVITY_TAB_LABEL } from '../activityCopy';
 import {
@@ -382,7 +390,8 @@ describe('the pages: Business OS AI has two tabs, Settings first; the report is 
   });
 
   // MK-3a (ruled): the page is AI cost, with its legend; its Calls tab (and the tab list) come in MK-3b.
-  it('the AI cost page mounts the report under its own h1 and the legend, with no tabs yet', async () => {
+  // MK-3b (ruled, SA-CR-MK3A): the tab list holds exactly "Summary & checks" and "Calls".
+  it('the AI cost page mounts the report under its own h1 and the legend, on its Summary & checks tab', async () => {
     const fetchMock = stubBoth();
     render(<AiCostPage />);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(AI_COST_TITLE);
@@ -391,7 +400,8 @@ describe('the pages: Business OS AI has two tabs, Settings first; the report is 
     expect(legend).toHaveTextContent(`${AI_COST_LEGEND.recorded.term} ${AI_COST_LEGEND.recorded.text}`);
     expect(await screen.findByTestId('costs-periods')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/credits/report'))).toBe(true);
-    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Summary & checks', 'Calls']);
+    expect(screen.getByRole('tab', { name: 'Summary & checks' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('costs-tab')).toBeVisible();
   });
 

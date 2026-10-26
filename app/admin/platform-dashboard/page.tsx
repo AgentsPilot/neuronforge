@@ -277,7 +277,8 @@ export default function AdminDashboard() {
                 <p className="text-xs text-slate-400">Last {period}d</p>
               </div>
             </div>
-            <Link href="/admin/analytics" className="text-orange-400 hover:text-orange-300 transition-colors">
+            {/* Money MK-3b (SA-Q-MK3-9): straight to the AI cost page's Calls tab, never through the redirect. */}
+            <Link href="/admin/ai-cost?tab=calls" className="text-orange-400 hover:text-orange-300 transition-colors">
               <ArrowUpRight className="w-5 h-5" />
             </Link>
           </div>
@@ -534,7 +535,7 @@ export default function AdminDashboard() {
           </Link>
 
           <Link
-            href="/admin/analytics"
+            href="/admin/ai-cost?tab=calls"
             className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group"
           >
             <div className="flex items-center gap-3">

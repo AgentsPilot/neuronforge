@@ -19,13 +19,19 @@
  * which mounts the same `CostsTab`; these cases mount it. The strip is A-K1 to
  * A-K5 (C-12 rewritten); the fixture gains `recorded`.
  *
+ * Money MK-3b (ruled): the strip is the PAGE's (above the tabs, the same on
+ * both), so its tiles and placeholders are read from the page, not from inside
+ * `costs-tab`; and the page's one URL spec owns `tab`, so a stray `tab=costs`
+ * is no longer kept (an unknown tab value is dropped, the page opens Summary &
+ * checks).
+ *
  * `useSearchParams` follows `window.location` here, as Next does once
  * `replaceState(null, …)` has been delivered (the `activityLayout.render`
  * harness).
  */
 
 import '@testing-library/jest-dom';
-import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
@@ -249,7 +255,9 @@ describe('the URL contract (§5.6)', () => {
     expect([...paramsOf(reportCalls(fetchMock)[3]).keys()]).toEqual(['from', 'to']);
   });
 
-  it('M-5 (SA-W1): a stray tab=costs from the old-link redirect is read past and kept; only the Costs keys change', async () => {
+  // MK-3b (ruled): the page's one spec owns `tab`, so a stray tab=costs is dropped on the next write
+  // (the redirect never sends it: its destination's tab=checks wins).
+  it('M-5 (SA-W1): a stray tab=costs is read past; the next write drops it and changes only the window', async () => {
     const fetchMock = stub(() => ok(report()));
     openAt(`?tab=costs&range=7d&account=${A}`);
     await within(costs()).findByTestId('costs-periods');
@@ -262,7 +270,7 @@ describe('the URL contract (§5.6)', () => {
     fireEvent.click(within(costs()).getByRole('button', { name: '90 days' }));
     await waitFor(() => expect(reportCalls(fetchMock)).toHaveLength(2));
     await flush();
-    expect(window.location.search).toBe(`?tab=costs&range=90d&account=${A}`);
+    expect(window.location.search).toBe(`?range=90d&account=${A}`);
   });
 
   it('C-5: From after To is refused inline: no read, no URL write (F-73)', async () => {
@@ -357,8 +365,8 @@ describe('the shared states (§5.10)', () => {
     expect(notice.textContent).toBe(COSTS_PLATFORM_ACCOUNT);
     expect(within(costs()).queryByTestId('costs-error')).toBeNull();
     expect(within(costs()).queryByRole('button', { name: 'Try again' })).toBeNull();
-    expect(within(costs()).queryByTestId('kpi-placeholder')).toBeNull();
-    expect(within(costs()).queryByTestId('costs-kpi-cost')).toBeNull();
+    expect(screen.queryByTestId('kpi-placeholder')).toBeNull();
+    expect(screen.queryByTestId('costs-kpi-cost')).toBeNull();
   });
 
   it('C-8: an empty report offers Clear filters only while a business is picked', async () => {
@@ -532,26 +540,27 @@ describe('L-9b: the sections and the leak panel on the standard (C-9 to C-11)', 
 // for it. "Credits charged" and "Charges" left the strip (§6 item 23): they are figures of the charged
 // block. Each tile has its leading or lagging pill; amounts print as `$` (USD-1), never "USD ".
 describe('C-12 / MK-3a: the KPI strip A-K1 to A-K5 (§4.1, §5, LL-1, USD-1, K-6, K-10)', () => {
-  const tile = (testId: string) => within(costs()).getByTestId(testId);
+  const tile = (testId: string) => screen.getByTestId(testId);
   const ALL_TILES = ['costs-kpi-cost', 'costs-kpi-recorded', 'costs-kpi-above', 'costs-kpi-periods', 'costs-kpi-fallback'];
   const ANCHOR_TILES = ['costs-kpi-cost', 'costs-kpi-periods', 'costs-kpi-fallback'];
-  const pillOf = (testId: string) => within(costs()).getByTestId(testId).parentElement?.textContent ?? '';
+  const pillOf = (testId: string) => screen.getByTestId(testId).parentElement?.textContent ?? '';
 
   it('five tiles in order, with values, pills and targets; Periods red "Needs action" at 1; no "USD " amount', async () => {
     stub(() => ok(report()));
     openAt('');
     await within(costs()).findByTestId('costs-periods');
-    const tiles = [...costs().querySelectorAll('[data-testid^="costs-kpi-"]')]
+    const tiles = [...document.querySelectorAll('[data-testid^="costs-kpi-"]')]
       .map((el) => el.getAttribute('data-testid'))
       .filter((id) => ALL_TILES.includes(id ?? ''));
     expect(tiles).toEqual(ALL_TILES);
     // A-K1: charges created in the window (MK-2), printed as F-K3 prints (four decimals).
     expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, $0.0065');
     expect(tile('costs-kpi-cost')).toHaveAttribute('href', '#costs-charged');
-    // A-K2: the recorded AI cost, Business OS calls, linking to the real AI calls & usage page (MK-3a).
+    // A-K2: the recorded AI cost, Business OS calls; MK-3b (ruled): it opens the page's Calls tab in place,
+    // with the page's window and business (none here, the defaults), never another page.
     expect(tile('costs-kpi-recorded')).toHaveAttribute('aria-label', 'Recorded AI cost, $0.0092');
     expect(tile('costs-kpi-recorded')).toHaveTextContent('Business OS calls');
-    expect(tile('costs-kpi-recorded')).toHaveAttribute('href', '/admin/analytics?range=custom&from=2026-09-03&to=2026-10-02');
+    expect(tile('costs-kpi-recorded')).toHaveAttribute('href', '/admin/ai-cost?tab=calls');
     // A-K3: recorded above charged, to the recorded block and the Leak check.
     expect(tile('costs-kpi-above')).toHaveAttribute('aria-label', 'Recorded above charged, $0.0027');
     expect(tile('costs-kpi-above')).toHaveAttribute('href', '#costs-leak');
@@ -708,11 +717,11 @@ describe('C-12 / MK-3a: the KPI strip A-K1 to A-K5 (§4.1, §5, LL-1, USD-1, K-6
     let release: (value: Answer) => void = () => {};
     stub(() => new Promise<Answer>((resolve) => (release = resolve)));
     const { unmount } = openAt('');
-    await waitFor(() => expect(within(costs()).getAllByTestId('kpi-placeholder')).toHaveLength(5));
+    await waitFor(() => expect(screen.getAllByTestId('kpi-placeholder')).toHaveLength(5));
     await act(async () => release({ status: 500, body: { success: false, error: 'boom' } }));
     await within(costs()).findByTestId('costs-error');
-    expect(within(costs()).queryByTestId('kpi-placeholder')).toBeNull();
-    expect(within(costs()).queryByTestId('costs-kpi-cost')).toBeNull();
+    expect(screen.queryByTestId('kpi-placeholder')).toBeNull();
+    expect(screen.queryByTestId('costs-kpi-cost')).toBeNull();
     unmount();
   });
 });
@@ -783,7 +792,7 @@ describe('F-1: the partial-report lines on the shared notice (F-120)', () => {
 // computation), with its own exactness; deleted accounts have their own line; the
 // period table is labelled as whole billing periods.
 describe('MK-2: one charged AI cost figure', () => {
-  const tile = (testId: string) => within(costs()).getByTestId(testId);
+  const tile = (testId: string) => screen.getByTestId(testId);
   const charged = (over: Partial<CostReportPayload['chargedInWindow']>) => ({ ...report().chargedInWindow, ...over });
 
   it('the block shows the window figure and the deleted accounts line; the period table says whole billing periods', async () => {

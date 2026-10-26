@@ -98,6 +98,17 @@ const nextConfig = {
         permanent: false,
       },
       {
+        // Money MK-3b (KPI restructure review SA-6): AI calls & usage is now
+        // the AI cost page's Calls tab. Temporary for the same reason as
+        // above. Next merges the incoming query with the destination's, so
+        // the page's keys arrive as they are (scope, range, from, to, account,
+        // category, group_by, the drill keys, agent, execution), and the old
+        // names the page reads forever (dateFrom, dateTo, user) too.
+        source: '/admin/analytics',
+        destination: '/admin/ai-cost?tab=calls',
+        permanent: false,
+      },
+      {
         // Money MK-4 (KPI restructure review SA-6): the Subscriptions page is
         // now Finance's Plans & subscriptions tab. Temporary for the same
         // reason as above. Next merges the incoming query with the

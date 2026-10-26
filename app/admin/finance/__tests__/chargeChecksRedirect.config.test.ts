@@ -21,7 +21,8 @@ import type { IncomingMessage } from 'http';
 import { matchHas, prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination';
 import type { RouteHas } from 'next/dist/lib/load-custom-routes';
 
-import { COSTS_FILTER_SPEC } from '@/app/admin/business-os-llm/costsFilters';
+// Money MK-3b (SA-CR-MK3B F-2, ruled): the AI cost page's ONE spec reads what arrives.
+import { AI_COST_FILTER_SPEC } from '@/app/admin/ai-cost/aiCostFilters';
 import { resolveWindow } from '@/app/admin/components/layout/adminWindow';
 
 interface Redirect {
@@ -58,9 +59,10 @@ describe('R-1: the redirect in next.config.js (shape only)', () => {
   // Money MK-4 (ruled): the Subscriptions redirect joins, so three in all.
   // Admin Exchange Rates slice 2b (SQ-17): the Exchange rates redirect joins, so four.
   // Money MK-3a (ruled): the Charge checks redirect joins, so five.
-  it('keeps the payments redirect; five redirects in all', async () => {
+  // Money MK-3b (ruled): the AI calls & usage redirect joins, so six.
+  it('keeps the payments redirect; six redirects in all', async () => {
     const all = await config.redirects();
-    expect(all).toHaveLength(5);
+    expect(all).toHaveLength(6);
     expect(all).toContainEqual({ source: '/business-os/payments', destination: '/business-os/orders', permanent: false });
   });
 });
@@ -92,8 +94,8 @@ describe('R-1 through Next 14.2.35 internals (matchHas, prepareDestination): on 
       const value = parsedDestination.query[key];
       return typeof value === 'string' && value ? value : null;
     };
-    expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
-    const window = COSTS_FILTER_SPEC.window.parse(get);
+    expect(AI_COST_FILTER_SPEC.account.parse(get)).toBe(A);
+    const window = AI_COST_FILTER_SPEC.window.parse(get);
     expect(window).toBeDefined();
     const resolved = resolveWindow(window!, new Date('2026-10-16T10:00:00.000Z'));
     expect(resolved).toMatchObject({ kind: 'dates', from: '2026-09-01', to: '2026-09-30' });
@@ -131,8 +133,8 @@ describe('MK-3a: /admin/finance/charges redirects to the AI cost page (SA-6)', (
       const value = parsedDestination.query[key];
       return typeof value === 'string' && value ? value : null;
     };
-    expect(COSTS_FILTER_SPEC.account.parse(get)).toBe(A);
-    const resolved = resolveWindow(COSTS_FILTER_SPEC.window.parse(get)!, new Date('2026-10-16T10:00:00.000Z'));
+    expect(AI_COST_FILTER_SPEC.account.parse(get)).toBe(A);
+    const resolved = resolveWindow(AI_COST_FILTER_SPEC.window.parse(get)!, new Date('2026-10-16T10:00:00.000Z'));
     expect(resolved).toMatchObject({ kind: 'dates', from: '2026-09-01', to: '2026-09-30' });
   });
 

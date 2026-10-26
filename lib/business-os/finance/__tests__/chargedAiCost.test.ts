@@ -9,7 +9,8 @@
 import type { CreditLedgerRow } from '@/lib/repositories/BusinessOsCreditLedgerReadRepository';
 import { CHARGING_CUTOVER_FLOOR_MS } from '@/lib/business-os/credits/aiActivity';
 import { windowInstants } from '@/lib/business-os/credits/creditReport';
-import { costsRouteSearch, COSTS_DEFAULT_WINDOW } from '@/app/admin/business-os-llm/costsFilters';
+// Money MK-3b (SA-CR-MK3B F-2, ruled): the AI cost page builds the report request (`reportSearch`).
+import { AI_COST_FILTER_SPEC, reportSearch } from '@/app/admin/ai-cost/aiCostFilters';
 import { buildChargedAiCostInWindow, CHARGED_LEDGER_READ, readChargedWindow } from '../chargedAiCost';
 import { resolveFinanceWindow } from '../financeWindow';
 
@@ -148,8 +149,8 @@ describe('the figure', () => {
 
 describe('the default window is the same on both pages (T-2)', () => {
   it("Charge checks' This month default resolves to Finance's This month instants", () => {
-    expect(COSTS_DEFAULT_WINDOW).toEqual({ kind: 'preset', preset: 'this_month' });
-    const params = new URLSearchParams(costsRouteSearch({ window: COSTS_DEFAULT_WINDOW, account: '' }, NOW));
+    expect(AI_COST_FILTER_SPEC.window.defaultValue).toEqual({ kind: 'preset', preset: 'this_month' });
+    const params = new URLSearchParams(reportSearch(AI_COST_FILTER_SPEC.window.defaultValue, '', NOW));
     const charges = windowInstants({ from: params.get('from') as string, to: params.get('to') as string });
     const finance = resolveFinanceWindow({ preset: 'this_month' }, NOW);
     expect(charges.start.toISOString()).toBe(finance.start.toISOString());

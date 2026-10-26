@@ -350,7 +350,8 @@ export const AI_BUSINESS = 'Business';
 export const AI_COST = 'Cost (USD)';
 export const AI_DELETED = 'Deleted accounts';
 export const AI_NO_ROWS = 'No AI actions charged in this window';
-export const AI_LINK = 'AI calls & usage';
+// Money MK-3b: AI calls & usage is the AI cost page's Calls tab.
+export const AI_LINK = 'AI cost: Calls';
 export const AI_LINK_NOTE = 'Every recorded AI call, charged or not:';
 export const AI_UNRESOLVED = 'corrections whose charge could not be found';
 export const AI_UNREADABLE = 'amounts could not be read and count as 0';
@@ -692,7 +693,8 @@ export const ACCOUNT_LINKS_TITLE = 'Open this business in';
 export const ACCOUNT_LINK_ACTIVITY = 'Business OS AI Activity';
 // Money MK-3a: Charge checks is now the AI cost page's Summary & checks tab.
 export const ACCOUNT_LINK_COSTS = 'AI cost: Summary & checks';
-export const ACCOUNT_LINK_ANALYTICS = 'AI calls & usage';
+// Money MK-3b: the AI cost page's Calls tab (the tab's own label, as Summary & checks above).
+export const ACCOUNT_LINK_ANALYTICS = 'AI cost: Calls';
 export const ACCOUNT_LINK_BUSINESSES = 'Businesses';
 
 // ── The Accounts tab: account economics and AI margin (slice 6a, Money M-3, §11E) ──

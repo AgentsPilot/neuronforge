@@ -6,7 +6,7 @@
 **Requirement:** [ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md](/docs/requirements/ADMIN_MONEY_KPI_RESTRUCTURE_REVIEW.md) §4 (Page 2), §5 (A-K1 to A-K5, the Leak check block KPI), §3.3 (LL-1 to LL-5), §3.4 (USD-1 to USD-6), §6 items 11 and 23 to 29, §7 C-2, C-3, C-6, C-7, §13 FC-1 / FC-4 / FC-5 / FC-6 / FC-9, §14 point 5, §12 MK-3 row; SA-RR-MK (SA-3, SA-6, SA-9, SA-11, guards, pins table row MK-3); SA-CR-MK2 Q-R1
 **Branch:** `feature/admin-money-mk3-ai-cost-page` (from `origin/main` `6e19cbe4`; worktree `neuronforge-finance-mk3`). **MK-2 must merge first; origin/main is merged into this branch before any code is written (§12 Step 0).**
 **Date:** 2026-10-26
-**Status:** SA Approved with conditions (SA-WP-MK3, 2026-10-26; conditions 1 to 7 folded in below). Build **MK-3a only**, after MK-2 merges and this branch is fast-forwarded to origin/main. **MK-3a Code Approved (SA-CR-MK3A), QA passed (B-1, B-2, L-1 fixed), TL approved; committed `9868bbf6`, PR [#517](https://github.com/AgentsPilot/neuronforge/pull/517) opened 2026-10-26, auto-merge on**; MK-3b not started
+**Status:** SA Approved with conditions (SA-WP-MK3, 2026-10-26; conditions 1 to 7 folded in below). Build **MK-3a only**, after MK-2 merges and this branch is fast-forwarded to origin/main. **MK-3a Code Approved (SA-CR-MK3A), QA passed (B-1, B-2, L-1 fixed), TL approved; committed `9868bbf6`, PR [#517](https://github.com/AgentsPilot/neuronforge/pull/517) opened 2026-10-26, auto-merge on**; **MK-3b Code Complete** (uncommitted, local branch `feature/admin-money-mk3b-calls-tab`), awaiting SA code review
 **Path:** full cycle (sidebar, redirects, guard pins, a new shared export)
 
 ## Overview
@@ -459,8 +459,8 @@ Between the two, the sidebar shows Finance, AI cost, AI calls & usage (detail), 
 - ✅ Step 3 (MK-3a part): page, copy, legend; T-1. ⬜ MK-3b: the one spec, `useCostReport`, the tab list, T-8 (DV-1)
 - ✅ Step 4 (MK-3a): `AiCostKpis`; Pin A removal and append; T-3 to T-5
 - ✅ Step 5 (MK-3a): Summary & checks blocks, `RecordedSection`, Leak block KPI; Finance one line (C-7); T-6, T-7
-- ⬜ Step 6 (MK-3b): Calls tab (`CallsTab`, summary cards, window rules); T-2, T-12
-- ✅ Step 7 (MK-3a part): the Charge checks redirect and retarget, Finance's links, the sidebar entry, the charges page deleted, Pin C test file, T-9 (charges), T-13. ⬜ MK-3b: the analytics redirect, the Health tile and other Calls links
+- ✅ Step 6 (MK-3b): Calls tab (`CallsTab`, summary cards, window rules); T-2, T-12
+- ✅ Step 7 (MK-3a part): the Charge checks redirect and retarget, Finance's links, the sidebar entry, the charges page deleted, Pin C test file, T-9 (charges), T-13. ✅ MK-3b: the analytics redirect, the Health tile and other Calls links
 - ✅ Step 8 (MK-3a part): guard updates (§8) and ruled test updates (§9.2)
 - ✅ Step 9 (MK-3a): runs (§9.3), pins re-checked, Implementation Notes
 
@@ -639,6 +639,84 @@ Steps: `git fetch`, then `git merge --ff-only origin/main` (the branch has no co
 | `typecheck:bos-llm` (`NODE_OPTIONS=--max-old-space-size=8192`, checked for an OOM trace) | passed: 587 files in scope, 11 errors, 0 new |
 | One load flake | `costsLayout` C-4 timed out once inside a parallel run of 4 folders (84 s suite); passed alone and in the next full run |
 
+### MK-3b build (2026-10-26, uncommitted, branch `feature/admin-money-mk3b-calls-tab` from `0a10df0b`)
+
+Local branch only: not pushed, no PR until #517 merges; then origin/main is merged in (never stacked on the MK-3a branch). Nothing stashed or committed.
+
+**Built.**
+
+| Part | Where |
+|---|---|
+| **One page spec** (SA-Q-MK3-2, DV-1 owed): `tab` (checks default, omitted / calls) + the Calls spec (window, account, scope, category, group_by, drill keys). Window: This month default; Today, 7d, 30d, This month, Custom, 90d; linked instants kept; `range=24h` falls back (U-4). `reportSearch` (whole UTC days; a linked window → the covering days; `system` → every business). Leaving Calls resets its keys; Clear keeps the tab | `app/admin/ai-cost/aiCostFilters.ts` |
+| **Report read lifted** out of `CostsTab` (DV-1 owed), unchanged logic, keyed on window + business only | `app/admin/ai-cost/useCostReport.ts`; `CostsTab.tsx` is presentational (`costsSectionsShown` exported) |
+| **Page view**: header, legend, tab list **exactly "Summary & checks", "Calls"** (APG, manual activation), the strip A-K1..A-K5 for both tabs, the covering-days line (linked window) and the `system` note, then the shown tab | `components/AiCostView.tsx`, `components/AiCostTabs.tsx`, `page.tsx` (Suspense only), `aiCostCopy.ts` |
+| **Strip on both tabs**: on Summary & checks the check tiles are anchors; A-K2 opens the Calls tab in place (same-page filter tile, real link `/admin/ai-cost?tab=calls…`); on Calls A-K2 is `aria-current` and the check tiles open Summary & checks at their block | `AiCostKpis.tsx` (`tab`, `tabLink` props; the `/admin/analytics` link is gone) |
+| **Calls tab**: the old page body, controlled by the page spec; reads only while shown and only when its request changed; `AnalyticsKpis` removed, its figures are summary cards ("Recorded AI cost, this view", Calls, Tokens, Avg cost per call; the four categories as filter links in All scope, SA-Q-MK3-6); chevrons slate-400; scope note "The charged cost is on the Summary & checks tab" | `app/admin/analytics/components/CallsTab.tsx`, `CallsSummary.tsx`; deleted `app/admin/analytics/page.tsx`, `AnalyticsKpis.tsx` |
+| **Windows** (SA-Q-MK3-3): 7, 30 and 90 days are whole UTC days on Calls too (no `period=N`), 24 h gone, linked windows exact | `app/admin/analytics/analyticsFilters.ts` (`ANALYTICS_PATH` = `/admin/ai-cost`, default This month, extras `['90d']`) |
+| **Redirect** `/admin/analytics` → `/admin/ai-cost?tab=calls` (temporary; the query merges; the destination tab wins) | `next.config.js` |
+| **Links retargeted** (no internal link relies on a redirect): Health spend tile (`?tab=calls&scope=bos&dateFrom&dateTo`, label "open in AI cost: Calls"), Businesses panel, Activity cut-over notice, the redundant Platform dashboard (two hrefs, SA-Q-MK3-9), Finance's Calls links (`analyticsHref`, `section3AnalyticsHref`, `k1AnalyticsHref` → `/admin/ai-cost?tab=calls&…`, Finance's preset as is); **`leakCheckHref` removed** (DV-5) | `lib/admin/health/evaluateHealth.ts`, `BusinessOsPanel.tsx`, `CutoverNotice.tsx`, `platform-dashboard/page.tsx`, `financeLinks.ts` |
+| **Copy**: "AI calls & usage" as a page name → "AI cost: Calls" / "the Calls tab of AI cost" (Health note and footnote, link labels, Activity cut-over line and link, Finance Section 3 and account summary links) | `evaluateHealth.ts`, `activityCopy.ts`, `financeCopy.ts`, `BusinessOsPanel.tsx` |
+| **Sidebar**: Money = Finance, AI cost; "AI calls & usage (detail)" removed; **MK3A-FU-2**: the AI cost icon is `Coins` | `AdminSidebar.tsx` |
+
+**Decision recorded (for SA):** only the shown tab's content is mounted (the other panel is an empty hidden tabpanel). Two bars, two pickers and two window controls in one DOM would duplicate every control; the cost is that a Leak check result is not kept across a tab switch (an on-demand check, one click to run again). The report is the page's, so switching back reads nothing. DV-2 (block order) is kept as MK-3a left it.
+
+**Pins (LF-normalised SHA-256; before = HEAD `0a10df0b`).**
+
+| Pin | Before | After | Note |
+|---|---|---|---|
+| Pin A | `4e2a93aa` | `a130d560` | One ruled re-freeze (condition 1): the 4 `A2 AnalyticsKpis` cases and their fixtures removed (`AnalyticsKpis.tsx` deleted, nothing imports it); the 4 `A2 AiCostKpis` cases with figures re-hashed because their props gain `tab` / `tabLink` and A-K2's target is now the Calls tab by decision (figures `9f638238…`, at least `f668d34d…`, unknown `c8c60658…`, no sections `3d974584…`; loading unchanged `c5bb8059…`); one Calls-tab case appended (`8673b5fe…`, DV-3). 62 / 62 |
+| Pin C test file | `e57f2675` | `e57f2675` | Unchanged |
+| Pin C table | `64a565e9` | `64a565e9` | Unchanged; T-12 repeats its report requests for the same states |
+| Pin B | `a1b3db0c` | `a1b3db0c` | Unchanged |
+| Pin D | `1f7cf07a` | `1f7cf07a` | Unchanged (the Health href is outside its shape) |
+| AC-173 | `3a1a2dd4` + `b84e0c96` | same | Unchanged |
+| AC-145 | `33340751…2215` | same | Unchanged; `lib/business-os/finance/**` and the finance route test byte-identical to HEAD |
+
+**Ruled baselines and test updates (MK-3b).** C-14 registry (analytics entry merged into `/admin/ai-cost (AI cost)` with the view, tabs, spec, read, `CallsTab`, `CallsSummary`); contrast `PAGES['AI cost']` + `app/admin/analytics`; vocabulary guard (21 files: `CallsTab`, `CallsSummary`, `AiCostView` replace the page, `AnalyticsKpis`, `page.tsx`; rows W-10, W-12a, W-19a, W-19b, W-21c, S-5, S-7, S-11, S-12 note and footnote to the new names; MIN_TEXTS 69 / 38 / 12); business-os-llm G-5 (the Leak panel is the costs folder's one reader); owner-text guard (`PAGE` = `CallsTab.tsx`); finance links test (Calls links, `leakCheckHref` cases removed, AC-193 widened to `/admin/analytics`); nav test (Money two entries, 27 hrefs, words); redirect count 6; Health tests (path and label); Activity cut-over href; Finance page links; the six analytics render tests (mount the AI cost page on `tab=calls`; This month default; whole days; no 24 h; summary cards instead of the strip); `analyticsFilters.test.ts` (whole days, no 24 h); `costsLayout` / `costsTab` (the strip is the page's; a stray `tab=costs` is dropped; the tab list); the AI cost page test (`tab=checks` is the default, omitted). The old-address guard G-1 now also refuses a string starting `/admin/analytics`.
+
+**New tests.** `app/admin/ai-cost/__tests__/aiCostRequests.render.test.tsx` (T-12: every request of each tab for each window, incl. linked and `range=24h`, plus scope, drill, business, `system`; T-2 / T-8: tabs, no report re-read on switch, Calls keys reset, A-K2 / check-tile switches, covering-days line, `system` note, Clear keeps the tab: 29 cases); `analyticsRedirect.config.test.ts` (shape, old file gone, query merge, Health and Businesses old keys, drill keys, `range=24h`: 8 cases).
+
+**Runs (2026-10-26).**
+
+| Run | Result |
+|---|---|
+| `app/admin` (all), `app/api/admin/token-usage`, `lib/admin` (finance, business-os-llm, components, admin guards, analytics, AI cost, redirects, Pins A–D, AC-173) | 219 suites, 6,892 passed |
+| `lib/business-os/finance`, `lib/business-os/credits`, credits and finance routes (AC-145), `lib/repositories` (range cap, importer guards) | 181 suites, 6,344 passed |
+| `test:authz-guard` | 203 passed |
+| `test:bos-entitlements` | 308 suites, 9,264 passed |
+| `lint:hooks` | exit 0 |
+| Scoped `tsc` (45 touched TS files) with a canary | canary `TS2322` at `AiCostView.tsx(173,7)`; restored, `cmp` identical (sha256 `44e16e8f3a9b176c` before and after); clean run 0 errors |
+| `typecheck:bos-llm` | passed: 587 files in scope, 11 errors, 0 new |
+
+#### SA-CR-MK3B fixes (Dev, 2026-10-26)
+
+| Item | Fixed by Dev | Tests |
+|---|---|---|
+| **F-1 (High)** | `AiCostView.tsx`: on the Calls tab a failed report read puts the existing words in the strip's place: the platform notice (`AdminNotice`, `COSTS_PLATFORM_ACCOUNT`) for a 409, otherwise the existing error with Try again (`AdminError`, the hook's message: the route's reason such as the 92-day cap, or the shared network sentence). Summary & checks keeps showing it in its content only (Calls content is not mounted there), so it is never shown twice. No new copy | `aiCostRequests.render.test.tsx` "F-1": 409, a custom window over 92 days (route 400, Try again re-reads), a network failure, and Summary & checks shows it once (one `alert`). `analytics.layout.render.test.tsx` (ruled): a stub that fails every request now also shows the strip's error, so the tab's Try again is taken from its own content |
+| **F-2 (Medium)** | `COSTS_FILTER_SPEC` and `costsRouteSearch` deleted from `costsFilters.ts` (the bar's type, default and 90-day extra stay). `financeLinks.test.ts` and `chargeChecksRedirect.config.test.ts` parse with `AI_COST_FILTER_SPEC`; `chargedAiCost.test.ts` builds the request with `reportSearch`. The retired spec's parse, projection and request cases moved, retargeted, to `app/admin/ai-cost/__tests__/aiCostFilters.test.ts`; `costsFilters.test.ts` now pins the bar's default and extra to the page spec's and the deletion | `aiCostFilters.test.ts` (23), `costsFilters.test.ts` (3) |
+
+**Merge:** after both fixes, `git fetch` and `git merge --ff-only origin/main`: fast-forward `0a10df0b` → `35c97b4f` (#517's merge commit; no file differs from the branch's MK-3a commits), no conflict, no stash; the MK-3b work stays uncommitted.
+
+**Re-runs (on `35c97b4f` plus the tree).** `app/admin`, `app/api/admin/token-usage`, `lib/admin`: 220 suites, 6,898 passed. `lib/business-os/finance`, `lib/business-os/credits`, the credits and finance routes, `lib/repositories`: 181 suites, 6,344 passed. `test:authz-guard` 203; `test:bos-entitlements` 9,264; `lint:hooks` exit 0. Scoped `tsc` on 49 files: 0 errors, canary caught (`AiCostView.tsx(190,7)` TS2322), restored `cmp` identical. Pins unchanged by the fixes: Pin A `a130d560`, Pin B `a1b3db0c`, Pin C `e57f2675` / `64a565e9`, Pin D `1f7cf07a`, AC-173 `3a1a2dd4` + `b84e0c96`, AC-145 `33340751…2215` (finance payload files untouched).
+
+#### QA E-1 fix (Dev, 2026-10-26)
+
+**Change.** `app/admin/analytics/analyticsFilters.ts` `setWholeDays` sends the day's end as `…T23:59:59.999Z` (was `…T23:59:59.999999Z`), the strip's A-K2 and Finance's inclusive end (the report's half-open window less 1 ms, SA-Q52, `recordedReads.ts`). A call stamped in the day's last millisecond is now counted on both the Calls tab and A-K2, or on neither. Linked windows are unchanged (sent verbatim). The audit trail's own `date_to` (`auditTrailFilters.ts`) is a different page and is not touched.
+
+**New T-12 rows** (`aiCostRequests.render.test.tsx`, "T-12 (E-1)"): for the default (This month), 7 days and a custom window, the Calls drill-down's `dateFrom` / `dateTo` equal the report window's start and A-K2's inclusive end (`end − 1 ms` = `…T23:59:59.999Z`). The route's `windowInstants` rule is written out in the test (importing the server module would load its Supabase client in jsdom).
+
+**Ruled request-pin updates (`dateTo` …59.999999Z → …59.999Z, nothing else in each request):**
+
+| File | Rows |
+|---|---|
+| `aiCostRequests.render.test.tsx` | the `days()` helper: every whole-day Calls drill-down row of T-12 (default, Today, 7d, 30d, This month, 90d, Custom, `range=24h`; All scope, a drill, a business, `system`). The linked row and every report row (Pin C's) are unchanged |
+| `analytics.layout.render.test.tsx` | R-2, R-3, R-4, R-5, R-8 `range=24h`, R-9, R-10 (the shared `THIS_MONTH`), R-6 (legacy whole dates), R-8 `range=90d`, R-8 `range=today`; R-14 (Clear's request string); "7 days" (dateTo); "Custom … Apply" (dateTo) |
+| `analyticsFilters.test.ts` | the defaults string; the 7d / 30d / 90d whole-day case (one expectation, three rows); Today and This month (renamed "end of day at its last millisecond"); F-54 custom. The two parse cases at lines 129 / 132 read a linked value and are unchanged |
+
+Pin C (`64a565e9`, report requests), Pin A, Pin B, Pin D, AC-173 and AC-145 do not move.
+
+**Re-runs.** AI cost, analytics, Finance, components (Pin A), admin guards, Business OS AI, `lib/admin` (Pin D), finance route (AC-145) and token-usage: 140 suites, 5,040 passed. Scoped `tsc` on 49 files: 0 errors; the canary (`analyticsFilters.ts(366,7)` TS2322) was caught and the file restored `cmp` identical. Pins: A `a130d560`, B `a1b3db0c`, C `e57f2675` / `64a565e9`, D `1f7cf07a`, AC-173 `3a1a2dd4` + `b84e0c96`, AC-145 `33340751…2215`.
+
 ## SA Review Notes
 
 ### SA Workplan Review (SA-WP-MK3)
@@ -723,6 +801,69 @@ Steps: `git fetch`, then `git merge --ff-only origin/main` (the branch has no co
 
 ### Optimisation Suggestions
 - MK-3a's report request now always includes the recorded read, under Finance's 2 s deadline and in parallel with the report. That is acceptable. If p95 rises in QA's timing check, the all-accounts read is the one to watch.
+
+### Code Approved for QA: Yes
+
+### SA Code Review (SA-CR-MK3B)
+
+**Code Review by SA — 2026-10-26**
+**Status:** 🔄 Fix Required. Two fixes, F-1 and F-2. Both are small and contained. Everything else is approved as built.
+
+**Items owed from SA-CR-MK3A: all done.**
+- **DV-1:** the report read is lifted into `useCostReport`, and there is one page spec with `tab`.
+- **T-12:** the requests are pinned for each tab and each window, including linked windows and `range=24h`.
+- **DV-5:** `leakCheckHref` is removed.
+- **Tab label:** the tab list says exactly "Summary & checks" and "Calls".
+- **MK3A-FU-2:** the AI cost entry uses the `Coins` icon.
+- **Pin A:** this is the second, ruled re-freeze.
+
+**SA-WP-MK3 conditions.**
+- **1 Pin A:** ✅ `4e2a93aa` → `a130d560`. See Q-1 below.
+- **2 Pin C:** ✅ file `e57f2675` and table `64a565e9` are unchanged.
+- **3 Unchanged pins:** ✅ AC-145, AC-173 and Pins B and D are unchanged, and `lib/business-os/finance/**` is byte-identical.
+- **5 Links:** ✅ the only `/admin/analytics` and `/admin/finance/charges` strings left outside tests are in comments. The Health tile, Businesses panel, Activity cut-over, Platform dashboard and Finance links go straight to `/admin/ai-cost?tab=calls…`.
+- **6 Windows:** ✅ 7, 30 and 90 days are whole UTC days, 24 hours is gone, `range=24h` falls back, and a linked window stays exact on Calls, with the covering-days line shown.
+- **7 Guards:** ✅ C-14, contrast, vocabulary, owner-text, G-5 and the nav test are updated by ruling. No `console.*` and no `any` in new code.
+- **Other checks:** ✅ The redirect is temporary and keeps the query, and the destination tab wins. Repositories only: no new read and no new route; the Calls tab uses the existing token-usage routes.
+
+**Rulings on Dev's three questions**
+
+| # | Ruling |
+|---|---|
+| Q-1 Re-hashing the 4 `AiCostKpis` cases | **Accepted, inside the one MK-3b re-freeze.** The hashes changed because A-K2's target moved to the Calls tab and the tiles gained `tab` / `tabLink`. That move was decided by condition 5 and DV-1, so it is not drift. Case names stay as they were, the loading case is unchanged, and the removal of the 4 `AnalyticsKpis` cases is proven because the file is deleted and nothing imports it. Before and after hashes for every moved case are recorded. 62/62. |
+| Q-2 Only the shown tab is mounted | **Accepted. This is not a business question.** Today the Leak check and AI calls & usage are two separate pages, so moving between them already drops a Leak check result. Switching tabs behaves the same, and the report itself is kept, so switching back reads nothing. Mounting both tabs would put two bars, two pickers and two window controls in one DOM. The result is one click to re-run. No question for the user. |
+| Q-3 Keep `COSTS_FILTER_SPEC` / `costsRouteSearch` with test callers only | **Not accepted. See F-2.** The workplan (§3, line 222) retires `COSTS_FILTER_SPEC`. Worse, `financeLinks.test.ts` and `chargeChecksRedirect.config.test.ts` still prove that Finance's AI cost links parse, and they parse them with a spec the page no longer reads. That proof is now about the wrong spec. |
+
+### Code Review Comments
+1. **F-1: report failures are silent on the Calls tab.** Priority: High. File: `app/admin/ai-cost/components/AiCostView.tsx`, around line 128. `reportState.error` reaches only `CostsTab`. On the Calls tab a 409 platform account, the route's 400 for a custom window over 92 days (the Calls window has no cap), a network failure or any other failure makes `AiCostKpis` return `null`, so the strip just disappears with no words. §2.3 says a platform account "shows the existing platform notice in place of the strip", and the never-silent rule covers the rest.
+   - **Fix:** while the Calls tab is shown and `error` is set, render the same `AdminNotice` (platform account) or `AdminError` with Try again (`reread`) where the strip is. Use the copy that already exists, with no new strings. Summary & checks keeps its current rendering, and the error must not show twice on that tab.
+   - **Tests, added to T-12 / T-2:** on `tab=calls`: a 409 shows the notice and the Calls content still renders; a custom window over 92 days shows the route's message; a network failure shows the error, and Try again re-sends the same request.
+2. **F-2: retire the old spec.** Priority: Medium. File: `app/admin/business-os-llm/costsFilters.ts`.
+   - Delete `COSTS_FILTER_SPEC` and `costsRouteSearch`. Keep what `CostsFilterBar.tsx` still imports.
+   - Retarget `financeLinks.test.ts` (lines 57, 237, 250, 285–286) and `chargeChecksRedirect.config.test.ts:96` to `AI_COST_FILTER_SPEC`.
+   - Retarget `lib/business-os/finance/__tests__/chargedAiCost.test.ts:152` to `reportSearch(ANALYTICS_DEFAULT_WINDOW, '', NOW)`. That is a test-only change, so AC-145 does not move.
+   - Trim `costsFilters.test.ts` to what remains.
+   - This is an update to ruled tests. List it in the Implementation Notes as before and after.
+
+### Optimisation Suggestions
+- `AiCostView` computes `new Date()` inside the memo and again for `covering`. That is harmless. If a test ever flakes around midnight UTC, pass one `now` to both.
+
+### Code Approved for QA: No. Yes once F-1 and F-2 are done. SA re-checks only the F-1 / F-2 diff and the test runs; no full re-review is needed.
+
+### SA Re-check (SA-CR-MK3B fixes)
+
+**Re-checked by SA — 2026-10-26** (fix diff only, on `35c97b4f` plus the uncommitted tree)
+**Status:** ✅ Code Approved.
+
+- **F-1 ✅** `AiCostView.tsx`: only on the Calls tab, a failed report puts the existing `AdminNotice` (409, `COSTS_PLATFORM_ACCOUNT`) or `AdminError` with Try again (`reread`) where the strip goes. There is no new copy. Summary & checks still shows the error once, in its content.
+  - Four tests in `aiCostRequests.render.test.tsx` cover it: the 409 (Calls content still shown); a window over 92 days, using the route's own message, where Try again re-reads; a network failure; and Summary & checks showing the error only once.
+  - The ruled update to `analytics.layout.render.test.tsx` is correct. Its stub fails every request, so the strip's error now appears there, and that tab's own Try again is the one exercised.
+- **F-2 ✅**
+  - `COSTS_FILTER_SPEC` and `costsRouteSearch` are gone. `costsFilters.ts` keeps only what `CostsFilterBar.tsx` imports, and `costsFilters.test.ts` asserts that the two exports are absent.
+  - `financeLinks.test.ts` and `chargeChecksRedirect.config.test.ts` now parse with `AI_COST_FILTER_SPEC`.
+  - `chargedAiCost.test.ts` uses `reportSearch`. It is a test file, so AC-145 does not move.
+  - The retired cases are kept, retargeted, in `aiCostFilters.test.ts`.
+- **Pins:** no pin moved (Pin A `a130d560`, AC-145 `33340751…`). The fast-forward to `35c97b4f` (#517) is clean, with no stash. The re-runs are green, and the canary was caught.
 
 ### Code Approved for QA: Yes
 
@@ -890,6 +1031,138 @@ The totals equal Dev's three groups exactly (90 / 3,395; 95 / 4,667; 131 / 3,082
 
 Copy (`leakCopy.ts`: `LEAK_KPI_UNKNOWN`, `LEAK_KPI_NOT_ALL_CHECKED`, `LEAK_KPI_COULD_NOT_CHECK`) passes the vocabulary guard. **Re-run:** the business-os-llm, system-config, admin guards, components (Pin A), finance (Pins B and C, AC-173), AI cost, `lib/admin` (Pin D) and the credits and finance routes (AC-145) suites: 140 suites, 4,985 passed. `test:authz-guard`: 203. `test:bos-entitlements`: 9,264. `lint:hooks`: exit 0. Scoped `tsc` on 51 files: 0 errors, and the canary was caught (`LeakCheckPanel.tsx(513,7)` TS2322), then restored with `cmp` identical. **No pin moved:** Pin A `4e2a93aa`, Pin B `a1b3db0c`, Pin C test `e57f2675` and table `64a565e9`, Pin D `1f7cf07a`, AC-173 `3a1a2dd4` + `b84e0c96`, AC-145 `33340751…2215`.
 
+### QA — MK-3b, 2026-10-26
+
+| | |
+|---|---|
+| **Tree** | Worktree `neuronforge-finance-mk3`, branch `feature/admin-money-mk3b-calls-tab` on `35c97b4f` (MK-3a merged), uncommitted. The source has been stable since 20:42, before every run below |
+| **Test mode** | full |
+| **Focus** | ui, api |
+| **Skipped** | the live page (user, below) |
+| **Input source** | the coordinator's list, the MK3-AC rows mapped to MK-3b, the "MK-3b build" and "SA-CR-MK3B fixes" notes |
+
+**Strategy used:**
+- **A + B:** every suite and guard, each run alone. The two run groups match Dev's totals exactly.
+- **A code read:** the page spec, `AiCostView`, `CallsTab` / `CallsSummary`, the Calls request builder, the drill-down route, both repository reads, the links and the sidebar.
+- **Two temporary, untracked probes, deleted afterwards.** `git status` is clean of `zz_*`, and neither is kept as a permanent test.
+  - **(1) Calls vs A-K2.** The two real repository methods each route uses (`listRowsAllAccountsInWindow` for the drill-down, and the `recordedReads.ts` binding of `listCostPointsAllAccountsInWindow` / `listCallsInWindow`) run on a fake Supabase client that evaluates `gte` / `lte` on `created_at` **at microsecond precision, as Postgres does**. They are fed the exact window each page sends: `analyticsRequestParams` for Calls; `reportDates` → `windowInstants` → `to − 1 ms` for A-K2.
+  - **(2) The real page, with Dev's T-12 harness:** tile hrefs on both tabs, `system`, and the summary cards and category links.
+- **The scoped tsc and `typecheck:bos-llm` at 8 GB,** checked for an OOM trace.
+
+**Verdict: PASS. No bugs.** One Low edge case: Calls vs A-K2 can differ by a call stamped in the last millisecond of the window's final day.
+
+#### 1. Tabs
+
+| Item | Result | Evidence |
+|---|---|---|
+| Exactly two tabs, "Summary & checks" and "Calls"; the strip on both | ✅ | T-2 render test (green): the tab names are exactly that and in that order, and the strip shows on both |
+| Switching tabs does not re-read the report | ✅ | T-2: one report request after Calls → Summary & checks. `useCostReport` is keyed on the window and the business only (code read) |
+| A-K2 switches to Calls in place; on Calls the check tiles return to Summary & checks at their block; no tile links off the page | ✅ | **Probe 2.** On Summary & checks with `range=7d&account=A`, A-K2 is `/admin/ai-cost?tab=calls&range=7d&account=A` and A-K3 `#costs-leak`. On Calls with `scope=all&group_by=model&provider=openai`, the four check tiles are `/admin/ai-cost?range=7d&account=A#costs-charged`, `#costs-leak`, `#costs-periods` and `#costs-fallback`: they keep the window and business and carry **no** Calls key. A-K2 is `aria-current`. **No `a[href]` on the Calls page leaves `/admin/ai-cost`** |
+
+#### 2. One page spec
+
+| Item | Result | Evidence |
+|---|---|---|
+| The window and business are shared | ✅ | `AI_COST_FILTER_SPEC` = `tab` + the Calls spec; one `useAdminFilters`. The T-2 and T-12 tests are green |
+| Leaving Calls resets the Calls keys | ✅ | `tabPatch('checks')` = `CALLS_ONLY_RESET`. T-2: `tab=calls&scope=all&group_by=model&provider=openai&range=7d&account=A` becomes `?range=7d&account=A` |
+| Clear keeps the tab | ✅ | T-2: Clear on Calls gives `?tab=calls` |
+| `account=system` reads all businesses and shows its note | ✅ | **Probe 2:** the report request has **no** `accountId`, the drill-down sends `user=system`, and the note `ai-cost-system-note` is shown |
+
+#### 3. Calls tab content
+
+| Item | Result | Evidence |
+|---|---|---|
+| Scope, drill-down and table work as before | ✅ | The six moved analytics render tests are green: layout, table, linked window, scope, Business OS lens, Business OS lens QA |
+| The AnalyticsKpis figures are summary cards; in All scope the categories are filter links | ✅ | Probe 2, All scope: the "Recorded AI cost, this view" card, then Creation, Execution, Memory and System, each a link on this page (`/admin/ai-cost?tab=calls&scope=all&category=…`). The Business OS scope cards (Calls, Tokens, Avg cost per call) are covered by the ruled analytics tests |
+| **Calls' recorded cost = A-K2 for the same whole days (date-filtering fake)** | ✅ with **E-1** | Probe 1 results below |
+
+Probe 1, A-K2 against Calls' total:
+- **The rows the two read are the same:**
+  - both start at `YYYY-MM-DDT00:00:00.000Z`;
+  - both apply the same Business OS filter (`buildFeatureFilterOrExpression(bosRowFilter())`, identical `or` string on both sides);
+  - both count system calls in all-businesses scope;
+  - both leave out the next day and the last instant before the window;
+  - both sum the same `cost_usd` column.
+- **One business** (A, This month): **5 = 5**.
+- **All businesses, every window** (This month, 7d, 30d, 90d, custom October): Calls is higher by **exactly the rows stamped after `…23:59:59.999` on the window's last day**. That is +8 for a row at `…23:59:59.999500Z`, and +32 for October's `…23:59:59.999999Z`. See E-1.
+
+#### 4. Windows
+
+| Item | Result | Evidence |
+|---|---|---|
+| 7, 30 and 90 days are whole UTC days; `period=N` is no longer sent | ✅ | Probe 1: each `period` param is null, and `dateFrom` / `dateTo` are whole days (for example 90d is `2026-08-12T00:00:00.000Z` to `2026-11-09T23:59:59.999999Z`). The T-12 table pins each |
+| No 24h choice; `range=24h` falls back to This month | ✅ | T-12 row `range=24h`: the report and drill-down for This month. `analyticsFilters.test.ts` is green |
+| A linked exact window stays exact on Calls, with the covering-days line | ✅ | T-12 linked row: the drill-down gets the exact instants, the report the covering whole days, and T-2 shows `ai-cost-covering-days` |
+| T-12 pins every request | ✅ | Each tab × default, today, 7d, 30d, this month, 90d, custom, linked and 24h, plus scope, drill, business and `system`. The Summary & checks report requests equal the Pin C table (`64a565e9`) |
+
+#### 5. F-1, failure states on Calls
+
+| Item | Result | Evidence |
+|---|---|---|
+| A 409 shows the platform notice | ✅ | The F-1 test (green): the notice replaces the strip, and the Calls content still renders |
+| A custom window over 92 days, a network failure and any other error show the error with Try again, which re-reads | ✅ | F-1 tests: the route's own 92-day message with Try again (a second report request is sent); the shared network sentence. Code read: any non-409 error goes to `AdminError` with `reread` |
+| Summary & checks shows an error only once | ✅ | F-1 test: one `alert`. The strip-place error renders only when `tab === 'calls'` (code read) |
+
+#### 6. Redirect and links
+
+| Item | Result | Evidence |
+|---|---|---|
+| `/admin/analytics` with a query → `/admin/ai-cost?tab=calls`, in one hop, keeping the query, its tab winning | ✅ | `next.config.js`: `source: '/admin/analytics'` → `destination: '/admin/ai-cost?tab=calls'`, temporary. In Next 14.2.35's `prepare-destination.js` the destination's query is merged last, so `tab=calls` wins and the incoming keys pass. `analyticsRedirect.config.test.ts` has 8 cases, green |
+| Every internal link goes direct | ✅ | Health `analyticsLink` → `/admin/ai-cost?tab=calls&scope=bos&dateFrom&dateTo`; Businesses panel `?tab=calls&scope=bos&user=…`; Activity cut-over `?tab=calls&scope=bos[&user]`; Platform dashboard ×2 `?tab=calls`; Finance's Calls links `callsHref` `?tab=calls…`. MK-3a's L-1 (`priceApply.ts`) is now `/admin/ai-cost?tab=checks` |
+| No old address outside comments | ✅ | Grep of non-test `app/`, `lib/`, `components/` and `hooks/`, comments excluded: `/admin/analytics` appears only as **module import paths** (`@/app/admin/analytics/…`), never as a link. `/admin/finance/charges` and `business-os-llm?tab=costs`: **none**. The G-1 guard refuses all three |
+| The sidebar Money section shows only Finance and AI cost, with Coins | ✅ | `AdminSidebar.tsx`: Money = Finance (`/admin/finance`), AI cost (`/admin/ai-cost`, `Coins`). The nav test is green |
+| The admin gate holds | ✅ | The page sits under `app/admin/layout.tsx` (`requireAdminPage`). The drill-down and report routes keep `requireAdmin` first. `test:authz-guard` 203/203 |
+
+#### 7. Pins and guards
+
+| Pin | Expected | Got |
+|---|---|---|
+| Pin A | `a130d560` | ✅ `a130d560`. Case-level diff: the 4 `A2 AnalyticsKpis` cases are out (`AnalyticsKpis.tsx` is deleted and nothing imports it); the 4 `A2 AiCostKpis` cases with figures are re-hashed (SA Q-1: the `tab` / `tabLink` props, and A-K2's target is now Calls); `A2 AiCostKpis on the Calls tab` is appended. The loading case and every other case are unchanged |
+| Pin C file / table | `e57f2675` / `64a565e9` | ✅ unchanged (`git diff --quiet HEAD`) |
+| AC-145 | `33340751…` | ✅ `333407516ae0…2215`. The finance route, `financeTypes.ts` and `financeHealth.ts` are unchanged |
+| AC-173, Pin B, Pin D | unchanged | ✅ `3a1a2dd4` / `b84e0c96`, `a1b3db0c`, `1f7cf07a` |
+
+#### Suite runs (each alone)
+
+| Suite | Result |
+|---|---|
+| `app/admin` (all), `app/api/admin/token-usage`, `lib/admin` | **220/220, 6898/6898** (= Dev) |
+| `lib/business-os/finance`, `lib/business-os/credits`, the credits and finance routes | 64/64, 3542/3542 |
+| `lib/repositories` (range cap, importer and isolation guards) | 117/117, 2802/2802 (with the line above: **181 / 6344 = Dev**) |
+| `npm run test:authz-guard` | 2/2, 203/203 |
+| `npm run test:bos-entitlements` | 308/308, 9264/9264 |
+| `npm run lint:hooks` | exit 0 |
+| `typecheck:bos-llm` (`NODE_OPTIONS=--max-old-space-size=8192`) | **passed: 587 files in scope, 11 errors, 0 new**; exit 0, **no OOM trace** in the output |
+| Scoped tsc | 456 app and lib files: `app/admin/{ai-cost, analytics, business-os-llm, finance, components, __tests__}`, the Businesses panel, Platform dashboard, `app/api/admin/token-usage`, `lib/admin/health` and `chargedAiCost.test.ts`. The canary gave `AiCostView.tsx(191,7) TS2322`; the file was restored with `cp` and checked with `cmp` (identical). Clean run: **exit 0, 0 errors** |
+
+#### Issues Found
+
+**Bugs:** none.
+
+**E-1, edge case (Low): Calls and A-K2 can differ by a call in the last millisecond of the window.** Files: `app/admin/analytics/analyticsFilters.ts` (`setWholeDays`) against `app/api/admin/business-os/finance/recordedReads.ts` (`inclusiveEnd`).
+- **The cause:** Calls sends `dateTo = …T23:59:59.999999Z`, and the drill-down passes it as is to `lte('created_at', …)`. A-K2's read ends at `to − 1 ms` = `…T23:59:59.999Z` (`lte`). Postgres `timestamptz` keeps microseconds, so a Business OS call stamped in `(…59.999000, …59.999999]` on the window's last day is in the Calls total but not in A-K2.
+- **The evidence:** probe 1 shows exactly that gap in every all-business window, and none otherwise.
+- **Likelihood and fix:** the chance is about one call in 86 million per window-end, so it is not worth blocking. To make them equal by construction, have `setWholeDays` send `…T23:59:59.999Z`, the bound A-K2 uses (the drill-down's `dateTo` is still valid), or move both to a half-open "before next midnight". Either way, pin it with one T-12 row.
+
+**Info (not defects):**
+- Only the shown tab is mounted (SA Q-2 accepted), so a Leak check result is not kept across a tab switch. The report is kept.
+- A-K1 vs F-K3's "to now" race, carried from MK-2.
+
+#### User browser steps (signed in as an admin)
+
+1. **Money → AI cost.** The sidebar's Money section shows only **Finance** and **AI cost** (coin icon). Two tabs: **Summary & checks** (selected) and **Calls**, with the five tiles above both.
+2. Pick **7 days** and a business, then click **Recorded AI cost**. The Calls tab opens in place, with the same 7 days and business, and the network panel shows **no** new report request.
+3. On Calls, set **All** scope, group by model and pick a provider. Click **Charged AI cost**: you are back on Summary & checks at the charged block, with 7 days and the business kept and the Calls choices gone.
+4. On Calls in All scope, the summary shows "Recorded AI cost, this view" and four category cards. Clicking one filters the table, and clicking it again clears the filter.
+5. With This month on both, Calls' "Recorded AI cost, this view" (Business OS scope, no filters) equals the **Recorded AI cost** tile.
+6. Visit `/admin/analytics?range=7d`: you land on `/admin/ai-cost?tab=calls&range=7d`. From the Health page's spend tile, the Businesses panel, the Activity cut-over notice and Finance's links, each lands on the AI cost Calls tab directly.
+7. Pick a custom window over 92 days on Calls: the error with **Try again** shows where the tiles were. Pick the platform account: the platform notice shows instead.
+
+#### Final Status
+
+- [x] All MK-3b ACs, the build notes and the F-1 / F-2 fixes verified. Only the ruled Pin A move; every other pin is unchanged. Every guard and suite is green (totals equal Dev's). tsc and `typecheck:bos-llm` are clean, with no OOM. **PASS, ready for RM.** E-1 is an optional Low follow-up.
+- [ ] Issues found
+
 ## Commit Info
 
 ### MK-3a
@@ -912,3 +1185,8 @@ Copy (`leakCopy.ts`: `LEAK_KPI_UNKNOWN`, `LEAK_KPI_NOT_ALL_CHECKED`, `LEAK_KPI_C
 | 2026-10-26 | Dev: MK-3a built (uncommitted) | Step 0 on `f8d32d60` (MK-2 merged), all hashes as expected. MK-3a: AI cost page with the legend and A-K1..A-K5; recorded block (C-7) and the Leak block KPI under `#costs-leak`; `BlockKpi` shared; `recordedReads.ts` shared by both routes; report route `recorded`; Finance's one line and links; Charge checks redirect and retarget; sidebar entry. Pin A `5f537869` → `4e2a93aa`, Pin C test `98ea0507` → `e57f2675`; Pin C table, B, D, AC-145, AC-173 unchanged. RU-1 to RU-15, DV-1 to DV-6 (DV-4 for SA). Runs recorded |
 | 2026-10-26 | SA code review (SA-CR-MK3A) | Code approved for QA. Conditions 1 to 7 met (Pin A `5f537869` → `4e2a93aa`; Pin C file `98ea0507` → `e57f2675`, table `64a565e9` unchanged; AC-145, AC-173, Pins B and D unchanged). DV-4 satisfies condition 4 (a difference follows R4-9). DV-1 to DV-3, DV-5, DV-6 and both copy changes accepted; MK-3b owes the read lift and one spec, removing `leakCheckHref`, and the "Summary & checks" tab label. Three Low comments, none blocking |
 | 2026-10-26 | Dev: QA fixes B-1, B-2, L-1 | The Leak KPI shows Unknown plus a chip when an incomplete run found none, and "Could not check" after a failed run. The margin-review link points straight at `/admin/ai-cost?tab=checks`, and G-1 now refuses `business-os-llm?tab=costs`. Tests added; no pin moved; 140 suites / 4,985 passed; scoped tsc clean |
+| 2026-10-26 | Dev: MK-3b built (uncommitted, local branch) | One page spec with `tab`; the report read lifted to the page; the tab list "Summary & checks" / "Calls"; the strip on both tabs with in-page tab tiles; the Calls tab from the old page, `AnalyticsKpis` replaced by summary cards; whole-day windows, no 24 h, linked windows exact; `/admin/analytics` redirect; every Calls link retargeted, `leakCheckHref` removed; sidebar two entries, `Coins` icon (MK3A-FU-2). Pin A `4e2a93aa` → `a130d560`; Pin C, B, D, AC-145, AC-173 unchanged. Runs recorded |
+| 2026-10-26 | SA code review (SA-CR-MK3B) | Fix required: F-1 (High), a report failure (409, the 92-day 400, network) is silent on the Calls tab; show the existing notice or error with Try again in place of the strip, plus tests. F-2 (Medium): retire `COSTS_FILTER_SPEC` / `costsRouteSearch` and retarget three tests to `AI_COST_FILTER_SPEC` / `reportSearch`. Q-1 Pin A re-hash accepted (`4e2a93aa` → `a130d560`); Q-2 mounting only the shown tab accepted, not a business question; Q-3 not accepted (= F-2). All items owed from SA-CR-MK3A done; conditions 1 to 7 met |
+| 2026-10-26 | Dev: SA-CR-MK3B F-1, F-2 fixed; origin/main fast-forwarded | F-1: a failed report on Calls shows the existing notice or error with Try again in the strip's place (tests: 409, over 92 days, network, shown once on Summary & checks). F-2: `COSTS_FILTER_SPEC` / `costsRouteSearch` deleted; three tests retargeted to `AI_COST_FILTER_SPEC` / `reportSearch`, the spec cases moved to `aiCostFilters.test.ts`. Fast-forward to `35c97b4f`. Pins unchanged; AC-145 unchanged |
+| 2026-10-26 | SA re-check (SA-CR-MK3B fixes) | Code approved for QA. F-1: on the Calls tab a failed report shows the existing notice or error with Try again in place of the strip, with 4 tests, and is shown once on Summary & checks. F-2: the old spec is retired and three tests are retargeted to `AI_COST_FILTER_SPEC` / `reportSearch`. No pin moved |
+| 2026-10-26 | Dev: QA E-1 fixed | `setWholeDays` ends whole days at `…23:59:59.999Z`, A-K2's and Finance's inclusive end; T-12 (E-1) rows added; ruled request-pin rows listed (Calls drill-down `dateTo` only); Pin C and every other pin unchanged; 140 suites / 5,040 passed; scoped tsc clean |

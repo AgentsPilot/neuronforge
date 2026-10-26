@@ -2,6 +2,16 @@
  * @jest-environment jsdom
  */
 
+/*
+ * Money MK-3b (ruled): AI calls & usage is now the AI cost page's Calls tab
+ * (`/admin/ai-cost?tab=calls`; `/admin/analytics` redirects there). These cases
+ * mount the AI cost page and arrive on the Calls tab: `useSearchParams` adds
+ * `tab=calls` when the arrival string has no tab, as the redirect does, and
+ * every address the page writes starts `?tab=calls`. The page also reads its
+ * report for the strip; the drill-down requests are filtered as before.
+ */
+
+
 /**
  * AI cost & usage — the exact-window deep link from the Health landing (admin
  * reorganisation slice 4, SA C-9). Both bounds or neither; ISO with an offset;
@@ -35,11 +45,15 @@ jest.mock('@/lib/logger/client', () => {
 
 let mockSearch = '';
 jest.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(mockSearch),
+  useSearchParams: () => {
+    const params = new URLSearchParams(mockSearch);
+    if (!params.has('tab')) params.set('tab', 'calls');
+    return params;
+  },
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
-import AdminCostAnalytics from '../page';
+import AdminCostAnalytics from '@/app/admin/ai-cost/page';
 
 const FROM = '2026-09-25T08:14:00.000Z';
 const TO = '2026-09-26T08:14:00.000Z';
@@ -64,18 +78,23 @@ function mockRoute(): jest.Mock {
   return fetchMock;
 }
 
-const firstQuery = (m: jest.Mock) => new URL(String(m.mock.calls[0][0]), 'http://x').searchParams;
+/** MK-3b: the page also reads its report (the strip); only the drill-down requests are this tab's. */
+const drillCalls = (m: jest.Mock) => m.mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/api/admin/token-usage/drill-down'));
+const firstQuery = (m: jest.Mock) => new URL(drillCalls(m)[0], 'http://x').searchParams;
+const lastQuery = (m: jest.Mock) => new URL(drillCalls(m)[drillCalls(m).length - 1], 'http://x').searchParams;
+/** MK-3b (ruled, C-6): the default window is This month, sent as whole UTC days. */
+const THIS_MONTH_FROM = `${new Date().toISOString().slice(0, 7)}-01T00:00:00.000Z`;
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockSearch = '';
-  window.history.replaceState(null, '', '/admin/analytics');
+  window.history.replaceState(null, '', '/admin/ai-cost?tab=calls');
 });
 
 /** Mirror the linked URL in both the mocked search params and the address bar. */
 function linkTo(query: string) {
   mockSearch = query;
-  window.history.replaceState(null, '', `/admin/analytics?${query}`);
+  window.history.replaceState(null, '', `/admin/ai-cost?tab=calls&${query}`);
 }
 
 describe('the page', () => {
@@ -84,7 +103,7 @@ describe('the page', () => {
     const fetchMock = mockRoute();
     render(<AdminCostAnalytics />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(drillCalls(fetchMock).length).toBeGreaterThan(0));
     const q = firstQuery(fetchMock);
     expect(q.get('dateFrom')).toBe(FROM);
     expect(q.get('dateTo')).toBe(TO);
@@ -93,15 +112,16 @@ describe('the page', () => {
     expect((await screen.findByTestId('linked-window-chip')).textContent).toContain('2026-09-25 08:14');
   });
 
-  it('ignores an invalid pair and falls back to the default period', async () => {
+  // MK-3b (ruled): the default is This month, whole UTC days (was period=30).
+  it('ignores an invalid pair and falls back to the default window', async () => {
     mockSearch = 'dateFrom=2026-09-25T08:14&dateTo=2026-09-26T08:14';
     const fetchMock = mockRoute();
     render(<AdminCostAnalytics />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(drillCalls(fetchMock).length).toBeGreaterThan(0));
     const q = firstQuery(fetchMock);
-    expect(q.get('dateFrom')).toBeNull();
-    expect(q.get('period')).toBe('30');
+    expect(q.get('dateFrom')).toBe(THIS_MONTH_FROM);
+    expect(q.get('period')).toBeNull();
     expect(screen.queryByTestId('linked-window-chip')).toBeNull();
   });
 
@@ -114,10 +134,12 @@ describe('the page', () => {
     fireEvent.click(screen.getByRole('button', { name: '7 days' }));
 
     await waitFor(() => expect(screen.queryByTestId('linked-window-chip')).toBeNull());
+    // MK-3b (ruled, SA-Q-MK3-3): 7 days is whole UTC days now, never the rolling period=7.
     await waitFor(() => {
-      const last = new URL(String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0]), 'http://x').searchParams;
-      expect(last.get('period')).toBe('7');
-      expect(last.get('dateFrom')).toBeNull();
+      const last = lastQuery(fetchMock);
+      expect(last.get('period')).toBeNull();
+      expect(last.get('dateFrom')).not.toBe(FROM);
+      expect(last.get('dateFrom')).toMatch(/T00:00:00\.000Z$/);
     });
   });
 
@@ -144,7 +166,8 @@ describe('the page', () => {
     mockRoute();
     render(<AdminCostAnalytics />);
     await screen.findByTestId('linked-window-chip');
-    fireEvent.click(screen.getByRole('button', { name: '24 hours' }));
+    // MK-3b: there is no "24 hours" any more (SA-Q-MK3-3).
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('dateFrom')).toBeNull());
   });
 
@@ -153,10 +176,12 @@ describe('the page', () => {
     mockRoute();
     render(<AdminCostAnalytics />);
     await screen.findByTestId('linked-window-chip');
-    for (const label of ['24 hours', '7 days', '30 days', '90 days']) {
+    for (const label of ['Today', '7 days', '30 days', 'This month', '90 days']) {
       expect(screen.getByRole('button', { name: label }).getAttribute('aria-pressed')).toBe('false');
     }
+    expect(screen.queryByRole('button', { name: '24 hours' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Remove linked window' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe('true'));
+    // MK-3b (ruled): the default is This month.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'This month' }).getAttribute('aria-pressed')).toBe('true'));
   });
 });

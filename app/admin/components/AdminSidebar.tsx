@@ -8,7 +8,7 @@ import {
   MessageSquare,
   Server,
   X,
-  TrendingUp,
+  Coins,
   Users,
   Settings,
   Gift,
@@ -134,20 +134,14 @@ const navigationSections: NavSection[] = [
         description: 'Revenue, AI cost and credits, Business OS'
       },
       {
-        // Money MK-3 (C-3, sign-off by Q-1): Charge checks became the AI cost
-        // page's Summary & checks tab (MK-3a); AI calls & usage becomes its
-        // Calls tab and leaves this list in MK-3b, so Money ends at two entries.
+        // Money MK-3 (C-3, sign-off by Q-1): one AI cost page for Charge checks
+        // (its Summary & checks tab, MK-3a) and AI calls & usage (its Calls
+        // tab, MK-3b), so Money has two entries. Both old addresses redirect.
+        // MK3A-FU-2: a money icon, not Charge checks' person-with-tick.
         name: 'AI cost',
         href: '/admin/ai-cost',
-        icon: UserCheck,
-        description: 'Charged and recorded AI cost, and the charge checks, Business OS'
-      },
-      {
-        // M-5 (S-1, S-2): the detailed page of every recorded AI call.
-        name: 'AI calls & usage (detail)',
-        href: '/admin/analytics',
-        icon: TrendingUp,
-        description: 'Every AI call and its recorded cost, both products'
+        icon: Coins,
+        description: 'Charged and recorded AI cost, the charge checks and every AI call'
       },
     ]
   },
