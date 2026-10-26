@@ -83,6 +83,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } fr
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 import { PlanFlowStatus, type PlanFlowStatusValues } from './PlanFlowStatus';
+import { PlanManage } from './PlanManage';
 import { PlanPurchase } from './PlanPurchase';
 import type { PlanComparisonCell, PlanComparisonSection, PlanPayload, PlanSentence } from './planPayloadTypes';
 import { ENDS_FREE_ACCESS_KEYS } from './planPurchaseCopy';
@@ -190,6 +191,7 @@ export function UpgradeModal({
   footerClose = 'back_to_plan',
   strip = 'status',
   returnFocusRef,
+  onPlanManaged,
   ...read
 }: {
   open: boolean;
@@ -210,6 +212,8 @@ export function UpgradeModal({
   strip?: 'status' | 'your_plan';
   /** UM-D3: where focus goes on close, before the element that was active at open. */
   returnFocusRef?: RefObject<HTMLElement>;
+  /** P-7a.1: the `your_plan` strip's Cancel / Reactivate answered; the caller re-reads my-plan. */
+  onPlanManaged?: () => void;
 } & UpgradeModalRead) {
   const { t, isRTL, language, timezone } = useLanguage();
   const sentence = (value: PlanSentence | null | undefined) => renderSentence(value, t, language, timezone);
@@ -470,6 +474,8 @@ export function UpgradeModal({
               </p>
               {/* B3 / B4: payment-critical, so shown in a flow too (R-12). */}
               <PlanBillingNotices plan={plan} t={t} />
+              {/* P-7a.1: Cancel / Reactivate, as in the drawer; hidden while a flow is open. */}
+              {openFlow === null && <PlanManage plan={plan} onChanged={onPlanManaged} />}
               {/* B8, collapsed by default; hidden while a flow is open (R-12). */}
               {openFlow === null && (
                 <details data-testid="plan-compare-includes" className="pt-1">

@@ -36,6 +36,12 @@ import 'server-only';
  *              input (U-2). `planUpgradeOffer.matrix.test.ts` drives THIS
  *              function against the real preview orchestration.
  *
+ *   manage     (P-7a.1, workplan §4.1; SA C-1) `planManageOffer`, the ONE
+ *              predicate the cancel and reactivate routes call at their step
+ *              5, fed from the SAME billing row read and the price-recognition
+ *              switch: Cancel, Reactivate, or the failed-payment line. Absent
+ *              when there is nothing to manage. No new read.
+ *
  * Returns `null` (nothing to offer, no billing sentence) when the plan cannot
  * be read, when the account has no plan row (the checkout refuses both), or
  * when the server key's mode is unknown (the checkout refuses that too). A
@@ -74,10 +80,12 @@ import {
 } from '@/lib/business-os/billing/planCheckoutEligibility';
 import type {
   EndsFreeAccessOnPurchaseWire,
+  PlanManageWireShape,
   PlanPurchaseBillingWire,
   PlanPurchaseOfferWire,
   PlanPurchaseWire,
 } from '@/lib/business-os/billing/planPurchaseTypes';
+import { planManageOffer, planManageWire } from '@/lib/business-os/billing/planManageOffer';
 import { currentStripeMode, isLiveMode, type StripeMode } from '@/lib/business-os/billing/stripeMode';
 import {
   planPaymentNotice,
@@ -277,10 +285,18 @@ export async function readPlanPurchaseView(
       ? planPaymentNotice(row, lifecycle, { serverLivemode: livemode, enforcing: (deps.enforcing ?? (() => getEntitlementMode() === 'enforce'))() })
       : null;
 
+  // P-7a.1 (workplan §4.1; SA C-1): cancel / reactivate, from the same row and
+  // the same predicate the routes call at their step 5, gated on the price
+  // switch the routes 404 on. A failed billing read reads as no row: nothing.
+  const manage: PlanManageWireShape | null = planManageWire(
+    planManageOffer(row, { pricesEnabled: switches.pricesEnabled }, now)
+  );
+
   return {
     offer: offerWire,
     billing: row ? billingStateFromRecord(row, now, notice) : null,
     endsFreeAccessOnPurchase: endsFreeAccess === null ? null : ENDS_FREE_ACCESS[endsFreeAccess],
     upgrade: upgradeOffer.kind === 'upgrade' ? { tiers: [...upgradeOffer.tiers] } : null,
+    ...(manage ? { manage } : {}),
   };
 }

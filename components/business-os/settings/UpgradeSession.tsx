@@ -107,6 +107,20 @@ export function UpgradeSession({
   // X-3: `ready` only with a plan. A plan is set only from a server answer, so a failure has none to show.
   const read: UpgradeModalRead = loading ? { readState: 'loading' } : plan !== null && !failed ? { readState: 'ready', plan } : { readState: 'failed' };
 
+  /** P-7a.1: after a Cancel / Reactivate answer in the strip, one fresh read. A failed read keeps what is shown. */
+  const rereadAfterManage = () => {
+    void (async () => {
+      const answer = await readMyPlan();
+      if (!mounted.current) return;
+      if (answer.kind !== 'answered') {
+        logger.warn({ err: answer.err }, 'Could not re-read the plan after a cancel / reactivate');
+        return;
+      }
+      const data = planFrom(answer.body);
+      if (data) setPlan(data);
+    })();
+  };
+
   return (
     <UpgradeModal
       open
@@ -122,6 +136,7 @@ export function UpgradeSession({
       returnFocusRef={returnFocusRef}
       // UM-3 §5.5 / SA R-11: no drawer behind either window, so the footer reads "Close".
       footerClose="close"
+      onPlanManaged={rereadAfterManage}
       {...read}
     />
   );
