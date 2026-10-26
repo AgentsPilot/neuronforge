@@ -90,6 +90,22 @@ export interface CostChargedInWindow {
   unreadableAmounts: number;
 }
 
+/**
+ * Money MK-3 (SA-3, C-7): the window's recorded AI cost (the usage log,
+ * Business OS rows) and "Recorded above charged", by Finance's own builder.
+ * Never added to the charged figure (BD-18).
+ */
+export interface CostRecordedInWindow {
+  status: 'ok' | 'partial' | 'unknown';
+  /** Null only when `status` is `unknown`. */
+  recordedUsd: number | null;
+  /** False = "At least". */
+  recordedExact: boolean;
+  aboveCharged: { state: 'figure' | 'none' | 'not_available' | 'unknown'; usd: number | null };
+  /** Only when `aboveCharged.state` is `none` and charged is strictly above recorded. */
+  chargedAboveUsd: number | null;
+}
+
 export interface CostReportPayload {
   generatedAt: string;
   window: { from: string; to: string; start: string; end: string };
@@ -122,4 +138,6 @@ export interface CostReportPayload {
   unreadableAmounts: number;
   /** MK-2: charges CREATED in the window, deleted accounts included; equals Finance for the same window. */
   chargedInWindow: CostChargedInWindow;
+  /** MK-3: the window's recorded AI cost and "Recorded above charged"; equals Finance for the same window. */
+  recorded: CostRecordedInWindow;
 }

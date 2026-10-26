@@ -1869,7 +1869,9 @@ describe('Money M-4 Part A: Section 3 names its measure and puts the window firs
 // ── Money M-4 Part B (OV-5, T9-B / T11-B on one render): the recorded block ──
 // A separate import, so the lists above stay unedited.
 import type { FinanceRecordedAiCost } from '@/lib/business-os/finance/financeTypes';
-import { ACCOUNT_RECORDED_ABOVE, RECORDED_LABEL } from '../financeCopy';
+import { ACCOUNT_RECORDED_ABOVE } from '../financeCopy';
+// Money MK-3a (C-7, ruled): the recorded block's label moved to the AI cost page's copy.
+import { RECORDED_LABEL } from '@/app/admin/business-os-llm/costCopy';
 import { cleanup } from '@testing-library/react';
 
 describe('Money M-4 Part B: the recorded AI cost on the page', () => {
@@ -1882,14 +1884,18 @@ describe('Money M-4 Part B: the recorded AI cost on the page', () => {
     return p;
   };
 
-  it('the Overview: the block inside Section 3, beside the unchanged charged total; no element shows their sum', async () => {
+  // Money MK-3a (C-7, ruled): Section 3 keeps one line, "Recorded above charged"; the recorded figure
+  // and its block are on the AI cost page.
+  it('the Overview: the one line inside Section 3, beside the unchanged charged total; no element shows their sum', async () => {
     serve({ success: true, data: withRecorded(RECORDED) });
     render(<FinanceView />);
     const section = await screen.findByTestId('section-ai-cost');
     const block = within(section).getByTestId('ai-recorded');
-    expect(within(block).getByText(RECORDED_LABEL)).toBeInTheDocument();
-    expect(within(block).getByTestId('ai-recorded-total')).toHaveTextContent('$4.25');
+    expect(block).toHaveTextContent(ACCOUNT_RECORDED_ABOVE);
+    expect(within(block).queryByText(RECORDED_LABEL)).toBeNull();
+    expect(within(block).queryByTestId('ai-recorded-total')).toBeNull();
     expect(within(block).getByTestId('ai-recorded-above')).toHaveTextContent('$0.75');
+    expect(within(block).getByTestId('ai-recorded-link').getAttribute('href')).toMatch(/^\/admin\/ai-cost\?tab=checks&.*#costs-leak$/);
     expect(within(section).getByTestId('ai-total')).toHaveTextContent('$3.50');
     expect(document.body.textContent).not.toContain('7.75');
   });

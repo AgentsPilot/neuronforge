@@ -71,7 +71,7 @@ import {
 } from '../financeCopy';
 import { formatCount, formatCredits } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
-import { BlockKpi } from './BlockKpi';
+import { BlockKpi } from '@/app/admin/components/layout/BlockKpi';
 import { FinanceSection } from './FinanceSection';
 import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
 

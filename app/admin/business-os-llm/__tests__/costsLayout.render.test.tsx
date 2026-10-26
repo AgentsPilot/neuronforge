@@ -15,6 +15,10 @@
  * carries no `tab` (the page has none), and a stray `tab` brought by the
  * old-link redirect is kept untouched (SA-W1).
  *
+ * Money MK-3a (ruled): Charge checks became the AI cost page, `/admin/ai-cost`,
+ * which mounts the same `CostsTab`; these cases mount it. The strip is A-K1 to
+ * A-K5 (C-12 rewritten); the fixture gains `recorded`.
+ *
  * `useSearchParams` follows `window.location` here, as Next does once
  * `replaceState(null, …)` has been delivered (the `activityLayout.render`
  * harness).
@@ -27,7 +31,7 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
-import ChargeChecksPage from '@/app/admin/finance/charges/page';
+import AiCostPage from '@/app/admin/ai-cost/page';
 import {
   COSTS_EMPTY,
   COSTS_INCOMPLETE,
@@ -41,7 +45,7 @@ import type { CostPeriodFigures, CostReportPayload } from '../costTypes';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
-const PAGE = '/admin/finance/charges';
+const PAGE = '/admin/ai-cost';
 const REPORT_PATH = '/api/admin/business-os/credits/report';
 const DAY_MS = 86_400_000;
 
@@ -104,6 +108,8 @@ function report(over: Partial<CostReportPayload> = {}): CostReportPayload {
       deleted: { costUsd: 0.0005, credits: 0.5, rows: 1 },
       unreadableAmounts: 0,
     },
+    // MK-3a: the recorded AI cost of the window; 0.0092 recorded, 0.0027 above the charged (less deleted).
+    recorded: { status: 'ok', recordedUsd: 0.0092, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.0027 }, chargedAboveUsd: null },
     ...over,
   };
 }
@@ -141,7 +147,7 @@ const flush = () => act(async () => {});
 
 function openAt(search: string) {
   window.history.replaceState(null, '', `${PAGE}${search}`);
-  return render(<ChargeChecksPage />);
+  return render(<AiCostPage />);
 }
 
 beforeEach(() => {
@@ -352,7 +358,7 @@ describe('the shared states (§5.10)', () => {
     expect(within(costs()).queryByTestId('costs-error')).toBeNull();
     expect(within(costs()).queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(within(costs()).queryByTestId('kpi-placeholder')).toBeNull();
-    expect(within(costs()).queryByTestId('costs-kpi-credits')).toBeNull();
+    expect(within(costs()).queryByTestId('costs-kpi-cost')).toBeNull();
   });
 
   it('C-8: an empty report offers Clear filters only while a business is picked', async () => {
@@ -522,38 +528,100 @@ describe('L-9b: the sections and the leak panel on the standard (C-9 to C-11)', 
   });
 });
 
-describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
+// Money MK-3a (ruled): the strip is the AI cost page's A-K1 to A-K5 (`AiCostKpis`); C-12 is rewritten
+// for it. "Credits charged" and "Charges" left the strip (§6 item 23): they are figures of the charged
+// block. Each tile has its leading or lagging pill; amounts print as `$` (USD-1), never "USD ".
+describe('C-12 / MK-3a: the KPI strip A-K1 to A-K5 (§4.1, §5, LL-1, USD-1, K-6, K-10)', () => {
   const tile = (testId: string) => within(costs()).getByTestId(testId);
-  const TOTALS_TILES = ['costs-kpi-credits', 'costs-kpi-cost', 'costs-kpi-charges', 'costs-kpi-fallback'];
-  const ALL_TILES = [...TOTALS_TILES, 'costs-kpi-periods'];
+  const ALL_TILES = ['costs-kpi-cost', 'costs-kpi-recorded', 'costs-kpi-above', 'costs-kpi-periods', 'costs-kpi-fallback'];
+  const ANCHOR_TILES = ['costs-kpi-cost', 'costs-kpi-periods', 'costs-kpi-fallback'];
+  const pillOf = (testId: string) => within(costs()).getByTestId(testId).parentElement?.textContent ?? '';
 
-  it('values and formats; Periods not matching red "Needs action" at 1; anchors to rendered sections', async () => {
+  it('five tiles in order, with values, pills and targets; Periods red "Needs action" at 1; no "USD " amount', async () => {
     stub(() => ok(report()));
     openAt('');
     await within(costs()).findByTestId('costs-periods');
-    expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
-    // Money MK-2 (SA-1, ruled): the cost tile is chargedInWindow (0.0065), not the stored periods' 0.007.
-    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.0065)}`);
-    expect(tile('costs-kpi-cost')).not.toHaveTextContent(formatUsd(0.007));
-    expect(tile('costs-kpi-credits')).toHaveTextContent('whole billing periods');
-    expect(tile('costs-kpi-charges')).toHaveTextContent('whole billing periods');
-    expect(tile('costs-kpi-charges')).toHaveAttribute('aria-label', 'Charges, 1,234');
-    expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced, 2');
-    expect(tile('costs-kpi-fallback')).toHaveTextContent('1 reconciled');
-    const periods = tile('costs-kpi-periods');
-    expect(periods).toHaveAttribute('aria-label', 'Periods not matching, 1, needs action');
-    expect(periods).toHaveAttribute('data-status', 'red');
-    expect(periods).toHaveTextContent('Needs action');
-    for (const testId of TOTALS_TILES) expect(tile(testId)).toHaveAttribute('data-status', 'neutral');
-
-    expect(tile('costs-kpi-credits')).toHaveAttribute('href', '#costs-periods');
+    const tiles = [...costs().querySelectorAll('[data-testid^="costs-kpi-"]')]
+      .map((el) => el.getAttribute('data-testid'))
+      .filter((id) => ALL_TILES.includes(id ?? ''));
+    expect(tiles).toEqual(ALL_TILES);
+    // A-K1: charges created in the window (MK-2), printed as F-K3 prints (four decimals).
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, $0.0065');
     expect(tile('costs-kpi-cost')).toHaveAttribute('href', '#costs-charged');
-    expect(tile('costs-kpi-charges')).toHaveAttribute('href', '#costs-breakdowns');
-    expect(tile('costs-kpi-fallback')).toHaveAttribute('href', '#costs-fallback');
+    // A-K2: the recorded AI cost, Business OS calls, linking to the real AI calls & usage page (MK-3a).
+    expect(tile('costs-kpi-recorded')).toHaveAttribute('aria-label', 'Recorded AI cost, $0.0092');
+    expect(tile('costs-kpi-recorded')).toHaveTextContent('Business OS calls');
+    expect(tile('costs-kpi-recorded')).toHaveAttribute('href', '/admin/analytics?range=custom&from=2026-09-03&to=2026-10-02');
+    // A-K3: recorded above charged, to the recorded block and the Leak check.
+    expect(tile('costs-kpi-above')).toHaveAttribute('aria-label', 'Recorded above charged, $0.0027');
+    expect(tile('costs-kpi-above')).toHaveAttribute('href', '#costs-leak');
+    const periods = tile('costs-kpi-periods');
+    expect(periods).toHaveAttribute('aria-label', 'Billing periods not matching, 1, needs action');
+    expect(periods).toHaveAttribute('data-status', 'red');
     expect(periods).toHaveAttribute('href', '#costs-periods');
-    for (const target of ['costs-charged', 'costs-periods', 'costs-breakdowns', 'costs-fallback']) {
+    expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced charges, 2');
+    expect(tile('costs-kpi-fallback')).toHaveTextContent('1 reconciled');
+    expect(tile('costs-kpi-fallback')).toHaveAttribute('href', '#costs-fallback');
+    for (const testId of ALL_TILES.filter((id) => id !== 'costs-kpi-periods')) expect(tile(testId)).toHaveAttribute('data-status', 'neutral');
+    for (const target of ['costs-charged', 'costs-periods', 'costs-fallback', 'costs-leak']) {
       expect(document.getElementById(target)).toHaveAttribute('data-testid', target);
     }
+    // LL-1: one pill per tile, lagging for A-K1 and A-K2, leading for the other three.
+    expect(ALL_TILES.map((id) => (pillOf(id).includes('Lagging') ? 'Lagging' : pillOf(id).includes('Leading') ? 'Leading' : 'none'))).toEqual([
+      'Lagging',
+      'Lagging',
+      'Leading',
+      'Leading',
+      'Leading',
+    ]);
+    // USD-1: no amount is written with the code.
+    expect(costs().textContent).not.toMatch(/USD -?\d/);
+  });
+
+  it('Q-R1: A-K1 is "At least" on an unreadable amount or the ceiling, never Unknown; Unknown only when its read failed', async () => {
+    const fetchMock = stub((url) =>
+      paramsOf(url).get('accountId') === A
+        ? ok(report({ accountFilter: A, chargedInWindow: { ...report().chargedInWindow, status: 'unknown', costUsd: null, credits: null, charges: null, rows: null, deleted: null } }))
+        : ok(report({ unreadableAmounts: 1, chargedInWindow: { ...report().chargedInWindow, status: 'partial', unreadableAmounts: 1 } }))
+    );
+    const { unmount } = openAt('');
+    await within(costs()).findByTestId('costs-charged');
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, At least $0.0065');
+    unmount();
+    openAt(`?account=${A}`);
+    await within(costs()).findByTestId('costs-charged-failed');
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, Unknown');
+    expect(reportCalls(fetchMock)).toHaveLength(2);
+  });
+
+  it('A-K2 and A-K3 follow the recorded read: "At least" when it stopped short, Unknown on a failed read, "Not available" before charging began', async () => {
+    const recorded = (over: Partial<CostReportPayload['recorded']>) => ({ ...report().recorded, ...over });
+    const fetchMock = stub((url) =>
+      paramsOf(url).get('accountId') === A
+        ? ok(report({ accountFilter: A, recorded: recorded({ status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null } }) }))
+        : paramsOf(url).get('accountId') === B
+          ? ok(report({ accountFilter: B, recorded: recorded({ aboveCharged: { state: 'not_available', usd: null } }) }))
+          : ok(report({ recorded: recorded({ status: 'partial', recordedExact: false, aboveCharged: { state: 'unknown', usd: null } }) }))
+    );
+    const first = openAt('');
+    await within(costs()).findByTestId('costs-periods');
+    expect(tile('costs-kpi-recorded')).toHaveAttribute('aria-label', 'Recorded AI cost, At least $0.0092');
+    expect(tile('costs-kpi-above')).toHaveAttribute('aria-label', 'Recorded above charged, Unknown');
+    first.unmount();
+    const second = openAt(`?account=${A}`);
+    await within(costs()).findByTestId('costs-periods');
+    expect(tile('costs-kpi-recorded')).toHaveAttribute('aria-label', 'Recorded AI cost, Unknown');
+    expect(tile('costs-kpi-above')).toHaveAttribute('aria-label', 'Recorded above charged, Unknown');
+    // The charged tile is another read and keeps its figure.
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, $0.0065');
+    // A-K2 carries the business to AI calls & usage.
+    expect(tile('costs-kpi-recorded').getAttribute('href')).toContain(`account=${A}`);
+    second.unmount();
+    openAt(`?account=${B}`);
+    await within(costs()).findByTestId('costs-periods');
+    expect(tile('costs-kpi-above')).toHaveAttribute('aria-label', 'Recorded above charged, Not available');
+    expect(tile('costs-kpi-above')).toHaveTextContent('AI charging began 29 Sep 2026');
+    expect(reportCalls(fetchMock)).toHaveLength(3);
   });
 
   it('neutral at no mismatch; "of N checked" when some periods were not checked; "Not checked" when none was', async () => {
@@ -567,7 +635,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     );
     const { unmount } = openAt('');
     await within(costs()).findByTestId('costs-periods');
-    expect(tile('costs-kpi-periods')).toHaveAttribute('aria-label', 'Periods not matching, 0');
+    expect(tile('costs-kpi-periods')).toHaveAttribute('aria-label', 'Billing periods not matching, 0');
     expect(tile('costs-kpi-periods')).toHaveAttribute('data-status', 'neutral');
     expect(tile('costs-kpi-periods')).not.toHaveTextContent('checked');
     unmount();
@@ -580,30 +648,29 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
 
     openAt(`?account=${B}`);
     await within(costs()).findByTestId('costs-periods');
-    expect(tile('costs-kpi-periods')).toHaveAttribute('aria-label', 'Periods not matching, Not checked');
+    expect(tile('costs-kpi-periods')).toHaveAttribute('aria-label', 'Billing periods not matching, Not checked');
     expect(tile('costs-kpi-periods')).toHaveAttribute('data-status', 'neutral');
     expect(reportCalls(fetchMock)).toHaveLength(3);
   });
 
-  // Money MK-2 (ruled): the cost tile has its own read and its own exactness, so the period
-  // report's ceiling no longer marks it; the other four tiles keep SA M-1.
-  it('SA M-1: an incomplete report puts "may be incomplete" on the four period tiles, turns none amber, and keeps Periods red', async () => {
+  it('SA M-1: an incomplete report puts "may be incomplete" on the two period-report tiles, turns none amber, and keeps Periods red', async () => {
     stub(() => ok(report({ incomplete: true, incompleteReasons: ['rows_ceiling'] })));
     openAt('');
     await within(costs()).findByTestId('costs-incomplete');
-    expect(tile('costs-kpi-cost')).not.toHaveTextContent('may be incomplete');
-    for (const testId of ALL_TILES.filter((id) => id !== 'costs-kpi-cost')) {
+    for (const testId of ['costs-kpi-cost', 'costs-kpi-recorded', 'costs-kpi-above']) {
+      expect(tile(testId)).not.toHaveTextContent('may be incomplete');
+    }
+    for (const testId of ['costs-kpi-periods', 'costs-kpi-fallback']) {
       const element = tile(testId);
       const sub = document.getElementById(element.getAttribute('aria-describedby') ?? '');
       expect(sub?.textContent).toContain('may be incomplete');
       expect(element).not.toHaveTextContent('Needs a look');
     }
-    for (const testId of TOTALS_TILES) expect(tile(testId)).toHaveAttribute('data-status', 'neutral');
     expect(tile('costs-kpi-periods')).toHaveAttribute('data-status', 'red');
     expect(tile('costs-kpi-fallback')).toHaveTextContent('1 reconciled; may be incomplete');
   });
 
-  it('"Unknown" for failed sections; no anchors when no section renders', async () => {
+  it('"Unknown" for failed sections; no anchors when no section renders, but the Leak check target stays', async () => {
     const fetchMock = stub((url) =>
       paramsOf(url).get('accountId') === A
         ? ok(report({ breakdowns: null, sections: { totals: 'ok', rows: 'failed', names: 'ok', originals: 'skipped' } }))
@@ -611,28 +678,27 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     );
     const { unmount } = openAt('');
     await within(costs()).findByTestId('costs-totals-failed');
-    // Money MK-2 (ruled): the cost tile's read is not the totals read, so it keeps its figure.
-    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', `Charged AI cost (USD), ${formatUsd(0.0065)}`);
-    for (const testId of ALL_TILES) {
-      if (testId !== 'costs-kpi-cost') expect(tile(testId).getAttribute('aria-label')).toMatch(/, Unknown$/);
-      expect(tile(testId)).not.toHaveAttribute('href');
-      expect(tile(testId)).toHaveAttribute('data-status', 'neutral');
-    }
+    // The charged and recorded reads are not the totals read, so they keep their figures.
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, $0.0065');
+    expect(tile('costs-kpi-periods').getAttribute('aria-label')).toMatch(/, Unknown$/);
+    expect(tile('costs-kpi-fallback').getAttribute('aria-label')).toMatch(/, Unknown$/);
+    for (const testId of ANCHOR_TILES) expect(tile(testId)).not.toHaveAttribute('href');
+    expect(tile('costs-kpi-above')).toHaveAttribute('href', '#costs-leak');
+    expect(document.getElementById('costs-leak')).not.toBeNull();
     unmount();
 
     openAt(`?account=${A}`);
     await within(costs()).findByTestId('costs-fallback-failed');
-    expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced, Unknown');
-    expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
+    expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced charges, Unknown');
     expect(tile('costs-kpi-fallback')).toHaveAttribute('href', '#costs-fallback');
     expect(reportCalls(fetchMock)).toHaveLength(2);
   });
 
-  it('an empty report: the tiles have no target (K-6)', async () => {
+  it('an empty report: the anchor tiles have no target (K-6)', async () => {
     stub(() => ok(report({ periods: [], mismatchedPeriods: 0 })));
     openAt('');
     await within(costs()).findByTestId('costs-empty');
-    for (const testId of ALL_TILES) {
+    for (const testId of ANCHOR_TILES) {
       expect(tile(testId).tagName).toBe('DIV');
       expect(tile(testId)).toHaveAttribute('role', 'group');
     }
@@ -646,7 +712,7 @@ describe('C-12: the KPI strip (§7.12, K-1 to K-10, SA M-1)', () => {
     await act(async () => release({ status: 500, body: { success: false, error: 'boom' } }));
     await within(costs()).findByTestId('costs-error');
     expect(within(costs()).queryByTestId('kpi-placeholder')).toBeNull();
-    expect(within(costs()).queryByTestId('costs-kpi-credits')).toBeNull();
+    expect(within(costs()).queryByTestId('costs-kpi-cost')).toBeNull();
     unmount();
   });
 });
@@ -755,14 +821,15 @@ describe('MK-2: one charged AI cost figure', () => {
     );
     const { unmount } = openAt('');
     await within(costs()).findByTestId('costs-charged');
-    expect(tile('costs-kpi-cost')).toHaveTextContent('at least');
+    // MK-3a (Q-R1): the tile prints "At least $x" as F-K3's formatter does; the block keeps its words.
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, At least $0.0065');
     expect(within(costs()).getByTestId('costs-charged-total')).toHaveTextContent(`at least ${formatUsd(0.0065)}`);
     unmount();
     openAt(`?account=${A}`);
     await within(costs()).findByTestId('costs-charged-failed');
-    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost (USD), Unknown');
+    expect(tile('costs-kpi-cost')).toHaveAttribute('aria-label', 'Charged AI cost, Unknown');
     // The period figures are another read and still show.
-    expect(tile('costs-kpi-credits')).toHaveAttribute('aria-label', 'Credits charged, 7.25');
+    expect(tile('costs-kpi-fallback')).toHaveAttribute('aria-label', 'Fallback-priced charges, 2');
     expect(reportCalls(fetchMock)).toHaveLength(2);
   });
 });

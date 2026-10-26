@@ -190,5 +190,34 @@ export interface CreditReportChargedInWindow {
   unreadableAmounts: number;
 }
 
-/** What the report route sends: the report, plus the window's charged AI cost (MK-2). */
-export type CreditReportResponse = CreditReport & { chargedInWindow: CreditReportChargedInWindow };
+/**
+ * Money MK-3 (SA-3, C-7): the window's RECORDED AI cost (the usage log,
+ * Business OS rows) and "Recorded above charged", built by Finance's own
+ * builder (`buildRecordedAiCost`) from the same two usage-log reads Finance
+ * makes, against `chargedInWindow`'s units. Never added to the charged figure
+ * (BD-18): no field holds their sum.
+ *
+ * Declared here, not imported from the finance module, so this module never
+ * imports `lib/business-os/finance` (SA-Q-MK3-12). It is pinned EQUAL to
+ * `FinanceRecordedAiCost` both ways by a type-level test
+ * (`lib/business-os/finance/__tests__/recordedInWindow.wireTypes.test.ts`), so
+ * a field added on either side fails `tsc`.
+ */
+export interface CreditReportRecordedInWindow {
+  /** ok: recorded exact and the difference decided; partial: "at least" or an Unknown difference; unknown: the read failed or passed its deadline. */
+  status: 'ok' | 'partial' | 'unknown';
+  /** Null only when `status` is `unknown`. */
+  recordedUsd: number | null;
+  /** False = "At least". */
+  recordedExact: boolean;
+  /** "Recorded above charged". `usd` only with `figure`, and always > 0. */
+  aboveCharged: { state: 'figure' | 'none' | 'not_available' | 'unknown'; usd: number | null };
+  /** Only when `aboveCharged.state` is `none` and charged is strictly above recorded. */
+  chargedAboveUsd: number | null;
+}
+
+/** What the report route sends: the report, the window's charged AI cost (MK-2) and its recorded AI cost (MK-3). */
+export type CreditReportResponse = CreditReport & {
+  chargedInWindow: CreditReportChargedInWindow;
+  recorded: CreditReportRecordedInWindow;
+};

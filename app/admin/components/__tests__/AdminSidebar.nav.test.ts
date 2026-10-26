@@ -29,6 +29,10 @@
  *      it); Exchange Rates left the disk in Admin Exchange Rates slice 2b (it
  *      is Finance's tab, and its old URL redirects there), so it left
  *      `UNLISTED` too.
+ *  11. (Money MK-3a, ruled) Charge checks became the AI cost page,
+ *      `/admin/ai-cost` (a one-level route the scan sees), and its nested
+ *      route left the disk (it redirects there), so `NESTED_LISTED` is empty.
+ *      AI calls & usage stays until MK-3b makes it the AI cost Calls tab.
  *
  * Source scan, like the per-page nav tests: the component is a client
  * component importing next/image and framer-motion, and the navigation lives
@@ -95,8 +99,9 @@ const adminPageRoutes = (): string[] => {
 // is no longer a page (Finance's tab; the old URL redirects there).
 const UNLISTED = ['/admin/platform-dashboard'];
 
-// Listed pages below the one-level scan (M-5): each must exist on disk.
-const NESTED_LISTED = ['/admin/finance/charges'];
+// Listed pages below the one-level scan (M-5): each must exist on disk. Empty since Money MK-3a:
+// Charge checks (`/admin/finance/charges`) became `/admin/ai-cost`, which the scan sees.
+const NESTED_LISTED: string[] = [];
 
 describe('section order', () => {
   it('is Monitor, Money, Businesses, Settings, AgentsPilot (parked)', () => {
@@ -124,7 +129,8 @@ describe('section order', () => {
     expect(hrefsOf('Money')).toEqual([
       '/admin/finance',
       // Money MK-4 (ruled): Subscriptions is now Finance's Plans & subscriptions tab; its item is gone.
-      '/admin/finance/charges',
+      // Money MK-3a (ruled): Charge checks is now the AI cost page; MK-3b removes AI calls & usage.
+      '/admin/ai-cost',
       '/admin/analytics',
     ]);
     expect(hrefsOf('Businesses')).toEqual([
@@ -179,6 +185,8 @@ describe('every admin page is reachable, exactly once', () => {
     expect(onDisk).toContain('/admin/platform-dashboard');
     expect(onDisk).toContain('/admin');
     expect(onDisk).not.toContain('/admin/exchange-rates');
+    // Money MK-3a: the AI cost page is a one-level route.
+    expect(onDisk).toContain('/admin/ai-cost');
   });
 
   it('lists every page except the deliberately unlisted ones', () => {
@@ -189,7 +197,8 @@ describe('every admin page is reachable, exactly once', () => {
     // signup slice 0) + AgentsPilot billing (ADMIN_BOS_CLEANUP slice 2) +
     // Finance (finance & business health slice 1a) + Charge checks (M-5)
     // − the redundant legacy dashboard (M-8, BD-34) + Subscriptions (plan
-    // payments P-8a.1) − Subscriptions (Money MK-4: a Finance tab now).
+    // payments P-8a.1) − Subscriptions (Money MK-4: a Finance tab now)
+    // − Charge checks + AI cost (Money MK-3a: one replaces the other).
     expect(allHrefs).toHaveLength(28);
   });
 
@@ -329,10 +338,11 @@ describe('Money M-5: the Money section (finance health §11H.3)', () => {
   });
 
   // Money MK-4 (ruled): the Subscriptions item is gone; its content is Finance's Plans & subscriptions tab.
-  it('Finance first, then Charge checks, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184)', () => {
+  // Money MK-3a (ruled): Charge checks became the AI cost page; its entry is AI cost, same place.
+  it('Finance first, then AI cost, then AI calls & usage (detail), with their words (S-1 to S-3, AC-184; MK-3a)', () => {
     expect(money().map((i) => [i.name, i.href, i.description])).toEqual([
       ['Finance', '/admin/finance', 'Revenue, AI cost and credits, Business OS'],
-      ['Charge checks', '/admin/finance/charges', 'Charged AI cost checked per account, Business OS'],
+      ['AI cost', '/admin/ai-cost', 'Charged and recorded AI cost, and the charge checks, Business OS'],
       ['AI calls & usage (detail)', '/admin/analytics', 'Every AI call and its recorded cost, both products'],
     ]);
   });

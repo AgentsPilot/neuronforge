@@ -61,9 +61,9 @@ const PAGES: Record<string, string[]> = {
   Businesses: walk('app/admin/users').filter((relative) => !BUSINESSES_EXCLUDED.includes(relative)),
   // Finance F-1 (Finance vs Admin Layout Standard review, 2026-10-15): the whole folder, no exclusion.
   Finance: walk('app/admin/finance'),
-  // Money M-5 (SA-Q63): the report and Leak check on Charge checks. The page
-  // itself is under the Finance walk; its components stay in this folder.
-  'Charge checks': walk('app/admin/business-os-llm/components/costs'),
+  // Money M-5 (SA-Q63): the report and Leak check on Charge checks; its components stay in this folder.
+  // Money MK-3a (ruled): Charge checks became the AI cost page, whose own folder joins the walk.
+  'AI cost': [...walk('app/admin/ai-cost'), ...walk('app/admin/business-os-llm/components/costs')],
 };
 
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
@@ -139,16 +139,20 @@ describe('LF-1 contrast guard: the walk', () => {
         'app/admin/finance/components/TakingsSection.tsx',
       ]),
     );
-    expect(PAGES['Charge checks']).toEqual(
+    expect(PAGES['AI cost']).toEqual(
       expect.arrayContaining([
+        'app/admin/ai-cost/page.tsx',
+        'app/admin/ai-cost/aiCostCopy.ts',
         'app/admin/business-os-llm/components/costs/CostsTab.tsx',
-        'app/admin/business-os-llm/components/costs/CostsKpis.tsx',
+        'app/admin/business-os-llm/components/costs/AiCostKpis.tsx',
+        'app/admin/business-os-llm/components/costs/RecordedSection.tsx',
         'app/admin/business-os-llm/components/costs/CostsFilterBar.tsx',
         'app/admin/business-os-llm/components/costs/CostsSections.tsx',
         'app/admin/business-os-llm/components/costs/LeakCheckPanel.tsx',
       ]),
     );
-    expect(PAGES.Finance).toContain('app/admin/finance/charges/page.tsx');
+    // Money MK-3a: the Charge checks page left the disk (it redirects to the AI cost page).
+    expect(PAGES.Finance).not.toContain('app/admin/finance/charges/page.tsx');
     for (const excluded of BUSINESSES_EXCLUDED) {
       expect(PAGES.Businesses).not.toContain(excluded);
       expect(fs.existsSync(path.join(process.cwd(), excluded))).toBe(true);

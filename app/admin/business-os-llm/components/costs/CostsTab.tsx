@@ -30,6 +30,12 @@
  * Activity precedent L-8 Q-12). That code must be seen before any generic
  * copy, so the read keeps its own branching on `readJsonBody` rather than
  * `readAdminResponse`.
+ *
+ * Money MK-3a: this is the AI cost page's Summary & checks content. The strip
+ * is A-K1 to A-K5 (`AiCostKpis`, replacing `CostsKpis`). The recorded AI cost
+ * block moved here from Finance (C-7, `RecordedSection`) and sits with the
+ * Leak check under one anchor, `#costs-leak` (A-K3's target), always drawn so
+ * the tile always has a target. The report read is unchanged (Pin C).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -56,9 +62,10 @@ import {
 import { COSTS_FILTER_SPEC, costsRouteSearch } from '../../costsFilters';
 import type { CostReportPayload } from '../../costTypes';
 import { CostsFilterBar } from './CostsFilterBar';
-import { CostsKpis } from './CostsKpis';
+import { AiCostKpis } from './AiCostKpis';
 import { BreakdownsSection, ChargedInWindowSection, FallbackSection, PeriodsSection, SpreadSection } from './CostsSections';
 import { LeakCheckPanel } from './LeakCheckPanel';
+import { RecordedSection } from './RecordedSection';
 
 const REPORT_URL = '/api/admin/business-os/credits/report';
 
@@ -154,7 +161,7 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
 
   return (
     <div className="space-y-4" data-testid="costs-tab">
-      <CostsKpis report={report} firstLoad={loading && !report && !error} sectionsShown={sectionsShown} />
+      <AiCostKpis report={report} firstLoad={loading && !report && !error} sectionsShown={sectionsShown} />
 
       <CostsFilterBar
         filters={filters}
@@ -241,9 +248,13 @@ export function CostsTab({ active = true }: { active?: boolean } = {}) {
         )}
       </div>
 
-      {/* Slice 4b: the on-demand leak check. Its own window (at most 7 days) and
-          button; it follows the business chosen above. */}
-      <LeakCheckPanel accountId={filters.account} accountLabel={businessName} />
+      {/* MK-3a (C-7, A-K3): the recorded AI cost beside the charged one, then the Leak check, which
+          says which calls. One anchor for both, always drawn. Slice 4b: the on-demand leak check has
+          its own window (at most 7 days) and button; it follows the business chosen above. */}
+      <div id="costs-leak" data-testid="costs-leak" className="space-y-4">
+        {report && <RecordedSection recorded={report.recorded} accountId={report.accountFilter} />}
+        <LeakCheckPanel accountId={filters.account} accountLabel={businessName} />
+      </div>
     </div>
   );
 }

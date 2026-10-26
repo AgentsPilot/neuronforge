@@ -38,6 +38,12 @@
  * Amended 2026-10-20 (user request): the Last rate change tile rounds each rate to 3 decimals, so the three Exchange rates cases that show a rate are re-hashed; no other case or hash touched.
  * Amended by Exchange rates 1d: fixtures gain `lastChange`; no case or hash changed.
  * Amended 2026-10-25 by Exchange rates 1e (SA §13.8 SQ-51 (7)): a third tile, "Rates last checked", so the five ExchangeRatesKpis cases are re-hashed (loading has 3 placeholders; the four payload cases pass `lastSync` ok, names kept) and two cases are appended (none, unavailable); no other case or hash touched.
+ * RE-FROZEN ONCE by Money MK-3a (SA-WP-MK3 condition 1): Charge checks' strip `CostsKpis` was
+ * replaced by the AI cost page's strip `AiCostKpis` (A-K1 to A-K5) and the file deleted, so its three
+ * cases (`A2 CostsKpis loading`, `A2 CostsKpis`, `A2 CostsKpis no sections`) and their fixture are
+ * removed (the component no longer exists, so the cases cannot run) and five `A2 AiCostKpis` cases
+ * are appended. No other case or hash touched. Old and new SHA-256 of this file are in
+ * docs/workplans/ADMIN_MONEY_MK3_AI_COST_PAGE_WORKPLAN.md.
  * Amended 2026-10-25 by Exchange rates 1f (SA §13.9 SQ-57): `FX_LAST_SYNC_OK` gains its checker (Anna Admin), so the four payload cases that draw it are re-hashed (two tiles, no history, name lookup failed, old rate null); loading, last sync none and last sync unavailable keep their hashes; two cases are appended (checker label failed, no checker); no other case or hash touched.
  */
 
@@ -57,7 +63,7 @@ import type { InvitesPayload } from '@/app/admin/business-os-invites/types';
 import { ActivityKpis } from '@/app/admin/business-os-llm/components/activity/ActivityKpis';
 import type { ActivityFilters } from '@/app/admin/business-os-llm/activityFilters';
 import type { ActivityPayload } from '@/app/admin/business-os-llm/activityTypes';
-import { CostsKpis } from '@/app/admin/business-os-llm/components/costs/CostsKpis';
+import { AiCostKpis } from '@/app/admin/business-os-llm/components/costs/AiCostKpis';
 import type { CostReportPayload } from '@/app/admin/business-os-llm/costTypes';
 import { SettingsKpis } from '@/app/admin/business-os-llm/components/SettingsKpis';
 import type { SettingsPayload } from '@/app/admin/business-os-llm/types';
@@ -143,14 +149,42 @@ const ACTIVITY = {
   cutover: { coverage: 'after_cutover' },
 } as unknown as ActivityPayload;
 
-const COSTS = {
+// Money MK-3a: the AI cost strip's fixtures (A-K1 to A-K5).
+const AI_COST = {
+  window: { from: '2026-10-01', to: '2026-10-16' },
+  accountFilter: null,
   sections: { totals: 'ok', rows: 'ok' },
   incomplete: true,
-  grandTotal: { stored: { creditsTotal: 1500, costUsd: 3.25, charges: 40 } },
   periods: [{ matches: true }, { matches: false }, { matches: null }],
   mismatchedPeriods: 1,
   fallback: { count: 2, reconciled: 1 },
   chargedInWindow: { status: 'ok', costUsd: 2.5 },
+  recorded: { status: 'ok', recordedUsd: 3.25, recordedExact: true, aboveCharged: { state: 'figure', usd: 0.75 }, chargedAboveUsd: null },
+} as unknown as CostReportPayload;
+const AI_COST_AT_LEAST = {
+  ...AI_COST,
+  incomplete: false,
+  chargedInWindow: { status: 'partial', costUsd: 2.5 },
+  recorded: { status: 'partial', recordedUsd: 3.25, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null },
+} as unknown as CostReportPayload;
+const AI_COST_UNKNOWN = {
+  ...AI_COST,
+  incomplete: false,
+  sections: { totals: 'ok', rows: 'failed' },
+  periods: [{ matches: null }],
+  mismatchedPeriods: 0,
+  chargedInWindow: { status: 'unknown', costUsd: null },
+  recorded: { status: 'unknown', recordedUsd: null, recordedExact: false, aboveCharged: { state: 'unknown', usd: null }, chargedAboveUsd: null },
+} as unknown as CostReportPayload;
+const AI_COST_BEFORE_CUTOVER = {
+  ...AI_COST,
+  incomplete: false,
+  accountFilter: '1a2b3c4d-1111-4111-8111-abcdefabcdef',
+  mismatchedPeriods: 0,
+  periods: [{ matches: true }],
+  fallback: { count: 0, reconciled: 0 },
+  chargedInWindow: { status: 'ok', costUsd: 0 },
+  recorded: { status: 'partial', recordedUsd: 0.5, recordedExact: true, aboveCharged: { state: 'not_available', usd: null }, chargedAboveUsd: null },
 } as unknown as CostReportPayload;
 
 const SETTINGS = {
@@ -296,9 +330,6 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A2 InviteKpis', () => <InviteKpis payload={INVITES} stoppedCount={1} loading={false} />],
   ['A2 ActivityKpis loading', () => <ActivityKpis payload={null} firstLoad filters={ACTIVITY_FILTERS} tile={activityTile} />],
   ['A2 ActivityKpis', () => <ActivityKpis payload={ACTIVITY} firstLoad={false} filters={ACTIVITY_FILTERS} tile={activityTile} />],
-  ['A2 CostsKpis loading', () => <CostsKpis report={null} firstLoad sectionsShown={false} />],
-  ['A2 CostsKpis', () => <CostsKpis report={COSTS} firstLoad={false} sectionsShown />],
-  ['A2 CostsKpis no sections', () => <CostsKpis report={COSTS} firstLoad={false} sectionsShown={false} />],
   ['A2 SettingsKpis loading', () => <SettingsKpis payload={null} firstLoad />],
   ['A2 SettingsKpis', () => <SettingsKpis payload={SETTINGS} firstLoad={false} />],
   ['A2 SettingsKpis quiet', () => <SettingsKpis payload={SETTINGS_QUIET} firstLoad={false} />],
@@ -325,6 +356,12 @@ const CASES: ReadonlyArray<readonly [string, () => React.ReactElement]> = [
   ['A3 Finance tab filter current lagging', () => <KpiTile testId="tile-fk4_ai_margin" label="AI margin" value="$85.50" sub="Revenue after tax minus Charged AI cost" detail="After Stripe fees (estimate): $82.32" indicator={{ kind: 'lagging', definition: 'A partial gross margin.' }} filter={{ href: '/admin/finance?tab=accounts', apply: noop, current: true }} />],
   ['A3 Finance tab filter lagging', () => <KpiTile testId="tile-fk5_paying" label="Paying accounts" value="18%" sub="9 of 50 accounts" indicator={{ kind: 'lagging', definition: 'What share pays.' }} filter={{ href: '/admin/finance?tab=plans', apply: noop }} />],
   ['A3 Finance no target lagging (a business picked)', () => <KpiTile testId="tile-fk5_paying" label="Paying accounts" value="Paying" sub="This business, now" indicator={{ kind: 'lagging', definition: 'What share pays.' }} />],
+  // Money MK-3a (SA-WP-MK3 condition 1): the AI cost strip, appended once.
+  ['A2 AiCostKpis loading', () => <AiCostKpis report={null} firstLoad sectionsShown={false} />],
+  ['A2 AiCostKpis', () => <AiCostKpis report={AI_COST} firstLoad={false} sectionsShown />],
+  ['A2 AiCostKpis at least', () => <AiCostKpis report={AI_COST_AT_LEAST} firstLoad={false} sectionsShown />],
+  ['A2 AiCostKpis unknown and not checked', () => <AiCostKpis report={AI_COST_UNKNOWN} firstLoad={false} sectionsShown />],
+  ['A2 AiCostKpis no sections, before the cut-over, one business', () => <AiCostKpis report={AI_COST_BEFORE_CUTOVER} firstLoad={false} sectionsShown={false} />],
 ];
 
 /** Recorded on the unchanged tree (447d17a2) at Step 0. */
@@ -363,9 +400,6 @@ const EXPECTED: Record<string, string> = {
   'A2 InviteKpis': '150679220b4584492a66f6ba0b129e20f5b990bf21e4c90328813b9d28c5ac2b',
   'A2 ActivityKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 ActivityKpis': 'a9e127f5ddf66d23d5a85f44a62841b0a294a0ffa26e874a3d2078151878ff58',
-  'A2 CostsKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
-  'A2 CostsKpis': '15439ff546e934a3c7352bf63f184127bbddfcc8977f95ccbd98d169266ef30e',
-  'A2 CostsKpis no sections': '6ee816e2cb93e629a4613a32e456cf75388f9bcd4bee2424cb52796a0f57ede5',
   'A2 SettingsKpis loading': '45c9f289d0fc608a1b9bcae86d76e181ff06b6bbbcbe4bc2a00b65fea6dad356',
   'A2 SettingsKpis': '2ba767a09c3960540b554ec09800a4523688e7a53b283281e3bf3029ea36d1e4',
   'A2 SettingsKpis quiet': 'ad762af1dcd97b350361a77614cc443052f145bf0db8afa5921446453fe00e0e',
@@ -397,6 +431,12 @@ const EXPECTED: Record<string, string> = {
   'A3 Finance tab filter current lagging': '9d94402070f3187e444af27a7d8ef5b8abe5c793674473d204cbe79d56944922',
   'A3 Finance tab filter lagging': '5ae604690d8a359e8e904557359e6a9943918b53fd166703309d2321194efc7c',
   'A3 Finance no target lagging (a business picked)': '876167dd1a46e911165ffa38004875214a463aa6eaafc4a8a80c6b5b8d4c434a',
+  // Money MK-3a (SA-WP-MK3 condition 1): recorded on first render.
+  'A2 AiCostKpis loading': 'c5bb805961ec8cb19fe5a0978668a5be0cbc9a0b7986c96b20876c7568cc86cc',
+  'A2 AiCostKpis': '6e3b63efe2a601111465e014db3d9fa7a16d56bfe7636d660d1beb62d74babdb',
+  'A2 AiCostKpis at least': 'ade0938b6ea3b6eea8b1fff273f637a29e0253c765ffb93fdb4881f5066bc164',
+  'A2 AiCostKpis unknown and not checked': '6597faff4334086d585a63367f3348f4b19a66176785022932bbdfe60283dcf7',
+  'A2 AiCostKpis no sections, before the cut-over, one business': 'f6e6e16af3f5b7be5dd93d04a99d17bb83a37d129ab30d849eb9279ebe652cc8',
 };
 
 describe('Finance F-5 Pin A: the existing KpiTile / KpiStrip callers render byte-identically', () => {

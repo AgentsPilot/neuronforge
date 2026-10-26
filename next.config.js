@@ -79,11 +79,22 @@ const nextConfig = {
         // Money M-5 (§11H.4 R-1): the Business OS AI "Costs & credits" tab
         // moved to Charge checks. Temporary for the same reason as above. Next
         // passes the query through, so the window (range, from, to) and the
-        // business (account) arrive; the stray tab=costs is not a Charge checks
-        // key and is ignored there (SA-Q60, SA-W1). `value` is matched whole.
+        // business (account) arrive. `value` is matched whole. Money MK-3
+        // (SA-6): Charge checks is now the AI cost page's Summary & checks, so
+        // this goes there directly, never through a second redirect; the
+        // destination's tab=checks wins over the incoming tab=costs.
         source: '/admin/business-os-llm',
         has: [{ type: 'query', key: 'tab', value: 'costs' }],
-        destination: '/admin/finance/charges',
+        destination: '/admin/ai-cost?tab=checks',
+        permanent: false,
+      },
+      {
+        // Money MK-3 (KPI restructure review SA-6): Charge checks is now the
+        // AI cost page's Summary & checks tab. Temporary for the same reason as
+        // above. Next merges the incoming query with the destination's, so the
+        // window (range, from, to) and the business (account) arrive.
+        source: '/admin/finance/charges',
+        destination: '/admin/ai-cost?tab=checks',
         permanent: false,
       },
       {

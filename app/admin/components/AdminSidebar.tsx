@@ -134,13 +134,13 @@ const navigationSections: NavSection[] = [
         description: 'Revenue, AI cost and credits, Business OS'
       },
       {
-        // M-5 (BD-24, SA-Q58): the cost report and the Leak check, moved out of
-        // the Business OS AI page. Its own entry because the sidebar highlights
-        // by exact path.
-        name: 'Charge checks',
-        href: '/admin/finance/charges',
+        // Money MK-3 (C-3, sign-off by Q-1): Charge checks became the AI cost
+        // page's Summary & checks tab (MK-3a); AI calls & usage becomes its
+        // Calls tab and leaves this list in MK-3b, so Money ends at two entries.
+        name: 'AI cost',
+        href: '/admin/ai-cost',
         icon: UserCheck,
-        description: 'Charged AI cost checked per account, Business OS'
+        description: 'Charged and recorded AI cost, and the charge checks, Business OS'
       },
       {
         // M-5 (S-1, S-2): the detailed page of every recorded AI call.

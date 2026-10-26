@@ -264,7 +264,8 @@ describe('MarginReviewNotice (MP-FR-14)', () => {
     expect(card).toHaveTextContent('gpt-4o-mini (chat)');
     expect(card).toHaveTextContent('input per 1M: $0.15 → $0.16 (+6.67%)');
     expect(card).toHaveTextContent('the built-in fallback price differs: update it by PR');
-    expect(screen.getByTestId('margin-review-link')).toHaveAttribute('href', '/admin/business-os-llm?tab=costs');
+    // Money MK-3a (QA L-1, ruled): straight to the AI cost page's Summary & checks, not through the redirect.
+    expect(screen.getByTestId('margin-review-link')).toHaveAttribute('href', '/admin/ai-cost?tab=checks');
 
     fireEvent.click(screen.getByTestId('margin-done-batch-1'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Write at least 3 characters.');

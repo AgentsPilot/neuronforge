@@ -6,6 +6,11 @@
  * Money MK-2 (ruled updates RU-6, RU-7): the no-dates default is This month
  * (was the last 30 days); the ledger mock gains R-a / R-a′ (the window's
  * charged AI cost, `chargedInWindow`), and every refusal proves neither ran.
+ *
+ * Money MK-3 (SA-3, C-7): the route also builds `recorded` from Finance's two
+ * usage-log reads (bound in `finance/recordedReads.ts`). They are faked at the
+ * repository boundary, as the finance route test does; every refusal proves
+ * neither ran, and `recorded` equals Finance's builder for the same inputs.
  */
 
 import * as fs from 'fs';
@@ -50,6 +55,19 @@ jest.mock('@/lib/supabaseServer', () => ({ supabaseServer: {} }));
 jest.mock('@/lib/repositories/BusinessOsCreditLedgerReadRepository', () => ({
   ...jest.requireActual('@/lib/repositories/BusinessOsCreditLedgerReadRepository'),
   businessOsCreditLedgerReadRepository: mockLedger,
+}));
+
+// MK-3: the two usage-log readers, faked at the repository boundary with ONLY the one method the
+// binding may call; the modules' real limits are kept.
+const mockRecordedAllAccounts = jest.fn();
+jest.mock('@/lib/repositories/AdminTokenUsageAnalyticsRepository', () => ({
+  ...jest.requireActual('@/lib/repositories/AdminTokenUsageAnalyticsRepository'),
+  adminTokenUsageAnalyticsRepository: { listCostPointsAllAccountsInWindow: (...a: unknown[]) => mockRecordedAllAccounts(...a) },
+}));
+const mockRecordedForAccount = jest.fn();
+jest.mock('@/lib/repositories/TokenUsageRepository', () => ({
+  ...jest.requireActual('@/lib/repositories/TokenUsageRepository'),
+  tokenUsageRepository: { listCallsInWindow: (...a: unknown[]) => mockRecordedForAccount(...a) },
 }));
 
 const mockFindNames = jest.fn();
@@ -121,6 +139,15 @@ function ledgerWithOnePeriod() {
     data: { rows: [created(ACCOUNT, '0.0010000000')], reachedCeiling: false },
     error: null,
   });
+  // MK-3: the usage log: 0.0025 recorded for all accounts, 0.0016 for the one account.
+  mockRecordedAllAccounts.mockResolvedValue({
+    data: { rows: [{ cost_usd: '0.0015' }, { cost_usd: 0.001 }], completed: true },
+    error: null,
+  });
+  mockRecordedForAccount.mockResolvedValue({
+    data: { rows: [{ cost_usd: '0.0016' }], reachedCeiling: false },
+    error: null,
+  });
 }
 
 const noReadHappened = () => {
@@ -130,6 +157,9 @@ const noReadHappened = () => {
   expect(mockLedger.findChargesByActionIds).not.toHaveBeenCalled();
   expect(mockLedger.listRowsOfAllAccountsCreatedInRange).not.toHaveBeenCalled();
   expect(mockLedger.listRowsForAccountCreatedInRange).not.toHaveBeenCalled();
+  // MK-3: the usage-log reads too.
+  expect(mockRecordedAllAccounts).not.toHaveBeenCalled();
+  expect(mockRecordedForAccount).not.toHaveBeenCalled();
   expect(mockFindNames).not.toHaveBeenCalled();
 };
 
@@ -313,6 +343,83 @@ describe('200: the report', () => {
     const res = await call('?from=2026-09-01&to=2026-09-10');
     expect(res.status).toBe(200);
     expect((await res.json()).data.sections.rows).toBe('failed');
+  });
+});
+
+describe('MK-3: the recorded AI cost (SA-3, C-7)', () => {
+  beforeEach(asAdmin);
+
+  it('all accounts: only the all-accounts read, Business OS rows, half-open window less 1 ms, paged at 1,000', async () => {
+    const res = await call('?from=2026-10-01&to=2026-10-10');
+    expect(res.status).toBe(200);
+    expect(mockRecordedForAccount).not.toHaveBeenCalled();
+    expect(mockRecordedAllAccounts).toHaveBeenCalledTimes(1);
+    const [context, window, filters, opts] = mockRecordedAllAccounts.mock.calls[0];
+    expect(context).toEqual({ correlationId: expect.any(String), adminId: ADMIN.id });
+    expect(window).toEqual({ start: '2026-10-01T00:00:00.000Z', end: '2026-10-10T23:59:59.999Z' });
+    expect(filters).toEqual({ featureFilter: expect.any(Object) });
+    expect(opts).toMatchObject({ pageSize: 1000, ceiling: 10000 });
+    expect(opts.signal).toBeDefined();
+  });
+
+  it('all accounts: recorded and "Recorded above charged" by Finance\'s rule (deleted accounts left out of the charged side)', async () => {
+    const body = await (await call('?from=2026-10-01&to=2026-10-10')).json();
+    // Recorded 0.0025; charged 0.0013 of which 0.0003 is a deleted account's, so above = 0.0025 − 0.0010.
+    expect(body.data.recorded).toEqual({
+      status: 'ok',
+      recordedUsd: 0.0025,
+      recordedExact: true,
+      aboveCharged: { state: 'figure', usd: 0.0015 },
+      chargedAboveUsd: null,
+    });
+  });
+
+  it('one business: only the one-account read, with exactly the validated id and no signal', async () => {
+    const body = await (await call(`?from=2026-10-01&to=2026-10-10&accountId=${ACCOUNT}`)).json();
+    expect(mockRecordedAllAccounts).not.toHaveBeenCalled();
+    expect(mockRecordedForAccount).toHaveBeenCalledTimes(1);
+    const [id, window, , opts] = mockRecordedForAccount.mock.calls[0];
+    expect(id).toBe(ACCOUNT);
+    expect(window.end.toISOString()).toBe('2026-10-10T23:59:59.999Z');
+    expect(opts).toEqual({ pageSize: 1000, ceiling: 5000 });
+    expect(body.data.recorded).toMatchObject({ status: 'ok', recordedUsd: 0.0016, aboveCharged: { state: 'figure', usd: 0.0006 } });
+  });
+
+  it('a failed recorded read leaves the report 200, the charged figure intact and recorded Unknown', async () => {
+    mockRecordedAllAccounts.mockResolvedValue({ data: null, error: new Error('secret usage detail') });
+    const res = await call('?from=2026-10-01&to=2026-10-10');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.chargedInWindow).toMatchObject({ status: 'ok', costUsd: 0.0013 });
+    expect(body.data.recorded).toEqual({
+      status: 'unknown',
+      recordedUsd: null,
+      recordedExact: false,
+      aboveCharged: { state: 'unknown', usd: null },
+      chargedAboveUsd: null,
+    });
+    expect(JSON.stringify(body)).not.toContain('secret usage detail');
+  });
+
+  it('a throwing recorded read is settled, never a 500', async () => {
+    mockRecordedAllAccounts.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const res = await call('?from=2026-10-01&to=2026-10-10');
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.recorded.status).toBe('unknown');
+  });
+
+  it('before the cut-over the recorded figure still shows, and the difference is "Not available"', async () => {
+    const body = await (await call('?from=2026-09-01&to=2026-09-10')).json();
+    expect(body.data.recorded).toMatchObject({ recordedUsd: 0.0025, aboveCharged: { state: 'not_available', usd: null } });
+  });
+
+  it('logs counts and flags for the recorded read, never an amount', async () => {
+    await call('?from=2026-10-01&to=2026-10-10');
+    const line = mockLog.info.mock.calls.find(([, msg]) => msg === 'Admin read the Business OS credit cost report');
+    expect(line?.[0].recorded).toMatchObject({ status: 'ok', read: 'all_accounts', outcome: 'ok', rows: 2, completed: true, unreadable: 0 });
+    expect(JSON.stringify(line?.[0].recorded)).not.toMatch(/0\.00(25|15)/);
   });
 });
 

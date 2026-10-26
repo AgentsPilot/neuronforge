@@ -97,6 +97,9 @@ function walk(dir: string, out: string[] = []): string[] {
 const FILES = [
   ...walk('lib/business-os/finance'),
   'app/api/admin/business-os/finance/route.ts',
+  // Money MK-3 (SA-Q-MK3-1): the recorded AI cost's two usage-log reads, bound once for the
+  // finance route and the AI cost report route. Every FILES rule applies to it.
+  'app/api/admin/business-os/finance/recordedReads.ts',
   ...walk('app/admin/finance'),
   'lib/repositories/BusinessOsFinanceReadRepository.ts',
   'lib/business-os/billing/payingSubscriptionStatuses.ts',
@@ -154,11 +157,12 @@ describe('finance slice 1a source guards', () => {
 
   // Money M-4 (SA-W103): WIDENED to `/tokenusage/i` over code (comments stripped), so the analytics
   // reader and both instance names are caught too, not only `TokenUsageRepository` (today's gap).
-  // Only the route may name a usage-log reader; it is pinned positively in the M-4 describe.
+  // Only the binding file may name a usage-log reader (the route until Money MK-3, SA-Q-MK3-1, moved
+  // its two bindings to `recordedReads.ts`); it is pinned positively in the M-4 describe.
   const USAGE_LOG_READER = /tokenusage/i;
-  const NOT_THE_ROUTE = FILES.filter((file) => file !== 'app/api/admin/business-os/finance/route.ts');
+  const NOT_THE_ROUTE = FILES.filter((file) => file !== 'app/api/admin/business-os/finance/recordedReads.ts');
 
-  it.each(NOT_THE_ROUTE)('%s: names no usage-log reader in code (only the route may, M4-FR-6)', (file) => {
+  it.each(NOT_THE_ROUTE)('%s: names no usage-log reader in code (only recordedReads.ts may, M4-FR-6, MK-3)', (file) => {
     expect(codeOf(file)).not.toMatch(USAGE_LOG_READER);
   });
 
@@ -174,8 +178,8 @@ describe('finance slice 1a source guards', () => {
     // The old case-sensitive pattern missed the analytics reader: the gap this closes.
     expect(/TokenUsageRepository/.test('AdminTokenUsageAnalyticsRepository')).toBe(false);
     expect(FILES.length - NOT_THE_ROUTE.length).toBe(1);
-    // AGG-4 still bites on the route's own code.
-    expect(`${codeOf('app/api/admin/business-os/finance/route.ts')}\nq.from('token_usage');\n`).toMatch(/token_usage/);
+    // AGG-4 still bites on the binding file's own code.
+    expect(`${codeOf('app/api/admin/business-os/finance/recordedReads.ts')}\nq.from('token_usage');\n`).toMatch(/token_usage/);
   });
 
   // Slice 2a (S2-F1): the finance read repository is the one file allowed to
@@ -1358,6 +1362,8 @@ describe('finance slice 6a source guards (account economics, the AI margin)', ()
 // Every rule has a planted negative control.
 describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
   const ROUTE = 'app/api/admin/business-os/finance/route.ts';
+  // Money MK-3 (SA-Q-MK3-1, ruled): the two bindings moved from the route to this file.
+  const READS = 'app/api/admin/business-os/finance/recordedReads.ts';
   const BUILDER = 'lib/business-os/finance/recordedCost.ts';
   const ORCHESTRATOR = 'lib/business-os/finance/financeHealth.ts';
   const TYPES = 'lib/business-os/finance/financeTypes.ts';
@@ -1374,13 +1380,14 @@ describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
     expect(codeOf(BUILDER).length).toBeGreaterThan(1500);
   });
 
-  // (b) The route is the ONE finance file that names a usage-log reader, by code, and it calls exactly two methods.
+  // (b) recordedReads.ts is the ONE finance file that names a usage-log reader, by code, and it calls
+  // exactly two methods (the route until MK-3, SA-Q-MK3-1). Neither route names one directly.
   const namersOf = (code: (file: string) => string) => FILES.filter((file) => READER.test(code(file)));
   const READER_CALL = /\b(?:adminTokenUsageAnalyticsRepository|tokenUsageRepository)\s*\.\s*(\w+)\s*\(/g;
   const methodsOf = (code: string) => [...new Set([...code.matchAll(READER_CALL)].map((m) => m[1]))].sort();
 
-  it('only the route names a usage-log reader in code (a positive pin; comments are not code, SA-W103)', () => {
-    expect(namersOf(codeOf)).toEqual([ROUTE]);
+  it('only recordedReads.ts names a usage-log reader in code (a positive pin; comments are not code, SA-W103)', () => {
+    expect(namersOf(codeOf)).toEqual([READS]);
     // The finance read repository names one in a comment only: read raw it matches, as code it does not.
     expect(read(REPOSITORY)).toMatch(/TokenUsageRepository/);
     expect(codeOf(REPOSITORY)).not.toMatch(READER);
@@ -1391,19 +1398,30 @@ describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
       file === ORCHESTRATOR
         ? `${codeOf(file)}\nimport type { AdminCostPointRow } from '@/lib/repositories/AdminTokenUsageAnalyticsRepository';\n`
         : codeOf(file);
-    expect(namersOf(planted).sort()).toEqual([ORCHESTRATOR, ROUTE].sort());
+    expect(namersOf(planted).sort()).toEqual([ORCHESTRATOR, READS].sort());
     // …while the same name in a comment does not (W103).
     const inComment = (file: string) =>
       file === ORCHESTRATOR ? stripComments(`${read(file)}\n// see AdminTokenUsageAnalyticsRepository\n`) : codeOf(file);
-    expect(namersOf(inComment)).toEqual([ROUTE]);
+    expect(namersOf(inComment)).toEqual([READS]);
   });
 
-  it('the route calls exactly listCostPointsAllAccountsInWindow and listCallsInWindow on the two readers', () => {
-    expect(methodsOf(codeOf(ROUTE))).toEqual(['listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
+  it('recordedReads.ts calls exactly listCostPointsAllAccountsInWindow and listCallsInWindow on the two readers', () => {
+    expect(methodsOf(codeOf(READS))).toEqual(['listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
   });
 
-  it('the method pin bites (planted): a third method on either reader is caught', () => {
-    const planted = `${codeOf(ROUTE)}\nvoid tokenUsageRepository.countInWindow([id], w, m);\n`;
+  it('MK-3: neither route names a usage-log method or reader directly; both call the bound reads', () => {
+    const REPORT_ROUTE = 'app/api/admin/business-os/credits/report/route.ts';
+    for (const route of [ROUTE, REPORT_ROUTE]) {
+      expect({ route, methods: methodsOf(codeOf(route)) }).toEqual({ route, methods: [] });
+      expect({ route, reader: READER.test(codeOf(route)) }).toEqual({ route, reader: false });
+      expect(codeOf(route)).toMatch(/recordedReads\(/);
+    }
+    // Planted: a route that binds a reader itself is caught.
+    expect(methodsOf(`${codeOf(ROUTE)}\nvoid tokenUsageRepository.listCallsInWindow(id, w, f, o);\n`)).toEqual(['listCallsInWindow']);
+  });
+
+  it('the method pin bites (planted, SA-WP-MK3): a third method planted in recordedReads.ts is caught', () => {
+    const planted = `${codeOf(READS)}\nvoid tokenUsageRepository.countInWindow([id], w, m);\n`;
     expect(methodsOf(planted)).toEqual(['countInWindow', 'listCallsInWindow', 'listCostPointsAllAccountsInWindow']);
   });
 
@@ -1416,8 +1434,8 @@ describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
   };
   const filterCount = (text: string) => (text.match(/\bbosRowFilter\(\)/g) ?? []).length;
 
-  it('SA-WR-48: each recorded binding in the route passes bosRowFilter() exactly once', () => {
-    const { all, one } = bindingsOf(codeOf(ROUTE));
+  it('SA-WR-48: each recorded binding in recordedReads.ts passes bosRowFilter() exactly once', () => {
+    const { all, one } = bindingsOf(codeOf(READS));
     expect(all).toMatch(/listCostPointsAllAccountsInWindow\(/);
     expect(one).toMatch(/listCallsInWindow\(/);
     expect(filterCount(all)).toBe(1);
@@ -1426,16 +1444,16 @@ describe('Money M-4 source guards (the recorded AI cost, T6-B)', () => {
   });
 
   it('SA-WR-48 (planted): a binding with its filter removed is caught', () => {
-    const plantedAll = bindingsOf(codeOf(ROUTE).replace('{ featureFilter: bosRowFilter() }', '{}'));
+    const plantedAll = bindingsOf(codeOf(READS).replace('{ featureFilter: bosRowFilter() }', '{}'));
     expect(filterCount(plantedAll.all)).toBe(0);
-    const route = codeOf(ROUTE);
+    const route = codeOf(READS);
     const oneStart = route.indexOf('readRecordedForAccount:');
     const plantedOne = bindingsOf(route.slice(0, oneStart) + route.slice(oneStart).replace('bosRowFilter(),', '{ featurePrefix: "", features: [] },'));
     expect(filterCount(plantedOne.one)).toBe(0);
   });
 
   it('SA-Q52: both bindings pass the window end less 1 ms through the one helper', () => {
-    const route = codeOf(ROUTE);
+    const route = codeOf(READS);
     expect(route).toMatch(/const inclusiveEnd = \(to: Date\) => new Date\(to\.getTime\(\) - 1\);/);
     const { all, one } = bindingsOf(route);
     expect(all).toMatch(/end: inclusiveEnd\(span\.to\)\.toISOString\(\)/);
