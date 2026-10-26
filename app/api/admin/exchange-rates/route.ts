@@ -1,15 +1,16 @@
 /**
  * GET /api/admin/exchange-rates — the admin Exchange rates page's one read
  * (Admin Exchange Rates slice 1a, SA-R4; slice 1c.1, SQ-12 / SQ-13; slice 1d,
- * SQ-26 to SQ-31).
+ * SQ-26 to SQ-31; slice 1e, SA §13.8 SQ-51).
  *
  *   GET /api/admin/exchange-rates[?from=&to=]    every currency in `exchange_rates`,
  *                                                the newest HISTORY_LIMIT (10) rows of
  *                                                `exchange_rate_history` INSIDE the
  *                                                window, `lastChange` (the newest row
  *                                                of all time, whatever the window),
- *                                                `nameLookup` and the server clock
- *                                                (`readAt`)
+ *                                                `nameLookup`, the server clock
+ *                                                (`readAt`) and `lastSync` (the newest
+ *                                                successful rate sync, slice 1e)
  *   GET /api/admin/exchange-rates?currency=XXX[&from=&to=]
  *                                                that currency's newest HISTORY_LIMIT
  *                                                rows inside the window only
@@ -55,6 +56,15 @@
  * 'currency'`). Internal error text is returned only in development. A plain
  * read: no audit row.
  *
+ * THE ONE EXCEPTION (slice 1e, SQ-51 (3)): `lastSync`, the "Rates last checked"
+ * tile, is the fourth member of the plain read's `Promise.all` (no added
+ * latency), read from the audit trail through
+ * `AuditTrailRepository.findLatestAdminExchangeRateSync` (its only caller,
+ * pinned by adminReadMethods.guard.test.ts). Its failure, returned or thrown,
+ * is `{ status: 'unavailable' }` with a warn naming `failed: 'lastSync'`, and
+ * NEVER a 500: the rates page works without the tile. The `?currency=` read
+ * never reads it.
+ *
  * @module app/api/admin/exchange-rates
  */
 
@@ -70,11 +80,12 @@ import {
   type EditorLookup,
   type ExchangeRateHistoryPayload,
   type ExchangeRateHistoryRecord,
-  type ExchangeRatesPayload,
   type NameLookupStatus,
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import type { ExchangeRatesReadPayload, LastRateSyncWire } from '@/lib/admin/exchangeRates/rateSyncRules';
 import { createLogger, type Logger } from '@/lib/logger';
 import { adminUserRepository } from '@/lib/repositories/AdminUserRepository';
+import { auditTrailRepository } from '@/lib/repositories/AuditTrailRepository';
 import {
   exchangeRatesRepository,
   toExchangeRateHistoryRecord,
@@ -183,6 +194,25 @@ async function resolveLookup(
   return { lookup: { status: 'ok', names: nameMap, emails: emailMap }, nameLookup: 'ok' };
 }
 
+/**
+ * The "Rates last checked" tile's value (SQ-51 (3)). A returned error and a
+ * thrown error are the same failure: `unavailable`, logged as a warn, never a
+ * 500. Module-private on purpose (a `route.ts` may export only handlers).
+ */
+async function settleLastSync(adminId: string, correlationId: string, requestLogger: Logger): Promise<LastRateSyncWire> {
+  try {
+    const result = await auditTrailRepository.findLatestAdminExchangeRateSync({ correlationId, adminId });
+    if (result.error) {
+      requestLogger.warn({ err: result.error, failed: 'lastSync' }, 'Last rate sync read failed; the tile shows unavailable');
+      return { status: 'unavailable' };
+    }
+    return result.data ? { status: 'ok', checkedAt: result.data.checkedAt, rateDate: result.data.rateDate } : { status: 'none' };
+  } catch (err) {
+    requestLogger.warn({ err, failed: 'lastSync' }, 'Last rate sync read failed; the tile shows unavailable');
+    return { status: 'unavailable' };
+  }
+}
+
 export async function GET(request: NextRequest) {
   // Admin gate. Nothing above this line may touch the database.
   const gate = await requireAdmin(logger.child({ route: 'admin-exchange-rates', method: 'GET' }));
@@ -244,10 +274,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, data: payload });
     }
 
-    const [rates, history, latest] = await Promise.all([
+    const [rates, history, latest, lastSync] = await Promise.all([
       exchangeRatesRepository.listAll(),
       exchangeRatesRepository.listRecentHistory(bounds),
       exchangeRatesRepository.findLatestChange(),
+      // Slice 1e (SQ-51 (3)): never rejects, never a 500.
+      settleLastSync(gate.user.id, correlationId, requestLogger),
     ]);
 
     if (rates.error || !rates.data) {
@@ -270,12 +302,13 @@ export async function GET(request: NextRequest) {
       latestRecord ? [...records, latestRecord] : records,
       requestLogger
     );
-    const payload: ExchangeRatesPayload = {
+    const payload: ExchangeRatesReadPayload = {
       rates: rates.data.map(toExchangeRateWire),
       history: labelHistory(records, lookup),
       lastChange: latestRecord ? labelHistory([latestRecord], lookup)[0] : null,
       nameLookup,
       readAt: new Date().toISOString(),
+      lastSync,
     };
     return NextResponse.json({ success: true, data: payload });
   } catch (error) {

@@ -54,7 +54,13 @@ const PUBLIC_PREFIXES = [
  * `/payments` dashboard, so they have to be named exactly rather than by
  * prefix — the same distinction the middleware draws.
  */
-const PUBLIC_EXACT = ['/payments/success', '/payments/cancelled'] as const
+const PUBLIC_EXACT = [
+  '/payments/success',
+  '/payments/cancelled',
+  // Data export DE-10b.2: after a self-delete the visitor has no account and no
+  // session, so the owner's platform shell (and its authed calls) must not load.
+  '/account-deleted',
+] as const
 
 /** Whether this path is a customer-facing surface. */
 export function isPublicSurfacePath(pathname: string): boolean {

@@ -13,14 +13,31 @@
  * Every read and write goes through the admin route (no Supabase client, no
  * `CurrencyService`, no outside host — pinned by the Exchange rates guard in
  * `app/admin/__tests__/redundantPages.source.guard.test.ts`, which also counts
- * exactly three `fetch(` call sites in this folder):
+ * exactly four `fetch(` call sites in this folder):
  *   GET   /api/admin/exchange-rates?from=&to=                 rates, the newest 10
  *                                                             changes in the window,
  *                                                             the all-time lastChange,
- *                                                             readAt
+ *                                                             readAt, lastSync
  *   GET   /api/admin/exchange-rates?currency=<CODE>&from=&to= that currency's newest
  *                                                             10 changes in the window
  *   PATCH /api/admin/exchange-rates/<CODE>                    one rate, or one on/off switch
+ *                                                             (also Accept suggestion)
+ *   POST  /api/admin/exchange-rates/sync                      the ECB suggestions (slice 1e)
+ *
+ * Slice 1e (§5.7, SA §13.7 SA-1e-1 / SA-1e-2, §13.8 SQ-49 / SQ-51): this view
+ * owns the sync. An action row between the filter bar and the content holds
+ * "Sync rates" (disabled while a sync runs and while there is no successful
+ * plain read), the always-visible source line (a new-tab link to the ECB's
+ * human page through `ECB_SOURCE_PAGE_URL`: navigation only, never fetched),
+ * the outcome sentence and, after a successful sync, the status line. The
+ * columns follow the visit's last SUCCESSFUL sync; a failed sync shows its
+ * sentence and leaves the columns and the tile as they were. Each sync takes a
+ * number from `syncRequest`, so an answer after unmount (or after a newer
+ * sync) writes nothing. Accept goes through the same `patch` as a manual save,
+ * with `expectedRate` (the sync's base) and `origin`, then runs the save's
+ * re-reads; success adds the code to the accepted set, which the next
+ * successful sync clears. The "Rates last checked" tile shows the visit's own
+ * sync ahead of the GET's `lastSync`, so a later re-read cannot move it back.
  *
  * The KPIs and the overall history always come from the plain GET; the
  * one-currency read only feeds the history panel (SA-1c-2). That read is
@@ -63,6 +80,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ExternalLink } from 'lucide-react';
 
 import {
   ADMIN_FIELD_CONTROL,
@@ -73,12 +91,22 @@ import { AdminEmpty, AdminError, AdminLoading } from '@/app/admin/components/lay
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import { windowEquals, type AdminWindowValue } from '@/app/admin/components/layout/adminWindow';
+import { ADMIN_BUTTON } from '@/app/admin/components/layout/adminTable';
 import type {
   ExchangeRateHistoryPayload,
   ExchangeRatePatchResult,
   ExchangeRatePatchBody,
-  ExchangeRatesPayload,
 } from '@/lib/admin/exchangeRates/exchangeRateRules';
+import {
+  ECB_SOURCE_LABEL,
+  ECB_SOURCE_NOTE,
+  ECB_SOURCE_PAGE_URL,
+  lastSyncFromSync,
+  syncOutcomeText,
+  type ExchangeRateSyncPayload,
+  type ExchangeRatesReadPayload,
+  type LastRateSyncWire,
+} from '@/lib/admin/exchangeRates/rateSyncRules';
 import { clientLogger } from '@/lib/logger/client';
 
 // Relative on purpose: the alias path would spell the page route, which the
@@ -94,7 +122,7 @@ import {
 } from '../exchangeRatesFilters';
 import { HISTORY_DEFAULT_WINDOW, historyWindowParams } from '../historyWindow';
 import { ExchangeRatesKpis } from './ExchangeRatesKpis';
-import { ExchangeRatesTable } from './ExchangeRatesTable';
+import { ExchangeRatesTable, syncSourceLine, type RateSyncView } from './ExchangeRatesTable';
 import { RateHistoryTable } from './RateHistoryTable';
 
 const logger = clientLogger.child({ module: 'AdminExchangeRates' });
@@ -139,6 +167,18 @@ interface HeldRows {
 const NO_CODES: ReadonlySet<string> = new Set<string>();
 const NO_HELD: HeldRows = { filters: null, searchVersion: -1, codes: NO_CODES };
 
+/** Noun phrase for the sync's fallback error. */
+const SYNC_WHAT = 'the public exchange rates';
+
+/** Shown when Accept is pressed for a row that no longer has a suggestion (a guard, not a normal path). */
+const NO_SUGGESTION = 'There is no suggestion to accept. Sync again.';
+
+/**
+ * An answer from before slice 1e carries no `lastSync`: the tile then says it
+ * could not check, never "No sync on record" (an unknown is not a "no").
+ */
+const LAST_SYNC_UNKNOWN: LastRateSyncWire = { status: 'unavailable' };
+
 /** Search input cap: currency codes and names are short. */
 const SEARCH_MAX_LENGTH = 64;
 
@@ -148,7 +188,7 @@ export interface ExchangeRatesViewProps {
 }
 
 export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}) {
-  const [payload, setPayload] = useState<ExchangeRatesPayload | null>(null);
+  const [payload, setPayload] = useState<ExchangeRatesReadPayload | null>(null);
   // The window `payload.history` was read under (SA-1d-2): its caption's period.
   const [payloadWindow, setPayloadWindow] = useState<AdminWindowValue>(HISTORY_DEFAULT_WINDOW);
   // The applied history window (slice 1d, SQ-25): page state only. The ref is
@@ -192,6 +232,22 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
   const showId = useId();
   const searchId = useId();
 
+  // Slice 1e (SA-1e-2): the sync lives here, the folder's only fetch owner.
+  const [syncing, setSyncing] = useState(false);
+  // The visit's last SUCCESSFUL sync and the codes accepted since it (SA-1e-1).
+  const [syncView, setSyncView] = useState<RateSyncView | null>(null);
+  // `acceptSuggestion` has empty-ish deps: it reads the sync as it is when Accept is pressed.
+  const syncViewRef = useRef<RateSyncView | null>(null);
+  useEffect(() => {
+    syncViewRef.current = syncView;
+  }, [syncView]);
+  // A failed sync's sentence, or the server's refusal (a live region by the button).
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  // The tile's value from this visit's own successful sync (SQ-51 (5)); ahead of the GET's.
+  const [visitLastSync, setVisitLastSync] = useState<LastRateSyncWire | null>(null);
+  // The newest sync; an answer carrying an older number (or after unmount) is dropped.
+  const syncRequest = useRef(0);
+
   /**
    * One read. After a save (`afterSave`), a failed re-read keeps the data on
    * screen (the saved row is already in it) and shows a short notice instead
@@ -221,7 +277,7 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
         if (isCurrent()) failed(ADMIN_NETWORK_ERROR);
         return;
       }
-      const result = await readAdminResponse<ExchangeRatesPayload>(response, { what: WHAT, sessionEndedCopy: true });
+      const result = await readAdminResponse<ExchangeRatesReadPayload>(response, { what: WHAT, sessionEndedCopy: true });
       if (!isCurrent()) return;
       if (!result.ok) {
         logger.warn({ status: result.status, afterSave: Boolean(options.afterSave) }, 'Exchange rates read failed');
@@ -305,6 +361,7 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
     () => () => {
       historyRequest.current += 1;
       loadRequest.current += 1;
+      syncRequest.current += 1;
     },
     []
   );
@@ -331,7 +388,12 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
 
   /** One PATCH; resolves to an error message for the row, or null after the row was replaced. */
   const patch = useCallback(
-    async (currencyCode: string, body: ExchangeRatePatchBody): Promise<string | null> => {
+    async (
+      currencyCode: string,
+      body: ExchangeRatePatchBody,
+      // Slice 1e (QA edge 1): lets Accept tell a 409 `rate_changed` from other refusals.
+      onRefused?: (status: number) => void
+    ): Promise<string | null> => {
       let response: Response;
       try {
         response = await fetch(`/api/admin/exchange-rates/${encodeURIComponent(currencyCode)}`, {
@@ -348,6 +410,7 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
       });
       if (!result.ok) {
         logger.warn({ currencyCode, field: body.field, status: result.status }, 'Exchange rate change refused');
+        onRefused?.(result.status);
         return result.message;
       }
       const saved = result.data.rate;
@@ -395,6 +458,95 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
     [patch]
   );
 
+  /**
+   * "Sync rates" (slice 1e). The server reads the ECB; nothing is saved. Only a
+   * successful answer replaces the columns, clears the accepted set and moves
+   * the tile; a failure shows its sentence and leaves all three as they were.
+   */
+  const runSync = useCallback(async () => {
+    const request = ++syncRequest.current;
+    const isCurrent = () => request === syncRequest.current;
+    setSyncing(true);
+    setSyncNotice(null);
+    try {
+      let response: Response;
+      try {
+        response = await fetch('/api/admin/exchange-rates/sync', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+      } catch {
+        if (isCurrent()) setSyncNotice(ADMIN_NETWORK_ERROR);
+        return;
+      }
+      const result = await readAdminResponse<ExchangeRateSyncPayload>(response, { what: SYNC_WHAT, sessionEndedCopy: true });
+      if (!isCurrent()) return;
+      if (!result.ok) {
+        logger.warn({ status: result.status }, 'Exchange rate sync refused');
+        setSyncNotice(result.message);
+        return;
+      }
+      const answer = result.data;
+      if (answer.outcome !== 'ok') {
+        logger.warn({ outcome: answer.outcome }, 'Exchange rate sync could not read the public rates');
+        setSyncNotice(syncOutcomeText(answer.outcome));
+        return;
+      }
+      setSyncView({ answer, accepted: NO_CODES });
+      const checked = lastSyncFromSync(answer);
+      if (checked) setVisitLastSync(checked);
+      logger.info({ suggestions: answer.suggestions.length }, 'Exchange rates synced');
+    } finally {
+      if (isCurrent()) setSyncing(false);
+    }
+  }, []);
+
+  /**
+   * Accept one row's suggestion (slice 1e.2) through the SAME `patch` as a
+   * manual save, with the sync's base as `expectedRate` (a changed base is a
+   * 409, SQ-44) and `origin` (SQ-43). Then the save's re-reads, and the code
+   * joins the accepted set of the sync it was accepted from.
+   */
+  const acceptSuggestion = useCallback(
+    async (currencyCode: string): Promise<string | null> => {
+      const view = syncViewRef.current;
+      const suggestion = view?.answer.suggestions.find((entry) => entry.currencyCode === currencyCode);
+      if (!view || !suggestion || suggestion.suggestedRate === null || view.answer.rateDate === null) return NO_SUGGESTION;
+      let rateChanged = false;
+      const message = await patch(
+        currencyCode,
+        {
+          field: 'rate',
+          rate: suggestion.suggestedRate,
+          expectedRate: suggestion.currentRate,
+          origin: { kind: 'sync', source: 'ecb', rateDate: view.answer.rateDate },
+        },
+        (status) => {
+          rateChanged = status === 409;
+        }
+      );
+      if (message !== null) {
+        // QA edge 1: the stored rate moved since the sync. Re-read the plain list through
+        // the existing `load`, so the row shows the new rate and SA-1e-1 state (3) "Rate
+        // changed since the sync", not a stale Accept. No new fetch( (G-6 stays at 4).
+        if (rateChanged) void load();
+        return message;
+      }
+      // Only the sync it was accepted from: a newer sync since then starts a clean set.
+      setSyncView((current) =>
+        current && current.answer === view.answer
+          ? { ...current, accepted: new Set(current.accepted).add(currencyCode) }
+          : current
+      );
+      void load({ afterSave: true });
+      const open = openCodeRef.current;
+      if (open) void loadCurrencyHistory(open);
+      return null;
+    },
+    [patch, load, loadCurrencyHistory]
+  );
+
   const changeSearch = (value: string) => {
     setSearchTerm(value);
     setSearchVersion((n) => n + 1);
@@ -412,11 +564,13 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
   // The held set counts only under the view it was taken in (SQ-9, SA Q-3).
   const heldNow = held.filters === filters && held.searchVersion === searchVersion ? held.codes : NO_CODES;
   const rows = payload ? visibleRates(payload.rates, show, searchTerm, heldNow) : [];
+  // SQ-51 (5): the visit's own sync first, so a later re-read cannot move the tile back.
+  const lastSync = visitLastSync ?? payload?.lastSync ?? LAST_SYNC_UNKNOWN;
 
   return (
     <div className="space-y-6">
       {/* K-10: hidden while the page shows an error. */}
-      <ExchangeRatesKpis payload={error ? null : payload} loading={loading} />
+      <ExchangeRatesKpis payload={error ? null : payload} loading={loading} lastSync={lastSync} />
 
       {/* Controls from the first render (SA Q-1): Show is URL state, meaningful before any data. */}
       <AdminFilterBar
@@ -463,6 +617,48 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
         </div>
       </AdminFilterBar>
 
+      {/* Slice 1e: rendered from the first render, so "disabled with no plain read" is real (Q-1). */}
+      <div data-testid="rate-sync" className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className={ADMIN_BUTTON}
+            data-testid="sync-rates"
+            disabled={syncing || !payload}
+            aria-busy={syncing}
+            onClick={() => void runSync()}
+          >
+            {syncing ? 'Syncing…' : 'Sync rates'}
+          </button>
+          <p data-testid="rate-sync-source" className="text-xs text-slate-400">
+            Source:{' '}
+            <a
+              href={ECB_SOURCE_PAGE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="rate-sync-source-link"
+              className="inline-flex items-center gap-1 text-purple-300 underline hover:text-purple-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+            >
+              {ECB_SOURCE_LABEL}
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+            . {ECB_SOURCE_NOTE}
+          </p>
+        </div>
+        <div role="status" data-testid="rate-sync-status" className="text-xs">
+          {syncNotice ? (
+            <span data-testid="rate-sync-notice" className="text-amber-300">
+              {syncNotice}
+            </span>
+          ) : syncView ? (
+            <span data-testid="rate-sync-line" className="text-slate-400">
+              Source: {syncSourceLine(syncView.answer)}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
       {error && <AdminError message={error} testId="page-error" onRetry={() => void load()} />}
 
       {refreshNotice && (
@@ -497,6 +693,8 @@ export function ExchangeRatesView({ active = true }: ExchangeRatesViewProps = {}
                   onSetEnabled={setEnabled}
                   onShowHistory={showHistory}
                   historyFor={openCode}
+                  sync={syncView}
+                  onAcceptSuggestion={acceptSuggestion}
                 />
               )}
             </div>

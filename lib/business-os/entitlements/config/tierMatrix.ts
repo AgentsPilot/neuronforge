@@ -9,17 +9,19 @@
 //
 //   internal   marketing          chat   credits          ends           price
 //   ────────────────────────────────────────────────────────────────────────
-//   trial      Test Flight        no     2,000 in total   14 days or     $0
+//   trial      Test Flight        no     1,000 in total   14 days or     $0
 //                                                         credits gone
-//   champion   Founding Partner   yes    32,250/mo        never          $0
+//   champion   Founding Partner   yes    5,000/mo         never          $0
 //                                        (reads `pro`)
-//   basic      Essentials         no     19,750/mo        while paid     $79
-//   pro        Autopilot          yes    32,250/mo        while paid     $129
+//   basic      Essentials         no     2,000/mo         while paid     $79
+//   pro        Autopilot          yes    5,000/mo         while paid     $129
 //
-// The credit numbers, and why: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md.
+// The credit numbers, and why: docs/architecture/BUSINESS_OS_CREDIT_PRICING.md
+// (re-sized 2026-10-25 by decision D4, matrix version 3).
 //
 // "Chat" above means the `chat.access` capability (FR-46) plus the eight
-// per-operation `chat.*` groups. Autopilot has all nine; nobody else has any.
+// per-operation `chat.*` groups. Autopilot has all nine, and so does Founding
+// Partner, because it reads the `pro` row; Essentials and Test Flight have none.
 //
 // **Only TWO of those are tiers.** `trial` and `champion` are cohorts: `trial`
 // points at the `basic` tier and `champion` at the `pro` tier (see `cohorts.ts`),
@@ -153,8 +155,9 @@ const BASE: TierRow = {
   'chat.bulk': true,
 
   // ── Numbers ──────────────────────────────────────────────────────────────
-  // Decided (D1–D3, 2026-09-30): docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
-  'credits.allowance': { perMonth: 19750 },
+  // Decided (D4, 2026-10-25; was 19,750 under D1–D3): ≈ 3× a modelled heavy
+  // Essentials month. docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
+  'credits.allowance': { perMonth: 2000 },
   // FIRST PASS. A fair-use ceiling alerts the platform team and never blocks a
   // customer (B-7), so it is an abuse threshold rather than a product promise —
   // and it is the same on both tiers, because email volume is not one of the
@@ -220,9 +223,24 @@ const basic: TierRow = withoutChat();
 /** Autopilot — Essentials plus chat, and more credits. */
 const pro: TierRow = {
   ...BASE,
-  // Decided (D1–D3, 2026-09-30): docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
-  'credits.allowance': { perMonth: 32250 },
+  // Decided (D4, 2026-10-25; was 32,250 under D1–D3): ≈ 3× a modelled heavy
+  // Autopilot month. docs/architecture/BUSINESS_OS_CREDIT_PRICING.md §3.
+  'credits.allowance': { perMonth: 5000 },
 };
+
+/**
+ * The instant the 2026-10-25 re-size (decision D6) stops the old allowances
+ * applying: the decision date, which is BEFORE this release ships.
+ *
+ * No grandfathering, on purpose. The resolver's Layer 1a keeps a removal's
+ * `previousValue` only while `now < grandfatherUntil`, so an instant already in
+ * the past means no account is ever resolved at the old value after deploy.
+ * There were no paying customers on the decision date; existing (test / demo)
+ * accounts are moved with one expiring admin grant each instead (pricing doc
+ * §6.4). A fixed literal rather than "now", so the config is the same on every
+ * server and in every test run.
+ */
+const RESIZE_2026_10_25 = '2026-10-25T00:00:00.000Z';
 
 export const TIER_MATRIX = {
   // Version 1 was the FIRST REAL MATRIX. Version 2 (credit deduction slice 5)
@@ -230,9 +248,28 @@ export const TIER_MATRIX = {
   // `credits.allowance` (SA SQ-17) and both values were raised (SQ-19). Nothing
   // was lowered, so `removals` stays empty: a rename is not a removal, and an
   // entry naming an id that is no longer in the catalog would describe nothing.
-  version: 2,
+  //
+  // Version 3 (2026-10-25, decisions D4–D6) LOWERS both credit allowances, so it
+  // is the first matrix with `removals`: one per tier, recording the value each
+  // tier had, with no grandfathering (see `RESIZE_2026_10_25`).
+  version: 3,
   tiers: { basic, pro },
-  removals: [] as readonly MatrixRemoval<TierId>[],
+  removals: [
+    {
+      version: 3,
+      tier: 'basic',
+      capability: 'credits.allowance',
+      previousValue: { perMonth: 19750 },
+      grandfatherUntil: RESIZE_2026_10_25,
+    },
+    {
+      version: 3,
+      tier: 'pro',
+      capability: 'credits.allowance',
+      previousValue: { perMonth: 32250 },
+      grandfatherUntil: RESIZE_2026_10_25,
+    },
+  ] as readonly MatrixRemoval<TierId>[],
   /**
    * What a customer sees, and what they pay.
    *

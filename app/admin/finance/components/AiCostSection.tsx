@@ -60,6 +60,7 @@ import { atLeast, formatCount, formatCredits, formatUsd } from '../financeFormat
 import { section3AnalyticsHref } from '../financeLinks';
 import { groupLabel } from './AccountsByPlanSection';
 import { FinanceSection } from './FinanceSection';
+import { businessTargetOf, useBusinessRowOpen } from './BusinessDrawer';
 import { RecordedCostLines } from './RecordedCostLines';
 
 function nameOf(account: FinanceTopAccount): string {
@@ -90,6 +91,8 @@ export function AiCostSection({
   onRetry: () => void;
 }) {
   const f = aiCost.figures;
+  // Money MK-10: the top accounts open like the Businesses rows (D-17), when the drawer is mounted.
+  const opener = useBusinessRowOpen();
   const usd = (v: number) => atLeast(formatUsd(v), f?.exact ?? true);
   const entirelyBefore = aiCost.coverage === 'entirely_before_cutover';
   // Fix round 1: the failure notice names "the charged figures above" only when they rendered.
@@ -173,13 +176,14 @@ export function AiCostSection({
               <div className={ADMIN_TABLE_WRAP}>
                 <table className={ADMIN_TABLE} data-testid="ai-top">
                   <caption className="px-3 py-2 text-left text-xs font-medium text-slate-300">{AI_TOP}</caption>
-                  <thead className={ADMIN_THEAD}><tr><th scope="col" className={ADMIN_TH}>{AI_BUSINESS}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_COST}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_CREDITS}</th></tr></thead>
+                  <thead className={ADMIN_THEAD}><tr><th scope="col" className={ADMIN_TH}>{AI_BUSINESS}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_COST}</th><th scope="col" className={ADMIN_TH_NUM}>{AI_CREDITS}</th>{opener?.header}</tr></thead>
                   <tbody className={ADMIN_TBODY}>
                     {f.topAccounts.map((a) => (
-                      <tr key={a.accountId}>
+                      <tr key={a.accountId} data-testid={`ai-top-row-${a.accountId}`} {...opener?.rowProps(businessTargetOf(a))}>
                         <th scope="row" className={`${ADMIN_TD} font-normal`}>{nameOf(a)}</th>
                         <td className={ADMIN_TD_NUM}>{usd(a.costUsd)}</td>
                         <td className={ADMIN_TD_NUM}>{formatCredits(a.credits)}</td>
+                        {opener?.cell(businessTargetOf(a), nameOf(a))}
                       </tr>
                     ))}
                   </tbody>

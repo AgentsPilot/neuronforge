@@ -163,6 +163,32 @@ describe('C-2 / W-3: ?section=plan opens the plan drawer', () => {
   it('the plan drawer closes through the hook', () => {
     expect(code).toContain('onOpenChange={planDrawer.onOpenChange}');
   });
+
+  /*
+   * UM-D3 (D3-12): the link still opens "the plan surface" unconditionally (the
+   * pin above); WHICH surface is the decider's (`planSurfaceFor`, through
+   * `usePlanSurface`), never this branch. Each surface is open only on its own
+   * decision, so the two are never open together (R-3, AC-UMD3 (e)), and the
+   * pop-up closes through the same link hook.
+   */
+  it('UM-D3: the surface is chosen by the decider, not by the branch, and the two surfaces are exclusive', () => {
+    const branch = branchOf(code, 'plan') ?? '';
+    expect(branch).not.toMatch(/planSurface|SettingsPlanModal|surface/);
+    expect(code).toMatch(/const\s+planSurface\s*=\s*usePlanSurface\(\{\s*open:\s*planDrawer\.open,/);
+    expect(code).toContain("open={planDrawer.open && planSurface.surface === 'drawer'}");
+    expect(code).toContain("open={planDrawer.open && planSurface.surface === 'modal'}");
+    expect(code).toContain('onClose={() => planDrawer.onOpenChange(false)}');
+    expect(code).not.toMatch(/planSurfaceFor|hasActions/);
+  });
+
+  it('UM-D3 negative controls: a surface chosen in the branch, or a drawer open on the bare flag', () => {
+    const inBranch = code.replace('openPlanFromLink();', "openPlanFromLink(); planSurface.surface === 'modal';");
+    expect(inBranch).not.toBe(code);
+    expect(branchOf(inBranch, 'plan') ?? '').toMatch(/planSurface/);
+    const bare = code.replace("open={planDrawer.open && planSurface.surface === 'drawer'}", 'open={planDrawer.open}');
+    expect(bare).not.toBe(code);
+    expect(bare).not.toContain("open={planDrawer.open && planSurface.surface === 'drawer'}");
+  });
 });
 
 describe('S-2 / C-7: ?section=password opens the password drawer', () => {

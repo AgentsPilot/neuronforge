@@ -25,8 +25,8 @@
  *   - cancelling at period end: counted until it ends, and shown as
  *     "of which cancelling" (BQ-P8a-3, settled);
  *   - `past_due`: counted and shown as "of which past due" while
- *     `MRR_COUNTS_PAST_DUE` is true. This is BQ-P8a-4, still open with the user,
- *     built with its default. A "no" is this ONE constant;
+ *     `MRR_COUNTS_PAST_DUE` is true. This is BQ-P8a-4, answered with its default
+ *     (past due counted, shown apart). A "no" is this ONE constant;
  *   - a row with a founder discount (`founder_discount_applied_at`, only P-11
  *     sets it): never at list price. It goes in `discountUnknown` until P-11
  *     records the discounted price (BQ-P1 terms, SA-WP-P8a);

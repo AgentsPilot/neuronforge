@@ -9,7 +9,7 @@
  * `ACCOUNT_CLOCK_SENTENCE_KEYS` for its existing importers.
  */
 
-import { Info } from 'lucide-react';
+import { Check, Info } from 'lucide-react';
 
 import { planCategoryLine } from '@/lib/business-os/planCategoryLine';
 
@@ -139,6 +139,69 @@ export function CategoryRowText({
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * B3 / B4, the failed-renewal lines (plan payments P-6a.2), in ONE place: the
+ * drawer and the Settings pop-up (upgrade modal UM-D3, SA R-5 / D3-5) render the
+ * same conditions, keys and test ids, so the two cannot disagree about when an
+ * owner is told to act. No "Update card" button until P-7a (SA Q-6): Stripe's
+ * email has the link.
+ */
+export function PlanBillingNotices({ plan, t }: { plan: PlanPayload; t: (key: string) => string }) {
+  const billing = plan.kind === 'tier' ? plan.purchase?.billing : undefined;
+  return (
+    <>
+      {billing?.state === 'payment_failed' && (
+        <p className="text-xs text-[var(--v2-text-secondary)] mt-1" data-testid="plan-update-card-email">
+          {t('plan.update_card_email')}
+        </p>
+      )}
+      {billing?.state === 'action_required' && (
+        <a
+          href={billing.confirmUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block mt-1 text-sm font-medium text-[var(--v2-text-primary)] underline underline-offset-2"
+          data-testid="plan-confirm-payment"
+        >
+          {t('billing.notice.confirm_payment')}
+        </a>
+      )}
+    </>
+  );
+}
+
+/**
+ * B8, "What your plan includes": the account's own resolution (a trial's one-off
+ * credits, say), which the as-defined comparison table does not show. One copy
+ * for the drawer and the Settings pop-up's disclosure (UM-D3, D3-5).
+ */
+export function PlanIncludedList({
+  plan,
+  t,
+  noteTestIdPrefix,
+}: {
+  plan: PlanPayload;
+  t: (key: string) => string;
+  noteTestIdPrefix: string;
+}) {
+  if (plan.included.length === 0) {
+    return <p className="text-sm text-[var(--v2-text-muted)]">{t('plan.features_unavailable')}</p>;
+  }
+  return (
+    // Named so a screen reader says which list this is, and so a test can
+    // scope to it: an unnamed second list two elements down carries similar
+    // numbers, and a positional query silently followed it.
+    <ul className="space-y-2" aria-label={t('plan.includes')}>
+      {plan.included.map((row) => (
+        <li key={row.category} className="flex items-start gap-2">
+          <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--v2-primary)]" />
+          <CategoryRowText row={row} t={t} noteTestId={`${noteTestIdPrefix}${row.category}`} />
+        </li>
+      ))}
+    </ul>
   );
 }
 

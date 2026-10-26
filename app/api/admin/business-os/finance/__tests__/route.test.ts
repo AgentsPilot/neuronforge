@@ -565,8 +565,8 @@ describe('200', () => {
     expect(body.data.window.preset).toBe('this_month');
     expect(body.data.window.to).toBe(todayUtc());
     // Money MK-4 (ruled): `mrr` and `stripeMode` join the payload. MK-5 (ruled): `paying` and `platformMargin`.
-    // MK-5b (ruled): `converted`.
-    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'converted', 'credits', 'generatedAt', 'mrr', 'paying', 'paymentProblems', 'platformMargin', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
+    // MK-5b (ruled): `converted`. MK-9 (ruled): `payingBreakdown`.
+    expect(Object.keys(body.data).sort()).toEqual(['accountId', 'accounts', 'aiCost', 'converted', 'credits', 'generatedAt', 'mrr', 'paying', 'payingBreakdown', 'paymentProblems', 'platformMargin', 'revenue', 'stripeMode', 'takings', 'tiles', 'window']);
     expect(Object.keys(body.data.tiles).sort()).toEqual(['k1', 'k2', 'k3', 'k4', 'k5']);
     expect(body.data.credits.status).toBe('ok');
     expect(body.data.tiles.k4.value).toEqual({ value: GIFTED_FIGURE, exact: true });
@@ -1306,18 +1306,29 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
   // Money MK-4 (ruled): the two MRR keys, last.
   // Money MK-5 (ruled): `paying` and `platformMargin`, from the builder, before the route's MRR keys.
   // Money MK-5b (ruled): `converted`, from the builder, after `paying`.
-  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'paying', 'converted', 'platformMargin', 'mrr', 'stripeMode'];
+  // Money MK-9 (ruled, SA-WP-MK9): `payingBreakdown`, after `converted`. EXPECTED_CALLS unchanged (no new dep).
+  const EXPECTED_KEYS = ['generatedAt', 'window', 'accountId', 'tiles', 'revenue', 'accounts', 'aiCost', 'credits', 'takings', 'paymentProblems', 'paying', 'converted', 'payingBreakdown', 'platformMargin', 'mrr', 'stripeMode'];
   // SA-Q72 (4b.2): the new hash. E-55 (M-4): its hash, which the payload gives with the 4b.2 keys put back;
   // and the 6a hash, which that payload still gives with `aiCost.recorded` taken out.
   // Money MK-4 (ruled re-freeze): the payload with `mrr` and `stripeMode`. BEFORE_MK4 is the 4b.2 hash it replaces.
   // Money MK-5 (ruled re-freeze): with `paying` and `platformMargin`. AFTER_MK4 is the MK-4 hash it replaces.
   // Money MK-5b (ruled re-freeze): with `converted`. AFTER_MK5 is the MK-5 hash it replaces.
-  const EXPECTED_SHA256 = '23a12c7ebd13e5549b1ed8926e108289f504de1a57dc841413bcd68c4b862069';
-  const AFTER_MK5_SHA256 = 'a13f1ccd7a95db60cce67bccc0df7450290b3162506b6e06f50edac3016f0060';
-  const AFTER_MK4_SHA256 = '30275c298fa4cb265ffe8933dee56c71d4243c171c39eddbe1d2e55d64950631';
-  const BEFORE_MK4_SHA256 = '39b35743527b3a1948efd30c3ebc2510eb0916301baa4ea8f2e0210d7e1556ea';
-  const M4_SHA256 = '6761620e6fb59c9df83ec19b6ba0b534929bca660e7b3dbd2e271356e11b5250';
-  const SLICE_6A_SHA256 = 'b4d10bc1256d32de808c435917c0a53d44229e3df4e9ff879a035911ae13588c';
+  // Credits re-size (2026-10-25, decision D4; re-freeze for SA review): ALL six hashes moved, and the
+  // route did not change. The credit pass reads the REAL trial allowance (see the plan snapshot
+  // above), and the trial went from 2,000 to 1,000 credits in total, so the one credits row reads
+  // `allowance` 1000 (was 2000) and `usedTenths` 7 (was 3). Verified by dumping the payload with the
+  // previous tierMatrix.ts / cohorts.ts: those two values are the only difference, and that config
+  // reproduces the previous hashes. Previous values, in order: 23a12c7e…, a13f1ccd…, 30275c29…,
+  // 39b35743…, 6761620e…, b4d10bc1….
+  // Money MK-9 (ruled re-freeze, SA-WP-MK9): with `payingBreakdown`. AFTER_MK5B is the hash it replaces
+  // (the credits re-size's `5e911c70…`); stripping the key gives it back.
+  const EXPECTED_SHA256 = '333407516ae0d081d59e8372a499cf305c207adeebf931fd363b62e58f632215';
+  const AFTER_MK5B_SHA256 = '5e911c70805e03ea6cc2740a1760ee4458d8145d80769ed1e2065df39f6f9b17';
+  const AFTER_MK5_SHA256 = '029bff1146cd17747357bc71b87602f1230a1607dbe5ecea9c285ff9ec39629b';
+  const AFTER_MK4_SHA256 = '5ee0556ba4fdbfdca97c4d700259a96f9f56f6d3fb3dfb6f3b057c209c8d2d02';
+  const BEFORE_MK4_SHA256 = '09ce46446a99103d539c428be748eb944ba69278dc581e3993a28ad266005a7c';
+  const M4_SHA256 = '367edb18ed17a74b0721e350777dec0b9d9bcb0f8ce6e1e814fc1418b415020f';
+  const SLICE_6A_SHA256 = 'e12a7750938b4467da62a57f9ef05060b80745159950713a0c59185e32deb822';
 
   it('the read calls, the findNames calls, the top-level keys and the payload bytes', async () => {
     const res = await call();
@@ -1337,8 +1348,14 @@ describe('AC-145 baseline: the Overview request is unchanged by slice 6a', () =>
     type Json = Record<string, unknown>;
     // MK-4: the only change to the bytes is the two MRR keys at the end. Strip them: the 4b.2 bytes come back.
     // MK-5: the only change to the bytes is the two builder keys. Strip them: the MK-4 bytes come back.
+    // MK-9: the only change to the bytes is `payingBreakdown`. Strip it: the MK-5b bytes come back.
+    const withMk9 = { ...(body.data as Json) };
+    expect(withMk9.payingBreakdown).toEqual(expect.objectContaining({ trials: expect.objectContaining({ minimumForRate: 10 }) }));
+    delete withMk9.payingBreakdown;
+    const shaAfterMk5b = (jest.requireActual('crypto') as typeof import('crypto')).createHash('sha256');
+    expect(shaAfterMk5b.update(JSON.stringify(withMk9)).digest('hex')).toBe(AFTER_MK5B_SHA256);
     // MK-5b: the only change to the bytes is `converted`. Strip it: the MK-5 bytes come back.
-    const withMk5b = { ...(body.data as Json) };
+    const withMk5b = { ...withMk9 };
     expect(withMk5b.converted).toEqual({
       scope: 'all', status: 'ok', month: { from: '2026-10-01T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' },
       converted: 0, paying: 0, stopped: 0, rows: [], shownLimit: 100,

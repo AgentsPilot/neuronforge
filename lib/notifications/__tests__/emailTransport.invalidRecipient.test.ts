@@ -47,6 +47,15 @@ describe('isInvalidDomainRecipient', () => {
   it.each(['x@invalid.com', 'x@example.com', 'invalid@example.org', 'x@notinvalid', 'no-at-sign'])('%s is not', (address) => {
     expect(isInvalidDomainRecipient(address)).toBe(false);
   });
+
+  // DE-10b.1 QA E-2, fixed in DE-10b.2: the display-name form.
+  it.each(['Dana <deleted-0123456789ab@deleted.invalid>', 'Dana <x@deleted.invalid> ', '<x@invalid>'])('%s (display-name form) is refused', (address) => {
+    expect(isInvalidDomainRecipient(address)).toBe(true);
+  });
+
+  it.each(['Dana <dana@example.com>', '"Inv Alid" <x@invalid.com>'])('%s (display-name form) is not', (address) => {
+    expect(isInvalidDomainRecipient(address)).toBe(false);
+  });
 });
 
 describe('sendEmail refuses .invalid recipients before any transport', () => {

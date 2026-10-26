@@ -303,7 +303,7 @@
       },
       "credits.allowance": {
         "value": {
-          "perMonth": 19750
+          "perMonth": 2000
         },
         "decidedBy": "basis",
         "trace": [
@@ -311,13 +311,13 @@
             "layer": "basis",
             "from": null,
             "to": {
-              "perMonth": 19750
+              "perMonth": 2000
             },
             "note": "tier basic"
           }
         ],
         "granting": true,
-        "display": "19,750 per month"
+        "display": "2,000 per month"
       },
       "marketing.mass_email": {
         "value": false,

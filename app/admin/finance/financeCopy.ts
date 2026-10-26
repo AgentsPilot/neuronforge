@@ -833,3 +833,62 @@ export const HISTORY_COLUMN_LABELS = {
   credit_over_allowance: 'Accounts over allowance',
   credit_far_over_allowance: 'Far over allowance',
 } as const;
+
+// ── Money MK-8: the Finance drawers (read-only quick looks, Q-7) ──
+export const BUSINESS_DRAWER = {
+  /** The drawer title when no name is known (the short id follows it). */
+  titleFallback: 'Business',
+  /** Noun phrase for the shared reading / error sentences. */
+  what: 'this business',
+  /** MK-10: the Open button's accessible name and tooltip, the Businesses page's pattern ("Open details for …"). */
+  openDetails: (name: string) => `Open details for ${name}`,
+  clientPayments: 'Client payments (their money, not ours)',
+  clientPaymentsNote: "In this business's own currency. Never added to our revenue.",
+  clientPaymentsNone: 'No client payments recorded in this window',
+  clientPaymentsUnknown: 'Client payments could not be read.',
+  clientPaymentsLine: (payments: string, gross: string, net: string) => `${payments} payments · gross ${gross} · net ${net}`,
+  overdue: 'Overdue items, as of now',
+  overdueInvoices: 'Overdue invoices',
+  overdueInstalments: 'Overdue instalments',
+  unknown: 'Unknown',
+  openFull: 'Open full view',
+} as const;
+
+export const PLAN_DRAWER = {
+  what: 'this plan',
+  /** The opener's accessible name and tooltip. */
+  open: (plan: string) => `Open plan ${plan}`,
+  mrr: 'MRR',
+  mrrNone: 'None',
+  statuses: 'Accounts by status',
+  accounts: 'Accounts',
+  empty: 'No account on this plan.',
+  showing: (shown: string, total: string) => `Showing ${shown} of ${total} accounts`,
+} as const;
+
+// ── Money MK-9: F-K5's breakdown on Plans & subscriptions (S5B-FR-8 to FR-16) ──
+// No billing-mode word anywhere here (the finance mode guard; MK9-R1).
+export const PAYING_BREAKDOWN = {
+  subtitle: 'What is behind Paying accounts: who pays, why comped accounts do not, and how trials turn into paying accounts. All businesses.',
+  paying: (paying: string, accounts: string) => `Paying: ${paying} of ${accounts} accounts`,
+  payingUnknown: 'Paying: Unknown',
+  compedHeading: 'Comped',
+  compedTotal: (total: string) => `Comped: ${total}`,
+  assigned: 'Assigned, no subscription',
+  endedOrNotPaying: 'Subscription ended or not paying',
+  compedUnknown: 'Comped: Could not check',
+  note: 'Paying means a paid plan subscription that is active or past due now. Comped means a plan in force with no paying subscription.',
+  trialsHeading: 'Trial to paid',
+  endedInWindow: (count: string) => `Trials ended in this window: ${count}`,
+  paid: (count: string) => `Paid: ${count}`,
+  paidBeforeEnd: (count: string) => `of which before the trial ended: ${count}`,
+  paidUnknown: 'Paid: Unknown',
+  rate: (paid: string, base: string, percent: string) => `Rate: ${paid} of ${base} (${percent}%)`,
+  tooFew: (minimum: string) => `Too few trials for a rate (a rate needs at least ${minimum})`,
+  noRateCutOff: 'No rate: not every account could be read',
+  stillRunning: (count: string) => `Still running: ${count}`,
+  trialsUnknown: 'Trials could not be read.',
+  limits: 'Paid means a first plan payment, counted as for Converted this month. Boosts are not a conversion.',
+  cutOff: 'Not every account could be read, so these counts are "at least".',
+  unknown: 'Unknown',
+} as const;

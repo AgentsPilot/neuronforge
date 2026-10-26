@@ -71,7 +71,9 @@ describe('per account state (§9.4)', () => {
     const view = upgradeModalView(payload);
     expect(payload.kind).not.toBe('tier');
     expect(view.columns.some((entry) => entry.isCurrent)).toBe(false);
-    expect(view.columns.every((entry) => entry.action === 'offered')).toBe(true);
+    // UM-1b §13: 'offered' is split by the server's offer kind; a trial chooses.
+    expect(view.columns.every((entry) => entry.action === 'choose')).toBe(true);
+    expect(view.hasActions).toBe(true);
     // UM-BQ4: the top plan, although the server's nextPlanUp for a trial is the lower one.
     expect(column(payload, TOP).isRecommended).toBe(true);
     expect(column(payload, LOWER).isRecommended).toBe(false);
@@ -118,7 +120,7 @@ describe('per account state (§9.4)', () => {
     expect(payload.purchase?.upgrade?.tiers).toContain(TOP);
     const view = upgradeModalView(payload);
     expect(column(payload, LOWER)).toMatchObject({ isCurrent: true, isRecommended: false, action: 'current_label' });
-    expect(column(payload, TOP)).toMatchObject({ isCurrent: false, isRecommended: true, action: 'offered' });
+    expect(column(payload, TOP)).toMatchObject({ isCurrent: false, isRecommended: true, action: 'upgrade', ownPlanNote: null });
     expect(view.headline).toBe('choose');
   });
 
@@ -149,7 +151,7 @@ describe('per account state (§9.4)', () => {
     const payload = await payloadFor({ planId: TOP, buyable: [TOP] });
     expect(payload.purchase?.offer).toEqual({ kind: 'choose', tiers: [TOP] });
     const view = upgradeModalView(payload);
-    expect(column(payload, TOP)).toMatchObject({ isCurrent: true, isRecommended: false, action: 'offered' });
+    expect(column(payload, TOP)).toMatchObject({ isCurrent: true, isRecommended: false, action: 'pay_for', ownPlanNote: 'choose' });
     expect(view.somethingOffered).toBe(false);
     expect(view.headline).toBe('top_plan');
   });
@@ -157,7 +159,9 @@ describe('per account state (§9.4)', () => {
   it('W-1: an admin-assigned lower tier offered only its own plan reads compare, not choose', async () => {
     const payload = await payloadFor({ planId: LOWER, buyable: [LOWER] });
     const view = upgradeModalView(payload);
-    expect(column(payload, LOWER).action).toBe('offered');
+    expect(column(payload, LOWER).action).toBe('pay_for');
+    // "See plans": there IS a button (its own plan's "Pay for"), although nothing else is offered.
+    expect(view.hasActions).toBe(true);
     expect(view.somethingOffered).toBe(false);
     expect(view.headline).toBe('compare');
   });
@@ -178,10 +182,88 @@ describe('per account state (§9.4)', () => {
       ...base,
       plans: base.plans!.map((choice) => (choice.planId === nextId ? { ...choice, availableToBuy: false } : choice)),
       nextPlanUp: { ...base.nextPlanUp!, availableToBuy: false, actionUnavailableBecause: reason },
+      // As the server would send it: a plan that cannot be bought is not offered as an upgrade.
+      purchase: { ...base.purchase!, upgrade: null },
     };
-    expect(column(payload, nextId)).toMatchObject({ comingSoon: true, unavailableBecause: reason });
+    expect(column(payload, nextId)).toMatchObject({ comingSoon: true, unavailableBecause: reason, action: 'none' });
     for (const entry of upgradeModalView(payload).columns.filter((c) => c.planId !== nextId)) {
       expect(entry).toMatchObject({ comingSoon: false, unavailableBecause: null });
     }
+  });
+});
+
+describe('UM-1b: which button, by the server\'s offer (§4; SA Q-1, Q-3)', () => {
+  it('precedence: a plan in both offer.tiers and upgrade.tiers is an upgrade (SA Q-3)', async () => {
+    const base = await payloadFor({ planId: TRIAL });
+    const payload: PlanPayload = { ...base, purchase: { ...base.purchase!, upgrade: { tiers: [TOP] } } };
+    // Non-vacuity: TOP is in both offers.
+    expect(payload.purchase!.offer).toMatchObject({ kind: 'choose' });
+    expect(payload.purchase!.offer.kind === 'choose' && payload.purchase!.offer.tiers.includes(TOP)).toBe(true);
+    expect(column(payload, TOP).action).toBe('upgrade');
+    expect(column(payload, LOWER).action).toBe('choose');
+  });
+
+  it('SA Q-1: while choosing, a shown plan the server does not offer is "coming soon" (UM-FR3), with no action', async () => {
+    const payload = await payloadFor({ planId: TRIAL, buyable: [LOWER] });
+    expect(column(payload, TOP)).toMatchObject({ action: 'none', comingSoon: true });
+    expect(column(payload, LOWER)).toMatchObject({ action: 'choose', comingSoon: false });
+  });
+
+  it('SA Q-1: outside the choose context, a plan on sale but not offered to you is NOT "coming soon"', async () => {
+    const payload = await payloadFor({ planId: TOP, billingRow: payingRow(TOP) });
+    expect(column(payload, LOWER)).toMatchObject({ action: 'none', comingSoon: false });
+    expect(column(payload, TOP)).toMatchObject({ action: 'current_label', comingSoon: false });
+    expect(upgradeModalView(payload).hasActions).toBe(false);
+  });
+
+  it('the current column never shows the chip, even when its plan cannot be bought', async () => {
+    const base = await payloadFor({ planId: TOP, billingRow: payingRow(TOP) });
+    const payload: PlanPayload = { ...base, plans: base.plans!.map((choice) => ({ ...choice, availableToBuy: false })) };
+    expect(column(payload, TOP)).toMatchObject({ action: 'current_label', comingSoon: false });
+  });
+
+  it('ownPlanNote: an upgrade on the CURRENT column carries the upgrade note (plan payments Q-5)', async () => {
+    const payload = await payloadFor({ planId: TOP, billingRow: payingRow(LOWER) });
+    expect(payload.purchase?.upgrade).toEqual({ tiers: [TOP] });
+    expect(column(payload, TOP)).toMatchObject({ isCurrent: true, action: 'upgrade', ownPlanNote: 'upgrade' });
+  });
+});
+
+describe("LF-2 (live test 2026-10-20): a non-tier account's own plan is its own column", () => {
+  it.each([
+    ['trial', () => payloadFor({ planId: TRIAL }), TRIAL],
+    ['Founding Partner, no end date', () => payloadFor({ planId: FOUNDING_PARTNER }), FOUNDING_PARTNER],
+    ['Founding Partner, dated', () => payloadFor({ planId: FOUNDING_PARTNER, cohortExpiresAt: inSixtyDays() }), FOUNDING_PARTNER],
+  ] as const)('%s: ownColumn from the server (id) and the payload (name, Free); tier columns unchanged', async (_name, make, ownId) => {
+    const payload = await make();
+    const view = upgradeModalView(payload);
+    expect(view.ownColumn).toEqual({ planId: ownId, name: payload.name, free: true });
+    // The tier columns and the server's table are untouched (C-21).
+    expect(view.columns.map((entry) => entry.planId)).toEqual(payload.comparison!.planIds);
+    expect(view.sections).toBe(payload.comparison!.sections);
+    expect(view.columns.some((entry) => entry.isCurrent)).toBe(false);
+  });
+
+  it('a tier account has no ownColumn: its plan is the column marked current', async () => {
+    const payload = await payloadFor({ billingRow: payingRow(LOWER) });
+    const view = upgradeModalView(payload);
+    expect(view.ownColumn).toBeNull();
+    expect(column(payload, LOWER).isCurrent).toBe(true);
+  });
+
+  it('the own column changes no action, offer or headline (the Founding Partner with no end date is still offered nothing)', async () => {
+    const payload = await payloadFor({ planId: FOUNDING_PARTNER });
+    const withOwn = upgradeModalView(payload);
+    const old: PlanPayload = { ...payload, comparison: { ...payload.comparison!, current: null } };
+    const without = upgradeModalView(old);
+    expect(without.ownColumn).toBeNull();
+    expect({ ...withOwn, ownColumn: null }).toEqual(without);
+    expect(withOwn.hasActions).toBe(false);
+  });
+
+  it('only what the server sent: no `current` → no own column, even for a cohort', async () => {
+    const payload = await payloadFor({ planId: TRIAL });
+    const { current: _dropped, ...comparison } = payload.comparison!;
+    expect(upgradeModalView({ ...payload, comparison }).ownColumn).toBeNull();
   });
 });

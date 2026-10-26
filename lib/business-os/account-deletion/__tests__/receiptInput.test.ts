@@ -8,6 +8,7 @@ import {
   DELETION_RECEIPT_INPUT_KEYS,
   DELETION_RECEIPT_RETENTION,
   buildAdminReceipt,
+  buildOwnerReceipt,
   computeRetainUntil,
   deletionReceiptBaseSchema,
   withFilesRemoved,
@@ -93,5 +94,51 @@ describe('buildAdminReceipt', () => {
 
   it('throws on a value the table would refuse, so nothing is removed', () => {
     expect(() => buildAdminReceipt({ ...facts, emailFingerprint: 'x' })).toThrow();
+  });
+});
+
+describe('buildOwnerReceipt (DE-10b.2 self-delete)', () => {
+  const owner = {
+    emailFingerprint: FP,
+    fingerprintKeyVersion: 1,
+    statementLanguage: 'he' as const,
+    statementText: '  typed exactly as sent  ',
+    ownerLastExportReadyAt: null,
+    ownerExportDownloadedAt: null,
+    adminExportExisted: false,
+    requestedAt: NOW,
+    correlationId: 'corr-2',
+  };
+
+  it('origin owner, executor self-service, no admin and no reason, the statement kept verbatim', () => {
+    const receipt = buildOwnerReceipt(owner);
+    expect(receipt).toEqual({
+      email_fingerprint: FP,
+      fingerprint_key_version: 1,
+      origin: 'owner',
+      executor_kind: 'self_service',
+      executor_admin_email: null,
+      reason_category: null,
+      reason_note: null,
+      statement_language: 'he',
+      statement_text: '  typed exactly as sent  ',
+      owner_last_export_ready_at: null,
+      owner_export_downloaded_at: null,
+      admin_export_existed: false,
+      requested_at: NOW.toISOString(),
+      retain_until: computeRetainUntil(NOW).toISOString(),
+      correlation_id: 'corr-2',
+    });
+  });
+
+  it('copies the export facts (N-3: "no export on record" is the NULL pair)', () => {
+    const receipt = buildOwnerReceipt({ ...owner, ownerLastExportReadyAt: '2026-10-10 10:00:00+00', ownerExportDownloadedAt: '2026-10-11T08:00:00Z' });
+    expect(receipt.owner_last_export_ready_at).toBe('2026-10-10T10:00:00.000Z');
+    expect(receipt.owner_export_downloaded_at).toBe('2026-10-11T08:00:00.000Z');
+  });
+
+  it('throws on a statement longer than the column, or a bad fingerprint', () => {
+    expect(() => buildOwnerReceipt({ ...owner, statementText: 'x'.repeat(501) })).toThrow();
+    expect(() => buildOwnerReceipt({ ...owner, emailFingerprint: 'x' })).toThrow();
   });
 });

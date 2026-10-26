@@ -25,3 +25,14 @@ export function closedAccountRef(email: string | null | undefined): string | nul
   const match = CLOSED_ACCOUNT_EMAIL.exec(email);
   return match ? match[1] : null;
 }
+
+/**
+ * How an admin page names a login (data export DE-10b.2, SA TQ-21): "Deleted
+ * account {ref}" for a closed account, the email otherwise. Joins and ids do
+ * not change; only the label does.
+ */
+export function adminAccountLabel(email: string | null | undefined): string | null {
+  const ref = closedAccountRef(email);
+  if (ref !== null) return `Deleted account ${ref}`;
+  return typeof email === 'string' && email !== '' ? email : null;
+}

@@ -232,6 +232,26 @@ export function isBusinessOsCreditsBoostEnabled(): boolean {
 }
 
 /**
+ * The customer self-delete's off switch (data export DE-10b.2, SA Review 2
+ * TQ-10, workplan §2.1): may a signed-in owner delete their own account from
+ * Settings → Danger Zone?
+ *
+ * **SERVER-ONLY. Default off.** On only for the exact string `true`: unset,
+ * blank, `1`, `TRUE ` and anything else are off, because this gates an
+ * irreversible erasure. No `NEXT_PUBLIC_` prefix: the browser learns the state
+ * only from `GET /api/business-os/account/deletion-check`, which answers
+ * `{ enabled: false }` while it is off (the Danger Zone keeps today's body),
+ * and `POST /api/business-os/account/delete` answers 404.
+ *
+ * Rollback is unsetting it and redeploying. No data changes with it.
+ *
+ * @returns {boolean} True only when `BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED` is exactly `true`
+ */
+export function isAccountSelfDeleteEnabled(): boolean {
+  return process.env.BUSINESS_OS_ACCOUNT_SELF_DELETE_ENABLED === 'true';
+}
+
+/**
  * Get all feature flags status.
  *
  * ⚠️ **Debug helper only — it has NO production consumer**, by design. Nothing

@@ -335,6 +335,8 @@ export async function GET(request: NextRequest) {
           mrr: { status: mrr.status, currencies: mrr.lines.length },
           // MK-5b: Converted this month, its status only (the counts are in `counts.converted`).
           converted: payload.converted?.status ?? 'not_built',
+          // MK-9: F-K5's breakdown, the trial part's status only (its counts are in `counts.payingBreakdown`).
+          payingBreakdown: payload.payingBreakdown?.trials.status ?? 'not_built',
           paymentProblems: {
             block: payload.paymentProblems.status,
             overdueInvoices: payload.paymentProblems.overdueInvoices.status,

@@ -40,9 +40,14 @@ const SESSION_ID = /^cs_(test|live)_[A-Za-z0-9]{1,190}$/;
  * are not credit figures (the credit-figure guard scans this file).
  */
 const POLL_DELAYS_SECONDS = [2, 5, 10, 20, 40] as const;
-export const BOOST_RETURN_POLL_DELAYS_MS: readonly number[] = POLL_DELAYS_SECONDS.map((seconds) => seconds * 1000);
+/**
+ * Written as `1e3`: since the 2026-10-25 re-size the trial allowance is 1,000
+ * credits, so the guard reads a bare thousand as a credit figure. Not one.
+ */
+const MS_PER_SECOND = 1e3;
+export const BOOST_RETURN_POLL_DELAYS_MS: readonly number[] = POLL_DELAYS_SECONDS.map((seconds) => seconds * MS_PER_SECOND);
 /** How long "Credits added." stays before the notice hides itself. */
-export const BOOST_RETURN_CREDITED_HIDE_MS = 8 * 1000;
+export const BOOST_RETURN_CREDITED_HIDE_MS = 8 * MS_PER_SECOND;
 
 type NoticeState = 'hidden' | 'received' | 'credited' | 'still_confirming' | 'awaiting' | 'failed' | 'expired' | 'under_review';
 

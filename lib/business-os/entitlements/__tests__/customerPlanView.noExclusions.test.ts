@@ -158,9 +158,10 @@ describe('no plan is described by what it withholds', () => {
    * The comparison (UM-D1, C-18), every level an exact allow-list. A cell is a
    * boolean, a string-or-null and a boolean: there is nowhere to put a list.
    */
-  const COMPARISON_KEYS = ['planIds', 'sections'].sort();
+  // LF-2 (2026-10-20): `current` (the account's own plan id, or null) and each row's `current` cell.
+  const COMPARISON_KEYS = ['planIds', 'current', 'sections'].sort();
   const SECTION_KEYS = ['section', 'labelKey', 'rows'].sort();
-  const COMPARISON_ROW_KEYS = ['row', 'label', 'cells'].sort();
+  const COMPARISON_ROW_KEYS = ['row', 'label', 'cells', 'current'].sort();
   const CELL_KEYS = ['planId', 'included', 'value', 'highlight'].sort();
 
   /** One plan in `plans` (P-4.2): a name, a price and a flag; no list to hide an exclusion in. */
@@ -220,12 +221,14 @@ describe('no plan is described by what it withholds', () => {
       expect(view.comparison).not.toBeNull();
       const comparison = view.comparison!;
       expect(Object.keys(comparison).sort()).toEqual(COMPARISON_KEYS);
+      expect(comparison.current === null || Object.keys(comparison.current).join() === 'planId').toBe(true);
       expect(comparison.sections.length).toBeGreaterThan(0);
       for (const section of comparison.sections) {
         expect(Object.keys(section).sort()).toEqual(SECTION_KEYS);
         for (const row of section.rows) {
           expect(Object.keys(row).sort()).toEqual(COMPARISON_ROW_KEYS);
-          for (const cell of row.cells) {
+          // LF-2: the own-plan cell is a cell like any other, held to the same allow-list.
+          for (const cell of row.current ? [...row.cells, row.current] : row.cells) {
             expect(Object.keys(cell).sort()).toEqual(CELL_KEYS);
             expect(typeof cell.included).toBe('boolean');
             expect(typeof cell.highlight).toBe('boolean');

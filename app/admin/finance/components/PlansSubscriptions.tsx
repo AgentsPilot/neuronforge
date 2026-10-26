@@ -23,15 +23,18 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { clientLogger } from '@/lib/logger/client';
-import { formatMinorAmount } from '@/lib/business-os/currency';
 import { AdminEmpty, AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_FIELD_CONTROL, ADMIN_FIELD_LABEL } from '@/app/admin/components/layout/AdminFilterBar';
 import { ADMIN_COUNT_LINE } from '@/app/admin/components/layout/adminTable';
 import { formatCount, formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { StatusChip } from '@/app/admin/components/layout/StatusChip';
-import type { SubscriptionStatus, SubscriptionsMrrLine, SubscriptionsPayload } from '@/lib/admin/billing/subscriptionsTypes';
+import type { SubscriptionPlanName, SubscriptionStatus, SubscriptionsPayload } from '@/lib/admin/billing/subscriptionsTypes';
 import { SubscriptionsTable } from './SubscriptionsTable';
+import { money, mrrParts } from '../plansMoney';
+import { PLAN_DRAWER } from '../financeCopy';
+import { useBusinessQuickLook, useOpenBusinessAccountId } from './BusinessDrawer';
+import { PlanDrawer } from './PlanDrawer';
 import {
   EMPTY_ALL,
   EMPTY_ALL_HINT,
@@ -39,9 +42,7 @@ import {
   MODE_BADGE,
   MRR_LABEL,
   MRR_NONE,
-  MRR_PAST_DUE_COUNTED,
   MRR_PAST_DUE_NOT_COUNTED,
-  MRR_UNKNOWN_CURRENCY,
   PAID_ACCOUNTS_LABEL,
   STATUS_FILTER_ORDER,
   STATUS_LABEL,
@@ -58,19 +59,7 @@ const logger = clientLogger.child({ module: 'AdminFinancePlansSubscriptions' });
 
 export const SUBSCRIPTIONS_ROUTE = '/api/admin/business-os/billing/subscriptions';
 
-function money(hundredths: number, currency: string | null): string {
-  // An unreadable currency code is never assumed to be USD.
-  if (currency === null) return `${MRR_UNKNOWN_CURRENCY} ${formatCount(hundredths)} (hundredths)`;
-  return formatMinorAmount(hundredths, currency, 'en-US');
-}
-
-function mrrParts(line: SubscriptionsMrrLine): string {
-  const parts = [`${formatCount(line.subscriptions)} subscription${line.subscriptions === 1 ? '' : 's'}`];
-  if (line.cancellingHundredths > 0) parts.push(`of which cancelling ${money(line.cancellingHundredths, line.currency)}`);
-  if (line.pastDueHundredths > 0) parts.push(`of which ${MRR_PAST_DUE_COUNTED} ${money(line.pastDueHundredths, line.currency)}`);
-  if (line.overflow) parts.push('not exact');
-  return parts.join(' · ');
-}
+// Money MK-8: the MRR line formatters moved to `../plansMoney`, so the plan drawer shares them.
 
 export function PlansSubscriptions({
   status,
@@ -84,6 +73,11 @@ export function PlansSubscriptions({
   const [error, setError] = useState<string | null>(null);
   const readSeq = useRef(0);
   const selectId = useId();
+  // Money MK-8: the plan drawer (its own read on open) and the business drawer for a row (the page's provider).
+  const [planOpen, setPlanOpen] = useState<SubscriptionPlanName | null>(null);
+  const planOpenerRef = useRef<HTMLElement | null>(null);
+  const openBusiness = useBusinessQuickLook();
+  const openAccountId = useOpenBusinessAccountId();
 
   const load = useCallback(async () => {
     readSeq.current += 1;
@@ -190,7 +184,24 @@ export function PlansSubscriptions({
             <dd className="text-sm text-white" data-testid="plans-subscriptions-paid">
               <span className="font-semibold tabular-nums">{formatCount(paidAccounts)}</span>{' '}
               <span className="text-xs text-slate-400">
-                {totals.paidByPlan.map((plan) => `${plan.name} ${formatCount(plan.accounts)}`).join(' · ')}
+                {/* MK-8: each plan opens its plan drawer; the words are unchanged. */}
+                {totals.paidByPlan.map((plan, index) => (
+                  <span key={plan.id}>
+                    {index > 0 && ' · '}
+                    <button
+                      type="button"
+                      title={PLAN_DRAWER.open(plan.name)}
+                      data-testid={`plans-subscriptions-plan-${plan.id}`}
+                      onClick={(event) => {
+                        planOpenerRef.current = event.currentTarget;
+                        setPlanOpen({ id: plan.id, name: plan.name });
+                      }}
+                      className="underline decoration-dotted hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-400"
+                    >
+                      {`${plan.name} ${formatCount(plan.accounts)}`}
+                    </button>
+                  </span>
+                ))}
               </span>
             </dd>
           </div>
@@ -213,10 +224,20 @@ export function PlansSubscriptions({
             <p data-testid="plans-subscriptions-count" className={ADMIN_COUNT_LINE}>
               {countLine(data.rows.length, data.matching)}
             </p>
-            <SubscriptionsTable rows={data.rows} />
+            <SubscriptionsTable
+              rows={data.rows}
+              openAccountId={openAccountId}
+              onQuickLook={
+                openBusiness
+                  ? (row, opener) =>
+                      openBusiness({ accountId: row.accountId, name: { name: row.businessName, platform: false }, withBilling: true }, opener)
+                  : undefined
+              }
+            />
           </>
         )}
       </div>
+      <PlanDrawer plan={planOpen} onClose={() => setPlanOpen(null)} onReturnFocus={() => planOpenerRef.current?.focus()} />
     </section>
   );
 }

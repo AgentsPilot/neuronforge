@@ -72,6 +72,8 @@ import {
 } from '../financeCopy';
 import { atLeast, formatCredits, formatMoney, formatUsd } from '../financeFormat';
 import { groupLabel } from './AccountsByPlanSection';
+// Money MK-8: the row's quick look (the Finance business drawer), when the page mounts it.
+import { useBusinessRowOpen, type BusinessDrawerTarget } from './BusinessDrawer';
 
 const NOTE = 'block text-[11px] text-slate-400';
 const LINK = 'text-xs text-purple-300 underline hover:text-purple-200';
@@ -187,6 +189,8 @@ export function AccountEconomicsTable({
   deleted: FinanceEconomicsDeletedRow | null;
   window: Pick<FinanceWindowInfo, 'preset' | 'from' | 'to'>;
 }) {
+  // Money MK-10: the rows open like the Businesses rows (D-17), when the drawer is mounted.
+  const opener = useBusinessRowOpen();
   return (
     <div className={ADMIN_TABLE_WRAP}>
       <table className={ADMIN_TABLE} data-testid="econ-table">
@@ -206,6 +210,7 @@ export function AccountEconomicsTable({
               <span className={`${NOTE} normal-case tracking-normal`}>{ECON_CREDITS_NOTE}</span>
             </th>
             <th scope="col" className={ADMIN_TH}>{ECON_OPEN}</th>
+            {opener?.header}
           </tr>
         </thead>
         <tbody className={ADMIN_TBODY}>
@@ -213,8 +218,11 @@ export function AccountEconomicsTable({
             const business = businessText(row);
             // QA B-1: only an account the one-account view can open (it has a plan row).
             const linked = row.kind !== 'platform' && !row.noPlanRow;
+            const target: BusinessDrawerTarget | null = linked
+              ? { accountId: row.accountId, name: { name: row.nameStatus === 'found' ? row.name : null, platform: false } }
+              : null;
             return (
-              <tr key={row.accountId} data-testid={`econ-row-${row.accountId}`}>
+              <tr key={row.accountId} data-testid={`econ-row-${row.accountId}`} {...opener?.rowProps(target)}>
                 <th scope="row" className={`${ADMIN_TD} font-normal text-slate-200`} title={row.accountId}>
                   {business}
                 </th>
@@ -256,6 +264,7 @@ export function AccountEconomicsTable({
                     </Link>
                   )}
                 </td>
+                {opener?.cell(target, business)}
               </tr>
             );
           })}
@@ -279,6 +288,8 @@ export function AccountEconomicsTable({
               </td>
               <td className={ADMIN_TD_NUM} />
               <td className={ADMIN_TD} />
+              {/* MK-10: the Open column, empty: a deleted account is not a business to open. */}
+              {opener?.cell(null, '')}
             </tr>
           )}
         </tbody>

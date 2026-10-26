@@ -27,6 +27,7 @@ import {
 } from '@/app/admin/components/layout/adminTable';
 import { formatUtc } from '@/app/admin/components/layout/adminFormat';
 import { OpenRowButton } from '@/app/admin/components/layout/OpenRowButton';
+import { rowOpenTarget } from '@/app/admin/components/layout/rowOpenClick';
 import { ADMIN_NETWORK_ERROR, readAdminResponse } from '@/app/admin/components/layout/readAdminResponse';
 import { useAdminFilters } from '@/app/admin/components/layout/useAdminFilters';
 import { BusinessDetail } from './components/BusinessDetail';
@@ -45,21 +46,10 @@ const logger = clientLogger.child({ module: 'AdminUsersPage' });
 /** One row of the list route (the type moved to `types.ts` in L-4b). */
 type User = AdminUserRow;
 
-/**
- * D-17 (user, 2026-10-11): a click anywhere on a row also opens it, but never
- * a click on a control inside the row (SA Q-1 rule 2). The Open button is in
- * this list too, so a click on it opens once, through the button only.
- */
-const ROW_CONTROL_SELECTOR =
-  'button, a, input, select, textarea, label, summary, [role="button"], [role="link"], [contenteditable="true"]';
-
-/** The admin is selecting text inside this row (SA Q-1 rule 3): a click then is not an "open". */
-function isSelectingIn(row: HTMLElement): boolean {
-  const selection = typeof window === 'undefined' ? null : window.getSelection();
-  if (!selection || selection.isCollapsed) return false;
-  const { anchorNode, focusNode } = selection;
-  return Boolean((anchorNode && row.contains(anchorNode)) || (focusNode && row.contains(focusNode)));
-}
+// D-17 (user, 2026-10-11): a click anywhere on a row also opens it. The rules
+// (never a control inside the row, never while selecting text, always through
+// the row's Open button) are the shared `rowOpenTarget` since Money MK-10
+// (SA-Q-MK10-1), so this page and Finance cannot drift.
 
 /** The business line of a row: the business name, or why there is none. */
 function businessLabel(user: User): { text: string; muted: boolean } {
@@ -413,14 +403,7 @@ export default function UsersPage() {
    * the row, so focus returns to the button whichever path opened it.
    */
   const handleRowClick = (event: React.MouseEvent<HTMLTableRowElement>, user: User) => {
-    const row = event.currentTarget;
-    const target = event.target;
-    if (target instanceof Element) {
-      const control = target.closest(ROW_CONTROL_SELECTOR);
-      if (control && row.contains(control)) return;
-    }
-    if (isSelectingIn(row)) return;
-    const button = row.querySelector<HTMLButtonElement>('[data-testid="row-open"]');
+    const button = rowOpenTarget(event);
     if (!button) return;
     openRow(user, button);
   };

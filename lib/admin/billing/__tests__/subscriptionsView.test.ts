@@ -9,6 +9,8 @@ import type { BusinessOsAccountPlan } from '@/lib/repositories/BusinessOsAccount
 import { getEntitlementConfig } from '@/lib/business-os/entitlements/source';
 import { planLabel, planMonthlyPriceUsd } from '@/lib/business-os/entitlements/planPresentation';
 import { buildSubscriptions, catalogPriceOf } from '../subscriptionsView';
+// Money MK-8: a separate import, so the line above stays unedited.
+import { buildPlanSubscriptions, subscriptionsMrr } from '../subscriptionsView';
 import { SUBSCRIPTIONS_ROW_CAP, type SubscriptionStatus } from '../subscriptionsTypes';
 
 const config = getEntitlementConfig();
@@ -248,5 +250,102 @@ describe('filter and cap', () => {
   it('carries the mode and the server clock', () => {
     const result = build([], []);
     expect(result).toMatchObject({ mode: 'test', generatedAt: NOW.toISOString(), status: null, matching: 0 });
+  });
+});
+
+// ── Money MK-8: the plan drawer's builder (one plan's accounts, statuses and MRR) ──
+describe('buildPlanSubscriptions (MK-8)', () => {
+  const OTHER = config.tierOrder.find((tier) => tier !== LOW) ?? null;
+  const buildPlan = (billingRows: AdminBillingRow[], planRows: BusinessOsAccountPlan[], planId = LOW) =>
+    buildPlanSubscriptions({ billingRows, planRows, config, now: NOW, mode: 'test', status: null, planId });
+
+  it('only the plan’s billing rows: its MRR equals subscriptionsMrr over those rows, and paid accounts name only it', () => {
+    if (OTHER === null) return; // one-plan config: nothing to separate
+    const rows = [billing(1), billing(2, { bought_tier: OTHER }), billing(3, { cancel_at_period_end: true })];
+    const result = buildPlan(rows, [plan(1), plan(2, { tier: OTHER }), plan(3)]);
+    expect(result.rows.map((r) => r.accountId).sort()).toEqual([account(1), account(3)]);
+    expect(result.totals.mrr).toEqual(subscriptionsMrr([rows[0], rows[2]], config, 'test').lines);
+    expect(result.totals.paidByPlan).toEqual([{ id: LOW, name: planLabel(config, LOW), accounts: 2 }]);
+    expect(result.totals.accounts).toBe(2);
+  });
+
+  it('a plan row on the plan with no billing row in this mode is listed as No Stripe', () => {
+    const result = buildPlan([], [plan(7)]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toEqual(expect.objectContaining({ accountId: account(7), status: 'no_stripe', planBought: null }));
+    expect(result.totals.mrr).toEqual([]);
+  });
+
+  it('an account billed on ANOTHER plan is not this plan’s, even when its plan row says this plan', () => {
+    if (OTHER === null) return;
+    const result = buildPlan([billing(4, { bought_tier: OTHER })], [plan(4, { tier: LOW })]);
+    expect(result.rows).toEqual([]);
+  });
+
+  it('a test-mode-only row for a live read: the live list has the plan row as No Stripe, never the test billing', () => {
+    const result = buildPlanSubscriptions({
+      billingRows: [billing(5)],
+      planRows: [plan(5)],
+      config,
+      now: NOW,
+      mode: 'live',
+      status: null,
+      planId: LOW,
+    });
+    expect(result.rows.map((r) => r.status)).toEqual(['no_stripe']);
+    expect(result.totals.mrr).toEqual([]);
+  });
+
+  it('the cap is the list’s own; matching counts every row of the plan', () => {
+    const many = Array.from({ length: SUBSCRIPTIONS_ROW_CAP + 5 }, (_, i) => billing(i + 1));
+    const result = buildPlan(many, many.map((_, i) => plan(i + 1)));
+    expect(result.rows).toHaveLength(SUBSCRIPTIONS_ROW_CAP);
+    expect(result.matching).toBe(SUBSCRIPTIONS_ROW_CAP + 5);
+  });
+
+  it('a plan id with no rows: an empty list and no MRR, never another plan’s figures', () => {
+    const result = buildPlan([billing(1)], [plan(1)], 'no-such-plan');
+    expect(result.rows).toEqual([]);
+    expect(result.totals.mrr).toEqual([]);
+  });
+});
+
+// ── SA-CR-MK8 CR-1 (QA probe, made permanent): each account lands in exactly one plan drawer ──
+describe('buildPlanSubscriptions CR-1: one predicate with the list and MRR', () => {
+  const OTHER = config.tierOrder.find((tier) => tier !== LOW) ?? null;
+  const buildPlan = (billingRows: AdminBillingRow[], planRows: BusinessOsAccountPlan[], planId: string) =>
+    buildPlanSubscriptions({ billingRows, planRows, config, now: NOW, mode: 'test', status: null, planId });
+
+  it('a stale bought_tier on a row with no subscription status: the account is in its plan row’s drawer only, never in both', () => {
+    if (OTHER === null) return; // one-plan config: nothing to separate
+    // QA's probe: no subscription status, but bought_tier still LOW; the plan row is on OTHER.
+    const stale = billing(8, { subscription_status: null, bought_tier: LOW });
+    const planRows = [plan(8, { tier: OTHER })];
+    const low = buildPlan([stale], planRows, LOW);
+    const other = buildPlan([stale], planRows, OTHER);
+    const inLow = low.rows.some((r) => r.accountId === account(8));
+    const inOther = other.rows.some((r) => r.accountId === account(8));
+    expect({ inLow, inOther }).toEqual({ inLow: false, inOther: true });
+    expect(other.rows.find((r) => r.accountId === account(8))?.status).toBe('no_stripe');
+    expect(low.totals.mrr).toEqual([]);
+  });
+
+  it('every account of the list is in exactly one plan drawer, and the drawers’ MRR adds up per currency to the list’s', () => {
+    const rows = [
+      billing(1),
+      billing(2, { bought_tier: OTHER ?? LOW }),
+      billing(3, { subscription_status: null, bought_tier: LOW }),
+      billing(4, { subscription_status: 'past_due' }),
+    ];
+    const planRows = [plan(1), plan(2, { tier: OTHER ?? LOW }), plan(3, { tier: OTHER ?? LOW }), plan(4), plan(5)];
+    const list = build(rows, planRows);
+    const drawers = config.tierOrder.map((tier) => buildPlan(rows, planRows, tier));
+    for (const row of list.rows) {
+      const holders = drawers.filter((d) => d.rows.some((r) => r.accountId === row.accountId)).length;
+      expect({ account: row.accountId, holders }).toEqual({ account: row.accountId, holders: 1 });
+    }
+    const total = (lines: Array<{ currency: string | null; totalHundredths: number }>) =>
+      lines.filter((l) => l.currency === 'USD').reduce((sum, l) => sum + l.totalHundredths, 0);
+    expect(drawers.reduce((sum, d) => sum + total(d.totals.mrr), 0)).toBe(total(list.totals.mrr));
   });
 });

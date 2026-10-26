@@ -116,11 +116,26 @@ function pg2(source: string) {
   expect(row).toContain('onClick={planDrawer.openFromRow}');
 }
 
+/** UM-D3: the decider's `usePlanSurface({ … })` options. */
+const surfaceCall = (source: string) => braceBlock(source, 'const planSurface = usePlanSurface(');
+
+/**
+ * P-G3, re-mapped by UM-D3 (D3-12): the DECIDER takes the page's set, once per
+ * open, and hands it on; the section takes the decider's hand-over. Was: the
+ * section took `planPrefetch.take` itself. The marker expression is still the
+ * same, byte for byte, in both places (C-11).
+ */
 function pg3(source: string) {
   const element = sectionElement(source);
   // SA condition C-11: the marker expression, byte for byte.
   expect(element).toContain("checkoutMarker={searchParams?.get('checkout') ?? null}");
-  expect(element).toContain('takePrefetched={planPrefetch.take}');
+  expect(element).toContain('takePrefetched={planSurface.takeForDrawer}');
+  const call = surfaceCall(source);
+  expect(call).toContain('open: planDrawer.open,');
+  expect(call).toContain("checkoutMarker: searchParams?.get('checkout') ?? null,");
+  expect(call).toContain('takePrefetched: planPrefetch.take,');
+  // The decider is the page set's only taker.
+  expect(source.match(/planPrefetch\.take\b/g) ?? []).toHaveLength(1);
 }
 
 function pg4(source: string) {
@@ -128,6 +143,8 @@ function pg4(source: string) {
     expect(block).not.toContain('planPrefetch');
     expect(block).not.toContain('startPlanDrawerRead');
     expect(block).not.toContain('planWarmSpent');
+    // UM-D3 (D3-8): nor the decider, which takes the set when the surface opens.
+    expect(block).not.toContain('planSurface');
   }
 }
 
@@ -283,8 +300,18 @@ describe('negative controls: each pin fails on the mutation it exists for', () =
   });
 
   it('P-G3 fails without takePrefetched, or with the marker expression changed', () => {
-    expect(() => pg3(without('takePrefetched={planPrefetch.take}'))).toThrow();
+    expect(() => pg3(without('takePrefetched={planSurface.takeForDrawer}'))).toThrow();
     expect(() => pg3(without("checkoutMarker={searchParams?.get('checkout') ?? null}", "checkoutMarker={searchParams?.get('checkout') || null}"))).toThrow();
+  });
+
+  it('P-G3 (UM-D3) fails when the section takes the page set itself, the decider loses it, or its marker changes', () => {
+    expect(() => pg3(without('takePrefetched={planSurface.takeForDrawer}', 'takePrefetched={planPrefetch.take}'))).toThrow();
+    expect(() => pg3(without('takePrefetched: planPrefetch.take,', 'takePrefetched: () => null,'))).toThrow();
+    expect(() => pg3(without("checkoutMarker: searchParams?.get('checkout') ?? null,", 'checkoutMarker: null,'))).toThrow();
+  });
+
+  it('P-G4 (UM-D3) fails when the deep-link effect names the decider', () => {
+    expect(() => pg4(without('openPlanFromLink();', 'planSurface.takeForDrawer(); openPlanFromLink();'))).toThrow();
   });
 
   it('P-G4 fails when loadData or the deep-link effect warms', () => {

@@ -14,7 +14,10 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { CLEANUP_FUNCTION_VERSION } from '@/lib/business-os/test-account-cleanup/cleanupFunctionVersion.generated';
+// The stamp of the applied 20261081 cleanup function. Was the generated CLEANUP_FUNCTION_VERSION; 20261092
+// (the meeting links) moved that on (2026-10-24). The DE-10b.1 checker is a point-in-time check for the
+// 20261080 + 20261081 apply, so its row 11 reads FAIL by design once 20261092 is live (DE-8a precedent).
+const CLEANUP_FUNCTION_VERSION = '2bd40a46795e4555';
 
 const ROOT = process.cwd();
 const read = (...parts: string[]) => readFileSync(join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
@@ -208,8 +211,10 @@ describe('the pre-check and the checker pin the right function versions (workpla
     expect(PRECHECK).toContain("pg_catalog.to_regclass('public.business_os_deletion_receipts') IS NULL");
   });
 
-  it('the checker requires the stamp this build pins, and the 6 argument function gone', () => {
+  it('the checker requires the 20261081 stamp, and the 6 argument function gone', () => {
     expect(CHECKER).toContain(`position('${CLEANUP_FUNCTION_VERSION}' in p.prosrc) > 0`);
+    // Cross-checked against the applied file, so the literal above cannot drift from it.
+    expect(read('supabase', 'migrations', '20261081_operator_account_cleanup_anonymise.sql')).toContain(`'version', '${CLEANUP_FUNCTION_VERSION}'`);
     expect(CHECKER).toContain("pg_catalog.to_regprocedure('public.operator_test_account_cleanup(text, text, text, text, uuid, text)') IS NULL");
   });
 });
