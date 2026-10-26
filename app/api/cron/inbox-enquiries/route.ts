@@ -20,7 +20,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { withCronRunRecord } from '@/lib/cron/cronRunRecorder';
-import { runInboxChannels } from '@/lib/business-os/leads/inboxChannelRunner';
+
+/*
+ * `runInboxChannels` IS NOT IMPORTED HERE. It is loaded inside the handler.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY, AND IT IS NOT A STYLE CHOICE
+ *
+ * The runner reaches the whole workflow engine, and one module on that path
+ * throws while it is being EVALUATED rather than when it is called:
+ *
+ *   inboxChannelRunner → @/lib/pilot → lib/orchestration/RoutingService
+ *                      → lib/supabaseAdmin, which throws
+ *                        "Missing Supabase environment variables" at import
+ *                        unless `SUPABASE_URL` is set.
+ *
+ * `SUPABASE_URL` is a SEPARATE variable from `NEXT_PUBLIC_SUPABASE_URL`, and a
+ * deployment that has only the prefixed one builds every other route and dies
+ * on this one. Measured twice on 2026-10-25: the same chain took out the jest
+ * run (fixed with an env stub) and then the Vercel deployment, while the local
+ * build and GitHub's `next build` both passed, because both environments
+ * happened to have it.
+ *
+ * Imported lazily, nothing on that path is evaluated at build time, so this
+ * route can be compiled and deployed by an environment that is missing a
+ * variable it only needs at RUN time — and if it is still missing when the
+ * cron fires, the catch below turns it into a logged 500 for one invocation
+ * instead of a failed deploy for the whole application.
+ *
+ * It also keeps `lib/pilot` out of this function's bundle, which is a cron
+ * that reads mailboxes and has no business carrying the agent runtime.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 
 const logger = createLogger({ module: 'InboxEnquiriesCron' });
 
@@ -61,6 +92,8 @@ async function runJob(request: NextRequest) {
   }
 
   try {
+    /* Loaded here, not at the top of the file — see the note on the imports. */
+    const { runInboxChannels } = await import('@/lib/business-os/leads/inboxChannelRunner');
     const result = await runInboxChannels();
 
     /* Logged at info even when nothing happened: a channel that silently stops
