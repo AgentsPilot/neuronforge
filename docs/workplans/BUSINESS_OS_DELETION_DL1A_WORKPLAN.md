@@ -765,3 +765,24 @@ None. The claim is one indexed CTE; 120 rows across 4 workers ran without lock w
 - **Q-8:** anon / authenticated cannot CREATE in `public` (false / false).
 - **Q-9:** no row ≥ 20261093 in `supabase_migrations.schema_migrations` (migrations are applied by hand; the coordination file holds the reservations: 20261093 + 20261094 = DL-1a).
 - **Q-10** (spike baseline) is run only after the user approves the spike.
+
+## Spike result — 2026-10-26 (D1.1, run by the user on prod, TL read Q-10)
+
+Login: `meiribarak+closurespike@gmail.com` (id `00075df3-6d6c-41d4-be20-23b79b951203`, Champion, not admin, no live billing, no business). The script's tag guard was set to `+closurespike` for this login; the S-0 id match stayed the hard guard. GoTrue **v2.197.0**.
+
+| Step | Result |
+|---|---|
+| 1 | two sign-ins A and B: ok |
+| 3 | ban 10 years: ok (`banned_until` 2036-10-23) |
+| Q-10 after the ban (read at 20:32, after step 8) | **sessions 3, live refresh tokens 3** — the ban removed nothing |
+| 5 | `getUser` A/B: **403 user_banned** |
+| 6 | refresh A/B: **400 user_banned** |
+| 7 | new sign-in: **400 user_banned** |
+| 8 | global sign-out with the banned token: `user_banned` (refused); `getUser` after: 403 |
+| 5b | PostgREST read with the old access token: **200** — direct RLS reads keep working until the JWT expires |
+| 9 | unban ok, `banned_until` cleared, sign-in after unban ok, final global sign-out ok |
+| Q-10 after step 9 | banned_until NULL, sessions 0, refresh tokens 0 |
+
+Note: the user pressed Enter at pauses 2 and 4 before TL read Q-10, so the only mid-ban reading is the step-8 one; it is decisive (rows still present ~66 s after the ban).
+
+**Decision (§3.3 rule): KEEP the session-cut function.** A ban alone refuses the Auth API, refresh and sign-in at once, but leaves session and refresh-token rows in place, a banned user cannot sign itself out, and an already-issued access token still reads through PostgREST (5b = 200) until it expires. For DL-4 (D9): the error code a banned user sees is `user_banned` (403 on getUser, 400 on refresh/sign-in); lock copy must not promise that an open tab stops reading data instantly — the session cut removes refresh, and the JWT lifetime bounds the rest.
