@@ -2567,7 +2567,8 @@ describe('Money MK-1: block KPIs as headlines, with their leading icon', () => {
     render(<FinanceView />);
     const section = await screen.findByTestId('section-takings');
     const kpi = within(section).getByRole('group', { name: `${BLOCK_KPI_CLIENT_PAYMENTS_LABEL}, 3` });
-    expect(within(section).getByTestId('takings-body').firstElementChild).toBe(kpi);
+    // Block KPI 5-grid (2026-10-27): the headline is the first cell of the strip grid that opens the body.
+    expect(within(section).getByTestId('takings-body').firstElementChild?.firstElementChild).toBe(kpi);
     expect(within(kpi).getByTestId('takings-businesses')).toHaveTextContent('3');
     const icon = within(kpi).getByRole('button', { name: `${KPI_INDICATOR_WORDS.leading.name}. ${BLOCK_KPI_CLIENT_PAYMENTS_DEFINITION}` });
     expect(screen.getByTestId('takings-businesses-indicator')).toHaveAttribute('data-indicator', 'leading');
