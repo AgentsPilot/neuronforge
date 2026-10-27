@@ -2205,6 +2205,19 @@ The guard's own cost is about 3 s here; Dev measured 1.8 to 2.0 s. The standalon
 
 **Ship drill (RM, 2026-10-27):** `npm run build` passed. `tsc --noEmit` showed 0 errors in the touched files (1,860 pre-existing elsewhere) and did not run out of memory. Re-checked against `main` after the sync: register row 119 is the next free number, the audit split is 62 / 77 / 84 (223), and the nav total is 28. After the sync, 10 suites and 623 tests pass, and `test:authz-guard` passes 203. Secrets scan of the diff: clean.
 
+### PR 2: EC-3 and EC-4
+
+**Branch:** `feature/admin-environment-view-2` · **PR:** [#524](https://github.com/AgentsPilot/neuronforge/pull/524), EC-3 and EC-4 together, on auto-merge (merge commit) through the merge queue
+
+| Commit | Message |
+|---|---|
+| `4de3f0a7` | test(admin): environment catalogue drift guard (EC-3) |
+| `587cb3a7` | feat(admin): environment diagnostics, KPI strip, search and group filter (EC-4) |
+| `3b596527` | docs(admin): environment view EC-3 and EC-4 workplan, reviews and progress |
+| `f7cacd57` | Merge `origin/main` into the branch (no conflicts) |
+
+**Ship drill (RM, 2026-10-27):** `npm run build` passed. `tsc --noEmit` showed 0 errors in the touched files (1,860 pre-existing elsewhere) and did not run out of memory. EC-3 took only its own hunks of `catalogue.ts` (header, doc link) and `catalogue.test.ts` (the 133 pin); the TLS entry and the boost list kind went with EC-4. After the sync with `main`: 39 suites, 1,178 of 1,179 tests pass (the one failure is `oneAddressPolicy.guard`, Windows backslash paths, as on `main`); the sidebar nav pin, the `eventAudience` split and `test:authz-guard` (203) pass; the drift guard passes against `main`'s reads. Secrets scan of the staged diff: clean.
+
 ---
 
 ## Change History
@@ -2219,3 +2232,4 @@ The guard's own cost is about 3 s here; Dev measured 1.8 to 2.0 s. The standalon
 | 2026-10-27 | RM: commit, PR and auto-merge | EC-1 and EC-2 committed (`7d3b89a0`, `657f10b8`, `c866088e`), synced with `main` without conflicts, PR #522 opened on auto-merge. §7 filled in. |
 | 2026-10-27 | EC-3 and EC-4 workplans written | Dev, on `feature/admin-environment-view-2`. §3: the drift guard as one Jest file with pure scanner functions, plugin JSON and constant resolution (SA Q-2), the timing plan with a measured 1.24 to 1.32 s local scan, negative controls N-1 to N-14, questions Q3-1 to Q3-8. §4: closed diagnostic codes with `checkedAgainst` and null counts when not checked, the boost count through its reader (QA-3), the whitespace check, a five-tile KPI strip, search and a URL group filter, tests D/S-7/P4, questions Q4-1 to Q4-12. Header, overview and ToC updated. |
 | 2026-10-27 | EC-3 implemented: Code Complete | Dev. The drift guard with E3-1 (pinned sites with a count, no console output), E3-3 (byte prefilter; N-15 template-literal read) and Q3-2 to Q3-5. The 133 pin removed; docs step and `.env.example` pointer added. Guard about 1.8 to 2.0 s marginal locally, 3.1 s inside the full gate. Full local gate: 13 failing suites, all of them local-only, shown unchanged without the guard; no exemption needed. §3.6 ticked, §3.9 added. Requirement fold gaps closed (E4-6). |
+| 2026-10-27 | RM: PR 2 commit, PR and auto-merge | EC-3 and EC-4 committed (`4de3f0a7`, `587cb3a7`, docs `3b596527`), synced with `main` without conflicts (`f7cacd57`), PR #524 opened on auto-merge. §7 PR 2 block added. |
