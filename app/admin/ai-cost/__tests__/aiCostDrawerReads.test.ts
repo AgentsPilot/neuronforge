@@ -39,15 +39,31 @@ describe('readAiCostDrawer', () => {
   it('reads the report route once, no-store, and answers the data', async () => {
     respond(200, { success: true, data: { marker: 1 } });
     const key = aiCostDrawerKey({ from: '2026-10-01', to: '2026-10-16' }, A);
-    await expect(readAiCostDrawer(key, signal())).resolves.toEqual({ ok: true, data: { marker: 1 } });
+    await expect(readAiCostDrawer(key, signal())).resolves.toEqual({ ok: true, data: { kind: 'report', report: { marker: 1 } } });
     const calls = (global.fetch as jest.Mock).mock.calls;
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe(`${REPORT}?${key}`);
     expect(calls[0][1]).toMatchObject({ method: 'GET', cache: 'no-store' });
   });
 
-  it('409 platform_account: the page\'s own platform sentence', async () => {
+  // MK8B note / FU2-C1: a platform account is its own KIND, from the status AND the route's stable code.
+  it('409 platform_account: answered as the platform_account kind (data, not an error)', async () => {
     respond(409, { success: false, error: 'platform_account' });
+    await expect(readAiCostDrawer('k', signal())).resolves.toEqual({ ok: true, data: { kind: 'platform_account' } });
+  });
+
+  it('FU2-C1: any other 409 stays an error with its reason', async () => {
+    respond(409, { success: false, error: 'conflict' });
+    await expect(readAiCostDrawer('k', signal())).resolves.toEqual({ ok: false, message: 'conflict' });
+  });
+
+  it('FU2-C1: the platform code on another status is not the platform kind', async () => {
+    respond(400, { success: false, error: 'platform_account' });
+    await expect(readAiCostDrawer('k', signal())).resolves.toEqual({ ok: false, message: 'platform_account' });
+  });
+
+  it('the platform SENTENCE as a reason is just a reason (wording never decides the kind)', async () => {
+    respond(400, { success: false, error: COSTS_PLATFORM_ACCOUNT });
     await expect(readAiCostDrawer('k', signal())).resolves.toEqual({ ok: false, message: COSTS_PLATFORM_ACCOUNT });
   });
 

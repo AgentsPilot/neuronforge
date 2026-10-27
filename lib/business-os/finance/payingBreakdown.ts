@@ -11,6 +11,8 @@
  *    has no billing row with a subscription status; "Subscription ended or not
  *    paying" = it has one, and it is not paying (MK9-R4: the same "billed"
  *    predicate as the Subscriptions list, so "Assigned" is its "No Stripe").
+ *    A cut plan walk makes the split "at least" (MK9-FU-2): the page reads that
+ *    from the same walk's flag, carried on `trials.status`, so no key is added.
  *
  * 2. Trial-to-paid (BQ-23). The base is every trial that ENDED in the window
  *    `[start, end)` and by now (SA-CR-MK9 C-1: ended means before both the

@@ -29,14 +29,23 @@
  * business picked. Lists use the report's `formatUsd` (`$`, sub-cent kept);
  * credits are units, never money. Nothing is added across currencies: AI cost
  * is USD by definition (CUR-5).
+ *
+ * "OPEN FULL VIEW" IN PLACE (MK8B note, SA-WP-FU2 Q-3/Q-4; user 2026-10-27):
+ * a real link (new tab, copied address), and a plain left click applies the
+ * same switch in place through the page's `useAdminFilters` (the strip tiles'
+ * "real link, plain left click applies in place" contract, `isPlainLeftClick`).
+ * So no document load, and the switch replaces the history entry like every
+ * other in-page change here. The row that opened the drawer is gone once a
+ * business is picked, so focus goes to the Summary & checks tab instead.
  */
 
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { AdminDrawer, DrawerField, DrawerFields, DrawerSection } from '@/app/admin/components/layout/AdminDrawer';
 import { AdminError, AdminLoading, AdminNotice } from '@/app/admin/components/layout/AdminStates';
 import { ADMIN_TABLE, ADMIN_TABLE_WRAP, ADMIN_TBODY, ADMIN_TD, ADMIN_TD_NUM, ADMIN_TH, ADMIN_TH_NUM, ADMIN_THEAD } from '@/app/admin/components/layout/adminTable';
 import { useDrawerResource } from '@/app/admin/components/layout/useDrawerResource';
+import { isPlainLeftClick } from '@/app/admin/components/layout/KpiStrip';
 import { aboveTile, chargedValue, periodsTile, recordedValue } from '@/app/admin/business-os-llm/components/costs/AiCostKpis';
 import { PeriodCheckChip } from '@/app/admin/business-os-llm/components/costs/CostsSections';
 import { LeakCheckPanel } from '@/app/admin/business-os-llm/components/costs/LeakCheckPanel';
@@ -57,9 +66,12 @@ import type { CostPeriodFigures, CostReportPayload } from '@/app/admin/business-
 import { AI_COST_DRAWER } from '../aiCostDrawerCopy';
 import { aiCostDrawerKey, readAiCostDrawer } from '../aiCostDrawerReads';
 import { AiCostDrawerContext, aiCostBusinessName, targetKey, type AiCostDrawerTarget } from './aiCostRowOpen';
+import { aiCostTabId } from './AiCostTabs';
 
 /** "Open full view": the AI cost page with this business picked, same window, Summary & checks. */
 export type AiCostFullViewHref = (accountId: string, anchor: `#${string}` | null) => string;
+/** The same switch applied in place (the page's `setFilters`, then the anchor scrolled into view). */
+export type AiCostOpenFullView = (accountId: string, anchor: `#${string}` | null) => void;
 
 const NOTE = 'text-xs text-slate-400';
 const LINK =
@@ -207,23 +219,43 @@ function PeriodPart({ data, accountId, periodStart }: { data: CostReportPayload;
   );
 }
 
-function FullViewLink({ href }: { href: string }) {
+function FullViewLink({ href, onOpen }: { href: string; onOpen: () => void }) {
   return (
     <p>
-      <a href={href} data-testid="ai-cost-drawer-open-full" className={LINK}>
+      <a
+        href={href}
+        data-testid="ai-cost-drawer-open-full"
+        className={LINK}
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+          // Modified and non-left clicks keep the browser's own handling of the real address.
+          if (!isPlainLeftClick(event)) return;
+          event.preventDefault();
+          onOpen();
+        }}
+      >
         {AI_COST_DRAWER.openFull}
       </a>
     </p>
   );
 }
 
-function DrawerBody({ target, data, fullViewHref }: { target: AiCostDrawerTarget; data: CostReportPayload; fullViewHref: AiCostFullViewHref }) {
+function DrawerBody({
+  target,
+  data,
+  fullViewHref,
+  onFullView,
+}: {
+  target: AiCostDrawerTarget;
+  data: CostReportPayload;
+  fullViewHref: AiCostFullViewHref;
+  onFullView: AiCostOpenFullView;
+}) {
   if (target.kind === 'period') {
     return (
       <div className="space-y-5" data-testid="ai-cost-period-drawer-body">
         <PeriodPart data={data} accountId={target.accountId} periodStart={target.periodStart} />
         <WindowFigures data={data} title={AI_COST_DRAWER.businessSection} />
-        <FullViewLink href={fullViewHref(target.accountId, '#costs-periods')} />
+        <FullViewLink href={fullViewHref(target.accountId, '#costs-periods')} onOpen={() => onFullView(target.accountId, '#costs-periods')} />
       </div>
     );
   }
@@ -232,7 +264,7 @@ function DrawerBody({ target, data, fullViewHref }: { target: AiCostDrawerTarget
       <WindowFigures data={data} title={AI_COST_DRAWER.windowSection} />
       <PeriodsList data={data} />
       <LeakCheckPanel accountId={target.accountId} accountLabel={aiCostBusinessName(target)} variant="drawer" />
-      <FullViewLink href={fullViewHref(target.accountId, null)} />
+      <FullViewLink href={fullViewHref(target.accountId, null)} onOpen={() => onFullView(target.accountId, null)} />
     </div>
   );
 }
@@ -247,12 +279,17 @@ export interface AiCostDrawerProviderProps {
   /** The page's report failure, shown in an open drawer instead of a silent wait (C-4). */
   pageError: string | null;
   fullViewHref: AiCostFullViewHref;
+  /** "Open full view" applied in place (a plain left click on the link). */
+  openFullView: AiCostOpenFullView;
   children: ReactNode;
 }
 
-export function AiCostDrawerProvider({ window, pageError, fullViewHref, children }: AiCostDrawerProviderProps) {
+export function AiCostDrawerProvider({ window, pageError, fullViewHref, openFullView, children }: AiCostDrawerProviderProps) {
   const [target, setTarget] = useState<AiCostDrawerTarget | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  // Set just before a full-view close: the opener row is unmounted by then (a picked business has no
+  // openers, MK-8 N-5), so focus goes to the tab the user was sent to (SA-Q-FU2-3).
+  const closedForFullViewRef = useRef(false);
   const key = target !== null && window !== null ? aiCostDrawerKey(window, target.accountId) : null;
   const state = useDrawerResource(key, readAiCostDrawer);
 
@@ -261,18 +298,36 @@ export function AiCostDrawerProvider({ window, pageError, fullViewHref, children
     setTarget(next);
   }, []);
   const value = useMemo(() => ({ open, openKey: target ? targetKey(target) : null }), [open, target]);
+  const onFullView = useCallback<AiCostOpenFullView>(
+    (accountId, anchor) => {
+      closedForFullViewRef.current = true;
+      setTarget(null);
+      openFullView(accountId, anchor);
+    },
+    [openFullView]
+  );
+  const returnFocus = useCallback(() => {
+    if (closedForFullViewRef.current) {
+      closedForFullViewRef.current = false;
+      // preventScroll: the period drawer's anchor scroll must not be undone.
+      document.getElementById(aiCostTabId('checks'))?.focus({ preventScroll: true });
+      return;
+    }
+    openerRef.current?.focus();
+  }, []);
 
   let body: ReactNode = null;
   if (target !== null) {
     if (window === null && pageError !== null) body = <AdminError message={pageError} testId="ai-cost-drawer-error" />;
-    else if (state.kind === 'ready') body = <DrawerBody target={target} data={state.data} fullViewHref={fullViewHref} />;
-    else if (state.kind === 'error')
+    else if (state.kind === 'ready')
+      // A platform account is told by the read's kind (409 + `platform_account`), never by the wording.
       body =
-        state.message === COSTS_PLATFORM_ACCOUNT ? (
-          <AdminNotice testId="ai-cost-drawer-platform">{state.message}</AdminNotice>
+        state.data.kind === 'platform_account' ? (
+          <AdminNotice testId="ai-cost-drawer-platform">{COSTS_PLATFORM_ACCOUNT}</AdminNotice>
         ) : (
-          <AdminError message={state.message} testId="ai-cost-drawer-error" />
+          <DrawerBody target={target} data={state.data.report} fullViewHref={fullViewHref} onFullView={onFullView} />
         );
+    else if (state.kind === 'error') body = <AdminError message={state.message} testId="ai-cost-drawer-error" />;
     else body = <AdminLoading what={AI_COST_DRAWER.what} />;
   }
 
@@ -282,7 +337,7 @@ export function AiCostDrawerProvider({ window, pageError, fullViewHref, children
       <AdminDrawer
         open={target !== null}
         onClose={() => setTarget(null)}
-        onReturnFocus={() => openerRef.current?.focus()}
+        onReturnFocus={returnFocus}
         title={target ? aiCostBusinessName(target) : AI_COST_DRAWER.titleFallback}
         titleSuffix={target?.kind === 'period' ? AI_COST_DRAWER.periodTitleSuffix(formatDay(target.periodStart)) : undefined}
         testId="ai-cost-drawer"
