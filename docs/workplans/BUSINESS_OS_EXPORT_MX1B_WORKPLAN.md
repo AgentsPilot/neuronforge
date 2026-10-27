@@ -877,7 +877,12 @@ Local dev uses the shared production database, and TL ruled no app run, no email
 
 ## Commit Info
 
-*(RM populates this section.)*
+| Field | Value |
+|---|---|
+| Branch | `feature/bos-export-mx1b-route-drawer` |
+| Commit | `88648e6c` (feature), merge of `origin/main` `f60ea30b` |
+| PR | [#544](https://github.com/AgentsPilot/neuronforge/pull/544), merge commit via auto-merge + merge queue |
+| Date | 2026-10-27 |
 
 ---
 
@@ -893,3 +898,4 @@ Local dev uses the shared production database, and TL ruled no app run, no email
 | 2026-10-27 | Dev fixes for SA code review CR-1…CR-5 | CR-1: the "started" sentence also goes into the drawer's polite status region, with the address in `<bdi>`, and the toast is kept. CR-3: the toast address is wrapped in FSI/PDI. CR-2: a daily limit with no `retryAt` maps to `failed`. CR-4: the Hebrew email isolates the date and "time (UTC)" (`<bdi>` in the HTML, FSI/PDI in the text). CR-5: the redundant cast is dropped. 17 suites, 297 tests pass. tsc: 0 errors in touched files, no OOM. ESLint clean. Uncommitted |
 | 2026-10-27 | QA report (full, Jest + in-memory harnesses) | PASS for the Jest scope. 3 QA files, 65 tests (route ↔ seam round trip, real-seam probe outcomes, stacking with a started in-flight request). 286 suites, 6,297 tests: 1 failure, `oneAddressPolicy`, pre-existing on `main`. tsc: 0 errors in touched files. Guards 3/4 and the callers guard proved with real planted files. QA added its route test to the callers-guard class allow-list (SA to confirm). Edge cases E-1…E-3 (Low). Browser and screen-reader items 1–10 left for TL. No live rows, no email |
 | 2026-10-27 | SA post-QA ruling | QA's `OWNER_ROUTE_QA_TEST` callers-guard entry is accepted (class rules only). E-2: guard check 4's title is fixed by the SA (title only). Both guard suites and both route suites pass, 122 tests |
+| 2026-10-27 | Committed and PR opened (RM) | `88648e6c` on `feature/bos-export-mx1b-route-drawer`, `origin/main` merged in cleanly (`f60ea30b`), slice suites 43 / 1,055 pass; PR #544 on auto-merge |
